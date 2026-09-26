@@ -1146,10 +1146,11 @@ cmd_prune() {
     # fleet state apart, while that state was written within the retention or
     # the worktree it records still stands: a lane closed while its item was
     # open keeps that state for a later resume, and only the item's close-out
-    # takes it. A state past the retention whose worktree is gone is an item
-    # nothing resumes, one a close-out never reached, and it ages out with its
-    # files.
-    local recent wt
+    # takes it. A state that records a branch and no worktree names its tree
+    # through git-context branch-worktree, as round-prune reads it. A state past
+    # the retention whose worktree is gone is an item nothing resumes, one a
+    # close-out never reached, and it ages out with its files.
+    local recent wt branch root=""
     for f in "$sd/$STATE_PREFIX-"*.json; do
         [[ -f "$f" && "$f" != "$sd/${state_file##*/}" ]] || continue
         if ! recent=$(find "$f" -mtime "-$days" -print 2>&1); then
@@ -1157,6 +1158,13 @@ cmd_prune() {
         fi
         if [[ -z "$recent" ]]; then
             wt=$(jq -r '.worktree // empty' "$f") || return 1
+            if [[ -z "$wt" ]]; then
+                branch=$(jq -r '.branch // empty' "$f") || return 1
+                if [[ -n "$branch" ]]; then
+                    [[ -n "$root" ]] || root=$(project_root) || return 1
+                    wt=$("$SCRIPT_DIR/git-context" branch-worktree "$branch" "$root") || return 1
+                fi
+            fi
             [[ -n "$wt" && -d "$wt" ]] || continue
         fi
         f="${f#"$sd/$STATE_PREFIX-"}"
@@ -1429,7 +1437,9 @@ EOF
                                 record is not done, nor a path named for an
                                 item whose workflow state file stands and was
                                 written within the retention or names a
-                                worktree that still exists. Refused
+                                worktree that still exists, by its worktree
+                                field or, with none, the linked worktree
+                                holding its branch. Refused
                                 as prune-progress-overlap where the progress
                                 report directory is or holds the state
                                 directory. Prints "pruned path=PATH" per removed

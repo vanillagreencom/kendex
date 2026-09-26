@@ -267,6 +267,43 @@ out="$( (cd "$TMP_ROOT/empty" && ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$TMP_RO
   && pass "a prune with no state directory removes nothing and creates none" \
   || fail "a prune with no state directory removes nothing and creates none" "rc=$rc out=$out"
 
+# States that record a branch and no worktree, in a checkout that is a git
+# repository with no fleet state, every state and file old: KEN-5's branch is
+# checked out in a linked worktree, KEN-6's branch is checked out nowhere, and
+# KEN-7's branch is the main checkout's own, which is never a lane's tree.
+build_branch() { # DIR
+  local p="$1" sd="$1/tmp" f
+  mkdir -p "$p"
+  git -C "$p" init -q -b ken-7
+  git -C "$p" config gc.auto 0
+  git -C "$p" config user.email test@example.com
+  git -C "$p" config user.name Test
+  git -C "$p" config commit.gpgsign false
+  git -C "$p" commit -q --allow-empty -m base
+  git -C "$p" branch ken-6
+  git -C "$p" worktree add -q -b ken-5 "$p.trees/ken-5" ken-7
+  mkdir -p "$sd"
+  for f in 5 6 7; do
+    printf '{"branch":"ken-%s"}\n' "$f" > "$sd/workflow-state-KEN-$f.json"
+    printf 'x\n' > "$sd/audit-KEN-$f.json"
+  done
+  find "$sd" -mindepth 1 -exec touch -t "$old_touch" {} +
+}
+BRANCH_ROWS='kept|workflow-state-KEN-5.json|an old branch-only state whose branch a linked worktree holds
+kept|audit-KEN-5.json|the old file of an item whose branch a linked worktree holds
+removed|workflow-state-KEN-6.json|an old branch-only state whose branch no worktree holds
+removed|audit-KEN-6.json|the old file of an item whose branch no worktree holds
+removed|workflow-state-KEN-7.json|an old branch-only state whose branch only the main checkout holds'
+br="$TMP_ROOT/branch"
+build_branch "$br"
+rc=0
+out="$(bare_run "$br" "$WS")" || rc=$?
+[[ "$rc" -eq 0 ]] && ok "a prune over branch-only states exits 0" || bad "a prune over branch-only states exits 0" "rc=$rc out=$out"
+while IFS='|' read -r want path label; do
+  if [[ -e "$br/tmp/$path" ]]; then got=kept; else got=removed; fi
+  [[ "$got" == "$want" ]] && ok "$label is $want" || bad "$label is $want" "path=$path got=$got"
+done <<<"$BRANCH_ROWS"
+
 # A step that fails before the archive stands removes nothing and writes no
 # archive: an archive tar cannot write, an archive root that is a file, a find
 # that cannot read an age, and a progress directory that is the state
@@ -428,6 +465,34 @@ state_find_row "$MUTANT_DIR/state-find-ignored"
 [[ "$STATE_FIND" == rc=0\ * ]] \
   && ok "control: without the standing-state refusal a state whose age find cannot read is held live" \
   || bad "control: without the standing-state refusal a state whose age find cannot read is held live" "$STATE_FIND"
+# Planted: the branch left unresolved, so a branch-only state reads as one
+# whose worktree is gone.
+mutant no-branch-hold 'wt=$("$SCRIPT_DIR/git-context" branch-worktree "$branch" "$root") || return 1' ':'
+mb="$TMP_ROOT/mb-no-branch-hold"
+build_branch "$mb"
+bare_run "$mb" "$MUTANT_DIR/no-branch-hold" >/dev/null || true
+[[ ! -e "$mb/tmp/audit-KEN-5.json" ]] \
+  && ok "control: without the branch lookup an item whose branch a linked worktree holds is pruned" \
+  || bad "control: without the branch lookup an item whose branch a linked worktree holds is pruned"
+# Planted in git-context, the lookup's one owner: the main checkout answers
+# for its own branch.
+GC_DIR="$TMP_ROOT/mutant-git-context"
+mkdir -p "$GC_DIR"
+cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$GC_DIR/lib"
+cp "$REPO_ROOT/skills/orch/scripts/orch-env" "$WS" "$GC_DIR/"
+GC_ANCHOR='$0 == "branch " want && n > 1 { print path; exit }'
+[[ "$(grep -Fc -- "$GC_ANCHOR" "$REPO_ROOT/skills/orch/scripts/git-context")" == 1 ]] \
+  && ok "the main-checkout control finds its anchor" || bad "the main-checkout control finds its anchor"
+A="$GC_ANCHOR" R='$0 == "branch " want { print path; exit }' \
+  awk 'index($0, ENVIRON["A"]) { sub(/[^ ].*/, ""); print $0 ENVIRON["R"]; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/git-context" > "$GC_DIR/git-context"
+chmod +x "$GC_DIR/git-context"
+mb="$TMP_ROOT/mb-main-checkout"
+build_branch "$mb"
+bare_run "$mb" "$GC_DIR/workflow-state" >/dev/null || true
+[[ -e "$mb/tmp/workflow-state-KEN-7.json" ]] \
+  && ok "control: with the main checkout answering for its branch an old state it holds is kept" \
+  || bad "control: with the main checkout answering for its branch an old state it holds is kept"
 mutant no-fresh-hold 'if [[ -z "$recent" ]]; then' 'if true; then'
 control_bare no-fresh-hold '[[ ! -e tmp/completion-summary-KEN-1.md ]]' \
   "without the retention hold a running item with a fresh state and no worktree loses its old files"

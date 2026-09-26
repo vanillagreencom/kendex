@@ -96,17 +96,12 @@ fi
 worktree="" branch=""
 worktree="$(state_get '.worktree // ""')" || { message state-missing worktree >&2; exit 2; }
 # A state initialized with a branch alone names its tree through the linked
-# worktree that has that branch checked out; the first listed is the main
-# checkout, whose lease the guard refuses and which is never a lane's.
+# worktree that has that branch checked out, as git-context branch-worktree
+# resolves it; the main checkout, whose lease the guard refuses, is never one.
 if [[ -z "$worktree" ]]; then
   branch="$(state_get '.branch // ""')" || { message state-missing branch >&2; exit 2; }
   if [[ -n "$branch" ]]; then
-    listing=""
-    listing="$(git worktree list --porcelain)" || { message worktree-list "$branch" >&2; exit 2; }
-    worktree="$(awk -v want="refs/heads/$branch" '
-      /^worktree / { path = substr($0, 10); n++ }
-      $0 == "branch " want && n > 1 { print path; exit }
-    ' <<<"$listing")"
+    worktree="$("$GIT_CONTEXT" branch-worktree "$branch")" || { message worktree-list "$branch" >&2; exit 2; }
   fi
 fi
 
