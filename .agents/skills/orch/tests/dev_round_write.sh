@@ -164,11 +164,25 @@ echo "=== a two-item round record, immutable once stamped ==="
 # worktree); an identical re-invocation is an idempotent retry, a different
 # set under the same round id is refused with the original intact, and a
 # fresh round id writes a distinct file beside the prior round's.
+WRITE_BEFORE="$(date +%s)"
 run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" --adds "$ADDS"
+WRITE_AFTER="$(date +%s)"
 FIRST="$OUT"
-E="rc=0 out=$WT/tmp/dev-round-issue-1230-$RID.json written=yes .schema_version=2 .schema_version|type=number .round_id=$RID .issue=issue-1230 .base_sha=$BASE_SHA .delegated_at|type=number .adds|tojson=[\"crates/parser/src/lib.rs\",\"skills/orch/scripts/new-check\"] .items|length=2 .items[0].n=1 .items[0].n|type=number"
+E="rc=0 out=$WT/tmp/dev-round-issue-1230-$RID.json written=yes .schema_version=2 .schema_version|type=number .round_id=$RID .issue=issue-1230 .base_sha=$BASE_SHA .delegated_at|type=number (.delegated_at>=$WRITE_BEFORE)and(.delegated_at<=$WRITE_AFTER)=true .adds|tojson=[\"crates/parser/src/lib.rs\",\"skills/orch/scripts/new-check\"] .items|length=2 .items[0].n=1 .items[0].n|type=number"
 assert_eq "$(observe "$E")" "$E" "the record carries the round token, the normalized issue, HEAD as base_sha, the delegation time, the adds list and one numbered item per --item" "$ERR"
 assert_eq "$(rec '.items[1].text')" "$ITEM2" "an item's formatted block is preserved verbatim, multi-line" "$ERR"
+# Control: a writer that stamps a constant time records one outside the
+# write's own window.
+STAMP_MUTANT_SCRIPTS="$(copy_scripts round-stamp-mutant)"
+mutate_file "$STAMP_MUTANT_SCRIPTS/dev-round-write" 'delegated_at="$(date +%s)"' 'delegated_at=0'
+SAVED_WRITE_BIN="$WRITE_BIN"
+WRITE_BIN="$STAMP_MUTANT_SCRIPTS/dev-round-write"
+WRITE_BEFORE="$(date +%s)"
+run_write --worktree "$WT" --issue issue-1230 --round-id 90-90 --item 1 "stamp control" "$OK_REACH"
+WRITE_AFTER="$(date +%s)"
+WRITE_BIN="$SAVED_WRITE_BIN"
+E="rc=0 (.delegated_at>=$WRITE_BEFORE)and(.delegated_at<=$WRITE_AFTER)=false"
+assert_eq "$(observe "$E")" "$E" "control: with a constant stamp the delegation time falls outside the write" "$ERR"
 assert_eq "$([[ -e "$WT/.git/kendex" ]] && echo yes || echo no)" "no" "nothing is written outside the worktree"
 run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" --adds "$ADDS"
 assert_eq "$(observe "rc=0 out=$FIRST [.items[].n]|tojson=[1,2]")" "rc=0 out=$FIRST [.items[].n]|tojson=[1,2]" "an identical re-invocation is idempotent: same path, record unchanged" "$ERR"

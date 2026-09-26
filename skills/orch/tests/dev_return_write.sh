@@ -272,6 +272,13 @@ mv "$NEXT_RECORD.next" "$NEXT_RECORD"
 VRUN_NOHEAD="$(validate_run_dir "$TMP_ROOT/validate-run-nohead" range)"
 VRUN_BADHEAD="$(validate_run_dir "$TMP_ROOT/validate-run-badhead" range 0 0000000000000000000000000000000000000000 "$ROUND_DELEGATED")"
 NEXT_ARGS="--kind fix --issue issue-776 --round-id 23-23 --branch b --commit $ROUND_BASE --validate pass --item 1 Applied fixed"
+# The bound record under fresh round ids, its base intact and its delegation
+# time absent or not a number: dev-round-write wrote no delegated_at before
+# the time binding, so a round delegated across the change holds one.
+jq '.round_id = "24-24" | del(.delegated_at)' "$BW/tmp/dev-round-issue-776-21-21.json" > "$BW/tmp/dev-round-issue-776-24-24.json"
+jq '.round_id = "25-25" | .delegated_at |= tostring' "$BW/tmp/dev-round-issue-776-21-21.json" > "$BW/tmp/dev-round-issue-776-25-25.json"
+UNTIMED_ARGS="--kind fix --issue issue-776 --round-id 24-24 --branch b --commit $ROUND_BASE --validate pass --item 1 Applied fixed --validate-run-dir $VRUN_BOUND"
+STRING_TIME_ARGS="--kind fix --issue issue-776 --round-id 25-25 --branch b --commit $ROUND_BASE --validate pass --item 1 Applied fixed --validate-run-dir $VRUN_BOUND"
 BIND_ARGS="--kind fix --issue issue-776 --round-id 21-21 --branch b --commit $ROUND_BASE --validate pass --item 1 Applied fixed"
 BIND_ROWS=(
   "the implement round's full run is refused, naming the run, its HEAD and the round's base|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_IMPL|rc=2 written=no stderr~dev-return-write:+run-off-round+run-dir=$VRUN_IMPL+head=$IMPL_BASE+base-sha=$ROUND_BASE=true"
@@ -280,6 +287,8 @@ BIND_ROWS=(
   "a run that records no HEAD is refused on its own key|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_NOHEAD|rc=2 written=no stderr~dev-return-write:+run-headless+run-dir=$VRUN_NOHEAD=true"
   "a HEAD git cannot resolve is refused on its own key|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_BADHEAD|rc=2 written=no stderr~dev-return-write:+ancestry-unreadable+run-dir=$VRUN_BADHEAD=true"
   "a fix round with no round record is refused|--worktree $BW --kind fix --issue issue-776 --round-id 22-22 --branch b --commit $ROUND_BASE --validate pass --item 1 Applied fixed --validate-run-dir $VRUN_BOUND|rc=2 written=no stderr~dev-return-write:+round-record-unreadable+path=$BW/tmp/dev-round-issue-776-22-22.json=true"
+  "a round record with a base and no delegation time is refused|--worktree $BW $UNTIMED_ARGS|rc=2 written=no stderr~dev-return-write:+round-record-unreadable+path=$BW/tmp/dev-round-issue-776-24-24.json=true"
+  "a round record whose delegation time is a string is refused|--worktree $BW $STRING_TIME_ARGS|rc=2 written=no stderr~dev-return-write:+round-record-unreadable+path=$BW/tmp/dev-round-issue-776-25-25.json=true"
 )
 table "${BIND_ROWS[@]}"
 rm -f "$BW/tmp/dev-return-issue-776-21-21.json"
@@ -296,14 +305,25 @@ table \
   "control: without the binding a run that records no HEAD is written|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_NOHEAD|rc=0 written=yes" \
   "control: without the binding a HEAD git cannot resolve is written|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_BADHEAD|rc=0 written=yes" \
   "control: without the binding a fix round with no round record is written|--worktree $BW --kind fix --issue issue-776 --round-id 22-22 --branch b --commit $ROUND_BASE --validate pass --item 1 Applied fixed --validate-run-dir $VRUN_BOUND|rc=0 written=yes" \
-  "control: without the binding the previous round's run is written for the next round|--worktree $BW $NEXT_ARGS --validate-run-dir $VRUN_BOUND|rc=0 written=yes"
-rm -f -- "${BW:?}/tmp/dev-return-issue-776-23-23.json"
+  "control: without the binding the previous round's run is written for the next round|--worktree $BW $NEXT_ARGS --validate-run-dir $VRUN_BOUND|rc=0 written=yes" \
+  "control: without the binding a record with no delegation time is written|--worktree $BW $UNTIMED_ARGS|rc=0 written=yes" \
+  "control: without the binding a string delegation time is written|--worktree $BW $STRING_TIME_ARGS|rc=0 written=yes"
+rm -f -- "${BW:?}/tmp/dev-return-issue-776-23-23.json" "${BW:?}/tmp/dev-return-issue-776-24-24.json" "${BW:?}/tmp/dev-return-issue-776-25-25.json"
 # Control: with the ancestry kept and the time dropped, the previous round's
 # run at the same base binds to the next round.
 TIME_SCRIPTS="$(copy_scripts time-mutant)"
 mutate_file "$TIME_SCRIPTS/dev-return-write" '(( 10#$run_start >= 10#$round_delegated_at )) \' 'true \'
 WRITE="$TIME_SCRIPTS/dev-return-write"
 table "control: without the delegation time the previous round's run is written for the next round|--worktree $BW $NEXT_ARGS --validate-run-dir $VRUN_BOUND|rc=0 written=yes"
+# Control: a record check that reads the base alone lets a record with no
+# numeric delegation time through to the time comparison, which refuses it
+# on the wrong key.
+RECORD_TIME_SCRIPTS="$(copy_scripts record-time-mutant)"
+mutate_file "$RECORD_TIME_SCRIPTS/dev-return-write" '[[ "$round_base" =~ ^[0-9a-f]{40}$ && "${round_delegated_at:-}" =~ ^[0-9]+$ ]] \' '[[ "$round_base" =~ ^[0-9a-f]{40}$ ]] \'
+WRITE="$RECORD_TIME_SCRIPTS/dev-return-write"
+table \
+  "control: with the time unchecked a record with no delegation time is refused on another key|--worktree $BW $UNTIMED_ARGS|stderr~dev-return-write:+round-record-unreadable=false" \
+  "control: with the time unchecked a string delegation time is refused on another key|--worktree $BW $STRING_TIME_ARGS|stderr~dev-return-write:+round-record-unreadable=false"
 WRITE="$WRITE_SHIPPED"
 
 echo "=== every refusal exits 2 on its own guard and writes nothing ==="
