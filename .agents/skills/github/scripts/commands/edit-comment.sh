@@ -80,7 +80,7 @@ edit_comment() {
                 # the flag last, `$2` is unset and `set -u` would end the run
                 # with a shell diagnostic no caller can parse as JSON.
                 if [ "$#" -lt 2 ]; then
-                    jq -nc --arg flag "$1" '{error: ($flag + " requires a value")}' >&2
+                    github_error "$1 requires a value"
                     exit 1
                 fi
                 if [ "$1" = "--body" ]; then
@@ -100,8 +100,7 @@ edit_comment() {
                 elif [ "$body_set" = false ]; then
                     body="$1"; body_set=true
                 else
-                    jq -nc --arg arg "$1" \
-                        '{error: ("Unexpected argument: " + $arg)}' >&2
+                    github_error "Unexpected argument: $1"
                     exit 1
                 fi
                 shift
@@ -110,36 +109,34 @@ edit_comment() {
     done
 
     if [ -z "$comment_id" ]; then
-        echo '{"error": "Comment ID required"}' >&2
+        github_error 'Comment ID required'
         exit 1
     fi
 
     if [ "$body_set" = true ] && [ "$body_file_set" = true ]; then
-        echo '{"error": "--body and --body-file are mutually exclusive"}' >&2
+        github_error '--body and --body-file are mutually exclusive'
         exit 1
     fi
     if [ "$body_file_set" = true ]; then
         if [ -z "$body_file" ]; then
-            echo '{"error": "--body-file requires a non-empty path argument"}' >&2
+            github_error '--body-file requires a non-empty path argument'
             exit 1
         fi
         if [ ! -r "$body_file" ]; then
-            jq -nc --arg path "$body_file" \
-                '{error: ("--body-file path not readable: " + $path)}' >&2
+            github_error "--body-file path not readable: $body_file"
             exit 1
         fi
         body=$(cat -- "$body_file")
     fi
 
     if [ -z "$body" ]; then
-        echo '{"error": "Comment body required (positional, --body, or --body-file)"}' >&2
+        github_error 'Comment body required (positional, --body, or --body-file)'
         exit 1
     fi
 
     # Validate comment ID is numeric
     if ! [[ "$comment_id" =~ ^[0-9]+$ ]]; then
-        jq -nc --arg id "$comment_id" \
-            '{error: ("Comment ID must be numeric: " + $id)}' >&2
+        github_error "Comment ID must be numeric: $comment_id"
         exit 1
     fi
 

@@ -853,7 +853,7 @@ main() {
     refuse_retired_settings
 
     if [ -z "$pr_num" ]; then
-        echo '{"error": "PR number required"}' >&2
+        github_error 'PR number required'
         exit 1
     fi
     if [ -n "$supplied_head" ] && ! [[ "$supplied_head" =~ ^[0-9a-fA-F]{40}$ ]]; then

@@ -58,14 +58,14 @@ unresolve_threads() {
                 shift
                 ;;
             *)
-                echo "{\"error\": \"Invalid thread ID: $1 (must start with PRRT_)\"}" >&2
+                github_error "Invalid thread ID: $1 (must start with PRRT_)"
                 exit 1
                 ;;
         esac
     done
 
     if [ ${#thread_ids[@]} -eq 0 ]; then
-        echo '{"error": "No thread IDs provided"}' >&2
+        github_error 'No thread IDs provided'
         exit 1
     fi
 

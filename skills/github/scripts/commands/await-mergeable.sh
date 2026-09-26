@@ -20,6 +20,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/json-error.sh
+source "$SCRIPT_DIR/../lib/json-error.sh"
+
 show_help() {
     cat <<'EOF'
 Wait for GitHub to finish computing a PR's merge state.
@@ -92,13 +96,13 @@ main() {
     done
 
     if [ -z "$pr_num" ]; then
-        echo '{"error": "PR number required"}' >&2
+        github_error 'PR number required'
         exit 1
     fi
 
     # Quick validation — fail fast on missing PR rather than looping.
     if ! gh pr view "$pr_num" --json number >/dev/null 2>&1; then
-        echo "{\"error\": \"PR #$pr_num not found\"}" >&2
+        github_error "PR #$pr_num not found"
         exit 1
     fi
 

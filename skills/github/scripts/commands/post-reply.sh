@@ -122,7 +122,7 @@ post_reply() {
                 elif [ "$body_set" = false ]; then
                     body="$1"; body_set=true
                 else
-                    echo "{\"error\": \"Unexpected argument: $1\"}" >&2
+                    github_error "Unexpected argument: $1"
                     exit 1
                 fi
                 shift
@@ -131,28 +131,28 @@ post_reply() {
     done
 
     if [ -z "$id" ]; then
-        echo '{"error": "Thread/comment ID required"}' >&2
+        github_error 'Thread/comment ID required'
         exit 1
     fi
 
     if [ "$body_set" = true ] && [ "$body_file_set" = true ]; then
-        echo '{"error": "--body and --body-file are mutually exclusive"}' >&2
+        github_error '--body and --body-file are mutually exclusive'
         exit 1
     fi
     if [ "$body_file_set" = true ]; then
         if [ -z "$body_file" ]; then
-            echo '{"error": "--body-file requires a non-empty path argument"}' >&2
+            github_error '--body-file requires a non-empty path argument'
             exit 1
         fi
         if [ ! -r "$body_file" ]; then
-            echo "{\"error\": \"--body-file path not readable: $body_file\"}" >&2
+            github_error "--body-file path not readable: $body_file"
             exit 1
         fi
         body=$(cat -- "$body_file")
     fi
 
     if [ -z "$body" ]; then
-        echo '{"error": "Reply body required (positional, --body, or --body-file)"}' >&2
+        github_error 'Reply body required (positional, --body, or --body-file)'
         exit 1
     fi
 
@@ -170,7 +170,7 @@ post_reply() {
     # usage error before any API call, in both --dry-run and real modes. Thread
     # IDs (PRRT_...) do not need --pr and keep their existing behavior.
     if [ "$is_thread_id" = "false" ] && [ -z "$pr_ref" ]; then
-        echo '{"error": "Numeric comment ID requires --pr <N> (PRRT_... thread IDs do not). See post-reply --help."}' >&2
+        github_error 'Numeric comment ID requires --pr <N> (PRRT_... thread IDs do not). See post-reply --help.'
         exit 1
     fi
 
