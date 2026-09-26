@@ -198,7 +198,7 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     '232560 of 258400 at 90: rc=0 room'
   control absolute-cap lane-context.sh '[ "$1" -ge 400000 ]' '[ "$1" -gt 400000 ]' \
     '400000 of no window at 90: rc=0 due'
-  control mandatory-pct lane-context.sh 'printf '90\n'' 'printf '100\n'' \
+  control mandatory-pct lane-context.sh '[ "$1" -gt 90 ]' '[ "$1" -gt 100 ]' \
     '180001 of 200000 at 100: rc=0 due'
   control window-read-as-room lane-context.sh "case \"\${2:-}\" in '' | 0) return 1 ;;" "case \"\${2:-}\" in '' | 0) printf 'room\\n'; return 0 ;;" \
     '5 of no window at 90: rc=1'

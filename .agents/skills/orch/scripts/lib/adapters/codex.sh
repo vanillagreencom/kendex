@@ -1,9 +1,8 @@
 # shellcheck shell=bash
 #
-# The Codex adapter: the context a session has used and the window it has, read
-# from the rollout Codex writes. The launch word that keeps the harness from
-# compacting a session on its own is the codex row of the launch-choice table
-# in lib/lane-launch.sh.
+# The Codex adapter reads tokens used and effective capacity from the rollout.
+# lib/lane-launch.sh owns the launch policy. references/skill-rules.md,
+# Compaction, describes its usable-window cap and remaining compaction paths.
 #
 # Sourced by lib/lane-context.sh, never run.
 

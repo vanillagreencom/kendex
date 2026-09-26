@@ -151,7 +151,7 @@ screen_reading() { # SCREEN
     "$UNDER_MARK") echo 'claude 100000 1000000 claude-fable-5-1' ;;
     "$CODEX_SCREEN") echo 'codex 100000 258400 gpt-6-astra' ;;
     "$CODEX_AT_MARK") echo 'codex 232560 258400 gpt-6-astra' ;;
-    "$NO_TABLE_TIER") echo 'claude 470000 - claude-sonnet-4-5' ;;
+    "$NO_TABLE_TIER") echo 'claude 399999 - claude-sonnet-4-5' ;;
     *'Sonnet 4.5 52%'*) echo 'claude 399999 - claude-sonnet-4-5' ;;
     *'Opus 5 (200k context) 41%'*) echo 'claude 82000 200000 claude-opus-5' ;;
     *) ;;
