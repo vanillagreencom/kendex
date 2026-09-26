@@ -6,6 +6,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../lib/github-api.sh"
+# shellcheck source=../lib/ci-run-correlation.sh
+source "$SCRIPT_DIR/../lib/ci-run-correlation.sh"
 
 show_help() {
     cat << 'EOF'
@@ -52,9 +54,10 @@ Output, one JSON object on stdout:
 
 Every stamp is ISO 8601 UTC, and every stamp and duration is null where the
 PR never reached it. The gate is a commit status, not a check run, so no CI
-figure counts it. Every CI figure reads the current attempt of each check
-alone: per workflow (or app) and check name, the attempt that started last,
-its id breaking a tie, so a rerun supersedes the attempt it replaced.
+figure counts it. Every CI figure reads only the checks of the current
+authoritative run of each workflow, as lib/ci-run-correlation.sh scopes a
+`gh pr checks` rollup, and the latest check run per name within a suite, as
+GitHub's own rollup does.
 
 Errors: {"error": "..."} on stderr and exit 1. A connection longer than one
 page (more than 100 commits, reviews, marked timeline events or check runs, or
@@ -94,9 +97,9 @@ fragment suites on Commit {
   checkSuites(first: 50) {
     pageInfo { hasNextPage }
     nodes {
-      app { slug }
-      workflowRun { event workflow { name } }
-      checkRuns(first: 100) { pageInfo { hasNextPage } nodes { name databaseId status conclusion startedAt completedAt } }
+      workflowRun { event url workflow { name } }
+      checkRuns(first: 100, filterBy: { checkType: LATEST }) {
+        pageInfo { hasNextPage } nodes { name status conclusion startedAt completedAt detailsUrl } }
     }
   }
 }'
@@ -107,19 +110,16 @@ fragment suites on Commit {
 # the strings order them.
 FILTER='
 def suites($c): [$c.checkSuites.nodes[]?];
-# A rerun adds an attempt beside the one it replaces: the current attempt of
-# each check is the one that started last, as lib/ci-run-correlation.sh
-# orders the settled runs of a workflow group, with the check id breaking
-# a tie.
-def runs($s): [$s[] | . as $suite | .checkRuns.nodes[]
-  | . + {key: [($suite.workflowRun.workflow.name // $suite.app.slug // ""), .name]}]
-  | group_by(.key) | map(max_by([(.startedAt // ""), (.databaseId // 0)]));
-def span($r): [$r[] | select(.startedAt != null and .completedAt != null)]
-  | if length == 0 then null
-    else (map(.completedAt | fromdate) | max) - (map(.startedAt | fromdate) | min) end;
-def green($r): if ($r | length) > 0
-    and all($r[]; .status == "COMPLETED" and (.conclusion | IN("SUCCESS", "NEUTRAL", "SKIPPED")))
-  then ($r | map(.completedAt) | max) else null end;
+# Each check run in the shape a `gh pr checks` rollup row has, which
+# scope_current_run reads: the run it belongs to through its workflow run
+# link, its state the conclusion once completed and the status before, a
+# neutral conclusion reading as skipped as gh buckets it.
+def rollup($s): [$s[] | . as $suite | .checkRuns.nodes[]
+  | {name, workflow: ($suite.workflowRun.workflow.name // ""),
+     link: ($suite.workflowRun.url // .detailsUrl // ""),
+     state: (if .status != "COMPLETED" then .status
+             elif .conclusion == "NEUTRAL" then "SKIPPED" else .conclusion end),
+     startedAt, completedAt}];
 def gate($c): $c.status.context // null | select(. != null and .state == "SUCCESS") | .createdAt;
 def secs($a; $b): if $a == null or $b == null then null else ($b | fromdate) - ($a | fromdate) end;
 .repository.pullRequest as $p
@@ -143,7 +143,7 @@ def secs($a; $b): if $a == null or $b == null then null else ($b | fromdate) - (
       first_bot_review: ($bot | map(.submittedAt) | min),
       first_gate_met: null,
       gate_met: ([gate($head)] | first // null),
-      ci_green: green(runs($head_suites)),
+      ci_green: null,
       armed: ([$p.timelineItems.nodes[] | select(.__typename == "AutoMergeEnabledEvent") | .createdAt] | max),
       queued: ([$p.timelineItems.nodes[] | select(.__typename == "AddedToMergeQueueEvent") | .createdAt] | max),
       merged: $p.mergedAt
@@ -152,8 +152,9 @@ def secs($a; $b): if $a == null or $b == null then null else ($b | fromdate) - (
       pr: $p.number, repo: $repo, state: $p.state,
       head: $head.oid, merge_commit: ($p.mergeCommit.oid // null),
       stamps: $stamps,
-      ci_head_secs: span(runs($head_suites)),
-      ci_merge_group_secs: span(runs($group_suites)),
+      ci_head_secs: null,
+      ci_merge_group_secs: null,
+      _checks: {head: rollup($head_suites), group: rollup($group_suites)},
       open_secs: secs($stamps.created; $stamps.merged),
       bot_reviews: ($bot | length)
     }
@@ -195,6 +196,22 @@ pr_timeline() {
         jq -c '{error: ("truncated: " + .truncated)}' <<<"$result" >&2
         exit 1
     fi
+    # The CI figures, over the checks scope_current_run keeps of each set.
+    local head_checks group_checks
+    head_checks=$(jq -c '._checks.head' <<<"$result" | scope_current_run) \
+        || { echo '{"error": "pr-timeline: head checks unscoped"}' >&2; exit 1; }
+    group_checks=$(jq -c '._checks.group' <<<"$result" | scope_current_run) \
+        || { echo '{"error": "pr-timeline: merge-group checks unscoped"}' >&2; exit 1; }
+    result=$(jq -c --argjson head "$head_checks" --argjson group "$group_checks" "$CI_RUN_JQ_DEFS"'
+        def span($r): [$r[] | select(.startedAt != null and .completedAt != null)]
+          | if length == 0 then null
+            else (map(.completedAt | fromdate) | max) - (map(.startedAt | fromdate) | min) end;
+        def green($r): if ($r | length) > 0 and all($r[]; bucket | IN("pass", "skipping"))
+          then ($r | map(.completedAt) | max) else null end;
+        del(._checks) | .stamps.ci_green = green($head)
+        | .ci_head_secs = span($head) | .ci_merge_group_secs = span($group)' <<<"$result") \
+        || { echo '{"error": "pr-timeline: unreadable checks"}' >&2; exit 1; }
+
     # first_gate_met, from the status history of every head the PR carried:
     # the GraphQL status names only each head's latest, and the review writer
     # posts success, then failure or pending when a late thread opens, then

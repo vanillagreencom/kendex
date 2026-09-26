@@ -49,9 +49,11 @@ GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$TMP_ROOT/bin"
 response() {
   jq -cn '
     def t($hm): "2026-09-20T\($hm):00Z";
-    def run($name; $s; $e): {name: $name, databaseId: 1, status: "COMPLETED", conclusion: "SUCCESS", startedAt: t($s), completedAt: t($e)};
-    def suite($event; $runs): {app: {slug: (if $event == null then "other-app" else "github-actions" end)},
-                               workflowRun: (if $event == null then null else {event: $event, workflow: {name: "ci-\($event)"}} end),
+    def run($name; $s; $e): {name: $name, status: "COMPLETED", conclusion: "SUCCESS", startedAt: t($s), completedAt: t($e),
+                             detailsUrl: "https://checks.example/\($name)"};
+    def suite($event; $runs): {workflowRun: (if $event == null then null
+                                 else {event: $event, url: "https://github.com/owner/repo/actions/runs/\($event | length)00",
+                                       workflow: {name: "ci-\($event)"}} end),
                                checkRuns: {pageInfo: {hasNextPage: false}, nodes: $runs}};
     def gate($state; $hm): {status: {context: {state: $state, createdAt: t($hm)}}};
     {data: {repository: {pullRequest: {
@@ -142,19 +144,29 @@ rc=0
   bash "$BIN" 42 >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
 assert_eq "rc=$rc out=$(cat "$TMP_ROOT/stdout")" "rc=1 out=" "a status history that does not read prints nothing"
 
-echo "=== a rerun supersedes the attempt it replaced ==="
-# A failed attempt of a check, then its rerun under the same name, on the
-# final head and in the merge group.
-STALE_HEAD='.data.repository.pullRequest.headCommit.nodes[0].commit.checkSuites.nodes[0].checkRuns.nodes += [{name: "test", databaseId: 0, status: "COMPLETED", conclusion: "FAILURE", startedAt: "2026-09-20T10:18:00Z", completedAt: "2026-09-20T10:19:00Z"}]'
-STALE_GROUP='.data.repository.pullRequest.mergeCommit.checkSuites.nodes[0].checkRuns.nodes += [{name: "test", databaseId: 0, status: "COMPLETED", conclusion: "FAILURE", startedAt: "2026-09-20T10:57:00Z", completedAt: "2026-09-20T10:58:00Z"}]'
+echo "=== each workflow's current run is the one lib/ci-run-correlation.sh keeps ==="
+# A second run of a workflow beside the fixture's own: its suite carries
+# another run id, and scope_current_run decides which run's checks count.
+# extra_run prints the jq edit that appends it.
+extra_run() { # PATH RUNID EVENT CONCLUSION START END
+  printf '%s.checkSuites.nodes += [{workflowRun: {event: "%s", url: "https://github.com/owner/repo/actions/runs/%s", workflow: {name: "ci-%s"}}, checkRuns: {pageInfo: {hasNextPage: false}, nodes: [{name: "test", status: "COMPLETED", conclusion: "%s", startedAt: "2026-09-20T%s:00Z", completedAt: "2026-09-20T%s:00Z", detailsUrl: "x"}]}}]' \
+    "$1" "$3" "$2" "$3" "$4" "$5" "$6"
+}
+HEAD_PATH='.data.repository.pullRequest.headCommit.nodes[0].commit'
+GROUP_PATH='.data.repository.pullRequest.mergeCommit'
+# The fixture's head run is runs/1200 (pull_request) and the group's
+# runs/1100 (merge_group); an earlier failed run of each takes a lower id.
+STALE_HEAD="$(extra_run "$HEAD_PATH" 5 pull_request FAILURE 10:05 10:06)"
+STALE_GROUP="$(extra_run "$GROUP_PATH" 5 merge_group FAILURE 10:57 10:58)"
 while IFS='@' read -r label edit want; do
   [[ -n "$label" ]] || continue
   run "$edit" >/dev/null
   assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_merge_group_secs]' "$TMP_ROOT/stdout")" "$want" "$label"
 done <<ROWS
-a failed attempt on the head, then its successful rerun: CI green, the rerun alone timed@$STALE_HEAD@["2026-09-20T10:45:00Z",1500,900]
-a failed attempt in the merge group, then its rerun: the rerun alone timed@$STALE_GROUP@["2026-09-20T10:45:00Z",1500,900]
-a success, then a rerun that failed: CI never green@$STALE_HEAD | .data.repository.pullRequest.headCommit.nodes[0].commit.checkSuites.nodes[0].checkRuns.nodes[2] |= (.startedAt = "2026-09-20T10:22:00Z" | .completedAt = "2026-09-20T10:41:00Z")@[null,1500,900]
+a failed run on the head, then a later run that passed: CI green, the later run alone timed@$STALE_HEAD@["2026-09-20T10:45:00Z",1500,900]
+a failed run in the merge group, then a later run: the later run alone timed@$STALE_GROUP@["2026-09-20T10:45:00Z",1500,900]
+a later all-skipped run keeps the substantive run current@$(extra_run "$HEAD_PATH" 9999 pull_request SKIPPED 10:50 10:51)@["2026-09-20T10:45:00Z",1500,900]
+a later run that failed leaves CI never green@$(extra_run "$HEAD_PATH" 9999 pull_request FAILURE 10:46 10:47)@[null,1500,900]
 ROWS
 
 echo "=== a connection longer than its page refuses ==="
@@ -198,10 +210,10 @@ mutant group-suites 'select(.workflowRun.event == "merge_group") end]' 'select(t
 run . >/dev/null
 assert_eq "$(jq -c '.ci_merge_group_secs' "$TMP_ROOT/stdout")" "2400" \
   "control: without the merge_group filter the merge commit's push suite joins the merge-group figure"
-mutant every-attempt '| group_by(.key) | map(max_by([(.startedAt // ""), (.databaseId // 0)]));' ';'
+mutant unscoped "head_checks=\$(jq -c '._checks.head' <<<\"\$result\" | scope_current_run)" "head_checks=\$(jq -c '._checks.head' <<<\"\$result\")"
 run "$STALE_HEAD" >/dev/null
-assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs]' "$TMP_ROOT/stdout")" '[null,1620]' \
-  "control: reading every attempt keeps the superseded failure and times across it"
+assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs]' "$TMP_ROOT/stdout")" '[null,2400]' \
+  "control: without scope_current_run the superseded failed run is read and timed"
 mutant latest-pass '| .created_at] | min // empty' '| .created_at] | max // empty'
 HISTORY_B1="10:30:pending" HISTORY_H2="10:25:success 10:24:failure 10:02:success"
 run . >/dev/null
