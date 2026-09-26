@@ -224,7 +224,7 @@ message() { # KEY VALUE [CAUSE]
           "$2" "$MARK" "$HANDOFF_INSTRUCTION"
         ;;
       qualifying=*)
-        printf 'oversee-succeed finds %s accounts above the headroom mark, the account this session runs on counted where it has room, at or below the ORCH_OVERSEER_SUCCESSOR_ACCOUNTS mark of %s. The account this session runs on reads headroom=%s, where none or unreadable is an account nothing measured rather than one spent. Succeed this session yourself onto another of them before no account remains.\n%s\n' \
+        printf 'oversee-succeed reads a qualifying-account count of %s against the ORCH_OVERSEER_SUCCESSOR_ACCOUNTS mark of %s, by the rule oversee-succeed --help states. The account this session runs on reads headroom=%s, where none or unreadable is an account nothing measured rather than one spent. Succeed this session yourself onto another account before no account remains.\n%s\n' \
           "$2" "$MARK" "${MARK_HEADROOM:-none}" "$HANDOFF_INSTRUCTION"
         ;;
       question-tool=*)

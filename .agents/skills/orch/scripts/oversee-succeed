@@ -72,28 +72,25 @@
 #        The QUALIFYING mark (ORCH_OVERSEER_SUCCESSOR_ACCOUNTS, 0 turns it
 #        off) counts the accounts of this overseer's harness above
 #        ORCH_OVERSEER_HEADROOM_PCT, by the `lanes pick` judgement a successor
-#        pick takes, and counts this overseer's own account among them where
-#        its headroom was measured above that trigger. Counted whole, the
-#        figure reads the same from every account it covers, so no move
-#        inside one harness lowers it; a count that left this account out
-#        would read one from either of two accounts above the trigger, and a
-#        successor would count the account just left and move back as soon
-#        as the two headroom readings crossed, which the move itself brings
-#        about by spending the account it lands on. The mark fires where the
-#        count is at or below the setting, holds at least one account other
-#        than this one, the account the pick names has more headroom than
-#        this one, and a successor settles it: the walk of step 3 runs here,
-#        launching nothing, and must choose an entry whose successor, on the
-#        lane picked, reads a count above the setting. A successor that reads
-#        the same count still at or below it would fire this mark again once
-#        the headroom readings cross, so that entry is skipped, and where the
-#        walk chooses none the mark does not fire. At the default of 1 the
-#        mark therefore fires only where this overseer's own account is not
-#        measured above the trigger and exactly one other account is; there
-#        its line carries `headroom`, the reading of this overseer's own
-#        account the below-mark lines carry. Because it walks, a qualifying
-#        judgement reads ORCH_OVERSEER_PREFERENCE and can refuse as the walk
-#        does, `invalid-preference`, `model-failed` or `lanes-failed`.
+#        pick takes, this overseer's own among them where its headroom was
+#        measured above that trigger. Counted whole, the figure reads the same
+#        from every account it covers; a count without this account would read
+#        one from either of two accounts, and the overseer would move back and
+#        forth as their headroom readings crossed. The mark fires where the
+#        count is at or below the setting, at least one other account is in
+#        it, the account the pick names has more headroom than this one, and
+#        the walk of step 3, run here and launching nothing, chooses an entry
+#        whose successor settles the mark: counting from the lane picked, it
+#        finds no other account above the trigger, or a count above the
+#        setting. Where the walk chooses none the mark does not fire, so a
+#        setting no move can clear leaves this trigger inert; at the default
+#        of 1 it fires only where this overseer's own account is not measured
+#        above the trigger and exactly one other account is. Its
+#        `mark-reached` line always carries `headroom`, this overseer's own
+#        reading, which at the default shows why that account was not
+#        counted. A qualifying judgement reads ORCH_OVERSEER_PREFERENCE and
+#        can refuse at exit 1 as the walk does: `invalid-preference`,
+#        `model-failed` or `lanes-failed`.
 #        The CONTEXT mark reads the pane's status line
 #        (lib/lane-context.sh). Its window is the one the line names, or the
 #        window the model it names runs, where the line names none. A window
@@ -263,8 +260,11 @@
 #                    Refused beside --dead-pane, whose line already holds them
 #   --check-marks    Judge the triggers of step 2 against this overseer's own
 #                    pane and account, print the one keyed line that says what
-#                    they found, and stop there: no lane is picked, no window
-#                    is opened and nothing is launched. `mark-reached` carries
+#                    they found, and stop there: no window is opened and
+#                    nothing is launched. Lanes are picked only to judge
+#                    whether a qualifying mark has a successor that settles
+#                    it, and that judgement can refuse at exit 1 as the walk
+#                    does (step 2). `mark-reached` carries
 #                    `kind` (context, headroom, rate or qualifying), the `value` it read, the
 #                    `mark` it crossed and `succession`, the effective
 #                    ORCH_OVERSEER_SUCCESSION. A reading that could not be
@@ -275,7 +275,8 @@
 #                    the two below-mark lines above are printed instead.
 #                    Because it launches nothing, `off` does not gate it: an
 #                    overseer past its mark is told so whether or not a
-#                    successor may open. Exit 0 with the line on stdout. Takes
+#                    successor may open. Exit 0 with the line on stdout, but
+#                    for those refusals. Takes
 #                    no other option, --handoff and --wait-secs included
 #   --print-launch-line
 #                    Print the command a successor of THIS overseer would be
@@ -1006,13 +1007,8 @@ walk_entries() {
         message successor-lane-spent "lane=$WALLED_LANE" "entry=$entry" >&2
         continue
       fi
-      # A qualifying mark is held to the count its successor will read: the
-      # accounts of that successor's harness above the trigger other than the
-      # lane picked, plus the lane picked, which the pick has just judged above
-      # it. A figure still at or below the setting settles nothing, since the
-      # successor fires the same mark once the two headroom readings cross, so
-      # the entry is skipped; a walk that skips every entry leaves the mark
-      # unfired (step 2).
+      # A qualifying mark is held to the count its successor will read, the
+      # lane picked included; header step 2 states which counts settle it.
       if [[ "$MARK_KIND" == qualifying ]]; then
         rc=0
         ol_pick_record "$harness" "$pick_model" "$HEADROOM_TRIGGER" "$OL_PICKED_DIR" || rc=$?
@@ -1120,7 +1116,8 @@ if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
 fi
 
 # A mark is reached, and `check` ends here: its caller acts on the answer, so
-# this run picks no lane, opens no window and spends no account. The account
+# this run opens no window and spends no account, and the lanes a qualifying
+# judgement picked served that judgement alone. The account
 # mark leads for the reason the walk below gives — an account at its trigger is
 # what the successor must not be opened on — and only its line names the
 # account, because at the context mark this overseer's account either has room
