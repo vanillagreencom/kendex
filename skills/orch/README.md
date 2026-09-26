@@ -67,8 +67,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | Recording settings | `ORCH_FLEET_LOG_ROW_BYTES`, `ORCH_TAKEOVER_ROWS`, `ORCH_RECORD_RETENTION_DAYS`, `ORCH_PROGRESS_REPORT_DIR`: [recording policy](schemas/workflow-state.md#recording-policy) | |
 | Report settings | `ORCH_REPORT`, `ORCH_REPORT_EVERY_MINUTES`, `ORCH_REPORT_EVERY_ISSUES`, `ORCH_REPORT_UPCOMING`, `ORCH_REPORT_COLUMNS`: `oversee-report --help` | |
 | Watch settings | `ORCH_WATCH_TAIL_LINES`, `ORCH_WATCH_PREPARE_SECS`: `oversee-watch --help` § Environment | |
-| `ORCH_LANE_HOST` | Provider `lane-host` runs: an executable script path or `local`. `open-terminal` launches through it; `--host` overrides. [Host protocol](schemas/lane-host.md) | `local` |
-| `ORCH_LANE_HOST_MAX_CALLS` | Provider processes `lane-host` runs at once per home. A call at the cap waits `ORCH_LANE_HOST_BUSY_WAIT_SECS` (`30`), then exits `69`. [Host protocol](schemas/lane-host.md#provider-protocol) | `4` |
+| `ORCH_LANE_HOST` | Provider `lane-host` runs: an executable script path or `local`; `ORCH_LANE_HOST_MAX_CALLS` (`4`) and `ORCH_LANE_HOST_BUSY_WAIT_SECS` (`30`) bound its calls. [Host protocol](schemas/lane-host.md) | `local` |
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal | empty |
 | `RECONCILE_STALE_HOURS` | Hours before an In Progress or In Review item counts as started-stale in `reconcile-work-items` sweeps | `24` |
 | `WORKTREE_CLI` | Path to the worktree CLI `open-terminal` drives; empty resolves the installed worktree skill's script | resolved |
