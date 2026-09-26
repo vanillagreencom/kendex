@@ -289,9 +289,22 @@ rc_of near_miss_rc env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS ORCH_ST
   "$CHECK_BIN" --worktree "$WT" --issue pr-51x
 assert_eq "$near_miss_rc" "2" "a key outside the pr-N shape still reaches the tracker"
 
+# The same holds for the local- form new-local-key mints: a truncated or
+# mistyped local key is not the fallback, so it reaches the tracker and refuses.
+for near_miss_key in local-1-2 local-x local-1-2-3x; do
+  "$STATE" --state-dir "$WT/tmp" init "$near_miss_key" --worktree "$WT" --branch size >/dev/null
+  set +e
+  near_miss_error="$(env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS ORCH_STATE_DIR="$WT/tmp" \
+    "$CHECK_BIN" --worktree "$WT" --issue "$near_miss_key" 2>&1 >/dev/null)"
+  near_miss_rc=$?
+  set -e
+  assert_eq "$near_miss_rc,${near_miss_error%%$'\n'*}" "2,branch-size-check: linear-read issue=$near_miss_key" \
+    "$near_miss_key, outside the local- shape, still reaches the tracker"
+done
+
 PR_MUTANT_SCRIPTS="$(copy_scripts pr-key-mutant)"
 PR_MUTANT="$PR_MUTANT_SCRIPTS/branch-size-check"
-mutate_file "$PR_MUTANT" 'NO_ISSUE_KEY_GRAMMAR='"'"'^pr-[0-9]+$'"'"'' 'NO_ISSUE_KEY_GRAMMAR='"'"'^$'"'"''
+mutate_file "$PR_MUTANT" 'NO_ISSUE_KEY_GRAMMAR='"'"'^(pr-[0-9]+|local-[0-9]+-[0-9]+-[0-9]+)$'"'"'' 'NO_ISSUE_KEY_GRAMMAR='"'"'^$'"'"''
 set +e
 pr_mutant_error="$(run_pr_check "$PR_MUTANT" 2>&1 >/dev/null)"
 pr_mutant_rc=$?

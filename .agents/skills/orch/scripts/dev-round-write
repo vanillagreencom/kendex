@@ -253,7 +253,7 @@ recorded allowance, or its recorded production and test counts when unsized.
 size_check always records the current report; cut_comparison preserves the cut
 target across retries.
 --issue is the workflow-state key, whose forms `workflow-state --help` § Keys
-lists. A `pr-N` key names no issue and so measures under the
+lists. A `pr-N` or `local-` key names no issue and so measures under the
 allowance_missing verdict. workflow-state stores the key as passed and
 validates none of it.
 --issue / --round-id must match
