@@ -10,6 +10,12 @@ enabled = true
 
 [skill-instructions]
 all = "Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first."
+code-quality = '''
+### React
+
+- A store selector returns a stable reference: never mint an array, object or Set inside one, since a fresh value re-renders forever and blanks the page.
+- An effect that positions or measures rendered content takes what is drawn as its trigger, not a list of state names; the exhaustive-dependencies lint checks only what the effect reads.
+'''
 project-management = '''
 ### Project taxonomy
 
