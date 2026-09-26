@@ -1267,8 +1267,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "93ecd1b8e8d25cc770c599f6c0e20b15aaa5282286f1b0e57dc05951d0361df6",
-      "renderedHash": "9f8da67a0740d3a30ee48ce6d3d978fc57afd739868a619cfbd37d1db9bb0db6",
+      "sourceHash": "35f7416fa71a0196aef812f5749cec1af8d1aa16ca4b1ecf7df44ed843eaf5b2",
+      "renderedHash": "69e7b7d446e2223773d0f86446a510c294ab33bda3cacf26cc3d92cc74b8f687",
       "enabled": true,
       "registration": {
         "event": "PreToolUse",
@@ -1291,8 +1291,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "93ecd1b8e8d25cc770c599f6c0e20b15aaa5282286f1b0e57dc05951d0361df6",
-      "renderedHash": "9f8da67a0740d3a30ee48ce6d3d978fc57afd739868a619cfbd37d1db9bb0db6",
+      "sourceHash": "35f7416fa71a0196aef812f5749cec1af8d1aa16ca4b1ecf7df44ed843eaf5b2",
+      "renderedHash": "69e7b7d446e2223773d0f86446a510c294ab33bda3cacf26cc3d92cc74b8f687",
       "enabled": true,
       "registration": {
         "event": "PreToolUse",
@@ -1315,8 +1315,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "93ecd1b8e8d25cc770c599f6c0e20b15aaa5282286f1b0e57dc05951d0361df6",
-      "renderedHash": "9f8da67a0740d3a30ee48ce6d3d978fc57afd739868a619cfbd37d1db9bb0db6",
+      "sourceHash": "35f7416fa71a0196aef812f5749cec1af8d1aa16ca4b1ecf7df44ed843eaf5b2",
+      "renderedHash": "69e7b7d446e2223773d0f86446a510c294ab33bda3cacf26cc3d92cc74b8f687",
       "enabled": true,
       "registration": {
         "event": "tool_call",

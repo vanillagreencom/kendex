@@ -336,7 +336,14 @@ a quoted source reference cuts the words after it too|2|block-worktree-refresh: 
 the same with --scope all after the quoted reference|2|block-worktree-refresh: refused=source add|kendex source --global add x "owner/repo" --scope all
 the cut source write after a cd is refused as moved|2|block-worktree-refresh: moved=source remove|cd .. && kendex source --global remove "x" --scope project
 a quote in another command leaves a global source write whole|0|-|echo "x y" && kendex source --global add x owner/repo
-a continued line before a quoted reference is not the command's text as it stands, so no global scope is read|2|block-worktree-refresh: refused=source add|kendex source --global add x \\\n  "owner/repo" --scope project
+a quoted reference on a continued line cuts the words after it too|2|block-worktree-refresh: refused=source add|kendex source --global add x \\\n  "owner/repo" --scope project
+a backtick substitution cuts the words after it from the segment|2|block-worktree-refresh: refused=source remove|kendex source --global remove \0140echo x\0140 --scope project
+the same for refresh|2|block-worktree-refresh: refused=refresh|kendex refresh --global \0140true\0140 --scope project
+a quoted span after refresh is opened as command text and cut the same way|2|block-worktree-refresh: refused=refresh|kendex refresh --global '--scope' project
+a comment after a global write leaves it whole|0|-|kendex refresh --global # a note
+a stderr redirection and a pipe after a global write leave it whole|0|-|kendex refresh --global 2>&1 | tail
+a quoted span the reader masks is still the command's text|0|-|kendex add --global "./a b"
+a substitution lifted out of a quoted word leaves a segment the command does not hold, so no global scope is read|2|block-worktree-refresh: refused=add|kendex add --global "a\0044(echo b)" --scope project
 marketplace list is a read|0|-|kendex marketplace list
 the verb is found after a chained command|2|block-worktree-refresh: refused=refresh|true && kendex refresh
 the verb is found on the second line|2|block-worktree-refresh: refused=apply|echo x\nkendex apply

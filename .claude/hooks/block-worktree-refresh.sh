@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, `source add|remove|enable|disable`, `marketplace subscribe|unsubscribe`) when the working directory is a linked git worktree, the command does not name the global scope, and the project the write lands in is not the worktree's own; and whenever a `cd`, `pushd`, `env -C` or `sudo -D` stands before the verb in the same command, since the directory the write lands in cannot then be read from the command. The project a bare verb writes is the one kendex resolves from the working directory; where that project has no manifest of its own in the linked worktree (kendex.toml, or kendex-local.toml for a source catalog), its declarations are the main checkout's, so a project-scope write renders into that checkout and removes what it does not expect there. Where it has one, it is a project in its own right and its target is unambiguous, so every writing verb but `update-pi` passes there bare. `refresh`, `apply` and `updates --apply` pass in any worktree once they name their target with `--project-path PATH`: the directory the write lands in is then the command's own word; `update-pi` is refused in every worktree at the project scope. Names the forms that are right: `--project-path PATH` where the verb takes it and the installed kendex lists the flag, the same command from the main checkout, or the verb's global form (`--global` for add, `--scope global` for update-pi, either for the rest, the `source` subcommands included). An installed kendex whose `refresh --help` does not list `--project-path` is named with its version instead of the flag it lacks.
 # summary: Stops a kendex command that writes a project from inside a linked git worktree, where the write would land somewhere the command does not name.
-# safety: Reads the command text and asks git whether the tool call's working directory has a git dir that differs from its common dir, which is what makes a worktree linked, and for a linked worktree its root; walks up from the working directory to that root for the project kendex would write, and tests whether its manifest exists, reading its kendex.toml only for the text `is_source_catalog`; the hook itself writes nothing. A git that cannot answer refuses. The verb is the first word naming one after a `kendex` word, anywhere in the command except the text the shell would not run: the words inside a quoted span, a heredoc body its command reads as data, and a comment are masked out before the command is read, so prose spelling the pair is not refused, while a span or a heredoc body that a shell, `eval`, `source` or `.` word runs is read as the command it is; a quote that cannot be paired leaves the whole text to be read, so a command this hook could not take apart is refused rather than passed. The command is read by the commit-guards skill's command-position library, found in the install beside the hook; without it every call is refused. The bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex help VERB`, a matched verb with `--help`, `-h` or `--plan` among the words Bash passes it, `kendex updates` without `--apply`, `kendex verify`, `list`, `report`, `check` — whose one write, the scope's install record for copies it proves against their source, renders nothing into any checkout — and every other verb pass. `-g`/`--global`, `--scope`, `--project-path`, `--apply`, `--help`, `-h` and `--plan` are read from the words Bash passes kendex after the verb in its own segment, and for a `source` subcommand also from the option words between `source` and it, where its parser takes them too: a redirection operator and the file it opens are not arguments, a standalone `--` ends the options, and a word there the shell settles only when it runs (a parameter expansion, a glob, a brace, or a backslash) grants no exemption and counts as `--apply`; a command substitution, and a quoted span the command reader opens as command text with the words after it, are cut out of the segment and not read, so a `source` subcommand whose segment the command's text holds with a quote after it, or does not hold as it stands, names no global scope: the reader takes kendex's `source` word for the shell's and cuts at the first quoted word after it. update-pi's `--check` is read from the segment's text. A command carrying `-g`, `--global` or `--scope global` there, with no other `--scope` beside it, passes because it names the scope this hook does not guard, and a `refresh`, `apply` or `updates` carrying `--project-path` there passes because it names the project it writes, the value itself being read by kendex, which refuses the flag without one. On the refusal path only, and only where the refusal of `refresh`, `apply` or `updates --apply` would offer `--project-path`, the hook runs `kendex refresh --help` and `kendex --version` once from the PATH it was given, reads whether the help lists the flag, and captures what both wrote; a kendex that is not on PATH or whose help cannot be read is named as unasked, and the flag is not offered. That kendex is a binary of its own: its first run on a machine records the command's path under kendex's data directory, and it writes into no checkout. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the command text and asks git whether the tool call's working directory has a git dir that differs from its common dir, which is what makes a worktree linked, and for a linked worktree its root; walks up from the working directory to that root for the project kendex would write, and tests whether its manifest exists, reading its kendex.toml only for the text `is_source_catalog`; the hook itself writes nothing. A git that cannot answer refuses. The verb is the first word naming one after a `kendex` word, anywhere in the command except the text the shell would not run: the words inside a quoted span, a heredoc body its command reads as data, and a comment are masked out before the command is read, so prose spelling the pair is not refused, while a span or a heredoc body that a shell, `eval`, `source` or `.` word runs is read as the command it is; a quote that cannot be paired leaves the whole text to be read, so a command this hook could not take apart is refused rather than passed. The command is read by the commit-guards skill's command-position library, found in the install beside the hook; without it every call is refused. The bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex help VERB`, a matched verb with `--help`, `-h` or `--plan` among the words Bash passes it, `kendex updates` without `--apply`, `kendex verify`, `list`, `report`, `check` — whose one write, the scope's install record for copies it proves against their source, renders nothing into any checkout — and every other verb pass. `-g`/`--global`, `--scope`, `--project-path`, `--apply`, `--help`, `-h` and `--plan` are read from the words Bash passes kendex after the verb in its own segment, and for a `source` subcommand also from the option words between `source` and it, where its parser takes them too: a redirection operator and the file it opens are not arguments, a standalone `--` ends the options, and a word there the shell settles only when it runs (a parameter expansion, a glob, a brace, or a backslash) grants no exemption and counts as `--apply`; a command substitution, and a quoted span the command reader opens as command text with the words after it, are cut out of the segment and not read, so a segment the command's text does not follow with a separator, a comment or its end names no global scope and counts as `--apply`. update-pi's `--check` is read from the segment's text. A command carrying `-g`, `--global` or `--scope global` there, with no other `--scope` beside it, passes because it names the scope this hook does not guard, and a `refresh`, `apply` or `updates` carrying `--project-path` there passes because it names the project it writes, the value itself being read by kendex, which refuses the flag without one. On the refusal path only, and only where the refusal of `refresh`, `apply` or `updates --apply` would offer `--project-path`, the hook runs `kendex refresh --help` and `kendex --version` once from the PATH it was given, reads whether the help lists the flag, and captures what both wrote; a kendex that is not on PATH or whose help cannot be read is named as unasked, and the flag is not offered. That kendex is a binary of its own: its first run on a machine records the command's path under kendex's data directory, and it writes into no checkout. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # ---
 
@@ -384,7 +384,8 @@ writing_verb() { # SEGMENT -> FOUND, TAIL
 # A word in the segment whose value the shell settles only when it runs — a
 # parameter expansion, a glob, a brace, or a backslash, which can also join
 # it to the next word — may be any word at all, `--` and `--scope=project`
-# included, so it grants nothing: the scope is then the project scope,
+# included, so it grants nothing, and so does a segment the reader may have
+# cut short: the scope is then the project scope,
 # `--apply` counts as present, and a `--project-path` after it is not read as
 # a target, since the word before could have ended the options. A quote is
 # removed as the shell removes it. Words the command reader cut out of the
@@ -400,7 +401,7 @@ writing_verb() { # SEGMENT -> FOUND, TAIL
 # or `--plan` reaches kendex, on which it prints and writes nothing; an
 # unsure word anywhere in the segment withdraws it, since that word may be
 # the `--` that turns a later `--help` into a positional.
-read_options() { # TAIL -> ARG_SCOPE, ARG_TARGET, ARG_APPLY, ARG_READ
+read_options() { # TAIL SEGMENT -> ARG_SCOPE, ARG_TARGET, ARG_APPLY, ARG_READ
   local rest=$1 word next head value="" operand="" unsure=""
   ARG_SCOPE=unnamed
   ARG_TARGET=""
@@ -477,29 +478,25 @@ read_options() { # TAIL -> ARG_SCOPE, ARG_TARGET, ARG_APPLY, ARG_READ
     esac
     value=""
   done
-  # A `--scope` whose value the segment does not hold is one whose value is
-  # not known here: the command reader cuts a quoted span after a word ending
-  # in `sh`, `refresh` among them, into a segment of its own.
-  if [ -n "$unsure" ] || [ "$value" = scope ]; then
+  if [ -n "$unsure" ] || cut_short "$2"; then
     ARG_SCOPE=project
     ARG_APPLY=1
   fi
   [ -z "$unsure" ] || ARG_READ=""
 }
 
-# Whether the command reader may have cut words off the end of SEGMENT. It
-# takes the kendex `source` word for the shell's `source`, which runs the
-# quoted span after it, so it cuts that span and every word after it into
-# segments of their own: in `kendex source --global remove "x" --scope
-# project` the segment ends before `"x"`, and the `--scope project` kendex
-# reads is not in it. A cut segment is the command's text up to a quote, so a
-# segment the text holds with a quote after it may be one; so may a segment
-# the text does not hold as it stands, which the reader changed by masking a
-# span before the `source` word or by joining a continued line.
+# Whether the command reader may have cut SEGMENT short. It cuts at a
+# command substitution and at a quoted span it opens as command text, as after
+# a `source` or `refresh` word, and the words after the cut are not in the
+# segment. A whole segment ends in the command's text, continued lines joined,
+# before a separator, a comment or the end; anything else is a cut. The end
+# is read after the segment's last masked character, the text the reader left
+# as the command spells it; that text found nowhere is a cut too.
 cut_short() { # SEGMENT -> 0 where the segment may not hold every word
-  case "$COMMAND" in
-    *"$1"[\"\']*) return 0 ;;
-    *"$1"*) return 1 ;;
+  local end=${1##*"$MASK"} more='[!&;|)[:blank:]'$NL']'
+  case "${COMMAND//\\$NL/ }" in
+    *"$end"$more*) return 0 ;;
+    *"$end"*) return 1 ;;
   esac
   return 0
 }
@@ -513,12 +510,7 @@ while IFS= read -r SEGMENT; do
   [[ $SEGMENT =~ $MOVE_RE ]] && MOVED=1
   writing_verb "$SEGMENT"
   [ -n "$FOUND" ] || continue
-  read_options "$TAIL"
-  # A `source` subcommand whose segment may not hold every word names no
-  # global scope, since a `--scope project` cut from it outranks a `--global`.
-  case "$FOUND" in
-    "source "*) ! cut_short "$SEGMENT" || [ "$ARG_SCOPE" != global ] || ARG_SCOPE=project ;;
-  esac
+  read_options "$TAIL" "$SEGMENT"
   # A verb asked for its help or its plan prints and writes nothing.
   [ -z "$ARG_READ" ] || continue
   # `update-pi --check` previews and writes nothing.
