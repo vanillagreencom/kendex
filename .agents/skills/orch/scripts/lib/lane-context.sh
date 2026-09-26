@@ -40,6 +40,19 @@ LANE_CONTEXT_UNREAD=unread
 # overseer. A hosted lane's mailbox is already read through its host, so the
 # record reaches the overseer by the same road.
 LANE_CONTEXT_RECORD=context.json
+# The orch scripts directory this library sits under, where git-context is.
+LANE_CONTEXT_SCRIPTS="${BASH_SOURCE[0]%/*}/.."
+
+# lane_context_overseer_box DIR — the overseer mailbox directory for the
+# checkout DIR is in: `tmp/lane-mail/overseer` at its main checkout, where
+# lane-mail keeps the overseer mailbox, or at DIR itself where git-context
+# names no main checkout. Every writer and reader of the overseer's reading
+# asks here.
+lane_context_overseer_box() { # DIR
+  local root
+  root=$("$LANE_CONTEXT_SCRIPTS/git-context" common-root "$1" 2>/dev/null) || root="$1"
+  printf '%s/tmp/lane-mail/overseer\n' "${root:-$1}"
+}
 
 # One report row. $1 lane, $2 pane id, $3 config dir, $4 account label, $5
 # status, $6 detail, $7 the tmux server the pane id belongs to, $8 non-empty on
@@ -308,7 +321,8 @@ lane_context_with_caller() {
 # where the record could not be read. $4: the percentage every row is judged at.
 #
 # No pane is read. A session that has not ended a turn since its launch has no
-# reading, and its row is `unrecorded`, never an empty context.
+# reading, and its row is `unrecorded`, never an empty context; a reading whose
+# window its adapter could not name is `window-unread`, never `ok`.
 lane_context_collect() {
   local claims="$1" alias_fn="$2" fetch_fn="$3" pct="$4" cfg lane server pane caller claim rest
   local out rc judged
@@ -345,7 +359,16 @@ lane_context_collect() {
       rc=0
       judged="$(lane_context_record_judged "$out" "$pct")" || rc=$?
       case "$rc" in
-        0) lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" ok "" "$server" "$caller" "$judged" ;;
+        0)
+          # A reading with no window is judged neither due nor room, and its
+          # row says so rather than reading `ok` beside a blank handoff cell.
+          if [[ "$(jq -r '.handoff_due' <<<"$judged")" == null ]]; then
+            lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" window-unread \
+              "the harness adapter named no context window for this session's model" "$server" "$caller" "$judged"
+          else
+            lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" ok "" "$server" "$caller" "$judged"
+          fi
+          ;;
         1)
           lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" \
             unreadable "the recorded reading is not an object carrying a token count" "$server" "$caller"
@@ -396,7 +419,7 @@ lane_context_message() {
       printf 'lane-context: headroom kind=account-binding handoff=threshold\n'
       printf 'HEADROOM: percent remaining in the account binding bucket; HANDOFF is required at or below ORCH_HANDOFF_HEADROOM_PCT.\n'
       printf 'lane-context: handoff kind=lane-threshold context=ORCH_HANDOFF_CONTEXT_PCT overseer-trigger=ORCH_OVERSEER_HEADROOM_PCT\n'
-      printf 'HANDOFF: required at or past ORCH_HANDOFF_CONTEXT_PCT of the session'"'"'s own window, or at the LANE headroom threshold. An overseer succeeds itself at ORCH_OVERSEER_HEADROOM_PCT, the higher figure by default (5 against 3), so by default its own row reads - at a headroom that already fires its succession.\n'
+      printf 'HANDOFF: required at or past ORCH_HANDOFF_CONTEXT_PCT of the session'"'"'s own window, the one context mark lanes and the overseer share, or at the LANE headroom threshold. It never reports the overseer'"'"'s own ORCH_OVERSEER_HEADROOM_PCT, wall or qualifying-accounts triggers: by default the overseer succeeds itself at 5 percent headroom against the lane'"'"'s 3, so its own row can read - at a headroom that already fires its succession.\n'
       printf 'lane-context: caller kind=lane-marker marker=*\n'
       printf 'LANE: a leading * marks the row of the session that ran this command.\n'
       ;;

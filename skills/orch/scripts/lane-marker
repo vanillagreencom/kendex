@@ -63,7 +63,8 @@ mailbox-missing=<path>` before every tool call and at every turn end until
 that directory stands. Each launcher calls this: `open-terminal` locally,
 `lane-host create` over its transport. The mailbox loses the context reading a
 session before this launch recorded in it, `context.json`, so a new session is
-never reported at its predecessor's handoff mark.
+never reported at its predecessor's handoff mark. `--marker-path` writes
+nothing, so a launcher using it empties that record over its own transport.
 
 `--marker-path` prints the marker half's path under the common git directory
 it is given and writes nothing. A launcher whose lane is on another machine

@@ -2,9 +2,10 @@
 # The harness gate a fleet launch passes before anything else: a lane launched
 # into an oversee fleet hands off at a share of its own window, which a harness
 # adapter reads, and runs with its harness's own compaction off, so the handoff
-# comes first. A harness no adapter reads is refused as unsupported-for-oversee,
-# and a Pi launch whose settings would let Pi compact the session is refused as
-# compaction-on. A launch naming no fleet state is judged on neither.
+# comes first. A launch that turned compaction off on a session whose window
+# nothing can name would run it into its wall with neither, so each harness is
+# admitted only where both halves hold. A launch naming no fleet state is
+# judged on none of it.
 #
 # Every row stops before a window could open: a launch the gate passes is
 # handed an empty worktree path by the stubbed worktree CLI and refused later,
@@ -19,7 +20,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 PASS=0
@@ -39,7 +40,9 @@ printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
 # The worktree CLI a launch the gate passes reaches next: an empty path, which
 # open-terminal refuses by name before any window opens.
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/worktree-stub"
-chmod +x "$BIN/term" "$BIN/gh" "$BIN/worktree-stub"
+# A lane host that answers nothing: the Pi gate refuses before it is asked.
+printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/provider"
+chmod +x "$BIN/term" "$BIN/gh" "$BIN/worktree-stub" "$BIN/provider"
 
 # stage DIR — a copy of the orch scripts in a git repo of its own, so the
 # project root, and the project .pi/settings.json the Pi rule reads, are the
@@ -54,65 +57,118 @@ REPO="$TMP_ROOT/repo"
 stage "$REPO"
 PI_AGENT="$TMP_ROOT/pi-agent"
 mkdir -p "$PI_AGENT"
+# The pi-hooks carrier Pi loads, sending the window on its Stop payload or not.
+pi_carrier() { # sends|old|none
+  rm -rf -- "${PI_AGENT:?}/packages"
+  [[ "$1" != none ]] || return 0
+  mkdir -p "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions"
+  if [[ "$1" == sends ]]; then
+    printf 'export const f = { context_window: 1 };\n' > "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
+  else
+    printf 'export const f = { session_id: 1 };\n' > "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
+  fi
+}
 
-# launch NAME HARNESS FLEET [OT] — the gate's line open-terminal wrote, or
-# `passed` where it wrote none, for a GUI launch of CC-1 on HARNESS; FLEET `yes`
-# names a fleet state.
-launch() { # NAME HARNESS FLEET [OT]
-  local fleet=() rc=0 line
-  [[ "$3" != yes ]] || fleet=(--state-dir "$TMP_ROOT/$1.fleet")
-  ( cd "$REPO" && PATH="$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/$1.state" WORKTREE_CLI="$BIN/worktree-stub" \
-    OT_TERM_LOG="$TMP_ROOT/$1.term" TERMINAL=term TMUX= PI_CODING_AGENT_DIR="$PI_AGENT" \
-    "${4:-$REPO/scripts/open-terminal}" --ghostty --harness "$2" ${fleet[@]+"${fleet[@]}"} CC-1 ) \
-    >/dev/null 2>"$TMP_ROOT/$1.err" || rc=$?
-  line="$(grep -E '^open-terminal: (unsupported-for-oversee|compaction-on) ' "$TMP_ROOT/$1.err" || true)"
+# The launch-choice refusals that run ahead of the gate are read too, so a row
+# refused before the gate cannot read as one the gate passed.
+GATE_KEYS='unsupported-for-oversee|compaction-on|launch-window-unknown|launch-compaction-missing|pi-compaction-unverified|pi-settings-unreadable|launch-question-tool-missing|launch-model-missing|launch-effort-missing'
+# launch NAME ARGS... — the gate's line open-terminal wrote, or `passed` where it
+# wrote none, for a GUI launch of CC-1 under ARGS; OT names another copy.
+launch() { # NAME ARGS...
+  local name="$1" rc=0 line
+  shift
+  ( cd "$REPO" && PATH="$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="$BIN/worktree-stub" \
+    OT_TERM_LOG="$TMP_ROOT/$name.term" TERMINAL=term TMUX= PI_CODING_AGENT_DIR="$PI_AGENT" \
+    "${OT:-$REPO/scripts/open-terminal}" --ghostty "$@" CC-1 ) \
+    >/dev/null 2>"$TMP_ROOT/$name.err" || rc=$?
+  line="$(grep -E "^open-terminal: ($GATE_KEYS) " "$TMP_ROOT/$name.err" || true)"
   printf '%s' "${line:-passed}"
 }
 
-PASSED=passed
-PI_FILE="file=$PI_AGENT/settings.json"
+FLEET=(--state-dir "$TMP_ROOT/fleet")
+# The words the launch-choice table gives each harness, as a --cmd command
+# carries them.
+CLAUDE_WORDS="'--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}'"
+CODEX_WORDS='-c model_auto_compact_token_limit=9223372036854775807'
+CLAUDE_QUESTION=--disallowedTools=AskUserQuestion,EnterPlanMode
+CODEX_QUESTION='-c features.default_mode_request_user_input=false'
+CLAUDE_TEMPLATE="claude --model opus --effort high $CLAUDE_QUESTION $CLAUDE_WORDS {item}"
 
-echo "=== a fleet launch runs only a harness whose context an adapter reads ==="
-# `name|harness|fleet|user settings|project settings|answer`: `-` is no file.
-while IFS='|' read -r name harness fleet user project want; do
+echo "=== a fleet launch runs claude and codex only where compaction goes off and the window is named ==="
+while IFS='|' read -r label want args; do
+  eval "set -- $args"
+  assert_eq "$(launch row "$@")" "$want" "$label"
+done <<ROWS
+claude on a model with a window passes|passed|${FLEET[*]} --harness claude --launch-flags '--model opus --effort high'
+claude on a model whose window no row names is refused|open-terminal: launch-window-unknown harness=claude model=sonnet|${FLEET[*]} --harness claude --launch-flags '--model sonnet --effort high'
+claude naming no model is refused the same way|open-terminal: launch-window-unknown harness=claude model=none|${FLEET[*]} --harness claude
+codex passes, its rollout naming its window|passed|${FLEET[*]} --harness codex --launch-flags '-m gpt-6-astra -c model_reasoning_effort=high'
+a claude --cmd carrying the compaction words passes|passed|${FLEET[*]} --harness claude --cmd "$CLAUDE_TEMPLATE"
+a claude --cmd without them is refused, naming them|open-terminal: launch-compaction-missing harness=claude word=--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}|${FLEET[*]} --harness claude --cmd 'claude --model opus --effort high $CLAUDE_QUESTION {item}'
+a codex --cmd without them is refused, one word field per word|open-terminal: launch-compaction-missing harness=codex word=-c word=model_auto_compact_token_limit=9223372036854775807|${FLEET[*]} --harness codex --cmd 'codex -m gpt-6-astra -c model_reasoning_effort=high $CODEX_QUESTION {item}'
+a codex --cmd carrying them passes|passed|${FLEET[*]} --harness codex --cmd 'codex -m gpt-6-astra -c model_reasoning_effort=high $CODEX_QUESTION $CODEX_WORDS {item}'
+a fleet --cmd naming no harness is refused|open-terminal: unsupported-for-oversee harness=none|${FLEET[*]} --cmd 'claude --model opus {item}'
+opencode in a fleet is refused|open-terminal: unsupported-for-oversee harness=opencode|${FLEET[*]} --harness opencode --launch-flags '--model m'
+opencode with no fleet passes|passed|--harness opencode --launch-flags '--model m'
+claude on a model with no window, with no fleet, passes|passed|--harness claude --launch-flags '--model sonnet --effort high'
+ROWS
+
+echo "=== a Pi fleet launch runs only where Pi will not compact and its window reaches the hook ==="
+# `label|carrier|user settings|project settings|args|answer`: `-` is no file.
+PI_FILE="file=$PI_AGENT/settings.json"
+while IFS='|' read -r label carrier user project args want; do
   rm -f -- "$PI_AGENT/settings.json" "$REPO/.pi/settings.json"
   [[ "$user" == - ]] || printf '%s\n' "$user" > "$PI_AGENT/settings.json"
   if [[ "$project" != - ]]; then mkdir -p "$REPO/.pi"; printf '%s\n' "$project" > "$REPO/.pi/settings.json"; fi
-  case "$want" in
-    passed) want="$PASSED" ;;
-    compaction-on) want="open-terminal: compaction-on harness=pi $PI_FILE" ;;
-    unreadable) want="open-terminal: compaction-on harness=pi file=unreadable" ;;
-    unsupported) want="open-terminal: unsupported-for-oversee harness=$harness" ;;
-  esac
-  assert_eq "$(launch "$name" "$harness" "$fleet")" "$want" "$name: $want"
-done <<'ROWS'
-claude in a fleet passes|claude|yes|-|-|passed
-codex in a fleet passes|codex|yes|-|-|passed
-opencode in a fleet is refused|opencode|yes|-|-|unsupported
-opencode with no fleet passes|opencode|no|-|-|passed
-pi in a fleet with compaction at its default is refused|pi|yes|-|-|compaction-on
-pi in a fleet with compaction on is refused|pi|yes|{"compaction":{"enabled":true}}|-|compaction-on
-pi in a fleet with compaction off passes|pi|yes|{"compaction":{"enabled":false}}|-|passed
-pi in a fleet whose project turns compaction back on is refused|pi|yes|{"compaction":{"enabled":false}}|{"compaction":{"enabled":true}}|compaction-on
-pi in a fleet with a settings file it cannot read is refused|pi|yes|not json|-|unreadable
-pi with no fleet passes whatever its settings|pi|no|-|-|passed
+  pi_carrier "$carrier"
+  want="${want//@FILE@/$PI_FILE}"
+  eval "set -- $args"
+  assert_eq "$(launch pi "$@")" "$want" "$label"
+done <<ROWS
+compaction at its default is refused|sends|-|-|${FLEET[*]} --harness pi|open-terminal: compaction-on harness=pi @FILE@
+compaction on is refused|sends|{"compaction":{"enabled":true}}|-|${FLEET[*]} --harness pi|open-terminal: compaction-on harness=pi @FILE@
+compaction off with a carrier that sends the window passes|sends|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|passed
+a project turning compaction back on is refused|sends|{"compaction":{"enabled":false}}|{"compaction":{"enabled":true}}|${FLEET[*]} --harness pi|open-terminal: compaction-on harness=pi @FILE@
+a carrier that sends no window is refused|old|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
+no carrier installed is refused|none|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
+a settings file jq cannot read is named|sends|not json|-|${FLEET[*]} --harness pi|open-terminal: pi-settings-unreadable @FILE@
+a hosted Pi fleet lane, whose host keeps its own settings, is refused|sends|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi --host $BIN/provider|open-terminal: pi-compaction-unverified host=$BIN/provider
+no fleet passes whatever its settings|none|-|-|--harness pi|passed
 ROWS
 rm -f -- "$PI_AGENT/settings.json" "$REPO/.pi/settings.json"
+assert_eq "$(grep -c 'jq: error\|parse error' "$TMP_ROOT/pi.err" || true)" "0" \
+  "the last row's run carries no jq words; the unreadable row's did, under its key"
 
 echo "=== must-fail controls ==="
 # Each rule's refusal replaced by a pass: the row it holds reads as passed.
-UNSUPPORTED_CTRL="$TMP_ROOT/unsupported-ctrl"
-stage "$UNSUPPORTED_CTRL"
-mutate_file "$UNSUPPORTED_CTRL/scripts/open-terminal" \
-  '*) ot_message unsupported-for-oversee "harness=$HARNESS" >&2; exit 1 ;;' '*) ;;'
-assert_eq "$(launch unsupported-ctrl opencode yes "$UNSUPPORTED_CTRL/scripts/open-terminal")" "$PASSED" \
+# control NAME OLD NEW — a staged copy with OLD replaced by NEW, in CTRL_OT.
+control() { # NAME OLD NEW
+  stage "$TMP_ROOT/$1"
+  mutate_file "$TMP_ROOT/$1/scripts/open-terminal" "$2" "$3"
+  CTRL_OT="$TMP_ROOT/$1/scripts/open-terminal"
+}
+control unsupported-ctrl '*) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; exit 1 ;;' '*) ;;'
+assert_eq "$(OT="$CTRL_OT" launch unsupported-ctrl "${FLEET[@]}" --harness opencode --launch-flags '--model m')" passed \
   "control: without its refusal an opencode fleet launch passes the gate"
-COMPACTION_CTRL="$TMP_ROOT/compaction-ctrl"
-stage "$COMPACTION_CTRL"
-mutate_file "$COMPACTION_CTRL/scripts/open-terminal" \
-  '0) ot_message compaction-on "harness=pi"' '0) : ot_message compaction-on "harness=pi"'
-assert_eq "$(launch compaction-ctrl pi yes "$COMPACTION_CTRL/scripts/open-terminal")" "$PASSED" \
-  "control: without its refusal a pi fleet launch Pi would compact passes the gate"
+control window-ctrl 'ot_message launch-window-unknown "harness=claude" "model=${LAUNCH_MODEL:-none}" >&2' ': '
+assert_eq "$(OT="$CTRL_OT" launch window-ctrl "${FLEET[@]}" --harness claude --launch-flags '--model sonnet --effort high')" passed \
+  "control: without its refusal a claude fleet lane on a model with no window passes"
+control compaction-missing-ctrl 'ot_message launch-compaction-missing "harness=$LAUNCH_HARNESS" "${compaction_fields[@]}" >&2' ': '
+assert_eq "$(OT="$CTRL_OT" launch compaction-missing-ctrl "${FLEET[@]}" --harness claude --cmd "claude --model opus --effort high $CLAUDE_QUESTION {item}")" passed \
+  "control: without its refusal a --cmd fleet lane keeps its compaction on"
+printf '{"compaction":{"enabled":false}}\n' > "$PI_AGENT/settings.json"
+pi_carrier old
+control window-read-ctrl 'ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; exit 1;' ': ;'
+assert_eq "$(OT="$CTRL_OT" launch window-read-ctrl "${FLEET[@]}" --harness pi)" passed \
+  "control: without its refusal a Pi fleet lane whose carrier sends no window passes"
+control hosted-pi-ctrl 'ot_message pi-compaction-unverified "host=$LANE_HOST" >&2; exit 1;' ': ;'
+assert_eq "$(OT="$CTRL_OT" launch hosted-pi-ctrl "${FLEET[@]}" --harness pi --host "$BIN/provider")" "open-terminal: unsupported-for-oversee harness=pi reason=no-window-read" \
+  "control: without its refusal a hosted Pi fleet lane is judged on this machine's files"
+rm -f -- "$PI_AGENT/settings.json"
+pi_carrier sends
+control compaction-ctrl '0) ot_message compaction-on "harness=pi"' '0) : ot_message compaction-on "harness=pi"'
+assert_eq "$(OT="$CTRL_OT" launch compaction-ctrl "${FLEET[@]}" --harness pi)" passed \
+  "control: without its refusal a Pi fleet lane Pi would compact passes the gate"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

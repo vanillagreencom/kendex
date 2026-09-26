@@ -78,7 +78,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |
 | `ORCH_SIZE_TEST_PATHS` | Path globs counted as test lines in size reports and cut comparisons | empty |
 
-Every launch turns its harness's own compaction off: the launch-choice table in `scripts/lib/lane-launch.sh` gives Claude Code `DISABLE_AUTO_COMPACT` and Codex `model_auto_compact_token_limit`. `open-terminal` refuses a Pi fleet launch as `compaction-on` until Pi's `compaction.enabled` is `false`, and a fleet launch on any other harness as `unsupported-for-oversee`.
+Every command `open-terminal` builds turns its harness's own compaction off, and a fleet `--cmd` carries the words itself: Claude Code `DISABLE_AUTO_COMPACT`, Codex `model_auto_compact_token_limit` (`scripts/lib/lane-launch.sh`). Pi's `compaction.enabled` must be `false`. The fleet gate's refusals: [lane-directive.md](references/lane-directive.md).
 
 Every lane merges its own pull request through the merge queue. `ORCH_MERGE_BYPASS`, `ORCH_ADMIN_MERGE_GH_CONFIG_DIR` and `ORCH_ADMIN_MERGE_CLASSES` are retired and refused while set; `pr-merge --help` § Retired settings names where to delete them.
 

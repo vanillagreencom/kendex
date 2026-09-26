@@ -20,8 +20,12 @@ ot_message() { # REASON FIELD=VALUE...
     command-missing) text='Select a harness or a custom command.' ;;
     cmd-unbalanced-quote) text='Put the brief in a file and reference it, or escape the quote.' ;;
     desktop-harness) text='Use the Codex Desktop thread tools for this harness.' ;;
-    unsupported-for-oversee) text='No harness adapter reads this harness'"'"'s context and window, so nothing would judge this fleet lane'"'"'s handoff mark and the harness'"'"'s own compaction would be the only thing to stop it. Nothing was launched. Launch the lane on claude, codex or pi.' ;;
-    compaction-on) text='Pi would compact this fleet lane on its own before its handoff mark. Nothing was launched. Set compaction.enabled to false in the settings file named, and leave no project .pi/settings.json setting it back to true; a lane hands off at ORCH_HANDOFF_CONTEXT_PCT of its window instead. unreadable is a settings file this could not read.' ;;
+    unsupported-for-oversee) text='No harness adapter reads this fleet lane'"'"'s context window, so nothing would judge its handoff mark. Nothing was launched. harness=none is a launch naming no harness; reason=no-window-read is a Pi whose installed pi-hooks sends no context_window on its Stop payload, so install the current pi-hooks. Launch the lane on claude, codex or pi.' ;;
+    launch-window-unknown) text='The claude adapter names no context window for this model, so this fleet lane would run with its compaction off and no handoff mark to judge. Nothing was launched. Launch it on a model the window table in scripts/lib/adapters/claude.sh names.' ;;
+    launch-compaction-missing) text='This fleet --cmd command leaves the harness'"'"'s own compaction on, so it would compact the lane before its handoff mark. Nothing was launched. Add the words this line names, in that order, inside the command.' ;;
+    compaction-on) text='Pi would compact this fleet lane on its own before its handoff mark. Nothing was launched. Set compaction.enabled to false in the settings file named, and leave no project .pi/settings.json setting it back to true; a lane hands off at ORCH_HANDOFF_CONTEXT_PCT of its window instead.' ;;
+    pi-compaction-unverified) text='A hosted Pi lane loads the Pi settings of its host, which this machine cannot read, so whether Pi would compact it is unknown. Nothing was launched. Launch the Pi lane on this machine, or the lane on claude or codex.' ;;
+    pi-settings-unreadable) text='The Pi settings file named could not be read, so whether Pi would compact this fleet lane is unknown. Nothing was launched. jq'"'"'s words follow.' ;;
     mode-override) text='The explicit GUI option overrides the detected tmux mode.' ;;
     verify-seconds-invalid) text='The verification timeout must be a positive integer in seconds.' ;;
     verify-seconds-clamped) text='The verification timeout was limited to the maximum.' ;;

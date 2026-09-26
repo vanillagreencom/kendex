@@ -100,7 +100,9 @@ echo "=== every command open-terminal builds takes the question tool away ==="
 # HARNESS|FLAGS|ITEM|RENDERED COMMAND|WHAT. FLAGS `-` passes no --launch-flags.
 # A caller's flags that already carry the words keep one copy, ahead of the rest.
 for row in \
-  "claude|-|CC-1|claude -n CC-1 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '/orch start CC-1'|claude denies AskUserQuestion and EnterPlanMode, after the setting that turns its compaction off" \
+  "claude|-|CC-1|claude -n CC-1 '--disallowedTools=AskUserQuestion,EnterPlanMode' '/orch start CC-1'|claude denies AskUserQuestion and EnterPlanMode; naming no model, it keeps its compaction" \
+  "claude|--model opus|CC-6|claude -n CC-6 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'opus' '/orch start CC-6'|a claude model the adapter names a window for turns its compaction off" \
+  "claude|--model sonnet|CC-7|claude -n CC-7 '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'sonnet' '/orch start CC-7'|a claude model with no window keeps its compaction, and there is no mark to hand off at" \
   "codex|-|CC-2|codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'features.default_mode_request_user_input=false' 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-2'|codex disables the request_user_input feature after its update and compaction settings" \
   "pi|-|CC-3|pi '--exclude-tools' 'question' '/skill:orch start CC-3'|pi excludes the pi-questions tool" \
   "opencode|-|CC-4|opencode --prompt '/orch start CC-4'|an opencode lane keeps its question tool: no flag turns it off, so none is rendered" \
