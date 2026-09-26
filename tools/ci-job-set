@@ -22,14 +22,24 @@
 #     always run: cargo_linux and bot_instructions.
 #   - The shell shards run per package. A package is a skill
 #     (`skills/<name>/`, its render under `.agents/skills/<name>/` included),
-#     `tools/`, `hooks/`, or a Pi package under `pi-extensions/`. A changed
-#     package selects the shards whose steps run its suites, and a changed
-#     skill also selects every skill declaring it under
-#     `dependencies.required` in its SKILL.md: the declaring skill's own
-#     scripts call it. `guards-scans` runs where a path under skills/, hooks/
-#     or tools/ changed, the trees its scans read. `rest` also runs where a
-#     build input changed, because it builds kendex-cli from the checkout for
-#     harness-ci's change-class rows. A diff outside every package selects
+#     `tools/`, `hooks/` (its renders under `.claude/hooks/`, `.codex/hooks/`
+#     and `.pi/kendex/hooks/` included), or a Pi package under
+#     `pi-extensions/`. A changed package selects the shards whose steps run
+#     its suites. A changed skill also selects `guards-tools`, whose tools/
+#     and hooks/ suites read skills' scripts, some by glob.
+#   - Who reads a change is searched for, not listed. The scripts and suites
+#     under skills/*/scripts, skills/*/tests, tools/ and hooks/ are searched
+#     for each changed skill's name and for the path of each changed file
+#     outside skills/ that is not prose. A suite that names one selects its
+#     own shard. A script that names a skill, or a skill declaring it under
+#     `dependencies.required` in its SKILL.md, carries the change on: that
+#     skill counts as changed and is searched for in turn, until no search
+#     finds a new one. A reference the search cannot see, a path a script
+#     assembles at run time, is outside this rule.
+#   - `guards-scans` runs where a path under skills/, hooks/ or tools/
+#     changed, the trees its scans read. `rest` also runs where a build input
+#     changed, because it builds kendex-cli from the checkout for
+#     harness-ci's change-class rows. A diff that reaches no package selects
 #     no shard, and shell_shards is false exactly where the list is empty.
 #   - The platform lanes (macos_legs, cargo_macos, cargo_windows) stand down
 #     only on a diff whose every path is prose, whose content no platform
@@ -183,9 +193,11 @@ reads() {
 # `SKILL<tab>NAME` for each name a skill's SKILL.md frontmatter declares under
 # `dependencies.required`, read from the checkout this script runs in. The
 # kendex engine reads the same key when it installs a skill
-# (crates/core/src/source/browse/deps.rs). Every SKILL.md here spells it as an
-# inline list; a `required:` this reader cannot take as one prints `?` and its
-# file, which the caller refuses rather than read as no dependency.
+# (crates/core/src/source/browse/deps.rs). Every SKILL.md here spells it as a
+# two-space `required:` or `optional:` key holding an inline list of bare
+# names. Anything else this reader meets under `dependencies:` prints `?` and
+# its file, a name that is not bare prints `?` too, and the caller refuses
+# both rather than read them as no dependency.
 requirements() {
   local f
   set --
@@ -197,16 +209,60 @@ requirements() {
     FNR == 1 { front = ($0 == "---"); deps = 0; skill = FILENAME; sub(/\/SKILL\.md$/, "", skill); sub(/^.*\//, "", skill); next }
     !front { next }
     $0 == "---" { front = 0; next }
-    /^[^ ]/ { deps = ($0 == "dependencies:"); next }
-    deps && /^  required:/ {
+    /^[^ ]/ {
+      deps = ($0 == "dependencies:")
+      if (!deps && index($0, "dependencies:") == 1) print "?\t" FILENAME
+      next
+    }
+    !deps { next }
+    /^  optional:/ { next }
+    !/^  required:/ { print "?\t" FILENAME; next }
+    {
       list = $0
       sub(/^  required:[ ]*/, "", list)
       if (substr(list, 1, 1) != "[" || substr(list, length(list)) != "]" || index(substr(list, 2, length(list) - 2), "]") > 0) { print "?\t" FILENAME; next }
       gsub(/[][ ]/, "", list)
       n = split(list, names, ",")
-      for (i = 1; i <= n; i++) if (names[i] != "") print skill "\t" names[i]
+      for (i = 1; i <= n; i++) {
+        if (names[i] !~ /^[a-z0-9-]+$/) { print "?\t" FILENAME; continue }
+        print skill "\t" names[i]
+      }
     }
   ' "$@"
+}
+
+# Who reads a path: `<package> <how>` for each file naming one of the paths
+# on stdin, the package `skills/<name>`, `tools` or `hooks`. These trees are
+# what a shard runs. <how> is `suite` for a file under a tests/ directory,
+# which reads the path when its own shard runs, and `script` for any other,
+# whose behaviour now depends on it. A path is named where it stands whole:
+# no path character touches either end, save a `/` before it or a path
+# ending in one, so `install.sh` is not read out of `atomic-install.sh`. A skill is also
+# named as `skills/<name>` or `../<name>/`. Exit 2 where the search failed.
+consumers() {
+  local tree trees="" path end n=0 files status=0
+  for tree in skills/*/scripts skills/*/tests tools hooks; do
+    [ ! -d "$tree" ] || trees="$trees $tree"
+  done
+  set --
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    end='([^A-Za-z0-9_.-]|$)'
+    case "$path" in */) end="" ;; esac
+    set -- "$@" -e "(^|[^A-Za-z0-9_.-])$(printf '%s' "$path" | sed 's/[][\.*^$+?(){}|]/\\&/g')$end"
+    n=$((n + 1))
+  done
+  [ -n "$trees" ] && [ "$n" -gt 0 ] || return 0
+  # shellcheck disable=SC2086 # the tree list is word-split on purpose
+  files="$(grep -rlE "$@" -- $trees)" || status=$?
+  [ "$status" -le 1 ] || return 2
+  [ -n "$files" ] || return 0
+  printf '%s\n' "$files" | awk '
+    { how = ($0 ~ /\/tests\//) ? "suite" : "script" }
+    /^skills\/[^\/]+\// { split($0, part, "/"); print "skills/" part[2] " " how; next }
+    /^tools\// { print "tools " how; next }
+    /^hooks\// { print "hooks " how; next }
+  ' | sort -u
 }
 
 # The shards the changed paths select, gathered into `want` as a
@@ -238,38 +294,84 @@ want_package() { # PACKAGE
     tools | hooks) want_shard guards-tools ;;
     pi-extensions/pi-claude-bridge) want_shard node pi-claude-bridge ;;
     pi-extensions) want_shard node ;;
-    *) die "unknown-package package=$1" "no shard is declared for this package" ;;
   esac
 }
-# The `shards=` value for a measured row: the JSON list, in roster order.
-select_shards() { # BUILD(true|false)
-  local path skill changed=" " reqs required list="" shard
-  while IFS= read -r path; do
-    case "$path" in
-      skills/*/* | .agents/skills/*/*)
-        skill="${path#.agents/}"
-        skill="${skill#skills/}"
-        skill="${skill%%/*}"
-        want_package "skills/$skill"
-        changed="$changed$skill "
-        ;;
-      tools/*) want_package tools ;;
-      hooks/*) want_package hooks ;;
-      pi-extensions/pi-claude-bridge/*) want_package pi-extensions/pi-claude-bridge ;;
-      pi-extensions/*) want_package pi-extensions ;;
-    esac
-    case "$path" in skills/* | hooks/* | tools/*) want_shard guards-scans ;; esac
-  done <<<"$paths"
-  if [ "$changed" != " " ]; then
+
+# A skill whose behaviour the diff changes: its own shards, every skill
+# declaring it under dependencies.required, and its name queued for the
+# search, whose scripts reach on in turn.
+reached=" "
+pending=""
+reqs=""
+reqs_read=false
+reach_skill() { # NAME
+  local skill required
+  case "$reached" in *" $1 "*) return 0 ;; esac
+  reached="$reached$1 "
+  want_package "skills/$1"
+  pending="$pending
+skills/$1
+../$1/"
+  if [ "$reqs_read" = false ]; then
     reqs="$(requirements)" ||
       die "requirements-failed" "the dependencies.required lists of skills/*/SKILL.md could not be read"
     while IFS="$(printf '\t')" read -r skill required; do
       [ -n "$skill" ] || continue
       [ "$skill" != "?" ] || die "requirements-unreadable path=$required" \
-        "dependencies.required is not an inline list this reader can take"
-      case "$changed" in *" $required "*) want_package "skills/$skill" ;; esac
+        "dependencies: holds a line this reader cannot take"
+      [ -d "skills/$required" ] || die "requirements-unreadable path=skills/$skill/SKILL.md" \
+        "dependencies.required names $required, which is no skill under skills/"
     done <<<"$reqs"
+    reqs_read=true
   fi
+  while IFS="$(printf '\t')" read -r skill required; do
+    [ "$required" != "$1" ] || reach_skill "$skill"
+  done <<<"$reqs"
+}
+
+# The `shards=` value for a measured row: the JSON list, in roster order.
+select_shards() { # BUILD(true|false)
+  local path skill batch found package list="" shard
+  while IFS= read -r path; do
+    case "$path" in
+      skills/*/* | .agents/skills/*/*)
+        skill="${path#.agents/}"
+        skill="${skill#skills/}"
+        reach_skill "${skill%%/*}"
+        # tools/ and hooks/ suites read every skill's scripts, some by glob.
+        want_package tools
+        ;;
+      tools/*) want_package tools ;;
+      hooks/* | .claude/hooks/* | .codex/hooks/* | .pi/kendex/hooks/*) want_package hooks ;;
+      pi-extensions/pi-claude-bridge/*) want_package pi-extensions/pi-claude-bridge ;;
+      pi-extensions/*) want_package pi-extensions ;;
+    esac
+    case "$path" in skills/* | hooks/* | tools/*) want_shard guards-scans ;; esac
+    # A file outside every skill is searched for by its own path. Prose is
+    # left out: no suite executes it, and its bare name is every fixture's.
+    case "$path" in
+      skills/* | .agents/skills/* | *.md | *.markdown) ;;
+      *) pending="$pending
+$path" ;;
+    esac
+  done <<<"$paths"
+  # Until no search finds a skill it has not searched for.
+  while [ -n "$pending" ]; do
+    batch="$pending"
+    pending=""
+    found="$(consumers <<<"$batch")" ||
+      die "consumers-failed" "the scripts and suites naming a changed path could not be searched"
+    # A suite that reads a path runs; a script that reads one carries the
+    # change on to its own package's readers. tools/ and hooks/ are read by
+    # no package's scripts, so they end the chain.
+    while read -r package how; do
+      case "$package:$how" in
+        skills/*:script) reach_skill "${package#skills/}" ;;
+        skills/*:suite | tools:* | hooks:*) want_package "$package" ;;
+        :) ;;
+      esac
+    done <<<"$found"
+  done
   [ "$1" = false ] || want_shard rest
   # shellcheck disable=SC2086 # the roster is a word list
   ! any "$ALL_SHARDS" || want_shard $SHARDS

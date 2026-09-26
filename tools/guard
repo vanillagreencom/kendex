@@ -1127,7 +1127,7 @@ fi
 # (`test:ci` where it declares one, `test` otherwise, the rule
 # pi-extensions/package-policy.test.mjs holds CI to). An untouched suite is
 # not evidence about this change and is not run here; CI also runs the
-# shards of the skills declaring a touched one, as tools/ci-job-set selects.
+# shards of the packages that read a touched one, as tools/ci-job-set selects.
 # A Pi package whose suite value-imports Pi has no lockfile for those peers;
 # CI installs them in the step before its suite, so a checkout without that
 # install names the missing peers beside the failing suite rather than in

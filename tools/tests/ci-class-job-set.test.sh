@@ -10,11 +10,11 @@
 # Each is a check nobody would see fail, which is why they are here.
 #
 # Four surfaces:
-#   1. the selection: one row per class and path shape, asserting the whole
-#      lane line and shard list, and the refusals beside them; a control per
-#      shard-selection rule; then a `trivial` diff of a path the Rust source
-#      reads, and a dependency list the reader cannot take, in fixture
-#      checkouts.
+#   1. the selection: one row per class and path shape over this tree,
+#      asserting the whole lane line and the shards its case is about, and
+#      the refusals beside them; then a `trivial` diff of a path the Rust
+#      source reads, and the shard selection whole, in fixture checkouts,
+#      with a control per selection rule and a row per refusal.
 #   2. the names: the lanes the gates read, the lanes the changes job
 #      publishes and the lanes ci-job-set selects are one set, compared by
 #      name, and each aggregate, on its own, holds every job it needs to the
@@ -95,71 +95,111 @@ VERIFY_ROW="shell_shards=false macos_legs=false macos_pull_request=false ui=fals
 # shards run per package, the platform lanes stand down only on an all-prose
 # diff, the macOS legs also where no shard runs, the compile lanes where no
 # build input changed, and ui off ui/.
-measured() { # SHELL MACOS MACOS_PR UI PLATFORM BUILD SHARDS — one measured row
-  printf 'shell_shards=%s macos_legs=%s macos_pull_request=%s ui=%s bot_instructions=true cargo_linux=true cargo_macos=%s cargo_lint=%s cargo_windows=%s cargo_windows_check=%s shards=%s' \
-    "$1" "$2" "$3" "$4" "$5" "$6" "$5" "$6" "$7"
+lanes() { # SHELL MACOS MACOS_PR UI PLATFORM BUILD — a measured row's lanes
+  printf 'shell_shards=%s macos_legs=%s macos_pull_request=%s ui=%s bot_instructions=true cargo_linux=true cargo_macos=%s cargo_lint=%s cargo_windows=%s cargo_windows_check=%s' \
+    "$1" "$2" "$3" "$4" "$5" "$6" "$5" "$6"
 }
-# Outside every package.
+measured() { # SHELL MACOS MACOS_PR UI PLATFORM BUILD SHARDS — one measured row
+  printf '%s shards=%s' "$(lanes "$1" "$2" "$3" "$4" "$5" "$6")" "$7"
+}
+# The selections section 3 evaluates the workflow against.
 PROSE_ROW="$(measured false false false false false false '[]')"
 CODE_ROW="$(measured false false false false true false '[]')"
 UI_ROW="$(measured false false false true true false '[]')"
-# A build input runs `rest`, which builds kendex-cli for harness-ci's rows.
-BUILD_ROW="$(measured true true false false true true '["rest"]')"
-# tools/ and hooks/ run their suites' shard and the scans.
-TOOL_ROW="$(measured true true false false true false '["guards-scans","guards-tools"]')"
-# orch, and the skills declaring it, which `rest` runs.
 ORCH_SHARDS="[$ORCH,\"guards-scans\",\"rest\"]"
-ORCH_PROSE_ROW="$(measured true false false false false false "$ORCH_SHARDS")"
 ORCH_CODE_ROW="$(measured true true false false true false "$ORCH_SHARDS")"
+VERIFY_LANES="${VERIFY_ROW% shards=*}"
+# The fixture checkouts' rows, where no script or suite reads a path: a
+# build input runs `rest`, which builds kendex-cli for harness-ci's rows, and
+# a tools/ path its suites' shard and the scans.
+BUILD_ROW="$(measured true true false false true true '["rest"]')"
+TOOL_ROW="$(measured true true false false true false '["guards-scans","guards-tools"]')"
+# Where a shard runs, and where none does.
+SHARD_CODE="$(lanes true true false false true false)"
+SHARD_BUILD="$(lanes true true false false true true)"
+SHARD_PROSE="$(lanes true false false false false false)"
+NONE_CODE="$(lanes false false false false true false)"
+NONE_PROSE="$(lanes false false false false false false)"
+NO_SKILL="-review-gate -orch-terminal -orch-oversee -orch-oversee-succeed -orch-state -orch-rest -guards-commit -linear -worktree -rest -node -pi-claude-bridge"
+ORCH_ALL="+orch-terminal +orch-oversee +orch-oversee-succeed +orch-state +orch-rest"
 
-# CLASS|DOCS_ONLY|PATHS (blank-separated)|EXPECTED
+# Whether a `shards=` list meets a spec: an exact list, `*` for any, or
+# `+shard` members it must hold and `-shard` members it must not. Empty
+# where it does.
+shards_miss() { # SPEC SHARDS
+  local word
+  case "$1" in
+    '*') return 0 ;;
+    '['*) [ "$1" = "$2" ] || printf '%s' "$2"; return 0 ;;
+  esac
+  for word in $1; do
+    case "$word:$2" in
+      +*) case "$2" in *"\"${word#+}\""*) ;; *) printf 'missing=%s ' "${word#+}" ;; esac ;;
+      -*) case "$2" in *"\"${word#-}\""*) printf 'unexpected=%s ' "${word#-}" ;; esac ;;
+    esac
+  done
+}
+# One selection row: its lanes whole and its shards against the spec, or the
+# refusal key where LANES is one.
+sel_row() { # DESC CLASS DOCS PATHS LANES SPEC
+  local got
+  got="$(selection "$2" "$3" "$(printf '%s\n' $4)")"
+  case "$got" in
+    exit=*) check "$1" "$5" "$got" ;;
+    *) check "$1" "$5|" "${got% shards=*}|$(shards_miss "$6" "${got##* shards=}")" ;;
+  esac
+}
+
+# CLASS|DOCS_ONLY|PATHS (blank-separated)|LANES|SHARDS. This tree's scripts
+# and suites decide who reads a path, so a row here names the members its
+# case is about; the fixture world below holds whole lists.
 selection_rows=0
-while IFS='|' read -r class docs paths expected; do
+while IFS='|' read -r class docs paths want spec; do
   selection_rows=$((selection_rows + 1))
-  check "selection: $class docs_only=$docs over '$paths'" "$expected" \
-    "$(selection "$class" "$docs" "$(printf '%s\n' $paths)")"
+  sel_row "selection: $class docs_only=$docs over '$paths'" "$class" "$docs" "$paths" "$want" "$spec"
 done <<ROWS
-render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|$VERIFY_ROW
-trivial|true|docs/architecture/overview.md|$VERIFY_ROW
-trivial|true|AGENTS.md|$VERIFY_ROW
-standard|false|crates/core/src/lib.rs|$BUILD_ROW
-micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$ORCH_PROSE_ROW
-small|false|crates/cli/src/main.rs|$BUILD_ROW
-micro|false|ui/src/app.tsx|$UI_ROW
-standard|false|skills/orch/scripts/lanes tools/guard|$(measured true true false false true false "[$ORCH,\"guards-scans\",\"guards-tools\",\"rest\"]")
-standard|false|tools/ci-job-set.orig|$TOOL_ROW
-micro|false|install.sh|$CODE_ROW
-micro|false|.gitattributes|$CODE_ROW
-micro|false|skills/orch/scripts/lanes|$ORCH_CODE_ROW
-micro|false|tools/tests/ci-job-set.test.sh|$TOOL_ROW
-micro|false|hooks/lane-mail-check|$TOOL_ROW
-micro|false|skills/worktree/scripts/worktree|$(measured true true false false true false "[$ORCH,\"guards-scans\",\"worktree\"]")
-micro|false|.agents/skills/worktree/scripts/worktree|$(measured true true false false true false "[$ORCH,\"worktree\"]")
-micro|false|skills/review-gate/scripts/x|$(measured true true false false true false '["review-gate","guards-scans"]')
-micro|false|skills/harness-ci/scripts/x|$(measured true true false false true false '["review-gate","guards-scans","rest"]')
-micro|false|skills/commit-guards/scripts/x|$(measured true true false false true false '["guards-scans","guards-commit","guards-tools","rest"]')
-micro|false|skills/preflight/scripts/x|$(measured true true false false true false '["guards-scans","linear"]')
-micro|false|skills/deep-research/scripts/x.mjs|$(measured true true false false true false '["guards-scans","node"]')
-micro|false|pi-extensions/pi-qol/src/x.ts|$(measured true true false false true false '["node"]')
-micro|false|pi-extensions/pi-claude-bridge/src/x.ts|$(measured true true false false true false '["node","pi-claude-bridge"]')
-micro|false|skills/AGENTS.md|$(measured true false false false false false '["guards-scans"]')
-micro|false|.github/instructions/code-review.md|$(measured true false false false false false "$ROSTER")
-micro|false|.github/AGENTS.md skills/orch/scripts/lanes|$(measured true true true false true false "$ROSTER")
-micro|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
-small|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
-standard|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
-standard|true|AGENTS.md|$PROSE_ROW
-standard|true|CLAUDE.md|$PROSE_ROW
-standard|true|GEMINI.md|$PROSE_ROW
-standard|true|docs/legal/terms.md|$PROSE_ROW
-trivial|true|docs/legal/terms.md|$PROSE_ROW
-trivial|true|README.md|$PROSE_ROW
-standard|false|docs/guide.md|$CODE_ROW
-enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous
-micro|false||exit=2 class-without-paths class=micro
-micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe
+render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|$VERIFY_LANES|[]
+trivial|true|docs/architecture/overview.md|$VERIFY_LANES|[]
+trivial|true|AGENTS.md|$VERIFY_LANES|[]
+standard|false|crates/core/src/lib.rs|$SHARD_BUILD|+rest
+small|false|crates/cli/src/main.rs|$SHARD_BUILD|+rest
+micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|$ORCH_ALL +guards-scans +guards-tools
+micro|false|skills/orch/scripts/lanes|$SHARD_CODE|$ORCH_ALL +guards-scans +guards-tools +rest
+standard|false|skills/orch/scripts/lanes tools/guard|$SHARD_CODE|$ORCH_ALL +guards-tools +rest
+micro|false|tools/tests/example.test.sh|$SHARD_CODE|+guards-scans +guards-tools $NO_SKILL
+micro|false|hooks/lane-mail-check|$SHARD_CODE|+guards-scans +guards-tools
+micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL +guards-tools
+micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL -guards-scans
+micro|false|skills/orch/scripts/lane-mail|$SHARD_CODE|+guards-tools
+micro|false|skills/bot-instructions/scripts/bot-instructions|$SHARD_CODE|+linear +guards-tools
+micro|false|skills/preflight/scripts/preflight|$SHARD_CODE|+linear +guards-commit
+micro|false|skills/doc-limits/scripts/doc-limits|$SHARD_CODE|+rest +guards-commit
+micro|false|skills/github/scripts/lib/gh-auth.sh|$SHARD_CODE|+rest +worktree
+micro|false|skills/orch/scripts/lib/branch-growth.sh|$SHARD_CODE|+review-gate +rest
+micro|false|kendex.settings.toml|$SHARD_CODE|+guards-tools
+micro|false|kendex-local.toml|$SHARD_CODE|+guards-tools
+micro|false|crates/core/src/discover.rs|$SHARD_BUILD|+guards-tools +rest
+micro|false|.claude/hooks/lane-mail-check|$SHARD_CODE|+guards-tools
+micro|false|pi-extensions/pi-qol/src/x.ts|$SHARD_CODE|+node -pi-claude-bridge
+micro|false|pi-extensions/pi-claude-bridge/src/x.ts|$SHARD_CODE|+node +pi-claude-bridge
+micro|false|skills/AGENTS.md|$SHARD_PROSE|["guards-scans"]
+micro|false|.github/instructions/code-review.md|$SHARD_PROSE|$ROSTER
+micro|false|.github/AGENTS.md skills/orch/scripts/lanes|$(lanes true true true false true false)|$ROSTER
+micro|true|docs/guide.md CHANGELOG.md|$NONE_PROSE|[]
+small|true|docs/guide.md CHANGELOG.md|$NONE_PROSE|[]
+standard|true|docs/guide.md CHANGELOG.md|$NONE_PROSE|[]
+standard|true|AGENTS.md|$NONE_PROSE|[]
+standard|true|CLAUDE.md|$NONE_PROSE|[]
+standard|true|GEMINI.md|$NONE_PROSE|[]
+standard|true|docs/legal/terms.md|$NONE_PROSE|[]
+trivial|true|docs/legal/terms.md|$NONE_PROSE|[]
+trivial|true|README.md|$NONE_PROSE|[]
+standard|false|docs/guide.md|$NONE_CODE|[]
+enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous|
+micro|false||exit=2 class-without-paths class=micro|
+micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe|
 ROWS
-[ "$selection_rows" -ge 38 ] ||
+[ "$selection_rows" -ge 39 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
 
 # Each declared lane source runs every lane and each declared build name is a
@@ -182,19 +222,19 @@ pins() { echo "$(echo $(lane_sources "$1"))|$(echo $(build_names "$2"))"; } # JO
 check "the declared lists are the pinned sets" "$SOURCES|$NAMES" "$(pins "$JOB_SET" "$ROOT/tools/rust-reads")"
 sources="$(lane_sources "$JOB_SET")" names="$(build_names "$ROOT/tools/rust-reads")"
 while IFS= read -r p; do check "lane source $p runs every lane" "$ALL_ON" "$(selection standard false "$p")"; done <<<"$sources"
-while IFS= read -r p; do check "build name $p is a build input" "$BUILD_ROW" "$(selection micro false "$p")"; done <<<"$names"
+while IFS= read -r p; do sel_row "build name $p is a build input" micro false "$p" "$SHARD_BUILD" +rest; done <<<"$names"
 mkdir -p "$TMP/member/tools"
 sed 's/(\(ci-job-set.\)ci-aggregate/(\1nothing/' "$JOB_SET" >"$TMP/member/tools/ci-job-set"
 sed 's/ \.cargo \\$/ \\/' "$ROOT/tools/rust-reads" >"$TMP/member/tools/rust-reads"
 chmod +x "$TMP/member/tools/ci-job-set" "$TMP/member/tools/rust-reads"
 check "control: a copy without a member fails each pin" "${SOURCES/ci-aggregate/nothing}|$(echo ${NAMES/.cargo /})" \
   "$(pins "$TMP/member/tools/ci-job-set" "$TMP/member/tools/rust-reads")"
-while IFS='|' read -r class path expected; do
-  check "control: copies without the member $path run it as no lane source or build input" "$expected" \
-    "$(SELECT_WITH="$TMP/member/tools/ci-job-set" selection "$class" false "$path")"
+while IFS='|' read -r class path want; do
+  SELECT_WITH="$TMP/member/tools/ci-job-set" sel_row \
+    "control: copies without the member $path run it as no lane source or build input" "$class" false "$path" "$want" '*'
 done <<ROWS
-standard|tools/ci-aggregate|$TOOL_ROW
-micro|.cargo|$CODE_ROW
+standard|tools/ci-aggregate|$SHARD_CODE
+micro|.cargo|$SHARD_CODE
 ROWS
 
 # A row that forgets a lane is refused before any lane reads it. macos_legs is
@@ -292,47 +332,135 @@ s/ci-aggregate.rust-reads)\$)/ci-aggregate.rust-reads))/|standard|tools/ci-job-s
 s/any '^ui\/' .. uitree=true/uitree=true/|micro|docs/a.md|$PROSE_ROW
 CONTROLS
 
-# The shard selection's rules, each removed from a copy run over this tree:
-# the copy must answer its row other than the script does. Fields split on
-# `@`, since the edits spell `|`. The second row is
-# the inverse the selection must never reach, an orch diff selecting none of
+# The shard selection in a fixture world, where every reader is planted and
+# so each list is whole:
+#   worktree's script sources github's lib, and orch declares worktree;
+#   harness-ci's script sources orch's lib, and review-gate declares
+#   harness-ci;
+#   commit-guards' suite runs preflight, and doc-limits declares
+#   commit-guards;
+#   a tools/ suite reads kendex.settings.toml and names atomic-install.sh and
+#   AGENTS.md; a hooks/ suite reads crates/demo/src/discover.rs.
+# A script's read carries the change to its skill's readers; a suite's read
+# runs that suite's shard and goes no further.
+SEL_WORLD="$TMP/sel-world"
+mkdir -p "$SEL_WORLD/tools/tests" "$SEL_WORLD/hooks/tests"
+cp -R "$READ_WORLD/crates" "$SEL_WORLD/crates"
+skill() { # NAME REQUIRED-LIST — a SKILL.md, with a dependencies block where REQUIRED-LIST is given
+  mkdir -p "$SEL_WORLD/skills/$1/scripts" "$SEL_WORLD/skills/$1/tests"
+  if [ -n "$2" ]; then
+    printf -- '---\nname: %s\ndependencies:\n  required: [%s]\n  optional: [price-handling]\n---\n' "$1" "$2"
+  else
+    printf -- '---\nname: %s\n---\n' "$1"
+  fi >"$SEL_WORLD/skills/$1/SKILL.md"
+}
+skill github ''
+skill worktree ''
+skill orch worktree
+skill harness-ci ''
+skill review-gate harness-ci
+skill preflight ''
+skill commit-guards ''
+skill doc-limits commit-guards
+skill price-handling ''
+printf '. "$(dirname "$0")/../../github/scripts/lib/gh-auth.sh"\n' >"$SEL_WORLD/skills/worktree/scripts/worktree"
+printf '. "$HERE/../../orch/scripts/lib/branch-growth.sh"\n' >"$SEL_WORLD/skills/harness-ci/scripts/change-class"
+printf 'run "$R/.agents/skills/preflight/scripts/preflight"\n' >"$SEL_WORLD/skills/commit-guards/tests/scope.test.sh"
+printf 'read "$ROOT/kendex.settings.toml" lib/atomic-install.sh AGENTS.md\n' >"$SEL_WORLD/tools/tests/settings.test.sh"
+printf 'DISCOVER="$TEST_DIR/../../crates/demo/src/discover.rs"\n' >"$SEL_WORLD/hooks/tests/discover.test.sh"
+# PATH|SHARDS, every row micro and not docs-only.
+world_rows=0
+while IFS='|' read -r path expected; do
+  world_rows=$((world_rows + 1))
+  check "world selection over '$path'" "$expected" \
+    "$(SELECT_IN="$SEL_WORLD" selection micro false "$path" | sed 's/.* shards=//')"
+done <<ROWS
+skills/price-handling/scripts/x|["guards-scans","guards-tools","rest"]
+skills/github/scripts/lib/gh-auth.sh|["review-gate",$ORCH,"guards-scans","guards-tools","worktree","rest"]
+skills/orch/scripts/lib/branch-growth.sh|["review-gate",$ORCH,"guards-scans","guards-tools","rest"]
+skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-tools","linear"]
+kendex.settings.toml|["guards-tools"]
+install.sh|[]
+AGENTS.md|[]
+crates/demo/src/discover.rs|["guards-tools","rest"]
+.claude/hooks/lane-mail-check|["guards-tools"]
+.pi/kendex/hooks/lane-mail-check|["guards-tools"]
+ROWS
+[ "$world_rows" -ge 10 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
+
+# The shard selection's rules, each removed from a copy run over the fixture
+# world: the copy must answer its path other than the script does. Fields
+# split on `@`, since the edits spell `|`. The row for
+# skills/orch/scripts/lib/branch-growth.sh under the package-arm edit is the
+# inverse the selection must never reach, an orch diff selecting none of
 # orch's shards.
-while IFS='@' read -r edit class paths; do
+while IFS='@' read -r edit paths; do
   sed "$edit" "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
   chmod +x "$TMP/rule/tools/ci-job-set"
   if cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set"; then
     bad "control: the edit changed nothing in a ci-job-set copy: $edit"
     continue
   fi
-  expected="$(selection "$class" false "$(printf '%s\n' $paths)")"
-  got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" selection "$class" false "$(printf '%s\n' $paths)")"
-  [ "$got" != "$expected" ] && ok "control: $edit reddens $class over $paths" ||
-    bad "control: $edit reddens $class over $paths (still '$got')"
+  expected="$(SELECT_IN="$SEL_WORLD" selection micro false "$(printf '%s\n' $paths)")"
+  got="$(SELECT_IN="$SEL_WORLD" SELECT_WITH="$TMP/rule/tools/ci-job-set" selection micro false "$(printf '%s\n' $paths)")"
+  [ "$got" != "$expected" ] && ok "control: $edit reddens $paths" ||
+    bad "control: $edit reddens $paths (still '$got')"
 done <<'CONTROLS'
-s/want_package "skills\/\$skill" ;; esac/;; esac/@micro@skills/worktree/scripts/worktree
-s/skills\/\*\/\* | \.agents\/skills\/\*\/\*)/no-package)/@micro@skills/orch/scripts/lanes
-s/skills\/\* | hooks\/\* | tools\/\*) want_shard guards-scans/no-tree) want_shard guards-scans/@micro@skills/AGENTS.md
-s/\[ "\$1" = false \] || want_shard rest/:/@micro@crates/core/src/lib.rs
-s/! any "\$ALL_SHARDS" || want_shard \$SHARDS/:/@micro@.github/instructions/code-review.md
-s/! any "\$ALL_SHARDS" || macos_pr=\$macos/:/@micro@.github/AGENTS.md skills/orch/scripts/lanes
-s/\[ "\$shards" != "\[\]" \] || shell=false/:/@micro@install.sh
-s/\[ "\$shell:\$platform" != true:true \] || macos=true/macos=$platform/@micro@install.sh
+s/^    \[ "\$required" != "\$1" \] || reach_skill "\$skill"$/    :/@skills/orch/scripts/lib/branch-growth.sh
+s/skills\/\*:script) reach_skill "\${package#skills\/}"/skills\/*:script) want_package "$package"/@skills/github/scripts/lib/gh-auth.sh
+s/how = (\$0 ~ \/\\\/tests\\\/\/) ? "suite" : "script"/how = "script"/@skills/preflight/scripts/preflight
+s/"(^|\[^A-Za-z0-9_.-\])\$(printf/"$(printf/@install.sh
+s/^\$path" ;;$/" ;;/@kendex.settings.toml
+s/skills\/\* | \.agents\/skills\/\* | \*\.md | \*\.markdown) ;;/skills\/* | .agents\/skills\/*) ;;/@AGENTS.md
+s/^\.\.\/\$1\/"$/"/@skills/orch/scripts/lib/branch-growth.sh
+s/^        want_package tools$/        :/@skills/price-handling/scripts/x
+s/ | \.claude\/hooks\/\*//@.claude/hooks/lane-mail-check
+s/skills\/\*\/\* | \.agents\/skills\/\*\/\*)/no-package)/@skills/orch/scripts/lib/branch-growth.sh
+s/skills\/\* | hooks\/\* | tools\/\*) want_shard guards-scans/no-tree) want_shard guards-scans/@skills/price-handling/scripts/x
+s/\[ "\$1" = false \] || want_shard rest/:/@crates/demo/src/unnamed.rs
+s/! any "\$ALL_SHARDS" || want_shard \$SHARDS/:/@.github/instructions/code-review.md
+s/! any "\$ALL_SHARDS" || macos_pr=\$macos/:/@.github/AGENTS.md skills/price-handling/scripts/x
+s/\[ "\$shards" != "\[\]" \] || shell=false/:/@install.sh
+s/\[ "\$shell:\$platform" != true:true \] || macos=true/macos=$platform/@install.sh
 CONTROLS
 
-# A dependencies.required this reader cannot take as an inline list is
-# refused, never read as no dependency.
+# Each refusal the shard selection makes, from a fixture or a planted copy.
+# A dependencies block this reader cannot take is refused, never read as no
+# dependency: WORLD-EDIT|EXPECTED, the edit made to doc-limits' SKILL.md.
 DEP_WORLD="$TMP/dep-world"
-mkdir -p "$DEP_WORLD/skills/block" "$DEP_WORLD/skills/plain"
-cp -R "$READ_WORLD/crates" "$DEP_WORLD/crates"
-printf -- '---\nname: block\ndependencies:\n  required:\n    - plain\n---\n' >"$DEP_WORLD/skills/block/SKILL.md"
-printf -- '---\nname: plain\n---\n' >"$DEP_WORLD/skills/plain/SKILL.md"
-check "a required list this reader cannot take is refused" \
-  "exit=2 requirements-unreadable path=skills/block/SKILL.md" \
-  "$(SELECT_IN="$DEP_WORLD" selection micro false skills/plain/scripts/x)"
-printf -- '---\nname: block\ndependencies:\n  required: [plain]\n---\n' >"$DEP_WORLD/skills/block/SKILL.md"
-check "and the inline list it can take selects the declaring skill's shard" \
-  "$(measured true true false false true false '["guards-scans","rest"]')" \
-  "$(SELECT_IN="$DEP_WORLD" selection micro false skills/plain/scripts/x)"
+while IFS='|' read -r edit expected; do
+  rm -rf -- "${DEP_WORLD:?}"
+  cp -R "$SEL_WORLD" "$DEP_WORLD"
+  sed "$edit" "$SEL_WORLD/skills/doc-limits/SKILL.md" >"$DEP_WORLD/skills/doc-limits/SKILL.md"
+  if cmp -s "$SEL_WORLD/skills/doc-limits/SKILL.md" "$DEP_WORLD/skills/doc-limits/SKILL.md"; then
+    bad "the SKILL.md edit changed nothing: $edit"
+    continue
+  fi
+  check "dependencies refused after '$edit'" "$expected" \
+    "$(SELECT_IN="$DEP_WORLD" selection micro false skills/price-handling/scripts/x)"
+done <<'ROWS'
+s/  required: \[commit-guards\]/  required:\n    - commit-guards/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
+s/\[commit-guards\]/["commit-guards"]/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
+s/^dependencies:$/dependencies: # the skills it needs/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
+s/^  required:/   required:/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
+s/\[commit-guards\]/[commit-guard]/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
+ROWS
+# An optional list is read past, never refused and never followed.
+check "an optional list is no dependency" '["guards-scans","guards-tools","rest"]' \
+  "$(SELECT_IN="$SEL_WORLD" selection micro false skills/price-handling/scripts/x | sed 's/.* shards=//')"
+# EDIT#PATH#EXPECTED — a copy of the script with a planted fault. Fields split
+# on `#`, since an edit spells `$@`.
+while IFS='#' read -r edit path expected; do
+  sed "$edit" "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
+  chmod +x "$TMP/rule/tools/ci-job-set"
+  cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" && { bad "the planted fault changed nothing: $edit"; continue; }
+  check "a planted fault is refused: $expected" "$expected" \
+    "$(SELECT_IN="$SEL_WORLD" SELECT_WITH="$TMP/rule/tools/ci-job-set" selection micro false "$path")"
+done <<'ROWS'
+s/skills\/worktree) want_shard worktree ;;/skills\/worktree) want_shard worktre ;;/#skills/worktree/scripts/worktree#exit=2 shard-undeclared shard=worktre
+s/^  ' "\$@"$/  ' "$@" \&\& false/#skills/price-handling/scripts/x#exit=2 requirements-failed
+s/files="\$(grep -rlE /files="$(grep --no-such-option -rlE /#kendex.settings.toml#exit=2 consumers-failed
+ROWS
 
 # --- 2. The names -----------------------------------------------------------
 # Each reader is extracted with an anchored pattern: a name is the whole run
