@@ -294,7 +294,8 @@ directory_table() {
 # tail; the bare source shorthand is not read.
 # The verb is the first word after `kendex` that names one, so `source add`
 # is read whole and a later verb word is an argument; the value decides which
-# global option the refusal names, and `source` subcommands have none.
+# global option the refusal names. `source` takes its scope options before
+# its subcommand as well as after it.
 # The scope, target and apply options are the words Bash passes: a
 # redirection's file is not one, a standalone `--` ends them, and a word the
 # shell settles only when it runs grants nothing and counts as `--apply`.
@@ -321,6 +322,14 @@ kendex source disable x from the worktree is refused|2|block-worktree-refresh: r
 kendex marketplace subscribe x from the worktree is refused|2|block-worktree-refresh: refused=marketplace subscribe|kendex marketplace subscribe x
 kendex marketplace unsubscribe x from the worktree is refused|2|block-worktree-refresh: refused=marketplace unsubscribe|kendex marketplace unsubscribe x
 source list is a read|0|-|kendex source list
+source add --global before the subcommand passes|0|-|kendex source --global add x owner/repo
+source remove --global after the subcommand passes|0|-|kendex source remove x --global
+source enable -g before the subcommand passes|0|-|kendex source -g enable x
+source disable --global passes|0|-|kendex source disable x --global
+source refresh --global before the subcommand is not the refresh verb|0|-|kendex source --global refresh
+the --scope global words before a source subcommand pass|0|-|kendex source --scope global add x owner/repo
+the --scope project words before a source subcommand are the project scope|2|block-worktree-refresh: refused=source add|kendex source --scope project add x owner/repo
+--scope project before a source subcommand outranks a --global after it|2|block-worktree-refresh: refused=source remove|kendex source --scope project remove x --global
 marketplace list is a read|0|-|kendex marketplace list
 the verb is found after a chained command|2|block-worktree-refresh: refused=refresh|true && kendex refresh
 the verb is found on the second line|2|block-worktree-refresh: refused=apply|echo x\nkendex apply
@@ -521,8 +530,7 @@ run_in "$WT" 'kendex refresh'
 assert_contains "$ERR_FILE" '--scope global (or --global)' 'while a verb taking either names both'
 assert_contains "$ERR_FILE" 'git worktree list' 'the refusal names the command that finds the main checkout'
 run_in "$WT" 'kendex source add x owner/repo'
-assert_not_contains "$ERR_FILE" '--global' 'a source subcommand has no global flag, and the refusal offers none'
-assert_not_contains "$ERR_FILE" '--scope global' 'nor a global scope'
+assert_contains "$ERR_FILE" '--scope global (or --global)' 'a source subcommand takes either, and the refusal names both'
 run_in "$OWN" 'kendex update-pi --scope project'
 assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-worktree-refresh: refused=update-pi' 'update-pi at the project scope is refused where the project owns its manifest'
 assert_contains "$ERR_FILE" 'kendex update-pi --scope global' 'and the refusal offers the one form update-pi runs as in a linked worktree'
