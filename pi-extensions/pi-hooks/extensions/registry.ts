@@ -124,7 +124,8 @@ interface RenderedCommand {
  * Read one registered command. `engine::targets` writes three shapes and no
  * others: a global command names the file outright, `bash "<path>"`; a global
  * command for a hook whose declaration sets an environment binds the file
- * first and assigns before running it, `h="<path>"; NAME='value' … bash "$h"`;
+ * first, resolves `bash` and assigns before running it,
+ * `h="<path>"; b=$(command -v bash) || b=bash; NAME='value' … "$b" "$h"`;
  * and a project command, with or without an environment, opens by naming the
  * file under the project it will go and find, `p='<path>'; …`. All three are
  * read here, and `anchor` is what a project path is relative to — the project
@@ -136,13 +137,13 @@ function renderedCommand(command: string, anchor: string | undefined): RenderedC
 	const relative = /^p='((?:[^']|'\\'')*)';/.exec(command);
 	if (relative !== null) {
 		const script = anchor === undefined ? "" : resolve(anchor, relative[1]!.replaceAll("'\\''", "'"));
-		// The walk closes with `}; ` and the assignments stand between that
-		// and `bash`. Each one ends in the closing quote `names::quoted`
-		// wrote and a space, so no value a declaration can set spells this
-		// suffix: a command ending in it sets nothing.
+		// The walk closes with `}; ` and a command that sets nothing runs
+		// `bash` straight after it. One that sets an environment resolves
+		// the interpreter there instead, so no value a declaration can set
+		// spells this suffix: a command ending in it sets nothing.
 		return { script, assigns: !command.endsWith('}; bash "$r/$p"') };
 	}
-	const bound = /^h="([^"]*)"; ([\s\S]*)bash "\$h"$/.exec(command);
+	const bound = /^h="([^"]*)"; ([\s\S]*)(?:bash|"\$b") "\$h"$/.exec(command);
 	if (bound !== null) return { script: resolve(bound[1]!), assigns: bound[2]! !== "" };
 	const word = command.startsWith('bash "') && command.endsWith('"') ? command.slice(6, -1) : "";
 	return { script: word === "" ? "" : resolve(word), assigns: false };

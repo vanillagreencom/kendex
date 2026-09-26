@@ -284,29 +284,42 @@ function assignmentsOf(env: Record<string, string>): string {
 }
 
 /**
+ * The words `engine::targets::launch` writes to start a script under `env`,
+ * rendered from that function's own template, or `bare`, the words the caller
+ * spells for a hook whose declaration sets nothing.
+ */
+function launchOf(env: Record<string, string>, bare: string): string {
+	const set = assignmentsOf(env);
+	if (set === "") return bare;
+	const launch = rustFormat(rustBody("engine/targets.rs", "fn launch(vars: Option<&BTreeMap<String, String>>) -> Option<String> {"), "launch");
+	return launch.replace("{set}", set);
+}
+
+/**
  * The command `engine::targets::project_command` writes for `rel` and a hook
  * whose declaration sets `env`, rendered from that function rather than
- * spelled again here. Its template takes the quoted path, then the
- * environment's assignments, which are empty for a hook that declares none. A
+ * spelled again here. Its template takes the quoted path, then the words that
+ * start the script, the bare interpreter its fallback names for a hook that
+ * declares no environment. A
  * rename, a respelling or a template taking another argument on the Rust side
  * throws, which is the whole point: a carrier that reads a command kendex no
  * longer writes is every project hook silently off.
  */
 export function projectCommand(rel: string, env: Record<string, string> = {}): string {
-	const command = rustFormat(
-		rustBody("engine/targets.rs", "fn project_command(rel: &str, vars: Option<&BTreeMap<String, String>>) -> String {"),
-		"project_command",
-	);
+	const body = rustBody("engine/targets.rs", "fn project_command(rel: &str, vars: Option<&BTreeMap<String, String>>) -> String {");
+	const command = rustFormat(body, "project_command");
+	const bare = /unwrap_or_else\(\|\| "([^"]*)"/.exec(body);
+	if (bare === null) throw new Error("project_command names no interpreter for a hook that declares no environment");
 	const slots = command.split("{}");
-	if (slots.length !== 3) throw new Error(`project_command's template takes ${slots.length - 1} arguments, not the path and the assignments`);
+	if (slots.length !== 3) throw new Error(`project_command's template takes ${slots.length - 1} arguments, not the path and the launch words`);
 	const [head, middle, tail] = slots as [string, string, string];
-	return braces(`${head}${quoted(rel)}${middle}${assignmentsOf(env)}${tail}`);
+	return braces(`${head}${quoted(rel)}${middle}${launchOf(env, bare[1]!)}${tail}`);
 }
 
 /**
  * The command `engine::targets::direct_command` writes for a global hook at
  * `path` whose declaration sets `env`, rendered from that function and from
- * `assignments` rather than spelled again here: the no-environment arm for an
+ * `launch` rather than spelled again here: the no-environment arm for an
  * empty `env`, the binding arm with each entry assigned in key order for any
  * other. A value is quoted as `names::quoted` quotes it. A placeholder left
  * unfilled throws, so a template taking another argument cannot pass unread.
@@ -315,7 +328,7 @@ export function globalCommand(path: string, env: Record<string, string> = {}): s
 	const body = rustBody("engine/targets.rs", "fn direct_command(path: &str, vars: Option<&BTreeMap<String, String>>) -> String {");
 	const set = assignmentsOf(env);
 	const template = rustFormat(set === "" ? body : body.slice(body.lastIndexOf("format!(")), "direct_command");
-	const command = template.replace("{path}", path).replace("{set}", set);
+	const command = template.replace("{path}", path).replace("{launch}", launchOf(env, ""));
 	const unfilled = /\{[a-z]*\}/.exec(command);
 	if (unfilled !== null) throw new Error(`direct_command's template holds ${unfilled[0]}, which this rendering does not fill`);
 	return braces(command);
