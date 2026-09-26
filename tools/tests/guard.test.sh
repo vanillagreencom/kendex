@@ -491,7 +491,8 @@ done <<'ROWS'
 refuse|an escape spelled \x1b in a verb is refused|crates/cli/src/commands/paint.rs|const RED: &str = "\x1b[31m";
 refuse|an escape spelled \u{1b} in a verb is refused|crates/cli/src/commands/paint.rs|const RED: &str = "\u{1b}[31m";
 refuse|an escape spelled \033 in a verb is refused|crates/cli/src/commands/paint.rs|const RED: &str = "\033[31m";
-refuse|a stream handle in a verb is refused|crates/cli/src/commands/paint.rs|fn say() { let _ = writeln!(std::io::stderr(), "x"); }
+refuse|a stderr handle in a verb is refused|crates/cli/src/commands/paint.rs|fn say() { let _ = writeln!(std::io::stderr(), "x"); }
+refuse|a stdout handle in a verb is refused|crates/cli/src/commands/paint.rs|fn say() { let _ = writeln!(std::io::stdout(), "x"); }
 pass|an escape inside the ui module passes|crates/cli/src/ui/paint.rs|const RED: &str = "\x1b[31m";
 pass|a stream handle in the ui module's root passes|crates/cli/src/ui.rs|fn say() { let _ = writeln!(std::io::stderr(), "x"); }
 ROWS

@@ -72,6 +72,26 @@ fn no_color_and_a_dumb_terminal_print_what_a_pipe_gets() {
     );
 }
 
+/// On a terminal the check draws its spinner while it reads, then clears
+/// that line before the header takes it: the frame, then the clear, then
+/// the header. The first frame is written before the spinner ever waits,
+/// so a check that finishes at once still draws it.
+#[test]
+fn the_spinner_line_is_cleared_before_the_header() {
+    let at = fixture();
+    let sent = kendex_on_a_terminal(&at.home, &at.project, &["check", "--scope", "project"]);
+    let after = sent
+        .rsplit_once("reading the snapshot")
+        .map(|(_, after)| after)
+        .unwrap_or_else(|| panic!("the spinner never reached the terminal: {sent:?}"));
+    let clear = after.find("\r\u{1b}[2K");
+    let header = after.find("kendex check");
+    assert!(
+        matches!((clear, header), (Some(clear), Some(header)) if clear < header),
+        "the spinner line was not cleared before the header: {after:?}"
+    );
+}
+
 /// A rich run at `COLUMNS=80` gets no line wider than 80 cells, escapes
 /// not counted, while the same report in a pipe has lines wider than that —
 /// so the width was reached and wrapped, not merely never met. A remedy's

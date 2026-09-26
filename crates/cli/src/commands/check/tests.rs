@@ -22,7 +22,9 @@ fn section(title: &str, lines: Vec<Line>) -> Section {
 
 /// A changed package, a blocked one, a decision between two directions, a
 /// verdict still owed and a scope that could not be read: every kind of
-/// row the check draws.
+/// row the check draws. The last section mixes classes the way
+/// `fold_commit_hooks` folds them, a drift line above one that could not
+/// be checked.
 fn every_kind() -> CheckReport {
     CheckReport {
         status: CheckStatus::Unknown,
@@ -62,6 +64,13 @@ fn every_kind() -> CheckReport {
                     "global: the install record is unreadable",
                     None,
                 )],
+            ),
+            section(
+                "commit hooks",
+                vec![
+                    line(Class::Drift, "pre-commit is not armed", None),
+                    line(Class::Unknown, "commit-msg could not be read", None),
+                ],
             ),
         ],
         snapshot_age_secs: Some(300),
@@ -126,6 +135,10 @@ fn the_check_draws_every_kind_of_row_rich() {
             "",
             "<1;31>could not check</>  <90>1</>",
             "  <31>✗</> global: the install record is unreadable",
+            "",
+            "<1;31>commit hooks</>  <90>2</>",
+            "  <33>!</> pre-commit is not armed",
+            "  <31>✗</> commit-msg could not be read",
             "<90>(package evaluation: 5m ago)</>",
             "<90>Next: kendex refresh --scope project --yes in this checkout to refresh project packages.</>",
         ]
@@ -134,7 +147,7 @@ fn the_check_draws_every_kind_of_row_rich() {
         tagged(&drawn.verdict),
         [
             "",
-            "<31>✗</> <1>5 items need attention — see the lines above</>"
+            "<31>✗</> <1>7 items need attention — see the lines above</>"
         ]
     );
 }
@@ -158,13 +171,16 @@ fn the_check_draws_every_kind_of_row_plain() {
             "  skill docs-writing",
             "could not check:",
             "  global: the install record is unreadable",
+            "commit hooks:",
+            "  pre-commit is not armed",
+            "  commit-msg could not be read",
             "(package evaluation: 5m ago)",
             "Next: kendex refresh --scope project --yes in this checkout to refresh project packages.",
         ]
     );
     assert_eq!(
         drawn.verdict,
-        ["5 items need attention — see the lines above"]
+        ["7 items need attention — see the lines above"]
     );
 }
 
@@ -189,6 +205,20 @@ fn a_clean_check_draws_only_the_all_clear() {
     );
 }
 
+/// A check that found drift and nothing it could not check closes on a
+/// decision, not a failure.
+#[test]
+fn a_drift_check_closes_on_a_decision() {
+    let drawn = screen(&rich(100), &many(2), "here");
+    assert_eq!(
+        tagged(&drawn.verdict),
+        [
+            "",
+            "<33>!</> <1>2 items need attention — see the lines above</>"
+        ]
+    );
+}
+
 /// The verdict counts the rows the reader was shown, and points at them
 /// as what to run only where every one of them carries a remedy.
 #[test]
@@ -196,7 +226,7 @@ fn the_verdict_counts_the_rows_it_closes() {
     let rows: [(CheckReport, &str); 3] = [
         (clean(), "all clear — every install matches its source"),
         (many(1), "1 item needs attention — see the lines above"),
-        (every_kind(), "5 items need attention — see the lines above"),
+        (every_kind(), "7 items need attention — see the lines above"),
     ];
     for (report, want) in rows {
         assert_eq!(verdict(&page(&report)), want);
