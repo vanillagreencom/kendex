@@ -1,12 +1,12 @@
 # Audit Output Schema
 
-Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-project-YYYYMMDD-HHMMSS.json`, `tmp/audit-issues-YYYYMMDD-HHMMSS.json`, or `tmp/audit-project-order-YYYYMMDD-HHMMSS.json`. The fleet proposal sweep writes issue-mode output under `tmp/` and names that path in its lane status file.
+Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-project-YYYYMMDD-HHMMSS.json`, `tmp/audit-issues-YYYYMMDD-HHMMSS.json`, `tmp/audit-single-YYYYMMDD-HHMMSS.json`, or `tmp/audit-project-order-YYYYMMDD-HHMMSS.json`. The fleet proposal sweep writes issue-mode output under `tmp/` and names that path in its lane status file.
 
 ## Common Fields
 
 ```json
 {
-  "mode": "project|team|issue|project-order",
+  "mode": "project|team|issue|single|project-order",
   "generated": "ISO timestamp",
   "worktree": "path",
   "tracker": {"type": "linear|github", "repository": "owner/repo"},
@@ -85,6 +85,8 @@ Mode `team` uses this same shape with `project: null` — its input set is the w
 **`project_recommendations[]`**: `create_project` with `name`, `description`, `rationale`, `gaps_to_include[]`, `suggested_state`, `priority`, `initiative{}`, `dependencies{}`; or `reopen_project` with `project`, `project_id`, `current_state`, `target_state`, `rationale`, `gaps_requiring_reopen[]`.
 
 ## ISSUE Mode
+
+Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` row, whose action is `create` or `skip` ([tpm-audit](../workflows/tpm-audit.md) § 14).
 
 ```json
 {

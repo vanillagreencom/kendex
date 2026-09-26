@@ -4,7 +4,7 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 
 **Do NOT modify the tracker.** Return recommendations only.
 
-**Hold the creation bar** ([SKILL.md](../SKILL.md) § Disposition). An observation that clears it is a `create`; everything else is `skip` with a one-line reason. Every run that reads an issue backlog also completes the § 6 cancellation sweep.
+**Hold the creation bar** ([SKILL.md](../SKILL.md) § Disposition). An observation that clears it is a `create`; everything else is `skip` with a one-line reason. Every run that reads an issue backlog also completes the § 6 cancellation sweep. A `single` run reads open titles, not the backlog, and does not sweep (§ 14).
 
 ## Inputs
 
@@ -13,6 +13,7 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 | `--project <name>` / `--project` | `project` | Every issue in the named or active project |
 | `--team` | `team` | Every Backlog/Todo/In Progress/In Review issue on the team |
 | `--issues <file>` | `issues` | Items from [audit-issues-input.md](../schemas/audit-issues-input.md) |
+| `--single <file>` | `single` | The one item in an [audit-issues-input.md](../schemas/audit-issues-input.md) file |
 | `--project-order` | `project-order` | All projects and initiatives |
 
 ---
@@ -21,7 +22,7 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 
 ### 1.1 Determine Mode
 
-`project-order` → § 1.1.1, then § 11 (§§ 2-10 and § 12 do not apply). An ordering-only run reads no issue backlog, so the § 6 cancellation sweep is not among its obligations — exemption from the sweep is never exemption from scope, and § 11 reads and reorders projects.
+`single` → § 14, which names the sections it runs. `project-order` → § 1.1.1, then § 11 (§§ 2-10 and § 12 do not apply). An ordering-only run reads no issue backlog, so the § 6 cancellation sweep is not among its obligations — exemption from the sweep is never exemption from scope, and § 11 reads and reorders projects.
 
 **project**: store `WORKTREE` from the delegation prompt (default `.`). Linear only — this mode audits Linear projects.
 
@@ -373,7 +374,7 @@ Return per § 13 with the `tmp/audit-project-order-YYYYMMDD-HHMMSS.json` hint an
 
 ## 12. Pre-Output Verification
 
-**Skip if** MODE = project-order — §§ 2-10 built none of these (§ 1.1).
+**Skip if** MODE = project-order — §§ 2-10 built none of these (§ 1.1). MODE = single checks the team-prefix and proposed-item rows only.
 
 Any invariant failing sends you back before the JSON is built.
 
@@ -388,7 +389,7 @@ Any invariant failing sends you back before the JSON is built.
 
 ## 13. Return Output
 
-Build the JSON per [audit-output.md](../schemas/audit-output.md) and set the destination hint to `tmp/audit-project-YYYYMMDD-HHMMSS.json`, `tmp/audit-team-YYYYMMDD-HHMMSS.json`, `tmp/audit-issues-YYYYMMDD-HHMMSS.json`, or `tmp/audit-project-order-YYYYMMDD-HHMMSS.json` for the mode.
+Build the JSON per [audit-output.md](../schemas/audit-output.md) and set the destination hint to `tmp/audit-project-YYYYMMDD-HHMMSS.json`, `tmp/audit-team-YYYYMMDD-HHMMSS.json`, `tmp/audit-issues-YYYYMMDD-HHMMSS.json`, `tmp/audit-single-YYYYMMDD-HHMMSS.json`, or `tmp/audit-project-order-YYYYMMDD-HHMMSS.json` for the mode.
 
 Return the JSON inline. Do not write the artifact yourself.
 
@@ -398,3 +399,25 @@ File: tmp/audit-[MODE]-YYYYMMDD-HHMMSS.json
 {complete JSON object}
 ```
 </output_format>
+
+---
+
+## 14. Single-Item Mode
+
+One filing: the creation bar, a title-level duplicate check, the label set and the placement, then § 12 and § 13. No other section runs: no contracts, no relation or hierarchy analysis, no comparison-set bodies, and no § 6 cancellation sweep.
+
+1. **Input.** Read the file as § 1.1 reads `issues` mode. It holds exactly one `items[]` entry and no `hierarchy_contract`; any other shape halts naming the item count, and the caller runs `--issues`.
+2. **Scope and labels.** § 1.1.1, then § 1.2.
+3. **Placement.** Linear: the § 1.3 command, then the project whose name and description fit the item's `location`. GitHub: § 1.3's degradation.
+4. **Duplicates by title.** One read of the open titles; keep only rows § 1.1.1 scopes in:
+
+   ```bash
+   .agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review" --max --format=compact | jq -r '.[] | "\(.id)\t\(.title)"'   # TRACKER=linear
+   gh issue list --repo [REPOSITORY] --state open --limit 200 --json number,title --jq '.[] | "#\(.number)\t\(.title)"'                                            # TRACKER=github
+   ```
+
+   A title naming the item's problem makes the item `skip` with that issue as `target` and reason `covered by [ISSUE_ID]`. Read a matched issue's body (`cache issues get`, or `gh issue view --json body`) only when its title alone leaves the match open; read no other body.
+
+5. **Action.** § 10.1, then `create` or `skip`; no other action. A `create` fills `create_fields` per § 10.2, with `hierarchy: {"action": "none", "parent": null}`.
+
+Return per § 13: `mode: "single"` in the issue-mode shape of [audit-output.md](../schemas/audit-output.md), one `issues[]` row.

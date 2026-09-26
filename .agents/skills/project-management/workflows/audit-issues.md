@@ -13,9 +13,10 @@ Audit tracked issues and projects, apply mechanical corrections, and authorize c
 | `audit-issues team` | `team` | Every Backlog/Todo/In Progress/In Review issue on the team |
 | `audit-issues issue [ISSUE_ID] ...` | `issue` | Those issues |
 | `audit-issues --issues [file]` | `issue` | Items from a JSON file per [audit-issues-input.md](../schemas/audit-issues-input.md) |
+| `audit-issues --single [file]` | `single` | One item from such a file: creation bar, title duplicate check, label preflight and create, with no cancellation sweep |
 | `audit-issues --analyzed [file]` | `analyzed` | Pre-analyzed [audit-output.md](../schemas/audit-output.md) issue-mode JSON — skips § 4 |
 
-`analyzed` follows every `issue`-mode rule in §§ 5-9. `team` follows every `project`-mode rule in §§ 4-8, a rule added later included; only a rule naming `team` overrides one.
+`analyzed` follows every `issue`-mode rule in §§ 5-9, and `single` every one in §§ 4-9; its TPM run proposes no cancellation, so its Cancel section and § 7.4 stay empty. `team` follows every `project`-mode rule in §§ 4-8, a rule added later included; only a rule naming `team` overrides one.
 
 The input file's `tracker` block fixes the tracker for the whole audit. A caller that already resolved one (orch `TRACKER`) must set it.
 
@@ -56,7 +57,7 @@ Store as `TRACKER`, plus `[OWNER/REPO]` when `TRACKER=github`.
 .agents/skills/orch/scripts/reconcile-work-items
 ```
 
-Run `reconcile-work-items` only where the orch skill is installed (skip the line otherwise). Exit 0 is a clean tracker; exit 1 is findings — carry them into the audit as facts; exit 2 is a broken sweep to fix before auditing.
+MODE `single` runs the first and third lines only. Run `reconcile-work-items` only where the orch skill is installed (skip the line otherwise). Exit 0 is a clean tracker; exit 1 is findings — carry them into the audit as facts; exit 2 is a broken sweep to fix before auditing.
 
 Keep `project` for fallback target resolution and the issue-label inventory for every create/update preflight.
 
@@ -73,7 +74,7 @@ No sync step. Load project taxonomy the same way as Linear mode; with no declare
 
 ### 1.3 Route
 
-`project-order` → § 2 · `project` → § 3 · `team` → § 4 · `issue` → § 4 · `analyzed` → § 5.
+`project-order` → § 2 · `project` → § 3 · `team` → § 4 · `issue` → § 4 · `single` → § 4 · `analyzed` → § 5.
 
 ---
 
@@ -149,7 +150,7 @@ Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the
 <delegation_format>
 Follow workflow: .agents/skills/project-management/workflows/tpm-audit.md
 
-Arguments: --project "[PROJECT_NAME]" | --team | --issues [FILE_PATH]
+Arguments: --project "[PROJECT_NAME]" | --team | --issues [FILE_PATH] | --single [FILE_PATH]
 Worktree: [WORKTREE_PATH]
 Tracker: [TRACKER] [OWNER/REPO]
 </delegation_format>
@@ -380,7 +381,7 @@ Repeat cancellation, decline and deferred-cleanup bullets per entry; omit empty 
 **Mismatches**: [any § 7.5 discrepancy, or omit this line]
 </output_format>
 
-When M is 0 and N is not, say why the cancellation sweep found nothing.
+When M is 0 and N is not, say why the cancellation sweep found nothing; a `single` run says it ran none.
 
 ## 9. Return State
 
