@@ -1,4 +1,4 @@
-"""The spec copy: version, doctrine blocks, and the routing table.
+"""The spec copy: version, doctrine blocks, default surfaces, and the routing table.
 
 SKILL.md § Doctrine defines a spec copy as a copy of this package whose
 `SKILL.md` carries the doctrine section and whose `schemas/renders.md` carries
@@ -15,6 +15,7 @@ content refusals, which `refusals.py` owns.
 """
 
 import re
+import tomllib
 
 from .constants import (
     FROZEN_BLOCK_IDS,
@@ -35,10 +36,14 @@ _DASH = "–"
 
 
 class Doctrine:
-    def __init__(self, blocks, version, routing, positions):
+    def __init__(self, blocks, version, routing, positions, surfaces):
         self.blocks = blocks            # id -> text
         self.version = version
         self.routing = routing          # column -> [block ids in order]
+        # The `## Default surfaces` entries as the TOML parsed them. Validated
+        # against the manifest's own surface schema where they meet the
+        # repo's set, in `model.build`, which already reads the config.
+        self.surfaces = surfaces
         # block id -> {column: position}. Its own attribute rather than a
         # `_positions` key inside `routing`, whose documented type is the line
         # above: a sentinel key there makes any iteration over `routing` read
@@ -144,6 +149,51 @@ def parse_doctrine(skill_text, where):
     return blocks
 
 
+def parse_default_surfaces(skill_text, where):
+    """The one `toml` block inside the one `## Default surfaces` section.
+
+    Its only table is `[[surface]]`, keyed as `[[bot-instructions.surface]]`
+    is; the keys and refusals are judged later, by the same code that judges
+    the repo's own surfaces.
+    """
+    lines = skill_text.splitlines()
+    starts = [i for i, ln in enumerate(lines) if ln.strip() == "## Default surfaces"]
+    if len(starts) != 1:
+        raise SpecError(
+            f"{where}: found {len(starts)} `## Default surfaces` sections; exactly one is required"
+        )
+    end = len(lines)
+    for i in range(starts[0] + 1, len(lines)):
+        if markdown.heading_level(lines[i]) in (1, 2):
+            end = i
+            break
+    blocks, current = [], None
+    for line in lines[starts[0] + 1:end]:
+        if current is None and line.strip() == "```toml":
+            current = []
+        elif current is not None and line.strip() == "```":
+            blocks.append("\n".join(current))
+            current = None
+        elif current is not None:
+            current.append(line)
+    if current is not None or len(blocks) != 1:
+        raise SpecError(
+            f"{where} § Default surfaces: expected exactly one closed `toml` block, found "
+            f"{len(blocks)}{' and one left open' if current is not None else ''}"
+        )
+    try:
+        data = tomllib.loads(blocks[0])
+    except tomllib.TOMLDecodeError as exc:
+        raise SpecError(f"{where} § Default surfaces: the toml block does not parse: {exc}") from exc
+    unknown = sorted(set(data) - {"surface"})
+    if unknown:
+        raise SpecError(f"{where} § Default surfaces: unknown table or key {unknown[0]!r}")
+    surfaces = data.get("surface", [])
+    if not isinstance(surfaces, list):
+        raise SpecError(f"{where} § Default surfaces: `surface` must be an array of tables")
+    return surfaces
+
+
 def parse_routing(renders_text, where):
     """The one table in `renders.md` § Doctrine routing, read as data."""
     rows = [
@@ -196,6 +246,7 @@ def load(spec_tree, skill_rel, renders_rel):
             raise SpecError(f"{renders_rel}: the spec copy has no routing table")
         version = read_version(skill_text, skill_rel)
         blocks = parse_doctrine(skill_text, skill_rel)
+        surfaces = parse_default_surfaces(skill_text, skill_rel)
         routing, positions = parse_routing(renders_text, renders_rel)
     except BotInstructionsError as exc:
         # Mark WHERE it failed, not what the tree happens to be rooted at:
@@ -204,7 +255,7 @@ def load(spec_tree, skill_rel, renders_rel):
         # command line holds the spec root it resolved and fills it in.
         exc.from_spec = True
         raise
-    return Doctrine(blocks, version, routing, positions)
+    return Doctrine(blocks, version, routing, positions, surfaces)
 
 
 def frozen_ids():

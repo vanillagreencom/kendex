@@ -7,12 +7,12 @@ that list.
 """
 
 from .constants import CODERABBIT_SCHEMA_PATH
-from .errors import InputError, ManifestError
-from . import manifest, marker as marker_mod, spec
+from .errors import InputError, ManifestError, SpecError
+from . import config as config_mod, manifest, marker as marker_mod, spec
 
 
 class RenderModel:
-    def __init__(self, config, doctrine, exclusions, inputs):
+    def __init__(self, config, doctrine, exclusions, inputs, surfaces):
         # Every path here is interpolated into the marker comment, so every
         # path here meets the class that cannot close one. This is the
         # backstop for the paths that are this package's own constants;
@@ -24,6 +24,9 @@ class RenderModel:
         self.doctrine = doctrine
         self.exclusions = exclusions      # ordered [{glob, reason, derived}]
         self.inputs = inputs              # every path this render read
+        # The repo's `[[bot-instructions.surface]]` set, then the spec copy's
+        # defaults. Every route that renders surfaces reads this list.
+        self.surfaces = surfaces
         self._blocks, self._repo_authored = _assemble(config, doctrine)
 
     @property
@@ -127,7 +130,30 @@ def build(tree, config, doctrine, spec_paths, resolved):
     if config.bots["codex"]:
         inputs.append("AGENTS.md")
     _check_duplicates(exclusions, config.where)
-    return RenderModel(config, doctrine, exclusions, inputs)
+    return RenderModel(config, doctrine, exclusions, inputs,
+                       config.surfaces + _default_surfaces(config, doctrine))
+
+
+def _default_surfaces(config, doctrine):
+    """The spec copy's surfaces, judged as the manifest's own are.
+
+    A refusal is the spec copy's defect, not the repo's, so it leaves as a
+    `SpecError`. A repo surface taking a default's `name` is the repo's: the
+    two would render to one file, and only the later write would survive.
+    """
+    try:
+        defaults = config_mod.surfaces(doctrine.surfaces, "SKILL.md § Default surfaces")
+    except InputError as exc:
+        raise SpecError(str(exc)) from exc
+    taken = {s["name"] for s in config.surfaces}
+    for surface in defaults:
+        if surface["name"] in taken:
+            raise InputError(
+                f"{config.where} [[bot-instructions.surface]] name: {surface['name']!r} is a "
+                "surface this package renders in every repo (SKILL.md § Default surfaces). "
+                "Drop the repo's entry"
+            )
+    return defaults
 
 
 def _check_duplicates(exclusions, where):

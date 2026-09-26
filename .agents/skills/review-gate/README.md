@@ -34,13 +34,17 @@ Set `REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;s
 
 | Change class | Review evidence | Review threads | Objections and suppressed findings |
 |---|---|---|---|
-| `render` | Not required | Not read | Not read |
-| `trivial` | Not required | Not read | Not read |
-| `micro` | Not required | Not read | Not read |
+| `render` | Not required | Bot threads resolved at merge; a person's thread blocks | Not read |
+| `trivial` | Not required | Bot threads resolved at merge; a person's thread blocks | Not read |
+| `micro` | Not required | Bot threads resolved at merge; a person's thread blocks | Not read |
 | `small` | One normal bot round | Enforced | Enforced |
 | `standard` | Current review-gate behavior | Current review-gate behavior | Current review-gate behavior |
 
+`trivial` holds every diff inside the classifier's documentation path set, whatever its size, so a plan under `docs/` of any length takes that row. A repository allowlist in `HARNESS_CI_TRIVIAL_PATHS` replaces that set and keeps a line ceiling (`change-class --help`).
+
 A `none` row puts the pull request OUTSIDE the review gate: no review evidence, no thread wait, no standing objection and no suppressed finding is read for it, because a gate that cannot stop a bot from commenting must not run on a change it waives. What stays enforced is everything outside that gate — required CI checks, commit guards and merge conflicts — and the orch merge path still refuses a `CHANGES_REQUESTED` review at its readiness check, in every mode.
+
+A base branch's own thread-resolution rule is outside the gate too, and it still holds the merge on every open thread. So the `pr-merge` route resolves each thread a bot opened on a `none`-row pull request, as its last step before it merges or arms: one reply naming the class and `REVIEW_GATE_CLASS_POLICY`, then a resolve. A thread a person opened still blocks it. `pr-merge --help` § Review-thread gate holds the contract.
 
 The table is applied only where the shared classifier measured a class, which it says on its own answer. It needs both endpoints present in the checkout, an ancestor they share, a readable generated-file inventory at the base end, and the `orch` skill beside `harness-ci` for its `references/narrow-change.conf` list and its `scripts/lib/branch-growth.sh` measurer. Missing any of those, the classifier falls back to `standard` and marks the answer unmeasured, and `review-policy` exits 2 naming the reason rather than apply a row to a class nothing earned. Fix what the reason names, then ask again.
 

@@ -137,7 +137,7 @@ def parse(raw, where):
         )
     data = {name: _table(raw, name, schema, f"{where} [bot-instructions.{name}]") for name, schema in KEYS.items()}
     data["exclusions"]["path"] = _exclusions(raw.get("exclusions", {}), where)
-    data["surface"] = _surfaces(raw.get("surface", []), where)
+    data["surface"] = surfaces(raw.get("surface", []), f"{where} [[bot-instructions.surface]]")
     data["doctrine"] = _doctrine(raw.get("doctrine", {}), where)
     _cadence(data["cadence"], where)
     _budgets(data["budgets"], where)
@@ -218,13 +218,17 @@ def _exclusions(table, where):
     return out
 
 
-def _surfaces(entries, where):
+def surfaces(entries, where):
+    """Judge a surface list: the manifest's own, and the spec copy's defaults.
+
+    `where` names the list, so a refusal points at the file that holds it.
+    """
     if not isinstance(entries, list):
-        raise InputError(f"{where} [[bot-instructions.surface]]: expected an array of tables")
+        raise InputError(f"{where}: expected an array of tables")
     out = []
     seen = set()
     for i, entry in enumerate(entries):
-        w = f"{where} [[bot-instructions.surface]][{i}]"
+        w = f"{where}[{i}]"
         if not isinstance(entry, dict):
             raise InputError(f"{w}: expected a table")
         s = _table({"e": entry}, "e", SURFACE_KEYS, w)

@@ -182,7 +182,7 @@ def qodo_best_practices(ctx, out):
     lines = len(text.splitlines())
     if lines > budget:
         worst = sorted(
-            ((s["name"], len(s["instructions"].splitlines())) for s in ctx.config.surfaces),
+            ((s["name"], len(s["instructions"].splitlines())) for s in ctx.model.surfaces),
             key=lambda p: -p[1],
         )
         top = "; ".join(f"{n}: {c}" for n, c in worst[:5])

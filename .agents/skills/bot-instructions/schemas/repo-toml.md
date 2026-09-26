@@ -207,7 +207,7 @@ A reason is required because an exclusion with no stated reason is indistinguish
 
 ### `[[bot-instructions.surface]]`
 
-A path set plus what a reviewer needs to know about it. Zero or more.
+A path set plus what a reviewer needs to know about it. Zero or more. Every render appends the spec copy's default surfaces, `SKILL.md` § Default surfaces, which are judged by this table's keys and refusals; a `name` one of them holds is refused here, because the two would render to one file.
 
 | Key | Type | Required | Meaning |
 |-----|------|----------|---------|

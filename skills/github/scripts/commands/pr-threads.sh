@@ -33,9 +33,15 @@ Output (safe format):
     "path": "src/file.rs",
     "line": 42,
     "author": "reviewer",
+    "author_type": "User",
     "body": "First comment text"
   }]
 }
+
+author and author_type describe the first comment's author. author_type is
+GitHub's actor type: Bot for an app such as Copilot's reviewer, whose login
+carries no [bot] suffix here, User for a person, and empty where GitHub names
+no author.
 
 Examples:
   pr-threads.sh 23
@@ -120,7 +126,7 @@ get_pr_threads() {
                           isOutdated
                           path
                           line
-                          comments(first: 1) { nodes { author { login } body } }') || exit 1
+                          comments(first: 1) { nodes { author { login __typename } body } }') || exit 1
 
     local result
     # The complete multi-page result can be large; wrap stdin rather than
@@ -171,6 +177,7 @@ get_pr_threads() {
                     path: (.path // ""),
                     line: (.line // null),
                     author: (.comments.nodes[0].author.login // ""),
+                    author_type: (.comments.nodes[0].author.__typename // ""),
                     body: (.comments.nodes[0].body // "")
                 }]
             }'

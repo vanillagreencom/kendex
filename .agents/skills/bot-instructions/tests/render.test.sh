@@ -97,6 +97,47 @@ for path in .coderabbit.yaml .pr_agent.toml best_practices.md REVIEW.md \
   [ -f "$repo/$path" ] && ok "wrote $path" || bad "wrote $path"
 done
 
+# The package's default surfaces reach every route a repo surface reaches,
+# though the canonical TOML declares none of them. The expected set is read
+# off the spec copy, floored at one and required to hold `docs-plans`, so an
+# emptied section fails as a broken fixture rather than passing as no work.
+if python3 -B - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PY'; then
+from pathlib import Path
+import sys
+sys.path.insert(0, sys.argv[1] + "/scripts")
+from lib import spec, tree
+defaults = spec.load(tree.Worktree(sys.argv[1]), "SKILL.md", "schemas/renders.md").surfaces
+names = [d["name"] for d in defaults]
+assert "docs-plans" in names, f"the spec copy's default surfaces lost docs-plans: {names}"
+repo = Path(sys.argv[2])
+for d in defaults:
+    copilot = (repo / f".github/instructions/{d['name']}.instructions.md").read_text()
+    assert f'applyTo: "{",".join(d["globs"])}"' in copilot.split("---")[1], copilot
+    assert d["instructions"].strip().split("\n")[0] in copilot, copilot
+    assert (repo / f".macroscope/correctness/{d['name']}.md").is_file(), d["name"]
+    assert f"\n## {d['name']}\n" in (repo / "best_practices.md").read_text(), d["name"]
+    assert d["globs"][0] in (repo / ".coderabbit.yaml").read_text(), d["name"]
+PY
+  ok "every default surface renders on every surface route with no manifest entry"
+else
+  bad "every default surface renders on every surface route with no manifest entry"
+fi
+
+# A repo surface cannot take a default's name: the two would render to one
+# file, and only the later write would survive.
+taken="$(bi_new_repo default-name-taken)" || exit 1
+cat >>"$taken/kendex.toml" <<'TOML'
+
+[[bot-instructions.surface]]
+name = "docs-plans"
+globs = ["docs/**"]
+instructions = """
+A repo's own plan rules.
+"""
+TOML
+expect_clause toml-schema "renders in every repo" \
+  "a repo surface taking a default surface's name is refused" render --dry-run --repo "$taken"
+
 # One title. A consumer that lints every tracked markdown file rejects a
 # second level-one heading, and Copilot reads the levels below all the same.
 for f in .github/copilot-instructions.md .github/instructions/code-review.md; do

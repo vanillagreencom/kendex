@@ -125,7 +125,7 @@ def copilot_instructions(model):
     out.append("")
     out.append(POINTER.format(path=model.code_review_path))
     out.append("")
-    if model.config.surfaces:
+    if model.surfaces:
         out.append("## Path rules")
         out.append("")
         out.append(PATH_RULES)
@@ -165,7 +165,7 @@ def review_md(model):
 def best_practices(model):
     """Surface text's only route to Qodo. No doctrine: `.pr_agent.toml` has it."""
     out = [model.marker("html"), ""]
-    for surface in model.config.surfaces:
+    for surface in model.surfaces:
         out.append(f"## {surface['name']}")
         out.append("")
         out.append("Applies to " + ", ".join(surface["globs"]) + ".")
