@@ -121,6 +121,31 @@ supp_carries "the carried detail names the file:line list" "$SUPP_FIRST" "$LAST_
 supp_carry_case identical '[]' \
   "an identical-tree carry brings the block with it"
 
+# A carry the openers stage finds late still brings its base's findings. The
+# newest candidate decides the carry walk, and a bodyless review that opened a
+# thread becomes a candidate only once the review-comment listing is read, so
+# here the first walk stops at Z, whose code delta refuses, and the second
+# walk carries at W, where an earlier review body declares findings.
+SUPP_W='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+SUPP_Z='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_MIN_STATE=any
+CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+CFG_CARRY=docs
+CFG_CARRY_EXCLUDE=""
+reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$SUPP_W" "$(supp_body '### Suppressed comments (2)' "$SUPP_ENTRIES")" 1)" \
+  "$(review human COMMENTED "2026-08-02T19:00:00Z" "$SUPP_Z" "Looks fine." 2)" \
+  "$(review human2 COMMENTED "2026-08-02T20:00:00Z" "$SUPP_W" "" 3)"
+jq -n --argjson c "$(review_comment 3)" '[$c]' >"$fixtures/review-comments.json"
+compare_fix ahead "[$(delta_file "src/thing.sh" modified '@@ -1 +1 @@
+-do_the_thing
++do_the_other_thing')]"
+mv "$fixtures/compare.json" "$fixtures/compare-$SUPP_Z.json"
+compare_fix ahead "[$SUPP_DOCS_DELTA]"
+mv "$fixtures/compare.json" "$fixtures/compare-$SUPP_W.json"
+run "a carry the openers stage finds late still brings its base's block" suppressed-findings
+
 # The control: with carry off, the same ancestor row is not evidence at all,
 # so the gate answers awaiting and the rows above are proving carry, not the
 # ancestor row's mere presence.

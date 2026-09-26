@@ -16,7 +16,9 @@
 # workflow-runs.json. A
 # repos/OWNER/NAME/... read is served from the directory
 # repos/OWNER/NAME/ under the fixtures when that directory exists, so one
-# world can hold several repositories.
+# world can hold several repositories. A compare read is served from
+# compare-<base>.json when that file exists, so a case can give each carry
+# candidate its own delta, and from compare.json otherwise.
 # Every read's URL is appended to .urls.log so a case can pin read shapes.
 # A write (`gh api -X METHOD` other than GET, or `gh secret set`) reads no
 # fixture: it appends one line to .writes.log, `METHOD URL BODY` or
@@ -181,6 +183,11 @@ if [ -n "${GH_SHIM_EMPTY:-}" ] && [ "$GH_SHIM_EMPTY" = "$name" ]; then
   exit 0
 fi
 file="$fixtures/$name.json"
+if [ "$name" = "compare" ]; then
+  compare_base="${url#*/compare/}"
+  compare_base="${compare_base%%...*}"
+  [ ! -f "$fixtures/compare-$compare_base.json" ] || file="$fixtures/compare-$compare_base.json"
+fi
 if [ "$name" = "graphql" ] && [ -n "$graphql_after" ] && [ -f "$fixtures/graphql.cursor-$graphql_after.json" ]; then
   # Cursor-keyed page: the fixture named by the requested cursor wins, so a
   # case can lay out a distinct advancing page per cursor and walk the full
