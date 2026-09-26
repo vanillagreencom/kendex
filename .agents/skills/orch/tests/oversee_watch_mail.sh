@@ -270,35 +270,131 @@ out="$(run_watch LINEAR_TEAM -- --max-loops 1 --since 2026-01-01T00:00:00Z 2>"$e
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-01-01T00:00:00Z" \
   "a watch for another fleet's --since does not report the note again" "$err"
 
-# The overseer answers an owner note in its own mailbox, and that reply is no
-# note of the owner's: the watch acknowledges it and reports nothing, and still
-# reports the owner note behind it in the same pass. `sent` is the reply
-# lane-mail stamps `overseer`; `owner-answer` is an answer carrying `owner`,
-# which the owner never writes.
+# An answer in the overseer's own mailbox carrying `owner` and no `by` is
+# nobody's: the owner answers nothing, and lane-mail refuses a send with --re
+# into this mailbox as resolve-required. The watch acknowledges it and reports
+# nothing, and still reports the owner note behind it in the same pass.
 new_case mail_overseer_reply
-printf 'Held.\n' > "$TMP_ROOT/reply.txt"
 printf 'Hold KEN-8 too.\n' > "$TMP_ROOT/after-reply.txt"
-overseer_reply() { # sent|owner-answer -> the reply's id, then the note's after it
+overseer_reply() { # -> the answer's id, then the note's after it
   mail_reset overseer
-  case "$1" in
-    sent)
-      (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item overseer --re some-note --file "$TMP_ROOT/reply.txt") >/dev/null
-      ;;
-    owner-answer)
-      jq -nc '{id: "1-1-reply", kind: "answer", at: "2026-01-01T00:00:00Z", from: "owner", re: "some-note", text: "Held."}' \
-        >> "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
-      ;;
-  esac
+  jq -nc '{id: "1-1-reply", kind: "answer", at: "2026-01-01T00:00:00Z", from: "owner", re: "some-note", text: "Held."}' \
+    >> "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
   (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item overseer --directive --file "$TMP_ROOT/after-reply.txt") >/dev/null
   jq -rs 'map(.id) | join(" ")' "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
 }
-for name in sent owner-answer; do
-  ids="$(overseer_reply "$name")"
-  err="$TMP_ROOT/reply-$name"
-  out="$(run_watch -- --max-loops 1 2>"$err")"
-  assert_eq "$(head -1 <<<"$out")" "EVENT owner-note ${ids#* }" \
-    "the overseer's own $name reply is never reported to it, and the note after it is" "$err"
-done
+ids="$(overseer_reply)"
+err="$TMP_ROOT/reply"
+out="$(run_watch -- --max-loops 1 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "EVENT owner-note ${ids#* }" \
+  "an answer carrying owner and no by is never reported, and the note after it is" "$err"
+
+# The class's absent-`from` arm: a directive naming no sender is the owner's,
+# never a peer's with an empty repository.
+new_case mail_owner_note_fromless
+mail_reset overseer
+jq -nc '{id: "1-1-fromless", kind: "directive", at: "2026-01-01T00:00:00Z", text: "Hold KEN-9."}' \
+  >> "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
+err="$TMP_ROOT/fromless"
+out="$(run_watch -- --max-loops 1 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "EVENT owner-note 1-1-fromless" \
+  "a directive with no from is reported as an owner note" "$err"
+
+# owner_ask TEXT RECOMMEND WAIT — an owner ask from the overseer's own
+# checkout, its id in ASK.
+owner_ask() {
+  printf '%s\n' "$1" > "$TMP_ROOT/ask.txt"
+  ASK="$(cd "$CASE_REPO_ROOT" && "$LANE_MAIL" ask --item overseer --to owner --options cut,keep \
+    --recommend "$2" --wait "$3" --file "$TMP_ROOT/ask.txt")"
+  ASK="${ASK#id=}"
+}
+owner_pending() { (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" pending --item overseer --to owner | jq -r '.id'); }
+
+# The owner's answer, resolved by a relay, reaches the overseer as the ask's
+# closing, named by the ask and not by the answer's own id.
+new_case mail_owner_ask_text
+mail_reset overseer
+owner_ask 'Cut the scanner?' cut 120
+printf 'keep it\n' > "$TMP_ROOT/answer.txt"
+(cd "$CASE_REPO_ROOT" && "$LANE_MAIL" resolve --item overseer --id "$ASK" --text "$TMP_ROOT/answer.txt" >/dev/null)
+err="$TMP_ROOT/ask-text-a"
+out="$(run_watch -- --max-loops 1 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "EVENT owner-ask-resolved $ASK by=text" \
+  "an owner's answer emits owner-ask-resolved naming the ask, by text" "$err"
+assert_contains "$out" "  keep it" "the ruling's text follows its event line" "$err"
+err="$TMP_ROOT/ask-text-b"
+out="$(run_watch -- --max-loops 1 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" "the resolution is not reported twice" "$err"
+
+# At the deadline the watch itself resolves the ask to its recommendation,
+# before it reads the mailbox, so the same pass reports the ruling it made.
+new_case mail_owner_ask_deadline
+mail_reset overseer
+owner_ask 'Cut the scanner?' cut 0
+DUE="$ASK"
+owner_ask 'And the lexer?' keep 120
+LATER="$ASK"
+err="$TMP_ROOT/ask-due-a"
+out="$(run_watch -- --max-loops 1 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "EVENT owner-ask-resolved $DUE by=default" \
+  "an ask past its deadline is resolved by the watch and reported by default" "$err"
+assert_contains "$out" "  cut" "the recommendation is the ruling's text" "$err"
+assert_eq "$(owner_pending | paste -sd, -)" "$LATER" \
+  "the ask past its deadline is closed and the one still waiting stands" "$err"
+err="$TMP_ROOT/ask-due-b"
+out="$(run_watch -- --max-loops 1 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" "a resolved deadline is not reported again" "$err"
+
+# The deadline step's three refusal arms, driven through a lane-mail wrapper
+# that answers one call by the arm STUB_DIR/ask-arm names and hands every
+# other call to the real script: the due listing failing, a resolve refused
+# resolved-already, which is the owner's answer landing first and no failure,
+# and a resolve refused for any other cause. The mailbox is read in the same
+# pass whatever the step did, so the owner note behind it is still reported.
+mkdir -p "$TMP_ROOT/bin"
+cat > "$TMP_ROOT/bin/lane-mail-ask-arm.sh" <<'EOF'
+#!/usr/bin/env bash
+arm="$(cat "$STUB_DIR/ask-arm")"
+case "$arm:$1:$2:$3:$4:$5:$6" in
+  due-fail:pending:--item:overseer:--to:owner:--due)
+    printf 'lane-mail: lock-failed=/srv/box\nThe refusal.\n' >&2; exit 2 ;;
+  resolved-already:resolve:--item:overseer:--id:*:--default)
+    printf 'lane-mail: resolved-already=%s id=x\nThe refusal.\n' "$5" >&2; exit 2 ;;
+  write-failed:resolve:--item:overseer:--id:*:--default)
+    printf 'lane-mail: write-failed=/srv/box/to-lane.jsonl\nThe refusal.\n' >&2; exit 2 ;;
+esac
+exec "$REAL_LANE_MAIL" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/lane-mail-ask-arm.sh"
+printf 'Hold KEN-8.\n' > "$TMP_ROOT/arm-note.txt"
+ask_arm() { # ARM -> ARM_RC, ARM_OUT, ARM_ERR, ARM_ASK, ARM_NOTE
+  mail_reset overseer
+  owner_ask 'Cut the scanner?' cut 0
+  ARM_ASK="$ASK"
+  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item overseer --directive --file "$TMP_ROOT/arm-note.txt") >/dev/null
+  ARM_NOTE="$(jq -r 'select(.kind == "directive") | .id' "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")"
+  printf '%s' "$1" > "$STUB_DIR/ask-arm"
+  ARM_ERR="$TMP_ROOT/ask-arm-$1"
+  ARM_RC=0
+  ARM_OUT="$(run_watch OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-ask-arm.sh" \
+    REAL_LANE_MAIL="$LANE_MAIL" -- --max-loops 1 2>"$ARM_ERR")" || ARM_RC=$?
+}
+arm_facts() { printf 'rc=%s due-unread=%s resolve-failed=%s first=%s' "$ARM_RC" \
+  "$(grep -c '^oversee-watch: ask-due-unread exit=2' "$ARM_ERR" || :)" \
+  "$(grep -c "^oversee-watch: ask-resolve-failed id=$ARM_ASK exit=2" "$ARM_ERR" || :)" \
+  "$(head -1 <<<"$ARM_OUT")"; }
+new_case mail_owner_ask_due_unread
+ask_arm due-fail
+assert_eq "$(arm_facts)" "rc=2 due-unread=1 resolve-failed=0 first=EVENT owner-note $ARM_NOTE" \
+  "a due listing that fails is reported once and fails the pass, and the mailbox is still read in that pass" "$ARM_ERR"
+new_case mail_owner_ask_resolved_race
+ask_arm resolved-already
+assert_eq "$(arm_facts)" "rc=0 due-unread=0 resolve-failed=0 first=EVENT owner-note $ARM_NOTE" \
+  "a resolve refused resolved-already is the owner's answer landing first: no failure, and the pass goes on" "$ARM_ERR"
+new_case mail_owner_ask_resolve_failed
+ask_arm write-failed
+assert_eq "$(arm_facts)" "rc=2 due-unread=0 resolve-failed=1 first=EVENT owner-note $ARM_NOTE" \
+  "a resolve refused for any other cause is reported once, naming the ask, and fails the pass" "$ARM_ERR"
 
 # One mailbox, two checkouts. lane-mail resolves the overseer mailbox to the
 # main checkout from a linked worktree as well, and every fleet lane runs in

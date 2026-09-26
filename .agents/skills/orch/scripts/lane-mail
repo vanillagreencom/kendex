@@ -14,6 +14,9 @@
 # of one envelope to one item inside a minute is refused before the append
 # rather than delivered a second time. The Receipt section of usage() owns
 # what counts as a repeat, and nothing here restates it.
+# An owner ask in the overseer mailbox is closed by `resolve` alone, exactly
+# once, under the same lock the append takes, and a send carrying a delivery
+# id lands once under that lock too; usage() § Owner channel owns both rules.
 # Text crosses a file, never argv (orch SKILL.md § Harness-Safe Shell).
 # Bash 3.2-safe: tools/bash32-lint scans this directory.
 
@@ -25,7 +28,8 @@ NL='
 usage() {
   cat <<'USAGE'
 Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
-       lane-mail send|drain|pending --item ITEM [--root ROOT] [--host] [options]
+       lane-mail send|drain|pending|events --item ITEM [--root ROOT] [--host] [options]
+       lane-mail resolve --item overseer --id MSGID (--text PATH | --default) [options]
        lane-mail peer ask|send --repo REPO [--host] [options]
 
 The lane-to-overseer channel. Harness-agnostic, tmux-free, and reachable
@@ -89,16 +93,70 @@ Overseer side:
               receipt: a directive on a line at or below N is one the lane
               has read. A directive whose id is outside the item alphabet is
               not listed
-  pending --item ITEM
+  pending --item ITEM [--to owner|peer] [--due]
               print every to-overseer.jsonl ask with no answer: for a lane
               item, what a restarted overseer owes a reply; for `--item
-              overseer`, the asks this overseer SENT a peer that the peer has
-              not answered. Then every to-lane.jsonl directive past
+              overseer`, the asks this overseer SENT the owner or a peer that
+              nobody has answered. Then every to-lane.jsonl directive past
               to-lane.cursor: sent and not yet read. A peer's inbound ask
               lands in to-lane.jsonl and is read by `inbox`, so `pending`
               never lists it. A cursor read `drain --receipts` would report
               `missed` is refused `mail-read-failed=<item> cursor=missed`
-              and prints nothing
+              and prints nothing. --to keeps the asks whose `to` field
+              names that audience and prints no directive, so the report's
+              "Waiting on you" and the owner relay read one field and
+              never infer the audience; --due keeps the asks whose deadline
+              has passed by this clock, the ones the watch resolves. Either
+              reads no cursor, since no directive is printed, so a cursor
+              read that missed refuses neither
+  events --item ITEM
+              print every envelope of both files, to-overseer.jsonl then
+              to-lane.jsonl, each with `box` naming the file it came from,
+              answered asks and their answers included. Moves no cursor and
+              marks nothing: a relay keeps its own record of what it carried
+
+Owner channel, the overseer's own mailbox from any of its checkouts:
+  ask --item overseer --to owner --file PATH [--options a,b]
+              [--recommend a] [--wait MINUTES]
+              a question for the owner, appended to to-overseer.jsonl with
+              `to` as a field. --recommend names the option that stands
+              where nobody answers, one of --options, and gives the ask its
+              deadline: --wait minutes from now, ORCH_ASK_WAIT_MINUTES
+              (default 120) when --wait is not given. An ask with no
+              --recommend has no deadline and waits for its answer, and one
+              with no --options waits for free text
+  notice --item overseer --to owner --file PATH [--ref MSGID] [--attach PATH]
+              a note for the owner. --ref names the envelope it answers,
+              an owner note in to-lane.jsonl, one the owner wrote and not a
+              peer's line or a resolution, or an owner ask in
+              to-overseer.jsonl whose ruling it reports, so a relay puts the
+              reply where the note or the question was written. --attach
+              names a file the relay carries beside the text: a regular
+              file, not itself a symlink, whose directory resolves
+              physically to the progress-report directory workflow-state
+              names, recorded at that physical path; refused
+              `attach-outside` otherwise
+  resolve --item overseer --id MSGID (--text PATH | --default) [--delivery-id KEY]
+              the one operation that closes an owner ask: under the mailbox
+              lock it appends to to-lane.jsonl the `answer` envelope whose
+              `re` is MSGID, --text carrying the owner's words and `by=text`,
+              --default the ask's own recommendation and `by=default`.
+              Prints `lane-mail: resolved id=<MSGID> by=<by> answer=<id>`.
+              A second resolution is refused `resolved-already` naming the
+              answer already there, unless it carries the --delivery-id that
+              answer landed under: then the same line prints again and
+              nothing is appended, so a relay that crashed between resolving
+              and its own mark repeats the call and lands nothing twice.
+              An id naming no owner ask is `ask-unknown`; --default on an ask
+              with no recommendation is `recommend-missing`
+  send --item ITEM ... --delivery-id KEY
+              a send whose envelope carries KEY, the sender's own name for
+              this delivery. Under the mailbox lock a KEY the file already
+              holds refuses the send as `delivery-repeated=<KEY> id=<id>`,
+              naming the envelope that landed, so a retry after a crash
+              between the append and the sender's mark lands nothing twice.
+              Local only: a hosted append passes through a provider that
+              judges no key
 
 Peer side, one other repository's overseer mailbox per call:
   peer ask --repo REPO --file PATH [--options a,b]
@@ -141,6 +199,18 @@ Options:
   --ack N       inbox only: the count a --peek printed, acknowledged once its
                 envelopes were handed over
   --halt        send only: a directive that halts the lane, as above
+  --to WHO      `owner` or `peer`: the audience field of an overseer ask or
+                notice, which a peer ask writes as `peer` itself, and the
+                filter `pending` keeps
+  --ref MSGID   notice --to owner only: the owner note or owner ask answered
+  --attach PATH notice --to owner only: the file carried beside the text
+  --recommend a ask --to owner only: the option that stands by default
+  --wait N      ask --to owner only: minutes until that default stands
+  --due         pending only: asks whose deadline has passed
+  --text PATH   resolve only: the owner's answer, read as --file is
+  --default     resolve only: the ask's recommendation is the answer
+  --delivery-id KEY
+                send and resolve only: the sender's name for this delivery
   --timeout S   seconds before `wait` exits 124; 0 never times out
   --interval S  seconds between `wait` and `watch` polls (default 5)
 
@@ -151,12 +221,14 @@ file opening with another id is a replacement mailbox, not the one counted.
 
 Envelope, one JSON object per line: id, kind, at, from, re (answers only),
 halt (true on a directive sent with --halt), text and options (asks with
-choices). kind is ask, notice, answer or directive; at is UTC; id is
-<epoch>-<pid>-<random>. from is the sender, read from its own checkout and
-never from an option: a lane verb writes the item, a note sent into the
-overseer's own mailbox writes `owner`, an answer sent there with --re writes
-`overseer`, the overseer's reply to that note, and everything else an overseer
-sends writes `overseer:<repository>`. The repository is the `[marketplace]` name in the
+choices), and the owner-channel fields each verb above writes: to, ref,
+attach, recommend, wait, deadline (UTC, at plus wait minutes), delivery_id
+and by (`text` or `default`, on an answer `resolve` wrote). kind is ask,
+notice, answer or directive; at is UTC; id is <epoch>-<pid>-<random>. from
+is the sender, read from its own checkout and never from an option: a lane
+verb writes the item, a send into the overseer's own mailbox and a `resolve
+--text` write `owner`, and everything else an overseer sends, a `resolve
+--default` included, writes `overseer:<repository>`. The repository is the `[marketplace]` name in the
 caller's kendex.toml, else the last segment of its origin URL, else the
 checkout's own directory name.
 
@@ -173,7 +245,8 @@ its receipt always names item `overseer` rather than the repository it reached.
 Silence is not a success: a send that printed no receipt appended nothing.
 
 A send repeating an envelope the mailbox already holds is a retry of a delivery
-that landed, not a second message. What is compared is the envelope whole,
+that landed, not a second message. A send carrying --delivery-id is judged by
+that key alone, under the lock, and never by this window. What is compared is the envelope whole,
 every field of it but the id it is minted with and the stamp, which the window
 judges instead, against a line already in the mailbox stamped within the minute
 before this send. Any one field differing makes a message of its own, so the
@@ -203,12 +276,17 @@ outside the alphabet, a lock, a write or a host that failed; 69
 cap, passed through; 124 `wait` reached --timeout with no answer. Refusal
 keys, first line `lane-mail: <key>=<value>`: verb-invalid, option-unknown,
 option-conflict, missing-value, option-required, item-invalid, after-invalid,
-seconds-invalid, command-missing, file-unreadable, root-unresolved,
-repo-unresolved, repo-self, lane-foreign, mailbox-unsafe, cursor-invalid,
-duplicate, lock-failed, write-failed, host-append, host-unreachable,
-mail-read-failed, lane-host-busy, timeout, item-case-variant, mailbox-missing. `duplicate` is the one key whose value follows ` id=`
-rather than `=`, so it names the earlier envelope through the same field the
-receipt above prints.
+seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown,
+recommend-invalid, recommend-missing, attach-outside, ask-unknown,
+resolve-required, resolved-already, delivery-repeated, overseer-only,
+command-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
+lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
+write-failed, host-append, host-unreachable, mail-read-failed, lane-host-busy,
+timeout, item-case-variant, mailbox-missing. `duplicate` is the one key whose
+value follows ` id=` rather than `=`, so it names the earlier envelope through
+the same field the receipt above prints; `resolved-already` and
+`delivery-repeated` close their own value with ` id=<id>` naming the envelope
+already there.
 
 One mailbox per lane, named exactly as `--item` spells it. A verb that would
 open a second directory under the same root differing from ITEM only in case is
@@ -282,6 +360,18 @@ lm_message() { # KEY VALUE
     timeout) text='No answer to this ask arrived before --timeout.' ;;
     mail) text='Overseer mail landed in this lane mailbox. Run the command below and act on every directive it prints.' ;;
     mailbox-missing) text='The mailbox directory is not there, so no watch of it can wake the lane. Run the watch from the lane worktree, or with --root naming it, for the item its launch created.' ;;
+    minutes-invalid) text='The option, or ORCH_ASK_WAIT_MINUTES, takes a non-negative integer number of minutes.' ;;
+    to-invalid) text='--to takes owner or peer. A peer ask is `peer ask --repo`, which writes peer itself, so an ask or notice typed here takes owner.' ;;
+    ref-invalid) text='--ref takes the id of an envelope: ASCII letters, digits, dot, underscore and hyphen.' ;;
+    ref-unknown) text='No owner note in to-lane.jsonl and no owner ask in to-overseer.jsonl carries that id, so nothing here can be answered by it; a line a peer overseer sent and a resolution there are neither. Read the note or the ask again and pass the id it carries.' ;;
+    recommend-invalid) text='--recommend names one of the choices --options lists, and an ask with no choices has nothing to recommend.' ;;
+    recommend-missing) text='The ask carries no recommendation, so no default can stand for it: answer it with --text.' ;;
+    attach-outside) text='An attachment is a regular file, not itself a symlink, whose directory resolves physically to the progress-report directory, and it is recorded at that physical path. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
+    ask-unknown) text='No unanswered-or-answered owner ask in the overseer mailbox carries that id. resolve closes asks sent with --to owner and nothing else.' ;;
+    resolve-required) text='An ask in the overseer mailbox is closed by `lane-mail resolve` alone, exactly once, so nothing is sent into it with --re. Run resolve --item overseer --id MSGID --text PATH; a reply owed to an owner note is `notice --item overseer --to owner --ref MSGID`.' ;;
+    resolved-already) text='This ask is already resolved by the answer named above, and an ask resolves exactly once. Deliver later text for it as a directive with `send --item overseer --directive`.' ;;
+    delivery-repeated) text='An envelope carrying this delivery id already stands in the mailbox, named by id= above: this send is a retry of a delivery that landed, so nothing is appended. Record that id against the delivery and go on.' ;;
+    overseer-only) text='resolve closes an owner ask in the overseer mailbox alone. A lane ask is answered with `send --item ITEM --re MSGID`.' ;;
     duplicate) sep=' id='; text='This envelope was sent to this item less than a minute ago: every field of it but its own id and its stamp matches the envelope the id above names, so the send is a retry of a delivery that already landed rather than a second message. Change any field of the message, or wait out the minute, to send it again.' ;;
     *) printf 'lane-mail: message-invalid key=%s\n' "$1" >&2; return 2 ;;
   esac
@@ -310,7 +400,7 @@ if [ "$VERB" = peer ]; then
   esac
 fi
 case "$VERB" in
-  ask | notice | wait | inbox | watch | send | drain | pending | peer) ;;
+  ask | notice | wait | inbox | watch | send | drain | pending | events | resolve | peer) ;;
   *) refuse verb-invalid "$VERB" ;;
 esac
 
@@ -330,6 +420,15 @@ HALT=0
 PEEK=0
 ACK=""
 RECEIPTS=0
+TO=""
+REF=""
+ATTACH=""
+RECOMMEND=""
+WAIT=""
+WAIT_GIVEN=0
+DUE=0
+DEFAULT=0
+DELIVERY_ID=""
 
 need_val() { [ "$#" -ge 2 ] && [ -n "${2:-}" ] || refuse missing-value "$1"; }
 
@@ -354,6 +453,15 @@ while [ "$#" -gt 0 ]; do
     --peek) PEEK=1; shift ;;
     --receipts) RECEIPTS=1; shift ;;
     --ack) need_val "$@"; ACK="$2"; shift 2 ;;
+    --to) need_val "$@"; TO="$2"; shift 2 ;;
+    --ref) need_val "$@"; REF="$2"; shift 2 ;;
+    --attach) need_val "$@"; ATTACH="$2"; shift 2 ;;
+    --recommend) need_val "$@"; RECOMMEND="$2"; shift 2 ;;
+    --wait) need_val "$@"; WAIT="$2"; WAIT_GIVEN=1; shift 2 ;;
+    --due) DUE=1; shift ;;
+    --text) need_val "$@"; FILE="$2"; shift 2 ;;
+    --default) DEFAULT=1; shift ;;
+    --delivery-id) need_val "$@"; DELIVERY_ID="$2"; shift 2 ;;
     --help | -h) usage; exit 0 ;;
     *) refuse option-unknown "$1" ;;
   esac
@@ -377,9 +485,34 @@ if [ "$VERB" = peer ]; then
     esac
   done
   ITEM=overseer
+  # A peer ask is addressed by the verb: the record it leaves carries the
+  # audience field pending filters on, written here and never typed.
+  [ "$PEER_VERB" != ask ] || TO=peer
 elif [ -n "$REPO" ]; then
   refuse option-unknown --repo
 fi
+
+# The owner-channel options belong to the overseer mailbox, and each to one
+# verb of it; typed anywhere else they are refused rather than dropped, as
+# --options on a notice is, so no caller is told a field landed that never
+# did. --to is the one that reaches two verbs, and a value outside the two
+# audiences is a field nothing reads.
+for given in $OPTS_GIVEN; do
+  case "$given" in
+    --to)
+      case "$TO" in owner | peer) ;; *) refuse to-invalid "$TO" ;; esac
+      case "$VERB:$ITEM:$TO" in
+        ask:overseer:owner | notice:overseer:owner | pending:*:*) ;;
+        ask:overseer:peer | notice:overseer:peer) refuse to-invalid "$TO" ;;
+        *) refuse option-unknown --to ;;
+      esac ;;
+    --ref | --attach) [ "$VERB:$ITEM" = notice:overseer ] || refuse option-unknown "$given" ;;
+    --recommend | --wait) [ "$VERB:$ITEM" = ask:overseer ] || refuse option-unknown "$given" ;;
+    --due) [ "$VERB" = pending ] || refuse option-unknown --due ;;
+    --text | --default) [ "$VERB" = resolve ] || refuse option-unknown "$given" ;;
+    --delivery-id) case "$VERB" in send | resolve) ;; *) refuse option-unknown --delivery-id ;; esac ;;
+  esac
+done
 
 # Judged before it reaches a path: a `/`, a NUL or a dotted name would
 # otherwise select a directory of the caller's choosing.
@@ -478,12 +611,10 @@ lm_repository() {
 # reply to one, since the owner answers nothing, and every other overseer write
 # carries the repository it was sent from.
 FROM=""
-case "$VERB:$ITEM" in
+case "$VERB:$ITEM:$DEFAULT" in
   ask:* | notice:*) FROM="$ITEM" ;;
-  send:overseer)
-    if [ -n "$MSGID" ]; then FROM=overseer; else FROM=owner; fi
-    ;;
-  send:* | peer:*) FROM="overseer:$(lm_repository)" ;;
+  send:overseer:* | resolve:*:0) FROM=owner ;;
+  send:* | peer:* | resolve:*) FROM="overseer:$(lm_repository)" ;;
 esac
 
 # A lane verb is rooted at its own worktree; the overseer's verbs take --root.
@@ -520,7 +651,7 @@ if [ -z "$ROOT" ]; then
     overseer:*)
       ROOT="$("$SCRIPT_DIR/git-context" common-root . 2>/dev/null)" || ROOT=""
       ;;
-    *:send | *:drain | *:pending)
+    *:send | *:drain | *:pending | *:events)
       WORKTREE="$SCRIPT_DIR/../../worktree/scripts/worktree"
       if [ -x "$WORKTREE" ]; then
         ROOT="$("$WORKTREE" path "$ITEM" 2>/dev/null)" || ROOT=""
@@ -544,7 +675,7 @@ fi
 # exists to be. A root that resolves to no common root at all is refused with
 # them, so an unreadable checkout is no way in. A hosted send is out of reach:
 # the root is a path on another host.
-if [ "$VERB" = send ] && [ "$HOST" -eq 0 ]; then
+if { [ "$VERB" = send ] || [ "$VERB" = resolve ]; } && [ "$HOST" -eq 0 ]; then
   LANE_ROOT="$("$SCRIPT_DIR/git-context" common-root "$ROOT" 2>/dev/null)" || LANE_ROOT=""
   { [ -n "$LANE_ROOT" ] && [ "$LANE_ROOT" = "$OWN_ROOT" ]; } || refuse lane-foreign "$ROOT"
 fi
@@ -816,39 +947,146 @@ lm_answered() { # DEST
 # Runs in a command substitution: a refusal exits that subshell after writing
 # its keyed line, and errexit carries the status out. jq's words are captured
 # at the site and replayed under the key, never ahead of it.
+# One clock read stamps the id, `at` and the deadline, so the three cannot
+# straddle a second; jq's todate spells the same UTC form `date` did. Every
+# owner-channel field rides the variable its option set and is written only
+# where set, so an envelope with none is byte-for-byte what it was before.
 lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
-  local id at line
-  at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || refuse write-failed "$BOX"
-  id="$(date -u +%s)-$$-$RANDOM"
+  local id now line
+  now="$(date -u +%s)" || refuse write-failed "$BOX"
+  id="$now-$$-$RANDOM"
   printf '%s\n' "$id" >"$WORK_DIR/id" || refuse write-failed "$WORK_DIR/id"
-  line="$(jq -cn --arg id "$id" --arg kind "$1" --arg at "$at" --arg re "${2:-}" \
+  line="$(jq -cn --arg id "$id" --arg kind "$1" --argjson now "$now" --arg re "${2:-}" \
     --arg from "$FROM" --arg halt "$HALT" --arg options "$OPTIONS" \
+    --arg to "$TO" --arg ref "$REF" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
+    --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg by "$BY" \
     --rawfile text "$FILE" '
-      {id: $id, kind: $kind, at: $at, from: $from}
+      {id: $id, kind: $kind, at: ($now | todate), from: $from}
       + (if $re == "" then {} else {re: $re} end)
       + (if $halt == "1" then {halt: true} else {} end)
+      + (if $to == "" then {} else {to: $to} end)
+      + (if $ref == "" then {} else {ref: $ref} end)
+      + (if $attach == "" then {} else {attach: $attach} end)
+      + (if $recommend == "" then {} else {recommend: $recommend} end)
+      + (if $wait == "" then {} else {wait: ($wait | tonumber), deadline: (($now + ($wait | tonumber) * 60) | todate)} end)
+      + (if $delivery == "" then {} else {delivery_id: $delivery} end)
+      + (if $by == "" then {} else {by: $by} end)
       + {text: ($text | sub("\n$"; ""))}
       + (if $options == "" then {} else {options: ($options | split(","))} end)' \
     2>"$WORK_DIR/jq.err")" || refuse file-unreadable "$FILE" "$(cat -- "$WORK_DIR/jq.err")"
   printf '%s\n' "$line"
 }
+BY=""
 
 # Serialized on the file itself; to-overseer.jsonl has many writers, to-lane
 # one. The lock, the created file and the closing of an unterminated last line
 # are `lib/mailbox-append.sh`, the one owner a hosted append obeys too, so the
 # two paths cannot drift apart. The here-string carries the line with the
 # trailing newline a mailbox line ends on.
-lm_append_local() { # FILE LINE
+# GUARD, where given, is the check the library runs under the lock before the
+# append; a guard that refused returns 4 here for the verb to name, with what
+# the guard found in the work directory, and nothing was appended.
+lm_append_local() { # FILE LINE [GUARD]
   local rc=0
   mkdir -p -- "$BOX" || refuse write-failed "$BOX"
   # The library opens the file itself, so a mailbox the lane cannot write is
   # the shell's own message on its stderr. Captured here and replayed under
   # the key, like every other failing command this script runs, so the keyed
   # line stays first and a reader is never met by a library path instead.
-  mailbox_append_locked "$1" 30 <<<"$2" 2>"$WORK_DIR/local.err" || rc=$?
+  mailbox_append_locked "$1" 30 "${3:-}" <<<"$2" 2>"$WORK_DIR/local.err" || rc=$?
   trap lm_cleanup EXIT
+  [ "$rc" -ne 4 ] || return 4
   [ "$rc" -ne 3 ] || refuse lock-failed "$1" "$(cat -- "$WORK_DIR/local.err")"
   [ "$rc" -eq 0 ] || refuse write-failed "$1" "$(cat -- "$WORK_DIR/local.err")"
+}
+
+# The guards the library runs under the lock. Each reads the file the line
+# would join, complete lines only, since the writer holding the lock has
+# closed any fragment, and leaves what it found in the work directory for the
+# verb's refusal to name.
+
+# The envelope already carrying this send's delivery id, its id into
+# WORK_DIR/delivery.earlier; refuses where one stands.
+lm_guard_delivery() { # FILE
+  jq -r -R --arg key "$DELIVERY_ID" '(fromjson? // empty) | objects
+    | select(.delivery_id == $key) | .id | strings' <"$1" >"$WORK_DIR/delivery.earlier" || return 2
+  [ ! -s "$WORK_DIR/delivery.earlier" ]
+}
+
+# The answer already resolving this ask, into WORK_DIR/resolved.earlier as
+# `<id> <by> <delivery_id>`; refuses where one stands.
+lm_guard_resolve() { # FILE
+  jq -r -R --arg re "$MSGID" "$MAILBOX_CLASS_JQ"' (fromjson? // empty) | objects
+    | select(overseer_mail_class == "resolution" and .re == $re)
+    | "\(.id) \(.by) \(.delivery_id // "")"' <"$1" >"$WORK_DIR/resolved.earlier" || return 2
+  [ ! -s "$WORK_DIR/resolved.earlier" ]
+}
+
+# The owner ask in to-overseer.jsonl with that id, into ASK_JSON, read through
+# lm_fetch as every read of this mailbox is: the one judge of what an owner ask
+# is, for the resolve that closes one and the reply that names one. Returns 1
+# with ASK_JSON empty where no such ask stands.
+ASK_JSON=""
+lm_owner_ask_find() { # ID
+  lm_fetch "$TO_OVERSEER" "$WORK_DIR/ask.raw"
+  lm_terminated "$WORK_DIR/ask.raw" "$WORK_DIR/ask.jsonl"
+  if ! ASK_JSON="$(lm_objects "$WORK_DIR/ask.jsonl" |
+    jq -c --arg id "$1" 'select(.kind == "ask" and .to == "owner" and .id == $id)' | awk 'NR == 1')"; then
+    refuse file-unreadable "$TO_OVERSEER"
+  fi
+  [ -n "$ASK_JSON" ]
+}
+
+# The ask ID closes, refused where none stands.
+lm_owner_ask() { # ID
+  lm_owner_ask_find "$1" || refuse ask-unknown "$1"
+}
+
+# The line resolve prints, once per resolution however many times it is asked.
+lm_resolved() { # ASK_ID BY ANSWER_ID
+  printf 'lane-mail: resolved id=%s by=%s answer=%s\n' "$1" "$2" "$3"
+}
+
+# An owner ask's deadline: --wait as given, else ORCH_ASK_WAIT_MINUTES from
+# the kendex settings ladder, else 120. Read only where an ask carries a
+# recommendation, since a deadline stands for the default it hands over, and
+# the ladder is loaded here alone: every other verb runs on the hooks' path
+# and reads no project file.
+lm_wait_minutes() {
+  if [ "$WAIT_GIVEN" -eq 1 ]; then
+    case "$WAIT" in
+      '' | *[!0-9]*) refuse minutes-invalid --wait ;;
+    esac
+    return 0
+  fi
+  # shellcheck source=lib/kendex-env.sh
+  . "$SCRIPT_DIR/lib/kendex-env.sh"
+  kendex_load_project_env "$OWN_ROOT" 2>"$WORK_DIR/env.err" ||
+    refuse file-unreadable "$OWN_ROOT/kendex.settings.toml" "$(cat -- "$WORK_DIR/env.err")"
+  WAIT="${ORCH_ASK_WAIT_MINUTES-120}"
+  case "$WAIT" in
+    '' | *[!0-9]*) refuse minutes-invalid "ORCH_ASK_WAIT_MINUTES=$WAIT" ;;
+  esac
+}
+
+# The attachment, judged where it stands: a regular file, not itself a
+# symlink, whose directory resolves physically to the progress-report
+# directory workflow-state names, which is one rule at the one point the relay
+# would otherwise carry any path it was handed. ATTACH is rewritten to the
+# physical path so the relay opens what was judged.
+lm_attach_confined() {
+  local reports dir base
+  reports="$("$SCRIPT_DIR/workflow-state" progress-report-path 2>"$WORK_DIR/reports.err")" ||
+    refuse attach-outside "$ATTACH" "$(cat -- "$WORK_DIR/reports.err")"
+  reports="$(cd -- "${reports%/*}" 2>/dev/null && pwd -P)" || refuse attach-outside "$ATTACH"
+  { [ ! -L "$ATTACH" ] && [ -f "$ATTACH" ]; } || refuse attach-outside "$ATTACH"
+  case "$ATTACH" in
+    */*) dir="${ATTACH%/*}"; base="${ATTACH##*/}" ;;
+    *) dir=.; base="$ATTACH" ;;
+  esac
+  dir="$(cd -- "$dir" 2>/dev/null && pwd -P)" || refuse attach-outside "$ATTACH"
+  [ "$dir" = "$reports" ] || refuse attach-outside "$ATTACH"
+  ATTACH="$dir/$base"
 }
 
 # The line alone crosses the transport, and the provider adds it under a lock
@@ -932,6 +1170,44 @@ case "$VERB" in
     if [ "$VERB" = notice ] && [ -n "$OPTIONS" ]; then
       refuse option-unknown --options
     fi
+    # The overseer's own ask or notice names its audience, the field the
+    # relay, the report and pending all read; one with none reaches nobody.
+    [ "$ITEM" != overseer ] || [ -n "$TO" ] || refuse option-required --to
+    if [ -n "$RECOMMEND" ]; then
+      [ -n "$OPTIONS" ] || refuse option-required --options
+      # The envelope records --options split on commas, so a value holding a
+      # comma spans two choices and is none of them; without one, a match
+      # between the delimiters is exactly one of those choices.
+      case "$RECOMMEND" in
+        *,*) refuse recommend-invalid "$RECOMMEND" ;;
+      esac
+      case ",$OPTIONS," in
+        *",$RECOMMEND,"*) ;;
+        *) refuse recommend-invalid "$RECOMMEND" ;;
+      esac
+      lm_wait_minutes
+    elif [ "$WAIT_GIVEN" -eq 1 ]; then
+      # A deadline stands for a default; with none there is nothing to stand.
+      refuse option-required --recommend
+    fi
+    if [ -n "$REF" ]; then
+      case "$REF" in
+        *[!A-Za-z0-9._-]*) refuse ref-invalid "$REF" ;;
+      esac
+      # The envelope answered is an owner note in to-lane.jsonl or an owner
+      # ask in to-overseer.jsonl, the two things the owner reads a reply to;
+      # a notice of this overseer's own, a peer's line and a resolution
+      # answer nothing the owner wrote. The note is judged by the class the
+      # watch reports it under, so a line the watch calls a peer's is never
+      # the owner's here.
+      lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
+      lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
+      lm_objects "$WORK_DIR/lane.jsonl" |
+        jq -e --arg id "$REF" "$MAILBOX_CLASS_JQ"' select(.id == $id and overseer_mail_class == "owner-note")' >/dev/null ||
+        lm_owner_ask_find "$REF" ||
+        refuse ref-unknown "$REF"
+    fi
+    [ -z "$ATTACH" ] || lm_attach_confined
     LINE="$(lm_envelope "$VERB")"
     lm_append_local "$TO_OVERSEER" "$LINE"
     if [ "$VERB" = ask ]; then
@@ -949,6 +1225,12 @@ case "$VERB" in
       refuse option-required --re
     fi
     [ "$HALT" -eq 0 ] || [ "$ITEM" != overseer ] || refuse option-conflict '--item=overseer,--halt'
+    # An owner ask closes through resolve alone, so the overseer mailbox takes
+    # no answer by --re: two routes would be two resolutions.
+    [ -z "$MSGID" ] || [ "$ITEM" != overseer ] || refuse resolve-required "$MSGID"
+    # The delivery-id check runs under the lock on the disk that holds the
+    # file; a provider's append takes no guard, so a hosted send carries none.
+    [ -z "$DELIVERY_ID" ] || [ "$HOST" -eq 0 ] || refuse option-conflict '--host,--delivery-id'
     # The envelope is built first and judged whole; lm_envelope writes the id
     # into the work directory and prints the line, so a refusal below leaves
     # nothing in any mailbox.
@@ -957,14 +1239,70 @@ case "$VERB" in
     else
       LINE="$(lm_envelope answer "$MSGID")"
     fi
-    lm_no_duplicate "$LINE"
+    # A send naming its delivery is judged by that name under the lock and by
+    # nothing else: the minute window is for a sender with no name of its own.
+    [ -n "$DELIVERY_ID" ] || lm_no_duplicate "$LINE"
     lm_receipt_fields "$LINE"
     if [ "$HOST" -eq 1 ]; then
       lm_append_host "$TO_LANE" "$LINE"
+    elif [ -n "$DELIVERY_ID" ]; then
+      lm_append_local "$TO_LANE" "$LINE" lm_guard_delivery || {
+        REFUSE_EXTRA="id=$(cat -- "$WORK_DIR/delivery.earlier")"
+        refuse delivery-repeated "$DELIVERY_ID"
+      }
     else
       lm_append_local "$TO_LANE" "$LINE"
     fi
     lm_sent
+    ;;
+
+  resolve)
+    [ "$ITEM" = overseer ] || refuse overseer-only "$ITEM"
+    [ "$HOST" -eq 0 ] || refuse option-unknown --host
+    [ -n "$MSGID" ] || refuse option-required --id
+    if [ "$DEFAULT" -eq 1 ]; then
+      [ -z "$FILE" ] || refuse option-conflict '--text,--default'
+    else
+      [ -n "$FILE" ] || refuse option-required --text
+      lm_read_file
+    fi
+    lm_owner_ask "$MSGID"
+    if [ "$DEFAULT" -eq 1 ]; then
+      BY=default
+      # The recommendation is the answer's text, crossing the file every
+      # text crosses: nothing here builds an envelope from an argument.
+      jq -r '.recommend // empty' <<<"$ASK_JSON" >"$WORK_DIR/default.txt" ||
+        refuse file-unreadable "$TO_OVERSEER"
+      [ -s "$WORK_DIR/default.txt" ] || refuse recommend-missing "$MSGID"
+      FILE="$WORK_DIR/default.txt"
+    else
+      BY=text
+    fi
+    LINE="$(lm_envelope answer "$MSGID")"
+    if lm_append_local "$TO_LANE" "$LINE" lm_guard_resolve; then
+      lm_resolved "$MSGID" "$BY" "$(cat -- "$WORK_DIR/id")"
+    else
+      read -r EARLIER_ID EARLIER_BY EARLIER_KEY <"$WORK_DIR/resolved.earlier" ||
+        refuse file-unreadable "$WORK_DIR/resolved.earlier"
+      # The same delivery asking again gets the same answer and no second
+      # envelope: a relay that resolved and crashed before its mark cannot
+      # turn the reply it holds into a directive.
+      if [ -n "$DELIVERY_ID" ] && [ "$DELIVERY_ID" = "$EARLIER_KEY" ]; then
+        lm_resolved "$MSGID" "$EARLIER_BY" "$EARLIER_ID"
+      else
+        REFUSE_EXTRA="id=$EARLIER_ID"
+        refuse resolved-already "$MSGID"
+      fi
+    fi
+    ;;
+
+  events)
+    lm_fetch "$TO_OVERSEER" "$WORK_DIR/over.raw"
+    lm_terminated "$WORK_DIR/over.raw" "$WORK_DIR/over.jsonl"
+    lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
+    lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
+    lm_objects "$WORK_DIR/over.jsonl" | jq -c '. + {box: "to-overseer"}' || refuse file-unreadable "$TO_OVERSEER"
+    lm_objects "$WORK_DIR/lane.jsonl" | jq -c '. + {box: "to-lane"}' || refuse file-unreadable "$TO_LANE"
     ;;
 
   peer)
@@ -1153,8 +1491,14 @@ case "$VERB" in
     # beside the cursor, clamped to the lines listed, so a directive appended
     # and read between the file read and the cursor read is not taken as read
     # before it was listed. Judged before anything is printed, so a pending
-    # read that missed prints nothing but its refusal.
-    if [ "$VERB" = pending ] || [ "$RECEIPTS" -eq 1 ]; then
+    # read that missed prints nothing but its refusal. The cursor is read
+    # only where a directive would be printed: a pending kept to --to or
+    # --due prints asks alone, so no cursor reaches its output and none
+    # is judged.
+    LISTS_DIRECTIVES=0
+    if [ "$VERB" = pending ] && [ -z "$TO" ] && [ "$DUE" -eq 0 ]; then LISTS_DIRECTIVES=1; fi
+    [ "$RECEIPTS" -eq 0 ] || LISTS_DIRECTIVES=1
+    if [ "$LISTS_DIRECTIVES" -eq 1 ]; then
       lm_cursor_read
       lm_directives "$WORK_DIR/lane.jsonl" >"$WORK_DIR/directives"
       COUNT="$(lm_count "$WORK_DIR/lane.jsonl")" || refuse file-unreadable "$TO_LANE"
@@ -1193,13 +1537,20 @@ case "$VERB" in
     else
       cat -- "$WORK_DIR/over.jsonl" >"$WORK_DIR/new"
     fi
-    # An answered ask is not news again; `pending` is what is still owed a reply.
-    lm_objects "$WORK_DIR/new" | jq -c --arg answered "$ANSWERED" --arg verb "$VERB" '
+    # An answered ask is not news again; `pending` is what is still owed a
+    # reply. --to keeps one audience's asks and --due the ones past their
+    # deadline by this clock, the one deadline judge the watch resolves its
+    # owner asks by.
+    NOW_EPOCH="$(date -u +%s)" || refuse write-failed "$BOX"
+    lm_objects "$WORK_DIR/new" | jq -c --arg answered "$ANSWERED" --arg verb "$VERB" \
+      --arg to "$TO" --argjson due "$DUE" --argjson now "$NOW_EPOCH" "$LM_JQ_DEFS"'
       ($answered | split("\n")) as $done
       | . as $envelope
       | select($verb == "drain" or $envelope.kind == "ask")
-      | select($envelope.kind != "ask" or ($done | index($envelope.id) | not))'
-    if [ "$VERB" = pending ]; then
+      | select($envelope.kind != "ask" or ($done | index($envelope.id) | not))
+      | select($to == "" or $envelope.to == $to)
+      | select($due == 0 or (($envelope.deadline // "" | at_epoch) as $d | $d != null and $d <= $now))'
+    if [ "$VERB" = pending ] && [ "$LISTS_DIRECTIVES" -eq 1 ]; then
       jq -c --argjson seen "$SEEN" 'select(.line > $seen) | .envelope' <"$WORK_DIR/directives" ||
         refuse file-unreadable "$TO_LANE"
     elif [ "$RECEIPTS" -eq 1 ]; then

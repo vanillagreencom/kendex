@@ -113,9 +113,23 @@ EOF
 # without one; mail-fail-ITEM makes it fail with that file as its stderr and
 # mail-exit-ITEM's status, 2 without one. The call must read the lane's own
 # root, /w/ITEM, and a hosted lane's (hosted-ITEM names its host) through
-# --host under that host's ORCH_LANE_HOST, a local one without --host.
+# --host under that host's ORCH_LANE_HOST, a local one without --host. The
+# overseer's own asks are `pending --item overseer --to owner`, no root,
+# answered by pending-overseer.jsonl, failed by owner-mail-fail. `notice --item overseer --to owner
+# --attach PATH --file PATH` is the report notice: its argv is appended to
+# mail.calls, and notice-fail makes it fail.
 cat > "$TMP_ROOT/bin/lane-mail" <<'EOF'
 #!/usr/bin/env bash
+if [[ "$*" == "pending --item overseer --to owner" ]]; then
+  [[ ! -f "$CASE/owner-mail-fail" ]] || { echo "lane-mail: mail-read-failed" >&2; exit 2; }
+  [[ ! -f "$CASE/pending-overseer.jsonl" ]] || cat "$CASE/pending-overseer.jsonl"
+  exit 0
+fi
+if [[ "$1 $2 $3 $4 $5 $6" == "notice --item overseer --to owner --attach" && "$8" == --file ]]; then
+  printf '%s\n' "$*" >> "$CASE/mail.calls"
+  [[ ! -f "$CASE/notice-fail" ]] || { echo "lane-mail: write-failed=$7" >&2; exit 2; }
+  exit 0
+fi
 [[ "$1 $2" == "pending --item" ]] || { echo "unexpected lane-mail call: $*" >&2; exit 2; }
 want="--root /w/$3"; host=""
 [[ ! -f "$CASE/hosted-$3" ]] || { host="$(cat "$CASE/hosted-$3")"; want+=" --host"; }
@@ -229,8 +243,10 @@ first_err() { awk 'NR == 1' "$CASE/err"; }
 seed_fleet() {
   new_case "$1"
   report -3600
-  fleet '+ {launch_queue: ["KEN-4", "KEN-5", "KEN-6"], owner_items: [{id: "a", text: "Merge the pricing change?"}]}' \
+  fleet '+ {launch_queue: ["KEN-4", "KEN-5", "KEN-6"]}' \
     "$(lane KEN-1 done)" "$(lane KEN-2 running)" "$(lane KEN-3 running)" "$(lane KEN-7 preparing -86400 ssh-a)"
+  echo '{"id":"1790000000-0-a","kind":"ask","to":"owner","text":"Merge the pricing change?","options":["yes","no"],"recommend":"yes","wait":120,"deadline":"2026-09-26T03:00:00Z"}' \
+    > "$CASE/pending-overseer.jsonl"
   echo '{"id":"1790000000-1-a","kind":"ask","text":"Which schema?"}' > "$CASE/pending-KEN-2.jsonl"
   echo '[{"number": 12, "branch": "ken-2", "failed_checks": ["test", "lint"]}]' > "$CASE/failing.json"
   item_state KEN-3 '{"post_pr_stop": {"name": "review-round-cap", "gate": "review", "remaining": ["one unresolved review thread"]},
@@ -272,12 +288,19 @@ Next:
 | KEN-6 | Title 6 | Outcome 6 \\| kept |
 
 Waiting on you:
-- Question for you: Merge the pricing change?
+- Question for you: Merge the pricing change? (recommended yes; defaults to it after 2026-09-26T03:00:00Z)
 - KEN-2 waits on the overseer to answer: Which schema?
 - KEN-2 waits on red checks on #12: test, lint
 - KEN-3 waits on a stopped review gate, review-round-cap: one unresolved review thread"
 assert_eq "$RC|$OUT" "0|$WANT" \
-  "Landed holds only the fleet item merged since the last report, Running each live or preparing lane with its PR, Validation each running lane's minutes in total and per round, Next the queue, Waiting on you the open question then each running lane's blockers"
+  "Landed holds only the fleet item merged since the last report, Running each live or preparing lane with its PR, Validation each running lane's minutes in total and per round, Next the queue, Waiting on you the open owner ask with its recommendation and deadline then each running lane's blockers"
+
+echo "=== render: Waiting on you reads the overseer mailbox and nothing else ==="
+seed_fleet owner_asks_mail
+touch "$CASE/owner-mail-fail"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: owner-asks=overseer" \
+  "an overseer mailbox that cannot be listed refuses rather than render Waiting on you as none"
 
 echo "=== render: Waiting on you holds a lane's asks, not its unread directives ==="
 # lane-mail pending lists the directives the overseer sent and the lane has
@@ -494,7 +517,8 @@ assert_eq "$(awk '/^Waiting on you/ { on = 1; next } on' <<<"$OUT")" "- KEN-2 wa
 echo "=== render: tracker text is fitted to one line ==="
 new_case cell_text
 report -60
-fleet '+ {owner_items: [{id: "a", text: "line one\nline two"}]}' "$(lane KEN-1 running)"
+fleet '' "$(lane KEN-1 running)"
+echo '{"id":"1790000000-0-b","kind":"ask","to":"owner","text":"line one\nline two"}' > "$CASE/pending-overseer.jsonl"
 jq -n '{title: ("T" * 200), description: "Intro\r\n## Done when\r\n* CRLF outcome\r\n"}' > "$CASE/linear-KEN-1.json"
 run -- render --state "$CASE/state.json" --repo owner/repo
 LONG="$(printf 'T%.0s' $(seq 157))..."
@@ -504,7 +528,7 @@ while IFS='|' read -r what line want; do
 done <<ROWS
 a title past 160 characters keeps 157 and an ellipsis|$(awk -F' [|] ' '/^\| KEN-1/ { print $2 }' <<<"$OUT")|$LONG
 a CRLF description still yields its Done-when line|$(awk -F' [|] ' '/^\| KEN-1/ { sub(/ \|$/, "", $3); print $3 }' <<<"$OUT")|CRLF outcome
-an owner question with a newline is one list line|$(awk '/^- Question for you/' <<<"$OUT")|- Question for you: line one line two
+an owner question with a newline is one list line, and one with no recommendation names none|$(awk '/^- Question for you/' <<<"$OUT")|- Question for you: line one line two
 ROWS
 
 echo "=== render: a hosted lane's stop is read from its clone ==="
@@ -659,11 +683,33 @@ assert_eq "$RC|$(first_err)" "0|oversee-report: report-written=$FILE" "a success
 assert_eq "printed=$([[ -n "$OUT" ]] && echo yes)|$OUT" "printed=yes|$(cat "$FILE" 2>/dev/null)" "what write prints is the file's content, byte for byte"
 assert_eq "$(grep -c -E '^(Landed|Running|Validation|Next|Waiting on you):' <<<"$OUT")|$(awk 'NR == 1' <<<"$OUT")|$(awk 'NR == 3' <<<"$OUT")" \
   "5|Two items landed and one waits on you.|Landed:" "the report is the summary, one blank line, then the five rows"
+assert_eq "$(awk '{ $NF = "TEXT"; print }' "$CASE/mail.calls")" "notice --item overseer --to owner --attach $FILE --file TEXT" \
+  "write sends the owner one report notice carrying the file"
 run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt" --succession
 assert_eq "$RC|$(first_err)" "2|oversee-report: report-exists=$FILE" "a second report under the same name is refused, never overwritten"
 : > "$CASE/empty.txt"
 run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/empty.txt"
 assert_eq "$RC|$(first_err)" "2|oversee-report: summary=$CASE/empty.txt" "a write with an empty summary is refused"
+# The notice's text is the summary as written into the file, the trailing
+# blank lines dropped; the stub keeps the argv alone, so the text is read
+# through a copy of the stub that saves it.
+seed_fleet write_notice_text
+printf 'One line.\nTwo.\n\n' > "$CASE/summary.txt"
+sed 's@printf .%s\\n. "\$\*" >> "\$CASE/mail.calls"@cat "$9" > "$CASE/notice.txt"@' "$TMP_ROOT/bin/lane-mail" > "$TMP_ROOT/bin/lane-mail-saving"
+chmod +x "$TMP_ROOT/bin/lane-mail-saving"
+assert_eq "$(cmp -s "$TMP_ROOT/bin/lane-mail-saving" "$TMP_ROOT/bin/lane-mail" && echo same || echo differs)" "differs" \
+  "the saving stub really differs from the recording one"
+run OVERSEE_REPORT_LANE_MAIL="$TMP_ROOT/bin/lane-mail-saving" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+assert_eq "$RC|$(cat "$CASE/notice.txt")" "0|One line.
+Two." "the notice's text is the summary the report opens with"
+seed_fleet write_notice_fails
+echo "Nobody hears this." > "$CASE/summary.txt"
+touch "$CASE/notice-fail"
+run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+FILE="$CASE/progress-reports/$("$REAL_DATE" -u -d "@$NOW" +%m-%d-%H-%M 2>/dev/null || "$REAL_DATE" -u -r "$NOW" +%m-%d-%H-%M).md"
+assert_eq "$RC|$(first_err)|$([[ -f "$FILE" ]] && echo written || echo missing)|$(awk 'NR == 1' <<<"$OUT")" \
+  "2|oversee-report: notice=$FILE|written|Nobody hears this." \
+  "a notice that cannot be sent is refused by name after the report is printed, the file standing"
 seed_fleet write_report_off
 echo "The overseer hands over." > "$CASE/summary.txt"
 run ORCH_REPORT=off -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt" --succession
