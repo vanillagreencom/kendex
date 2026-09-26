@@ -42,8 +42,11 @@ build() { # DIR
   done
   touch -t "$old_touch" "$sd/waiter.abc"
 }
+# The prune a close-out runs with no fleet state reads the progress report
+# directory from the environment first, so an exported one never reaches it.
 remove() { # SCRIPT DIR ITEM
-  (cd "$TMP_ROOT" && ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$2.fleet" bash "$1" --state-dir "$2" remove "$3")
+  (cd "$TMP_ROOT" && env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$2.fleet" \
+    bash "$1" --state-dir "$2" remove "$3")
 }
 
 sd="$TMP_ROOT/main"
@@ -105,6 +108,22 @@ out="$(remove "$WS" "$nf" KEN-1 2>&1)" || rc=$?
   && ok "with no fleet state the close-out prunes an old file no item names and names its archive" \
   || bad "with no fleet state the close-out prunes an old file no item names and names its archive" "rc=$rc out=$out"
 
+# A backstop that refuses is the close-out's refusal: with no fleet state and
+# an archive root that is a file, SCRIPT's remove has taken the item's files,
+# and its status and first stderr line are the prune's. BACKSTOP reads it.
+backstop_refused() { # SCRIPT
+  local bd="$TMP_ROOT/backstop-${1##*/}" brc=0
+  build "$bd"
+  rm -f -- "${bd:?}/workflow-state-oversee.json"
+  printf 'x\n' > "$bd.fleet"
+  remove "$1" "$bd" KEN-1 >"$bd.out" 2>"$bd.err" || brc=$?
+  BACKSTOP="rc=$brc removed=$(grep -c '^removed path=' "$bd.out" || true) err=$(head -n 1 "$bd.err" | sed "s|path=$bd.fleet/.*|path=FLEET|") old=$([[ -e "$bd/waiter.abc" ]] && echo kept || echo removed)"
+}
+backstop_refused "$WS"
+[[ "$BACKSTOP" == "rc=1 removed=6 err=workflow-state: prune-archive-failed path=FLEET old=kept" ]] \
+  && ok "with no fleet state a backstop whose archive cannot be built refuses the close-out" \
+  || bad "with no fleet state a backstop whose archive cannot be built refuses the close-out" "$BACKSTOP"
+
 # Each refusal and each quiet success, one row: the case, the exit status and
 # the first line it prints.
 REAL_RM="$(command -v rm)"
@@ -165,6 +184,15 @@ no-fleet-files@"$sd/${2##*/}"|"$sd/${2##*/}.lock"|"$WATCH_PID_FILE"|@"$sd/none")
 no-handoff-keep@for f in "$entry"/*; do [[ "${f##*/}" == OVERSEER-HANDOFF.md ]] || UNITS+=("$f"); done ;;@for f in "$entry"/*; do UNITS+=("$f"); done ;;@OVERSEER@yes@handoffs/OVERSEER-HANDOFF.md@without the handoff exclusion remove OVERSEER takes the overseer handoff file
 no-backstop@fleet_state_file >/dev/null || cmd_prune@:@KEN-1@no@waiter.abc@without the backstop a close-out with no fleet state leaves an old unnamed file
 ROWS
+
+# Planted: the backstop's status dropped, so a refused prune reads as a clean
+# close-out.
+A='fleet_state_file >/dev/null || cmd_prune' R='fleet_state_file >/dev/null || cmd_prune || :' \
+  awk 'index($0, ENVIRON["A"]) { sub(/[^ ].*/, ""); print $0 ENVIRON["R"]; next } { print }' "$WS" > "$MUTANT_DIR/backstop-ignored"
+backstop_refused "$MUTANT_DIR/backstop-ignored"
+[[ "$BACKSTOP" == rc=0\ * ]] \
+  && ok "control: without the backstop status a refused prune reads as a clean close-out" \
+  || bad "control: without the backstop status a refused prune reads as a clean close-out" "$BACKSTOP"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

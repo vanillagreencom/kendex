@@ -3,9 +3,9 @@
 # ../schemas/workflow-state.md § Recording policy states, on a fixture fleet. Past ORCH_RECORD_RETENTION_DAYS a closed lane's
 # files, an old directive, an old handoff archive and an old progress report
 # go, with the fleet_log rows and done lane records past the window. A live
-# lane's files, a --keep path and the named keep list stay whatever their age.
-# A checkout with no fleet state prunes the same directory by age, holding
-# every item whose own workflow state still stands.
+# lane's files, an open item's files while its own workflow state stands, a
+# --keep path and the named keep list stay whatever their age. A checkout with
+# no fleet state prunes the same directory with no lane records to judge.
 # Everything removed is in the archive `kept=` names first, and a prune whose
 # archive cannot be written removes nothing.
 
@@ -36,7 +36,10 @@ umask 022
 # One project per case, outside Git, so its root, its progress directory and
 # its archive name are the sandbox's own; the retention is two days and every
 # old fixture is three days old. KEN-0 is the first lane record, done and old;
-# KEN-1 runs; KEN-2 and KEN-12 are done and old; KEN-3 is done and fresh.
+# KEN-1 runs; KEN-2 and KEN-12 are done and old, their workflow states taken by
+# their close-outs; KEN-3 is done and fresh, its lane closed while its item was
+# open, which left its workflow state. oversee-triage-source.json is an
+# overseer read that outlived its step, named for no item.
 build() { # DIR
   local p="$1" sd="$1/tmp"
   mkdir -p "$p"
@@ -55,7 +58,8 @@ build() { # DIR
   mkdir -p "$sd/lane-mail/KEN-1" "$sd/lane-mail/KEN-2" "$sd/lane-mail/overseer" \
     "$sd/handoffs" "$sd/progress-reports" "$sd/waiter.run"
   for f in lane-mail/KEN-1/to-lane.jsonl lane-mail/KEN-2/to-lane.jsonl lane-mail/overseer/to-lane.jsonl \
-    workflow-state-KEN-1.json workflow-state-KEN-2.json workflow-state-KEN-12.json lane-status-KEN-1.md \
+    workflow-state-KEN-1.json audit-KEN-2.json audit-KEN-12.json lane-status-KEN-1.md \
+    workflow-state-KEN-3.json audit-KEN-3.json oversee-triage-source.json \
     directive.md workflow-state-oversee.json.lock oversee-watch.pid oversee-watch.argv oversee-watch.log \
     oversee-watch.err oversee-watch.runner handoffs/OVERSEER-HANDOFF.md handoffs/session-1.md progress-reports/01-01-00-00.md \
     progress-reports/01-01-00-00-succession.md progress-reports/notes.md waiter.run/watch.log; do
@@ -97,8 +101,11 @@ while IFS='|' read -r want path label; do
   || fail "$label is $want" "path=$path got=$got"
 done <<'ROWS'
 removed|directive.md|a three-day-old directive
-removed|workflow-state-KEN-2.json|a closed lane's workflow state
-removed|workflow-state-KEN-12.json|a closed lane's file whose item extends a live one's
+removed|audit-KEN-2.json|a closed lane's old file
+removed|audit-KEN-12.json|a closed lane's file whose item extends a live one's
+removed|oversee-triage-source.json|an old overseer file named for no item
+kept|workflow-state-KEN-3.json|an open item's workflow state past the retention, its lane done
+kept|audit-KEN-3.json|an open item's old file, its lane done
 removed|lane-mail/KEN-2|a closed lane's mailbox
 removed|handoffs/session-1.md|an old handoff archive
 removed|progress-reports/01-01-00-00.md|an old progress report
@@ -143,7 +150,7 @@ start_after="$(jq -r '.lanes[0].launched_at' "$sd/workflow-state-oversee.json")"
   || fail "the fleet start, the first lane record's launched_at, is unchanged" "before=$start_before after=$start_after"
 
 count="$(grep '^pruned fleet_log=' "$TMP_ROOT/main.out" || true)"
-[[ "$count" == "pruned fleet_log=1 lanes=2 progress_reports=2 paths=7" ]] \
+[[ "$count" == "pruned fleet_log=1 lanes=2 progress_reports=2 paths=8" ]] \
   && pass "the count line names each record removed" \
   || fail "the count line names each record removed" "got=$count"
 
@@ -158,7 +165,7 @@ modes="$(ls -ld "$archive" | cut -c1-10) $(ls -ld "${archive%/*}" | cut -c1-10)"
 
 listing="$(tar -tzf "$archive" 2>/dev/null || true)"
 missing=""
-for path in directive.md workflow-state-KEN-2.json workflow-state-KEN-12.json lane-mail/KEN-2/to-lane.jsonl \
+for path in directive.md audit-KEN-2.json audit-KEN-12.json oversee-triage-source.json lane-mail/KEN-2/to-lane.jsonl \
   handoffs/session-1.md progress-reports/01-01-00-00.md progress-reports/01-01-00-00-succession.md; do
   grep -qxF -- "${sd#/}/$path" <<<"$listing" || missing="$missing $path"
 done
@@ -309,15 +316,15 @@ run_prune "$fp" "$WS" "$RM_BIN:" --keep tmp/waiter.run >/dev/null 2>"$fp.err" ||
 key="$(head -n 1 "$fp.err")"
 kept="${key##* kept=}"
 [[ "$rc" -eq 1 && "$key" == "workflow-state: prune-remove-failed path=$fp/tmp/directive.md kept="* ]] \
-  && ok "a removal that fails is refused as prune-remove-failed" \
-  || bad "a removal that fails is refused as prune-remove-failed" "rc=$rc key=$key"
+  && pass "a removal that fails is refused as prune-remove-failed" \
+  || fail "a removal that fails is refused as prune-remove-failed" "rc=$rc key=$key"
 [[ -s "$kept" ]] && grep -qxF -- "${fp#/}/tmp/directive.md" <<<"$(tar -tzf "$kept" 2>/dev/null || true)" \
-  && ok "the archive it names holds the path it could not remove" \
-  || bad "the archive it names holds the path it could not remove" "kept=$kept"
+  && pass "the archive it names holds the path it could not remove" \
+  || fail "the archive it names holds the path it could not remove" "kept=$kept"
 got="$(jq -c '[any(.fleet_log[]; .text == "old"), any(.lanes[]; .item == "KEN-2")]' "$fp/tmp/workflow-state-oversee.json")"
 [[ "$got" == '[false,false]' ]] \
-  && ok "the pruned rows had already left the state" \
-  || bad "the pruned rows had already left the state" "got=$got"
+  && pass "the pruned rows had already left the state" \
+  || fail "the pruned rows had already left the state" "got=$got"
 
 MUTANT_DIR="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_DIR"
@@ -363,9 +370,16 @@ control no-live "" "" '[[ ! -e tmp/lane-mail/KEN-1 ]]' \
 mutant no-state-live 'live+="${f%.json}"$'"'"'\n'"'" ':'
 control_bare no-state-live '[[ ! -e tmp/completion-summary-KEN-1.md ]]' \
   "without the standing-state match a running item's old file is pruned"
-mutant state-age '[[ -f "$f" ]] || continue' '[[ -n "$(find "$f" -mtime -2)" ]] || continue'
+STATE_LIVE='[[ -f "$f" && "$f" != "$sd/${state_file##*/}" ]] || continue'
+mutant state-age "$STATE_LIVE" '[[ -f "$f" && -n "$(find "$f" -mtime -2)" ]] || continue'
 control_bare state-age '[[ ! -e tmp/workflow-state-KEN-3.json ]]' \
   "a live rule read from the state's age prunes an open item whose PR waits past the retention"
+mutant fleet-state-live "$STATE_LIVE" '[[ "$fleet" == false && -f "$f" && "$f" != "$sd/${state_file##*/}" ]] || continue'
+control fleet-state-live "" "" '[[ ! -e tmp/audit-KEN-3.json ]]' \
+  "a fleet prune reading liveness from lane records alone prunes an open item whose lane is done"
+mutant fleet-state-item "$STATE_LIVE" '[[ -f "$f" ]] || continue'
+control fleet-state-item "" "" '[[ -e tmp/oversee-triage-source.json ]]' \
+  "without the fleet-state exclusion an old overseer file is held as a live item's"
 
 mutant no-keep '[[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || kept_by=keep' ':'
 control no-keep "" "" '[[ ! -e tmp/waiter.run ]]' "without the --keep match the kept watch log is pruned"

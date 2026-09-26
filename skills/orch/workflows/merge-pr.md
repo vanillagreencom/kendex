@@ -411,7 +411,7 @@ Use the output as `MAIN_REPO_ROOT`.
    .agents/skills/orch/scripts/workflow-state remove [STATE_KEY]
    ```
 
-   It takes the item's workflow state and every other file there named for the item, and where no fleet state stands it runs that checkout's age backstop too, as [schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out) states. A `workflow-state remove` refusal blocks nothing after it: its first line goes on § 6's `tmp/ close-out` line.
+   What it takes and keeps is [schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out). A `workflow-state remove` refusal blocks nothing after it: its first line goes on § 6's `tmp/ close-out` line.
 
    With the project verification passed, re-run step 4's disposal predicate whole. Step 4 read it two steps ago, and step 5's replies and this step's build can each dirty the tree or move the branch. `worktree remove` runs `git worktree remove --force` and then `rm -rf`, so it refuses nothing itself: uncommitted content, untracked content and a worktree that has moved to another branch all go with the directory, and the predicate is the only thing between them and that.
 
@@ -444,9 +444,9 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 | Container | [PARENT_ID] → Done / deferred — [pending ids, restorations, or cause] |
 | Base sync | local `[BASE_BRANCH]` → [NEW_SHA] |
 
-Worktree `[WORKTREE_PATH]` gone / standing — [cause]
-
 tmp/ close-out: [FIRST_REFUSAL_LINE]
+
+Worktree `[WORKTREE_PATH]` gone / standing — [cause]
 
 </output_format>
 
