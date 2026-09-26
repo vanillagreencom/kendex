@@ -2652,6 +2652,7 @@ bounded_account_read() {
 overseer_marks_judge() {
   local line first field
   local errf="$WORK_DIR/overseer-mark.err"
+  local judge_args=(--check-marks)
   [[ "$OVERSEER_MARK_READ" -eq 0 ]] || return "$OVERSEER_MARK_RC"
   OVERSEER_MARK_READ=1
   # Every field belongs to THIS reading. Cleared before the line is parsed,
@@ -2673,7 +2674,8 @@ overseer_marks_judge() {
   # usage endpoint per account, and on a cache miss on the host-wide usage
   # refresh lock and a 429 retry's sleep and second request, which together can
   # outlast the pass interval.
-  if ! bounded_account_read overseer-mark-unjudged "$errf" "$SUCCEED" --check-marks; then
+  [[ -z "$OVERSEER_HARNESS" ]] || judge_args+=(--harness "$OVERSEER_HARNESS")
+  if ! bounded_account_read overseer-mark-unjudged "$errf" "$SUCCEED" "${judge_args[@]}"; then
     [[ ! -s "$errf" ]] || cat -- "$errf" >&2
     return 1
   fi
