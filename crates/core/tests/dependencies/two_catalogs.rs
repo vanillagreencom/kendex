@@ -198,6 +198,97 @@ fn a_withheld_rebind_reaches_the_provenance_conflict_and_not_the_trash() {
     }
 }
 
+/// A hook with no harnesses line, which the other catalog offers.
+const SOLO: &str = "#!/usr/bin/env bash\n# ---\n# name: solo\n# event: PreToolUse\n# description: run before a tool call\n# ---\nexit 0\n";
+/// The same hook as the wrapper's catalog offers it, on Claude Code alone.
+const SOLO_CLAUDE: &str = "#!/usr/bin/env bash\n# ---\n# name: solo\n# event: PreToolUse\n# description: run before a tool call on Claude Code alone\n# harnesses: [claude]\n# ---\nexit 0\n";
+/// An agent every tool loads, which the other catalog offers.
+const CRITIC: &str = "---\nname: critic\ndescription: reviews a change\n---\nBody.\n";
+/// The same agent as the wrapper's catalog offers it, at an effort level
+/// Claude Code accepts and Codex refuses.
+const CRITIC_MAX: &str =
+    "---\nname: critic\ndescription: reviews a change\neffort: max\n---\nBody.\n";
+
+/// A declared item installed from the other catalog on both tools, then
+/// set to come from the wrapper's catalog, whose copy plans nothing on
+/// Codex: a hook that catalog does not derive there, and an agent Codex
+/// refuses. The Codex record is still the other catalog's, so the plan
+/// says so as the provenance conflict a rebind always gets, keeps the
+/// record, and takes nothing to the trash, on either tool.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_rebind_planning_nothing_on_a_tool_reaches_the_provenance_conflict_and_not_the_trash() {
+    /// The declaration's kind, its catalog file, the other catalog's
+    /// bytes and the wrapper catalog's bytes.
+    type Row = (ItemKind, &'static str, &'static str, &'static str);
+    let rows: [Row; 2] = [
+        (ItemKind::Hook, "hooks/solo.sh", SOLO, SOLO_CLAUDE),
+        (ItemKind::Agent, "agents/critic.md", CRITIC, CRITIC_MAX),
+    ];
+    for (kind, file, from_other, from_cat) in rows {
+        let name = Path::new(file).file_stem().unwrap().to_str().unwrap();
+        let declaration =
+            |source: &str| format!("[{}s.{name}]\nsource = \"{source}\"\n", kind.name());
+        let (f, other) = two_catalogs(&declaration("other"));
+        for (catalog, bytes) in [(&other, from_other), (&f.source, from_cat)] {
+            fs::create_dir_all(catalog.join(file).parent().unwrap()).unwrap();
+            fs::write(catalog.join(file), bytes).unwrap();
+        }
+        apply_now(&f);
+        let key = format!("{}:{name}:codex", kind.name());
+        assert_eq!(
+            lock_of(&f).entries[&key].source_repo,
+            identity(&other),
+            "{key}"
+        );
+
+        declare_two(&f, &other, &declaration("cat"));
+        let report = plan_apply(
+            &f.env,
+            &f.scope,
+            &PlanOptions {
+                remove_orphans: true,
+                ..PlanOptions::default()
+            },
+        )
+        .unwrap();
+        let conflict = format!(
+            "installed from {} but now set to come from {} — remove it first",
+            identity(&other),
+            identity(&f.source)
+        );
+        for harness in [HarnessId::Claude, HarnessId::Codex] {
+            let rows: Vec<(DriftState, &str)> = report
+                .drift
+                .iter()
+                .filter(|row| row.name == name && row.harness == harness)
+                .map(|row| (row.state, row.detail.as_str()))
+                .collect();
+            assert_eq!(
+                rows,
+                [(DriftState::Conflict, conflict.as_str())],
+                "{key} on {harness:?}: {:?}",
+                drift_details(&report)
+            );
+        }
+        let trashed: Vec<&PathBuf> = report
+            .plan
+            .ops
+            .iter()
+            .filter_map(|op| match &op.op {
+                Op::Trash { path, .. } => Some(path),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(trashed, Vec::<&PathBuf>::new(), "{key}");
+        assert_eq!(
+            report.record.entries[&key].source_repo,
+            identity(&other),
+            "{key}'s record was rebound or dropped"
+        );
+    }
+}
+
 /// A row the plan leaves on a hook, spelled before the fixture exists:
 /// the conflict names the fixture's catalogs.
 #[derive(Clone, Copy)]

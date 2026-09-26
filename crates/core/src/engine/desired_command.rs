@@ -66,6 +66,7 @@ fn native_file(
                     name: ctx.name.to_owned(),
                     harness,
                     reason,
+                    provenance: ctx.provenance.to_owned(),
                 });
                 return Ok(None);
             }
@@ -80,6 +81,7 @@ fn native_file(
             name: ctx.name.to_owned(),
             harness,
             reason,
+            provenance: ctx.provenance.to_owned(),
         });
         return Ok(None);
     }
@@ -140,6 +142,7 @@ fn as_skill(
             name: ctx.name.to_owned(),
             harness,
             reason,
+            provenance: ctx.provenance.to_owned(),
         });
         return Ok(None);
     }
@@ -246,6 +249,7 @@ fn emitted_name(ctx: &ItemCtx, state: &mut DesiredState, harness: HarnessId) -> 
                     harness.display_name(),
                     name = ctx.name
                 ),
+                provenance: ctx.provenance.to_owned(),
             });
             None
         }

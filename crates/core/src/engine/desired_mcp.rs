@@ -45,6 +45,7 @@ pub(super) fn desired_mcp(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()>
                     name: ctx.name.to_owned(),
                     harness,
                     reason,
+                    provenance: ctx.provenance.to_owned(),
                 });
                 continue;
             }

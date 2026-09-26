@@ -183,6 +183,10 @@ enum Verdict {
     /// with it, except a copy withheld for a companion that will not run,
     /// which is an answer, and what is known outranks what is not.
     Retained,
+    /// Another declaration's record: installed from one catalog, the
+    /// declaration now set to come from another that plans nothing here.
+    /// Invariant 4's conflict row, and the record kept.
+    Rebound { detail: String },
     /// Not removable under the options: the left-over row, and offered to
     /// a sweep where nothing needs it.
     Left { unneeded: bool },
@@ -254,6 +258,10 @@ pub(super) fn orphans(
         let entry = &lock.entries[key];
         match verdict {
             Verdict::Retained => {
+                new_lock.entries.insert(key.clone(), entry.clone());
+            }
+            Verdict::Rebound { detail } => {
+                drift.push(row(entry, DriftState::Conflict, detail, None));
                 new_lock.entries.insert(key.clone(), entry.clone());
             }
             Verdict::Left { unneeded } => {
@@ -356,6 +364,20 @@ fn verdicts<'a>(
         if desired_keys.contains(key) || decided_keys.contains(key) {
             continue;
         }
+        // A declaration that resolved and planned nothing on this tool is
+        // still the one the record answers to: a record from another
+        // catalog is invariant 4's conflict, as it is where the plan writes.
+        let declared = state.processed.get(&(entry.kind, entry.name.clone()));
+        if let Some(provenance) = declared
+            && let Some(detail) = super::item_plan::rebound(
+                entry,
+                provenance,
+                manifest.recorded_fork(entry.kind, &entry.name),
+            )
+        {
+            verdicts.push((key, Verdict::Rebound { detail }));
+            continue;
+        }
         let named = options.named_for_removal(entry.kind, &entry.name);
         if lacking.contains(key) {
             verdicts.push((
@@ -372,7 +394,7 @@ fn verdicts<'a>(
         // that did resolve has already said everything it wants installed,
         // so an entry it did not ask for — a harness dropped from its list —
         // is stranded and must be cleaned up like any other orphan.
-        let departed_harness = state.processed.contains(&(entry.kind, entry.name.clone()));
+        let departed_harness = declared.is_some();
         let unreachable_source =
             manifest.declared(entry.kind).contains_key(&entry.name) && !departed_harness;
         // An installation something else brought in was derived from a
@@ -445,9 +467,10 @@ fn keep_what_kept_records_require(
             .filter_map(|(key, verdict)| match verdict {
                 Verdict::Removed { .. } => None,
                 Verdict::Retained => Some((key.as_str(), false)),
-                Verdict::Left { .. } | Verdict::Held | Verdict::Needed { .. } => {
-                    Some((key.as_str(), true))
-                }
+                Verdict::Rebound { .. }
+                | Verdict::Left { .. }
+                | Verdict::Held
+                | Verdict::Needed { .. } => Some((key.as_str(), true)),
             })
             .collect();
         let mut changed = false;

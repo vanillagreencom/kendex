@@ -124,11 +124,15 @@ const EDITS_KEPT: &str =
 /// rendering comes off disk on the default path — leaving it live would
 /// keep exactly the access the refusal exists to prevent. Only what this
 /// installation alone holds comes off: the tree a refused tool shares with
-/// a tool that still installs stays exactly where it is.
+/// a tool that still installs stays exactly where it is. A record that is
+/// another declaration's — installed from one catalog, now set to come
+/// from another — is invariant 4's conflict first, as it is where the plan
+/// writes: the record stays and nothing of it is taken.
 #[allow(clippy::too_many_arguments)]
 fn plan_refusals(
     env: &Env,
     scope: &Scope,
+    manifest: &Manifest,
     lock: &Lock,
     state: &desired::DesiredState,
     guard: &mut removal::TrashGuard,
@@ -147,6 +151,22 @@ fn plan_refusals(
         let key = crate::lock::entry_key(refusal.kind, &refusal.name, refusal.harness);
         let mut removals = Vec::new();
         if let Some(entry) = lock.entries.get(&key) {
+            let recorded_fork = manifest.recorded_fork(refusal.kind, &refusal.name);
+            if let Some(detail) = item_plan::rebound(entry, &refusal.provenance, recorded_fork) {
+                drift.push(DriftRow {
+                    kind: refusal.kind,
+                    name: refusal.name.clone(),
+                    harness: refusal.harness,
+                    scope: scope.clone(),
+                    state: DriftState::Conflict,
+                    detail,
+                    cause: None,
+                    compared: None,
+                    also_in_the_way: Vec::new(),
+                });
+                kept.keep(new_lock, &key, entry);
+                continue;
+            }
             // A refused rendering takes its previous installation off disk
             // — unless the user's edits are in it, or the record cannot
             // prove they are not (`edit_holds` draws that line). Edited
@@ -220,6 +240,7 @@ pub(super) fn plan_not_written(
     let mut decided = plan_refusals(
         env,
         scope,
+        manifest,
         lock,
         state,
         guard,

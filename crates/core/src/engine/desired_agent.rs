@@ -73,6 +73,7 @@ fn loadable(
             name: ctx.name.to_owned(),
             harness,
             reason,
+            provenance: ctx.provenance.to_owned(),
         });
         return false;
     }
@@ -232,6 +233,7 @@ fn render_or_refuse(
                 name: ctx.name.to_owned(),
                 harness,
                 reason: refusal,
+                provenance: ctx.provenance.to_owned(),
             });
             None
         }
