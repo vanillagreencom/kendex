@@ -140,6 +140,28 @@ fn deploy_rows(report: &kendex_core::engine::EngineReport) -> Vec<(DriftState, S
         .collect()
 }
 
+/// What the report says, in the words a person reads: each op's preview
+/// line, each generated path, each drift row's name and detail. Assertion
+/// messages print these and never the report, which carries the plan.
+fn op_lines(report: &kendex_core::engine::EngineReport) -> Vec<String> {
+    report.plan.ops.iter().map(|op| op.line()).collect()
+}
+fn generated(report: &kendex_core::engine::EngineReport) -> Vec<String> {
+    report
+        .generated
+        .whole
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect()
+}
+fn drift_rows(report: &kendex_core::engine::EngineReport) -> Vec<(String, String)> {
+    report
+        .drift
+        .iter()
+        .map(|row| (row.name.clone(), row.detail.clone()))
+        .collect()
+}
+
 /// Apply writes the block into `SKILL.md` and touches no other byte of the
 /// tree; the record holds the links alone, with no rendered hash, because
 /// kendex wrote no render of the tree.
@@ -203,7 +225,7 @@ fn an_edit_to_the_tree_raises_no_row_and_moves_no_record() {
     let report = world.apply();
 
     assert_eq!(deploy_rows(&report), Vec::new());
-    assert!(report.plan.ops.is_empty(), "{:?}", report.plan.ops);
+    assert!(report.plan.ops.is_empty(), "{:?}", op_lines(&report));
     assert_eq!(world.read(&world.lock_path()), recorded);
     assert_eq!(world.read(&world.skill_file()), skill);
     let lock = kendex_core::lock::load(&world.lock_path()).unwrap();
@@ -284,7 +306,7 @@ fn a_skill_file_that_is_not_text_is_refused_and_not_written() {
             3
         ]
     );
-    assert!(report.plan.ops.is_empty(), "{:?}", report.plan.ops);
+    assert!(report.plan.ops.is_empty(), "{:?}", op_lines(&report));
     assert_eq!(fs::read(world.skill_file()).unwrap(), authored);
     assert!(!world.project.join(".claude/skills/deploy").exists());
 }
@@ -321,12 +343,12 @@ fn a_copy_delivered_from_an_in_place_declaration_is_a_render() {
     assert!(
         report.generated.whole.contains(&copy.join("SKILL.md")),
         "{:?}",
-        report.generated.whole
+        generated(&report)
     );
     assert!(
         !report.generated.whole.contains(&world.skill_file()),
         "{:?}",
-        report.generated.whole
+        generated(&report)
     );
     let rendered = world.read(&copy.join("SKILL.md"));
     assert!(rendered.contains("shared rule"), "{rendered}");
@@ -365,7 +387,7 @@ fn a_copy_delivered_from_an_in_place_declaration_is_a_render() {
             .iter()
             .any(|op| matches!(op.op, kendex_core::apply::Op::WriteTree { .. })),
         "{:?}",
-        report.plan.ops
+        op_lines(&report)
     );
 
     let report = kendex_core::engine::ops::remove(
@@ -407,12 +429,12 @@ fn a_namespaced_in_place_name_is_not_served_and_nothing_is_written() {
             .iter()
             .any(|note| note.starts_with("pl/deploy: not found in source 'in-place'")),
         "{:?}",
-        report.notes
+        report.notes.to_vec()
     );
     assert!(
         report.drift.iter().all(|row| row.name != "pl/deploy"),
         "{:?}",
-        report.drift
+        drift_rows(&report)
     );
     apply::execute(&world.env, &report.plan).unwrap();
     assert_eq!(world.read(&source.join("SKILL.md")), AUTHORED);
@@ -471,5 +493,5 @@ fn an_old_record_is_re_recorded_by_one_refresh() {
     assert_eq!(world.check_text(), "");
     let again = world.plan();
     assert_eq!(deploy_rows(&again), Vec::new());
-    assert!(again.plan.ops.is_empty(), "{:?}", again.plan.ops);
+    assert!(again.plan.ops.is_empty(), "{:?}", op_lines(&again));
 }
