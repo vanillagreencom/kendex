@@ -418,6 +418,30 @@ assert_eq "a copilot hook registry file is a configuration source" \
   "cause=configuration-source path=.github/hooks/guard.json glob=.github/hooks/*.json" \
   "$(printf '%s\n' "$copilot_hook_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
 
+# The micro-tier measurement's own boundary: a two-line edit to a script it
+# resolves its range or its settings through escapes the narrow classes,
+# whether the measurement reaches it by `source` or as an argument. The
+# Linear CLI it runs to read the allowance is outside that boundary, so an
+# ordinary edit to it keeps the class its size earns.
+boundary_rows=0
+while IFS='|' read -r boundary_path boundary_line; do
+  boundary_rows=$((boundary_rows + 1))
+  reset_case
+  set_verifier dirty
+  write_lines "$repo" "$boundary_path" 2
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "an edit to a measurement dependency"
+  boundary_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+    --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+  assert_eq "$boundary_path answers ${boundary_line%% *}" "class: $boundary_line" \
+    "$(printf '%s\n' "$boundary_err" | grep '^class: ')"
+done <<'BOUNDARY'
+skills/orch/scripts/resolve-base-branch|class=standard measured=true cause=excluded-path path=skills/orch/scripts/resolve-base-branch glob=*skills/orch/scripts/resolve-base-branch
+skills/orch/scripts/lib/kendex-env.sh|class=standard measured=true cause=excluded-path path=skills/orch/scripts/lib/kendex-env.sh glob=*skills/orch/scripts/lib/kendex-env.sh
+skills/linear/scripts/linear.sh|class=micro measured=true cause=production-within-micro production=2
+BOUNDARY
+require_rows change-class-boundary "$boundary_rows"
+
 # The excluded list refuses before the allowlist is consulted, so a repository
 # that allowlists everything still cannot buy a narrow class for a gate file.
 reset_case

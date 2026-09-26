@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::{HarnessAdapter, ProjectMarker, Reader, Surface};
+use super::{HarnessAdapter, ProjectMarker, ProjectPath, Reader, Role, Surface};
 use crate::env::Env;
 use crate::hook::{HookSpec, Registration};
 use crate::model::{HarnessId, ItemKind};
@@ -83,6 +83,14 @@ impl HarnessAdapter for Antigravity {
             ProjectMarker::File(".agents/hooks.json"),
             ProjectMarker::File(".agents/mcp_config.json"),
         ]
+    }
+
+    /// `rules/` is context the loader reads every session, with no item
+    /// named, so the marker is an instruction surface here, whatever
+    /// `.cursor/rules` is to Cursor.
+    fn project_reads(&self) -> &'static [ProjectPath] {
+        const READS: &[ProjectPath] = &[ProjectPath::dir(".agents/rules", Role::Instruction)];
+        READS
     }
 
     fn global_surfaces(&self, kind: ItemKind, root: &Path, _env: &Env) -> Vec<Surface> {

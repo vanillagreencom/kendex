@@ -218,6 +218,11 @@ enum Command {
     /// precedence: newer, same, or older
     #[command(name = "version-compare")]
     VersionCompare(commands::version_compare::VersionCompareArgs),
+    /// Every project path kendex's harness adapters read, and whether each
+    /// harness reads it as a root, a catalog, a registry or an instruction
+    /// (JSON)
+    #[command(name = "harness-paths")]
+    HarnessPaths,
     /// The model id a rank on the tier ladder names on one harness
     #[command(name = "tier-model")]
     TierModel(commands::tier_model::TierModelArgs),
@@ -563,6 +568,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         Command::Update { force, git } => commands::update::run(&env, force, git)?,
         Command::VersionCompare(args) => commands::version_compare::run(args)?,
         Command::TierModel(args) => commands::tier_model::run(args)?,
+        Command::HarnessPaths => commands::harness_paths::run(&env)?,
         Command::ReleaseMainBuild(args) => commands::update::release_main_build(args)?,
     }
     Ok(ExitCode::SUCCESS)

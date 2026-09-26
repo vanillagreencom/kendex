@@ -110,6 +110,42 @@ fn tier_model_names_a_rank_and_refuses_one_off_the_ladder() {
     assert_eq!(String::from_utf8_lossy(&off.stdout), "");
 }
 
+/// The enumeration is read from the adapters alone: a folder that is no
+/// project and has installed nothing gets it, derived and declared rows
+/// both, in the spellings a classifier reads.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn harness_paths_prints_the_adapters_paths_from_anywhere() {
+    let tmp = fixture_home();
+    let home = tmp.path();
+    let folder = tempfile::tempdir().unwrap();
+    let empty = rooted(&folder);
+
+    let output = kendex(home, &empty, &["harness-paths"]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(printed["version"], 1);
+    let rows = printed["paths"].as_array().unwrap();
+    assert!(rows.contains(&serde_json::json!({
+        "harness": "copilot",
+        "role": "instruction",
+        "path": ".github/allowed_models.txt",
+        "glob": ".github/allowed_models.txt",
+    })));
+    assert!(rows.contains(&serde_json::json!({
+        "harness": "copilot",
+        "role": "registry",
+        "path": ".github/hooks",
+        "glob": ".github/hooks/*.json",
+    })));
+    assert!(rows.contains(&serde_json::json!({
+        "harness": "cursor",
+        "role": "catalog",
+        "path": ".cursor/rules",
+        "glob": ".cursor/rules/*",
+    })));
+}
+
 #[test]
 fn scope_project_outside_a_project_is_an_error() {
     let tmp = fixture_home();

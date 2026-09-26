@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::{HarnessAdapter, ProjectMarker, Reader, Surface};
+use super::{HarnessAdapter, ProjectMarker, ProjectPath, Reader, Role, Surface};
 use crate::env::Env;
 use crate::hook::{HookSpec, Registration};
 use crate::model::{DetectedHarness, HarnessId, ItemKind};
@@ -113,6 +113,12 @@ impl HarnessAdapter for Gemini {
             ProjectMarker::Dir(".gemini"),
             ProjectMarker::File("GEMINI.md"),
         ]
+    }
+
+    /// The context file Gemini loads is a marker, read here in its role.
+    fn project_reads(&self) -> &'static [ProjectPath] {
+        const READS: &[ProjectPath] = &[ProjectPath::file("GEMINI.md", Role::Instruction)];
+        READS
     }
 
     fn global_surfaces(&self, kind: ItemKind, root: &Path, env: &Env) -> Vec<Surface> {

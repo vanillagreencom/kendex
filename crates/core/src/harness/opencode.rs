@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::{HarnessAdapter, ProjectMarker, Reader, Surface, shared_first};
+use super::{HarnessAdapter, ProjectMarker, ProjectPath, Reader, Role, Surface, shared_first};
 use crate::env::Env;
 use crate::model::{DetectedHarness, HarnessId, ItemKind, Scope};
 
@@ -78,6 +78,19 @@ impl HarnessAdapter for Opencode {
             ProjectMarker::File("opencode.json"),
             ProjectMarker::File("opencode.jsonc"),
         ]
+    }
+
+    /// opencode has no hook surface of its own, so a hook is rendered as an
+    /// instruction file the config names and the harness loads every
+    /// session: `instructions/` is context, not a catalog. The config is
+    /// whichever of its two spellings is on disk, so both are named.
+    fn project_reads(&self) -> &'static [ProjectPath] {
+        const READS: &[ProjectPath] = &[
+            ProjectPath::dir(".opencode/instructions", Role::Instruction),
+            ProjectPath::file("opencode.json", Role::Registry),
+            ProjectPath::file("opencode.jsonc", Role::Registry),
+        ];
+        READS
     }
 
     fn global_surfaces(&self, kind: ItemKind, root: &Path, env: &Env) -> Vec<Surface> {

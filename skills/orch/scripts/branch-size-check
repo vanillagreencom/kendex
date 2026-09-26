@@ -66,6 +66,19 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# The micro-tier measurement's boundary as this script reaches it: every file
+# it reads or runs whose edit changes the range measured, the settings the
+# measurement reads, or the ceilings it compares against. The base resolver
+# reaches execution as an argument, run inside branch-growth.sh, so no walk of
+# invocation syntax finds it; the Linear CLI read for the allowance and the
+# workflow-state write for the verdict are outside the rule. The
+# narrow-change.conf boundary group is held to this list by harness-ci's
+# tests/narrow-boundary.test.sh.
+# measures-with: skills/orch/scripts/branch-size-check
+# measures-with: skills/orch/scripts/lib/branch-growth.sh
+# measures-with: skills/orch/scripts/lib/kendex-env.sh
+# measures-with: skills/orch/scripts/resolve-base-branch
+
 print_usage() {
   sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'
 }
