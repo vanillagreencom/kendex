@@ -55,6 +55,7 @@ TAIL="Ab3dEf5hIj7lMn9pQr1tUv2x"
 ROWS="$(cat <<'EOF'
 an RSA private-key header|-----BEGIN RSA PRIVATE KEY-----|sensitive
 a bare private-key header|-----BEGIN PRIVATE KEY-----|sensitive
+an OpenPGP private-key armor header|-----BEGIN PGP PRIVATE KEY BLOCK-----|sensitive
 a GitHub personal token|ghp_@|sensitive
 a GitHub OAuth token|gho_@|sensitive
 a GitHub user token|ghu_@|sensitive
