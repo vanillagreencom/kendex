@@ -213,7 +213,7 @@ The § 1 control-host refusal also ends the run, before any condition above can 
 
 Ending the run leaves the branch and its commits where they stand and reports the condition in § 5. **Main checkout only**, use the route below before reporting. It owns the base-branch restore this file opens with.
 
-The item then relaunches at the next class up, as [oversee.md](oversee.md) § Item Tier assigns it from the branch in the checkout the route below leaves, by that route. `[BRIEF]` is that assignment's `brief=` word:
+The item then relaunches at the next class up, as [oversee.md](oversee.md) § Item Tier assigns it from the branch's state, by the route the checkout leaves it on. `[BRIEF]` is that assignment's `brief=` word:
 
 - **In a lane**, run `/orch [BRIEF] [ISSUE_ID]`. `small` runs [small.md](small.md), and `start` routes a worktree cwd to [start-worktree.md](start-worktree.md) ([start.md](start.md) § 1 step 3). Either session's § 1 resolves the item from the existing branch, and its § 2 implements against it.
 - **From the main checkout at condition 1**, no branch was cut: the item takes plain `/orch [BRIEF] [ISSUE_ID]`.
