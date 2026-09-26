@@ -136,6 +136,7 @@ ask --item KEN-1 --to owner --file $F|2=lane-mail: option-unknown=--to
 ask --item overseer --to peer --file $F|2=lane-mail: to-invalid=peer
 ask --item overseer --to nobody --file $F|2=lane-mail: to-invalid=nobody
 ask --item overseer --to owner --options a,b --recommend c --file $F|2=lane-mail: recommend-invalid=c
+ask --item overseer --to owner --options a,b --recommend a,b --file $F|2=lane-mail: recommend-invalid=a,b
 ask --item overseer --to owner --recommend a --file $F|2=lane-mail: option-required=--options
 ask --item overseer --to owner --options a,b --wait 5 --file $F|2=lane-mail: option-required=--recommend
 ask --item overseer --to owner --options a,b --recommend a --wait 5m --file $F|2=lane-mail: minutes-invalid=--wait
