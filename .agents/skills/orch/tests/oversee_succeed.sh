@@ -195,12 +195,14 @@ wall="ORCH_OVERSEER_WALL_MINUTES=\${WALL_MINUTES:-0}"
 successors="ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=\${SUCCESSOR_ACCOUNTS:-0}"
 qt=""
 [ -z "\${QUESTION_TOOL:-}" ] || qt="ORCH_OVERSEER_QUESTION_TOOL=\$QUESTION_TOOL"
+host=""
+[ -z "\${OVERSEER_HOST:-}" ] || host="ORCH_OVERSEER_HOST=\$OVERSEER_HOST"
 cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
   \$lane \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
   ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \\
-  \$hp \$cm \$ttl \$wall \$successors \$qt "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
+  \$hp \$cm \$ttl \$wall \$successors \$qt \$host "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
 # in-pane ARGS... — a caller pane's own command: draw the screen, wait until
 # tmux shows it, then become the script.
@@ -309,6 +311,7 @@ lane_process_env_readable ||
 FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
 fleet_state() { mkdir -p "$(dirname "$FLEET_STATE")"; printf '{"issue_id": "oversee"}\n' > "$FLEET_STATE"; }
 recorded_line() { jq -r '.overseer.launch_line // "none"' "$FLEET_STATE" 2>/dev/null || echo unreadable; }
+orec() { jq -r ".overseer.$1 // \"none\"" "$FLEET_STATE" 2>/dev/null || echo unreadable; }
 fleet_state
 
 # The caller at index 3 over a gap, renumber-windows off: the successor must
@@ -326,6 +329,14 @@ for _ in $(seq 1 100); do kill -0 "$caller_pid" 2>/dev/null || break; sleep 0.2;
 assert_eq "$(layout)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pane.out" | sed 's/window=@[0-9]*/window=@N/; s/pane=%[0-9]*/pane=%N/; s|path=.*/tmp/workflow-state-oversee.json$|path=STATE|' | tr '\n' ';')|$(recorded claude)" \
   "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=none;${UNOBSERVED_LINE}oversee-succeed: watch-absent path=STATE;oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--dangerously-skip-permissions;--verbose;$BRIEF;" \
   "success in the caller's own pane: successor at the caller's index, caller window gone"
+
+# The record that succession wrote before the successor's first turn, over the
+# fresh state above: runtime tmux, generation 1, the account picked, and the
+# successor's own pane, which is the one the successor-working line names.
+SUCC_REC_PANE="$(sed -n 's/.*successor-working window=@[0-9]* pane=\(%[0-9]*\).*/\1/p' "$TMP_ROOT/in-pane.out")"
+assert_eq "runtime=$(orec runtime) generation=$(orec generation) account=$(orec account) pane=$(orec pane)" \
+  "runtime=tmux generation=1 account=$H/.claude pane=$SUCC_REC_PANE" \
+  "the successor record names the runtime, generation, account and successor pane"
 
 # The same launch's record, written before the window opened: the close kills
 # this script's own window, so a write placed after it may never run.
@@ -722,6 +733,130 @@ assert_eq "$RC|$(keyed interrupted "$(cat "$TMP_ROOT/interrupted.out")" | sed -n
   "1|oversee-succeed: interrupted window=@N signal=TERM|yes|0" \
   "interrupted mid-wait: refused, caller kept, successor closed"
 
+# A signal that lands while the runtime's create runs, the window the script
+# header names: the successor window is open and its id lives only in the
+# provider's answer, not yet in SUCC_PANE. The close-out must read the session
+# off that answer and stop it, or two overseers run. A tmux shim on PATH
+# delays load-buffer, the first write the provider's pane_write makes, so the
+# group kill lands inside the real provider, between its new-window and its
+# answer, before the line is typed; the shim is on PATH for these rows alone.
+REAL_TMUX="$(command -v tmux)"
+# int_create_run BIN — the script launched in its own process group so the
+# group kill reaches the provider too, run until the overseer window opens,
+# then TERMed. Sets INT_OVERSEERS to the overseer count after it exits.
+int_create_run() { # SUCCEED_BIN
+  new_caller "$MARK"
+  local before after=""
+  before="$(overseers)"
+  setsid env TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" SUCCEED_BIN="$1" \
+    "$TMP_ROOT/succeed-env" intcreate 'claude:1:high' --wait-secs 30 \
+    > "$TMP_ROOT/intcreate.out" 2>&1 &
+  local pgid=$!
+  for _ in $(seq 1 100); do [[ "$(overseers)" -gt "$before" ]] && break; sleep 0.2; done
+  kill -TERM -"$pgid" 2>/dev/null || true
+  wait "$pgid" 2>/dev/null || true
+  for _ in $(seq 1 25); do after="$(overseers)"; [[ "$after" -le "$before" ]] && break; sleep 0.2; done
+  INT_OVERSEERS="$after"
+}
+if command -v setsid >/dev/null 2>&1; then
+  # The delay is the span the kill must land in: longer than the poll above
+  # takes to see the new window.
+  cat > "$BIN/tmux" <<SHIM
+#!/bin/sh
+[ "\$1" != load-buffer ] || sleep 2
+exec "$REAL_TMUX" "\$@"
+SHIM
+  chmod +x "$BIN/tmux"
+  int_create_run "$SUCCEED"
+  assert_eq "$INT_OVERSEERS" \
+    "0" \
+    "a signal during create closes the successor read off the provider's answer"
+  # The provider's control: without its signal guard it dies between
+  # new-window and its answer, and the window leaks.
+  INTHOST="$(mutant_scripts int-create-host overseer-host-tmux)" || exit 1
+  mutate_file "$INTHOST/overseer-host-tmux" "    trap '' HUP INT TERM" '    :'
+  int_create_run "$INTHOST/oversee-succeed"
+  assert_eq "$INT_OVERSEERS" \
+    "1" \
+    "control: a provider without its signal guard leaks the successor"
+  # The library's control: ol_session_abandon recovers the session from the
+  # provider's answer where the caller never assigned it. Drop that recovery
+  # and the window leaks.
+  INTCTL="$(mutant_scripts int-create-ctl lib/overseer-launch.sh)" || exit 1
+  mutate_file "$INTCTL/lib/overseer-launch.sh" '  [[ -n "$OL_SESSION" ]] || ol_session_from_out' '  :'
+  int_create_run "$INTCTL/oversee-succeed"
+  assert_eq "$INT_OVERSEERS" \
+    "1" \
+    "control: without the recovery a signal during create leaks the successor"
+  rm -f -- "${BIN:?}/tmux"
+  tm kill-window -a -t fleet:0 2>/dev/null || true
+else
+  echo "  skip  a signal during create closes the successor (no setsid)"
+fi
+
+# The caller's own record is put back WHOLE when a launch is abandoned, its own
+# launch line included: the read runs before the successor's line is written,
+# so a later dead-overseer relaunch never replays the line this run refused.
+# Seed a prior generation, run an abandon (never-working), and read the record.
+SEED_LINE='env CLAUDE_CONFIG_DIR=/seed/.claude claude -n overseer --seeded'
+seed_overseer() {
+  fleet_state
+  jq --arg line "$SEED_LINE" \
+    '.overseer = {runtime: "tmux", generation: 5, server: "7000", pane: "%900", window: "@900", account: "/seed/.claude", launch_line: $line}' \
+    "$FLEET_STATE" > "$FLEET_STATE.tmp" && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
+}
+seed_overseer
+new_caller "$MARK"
+touch "$TMP_ROOT/idle"
+run_succeed restore 'claude:1:high' --wait-secs "$IDLE_WAIT"
+rm -f "$TMP_ROOT/idle"
+assert_eq "$RC|generation=$(orec generation) pane=$(orec pane) account=$(orec account) line=$(recorded_line)" \
+  "1|generation=5 pane=%900 account=/seed/.claude line=$SEED_LINE" \
+  "an abandoned succession puts the caller's whole record back, its own line included"
+
+# A signal that lands while the session record's writer runs is taken only
+# once the writer returns, and the writer may have committed: the abandon then
+# has to put the caller's record back although ol_record_write never returned.
+# A workflow-state stand-in commits the successor's record, TERMs the script
+# and exits 0, once; every other call is the real writer's.
+# record_commit_run SCRIPTS_DIR — the run over that tree; sets OUT and RC.
+record_commit_run() { # SCRIPTS_DIR
+  rm -f -- "$1/workflow-state" "$TMP_ROOT/record-commit.fired"
+  cat > "$1/workflow-state" <<STUB
+#!/usr/bin/env bash
+"$SRC_DIR/workflow-state" "\$@" || exit
+if [[ "\$1 \$2 \$3" == "set oversee overseer" && ! -e "$TMP_ROOT/record-commit.fired" ]]; then
+  : > "$TMP_ROOT/record-commit.fired"
+  kill -TERM "\$PPID"
+fi
+STUB
+  chmod +x "$1/workflow-state"
+  seed_overseer
+  new_caller "$MARK"
+  touch "$TMP_ROOT/idle"
+  SUCCEED_BIN="$1/oversee-succeed" run_succeed recordcommit 'claude:1:high' --wait-secs 30
+  rm -f "$TMP_ROOT/idle"
+}
+seed_overseer
+SEED_RECORD="$(jq -cS .overseer "$FLEET_STATE")"
+RECCOMMIT="$(mutant_scripts record-commit)" || exit 1
+record_commit_run "$RECCOMMIT"
+assert_eq "$RC|$(keyed interrupted "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)|$(jq -cS .overseer "$FLEET_STATE")" \
+  "1|oversee-succeed: interrupted window=@N signal=TERM|yes|0|$SEED_RECORD" \
+  "a signal while the record's writer commits: refused, successor closed, the caller's record back"
+# The control: the put-back gated on a flag ol_record_write sets once its
+# writer returns, which a signal during the writer never lets it reach, so the
+# record keeps the closed successor's generation, one past the seeded 5.
+RECCTL="$(mutant_scripts record-commit-ctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$RECCTL/lib/overseer-launch.sh" '  if [[ -n "$OL_PRIOR" ]] && ! ol_record_restore; then' \
+  '  if [[ -n "${OL_WRITE_RETURNED:-}" ]] && ! ol_record_restore; then'
+mutate_file "$RECCTL/lib/overseer-launch.sh" 'set oversee overseer "$record" >/dev/null 2>"$DEP_ERR"' \
+  'set oversee overseer "$record" 2>"$DEP_ERR" >/dev/null || return 1; OL_WRITE_RETURNED=1'
+record_commit_run "$RECCTL"
+assert_eq "$RC|$(caller_open)|$(overseers)|generation=$(orec generation)" \
+  "1|yes|0|generation=6" \
+  "control: a put-back gated on the write returning leaves the closed successor recorded"
+
 new_caller "$UNDER_MARK"
 run_succeed under 'claude:1:high'
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
@@ -825,6 +960,23 @@ SUCCESSOR_ACCOUNTS=bad run_succeed badsuccessors '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "1|oversee-succeed: invalid-successor-accounts ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=bad" \
   "a malformed successor-account setting is refused before judgement"
+# A preference entry outside harness:rank:effort is refused before any pick,
+# by lib/overseer-launch.sh's parser, the one `oversee launch` reads the same
+# setting with.
+new_caller "$MARK"
+run_succeed badpreference 'claude:one:high' --wait-secs 5
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "1|oversee-succeed: invalid-preference entry=claude:one:high|0" \
+  "a preference entry outside the shape is refused before any pick, nothing opened"
+# A runtime other than tmux is refused before anything is printed, written or
+# opened, by the library rule `oversee launch` reads: this script verifies the
+# successor's account off its pane, so a provider path is never opened through
+# and recorded as tmux.
+new_caller "$MARK"
+OVERSEER_HOST="$TMP_ROOT/other" run_succeed otherhost 'claude:1:high' --wait-secs 5
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(grep -c '^oversee-succeed: successor-launch ' <<<"$OUT")|$(overseers)" \
+  "1|oversee-succeed: runtime-unsupported host=$TMP_ROOT/other|0|0" \
+  "a runtime other than tmux is refused before the pre-launch line, nothing opened"
 stage_usage_pair rateleadingzero 40 20 600
 new_caller "$UNDER_MARK"
 WALL_MINUTES=030 run_succeed rateleadingzero '' --check-marks
@@ -1059,20 +1211,18 @@ assert_eq "$RC|$OUT|$(recorded codex)" \
 # walled row's clause above and lane-launch-trust.sh's, and both have already
 # written this very home by the time a print row runs: asserting it here would
 # read back another row's state rather than this mode's own.
-# --print-launch-line's one control.
-PRINTSKIP="$(mutant_scripts printskip oversee-succeed)" || exit 1
-# The call's own line carries a continuation, so it is re-emitted from the file
-# rather than retyped: an awk -v value cannot hold a trailing backslash.
-awk -v call='  lane_codex_trust_prepare "$harness" "$lane_dir" "$CALLER_PATH"' \
-    -v home='  launch_home="$LANE_TRUST_HOME"' \
-  'index($0, call) == 1 { print "  if [[ \"$MODE\" != succeed ]]; then LANE_TRUST_HOME=\"$lane_dir\" LANE_TRUST_ROUTE=none";
-                          print "  else " substr($0, 3); calls++; next }
-   $0 == home { print "  fi"; print; homes++; next }
+# --print-launch-line's one control. The preparation is made in
+# lib/overseer-launch.sh's ol_command_line, the one builder every launch and
+# every printed line go through, so the copy whose builder skips it is what a
+# print without the preparation would record.
+PRINTSKIP="$(mutant_scripts printskip lib/overseer-launch.sh)" || exit 1
+awk -v call='  if ! lane_codex_trust_prepare "$harness" "$lane_dir" "$launch_dir"; then' \
+  '$0 == call { print "  LANE_TRUST_HOME=\"$lane_dir\" LANE_TRUST_ROUTE=none LANE_TRUST_REASON=\"\"; if false; then"; calls++; next }
    { print }
-   END { if (calls != 1 || homes != 1) exit 1 }' "$SUCCEED" > "$PRINTSKIP/oversee-succeed" \
+   END { if (calls != 1) exit 1 }' "$SRC_DIR/lib/overseer-launch.sh" > "$PRINTSKIP/lib/overseer-launch.sh" \
   || { echo "fixture: printskip found no single site to mutate" >&2; exit 1; }
-assert_eq "$(bash -n "$PRINTSKIP/oversee-succeed" && echo parses || echo broken)" \
-  "parses" "control printskip parses"
+assert_eq "$(cmp -s "$PRINTSKIP/lib/overseer-launch.sh" "$SRC_DIR/lib/overseer-launch.sh" && echo same || echo differs)|$(bash -n "$PRINTSKIP/lib/overseer-launch.sh" && echo parses || echo broken)" \
+  "differs|parses" "control printskip really drops the preparation from the builder"
 new_caller "$CODEX_SCREEN" 'Context 48% left'
 PRINT_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 PRINT_HOME="$(lane_codex_home_path "$H/.codex" "$PRINT_CWD")"

@@ -72,7 +72,9 @@ chmod +x "$FAILPS/ps" "$FAILPASTE/tmux" "$SLOWPASTE/tmux"
 # A tmux whose pane list names systemd-run as every pane's command for the
 # first reads, as many as WRAP_LIMIT holds, the window a fleet-confine
 # default-command holds before its shell takes the foreground. A row writes
-# both files first.
+# both files first. Only a row's last word is replaced, so its separators
+# stay: the window resolution reads a tab-separated list and the id lookup a
+# space-separated one.
 WRAPPED="$TMP_ROOT/wrapped"
 WRAP_COUNT="$TMP_ROOT/wrap-count"
 WRAP_LIMIT="$TMP_ROOT/wrap-limit"
@@ -83,7 +85,7 @@ if [ "\$1" = list-panes ]; then
   n=\$((\$(cat '$WRAP_COUNT') + 1))
   echo "\$n" > '$WRAP_COUNT'
   if [ "\$n" -le "\$(cat '$WRAP_LIMIT')" ]; then
-    "$REAL_TMUX" "\$@" | awk -F'\t' -v OFS='\t' '{ \$NF = "systemd-run" } 1'
+    "$REAL_TMUX" "\$@" | sed 's/[^[:space:]]*\$/systemd-run/'
     exit
   fi
 fi
@@ -244,6 +246,19 @@ concurrent() { # DIR
 assert_eq "$(concurrent "$REF")" "rc=0,0 lane=one, pair=two," \
   "two writers of one shell writing two panes at once each land only their own text"
 
+# A pane id from a caller outside tmux whose environment names no UTF-8
+# locale, the shape a launcher run from a job unit takes: tmux prints a tab in
+# a format as `_` to that client, so the id lookup must not split on one.
+no_utf8() { # DIR
+  local rc=0 key
+  env -i PATH="$PATH" HOME="$TMP_ROOT" TMUX_TMPDIR="$SOCK_DIR" "$1/pane-write" \
+    --pane "$LANE_PANE" --expect cat --file "$HELLO" 2>"$TMP_ROOT/err" >/dev/null || rc=$?
+  key="$(awk '$1 == "pane-write:" { print $2; exit }' "$TMP_ROOT/err")"
+  printf 'rc=%s key=%s received=%s' "$rc" "${key:-none}" "$(received)"
+}
+assert_eq "$(no_utf8 "$REF")" "rc=0 key=none received=hello," \
+  "a pane id resolves for a caller outside tmux whose locale names no UTF-8"
+
 echo "=== pane-write: each rule's control ==="
 # mutant NAME OLD NEW [FILE] — a copy of the scripts with OLD replaced by NEW in
 # FILE, a path under the copy, lib/pane-write.sh by default, once, or the
@@ -302,6 +317,11 @@ assert_eq "$(observe "$MUTANT" "" "--window;own;--expect;shell;--key;Enter" "PW_
 mutant copy-mode 'pane_write_mode_clear() {' 'pane_write_mode_clear() { return 0;'
 assert_eq "$(observe "$MUTANT" "" "--window;lane;--expect;cat;--file;$HELLO" 'tm copy-mode -t "$LANE_PANE"')" \
   "rc=0 key=none received=hello" "control: without the copy-mode cancel the Enter never reaches the program"
+# The first separator made a real tab, which tmux hands this client as `_`.
+mutant id-separator "-F '#{pane_id} #{pane_pid} #{pane_current_command}'" \
+  $'-F \'#{pane_id}\t#{pane_pid} #{pane_current_command}\'' lib/lane-state.sh
+assert_eq "$(no_utf8 "$MUTANT")" "rc=1 key=pane-missing received=" \
+  "control: a tab-separated id lookup misses the pane for a caller with no UTF-8 locale"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

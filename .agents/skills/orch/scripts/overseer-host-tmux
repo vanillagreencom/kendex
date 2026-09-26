@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+# overseer-host-tmux — the tmux provider behind `overseer-host`: the overseer's
+# own session is a tmux pane, and the four primitives of
+# ../schemas/overseer-host.md are the tmux calls the succession made by hand
+# before the adapter existed.
+#
+# Usage:
+#   overseer-host-tmux create --cwd DIR (--after SESSION | --session NAME)
+#                             [--name NAME] --line COMMAND
+#   overseer-host-tmux inspect --session SESSION [--launch]
+#   overseer-host-tmux deliver --session SESSION
+#   overseer-host-tmux stop --session SESSION [--successor SESSION]
+#
+#   SESSION is a tmux pane id, %N: the one exact session the runtime holds.
+#   Every verb reaches the tmux server the caller's tmux calls reach: the one
+#   $TMUX names, or the person's own at the socket tmux derives from their
+#   uid when $TMUX is unset.
+#
+#   create   opens a window named NAME (default overseer) with its shell in
+#            DIR, right after the window SESSION sits in, or at the end of the
+#            tmux session NAME when no predecessor is named, and types COMMAND
+#            into it followed by Enter through lib/pane-write.sh, the one
+#            writer into a pane, which refuses a pane no longer at its
+#            shell. Prints one line, `session=%N
+#            window=@N server=PID`, before the harness has drawn anything:
+#            the record a caller writes before the first turn. A window that
+#            opened and could not be typed into is closed again, so a failed
+#            create leaves nothing behind. HUP, INT and TERM do not
+#            interrupt it between opening the window and printing its line.
+#   inspect  prints one keyed line, `session=%N window=@N server=PID
+#            state=STATE`, then the pane's screen. STATE is
+#            lib/lane-state.sh's word for the pane, the one judge every
+#            reader of a lane asks: working, idle, asking, walled, exited,
+#            or unjudged where the screen settles nothing, with `cause=`
+#            naming a scan the judge could not run. `--launch` is the
+#            first-turn reading a launcher takes of a pane it opened seconds
+#            ago, which has no earlier turn to slice from: working where a
+#            turn is in flight anywhere on the screen, asking where the
+#            folder-trust dialog holds the harness, in which case the line
+#            under the keyed one is that dialog line rather than the screen,
+#            and idle otherwise. A session the server no longer lists is
+#            `state=gone` with no screen.
+#   deliver  reads a block on stdin and confirms the session can read it.
+#            On tmux the harness reads the watch log inside its own turn,
+#            so the block is already where that session reads; this verb
+#            proves the session is live and prints `deliver=watch-log
+#            session=%N`. A session the server no longer lists refuses.
+#   stop     closes the session's window. With --successor, the successor
+#            first takes the stopped session's window slot, in one client
+#            call, so no other window moves. Prints `stopped session=%N
+#            window=@N`; a session the server no longer lists is already
+#            stopped and prints `window=none`.
+#
+# Output: every refusal is `overseer-host-tmux: <key> <field>=<value>` on
+# stderr, tmux's own words under it, at exit 1; a usage error exits 2; a
+# session the server no longer lists, where the verb needs a live one,
+# exits 4 under `session-gone`.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=lib/tmux-server.sh
+source "$SCRIPT_DIR/lib/tmux-server.sh"
+# shellcheck source=lib/lane-state.sh
+source "$SCRIPT_DIR/lib/lane-state.sh"
+# shellcheck source=lib/pane-write.sh
+source "$SCRIPT_DIR/lib/pane-write.sh"
+
+usage() { sed -n '/^# Usage:/,/^# Output:/p' "$0" | sed 's/^# \{0,1\}//'; }
+
+message() { # KEY FIELD=VALUE...
+  local key="$1" text
+  shift
+  case "$key" in
+    unknown-option) text="$(usage | sed -n '/^Usage:/,/^$/p')" ;;
+    verb-invalid) text='The verbs are create, inspect, deliver and stop.' ;;
+    invalid-session) text='A session is a tmux pane id, %N.' ;;
+    option-missing) text='The verb needs the named option.' ;;
+    option-conflict) text='--after and --session name the placement two ways; give one.' ;;
+    session-gone) text='The tmux server no longer lists this session, so the verb has nothing to act on.' ;;
+    session-unreadable) text='The session could not be read; tmux says why below.' ;;
+    tmux-session-missing) text='The tmux session named for the new window does not exist on this server.' ;;
+    tmux-failed) text='The tmux call the operation field names failed for another reason than an absent session, no server at the socket among them; tmux says why below.' ;;
+    create-failed) text='The window could not be opened or typed into; a window already opened was closed again. The step field names the call that failed.' ;;
+    stop-failed) text='The window could not be closed.' ;;
+  esac
+  printf 'overseer-host-tmux: %s' "$key"
+  printf ' %s' "$@"
+  printf '\n%s\n' "$text"
+}
+
+DEP_ERR="$(mktemp)" || { printf 'overseer-host-tmux: mktemp-failed\n' >&2; exit 1; }
+trap 'rm -f -- "$DEP_ERR"' EXIT
+
+die_status() { # STATUS KEY FIELD=VALUE...
+  local status="$1"
+  shift
+  message "$@" >&2
+  [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+  exit "$status"
+}
+die() { die_status 1 "$@"; }
+
+matches() { # VALUE REGEX
+  local LC_ALL=C
+  [[ "$1" =~ $2 ]]
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
+VERB="${1:-}"
+[[ -n "$VERB" ]] || die_status 2 unknown-option arg=none
+shift
+case "$VERB" in
+  create|inspect|deliver|stop) ;;
+  *) die_status 2 verb-invalid "verb=$VERB" ;;
+esac
+
+CWD="" AFTER="" TMUX_SESSION_NAME="" NAME=overseer LINE="" SESSION="" SUCCESSOR="" LAUNCH=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --cwd|--after|--session|--name|--line|--successor)
+      [[ $# -ge 2 ]] || die_status 2 unknown-option "arg=$1"
+      case "$1" in
+        --cwd) CWD="$2" ;;
+        --after) AFTER="$2" ;;
+        --session) if [[ "$VERB" == create ]]; then TMUX_SESSION_NAME="$2"; else SESSION="$2"; fi ;;
+        --name) NAME="$2" ;;
+        --line) LINE="$2" ;;
+        *) SUCCESSOR="$2" ;;
+      esac
+      shift 2 ;;
+    --launch) LAUNCH=1; shift ;;
+    *) die_status 2 unknown-option "arg=$1" ;;
+  esac
+done
+
+# One field per tmux call: some tmux builds print a control-character
+# separator as escaped text, so no separator passes through tmux's output.
+pane_field() { # PANE FORMAT
+  tmux display-message -p -t "$1" "$2" 2>"$DEP_ERR"
+}
+
+# Whether the server lists PANE. Only a listing that succeeded answers gone:
+# a server that could not be asked is `session-unreadable`, never a session
+# that ended.
+pane_listed() { # PANE
+  local panes
+  panes="$(tmux list-panes -a -F '#{pane_id}' 2>"$DEP_ERR")" || die session-unreadable "session=$1"
+  grep -qxF -- "$1" <<<"$panes"
+}
+
+require_session() { # VALUE
+  [[ -n "$1" ]] || die_status 2 option-missing option=--session "verb=$VERB"
+  matches "$1" '^%[0-9]+$' || die_status 2 invalid-session "value=$1"
+}
+
+case "$VERB" in
+  create)
+    [[ -n "$CWD" ]] || die_status 2 option-missing option=--cwd verb=create
+    [[ -n "$LINE" ]] || die_status 2 option-missing option=--line verb=create
+    [[ -n "$AFTER" || -n "$TMUX_SESSION_NAME" ]] \
+      || die_status 2 option-missing option=--after,--session verb=create
+    [[ -z "$AFTER" || -z "$TMUX_SESSION_NAME" ]] || die_status 2 option-conflict verb=create
+    if [[ -n "$AFTER" ]]; then
+      matches "$AFTER" '^%[0-9]+$' || die_status 2 invalid-session "value=$AFTER"
+      target="$(pane_field "$AFTER" '#{window_id}')" || die session-unreadable "session=$AFTER"
+    else
+      # Exact, by the library's one reading of tmux's answer: absent is a
+      # missing session, anything else the call failing.
+      probe=0
+      tmux_session_present "$TMUX_SESSION_NAME" || probe=$?
+      if (( probe )); then
+        printf '%s\n' "$TMUX_SESSION_DETAIL" > "$DEP_ERR"
+        [[ "$probe" -eq 3 ]] || die tmux-failed operation=has-session "session=$TMUX_SESSION_NAME"
+        die tmux-session-missing "session=$TMUX_SESSION_NAME"
+      fi
+      if ! last_idx="$(tmux list-windows -t "=$TMUX_SESSION_NAME" -F '#{window_index}' 2>"$DEP_ERR" | tail -1)" \
+         || [[ -z "$last_idx" ]]; then
+        die create-failed step=list-windows "session=$TMUX_SESSION_NAME"
+      fi
+      target="=$TMUX_SESSION_NAME:$last_idx"
+    fi
+    # From the window opening to the answer, a group signal would leave a window
+    # no caller can name: create runs to its answer through these signals, the
+    # pane write included, so the caller's close-out reads the session off it. A
+    # tmux client sets its own HUP and TERM handlers once running, so only its
+    # own brief run stays exposed.
+    trap '' HUP INT TERM
+    spec="$(tmux new-window -d -a -t "$target" -n "$NAME" -c "$CWD" \
+      -P -F '#{pane_id} #{window_id} #{pid}' 2>"$DEP_ERR")" || die create-failed step=new-window
+    read -r pane window server <<<"$spec"
+    [[ -n "$window" && -n "$server" ]] || die create-failed step=new-window
+    if ! pane_write pane "$pane" shell text "$LINE" 2>"$DEP_ERR"; then
+      tmux kill-window -t "$window" 2>/dev/null || true
+      die create-failed step=pane-write "window=$window"
+    fi
+    printf 'session=%s window=%s server=%s\n' "$pane" "$window" "$server"
+    ;;
+  inspect)
+    require_session "$SESSION"
+    if ! pane_listed "$SESSION"; then
+      printf 'session=%s window=none server=none state=gone\n' "$SESSION"
+      exit 0
+    fi
+    window="$(pane_field "$SESSION" '#{window_id}')" || die session-unreadable "session=$SESSION" field=window_id
+    server="$(pane_field "$SESSION" '#{pid}')" || die session-unreadable "session=$SESSION" field=pid
+    screen="$(tmux capture-pane -pJ -t "$SESSION" 2>"$DEP_ERR")" || die session-unreadable "session=$SESSION" field=capture
+    if [[ "$LAUNCH" -eq 1 ]]; then
+      # The whole capture, never a turn slice: a pane opened seconds ago has
+      # no earlier turn to slice from. The trust dialog is named by its own
+      # predicate, since lane_state's asking rung would also cover every
+      # option list a first turn prints.
+      if pane_working "$screen"; then
+        state=working
+      elif dialog="$(pane_trust_dialog "$screen")"; then
+        state=asking
+        screen="$dialog"
+      else
+        state=idle
+      fi
+      printf 'session=%s window=%s server=%s state=%s\n' "$SESSION" "$window" "$server" "$state"
+    else
+      obs="$(pane_field "$SESSION" '#{pane_pid} #{pane_current_command}')" \
+        || die session-unreadable "session=$SESSION" field=pane_pid
+      matches "$obs" '^[0-9]+[[:blank:]]+[^[:space:]]' \
+        || die session-unreadable "session=$SESSION" field=pane_pid "value=${obs:-none}"
+      pid="${obs%%[[:blank:]]*}"
+      cmd="${obs#*[[:blank:]]}"
+      cause=""
+      # The sixth argument is empty: this reader's vantage point is the pane,
+      # so a screen the pane rungs cannot settle is `unjudged`, never `exited`.
+      lane_state state listed "$cmd" "$pid" "$screen" || cause=" cause=limit-scan"
+      [[ "$LANE_PROBE_RC" -le 1 || -n "$cause" ]] || cause=" cause=process-probe"
+      printf 'session=%s window=%s server=%s state=%s%s\n' "$SESSION" "$window" "$server" "$state" "$cause"
+    fi
+    printf '%s\n' "$screen"
+    ;;
+  deliver)
+    require_session "$SESSION"
+    # The block is consumed whole so a writer never meets a closed pipe; on
+    # tmux nothing here forwards it, because the harness in the pane reads
+    # the watch log it came from inside its own turn.
+    cat >/dev/null
+    pane_listed "$SESSION" || die_status 4 session-gone "session=$SESSION"
+    printf 'deliver=watch-log session=%s\n' "$SESSION"
+    ;;
+  stop)
+    require_session "$SESSION"
+    [[ -z "$SUCCESSOR" ]] || matches "$SUCCESSOR" '^%[0-9]+$' || die_status 2 invalid-session "value=$SUCCESSOR"
+    if ! pane_listed "$SESSION"; then
+      printf 'stopped session=%s window=none\n' "$SESSION"
+      exit 0
+    fi
+    window="$(pane_field "$SESSION" '#{window_id}')" || die session-unreadable "session=$SESSION" field=window_id
+    if [[ -n "$SUCCESSOR" ]]; then
+      succ_window="$(pane_field "$SUCCESSOR" '#{window_id}')" || die session-unreadable "session=$SUCCESSOR" field=window_id
+      # One client call: the successor takes the slot, then that window
+      # closes; with renumber-windows on, tmux renumbers as for any closed
+      # window.
+      tmux swap-window -d -s "$succ_window" -t "$window" \; kill-window -t "$window" \; select-window -t "$succ_window" \
+        2>"$DEP_ERR" || die stop-failed "session=$SESSION" "window=$window" "successor=$SUCCESSOR"
+    else
+      tmux kill-window -t "$window" 2>"$DEP_ERR" || die stop-failed "session=$SESSION" "window=$window"
+    fi
+    printf 'stopped session=%s window=%s\n' "$SESSION" "$window"
+    ;;
+esac

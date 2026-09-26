@@ -357,14 +357,20 @@ Options:
                       passed through to `oversee-succeed` when this watch
                       records the overseer's launch line (default
                       tmp/handoffs/OVERSEER-HANDOFF.md)
-  LANE_WINDOW...      tmux window names to watch; requires $TMUX. A bare name
-                      is a window in the session this watch started in, which
-                      it resolves once through $TMUX_PANE and names on
+  LANE_WINDOW...      tmux window names to watch; requires $TMUX or
+                      ORCH_TMUX_SESSION, which lets a watch outside tmux
+                      reach the fleet's session. A bare name is a window in
+                      that session, else the session this watch started in,
+                      which it resolves once through $TMUX_PANE and names on
                       stderr as session-resolved, so a pane that later dies
                       moves no lane into another session; `session:window`,
                       tmux's own target form, names one in another session.
                       A bare name with no session resolved is refused as
-                      session-unresolved naming the lane and the --state file
+                      session-unresolved naming the lane and the --state
+                      file; a setting tmux does not hold as session-missing,
+                      and a has-session call failing for any other reason,
+                      no server at the socket among them, as tmux-failed
+                      naming that socket
   -- OVERSEER_FLAGS...
                       the flags the OVERSEER itself runs under — its
                       permission flags, plus its current model and effort
@@ -735,6 +741,10 @@ source "$SCRIPT_DIR/lib/lane-claims.sh"
 source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
+# shellcheck source=lib/tmux-server.sh
+source "$SCRIPT_DIR/lib/tmux-server.sh"
+# shellcheck source=lib/watch-session.sh
+source "$SCRIPT_DIR/lib/watch-session.sh"
 # shellcheck source=lib/lane-context.sh
 source "$SCRIPT_DIR/lib/lane-context.sh"
 # shellcheck source=lib/lane-gitfile.sh
@@ -863,31 +873,6 @@ mail_row_commit() {
   MAIL_SEEN="$1"
 }
 
-# The session every bare lane window name belongs to, resolved ONCE, while the
-# pane that started this watch still exists: tmux resolves a target with no
-# session through the calling pane, and once that pane is gone it picks a
-# session of its own, so a watch outliving its launcher would read every bare
-# lane in some other session and report it window-gone. A repeat pass is handed
-# the wrapper's answer in OVERSEE_WATCH_SESSION and never asks tmux itself.
-# Empty off tmux, or where tmux named none; check_lane_set refuses a bare name
-# then, with tmux's own words in WATCH_SESSION_DETAIL.
-WATCH_SESSION=""
-WATCH_SESSION_DETAIL=""
-watch_session_resolve() {
-  local out target=()
-  [[ -n "${TMUX:-}" ]] || return 0
-  if [[ "$REPEAT_CHILD" -eq 1 ]]; then
-    WATCH_SESSION="${OVERSEE_WATCH_SESSION:-}"
-    return 0
-  fi
-  [[ -z "${TMUX_PANE:-}" ]] || target=(-t "$TMUX_PANE")
-  if out="$(tmux display-message -p ${target[@]+"${target[@]}"} '#S' 2>&1)" && [[ -n "$out" ]]; then
-    WATCH_SESSION="$out"
-  else
-    WATCH_SESSION_DETAIL="$out"
-  fi
-}
-
 # The -t target a lane is read through: a bare name inside the resolved
 # session, matched exactly, and a `session:window` name as it was given.
 lane_target() { # LANE
@@ -973,25 +958,6 @@ GIVEN_LANES=(${LANES[@]+"${LANES[@]}"})
 GIVEN_HOSTED=(${HOSTED[@]+"${HOSTED[@]}"})
 GIVEN_ROOTS=(${ROOTS[@]+"${ROOTS[@]}"})
 [[ ${#SKIP_LANES[@]} -eq 0 || -n "$STATE_FILE" ]] || die state-required "" "option=--skip-lane"
-# A lane is read through tmux, so a run naming one outside tmux is refused, and
-# so is a bare name with no session to read it in. A single run and every
-# repeat pass ask it of the lanes they carry.
-# The session is named once, by the process that resolved it, the first time
-# a bare name is read in it: after the argument checks, so a refusal is still
-# the first line a refused run prints.
-SESSION_NOTED=0
-check_lane_set() {
-  local lane
-  [[ ${#LANES[@]} -eq 0 || -n "${TMUX:-}" ]] || die tmux-missing "" "lanes=${LANES[*]}"
-  for lane in ${LANES[@]+"${LANES[@]}"}; do
-    [[ "$lane" != *:* ]] || continue
-    [[ -n "$WATCH_SESSION" ]] \
-      || die session-unresolved "$WATCH_SESSION_DETAIL" "lane=$lane" "path=${STATE_FILE:-none}"
-    [[ "$SESSION_NOTED" -eq 0 && "$REPEAT_CHILD" -eq 0 ]] || continue
-    ow_message session-resolved "session=$WATCH_SESSION" >&2
-    SESSION_NOTED=1
-  done
-}
 # A pass the repeat wrapper launched, which inherits that wrapper's session,
 # overseer record and watch record rather than making its own.
 REPEAT_CHILD=0
@@ -1235,70 +1201,17 @@ overseer_record_refuse() { # DETAIL REASON FIELD=VALUE...
   [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
   exit 2
 }
-# The tail every oversee-succeed call this watch makes carries: the handoff
-# path the successor's brief must name, and the overseer's own flags after the
-# `--` that ends that script's parser. Spelled here and nowhere else, because
-# two sites ask for the same successor — the record of the line a death would
-# replay, and the walled recovery that builds one now — and a flag added to
-# one spelling and not the other is a successor launched two ways.
-#
-# An array rather than a printed list: a flag is one argv word whatever it
-# holds, and a line-per-word rendering would split one carrying a newline into
-# two. Never empty, so every call site expands it plainly.
-OVERSEER_LAUNCH_ARGS=()
-overseer_launch_args() {
-  OVERSEER_LAUNCH_ARGS=(--handoff "$HANDOFF")
-  [[ ${#OVERSEER_FLAGS[@]} -eq 0 ]] || OVERSEER_LAUNCH_ARGS+=(-- "${OVERSEER_FLAGS[@]}")
-}
+# shellcheck source=lib/watch-overseer-record.sh
+source "$SCRIPT_DIR/lib/watch-overseer-record.sh"
 
-overseer_command_record() {
-  local pane="${TMUX_PANE:-}" key server window line record detail
-  [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
-  # The key is the orch library's, the same function the report and the lane
-  # turn-end hook read a session's own key with: the hook compares its own
-  # against the pair written here, and a second derivation that drifted would
-  # leave the overseer's turn end judged by nothing, with no keyed line.
-  # That library swallows tmux's own words, and a second read of `#{pid}` here
-  # would be a twin of the verb it owns, so the refusal names the read that
-  # failed instead of replaying a message this script cannot have. The window
-  # read below runs here and does replay tmux's. A key that came back in some
-  # other shape is its own cause and is replayed as one.
-  if ! key="$(lane_context_caller_key)"; then
-    overseer_record_refuse "tmux reported no server pid for pane $pane" \
-      overseer-unrecorded "pane=$pane" "step=identity"
-  fi
-  [[ "$key" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)$ ]] \
-    || overseer_record_refuse "the pane key read back as: $key" \
-      overseer-unrecorded "pane=$pane" "step=identity"
-  # Taken here, before the next match replaces BASH_REMATCH.
-  server="${BASH_REMATCH[1]}"
-  if ! window="$(tmux display-message -p -t "$pane" '#{window_id}' 2>&1)"; then
-    overseer_record_refuse "$window" overseer-unrecorded "pane=$pane" "step=window"
-  fi
-  [[ "$window" =~ ^@[0-9]+$ ]] \
-    || overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=window"
-  overseer_launch_args
-  if ! line="$("$SUCCEED" --print-launch-line "${OVERSEER_LAUNCH_ARGS[@]}" 2>&1)"; then
-    overseer_record_refuse "$line" overseer-line-missing "pane=$pane" "path=$SUCCEED"
-  fi
-  [[ -n "$line" ]] \
-    || overseer_record_refuse "" overseer-line-missing "pane=$pane" "path=$SUCCEED"
-  record="$(jq -n --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" \
-    '{server: $server, pane: $pane, window: $window, launch_line: $line}' 2>&1)" \
-    || overseer_record_refuse "$record" overseer-unrecorded "pane=$pane" "step=render"
-  detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
-    set oversee overseer "$record" 2>&1)" \
-    || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=write"
-}
-
-# Whether PANE, a pane id, is one the tmux server this start runs on no longer
+# Whether PANE, a pane id, is one the tmux server this start reaches no longer
 # lists. Only a listing that succeeded answers: a server that could not be
 # asked leaves the pane unjudged, and the watch serving it is refused, not
 # stopped. A pane on another tmux server reads as gone here; one fleet state is
 # watched from one server.
 watch_pane_gone() { # PANE
   local panes
-  [[ -n "${TMUX:-}" && "$1" == %* ]] || return 1
+  tmux_server_named && [[ "$1" == %* ]] || return 1
   panes="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>/dev/null)" || return 1
   ! awk -v p="$1" '$2 == p { found = 1 } END { exit !found }' <<<"$panes"
 }
@@ -1792,7 +1705,7 @@ require_item_helpers
 # naming items and no window is told which checks it is not running, as the
 # two notes above say for the reducer and the merged check. Outside tmux there
 # is no pane to read and nothing to note.
-if [[ -n "${TMUX:-}" && -n "$ITEM_BRANCHES" && ${#LANES[@]} -eq 0 ]]; then
+if tmux_server_named && [[ -n "$ITEM_BRANCHES" && ${#LANES[@]} -eq 0 ]]; then
   ow_message lanes-omitted "count=0" "active=pr-watch,merged,triage,handoff" >&2
 fi
 

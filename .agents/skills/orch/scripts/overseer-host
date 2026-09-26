@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Resolve or call the overseer-session runtime: the provider that opens,
+# reads, feeds and ends the OVERSEER's own session, as `lane-host` does for a
+# lane's. `ORCH_OVERSEER_HOST` selects it once per session: empty or `tmux` is
+# the included tmux provider beside this script, and any other value is an
+# executable script path speaking the protocol in ../schemas/overseer-host.md.
+# Every verb passes its arguments, stdin, stdout, stderr and exit status
+# through unchanged, so a caller reads the provider's own words.
+set -euo pipefail
+
+case "${1:-}" in
+  --help|-h|help)
+    printf '%s\n' 'Usage: overseer-host resolve | create|inspect|deliver|stop [arguments]' \
+      'ORCH_OVERSEER_HOST: tmux (default), or an executable script path.' \
+      'resolve prints the selected provider: tmux, or the path.' \
+      'Other verbs pass arguments and stdin to the provider unchanged and exit with its status.' \
+      'The protocol is schemas/overseer-host.md; the tmux provider is overseer-host-tmux --help.'
+    exit 0 ;;
+esac
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# The settings are the project's where the call is made inside one; a call
+# from elsewhere, a successor pane's shell included, reads the environment alone.
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$PROJECT_ROOT"
+host="${ORCH_OVERSEER_HOST:-tmux}"
+verb="${1:-}"
+case "$verb" in
+  resolve) printf '%s\n' "$host"; exit 0 ;;
+  create|inspect|deliver|stop) ;;
+  *) printf 'overseer-host: verb-invalid verb=%s\n' "$verb" >&2; exit 2 ;;
+esac
+if [[ "$host" == tmux ]]; then
+  provider="$SCRIPT_DIR/overseer-host-tmux"
+else
+  provider="$host"
+fi
+if [[ ! -x "$provider" || -d "$provider" ]]; then
+  printf 'overseer-host: host-unavailable path=%s\n' "$provider" >&2
+  exit 2
+fi
+exec "$provider" "$@"

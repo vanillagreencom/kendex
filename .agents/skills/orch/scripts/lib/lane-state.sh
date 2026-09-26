@@ -476,13 +476,18 @@ lane_pane_resolve() { # WINDOW
 # resolution above reads: LANE_PANE_ID, LANE_PANE_PID and LANE_PANE_CMD hold it
 # on status 0. Status 1 is a pane this server does not list, and status 2 the
 # list failing, with the three empty on both.
+#
+# The separator is a space, never a tab: tmux prints a tab in a format as `_`
+# to a client outside tmux whose environment names no UTF-8 locale, which is
+# what a launcher run from a job unit is. A pane id and a pid hold no space,
+# and the command is last, so it keeps the rest of the line.
 lane_pane_by_id() { # PANE_ID
   local rows row
   LANE_PANE_ID=""; LANE_PANE_PID=""; LANE_PANE_CMD=""
-  rows="$(tmux list-panes -a -F "#{pane_id}"$'\t'"#{pane_pid}"$'\t'"#{pane_current_command}" 2>/dev/null)" || return 2
-  row="$(awk -F'\t' -v p="$1" '$1 == p { print; exit }' <<<"$rows")" || return 2
+  rows="$(tmux list-panes -a -F '#{pane_id} #{pane_pid} #{pane_current_command}' 2>/dev/null)" || return 2
+  row="$(awk -v p="$1" '$1 == p { print; exit }' <<<"$rows")" || return 2
   [[ -n "$row" ]] || return 1
-  IFS=$'\t' read -r LANE_PANE_ID LANE_PANE_PID LANE_PANE_CMD <<<"$row"
+  read -r LANE_PANE_ID LANE_PANE_PID LANE_PANE_CMD <<<"$row"
 }
 
 # The lane's tmux pane, as the three raw observations `lane_state` judges

@@ -589,6 +589,50 @@ assert_eq "server=$(recorded server) pane=$(recorded pane) window=$(recorded win
 assert_eq "$(succeed_calls --print-launch-line)" "1" \
   "the live replacement derives its command once at watch startup" "$ERR"
 
+# The session record `oversee launch`, `oversee register` or a succession
+# wrote before this session's first turn: its runtime, generation and account
+# are kept where the record names this pane on this server, since the watch
+# observes the pane and the launch line and nothing about the generation.
+overseer_case record_keeps_generation idle
+jq -n --arg pane "$PANE" --arg window "$WINDOW" \
+  '{triaged: [], overseer: {runtime: "tmux", generation: 3, account: "/home/me/.claude", server: "7000", pane: $pane, window: $window, launch_line: "old"}}' \
+  > "$STUB_DIR/oversee-state.json"
+printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
+assert_eq "runtime=$(recorded runtime) generation=$(recorded generation) account=$(recorded account) line=$(recorded launch_line)" \
+  "runtime=tmux generation=3 account=/home/me/.claude line=$LINE" \
+  "a start on the recorded pane keeps the session record's runtime, generation and account and replaces the line" "$ERR"
+# A record naming another pane is another session's: its generation is not
+# this one's, so the start records only what it observes.
+overseer_case record_drops_other_session idle
+jq -n --arg window "$WINDOW" \
+  '{triaged: [], overseer: {runtime: "tmux", generation: 3, account: "/home/me/.claude", server: "7000", pane: "%4", window: $window, launch_line: "old"}}' \
+  > "$STUB_DIR/oversee-state.json"
+printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
+assert_eq "pane=$(recorded pane) generation=$(recorded generation) account=$(recorded account)" \
+  "pane=$PANE generation=none account=none" \
+  "a start on another pane than the record's drops that session's generation and account" "$ERR"
+# The must-fail control: a start that replaces the object whole loses the
+# generation the launcher wrote for this very pane.
+RECORD_MUTANT="$TMP_ROOT/record-mutant"
+mkdir -p "$RECORD_MUTANT/orch"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$RECORD_MUTANT/orch/scripts"
+ln -s "$REPO_ROOT/skills/github" "$RECORD_MUTANT/github"
+FROM='        | if (.server // "") == $server and (.pane // "") == $pane then . else {} end)'
+assert_eq "$(grep -cxF -- "$FROM" "$REPO_ROOT/skills/orch/scripts/lib/watch-overseer-record.sh")" "1" \
+  "control: the merge rule is one line of the record library"
+FROM="$FROM" awk '$0 == ENVIRON["FROM"] { print "        | {})"; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/lib/watch-overseer-record.sh" > "$RECORD_MUTANT/orch/scripts/lib/watch-overseer-record.sh"
+overseer_case record_keeps_generation_mutant idle
+jq -n --arg pane "$PANE" --arg window "$WINDOW" \
+  '{triaged: [], overseer: {runtime: "tmux", generation: 3, account: "/home/me/.claude", server: "7000", pane: $pane, window: $window, launch_line: "old"}}' \
+  > "$STUB_DIR/oversee-state.json"
+printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+WATCH_BIN="$RECORD_MUTANT/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
+assert_eq "generation=$(recorded generation)" "generation=none" \
+  "control: a start that replaces the object whole loses the generation" "$ERR"
+
 # A live replacement that cannot derive or publish its command stops before
 # it can consume the prior session's bypass line.
 overseer_case record_derivation_failure idle
