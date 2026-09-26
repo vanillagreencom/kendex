@@ -22,10 +22,12 @@ const workflowPath = join(root, "..", ".github", "workflows", "skill-tests.yml")
 // every run, which looks identical to a step that runs and passes. Deriving
 // these rather than pinning one shard's literal is what keeps a shard split
 // from silently retiring a suite, and keeps the teeth: an unknown name fails.
+// The matrix key expands the shards a diff selects; its literal is the whole
+// roster, which it runs where nothing was selected.
 function shardNames(workflow) {
-	const list = workflow.match(/^ {8}shard: \[(.+)\]$/m)?.[1];
-	assert.ok(list, `no "shard: [...]" matrix list in ${workflowPath} — the matrix reader is broken`);
-	return list.split(",").map((name) => name.trim());
+	const list = workflow.match(/^ {8}shard: .*'(\[.+\])'/m)?.[1];
+	assert.ok(list, `no "shard:" roster literal in ${workflowPath} — the matrix reader is broken`);
+	return JSON.parse(list);
 }
 
 function shardConditions(workflow) {
