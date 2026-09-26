@@ -353,6 +353,17 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   printf '%s' "$default"
 }
 
+# A packed list setting as one trimmed, non-empty entry per line. pipefail
+# inside, checked at every caller: a list decides a trust boundary, and the
+# last stage of the pipeline returns 0 on empty output. A `tr` that died would
+# leave a RESTRICTED list looking empty, which the evidence read takes as "any
+# non-author" — the trust list would open the gate it was set to close. A
+# broken pipeline is a refusal instead.
+rg_pack() { # RAW SEPARATORS -> one trimmed, non-empty entry per line
+  ( set -o pipefail
+    printf '%s\n' "$1" | tr "$2" '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;/^$/d' )
+}
+
 # The writer's per-pull-request share of its converge step, validated here
 # because two callers must agree on what a legal value is: the writer that
 # spends it, and the configuration check a repository adopts a settings file

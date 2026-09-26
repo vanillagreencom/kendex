@@ -34,14 +34,18 @@ Output (safe format):
     "line": 42,
     "author": "reviewer",
     "author_type": "User",
-    "body": "First comment text"
+    "body": "First comment text",
+    "comment_count": 2,
+    "comments": [{"author": "reviewer", "author_type": "User", "body": "..."}]
   }]
 }
 
-author and author_type describe the first comment's author. author_type is
+author, author_type and body describe the first comment. author_type is
 GitHub's actor type: Bot for an app such as Copilot's reviewer, whose login
 carries no [bot] suffix here, User for a person, and empty where GitHub names
-no author.
+no author. comments holds the thread's first 100 comments in order, each
+typed the same way, and comment_count is the thread's whole count, so a
+caller can tell a thread it read in full from one it did not.
 
 Examples:
   pr-threads.sh 23
@@ -126,7 +130,7 @@ get_pr_threads() {
                           isOutdated
                           path
                           line
-                          comments(first: 1) { nodes { author { login __typename } body } }') || exit 1
+                          comments(first: 100) { totalCount nodes { author { login __typename } body } }') || exit 1
 
     local result
     # The complete multi-page result can be large; wrap stdin rather than
@@ -178,7 +182,13 @@ get_pr_threads() {
                     line: (.line // null),
                     author: (.comments.nodes[0].author.login // ""),
                     author_type: (.comments.nodes[0].author.__typename // ""),
-                    body: (.comments.nodes[0].body // "")
+                    body: (.comments.nodes[0].body // ""),
+                    comment_count: (.comments.totalCount // null),
+                    comments: [(.comments.nodes // [])[] | {
+                        author: (.author.login // ""),
+                        author_type: (.author.__typename // ""),
+                        body: (.body // "")
+                    }]
                 }]
             }'
             ;;

@@ -178,7 +178,10 @@ render-inventory-gain|standard|clean|.kendex-generated.json:1
 instruction-source|standard|clean|AGENTS.md:10
 configuration-source|standard|clean|kendex.settings.toml:2 runtime/product.ts:2
 trivial-at-ceiling|trivial|dirty|docs/guide.md:20
-trivial-docs-past-the-ceiling|trivial|dirty|docs/guide.md:400
+trivial-docs-one-over|small|dirty|docs/guide.md:21
+trivial-product-read-docs-past-the-ceiling|small|dirty|docs/authoring/README.md:100
+trivial-plan-past-the-ceiling|trivial|dirty|docs/plans/v2.md:400
+trivial-plan-beside-other-docs-past-the-ceiling|small|dirty|docs/plans/v2.md:90 docs/guide.md:10
 micro-at-ceiling|micro|dirty|runtime/product.ts:20
 micro-counts-production-not-total|micro|dirty|runtime/product.ts:10 runtime/tests/product.test.sh:200
 micro-one-over|small|dirty|runtime/product.ts:21

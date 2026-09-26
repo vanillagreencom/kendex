@@ -8,7 +8,8 @@
 #   world  words for the stub, later words overriding earlier ones:
 #     checks:<name>  a checks fixture; checks-exit:<n> gh's exit for it
 #     threads:<actionable|outdated|malformed|large|bot|resolved100|->, and
-#     the bot-thread shapes threads:<bot-outdated|bot-and-person|two-bots>;
+#     the bot-thread shapes threads:<bot-outdated|bot-and-person|two-bots|
+#     codeql|bot-with-reply|bot-partial|waived-resolved>;
 #     `actionable` and `outdated` are a person's, typed User by GitHub
 #     threads:page2:<name>  a second page holding that fixture
 #     threads:<fetch-fail|page2-fail|page2-malformed>
@@ -22,7 +23,7 @@
 #     review:<decision|none> GitHub's reviewDecision, none being empty, with
 #     no latest review; review-latest:<state> one latest review in that state
 #     require-token (the stub refuses a mutation without the bot token)
-#     reply:fail, resolve:fail  the thread reply or resolve mutation errors
+#     reply:fail, resolve:fail, reopen:fail  that thread mutation errors
 #     repo:no-auto (allow_auto_merge=false), repo:no-rule (no ruleset check),
 #     repo:pr-rule (a ruleset pull_request rule only), repo:classic (no ruleset,
 #     one classic required context)
@@ -145,14 +146,22 @@ threads_of() {
     # isResolved null, missing, and a string
     malformed) printf '[{"id":"PRRT_null","isResolved":null,"isOutdated":false,"path":"src/null.rs","line":1,"comments":{"nodes":[]}},{"id":"PRRT_missing","isOutdated":false,"path":"src/missing.rs","line":2,"comments":{"nodes":[]}},{"id":"PRRT_string","isResolved":"false","isOutdated":false,"path":"src/string.rs","line":3,"comments":{"nodes":[]}}]' ;;
     # a bot's unresolved thread posted after a merge
-    bot) printf '[{"id":"PRRT_post_merge_bot","isResolved":false,"isOutdated":false,"path":"src/lib.rs","line":3,"comments":{"nodes":[{"author":{"login":"review-bot","__typename":"Bot"},"body":"post-merge nit"}]}}]' ;;
+    bot) printf '[{"id":"PRRT_post_merge_bot","isResolved":false,"isOutdated":false,"path":"src/lib.rs","line":3,"comments":{"totalCount":1,"nodes":[{"author":{"login":"review-bot","__typename":"Bot"},"body":"post-merge nit"}]}}]' ;;
     # the bot shapes of a waived class: Copilot's reviewer carries no [bot]
     # suffix in this view, so the type is the only thing marking it a bot
-    bot-outdated) printf '[{"id":"PRRT_bot_outdated","isResolved":false,"isOutdated":true,"path":"docs/plans/a.md","line":4,"comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Stale nit"}]}}]' ;;
-    bot-and-person) printf '[{"id":"PRRT_bot","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"}]}},{"id":"PRRT_person","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":9,"comments":{"nodes":[{"author":{"login":"reviewer","__typename":"User"},"body":"This contradicts the code"}]}}]' ;;
-    two-bots) printf '[{"id":"PRRT_bot_a","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"}]}},{"id":"PRRT_bot_b","isResolved":false,"isOutdated":true,"path":"docs/plans/a.md","line":7,"comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Stale nit"}]}}]' ;;
+    bot-outdated) printf '[{"id":"PRRT_bot_outdated","isResolved":false,"isOutdated":true,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":1,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Stale nit"}]}}]' ;;
+    bot-and-person) printf '[{"id":"PRRT_bot","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":1,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"}]}},{"id":"PRRT_person","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":9,"comments":{"nodes":[{"author":{"login":"reviewer","__typename":"User"},"body":"This contradicts the code"}]}}]' ;;
+    two-bots) printf '[{"id":"PRRT_bot_a","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":1,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"}]}},{"id":"PRRT_bot_b","isResolved":false,"isOutdated":true,"path":"docs/plans/a.md","line":7,"comments":{"totalCount":1,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Stale nit"}]}}]' ;;
     # a full first page of resolved threads
     resolved100) jq -cn '[range(0; 100) | {id: ("PRRT_resolved_" + tostring), isResolved: true, isOutdated: false, path: "src/first-page.rs", line: ., comments: {nodes: [{author: {login: "reviewer"}, body: "Resolved"}]}}]' ;;
+    # a code-scanning alert: a Bot, and not a review bot the gate reads
+    codeql) printf '[{"id":"PRRT_codeql","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":1,"nodes":[{"author":{"login":"github-advanced-security","__typename":"Bot"},"body":"Code scanning alert"}]}}]' ;;
+    # a review bot's thread a person has answered in
+    bot-with-reply) printf '[{"id":"PRRT_bot_reply","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":2,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"reviewer","__typename":"User"},"body":"It does, and this line is wrong"}]}}]' ;;
+    # a review bot's thread whose comments were not all read
+    bot-partial) printf '[{"id":"PRRT_bot_partial","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":101,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"}]}}]' ;;
+    # a thread the merge route resolved under an earlier waiver
+    waived-resolved) printf '[{"id":"PRRT_waived","isResolved":true,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":2,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"Resolved by the merge route: change class trivial at 1111111111111111111111111111111111111111, review evidence none under REVIEW_GATE_CLASS_POLICY"}]}}]' ;;
     -) printf '[]' ;;
     *) echo "UNKNOWN-THREADS: $1" >&2; exit 2 ;;
   esac
@@ -209,6 +218,7 @@ word() {
     require-token) W_ENV+=("STUB_REQUIRE_TOKEN=true") ;;
     reply:fail) W_ENV+=("STUB_REPLY_FAIL=true") ;;
     resolve:fail) W_ENV+=("STUB_RESOLVE_FAIL=true") ;;
+    reopen:fail) W_ENV+=("STUB_REOPEN_FAIL=true") ;;
     repo:no-auto) W_ENV+=("STUB_ALLOW_AUTO_MERGE=false") ;;
     repo:no-rule) W_ENV+=("STUB_GATE_RULES=[]") ;;
     repo:pr-rule) W_ENV+=('STUB_GATE_RULES=[{"type":"pull_request"}]') ;;
@@ -223,15 +233,15 @@ word() {
     base:*) W_ENV+=("STUB_BASE=$v") ;;
     # An ACTIVE review-gate class policy. The value is the supported table; `-` leaves the classifier with no class to
     # answer, which is the unreadable-policy shape.
-    class-policy:-) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
-    class-policy:range-fail) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_POLICY_RANGE_FAIL=true") ;;
+    class-policy:-) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS=$TRUSTED_LOGINS" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
+    class-policy:range-fail) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS=$TRUSTED_LOGINS" "STUB_POLICY_RANGE_FAIL=true") ;;
     # A class the classifier did not measure: it names one on stdout and marks
     # the answer a fallback, which is not a class any policy row applies to.
-    class-policy:unmeasured) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_CLASS=render" "STUB_MEASURED=false" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
+    class-policy:unmeasured) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS=$TRUSTED_LOGINS" "STUB_CLASS=render" "STUB_MEASURED=false" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     # A base the fixture repository does not hold, and no origin to fetch it
     # from: the range is unreadable and no class can be measured.
-    class-policy:range-absent) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_CLASS=render" "STUB_BASE_OID=$ABSENT_SHA" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$ABSENT_SHA" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
-    class-policy:*) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_CLASS=$v" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
+    class-policy:range-absent) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS=$TRUSTED_LOGINS" "STUB_CLASS=render" "STUB_BASE_OID=$ABSENT_SHA" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$ABSENT_SHA" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
+    class-policy:*) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS=$TRUSTED_LOGINS" "STUB_CLASS=$v" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     # The head moved after the class was measured: the policy read its range
     # at the fixture head, and every later read answers this one.
     head-moved:*) W_ENV+=("STUB_POLICY_HEAD=$RANGE_HEAD" "STUB_HEAD=$v") ;;
@@ -307,8 +317,12 @@ calls() {
         kind="${line##*threadId=}"
         kind="${kind%% *}"
         class="?"
-        [[ ! "$line" =~ change\ class\ ([a-z]+), ]] || class="${BASH_REMATCH[1]}"
+        [[ ! "$line" =~ change\ class\ ([a-z]+)\ at\ ([0-9a-f]{40}), ]] || class="${BASH_REMATCH[1]}@${BASH_REMATCH[2]:0:7}"
         out="$out,graphql:reply($kind:$class)"
+        ;;
+      "api graphql"*unresolveReviewThread*)
+        kind="${line##*threadId=}"
+        out="$out,graphql:reopen(${kind%% *})"
         ;;
       "api graphql"*resolveReviewThread*)
         kind="${line##*threadId=}"
@@ -363,7 +377,7 @@ run() {
   (cd "$RUN_DIR" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u KENDEX_ENV_FILE \
     -u ORCH_ADMIN_MERGE_GH_CONFIG_DIR -u ORCH_ADMIN_MERGE_CLASSES -u ORCH_MERGE_BYPASS -u GH_CONFIG_DIR \
     -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u REVIEW_GATE_CONTEXT \
-    -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY \
+    -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY -u REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS \
     STUB_CALL_LOG="$CALL_LOG" STUB_AUTH_LOG="$AUTH_LOG" \
     ${W_ENV[@]+"${W_ENV[@]}"} "${argv[@]}" >"$TMPDIR/stdout" 2>"$TMPDIR/stderr") || rc=$?
   printf 'rc=%s out=%s err=%s calls=%s auth=%s' "$rc" "$(stdout_text "$1")" "$(err_lines)" "$(calls)" "$(auth)"
@@ -393,10 +407,11 @@ err_macro() {
     malformed) printf 'review_threads_fetch_failed: GitHub returned malformed review thread data' ;;
     retired:*) printf 'The overseer'"'"'s admin merge and the ORCH_MERGE_BYPASS fast path are retired (kendex decision D003): every merge goes through the merge queue, armed with --auto.;Remove %s from kendex.settings.toml [env], .kendex/settings.toml [env], the private env file (.env.local unless KENDEX_ENV_FILE names another) and the environment, then retry.' "$(printf '%s' "${1#retired:}" | tr '+' ' ')" ;;
     arm-remedy) printf 'Nothing mutated. Enable auto-merge and a required status check or review rule on the base branch.' ;;
-    waived:*) printf "unresolved_threads_waived: %s bot thread(s) open, waived by the review gate's class policy for this change, and the merge route resolves them before it arms" "${1#waived:}" ;;
+    waived:*) printf "unresolved_threads_waived: %s review-bot thread(s) open, waived by the review gate's class policy for this change, and the merge route resolves them before it arms" "${1#waived:}" ;;
     # resolved:<thread>:<class>
     resolved:*) printf 'RESOLVED THREAD %s — change class %s, review evidence none' "$(printf '%s' "$1" | cut -d: -f2)" "$(printf '%s' "$1" | cut -d: -f3)" ;;
     unreadable) printf "review_policy_unreadable: The review gate's class policy could not be resolved for this pull request" ;;
+    reopened:*) printf 'REOPENED THREAD %s — the waiver that resolved it no longer covers this pull request' "${1#reopened:}" ;;
     *) printf 'UNKNOWN-MACRO:%s' "$1" ;;
   esac
 }
@@ -436,6 +451,9 @@ run_table() {
 CHECK="view:state,view:mergeable,checks,graphql:threads,view:reviews"
 # The supported class policy, the one value the review-gate README documents.
 CLASS_POLICY="render:none;trivial:none;micro:none;small:bot;standard:current"
+# The review gate's trusted logins beside it: two review bots and a person, so
+# --review-bots names the bots and drops the person.
+TRUSTED_LOGINS="copilot-pull-request-reviewer[bot];review-bot[bot];bmethod"
 # Its extra call: with a thread open, an active policy reads the pull request's
 # own endpoints once. A clean PR asks nothing and the trace is unchanged.
 CHECK_POLICY="view:state,view:mergeable,checks,graphql:threads,view:policy-range,view:reviews"
