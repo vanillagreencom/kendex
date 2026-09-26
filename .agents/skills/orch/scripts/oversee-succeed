@@ -537,8 +537,8 @@ read_context_mark() {
 # it cannot read its mail, handle an event, or call this script, and at this
 # default the level alone gives little notice before that. Restoring the
 # notice is the rate trigger beside the level.
-HEADROOM_TRIGGER="${ORCH_OVERSEER_HEADROOM_PCT:-10}"
-WALL_MINUTES="${ORCH_OVERSEER_WALL_MINUTES:-30}"
+HEADROOM_TRIGGER="${ORCH_OVERSEER_HEADROOM_PCT:-5}"
+WALL_MINUTES="${ORCH_OVERSEER_WALL_MINUTES:-20}"
 SUCCESSOR_ACCOUNTS="${ORCH_OVERSEER_SUCCESSOR_ACCOUNTS:-1}"
 # The window the context mark is set for. A smaller window reaches its own end
 # long before the mark, so the mark says nothing about it and the succession
