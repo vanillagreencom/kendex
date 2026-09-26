@@ -2,7 +2,8 @@ use kendex_core::drift::hook;
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
 
-use super::engine_common::{confirm_and_execute, print_safety};
+use super::advisory::print_safety;
+use super::engine_common::confirm_and_execute;
 use super::{CliResult, resolve_scopes, say, scope_label};
 use crate::scope::ScopeFilter;
 
@@ -40,7 +41,7 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
         for op in &report.plan.ops {
             say(&format!("  - {}", op.line()));
         }
-        print_safety(&report, false);
+        print_safety(&report.safety);
         confirm_and_execute(env, &report, yes)?;
     }
     say(&format!("{}: package checks installed", scope_label(scope)));

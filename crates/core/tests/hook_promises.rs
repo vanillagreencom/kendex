@@ -185,35 +185,67 @@ fn a_matcher_that_cannot_be_translated_installs_as_written_and_is_named() {
 }
 
 /// Catalog scripts supply their own frontmatter; a refused script names
-/// whether that input was unreadable or excluded the requested harness.
+/// whether that input was unreadable or excluded the requested harness. An
+/// exclusion is a note only where the person's declaration of the hook
+/// names the tool the header leaves out: with `harnesses` unset on the
+/// declaration it is expected state, carried as `excluded_hooks` and not
+/// said. One row per shape, and nothing lands on the excluded tool in any.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_catalog_hook_refusal_names_its_own_reason() {
-    for (text, record) in [
+    let excluding = GUARD.replace("# event:", "# harnesses: [claude]\n# event:");
+    let excluded = || {
+        vec![kendex_core::engine::ExcludedHook {
+            name: "guard".to_owned(),
+            harness: HarnessId::Codex,
+        }]
+    };
+    type Row = (
+        &'static str,
+        String,
+        &'static str,
+        Option<&'static str>,
+        Vec<kendex_core::engine::ExcludedHook>,
+    );
+    let rows: [Row; 3] = [
         (
+            "an unreadable header",
             "not a hook".to_owned(),
-            "kendex-hook-unreadable: hook=guard",
+            "[hooks.guard]\nsource = \"cat\"\n",
+            Some("kendex-hook-unreadable: hook=guard"),
+            vec![],
         ),
         (
-            GUARD.replace("# event:", "# harnesses: [claude]\n# event:"),
-            "kendex-hook-excluded: hook=guard harness=codex source=catalog field=harnesses",
+            "a declaration that leaves harnesses unset",
+            excluding.clone(),
+            "[hooks.guard]\nsource = \"cat\"\n",
+            None,
+            excluded(),
         ),
-    ] {
-        let f = fixture("\"codex\"", "[hooks.guard]\nsource = \"cat\"\n");
+        (
+            "a declaration naming the excluded tool",
+            excluding,
+            "[hooks.guard]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
+            Some("kendex-hook-excluded: hook=guard harness=codex source=catalog field=harnesses"),
+            vec![],
+        ),
+    ];
+    for (case, text, declaration, record, want_excluded) in rows {
+        let f = fixture("\"codex\"", declaration);
         fs::write(f.env.home.join("catalog/hooks/guard.sh"), text).unwrap();
         let report = plan(&f);
-        assert!(
-            report
-                .notes
-                .iter()
-                .any(|note| note.lines().next() == Some(record)),
-            "{record}: {:?}",
-            report.notes
-        );
+        let heads: Vec<&str> = report
+            .notes
+            .iter()
+            .filter_map(|note| note.lines().next())
+            .filter(|head| head.starts_with("kendex-hook-"))
+            .collect();
+        assert_eq!(heads, Vec::from_iter(record), "{case}: {:?}", report.notes);
+        assert_eq!(report.excluded_hooks, want_excluded, "{case}");
         kendex_core::apply::execute(&f.env, &report.plan).unwrap();
         let Scope::Project { root } = &f.scope else {
             panic!("fixture is a project")
         };
-        assert!(!root.join(".codex/hooks.json").exists(), "{record}");
+        assert!(!root.join(".codex/hooks.json").exists(), "{case}");
     }
 }

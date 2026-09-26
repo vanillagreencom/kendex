@@ -1,6 +1,6 @@
 use std::io::IsTerminal;
 
-use super::ledger::{Wrote, say_ledger};
+use super::ledger::{Folded, Wrote, say_ledger};
 use super::{CliResult, note, resolve_scopes, say, scope_label, warn};
 use crate::scope::ScopeFilter;
 use crate::ui;
@@ -61,6 +61,7 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
             },
             &[],
             &[],
+            Folded::None,
         );
     }
     match stopped {

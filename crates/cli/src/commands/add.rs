@@ -6,7 +6,7 @@ use kendex_core::model::Scope;
 use kendex_core::manifest::Method;
 
 use super::engine_common::{confirm_and_apply, parse_harnesses, print_report};
-use super::ledger::{Wrote, say_ledger};
+use super::ledger::{Folded, Wrote, say_ledger};
 use super::{CliResult, fail_refusal, harness_picker, install_destination};
 use crate::ui;
 
@@ -93,11 +93,11 @@ fn split(values: &[String]) -> Vec<String> {
 }
 
 pub fn run(env: &Env, args: AddArgs) -> CliResult {
-    ui::intro("kendex add");
     let scope = match args.global {
         true => Scope::Global,
         false => install_destination(env, args.yes)?,
     };
+    super::header("add", std::slice::from_ref(&scope));
     run_into(env, &scope, args)
 }
 
@@ -281,6 +281,7 @@ fn write_and_close(
                 },
                 &blocked,
                 &report.safety,
+                Folded::None,
             );
         },
     );

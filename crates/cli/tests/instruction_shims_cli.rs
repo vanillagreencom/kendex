@@ -128,7 +128,7 @@ fn a_foreign_shim_fails_verify_and_blocks_apply() {
     let output = kendex(&home, &project, &["apply", "--plan"]);
     let text = said(&output);
     assert!(
-        text.contains("conflict: skill CLAUDE.md for Claude Code: CLAUDE.md is not the shim"),
+        text.contains("  skill CLAUDE.md for Claude Code: CLAUDE.md is not the shim"),
         "{text}"
     );
     assert!(text.contains("--replace-unmanaged"), "{text}");

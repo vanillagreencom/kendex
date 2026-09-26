@@ -11,7 +11,7 @@ use std::path::Path;
 use kendex_core::check_catalog::{CHECK_SCHEMA, CatalogCheck, CheckFinding};
 use kendex_core::source_read::SealedSource;
 
-use super::engine_common::{ScoredAt, print_advisory};
+use super::advisory::print_advisory;
 use super::{CliResult, answer, say};
 
 pub fn run(catalog: &Path, strict: bool, json: bool) -> CliResult {
@@ -65,8 +65,9 @@ fn say_finding(finding: &kendex_core::check_catalog::CheckFinding) {
 
 /// The structural pass prints first and carries a fix line: a loader that
 /// will not hold an item is a thing the author does something about. The
-/// safety pass prints as the advisory block every other verb prints, fix
-/// lines and all left out — the score decides nothing here either.
+/// safety pass prints a score for every item, and each finding folded and
+/// cited the way a plan's safety section draws it, fix lines left out —
+/// the score decides nothing here either.
 fn lines(report: &CatalogCheck) {
     for finding in &report.catalog {
         say_finding(finding);
@@ -75,13 +76,7 @@ fn lines(report: &CatalogCheck) {
         for finding in &item.structural {
             say_finding(finding);
         }
-        print_advisory(
-            item.kind,
-            &item.name,
-            ScoredAt::CatalogPath(&item.file),
-            &item.advisory,
-            false,
-        );
+        print_advisory(item.kind, &item.name, &item.file, &item.advisory);
     }
     let tally = report.tally();
     say(&format!(

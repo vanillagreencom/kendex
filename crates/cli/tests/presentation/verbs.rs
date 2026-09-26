@@ -6,10 +6,7 @@
 use super::*;
 
 /// The verbs routed through the module and given a frame.
-const FRAMED: [&[&str]; 5] = [
-    &["refresh", "-y", "--scope", "project"],
-    &["apply", "--plan", "--scope", "project"],
-    &["add", "{catalog}", "--skill", "tidy", "-y"],
+const FRAMED: [&[&str]; 2] = [
     &[
         "remove",
         "commit-guards",
@@ -25,8 +22,11 @@ const FRAMED: [&[&str]; 5] = [
 /// frame has to keep printing plain lines on a terminal, not block glyphs
 /// hanging off a gutter nobody drew. A verb built from the design system's
 /// components is one of them: it draws its own layout and never a frame.
-const UNFRAMED: [&[&str]; 5] = [
+const UNFRAMED: [&[&str]; 8] = [
     &["check", "--scope", "project"],
+    &["refresh", "-y", "--scope", "project"],
+    &["apply", "--plan", "--scope", "project"],
+    &["add", "{catalog}", "--skill", "tidy", "-y"],
     &["list"],
     &["source", "list"],
     &["init"],

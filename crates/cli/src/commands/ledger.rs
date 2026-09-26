@@ -57,6 +57,16 @@ fn wrote(verb: &str, count: Option<usize>, skipped: usize) -> String {
     }
 }
 
+/// Lines the report above the ledger left out, and the flag that draws
+/// them.
+pub enum Folded {
+    /// Nothing the verb could draw more of: it drew every line, or it has
+    /// no flag that draws more.
+    None,
+    /// This many lines left out, which `--verbose` draws.
+    BehindVerbose(usize),
+}
+
 /// What a run wrote, said in its own verb, for a verb whose count is
 /// never in doubt.
 pub struct Wrote<'a> {
@@ -75,8 +85,14 @@ pub struct Wrote<'a> {
 /// that are not there, and `safety: clean` over a scan nobody ran claims
 /// one. A verb that printed neither passes both empty and closes on its
 /// head alone.
-pub fn say_ledger(scope: &Scope, wrote: Wrote<'_>, blocked: &[Blocked], scored: &[ItemSafety]) {
-    let (line, steps) = ledger(scope, wrote, blocked, scored);
+pub fn say_ledger(
+    scope: &Scope,
+    wrote: Wrote<'_>,
+    blocked: &[Blocked],
+    scored: &[ItemSafety],
+    folded: Folded,
+) {
+    let (line, steps) = ledger(scope, wrote, blocked, scored, folded);
     ui::ledger(&line, &steps);
 }
 
@@ -85,7 +101,7 @@ pub fn say_ledger(scope: &Scope, wrote: Wrote<'_>, blocked: &[Blocked], scored: 
 /// out are printed, and a closing line naming one of them again is the
 /// same sentence twice on one screen.
 pub fn say_preview(scope: &Scope, wrote: Wrote<'_>, blocked: &[Blocked], scored: &[ItemSafety]) {
-    let (line, _) = ledger(scope, wrote, blocked, scored);
+    let (line, _) = ledger(scope, wrote, blocked, scored, Folded::None);
     ui::ledger(&line, &[]);
 }
 
@@ -94,6 +110,7 @@ fn ledger(
     said: Wrote<'_>,
     blocked: &[Blocked],
     scored: &[ItemSafety],
+    folded: Folded,
 ) -> (String, Vec<String>) {
     let skipped = blocked.len();
     let flagged = flagged(scored);
@@ -133,6 +150,15 @@ fn ledger(
         ));
     } else if flagged == 0 && !scored.is_empty() {
         parts.push("safety: clean".to_owned());
+    }
+    // Last: what the report above left out is not an outcome of the run,
+    // and every part before it points at lines that are there.
+    match folded {
+        Folded::None | Folded::BehindVerbose(0) => {}
+        Folded::BehindVerbose(n) => {
+            parts.push(format!("folded {n} line{}", plural(n)));
+            steps.push("folded — --verbose draws them".to_owned());
+        }
     }
     (
         format!("{}: {}", scope_label(scope), parts.join(" · ")),
@@ -265,7 +291,7 @@ mod tests {
             ),
         ];
         for (case, scored, want) in rows {
-            let (line, _) = ledger(&Scope::Global, wrote(), &[], scored);
+            let (line, _) = ledger(&Scope::Global, wrote(), &[], scored, Folded::None);
             assert_eq!(line, format!("global: {want}"), "{case}");
         }
     }

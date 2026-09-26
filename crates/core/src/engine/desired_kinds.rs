@@ -221,18 +221,32 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
             // The finding on the hook already says why.
             Some(NotWritten::Withheld) => continue,
             Some(NotWritten::OwnHarnessesLine) => {
-                // A fact with no consequence reads as a fault the reader has
-                // to chase. The consequence is the skip, and the two answers
-                // are the whole decision. What decides it is the hook script's
-                // own frontmatter, not the manifest — a remedy naming the
-                // manifest would widen the install set and change nothing.
-                state.notes.push(format!(
-                    "kendex-hook-excluded: hook={record_arg0} harness={record_arg1} source=catalog field=harnesses\n{arg2} is not in the hook's own harnesses line in the catalog; add it there, or list this hook's harnesses in kendex.toml without {arg3}",
-                    arg2 = harness.name(),
-                    arg3 = harness.name(),
-                    record_arg0 = crate::names::shown(ctx.name ),
-                    record_arg1 = crate::names::shown(harness.name() ),
-                ));
+                // The hook's own header deciding where it runs is expected
+                // state, and every consumer rendering for that tool would
+                // otherwise read the same note on every run. It becomes a
+                // finding only where the person's own declaration of the
+                // hook names the tool: then two lines disagree, and the
+                // note names both. The hook script's frontmatter is what
+                // decides the skip, so a remedy only naming the manifest
+                // would change nothing.
+                let named = ctx
+                    .manifest
+                    .declared(ItemKind::Hook)
+                    .get(ctx.name)
+                    .and_then(|decl| decl.harnesses.as_ref())
+                    .is_some_and(|listed| listed.contains(&harness));
+                match named {
+                    true => state.notes.push(format!(
+                        "kendex-hook-excluded: hook={record_arg0} harness={record_arg1} source=catalog field=harnesses\nkendex.toml lists {arg2} in this hook's harnesses, and the hook's own harnesses line in the catalog leaves it out; add {arg2} to the catalog line, or take it off the hook's harnesses in kendex.toml",
+                        arg2 = harness.name(),
+                        record_arg0 = crate::names::shown(ctx.name),
+                        record_arg1 = crate::names::shown(harness.name()),
+                    )),
+                    false => state.excluded_hooks.push(super::ExcludedHook {
+                        name: ctx.name.to_owned(),
+                        harness,
+                    }),
+                }
                 continue;
             }
             Some(NotWritten::Undeliverable(reason)) => {

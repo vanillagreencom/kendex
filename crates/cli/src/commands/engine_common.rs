@@ -1,6 +1,3 @@
-pub use super::advisory::{ScoredAt, print_advisory, print_safety};
-pub use super::blocked::{print_conflicts, print_drift};
-
 use kendex_core::engine::{DriftRow, DriftState, EngineReport};
 use kendex_core::env::Env;
 use kendex_core::model::HarnessId;
@@ -18,16 +15,6 @@ pub fn parse_harnesses(values: &[String]) -> Result<Vec<HarnessId>, String> {
         .filter(|v| !v.is_empty())
         .map(|v| HarnessId::parse(v).ok_or(format!("unknown harness '{v}'")))
         .collect()
-}
-
-/// What the plan declined to do, in its own words. A note is the only
-/// channel some passes have — the settings seed and the git posture say
-/// here what they found — so a verb that prints nothing else about the
-/// plan still prints these.
-pub fn print_notes(report: &EngineReport) {
-    for line in &report.notes {
-        note(&format!("note: {}", line));
-    }
 }
 
 /// What a pass over a scope's marketplaces has to say: one warning per
@@ -80,7 +67,7 @@ fn print_trashed(removed: usize) {
 /// refused — one derivation, so a closing count and the conflict lines it
 /// sends the reader to are one reading of one set of rows.
 pub fn print_report(env: &Env, report: &EngineReport) -> Vec<super::offers::Blocked> {
-    print_notes(report);
+    let blocked = super::attention::print_attention(env, report, false).blocked;
     for warning in &report.warnings {
         let target = match warning.harness {
             Some(harness) => format!("{} ({})", warning.name, harness.display_name()),
@@ -91,8 +78,6 @@ pub fn print_report(env: &Env, report: &EngineReport) -> Vec<super::offers::Bloc
             say(&format!("  fix: {}", fix));
         }
     }
-    print_safety(report, false);
-    let blocked = print_conflicts(env, report);
     if report.plan.is_empty() {
         // "nothing to do" directly under a conflict reads as "and nothing
         // you can do" — the run has plenty to do, once the reader picks.

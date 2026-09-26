@@ -93,7 +93,7 @@ fn settled(home: &Path, project: &Path, at: &[&str], body: &str, still_waiting: 
     }
     if still_waiting.is_empty() {
         assert!(
-            after.contains("nothing to do") && !after.contains("conflict:"),
+            after.contains("nothing to do") && !after.contains("conflicts:"),
             "settled once, and still asking: {after}"
         );
     }
@@ -335,7 +335,7 @@ fn hand_made_files_beside_an_edited_install_keep_their_offer() {
             "By hand.",
             // The edit under the other tool is its own decision, and this
             // offer was never about it.
-            &["conflict: skill deploy for Claude Code"],
+            &["  skill deploy for Claude Code:"],
         );
     }
 }

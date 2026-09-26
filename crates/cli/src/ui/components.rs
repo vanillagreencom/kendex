@@ -28,6 +28,12 @@ pub enum Status {
     /// Needs a decision from the reader.
     Decision,
     Notice,
+    /// A safety finding at critical.
+    Critical,
+    /// A safety finding at high.
+    High,
+    /// A safety finding at medium or low.
+    Low,
 }
 
 impl Status {
@@ -37,6 +43,9 @@ impl Status {
             Status::Failed => Symbol::Failed,
             Status::Decision => Symbol::Decision,
             Status::Notice => Symbol::Notice,
+            Status::Critical => Symbol::Critical,
+            Status::High => Symbol::High,
+            Status::Low => Symbol::Low,
         }
     }
 
@@ -46,6 +55,9 @@ impl Status {
             Status::Failed => Token::Danger,
             Status::Decision => Token::Warn,
             Status::Notice => Token::Info,
+            Status::Critical => Token::Danger,
+            Status::High => Token::Warn,
+            Status::Low => Token::Muted,
         }
     }
 }
@@ -159,6 +171,28 @@ impl Style {
                 }
                 lines
             }
+        }
+    }
+
+    /// A line one level under the row above it: a finding, another place
+    /// the row sits at, the way out of it. A status puts its glyph in
+    /// front; without one the line is muted. Its commands are never broken.
+    pub fn detail(&self, status: Option<Status>, spans: &[Span<'_>]) -> Vec<String> {
+        let text = Escaped::from(spans);
+        let Look::Rich { palette, width } = self.look else {
+            return vec![format!("    {}", text.joined())];
+        };
+        match status {
+            Some(status) => {
+                let lead = format!(
+                    "    {} ",
+                    paint(palette, status.token(), self.glyph(status.symbol()))
+                );
+                fitted(width, &lead, 6, 6, &text.spans(), str::to_owned)
+            }
+            None => fitted(width, "    ", 4, 4, &text.spans(), |chunk| {
+                paint(palette, Token::Muted, chunk)
+            }),
         }
     }
 

@@ -97,7 +97,7 @@ pub use blocks::{finish, flush, intro};
 pub use components::{Choice, Target};
 pub use components::{Status, Value};
 pub use live::Spinner;
-pub use modes::{Channel, Span, Style, channel};
+pub use modes::{Channel, Span, Style, channel, style};
 pub use prompt::{ask, cancelled, confirm, spinner};
 pub use refusal::{Lines, fail_refusal, outro_fail, outro_refusal};
 
@@ -319,16 +319,26 @@ fn drawn(tone: Tone, line: &str) {
 /// How a run ended: the outcome, and the next step under each part of it
 /// that has one. Held open — with nothing after it, this is the line the
 /// frame closes on rather than one more block inside it.
+///
+/// With no frame open it is the summary component, a step a row under it:
+/// the plain rendering is the same head and two-space steps, and a rich
+/// one sets the outcome off from the report above it.
 pub fn ledger(head: &str, steps: &[String]) {
-    let head = escaped(head);
-    let steps: Vec<String> = steps.iter().map(|step| escaped(step)).collect();
     if mode() == Mode::Plain {
-        write_line(&head);
-        for step in &steps {
-            write_line(&format!("  {step}"));
+        let style = style();
+        let status = match steps.is_empty() {
+            true => Status::Done,
+            false => Status::Decision,
+        };
+        let mut lines = style.summary(status, head);
+        for step in steps {
+            lines.extend(style.row(Status::Decision, &[Span::Prose(step)], None));
         }
+        stderr(&lines);
         return;
     }
+    let head = escaped(head);
+    let steps: Vec<String> = steps.iter().map(|step| escaped(step)).collect();
     blocks::open(Tone::Done, &head, true, &steps);
 }
 

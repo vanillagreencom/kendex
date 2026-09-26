@@ -9,7 +9,18 @@
 
 use std::io::Write;
 
+use super::modes::{Look, style};
 use super::{Mode, escaped, mode};
+
+/// Whether a question is the terminal's widget rather than a typed line.
+/// A framed verb asks inside its frame, and a verb drawn from the
+/// components asks the same widget wherever it draws rich: the widget is
+/// what reads Esc and Ctrl-C as a cancel the verb can finish after, where
+/// a typed line on a terminal is ended by the signal with the run half
+/// said.
+fn widget() -> bool {
+    mode() == Mode::Pretty || matches!(style().look, Look::Rich { .. })
+}
 
 /// Ask. The caller has already established there is somebody to ask: a
 /// run needing an answer with no terminal on stdin refuses before its
@@ -27,12 +38,12 @@ pub fn confirm(question: &str) -> std::io::Result<bool> {
     // catalog or a tree kendex did not write — so it is escaped where
     // every other sentence is.
     let asked = escaped(&format!("{question} [y/N]"));
-    let answer = match mode() {
-        Mode::Pretty => cliclack::input(asked)
+    let answer = match widget() {
+        true => cliclack::input(asked)
             .default_input("N")
             .placeholder("N")
             .interact::<String>()?,
-        Mode::Plain => {
+        false => {
             let _ = write!(std::io::stderr(), "{asked} ");
             let mut typed = String::new();
             std::io::stdin().read_line(&mut typed)?;
@@ -53,17 +64,17 @@ pub fn confirm(question: &str) -> std::io::Result<bool> {
 pub fn ask(label: &str) -> std::io::Result<String> {
     super::flush();
     let label = &escaped(label);
-    match mode() {
+    match widget() {
         // The widget [`confirm`] uses, so the question and the answer land
         // inside the frame the run opened rather than at column 0 beside
         // it. Empty is an answer here — both callers read it as "accept
         // what is already selected" — so the input is not required, and
         // the label's trailing space is the plain rendering's cursor gap,
         // not part of the question.
-        Mode::Pretty => cliclack::input(label.trim_end())
+        true => cliclack::input(label.trim_end())
             .required(false)
             .interact::<String>(),
-        Mode::Plain => {
+        false => {
             let _ = write!(std::io::stderr(), "{label}");
             let _ = std::io::stderr().flush();
             let mut typed = String::new();
@@ -101,16 +112,29 @@ fn answered(typed: &str) -> bool {
 /// Starting one draws whatever block is open, which is the other half of
 /// its job: a verb that says where it is going and then waits would
 /// otherwise say it on the way back.
-pub struct Task(Option<cliclack::ProgressBar>);
+///
+/// A framed verb's wait is drawn in its frame; any other verb's is the
+/// design system's [`super::Spinner`], which draws only where the run is
+/// rich.
+pub enum Task {
+    Framed(cliclack::ProgressBar),
+    Drawn(
+        #[expect(
+            dead_code,
+            reason = "held for its drop, which stops the drawing and clears the line"
+        )]
+        super::Spinner,
+    ),
+}
 
 pub fn spinner(label: &str) -> Task {
     super::flush();
     if mode() == Mode::Plain {
-        return Task(None);
+        return Task::Drawn(super::Spinner::start(&style(), label));
     }
     let bar = cliclack::spinner();
     bar.start(escaped(label));
-    Task(Some(bar))
+    Task::Framed(bar)
 }
 
 impl Drop for Task {
@@ -120,7 +144,7 @@ impl Drop for Task {
     /// the work produced is the block that follows, and a line saying it
     /// waited would be one more line in both modes to say the same thing.
     fn drop(&mut self) {
-        if let Some(bar) = self.0.take() {
+        if let Task::Framed(bar) = self {
             bar.clear();
         }
     }

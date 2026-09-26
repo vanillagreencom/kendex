@@ -4,90 +4,132 @@
 //! with the install it blocks, and the exits under all of it.
 
 use kendex_core::engine::{Comparison, DriftCause, DriftRow, DriftState, EngineReport};
-use kendex_core::env::Env;
 use kendex_core::model::ItemKind;
 
-use super::offers::{Blocked, Offer, blocked_items, offer_goes_under, scope_flag};
-use super::say;
+use super::offers::{Blocked, Offer, offer_goes_under, scope_flag};
+use crate::ui::{Span, Status, Style};
 
-/// What this apply cannot write and why. A conflict plans no op, so
+/// What this plan cannot write and why. A conflict plans no op, so
 /// without this the run ends on "nothing to do" while the thing the user
 /// asked for sits blocked with the reason never printed.
 ///
-/// Every conflict is printed. A row is not the safety section said twice:
-/// the score is advisory, and the row carries what actually stops the
-/// write — files in its way kendex did not write, or the user's edits in
-/// the installed copy — with the exits printed under it.
-pub fn print_conflicts(env: &Env, report: &EngineReport) -> Vec<Blocked> {
-    let rows = conflict_rows(report);
-    let blocked = blocked_items(env, &rows);
-    for (_, group) in grouped(&rows) {
+/// Every conflict is drawn, one row however many tools it blocks. A row
+/// is not the safety section said twice: the score is advisory, and the
+/// row carries what actually stops the write — files in its way kendex did
+/// not write, or the user's edits in the installed copy — with the exits
+/// under it.
+pub fn conflicts(
+    style: &Style,
+    report: &EngineReport,
+    rows: &[&DriftRow],
+    blocked: &[Blocked],
+) -> Vec<String> {
+    let groups = grouped(rows);
+    if groups.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = style.section("conflicts", groups.len(), Status::Failed);
+    for (_, group) in &groups {
         let Some((first, rest)) = group.split_first() else {
             continue;
         };
-        let offer = blocked.iter().find(|item| item.is(first));
-        say(&format!(
-            "conflict: {} {} for {}: {}",
+        let head = format!(
+            "{} {} for {}: {}",
             first.kind.name(),
             first.name,
-            tools(&group).join(", "),
+            tools(group).join(", "),
             conflict_detail(first)
-        ));
+        );
+        lines.extend(style.row(Status::Failed, &[Span::Prose(&head)], None));
         // Every position, never a count: the exit for some of these is the
         // reader moving the files themselves, and a place the output does
         // not name is a place they cannot go to.
-        for place in also_at(first, rest) {
-            say(&format!("  also at {}", place));
-        }
-        let offer = offer.and_then(|item| item.offer.as_ref());
-        if let Some(line) = compared_line(first.compared.as_ref(), offer) {
-            say(&format!("  {line}"));
-        }
-        say_offer(&rows, group.last().unwrap_or(first), offer);
+        let offer = offer_of(blocked, first);
+        lines.extend(under_a_row(
+            style,
+            &also_at(first, rest),
+            first.compared.as_ref(),
+            offer,
+            offer_goes_under(rows, group.last().unwrap_or(first)),
+        ));
     }
-    say_scope_exit(report, &rows, &blocked);
-    blocked
+    lines.extend(scope_exit(style, report, rows, blocked));
+    lines
 }
 
 /// Every row on its own line, with what the collapsed listing says about
 /// each one under it. Asking for more detail must not cost the reader the
 /// way out, nor the comparison that decides which way out to take: more
 /// detail is a superset of less, never a different answer.
-pub fn print_drift(env: &Env, report: &EngineReport) -> Vec<Blocked> {
-    let rows = conflict_rows(report);
-    let blocked = blocked_items(env, &rows);
+pub fn drift(
+    style: &Style,
+    report: &EngineReport,
+    rows: &[&DriftRow],
+    blocked: &[Blocked],
+) -> Vec<String> {
+    if report.drift.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = style.section("drift", report.drift.len(), Status::Notice);
     for row in &report.drift {
-        let offer = blocked
-            .iter()
-            .find(|item| item.is(row))
-            .and_then(|item| item.offer.as_ref());
-        say(&format!(
+        let head = format!(
             "{} {} [{}]: {:?} — {}",
             row.kind.name(),
             row.name,
             row.harness.name(),
             row.state,
             conflict_detail(row)
+        );
+        let status = match row.state {
+            DriftState::Conflict => Status::Failed,
+            _ => Status::Notice,
+        };
+        lines.extend(style.row(status, &[Span::Prose(&head)], None));
+        let offer = offer_of(blocked, row);
+        lines.extend(under_a_row(
+            style,
+            &row.also_in_the_way,
+            row.compared.as_ref(),
+            offer,
+            offer_goes_under(rows, row),
         ));
-        // More detail is a superset of less: the collapsed listing names
-        // every position, so this one cannot name fewer.
-        for place in &row.also_in_the_way {
-            say(&format!("  also at {}", place));
-        }
-        if let Some(line) = compared_line(row.compared.as_ref(), offer) {
-            say(&format!("  {line}"));
-        }
-        say_offer(&rows, row, offer);
     }
-    say_scope_exit(report, &rows, &blocked);
-    blocked
+    lines.extend(scope_exit(style, report, rows, blocked));
+    lines
 }
 
-/// One remedy per item, said under the last of the rows that can carry it.
-fn say_offer(rows: &[&DriftRow], row: &DriftRow, offer: Option<&Offer>) {
-    if let (Some(offer), true) = (offer, offer_goes_under(rows, row)) {
-        say(&format!("  to keep those files: {}", offer.line));
+fn offer_of<'a>(blocked: &'a [Blocked], row: &DriftRow) -> Option<&'a Offer> {
+    blocked
+        .iter()
+        .find(|item| item.is(row))
+        .and_then(|item| item.offer.as_ref())
+}
+
+/// The lines under one blocked row: the other places it sits at, how the
+/// content in the way compares, and the item's one way out where `last`
+/// says this is the last of the item's rows that can carry it.
+fn under_a_row(
+    style: &Style,
+    places: &[String],
+    compared: Option<&Comparison>,
+    offer: Option<&Offer>,
+    last: bool,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    for place in places {
+        lines.extend(style.detail(None, &[Span::Prose(&format!("also at {place}"))]));
     }
+    if let Some(line) = compared_line(compared, offer) {
+        lines.extend(style.detail(None, &[Span::Prose(&line)]));
+    }
+    if let (Some(offer), true) = (offer, last) {
+        let way = match offer.adopt {
+            true => Span::Command(&offer.line),
+            false => Span::Prose(&offer.line),
+        };
+        lines.extend(style.detail(None, &[Span::Prose("to keep those files: "), way]));
+    }
+    lines
 }
 
 /// The rows a plan refused, in plan order — the one reading of "blocked"
@@ -218,14 +260,18 @@ fn plural(n: u32) -> &'static str {
     }
 }
 
-/// Once, not per row: the half that names the item differs line by line and
-/// belongs on the row; the flag is the same for all of them, and forty
-/// copies of it bury the paths that differ. Indented with them all the same
-/// — at column 0 it reads as a heading over the plan that follows, which is
-/// the plan that runs without it.
-fn say_scope_exit(report: &EngineReport, rows: &[&DriftRow], blocked: &[Blocked]) {
+/// Once, not per row: the half that names the item differs line by line
+/// and belongs on the row; the flag is the same for all of them, and forty
+/// copies of it bury the paths that differ. A row of the section, not a
+/// line under the last conflict: it answers for every one of them.
+fn scope_exit(
+    style: &Style,
+    report: &EngineReport,
+    rows: &[&DriftRow],
+    blocked: &[Blocked],
+) -> Vec<String> {
     let (true, Some(row)) = (blocked.iter().any(|item| item.replace), rows.first()) else {
-        return;
+        return Vec::new();
     };
     // The engine's own verdict on this scope, not a second reading of it:
     // the sweep answers for every item it sweeps up or for none of them, so
@@ -233,12 +279,17 @@ fn say_scope_exit(report: &EngineReport, rows: &[&DriftRow], blocked: &[Blocked]
     // printing the flag there offers a command that cannot succeed on the
     // scope it is printed under. Each item's own way out above still stands.
     if kendex_core::engine::takeover::sweep_would_refuse(&report.drift) {
-        return;
+        return Vec::new();
     }
-    say(&format!(
-        "  to install the packages this place lists instead: kendex apply --replace-unmanaged{}",
-        scope_flag(&row.scope)
-    ));
+    let command = format!("kendex apply --replace-unmanaged{}", scope_flag(&row.scope));
+    style.row(
+        Status::Decision,
+        &[
+            Span::Prose("to install the packages this place lists instead: "),
+            Span::Command(&command),
+        ],
+        None,
+    )
 }
 
 /// What a conflict row says on a terminal. A row whose files were already

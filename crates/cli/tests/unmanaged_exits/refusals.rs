@@ -53,7 +53,7 @@ fn a_shape_with_no_way_to_keep_the_files_is_told_to_move_them() {
                 .unwrap();
                 None
             },
-            "conflict: skill deploy",
+            "conflicts:\n  skill deploy",
             Some(true),
         ),
         (
@@ -66,7 +66,7 @@ fn a_shape_with_no_way_to_keep_the_files_is_told_to_move_them() {
                 link_at(&project.join(".agents/skills/deploy"), &elsewhere);
                 Some(elsewhere.join("SKILL.md"))
             },
-            "conflict: skill deploy",
+            "conflicts:\n  skill deploy",
             None,
         ),
         (
@@ -80,7 +80,7 @@ fn a_shape_with_no_way_to_keep_the_files_is_told_to_move_them() {
                 fs::write(&wrong, "not a folder").unwrap();
                 None
             },
-            "conflict: skill deploy",
+            "conflicts:\n  skill deploy",
             None,
         ),
         (
@@ -93,7 +93,7 @@ fn a_shape_with_no_way_to_keep_the_files_is_told_to_move_them() {
                 fs::write(here.join("notes.md"), "somebody else's folder").unwrap();
                 None
             },
-            "conflict: skill deploy",
+            "conflicts:\n  skill deploy",
             None,
         ),
         (
@@ -108,7 +108,7 @@ fn a_shape_with_no_way_to_keep_the_files_is_told_to_move_them() {
                 link_at(&project.join(".agents/skills/deploy"), &elsewhere);
                 None
             },
-            "conflict: skill deploy",
+            "conflicts:\n  skill deploy",
             Some(false),
         ),
         (
@@ -122,7 +122,7 @@ fn a_shape_with_no_way_to_keep_the_files_is_told_to_move_them() {
                 fs::write(here.join("notes.md"), "somebody else's folder").unwrap();
                 None
             },
-            "conflict: skill deploy",
+            "conflicts:\n  skill deploy",
             None,
         ),
         (
@@ -149,7 +149,7 @@ fn a_shape_with_no_way_to_keep_the_files_is_told_to_move_them() {
                 fs::write(dir.join("scout.md.disabled"), "off by hand").unwrap();
                 Some(dir.join("scout.md.disabled"))
             },
-            "conflict: agent scout",
+            "conflicts:\n  agent scout",
             None,
         ),
         (
@@ -162,7 +162,7 @@ fn a_shape_with_no_way_to_keep_the_files_is_told_to_move_them() {
                 fs::write(here.join("SKILL.md/notes.txt"), "not a marker").unwrap();
                 None
             },
-            "conflict: skill deploy",
+            "conflicts:\n  skill deploy",
             None,
         ),
     ];
@@ -273,7 +273,7 @@ fn an_edit_is_never_told_to_move_files() {
     .unwrap();
 
     let planned = plan(home, &project);
-    assert!(planned.contains("conflict: skill deploy"), "{planned}");
+    assert!(planned.contains("conflicts:\n  skill deploy"), "{planned}");
     assert!(
         !planned.contains("to keep those files:"),
         "moving files settles neither of these: {planned}"
@@ -418,8 +418,8 @@ fn the_scope_wide_flag_is_withheld_only_by_a_row_the_sweep_would_refuse_on() {
             // The fixture proves nothing unless lint carries both halves: the
             // person's edit at one tool, and a stranger's files at another.
             &[
-                "conflict: skill lint for Claude Code: edited on disk",
-                "conflict: skill lint for Codex",
+                "  skill lint for Claude Code: edited on disk",
+                "  skill lint for Codex",
                 "already holds files kendex did not write",
             ],
             true,
@@ -436,14 +436,8 @@ fn the_scope_wide_flag_is_withheld_only_by_a_row_the_sweep_would_refuse_on() {
 
         // Every row carries lint's conflict and deploy's: the flag is decided
         // over both, and the per-item ways out are untouched either way.
-        assert!(
-            planned.contains("conflict: skill lint"),
-            "{shape}: {planned}"
-        );
-        assert!(
-            planned.contains("conflict: skill deploy"),
-            "{shape}: {planned}"
-        );
+        assert!(planned.contains("  skill lint"), "{shape}: {planned}");
+        assert!(planned.contains("  skill deploy"), "{shape}: {planned}");
         for half in halves {
             assert!(
                 planned.contains(half),
@@ -525,7 +519,7 @@ fn the_offer_is_printed_exactly_where_the_run_it_names_settles_the_scope() {
         // A run that exits clean having changed nothing has not installed
         // what kendex.toml asks for.
         let after = plan(home, &project);
-        let settled = !after.contains("conflict: ");
+        let settled = !after.contains("conflicts:");
         assert_eq!(
             offered,
             settled,

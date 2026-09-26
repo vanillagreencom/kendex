@@ -222,7 +222,7 @@ fn a_position_reaches_the_terminal_escaped() {
     ));
     let conflict = printed
         .lines()
-        .find(|line| line.starts_with("conflict: skill deploy"))
+        .find(|line| line.starts_with("  skill deploy for "))
         .unwrap_or_else(|| panic!("the fixture needs a blocked install: {printed}"));
     assert!(
         !conflict.contains('\u{1b}'),
@@ -234,39 +234,64 @@ fn a_position_reaches_the_terminal_escaped() {
     );
 }
 
-/// A hook that skips a tool is a decision the reader can make, so the note
-/// names the file that actually decides it.
+/// A hook its own harnesses line keeps off a tool is expected state, said
+/// by nothing while no declaration of it names that tool. A declaration
+/// that does is contradicted by the header, and the note names both lines,
+/// its record and its sentence each on a line of their own. One row per
+/// manifest shape.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_hook_that_skips_a_tool_names_the_file_that_decides_it() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let project = home.join("dev/app");
-    let catalog = home.join("catalog");
-    fs::create_dir_all(catalog.join("hooks")).unwrap();
-    // Executable kinds install only from a catalog declaring kendex's layout.
-    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
-    fs::write(
-        catalog.join("hooks/block-unsafe-rm.sh"),
-        "#!/usr/bin/env bash\n# ---\n# name: block-unsafe-rm\n# event: PreToolUse\n# matcher: Bash\n# description: stop a dangerous remove\n# harnesses: [claude-code]\n# ---\nexit 0\n",
-    )
-    .unwrap();
-    fs::create_dir_all(project.join(".pi")).unwrap();
-    manifest(
-        &project,
-        &catalog,
-        "[\"claude\", \"pi\"]",
-        "copy",
-        "[hooks.block-unsafe-rm]\nsource = \"cat\"\n",
-    );
+fn a_hook_that_skips_a_tool_is_said_only_where_the_declaration_names_it() {
+    const RECORD: &str =
+        "  kendex-hook-excluded: hook=block-unsafe-rm harness=pi source=catalog field=harnesses";
+    let rows = [
+        ("harnesses unset on the declaration", "", false),
+        (
+            "the declaration names the excluded tool",
+            "harnesses = [\"claude\", \"pi\"]\n",
+            true,
+        ),
+    ];
+    for (case, harnesses, said_it) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let home = home.as_path();
+        let project = home.join("dev/app");
+        let catalog = home.join("catalog");
+        fs::create_dir_all(catalog.join("hooks")).unwrap();
+        // Executable kinds install only from a catalog declaring kendex's layout.
+        fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+        fs::write(
+            catalog.join("hooks/block-unsafe-rm.sh"),
+            "#!/usr/bin/env bash\n# ---\n# name: block-unsafe-rm\n# event: PreToolUse\n# matcher: Bash\n# description: stop a dangerous remove\n# harnesses: [claude-code]\n# ---\nexit 0\n",
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".pi")).unwrap();
+        manifest(
+            &project,
+            &catalog,
+            "[\"claude\", \"pi\"]",
+            "copy",
+            &format!("[hooks.block-unsafe-rm]\nsource = \"cat\"\n{harnesses}"),
+        );
 
-    let output = kendex(home, &project, &["apply", "--plan", "--scope", "project"]);
-    let printed = said(&output);
-    assert_eq!(output.status.code(), Some(0), "{printed}");
-    assert!(
-        printed.lines().any(|line| line.starts_with(
-            r"note: kendex-hook-excluded: hook=block-unsafe-rm harness=pi source=catalog field=harnesses\n"
-        )),
-        "the note identifies the catalog field that decides the skip: {printed}"
-    );
+        let output = kendex(home, &project, &["apply", "--plan", "--scope", "project"]);
+        let printed = said(&output);
+        assert_eq!(output.status.code(), Some(0), "{case}: {printed}");
+        let lines: Vec<&str> = printed.lines().collect();
+        match lines.iter().position(|line| *line == RECORD) {
+            Some(at) => {
+                assert!(said_it, "{case}: an expected exclusion was said: {printed}");
+                assert!(
+                    lines[at + 1].starts_with("    kendex.toml lists pi in this hook's harnesses"),
+                    "{case}: the sentence is not a line under its record: {printed}"
+                );
+            }
+            None => assert!(!said_it, "{case}: the contradiction went unsaid: {printed}"),
+        }
+        assert!(
+            !printed.contains("\\n"),
+            "{case}: a literal break: {printed}"
+        );
+    }
 }

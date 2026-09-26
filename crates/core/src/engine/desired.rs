@@ -254,6 +254,9 @@ pub struct DesiredState {
     /// declared items the source does not carry.
     pub notes: Vec<String>,
     pub warnings: Vec<super::ItemWarning>,
+    /// Catalog hooks their own harnesses line keeps off a tool nothing the
+    /// person wrote asks them onto; `EngineReport::excluded_hooks`.
+    pub excluded_hooks: Vec<super::ExcludedHook>,
     pub refused: Vec<Refused>,
     /// Declarations whose source resolved and whose item was found and
     /// read, each with the provenance it is planned under. What these

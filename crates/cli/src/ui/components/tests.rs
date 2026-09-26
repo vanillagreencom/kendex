@@ -46,6 +46,23 @@ fn drawn(style: &Style) -> Vec<(&'static str, Vec<String>)> {
             style.row(Status::Done, &[Span::Prose("skill tidy [claude]")], None),
         ),
         (
+            "detail",
+            style.detail(
+                Some(Status::Critical),
+                &[Span::Prose("[critical] pipes a download into a shell")],
+            ),
+        ),
+        (
+            "detail bare",
+            style.detail(
+                None,
+                &[
+                    Span::Prose("to keep those files: "),
+                    Span::Command("kendex adopt skill tidy"),
+                ],
+            ),
+        ),
+        (
             "change",
             style.change("tidy", "1.0.0", "1.2.0", Some("project")),
         ),
@@ -97,7 +114,7 @@ fn drawn(style: &Style) -> Vec<(&'static str, Vec<String>)> {
 /// with, and the header only a terminal gets.
 #[test]
 fn each_component_draws_rich() {
-    let want: [(&str, &[&str]); 16] = [
+    let want: [(&str, &[&str]); 18] = [
         (
             "header",
             &["<1;34>kendex check</>  <90>/home/me/dev/app, global</>"],
@@ -112,6 +129,14 @@ fn each_component_draws_rich() {
             ],
         ),
         ("row bare", &["  <32>✓</> skill tidy [claude]"]),
+        (
+            "detail",
+            &["    <31>◉</> [critical] pipes a download into a shell"],
+        ),
+        (
+            "detail bare",
+            &["    <90>to keep those files: kendex adopt skill tidy</>"],
+        ),
         (
             "change",
             &["  <1>tidy</>  <90>1.0.0</> <34>→</> 1.2.0  <90>[project]</>"],
@@ -175,11 +200,16 @@ fn each_component_draws_rich() {
 /// no escape, no blank line and no chrome.
 #[test]
 fn each_component_draws_plain() {
-    let want: [(&str, &[&str]); 16] = [
+    let want: [(&str, &[&str]); 18] = [
         ("header", &[]),
         ("section", &["stale:"]),
         ("row", &["  skill tidy — fix: kendex apply (not from here)"]),
         ("row bare", &["  skill tidy [claude]"]),
+        ("detail", &["    [critical] pipes a download into a shell"]),
+        (
+            "detail bare",
+            &["    to keep those files: kendex adopt skill tidy"],
+        ),
         ("change", &["  tidy  1.0.0 → 1.2.0  [project]"]),
         (
             "callout",
@@ -262,6 +292,10 @@ fn a_hostile_value_is_escaped_by_every_component() {
                     remark: Some(hostile),
                 }),
             ),
+            style.detail(
+                Some(Status::High),
+                &[Span::Prose(hostile), Span::Command(hostile)],
+            ),
             style.change(hostile, hostile, hostile, Some(hostile)),
             style.callout(hostile, hostile, &pick),
             style.link(hostile, Target::Url(hostile)),
@@ -306,6 +340,7 @@ fn a_rich_line_wraps_inside_its_width() {
                 remark: Some(long),
             }),
         ),
+        style.detail(Some(Status::Low), &[Span::Prose(long)]),
         style.callout(long, long, &[]),
         style.summary(Status::Decision, long),
         style.note(&[Span::Prose(long)]),
@@ -320,6 +355,11 @@ fn a_rich_line_wraps_inside_its_width() {
     assert!(
         row[1..].iter().all(|line| line.starts_with("    ")),
         "a row's continuation left its indent: {row:?}"
+    );
+    let detail = tagged(&drawn[2]);
+    assert!(
+        detail[1..].iter().all(|line| line.starts_with("      ")),
+        "a detail's continuation left the text it continues: {detail:?}"
     );
 }
 

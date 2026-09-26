@@ -10,8 +10,9 @@ use kendex_core::model::Scope;
 use kendex_core::registry::{CurlFetch, collections};
 use kendex_core::source_ops::{self, SourceAction};
 
-use super::engine_common::{apply_report, ask_before_writing, print_report, print_safety};
-use super::ledger::{Wrote, say_ledger};
+use super::advisory::print_safety;
+use super::engine_common::{apply_report, ask_before_writing, print_report};
+use super::ledger::{Folded, Wrote, say_ledger};
 use super::offers::Blocked;
 use super::{CliResult, fail_refusal, say, scope_label};
 
@@ -84,6 +85,7 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
             },
             &closing.blocked,
             &closing.scored,
+            Folded::None,
         );
     };
     let (outcome, refused) = finish(
@@ -331,7 +333,7 @@ fn install_step(
     {
         for (kind, name) in &members {
             let pinned = kendex_core::package::set_rev(env, scope, *kind, name, Some(commit))?;
-            print_safety(&pinned, false);
+            print_safety(&pinned.safety);
             wrote.scored.extend(pinned.safety.iter().cloned());
             wrote.applied += apply_report(env, &pinned)?;
         }

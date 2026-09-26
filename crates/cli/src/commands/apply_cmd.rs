@@ -3,7 +3,7 @@ use kendex_core::env::Env;
 use kendex_core::manifest::{self, ManifestFile};
 
 use super::engine_common::{confirm_and_apply, print_report, print_unmanaged};
-use super::ledger::{Wrote, say_ledger, say_preview};
+use super::ledger::{Folded, Wrote, say_ledger, say_preview};
 use super::{CliResult, fail_refusal, resolve_scopes_at, say, scope_label, warn};
 use crate::scope::ScopeFilter;
 use crate::ui;
@@ -55,12 +55,12 @@ pub struct ApplyArgs {
 }
 
 pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
-    ui::intro("kendex apply");
     let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::Project)?;
     // Every scope is planned before any of them is written: failing before
     // the first write beats a half-applied run.
     let mut planned = Vec::new();
     let scopes = resolve_scopes_at(env, filter, args.target.path())?;
+    super::header("apply", &scopes);
     // The refusal that registration carries, asked before the first
     // write. A plan never reaches a write, so it is asked nothing;
     // `project::register_target` owns the rule itself.
@@ -162,6 +162,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
                     },
                     &blocked,
                     &report.safety,
+                    Folded::None,
                 );
             },
         );

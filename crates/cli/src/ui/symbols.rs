@@ -12,6 +12,12 @@ pub enum Symbol {
     /// Needs a decision from the reader.
     Decision,
     Notice,
+    /// A safety finding at critical, the ramp's full mark.
+    Critical,
+    /// A safety finding at high.
+    High,
+    /// A safety finding at medium or low, the ramp's empty mark.
+    Low,
     /// From one value to another.
     Change,
     /// The choice the cursor is on, and a folded block.
@@ -39,6 +45,12 @@ impl Symbol {
             (Symbol::Decision, _) => "!",
             (Symbol::Notice, Glyphs::Unicode) => "•",
             (Symbol::Notice, Glyphs::Ascii) => "*",
+            (Symbol::Critical, Glyphs::Unicode) => "◉",
+            (Symbol::Critical, Glyphs::Ascii) => "#",
+            (Symbol::High, Glyphs::Unicode) => "◐",
+            (Symbol::High, Glyphs::Ascii) => "+",
+            (Symbol::Low, Glyphs::Unicode) => "○",
+            (Symbol::Low, Glyphs::Ascii) => "o",
             (Symbol::Change, Glyphs::Unicode) => "→",
             (Symbol::Change, Glyphs::Ascii) => "->",
             (Symbol::Current, Glyphs::Unicode) => "›",
@@ -85,6 +97,9 @@ mod tests {
             (Symbol::Failed, "✗", "x"),
             (Symbol::Decision, "!", "!"),
             (Symbol::Notice, "•", "*"),
+            (Symbol::Critical, "◉", "#"),
+            (Symbol::High, "◐", "+"),
+            (Symbol::Low, "○", "o"),
             (Symbol::Change, "→", "->"),
             (Symbol::Current, "›", ">"),
             (Symbol::Separator, "─", "-"),
