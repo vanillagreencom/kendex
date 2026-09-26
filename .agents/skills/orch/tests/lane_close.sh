@@ -53,6 +53,7 @@ mkdir -p "$FLEET_DIR"
 mkdir -p "$SCRIPTS/lib" "$FIXTURE/skills/linear/scripts" "$BIN"
 cp "$TEST_DIR/../scripts/lane-close" "$SCRIPTS/lane-close"
 cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$SCRIPTS/lib/lane-state.sh"
+cp "$TEST_DIR/../scripts/lib/lane-host-slots.sh" "$SCRIPTS/lib/lane-host-slots.sh"
 chmod +x "$SCRIPTS/lane-close"
 
 cat >"$SCRIPTS/workflow-state" <<'EOF'
@@ -346,6 +347,7 @@ lib_mutant() { # NAME OLD NEW [APPEND]
     ln -s "$SCRIPTS/$sibling" "$dir/skills/orch/scripts/$sibling"
   done
   ln -s "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
+  ln -s "$SCRIPTS/lib/lane-host-slots.sh" "$dir/skills/orch/scripts/lib/lane-host-slots.sh"
   python3 - "$SCRIPTS/lib/lane-state.sh" "$dir/skills/orch/scripts/lib/lane-state.sh" "$old" "$new" "${4:-}" <<'MUTPY'
 import pathlib, sys
 source, target, old, new, append = sys.argv[1:]
@@ -558,6 +560,29 @@ write_state running codex /host; write_panes python; codex_screen
 LANE_CLOSE_STOP_OUT='' run_close "$SCRIPT"
 assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=codex cause=answer-unparsed$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 failed=1 kill=0 status=running' 'a provider stop that prints no stopped line refuses as unparsed'
+
+echo '=== a call lane-host refused at its per-home cap changes nothing and exits 69 ==='
+# STEP|VARIABLE|REMOVED: the stub fails that step with lane-host's busy
+# status. The pane reads exited once the stop ran, so the close step is the
+# host close. REMOVED counts the item-file removals the close made first: the
+# host close runs after them, and a second close's removal finds nothing.
+for row in 'stop|LANE_CLOSE_STOP_STATUS|0' 'close|LANE_CLOSE_HOST_STATUS|1' 'mail-read|LANE_CLOSE_MAIL_STATUS|0'; do
+  IFS='|' read -r step var removed <<<"$row"
+  write_state running claude /host; write_panes python; claude_screen
+  export "$var=69"
+  run_close "$SCRIPT"
+  unset "$var"
+  assert_eq "rc=$RC busy=$(grep -cE "^lane-close: lane-host-busy item=KEN-1 (harness=claude )?step=$step\$" <<<"$ERR" || true) failed=$(grep -cE '^lane-close: (stop-failed|mail-read-failed) ' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE") removed=$(grep -c -x 'remove KEN-1' "$STATE_CALLS" || true)" \
+    "rc=69 busy=1 failed=0 kill=0 status=running removed=$removed" "a $step lane-host refused at its cap is lane-host-busy, keeping the window and the record"
+done
+# The busy branch's control: without it a refused stop reads as the provider
+# failing.
+MUTANT="$(mutant lane-close-busy-stop '    [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { message lane-host-busy "${fields[@]}" step=stop >&2; exit "$rc"; }
+' '')"
+write_state running claude /host; write_panes python; claude_screen
+LANE_CLOSE_STOP_STATUS=69 run_close "$MUTANT"
+assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=provider status=69$' <<<"$ERR" || true)" 'rc=1 failed=1' \
+  "control: without the busy branch a refused stop reads as the provider failing"
 
 echo '=== a finished hosted lane whose worktree is gone closes without a stop ==='
 # The provider's removed-worktree answer signals nothing, so the harness still
