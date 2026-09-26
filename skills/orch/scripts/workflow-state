@@ -216,7 +216,11 @@ state_message() {
       ;;
     panel-bound)
       printf 'workflow-state: panel-bound field=%s agents=%s limit=%s\n' "$field" "$agents" "$SMALL_TIER_PANEL_MAX"
-      printf '%s\n' "workflow-state: a small item's review panel holds at most $SMALL_TIER_PANEL_MAX reviewers (small.md § 3); $field not set"
+      printf '%s\n' "workflow-state: a small item's review panel holds at most $SMALL_TIER_PANEL_MAX reviewers, the external lane counted (small.md § 3); $field not set"
+      ;;
+    panel-external)
+      printf 'workflow-state: panel-external field=%s\n' "$field"
+      printf '%s\n' "workflow-state: a small item's review panel says whether the external lane runs, as \"external\": true or false (small.md § 3); $field not set"
       ;;
     cycle-cap)
       printf 'workflow-state: cycle-cap count=%s limit=%s\n' "$(jq -r '.entered' <<<"$report")" "$cap"
@@ -682,7 +686,8 @@ cap_table() {
     printf 'CI_FIX_MAX_CYCLES\t\t6\t\n'
 }
 
-# The reviewers a small item's panel may hold, small.md § 3's other bound.
+# The reviewers a small item's panel may hold, the external lane counted,
+# small.md § 3's other bound.
 SMALL_TIER_PANEL_MAX=3
 
 # One cap's "<field><tab><default><tab><small ceiling>", or the one refusal
@@ -801,8 +806,15 @@ cmd_set() {
     fi
     if [[ "$field" =~ ^(first|rereview|verification)_panel$ && "$value" == "{"* ]] &&
         [[ "$(state_tier "$issue_id")" == "small" ]]; then
-        local agents
-        agents=$(jq -r '(.agents // []) | length' <<<"$value") || return 1
+        # The external lane (review-pr § 2.2) is one of the reviewers the
+        # bound counts, so the panel must say whether it runs.
+        local agents external
+        external=$(jq -r '.external | type' <<<"$value") || return 1
+        if [[ "$external" != boolean ]]; then
+            state_message panel-external "$@" >&2
+            return 1
+        fi
+        agents=$(jq -r '((.agents // []) | length) + (if .external then 1 else 0 end)' <<<"$value") || return 1
         if (( agents > SMALL_TIER_PANEL_MAX )); then
             state_message panel-bound "$@" >&2
             return 1
@@ -1354,8 +1366,10 @@ EOF
                                 tier the value is micro, small or standard,
                                 refused otherwise as tier-value. With tier
                                 small, a first_panel, rereview_panel or
-                                verification_panel naming more than 3 agents
-                                is refused as panel-bound
+                                verification_panel is refused as
+                                panel-external unless its "external" is true
+                                or false, and as panel-bound when its agents,
+                                plus one for "external": true, exceed 3
   set-git-head <issue_id> <field> [worktree]  Set field to current HEAD SHA
   set-now <issue_id> <field>     Set field to current epoch seconds
   new-round-id <issue_id> <field>  Generate a unique per-delegation round token,
