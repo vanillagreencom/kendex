@@ -204,7 +204,11 @@ ol_session_stop() { # SESSION [SUCCESSOR]
 # ol_session_abandon — the close-out every refusal after `create` takes,
 # whichever launcher refuses: the session this launch opened is stopped, read
 # off the provider's answer where a signal landed before the caller parsed
-# it, and the prior record is put back where ol_record_write ran. Two
+# it, and the prior record is put back wherever ol_record_read read one,
+# whether or not ol_record_write ran: a signal that lands while its writer
+# runs is taken only once the writer returns, and the writer may have
+# committed. The put-back leaves the record as the launch found it, and an
+# empty OL_PRIOR, a state that could not be read, is never written to. Two
 # overseers never run, so this is one function and not a copy per caller.
 # DEP_ERR is left as the caller had it, holding the detail its refusal
 # relays; the stop's and the restore's own words go nowhere. Returns 0, or 1
@@ -216,7 +220,7 @@ ol_session_abandon() {
   detail="$(cat -- "$DEP_ERR" 2>/dev/null)" || detail=""
   [[ -n "$OL_SESSION" ]] || ol_session_from_out
   [[ -z "$OL_SESSION" ]] || ol_session_stop "$OL_SESSION" || true
-  if (( OL_RECORD_WRITTEN )) && ! ol_record_restore; then
+  if [[ -n "$OL_PRIOR" ]] && ! ol_record_restore; then
     OL_REASON=restore-failed
     OL_DETAIL="$(cat -- "$DEP_ERR" 2>/dev/null)" || OL_DETAIL=""
     rc=1
@@ -254,11 +258,9 @@ ol_record_read() {
 # repeated and never a second session. On tmux the session is the pane, and
 # the object keeps `pane` as the spelling the turn-end hook and the watch
 # already read it under. Every other field the prior carried
-# stays. The generation written is in OL_GENERATION, and OL_RECORD_WRITTEN
-# is 1 until ol_record_restore runs, which is how ol_session_abandon knows
-# there is a prior to put back. Returns 1 with the writer's words in DEP_ERR.
+# stays. The generation written is in OL_GENERATION. Returns 1 with the
+# writer's words in DEP_ERR.
 OL_GENERATION=""
-OL_RECORD_WRITTEN=0
 ol_record_write() { # RUNTIME SESSION WINDOW SERVER ACCOUNT [LINE]
   local prior="${OL_PRIOR:-null}" record
   record="$(jq -cn --argjson prior "$prior" --arg runtime "$1" --arg session "$2" \
@@ -273,17 +275,14 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER ACCOUNT [LINE]
       + (if $line == "" then {} else {launch_line: $line} end)' 2>"$DEP_ERR")" \
     || return 1
   OL_GENERATION="$(jq -r '.generation' <<<"$record" 2>"$DEP_ERR")" || return 1
-  "$SCRIPT_DIR/workflow-state" set oversee overseer "$record" >/dev/null 2>"$DEP_ERR" || return 1
-  OL_RECORD_WRITTEN=1
+  "$SCRIPT_DIR/workflow-state" set oversee overseer "$record" >/dev/null 2>"$DEP_ERR"
 }
 
-# ol_record_restore — OL_PRIOR written back whole, for a launch abandoned
-# after ol_record_write: the predecessor keeps running, so the record has to
-# name it again, its own launch line included. A prior of null removes the
-# object. Returns 1 with the writer's words in DEP_ERR; either way the write
-# is no longer one to put back.
+# ol_record_restore — OL_PRIOR written back whole, for an abandoned launch:
+# the predecessor keeps running, so the record has to name it again, its own
+# launch line included. A prior of null removes the object. Returns 1 with
+# the writer's words in DEP_ERR.
 ol_record_restore() {
-  OL_RECORD_WRITTEN=0
   if [[ "${OL_PRIOR:-null}" == null ]]; then
     "$SCRIPT_DIR/workflow-state" update oversee 'del(.overseer)' >/dev/null 2>"$DEP_ERR"
   else
