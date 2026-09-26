@@ -191,13 +191,42 @@ if [ -z "${PR_NUMBER:-}" ]; then
     rg_message warning writer-unbounded "$PER_PR_DEADLINE_SECONDS" \
       "no timeout utility here, so each PR's evaluation runs unbounded"
   fi
+  converge_pr() { # NUMBER HEAD BASE AUTHOR -> the single-head run's status
+    EVENT_NAME="$EVENT_NAME" PR_NUMBER="$1" \
+      HEAD_SHA="$2" PR_BASE_SHA="$3" PR_AUTHOR="$4" \
+      ${pr_bound[@]+"${pr_bound[@]}"} bash "$self" </dev/null
+  }
   failed=0
   while read -r number head base author; do
     [ -z "$number" ] && continue
     pr_status=0
-    EVENT_NAME="$EVENT_NAME" PR_NUMBER="$number" \
-      HEAD_SHA="$head" PR_BASE_SHA="$base" PR_AUTHOR="$author" \
-      ${pr_bound[@]+"${pr_bound[@]}"} bash "$self" </dev/null || pr_status=$?
+    converge_pr "$number" "$head" "$base" "$author" || pr_status=$?
+    # The listing is read once at the start of the pass, so a lane pushing
+    # before this PR's turn leaves a head the predicate may no longer be able
+    # to fetch. A failed evaluation of a head the PR no longer has says
+    # nothing about the PR, so the PR is re-read once: a moved head is walked
+    # on the current one, a closed PR is left for the next pass, and a
+    # failure on the head the PR still has, or an unreadable PR, stays a
+    # failure. An overrun is not a moved head and is not re-read.
+    if [ "$pr_status" -ne 0 ] && [ "$pr_status" -ne 124 ]; then
+      current=""
+      if raw_pr="$(gh api "repos/$GH_REPO/pulls/$number")" && [ -n "$raw_pr" ]; then
+        current="$(jq -r 'if type == "object" and all(.state, .head.sha, .base.sha; type == "string")
+                          then "\(.state) \(.head.sha) \(.base.sha)"
+                          else error("not a pull request object") end' <<<"$raw_pr" 2>/dev/null)" || current=""
+      fi
+      read -r cur_state cur_head cur_base <<<"$current"
+      if [ -z "$current" ]; then
+        rg_message error writer-pr-read-failed "$number" "::error::could not re-read PR #$number after its evaluation failed; the failure stands"
+      elif [ "$cur_state" != "open" ]; then
+        rg_message notice writer-head-moved "$number" "PR #$number is $cur_state since the listing; left for the next pass"
+        pr_status=0
+      elif [ "$cur_head" != "$head" ]; then
+        rg_message notice writer-head-moved "$number" "PR #$number moved from $head to $cur_head during the pass; evaluating the current head"
+        pr_status=0
+        converge_pr "$number" "$cur_head" "$cur_base" "$author" || pr_status=$?
+      fi
+    fi
     if [ "$pr_status" -ne 0 ]; then
       if [ "$pr_status" -eq 124 ]; then
         rg_message error writer-convergence-deadline "$number" "::error::PR #$number passed its ${PER_PR_DEADLINE_SECONDS}s share of the converge step; left for the next pass"
