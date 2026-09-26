@@ -43,10 +43,9 @@
 #     to the roster.
 #   - `guards-scans` runs where a path under skills/, hooks/ or tools/
 #     changed, the trees its scans read. `rest` also runs where a build input
-#     or a path INSTALL_RECORD names changed, because it builds kendex-cli
-#     from the checkout for harness-ci's change-class rows and judges the
-#     repository's install record with it. A diff that reaches no package selects
-#     no shard, and shell_shards is false exactly where the list is empty.
+#     changed, because it builds kendex-cli from the checkout for harness-ci's
+#     change-class rows. A diff that reaches no package selects no shard, and
+#     shell_shards is false exactly where the list is empty.
 #   - The platform lanes (macos_legs, cargo_macos, cargo_windows) stand down
 #     only on a diff whose every path is prose, whose content no platform
 #     reads differently, and run on any other diff; a `standard` diff that is
@@ -169,11 +168,6 @@ PROSE='\.(md|markdown)$'
 LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|rust-reads)$)'
 # A shard cited by name in prose: a name in backticks, then `shard`.
 SHARD_CITATION='`[a-z0-9][a-z0-9-]*` shards?'
-# What the repository's own install record covers: the catalog trees, their
-# renders, the manifests that shape them, the record itself, and every
-# AGENTS.md with the CLAUDE.md shim kendex keeps beside it, at any depth.
-# Build inputs, the kendex code that renders and records, are the other half.
-INSTALL_RECORD='^(skills/[^/]+|agents|hooks|commands|pi-extensions|\.agents|\.claude|\.codex|\.pi)/|^(kendex\.toml|kendex-local\.toml|\.kendex-lock\.json|\.kendex-generated\.json)$|(^|/)(AGENTS|CLAUDE)\.md$'
 # What selects every shell shard: the lane sources and the rest of .github/.
 ALL_SHARDS="^\\.github/|$LANE_SOURCES"
 
@@ -439,11 +433,9 @@ $path" ;;
       esac
     done <<<"$found"
   done
-  # `rest` judges the install record with the kendex this checkout builds,
-  # in skill-tests.yml's "the committed install record matches this tree"
-  # step, so a build input or a path the record covers runs it.
+  # `rest` builds kendex-cli from the checkout for harness-ci's change-class
+  # rows, so a build input runs it.
   [ "$build" = false ] || want_shard rest
-  ! any "$INSTALL_RECORD" || want_shard rest
   # shellcheck disable=SC2086 # the roster is a word list
   ! any "$ALL_SHARDS" || want_shard $SHARDS
   for shard in $SHARDS; do

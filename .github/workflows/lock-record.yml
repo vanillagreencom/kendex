@@ -1,0 +1,124 @@
+name: lock-record
+
+# After each push to main, this repository's install record
+# (.kendex-lock.json) is judged by a kendex built from that tree and, where
+# a merge moved what `kendex refresh` records, re-recorded and landed
+# through the one rolling pull request kendex/lock, which the lanes app arms
+# for the merge queue. A pull request never re-records it: two branches
+# changing one package would each rewrite the same rows and conflict at
+# every merge ahead of them (docs/decisions/D007-lock-record-on-main.md).
+# tools/lock-record is the body and says what each line it prints means;
+# its suite is crates/cli/tests/lock_record.rs.
+#
+# The push a rolling pull request's own merge makes runs this again, finds
+# the record current and writes nothing, so the branch settles after one
+# queue cycle. No path filter: the kendex code under crates/ is part of what
+# moves the record, and a verify that finds it current costs one warm build.
+#
+# The lanes app's two secrets live only in the kendex environment (D003),
+# whose deployment policy admits main alone, so a run from any other ref
+# reads nothing.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to main supersedes a run still judging an older head: the
+# record it would open is stale before it lands. A run cancelled mid-way can
+# leave the rolling pull request disarmed or dequeued, or its branch pushed
+# with no arm; the next run reads that state first and arms the pull request
+# on either path, the stand-down and the push alike.
+concurrency:
+  group: lock-record
+  cancel-in-progress: true
+
+jobs:
+  record:
+    # The workflow token checks out the tree, held to contents: read and
+    # persisted nowhere. The build, whose dependency build scripts run from
+    # the tree, never sees the App's token. The refresh and the push share
+    # the last step, which holds it: the refresh runs under GH_TOKEN and the
+    # gh credential helper, which answers a github.com credential challenge
+    # on its git fetches with that token, and it launches no package script,
+    # because nothing in the runner's fresh checkout is armed and a refresh
+    # arms nothing. A step that armed an effect here would put tree code
+    # under the token.
+    # tools/lock-record's header is the authority on what each command
+    # there runs with.
+    permissions:
+      contents: read
+    environment: kendex
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GIT_AUTHOR_NAME: vanillagreen-fleet-lanes[bot]
+      GIT_AUTHOR_EMAIL: 328550061+vanillagreen-fleet-lanes[bot]@users.noreply.github.com
+      GIT_COMMITTER_NAME: vanillagreen-fleet-lanes[bot]
+      GIT_COMMITTER_EMAIL: 328550061+vanillagreen-fleet-lanes[bot]@users.noreply.github.com
+    steps:
+      # A run with either secret empty fails here, by name, before anything
+      # is built: a green run that recorded nothing would leave main stale.
+      - name: The app credentials are set
+        env:
+          FLEET_GH_APP_ID: ${{ secrets.FLEET_GH_APP_ID }}
+          FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "$FLEET_GH_APP_ID" ] || missing="$missing FLEET_GH_APP_ID"
+          [ -n "$FLEET_GH_APP_PRIVATE_KEY" ] || missing="$missing FLEET_GH_APP_PRIVATE_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::not set:$missing. Both FLEET_GH_APP_ID and FLEET_GH_APP_PRIVATE_KEY are needed to push the rolling branch and arm its pull request, so the record was not judged. Add both secrets to the kendex environment (docs/decisions/D003-one-merge-path.md step 2)."
+            exit 1
+          fi
+
+      - name: Mint a token for this repository
+        id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          # The secret holds the App ID; this input also takes the client id.
+          app-id: ${{ secrets.FLEET_GH_APP_ID }}
+          private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
+          owner: vanillagreencom
+          repositories: kendex
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The head just pushed, or main on a dispatch.
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: lock-record
+      - name: System dependencies for the keychain store
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+
+      # The judge is this tree's kendex, not a release: a change to the code
+      # that hashes, renders or records is one of the changes that moves the
+      # record. A debug build is enough, since the run hands it a throwaway
+      # HOME with KENDEX_REAL_HOME set, which takes it out of its dev sandbox.
+      - name: kendex, from this tree
+        run: |
+          set -euo pipefail
+          cargo build -p kendex-cli --locked
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 target/debug/kendex "$HOME/.local/bin/kendex"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Record the install record and land it
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          home="$(mktemp -d)"
+          export HOME="$home" KENDEX_REAL_HOME=1 KENDEX_BACKGROUND_REFRESH=off \
+            XDG_CONFIG_HOME="$home/.config" XDG_CACHE_HOME="$home/.cache" \
+            XDG_DATA_HOME="$home/.local/share"
+          gh auth setup-git
+          tools/lock-record --repo "$GITHUB_WORKSPACE" --base main
