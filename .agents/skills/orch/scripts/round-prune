@@ -12,15 +12,15 @@
 # no workflow passes one: the round id from workflow state, and the linked
 # worktree the state names, never the main checkout, as git-context
 # lane-worktree resolves it from the state's worktree and branch; the lease
-# owner from that
-# worktree's branch through `git-context issue-from-branch`, which is the issue
-# id start-worktree claims the lease under; the Cargo target as tools/guard
-# resolves it, ${CARGO_TARGET_DIR:-target} with a relative value read from the
-# worktree; and the use of the volume holding that target from df. A state
-# with neither has no lane target to free: it records action=no-worktree and
-# exits 0. A branch naming no issue id had no start-worktree lease, and the
-# state key stands in as the owner. At or past ORCH_ROUND_PRUNE_DISK_PCT
-# (default 75) it runs
+# owner from that worktree's branch through `git-context issue-from-branch`,
+# which is the issue id start-worktree claims the lease under; the Cargo
+# target as tools/guard resolves it, ${CARGO_TARGET_DIR:-target} with a
+# relative value read from the worktree; and the use of the volume holding
+# that target from df. A state that names no linked worktree, by either field,
+# has no lane target to free: it records action=no-worktree and exits 0. A
+# listing git cannot give refuses as worktree-list. A branch naming no issue
+# id had no start-worktree lease, and the state key stands in as the owner.
+# At or past ORCH_ROUND_PRUNE_DISK_PCT (default 75) it runs
 #   worktree cleanup --targets-only --apply --worktree WORKTREE --owner OWNER
 # That prune takes every Cargo profile under the worktree's own target/,
 # however recent, and nothing else: node_modules/ and .next/ stay, since nothing

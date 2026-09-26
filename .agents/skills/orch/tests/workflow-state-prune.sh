@@ -333,6 +333,36 @@ while IFS='|' read -r want n label; do
     || bad "old, $label: state and file $want" "got=$SHAPES"
 done <<<"$SHAPE_ROWS"
 
+# A worktree listing git cannot give, over the same fixture: which worktree a
+# state names is unknown, so SCRIPT's prune refuses and removes nothing.
+# LISTING reads its status, whether the tree changed and whether it archived.
+REAL_GIT="$(command -v git)"
+GIT_LIST_FAIL_BIN="$TMP_ROOT/git-list-fail-bin"
+mkdir -p "$GIT_LIST_FAIL_BIN"
+cat > "$GIT_LIST_FAIL_BIN/git" <<STUB
+#!/usr/bin/env bash
+wt="" list=""
+for a in "\$@"; do
+  [[ "\$a" != worktree ]] || wt=1
+  [[ "\$a" != list ]] || list=1
+done
+if [[ -n "\$wt" && -n "\$list" ]]; then echo "fatal: planted failure" >&2; exit 128; fi
+exec "$REAL_GIT" "\$@"
+STUB
+chmod +x "$GIT_LIST_FAIL_BIN/git"
+listing_row() { # NAME SCRIPT
+  local lp="$TMP_ROOT/listing-$1" before lrc=0
+  build_shapes "$lp"
+  before="$(tree_of "$lp")"
+  (cd "$lp" && PATH="$GIT_LIST_FAIL_BIN:$PATH" env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 \
+    FLEET_DIR="$lp/fleet" bash "$2" prune) >/dev/null 2>"$lp.err" || lrc=$?
+  LISTING="rc=$lrc removed=$([[ "$(tree_of "$lp")" == "$before" ]] && echo none || echo some) archive=$([[ -z "$(find "$lp/fleet" -name '*.tgz' 2>/dev/null || true)" ]] && echo none || echo some)"
+}
+listing_row shipped "$WS"
+[[ "$LISTING" == "rc=1 removed=none archive=none" ]] && grep -qxF 'fatal: planted failure' "$TMP_ROOT/listing-shipped.err" \
+  && ok "a worktree listing git cannot give refuses the prune, carrying git's words, and removes nothing" \
+  || bad "a worktree listing git cannot give refuses the prune, carrying git's words, and removes nothing" "$LISTING"
+
 # A step that fails before the archive stands removes nothing and writes no
 # archive: an archive tar cannot write, an archive root that is a file, a find
 # that cannot read an age, and a progress directory that is the state
@@ -495,6 +525,14 @@ shapes_run no-lane-lookup "$MUTANT_DIR/no-lane-lookup"
 [[ " $SHAPES" == *" 1:removed,removed "* ]] \
   && ok "control: without the worktree lookup an item on its linked worktree is pruned" \
   || bad "control: without the worktree lookup an item on its linked worktree is pruned" "got=$SHAPES"
+# Planted: a failed listing read as no worktree, so every old state the
+# listing would have held is pruned.
+mutant listing-ignored 'wt=$("$SCRIPT_DIR/git-context" lane-worktree "${wt%%$'"'"'\t'"'"'*}" "${wt#*$'"'"'\t'"'"'}" "$root") || return 1' \
+  'wt=$("$SCRIPT_DIR/git-context" lane-worktree "${wt%%$'"'"'\t'"'"'*}" "${wt#*$'"'"'\t'"'"'}" "$root") || wt=""'
+listing_row listing-ignored "$MUTANT_DIR/listing-ignored"
+[[ "$LISTING" == rc=0\ * && "$LISTING" != *"removed=none"* ]] \
+  && ok "control: reading a failed listing as no worktree prunes the states it would have held" \
+  || bad "control: reading a failed listing as no worktree prunes the states it would have held" "$LISTING"
 # Planted in git-context, the lookup's one owner, one rule each: NAME, anchor,
 # replacement, the item whose verdict flips, and that verdict.
 GC_DIR="$TMP_ROOT/mutant-git-context"
