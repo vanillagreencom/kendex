@@ -71,6 +71,31 @@ The template carries outcomes only. A question in the set names no mechanism the
 [QUESTION]: [OPTION_A] | [OPTION_B], with [RECOMMENDED_OPTION] recommended.
 ```
 
+## Owner asks
+
+An overseer's question to the owner is one owner ask: the template above for the mode, written to a file, sent with the recommendation and the deadline as fields, never as prose, and printed in the chat as well. The recommended option is the one the ask takes at its deadline; `--wait` names one ask's minutes, and an ask without it takes `ORCH_ASK_WAIT_MINUTES`.
+
+```bash
+.agents/skills/orch/scripts/lane-mail ask --item overseer --to owner --options [OPTION_A],[OPTION_B] --recommend [RECOMMENDED_OPTION] --file [PATH]
+```
+
+The ask closes exactly once, through `lane-mail resolve` and nothing else, and the § 4 watch in [oversee.md](../workflows/oversee.md) reports the closing as `owner-ask-resolved`:
+
+- An answer that arrives through a relay, Slack among them, is that relay's own `resolve --text`.
+- **The chat-answer rule.** An answer typed into the overseer's chat reaches the record only through the overseer: before it acts on the answer, it runs `resolve --text` with the words as typed, so the relay, the report and the chat show one ruling.
+- At the deadline the watch runs `resolve --default`; the overseer tells the owner what stood, with `--ref` naming the ask.
+- Any later, distinct text for a resolved ask is refused `resolved-already` and delivered as a directive.
+
+The overseer records the ruling per § Recording and sends `lane-mail notice --item overseer --to owner --ref [ASK_ID]` naming it, so a relay posts the ruling where the question was asked.
+
+## Opening question
+
+A session that starts with no item to work, no handoff file and no owner note asks this, as an owner ask with no options and no recommendation, so it waits for the answer:
+
+```text
+What do you want to work on? Reply with issue ids or describe it.
+```
+
 ## Status report
 
 ```text
@@ -81,7 +106,7 @@ Next: [WHAT STARTS AFTER THAT]
 Waiting on you: [EACH OPEN QUESTION, OR none]
 ```
 
-Under `engineer` a report is the same shape with the session's own vocabulary. A report the overseer writes to the user takes this shape whatever produced its rows. The Validation line per lane comes from that lane's workflow state `validate_rounds`, which [`dev-start.md` § Store Validation Time](../workflows/dev-start.md#store-validation-time) writes, so the owner sees what each round's validation cost.
+Under `engineer` a report is the same shape with the session's own vocabulary. A report the overseer writes to the user takes this shape whatever produced its rows. The Validation line per lane comes from that lane's workflow state `validate_rounds`, which [`dev-start.md` § Store Validation Time](../workflows/dev-start.md#store-validation-time) writes, so the owner sees what each round's validation cost. Waiting on you is the unresolved owner asks `lane-mail pending --item overseer --to owner` lists, one record for the report, the relay and the chat.
 
 ## Handoff
 

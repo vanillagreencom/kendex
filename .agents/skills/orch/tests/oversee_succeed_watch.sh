@@ -110,6 +110,8 @@ SETSID_LINE='runner=setsid reason=probe-failed detail=Failed to connect to bus: 
 
 # run_succeed [SUCCEED_BIN] — the script from outside the caller's pane, under
 # a whole environment, with the flags an overseer on the claude:1 entry passes.
+# The question tool is kept, so the successor's flags are the caller's alone;
+# what ORCH_QUESTION_TOOL adds to a line is oversee_succeed.sh's.
 # ROW_PATH, when set, goes ahead of the stubs on PATH, and ROW_LAUNCH, when
 # set, is the word the run is started under. ROW_MANAGER=unit reaches this
 # host's user manager; any other value runs behind the failing systemd-run.
@@ -124,6 +126,7 @@ run_succeed() {
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
     CLAUDE_CONFIG_DIR="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" \
     ORCH_OVERSEER_PREFERENCE=claude:1:high ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 \
+    ORCH_QUESTION_TOOL=overseer \
     "${1:-$SUCCEED}" -- --permission-mode dontAsk --verbose 2>&1)" || RC=$?
   # The window the caller held, which the successor holds once the close ran.
   SUCC_PANE="$(tm list-panes -t fleet:1 -F '#{pane_id}' 2>/dev/null || true)"

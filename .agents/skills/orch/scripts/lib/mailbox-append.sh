@@ -45,18 +45,37 @@ mailbox_terminate() { # FILE
 # first one's line. FILE is created when it is not there, under whatever umask
 # the caller set, and an unterminated last line is closed first.
 #
+# GUARD, where given, is a function run as `GUARD FILE` under the lock after
+# the terminator and before the append: a check-and-append that is one
+# operation, so a line whose right to land depends on what the file already
+# holds, a delivery id or an ask's one resolution, is judged against the file
+# it joins and never against a copy another writer has moved on from. The
+# guard returning nonzero refuses the append as exit 4 and lands nothing; what
+# it found is the guard's own to report.
+#
 # Exit 3 when the lock could not be taken within WAIT_SECONDS, 2 when a write
-# failed. The two are different repairs, a writer holding the mailbox against a
-# disk or permission failure, so every caller turns the number into its own
-# word before anyone reads it: lane-mail into lock-failed and write-failed, the
-# provider and the fixture into lock-timeout and write-failed.
-mailbox_append_locked() { # FILE WAIT_SECONDS — bytes on stdin
+# failed, 4 when the guard refused. The three are different repairs, a writer
+# holding the mailbox, a disk or permission failure, a line already there, so
+# every caller turns the number into its own word before anyone reads it:
+# lane-mail into lock-failed, write-failed and the guard's key, the provider
+# and the fixture into lock-timeout and write-failed.
+mailbox_append_locked() { # FILE WAIT_SECONDS [GUARD] — bytes on stdin
   exec 9>>"$1" || return 2
   if ! orch_take_lock 9 "$1" "$2"; then
     exec 9>&-
     return 3
   fi
-  if ! mailbox_terminate "$1" || ! cat >&9; then
+  if ! mailbox_terminate "$1"; then
+    exec 9>&-
+    orch_release_lock
+    return 2
+  fi
+  if [ -n "${3:-}" ] && ! "$3" "$1"; then
+    exec 9>&-
+    orch_release_lock
+    return 4
+  fi
+  if ! cat >&9; then
     exec 9>&-
     orch_release_lock
     return 2

@@ -86,8 +86,8 @@ lane_env_prefix() { # HARNESS DIR
 # the harness question tool away, written as they stand, and `-` where this
 # table names none. A lane asks its overseer through `lane-mail ask`, and a
 # question tool in a lane opens a dialog nobody at the pane answers, so every
-# lane command carries them; an overseer carries them only where
-# ORCH_OVERSEER_QUESTION_TOOL is off.
+# lane command carries them; a launched overseer carries them as
+# launch_overseer_question_tool below decides from ORCH_QUESTION_TOOL.
 #
 # The FIRST spelling of each list is the one written; the rest are further
 # spellings a caller may have typed, which launch_choice_value reads.
@@ -461,6 +461,32 @@ launch_choice_question_off() { # HARNESS
   [[ -n "$row" ]] || return 0
   IFS='|' read -r _ _ _ _ _ _ _ _ words <<<"$row"
   [[ "$words" == - ]] || printf '%s\n' "$words"
+}
+
+# ORCH_QUESTION_TOOL, decided once here for every launcher: `off`, the
+# default, means no launched session keeps its harness question tool, the
+# overseer included, so every question for the owner is mailbox mail;
+# `overseer` keeps the tool in a launched overseer alone. A lane never keeps
+# it whatever the setting, since nobody sits at a lane's pane, which is why
+# open-terminal asks this function nothing. Prints `off` or `keep` for a
+# launched overseer; returns 3 on a value the setting does not take, for the
+# caller to name.
+launch_overseer_question_tool() {
+  case "${ORCH_QUESTION_TOOL:-off}" in
+    off) echo off ;;
+    overseer) echo keep ;;
+    *) return 3 ;;
+  esac
+}
+
+# The words a launched overseer on harness $1 carries under that policy: the
+# row's words where the tool is off, nothing where it keeps the tool. The one
+# call an overseer launcher outside this package makes, so it renders the
+# policy and writes no rule of its own. Returns 3 as above.
+launch_overseer_question_words() { # HARNESS
+  local policy
+  policy="$(launch_overseer_question_tool)" || return $?
+  [[ "$policy" == keep ]] || launch_choice_question_off "$1"
 }
 
 # Whether TEXT carries WORDS as consecutive tokens. Each token is compared with

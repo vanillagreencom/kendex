@@ -45,8 +45,8 @@
 #        `no-lane-qualifies` at exit 3 with the counts each sweep found.
 #     5. Build the command: the entry's model and effort words, the harness's
 #        full-bypass permission words, its launch settings, its question-tool
-#        words where ORCH_OVERSEER_QUESTION_TOOL is off, and the brief naming
-#        --handoff. An unattended overseer takes no flags from the caller:
+#        words where ORCH_QUESTION_TOOL is off, its default, and the brief
+#        naming --handoff. An unattended overseer takes no flags from the caller:
 #        the words are spelled per harness by lib/lane-launch.sh's table, so a
 #        preference that names two harnesses is never handed one harness's
 #        spelling for the other. A codex launch is made trusted for --cwd
@@ -123,7 +123,7 @@ message() { # KEY FIELD=VALUE...
     invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:rank:effort with harness claude or codex.' ;;
     preference-empty) text='A first launch has no caller whose own harness and lane could stand in, so ORCH_OVERSEER_PREFERENCE must name at least one entry.' ;;
     invalid-headroom-trigger) text='ORCH_OVERSEER_HEADROOM_PCT takes a whole number of percent from 0 to 100.' ;;
-    invalid-question-tool) text='ORCH_OVERSEER_QUESTION_TOOL takes on or off.' ;;
+    invalid-question-tool) text='ORCH_QUESTION_TOOL takes off or overseer.' ;;
     model-failed) text='kendex tier-model named no model for this entry; a preference naming a rank the ladder cannot answer is a setting to fix, not an entry to pass over.' ;;
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     no-lane-qualifies) text='No lane of any harness the preference names is above the headroom trigger; nothing was launched. entries counts the preference entries walked; walled and unmeasured are the accounts the sweeps refused and the accounts nothing could measure.' ;;
@@ -306,11 +306,10 @@ matches "$HEADROOM_TRIGGER" '^[0-9]{1,3}$' && (( 10#$HEADROOM_TRIGGER <= 100 )) 
   || die invalid-headroom-trigger "ORCH_OVERSEER_HEADROOM_PCT=$HEADROOM_TRIGGER"
 HEADROOM_TRIGGER=$((10#$HEADROOM_TRIGGER))
 QUESTION_OFF=()
-case "${ORCH_OVERSEER_QUESTION_TOOL:-on}" in
-  on) ;;
-  off) QUESTION_OFF=(--question-off) ;;
-  *) die invalid-question-tool "ORCH_OVERSEER_QUESTION_TOOL=$ORCH_OVERSEER_QUESTION_TOOL" ;;
-esac
+if ! question_policy="$(launch_overseer_question_tool)"; then
+  die invalid-question-tool "ORCH_QUESTION_TOOL=${ORCH_QUESTION_TOOL:-}"
+fi
+[[ "$question_policy" != off ]] || QUESTION_OFF=(--question-off)
 ol_preference_entries "${ORCH_OVERSEER_PREFERENCE:-}" || die invalid-preference "entry=$OL_BAD_ENTRY"
 (( OL_NAMED > 0 )) || die preference-empty setting=ORCH_OVERSEER_PREFERENCE
 
