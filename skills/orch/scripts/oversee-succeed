@@ -149,8 +149,8 @@
 #        the session record is written into the fleet state's `overseer`
 #        object: runtime, server, session, account and a generation one past
 #        the record it replaces, which is how the hooks and the watch tell
-#        the successor from this session; a launch abandoned after that put
-#        the caller's record back. Then read the session's account back, wait
+#        the successor from this session; a launch abandoned once its
+#        window opened puts the caller's record back. Then read the session's account back, wait
 #        for the adapter's `inspect` to show a running turn, and read the
 #        account again now that the harness is certainly the thing
 #        answering — all inside the one --wait-secs bound. A session observed
@@ -1236,8 +1236,8 @@ fi
 # Recorded BEFORE the window opens, not after the close: the close kills this
 # script's own window and a write placed after it may never run. The line
 # stands from here until the session record carries it, and a launch that is
-# abandoned after that record was written puts the caller's line back with
-# the rest of the caller's record. The state is the fleet's, so a run outside
+# abandoned once its window opened puts the caller's line back with the rest
+# of the caller's record read above. The state is the fleet's, so a run outside
 # a fleet has none: that is a notice, never a reason to leave the fleet
 # unattended. `walled` records too: its successor runs a command this run
 # built, and a later death that read the walled session's line would relaunch

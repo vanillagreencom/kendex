@@ -814,6 +814,49 @@ assert_eq "$RC|generation=$(orec generation) pane=$(orec pane) account=$(orec ac
   "1|generation=5 pane=%900 account=/seed/.claude line=$SEED_LINE" \
   "an abandoned succession puts the caller's whole record back, its own line included"
 
+# A signal that lands while the session record's writer runs is taken only
+# once the writer returns, and the writer may have committed: the abandon then
+# has to put the caller's record back although ol_record_write never returned.
+# A workflow-state stand-in commits the successor's record, TERMs the script
+# and exits 0, once; every other call is the real writer's.
+# record_commit_run SCRIPTS_DIR — the run over that tree; sets OUT and RC.
+record_commit_run() { # SCRIPTS_DIR
+  rm -f -- "$1/workflow-state" "$TMP_ROOT/record-commit.fired"
+  cat > "$1/workflow-state" <<STUB
+#!/usr/bin/env bash
+"$SRC_DIR/workflow-state" "\$@" || exit
+if [[ "\$1 \$2 \$3" == "set oversee overseer" && ! -e "$TMP_ROOT/record-commit.fired" ]]; then
+  : > "$TMP_ROOT/record-commit.fired"
+  kill -TERM "\$PPID"
+fi
+STUB
+  chmod +x "$1/workflow-state"
+  seed_overseer
+  new_caller "$MARK"
+  touch "$TMP_ROOT/idle"
+  SUCCEED_BIN="$1/oversee-succeed" run_succeed recordcommit 'claude:1:high' --wait-secs 30
+  rm -f "$TMP_ROOT/idle"
+}
+seed_overseer
+SEED_RECORD="$(jq -cS .overseer "$FLEET_STATE")"
+RECCOMMIT="$(mutant_scripts record-commit)" || exit 1
+record_commit_run "$RECCOMMIT"
+check "a signal while the record's writer commits: refused, successor closed, the caller's record back" \
+  "$RC|$(keyed interrupted "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)|$(jq -cS .overseer "$FLEET_STATE")" \
+  "1|oversee-succeed: interrupted window=@N signal=TERM|yes|0|$SEED_RECORD"
+# The control: the put-back gated on a flag ol_record_write sets once its
+# writer returns, which a signal during the writer never lets it reach, so the
+# record keeps the closed successor's generation, one past the seeded 5.
+RECCTL="$(mutant_scripts record-commit-ctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$RECCTL/lib/overseer-launch.sh" '  if [[ -n "$OL_PRIOR" ]] && ! ol_record_restore; then' \
+  '  if [[ -n "${OL_WRITE_RETURNED:-}" ]] && ! ol_record_restore; then'
+mutate_file "$RECCTL/lib/overseer-launch.sh" 'set oversee overseer "$record" >/dev/null 2>"$DEP_ERR"' \
+  'set oversee overseer "$record" 2>"$DEP_ERR" >/dev/null || return 1; OL_WRITE_RETURNED=1'
+record_commit_run "$RECCTL"
+check "control: a put-back gated on the write returning leaves the closed successor recorded" \
+  "$RC|$(caller_open)|$(overseers)|generation=$(orec generation)" \
+  "1|yes|0|generation=6"
+
 new_caller "$UNDER_MARK"
 run_succeed under 'claude:1:high'
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
