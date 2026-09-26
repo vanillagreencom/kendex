@@ -1059,20 +1059,18 @@ assert_eq "$RC|$OUT|$(recorded codex)" \
 # walled row's clause above and lane-launch-trust.sh's, and both have already
 # written this very home by the time a print row runs: asserting it here would
 # read back another row's state rather than this mode's own.
-# --print-launch-line's one control.
-PRINTSKIP="$(mutant_scripts printskip oversee-succeed)" || exit 1
-# The call's own line carries a continuation, so it is re-emitted from the file
-# rather than retyped: an awk -v value cannot hold a trailing backslash.
-awk -v call='  lane_codex_trust_prepare "$harness" "$lane_dir" "$CALLER_PATH"' \
-    -v home='  launch_home="$LANE_TRUST_HOME"' \
-  'index($0, call) == 1 { print "  if [[ \"$MODE\" != succeed ]]; then LANE_TRUST_HOME=\"$lane_dir\" LANE_TRUST_ROUTE=none";
-                          print "  else " substr($0, 3); calls++; next }
-   $0 == home { print "  fi"; print; homes++; next }
+# --print-launch-line's one control. The preparation is made in
+# lib/overseer-launch.sh's ol_command_line, the one builder every launch and
+# every printed line go through, so the copy whose builder skips it is what a
+# print without the preparation would record.
+PRINTSKIP="$(mutant_scripts printskip lib/overseer-launch.sh)" || exit 1
+awk -v call='  if ! lane_codex_trust_prepare "$harness" "$lane_dir" "$launch_dir"; then' \
+  '$0 == call { print "  LANE_TRUST_HOME=\"$lane_dir\" LANE_TRUST_ROUTE=none LANE_TRUST_REASON=\"\"; if false; then"; calls++; next }
    { print }
-   END { if (calls != 1 || homes != 1) exit 1 }' "$SUCCEED" > "$PRINTSKIP/oversee-succeed" \
+   END { if (calls != 1) exit 1 }' "$SRC_DIR/lib/overseer-launch.sh" > "$PRINTSKIP/lib/overseer-launch.sh" \
   || { echo "fixture: printskip found no single site to mutate" >&2; exit 1; }
-assert_eq "$(bash -n "$PRINTSKIP/oversee-succeed" && echo parses || echo broken)" \
-  "parses" "control printskip parses"
+assert_eq "$(cmp -s "$PRINTSKIP/lib/overseer-launch.sh" "$SRC_DIR/lib/overseer-launch.sh" && echo same || echo differs)|$(bash -n "$PRINTSKIP/lib/overseer-launch.sh" && echo parses || echo broken)" \
+  "differs|parses" "control printskip really drops the preparation from the builder"
 new_caller "$CODEX_SCREEN" 'Context 48% left'
 PRINT_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 PRINT_HOME="$(lane_codex_home_path "$H/.codex" "$PRINT_CWD")"

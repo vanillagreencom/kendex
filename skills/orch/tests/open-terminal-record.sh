@@ -247,8 +247,8 @@ assert_eq "$(cat "$TMP_ROOT/unread-row") above=$(awk '/^error connecting to / { 
   "rc=1 target= list= pane=%9 window=none recorded=none refused=tmux-session-unresolved+item=CC-125+consulted=ORCH_TMUX_SESSION,tmux.session,TMUX_PANE+pane=read-failed above=1" \
   "a launch whose pane read fails refuses with pane=read-failed below tmux's own line"
 assert_eq "$(RUN_SESSION=fleetz STUB_DEAD_SESSIONS=fleetz session_row sess-typo CC-106)" \
-  "rc=1 target= list= pane= window=none recorded=none refused=tmux-session-missing+item=CC-106+session=fleetz+source=ORCH_TMUX_SESSION" \
-  "a first launch naming a session tmux does not hold refuses, naming it and its source, and records nothing"
+  "rc=1 target= list= pane= window=none recorded=none refused=tmux-session-missing+item=CC-106+session=fleetz+source=ORCH_TMUX_SESSION+server=stub" \
+  "a first launch naming a session tmux does not hold refuses, naming it, its source and the server, and records nothing"
 assert_eq "$(RUN_SESSION= RUN_PANE=%9 STUB_SESSION_NAME=fleety session_row sess-pane CC-102)" \
   "rc=0 target==fleety:1 list==fleety pane=%9 window=fleety:CC-102 recorded=fleety refused=" \
   "the fleet's first launch from a pane opens in that pane's session and records it"
@@ -259,7 +259,7 @@ assert_eq "$(RUN_SESSION=fleetx session_row sess-pane CC-104)" \
   "rc=0 target==fleetx:1 list==fleetx pane= window=fleetx:CC-104 recorded=fleety refused=" \
   "ORCH_TMUX_SESSION outranks the recorded session and leaves the record as it was"
 assert_eq "$(RUN_SESSION= RUN_PANE=%9 STUB_SESSION_NAME=other STUB_DEAD_SESSIONS=fleety session_row sess-pane CC-107)" \
-  "rc=1 target= list= pane= window=none recorded=fleety refused=tmux-session-missing+item=CC-107+session=fleety+source=tmux.session" \
+  "rc=1 target= list= pane= window=none recorded=fleety refused=tmux-session-missing+item=CC-107+session=fleety+source=tmux.session+server=stub" \
   "a recorded session the server lost refuses from a pane in another session, naming the record as the source"
 NOFLEET_SESSION="$TMP_ROOT/nofleet-session"
 mkdir -p "$NOFLEET_SESSION"

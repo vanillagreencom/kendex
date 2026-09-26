@@ -159,8 +159,48 @@ assert_contains "$out" "EVENT window-gone gh-1" \
 new_case session_named
 err="$TMP_ROOT/e-session_named"
 run_watch OVERSEE_WATCH_SUCCEED=/nonexistent -- --max-loops 1 gh-1 gh-2 >/dev/null 2>"$err" || true
-assert_eq "$(grep -c '^oversee-watch: session-resolved session=main$' "$err")" "1" \
-  "a standalone run names the session its bare lanes are read in, on one line" "$err"
+assert_eq "$(grep -c '^oversee-watch: session-resolved session=main server=fake$' "$err")" "1" \
+  "a standalone run names the session its bare lanes are read in, and the server, on one line" "$err"
+
+# A watch run from OUTSIDE tmux, with ORCH_TMUX_SESSION naming the fleet's
+# session: no $TMUX, the lanes read in that session on the person's own tmux
+# server, whose socket the resolved line names. The setting outranks the pane,
+# so the pane's own session is never asked.
+DEFAULT_SOCKET="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default"
+new_case session_setting_outside
+printf 'Do you want to proceed?\n   \xe2\x9d\xaf 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e-session_setting_outside"
+out="$(run_watch TMUX= TMUX_PANE= ORCH_TMUX_SESSION=main OVERSEE_WATCH_SUCCEED=/nonexistent -- --max-loops 1 gh-1 gh-2 2>"$err")" \
+  && rc=0 || rc=$?
+assert_eq "rc=$rc events=$(awk '/^EVENT / { printf "%s%s", sep, $2 " " $3; sep = " " }' <<<"$out") line=$(grep -c "^oversee-watch: session-resolved session=main server=$DEFAULT_SOCKET\$" "$err")" \
+  "rc=0 events=lane-asking gh-2 line=1" \
+  "outside tmux, ORCH_TMUX_SESSION names the session the lanes are read in and the resolved line names the person's server" "$err"
+new_case session_setting_over_pane
+touch "$STUB_DIR/session-fail"
+printf 'Do you want to proceed?\n   \xe2\x9d\xaf 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e-session_setting_over_pane"
+out="$(run_watch ORCH_TMUX_SESSION=main OVERSEE_WATCH_SUCCEED=/nonexistent -- --max-loops 1 gh-1 gh-2 2>"$err")" \
+  && rc=0 || rc=$?
+assert_eq "rc=$rc events=$(awk '/^EVENT / { printf "%s%s", sep, $2 " " $3; sep = " " }' <<<"$out")" "rc=0 events=lane-asking gh-2" \
+  "inside tmux, ORCH_TMUX_SESSION outranks a pane whose session read fails" "$err"
+# A name the server does not hold is refused, never read as a session with no
+# windows: that would report every lane gone.
+new_case session_setting_missing
+err="$TMP_ROOT/e-session_setting_missing"
+out="$(run_watch TMUX= ORCH_TMUX_SESSION=nosuch OVERSEE_WATCH_SUCCEED=/nonexistent -- --max-loops 1 gh-1 2>"$err")" \
+  && rc=0 || rc=$?
+assert_eq "rc=$rc first=$(sed -n 1p "$err")" \
+  "rc=2 first=oversee-watch: session-missing session=nosuch source=ORCH_TMUX_SESSION server=$DEFAULT_SOCKET lanes=gh-1" \
+  "an ORCH_TMUX_SESSION tmux does not hold is refused naming it, its source and the server" "$err"
+# The must-fail control: a resolver that reads the setting without asking tmux
+# for it takes the missing session as resolved, and the lane reads gone.
+mutant session_setting_unchecked oversee-watch '    if out="$(tmux has-session -t "=$ORCH_TMUX_SESSION" 2>&1)"; then' '    if out="" && true; then'
+new_case session_setting_unchecked_mutant
+err="$TMP_ROOT/e-session_setting_unchecked_mutant"
+out="$(WATCH_BIN="$MUTANT" run_watch TMUX= ORCH_TMUX_SESSION=nosuch OVERSEE_WATCH_SUCCEED=/nonexistent -- --max-loops 1 gh-1 2>"$err")" \
+  && rc=0 || rc=$?
+assert_contains "$out" "EVENT window-gone gh-1" \
+  "control: a resolver that trusts the setting reads the lane gone in a session that is not there" "$err"
 
 # No session to read a bare name in: refused, naming the lane and the state.
 unresolved_case() { # NAME

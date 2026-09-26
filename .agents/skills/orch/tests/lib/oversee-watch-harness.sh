@@ -156,6 +156,13 @@ dash_t() {
   lane_name "$out"
 }
 case "${1:-}" in
+  # `has-session -t =<s>` asks whether the server holds session <s>: the
+  # caller's own, or one a windows-<s>.txt fixture names.
+  has-session)
+    s=""
+    while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && s="${2#=}"; shift; done
+    [[ "$s" != "$(current_session)" && ! -f "$STUB_DIR/windows-$s.txt" ]] || exit 0
+    echo "can't find session: $s" >&2; exit 1 ;;
   list-windows)
     s=""
     while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && s="${2#=}"; shift; done
