@@ -35,9 +35,18 @@ cp "$ORCH_DIR/scripts/lib/change-class.sh" "$LAYOUT/orch/scripts/lib/"
 cp "$ORCH_DIR/references/narrow-change.conf" "$LAYOUT/orch/references/"
 cat >"$LAYOUT/harness-ci/scripts/change-class" <<'SH'
 #!/usr/bin/env bash
+# Answers only the range the rows name, so a swapped or dropped endpoint is
+# a classifier failure rather than a class. The `class:` line carries the
+# measured marker the real classifier prints.
+[ "$*" = "$STUB_ARGV" ] || { echo "stub: unexpected argv: $*" >&2; exit 7; }
 case "$STUB_CLASS" in
   exit-2) echo "wiring-error: cause=stub" >&2; exit 2 ;;
-  *) printf 'change_class=%s\n' "$STUB_CLASS" ;;
+  unmeasured)
+    echo "class: class=standard measured=false cause=unresolved-endpoint endpoint=b" >&2
+    printf 'change_class=standard\n' ;;
+  *)
+    printf 'class: class=%s measured=true cause=stub\n' "$STUB_CLASS" >&2
+    printf 'change_class=%s\n' "$STUB_CLASS" ;;
 esac
 SH
 cat >"$LAYOUT/review-gate/scripts/review-policy" <<'SH'
@@ -50,6 +59,16 @@ esac
 SH
 chmod +x "$LAYOUT/harness-ci/scripts/change-class" "$LAYOUT/review-gate/scripts/review-policy"
 TIER="$LAYOUT/orch/scripts/item-tier"
+export STUB_ARGV="--event pull_request --base b --head h --repo $TMP_ROOT --output /dev/null"
+
+# Two layouts whose ceiling list item-tier cannot use: one without the file,
+# one without the small ceiling line.
+for variant in no-conf no-small-ceiling; do
+  cp -R "$LAYOUT" "$TMP_ROOT/$variant"
+done
+rm -- "${TMP_ROOT:?}/no-conf/orch/references/narrow-change.conf"
+grep -v '^small_max_production=' "$ORCH_DIR/references/narrow-change.conf" \
+  >"$TMP_ROOT/no-small-ceiling/orch/references/narrow-change.conf"
 
 conf_value() { sed -n "s/^$1=//p" "$ORCH_DIR/references/narrow-change.conf"; }
 MICRO_MAX="$(conf_value micro_max_production)"
@@ -63,7 +82,7 @@ SMALL_MAX="$(conf_value small_max_production)"
 run_tier() { # POLICY CLASS ARG...
   local policy="$1" class="$2" out rc=0
   shift 2
-  out="$(STUB_POLICY="$policy" STUB_CLASS="$class" "$TIER" --repo "$TMP_ROOT" "$@" 2>/dev/null)" || rc=$?
+  out="$(STUB_POLICY="$policy" STUB_CLASS="$class" "${TIER_BIN:-$TIER}" --repo "$TMP_ROOT" "$@" 2>/dev/null)" || rc=$?
   out="$(sed -n '1s/^\(tier=[a-z]* brief=[a-z]* cause=[a-z-]*\).*/\1/p' <<<"$out")"
   printf '%s' "${out:+$out }rc=$rc"
 }
@@ -85,18 +104,34 @@ ROWS=(
   "active|exit-2|--floor small --base b --head h|tier=standard brief=start cause=classifier-failed rc=0|a classifier that cannot answer is standard"
   "active|-|--production 1 --path $PR_MERGE|tier=standard brief=start cause=excluded-path rc=0|a merge-gate Location is never micro whatever the estimate"
   "active|-|--production 1 --path skills/orch/workflows/review-pr.md|tier=micro brief=micro cause=estimate-within-micro rc=0|a Location off the list leaves the estimate's class"
+  "active|unmeasured|--floor micro --base b --head h|tier=standard brief=start cause=classifier-unmeasured rc=0|a standard the classifier did not measure says so"
+  "active|docs|--floor micro --base b --head h|tier=standard brief=start cause=classifier-unreadable rc=0|a classifier word outside the classes is standard"
+  "active|render|--base b --head h|tier=micro brief=micro cause=classifier rc=0|a render branch counts as micro"
+  "active|-|--production $SMALL_MAX --floor small|tier=small brief=small cause=estimate-within-small rc=0|of two inputs naming one class the first names the cause"
   "inactive|-|--production 1|tier=small brief=small cause=review-policy-inactive rc=0|an inactive class policy refuses micro and names why"
-  "exit-2|-|--production 1|tier=small brief=small cause=review-policy-unreadable rc=0|an unreadable class policy refuses micro"
+  "inactive|-|--production $((SMALL_MAX + 1))|tier=standard brief=start cause=estimate-past-small rc=0|an inactive class policy leaves a wider tier alone"
+  "exit-2|-|--production 1|tier=small brief=small cause=review-policy-unreadable rc=0|a class policy read that fails refuses micro"
+  "unknown|-|--production 1|tier=small brief=small cause=review-policy-unreadable rc=0|a class policy answer outside the two refuses micro"
   "active|-||rc=2|no input is a usage error"
   "active|-|--production 1x|rc=2|a malformed estimate is a usage error"
   "active|-|--floor tiny|rc=2|an unknown floor is a usage error"
   "active|-|--base b|rc=2|a base without a head is a usage error"
+  "active|-|--production 1 --head h|rc=2|a head without a base is a usage error"
 )
 for row in "${ROWS[@]}"; do
   IFS='|' read -r policy class args want name <<<"$row"
   # shellcheck disable=SC2086
   assert_eq "$(run_tier "$policy" "$class" $args)" "$want" "$name"
 done
+
+# A ceiling list item-tier cannot use is standard, never a narrower class.
+TIER_BIN="$TMP_ROOT/no-conf/orch/scripts/item-tier"
+assert_eq "$(run_tier active - --production 1)" \
+  "tier=standard brief=start cause=narrow-change-unreadable rc=0" "no ceiling list is standard"
+TIER_BIN="$TMP_ROOT/no-small-ceiling/orch/scripts/item-tier"
+assert_eq "$(run_tier active - --production 1)" \
+  "tier=standard brief=start cause=narrow-change-ceilings-missing rc=0" "a missing ceiling is standard"
+unset TIER_BIN
 
 # The review gate absent is the policy unread.
 mv "$LAYOUT/review-gate" "$LAYOUT/review-gate.off"

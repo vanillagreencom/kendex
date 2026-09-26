@@ -36,7 +36,7 @@ Uncertain about category, prefer `fix` (if related); uncertain about relevance, 
 | Error-handling gaps | `issue` |
 | Security vulnerability | `fix` if quick, else `issue` — never skipped |
 | Data validation gaps | `fix` if quick, else `issue` |
-| A finding about wording, naming or an index that claims no defect, in any tier | A reply: `Declined:` naming what the current text already states. It never starts a fix push; a fix rides only on a push another finding starts |
+| A finding about wording, naming or an index that claims no defect, in any tier | `decline`, replying `Declined:` with what the current text already states; it never starts a fix push. A fix that rides a push another finding starts replies `Fixed in <sha>` instead. Text that changed code left stale takes the doc-update row above |
 | A finding sharing a root cause with one a prior round patched, at any site (a drifting claim, a re-derived enumeration, a second copy) | § Recurrence, which allows `structural-close` or `freeze` and no further patch |
 
 ## Recurrence
