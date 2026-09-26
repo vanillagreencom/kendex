@@ -215,15 +215,31 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
         // The one place the question is answered: this tree is the source
         // exactly where the source is where it stands.
         let in_place = in_place.as_ref() == Some(&canonical);
-        let artifact = Artifact::Tree {
-            canonical,
-            files: variant.files.clone(),
-            link,
-            in_place,
-        };
-        push_installs(ctx, state, group, artifact, enabled, method)?;
+        push_installs(
+            ctx,
+            state,
+            group,
+            Tree {
+                canonical,
+                files: variant.files.clone(),
+                link,
+                in_place,
+            },
+            enabled,
+            method,
+        )?;
     }
     Ok(())
+}
+
+/// The parts of one rendered tree, as [`Artifact::Tree`] carries them: a
+/// skill installs as a tree and nothing else, so the installation is built
+/// from these rather than from an artifact that could be any kind.
+struct Tree {
+    canonical: PathBuf,
+    files: Files,
+    link: Option<PathBuf>,
+    in_place: bool,
 }
 
 /// One rendering as the installation every member of its group wants.
@@ -235,27 +251,31 @@ fn push_installs(
     ctx: &ItemCtx,
     state: &mut DesiredState,
     group: &SurfaceGroup,
-    artifact: Artifact,
+    tree: Tree,
     enabled: bool,
     method: Method,
 ) -> Result<()> {
+    let Tree {
+        canonical,
+        files,
+        link,
+        in_place,
+    } = tree;
+    let artifact = Artifact::Tree {
+        canonical: canonical.clone(),
+        files,
+        link,
+        in_place,
+    };
     // Where the tree and the link landed goes on the record. A tool's
     // directory moves between kendex versions, and a pass that derived
     // the place again would name one this install never wrote — the
     // link it did write is then findable only through the record. The
     // person's own source tree is never on it.
-    let Artifact::Tree {
-        canonical,
-        in_place,
-        ..
-    } = &artifact
-    else {
-        unreachable!("a skill installs as a tree artifact");
-    };
     let paths = artifact
         .paths()
         .into_iter()
-        .filter(|path| !(*in_place && path == canonical))
+        .filter(|path| !(in_place && *path == canonical))
         .collect();
     let emitted = Some(EmittedArtifact {
         kind: ItemKind::Skill,

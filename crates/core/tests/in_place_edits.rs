@@ -5,13 +5,22 @@
 //!
 //! Controls, one production edit per surface: the in-place hash covering
 //! the tree's bytes again reddens `an_edit_to_the_tree_raises_no_row_and_
-//! moves_no_record`; the block never written reddens `apply_writes_the_
-//! instructions_block_and_nothing_else` and `a_changed_instruction_rewrites_
-//! the_block_alone`; the in-place answer taken per item rather than per
-//! artifact reddens `a_copy_delivered_from_an_in_place_declaration_is_a_
-//! render`. The edit hold needs no guard of its own: no record owns the
-//! source tree (`engine::owned::installed`), so the hold never finds an
-//! entry recorded there.
+//! moves_no_record` and `an_old_record_is_re_recorded_by_one_refresh`; the
+//! block never written reddens `apply_writes_the_instructions_block_and_
+//! nothing_else` and `a_changed_instruction_rewrites_the_block_alone`; the
+//! in-place answer taken per item rather than per artifact reddens
+//! `a_copy_delivered_from_an_in_place_declaration_is_a_render`, and so
+//! does the inventory skipping every in-place declaration rather than the
+//! source tree alone. The edit hold
+//! needs no guard of its own: no record owns the source tree
+//! (`engine::owned::installed`), so the hold never finds an entry recorded
+//! there. No production edit reddens `a_namespaced_in_place_name_is_not_
+//! served_and_nothing_is_written` through the internal refusal in
+//! `render_variant`: the in-place source serves directory names alone, so
+//! a `/` name is not found before that pass runs, and the test holds the
+//! source lookup's refusal, the one place the rule lives; the internal
+//! arm stands for the pass and the source disagreeing, which nothing
+//! plants.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -257,9 +266,21 @@ fn a_changed_instruction_rewrites_the_block_alone() {
 fn a_copy_delivered_from_an_in_place_declaration_is_a_render() {
     let world = world();
     world.declare_as("deploy", "\"claude\"", "copy", Some("shared rule"));
-    world.apply();
+    let report = world.apply();
     let copy = world.project.join(".claude/skills/deploy");
     assert!(copy.is_dir() && !copy.is_symlink(), "{}", copy.display());
+    // The copy is a render kendex wrote whole, so the inventory carries it;
+    // the source it was rendered from is the person's and stays out.
+    assert!(
+        report.generated.whole.contains(&copy.join("SKILL.md")),
+        "{:?}",
+        report.generated.whole
+    );
+    assert!(
+        !report.generated.whole.contains(&world.skill_file()),
+        "{:?}",
+        report.generated.whole
+    );
     assert!(world.read(&copy.join("SKILL.md")).contains("shared rule"));
     assert_eq!(
         world.read(&world.skill_file()),
@@ -347,4 +368,59 @@ fn a_namespaced_in_place_name_is_not_served_and_nothing_is_written() {
     apply::execute(&world.env, &report.plan).unwrap();
     assert_eq!(world.read(&source.join("SKILL.md")), AUTHORED);
     assert!(!world.project.join(".claude/skills/pl__deploy").exists());
+}
+
+/// A record written before in-place entries were recorded this way holds
+/// a hash over the tree's bytes and a rendered hash. The first plan after
+/// upgrading re-records it once, as a stale row per harness; from then on
+/// the record stands and an edit moves nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_old_record_is_re_recorded_by_one_refresh() {
+    let world = world();
+    world.apply();
+    let mut lock = kendex_core::lock::load(&world.lock_path()).unwrap();
+    for entry in lock
+        .entries
+        .values_mut()
+        .filter(|entry| entry.name == "deploy")
+    {
+        entry.source_hash = "0".repeat(64);
+        entry.rendered_hash = Some("1".repeat(64));
+    }
+    kendex_core::lock::save(&world.lock_path(), &lock).unwrap();
+
+    let report = world.apply();
+
+    assert_eq!(
+        deploy_rows(&report),
+        vec![
+            (
+                DriftState::Stale,
+                "source or customization changed since install".to_owned()
+            );
+            3
+        ]
+    );
+    let lock = kendex_core::lock::load(&world.lock_path()).unwrap();
+    let kendex_core::manifest::ManifestFile::Current(manifest) = kendex_core::manifest::load(
+        &kendex_core::manifest::manifest_path(&world.env, &world.scope),
+    )
+    .unwrap() else {
+        panic!("the fixture declares a manifest");
+    };
+    let expected = kendex_core::hash::in_place_installation_hash(
+        &manifest,
+        kendex_core::model::ItemKind::Skill,
+        "deploy",
+        kendex_core::model::HarnessId::Claude,
+    );
+    for entry in lock.entries.values().filter(|entry| entry.name == "deploy") {
+        assert_eq!(entry.rendered_hash, None, "{}", entry.harness.name());
+        assert_eq!(entry.source_hash, expected, "{}", entry.harness.name());
+    }
+    assert_eq!(world.check_text(), "");
+    let again = world.plan();
+    assert_eq!(deploy_rows(&again), Vec::new());
+    assert!(again.plan.ops.is_empty(), "{:?}", again.plan.ops);
 }
