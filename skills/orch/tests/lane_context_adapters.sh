@@ -20,15 +20,8 @@ LIB="${LIB_UNDER_TEST:-$SCRIPTS_DIR/lib/lane-context.sh}"
 TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
-PASS=0
-FAIL=0
-assert_eq() {
-  if [[ "$1" == "$2" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
-  else
-    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$3" "$2" "$1"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # reading LIB HARNESS WINDOW — the adapter's answer for the transcript on
 # stdin, with TABs shown as `|` and the exit status beside it.
