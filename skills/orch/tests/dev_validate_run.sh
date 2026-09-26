@@ -420,6 +420,15 @@ run_script "$RUN" --worktree "$proj_orphan" --poll 1 --validate-mode range --bas
 assert_eq "$RC $(grep '^dev-validate-run: ' <<<"$ERR")" "2 dev-validate-run: orphaned-base-unresolved base=$pre_rebase" \
   "an orphaned base with no origin base branch is refused, naming the base"
 
+# A project with no range command runs its whole battery on an orphaned base,
+# which needs no fork point, so a missing origin base branch refuses nothing.
+proj_orphan_full="$TMP_ROOT/proj-orphan-full"
+cp -R "$proj_orphan" "$proj_orphan_full"
+grep -v '^DEV_VALIDATE_RANGE_CMD' "$proj_orphan/kendex.settings.toml" > "$proj_orphan_full/kendex.settings.toml"
+run_script "$RUN" --worktree "$proj_orphan_full" --poll 1 --validate-mode range --base "$pre_rebase"
+assert_eq "$RC $(output_of "$OUT") $(start_line "$(run_dir_of "$OUT")" validate-mode)" "0 full full" \
+  "an orphaned base in a project with no range command runs the whole battery" "$ERR"
+
 # --- A command that ignores SIGTERM is still ended inside the bound -----------
 # Fixtures in this repository trap TERM by construction. The bound's TERM ends
 # the wrapper the command runs under, whatever the command does with it, and

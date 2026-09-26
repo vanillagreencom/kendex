@@ -352,17 +352,6 @@ if [[ "$mode" == start ]]; then
   cmd=""
   if [[ "$validate_mode" == range ]]; then
     base_sha="$(git rev-parse --verify -q "$base^{commit}")" || die invalid-base "base=$base"
-    # A range from a base a rebase left off the branch spans every commit the
-    # base branch gained; the branch's fork point holds only its own changes.
-    ancestor_rc=0
-    git merge-base --is-ancestor "$base_sha" HEAD || ancestor_rc=$?
-    (( ancestor_rc <= 1 )) || die ancestry-unreadable "base=$base_sha"
-    if (( ancestor_rc == 1 )); then
-      orphaned_sha="$base_sha"
-      base_branch="$("$SCRIPT_DIR/resolve-base-branch" "$worktree")" \
-        && base_sha="$(git merge-base HEAD "refs/remotes/origin/$base_branch")" \
-        || die orphaned-base-unresolved "base=$orphaned_sha"
-    fi
     if ! cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_RANGE_CMD "")"; then
       die unreadable-setting setting=DEV_VALIDATE_RANGE_CMD
     fi
@@ -371,7 +360,18 @@ if [[ "$mode" == start ]]; then
     if [[ -z "${cmd//[[:space:]]/}" ]]; then
       validate_mode=full
       base_sha=""
-      orphaned_sha=""
+    else
+      # A range from a base a rebase left off the branch spans every commit the
+      # base branch gained; the branch's fork point holds only its own changes.
+      ancestor_rc=0
+      git merge-base --is-ancestor "$base_sha" HEAD || ancestor_rc=$?
+      (( ancestor_rc <= 1 )) || die ancestry-unreadable "base=$base_sha"
+      if (( ancestor_rc == 1 )); then
+        orphaned_sha="$base_sha"
+        base_branch="$("$SCRIPT_DIR/resolve-base-branch" "$worktree")" \
+          && base_sha="$(git merge-base HEAD "refs/remotes/origin/$base_branch")" \
+          || die orphaned-base-unresolved "base=$orphaned_sha"
+      fi
     fi
   fi
   if [[ "$validate_mode" == full ]]; then
