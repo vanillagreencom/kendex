@@ -283,7 +283,7 @@ fn a_source_with_no_repository_is_never_pinned() {
     );
     assert_eq!(rev("part"), None, "an entry with no commit holds nothing");
     assert!(
-        pins.items.is_empty(),
+        pins.pins.is_empty(),
         "and nothing was recorded as a synthetic pin to take back out"
     );
 }

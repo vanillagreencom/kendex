@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use kendex_core::attest::{self, Document, Foreign, Placed, Row, Standing, State};
+use kendex_core::attest::{
+    self, Document, Floor, Foreign, Placed, Reading, Row, Stale, Standing, State,
+};
 use kendex_core::engine::{
     DriftState, Installation, Owns, Position, ShimStanding, planned_declarations,
 };
@@ -16,16 +18,45 @@ use super::{fail, fail_refusal, note, resolve_scopes, say, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
-/// What the machine-readable mode asks for: the document, and the
-/// revision each shared file's foreign part is compared against.
+/// What the run renders against and what the machine-readable mode asks
+/// for: the document, and the revision each shared file's foreign part is
+/// compared against.
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct Output {
+    /// Render each package that follows its source at the commit the install record names, not at the source's revision now; that commit must be on the source's history and, with --base, no older than the base revision's record names. A package with a revision of its own, or whose installations disagree on a commit, resolves as usual
+    #[arg(long)]
+    pub at_record: bool,
     /// Also print one JSON document on stdout: every row with its state and the positions it occupies
     #[arg(long)]
     pub json: bool,
     /// A git revision of the project; with --json, each shared file kendex writes keys in under the project scope says whether the rest of it is as that revision held it
     #[arg(long, requires = "json", value_name = "REV")]
     pub base: Option<String>,
+}
+
+impl Output {
+    /// What each recorded package is rendered at: under `--at-record`, a
+    /// package that follows its source and that the record can place at
+    /// the commit the record names, held to the source's history and, with
+    /// `--base`, to no older than the base revision's record.
+    fn reading(&self) -> Reading {
+        match self.at_record {
+            true => Reading::Recorded,
+            false => Reading::Current,
+        }
+    }
+
+    /// How far back a held commit may reach in `scope`: the record
+    /// `--base` held, for a project run at the record's commits. The
+    /// global scope has no project revision to read one from.
+    fn floor(&self, scope: &Scope) -> Floor {
+        match (self.reading(), scope, self.base.as_deref()) {
+            (Reading::Recorded, Scope::Project { root }, Some(rev)) => attest::floor_at(root, rev),
+            (Reading::Recorded, Scope::Global, _)
+            | (Reading::Recorded, Scope::Project { .. }, None)
+            | (Reading::Current, _, _) => Floor::Open,
+        }
+    }
 }
 
 fn report_record_problem(scope: &Scope, path: &Path, problem: Option<&str>) {
@@ -48,6 +79,8 @@ struct Tally {
     /// What this run did not check, said once at the end: a count of
     /// installations is only honest beside the content that was never one.
     unmanaged: Vec<kendex_core::engine::DriftRow>,
+    /// The sources each scope's record trails, for the document.
+    stale: Vec<Stale>,
     /// What each scope declares that its record does not hold. None of it
     /// reaches the count, and a count printed without them covers less
     /// than the scope does.
@@ -104,6 +137,13 @@ impl Tally {
 /// which is what a reader owning changed paths reads instead of the rows'
 /// wording. The human rows, the closing counts line and the exit status
 /// are the same with or without it.
+///
+/// `--at-record` renders each package that follows its source and that
+/// the record can place at the commit the record names rather than at the
+/// source's revision now, which weighs a record on its own terms after the
+/// source has moved on. That commit is held to the source's history and,
+/// with `--base`, to no older than the commit the base revision's record
+/// names. A package with a revision of its own resolves as usual.
 pub fn run(
     env: &Env,
     names: Vec<String>,
@@ -113,7 +153,7 @@ pub fn run(
     ui::intro("kendex verify");
     let mut tally = Tally::default();
     for scope in resolve_scopes(env, filter)? {
-        check_scope(env, scope, &names, output.base.as_deref(), &mut tally)?;
+        check_scope(env, scope, &names, &output, &mut tally)?;
     }
     print_unmanaged(&tally.unmanaged);
     print_gaps(&tally.gaps);
@@ -128,6 +168,7 @@ pub fn run(
             tally.checked,
             tally.failed,
             tally.rows,
+            tally.stale,
         ))?);
     }
     Ok(match clean {
@@ -142,9 +183,10 @@ fn check_scope(
     env: &Env,
     scope: Scope,
     names: &[String],
-    base: Option<&str>,
+    output: &Output,
     tally: &mut Tally,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let reading = output.reading();
     let path = lock_path(env, &scope);
     let records = kendex_core::ownership::read(env, &scope);
     let fallback = records.fallback;
@@ -165,17 +207,19 @@ fn check_scope(
         tally.recordless = true;
         return Ok(());
     }
-    let audited = match kendex_core::ownership::audit(env, &scope, &records) {
-        Ok(audited) => audited,
-        Err(error) => {
-            fail_refusal(&format!("! {} not checked: ", scope_label(&scope)), &error);
-            tally.recordless = true;
-            return Ok(());
-        }
-    };
+    let audited =
+        match kendex_core::ownership::audit(env, &scope, &records, &reading.plan_options()) {
+            Ok(audited) => audited,
+            Err(error) => {
+                fail_refusal(&format!("! {} not checked: ", scope_label(&scope)), &error);
+                tally.recordless = true;
+                return Ok(());
+            }
+        };
     let lock = audited.matching;
     let report = audited.report;
-    let placer = Placer::new(env, &scope, base, &report);
+    tally.stale.extend(trailed(&scope, &lock, &report, reading));
+    let placer = Placer::new(env, &scope, output.base.as_deref(), &report);
     let named = |name: &str| names.is_empty() || names.iter().any(|wanted| wanted == name);
     tally.unmanaged.extend(
         report
@@ -229,26 +273,48 @@ fn check_scope(
         ));
     }
     tally.setup_failed += super::repo_effects::say_lapsed(env, &scope, names);
-    bookkeeping_rows(env, &scope, fallback, &lock, &report, &placer, tally)?;
+    let record = match fallback {
+        true => None,
+        false => attest::record(env, &scope, &lock, &report, &output.floor(&scope))?,
+    };
+    bookkeeping_rows(&scope, record, &report, &placer, tally)?;
     Ok(())
+}
+
+/// The source commits this scope's record trails, each said beside the
+/// rows where the run rendered at the record's commits: the rows then
+/// pass on a render the source has moved past, and this is its age.
+fn trailed(
+    scope: &Scope,
+    lock: &kendex_core::lock::Lock,
+    report: &kendex_core::engine::EngineReport,
+    reading: Reading,
+) -> Vec<Stale> {
+    let stale = attest::stale(scope, lock, report);
+    if reading == Reading::Recorded {
+        for behind in &stale {
+            note(&format!(
+                "{}: source {} checked at recorded commit {}; it resolves to {} now",
+                scope_label(scope),
+                behind.source,
+                behind.recorded,
+                behind.resolved
+            ));
+        }
+    }
+    stale
 }
 
 /// The two files a project commits about itself, as rows. The record is a
 /// row only where there is one: its absence is the refusal already
 /// printed, not a second failed row.
 fn bookkeeping_rows(
-    env: &Env,
     scope: &Scope,
-    fallback: bool,
-    lock: &kendex_core::lock::Lock,
+    record: Option<Standing>,
     report: &kendex_core::engine::EngineReport,
     placer: &Placer,
     tally: &mut Tally,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let record = match fallback {
-        true => None,
-        false => attest::record(env, scope, lock, report)?,
-    };
     for (kind, standing) in [
         ("record", record),
         ("inventory", attest::inventory(scope, report)?),

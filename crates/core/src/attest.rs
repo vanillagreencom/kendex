@@ -100,8 +100,22 @@ pub struct Row {
     pub positions: Vec<Placed>,
 }
 
-/// The whole document: the rows, the closing counts, and whether the run
-/// closed clean, which is its exit status as a field.
+/// A commit of a repository source the record trails: one the record
+/// names for the source, or one a held pass read a declaration at, beside
+/// the commit the source resolves to now. Every render read at the
+/// recorded commit is behind the source by the commits between the two.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stale {
+    #[serde(flatten)]
+    pub scope: Scope,
+    pub source: String,
+    pub recorded: String,
+    pub resolved: String,
+}
+
+/// The whole document: the rows, the closing counts, whether the run
+/// closed clean, which is its exit status as a field, and the source
+/// commits the record trails.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Document {
     pub version: u32,
@@ -109,17 +123,108 @@ pub struct Document {
     pub checked: usize,
     pub failed: usize,
     pub rows: Vec<Row>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stale: Vec<Stale>,
 }
 
 impl Document {
-    pub fn new(clean: bool, checked: usize, failed: usize, rows: Vec<Row>) -> Document {
+    pub fn new(
+        clean: bool,
+        checked: usize,
+        failed: usize,
+        rows: Vec<Row>,
+        stale: Vec<Stale>,
+    ) -> Document {
         Document {
             version: DOCUMENT_VERSION,
             clean,
             checked,
             failed,
             rows,
+            stale,
         }
+    }
+}
+
+/// What a verify pass renders each recorded package at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reading {
+    /// The revision each declaration resolves to now.
+    Current,
+    /// The commit the record names, for each declaration with no revision
+    /// of its own that the record can place, Pi extensions included; the
+    /// rest resolve as [`Reading::Current`] reads them. [`record`] holds
+    /// each such commit to the history of the one its source resolves to
+    /// now and, given a base record, to not being older than the commit
+    /// that record names.
+    Recorded,
+}
+
+impl Reading {
+    /// The plan this reading renders through: under `Recorded`, the
+    /// single-package hold naming no package, which holds every follower.
+    pub fn plan_options(self) -> crate::engine::PlanOptions {
+        match self {
+            Reading::Current => crate::engine::PlanOptions::default(),
+            Reading::Recorded => crate::engine::PlanOptions::for_packages([]),
+        }
+    }
+}
+
+/// Each source commit the record trails, once per source and commit: a
+/// source's recorded commit and every commit a held pass read a
+/// declaration at, where the source resolves elsewhere now. A source
+/// recorded for another repository or revision is not stale but a
+/// different declaration, which [`record`] names.
+pub fn stale(scope: &Scope, lock: &Lock, report: &EngineReport) -> Vec<Stale> {
+    let planned = &report.record.sources;
+    let recorded = lock.sources.iter().filter_map(|(name, recorded)| {
+        let now = planned.get(name)?;
+        (now.repo == recorded.repo && now.rev == recorded.rev)
+            .then(|| (name.clone(), recorded.commit.clone()))
+    });
+    let held = report
+        .held
+        .iter()
+        .map(|pin| (pin.source.clone(), pin.commit.clone()));
+    recorded
+        .chain(held)
+        .collect::<BTreeSet<(String, String)>>()
+        .into_iter()
+        .filter_map(|(source, commit)| {
+            let now = planned.get(&source)?;
+            (now.commit != commit).then(|| Stale {
+                scope: scope.clone(),
+                source,
+                recorded: commit,
+                resolved: now.commit.clone(),
+            })
+        })
+        .collect()
+}
+
+/// The oldest commit a held pass may read a declaration at: the one the
+/// record at the base revision names for it.
+#[derive(Debug, Clone)]
+pub enum Floor {
+    /// No base revision was named, or it held no record: nothing bounds
+    /// how far back a held commit reaches but the source's history.
+    Open,
+    /// The record the base revision held.
+    Record(Lock),
+    /// The base revision does not resolve, or its record is one this
+    /// build cannot read: every held commit is refused rather than
+    /// passed unbounded.
+    Unreadable,
+}
+
+/// The floor the record at `rev` of the project at `root` sets.
+pub fn floor_at(root: &Path, rev: &str) -> Floor {
+    let base = Base { root, rev };
+    match base.resolves().then(|| base.record()).flatten() {
+        Some(BaseRecord::Held(lock)) => Floor::Record(lock),
+        Some(BaseRecord::Absent) => Floor::Open,
+        None => Floor::Unreadable,
     }
 }
 
@@ -201,12 +306,16 @@ pub fn inventory(scope: &Scope, report: &EngineReport) -> Result<Option<Standing
 /// honest record is behind a moving branch and stays honest, and a commit
 /// the mirror never held is one no resolution produced. A mirror that
 /// cannot answer for a commit is named as such, so the reader fetches it
-/// rather than searching the record for an edit nobody made.
+/// rather than searching the record for an edit nobody made. Each commit
+/// a held pass read a declaration at renders by construction as the
+/// record says, so it is held instead to the history of the commit its
+/// source resolves to now, and to `floor`.
 pub fn record(
     env: &Env,
     scope: &Scope,
     lock: &Lock,
     report: &EngineReport,
+    floor: &Floor,
 ) -> Result<Option<Standing>> {
     let path = crate::lock::lock_path(env, scope);
     let Some(text) = crate::fs::read_if_exists(&path)? else {
@@ -278,6 +387,14 @@ pub fn record(
             name,
             recorded,
             planned.bundles.get(name),
+        ));
+    }
+    for pin in &report.held {
+        problems.extend(held_problem(
+            env,
+            pin,
+            planned.sources.get(&pin.source),
+            floor,
         ));
     }
     for name in planned.bundles.keys() {
@@ -362,6 +479,7 @@ fn entry_commit_problem(
         recorded_commit,
         resolved,
         &format!("{key}: sourceCommit {recorded_commit}"),
+        OFF_HISTORY,
     )
 }
 
@@ -391,6 +509,7 @@ fn source_problem(
         &recorded.commit,
         &declared.commit,
         &format!("source {name}: commit {}", recorded.commit),
+        OFF_HISTORY,
     )
 }
 
@@ -417,16 +536,69 @@ fn bundle_problem(
         &recorded.commit,
         &declared.commit,
         &format!("set {name}: commit {}", recorded.commit),
+        OFF_HISTORY,
     )
 }
+
+/// A commit a held pass read a declaration at, held from above to the
+/// history of the commit its source resolves to now, since the mirror
+/// fetches every ref the remote serves, and from below to the commit the
+/// base record names for the same declaration, since the head's record
+/// is the change's own to write. A source this pass resolved nothing for
+/// leaves nothing to hold the commit to, which is named rather than
+/// passed.
+fn held_problem(
+    env: &Env,
+    pin: &crate::engine::HeldPin,
+    source: Option<&SourceRev>,
+    floor: &Floor,
+) -> Option<String> {
+    let subject = format!("{}: held at {}", pin.held, pin.commit);
+    let Some(source) = source else {
+        return Some(format!(
+            "{subject}: its source resolved to nothing this pass could hold the commit to"
+        ));
+    };
+    if let Some(problem) = history_problem(
+        env,
+        &source.repo,
+        &pin.commit,
+        &source.commit,
+        &subject,
+        OFF_HISTORY,
+    ) {
+        return Some(problem);
+    }
+    let base = match floor {
+        Floor::Open => return None,
+        Floor::Unreadable => {
+            return Some(format!(
+                "{subject}: the base revision's record cannot be read, so nothing bounds how far back it reaches"
+            ));
+        }
+        Floor::Record(base) => pin.recorded_in(base)?,
+    };
+    history_problem(
+        env,
+        &pin.repo,
+        &base,
+        &pin.commit,
+        &format!("{subject}: the base revision's record names {base}, which"),
+        "is not on its history",
+    )
+}
+
+/// What [`history_problem`] says of a recorded commit off the history of
+/// the revision a declaration resolves to.
+const OFF_HISTORY: &str = "is not on the declared revision's history";
 
 fn selector(rev: Option<&str>) -> &str {
     rev.unwrap_or("the source's own revision")
 }
 
 /// The sentence that fails a recorded commit, after `subject` names it:
-/// one that is no commit pin, one off the declared revision's history,
-/// or one the mirror cannot place. Equal commits are answered without a
+/// one that is no commit pin, one off the newer commit's history, said
+/// as `off_history`, or one the mirror cannot place. Equal commits are answered without a
 /// git call, which is also the only answer a path source ever needs; the
 /// rest is the mirror this declaration fetches into, asked through
 /// [`crate::remote::store::is_ancestor`]. Only a pin is asked about: git
@@ -439,6 +611,7 @@ fn history_problem(
     recorded: &str,
     resolved: &str,
     subject: &str,
+    off_history: &str,
 ) -> Option<String> {
     if recorded == resolved {
         return None;
@@ -450,9 +623,7 @@ fn history_problem(
     let mirror = crate::remote::store::mirror_dir(env, &key);
     match crate::remote::store::is_ancestor(&mirror, recorded, resolved) {
         Some(true) => None,
-        Some(false) => Some(format!(
-            "{subject} is not on the declared revision's history"
-        )),
+        Some(false) => Some(format!("{subject} {off_history}")),
         None => Some(format!(
             "{subject} cannot be placed: the mirror of {repo} does not answer for it — fetch it with kendex source refresh"
         )),
@@ -480,19 +651,7 @@ fn history_problem(
 /// an absent copy as an empty one or a moved entry as never moved.
 pub fn foreign_since(root: &Path, rev: &str, report: &EngineReport) -> BTreeMap<PathBuf, Foreign> {
     let base = Base { root, rev };
-    let resolves = matches!(
-        crate::commit_offer::git::read(
-            root,
-            &[
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                &format!("{rev}^{{commit}}")
-            ]
-        ),
-        Ok(Some(_))
-    );
-    let record = resolves.then(|| base.record()).flatten();
+    let record = base.resolves().then(|| base.record()).flatten();
     let previous = |key: &str| match &record {
         Some(BaseRecord::Held(lock)) => lock
             .entries
@@ -555,6 +714,21 @@ enum BaseRecord {
 }
 
 impl Base<'_> {
+    fn resolves(&self) -> bool {
+        matches!(
+            crate::commit_offer::git::read(
+                self.root,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &format!("{}^{{commit}}", self.rev)
+                ]
+            ),
+            Ok(Some(_))
+        )
+    }
+
     fn copy(&self, path: &Path) -> BaseCopy {
         let Ok(relative) = path.strip_prefix(self.root) else {
             return BaseCopy::Unreadable;

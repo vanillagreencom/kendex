@@ -25,7 +25,7 @@ use kendex_core::model::HarnessId;
 use kendex_core::process::Hardened;
 
 #[allow(clippy::expect_used)]
-fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
+pub(crate) fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_kendex"))
         .args(args)
         .current_dir(cwd)
@@ -37,7 +37,7 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .expect("kendex binary runs")
 }
 
-fn said(output: &Output) -> String {
+pub(crate) fn said(output: &Output) -> String {
     format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -46,7 +46,7 @@ fn said(output: &Output) -> String {
 }
 
 #[allow(clippy::unwrap_used)]
-fn git(dir: &Path, args: &[&str]) -> String {
+pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
     let home = dir.to_str().unwrap();
     let out = Hardened::git(args, Some(dir))
         .env("HOME", home)
@@ -66,7 +66,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 #[allow(clippy::unwrap_used)]
-fn write(path: &Path, text: &str) {
+pub(crate) fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
 }
@@ -79,19 +79,19 @@ fn repository(dir: &Path) {
     git(dir, &["config", "core.hooksPath", ".git/hooks"]);
 }
 
-fn commit(dir: &Path, message: &str) {
+pub(crate) fn commit(dir: &Path, message: &str) {
     git(dir, &["add", "-A"]);
     git(dir, &["commit", "-q", "-m", message]);
 }
 
 /// The commit the installed consumer is tagged at.
-const INSTALLED: &str = "installed";
+pub(crate) const INSTALLED: &str = "installed";
 
-struct World {
+pub(crate) struct World {
     _tmp: tempfile::TempDir,
-    home: PathBuf,
-    project: PathBuf,
-    catalog: PathBuf,
+    pub(crate) home: PathBuf,
+    pub(crate) project: PathBuf,
+    pub(crate) catalog: PathBuf,
 }
 
 /// A consumer with one item of every kind installed, on the awkward names:
@@ -107,7 +107,7 @@ struct World {
 /// extension alone, and `spare` for nothing, the state a source is in
 /// after its last package is removed. Installed, committed and tagged.
 #[allow(clippy::unwrap_used)]
-fn world() -> World {
+pub(crate) fn world() -> World {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let catalog = home.join("cat");
@@ -211,7 +211,7 @@ fn world() -> World {
 }
 
 /// One verify run of the project scope, with the document it printed.
-fn verify(world: &World, base: Option<&str>) -> (Output, Document) {
+pub(crate) fn verify(world: &World, base: Option<&str>) -> (Output, Document) {
     verify_scope(world, "project", base)
 }
 
@@ -234,7 +234,7 @@ fn verify_from(home: &Path, cwd: &Path, scope: &str, base: Option<&str>) -> (Out
     (output, document)
 }
 
-fn row<'a>(
+pub(crate) fn row<'a>(
     document: &'a Document,
     kind: &str,
     name: &str,
@@ -407,7 +407,7 @@ fn every_row_prints_the_positions_it_rendered() {
 
 /// One edit to the JSON document at `path`.
 #[allow(clippy::unwrap_used)]
-fn edit_json(path: &Path, edit: impl Fn(&mut serde_json::Value)) {
+pub(crate) fn edit_json(path: &Path, edit: impl Fn(&mut serde_json::Value)) {
     let mut value: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
     edit(&mut value);
@@ -448,7 +448,7 @@ type Failing = (
 );
 
 const CLAUDE_SECOND: &str = ".claude/skills/second/SKILL.md";
-const RECORD: &str = ".kendex-lock.json";
+pub(crate) const RECORD: &str = ".kendex-lock.json";
 const INVENTORY: &str = ".kendex-generated.json";
 
 fn on_record(edit: impl Fn(&mut serde_json::Value) + 'static) -> Edit {

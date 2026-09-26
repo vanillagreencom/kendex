@@ -229,9 +229,15 @@ fn an_edit_to_the_tree_raises_no_row_and_moves_no_record() {
     assert_eq!(world.read(&world.lock_path()), recorded);
     assert_eq!(world.read(&world.skill_file()), skill);
     let lock = kendex_core::lock::load(&world.lock_path()).unwrap();
-    let standing = kendex_core::attest::record(&world.env, &world.scope, &lock, &report)
-        .unwrap()
-        .unwrap();
+    let standing = kendex_core::attest::record(
+        &world.env,
+        &world.scope,
+        &lock,
+        &report,
+        &kendex_core::attest::Floor::Open,
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(standing.problems, Vec::<String>::new());
     assert_eq!(world.check_text(), "");
 }

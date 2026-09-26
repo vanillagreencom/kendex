@@ -33,6 +33,10 @@ stub_bin="$SANDBOX/stub-bin"
 mkdir -p "$stub_bin"
 cat >"$stub_bin/kendex" <<'STUB'
 #!/usr/bin/env bash
+if [ "$*" = "verify --help" ]; then
+  cat "$KENDEX_STUB_HELP"
+  exit 0
+fi
 printf '%s\n' "$*" >>"$KENDEX_STUB_CALLS"
 records=0
 for dir in "$(git rev-parse --git-common-dir)" "$(git rev-parse --git-dir)"; do
@@ -51,6 +55,10 @@ export KENDEX_STUB_TREES="$SANDBOX/kendex-trees"
 # What the stub says on stderr beside the document: verify's human rows,
 # for the row that pins them being carried to a refusal.
 export KENDEX_STUB_SAYS="$SANDBOX/kendex-says"
+# The flags verify's help lists, which the classifier reads for --at-record.
+export KENDEX_STUB_HELP="$SANDBOX/kendex-help"
+printf '      --at-record  Render each recorded package at the commit the install record names\n' \
+  >"$KENDEX_STUB_HELP"
 
 # The document a passing run prints for the sandbox consumer: one row per
 # kind that renders there, each with the positions the engine resolved — a
@@ -235,9 +243,22 @@ assert_eq "a path no passing position covers is owned by nobody" \
 assert_eq "and the refused run still says how many positions it weighed" \
   "render-coverage: named=7" \
   "$(printf '%s\n' "$unowned_err" | grep '^render-coverage: ')"
-assert_eq "the verifier is asked for its document against the range's base" \
-  "verify --scope project --json --base $(git -C "$repo" merge-base "$base" HEAD)" \
+assert_eq "the verifier is asked for its document against the range's base, at the record's commits" \
+  "verify --scope project --json --base $(git -C "$repo" merge-base "$base" HEAD) --at-record" \
   "$(cat "$KENDEX_STUB_CALLS")"
+# A kendex whose verify has no --at-record is still asked, at its sources'
+# revisions now, and the log says which reading the proof took.
+: >"$KENDEX_STUB_CALLS"
+printf '      --base <REV>\n' >"$KENDEX_STUB_HELP"
+older_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "a verify without --at-record is asked without it and says so" \
+  "render-reading: current cause=verify-lacks-at-record
+verify --scope project --json --base $(git -C "$repo" merge-base "$base" HEAD)" \
+  "$(printf '%s\n' "$older_err" | grep '^render-reading: ')
+$(cat "$KENDEX_STUB_CALLS")"
+printf '      --at-record  Render each recorded package at the commit the install record names\n' \
+  >"$KENDEX_STUB_HELP"
 
 # A registry file kendex writes keys in is owned only where the row that
 # prints it says the rest of the file is as the base held it; a rest that
@@ -1252,6 +1273,8 @@ TOML
   assert_eq "a customized consumer's pure refresh is a render" \
     "class=render measured=true cause=renders-match-their-sources" \
     "$(printf '%s\n' "$refresh_err" | sed -n 's/^class: //p')"
+  assert_eq "and a record the catalog has not moved past trails nothing" "" \
+    "$(printf '%s\n' "$refresh_err" | sed -n '/^render-stale: /p')"
 
   # A priming step that writes into the checkout would be weighing its own
   # repair rather than the commit, had the proof run there. It runs in a
@@ -1392,6 +1415,45 @@ TOML
   assert_eq "a classifier reading catalog bytes never clears the refresh row" \
     "class=standard measured=false cause=verify-refused" \
     "$(printf '%s\n' "$catalog_err" | sed -n 's/^class: //p')"
+
+  # The catalog moves on after the refresh is pushed, and the runner's mirror
+  # with it. The refresh is weighed at the commits its record names, so it is
+  # still a render, and the log names the source it trails. The hand edit on
+  # the same moved catalog is this row's must-fail control: files that differ
+  # from their record still refuse.
+  refreshed_at="$(git -C "$catalog" rev-parse HEAD)"
+  printf '\nA paragraph the catalog added after the refresh.\n' \
+    >>"$catalog/skills/demo/SKILL.md"
+  git -C "$catalog" add -A
+  git -C "$catalog" commit -q -m "catalog past the refresh"
+  catalog_tip="$(git -C "$catalog" rev-parse HEAD)"
+  kendex_here "$consumer" source refresh
+  behind_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base "$consumer_base" --head refreshed)"
+  assert_eq "a refresh the catalog moved past is still a render" \
+    "class=render measured=true cause=renders-match-their-sources" \
+    "$(printf '%s\n' "$behind_err" | sed -n 's/^class: //p')"
+  assert_eq "and the log names the source the render trails" \
+    "render-stale: source=cat recorded=$refreshed_at resolved=$catalog_tip" \
+    "$(printf '%s\n' "$behind_err" | grep '^render-stale: ')"
+  hand_behind_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base "$consumer_base" --head hand-edited)"
+  assert_eq "a hand edit the catalog moved past is still refused" \
+    "class=standard measured=false cause=verify-refused" \
+    "$(printf '%s\n' "$hand_behind_err" | sed -n 's/^class: //p')"
+
+  # A branch that puts the older install back, record and renders together,
+  # renders clean at its own commits; the base's record is the floor that
+  # refuses it the class.
+  git -C "$consumer" checkout -q -B rolled-back refreshed
+  git -C "$consumer" checkout -q "$consumer_base" -- .
+  git -C "$consumer" add -A
+  git -C "$consumer" commit -q -m "the older install put back"
+  rolled_back_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base refreshed --head HEAD)"
+  assert_eq "a record rewritten back past the base's is not a render" \
+    "class=standard measured=false cause=verify-refused" \
+    "$(printf '%s\n' "$rolled_back_err" | sed -n 's/^class: //p')"
 fi
 
 # Must-fail control: a classifier that trusts .kendex-generated.json instead of

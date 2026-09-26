@@ -185,7 +185,9 @@ pub struct LockEntry {
     pub source_hash: String,
     /// The source commit the bytes came from, for remotes. Cache, like the
     /// rest of the lock: losing it costs the Updates page its "current
-    /// version" until the next apply records it again.
+    /// version" until the next apply records it again. A held plan, which
+    /// `verify --at-record` runs, reads a declaration with no revision of
+    /// its own at the commit its entries agree on here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_commit: Option<String>,
     /// What the apply wrote to disk (file/tree artifacts only) — the anchor

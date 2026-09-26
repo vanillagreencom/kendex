@@ -17,6 +17,11 @@
 //! The pins are this pass's reading instructions, never intent: they exist
 //! only in the planning copy of the manifest, and [`HeldPins::unpin`] takes
 //! them back out of any manifest write the plan carries.
+//!
+//! A Pi extension is held with the planned kinds. The scope plan does not
+//! install one, but it compares the carrier package against the
+//! declaration it reads, and a held pass compares it at the recorded
+//! commit like every other follower.
 
 use std::collections::BTreeSet;
 
@@ -25,6 +30,7 @@ use crate::manifest::Manifest;
 use crate::model::ItemKind;
 
 use super::super::expansion::PLANNED_KINDS;
+use super::super::report_types::{Held, HeldPin};
 
 /// What a declaration in the manifest answers for, and therefore what
 /// pinning it decides. A bundle is not an installation and has no lock
@@ -119,8 +125,7 @@ fn owners_of(
 /// The synthetic pins one held plan wrote — exactly these and nothing else
 /// are taken back out, so a revision the user pinned is never touched.
 pub(crate) struct HeldPins {
-    items: Vec<(ItemKind, String)>,
-    bundles: Vec<String>,
+    pins: Vec<HeldPin>,
 }
 
 impl HeldPins {
@@ -129,29 +134,47 @@ impl HeldPins {
     /// chose from a hold that only exists to keep the rest of the scope
     /// still — the first is theirs to reconcile, the second is not.
     pub(crate) fn invented_item(&self, kind: ItemKind, name: &str) -> bool {
-        self.items
-            .iter()
-            .any(|(of_kind, of_name)| *of_kind == kind && of_name == name)
+        self.pins.iter().any(|pin| {
+            matches!(&pin.held, Held::Item { kind: of_kind, name: of_name }
+                if *of_kind == kind && of_name == name)
+        })
     }
 
     /// [`HeldPins::invented_item`] for a set's own declaration.
     pub(crate) fn invented_bundle(&self, name: &str) -> bool {
-        self.bundles.iter().any(|of_name| of_name == name)
+        self.pins
+            .iter()
+            .any(|pin| matches!(&pin.held, Held::Set { name: of_name } if of_name == name))
+    }
+
+    /// Every pin this plan invented, with the commit it read.
+    pub(crate) fn pins(&self) -> &[HeldPin] {
+        &self.pins
     }
 
     /// Remove the synthetic pins from a manifest the plan is about to
     /// write. Every pinned declaration had no `rev` before the hold, so
     /// clearing it restores the declaration exactly.
     pub(crate) fn unpin(&self, manifest: &mut Manifest) {
-        for (kind, name) in &self.items {
-            if let Some(decl) = manifest.declared_mut(*kind).get_mut(name) {
+        for pin in &self.pins {
+            let decl = match &pin.held {
+                Held::Item { kind, name } => manifest.declared_mut(*kind).get_mut(name),
+                Held::Set { name } => manifest.bundles.get_mut(name),
+            };
+            if let Some(decl) = decl {
                 decl.rev = None;
             }
         }
-        for name in &self.bundles {
-            if let Some(decl) = manifest.bundles.get_mut(name) {
-                decl.rev = None;
-            }
+    }
+}
+
+impl HeldPin {
+    /// The commit `lock` records for this pin's declaration, read as a
+    /// held plan reads it: `None` where that record could not place it.
+    pub(crate) fn recorded_in(&self, lock: &Lock) -> Option<String> {
+        match &self.held {
+            Held::Item { kind, name } => held_at(lock, *kind, name, &self.source, &self.repo),
+            Held::Set { name } => held_commit(lock, name, &self.source, &self.repo),
         }
     }
 }
@@ -202,12 +225,9 @@ fn held_manifest(
         exempt.extend(exempted_by(manifest, lock, target));
     }
     let mut held = manifest.clone();
-    let mut pins = HeldPins {
-        items: Vec::new(),
-        bundles: Vec::new(),
-    };
-    for kind in PLANNED_KINDS {
-        let pinnable: Vec<(String, String)> = held
+    let mut pins = HeldPins { pins: Vec::new() };
+    for kind in PLANNED_KINDS.into_iter().chain([ItemKind::PiExtension]) {
+        let pinnable: Vec<(String, String, String, String)> = held
             .declared(kind)
             .iter()
             .filter(|(name, decl)| {
@@ -221,13 +241,18 @@ fn held_manifest(
             .filter_map(|(name, decl)| {
                 let repo = source_repo(manifest, &decl.source)?;
                 let commit = held_at(lock, kind, name, &decl.source, repo)?;
-                Some((name.clone(), commit))
+                Some((name.clone(), decl.source.clone(), repo.to_owned(), commit))
             })
             .collect();
-        for (name, commit) in pinnable {
+        for (name, source, repo, commit) in pinnable {
             if let Some(decl) = held.declared_mut(kind).get_mut(&name) {
-                decl.rev = Some(commit);
-                pins.items.push((kind, name));
+                decl.rev = Some(commit.clone());
+                pins.pins.push(HeldPin {
+                    held: Held::Item { kind, name },
+                    source,
+                    repo,
+                    commit,
+                });
             }
         }
     }
@@ -245,8 +270,13 @@ fn held_manifest(
         let Some(commit) = held_commit(lock, name, &decl.source, repo) else {
             continue;
         };
-        decl.rev = Some(commit);
-        pins.bundles.push(name.clone());
+        decl.rev = Some(commit.clone());
+        pins.pins.push(HeldPin {
+            held: Held::Set { name: name.clone() },
+            source: decl.source.clone(),
+            repo: repo.to_owned(),
+            commit,
+        });
     }
     (held, pins)
 }
