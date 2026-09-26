@@ -23,6 +23,8 @@ PR_PAGE=500
 # own ceiling. A list that reaches it refuses, since the merges past it would
 # be missing from Landed.
 MERGED_PAGE=1000
+# A lane-mail refusal naming one lane's host or mailbox; group 2 is the item.
+LANE_MAIL_REFUSAL='^lane-mail: (host-unreachable|mail-read-failed)=([^ ]+)( |$)'
 # Farthest back Landed reaches, in seconds: 7 days, a window this repository's
 # merge rate keeps well under MERGED_PAGE whatever the report settings are.
 LANDED_LOOKBACK=604800
@@ -123,7 +125,8 @@ Rows:
                   then one line per thing a running lane waits on, naming the
                   item: an ask `lane-mail pending` lists, the post_pr_stop its
                   own workflow state holds, and failing checks on its open PR
-                  as `github.sh pr-list-failing --all` judges them.
+                  as `github.sh pr-list-failing --all` judges them; its lane-mail
+                  refusal naming the item is `- ITEM mailbox unreadable ...`.
 A row with nothing in it reads `none`. Landed, Running and Next are tables
 whose columns ORCH_REPORT_COLUMNS lists: `issue`; `what it is`, the issue's
 title; `why it matters`, the first line of its `## Done when` section. The
@@ -530,7 +533,7 @@ item_state() {
 BLOCKERS=""
 VALIDATION=""
 running_lanes() {
-  local lanes item host root args asks failing="" repo list stop minutes
+  local lanes item host root args asks mail rc line failing="" repo list stop minutes
   BLOCKERS=""
   VALIDATION=""
   for repo in "${REPOS[@]}"; do
@@ -554,8 +557,16 @@ running_lanes() {
     [[ -n "$root" ]] || refuse state "$STATE"
     args=(pending --item "$item" --root "$root")
     [[ -z "$host" ]] || args+=(--host)
-    if ! asks="$(ORCH_LANE_HOST="$host" "$LANE_MAIL" "${args[@]}" 2>"$WORK_DIR/mail.err")"; then
-      refuse mail-read "$item" "$(cat "$WORK_DIR/mail.err")"
+    # A refusal naming this lane marks its row, as the heartbeat's `failing`
+    # does; any other failure, a missing or crashed helper too, refuses.
+    mail=read rc=0
+    asks="$(ORCH_LANE_HOST="$host" "$LANE_MAIL" "${args[@]}" 2>"$WORK_DIR/mail.err")" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      line="$(awk 'NR == 1' "$WORK_DIR/mail.err")"
+      [[ "$rc" -eq 2 && "$line" =~ $LANE_MAIL_REFUSAL && "${BASH_REMATCH[2]}" == "$item" ]] \
+        || refuse mail-read "$item" "$(cat "$WORK_DIR/mail.err")"
+      mail="${BASH_REMATCH[1]}" asks=""
+      BLOCKERS+="- $item mailbox unreadable (mail-read=$item): $line"$'\n'
     fi
     # pending also lists the unread directives this overseer sent the lane,
     # which wait on the lane, not on the overseer: the asks alone are kept.
@@ -563,7 +574,8 @@ running_lanes() {
       refuse mail-read "$item" "$(cat "$WORK_DIR/mail.err")"
     fi
     [[ -z "$asks" ]] || BLOCKERS+="$asks"$'\n'
-    item_state "$item" "$host" "$root"
+    # A host that did not answer holds the hosted lane's state too.
+    ITEM_STATE=""; [[ "$mail" == host-unreachable && -n "$host" ]] || item_state "$item" "$host" "$root"
     if [[ -n "$ITEM_STATE" ]]; then
       if ! stop="$(jq -r --arg item "$item" '.post_pr_stop // empty
         | "- \($item) waits on a stopped \(.gate // "post-PR") gate, \(.name // "unnamed"): \((.remaining // []) | join("; "))"' <<<"$ITEM_STATE")"; then
@@ -571,7 +583,9 @@ running_lanes() {
       fi
       [[ -z "$stop" ]] || BLOCKERS+="$stop"$'\n'
     fi
-    if ! minutes="$(jq -r --arg item "$item" 'def min: (. + 30) / 60 | floor;
+    if [[ "$mail" == host-unreachable && -n "$host" ]]; then
+      minutes="- $item: validation unread, its host unreachable"
+    elif ! minutes="$(jq -r --arg item "$item" 'def min: (. + 30) / 60 | floor;
       (if . == null then [] else .validate_rounds // [] end) as $rounds
       | if ($rounds | length) == 0 then "- \($item): no validation run recorded"
         else "- \($item): \([$rounds[].seconds] | add | min) min over \($rounds | length) round\(if ($rounds | length) == 1 then "" else "s" end): \([$rounds[] | "\(.kind) \(.mode) \(.seconds | min)"] | join(", "))"
