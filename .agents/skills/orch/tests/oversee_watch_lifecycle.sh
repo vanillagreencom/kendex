@@ -205,7 +205,7 @@ assert_eq "rc=$rc first=$(sed -n 1p "$err")" \
   "a has-session that answers no-server is refused tmux-failed, not session-missing" "$err"
 # The must-fail control: without the answer split every failure is read as a
 # missing session, so a dead server prescribes starting the session.
-mutant session_no_server_unsplit lib/tmux-server.sh '    [[ "$WATCH_SESSION_DETAIL" == "can'"'"'t find session"* ]] \' '    if false; then :; fi \'
+mutant session_no_server_unsplit lib/tmux-server.sh '    "can'"'"'t find session"*) return 3 ;;' '    *) return 3 ;;'
 new_case session_no_server_unsplit_mutant
 touch "$STUB_DIR/has-session-fail"
 err="$TMP_ROOT/e-session_no_server_unsplit"
@@ -216,7 +216,7 @@ assert_eq "first=$(sed -n 1p "$err" | sed 's/ session=[^ ]*//')" \
   "control: without the answer split a dead server is misreported as a missing session" "$err"
 # The must-fail control: a resolver that reads the setting without asking tmux
 # for it takes the missing session as resolved, and the lane reads gone.
-mutant session_setting_unchecked lib/tmux-server.sh '    if out="$(tmux has-session -t "=$ORCH_TMUX_SESSION" 2>&1)"; then' '    if out="" && true; then'
+mutant session_setting_unchecked lib/watch-session.sh '    tmux_session_present "$ORCH_TMUX_SESSION" || probe=$?' '    :'
 new_case session_setting_unchecked_mutant
 err="$TMP_ROOT/e-session_setting_unchecked_mutant"
 out="$(WATCH_BIN="$MUTANT" run_watch TMUX= ORCH_TMUX_SESSION=nosuch OVERSEE_WATCH_SUCCEED=/nonexistent -- --max-loops 1 gh-1 2>"$err")" \

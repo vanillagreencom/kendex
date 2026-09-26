@@ -861,6 +861,7 @@
   ".agents/skills/orch/scripts/lib/usage-reset.sh",
   ".agents/skills/orch/scripts/lib/watch-overseer-record.sh",
   ".agents/skills/orch/scripts/lib/watch-pid.sh",
+  ".agents/skills/orch/scripts/lib/watch-session.sh",
   ".agents/skills/orch/scripts/open-terminal",
   ".agents/skills/orch/scripts/orch-env",
   ".agents/skills/orch/scripts/oversee",

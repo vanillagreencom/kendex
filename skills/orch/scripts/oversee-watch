@@ -367,7 +367,10 @@ Options:
                       tmux's own target form, names one in another session.
                       A bare name with no session resolved is refused as
                       session-unresolved naming the lane and the --state
-                      file; a setting tmux does not hold as session-missing
+                      file; a setting tmux does not hold as session-missing,
+                      and a has-session call failing for any other reason,
+                      no server at the socket among them, as tmux-failed
+                      naming that socket
   -- OVERSEER_FLAGS...
                       the flags the OVERSEER itself runs under — its
                       permission flags, plus its current model and effort
@@ -740,6 +743,8 @@ source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # shellcheck source=lib/tmux-server.sh
 source "$SCRIPT_DIR/lib/tmux-server.sh"
+# shellcheck source=lib/watch-session.sh
+source "$SCRIPT_DIR/lib/watch-session.sh"
 # shellcheck source=lib/lane-context.sh
 source "$SCRIPT_DIR/lib/lane-context.sh"
 # shellcheck source=lib/lane-gitfile.sh
@@ -867,10 +872,6 @@ mail_row_commit() {
   pw_commit_state "$MAIL_STATE_FILE"
   MAIL_SEEN="$1"
 }
-
-# The session bare lane names are read in and the server this watch reaches,
-# with the check every run and repeat pass makes of the lanes it carries, are
-# watch_session_resolve and check_lane_set of lib/tmux-server.sh, sourced above.
 
 # The -t target a lane is read through: a bare name inside the resolved
 # session, matched exactly, and a `session:window` name as it was given.
