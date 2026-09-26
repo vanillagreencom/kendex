@@ -841,9 +841,9 @@ seed_overseer
 SEED_RECORD="$(jq -cS .overseer "$FLEET_STATE")"
 RECCOMMIT="$(mutant_scripts record-commit)" || exit 1
 record_commit_run "$RECCOMMIT"
-check "a signal while the record's writer commits: refused, successor closed, the caller's record back" \
-  "$RC|$(keyed interrupted "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)|$(jq -cS .overseer "$FLEET_STATE")" \
-  "1|oversee-succeed: interrupted window=@N signal=TERM|yes|0|$SEED_RECORD"
+assert_eq "$RC|$(keyed interrupted "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)|$(jq -cS .overseer "$FLEET_STATE")" \
+  "1|oversee-succeed: interrupted window=@N signal=TERM|yes|0|$SEED_RECORD" \
+  "a signal while the record's writer commits: refused, successor closed, the caller's record back"
 # The control: the put-back gated on a flag ol_record_write sets once its
 # writer returns, which a signal during the writer never lets it reach, so the
 # record keeps the closed successor's generation, one past the seeded 5.
@@ -853,9 +853,9 @@ mutate_file "$RECCTL/lib/overseer-launch.sh" '  if [[ -n "$OL_PRIOR" ]] && ! ol_
 mutate_file "$RECCTL/lib/overseer-launch.sh" 'set oversee overseer "$record" >/dev/null 2>"$DEP_ERR"' \
   'set oversee overseer "$record" 2>"$DEP_ERR" >/dev/null || return 1; OL_WRITE_RETURNED=1'
 record_commit_run "$RECCTL"
-check "control: a put-back gated on the write returning leaves the closed successor recorded" \
-  "$RC|$(caller_open)|$(overseers)|generation=$(orec generation)" \
-  "1|yes|0|generation=6"
+assert_eq "$RC|$(caller_open)|$(overseers)|generation=$(orec generation)" \
+  "1|yes|0|generation=6" \
+  "control: a put-back gated on the write returning leaves the closed successor recorded"
 
 new_caller "$UNDER_MARK"
 run_succeed under 'claude:1:high'
