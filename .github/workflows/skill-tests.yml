@@ -39,14 +39,15 @@ name: Skill Tests
 # macOS runner forks and spawns at less than half the Linux pace, so it
 # reaches five minutes on work Linux runs in two, and it carries the looser
 # ceiling: TEN MINUTES, past which a shard is split even where its Linux leg
-# sits inside five. By the step seconds of run 36195213656, the first with
-# every split below in place and every suite run one at a time, the slowest
-# macOS shell leg is `orch-oversee` at 1087s and the slowest Linux one is
-# `orch-state` at 702s; five macOS legs and seven Linux legs sat past their
-# figure on that run. skills/orch/tests/run-all.sh now runs a shard's suites
-# `nproc` at a time and prints one `suite=<name> seconds=<n>` line per suite,
-# so an orch leg's wall time is below the sum of its suites' seconds, and
-# those lines are where the next split reads each suite's share.
+# sits inside five. Run 36195213656, the first with every split below in
+# place, has legs past their figure on both runners, and none is split here.
+# The orch legs among them ran their suites one at a time;
+# skills/orch/tests/run-all.sh now runs a shard's suites `nproc` at a time
+# and prints one `suite=<name> seconds=<n>` line per suite, so their next CI
+# run re-measures them, and the comment above the orch shard steps holds
+# that run's figures. `guards-tools` on both runners, `worktree` on macOS,
+# and `linear` and `rest` on Linux do not run through run-all.sh and stand
+# past their figure pending a split.
 #
 # A SPLIT GOES AS FAR AS ITS SEAM REACHES and no further — a name partition, a
 # scans-against-suites cut, a package boundary with its slowest tail moved
@@ -54,9 +55,9 @@ name: Skill Tests
 # which is what keeps a shard set a partition. Where the next cut would have
 # to name individual suites one at a time, the shard stands at what the seam
 # left and answers to its own step bound instead, and the paragraph above its
-# steps says so. Two legs are that case. `orch-terminal` ran 596s on Linux on
-# that run with open-terminal-lane alone 229s of it, and under the parallel
-# runner its wall time cannot fall below that one suite. The macOS
+# steps says so. Two legs are that case. `orch-terminal` is the first: its
+# largest suite, open-terminal-lane, is the floor of its wall time under the
+# parallel runner, and the orch shard comment gives both figures. The macOS
 # `kendex-cli` cargo leg splits by `--test` target into `render-lint` and
 # `rest`; `rest` lands
 # at 235-267s, inside the ceiling, while `render-lint` is a target whose cost
@@ -579,7 +580,9 @@ jobs:
       # `orch-rest` keeps the rest.
       #
       # Measured suite by suite, one at a time, on the Linux leg of run
-      # 36195213656: orch-terminal 597s over 10 files (open-terminal-lane
+      # 36195213656. A shard's figure is the sum of its suites' seconds, read
+      # from the log timestamps; the step time the jobs API reports is within
+      # a second of it. orch-terminal 597s over 10 files (open-terminal-lane
       # 229s, open-terminal-record 124s, open-terminal-claude-handoff 90s,
       # open-terminal-owned-skip 76s), orch-oversee 516s over 13
       # (oversee_watch_lifecycle 128s, oversee_watch 118s,
@@ -589,10 +592,11 @@ jobs:
       # 29s), orch-state 702s over 42 (dev_validate_run 206s, lanes 189s,
       # lane-host-ssh 50s, lane_close 49s) and orch-rest 221s over 37
       # (approval_wait 51s, round_recover 37s, queue_wait 26s). The macOS
-      # legs of that run spent 781s, 1087s, 597s, 1021s and 339s on the same
-      # five. run-all.sh runs those suites `nproc` at a time and prints each
-      # one's `suite=<name> seconds=<n>` line, so a step's wall time is now
-      # below its sum and its log carries these figures fresh. Splitting
+      # legs of that run spent 781s, 1087s, 597s, 1021s and 339s of step
+      # time on the same five. run-all.sh runs those suites `nproc` at a
+      # time and prints each one's `suite=<name> seconds=<n>` line, so a
+      # step's wall time is now below its sum and its log carries these
+      # figures fresh. Splitting
       # orch-terminal in turn would have to name individual suites rather
       # than a name prefix, since open-terminal-lane alone is 229s of its
       # 597s, so that is where a name partition stops.
@@ -610,9 +614,8 @@ jobs:
       # its lanes, receipts and usage limits. Its rejectors are the other
       # shard's selectors, so a new oversee suite lands in `orch-oversee` and
       # never in neither. Run 36195213656, PR #2902's own run with the split
-      # in place, confirms it: `orch-oversee` 517s on Linux and 1087s on
-      # macOS, `orch-oversee-succeed` 462s and 597s, each inside its leg's
-      # job ceiling.
+      # in place, confirms it: both shards finished inside each leg's job
+      # ceiling, by the per-suite paragraph above.
       - name: tmux for pane delivery tests
         if: matrix.shard == 'orch-terminal' || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-oversee-succeed' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'node'
         run: |

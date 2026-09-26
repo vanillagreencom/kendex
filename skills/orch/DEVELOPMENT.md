@@ -13,7 +13,7 @@ bash skills/orch/tests/run-all.sh '!open-terminal' '!oversee' # neither
 
 A bare argument selects and `!name` rejects, so a set of fragments and that set negated split the battery: no suite runs in both halves and none runs in neither. CI runs the battery as shards built that way, and `tools/tests/orch-shard-partition.test.sh` holds them to it.
 
-Each `tests/*.sh` is self-contained: it builds its own sandbox with parametrized CLI stubs on `PATH`, prints `pass: N fail: M`, and exits 0 only when every assertion passed. `run-all.sh` discovers them at execution time, so a new suite needs no registration. It runs them `nproc` at a time, so a suite shares its host with the others and keeps every file, socket and process it makes inside its own sandbox. Each suite's output is printed whole once it exits, followed by one `suite=<name> seconds=<n> pass=<n> fail=<n>` line, and the run ends on one `total` line; `tests/run-all-parallel.sh` holds that report and the worker count.
+Each `tests/*.sh` is self-contained: it builds its own sandbox with parametrized CLI stubs on `PATH`, prints `pass: N fail: M`, and exits 0 only when every assertion passed. `run-all.sh` discovers them at execution time, so a new suite needs no registration. It runs them `nproc` at a time, so a suite shares its host with the others and keeps every file, socket and process it makes inside its own sandbox. Each suite's output is printed whole once it exits, followed by one `suite=<name> seconds=<n> pass=<n> fail=<n>` line. One `total` line follows the last suite, and the `orch tests:` verdict follows it, naming every red suite on a red run; `tests/run-all-parallel.sh` holds that report and the worker count.
 
 Every `tests/*.sh` carries one line directly under its `set -...o pipefail`:
 

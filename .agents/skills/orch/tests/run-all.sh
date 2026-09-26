@@ -29,6 +29,9 @@
 #   suite=<name> seconds=<n> pass=<n> fail=<n>
 #   total suites=<n> seconds=<n> pass=<n> fail=<n>
 #
+# The `orch tests:` verdict line follows the total, and on a red run one
+# `  - <name>` line per red suite follows the verdict.
+#
 # `seconds` is the suite's own wall time, and the total's is the whole run's.
 # `pass` and `fail` are the counts from the last summary line the suite
 # printed in any of the shapes the suites use (`pass: N  fail: M`,
@@ -101,16 +104,6 @@ trap 'rm -rf -- "$OUT_DIR"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# Runs in the background. `<base>.done` holds "STATUS SECONDS" and is renamed
-# into place last, so its presence means the output file is complete.
-run_suite() { # BASE
-  local start=$SECONDS status
-  bash "$TEST_DIR/$1.sh" >"$OUT_DIR/$1.out" 2>&1 </dev/null
-  status=$?
-  printf '%s %s\n' "$status" "$((SECONDS - start))" >"$OUT_DIR/$1.part" &&
-    mv -- "$OUT_DIR/$1.part" "$OUT_DIR/$1.done"
-}
-
 # Prints "PASS FAIL" from a suite's output, per the shapes the header names.
 counts_of() { # FILE
   awk '
@@ -135,8 +128,6 @@ FAIL_FILES=()
 TOTAL_PASS=0
 TOTAL_FAIL=0
 
-# STATUS is the suite's exit status, or `lost` when its worker died without
-# recording one.
 report() { # BASE STATUS SECONDS
   local pass fail counts
   printf '\n──── %s ────\n' "$1"
@@ -147,7 +138,6 @@ report() { # BASE STATUS SECONDS
   counts="$(counts_of "$OUT_DIR/$1.out" 2>/dev/null)" || counts="0 0"
   read -r pass fail <<<"$counts"
   if [[ "$2" != 0 ]]; then
-    [[ "$2" == lost ]] && echo "run-all.sh: the worker running $1 exited without recording a status"
     [[ "$fail" -gt 0 ]] || fail=1
     FAIL_FILES+=("$1")
   fi
@@ -156,9 +146,10 @@ report() { # BASE STATUS SECONDS
   printf 'suite=%s seconds=%s pass=%s fail=%s\n' "$1" "$3" "$pass" "$fail"
 }
 
-# One slot per worker, each empty or holding the suite it runs. A slot is
-# refilled on the pass that reaps it; the loop sleeps only when a pass found
-# nothing to reap.
+# One slot per worker, each empty or holding the suite it runs. A suite is
+# reaped once `kill -0` finds it gone, and `wait` then returns the status the
+# shell kept for it. A slot is refilled on the pass that reaps it; the loop
+# sleeps only when a pass found nothing to reap.
 SLOT=()
 SLOT_PID=()
 SLOT_START=()
@@ -172,26 +163,17 @@ while [ "$finished" -lt "$RUN" ]; do
   k=0
   while [ "$k" -lt "$JOBS" ]; do
     base="${SLOT[k]}"
-    if [ -n "$base" ]; then
-      if [ -f "$OUT_DIR/$base.done" ]; then
-        wait "${SLOT_PID[k]}"
-        read -r status seconds <"$OUT_DIR/$base.done"
-        report "$base" "$status" "$seconds"
-      elif ! kill -0 "${SLOT_PID[k]}" 2>/dev/null && [ ! -f "$OUT_DIR/$base.done" ]; then
-        wait "${SLOT_PID[k]}"
-        report "$base" lost "$((SECONDS - SLOT_START[k]))"
-      else
-        base=""
-      fi
-      if [ -n "$base" ]; then
-        SLOT[k]=""
-        finished=$((finished + 1))
-        reaped=1
-      fi
+    if [ -n "$base" ] && ! kill -0 "${SLOT_PID[k]}" 2>/dev/null; then
+      wait "${SLOT_PID[k]}"
+      status=$?
+      report "$base" "$status" "$((SECONDS - SLOT_START[k]))"
+      SLOT[k]=""
+      finished=$((finished + 1))
+      reaped=1
     fi
     if [ -z "${SLOT[k]}" ] && [ "$next" -lt "$RUN" ]; then
       SLOT[k]="${SUITES[next]}"
-      run_suite "${SLOT[k]}" &
+      bash "$TEST_DIR/${SLOT[k]}.sh" >"$OUT_DIR/${SLOT[k]}.out" 2>&1 </dev/null &
       SLOT_PID[k]=$!
       SLOT_START[k]=$SECONDS
       next=$((next + 1))
