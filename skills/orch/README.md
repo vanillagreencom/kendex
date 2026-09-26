@@ -21,7 +21,7 @@ Requires jq, Bash 3.2, flock, setsid and timeout or gtimeout; the included SSH h
 - `oversee-report` writes the overseer's scheduled and handover status reports.
 - `open-terminal --relaunch` resumes a stopped lane's own agent session, on the same account or another one, and workflow state and handoff files let a lane or overseer continue where it stopped.
 - Each review finding is fixed, filed as an issue or declined by the rules in [references/finding-disposition.md](references/finding-disposition.md), settings cap the review and CI-fix rounds, and `branch-size-check` compares the branch's added lines with the issue's expected size.
-- [references/secret-value.ere](references/secret-value.ere) holds the one pattern of secret values: GitHub and Slack tokens and private-key headers. A package or a fleet script refuses to send text or a file that matches it. The file's header says how to read it.
+- [references/secret-value.ere](references/secret-value.ere) holds a pattern of secret values: GitHub and Slack tokens and private-key headers, for a package or a fleet script to refuse to send text or a file that matches it. Its header says how to read it.
 - Lanes run on Claude Code, Codex, OpenCode and Pi, and on another machine on Claude Code, Codex and Pi; the orchestrator runs on Claude Code, Codex, OpenCode and Pi, and account selection and overseer succession cover Claude Code and Codex.
 
 A directive is handed over at the end of the lane's turn where the harness runs hooks, and at the lane's next wait point where it does not. Delivery is checked on every harness kendex installs the mailbox hook on. That check runs on one machine at a time and is started by hand, so a fleet's control machine is covered by running it there.

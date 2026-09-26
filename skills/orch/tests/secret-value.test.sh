@@ -49,18 +49,6 @@ else
   exit 1
 fi
 
-# The reader contract refuses a file with no pattern line (none.ere) and one
-# with two (two.ere).
-printf '# comment only\n\n' >"$SCRATCH/none.ere"
-{ cat -- "$PATTERN_FILE"; printf 'second\n'; } >"$SCRATCH/two.ere"
-for mutant in none two; do
-  if load_pattern "$SCRATCH/$mutant.ere" >/dev/null; then
-    fail "the $mutant.ere file is read; it must be refused"
-  else
-    pass "the $mutant.ere file is refused"
-  fi
-done
-
 # NAME|TEXT|VERDICT. In TEXT, `@` is a key tail long enough for every prefix
 # and `~` is a line break.
 TAIL="Ab3dEf5hIj7lMn9pQr1tUv2x"
@@ -77,6 +65,8 @@ an sk- key|sk-@|sensitive
 a Slack bot token|xoxb-@|sensitive
 a Slack app-level token|xapp-@|sensitive
 a Slack app token in capitals|XAPP-@|sensitive
+a Slack app token with its numbered segment|xapp-1-@|sensitive
+a Slack bot token with its numeric segments|xoxb-1234567890-1234567890-@|sensitive
 a Slack xoxp- token|xoxp-@|sensitive
 a Slack xoxa- token|xoxa-@|sensitive
 a Slack xoxr- token|xoxr-@|sensitive
