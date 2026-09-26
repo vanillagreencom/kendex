@@ -283,7 +283,7 @@ fn kendex_own_keys_follow_the_package_s_own_credentials() {
             secrets
                 .iter()
                 .all(|row| row.current == SecretState::Set || row.key != email),
-            "{case}: {secrets:?}"
+            "{case}: the kendex-owned row does not read Set"
         );
     }
 }
