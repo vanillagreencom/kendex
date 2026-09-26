@@ -21,17 +21,8 @@ SD="$TMP_ROOT/state"
 NO_SETTINGS="$TMP_ROOT/no-settings"
 git init -q "$NO_SETTINGS"
 
-PASS=0
-FAIL=0
-assert_eq() { # GOT WANT NAME
-  if [[ "$1" == "$2" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$3"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$3" "$2" "$1"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 
 ws() { (cd "$NO_SETTINGS" && env -u REVIEW_MAX_CYCLES -u REVIEW_MAX_EXTERNAL_ROUNDS "$WS" --state-dir "$SD" "$@"); }
 
