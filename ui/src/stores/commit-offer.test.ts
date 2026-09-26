@@ -441,6 +441,13 @@ describe("the packages holding the picked commit", () => {
     };
     expect(heldBy(state).map((one) => one.name)).toEqual([row.want]);
   });
+
+  // A selector: the answer for an empty line is the same array each read,
+  // or every render sees a new value and loops.
+  it("answers an empty line with one array", () => {
+    const empty = { queue: [], scoped: "action" as const };
+    expect(heldBy(empty)).toBe(heldBy(empty));
+  });
 });
 
 describe("the set a step carries", () => {

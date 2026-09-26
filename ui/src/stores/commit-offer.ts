@@ -222,6 +222,10 @@ export function selectionOf(state: {
   return { kind: "only", paths: offer.actionPaths };
 }
 
+/** The one empty answer [`heldBy`] gives, shared: it is a store selector,
+ *  and a fresh array per read compares unequal each render and loops. */
+const NOTHING_HELD: StalePackage[] = [];
+
 /** The packages holding the commit the reader has picked: every pending
  *  change, or only this action's work. An older pending change to a
  *  package's files holds only the commit that carries it, so the two can
@@ -231,7 +235,7 @@ export function heldBy(state: {
   scoped: Scoped;
 }): StalePackage[] {
   const offer = state.queue[0];
-  if (!offer) return [];
+  if (!offer) return NOTHING_HELD;
   return selectionOf(state).kind === "all" ? offer.stale : offer.staleAction;
 }
 
