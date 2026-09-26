@@ -330,6 +330,13 @@ source refresh --global before the subcommand is not the refresh verb|0|-|kendex
 the --scope global words before a source subcommand pass|0|-|kendex source --scope global add x owner/repo
 the --scope project words before a source subcommand are the project scope|2|block-worktree-refresh: refused=source add|kendex source --scope project add x owner/repo
 --scope project before a source subcommand outranks a --global after it|2|block-worktree-refresh: refused=source remove|kendex source --scope project remove x --global
+a quoted source name cuts the words after it from the segment, so no global scope is read|2|block-worktree-refresh: refused=source remove|kendex source --global remove "x" --scope project
+the same with --scope all after the quoted name|2|block-worktree-refresh: refused=source remove|kendex source --global remove 'x' --scope all
+a quoted source reference cuts the words after it too|2|block-worktree-refresh: refused=source add|kendex source add x --global "owner/repo" --scope project
+the same with --scope all after the quoted reference|2|block-worktree-refresh: refused=source add|kendex source --global add x "owner/repo" --scope all
+the cut source write after a cd is refused as moved|2|block-worktree-refresh: moved=source remove|cd .. && kendex source --global remove "x" --scope project
+a quote in another command leaves a global source write whole|0|-|echo "x y" && kendex source --global add x owner/repo
+a continued line before a quoted reference is not the command's text as it stands, so no global scope is read|2|block-worktree-refresh: refused=source add|kendex source --global add x \\\n  "owner/repo" --scope project
 marketplace list is a read|0|-|kendex marketplace list
 the verb is found after a chained command|2|block-worktree-refresh: refused=refresh|true && kendex refresh
 the verb is found on the second line|2|block-worktree-refresh: refused=apply|echo x\nkendex apply
