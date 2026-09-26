@@ -201,7 +201,7 @@ fn a_declared_environment_is_assigned_ahead_of_the_script_that_names_the_hook() 
         "KENDEX_SKILL_LOAD_RULES".to_owned(),
         "crates/ui/**/*.rs=iced-rs; it's".to_owned(),
     )]);
-    let assignment = "b=$(command -v bash); KENDEX_SKILL_LOAD_RULES='crates/ui/**/*.rs=iced-rs; it'\\''s' \"$b\" ";
+    let assignment = "b=$(command -v bash) || b=bash; KENDEX_SKILL_LOAD_RULES='crates/ui/**/*.rs=iced-rs; it'\\''s' \"$b\" ";
     for harness in [
         HarnessId::Claude,
         HarnessId::Codex,
@@ -238,10 +238,12 @@ fn a_declared_environment_is_assigned_ahead_of_the_script_that_names_the_hook() 
     );
 }
 
-/// A declared `PATH` reaches the script and never the interpreter lookup: both
+/// A declared `PATH` reaches the script and never hides the interpreter: both
 /// command shapes, the global one naming its script and the project one walking
-/// up to it, start the script, which reports the `PATH` it was given. The
-/// launching shell's own `PATH` is set on the child, since the lookup reads it.
+/// up to it, start the script, which reports the `PATH` it was given. Each row
+/// is the launching shell's `PATH`, set on the child since the first lookup
+/// reads it, and the declared one: a declared `PATH` without `bash`, and a
+/// launching one without it that the declared one supplies.
 #[cfg(unix)]
 #[test]
 fn a_declared_path_reaches_the_script_and_not_the_interpreter_lookup() {
@@ -251,27 +253,32 @@ fn a_declared_path_reaches_the_script_and_not_the_interpreter_lookup() {
     std::fs::create_dir_all(root.join("sub")).unwrap();
     let script = root.join("hooks/guard.sh");
     std::fs::write(&script, "printf '%s' \"$PATH\"\n").unwrap();
-    let vars = BTreeMap::from([("PATH".to_owned(), "/nonexistent".to_owned())]);
-    for command in [
-        direct_command(&crate::paths::slashed(&script), Some(&vars)),
-        project_command("hooks/guard.sh", Some(&vars)),
+    for (launching, declared) in [
+        ("/usr/bin:/bin", "/nonexistent"),
+        ("/nonexistent", "/usr/bin:/bin"),
     ] {
-        let line = format!(
-            "cd {} && {command}",
-            crate::names::quoted(&crate::paths::slashed(&root.join("sub")))
-        );
-        let out = crate::process::Hardened::program("/bin/sh", &["-c", &line])
-            .env("PATH", "/usr/bin:/bin")
-            .run()
-            .unwrap();
-        assert_eq!(
-            (
-                out.status.code(),
-                String::from_utf8_lossy(&out.stdout).as_ref()
-            ),
-            (Some(0), "/nonexistent"),
-            "{line}\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        let vars = BTreeMap::from([("PATH".to_owned(), declared.to_owned())]);
+        for command in [
+            direct_command(&crate::paths::slashed(&script), Some(&vars)),
+            project_command("hooks/guard.sh", Some(&vars)),
+        ] {
+            let line = format!(
+                "cd {} && {command}",
+                crate::names::quoted(&crate::paths::slashed(&root.join("sub")))
+            );
+            let out = crate::process::Hardened::program("/bin/sh", &["-c", &line])
+                .env("PATH", launching)
+                .run()
+                .unwrap();
+            assert_eq!(
+                (
+                    out.status.code(),
+                    String::from_utf8_lossy(&out.stdout).as_ref()
+                ),
+                (Some(0), declared),
+                "PATH={launching}: {line}\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
     }
 }

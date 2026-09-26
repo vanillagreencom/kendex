@@ -171,10 +171,13 @@ fn direct_command(path: &str, vars: Option<&BTreeMap<String, String>>) -> String
 /// starts under a bare `bash`. A shell resolves a command word with its
 /// assignments in force, so a declared `PATH` would decide where the
 /// interpreter is found: the interpreter is resolved first, under the
-/// launching environment, and the assignments prefix its resolved path.
+/// launching environment, and the assignments prefix its resolved path. A
+/// launching environment with no `bash` leaves the bare word, found under the
+/// declared one, so a declared `PATH` that supplies the interpreter still
+/// starts the script and a miss on both names `bash`.
 fn launch(vars: Option<&BTreeMap<String, String>>) -> Option<String> {
     let set = assignments(vars);
-    (!set.is_empty()).then(|| format!("b=$(command -v bash); {set}\"$b\" "))
+    (!set.is_empty()).then(|| format!("b=$(command -v bash) || b=bash; {set}\"$b\" "))
 }
 
 /// A hook's declared environment as the words that set it for the one command

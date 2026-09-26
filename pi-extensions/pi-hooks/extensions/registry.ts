@@ -125,7 +125,7 @@ interface RenderedCommand {
  * others: a global command names the file outright, `bash "<path>"`; a global
  * command for a hook whose declaration sets an environment binds the file
  * first, resolves `bash` and assigns before running it,
- * `h="<path>"; b=$(command -v bash); NAME='value' … "$b" "$h"`;
+ * `h="<path>"; b=$(command -v bash) || b=bash; NAME='value' … "$b" "$h"`;
  * and a project command, with or without an environment, opens by naming the
  * file under the project it will go and find, `p='<path>'; …`. All three are
  * read here, and `anchor` is what a project path is relative to — the project
