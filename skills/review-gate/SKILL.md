@@ -113,7 +113,7 @@ Keys a repo decides: [references/adoption.md](references/adoption.md) § Keys a 
 
 Evidence for the CURRENT head is any of:
 
-1. A non-author review object accepted by the configured trust and state rules.
+1. A non-author review object accepted by the configured trust and state rules, carrying content of its own: a verdict, a body, or a thread it opened.
 2. A trusted clean-analysis check-run or commit status that proves analysis ran.
 3. A trusted comment-form pass bound to this head's SHA.
 4. A trusted operator override with a reason, for missing evidence only.

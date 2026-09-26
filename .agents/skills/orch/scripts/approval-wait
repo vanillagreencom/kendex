@@ -234,11 +234,8 @@ review — for repos whose reviewers post COMMENTED reviews and never
           bodyless COMMENTED review reads the review-comment listing; a
           transient failure of that read retries inside the wait budget,
           and a terminal one ends the wait (review-comments-failed, exit 1).
-          Under review-gate's default review-object settings (any state,
-          no trusted-login list), the merge-blocking Review gate status
-          (review-predicate.sh) still counts a reply-only non-author
-          review, so the wait can keep waiting on a head that status
-          already passed; or
+          review-gate's review-predicate.sh applies the same content rule;
+          or
       (b) PR_REVIEW_CHECK is non-empty and the current head carries a
           successful signal of exactly that name on EITHER evidence
           surface (kendex#654, kendex#681): the newest check-run with that

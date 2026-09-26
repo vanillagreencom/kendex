@@ -20,18 +20,25 @@ threads() { # isResolved values as args
   jq -n --argjson nodes "$nodes" \
     '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:$nodes}}}}}'
 }
-review() { # login, state, submitted_at, [commit sha; default HEAD], [body] -> one review row
+review() { # login, state, submitted_at, [commit sha; default HEAD], [body], [id; default 1] -> one review row
   # Real review rows always carry a body (often ""), so the fixture does too:
   # the errored-attestation filter reads it, and modeling the field as absent
   # would leave the `.body // ""` fallback the only shape ever exercised.
   jq -n --arg sha "${4:-$HEAD}" --arg login "$1" --arg state "$2" --arg at "${3:-2026-01-01T00:00:00Z}" \
-    --arg body "${5-}" \
-    '{commit_id:$sha,state:$state,submitted_at:$at,body:$body,user:{login:$login}}'
+    --arg body "${5-}" --argjson id "${6:-1}" \
+    '{id:$id,commit_id:$sha,state:$state,submitted_at:$at,body:$body,user:{login:$login}}'
 }
 reviews_set() { # rows... -> reviews.json
   local rows="[]" row
   for row in "$@"; do rows="$(jq -c --argjson r "$row" '. + [$r]' <<<"$rows")"; done
   printf '%s\n' "$rows" >"$fixtures/reviews.json"
+}
+review_comment() { # review id, [id of the comment it answers] -> one review-comment row
+  # A comment that opens a thread carries no in_reply_to_id at all; a reply
+  # carries the id of the comment it answers.
+  jq -n --argjson review "$1" --arg reply "${2-}" \
+    '{pull_request_review_id:$review,body:"inline note"}
+     + (if $reply == "" then {} else {in_reply_to_id:($reply | tonumber)} end)'
 }
 checkrun() { # name, conclusion, summary, [app slug] -> checkruns.json
   # Real check runs always carry a publishing app; the default models a
