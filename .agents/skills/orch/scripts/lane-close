@@ -58,7 +58,7 @@ message() { # REASON FIELD=VALUE...
     prepare-stop-failed) printf '%s\n' 'The background launch job the record names could not be stopped. Close-out changed nothing else.' ;;
     validate-stop-failed) printf '%s\n' "A validation run in the lane's worktree could not be ended. The window and record are unchanged; dev-validate-run's own words are on the lines above this one." ;;
     item-files-failed) printf '%s\n' "The item's files in the state directory could not all be removed. The host, window and record are unchanged, and a second close retries the removal. workflow-state's own words are on the lines above this one." ;;
-    item-files-kept) printf '%s\n' "The item is not finished, or its tracker did not answer, so its files in the state directory stay for a relaunch. cause is open for an item the tracker holds open, and otherwise names the read that did not answer, as tracker-read-failed does. The prune keeps them while the item's workflow state stands." ;;
+    item-files-kept) printf '%s\n' "The item is not finished, or its tracker did not answer, so its files in the state directory stay for a relaunch. cause is open for an item the tracker holds open, and otherwise names the read that did not answer, as tracker-read-failed does. How long they stay is the prune's keep list, as workflow-state prune --help states." ;;
     helper-missing) printf '%s\n' 'The required helper is not executable. Close-out changed nothing.' ;;
     stopped) printf '%s\n' 'The lane window closed and its sandbox was kept.' ;;
     closed) printf '%s\n' 'The lane, sandbox and fleet record closed.' ;;
@@ -123,8 +123,8 @@ null or absent; the record wins where it carries a value, and an option that
 contradicts one refuses as record-invalid. An exited lane closes without any
 of them, but its files leave the state directory only where its tracker
 answers, so a record carrying no tracker or repository takes --tracker or
---repo on that close; otherwise the files stay while the item's workflow state
-stands.
+--repo on that close; otherwise the files stay for as long as the prune holds
+the item live.
 
 A field neither the record nor an option carries is read from the lane where
 the lane answers it: tracker from the item key, linear for a tracker
