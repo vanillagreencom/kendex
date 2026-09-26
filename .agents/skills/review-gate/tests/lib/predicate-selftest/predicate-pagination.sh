@@ -11,6 +11,13 @@ jq -n --argjson r "$(review "reviewer" APPROVED "2026-01-02T00:00:00Z")" '[$r]' 
 run "pagination: review evidence on page 2 counts (page merge)" approved
 
 reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE=any
+reviews_set "$(review "reviewer" COMMENTED "2026-01-01T00:00:00Z" "$HEAD" "" 7)"
+jq -n --argjson c "$(review_comment 8)" '[$c]' >"$fixtures/review-comments.json"
+jq -n --argjson c "$(review_comment 7)" '[$c]' >"$fixtures/review-comments.page2.json"
+run "pagination: a thread opener on review-comments page 2 counts" approved
+
+reset
 CFG_TRUSTED_LOGINS=""
 jq -n --argjson r "$(review "reviewer" APPROVED)" '[$r]' >"$fixtures/reviews.json"
 jq -n --argjson r "$(review "objector" CHANGES_REQUESTED)" '[$r]' >"$fixtures/reviews.page2.json"
