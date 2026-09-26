@@ -117,8 +117,8 @@ mod repo_effects;
 pub use repo_effects::{InstalledDeclaration, installed_declaration, installed_declarations};
 mod report_types;
 pub use report_types::{
-    DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ForkEdit, Installation,
-    ItemWarning, PlanOptions, Registrations, StoodIn, StoodInRecord,
+    DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ForkEdit, Held, HeldPin,
+    Installation, ItemWarning, PlanOptions, Registrations, StoodIn, StoodInRecord,
 };
 
 pub(super) struct PlanOwnership {
@@ -156,7 +156,7 @@ pub fn plan_scope(
     // manifest any write this plan carries is built from. A single-package
     // update reads from a copy with every other follower pinned at its
     // installed commit — the pins steer this pass and never reach the file.
-    let (manifest, state) = desired_pass(env, scope, declared, lock, options)?;
+    let (manifest, state, held) = desired_pass(env, scope, declared, lock, options)?;
     // Advisory scoring over what this plan would write, before the ops are
     // planned: the rows ride out on the report beside the plan.
     let safety = scoring::run(scope, &state);
@@ -252,6 +252,7 @@ pub fn plan_scope(
         installations,
         stood_in: readings.stood_in(lock),
         record: new_lock,
+        held,
     };
     report.notes.extend(scope_notes);
     settled(env, scope, &manifest, lock, options, &state.items, report)
@@ -452,14 +453,19 @@ fn installations(
 /// The synthetic holds come back out of the manifest this pass computed
 /// before anything can write it: that manifest is a copy of the pinned
 /// one, and no written manifest may carry a pin as if the person had
-/// chosen it.
+/// chosen it. They come back as the third value for a proof that has to
+/// say where each one came from.
 fn desired_pass<'a>(
     env: &Env,
     scope: &Scope,
     declared: &'a Manifest,
     lock: &Lock,
     options: &PlanOptions,
-) -> Result<(std::borrow::Cow<'a, Manifest>, desired::DesiredState)> {
+) -> Result<(
+    std::borrow::Cow<'a, Manifest>,
+    desired::DesiredState,
+    Vec<HeldPin>,
+)> {
     let (planning, held_pins) = desired::hold::planning_manifest(declared, lock, options);
     let mut state = desired_state(
         env,
@@ -472,7 +478,10 @@ fn desired_pass<'a>(
     if let (Some(pins), Some(update)) = (&held_pins, state.manifest_update.as_mut()) {
         pins.unpin(update);
     }
-    Ok((planning, state))
+    let held = held_pins
+        .map(|pins| pins.pins().to_vec())
+        .unwrap_or_default();
+    Ok((planning, state, held))
 }
 
 /// The record this pass will write, before any of it is filled in: the

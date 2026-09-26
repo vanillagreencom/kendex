@@ -234,7 +234,7 @@ fn an_edit_to_the_tree_raises_no_row_and_moves_no_record() {
         &world.scope,
         &lock,
         &report,
-        kendex_core::attest::Reading::Current,
+        &kendex_core::attest::Floor::Open,
     )
     .unwrap()
     .unwrap();

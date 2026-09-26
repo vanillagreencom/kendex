@@ -1273,6 +1273,8 @@ TOML
   assert_eq "a customized consumer's pure refresh is a render" \
     "class=render measured=true cause=renders-match-their-sources" \
     "$(printf '%s\n' "$refresh_err" | sed -n 's/^class: //p')"
+  assert_eq "and a record the catalog has not moved past trails nothing" "" \
+    "$(printf '%s\n' "$refresh_err" | sed -n '/^render-stale: /p')"
 
   # A priming step that writes into the checkout would be weighing its own
   # repair rather than the commit, had the proof run there. It runs in a
@@ -1439,6 +1441,19 @@ TOML
   assert_eq "a hand edit the catalog moved past is still refused" \
     "class=standard measured=false cause=verify-refused" \
     "$(printf '%s\n' "$hand_behind_err" | sed -n 's/^class: //p')"
+
+  # A branch that puts the older install back, record and renders together,
+  # renders clean at its own commits; the base's record is the floor that
+  # refuses it the class.
+  git -C "$consumer" checkout -q -B rolled-back refreshed
+  git -C "$consumer" checkout -q "$consumer_base" -- .
+  git -C "$consumer" add -A
+  git -C "$consumer" commit -q -m "the older install put back"
+  rolled_back_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base refreshed --head HEAD)"
+  assert_eq "a record rewritten back past the base's is not a render" \
+    "class=standard measured=false cause=verify-refused" \
+    "$(printf '%s\n' "$rolled_back_err" | sed -n 's/^class: //p')"
 fi
 
 # Must-fail control: a classifier that trusts .kendex-generated.json instead of

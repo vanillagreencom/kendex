@@ -25,7 +25,7 @@ use kendex_core::model::HarnessId;
 use kendex_core::process::Hardened;
 
 #[allow(clippy::expect_used)]
-fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
+pub(crate) fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_kendex"))
         .args(args)
         .current_dir(cwd)
@@ -37,7 +37,7 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .expect("kendex binary runs")
 }
 
-fn said(output: &Output) -> String {
+pub(crate) fn said(output: &Output) -> String {
     format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -46,7 +46,7 @@ fn said(output: &Output) -> String {
 }
 
 #[allow(clippy::unwrap_used)]
-fn git(dir: &Path, args: &[&str]) -> String {
+pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
     let home = dir.to_str().unwrap();
     let out = Hardened::git(args, Some(dir))
         .env("HOME", home)
@@ -66,7 +66,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 #[allow(clippy::unwrap_used)]
-fn write(path: &Path, text: &str) {
+pub(crate) fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
 }
@@ -79,19 +79,19 @@ fn repository(dir: &Path) {
     git(dir, &["config", "core.hooksPath", ".git/hooks"]);
 }
 
-fn commit(dir: &Path, message: &str) {
+pub(crate) fn commit(dir: &Path, message: &str) {
     git(dir, &["add", "-A"]);
     git(dir, &["commit", "-q", "-m", message]);
 }
 
 /// The commit the installed consumer is tagged at.
-const INSTALLED: &str = "installed";
+pub(crate) const INSTALLED: &str = "installed";
 
-struct World {
+pub(crate) struct World {
     _tmp: tempfile::TempDir,
-    home: PathBuf,
-    project: PathBuf,
-    catalog: PathBuf,
+    pub(crate) home: PathBuf,
+    pub(crate) project: PathBuf,
+    pub(crate) catalog: PathBuf,
 }
 
 /// A consumer with one item of every kind installed, on the awkward names:
@@ -107,7 +107,7 @@ struct World {
 /// extension alone, and `spare` for nothing, the state a source is in
 /// after its last package is removed. Installed, committed and tagged.
 #[allow(clippy::unwrap_used)]
-fn world() -> World {
+pub(crate) fn world() -> World {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let catalog = home.join("cat");
@@ -211,7 +211,7 @@ fn world() -> World {
 }
 
 /// One verify run of the project scope, with the document it printed.
-fn verify(world: &World, base: Option<&str>) -> (Output, Document) {
+pub(crate) fn verify(world: &World, base: Option<&str>) -> (Output, Document) {
     verify_scope(world, "project", base)
 }
 
@@ -234,7 +234,7 @@ fn verify_from(home: &Path, cwd: &Path, scope: &str, base: Option<&str>) -> (Out
     (output, document)
 }
 
-fn row<'a>(
+pub(crate) fn row<'a>(
     document: &'a Document,
     kind: &str,
     name: &str,
@@ -407,7 +407,7 @@ fn every_row_prints_the_positions_it_rendered() {
 
 /// One edit to the JSON document at `path`.
 #[allow(clippy::unwrap_used)]
-fn edit_json(path: &Path, edit: impl Fn(&mut serde_json::Value)) {
+pub(crate) fn edit_json(path: &Path, edit: impl Fn(&mut serde_json::Value)) {
     let mut value: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
     edit(&mut value);
@@ -448,7 +448,7 @@ type Failing = (
 );
 
 const CLAUDE_SECOND: &str = ".claude/skills/second/SKILL.md";
-const RECORD: &str = ".kendex-lock.json";
+pub(crate) const RECORD: &str = ".kendex-lock.json";
 const INVENTORY: &str = ".kendex-generated.json";
 
 fn on_record(edit: impl Fn(&mut serde_json::Value) + 'static) -> Edit {
@@ -1656,75 +1656,5 @@ fn a_moved_hook_is_replayed_with_its_retirement_first() {
             Some(Foreign::Unchanged)
         )],
         "{document:?}"
-    );
-}
-
-/// `--at-record` renders each recorded package at the commit the record
-/// names. A catalog that moved on past the install stales every row of
-/// the plain verify, while the same record weighed at its own commits is
-/// clean and names the source it trails in the document. A commit the
-/// mirror holds off the declared revision's history, here a side branch
-/// whose skill bytes are the installed ones, renders identically, so only
-/// the history check fails it: dropping that check is this surface's
-/// must-fail control.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn at_record_weighs_a_record_the_source_moved_past_on_its_own_commits() {
-    let world = world();
-    let installed_at = git(&world.catalog, &["rev-parse", "HEAD"])
-        .trim()
-        .to_owned();
-    git(&world.catalog, &["checkout", "-q", "-b", "side"]);
-    write(&world.catalog.join("NOTES.md"), "A side note.\n");
-    commit(&world.catalog, "a side branch");
-    let side = git(&world.catalog, &["rev-parse", "HEAD"])
-        .trim()
-        .to_owned();
-    git(&world.catalog, &["checkout", "-q", "main"]);
-    let skill = world.catalog.join("skills/second/SKILL.md");
-    let text = fs::read_to_string(&skill).unwrap();
-    write(&skill, &format!("{text}\nA paragraph added later.\n"));
-    commit(&world.catalog, "the catalog moves on");
-    let tip = git(&world.catalog, &["rev-parse", "HEAD"])
-        .trim()
-        .to_owned();
-    let fetched = kendex(&world.home, &world.project, &["source", "refresh"]);
-    assert!(fetched.status.success(), "{}", said(&fetched));
-
-    let (current, _) = verify(&world, None);
-    assert!(!current.status.success(), "{}", said(&current));
-    let at_record = |world: &World| {
-        let output = kendex(
-            &world.home,
-            &world.project,
-            &["verify", "--scope", "project", "--json", "--at-record"],
-        );
-        let document: Document = serde_json::from_slice(&output.stdout).unwrap();
-        (output, document)
-    };
-    let (held, document) = at_record(&world);
-    assert!(held.status.success(), "{}", said(&held));
-    assert!(
-        document.stale.iter().any(|stale| stale.source == "cat"
-            && stale.recorded == installed_at
-            && stale.resolved == tip),
-        "{document:?}"
-    );
-
-    on_record(move |lock| {
-        for key in ["skill:second:claude", "skill:second:codex"] {
-            lock["entries"][key]["sourceCommit"] = serde_json::Value::String(side.clone());
-        }
-    })(&world);
-    let (off_history, document) = at_record(&world);
-    assert!(!off_history.status.success(), "{}", said(&off_history));
-    let record = row(&document, "record", RECORD, None).unwrap();
-    assert!(
-        record
-            .detail
-            .as_deref()
-            .unwrap_or_default()
-            .contains("is not on the declared revision's history"),
-        "{record:?}"
     );
 }

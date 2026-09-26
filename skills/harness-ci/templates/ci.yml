@@ -39,7 +39,9 @@ jobs:
       HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
       # The kendex the render proof re-renders with: a published main build,
       # whose installer is read at the same sha. Move both together, to a
-      # build whose `kendex verify --json` prints a version 1 document.
+      # build whose `kendex verify --json` prints a version 1 document and
+      # whose `kendex verify` takes `--at-record`; without that flag a render
+      # the catalog has moved past since its push answers standard.
       KENDEX_BUILD_SHA: 2ba4f18c9ba6889a190ad6f19793ac4bf089df35
       KENDEX_VERSION: main-build-133-1-2ba4f18c9ba6889a190ad6f19793ac4bf089df35
     steps:

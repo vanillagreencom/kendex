@@ -284,6 +284,39 @@ pub struct EngineReport {
     /// what a proof holds the committed record to. Empty on a report
     /// observed rather than planned, which nothing proves a record by.
     pub record: Lock,
+    /// The commits a held plan read declarations at in place of their
+    /// sources' revisions, each taken from the record. Empty on a plan
+    /// that holds nothing.
+    pub held: Vec<HeldPin>,
+}
+
+/// One declaration a held plan read at the commit the record names
+/// rather than at its source's revision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldPin {
+    pub held: Held,
+    /// The declared source it reads from.
+    pub source: String,
+    /// The repository that source points at, spelled as the record's
+    /// `sourceRepo` spells it.
+    pub repo: String,
+    pub commit: String,
+}
+
+/// What a held pin holds: an item's declaration or a set's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Held {
+    Item { kind: ItemKind, name: String },
+    Set { name: String },
+}
+
+impl std::fmt::Display for Held {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Held::Item { kind, name } => write!(f, "{} {name}", kind.name()),
+            Held::Set { name } => write!(f, "set {name}"),
+        }
+    }
 }
 
 /// Each source and set the record carries that a pass could not hold to a
@@ -341,6 +374,7 @@ impl EngineReport {
             installations: BTreeMap::new(),
             stood_in: StoodInRecord::default(),
             record: Lock::default(),
+            held: Vec::new(),
         }
     }
 }
@@ -484,14 +518,6 @@ impl PlanOptions {
             update_only: Some(targets.into_iter().collect()),
             ..PlanOptions::default()
         }
-    }
-
-    /// [`PlanOptions::for_packages`] naming nobody: every package the
-    /// lock can place holds at the commit it records. What `verify
-    /// --at-record` renders against, so a record the source has moved past
-    /// is weighed on its own terms.
-    pub fn at_record() -> Self {
-        PlanOptions::for_packages([])
     }
 
     /// [`PlanOptions::for_package`] that also discards that package's own

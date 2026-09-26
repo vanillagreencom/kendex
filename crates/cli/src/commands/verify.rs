@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use kendex_core::attest::{self, Document, Foreign, Placed, Reading, Row, Stale, Standing, State};
+use kendex_core::attest::{
+    self, Document, Floor, Foreign, Placed, Reading, Row, Stale, Standing, State,
+};
 use kendex_core::engine::{
     DriftState, Installation, Owns, Position, ShimStanding, planned_declarations,
 };
@@ -21,7 +23,7 @@ use crate::ui;
 /// compared against.
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct Output {
-    /// Render each recorded package at the commit the install record names, not at its source's revision now; that commit must be on the source's history
+    /// Render each package that follows its source at the commit the install record names, not at the source's revision now; that commit must be on the source's history and, with --base, no older than the base revision's record names. A package with a revision of its own, or whose installations disagree on a commit, resolves as usual
     #[arg(long)]
     pub at_record: bool,
     /// Also print one JSON document on stdout: every row with its state and the positions it occupies
@@ -38,6 +40,18 @@ impl Output {
         match self.at_record {
             true => Reading::Recorded,
             false => Reading::Current,
+        }
+    }
+
+    /// How far back a held commit may reach in `scope`: the record
+    /// `--base` held, for a project run at the record's commits. The
+    /// global scope has no project revision to read one from.
+    fn floor(&self, scope: &Scope) -> Floor {
+        match (self.reading(), scope, self.base.as_deref()) {
+            (Reading::Recorded, Scope::Project { root }, Some(rev)) => attest::floor_at(root, rev),
+            (Reading::Recorded, Scope::Global, _)
+            | (Reading::Recorded, Scope::Project { .. }, None)
+            | (Reading::Current, _, _) => Floor::Open,
         }
     }
 }
@@ -256,15 +270,15 @@ fn check_scope(
     tally.setup_failed += super::repo_effects::say_lapsed(env, &scope, names);
     let record = match fallback {
         true => None,
-        false => attest::record(env, &scope, &lock, &report, reading)?,
+        false => attest::record(env, &scope, &lock, &report, &output.floor(&scope))?,
     };
     bookkeeping_rows(&scope, record, &report, &placer, tally)?;
     Ok(())
 }
 
-/// The sources this scope's record trails, each said beside the rows
-/// where the run rendered at the record's commits: the rows then pass
-/// on a render the source has moved past, and this is its age.
+/// The source commits this scope's record trails, each said beside the
+/// rows where the run rendered at the record's commits: the rows then
+/// pass on a render the source has moved past, and this is its age.
 fn trailed(
     scope: &Scope,
     lock: &kendex_core::lock::Lock,
@@ -275,7 +289,7 @@ fn trailed(
     if reading == Reading::Recorded {
         for behind in &stale {
             note(&format!(
-                "{}: source {} checked at its recorded commit {}; it resolves to {} now",
+                "{}: source {} checked at recorded commit {}; it resolves to {} now",
                 scope_label(scope),
                 behind.source,
                 behind.recorded,
