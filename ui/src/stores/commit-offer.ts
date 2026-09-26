@@ -317,20 +317,25 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
 
   const head = () => get().queue[0];
 
-  /** Read the head project again after a step this dialog ran, against the
-   *  same reading the offer was scoped to: the action's own work plus what
-   *  the step wrote, with the earlier edits still asked about. An offer a
-   *  person opened keeps no reading, and is opened again as they opened
-   *  it. */
+  /** Read the head project again after a step this dialog ran, through the
+   *  one door a single project is read by, handing it the reading the
+   *  offer was scoped to: the action's own work plus what the step wrote,
+   *  with the earlier edits still asked about. An offer a person opened
+   *  keeps no reading and reads as they opened it. A read that fails or
+   *  finds the project blocked says so, and leaves the offer and its
+   *  reading where they were. */
   const reread = async (root: string): Promise<OpenedFor> => {
-    const since = get().baselines[root];
-    if (since === undefined) return get().openFor(root);
-    const response = await commands.commitOfferScan([root], [since]);
+    const response = await commands.commitOfferOpen(
+      root,
+      get().baselines[root] ?? null,
+    );
     if (response.status === "error") {
       return { at: "failed", error: response.error };
     }
-    const offer = response.data.find((one) => one.root === root);
-    if (!offer) return { at: "nothing" };
+    if (response.data.kind === "nothing") return { at: "nothing" };
+    if (response.data.kind === "blocked")
+      return { at: "blocked", flag: response.data.flag };
+    const offer = response.data.offer;
     set({
       queue: [offer, ...get().queue.filter((one) => one.root !== root)],
       // The set the earlier edits ride along with may have changed, so
@@ -531,7 +536,8 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
 
     openFor: async (root) => {
       const ticket = opens.begin();
-      const response = await commands.commitOfferOpen(root);
+      // A person opening the review has no action to scope it to.
+      const response = await commands.commitOfferOpen(root, null);
       const newest = opens.lands(ticket);
       if (response.status === "error") {
         return { at: "failed", error: response.error };

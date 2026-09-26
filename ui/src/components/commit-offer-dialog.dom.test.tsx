@@ -11,7 +11,7 @@ import {
   COMMIT_LABEL,
   TANGLED_LABEL,
 } from "@/lib/copy-commit-offer";
-import { useCommitOfferStore } from "@/stores/commit-offer";
+import { type Stage, useCommitOfferStore } from "@/stores/commit-offer";
 import { mount, settle } from "@/test/dom";
 import { CommitOfferDialog } from "./commit-offer-dialog";
 
@@ -65,10 +65,12 @@ beforeEach(() => {
   });
 });
 
-// A held offer draws why each package holds it, the disclosure its setup's
-// yes is given against, and the setup and leaving the files, never a commit
-// route. After a setup that left it held, the fresh reading's words are
-// drawn with leaving the only choice.
+// Every stage a held offer reaches, one row each, so a stage the dialog
+// draws with no row here is visible in the table. Held: why each package
+// holds the commit, the disclosure its setup's yes is given against, the
+// setup and leaving, never a commit route. Setting up: the same, both
+// actions disabled. Setup failed: the words, leaving only. Still held: the
+// fresh reading's words, leaving only.
 describe("an offer a package holds", () => {
   const held = (why: StalePackage["why"], said: string[]): StalePackage => ({
     name: "bot-instructions",
@@ -95,57 +97,86 @@ describe("an offer a package holds", () => {
       undo: null,
     },
   });
+  const NOT_SET_UP =
+    "bot-instructions is not set up in this checkout, so its files in this repository were not brought up to date.";
+  const DISCLOSED = "Renders the review-bot files.";
 
   it.each([
     {
-      name: "not set up",
+      name: "held, not set up",
+      stage: { at: "offer" } as Stage,
       held: held("notSetUp", []),
-      line: "bot-instructions is not set up in this checkout, so its files in this repository were not brought up to date.",
+      title: "1 file kendex wrote in site is not committed",
+      words: [NOT_SET_UP, DISCLOSED],
+      actions: ["Leave as diffs", "Set up bot-instructions here"],
+      disabled: false,
     },
     {
-      name: "out of date",
+      name: "held, out of date",
+      stage: { at: "offer" } as Stage,
       held: held("outOfDate", ["drift: AGENTS.md differs from a fresh render"]),
-      line: "bot-instructions says its files in this repository are out of date.",
-    },
-  ])("offers the setup and no commit: $name", async (row) => {
-    useCommitOfferStore.setState({ queue: [{ ...offer, stale: [row.held] }] });
-    mount(<CommitOfferDialog />);
-    await settle();
-
-    const labels = buttons();
-    expect(labels).toContain("Set up bot-instructions here");
-    expect(labels).toContain("Leave as diffs");
-    expect(labels).not.toContain(COMMIT_LABEL);
-    const text = document.body.textContent ?? "";
-    for (const said of [row.line, ...row.held.said])
-      expect(text).toContain(said);
-    expect(text).toContain("Renders the review-bot files.");
-    expect(text).not.toContain("raw summary");
-  });
-
-  it("draws the fresh reading's words once the setup ran", async () => {
-    useCommitOfferStore.setState({
-      queue: [
-        {
-          ...offer,
-          stale: [
-            held("unchecked", ["fail-check: the manifest would not read"]),
-          ],
-        },
+      title: "1 file kendex wrote in site is not committed",
+      words: [
+        "bot-instructions says its files in this repository are out of date.",
+        "drift: AGENTS.md differs from a fresh render",
+        DISCLOSED,
       ],
-      stage: { at: "stillHeld" },
+      actions: ["Leave as diffs", "Set up bot-instructions here"],
+      disabled: false,
+    },
+    {
+      name: "setting up",
+      stage: { at: "settingUp" } as Stage,
+      held: held("notSetUp", []),
+      title: "1 file kendex wrote in site is not committed",
+      words: [NOT_SET_UP, DISCLOSED],
+      actions: ["Leave as diffs", "Setting up…"],
+      disabled: true,
+    },
+    {
+      name: "setup failed",
+      stage: {
+        at: "setUpFailed",
+        error: "bot-instructions: render exited 2",
+      } as Stage,
+      held: held("notSetUp", []),
+      title: "The setup did not finish",
+      words: ["bot-instructions: render exited 2"],
+      actions: ["Leave as diffs"],
+      disabled: false,
+    },
+    {
+      name: "still held",
+      stage: { at: "stillHeld" } as Stage,
+      held: held("unchecked", ["fail-check: the manifest would not read"]),
+      title: "Set up, and still not ready to commit",
+      words: [
+        "bot-instructions could not say whether its files in this repository are up to date.",
+        "fail-check: the manifest would not read",
+      ],
+      actions: ["Leave as diffs"],
+      disabled: false,
+    },
+  ])("draws its stage: $name", async (row) => {
+    useCommitOfferStore.setState({
+      queue: [{ ...offer, stale: [row.held] }],
+      stage: row.stage,
     });
     mount(<CommitOfferDialog />);
     await settle();
 
+    const title = document.body.querySelector('[data-slot="dialog-title"]');
+    expect(title?.textContent).toBe(row.title);
     const text = document.body.textContent ?? "";
-    expect(text).toContain("Set up, and still not ready to commit");
-    expect(text).toContain(
-      "bot-instructions could not say whether its files in this repository are up to date.",
-    );
-    expect(text).toContain("fail-check: the manifest would not read");
-    expect(buttons()).toContain("Leave as diffs");
-    expect(buttons()).not.toContain("Set up bot-instructions here");
+    for (const said of row.words) expect(text).toContain(said);
+    expect(text).not.toContain("raw summary");
+    const footer = [
+      ...document.body.querySelectorAll('[data-slot="dialog-footer"] button'),
+    ];
+    expect(footer.map((one) => one.textContent)).toEqual(row.actions);
+    for (const one of footer)
+      expect((one as HTMLButtonElement).disabled).toBe(row.disabled);
+    expect(buttons()).not.toContain(COMMIT_LABEL);
   });
 });
 

@@ -312,7 +312,7 @@ A refused commit prints git's words and asks again. The words below are one repo
 1-3, or Enter to leave them as diffs:
 ```
 
-A refused commit whose words carry a findings block leads with it, and the rest waits behind a choice. The findings below are bot-instructions' own lines, each drift finding followed by its remedy, shown to fix the shape:
+A refused commit whose words carry a findings block leads with it, and the rest waits behind a choice. The words below are one check's findings, shown to fix the shape and the indent, not to fix what any check says:
 
 ```
   the commit was refused

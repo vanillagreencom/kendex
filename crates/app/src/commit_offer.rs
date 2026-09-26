@@ -717,26 +717,36 @@ pub fn commit_offer_scan(
     Ok(offers)
 }
 
-/// Build the offer for one project because a person asked for it, rather
-/// than because a write left it behind.
+/// Build the offer for one project on the window's own ask, rather than
+/// because a write's scan left it behind.
 ///
 /// The setting that turns off asking is not consulted: it decides whether
-/// kendex opens the question by itself, and this is the person opening it.
-/// Nothing is attributed to an action either — there is none — so every
-/// pending change is theirs to choose from.
+/// kendex opens the question by itself, and this is the window asking.
+/// `since` is the reading an offer on screen was scoped to, where the
+/// window reads that offer again after a step it ran: the answer keeps the
+/// action's attribution, and a read that fails or finds the project
+/// blocked says so rather than reading as nothing pending. Without one a
+/// person opened the review, and nothing is attributed to an action, so
+/// every pending change is theirs to choose from.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn commit_offer_open(root: String) -> Result<OpenOffer, String> {
+pub fn commit_offer_open(
+    root: String,
+    since: Option<ProjectBaseline>,
+) -> Result<OpenOffer, String> {
     let env = env()?;
-    Ok(
-        match read(&env, &PathBuf::from(&root), &root, Opened::ByPerson)? {
-            Some(Ok(offer)) => OpenOffer::Offer {
-                offer: Box::new(offer),
-            },
-            Some(Err(flag)) => OpenOffer::Blocked { flag },
-            None => OpenOffer::Nothing,
+    let since = since.map(ProjectBaseline::into_core);
+    let opened = match &since {
+        Some(since) => Opened::ByWrite(Some(since)),
+        None => Opened::ByPerson,
+    };
+    Ok(match read(&env, &PathBuf::from(&root), &root, opened)? {
+        Some(Ok(offer)) => OpenOffer::Offer {
+            offer: Box::new(offer),
         },
-    )
+        Some(Err(flag)) => OpenOffer::Blocked { flag },
+        None => OpenOffer::Nothing,
+    })
 }
 
 /// What asking for one project's offer answered with.
