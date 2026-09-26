@@ -83,3 +83,45 @@ lane_hosted_state_path() {
   [[ "$remote" == /* ]] || remote="$1/$remote"
   LANE_HOSTED_STATE_PATH="$remote/workflow-state-$3.json"
 }
+
+# lane_item_state WORKFLOW_STATE LANE_HOST_CLI STATE_DIR ITEM HOST ROOT SCRATCH
+# — sets LANE_ITEM_STATE to the item's own workflow-state JSON, empty where
+# the lane has written none. A local lane's, HOST empty, is under the project
+# state directory of its own checkout, ROOT, where ROOT is a directory, so a
+# lane of another repository reads from that repository, and of the caller's
+# checkout where ROOT is gone or unrecorded; a hosted lane's is in its clone
+# at ROOT, read
+# through the probe above with ORCH_LANE_HOST set to HOST. A hosted worktree
+# already gone, which ../../workflows/merge-pr.md § 5 leaves behind a merged
+# lane until lane-close runs, has no state either. 0 read, the state possibly
+# empty; 2 the read failed, SCRATCH/state.err saying why.
+LANE_ITEM_STATE=""
+lane_item_state() {
+  local path rc=0
+  LANE_ITEM_STATE=""
+  if [[ -z "$5" ]]; then
+    if [[ -n "$6" && -d "$6" ]]; then
+      path="$(cd -- "$6" && "$1" path "$4" 2>"$7/state.err")" || return 2
+    else
+      path="$("$1" path "$4" 2>"$7/state.err")" || return 2
+    fi
+    [[ -f "$path" ]] || return 0
+    LANE_ITEM_STATE="$(jq -c . -- "$path" 2>"$7/state.err")" || return 2
+    return 0
+  fi
+  ORCH_LANE_HOST="$5" lane_hosted_clone "$2" "$4" "$6" "$7/gitfile" "$7/state.err" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) return 0 ;;
+    3) printf '%s\n' "$6/.git: ${LANE_HOSTED_GITLINE:-<empty>}" >"$7/state.err"; return 2 ;;
+    *) return 2 ;;
+  esac
+  lane_hosted_state_path "$LANE_HOSTED_CLONE" "$3" "$4"
+  ORCH_LANE_HOST="$5" lane_host_fetch "$2" "$4" "$LANE_HOSTED_STATE_PATH" \
+    "$7/item-state.json" "$7/state.err" || rc=$?
+  case "$rc" in
+    0) LANE_ITEM_STATE="$(jq -c . -- "$7/item-state.json" 2>"$7/state.err")" || return 2 ;;
+    1) ;;
+    *) return 2 ;;
+  esac
+}

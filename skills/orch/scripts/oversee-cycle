@@ -1,0 +1,305 @@
+#!/usr/bin/env bash
+# oversee-cycle — a closed lane's merge-time record against its class target,
+# and the fleet's per-class rollup of those records.
+#
+# Usage:
+#   oversee-cycle [--state-dir DIR] record --pr N --tier micro|standard
+#                 [--repo OWNER/REPO] ITEM
+#   oversee-cycle [--state-dir DIR] rollup
+#
+# --state-dir is the fleet state's directory, as workflow-state takes it.
+#
+# record reads the lane record ITEM names in the oversee state, the merged
+# pull request's stamps from the github skill's `pr-timeline`, and the class
+# of the merged diff from harness-ci's classifier through lib/change-class.sh,
+# over the merge commit's first parent to the merge commit, read from this
+# checkout, which fetches the merge commit from origin where it lacks it. Run
+# it from a checkout of the lane's repository: where the lane's worktree names
+# another origin, or --repo another repository, the class is unread with
+# cause checkout-other-repo. A classifier answer whose `measured=` marker is
+# not true is no class. --repo
+# defaults to the lane record's repo, then this checkout's. --tier is the tier oversee.md
+# § Item Tier gave the item at its first launch. The round counts come from
+# the lane's own workflow state, read as oversee-report reads it through
+# lib/lane-gitfile.sh's lane_item_state; a lane whose state is gone, which
+# merge-pr.md § 5 removes, records its rounds as null, never as zero, and a
+# read that failed also prints `oversee-cycle: rounds-unread item=ITEM` and
+# the reason on stderr.
+#
+# It writes the record's `cycle` object, appends one `cycle` row to the fleet
+# log, and prints the same line:
+#   cycle item=ITEM pr=N class=C tier=T target=S actual=S verdict=V phase=P
+#     phase_secs=S missing=A,B review=N fix=N bot=N full_validations=N
+#     escaped=B refixed=B
+# (one line). A value it could not read prints `-`.
+#   stamps    launched (the record's launched_at), first_commit, pr_opened,
+#             gate_green, ci_green, armed (armed, else queued), merged
+#   missing   the stamps that are null
+#   target    seconds, launch to merge, by class, from the table `--help`
+#             prints last
+#   actual    merged minus launched
+#   verdict   met, miss (actual over target), unmeasured (launched or merged
+#             missing), or unclassified (the classifier gave no class)
+#   phase     the longest gap between two consecutive stamps in time order,
+#             named by the stamp that ends it; the earliest wins a tie. Null
+#             while any stamp is missing, since a missing stamp joins two gaps
+#   escaped   a micro tier whose merged class is small or standard
+#   refixed   a push landed after the first review-gate pass; null where no
+#             gate pass or no push was read
+# When this record makes the third miss on one phase among the fleet's
+# records, it also prints and logs
+#   repeat-miss phase=P items=A,B,C
+# which is the bar for filing a CI or process issue in that repository. A
+# record that was already a miss on that phase does not make it again.
+#
+# rollup prints, and appends to the fleet log, one row per class with any
+# recorded lane, in the order of the target table, then unclassified; with no
+# fleet state yet it prints nothing and exits 0:
+#   rollup class=C items=N median=S p90=S misses=N review=N fix=N bot=N
+#     full_validations=N rounds_unread=N escaped=N refixed=N
+# median and p90 are nearest-rank over the measured launch-to-merge seconds;
+# the round figures are sums over the records that carry rounds, and
+# rounds_unread counts the records that do not.
+#
+# Every refusal's first stderr line is `oversee-cycle: KEY=VALUE`.
+# Exit status: 0 done; 1 a refusal (state-missing, state-unreadable,
+# record-missing, timeline-failed, not-merged, state-write-failed,
+# fleet-log-failed); 2 usage.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
+GITHUB="$SCRIPT_DIR/../../github/scripts/github.sh"
+LANE_HOST="$SCRIPT_DIR/lane-host"
+# shellcheck source=lib/change-class.sh
+source "$SCRIPT_DIR/lib/change-class.sh"
+# shellcheck source=lib/lane-gitfile.sh
+source "$SCRIPT_DIR/lib/lane-gitfile.sh"
+# shellcheck source=../../github/scripts/lib/gh-repo.sh
+source "$SCRIPT_DIR/../../github/scripts/lib/gh-repo.sh"
+
+TARGETS='{"render":300,"trivial":300,"micro":900,"small":1500,"standard":5400}'
+
+usage() {
+  awk 'NR > 1 && /^set -euo/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"
+  jq -r '"Targets, seconds: " + (to_entries | map("\(.key) \(.value)") | join(", "))' <<<"$TARGETS"
+}
+
+refuse() { # KEY VALUE [DETAIL_FILE]
+  printf 'oversee-cycle: %s=%s\n' "$1" "$2" >&2
+  [[ -z "${3:-}" || ! -s "$3" ]] || cat -- "$3" >&2
+  exit 1
+}
+usage_error() { printf 'oversee-cycle: usage=%s\n' "$1" >&2; exit 2; }
+
+WS_ARGS=()
+if [[ "${1:-}" == --state-dir ]]; then
+  [[ -n "${2:-}" ]] || usage_error --state-dir
+  WS_ARGS=(--state-dir "$2"); shift 2
+fi
+VERB="${1:-}"
+[[ $# -eq 0 ]] || shift
+case "$VERB" in
+  --help | -h) usage; exit 0 ;;
+  record | rollup) ;;
+  *) usage_error "${VERB:-verb}" ;;
+esac
+
+WORK="$(mktemp -d)" || refuse mktemp failed
+trap 'rm -rf -- "$WORK"' EXIT
+
+STATE_FILE="$("$WORKFLOW_STATE" ${WS_ARGS[@]+"${WS_ARGS[@]}"} path oversee)" || refuse state-missing path
+# A fleet with no state yet, a session stopping before its first launch, has
+# nothing to roll up; a record for a lane it never launched refuses.
+if [[ ! -f "$STATE_FILE" ]]; then
+  [[ "$VERB" != rollup ]] || exit 0
+  refuse state-missing "$STATE_FILE"
+fi
+
+log_row() { # ITEM TEXT
+  jq -n --arg item "$1" --arg text "$2" '{kind: "cycle", item: $item, text: $text}' >"$WORK/row.json"
+  "$WORKFLOW_STATE" ${WS_ARGS[@]+"${WS_ARGS[@]}"} append-file oversee fleet_log "$WORK/row.json" \
+    >/dev/null 2>"$WORK/ws.err" || refuse fleet-log-failed "$1" "$WORK/ws.err"
+}
+
+if [[ "$VERB" == rollup ]]; then
+  [[ $# -eq 0 ]] || usage_error "$1"
+  lines="$(jq -r --argjson targets "$TARGETS" '
+    def nr($p): sort as $a | ($a | length) as $n
+      | if $n == 0 then "-" else $a[(($n * $p) | ceil) - 1] end;
+    def n: if . == null then "-" else tostring end;
+    [.lanes[]? | .cycle // empty] as $cycles
+    | (($targets | keys_unsorted) + ["unclassified"])[] as $class
+    | [$cycles[] | select((.class // "unclassified") == $class)] as $c
+    | select($c | length > 0)
+    | [$c[] | .rounds // empty] as $r
+    | def sum(f): [$r[] | f] | add;
+      "rollup class=\($class) items=\($c | length)"
+      + " median=\([$c[] | .actual // empty] | nr(0.5))"
+      + " p90=\([$c[] | .actual // empty] | nr(0.9))"
+      + " misses=\([$c[] | select(.verdict == "miss")] | length)"
+      + " review=\(sum(.review) | n) fix=\(sum(.fix) | n) bot=\(sum(.bot) | n)"
+      + " full_validations=\(sum(.full_validations) | n)"
+      + " rounds_unread=\([$c[] | select(.rounds == null)] | length)"
+      + " escaped=\([$c[] | select(.escaped == true)] | length)"
+      + " refixed=\([$c[] | select(.refixed == true)] | length)"
+  ' "$STATE_FILE")" || refuse state-unreadable "$STATE_FILE"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    class="${line#rollup class=}"
+    log_row "${class%% *}" "$line"
+    printf '%s\n' "$line"
+  done <<<"$lines"
+  exit 0
+fi
+
+PR="" TIER="" REPO="" ITEM=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pr | --tier | --repo)
+      [[ -n "${2:-}" ]] || usage_error "$1"
+      case "$1" in
+        --pr) PR="$2" ;; --tier) TIER="$2" ;; --repo) REPO="$2" ;;
+      esac
+      shift 2 ;;
+    -*) usage_error "$1" ;;
+    *) [[ -z "$ITEM" ]] || usage_error "$1"; ITEM="$1"; shift ;;
+  esac
+done
+[[ -n "$ITEM" ]] || usage_error item
+[[ "$PR" =~ ^[1-9][0-9]*$ ]] || usage_error --pr
+case "$TIER" in micro | standard) ;; *) usage_error --tier ;; esac
+
+if ! lane="$(jq -c --arg item "$ITEM" '[.lanes[]? | select(.item == $item)] | first // empty' "$STATE_FILE")"; then
+  refuse state-unreadable "$STATE_FILE"
+fi
+[[ -n "$lane" ]] || refuse record-missing "$ITEM"
+[[ -n "$REPO" ]] || REPO="$(jq -r '.repo // empty' <<<"$lane")"
+LANE_HOST_SPEC="$(jq -r '.host // empty' <<<"$lane")"
+LANE_ROOT="$(jq -r '.mail_root // empty' <<<"$lane")"
+
+rounds=null rounds_unread=""
+if ! lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
+  "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK"; then
+  rounds_unread="$WORK/state.err"
+elif [[ -n "$LANE_ITEM_STATE" ]]; then
+  rounds="$(jq -c '{review: ((if .first_panel then 1 else 0 end) + (.rereview_cycles // 0)),
+     fix: (.cycles // 0),
+     bot: (.pr_comment_review.iterations // 0),
+     full_validations: ([.validate_rounds[]? | select(.mode == "full")] | length)}' \
+    <<<"$LANE_ITEM_STATE" 2>"$WORK/state.err")" || { rounds=null; rounds_unread="$WORK/state.err"; }
+fi
+
+timeline="$("$GITHUB" pr-timeline "$PR" ${REPO:+--repo "$REPO"} 2>"$WORK/timeline.err")" \
+  || refuse timeline-failed "$PR" "$WORK/timeline.err"
+merge="$(jq -r '.merge_commit // empty' <<<"$timeline")" || refuse timeline-failed "$PR"
+[[ -n "$merge" ]] || refuse not-merged "$PR"
+
+# other_repo CHECKOUT — true where CHECKOUT is provably not a checkout of the
+# lane's repository: a local lane's worktree names another origin, or the
+# repository the timeline was read from is not the one CHECKOUT resolves to.
+# Where neither can be read nothing is proved, and the class read goes on.
+lower() { awk '{ print tolower($0) }'; }
+other_repo() {
+  local mine theirs
+  if [[ -z "$LANE_HOST_SPEC" && -n "$LANE_ROOT" && -d "$LANE_ROOT" ]]; then
+    mine="$(git -C "$1" config --get remote.origin.url)" || return 1
+    theirs="$(git -C "$LANE_ROOT" config --get remote.origin.url)" || return 1
+    [[ "$mine" != "$theirs" ]]
+    return
+  fi
+  [[ -n "$REPO" ]] || return 1
+  mine="$(unset GH_REPO; kendex_github_resolve_gh_repo "$1" 2>/dev/null)" || return 1
+  [[ "$(lower <<<"$mine")" != "$(lower <<<"$REPO")" ]]
+}
+
+# The class is the classifier's and nothing else's: an unread class records
+# null with its cause, and the verdict says unclassified rather than judging
+# the lane against a target it was never measured into. It is read from this
+# checkout, which must be one of the lane's repository: another repository's
+# merge commit is never fetched from this one's origin.
+class="" class_cause=""
+checkout="$(git rev-parse --show-toplevel 2>/dev/null)" || checkout=""
+if [[ -z "$checkout" ]]; then
+  class_cause="checkout-absent"
+elif other_repo "$checkout"; then
+  class_cause="checkout-other-repo"
+elif ! base="$(git -C "$checkout" rev-parse --verify -q "$merge^1^{commit}")" \
+  && ! { git -C "$checkout" fetch -q origin "$merge" 2>"$WORK/class.err" \
+         && base="$(git -C "$checkout" rev-parse --verify -q "$merge^1^{commit}")"; }; then
+  class_cause="merge-commit-absent"
+elif change_class_read "$base" "$merge" "$checkout" "$WORK/class.err"; then
+  if [[ "$CHANGE_CLASS_MEASURED" != true ]]; then
+    class_cause="class-unmeasured"
+  elif jq -e --arg c "$CHANGE_CLASS" 'has($c)' >/dev/null <<<"$TARGETS"; then
+    class="$CHANGE_CLASS"
+  else
+    class_cause="class-unknown-$CHANGE_CLASS"
+  fi
+else
+  class_cause="$CHANGE_CLASS_CAUSE"
+fi
+
+cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson rounds "$rounds" \
+  --argjson targets "$TARGETS" --arg class "$class" --arg cause "$class_cause" --arg tier "$TIER" '
+  $t.stamps as $s
+  | {launched: $lane.launched_at, first_commit: $s.first_commit, pr_opened: $s.created,
+     gate_green: $s.gate_met, ci_green: $s.ci_green, armed: ($s.armed // $s.queued),
+     merged: $s.merged} as $stamps
+  | (if $class == "" then null else $class end) as $class
+  | (if $class == null then null else $targets[$class] end) as $target
+  | (if $stamps.launched == null or $stamps.merged == null then null
+     else ($stamps.merged | fromdate) - ($stamps.launched | fromdate) end) as $actual
+  | [$stamps | to_entries[] | select(.value == null) | .key] as $missing
+  | ([$stamps | to_entries[] | select(.value != null) | {name: .key, at: (.value | fromdate)}]
+     | sort_by(.at)) as $seq
+  | (if ($missing | length) > 0 then {phase: null, secs: null} else
+       [range(1; $seq | length) as $i | {phase: $seq[$i].name, secs: ($seq[$i].at - $seq[$i - 1].at)}]
+       | sort_by(- .secs) | first end) as $dominant
+  | {pr: $t.pr, class: $class, class_cause: (if $cause == "" then null else $cause end),
+     tier: $tier, stamps: $stamps, target: $target, actual: $actual,
+     verdict: (if $class == null then "unclassified" elif $actual == null then "unmeasured"
+               elif $actual > $target then "miss" else "met" end),
+     phase: $dominant.phase, phase_secs: $dominant.secs, missing: $missing, rounds: $rounds,
+     escaped: (if $class == null then null else ($tier == "micro" and ($class | IN("small", "standard"))) end),
+     refixed: (if $s.first_gate_met == null or $s.last_push == null then null
+               else $s.last_push > $s.first_gate_met end)}')" \
+  || refuse timeline-failed "$PR"
+
+"$WORKFLOW_STATE" ${WS_ARGS[@]+"${WS_ARGS[@]}"} update oversee --arg item "$ITEM" --argjson cycle "$cycle" \
+  '(.lanes[] | select(.item == $item)).cycle = $cycle' >/dev/null 2>"$WORK/ws.err" \
+  || refuse state-write-failed "$ITEM" "$WORK/ws.err"
+
+line="$(jq -r --arg item "$ITEM" 'def n: if . == null then "-" else tostring end;
+  "cycle item=\($item) pr=\(.pr) class=\(.class | n) tier=\(.tier) target=\(.target | n)"
+  + " actual=\(.actual | n) verdict=\(.verdict) phase=\(.phase | n) phase_secs=\(.phase_secs | n)"
+  + " missing=\(if .missing == [] then "-" else .missing | join(",") end)"
+  + " review=\(.rounds.review | n) fix=\(.rounds.fix | n) bot=\(.rounds.bot | n)"
+  + " full_validations=\(.rounds.full_validations | n) escaped=\(.escaped | n) refixed=\(.refixed | n)"' <<<"$cycle")"
+log_row "$ITEM" "$line"
+printf '%s\n' "$line"
+[[ -z "$class_cause" ]] || printf 'oversee-cycle: class-unread cause=%s\n' "$class_cause" >&2
+[[ ! -s "$WORK/class.err" || -z "$class_cause" ]] || cat -- "$WORK/class.err" >&2
+if [[ -n "$rounds_unread" ]]; then
+  printf 'oversee-cycle: rounds-unread item=%s\n' "$ITEM" >&2
+  cat -- "$rounds_unread" >&2
+fi
+
+# The bar fires on the record that makes the third miss: one that was
+# already a miss on this phase, recorded again, makes nothing new.
+# One conjunct per line: this record is a miss, on a named phase, that it was
+# not already; the fleet's records that are misses, on that phase, are
+# exactly three.
+repeat="$(jq -r --argjson cycle "$cycle" --argjson prior "$(jq -c '.cycle // null' <<<"$lane")" '
+  if $cycle.verdict != "miss"
+     or $cycle.phase == null
+     or ($prior.verdict == "miss" and $prior.phase == $cycle.phase)
+  then empty else
+    [.lanes[]? | select(.cycle.verdict == "miss")
+               | select(.cycle.phase == $cycle.phase) | .item]
+    | select(length == 3) | "repeat-miss phase=\($cycle.phase) items=\(join(","))" end' "$STATE_FILE")" \
+  || refuse state-unreadable "$STATE_FILE"
+if [[ -n "$repeat" ]]; then
+  log_row "$ITEM" "$repeat"
+  printf '%s\n' "$repeat"
+fi

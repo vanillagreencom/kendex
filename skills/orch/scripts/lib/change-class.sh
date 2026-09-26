@@ -13,8 +13,11 @@
 #   Classifies the pull-request range BASE...HEAD of REPO and sets CHANGE_CLASS
 #   to the class the classifier printed, a lowercase word. The classifier's
 #   stdout is one change_class=<class> line and nothing else; any other shape is
-#   not a class. Returns 1 on failure with CHANGE_CLASS_CAUSE set to
-#   classifier-absent, classifier-exit-N or classifier-unreadable.
+#   not a class. Sets CHANGE_CLASS_MEASURED to the `measured=` value of the
+#   last `class:` line in STDERR_FILE, empty where it carries none: `false` is
+#   the classifier's fallback to standard, not a measured class. Returns 1 on
+#   failure with CHANGE_CLASS_CAUSE set to classifier-absent,
+#   classifier-exit-N or classifier-unreadable.
 #
 # change_class_docs BASE HEAD REPO PATHS_FILE STDERR_FILE
 #   The docs verdict for the same range, from harness-only --mode docs: sets
@@ -31,6 +34,7 @@
 CHANGE_CLASS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHANGE_CLASS=""
 CHANGE_CLASS_CAUSE=""
+CHANGE_CLASS_MEASURED=""
 CHANGE_CLASS_DOCS_ONLY=""
 CHANGE_CLASS_SCRIPTS=""
 
@@ -38,6 +42,7 @@ change_class_read() { # BASE HEAD REPO STDERR_FILE
   local classifier answer status=0
   CHANGE_CLASS=""
   CHANGE_CLASS_CAUSE=""
+  CHANGE_CLASS_MEASURED=""
   classifier="$CHANGE_CLASS_LIB_DIR/../../../harness-ci/scripts/change-class"
   if [[ ! -x "$classifier" ]]; then
     classifier="$(command -v change-class 2>/dev/null)" || classifier=""
@@ -61,6 +66,9 @@ change_class_read() { # BASE HEAD REPO STDERR_FILE
     change_class=*) CHANGE_CLASS="${answer#change_class=}" ;;
     *) CHANGE_CLASS_CAUSE=classifier-unreadable; return 1 ;;
   esac
+  CHANGE_CLASS_MEASURED="$(sed -n 's/^class: class=[^ ]* measured=\([^ ]*\).*/\1/p' "$4")" \
+    || { CHANGE_CLASS_CAUSE=classifier-unreadable; return 1; }
+  CHANGE_CLASS_MEASURED="${CHANGE_CLASS_MEASURED##*$'\n'}"
 }
 
 change_class_docs() { # BASE HEAD REPO PATHS_FILE STDERR_FILE

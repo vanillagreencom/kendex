@@ -28,6 +28,7 @@ tags: [git, integration]
 | `pr-data <N> [--actionable]` | Get PR with threads, comments, files. `--actionable`: unresolved non-outdated only. |
 | `pr-view [N] [--json FIELDS]` | View PR details (wraps gh pr view with bounded auth/no-PR errors) |
 | `pr-threads <N> [--unresolved\|--resolved] [--format=safe\|raw]` | Complete paginated thread list/count, outdated included. Both filters apply in both formats. See *PR blocked with no visible conversations*. |
+| `pr-timeline <N> [--repo OWNER/REPO] [--gate-context NAME]` | One PR's phase stamps (first commit, opened, last push, first bot review, first and final review-gate pass, CI green, armed, queued, merged) and its CI wall time on the final head and in the merge group, as one JSON object. Refuses a connection longer than the page it read rather than stamping from part of the history. |
 | `pr-list-ready [--all] [--format=safe\|table]` | List PRs ready for merge |
 | `pr-list-failing [--all] [--format=safe\|table]` | List PRs with CI failures |
 | `pr-create [--title T] [--body B \| --body-file PATH] [--draft] [--dry-run] [--force]` | Create PR as bot. Safety checks: not main, has commits, pushed; `--force` skips them. |
