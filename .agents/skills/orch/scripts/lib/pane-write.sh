@@ -25,7 +25,9 @@
 #           proved, which is new-window's own -P output for a pane it opened.
 #   EXPECT  the process the pane must be running. `shell` is a shell in the
 #           foreground, what a window opened seconds ago holds: a name
-#           is_bare_shell knows, or the name of tmux's default-shell. Any other
+#           is_bare_shell knows, or the name of tmux's default-shell, read
+#           again for up to PANE_WRITE_SETTLE_SECS (default 2) while a
+#           default-command wrapper still holds the pane. Any other
 #           word is a process name: the pane's foreground command, or the pane
 #           process or a process below it, carries that name. The second form
 #           is a harness started under a shell or through a wrapper script.
@@ -41,9 +43,9 @@
 # tmux write that failed after the checks passed, so part of the input may
 # have landed. Either prints its keyed line, then a `fix=` line, on stderr.
 #
-# The identity is read once, before the copy-mode check and the buffer load,
-# and the Enter that follows a paste is not checked again: a process that
-# changes after that read is not caught.
+# The identity is read before the copy-mode check and the buffer load, and the
+# Enter that follows a paste is not checked again: a process that changes after
+# that read is not caught.
 
 # The keys a caller may press, each with its producer: Enter (the composer
 # after a paste, a dialog's default), Up and Down (moving a Claude Code
@@ -68,9 +70,10 @@ pane_write_message() { # KEY FIELD=VALUE...
     pane-read-failed) printf '%s\n' 'fix=tmux or the process table did not answer; nothing was typed, and a retry is safe once it does' ;;
     process-mismatch)
       case " $* " in
-        *" expected=shell "*) printf '%s\n' 'fix=a window just opened must be at its shell, one of bash, zsh, fish, sh, dash or tmux'"'"'s default-shell; set default-shell to the shell it runs' ;;
+        *" expected=shell "*) printf '%s\n' 'fix=a window just opened must be at its shell, one of bash, zsh, fish, sh, dash or tmux'"'"'s default-shell; set default-shell to the shell it runs, and where a default-command wraps the shell (systemd-run, a confine script) raise PANE_WRITE_SETTLE_SECS past the time the wrapper takes to hand the pane to it' ;;
         *) printf '%s\n' 'fix=the pane does not run the expected process; read the lane'"'"'s state with lanes state before writing to it' ;;
       esac ;;
+    settle-invalid) printf '%s\n' 'fix=PANE_WRITE_SETTLE_SECS is a whole number of seconds from 0 to 99; nothing was typed' ;;
     expect-missing) printf '%s\n' 'fix=name the process the pane must run: shell for a window just opened, or the harness, or ssh for a hosted lane' ;;
     action-invalid) printf '%s\n' 'fix=the action is text, file or key; this is a defect in the caller' ;;
     key-invalid) printf '%s\n' "fix=press one of: $PANE_WRITE_KEYS" ;;
@@ -130,16 +133,36 @@ pane_write_resolve() { # KIND TARGET
 
 # Whether the resolved pane runs EXPECT.
 pane_write_expect() { # EXPECT
-  local table found default name_re
+  local table found default name_re settle="${PANE_WRITE_SETTLE_SECS:-2}" reads=0 rc
   [[ -n "$1" ]] || { pane_write_refuse 1 expect-missing "pane=$PANE_WRITE_ID"; return; }
   if [[ "$1" == shell ]]; then
-    is_bare_shell "$PANE_WRITE_CMD" && return 0
-    # A shell is_bare_shell does not name is still the window's own when it is
-    # the one tmux starts in a new window.
-    default="$(tmux show-options -gv default-shell 2>/dev/null)" \
-      || { pane_write_refuse 1 pane-read-failed "pane=$PANE_WRITE_ID" operation=show-options; return; }
-    default="${default##*/}"
-    [[ -z "$default" || "${PANE_WRITE_CMD#-}" != "$default" ]] || return 0
+    # A tmux default-command that wraps the shell, such as one starting it in
+    # its own systemd scope, holds a new window's foreground for a moment
+    # before the shell does, so the command is read again every tenth of a
+    # second until the settle time is spent.
+    while :; do
+      is_bare_shell "$PANE_WRITE_CMD" && return 0
+      if [[ "$reads" == 0 ]]; then
+        [[ "$settle" =~ ^[0-9]{1,2}$ ]] \
+          || { pane_write_refuse 1 settle-invalid "pane=$PANE_WRITE_ID" setting=PANE_WRITE_SETTLE_SECS "value=$settle"; return; }
+        default="$(tmux show-options -gv default-shell 2>/dev/null)" \
+          || { pane_write_refuse 1 pane-read-failed "pane=$PANE_WRITE_ID" operation=show-options; return; }
+        default="${default##*/}"
+      fi
+      # A shell is_bare_shell does not name is still the window's own when it
+      # is the one tmux starts in a new window.
+      [[ -z "$default" || "${PANE_WRITE_CMD#-}" != "$default" ]] || return 0
+      [[ "$reads" -lt $((10#$settle * 10)) ]] || break
+      reads=$((reads + 1))
+      sleep 0.1
+      rc=0
+      lane_pane_by_id "$PANE_WRITE_ID" || rc=$?
+      case "$rc" in
+        0) PANE_WRITE_CMD="$LANE_PANE_CMD" ;;
+        1) pane_write_refuse 1 pane-missing "pane=$PANE_WRITE_ID"; return ;;
+        *) pane_write_refuse 1 pane-read-failed "pane=$PANE_WRITE_ID" operation=list-panes; return ;;
+      esac
+    done
   else
     [[ "$PANE_WRITE_CMD" == "$1" ]] && return 0
     table="$(lane_process_table)" \
