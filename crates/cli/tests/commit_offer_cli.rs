@@ -551,12 +551,12 @@ fn held_project(tmp: &tempfile::TempDir) -> PathBuf {
     project
 }
 
-/// A commit that would carry a package's re-rendered file while its
-/// manifest table, which kendex never commits, has changed is held with
-/// the manifest named, whatever the package's own check says: no setup
-/// clears it, so the files are left for the person to commit together.
+/// A commit that would carry a package's re-rendered file while the
+/// manifest, which kendex never commits, has changed is held with the
+/// manifest named, whatever the package's own check says: no setup clears
+/// it, so the files are left for the person to commit together.
 #[test]
-fn a_commit_that_leaves_the_packages_manifest_table_behind_is_held() {
+fn a_commit_that_leaves_the_changed_manifest_behind_is_held() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let project = region_project(

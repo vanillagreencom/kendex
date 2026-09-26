@@ -891,85 +891,102 @@ fn a_linked_work_tree_names_the_main_checkout_in_its_skip_line() {
 
 /// A commit never splits a package's changed paths. One row per way a
 /// package's input can be left behind while its re-rendered files are
-/// carried: a pending doctrine change outside the action's own commit, and
-/// a changed `[bot-instructions]` table in the manifest, which no commit
-/// kendex makes carries. A manifest change outside that table leaves the
-/// commit whole.
+/// carried: a pending doctrine change outside the commit, the manifest
+/// changed or deleted anywhere, which no commit kendex makes carries, and
+/// a changed inventory outside the commit. A commit carrying every changed
+/// path kendex owns, the inventory included, is whole.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_commit_that_splits_a_packages_changed_paths_is_held() {
-    enum Carries {
-        Rendered,
-        Everything,
+    enum Edit {
+        Nothing,
+        Harnesses,
+        DeleteManifest,
+        Inventory,
     }
+    let doctrine = format!("{CODEX_PACKAGE}/SKILL.md");
+    let inventory = ".kendex-generated.json";
     let rows = [
         (
-            "the doctrine left out of the action's commit",
-            None,
-            Carries::Rendered,
-            Some(vec![format!("{CODEX_PACKAGE}/SKILL.md")]),
+            "the doctrine left out of the commit",
+            Edit::Nothing,
+            Some(doctrine.as_str()),
+            Some(vec![doctrine.clone()]),
         ),
         (
             "every pending change, the doctrine included",
+            Edit::Nothing,
             None,
-            Carries::Everything,
             None,
-        ),
-        (
-            "the package's manifest table changed",
-            Some(("name = \"fixture\"\n", "name = \"renamed\"\n")),
-            Carries::Everything,
-            Some(vec!["kendex.toml".to_owned()]),
         ),
         (
             "the manifest changed outside the package's table",
-            Some((
-                "harnesses = [\"claude\"]\n",
-                "harnesses = [\"claude\", \"codex\"]\n",
-            )),
-            Carries::Everything,
+            Edit::Harnesses,
             None,
+            Some(vec!["kendex.toml".to_owned()]),
         ),
+        (
+            "the manifest deleted",
+            Edit::DeleteManifest,
+            None,
+            Some(vec!["kendex.toml".to_owned()]),
+        ),
+        (
+            "the changed inventory left out of the commit",
+            Edit::Inventory,
+            Some(inventory),
+            Some(vec![inventory.to_owned()]),
+        ),
+        ("the changed inventory carried", Edit::Inventory, None, None),
     ];
-    for (what, manifest_edit, carries, split) in rows {
+    for (what, edit, leave, split) in rows {
         let fixture = enabled_fixture();
         commit_fixture(&fixture.root);
-        let manifest = fixture.root.join("kendex.toml");
-        if let Some((from, to)) = manifest_edit {
-            let text = fs::read_to_string(&manifest).unwrap();
-            assert_eq!(
-                text.matches(from).count(),
-                1,
-                "{what}: the manifest edit found {from:?}"
-            );
-            let text = text.replacen(from, to, 1);
-            fs::write(&manifest, text).unwrap();
-        }
         let mut generated = GeneratedPaths::default();
         generated.whole.insert(change_doctrine(&fixture.root));
-        let mut rendered = GeneratedPaths::default();
         bot_instructions::render(&fixture.env, &fixture.scope)
             .expect("the armed package renders")
-            .add_to(&mut rendered);
-        let scan = offer_scan(&fixture, &{
-            let mut all = generated.clone();
-            all.whole.extend(rendered.whole.iter().cloned());
-            all.regions.extend(rendered.regions.iter().cloned());
-            all
-        });
-        let rendered_paths: BTreeSet<String> = scan
+            .add_to(&mut generated);
+        let replace = |path: &str, from: &str, to: &str| {
+            let path = fixture.root.join(path);
+            let text = fs::read_to_string(&path).unwrap();
+            assert_eq!(text.matches(from).count(), 1, "{what}: {from:?}");
+            fs::write(&path, text.replacen(from, to, 1)).unwrap();
+        };
+        match edit {
+            Edit::Nothing => {}
+            Edit::Harnesses => replace(
+                "kendex.toml",
+                "harnesses = [\"claude\"]\n",
+                "harnesses = [\"claude\", \"codex\"]\n",
+            ),
+            Edit::DeleteManifest => fs::remove_file(fixture.root.join("kendex.toml")).unwrap(),
+            Edit::Inventory => replace(
+                inventory,
+                "\".claude/agents/a.md\",",
+                "\".claude/agents/a.md\",\".claude/agents/b.md\",",
+            ),
+        }
+        let scan = offer_scan(&fixture, &generated);
+        let carried_paths: BTreeSet<String> = scan
             .owned
             .iter()
             .map(|owned| owned.path.clone())
-            .filter(|path| !path.ends_with("SKILL.md"))
+            .filter(|path| Some(path.as_str()) != leave)
             .collect();
         assert!(
-            !rendered_paths.is_empty(),
+            carried_paths.len() > 1,
             "{what}: the render changed nothing"
         );
-        let carried = match carries {
-            Carries::Rendered => Carried::Only(&rendered_paths),
-            Carries::Everything => Carried::Everything,
+        let carried = match leave {
+            Some(left) => {
+                assert!(
+                    scan.owned.iter().any(|owned| owned.path == left),
+                    "{what}: {left} did not change"
+                );
+                Carried::Only(&carried_paths)
+            }
+            None => Carried::Everything,
         };
 
         let stale = commit_offer::stale(&fixture.env, &fixture.scope, &scan, carried)
