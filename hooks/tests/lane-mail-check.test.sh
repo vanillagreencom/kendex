@@ -120,6 +120,12 @@ unmark_lanes() {
   rm -rf -- "${common:?}/lane-mail"
 }
 
+# The context mark every row is judged at unless it names another: half of the
+# 1M window the claude fixture's model runs, which puts the mark at 500000
+# tokens. The adapter rows below judge the package default of 90 on windows of
+# every size; these rows judge everything else the marks rest on.
+CONTEXT_PCT_ENV=ORCH_HANDOFF_CONTEXT_PCT=50
+
 # The world a case runs in unless it names another: a home with no lane in it,
 # so the handoff marks' account read answers `no configured lane of this
 # harness` without reaching the network, and a fetch stub that fails if one
@@ -150,9 +156,9 @@ run_payload() { # RAW-JSON [ENV=VAL...]
   : > "$ERR_FILE"
   printf '%s' "$payload" |
     (cd "${CALL_DIR:-$LANE}" && env -u CLAUDE_CONFIG_DIR -u CLAUDE_PROJECT_DIR -u CODEX_HOME -u LANE_MAIL_ITEM \
-      -u ORCH_HANDOFF_CONTEXT_TOKENS -u ORCH_HANDOFF_HEADROOM_PCT -u ORCH_STATE_DIR \
+      -u ORCH_HANDOFF_CONTEXT_PCT -u ORCH_HANDOFF_HEADROOM_PCT -u ORCH_STATE_DIR \
       -u ORCH_OVERSEER_HEADROOM_PCT -u ORCH_OVERSEER_SUCCESSION -u TMUX -u TMUX_PANE \
-      "LANES_HOME=$OFFLINE_HOME" "ORCH_LANES_FETCH_CMD=$NO_FETCH" \
+      "LANES_HOME=$OFFLINE_HOME" "ORCH_LANES_FETCH_CMD=$NO_FETCH" ${CONTEXT_PCT_ENV:+"$CONTEXT_PCT_ENV"} \
       ${CALL_ENV[@]+"${CALL_ENV[@]}"} "$@" bash "$CASE_HOOK" ${ARM_ARGS[@]+"${ARM_ARGS[@]}"}) >"$TMP_ROOT/stdout" 2>"$ERR_FILE" || RC=$?
 }
 
@@ -179,20 +185,30 @@ stop_at() { # TRANSCRIPT ACTIVE [ENV=VAL...]
 # A real transcript grows one line at a time, so a row that turns on WHICH
 # usage line the hook reads writes the first and appends the rest.
 #
-#   claude  Claude Code's own line: input_tokens beside its two cache counts.
+#   claude  Claude Code's own line: input_tokens beside its two cache counts,
+#           on a model whose tier runs a 1M window.
+#   sonnet  the same line on a model whose window the claude adapter leaves
+#           unnamed.
 #   pi      Pi's session entry, `appendMessage` in @earendil-works/pi-coding-agent,
 #           carrying the `Usage` of @earendil-works/pi-ai: input, output,
 #           cacheRead, cacheWrite, totalTokens and cost, none of them spelled
 #           the way Claude Code spells them.
-#   unread  a usage object carrying neither spelling, which is what the hook
-#           must report rather than sum to zero. It stands for no harness this
-#           install has measured; TOKENS is what a lane would be past its mark
-#           by if the figure could be read at all.
+#   codex   Codex's rollout: the turn context naming the model, then the
+#           token count naming the tokens the last response left in a 258400
+#           window.
+#   unread  a usage object carrying no spelling the claude adapter reads, which
+#           is what the hook must report rather than sum to zero. TOKENS is
+#           what a lane would be past its mark by if the figure could be read.
 usage_line() { # SPELLING TOKENS
   case "$1" in
-    claude)
+    claude | sonnet)
+      jq -nc --argjson t "$2" --arg m "$([ "$1" = claude ] && echo claude-opus-5-5 || echo claude-sonnet-5)" \
+        '{type:"assistant",message:{model:$m,usage:{input_tokens:1,cache_read_input_tokens:($t - 1),cache_creation_input_tokens:0}}}'
+      ;;
+    codex)
+      jq -nc '{type:"turn_context",payload:{model:"gpt-6-astra"}}'
       jq -nc --argjson t "$2" \
-        '{type:"assistant",message:{usage:{input_tokens:1,cache_read_input_tokens:($t - 1),cache_creation_input_tokens:0}}}'
+        '{type:"event_msg",payload:{type:"token_count",info:{last_token_usage:{input_tokens:($t - 7),output_tokens:7,total_tokens:$t},model_context_window:258400}}}'
       ;;
     pi)
       jq -nc --argjson t "$2" \
@@ -617,22 +633,46 @@ write_transcript "$SPACED" 600000
 stop_at "$SPACED" false
 expect 2 "lane-mail-check: context=600000" "a transcript path holding a space is read, never truncated at it"
 
-# Every spelling a harness writes that usage object in, judged on one figure
-# and its inverse: under the mark the turn ends, at the mark the refusal names
-# the figure it reached. Pi's is the spelling a lane was reading as zero, so a
-# Pi lane ran its context to exhaustion with nothing held and nothing said.
-new_handoff_lane handoff_spellings KEN-90
-for SPELLING in claude pi; do
-  usage_line "$SPELLING" 499999 > "$TRANSCRIPT"
-  stop_at "$TRANSCRIPT" false
-  expect 0 "$GAP" "a $SPELLING-spelled usage line under the context mark ends the turn"
-  usage_line "$SPELLING" 500000 > "$TRANSCRIPT"
-  stop_at "$TRANSCRIPT" false
-  expect 2 "lane-mail-check: context=500000" \
-    "a $SPELLING-spelled usage line at the context mark is refused with the figure it reached"
-done
+# Each harness adapter, judged at the package default of 90 percent of the
+# window its own records name: Claude Code's by its model's tier, Codex's from
+# the rollout's own window, Pi's from the window its Stop payload carries. Each
+# row installs the hook where kendex installs it for that harness, which is what
+# picks the adapter, and pins the reading the turn end recorded for every other
+# reader. A 1M window at 500000 tokens is room under the fraction, where the
+# absolute mark this replaced fired. A reading whose window its adapter cannot
+# name is reported and passed, never judged against a guess.
+#
+#   HOOK DIR|SPELLING|TOKENS|PAYLOAD WINDOW|FIRST LINE|RECORDED
+ADAPTER_ROWS='.claude/hooks|claude|899999||GAP|claude 899999 1000000
+.claude/hooks|claude|900000||context=900000|claude 900000 1000000
+.claude/hooks|claude|500000||GAP|claude 500000 1000000
+.claude/hooks|sonnet|999999||window-unread=claude-sonnet-5|claude 999999 null
+.codex/hooks|codex|232559||GAP|codex 232559 258400
+.codex/hooks|codex|232560||context=232560|codex 232560 258400
+.pi/kendex/hooks|pi|179999|200000|GAP|pi 179999 200000
+.pi/kendex/hooks|pi|180000|200000|context=180000|pi 180000 200000
+.pi/kendex/hooks|pi|999999||window-unread=m|pi 999999 null'
+new_handoff_lane handoff_adapters KEN-90
+while IFS='|' read -r ROW_DIR ROW_SPELLING ROW_TOKENS ROW_WINDOW ROW_FIRST ROW_RECORDED; do
+  install_hook "$HOOK" "$LANE/$ROW_DIR/lane-mail-check.sh"
+  usage_line "$ROW_SPELLING" "$ROW_TOKENS" > "$TRANSCRIPT"
+  rm -f -- "${LANE:?}/tmp/lane-mail/KEN-90/context.json"
+  CONTEXT_PCT_ENV='' run_payload "$(jq -nc --arg p "$TRANSCRIPT" --arg w "$ROW_WINDOW" \
+    '{session_id:"s1",stop_hook_active:false,transcript_path:$p}
+     + (if $w == "" then {} else {context_window: ($w | tonumber)} end)')"
+  case "$ROW_FIRST" in
+    GAP) ROW_WANT="RC=0 first=$GAP" ;;
+    context=*) ROW_WANT="RC=2 first=lane-mail-check: $ROW_FIRST" ;;
+    *) ROW_WANT="RC=0 first=lane-mail-check: $ROW_FIRST" ;;
+  esac
+  assert_eq "RC=$RC first=$(first_line) recorded=$(jq -r '"\(.harness) \(.tokens) \(.window)"' \
+      "$LANE/tmp/lane-mail/KEN-90/context.json" 2>/dev/null)" \
+    "$ROW_WANT recorded=$ROW_RECORDED" \
+    "$ROW_SPELLING under $ROW_DIR at $ROW_TOKENS tokens of window ${ROW_WINDOW:-its adapter reads}: $ROW_FIRST, recorded for the report"
+done <<<"$ADAPTER_ROWS"
+install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
-# A usage object neither spelling reads. The figure IS there and unread, which
+# A usage object the adapter does not read. The figure IS there and unread, which
 # is not the documented gap a payload naming no transcript leaves, so it gets
 # its own key rather than the silence that gap takes. The turn still ends: no
 # handoff record the lane writes would teach this install a harness's field
@@ -643,21 +683,25 @@ stop_at "$TRANSCRIPT" false
 assert_eq "RC=$RC first=$(first_line) judged=$(grep -c 'context=' "$ERR_FILE")" \
   "RC=0 first=lane-mail-check: usage-unread=$TRANSCRIPT judged=0" \
   "a usage object neither spelling reads is keyed, never summed to a figure the mark is judged on"
-assert_eq "$(grep -c 'neither of the field spellings' "$ERR_FILE")" "1" \
+assert_eq "$(grep -c 'none of the field names' "$ERR_FILE")" "1" \
   "and the key carries the English that says why the figure went unread"
 assert_eq "$(grep -cx "$GAP" "$ERR_FILE")" "1" \
   "and the account mark beside it is judged as it is on any other turn end"
 
 new_handoff_lane handoff_setting KEN-51
 write_transcript "$TRANSCRIPT" 500000
-stop_at "$TRANSCRIPT" false ORCH_HANDOFF_CONTEXT_TOKENS=900000
+stop_at "$TRANSCRIPT" false ORCH_HANDOFF_CONTEXT_PCT=90
 expect 0 "$GAP" "a mark the setting raises is not reached at the same figure"
+CONTEXT_PCT_ENV='' stop_at "$TRANSCRIPT" false
+expect 0 "$GAP" "the package default, 90 percent, is not reached at half the window"
 # orch-env falls back to its default only on a NON-numeric value, so a value
 # in a shape no comparison can take reaches the hook and is named here.
-stop_at "$TRANSCRIPT" false ORCH_HANDOFF_CONTEXT_TOKENS=0500000
-assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "workflow-state set KEN-51 handoff " "$ERR_FILE")" \
-  "RC=2 first=lane-mail-check: setting-range=ORCH_HANDOFF_CONTEXT_TOKENS=0500000 named=1" \
-  "a context mark that is not a plain whole number names the value, and the record clears it"
+for VALUE in 050 101 0; do
+  stop_at "$TRANSCRIPT" false "ORCH_HANDOFF_CONTEXT_PCT=$VALUE"
+  assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "workflow-state set KEN-51 handoff " "$ERR_FILE")" \
+    "RC=2 first=lane-mail-check: setting-range=ORCH_HANDOFF_CONTEXT_PCT=$VALUE named=1" \
+    "a context mark of $VALUE, outside whole percents 1 to 100, names the value, and the record clears it"
+done
 
 new_handoff_lane handoff_subagent KEN-52
 write_transcript "$TRANSCRIPT" 800000
@@ -719,7 +763,7 @@ chmod +x "$LANE/.claude/skills/orch/scripts/orch-env"
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
 assert_eq "RC=$RC first=$(first_line) cause=$(grep -cx 'orch-env: broken' "$ERR_FILE") named=$(grep -cF -- "workflow-state set KEN-85 handoff " "$ERR_FILE")" \
-  "RC=2 first=lane-mail-check: setting=ORCH_HANDOFF_CONTEXT_TOKENS cause=1 named=1" \
+  "RC=2 first=lane-mail-check: setting=ORCH_HANDOFF_CONTEXT_PCT cause=1 named=1" \
   "a mark whose setting could not be read is refused with the reader's words and the record that clears it"
 
 # The read is bounded to the last TRANSCRIPT_WINDOW bytes, and falls back to
@@ -822,20 +866,28 @@ for status in 1 2; do
     "a lanes exiting $status leaves the account unmeasured with its own words, never refusing on a status its verb never gives"
 done
 
-# A harness this hook's install does not name has no account to read at all.
-# The context mark is still judged; the account gap is reported and the turn
-# ends, so a consumer on such a harness is never held by a mark it cannot reach.
+# A harness `lanes` keeps no inventory for has no account to read at all: Pi,
+# installed globally here. The context mark is still judged; the account gap is
+# reported and the turn ends, so a consumer on such a harness is never held by
+# a mark it cannot reach.
 new_handoff_lane handoff_unnamed_harness KEN-79
 rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
 global_home home-handoff
 install_hook "$HOOK" "$GLOBAL_HOME/.pi/agent/kendex/hooks/lane-mail-check.sh"
-write_transcript "$TRANSCRIPT" 1000
-stop_at "$TRANSCRIPT" false "HOME=$GLOBAL_HOME"
+# A Pi turn end: its session file, and the window its Stop payload names.
+stop_pi() { # TRANSCRIPT [ENV=VAL...]
+  local path="$1"
+  shift
+  run_payload "$(jq -nc --arg p "$path" \
+    '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:1000000}')" "$@"
+}
+usage_line pi 1000 > "$TRANSCRIPT"
+stop_pi "$TRANSCRIPT" "HOME=$GLOBAL_HOME"
 assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "$GLOBAL_HOME/.pi/agent/kendex/hooks is no harness" "$ERR_FILE")" \
   "RC=0 first=lane-mail-check: account=unlisted named=1" \
   "a harness this install does not name leaves the account unjudged, named, and the turn ends"
-write_transcript "$TRANSCRIPT" 600000
-stop_at "$TRANSCRIPT" false "HOME=$GLOBAL_HOME"
+usage_line pi 600000 > "$TRANSCRIPT"
+stop_pi "$TRANSCRIPT" "HOME=$GLOBAL_HOME"
 expect 2 "lane-mail-check: context=600000" "and the context mark is judged there as everywhere"
 
 # A setting out of range dies inside `lanes` as invalid-percent, whose exit the
@@ -1350,7 +1402,6 @@ case " $* " in
   *"#{window_id}"*) printf '%s\n' '@7' ;;
   *"#{pane_current_path}"*) printf '%s\n' "$FIXTURE_TMUX_PATH" ;;
   *"#{pane_current_command}"*) printf '%s\n' claude ;;
-  *" capture-pane "*) printf '%s\n' '  kendex (ken-1453) Fable 5.1 (1M context) 52% (fixture@example.com)     /rc' ;;
   *) exit 1 ;;
 esac
 REALTMUX
@@ -1359,8 +1410,11 @@ REALTMUX
   stop_at "$TRANSCRIPT" false $(overseer_env) "PATH=$REAL_TMUX_BIN:$PATH" \
     "FIXTURE_TMUX_SERVER=$OVERSEER_SERVER" "FIXTURE_TMUX_PATH=$LANE" \
     "ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=1"
-  expect 2 "lane-mail-check: context=520000" \
+  expect 2 "lane-mail-check: context=600000" \
     "a real hook returns an available context mark before a slow capacity sweep reaches its ceiling"
+  assert_eq "$(jq -r '"\(.tokens) \(.window) \(.pane_key)"' "$LANE/tmp/lane-mail/overseer/context.json" 2>/dev/null)" \
+    "600000 1000000 $OVERSEER_SERVER $OVERSEER_PANE" \
+    "the figure is the one this hook recorded for this pane, which the real judgement read back"
 
   variant short-judge -e 's@^ACCOUNT_CEILING=20$@ACCOUNT_CEILING=1@'
   new_overseer overseer_ceiling
@@ -1885,7 +1939,7 @@ assert_eq "$([ "$RC" -eq 2 ] && echo refused || echo passed)" "passed" \
   "control: without its exit the halt hook with no judge beside it does not refuse"
 
 # Each handoff mark's refusal replaced by a pass, its judgement still made.
-mutant no-context-mark -e 's@^    refuse_handoff context "\$TOKENS"$@    :@'
+mutant no-context-mark -e 's@^      0) \[ "\$DUE" != due \] || refuse_handoff context "\$TOKENS" ;;$@      0) : ;;@'
 new_handoff_lane control_context KEN-56
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 600000
@@ -1976,17 +2030,6 @@ write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
 expect 0 - "control: with a read mailbox routed past the marks a lane ends past the mark"
 
-# The first usage line taken instead of the last: a long first turn a
-# compaction reset would then hold the lane for ever.
-mutant first-usage -e 's@^    tail -n 1$@    head -n 1@'
-new_handoff_lane control_first_usage KEN-74
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-write_transcript "$TRANSCRIPT" 600000
-append_transcript "$TRANSCRIPT" 1000
-stop_at "$TRANSCRIPT" false
-expect 2 "lane-mail-check: context=600000" \
-  "control: reading the first usage line holds a lane whose window was reset"
-
 # The continued turn refusing every resolution failure again: the session then
 # never ends, which is the loop stop_hook_active exists to end.
 mutant active-refuses -e 's@^  if \[ "\$REPORTED" = true \]; then$@  if false; then@'
@@ -2021,8 +2064,7 @@ expect 2 "lane-mail-check: context=600000" \
 # The whole-file fallback dropped: a session whose recent window is all tool
 # results reads as no context at all and runs to its wall.
 MUTANT_SOURCE="$WINDOW_HOOK" mutant no-window-fallback \
-  -e 's@^    \[ -n "\$TOKENS" \] || TOKENS=\$(transcript_tokens <"\$TRANSCRIPT") ||$@    false ||@' \
-  -e 's@^      refuse_handoff transcript unread "\$(cat -- "\$WORK_DIR/transcript.err")"$@      :@'
+  -e 's@^  if \[ -z "\$READING" \] && ! READING=\$(lane_context_reading .*); then$@  if false; then@'
 new_handoff_lane control_window KEN-78
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 600000
@@ -2030,29 +2072,6 @@ filler "$TRANSCRIPT" 2000
 stop_at "$TRANSCRIPT" false
 expect 0 "$GAP" \
   "control: without the fallback a usage line before the window reads as no context at all"
-
-# Pi's spelling dropped from the filter, the rest of it intact: a Pi lane past
-# the mark then answers with the word for a usage nothing read, and the refusal
-# that would have held it is never made.
-mutant no-pi-usage \
-  -e 's@^         elif has("input") or has("cacheRead") or has("cacheWrite")$@         elif false@'
-new_handoff_lane control_pi_usage KEN-92
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-usage_line pi 600000 > "$TRANSCRIPT"
-stop_at "$TRANSCRIPT" false
-expect 0 "lane-mail-check: usage-unread=$TRANSCRIPT" \
-  "control: without Pi's spelling a Pi lane past the context mark is never refused"
-
-# The unread answer folded back into a figure of zero: a usage object neither
-# spelling reads then passes as a small window, with no key to say the mark
-# went unjudged, which is the silence every other unjudgeable mark here breaks.
-mutant zero-usage -e 's@^         else empty end) // \$unread.*@         else 0 end)'"'"' 2>"$WORK_DIR/transcript.err" |@'
-new_handoff_lane control_zero_usage KEN-93
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-usage_line unread 900000 > "$TRANSCRIPT"
-stop_at "$TRANSCRIPT" false
-expect 0 "$GAP" \
-  "control: summed to zero, a usage object neither spelling reads passes as a small window"
 
 # The record's time put back in the template: the lane is asked for it again,
 # and the row above that says it is not goes red.

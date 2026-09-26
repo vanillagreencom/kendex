@@ -361,7 +361,7 @@ echo "=== lane-state § agreement: the watch and the wake on one screen ==="
 WAKE_REPO="$TMP_ROOT/wake-repo"
 mkdir -p "$WAKE_REPO/scripts/lib" "$TMP_ROOT/wt/CC-1"
 cp "$SCRIPTS_DIR/open-terminal" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$WAKE_REPO/scripts/"
-cp "$SCRIPTS_DIR"/lib/*.sh "$WAKE_REPO/scripts/lib/"
+cp -R "$SCRIPTS_DIR/lib/." "$WAKE_REPO/scripts/lib/"
 orch_fixture_shared_libs "$WAKE_REPO"
 chmod +x "$WAKE_REPO/scripts/open-terminal"
 git -C "$WAKE_REPO" init -q
@@ -495,7 +495,7 @@ echo "=== lane-state § verb: lanes state, the judge on the command line ==="
 VERB_REPO="$TMP_ROOT/verb-repo"
 mkdir -p "$VERB_REPO/scripts/lib"
 cp "$SCRIPTS_DIR/lanes" "$VERB_REPO/scripts/"
-cp "$SCRIPTS_DIR"/lib/*.sh "$VERB_REPO/scripts/lib/"
+cp -R "$SCRIPTS_DIR/lib/." "$VERB_REPO/scripts/lib/"
 chmod +x "$VERB_REPO/scripts/lanes"
 git -C "$VERB_REPO" init -q
 # The provider, reduced to the one answer the probe reads: `touch` exits with

@@ -2603,7 +2603,7 @@ overseer_relaunch_failed() { # ROW ROWS IDENTITY PANE WINDOW ATTEMPT STEP
 # the first one's reading.
 #
 # OVERSEER_MARK_KEY is the answer's own key, `mark-reached`, `mark-unmeasured`
-# or `below-mark` for either of the two below-mark lines; the KIND, VALUE,
+# or `below-mark` for the `context-below-mark` line; the KIND, VALUE,
 # MARK, ACCOUNT and RESETS globals are its fields, empty where the line
 # carries none. Exit 1 means no judgement was made at all, the note already
 # said once, and nothing may be concluded from any of them.
@@ -2680,8 +2680,7 @@ overseer_marks_judge() {
   case "$first" in
     'oversee-succeed: mark-reached '*) OVERSEER_MARK_KEY=mark-reached ;;
     'oversee-succeed: mark-unmeasured '*) OVERSEER_MARK_KEY=mark-unmeasured ;;
-    'oversee-succeed: window-below-mark '* | 'oversee-succeed: context-below-mark '*)
-      OVERSEER_MARK_KEY=below-mark ;;
+    'oversee-succeed: context-below-mark '*) OVERSEER_MARK_KEY=below-mark ;;
     # A line this watch has no name for settles nothing, exactly as a run that
     # failed does: it is not a mark, and it is not evidence that one lifted.
     *) overseer_note overseer-mark-unjudged "path=$SUCCEED" "line=$first"; return 1 ;;

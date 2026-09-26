@@ -189,6 +189,29 @@ fi
 [[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { ot_message tracker-invalid "tracker=$TRACKER" >&2; exit 1; }
 [[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { ot_message command-missing "options=--harness,--cmd" >&2; exit 1; }
 [[ "$HARNESS" != "codex-app" ]] || { ot_message desktop-harness "harness=$HARNESS" >&2; exit 1; }
+# A fleet lane hands off at a share of its own window, which the harness adapter
+# in lib/lane-context.sh reads, and the harness's own compaction stays off so
+# the handoff comes first: claude and codex through the launch words the
+# launch-choice table in lib/lane-launch.sh leads every command with, Pi through
+# its settings file, which has no launch word and is checked here. A harness no
+# adapter reads is refused rather than launched into a fleet with nothing
+# judging its mark. A launch naming no fleet state has no overseer to hand off
+# to, and is judged on none of it.
+if [[ "$FLEET" == true ]]; then
+  case "$HARNESS" in
+    '' | claude | codex) ;;
+    pi)
+      pi_compaction_rc=0
+      lane_adapter_pi_compaction_on "$CLAIM_ROOT" || pi_compaction_rc=$?
+      case "$pi_compaction_rc" in
+        1) ;;
+        0) ot_message compaction-on "harness=pi" "file=${PI_CODING_AGENT_DIR:-${LANES_HOME:-$HOME}/.pi/agent}/settings.json" >&2; exit 1 ;;
+        *) ot_message compaction-on "harness=pi" "file=unreadable" >&2; exit 1 ;;
+      esac
+      ;;
+    *) ot_message unsupported-for-oversee "harness=$HARNESS" >&2; exit 1 ;;
+  esac
+fi
 # lane-host owns the setting's reading; it runs from this script's checkout,
 # whose project settings this script loaded, or from the caller's directory
 # when the script sits outside any checkout, since `cd ""` fails.

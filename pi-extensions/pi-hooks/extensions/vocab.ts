@@ -125,6 +125,19 @@ export function claudeSessionFields(ctx: ExtensionContext): Record<string, strin
 	return fields;
 }
 
+/**
+ * The context window of the session's model, as `context_window` on a `Stop`
+ * payload. Claude Code's payload carries no such field; Pi keeps the window in
+ * its model registry and never in the session file, so a turn-end hook that
+ * judges a session against its own window, as orch's `lane-mail-check` does,
+ * reads it here. Absent where Pi reports no usage, or a window that is not a
+ * positive whole number.
+ */
+export function piContextFields(ctx: ExtensionContext): Record<string, number> {
+	const window = ctx.getContextUsage?.()?.contextWindow;
+	return typeof window === "number" && Number.isInteger(window) && window > 0 ? { context_window: window } : {};
+}
+
 /** The agent name a pi-agents-tmux subagent process is started with, or
  * `undefined` in a process no subagent runner started. */
 export function piSubagentName(): string | undefined {

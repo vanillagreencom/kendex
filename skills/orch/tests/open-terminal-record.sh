@@ -127,7 +127,7 @@ REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/scripts/lib"
 cp "$SRC_OT" "$REPO/scripts/open-terminal"
 cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/orch-env" "$REPO/scripts/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$REPO/scripts/lib/"
+cp -R "$SCRIPTS_DIR/lib/." "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"
 chmod +x "$REPO/scripts/open-terminal"
 git -C "$REPO" init -q
@@ -512,7 +512,7 @@ fixture_copy() {
   local dir="$TMP_ROOT/$1"
   mkdir -p "$dir/scripts/lib"
   cp "$SRC_OT" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/orch-env" "$dir/scripts/"
-  cp "$SCRIPTS_DIR/lib"/*.sh "$dir/scripts/lib/"
+  cp -R "$SCRIPTS_DIR/lib/." "$dir/scripts/lib/"
   orch_fixture_shared_libs "$dir"
   git -C "$dir" init -q
 }

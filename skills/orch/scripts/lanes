@@ -119,17 +119,20 @@
 #         which no claim count enters, and the record's `claims` is null. The
 #         record printed on 3 under --json carries `wall`, the percentage
 #         judged, so a caller names what it refused on.
-#   context  Print each LIVE WORK LANE's context use, read from its pane
-#         status line and nothing else: Claude prints `Opus 5 41%` (the
-#         percentage USED), Codex prints either `Context 86% left` (the
-#         percentage REMAINING) or `Context 14% used`, and only the `left`
-#         spelling is converted. Both harnesses are reported as
-#         CONTEXT_USED_PCT — the share CONSUMED. CONTEXT_TOKENS is that
-#         share of the window the status line names (Claude prints
-#         `(1M context)`), or of the window LANE_CONTEXT_DEFAULT_WINDOWS
-#         gives the model where the line names none. HEADROOM
-#         sets HANDOFF to `required` at or below ORCH_HANDOFF_HEADROOM_PCT
-#         (default 3).
+#   context  Print each LIVE WORK LANE's context use, as its own turn-end
+#         hook recorded it: the tokens the last response left in the
+#         context, read from the transcript by the harness adapter
+#         (lib/lane-context.sh), and the window its model has. No pane is
+#         read. A lane's reading is in its own mailbox, which the running
+#         lane record of the fleet state (`workflow-state get oversee`)
+#         places, read through its host where that record names one; the
+#         caller's own row with no lane record is the overseer, read from
+#         the overseer mailbox and only where the reading names this pane.
+#         CONTEXT_USED_PCT is the share of that window CONSUMED, and a row
+#         with no reading is `unrecorded`, never empty. HANDOFF is
+#         `required` at or past ORCH_HANDOFF_CONTEXT_PCT of the window
+#         (default 90), the judge the hook uses, or at a HEADROOM at or
+#         below ORCH_HANDOFF_HEADROOM_PCT (default 3).
 #         --json carries `binding_resets_at` beside it, the time the account's
 #         binding bucket frees up, as whole-second UTC with a Z for either
 #         harness, so a caller refusing on headroom can say when the account
@@ -193,8 +196,8 @@
 #                    bucket is a model this launch will not pass has room for
 #                    the launch and none of its own. Pass it for a caller whose
 #                    launched session will be judged on the binding bucket
-#                    rather than on --model — a session whose status line names
-#                    no model, which is every codex session. A session that
+#                    rather than on --model — every codex session, which
+#                    lib/lane-context.sh judges on its binding bucket. A session that
 #                    WILL be judged on --model is already held to the reading
 #                    it takes, and the flag would then refuse it an account
 #                    over a window neither judgement reads. Without --model the
@@ -577,6 +580,14 @@ message() {
     context-claims)
       printf 'lanes: context-claims exit=%s\n' "1"
       printf '%s\n' "in-flight lane claims could not be read; refusing to report context (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
+      ;;
+    invalid-handoff-context)
+      printf 'lanes: invalid-handoff-context value=%s\n' "$1"
+      printf '%s\n' "ORCH_HANDOFF_CONTEXT_PCT must be a whole number of percent from 1 to 100"
+      ;;
+    context-fleet)
+      printf 'lanes: context-fleet item=%s\n' "$1"
+      printf '%s\n' "the fleet state's lane records could not be read, so no lane's mailbox, where its turn-end hook records its context, can be found; refusing to report context rather than report every lane unrecorded"
       ;;
     unknown-subcommand)
       printf 'lanes: unknown-subcommand SUB=%s\n' "$SUB"
@@ -1929,6 +1940,62 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 	printf '%s\n' "$rows"
 }
 
+# The recorded reading of the session one `lanes context` row names, the
+# lane_context_collect fetch contract: the record on stdout and exit 0, exit 1
+# where none is recorded, exit 2 with the cause on stdout where it could not be
+# read. A row whose window a running fleet lane record names is that lane, read
+# in its own mailbox, through its host where the record names one. The
+# caller's own row with no such record is the overseer, whose record is read
+# only where it names this very pane: a successor's report must not carry the
+# figure its predecessor left in the same mailbox.
+context_record_fetch() { # LANE CALLER
+	local lane="$1" caller="$2" rec fields item host root path out rc=0 probe_rc=0
+	rec="$(jq -c --arg w "$lane" 'map(select(((.window // "") | sub("^.*:"; "")) == $w)) | first // empty' <<<"$CONTEXT_LANES")" \
+		|| { printf 'the fleet lane records could not be searched for window %s\n' "$lane"; return 2; }
+	if [[ -z "$rec" ]]; then
+		if [[ -z "$caller" ]]; then
+			printf 'no running fleet lane record names the window %s, so the mailbox its reading is recorded in is unknown\n' "$lane"
+			return 2
+		fi
+		[[ -n "$CONTEXT_OVERSEER_BOX" ]] || { printf 'the main checkout could not be resolved, so the overseer mailbox is unknown\n'; return 2; }
+		path="$CONTEXT_OVERSEER_BOX/$LANE_CONTEXT_RECORD"
+		[[ -e "$path" ]] || return 1
+		out="$(cat -- "$path" 2>&1)" || { printf '%s\n' "$out"; return 2; }
+		[[ -n "$out" ]] || return 1
+		lane_context_record_fields "$out" || { printf '%s\n' "$out"; return 0; }
+		[[ -n "$CONTEXT_CALLER_KEY" && "$LANE_CTX_PANE_KEY" == "$CONTEXT_CALLER_KEY" ]] || return 1
+		printf '%s\n' "$out"
+		return 0
+	fi
+	fields="$(jq -r '[(.item // ""), (.host // ""), (.mail_root // "")] | join("\t")' <<<"$rec")" \
+		|| { printf 'the fleet lane record for window %s could not be read\n' "$lane"; return 2; }
+	item="${fields%%$'\t'*}"; fields="${fields#*$'\t'}"
+	host="${fields%%$'\t'*}"; root="${fields#*$'\t'}"
+	[[ -n "$item" && -n "$root" ]] || { printf 'the fleet lane record for window %s names no item or no mail_root\n' "$lane"; return 2; }
+	path="$root/tmp/lane-mail/$item/$LANE_CONTEXT_RECORD"
+	if [[ -z "$host" ]]; then
+		[[ -e "$path" ]] || return 1
+		out="$(cat -- "$path" 2>&1)" || { printf '%s\n' "$out"; return 2; }
+		[[ -n "$out" ]] || return 1
+		printf '%s\n' "$out"
+		return 0
+	fi
+	# A hosted read that fails with 2 is a file the host does not hold, or a
+	# host lane-host could not reach at all, which answers 2 as well; the probe
+	# tells them apart, as lane-mail's own hosted read does.
+	out="$("$SCRIPT_DIR/lane-host" cat --item "$item" "$path" 2>/dev/null)" || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		[[ -n "$out" ]] || return 1
+		printf '%s\n' "$out"
+		return 0
+	fi
+	"$SCRIPT_DIR/lane-host" touch --item "$item" >/dev/null 2>&1 || probe_rc=$?
+	[[ "$probe_rc" -eq 0 ]] || { printf 'the host of %s did not answer\n' "$item"; return 2; }
+	[[ "$rc" -ne 2 ]] || return 1
+	printf 'the host of %s answered and the read of %s failed with exit %s\n' "$item" "$path" "$rc"
+	return 2
+}
+
 render_table() {
 	jq -r '
 		def col($s; $n): ($s | tostring) as $t
@@ -2559,6 +2626,12 @@ case "$SUB" in
 	context)
 		HANDOFF_HEADROOM_PCT="${ORCH_HANDOFF_HEADROOM_PCT:-3}"
 		pct_valid "$HANDOFF_HEADROOM_PCT" || die invalid-handoff-headroom "$HANDOFF_HEADROOM_PCT"
+		# The context mark resolves through orch-env, as the turn-end hook and
+		# oversee-succeed resolve it, so one settings file sets it for all three.
+		HANDOFF_CONTEXT_PCT="$("$SCRIPT_DIR/orch-env" ORCH_HANDOFF_CONTEXT_PCT 90)" || die settings-rejected
+		context_rc=0
+		lane_context_handoff_due 0 1 "$HANDOFF_CONTEXT_PCT" >/dev/null || context_rc=$?
+		[[ "$context_rc" -ne 2 ]] || die invalid-handoff-context "$HANDOFF_CONTEXT_PCT"
 		validate_lane_settings
 		load_lane_claims
 		# An unreadable claim store is not an empty fleet: reporting no lanes
@@ -2571,15 +2644,30 @@ case "$SUB" in
 		# lane's turn-end handoff hook asks the same function about itself, so
 		# no session is one account in this report and another there.
 		caller_cfg=""
+		CONTEXT_CALLER_KEY=""
 		if [[ -n "${TMUX_PANE:-}" ]]; then
 			caller_cmd="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_command}' 2>/dev/null)" || caller_cmd=""
 			caller_cfg="$(lane_context_caller_cfg "$(lane_context_shape "${caller_cmd#-}")")"
+			CONTEXT_CALLER_KEY="$(lane_context_caller_key)" || CONTEXT_CALLER_KEY=""
 		fi
+		# Where each row's reading is recorded: a lane's in its own mailbox, which
+		# its fleet lane record places, and the overseer's in the overseer mailbox
+		# at the main checkout, where lane-mail keeps it.
+		# No fleet state is a session outside any fleet, whose rows are the
+		# caller's alone; a state that is there and cannot be read is refused.
+		CONTEXT_LANES='[]'
+		fleet_exists="$("$SCRIPT_DIR/workflow-state" exists --json oversee 2>/dev/null | jq -r '.exists')" \
+			|| die context-fleet oversee
+		if [[ "$fleet_exists" == true ]]; then
+			CONTEXT_LANES="$("$SCRIPT_DIR/workflow-state" get oversee '[.lanes // [] | .[] | select(.status == "running")]' 2>/dev/null)" \
+				|| die context-fleet oversee
+		fi
+		CONTEXT_OVERSEER_BOX="$("$SCRIPT_DIR/git-context" common-root . 2>/dev/null)/tmp/lane-mail/overseer" || CONTEXT_OVERSEER_BOX=""
 		# A separate list, never LANE_CLAIMS_LIVE itself: the caller's pane is
 		# a pane to measure and not a launch in flight, and the usage pass
 		# below counts that global's rows against each account.
 		panes_to_measure="$(lane_context_with_caller "$LANE_CLAIMS_LIVE" "$(lane_claims_canon "$caller_cfg")")"
-		out="$(lane_context_collect "$panes_to_measure" lane_alias_for)"
+		out="$(lane_context_collect "$panes_to_measure" lane_alias_for context_record_fetch "$HANDOFF_CONTEXT_PCT")"
 		usage="$(collect_lanes all)"
 		usage_i=0; usage_count="$(jq -r length <<<"$usage")"
 		while (( usage_i < usage_count )); do
@@ -2588,7 +2676,7 @@ case "$SUB" in
 			usage="$(jq -c --argjson i "$usage_i" --arg d "$usage_key" '.[$i].config_dir=$d' <<<"$usage")"
 			usage_i=$((usage_i + 1))
 		done
-		out="$(jq -nc --argjson c "$out" --argjson u "$usage" --argjson t "$HANDOFF_HEADROOM_PCT" '$c|map(. as $x|((($u|map(select(.config_dir==$x.config_dir))|first)//{}) as $l|($l.headroom_pct//null) as $h|.+{headroom_pct:$h,binding_resets_at:($l.binding_resets_at//null),handoff_required:($h!=null and $h<=$t)}))')"
+		out="$(jq -nc --argjson c "$out" --argjson u "$usage" --argjson t "$HANDOFF_HEADROOM_PCT" '$c|map(. as $x|((($u|map(select(.config_dir==$x.config_dir))|first)//{}) as $l|($l.headroom_pct//null) as $h|.+{headroom_pct:$h,binding_resets_at:($l.binding_resets_at//null),handoff_required:(($h!=null and $h<=$t) or $x.context_handoff_due==true)}))')"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else lane_context_render <<<"$out"; fi
 		;;
 	*) die unknown-subcommand "$@" ;;

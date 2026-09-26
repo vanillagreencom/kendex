@@ -964,7 +964,7 @@ said() { grep -cxF -- "$1" <<<"$OUT" || true; }
 
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD" --harness claude --lane work --repo o/r CC-40
 assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=$(host_call) ssh=$(typed "clear; ssh 'lane.example'") remote=$(typed "exec bash -lc 'cd /srv/lane && exec true --model opus --effort high $QUESTION_OFF_ALL'") env=$(typed CLAUDE_CONFIG_DIR=) opened=$(said "open-terminal: tmux-opened item=CC-40 host=$HOST_STUB path=/srv/lane")" \
-  "rc=0 creates=nolog launched=1 claim_lanes=eclaude calls=create,--item,CC-40,--repo,o/r,--harness,claude,--account,eclaude;cat,--item,CC-40,/srv/lane/.git;put,--item,CC-40,/srv/clone/.git/lane-mail/cc-40;cat,--item,CC-40,/srv/clone/.git/lane-mail/cc-40 ssh=1 remote=1 env=0 opened=1" \
+  "rc=0 creates=nolog launched=1 claim_lanes=eclaude calls=create,--item,CC-40,--repo,o/r,--harness,claude,--account,eclaude;cat,--item,CC-40,/srv/lane/.git;put,--item,CC-40,/srv/clone/.git/lane-mail/cc-40;cat,--item,CC-40,/srv/clone/.git/lane-mail/cc-40;put,--item,CC-40,/srv/lane/tmp/lane-mail/CC-40/context.json ssh=1 remote=1 env=0 opened=1" \
   "a hosted launch creates through lane-host, types ssh then the remote line, and renders no lane env prefix"
 # A hosted relaunch continues natively. Q is how single_quote renders one quote
 # of the continuation line inside the remote command.
@@ -982,8 +982,8 @@ Q="'\\''"
 hosted_line() { printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item %s first and act on every directive it prints, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item %s through your harness background wake.' "$1" "$1" "$1"; }
 HOSTED_LINE="$(hosted_line CC-41)"
 run_ot "$CHOICE" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch CC-41
-assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q --continue $Q$HOSTED_LINE$Q'")" \
-  "rc=0 creates=nolog launched=1 calls=create,--item,CC-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,CC-41,/srv/lane/.git;put,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;cat,--item,CC-41,/srv/clone/.git/lane-mail/cc-41 remote=1" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude $Q--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}$Q $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q --continue $Q$HOSTED_LINE$Q'")" \
+  "rc=0 creates=nolog launched=1 calls=create,--item,CC-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,CC-41,/srv/lane/.git;put,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;cat,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;put,--item,CC-41,/srv/lane/tmp/lane-mail/CC-41/context.json remote=1" \
   "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line"
 HOSTED_LINE="$(hosted_line CC-48)"
 run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model opus --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-48
@@ -991,7 +991,7 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash 
   "rc=0 creates=nolog launched=1 remote=1" \
   "a hosted pi relaunch continues natively with the continuation line"
 run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=-m gpt-6-astra -c model_reasoning_effort=high" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
-assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec codex $Q-c$Q ${Q}check_for_update_on_startup=false$Q $Q-c$Q ${Q}features.default_mode_request_user_input=false$Q $Q-m$Q ${Q}gpt-6-astra$Q $Q-c$Q ${Q}model_reasoning_effort=high$Q resume --last'") line=$(typed "Resume the orch workflow for CC-49")" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec codex $Q-c$Q ${Q}check_for_update_on_startup=false$Q $Q-c$Q ${Q}model_auto_compact_token_limit=9223372036854775807$Q $Q-c$Q ${Q}features.default_mode_request_user_input=false$Q $Q-m$Q ${Q}gpt-6-astra$Q $Q-c$Q ${Q}model_reasoning_effort=high$Q resume --last'") line=$(typed "Resume the orch workflow for CC-49")" \
   "rc=0 creates=nolog launched=1 remote=1 line=0" \
   "a hosted codex relaunch resumes promptless, so no sentence is rendered into the session-id slot"
 # The lane comes up idle, so the launcher owes the operator a record saying the
@@ -1018,7 +1018,7 @@ if command -v codex >/dev/null 2>&1; then
   # escape, which is what the remote shell does before codex sees its argv.
   RENDERED="$(sed -n "s/.*exec bash -lc 'cd \/srv\/lane \&\& exec \(codex .*\)'.*/\1/p" "$RUN/tmux.log" \
     | tail -1 | sed "s/'\\\\''/'/g")"
-  assert_eq "${RENDERED:-MISSING}" "codex '-c' 'check_for_update_on_startup=false' '-c' 'features.default_mode_request_user_input=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high' resume --last" \
+  assert_eq "${RENDERED:-MISSING}" "codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'features.default_mode_request_user_input=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high' resume --last" \
     "the rendered remote command is recovered from the pane log"
   CODEX_PARSE_RC=0
   CODEX_HOME="$TMP_ROOT/codex-parse-home" timeout 20 bash -c "$RENDERED zz-appended-session" </dev/null >/dev/null 2>&1 || CODEX_PARSE_RC=$?
@@ -1038,8 +1038,8 @@ fi
 # distinct, and the assertion below is what reddens if the bare number returns.
 HOSTED_LINE="$(hosted_line issue-2708)"
 run_ot "ORCH_LANE_ALIASES=eclaude=work;$CHOICE" --host "$HOST_STUB" --tracker github --harness claude --lane work --repo o/r --relaunch 2708
-assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q --continue $Q$HOSTED_LINE$Q'")" \
-  "rc=0 creates=nolog launched=1 calls=create,--item,issue-2708,--repo,o/r,--harness,claude,--account,eclaude,--relaunch;cat,--item,issue-2708,/srv/lane/.git;put,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;cat,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708 remote=1" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude $Q--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}$Q $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q --continue $Q$HOSTED_LINE$Q'")" \
+  "rc=0 creates=nolog launched=1 calls=create,--item,issue-2708,--repo,o/r,--harness,claude,--account,eclaude,--relaunch;cat,--item,issue-2708,/srv/lane/.git;put,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;cat,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;put,--item,issue-2708,/srv/lane/tmp/lane-mail/issue-2708/context.json remote=1" \
   "a GitHub relaunch names the worktree id its mailbox is bound under, never the bare issue number, and asks the provider nothing on an account that measured"
 
 # WHICH CREDENTIAL A HOSTED LAUNCH RUNS ON. The host runs the copy the provider
@@ -1356,7 +1356,7 @@ echo "=== the claim store belongs to the caller's checkout ==="
 SCRIPTREPO="$TMP_ROOT/scriptrepo"; CALLERREPO="$TMP_ROOT/callerrepo"
 mkdir -p "$SCRIPTREPO/scripts/lib" "$CALLERREPO"
 cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$SCRIPTREPO/scripts/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$SCRIPTREPO/scripts/lib/"
+cp -R "$SCRIPTS_DIR/lib/." "$SCRIPTREPO/scripts/lib/"
 orch_fixture_shared_libs "$SCRIPTREPO"
 chmod +x "$SCRIPTREPO/scripts/open-terminal" "$SCRIPTREPO/scripts/lanes" "$SCRIPTREPO/scripts/lane-marker"
 git -C "$SCRIPTREPO" init -q; git -C "$CALLERREPO" init -q

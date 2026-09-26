@@ -77,12 +77,19 @@ lane_env_prefix() { # HARNESS DIR
 # a `FLAG=VALUE` spelling also accepts `FLAG VALUE` when a caller supplied it.
 # `-` says the harness launch form has no permission word in that set. The
 # eighth is the launch-only settings every command a launcher builds for that
-# harness carries, written as they stand, and `-` where it has none. Codex
+# harness carries, written as they stand, one `;`-separated run per setting, and
+# `-` where it has none. Codex
 # checks for a newer CLI on startup and opens an interactive update prompt when
 # one exists; the first paste a lane receives then answers that prompt, installs
 # the update and exits the session. `check_for_update_on_startup=false` is the
 # key the Codex config reference names for centrally managed installs, passed
-# per launch so no installed config is edited. The ninth is the words that take
+# per launch so no installed config is edited. The same column turns the
+# harness's own auto-compaction off, so a lane hands off at its own mark
+# (lib/lane-context.sh) before the harness compacts it: claude reads
+# DISABLE_AUTO_COMPACT from the `env` table its `--settings` flag carries, and
+# codex compacts at `model_auto_compact_token_limit`, which a limit past every
+# window never reaches. Pi has no launch word for it; open-terminal checks its
+# settings file instead. The ninth is the words that take
 # the harness question tool away, written as they stand, and `-` where this
 # table names none. A lane asks its overseer through `lane-mail ask`, and a
 # question tool in a lane opens a dialog nobody at the pane answers, so every
@@ -132,8 +139,8 @@ lane_env_prefix() { # HARNESS DIR
 #             variable, JSON no flag word carries: the row names none, and an
 #             opencode lane keeps its question tool.
 LAUNCH_CHOICE_FLAGS=(
-  'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions|-|--disallowedTools=AskUserQuestion,EnterPlanMode'
-  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false|-c features.default_mode_request_user_input=false'
+  'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions|--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}|--disallowedTools=AskUserQuestion,EnterPlanMode'
+  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false;-c model_auto_compact_token_limit=9223372036854775807|-c features.default_mode_request_user_input=false'
   'opencode|-m --model|-|-|-|-|-|-|-'
   'pi|--model|--thinking|:|-|-|-|-|--exclude-tools question'
 )
@@ -433,17 +440,22 @@ launch_choice_lead_settings() { # [--question-off] HARNESS WORD...
     question_off=true
     shift
   fi
-  local harness="$1" nl=$'\n' lead="" row name settings question run words line
+  local harness="$1" nl=$'\n' lead="" row name settings question run runs words line
   shift
   words="$nl$(printf '%s\n' "$@")$nl"
   for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do
     IFS='|' read -r name _ _ _ _ _ _ settings question <<<"$row"
-    for run in "$settings" "$question"; do
-      [[ "$run" != - ]] || continue
+    # The settings column is `;`-separated runs, each stripped on its own, so a
+    # caller carrying one of a harness's settings loses it whatever else that
+    # row sets.
+    runs="${settings//;/$nl}$nl$question"
+    while IFS= read -r run; do
+      [[ -n "$run" && "$run" != - ]] || continue
       run="${run// /$nl}"
       while [[ "$words" == *"$nl$run$nl"* ]]; do words="${words/"$nl$run$nl"/$nl}"; done
-    done
+    done <<<"$runs"
     [[ "$name" == "$harness" ]] || continue
+    settings="${settings//;/ }"
     [[ "$settings" == - ]] || lead="${settings// /$nl}"
     [[ "$question_off" != true || "$question" == - ]] || lead="$lead$nl${question// /$nl}"
   done

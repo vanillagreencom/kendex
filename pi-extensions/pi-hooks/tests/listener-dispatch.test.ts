@@ -115,6 +115,29 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 		}
 	});
 
+	/** Pi names a session's context window nowhere a hook can read it but the
+	 * session's own usage report, so the Stop payload carries it, and carries
+	 * nothing where that report names no whole window. */
+	test("a Stop payload carries the session's context window where Pi reports one", async () => {
+		const project = initCleanRustRepo("pi-hooks-turn-end-window-");
+		const log = join(project, "window.log");
+		try {
+			registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, `cat >> ${JSON.stringify(log)}; exit 0`);
+			const rows: { usage: { contextWindow: number } | undefined; fields: Record<string, number> }[] = [
+				{ usage: { contextWindow: 272000 }, fields: { context_window: 272000 } },
+				{ usage: undefined, fields: {} },
+				{ usage: { contextWindow: 0 }, fields: {} },
+			];
+			for (const row of rows) {
+				rmSync(log, { force: true });
+				await installCarrier().handler(SETTLED_LISTENER)({}, trusted(project, { getContextUsage: () => row.usage }));
+				expect(JSON.parse(readLog(log))).toEqual({ hook_event_name: "Stop", stop_hook_active: false, session_id: SESSION_ID, ...row.fields });
+			}
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
 	/** Claude Code ends a subagent with `SubagentStop`, never `Stop`, so a Stop
 	 * hook judges the lead alone. A pi-agents-tmux subagent is its own Pi
 	 * process carrying its agent's name, and its settle is that subagent's end. */

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests for scripts/oversee-succeed over a real tmux server on a private
-# socket. The caller is a pane whose screen carries a claude status line;
+# socket. The caller is a pane whose context reading the overseer's turn-end
+# hook would have recorded in the overseer mailbox, written here per screen;
 # claude, codex and kendex are stubs on PATH, and `lanes pick` answers from
 # the lanes-fixture usage bodies. The harness stubs record their lane and argv
 # and print the interrupt hint a running turn draws. The success row runs the
@@ -60,6 +61,7 @@ cat > "$BIN/kendex" <<'STUB'
 #!/bin/sh
 case "$1:$2:$3" in
   tier-model:claude:1) echo fable ;;
+  tier-model:claude:3) echo sonnet ;;
   tier-model:codex:1) echo gpt-6-astra ;;
   *) exit 1 ;;
 esac
@@ -115,16 +117,13 @@ TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 SERVER_PID="$(tm display-message -p '#{pid}')"
 
 MARK='  kendex (ken-1453) Fable 5.1 (1M context) 52% (fixture@example.com)     /rc'
-# The line a status-line command that prints the percentage alone draws: no
-# window at all, which is what the overseer this feature was built for shows.
-NO_WINDOW_1M='  kendex (ken-1453) Fable 5.1 52% (fixture@example.com)     /rc'
 UNDER_MARK='  kendex (ken-1453) Fable 5.1 (1M context) 10% (fixture@example.com)     /rc'
-# A codex caller reads its own shape: the status line is the final non-empty
-# row, and the reset its account carries is parsed from a Unix epoch.
+# A codex caller, whose account's reset is parsed from a Unix epoch.
 CODEX_SCREEN='  Context 48% left'
-# A tier LANE_CONTEXT_DEFAULT_WINDOWS leaves out, on a line naming no window
-# either: the parse then prints three empty fields before the model, the one
-# shape a split that collapses a tab run reads as a shifted row.
+# A codex caller at exactly 90 percent of the 258400 window its rollout names.
+CODEX_AT_MARK='  Context 10% left'
+# A claude tier the claude adapter's window table leaves out, so its reading
+# carries a model and no window.
 NO_TABLE_TIER='  kendex (ken-1453) Sonnet 4.5 47% (fixture@example.com)     /rc'
 
 SRC_DIR="$(cd "$(dirname "$SUCCEED")" && pwd)"
@@ -137,6 +136,46 @@ source "$SRC_DIR/lib/lane-launch.sh"
 # by the row that pins the pick's bound. See § the pick reading.
 # shellcheck source=../scripts/lib/lane-context.sh
 source "$SRC_DIR/lib/lane-context.sh"
+# The reading the overseer's own turn-end hook takes for each screen below,
+# `<harness> <tokens> <window> <model>`, empty for a screen whose session has
+# taken none. The screens stay on the pane only as what it draws. The hook
+# records the reading, which the script reads for the harness and model alone,
+# and hands the figure in as --context, which every judging run below is given
+# unless the row sets NO_CONTEXT. Every row judges at CONTEXT_PCT, 50 unless the
+# row names another, so the 1M reading at 520000 is past the mark and at 100000
+# under it.
+screen_reading() { # SCREEN
+  case "$1" in
+    "$MARK") echo 'claude 520000 1000000 claude-fable-5-1' ;;
+    "$UNDER_MARK") echo 'claude 100000 1000000 claude-fable-5-1' ;;
+    "$CODEX_SCREEN") echo 'codex 100000 258400 gpt-6-astra' ;;
+    "$CODEX_AT_MARK") echo 'codex 232560 258400 gpt-6-astra' ;;
+    "$NO_TABLE_TIER") echo 'claude 470000 - claude-sonnet-4-5' ;;
+    *'Sonnet 4.5 52%'*) echo 'claude 520000 - claude-sonnet-4-5' ;;
+    *'Opus 5 (200k context) 41%'*) echo 'claude 82000 200000 claude-opus-5' ;;
+    *) ;;
+  esac
+}
+
+# The overseer mailbox every row's script reads, under the directory each run
+# starts in.
+OVERSEER_RECORD="$TMP_ROOT/work/tmp/lane-mail/overseer/context.json"
+
+# record_caller SCREEN PANE — the reading screen_reading names for SCREEN,
+# recorded for PANE through the library's own writer, and its figure left in
+# CALLER_CONTEXT_FILE as the --context argument; neither where it names none.
+CALLER_CONTEXT_FILE="$TMP_ROOT/caller.context"
+record_caller() { # SCREEN PANE
+  local reading harness tokens window model
+  mkdir -p "${OVERSEER_RECORD%/*}"
+  rm -f -- "$OVERSEER_RECORD" "$CALLER_CONTEXT_FILE"
+  reading="$(screen_reading "$1")"
+  [[ -n "$reading" ]] || return 0
+  read -r harness tokens window model <<<"$reading"
+  [[ "$window" != - ]] || window=""
+  lane_context_record "${OVERSEER_RECORD%/*}" "$harness" "$tokens" "$window" "$model" s1 "$SERVER_PID $2"
+  printf '%s:%s\n' "$tokens" "$window" > "$CALLER_CONTEXT_FILE"
+}
 
 # new_caller SCREEN [MARKER] [COMMAND] — every window past index 0 closed, then
 # a caller pane at index 1 showing SCREEN; sets CALLER_PANE and CALLER_WINDOW.
@@ -150,6 +189,7 @@ new_caller() {
   tm kill-window -a -t fleet:0
   spec="$(tm new-window -d -t fleet:1 -P -F '#{pane_id} #{window_id}' "$cmd")"
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
+  record_caller "$1" "$CALLER_PANE"
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     [[ "$(tm capture-pane -p -t "$CALLER_PANE")" != *"$marker"* ]] || return 0
     sleep 0.2
@@ -184,8 +224,7 @@ hp=""
 # written and the fixture would carry whatever that printed.
 lane="\${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}"
 [ "\$lane" != none ] || lane=""
-cm=""
-[ -z "\${CONTEXT_TOKENS:-}" ] || cm="ORCH_HANDOFF_CONTEXT_TOKENS=\$CONTEXT_TOKENS"
+cm="ORCH_HANDOFF_CONTEXT_PCT=\${CONTEXT_PCT:-50}"
 # A lanes setting the row can spoil, for the one row that needs the account
 # judge itself to fail rather than answer.
 ttl=""
@@ -195,6 +234,15 @@ wall="ORCH_OVERSEER_WALL_MINUTES=\${WALL_MINUTES:-0}"
 successors="ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=\${SUCCESSOR_ACCOUNTS:-0}"
 qt=""
 [ -z "\${QUESTION_TOOL:-}" ] || qt="ORCH_OVERSEER_QUESTION_TOOL=\$QUESTION_TOOL"
+# The reading a judging run is handed, as the turn-end hook hands it; the three
+# modes that judge nothing refuse it, and NO_CONTEXT withholds it.
+judging=1
+for arg in "\$@"; do
+  case "\$arg" in --print-launch-line|--walled-pane|--dead-pane) judging=0 ;; --) break ;; esac
+done
+if [ "\$judging" -eq 1 ] && [ -z "\${NO_CONTEXT:-}" ] && [ -s "$CALLER_CONTEXT_FILE" ]; then
+  set -- --context "\$(cat "$CALLER_CONTEXT_FILE")" "\$@"
+fi
 cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
   \$lane \\
@@ -203,11 +251,13 @@ cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMU
   \$hp \$cm \$ttl \$wall \$successors \$qt "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
 # in-pane ARGS... — a caller pane's own command: draw the screen, wait until
-# tmux shows it, then become the script.
+# tmux shows it and its reading is recorded for this pane, then become the
+# script.
 cat > "$TMP_ROOT/in-pane" <<PANE
 #!/bin/sh
 cat "$TMP_ROOT/caller.screen"
 until tmux capture-pane -p -t "\$TMUX_PANE" | grep -q 'fixture@example.com'; do sleep 0.1; done
+until grep -qF "\"$SERVER_PID \$TMUX_PANE\"" "$OVERSEER_RECORD" 2>/dev/null; do sleep 0.1; done
 exec "$TMP_ROOT/succeed-env" "\$@" > "$TMP_ROOT/in-pane.out" 2>&1
 PANE
 chmod +x "$TMP_ROOT/succeed-env" "$TMP_ROOT/in-pane"
@@ -265,6 +315,13 @@ recorded_argv0() { sed -n 's/^argv0=//p' "$TMP_ROOT/argv.$1" 2>/dev/null || true
 # One brief on every harness: the plain sentence each of them reads as its
 # opening prompt.
 BRIEF='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
+# The launch words that turn each harness's own compaction off, which every
+# successor command carries, as the harness stub records them and as the
+# launch line spells the claude one for its shell.
+# shellcheck disable=SC2016  # JSON, never expanded.
+CLAUDE_COMPACT='--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}'
+CODEX_COMPACT='-c;model_auto_compact_token_limit=9223372036854775807'
+CLAUDE_COMPACT_LINE="$(printf '%q' "$CLAUDE_COMPACT")"
 
 # A live process that is NOT this suite's tmux server: lane_claims_read keeps a
 # claim on a server it cannot enumerate while that server's process runs, so a
@@ -319,18 +376,19 @@ rm -f "${TMP_ROOT:?}"/argv.*
 spec="$(tm new-window -d -t fleet:3 -P -F '#{pane_id} #{window_id} #{pane_pid}' \
   "exec '$TMP_ROOT/in-pane' success 'claude:1:high' -- --dangerously-skip-permissions --verbose")"
 read -r CALLER_PANE CALLER_WINDOW caller_pid <<<"$spec"
+record_caller "$MARK" "$CALLER_PANE"
 for _ in $(seq 1 100); do kill -0 "$caller_pid" 2>/dev/null || break; sleep 0.2; done
 # Before the close that ends its own window, the run names the fleet watch it
 # hands to the successor, here that none runs on the fleet state
 # (oversee_succeed_watch.sh holds the handover itself).
 assert_eq "$(layout)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pane.out" | sed 's/window=@[0-9]*/window=@N/; s/pane=%[0-9]*/pane=%N/; s|path=.*/tmp/workflow-state-oversee.json$|path=STATE|' | tr '\n' ';')|$(recorded claude)" \
-  "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=none;${UNOBSERVED_LINE}oversee-succeed: watch-absent path=STATE;oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--dangerously-skip-permissions;--verbose;$BRIEF;" \
+  "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=none;${UNOBSERVED_LINE}oversee-succeed: watch-absent path=STATE;oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;--dangerously-skip-permissions;--verbose;$BRIEF;" \
   "success in the caller's own pane: successor at the caller's index, caller window gone"
 
 # The same launch's record, written before the window opened: the close kills
 # this script's own window, so a write placed after it may never run.
 assert_eq "$(recorded_line)" \
-  "env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high --dangerously-skip-permissions --verbose '$BRIEF'" \
+  "env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high $CLAUDE_COMPACT_LINE --dangerously-skip-permissions --verbose '$BRIEF'" \
   "a succession records the line it launched, for a later dead-overseer relaunch"
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -343,7 +401,7 @@ CALLER_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 CODEX_LAUNCH_HOME="$(lane_codex_home_path "$H/.codex" "$CALLER_CWD")"
 run_succeed walled 'claude:1:high,codex:1:high' -- --dangerously-skip-permissions
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(lane_codex_trusted "$CODEX_LAUNCH_HOME/config.toml" "$CALLER_CWD" && echo trusted || echo untrusted)" \
-  "0|1 overseer;|no|none|lane=$CODEX_LAUNCH_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;$BRIEF;|oversee-succeed: successor-launch form=prefix lane=$H/.codex trust=launch-home|trusted" \
+  "0|1 overseer;|no|none|lane=$CODEX_LAUNCH_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;$CODEX_COMPACT;$BRIEF;|oversee-succeed: successor-launch form=prefix lane=$H/.codex trust=launch-home|trusted" \
   "walled claude entry: codex entry picked, under a home that trusts the caller directory"
 # The other side of that preparation: an account config that exists and cannot
 # be read refuses the successor rather than launching it onto a config with
@@ -387,7 +445,7 @@ for row in \
   # shellcheck disable=SC2086  # a row's words are its own, split on purpose.
   QUESTION_TOOL="$row_value" run_succeed "stripflags$row_value" 'codex:1:high' -- --model fable --effort high --dangerously-skip-permissions $row_words
   assert_eq "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
-    "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false$row_tail;$BRIEF;" \
+    "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;$CODEX_COMPACT$row_tail;$BRIEF;" \
     "$row_what"
 done
 
@@ -397,7 +455,7 @@ claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed same-harness-restricted 'claude:1:high' -- \
   --model caller-model --effort low --permission-mode dontAsk --verbose
 assert_eq "$RC|$(overseers)|$(recorded claude)" \
-  "0|1|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;--permission-mode;dontAsk;--verbose;$BRIEF;" \
+  "0|1|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;--permission-mode;dontAsk;--verbose;$BRIEF;" \
   "a same-harness named entry preserves the restricted permission spelling"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 
@@ -412,7 +470,7 @@ CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-to-claude 'claude:1:high' -
   --dangerously-bypass-approvals-and-sandbox --verbose
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 assert_eq "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
-  "0|1|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--dangerously-skip-permissions;--verbose;$BRIEF;|none" \
+  "0|1|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--dangerously-skip-permissions;$CLAUDE_COMPACT;--verbose;$BRIEF;|none" \
   "a codex caller picking claude carries claude's permission word and none of codex's, its update setting included"
 
 # An alternate full-bypass spelling has the same meaning across harnesses.
@@ -424,7 +482,7 @@ ALT_HOME="$(lane_codex_home_path "$H/.codex" "$ALT_CWD")"
 CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.claude" run_succeed alternate-bypass 'codex:1:high' -- \
   --model fable --effort high --permission-mode bypassPermissions --verbose
 assert_eq "$RC|$(overseers)|$(recorded codex)" \
-  "0|1|lane=$ALT_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;--verbose;$BRIEF;" \
+  "0|1|lane=$ALT_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;$CODEX_COMPACT;--verbose;$BRIEF;" \
   "an alternate claude full-bypass spelling transfers to codex"
 
 # Permission modes without exact full-bypass equivalence refuse before launch.
@@ -483,7 +541,7 @@ codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 new_caller "$MARK"
 run_succeed callerflags '' -- --model fable --effort high --permission-mode bypassPermissions --verbose
 assert_eq "$RC|$(overseers)|$(recorded claude)" \
-  "0|1|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--permission-mode;bypassPermissions;--verbose;$BRIEF;" \
+  "0|1|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;--model;fable;--effort;high;--permission-mode;bypassPermissions;--verbose;$BRIEF;" \
   "the caller entry carries the caller's model, effort and permission words whole"
 
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -564,7 +622,7 @@ new_caller "$UNDER_MARK"
 claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed headroom 'claude:1:high'
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "account headroom under the trigger: succession fires under the context mark, on the picked lane"
 
 # The empty preference keeps the caller's own harness and passes no model or
@@ -572,7 +630,7 @@ assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
 new_caller "$UNDER_MARK"
 run_succeed headroom-caller '' -- --verbose
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--verbose;$BRIEF;" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;--verbose;$BRIEF;" \
   "empty preference at the account mark: the caller's own account is left behind"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 
@@ -597,6 +655,22 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded cod
   "1|oversee-succeed: model-failed entry=claude:9:high|yes|0|none" \
   "an entry whose rank the ladder cannot answer refuses model-failed and stops the walk"
 
+# The builder turns a successor's compaction off only where an adapter names its
+# model's window, so an entry whose claude model has none would open a successor
+# that compacts rather than hands off: the same setting to fix, ending the run
+# before any window opens. The caller's own entry is judged on the model its
+# flags carry, so a sonnet overseer with an empty preference is refused too.
+new_caller "$MARK"
+run_succeed nowindow 'claude:3:high,codex:1:high'
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
+  "1|oversee-succeed: model-window-unknown entry=claude:3:high model=sonnet|yes|0|none" \
+  "an entry whose claude model has no window refuses model-window-unknown and stops the walk"
+new_caller "$MARK"
+run_succeed sonnetcaller '' -- --model sonnet --effort high
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)" \
+  "1|oversee-succeed: model-window-unknown entry=caller model=sonnet|yes|0" \
+  "a sonnet overseer with an empty preference is refused on its own entry"
+
 # An overseer started by hand names no account in its environment, and the one
 # it is spending is the harness's own default. The caller entry launches its
 # successor THERE, read through the same lib/lane-context.sh owner that measured
@@ -607,7 +681,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded cod
 new_caller "$MARK" '(fixture@example.com)' "cat '$TMP_ROOT/caller.screen'; exec '$BIN/hclaude' 100000"
 CALLER_LANE=none run_succeed callerdefault ''
 assert_eq "$RC|$(caller_open)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(recorded claude)" \
-  "0|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=none|lane=$H/.claude;-n;overseer;$BRIEF;" \
+  "0|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=none|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
   "a caller entry naming no account variable launches on the account its room was measured on"
 
 # The same refusal from a CODEX overseer. Its account's reset arrives from the
@@ -630,7 +704,7 @@ new_caller "$UNDER_MARK"
 write_foreign_claim foreign-pane "$CALLER_PANE" "$H/.eclaude"
 run_succeed foreign-pane 'claude:1:high'
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80|0|none" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=80|0|none" \
   "a foreign server's claim on the caller's pane number does not name the judged account"
 
 # An account judge that cannot answer says nothing about this account: the run
@@ -640,7 +714,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
 new_caller "$UNDER_MARK"
 USAGE_TTL=forever run_succeed lanesfail 'claude:1:high'
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=unreadable|0|none" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=unreadable|0|none" \
   "an unanswerable account judge leaves the account mark unfired, not the run refused"
 
 # A preference naming another harness, every account of it walled. The walk
@@ -652,7 +726,7 @@ new_caller "$MARK"
 codex_usage 95 > "$FIXTURE_DIR/.codex.json"
 run_succeed crossharness 'codex:1:high'
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)" \
-  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;$BRIEF;|none" \
+  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;|none" \
   "a one-entry preference whose harness is walled falls through to the caller-harness sweep"
 
 # The must-fail inverse of that row, on the same fixture: with the fallback
@@ -725,26 +799,20 @@ assert_eq "$RC|$(keyed interrupted "$(cat "$TMP_ROOT/interrupted.out")" | sed -n
 new_caller "$UNDER_MARK"
 run_succeed under 'claude:1:high'
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80|0|none" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=80|0|none" \
   "1M window under the context mark: context-below-mark, nothing launched"
 
-new_caller "$NO_WINDOW_1M"
-run_succeed window 'claude:1:high'
-assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BRIEF;" \
-  "a line naming no window takes the window its model runs, and the successor launches"
 
-# What a refusal's window rests on. A window the line NAMES is read off the
-# line whatever the table holds for that model, and a model the table leaves
-# out is no window at all rather than another model's figure.
+# A window under 1M is judged at the same share as any other, and a reading
+# whose window its adapter could not name is unmeasured rather than guessed at.
 for row in \
-  "  kendex (ken-1453) Opus 5 (200k context) 41% (fixture@example.com)     /rc|window=200000 source=status-line headroom=80|a named window under 1M is read off the line, not off the table" \
-  "  kendex (ken-1453) Sonnet 4.5 52% (fixture@example.com)     /rc|window=none source=none headroom=80|a model the table leaves out is unmeasured, not guessed at"; do
+  "  kendex (ken-1453) Opus 5 (200k context) 41% (fixture@example.com)     /rc|context-below-mark tokens=82000 window=200000 mark=50 headroom=80|a 200k window is judged at the same share as a 1M one" \
+  "  kendex (ken-1453) Sonnet 4.5 52% (fixture@example.com)     /rc|context-unmeasured reason=window-unnamed headroom=80|a model whose window the adapter leaves out is unmeasured, not guessed at"; do
   IFS='|' read -r row_screen row_want row_label <<<"$row"
   new_caller "$row_screen"
   run_succeed window 'claude:1:high'
   assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
-    "0|oversee-succeed: window-below-mark $row_want|0|none" \
+    "0|oversee-succeed: $row_want|0|none" \
     "$row_label"
 done
 
@@ -757,17 +825,17 @@ new_caller "$MARK"
 BEFORE_LINE="$(recorded_line)"
 run_succeed checkcontext '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)|$(recorded claude)" \
-  "0|oversee-succeed: mark-reached kind=context value=520000 mark=500000 succession=on headroom=80|0|yes|none" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=50 succession=on headroom=80 window=1000000|0|yes|none" \
   "--check-marks at the context mark: the mark is reported, nothing is launched"
-assert_eq "$(recorded_line)" \
-  "$BEFORE_LINE" "and the fleet state keeps the launch line it had: a judgement records none"
+assert_eq "$(recorded_line)" "$BEFORE_LINE" \
+  "and the fleet state keeps the launch line it had: a judgement records none"
 
 # A mistyped ORCH_OVERSEER_QUESTION_TOOL rides along: a judgement builds no
 # line, so the setting is not read and cannot silence the mark.
 new_caller "$UNDER_MARK"
 QUESTION_TOOL=sometimes run_succeed checkunder '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80|0|yes" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=80|0|yes" \
   "--check-marks under both marks: the below-mark line, nothing launched, a mistyped question-tool setting unread"
 
 # The projected wall is measured from the displaced cache sample. A fast burn
@@ -783,13 +851,13 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
 new_caller "$UNDER_MARK"
 WALL_MINUTES=30 run_succeed ratefast ''
 assert_eq "$RC|$(caller_open)|$(recorded claude)" \
-  "0|no|lane=$H/.eclaude;-n;overseer;$BRIEF;" \
+  "0|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
   "a rate trigger moves off the caller account even when it has more headroom"
 stage_usage_pair rateslow 22 20 600
 new_caller "$UNDER_MARK"
 WALL_MINUTES=30 run_succeed rateslow '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=78|0" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=78|0" \
   "a projected wall beyond the setting does not fire"
 stage_usage_pair ratedefaultat 60 40 600
 new_caller "$UNDER_MARK"
@@ -801,7 +869,7 @@ stage_usage_pair ratedefaultabove 58 38 600
 new_caller "$UNDER_MARK"
 WALL_MINUTES=default run_succeed ratedefaultabove '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=42|0" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=42|0" \
   "the default wall notice stays clear at twenty-one projected minutes"
 for rate_row in \
   "rateone|40|none|0|one-sample" \
@@ -842,7 +910,7 @@ THREE_LANES="$H/.claude:$H/.eclaude:$H/.nclaude"
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyingtwo '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=40|0" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=40|0" \
   "two successor accounts do not fire the qualifying-set trigger"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
 new_caller "$UNDER_MARK"
@@ -853,19 +921,19 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyinglaunch ''
 assert_eq "$RC|$(caller_open)|$(recorded claude)" \
-  "0|no|lane=$H/.eclaude;-n;overseer;$BRIEF;" \
+  "0|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
   "the qualifying-set trigger succeeds onto the remaining account"
 new_caller "$UNDER_MARK"
 CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.eclaude" SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" \
   run_succeed qualifyingstable '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=50" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=50" \
   "the successor stays in place when no remaining account has more headroom"
 claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyingequal '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=50" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=50" \
   "an equal-headroom successor does not fire the qualifying-set trigger"
 
 # A known harness remains enough to judge account triggers when its context
@@ -897,13 +965,13 @@ claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
 new_known_claude_caller "$NO_CONTEXT"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed knownunmeasured '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "0|oversee-succeed: mark-unmeasured kind=context reason=window-none source=none succession=on" \
-  "a known harness with no account trigger reports its context as unmeasured"
+  "0|oversee-succeed: account-below-mark headroom=40" \
+  "a known harness handed no reading judges its account triggers alone"
 new_caller "$NO_CONTEXT" "$NO_CONTEXT"
 run_succeed unknowncontext '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "1|oversee-succeed: no-status-line pane=$CALLER_PANE" \
-  "a pane with no known harness and no context line still refuses"
+  "1|oversee-succeed: harness-unnamed pane=$CALLER_PANE" \
+  "a pane with no known harness and no reading naming one still refuses"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
 
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -926,39 +994,43 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
 new_caller "$MARK"
 SUCCESSION=off run_succeed checkoff '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
-  "0|oversee-succeed: mark-reached kind=context value=520000 mark=500000 succession=off headroom=80|0|yes" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=50 succession=off headroom=80 window=1000000|0|yes" \
   "--check-marks with succession off still judges, and says the setting is off"
 
-# The context mark is ORCH_HANDOFF_CONTEXT_TOKENS, the one the lane turn-end
-# hook judges. A screen past the default and under a raised setting reaches the
-# mark only where the setting is read, so a mark hard-coded here reddens this.
+# The context mark is ORCH_HANDOFF_CONTEXT_PCT, the one the lane turn-end hook
+# judges. A reading past one share of its window and under a raised one reaches
+# the mark only where the setting is read, so a mark hard-coded here reddens
+# this.
 new_caller "$MARK"
-CONTEXT_TOKENS=600000 run_succeed checkraised '' --check-marks
+CONTEXT_PCT=60 run_succeed checkraised '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: context-below-mark tokens=520000 mark=600000 headroom=80|0" \
-  "a context mark the setting raises is not reached at the same screen"
+  "0|oversee-succeed: context-below-mark tokens=520000 window=1000000 mark=60 headroom=80|0" \
+  "a context mark the setting raises is not reached at the same reading"
 new_caller "$MARK"
-CONTEXT_TOKENS=400000 run_succeed checklowered '' --check-marks
+CONTEXT_PCT=40 run_succeed checklowered '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: mark-reached kind=context value=520000 mark=400000 succession=on headroom=80|0" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=40 succession=on headroom=80 window=1000000|0" \
   "and one the setting lowers is reported against the value that was set"
 
 # The mark is read through `orch-env`, which owns the ladder AND the fallback:
-# a value it cannot read as a number falls back to the default, which is what
-# the turn-end hook then judges at. Reading the variable here instead would
-# keep the value orch-env dropped, and the two would judge one overseer at two
-# marks. A leading zero is the value orch-env passes through and bash
-# arithmetic reads as octal, so that one is refused rather than reinterpreted.
+# a value it cannot read as a number falls back to the default, 90, which is
+# what the turn-end hook then judges at. Reading the variable here instead
+# would keep the value orch-env dropped, and the two would judge one overseer at
+# two marks. A leading zero is the value orch-env passes through and bash
+# arithmetic reads as octal, so that one is refused rather than reinterpreted,
+# and so is a share past the whole window.
 new_caller "$MARK"
-CONTEXT_TOKENS=tokens run_succeed contextfallback '' --check-marks
+CONTEXT_PCT=percent run_succeed contextfallback '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: mark-reached kind=context value=520000 mark=500000 succession=on headroom=80|0" \
+  "0|oversee-succeed: context-below-mark tokens=520000 window=1000000 mark=90 headroom=80|0" \
   "a context mark orch-env cannot read falls back to the default both readers use"
-new_caller "$MARK"
-CONTEXT_TOKENS=0500000 run_succeed contextguard '' --check-marks
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "1|oversee-succeed: invalid-context-mark ORCH_HANDOFF_CONTEXT_TOKENS=0500000|0" \
-  "a context mark spelled with a leading zero: refused, nothing judged"
+for CONTEXT_GUARD in 050 101; do
+  new_caller "$MARK"
+  CONTEXT_PCT="$CONTEXT_GUARD" run_succeed contextguard '' --check-marks
+  assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+    "1|oversee-succeed: invalid-context-mark ORCH_HANDOFF_CONTEXT_PCT=$CONTEXT_GUARD|0" \
+    "a context mark of $CONTEXT_GUARD, outside whole percents 1 to 100: refused, nothing judged"
+done
 
 # A reading that could not be taken is not a mark that did not fire, and only
 # `check` tells them apart: the watch holds a standing mark across such a pass,
@@ -975,22 +1047,69 @@ new_caller "$MARK"
 LANE_DIRS="$H/.openclaude" CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.openclaude" \
   run_succeed checkunmeasuredpast '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: mark-reached kind=context value=520000 mark=500000 succession=on headroom=none|0" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=50 succession=on headroom=none window=1000000|0" \
   "and a context mark that fired outranks it: a mark the caller must act on is reported"
 
-# A status line naming a window this reader holds no row for: the context
-# reading could not be taken at all, which is not the measured 200k window the
-# window-below-mark rows above report.
+# A reading whose window its adapter could not name: the context mark could not
+# be judged at all, which is not the measured 200k window the rows above judge.
 new_caller "  kendex (ken-1453) Sonnet 4.5 52% (fixture@example.com)     /rc"
 run_succeed checkwindownone '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: mark-unmeasured kind=context reason=window-none source=none succession=on|0" \
+  "0|oversee-succeed: mark-unmeasured kind=context reason=window-unnamed succession=on|0" \
   "--check-marks with no window to measure against: mark-unmeasured names the window"
 new_caller "  kendex (ken-1453) Opus 5 (200k context) 41% (fixture@example.com)     /rc"
 run_succeed checkwindowsmall '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: window-below-mark window=200000 source=status-line headroom=80|0" \
-  "a window this reader DID measure and that is under 1M stays a below-mark answer"
+  "0|oversee-succeed: context-below-mark tokens=82000 window=200000 mark=50 headroom=80|0" \
+  "a 200k window this reader DID measure is judged, a below-mark answer under the share"
+
+# The share the package ships, on the smallest window a harness here runs: a
+# codex overseer at 90 percent of 258400 tokens has reached its mark, a figure
+# the absolute 500000 this replaced never reached before the harness compacted.
+new_caller "$CODEX_AT_MARK" 'Context 10% left'
+CONTEXT_PCT=90 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codexatmark '' --check-marks
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: mark-reached kind=context value=232560 mark=90 succession=on headroom=80 window=258400|0" \
+  "a codex overseer at 90 percent of its 258400 window reaches the context mark"
+
+# No stored reading is ever judged. A run handed no --context, which is every
+# watch pass, judges the account triggers alone, so a session restarted by hand
+# in this pane, or reset in place, is never judged on the at-mark figure the
+# record in the overseer mailbox still holds for the pane.
+new_caller "$MARK"
+NO_CONTEXT=1 run_succeed stored '' --check-marks
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: account-below-mark headroom=80|0" \
+  "a record at the mark for this very pane is not judged without a reading handed in"
+
+# A succession handed no reading judges no context mark, so an overseer past it
+# whose account marks are all below is told its context went unread, never
+# that no mark is reached: the route is the command its refusal names.
+new_caller "$MARK"
+NO_CONTEXT=1 run_succeed unread 'claude:1:high'
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
+  "0|oversee-succeed: context-unmeasured reason=context-unread headroom=80|0|none" \
+  "a succession handed no reading at the context mark alone launches nothing and says its context went unread"
+
+# The reading is TOKENS:WINDOW as the hook writes it, and only a judging run
+# takes one.
+new_caller "$MARK"
+for row in "badcontext|--check-marks --context 12|1|oversee-succeed: invalid-context value=12" \
+           "printcontext|--print-launch-line --context 12:100|1|oversee-succeed: mode-conflict mode=print context=12:100"; do
+  IFS='|' read -r row_name row_args row_rc row_first <<<"$row"
+  # shellcheck disable=SC2086
+  NO_CONTEXT=1 run_succeed "$row_name" '' $row_args
+  assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "$row_rc|$row_first" "$row_name: $row_first"
+done
+
+# The record answers for the harness of a pane whose command names none only
+# where it names this very pane: one another pane left names nothing here.
+new_caller "$MARK"
+record_caller "$MARK" '%999'
+run_succeed otherpane '' --check-marks
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "1|oversee-succeed: harness-unnamed pane=$CALLER_PANE|0" \
+  "a record another pane left names no harness for this one"
 
 # --check-marks' one control: the judgement runs on past its own answer. It is
 # the launch path's own steps that follow, so a check that does not stop opens
@@ -1019,7 +1138,7 @@ for row in \
 done
 
 echo "=== an overseer that DIED, which reaches none of the marks above ==="
-# A dead pane shows no status line and holds no harness, so nothing there names
+# A dead pane runs no harness and records no reading, so nothing there names
 # the harness, the model or the account the session ran on. Two modes carry
 # that case over ONE launch path: `--print-launch-line` builds the command
 # while the overseer is alive, and `--dead-pane` sends that record into the
@@ -1031,13 +1150,13 @@ echo "=== an overseer that DIED, which reaches none of the marks above ==="
 new_caller "$UNDER_MARK"
 run_succeed printline '' --print-launch-line -- --verbose
 assert_eq "$RC|$OUT|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --verbose '$BRIEF'|yes|0|none" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose '$BRIEF'|yes|0|none" \
   "--print-launch-line prints the caller's own line, judges no mark and launches nothing"
 
 new_caller "$UNDER_MARK"
 WALL_MINUTES=bad SUCCESSOR_ACCOUNTS=bad run_succeed printbadmarks '' --print-launch-line
 assert_eq "$RC|$OUT|$(overseers)" \
-  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|0" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|0" \
   "malformed trigger settings do not block a non-judging launch-line print"
 
 # The preference names where a LATER successor goes; the printed line records
@@ -1046,7 +1165,7 @@ assert_eq "$RC|$OUT|$(overseers)" \
 new_caller "$UNDER_MARK"
 run_succeed printpref 'codex:1:high' --print-launch-line
 assert_eq "$RC|$OUT|$(recorded codex)" \
-  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|none" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|none" \
   "--print-launch-line walks the caller entry whatever the preference names"
 
 # The printed line is replayed verbatim into a DEAD pane, and nobody is at that
@@ -1078,8 +1197,8 @@ PRINT_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 PRINT_HOME="$(lane_codex_home_path "$H/.codex" "$PRINT_CWD")"
 CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$PRINTSKIP/oversee-succeed" \
   run_succeed printskip '' --print-launch-line
-assert_eq "$RC|$OUT" \
-  "0|env CODEX_HOME='$H/.codex' codex -c check_for_update_on_startup=false '$BRIEF'" "control: a print that skips the preparation records the bare account, not the prepared home"
+assert_eq "$RC|$OUT" "0|env CODEX_HOME='$H/.codex' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 '$BRIEF'" \
+  "control: a print that skips the preparation records the bare account, not the prepared home"
 
 # Both arms of lib/lane-context.sh's answer for the caller's own lane: the
 # variable where the session carries one, and the default under LANES_HOME where
@@ -1092,8 +1211,8 @@ for row in \
   IFS='|' read -r row_lane row_what <<<"$row"
   new_caller "$CODEX_SCREEN" 'Context 48% left'
   CALLER_LANE="$row_lane" run_succeed printcodex '' --print-launch-line
-  assert_eq "$RC|$OUT|$(overseers)" \
-    "0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false '$BRIEF'|0" "--print-launch-line on a codex caller records the home trust was made in, under $row_what"
+  assert_eq "$RC|$OUT|$(overseers)" "0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 '$BRIEF'|0" \
+    "--print-launch-line on a codex caller records the home trust was made in, under $row_what"
 done
 # A codex caller launched by this script already runs with the startup update
 # check off, and a caller entry hands its flags on whole: the line still carries
@@ -1101,32 +1220,26 @@ done
 new_caller "$CODEX_SCREEN" 'Context 48% left'
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed printcodex-settings '' --print-launch-line -- \
   --verbose -c check_for_update_on_startup=false
-assert_eq "$RC|$OUT" \
-  "0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false --verbose '$BRIEF'" "a codex caller entry carrying the update setting keeps it exactly once"
+assert_eq "$RC|$OUT" "0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 --verbose '$BRIEF'" \
+  "a codex caller entry carrying the update setting keeps it exactly once"
 
-# Why `print` is the only mode that records the caller's own codex lane. A
-# codex status line names no context window, so a succession that is not
-# already at its account trigger ends here, before the entry list is built; and
-# at the trigger the caller's lane is not kept, `lanes pick` naming the lane
-# instead. A codex caller therefore never carries lane_context_caller_cfg's
-# answer into a live launch, and the rows above are where that arm is read.
-#
+# A codex caller is judged on the window its own rollout names, like any other.
 # The account mark still reads a figure here, and the account it reads is the
 # codex default: this session names no account variable, and the harness its
-# own status line names is what turns that silence into a directory. The codex
+# recorded reading names is what turns that silence into a directory. The codex
 # fixture holds 80 percent headroom, well above the trigger.
 new_caller "$CODEX_SCREEN" 'Context 48% left'
-CALLER_LANE=none run_succeed codexnowindow ''
+CALLER_LANE=none run_succeed codexwindow ''
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)" \
-  "0|oversee-succeed: window-below-mark window=none source=none headroom=80|yes|0" \
-  "a codex caller with room ends at the context mark, its status line naming no window"
+  "0|oversee-succeed: context-below-mark tokens=100000 window=258400 mark=50 headroom=80|yes|0" \
+  "a codex caller with room ends under the context mark of its own 258400 window"
 
 # Printing launches nothing, so the setting that governs launching does not
 # gate it: the record is what an owner's later relaunch by hand reads.
 new_caller "$UNDER_MARK"
 SUCCESSION=off run_succeed printoff '' --print-launch-line
 assert_eq "$RC|$OUT|$(overseers)" \
-  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|0" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|0" \
   "succession off still prints the line: printing launches nothing"
 
 # A successor overseer keeps its harness question tool unless
@@ -1135,11 +1248,11 @@ assert_eq "$RC|$OUT|$(overseers)" \
 # dropped while it is on and carried once while it is off. A value that is
 # neither refuses before a line is built.
 for row in \
-  "claude|||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|unset keeps the claude question tool" \
-  "claude|off||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --disallowedTools=AskUserQuestion\\,EnterPlanMode '$BRIEF'|off takes the claude question tool away" \
-  "claude|on|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --verbose '$BRIEF'|on drops the caller's own question-tool words" \
-  "claude|off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose '$BRIEF'|off carries a caller's own copy of the words once" \
-  "codex|off||0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c features.default_mode_request_user_input=false '$BRIEF'|off takes the codex question tool away" \
+  "claude|||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|unset keeps the claude question tool" \
+  "claude|off||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode '$BRIEF'|off takes the claude question tool away" \
+  "claude|on|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose '$BRIEF'|on drops the caller's own question-tool words" \
+  "claude|off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose '$BRIEF'|off carries a caller's own copy of the words once" \
+  "codex|off||0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c features.default_mode_request_user_input=false '$BRIEF'|off takes the codex question tool away" \
   "claude|sometimes||1|oversee-succeed: invalid-question-tool ORCH_OVERSEER_QUESTION_TOOL=sometimes|a value that is neither on nor off refuses" \
   ; do
   IFS='|' read -r row_harness row_value row_flags row_rc row_want row_what <<<"$row"
@@ -1156,8 +1269,8 @@ for row in \
   assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" "$row_rc|$row_want|0" "question tool: $row_what"
 done
 
-# The dead overseer's window: a pane drawing NOTHING — no status line, no
-# harness — at an index of its own, so a row reads which window the successor
+# The dead overseer's window: a pane running no harness and recorded by nothing,
+# at an index of its own, so a row reads which window the successor
 # landed in and whether the caller's own was touched.
 new_dead_pane() {
   local spec
@@ -1223,8 +1336,8 @@ assert_eq "$RC|$(keyed line-unrecorded "$OUT" | sed -n 1p)|$(overseers)|$(caller
   "a succession with no fleet state names the unrecorded line and still opens the successor"
 mv -- "$TMP_ROOT/fleet-state.away" "$FLEET_STATE"
 
-# --dead-pane's one control: the dead pane asked for a status line after all.
-# It draws none, so the relaunch refuses and the fleet keeps no overseer —
+# --dead-pane's one control: the dead pane asked for its harness after all.
+# It runs none, so the relaunch refuses and the fleet keeps no overseer —
 # which is what the recorded line exists to prevent.
 DEADCTL="$(mutant_scripts deadctl oversee-succeed)" || exit 1
 mutate_file "$DEADCTL/oversee-succeed" 'if [[ "$MODE" != dead ]]; then' 'if true; then'
@@ -1232,7 +1345,7 @@ new_caller "$MARK"
 new_dead_pane
 SUCCEED_BIN="$DEADCTL/oversee-succeed" run_succeed deadctl '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(dead_open)" \
-  "1|oversee-succeed: no-status-line pane=$DEAD_PANE|0|yes" \
+  "1|oversee-succeed: harness-unnamed pane=$DEAD_PANE|0|yes" \
   "control: a mode that reads the dead pane refuses it and launches no successor"
 
 # ORCH_OVERSEER_HEADROOM_PCT over the same screen. A value the guard lets
@@ -1261,7 +1374,7 @@ HEADROOM_PCT=60 run_succeed headroomset 'claude:1:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "a non-default trigger is read: 50 headroom fires the account mark at 60"
 
 # The trigger's own boundary, caller side. `at or below` is the documented
@@ -1271,14 +1384,14 @@ claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed calleratbound 'claude:1:high'
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "caller at exactly the trigger fires the account mark"
 
 new_caller "$UNDER_MARK"
 claude_usage "$ABOVE_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
 run_succeed callerabovebound 'claude:1:high'
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=$((TRIGGER + 1))|0|none" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=$((TRIGGER + 1))|0|none" \
   "caller one percent above the trigger falls through to the context mark"
 
 # The SHIPPED default, which no row above pins: every one of them derives its
@@ -1294,7 +1407,7 @@ claude_usage 93 0 0 Opus > "$FIXTURE_DIR/.claude.json"
 run_succeed defaultspares 'claude:1:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=7|0|none" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=7|0|none" \
   "the shipped default leaves a caller at 7 percent headroom unsucceeded"
 
 # The floor side, which is the job the shipped default answers: the caller is
@@ -1307,7 +1420,7 @@ run_succeed defaultfloor 'claude:1:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "the shipped default opens the successor on a candidate at 7 percent headroom"
 
 # The same boundary on the pick side: the only candidate sits exactly at the
@@ -1327,7 +1440,7 @@ run_succeed pickabovebound 'claude:1:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "a candidate one percent above the trigger is chosen"
 
 # An account nothing could measure is its own state, never a healthy one. With
@@ -1341,7 +1454,7 @@ run_succeed unmeasured ''
 mv "$FIXTURE_DIR/.claude.json.held" "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$BRIEF;" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
   "an unmeasured caller account is not reused at the context mark"
 
 # The same unmeasured account where the pick names NO lane. `lanes pick` is the
@@ -1383,7 +1496,7 @@ run_succeed claimedcaller ''
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$BRIEF;" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
   "a claim on the caller pane does not move the judged account, and its account mark fires"
 
 # The other side of that rule: a caller account MEASURED above the trigger
@@ -1398,11 +1511,11 @@ run_succeed callerhasroom ''
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;$BRIEF;" \
+  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
   "a caller with room above the trigger keeps its own lane, not the roomier one the pick names"
 
-# The account mark reads the buckets THIS session spends. The caller's status
-# line names Fable, and its account's only spent window is scoped to Opus at
+# The account mark reads the buckets THIS session spends. The caller's recorded
+# reading names Fable, and its account's only spent window is scoped to Opus at
 # exactly the trigger: that window walls no Fable turn, so the mark does not
 # fire and the run falls through to the context mark, which reports the
 # model-scoped headroom it read. The caller's model is what decides it, so the
@@ -1417,11 +1530,11 @@ jq -n --argjson m "$AT_TRIGGER" '{
 }' > "$FIXTURE_DIR/.claude.json"
 run_succeed unmatchedbucket 'claude:1:high'
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=100|0|none" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=100|0|none" \
   "a spent window scoped to a model this overseer does not run leaves the account mark unfired"
 
 # The matched side of the same rule: the spent window is scoped to the model
-# the caller's own status line names, so it walls this session and the mark
+# the caller's own recorded reading names, so it walls this session and the mark
 # fires. Nothing but the window's label differs from the row above. The
 # second claude lane has room, so the successor has somewhere to go.
 new_caller "$UNDER_MARK"
@@ -1436,16 +1549,14 @@ run_succeed matchedbucket 'claude:1:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "a spent window scoped to the model this overseer runs fires the account mark"
 
 # The model reaches the account mark on every claude tier, not only the ones
 # the window table names. This caller runs Sonnet, which that table leaves out,
-# so its line carries no window and the parse prints three empty fields before
-# the model. Read with a split that collapses a tab run, the model lands in the
-# token field and the mark is judged with no model at all: this account's only
-# spent window is scoped to Opus at exactly the trigger, so it would fire and
-# hand the session over for a window no Sonnet turn draws on.
+# so its reading carries no window. Judged with no model at all, this account's
+# only spent window, scoped to Opus at exactly the trigger, would fire and hand
+# the session over for a window no Sonnet turn draws on.
 new_caller "$NO_TABLE_TIER"
 jq -n --argjson m "$AT_TRIGGER" '{
   five_hour: {utilization: 0, resets_at: "2026-07-27T06:00:00Z"},
@@ -1455,7 +1566,7 @@ jq -n --argjson m "$AT_TRIGGER" '{
 }' > "$FIXTURE_DIR/.claude.json"
 run_succeed tiernotintable 'claude:1:high'
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
-  "0|oversee-succeed: window-below-mark window=none source=none headroom=100|0|none" \
+  "0|oversee-succeed: context-unmeasured reason=window-unnamed headroom=100|0|none" \
   "a tier the window table leaves out still carries its model into the account mark"
 
 # The caller fallback entry names no model in the LAUNCH, and its pick is still
@@ -1474,7 +1585,7 @@ jq -n '{
 }' > "$FIXTURE_DIR/.eclaude.json"
 run_succeed callerfallbackmodel ''
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$BRIEF;" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
   "the caller fallback pick is judged on the model this overseer runs"
 
 # The successor pick and the successor's own first judgement read ONE bucket.
@@ -1498,15 +1609,15 @@ run_succeed bindingfloor 'claude:1:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "a lane with room for the entry's model and none outside it is opened on"
 
 # Which reading the pick is held to is lib/lane-context.sh's answer, because it
-# is the reading THAT file takes off the successor's own status line later. A
-# claude line names the model, so the pick names it too and the two judgements
-# read one bucket. A codex line names none, so a codex successor is judged on
-# the account's binding bucket whatever model it was launched on, and the pick
-# is held there with --binding-floor. The RULE is pinned here, where it is
+# is the rule the successor's own account mark applies to its recorded reading
+# later. A claude successor is judged on its model, so the pick names it too
+# and the two judgements read one bucket. A codex successor is judged on the
+# account's binding bucket whatever model it was launched on, and the pick is
+# held there with --binding-floor. The RULE is pinned here, where it is
 # decided; the row below it pins the FORWARDING of the flag that rule selects,
 # over a stubbed judge, because no usage fixture can distinguish the two walls
 # for codex: lanes' codex parser reports no model-scoped window at all, so a
@@ -1514,7 +1625,7 @@ assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
 # accounts protocol carries a scoped codex window.
 assert_eq "$(lane_context_mark_model claude fable)|$(lane_context_mark_model codex gpt-6-astra)|$(lane_context_mark_model claude '')|$(lane_context_mark_model '' fable)" \
   "fable|||" \
-  "the pick reading follows the harness whose status line names the model"
+  "the pick reading follows the harness judged on its model"
 
 # The forwarding itself, over a `lanes` that answers the two picks a succession
 # makes and distinguishes the two walls by the one flag under test. It stands
@@ -1621,7 +1732,7 @@ succeed_shim() {
 new_caller "$MARK"
 succeed_shim shim 'claude:1:high'
 assert_eq "$RC|$(caller_open)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(recorded_argv0 4claude)|$(recorded 4claude)|$(recorded claude)" \
-  "0|no|oversee-succeed: successor-launch form=launcher:$BIN/4claude lane=$H/.4claude trust=none|$BIN/4claude|lane=;-n;overseer;--model;fable;--effort;high;$BRIEF;|none" \
+  "0|no|oversee-succeed: successor-launch form=launcher:$BIN/4claude lane=$H/.4claude trust=none|$BIN/4claude|lane=;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;|none" \
   "a lane whose launcher is on PATH is launched through it by absolute path, with no environment prefix"
 
 # A successor stopped at a folder-trust dialog is reported as that, with the
@@ -1653,7 +1764,7 @@ RC=0
 OUT="$(exec env TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" LANE_DIRS="$H/.$QLANE" \
   "$TMP_ROOT/succeed-env" quoted 'claude:1:high' 2>&1)" || RC=$?
 assert_eq "$RC|$(caller_open)|$(recorded claude)" \
-  "0|no|lane=$H/.$QLANE;-n;overseer;--model;fable;--effort;high;$BRIEF;" \
+  "0|no|lane=$H/.$QLANE;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "a lane directory carrying an apostrophe is quoted for the pane shell and reaches the harness"
 
 # ── The account the pane is really on ───────────────────────────────────────
@@ -1768,8 +1879,8 @@ fi
 rm -f -- "${TMP_ROOT:?}/selects-late" "${TMP_ROOT:?}/late-secs"
 
 echo "=== an overseer whose ACCOUNT is spent, which reaches none of the marks either ==="
-# A walled overseer is not dead: its harness is running and its pane still
-# draws a status line, so nothing here needs a recorded line. What it cannot
+# A walled overseer is not dead: its harness is still its pane's foreground
+# command, so nothing here needs a recorded line. What it cannot
 # do is take a turn, so it never reaches the marks that hand a session over.
 # `--walled-pane` is therefore the succession with the wall in place of the
 # mark: no mark judged, the caller's own account never kept, every entry
@@ -1786,9 +1897,9 @@ walled_world_reset() { claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"; 
 new_caller "$MARK"
 walled_world
 run_succeed walledpane '' --walled-pane "$CALLER_PANE"
-WALLED_LINE="env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer '$BRIEF'"
+WALLED_LINE="env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$BRIEF;" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
   "--walled-pane opens the successor on the lane the pick named, never on the caller's own"
 # The line is on stdout ahead of every keyed line, and in the fleet state: the
 # caller is oversee-watch, which reports the recovery it just performed, and a
@@ -1803,12 +1914,12 @@ assert_eq "$(sed -n 1p <<<"$OUT")|$(recorded_line)" \
 new_caller "$UNDER_MARK"
 run_succeed walledmarkless ''
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=50|yes|0" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=50|yes|0" \
   "the same world under both marks: a live succession launches nothing"
 new_caller "$UNDER_MARK"
 run_succeed walledundermark '' --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$BRIEF;" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
   "and the walled recovery of it launches, judging no mark at all"
 
 # Succession off launches nothing here as everywhere else: the operator's
@@ -1842,7 +1953,7 @@ new_caller "$MARK"
 walled_world
 run_succeed walledflags 'codex:1:high' --walled-pane "$CALLER_PANE" -- --model fable --effort high --permission-mode bypassPermissions --verbose
 assert_eq "$RC|$(recorded claude)|$(recorded codex)" \
-  "0|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;--permission-mode;bypassPermissions;--verbose;$BRIEF;|none" \
+  "0|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;--model;fable;--effort;high;--permission-mode;bypassPermissions;--verbose;$BRIEF;|none" \
   "--walled-pane keeps this session's own model, effort and permission words"
 
 # The one account this recovery may never open on is the one it is recovering
@@ -1902,7 +2013,7 @@ mutate_file "$WALLCTL/oversee-succeed" '  if [[ "$MODE" == succeed || "$MODE" ==
 new_caller "$MARK"
 SUCCEED_BIN="$WALLCTL/oversee-succeed" run_succeed wallctl '' --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(recorded claude)" \
-  "0|lane=$H/.claude;-n;overseer;$BRIEF;" \
+  "0|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
   "control: without that gate the successor opens on the account that walled"
 walled_world_reset
 
