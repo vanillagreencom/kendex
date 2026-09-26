@@ -8,6 +8,72 @@ change came from an outside contributor.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-26
+
+### Added
+
+- A `--project-path` that is no kendex project root is refused before anything is planned.
+- Naming a project with `apply`, `refresh` or `updates --apply` puts it on your projects list, even where the packages it declares were all up to date.
+- Naming a folder under a temporary path with `apply`, `refresh` or `updates --apply` is refused unless `--throwaway` is passed; `apply --plan` and a bare `updates` listing are not asked.
+- A folder that declares nothing, a run that failed without writing, an `apply --plan` and a bare `updates` listing leave your projects list alone, even where `--project-path` names it.
+- `refresh`, `apply` and `updates` take `--project-path PATH`: the run reads and writes that project, not the one the command was typed in.
+- A hosted fleet launch (`open-terminal --state-dir`) returns within seconds when its host accepts the item and prepares it in the background, and `oversee-watch` reports the outcome.
+- orch: `workflow-state prune` archives, then removes, fleet records and control-host files past their retention, and never touches a live lane's files.
+- `kendex verify --json` prints each checked row with the positions it occupies, and a refresh that re-renders installed items of any kind now classifies as a render.
+- `kendex check` names a Pi extension a project declares that the global manifest declares too: Pi will not start with one registered twice, so keep the global declaration and drop the project's.
+- An apply, refresh, remove or update-pi drops trash entries older than `KENDEX_TRASH_KEEP_DAYS` days (30) or past `KENDEX_TRASH_KEEP_MB` MB (512); `kendex trash` lists and empties it.
+- The safety scan sets aside a finding kendex accepted in its own package, for a copy installed from kendex's own catalog at the exact file text; any other source or an edit flags it again.
+- A hosted lane's worktree (`worktree create --hosted`) sits at one path beside its clone, the same in every lane, so sccache hits workspace crates across lanes.
+- The `.deb`, `.rpm` and Windows setup install the `kendex` command on the PATH with the app; the macOS app carries it inside the bundle. A command inside the app updates with the app.
+- On first launch the macOS app offers once, when no `kendex` command is installed, to link `/usr/local/bin/kendex` to the command inside the app through one administrator prompt; Settings keeps it.
+- review-gate: `scripts/validate-standard.sh` reports, read-only, whether a repository's rulesets, required contexts, app installation and app-secret environment match `standard.json`.
+- Install only the `kendex` command with `install.sh --cli-only` (`curl -fsSL https://kendex.ai/install.sh | sh -s -- --cli-only`), on Linux as well as macOS.
+
+### Changed
+
+- A linked git worktree with its own `kendex.toml` is a project of its own: `project list` marks it a worktree of its checkout, and the session-start check names it wherever the verb takes it.
+- The commit offer drops the push where a GitHub branch's rules require a pull request, naming why; a push GitHub still refuses for that reason prints the commands that open one.
+- `kendex verify` closes non-zero when a declared package has no install-record entry, the unmanaged-copy state included: an install skipped on a conflict leaves its declaration as a gap.
+- `lane-mail send` and `peer send` print `lane-mail: sent item=<item> id=<id> bytes=<n> monitor=<m>`, where `live` means a lane watch polls that mailbox, and refuse a repeat envelope within a minute.
+- The Terms of Service now state the trash's automatic deletion; the Terms and the Privacy Policy are at version 2, effective 25 September 2026, and the app and the CLI ask for acceptance once more.
+- In a project that keeps an install record, `kendex apply` records every source the plan reads, so `kendex verify` fails the record row until the next apply.
+- Catalog agents inherit the calling session's model instead of pinning `opus`, or `fable` for the planner, so a subagent keeps running when the pinned model's usage limit is spent.
+- A Homebrew kendex-cli 5.x install now upgrades to 1.0.0 through `brew upgrade`. The cask has no version scheme, so it says to uninstall the app and the kendex-cli formula, then reinstall.
+
+### Removed
+
+- The Windows `.msi` is no longer built or published; the NSIS setup `.exe` is the Windows download.
+- **Breaking:** orch lanes merge only through the merge queue: `pr-merge --admin`, `--force` and `--admin-credential` are gone. A set `ORCH_MERGE_BYPASS` or `ORCH_ADMIN_MERGE_*` key is refused; delete it.
+
+### Fixed
+
+- A fix round on a pull request with no issue id stamps again. Its `pr-N` state key names no issue, so the branch size check measures the branch and reports `allowance_missing`.
+- `open-terminal` opens every lane window in the fleet's named tmux session and records it as `SESSION:WINDOW`, so a detached launch no longer opens where the watch does not look.
+- The safety scan no longer flags a switch a shell script only names in a comment or printed message; kendex's guards scan clean, and a run closes on `safety: clean` or `not fully checked on safety`.
+- The pre-commit hook no longer refuses a command whose short no-verify flag belongs to another program, such as grep, sed or tail; a command it cannot split with confidence is still checked whole.
+- The Pi Claude bridge works on Pi 0.86 and later, where a `pi-claude` session had no file or shell tools and a new session's first turn got no reply. It now requires Pi 0.86.0 or later.
+- Companions are judged as the plan writes them: a wrapper is withheld where its declared judge is not; a rebind reports the conflict; a companion that only removed wrappers need goes too.
+- A Pi package counts as one package across every name it has shipped under, so `update-pi` now blocks a cross-scope duplicate where one scope names it currently and the other by an earlier name.
+- The Pi Claude bridge offers Claude Opus 5.5 (`claude-opus-5-5`) in the `pi-claude` model picker, released as `@vanillagreen/pi-claude-bridge` 4.0.3.
+- `kendex verify` holds every recorded source and set to a fresh read: an entry that differs, or one it cannot read fresh, fails the record row until an apply or a source refresh puts it right.
+- The worktree hook allows add and other one-project writes where the project owns a manifest, reads no redirection target or word after `--` as an option, and refuses `env -C` or `sudo -D` like `cd`.
+- Version 10 recovery works across retries and outside Git, updates renders, retires old hook registrations, keeps hand edits, ignores the recovery backup, and shows exact steps in the desktop.
+- No git call kendex makes runs the `core.fsmonitor` command a repository names in its own config; a catalog checkout kendex reads cannot run code through it.
+- The installed audit reads every adapter's view of one skill tree as the row that wrote it, and a hand copy elsewhere as nobody's, so an accepted finding is set aside only where kendex wrote.
+- A plan no longer starts a git process per source file when no file has CRLF line endings: `kendex refresh` of the kendex repository drops from about 90 s to about 5 s.
+- `lane-close` ends an idle Claude, Codex or Pi lane by SIGTERM to its harness instead of typing `/exit` into the pane, so an unsent draft no longer blocks the close.
+- The trash pass after an apply, refresh, remove, update-pi or desktop action no longer walks every kept entry: each size is recorded once in `sizes.json`, so a large trash no longer slows every run.
+- Every desktop action that moves a copy into the trash now brings the trash within its bounds, as the CLI does, so an app-only install no longer keeps every removed copy for good.
+- A render leaves an in-place skill source directory unchanged, and reports a missing link as a refresh instead of offering to take over the source.
+- The session drift report names each package whose source comparison is missing or outdated, gives the age of that comparison, and ends with a refresh command for the reported scope.
+- `kendex check` reads the current manifest only, groups missing installs by package, shows every row when run by hand, and prints the command for each repair it supports.
+- Hosted lanes install the locked UI dependencies and pinned Rust cross-compile targets before their worktree is created.
+- A `worktree push` that rebased and was then refused by a pre-push hook keeps that rewrite's force-with-lease authorization, so the retry publishes instead of stranding the branch.
+- The desktop app in the Arch `kendex` and `kendex-git` packages opens its interface; it showed a connection error for `localhost:5273`.
+- The Linux `.deb` and `.rpm` carry a description, a Development menu category and a git dependency; the Arch `kendex-bin` package carries the license file.
+- `kendex --version` from the Arch `kendex-git` and `kendex-cli-git` packages shows the built commit, and the Linux `.deb` names a maintainer with an address.
+- Foreground refreshes and installs now wait for a source download already running in another kendex process instead of reporting every package as unfetched.
+
 ## [1.0.0] - 2026-09-22
 
 ### Added

@@ -1,1 +1,0 @@
-- The commit offer drops the push where a GitHub branch's rules require a pull request, naming why; a push GitHub still refuses for that reason prints the commands that open one.

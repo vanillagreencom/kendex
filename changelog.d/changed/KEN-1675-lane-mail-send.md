@@ -1,1 +1,0 @@
-- `lane-mail send` and `peer send` print `lane-mail: sent item=<item> id=<id> bytes=<n> monitor=<m>`, where `live` means a lane watch polls that mailbox, and refuse a repeat envelope within a minute.
