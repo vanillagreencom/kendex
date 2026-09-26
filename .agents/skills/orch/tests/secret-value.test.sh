@@ -62,6 +62,7 @@ a GitHub server token|ghs_@|sensitive
 a GitHub refresh token|ghr_@|sensitive
 a GitHub fine-grained token|github_pat_@|sensitive
 an sk- key|sk-@|sensitive
+an sk- key with separators in its tail|key=sk-ant-api03-aB-_aB-_@|sensitive
 a Slack bot token|xoxb-@|sensitive
 a Slack app-level token|xapp-@|sensitive
 a Slack app token in capitals|XAPP-@|sensitive
