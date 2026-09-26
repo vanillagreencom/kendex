@@ -221,7 +221,7 @@ lanes_table "$OUT" \
   "a local lane's reading is read from the mailbox its lane record places|ken-101|status=ok harness=claude model=claude-opus-5-5 context_tokens=950000 context_window=1000000 context_used_pct=95" \
   "a local lane at or past the default 90 percent of its own window is due for handoff|ken-101|context_handoff_due=true handoff_required=true" \
   "a hosted lane's reading is read through its host, the same as a local one|ken-102|status=ok harness=codex context_tokens=232560 context_window=258400 context_used_pct=90" \
-  "a codex window of 258400 at 90 percent is due, whatever the absolute figure|ken-102|context_handoff_due=true handoff_required=true" \
+  "a codex window of 258400 at exactly 90 percent has room|ken-102|context_handoff_due=false handoff_required=false" \
   "a lane that has recorded nothing is unrecorded, never an empty context|ken-103|status=unrecorded context_tokens=null context_used_pct=null context_handoff_due=null handoff_required=false" \
   "a record the library did not write is unreadable, and says so|ken-104|status=unreadable context_tokens=null detail~not+an+object+carrying+a+token+count=true" \
   "a claim no running lane record names is unreadable, naming the window|ken-105|status=unreadable detail~names+the+window+ken-105=true" \
@@ -234,14 +234,17 @@ echo "=== the context mark is the setting, and defaults to ninety percent ==="
 # account at 10 percent headroom above the mark leaves nothing required.
 # A reading whose window the adapter could not name is judged neither way, and
 # its row says so rather than reading ok beside a blank handoff cell.
-record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 999999 "" claude-sonnet-5
+record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 399999 "" claude-sonnet-5
 lanes_table "$(run_ctx --json)" \
-  "a reading with no window is window-unread, never ok|ken-103|status=window-unread context_tokens=999999 context_window=null context_handoff_due=null handoff_required=false"
-record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 899999 1000000 claude-opus-5-5
+  "a reading with no window is window-unread, never ok|ken-103|status=window-unread context_tokens=399999 context_window=null context_handoff_due=null handoff_required=false"
+record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 400000 "" claude-sonnet-5
 lanes_table "$(run_ctx --json)" \
-  "one token under 90 percent of the window is room|ken-103|context_handoff_due=false handoff_required=false"
+  "the absolute cap is due without capacity|ken-103|status=ok context_tokens=400000 context_window=null context_handoff_due=true handoff_required=true"
+record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 399999 1000000 claude-opus-5-5
+lanes_table "$(run_ctx --json)" \
+  "one token under the absolute cap with capacity remaining is room|ken-103|context_handoff_due=false handoff_required=false"
 lanes_table "$(CTX_CONTEXT_PCT=96 run_ctx --json)" \
-  "a mark the setting raises is not reached at the same reading|ken-101|context_handoff_due=false"
+  "a raised percentage keeps the absolute cap|ken-101|context_handoff_due=true"
 err="$(CTX_CONTEXT_PCT=101 run_ctx --json 2>&1 >/dev/null)" && rc=0 || rc=$?
 assert_eq "rc=$rc first=${err%%$'\n'*}" "rc=1 first=lanes: invalid-handoff-context value=101" \
   "a context mark outside whole percents 1 to 100 is refused by name"

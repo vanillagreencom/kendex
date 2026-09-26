@@ -92,14 +92,12 @@ lane_env_prefix() { # HARNESS DIR
 # table names none. A lane asks its overseer through `lane-mail ask`, and a
 # question tool in a lane opens a dialog nobody at the pane answers, so every
 # lane command carries them; an overseer carries them only where
-# ORCH_OVERSEER_QUESTION_TOOL is off. The tenth is the words that turn the
-# harness's own auto-compaction off, which every command a launcher builds
-# carries, so a session hands off at its own mark (lib/lane-context.sh) before
-# its harness compacts it, and `-` where the harness has no launch word for it:
-# claude reads DISABLE_AUTO_COMPACT from the `env` table its `--settings` flag
-# carries, and codex compacts at `model_auto_compact_token_limit`, which a limit
-# past every window never reaches. Pi's switch is its settings file, which
-# open-terminal reads instead.
+# ORCH_OVERSEER_QUESTION_TOOL is off. The tenth holds the harness compaction
+# policy settings; `-` means no launch setting. Claude reads DISABLE_AUTO_COMPACT
+# from --settings. Codex defers normal compaction to its reported usable-window
+# cap; it can still compact between external handoff checks or on other paths.
+# references/skill-rules.md, Compaction, cites the verified runtime contract.
+# Pi uses its settings file, which open-terminal reads instead.
 #
 # The FIRST spelling of each list is the one written; the rest are further
 # spellings a caller may have typed, which launch_choice_value reads.
@@ -145,7 +143,7 @@ lane_env_prefix() { # HARNESS DIR
 #             opencode lane keeps its question tool.
 LAUNCH_CHOICE_FLAGS=(
   'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions|-|--disallowedTools=AskUserQuestion,EnterPlanMode|--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}'
-  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false|-c features.default_mode_request_user_input=false|-c model_auto_compact_token_limit=9223372036854775807'
+  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false|-c features.default_mode_request_user_input=false|-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0'
   'opencode|-m --model|-|-|-|-|-|-|-|-'
   'pi|--model|--thinking|:|-|-|-|-|--exclude-tools question|-'
 )
@@ -494,11 +492,11 @@ launch_choice_question_off() { # HARNESS
   [[ "$words" == - ]] || printf '%s\n' "$words"
 }
 
-# launch_choice_compaction HARNESS MODEL — the words that turn HARNESS's own
-# compaction off for a session on MODEL, empty where the row names none. Exit 1,
+# launch_choice_compaction HARNESS MODEL: the compaction policy settings for
+# a session on MODEL, empty where the row names none. Exit 1,
 # printing nothing, where the row names words and no adapter can name MODEL's
-# window: that session would run with compaction off and no mark to hand off
-# at, so it keeps its compaction. The one owner of that rule: every command a
+# window: disabling Claude compaction would leave its capacity unknown.
+# The one owner of that rule: every command a
 # launcher builds takes its words from here, and a fleet launch refuses on the
 # same answer. A claude window is the claude adapter's by model; a codex
 # rollout names its own window whatever the model.
@@ -512,7 +510,7 @@ launch_choice_compaction() { # HARNESS MODEL
   printf '%s\n' "$words"
 }
 
-# The words that turn harness $1's own auto-compaction off, empty where the row
+# The compaction policy settings for harness $1, empty where the row
 # says `-` or the table names no such harness.
 launch_choice_compaction_off() { # HARNESS
   local row words

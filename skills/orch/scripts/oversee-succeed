@@ -71,16 +71,16 @@
 #        the only state that keeps the caller's own lane is a headroom
 #        MEASURED above the trigger (step 3).
 #        The CONTEXT mark is judged only on the reading --context hands in,
-#        the tokens and window this session's own turn-end hook just read out
+#        the tokens used and effective capacity this session's hook read out
 #        of its transcript, which that hook passes here and names in the
 #        command its refusal prints. No stored reading is judged, so a session
 #        is never judged on a figure another session left, and a run given no
 #        --context, the watch's included, judges the account triggers alone.
-#        It is judged at ORCH_HANDOFF_CONTEXT_PCT of that window, the one
-#        setting and the one judge the lane turn-end hook uses too. Under it
-#        prints `context-below-mark`. A context mark not judged prints
+#        The shared lane_context_handoff_due rule judges both independent
+#        context triggers, using the same setting as the lane hook. Below both
+#        it prints `context-below-mark`. An unmeasured context rule prints
 #        `context-unmeasured`, with `reason=window-unnamed` for a reading whose
-#        window its adapter could not name and `reason=context-unread` for a
+#        capacity is unknown below the token cap, and `reason=context-unread` for a
 #        run handed no reading; under --check-marks a run handed none prints
 #        `account-below-mark`, since its caller asked about the account
 #        triggers alone. Each
@@ -356,7 +356,7 @@ message() { # KEY FIELD=VALUE...
     invalid-harness) text='--harness takes claude or codex.' ;;
     invalid-context) text='--context takes TOKENS:WINDOW, two whole numbers, the window empty where no adapter named one.' ;;
     context-unmeasured) text='No account mark is reached and the context mark was not judged: the --context reading names no window (window-unnamed), or this run was handed none (context-unread). Nothing was launched. At the context mark, run the succession the turn-end refusal names, which carries the reading. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
-    context-below-mark) text='No mark is reached; nothing was launched. The overseer context is under ORCH_HANDOFF_CONTEXT_PCT of its own window. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
+    context-below-mark) text='No mark is reached; nothing was launched. The shared context rule requires no handoff at this reading. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
     account-below-mark) text='No account mark is reached. This run was handed no --context reading, so the context mark was not judged; the overseer turn-end hook judges it on the reading it takes. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
     mark-reached) text='This overseer is at or past one of its own marks and has to hand this session over. Run oversee-succeed with the permission, model and effort flags this session runs under; where succession is off, write the overseer handoff file and ask for a fresh overseer session by hand.' ;;
     mark-unmeasured) text='One trigger could not be measured this time, and no other trigger fired. Nothing is launched and nothing is settled: a reading that failed is never a mark that lifted, so a caller holding a standing mark keeps it. The reason field names the figure that was missing.' ;;
@@ -541,7 +541,7 @@ lane_account_id() { # DIR
 # Defaults are set after the settings load, which assigns any name.
 HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
 WAIT_SECS=60
-# The overseer's context mark, in percent of its own window:
+# The earlier-only context percentage, normalized for the shared rule:
 # ORCH_HANDOFF_CONTEXT_PCT, the one setting the lane's turn-end hook judges a
 # lane on (../references/oversee-events.md § Judgement rules), read through the
 # one script that resolves a setting for a workflow step. `orch-env` owns the
@@ -555,6 +555,9 @@ CONTEXT_PCT=""
 read_context_pct() {
   CONTEXT_PCT="$("$SCRIPT_DIR/orch-env" ORCH_HANDOFF_CONTEXT_PCT 90 2>"$DEP_ERR")" \
     || die settings-rejected "setting=ORCH_HANDOFF_CONTEXT_PCT"
+  local requested_pct="$CONTEXT_PCT"
+  CONTEXT_PCT="$(lane_context_handoff_pct "$requested_pct")" \
+    || die invalid-context-mark "ORCH_HANDOFF_CONTEXT_PCT=$requested_pct"
 }
 # Account headroom, in percent of the binding bucket, at or below which the
 # overseer succeeds itself. One number does two jobs: it is this mark, and it
@@ -855,7 +858,7 @@ fi
 # nobody named.
 (( ! JUDGES )) || read_context_pct
 if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
-  if [[ "$CONTEXT_STATE" == unmeasured && -n "$window" ]]; then
+  if [[ "$CONTEXT_STATE" == unmeasured ]]; then
     due_rc=0
     due="$(lane_context_handoff_due "$tokens" "$window" "$CONTEXT_PCT")" || due_rc=$?
     case "$due_rc" in
@@ -1258,9 +1261,9 @@ else
   # question-tool words follow them where QUESTION_OFF asks for them.
   # The model the successor runs: the one this entry writes, else the one the
   # flags it keeps name, else the one this pane already runs, the model its pick
-  # was judged on. The builder turns compaction off only where an adapter names
-  # that model's window, and a successor it would leave compacting is refused as
-  # a setting to fix, as a rank the ladder cannot answer is.
+  # was judged on. The builder applies the harness compaction policy. A Claude
+  # successor with no named window is refused as a setting to fix, as a rank
+  # the ladder cannot answer is.
   lead_model="$model"
   [[ -n "$lead_model" ]] || lead_model="$(launch_choice_value "$(launch_choice_model_spellings "$harness")" \
     "${LAUNCH_CHOICE_KEPT[*]+${LAUNCH_CHOICE_KEPT[*]}}")"

@@ -8,10 +8,10 @@
 # hosted lane reads the same as a local one and a scrolled or quiet pane changes
 # nothing.
 #
-# One judge: lane_context_handoff_due answers whether a reading is at or past
-# ORCH_HANDOFF_CONTEXT_PCT of its own window, and no reader carries its own
-# arithmetic. A window the adapter could not name is unmeasured, never judged
-# against a guess.
+# One judge: lane_context_handoff_due enforces the absolute token cap and the
+# remaining-capacity mark. ORCH_HANDOFF_CONTEXT_PCT can request an earlier
+# handoff. No reader carries its own arithmetic. Missing capacity is unmeasured
+# below the absolute cap, never judged against a guess.
 set -euo pipefail
 
 # A launch home reaches this library in CODEX_HOME, and only lane-home.sh says
@@ -178,19 +178,33 @@ lane_context_reading() { # HARNESS [WINDOW]
   esac
 }
 
+# Normalize the requested handoff percentage for the judge and its reports.
+# A larger setting cannot weaken the mandatory remaining-capacity mark.
+lane_context_handoff_pct() { # PCT
+  case "${1:-}" in '' | *[!0-9]* | 0*) return 2 ;; esac
+  [ "$1" -le 100 ] || return 2
+  if [ "$1" -gt 90 ]; then printf '90\n'; else printf '%s\n' "$1"; fi
+}
+
 # lane_context_handoff_due TOKENS WINDOW PCT — the one judgement of a context
-# reading: `due` where TOKENS is at or past PCT percent of WINDOW, `room` where
-# it is under. Exit 1 where WINDOW is empty or 0, a window nobody named, which
-# is unmeasured and never room. Exit 2 where PCT is not a whole number from 1
+# reading: `due` at 400000 used tokens or strictly past PCT percent of WINDOW,
+# with PCT capped at 90. WINDOW is the effective capacity before compaction,
+# or the actual window when compaction is disabled. Exit 1 below the token cap
+# where WINDOW is empty or 0, which is unmeasured and never room. Exit 2 where
+# PCT is not a whole number from 1
 # to 100, or a figure is not a whole number or carries a leading zero a shell
 # would read as octal. Every reader of a reading asks here, so a lane, the
 # overseer and the report cannot judge one reading two ways.
 lane_context_handoff_due() { # TOKENS WINDOW PCT
-  case "${3:-}" in '' | *[!0-9]* | 0*) return 2 ;; esac
-  [ "$3" -le 100 ] || return 2
+  local pct
+  pct=$(lane_context_handoff_pct "${3:-}") || return 2
   case "${1:-}" in '' | *[!0-9]*) return 2 ;; 0) ;; 0*) return 2 ;; esac
+  if [ "$1" -ge 400000 ]; then
+    printf 'due\n'
+    return 0
+  fi
   case "${2:-}" in '' | 0) return 1 ;; *[!0-9]* | 0*) return 2 ;; esac
-  if [ $(($1 * 100)) -ge $(($2 * $3)) ]; then
+  if [ $(($1 * 100)) -gt $(($2 * pct)) ]; then
     printf 'due\n'
   else
     printf 'room\n'
@@ -413,13 +427,13 @@ lane_context_message() {
       ;;
     legend)
       printf 'lane-context: percent kind=consumed\n'
-      printf 'CONTEXT_USED_PCT: percent of the session'"'"'s own context window CONSUMED, at the turn end its reading was recorded at; a dash where its harness named no window.\n'
+      printf 'CONTEXT_USED_PCT: percent of effective capacity CONSUMED at the recorded turn end; a dash where capacity is unknown.\n'
       printf 'lane-context: tokens kind=recorded absent=-\n'
       printf 'CONTEXT_TOKENS: the tokens the last response left in the context, read from the transcript by the harness adapter at the session'"'"'s last turn end; a dash where no reading is recorded.\n'
       printf 'lane-context: headroom kind=account-binding handoff=threshold\n'
       printf 'HEADROOM: percent remaining in the account binding bucket; HANDOFF is required at or below ORCH_HANDOFF_HEADROOM_PCT.\n'
       printf 'lane-context: handoff kind=lane-threshold context=ORCH_HANDOFF_CONTEXT_PCT overseer-trigger=ORCH_OVERSEER_HEADROOM_PCT\n'
-      printf 'HANDOFF: required at or past ORCH_HANDOFF_CONTEXT_PCT of the session'"'"'s own window, the one context mark lanes and the overseer share, or at the LANE headroom threshold. It never reports the overseer'"'"'s own ORCH_OVERSEER_HEADROOM_PCT, wall or qualifying-accounts triggers: by default the overseer succeeds itself at 5 percent headroom against the lane'"'"'s 3, so its own row can read - at a headroom that already fires its succession.\n'
+      printf 'HANDOFF: required by the shared context rule, or at the LANE headroom threshold. It never reports the overseer'"'"'s own ORCH_OVERSEER_HEADROOM_PCT, wall or qualifying-accounts triggers: by default the overseer succeeds itself at 5 percent headroom against the lane'"'"'s 3, so its own row can read - at a headroom that already fires its succession.\n'
       printf 'lane-context: caller kind=lane-marker marker=*\n'
       printf 'LANE: a leading * marks the row of the session that ran this command.\n'
       ;;

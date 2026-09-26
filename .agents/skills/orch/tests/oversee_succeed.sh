@@ -152,7 +152,7 @@ screen_reading() { # SCREEN
     "$CODEX_SCREEN") echo 'codex 100000 258400 gpt-6-astra' ;;
     "$CODEX_AT_MARK") echo 'codex 232560 258400 gpt-6-astra' ;;
     "$NO_TABLE_TIER") echo 'claude 470000 - claude-sonnet-4-5' ;;
-    *'Sonnet 4.5 52%'*) echo 'claude 520000 - claude-sonnet-4-5' ;;
+    *'Sonnet 4.5 52%'*) echo 'claude 399999 - claude-sonnet-4-5' ;;
     *'Opus 5 (200k context) 41%'*) echo 'claude 82000 200000 claude-opus-5' ;;
     *) ;;
   esac
@@ -321,7 +321,7 @@ BRIEF='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow a
 # launch line spells the claude one for its shell.
 # shellcheck disable=SC2016  # JSON, never expanded.
 CLAUDE_COMPACT='--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}'
-CODEX_COMPACT='-c;model_auto_compact_token_limit=9223372036854775807'
+CODEX_COMPACT='-c;model_auto_compact_token_limit=9223372036854775807;-c;model_auto_compact_token_limit_scope=body_after_prefix;-c;model_post_turn_compact_threshold_percent=0'
 CLAUDE_COMPACT_LINE="$(printf '%q' "$CLAUDE_COMPACT")"
 
 # A live process that is NOT this suite's tmux server: lane_claims_read keeps a
@@ -1012,8 +1012,8 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
 new_caller "$MARK"
 CONTEXT_PCT=60 run_succeed checkraised '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: context-below-mark tokens=520000 window=1000000 mark=60 headroom=80|0" \
-  "a context mark the setting raises is not reached at the same reading"
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=60 succession=on headroom=80 window=1000000|0" \
+  "a raised percentage keeps the absolute cap"
 new_caller "$MARK"
 CONTEXT_PCT=40 run_succeed checklowered '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
@@ -1030,7 +1030,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
 new_caller "$MARK"
 CONTEXT_PCT=percent run_succeed contextfallback '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: context-below-mark tokens=520000 window=1000000 mark=90 headroom=80|0" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=90 succession=on headroom=80 window=1000000|0" \
   "a context mark orch-env cannot read falls back to the default both readers use"
 for CONTEXT_GUARD in 050 101; do
   new_caller "$MARK"
@@ -1077,8 +1077,25 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
 new_caller "$CODEX_AT_MARK" 'Context 10% left'
 CONTEXT_PCT=90 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codexatmark '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: mark-reached kind=context value=232560 mark=90 succession=on headroom=80 window=258400|0" \
-  "a codex overseer at 90 percent of its 258400 window reaches the context mark"
+  "0|oversee-succeed: context-below-mark tokens=232560 window=258400 mark=90 headroom=80|0" \
+  "a codex overseer at exactly 90 percent of its 258400 window has room"
+
+# Readings arrive through the real --context argument used by the hook.
+while IFS='|' read -r reading mark key; do
+  new_caller "$UNDER_MARK"
+  CONTEXT_PCT="$mark" run_succeed independentcontext '' --check-marks --context "$reading"
+  assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" "0|oversee-succeed: $key|0" \
+    "the real context caller judges $reading at requested percent $mark"
+done <<'ROWS'
+399999:1000000|90|context-below-mark tokens=399999 window=1000000 mark=90 headroom=80
+400000:1000000|90|mark-reached kind=context value=400000 mark=90 succession=on headroom=80 window=1000000
+400000:|90|mark-reached kind=context value=400000 mark=90 succession=on headroom=80 window=
+399999:|90|mark-unmeasured kind=context reason=window-unnamed succession=on
+180000:200000|100|context-below-mark tokens=180000 window=200000 mark=90 headroom=80
+180001:200000|100|mark-reached kind=context value=180001 mark=90 succession=on headroom=80 window=200000
+160000:200000|80|context-below-mark tokens=160000 window=200000 mark=80 headroom=80
+160001:200000|80|mark-reached kind=context value=160001 mark=80 succession=on headroom=80 window=200000
+ROWS
 
 # No stored reading is ever judged. A run handed no --context, which is every
 # watch pass, judges the account triggers alone, so a session restarted by hand
@@ -1206,7 +1223,7 @@ PRINT_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 PRINT_HOME="$(lane_codex_home_path "$H/.codex" "$PRINT_CWD")"
 CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$PRINTSKIP/oversee-succeed" \
   run_succeed printskip '' --print-launch-line
-assert_eq "$RC|$OUT" "0|env CODEX_HOME='$H/.codex' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 '$BRIEF'" \
+assert_eq "$RC|$OUT" "0|env CODEX_HOME='$H/.codex' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'" \
   "control: a print that skips the preparation records the bare account, not the prepared home"
 
 # Both arms of lib/lane-context.sh's answer for the caller's own lane: the
@@ -1220,7 +1237,7 @@ for row in \
   IFS='|' read -r row_lane row_what <<<"$row"
   new_caller "$CODEX_SCREEN" 'Context 48% left'
   CALLER_LANE="$row_lane" run_succeed printcodex '' --print-launch-line
-  assert_eq "$RC|$OUT|$(overseers)" "0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 '$BRIEF'|0" \
+  assert_eq "$RC|$OUT|$(overseers)" "0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'|0" \
     "--print-launch-line on a codex caller records the home trust was made in, under $row_what"
 done
 # A codex caller launched by this script already runs with the startup update
@@ -1229,7 +1246,7 @@ done
 new_caller "$CODEX_SCREEN" 'Context 48% left'
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed printcodex-settings '' --print-launch-line -- \
   --verbose -c check_for_update_on_startup=false
-assert_eq "$RC|$OUT" "0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 --verbose '$BRIEF'" \
+assert_eq "$RC|$OUT" "0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 --verbose '$BRIEF'" \
   "a codex caller entry carrying the update setting keeps it exactly once"
 
 # A codex caller is judged on the window its own rollout names, like any other.
@@ -1261,7 +1278,7 @@ for row in \
   "claude|off||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode '$BRIEF'|off takes the claude question tool away" \
   "claude|on|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose '$BRIEF'|on drops the caller's own question-tool words" \
   "claude|off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose '$BRIEF'|off carries a caller's own copy of the words once" \
-  "codex|off||0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c features.default_mode_request_user_input=false '$BRIEF'|off takes the codex question tool away" \
+  "codex|off||0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false '$BRIEF'|off takes the codex question tool away" \
   "claude|sometimes||1|oversee-succeed: invalid-question-tool ORCH_OVERSEER_QUESTION_TOOL=sometimes|a value that is neither on nor off refuses" \
   ; do
   IFS='|' read -r row_harness row_value row_flags row_rc row_want row_what <<<"$row"

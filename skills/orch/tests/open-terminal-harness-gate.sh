@@ -89,7 +89,7 @@ FLEET=(--state-dir "$TMP_ROOT/fleet")
 # The words the launch-choice table gives each harness, as a --cmd command
 # carries them.
 CLAUDE_WORDS="'--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}'"
-CODEX_WORDS='-c model_auto_compact_token_limit=9223372036854775807'
+CODEX_WORDS='-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0'
 CLAUDE_QUESTION=--disallowedTools=AskUserQuestion,EnterPlanMode
 CODEX_QUESTION='-c features.default_mode_request_user_input=false'
 CLAUDE_TEMPLATE="claude --model opus --effort high $CLAUDE_QUESTION $CLAUDE_WORDS {item}"
@@ -107,7 +107,7 @@ a claude --cmd carrying the compaction words passes|passed|${FLEET[*]} --harness
 a claude --cmd without them is refused, naming them|open-terminal: launch-compaction-missing harness=claude word=--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}|${FLEET[*]} --harness claude --cmd 'claude --model opus --effort high $CLAUDE_QUESTION {item}'
 a claude --cmd whose JSON the shell would strip is refused, the word never reaching claude whole|open-terminal: launch-compaction-missing harness=claude word=--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}|${FLEET[*]} --harness claude --cmd "claude --model opus --effort high $CLAUDE_QUESTION --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} {item}"
 a claude --cmd quoting only the JSON passes|passed|${FLEET[*]} --harness claude --cmd "claude --model opus --effort high $CLAUDE_QUESTION --settings='{\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' {item}"
-a codex --cmd without them is refused, one word field per word|open-terminal: launch-compaction-missing harness=codex word=-c word=model_auto_compact_token_limit=9223372036854775807|${FLEET[*]} --harness codex --cmd 'codex -m gpt-6-astra -c model_reasoning_effort=high $CODEX_QUESTION {item}'
+a codex --cmd without them is refused, one word field per word|open-terminal: launch-compaction-missing harness=codex word=-c word=model_auto_compact_token_limit=9223372036854775807 word=-c word=model_auto_compact_token_limit_scope=body_after_prefix word=-c word=model_post_turn_compact_threshold_percent=0|${FLEET[*]} --harness codex --cmd 'codex -m gpt-6-astra -c model_reasoning_effort=high $CODEX_QUESTION {item}'
 a codex --cmd carrying them passes|passed|${FLEET[*]} --harness codex --cmd 'codex -m gpt-6-astra -c model_reasoning_effort=high $CODEX_QUESTION $CODEX_WORDS {item}'
 a fleet --cmd naming no harness is refused|open-terminal: unsupported-for-oversee harness=none|${FLEET[*]} --cmd 'claude --model opus {item}'
 opencode in a fleet is refused|open-terminal: unsupported-for-oversee harness=opencode|${FLEET[*]} --harness opencode --launch-flags '--model m'

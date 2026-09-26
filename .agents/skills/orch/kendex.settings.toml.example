@@ -168,8 +168,7 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # its handoff at the next safe point.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
-# Percent of a session's own context window at or past which a turn end is
-# refused until that session's handoff record stands; who judges on it is
+# Earlier context handoff percentage. Shared rule and boundary behavior:
 # references/oversee-events.md, Judgement rules.
 # ORCH_HANDOFF_CONTEXT_PCT = "90"
 
