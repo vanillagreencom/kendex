@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+# item-tier — the cycle a work item runs: micro, small or standard.
+#
+# Usage:
+#   item-tier [--production N] [--floor CLASS] [--path PATH]...
+#             [--base REF --head REF] [--repo DIR]
+#
+# Every input names a class, and the widest one wins, in the order
+# micro < small < standard:
+#
+#   --production N   the overseer's launch-time estimate of the item's added
+#                    production lines, against the micro_max_production and
+#                    small_max_production ceilings in
+#                    references/narrow-change.conf.
+#   --floor CLASS    a class the item already holds: the tier a lane runs at,
+#                    or the class above the one a run escaped from.
+#   --path PATH      a file the item's **Location** names. A path one of that
+#                    file's `path` lines matches is refused by every narrow
+#                    class, so it answers standard.
+#   --base, --head   the item's branch, classified by harness-ci's
+#                    change-class through lib/change-class.sh: the script CI
+#                    runs, so a lane and the gate judging it cannot disagree.
+#                    render and trivial count as micro.
+#
+# At least one of --production, --floor and --base is required. --repo
+# (default .) is the checkout the classifier and the review gate read. No
+# `**Expected delta**` line is read here: that line is branch-size-check's
+# optional allowance, and the estimate is the caller's.
+#
+# A micro answer also needs the review gate's per-class policy active, as
+# `review-policy --check-config` answers it. With the policy inactive, the
+# review gate absent, or its answer unreadable, a micro run is certain to
+# escape at micro.md § Escape condition 7, so the item takes small and the
+# cause names why.
+#
+# A ceiling list or a classifier this script cannot read answers standard,
+# naming the cause, never a narrower class.
+#
+# stdout is one line, `tier=CLASS brief=VERB cause=CAUSE[ DETAIL]`. VERB is
+# the orch command the launch brief runs: micro, small, or start for
+# standard. CAUSE names the input that decided. Exit 2 is a usage error and
+# prints no tier.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"
+REVIEW_POLICY="$SCRIPT_DIR/../../review-gate/scripts/review-policy"
+
+usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
+
+die() { # CAUSE MESSAGE
+  printf 'item-tier-error: cause=%s\n%s\n' "$1" "$2" >&2
+  exit 2
+}
+
+need_value() { # FLAG REMAINING
+  [ "$2" -ge 2 ] || die missing-value "$1 needs a value"
+}
+
+production=""
+floor=""
+base=""
+head=""
+repo="."
+paths=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --production) need_value "$1" "$#"; production="$2"; shift 2 ;;
+    --floor) need_value "$1" "$#"; floor="$2"; shift 2 ;;
+    --path) need_value "$1" "$#"; paths+=("$2"); shift 2 ;;
+    --base) need_value "$1" "$#"; base="$2"; shift 2 ;;
+    --head) need_value "$1" "$#"; head="$2"; shift 2 ;;
+    --repo) need_value "$1" "$#"; repo="$2"; shift 2 ;;
+    -h | --help) usage; exit 0 ;;
+    *) die unknown-argument "unknown argument '$1'" ;;
+  esac
+done
+
+case "$production" in
+  '') ;;
+  *[!0123456789]*) die invalid-production "--production must be a whole number" ;;
+esac
+case "$floor" in
+  '' | micro | small | standard) ;;
+  *) die invalid-floor "--floor must be micro, small or standard" ;;
+esac
+if { [ -n "$base" ] && [ -z "$head" ]; } || { [ -z "$base" ] && [ -n "$head" ]; }; then
+  die range-incomplete "--base and --head are given together"
+fi
+[ -n "$production" ] || [ -n "$floor" ] || [ -n "$base" ] ||
+  die no-input "name --production, --floor or --base"
+
+rank() { # CLASS
+  case "$1" in
+    micro) echo 0 ;;
+    small) echo 1 ;;
+    standard) echo 2 ;;
+    *) die internal-class "no rank for class '$1'" ;;
+  esac
+}
+
+tier=""
+cause=""
+# The first input naming the widest class decides, and names the cause.
+consider() { # CLASS CAUSE
+  if [ -z "$tier" ] || [ "$(rank "$1")" -gt "$(rank "$tier")" ]; then
+    tier="$1"
+    cause="$2"
+  fi
+}
+
+# The ceilings and the path list, read once and only when an input needs them.
+micro_max=""
+small_max=""
+excluded=""
+conf_cause=""
+read_conf() {
+  [ -r "$NARROW_CONF" ] || { conf_cause="narrow-change-unreadable"; return 1; }
+  micro_max="$(sed -n 's/^micro_max_production=\([0123456789][0123456789]*\)$/\1/p' "$NARROW_CONF" | tail -1)" &&
+    small_max="$(sed -n 's/^small_max_production=\([0123456789][0123456789]*\)$/\1/p' "$NARROW_CONF" | tail -1)" &&
+    excluded="$(sed -n 's/^path //p' "$NARROW_CONF")" ||
+    { conf_cause="narrow-change-unreadable"; return 1; }
+  [ -n "$micro_max" ] && [ -n "$small_max" ] ||
+    { conf_cause="narrow-change-ceilings-missing"; return 1; }
+}
+
+if [ -n "$production" ] || [ "${#paths[@]}" -gt 0 ]; then
+  if ! read_conf; then
+    consider standard "$conf_cause"
+  else
+    if [ -n "$production" ]; then
+      if [ "$production" -le "$micro_max" ]; then
+        consider micro "estimate-within-micro production=$production"
+      elif [ "$production" -le "$small_max" ]; then
+        consider small "estimate-within-small production=$production"
+      else
+        consider standard "estimate-past-small production=$production"
+      fi
+    fi
+    # A `path` glob matches the whole path, `*` crossing `/`, as the list's
+    # header states. Expansion is off so a glob never names local files.
+    set -f
+    for path in ${paths[@]+"${paths[@]}"}; do
+      while IFS= read -r glob; do
+        [ -n "$glob" ] || continue
+        # shellcheck disable=SC2254
+        case "$path" in
+          $glob) consider standard "excluded-path path=$path glob=$glob"; break ;;
+        esac
+      done <<<"$excluded"
+    done
+    set +f
+  fi
+fi
+
+[ -z "$floor" ] || consider "$floor" "floor class=$floor"
+
+if [ -n "$base" ]; then
+  # shellcheck source=lib/change-class.sh
+  . "$SCRIPT_DIR/lib/change-class.sh"
+  class_err="$(mktemp "${TMPDIR:-/tmp}/item-tier-class.XXXXXX")" ||
+    die scratch-unavailable "a scratch file for the classifier's log could not be created"
+  trap 'rm -f -- "$class_err"' EXIT
+  if change_class_read "$base" "$head" "$repo" "$class_err"; then
+    case "$CHANGE_CLASS" in
+      render | trivial | micro) consider micro "classifier class=$CHANGE_CLASS" ;;
+      small | standard) consider "$CHANGE_CLASS" "classifier class=$CHANGE_CLASS" ;;
+      *) consider standard "classifier-unreadable class=$CHANGE_CLASS" ;;
+    esac
+  else
+    cat -- "$class_err" >&2
+    consider standard "classifier-failed detail=$CHANGE_CLASS_CAUSE"
+  fi
+fi
+
+if [ "$tier" = micro ]; then
+  policy=""
+  if [ ! -x "$REVIEW_POLICY" ]; then
+    tier=small
+    cause="review-policy-absent"
+  elif ! policy="$(cd -- "$repo" && "$REVIEW_POLICY" --check-config)"; then
+    tier=small
+    cause="review-policy-unreadable"
+  else
+    case "$policy" in
+      review-policy=active) ;;
+      review-policy=inactive) tier=small; cause="review-policy-inactive" ;;
+      *) tier=small; cause="review-policy-unreadable" ;;
+    esac
+  fi
+fi
+
+case "$tier" in
+  micro) brief=micro ;;
+  small) brief=small ;;
+  standard) brief=start ;;
+  *) die internal-tier "no tier was decided" ;;
+esac
+printf 'tier=%s brief=%s cause=%s\n' "$tier" "$brief" "$cause"

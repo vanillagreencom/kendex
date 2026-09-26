@@ -46,7 +46,7 @@ The table is applied only where the shared classifier measured a class, which it
 
 CI's writer workflow runs the review predicate for each open PR and posts the gate status. A control host running orch's `oversee-watch` runs the same predicate locally on each `pr-watch.sh --heal` pass to find a stale status, and posts nothing itself. On both hosts the predicate refreshes the PR's kendex sources only when every changed path is a generated file, because only the `render` check reads them. Every other diff is classified without refreshing kendex sources. A refresh that passes its time limit fails that PR's evaluation with `predicate-policy-refresh-deadline`, naming the PR and the limit, and the next pass tries again. CI shows that line in the writer's job log. The control host shows it in the `error` line `pr-watch.sh` prints for that PR.
 
-The empty default disables this table and preserves the existing gate behavior. Every consumer of `scripts/review-policy` applies the same answer: the orch skill's reviewer wait and thread gates, orch's micro admission, and the `pr-merge` review-thread gate.
+The empty default disables this table and preserves the existing gate behavior. Every consumer of `scripts/review-policy` applies the same answer: the orch skill's reviewer wait and thread gates, orch's micro admission and tier gate, and the `pr-merge` review-thread gate.
 
 - `REVIEW_GATE_CONTEXT` names the required commit status.
 - Select trusted reviewer logins and check names using [references/settings.md](references/settings.md).
