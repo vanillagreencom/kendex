@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Behavioral tests for run-all.sh's worker pool and its per-suite report.
-# The battery runs its suites `nproc` at a time and prints each suite's
+# The battery runs its suites `nproc` at a time, prints one
+# `start suite=<name>` line as each starts, and prints each suite's
 # output whole under its header followed by one
 # `suite=<name> seconds=<n> pass=<n> fail=<n>` line. One
 # `total suites=<n> seconds=<n> pass=<n> fail=<n>` line follows the last
@@ -11,15 +12,18 @@
 # timing the case controls.
 #
 # Three surfaces:
-#   1. the report — each summary shape a suite prints becomes that suite's
-#      pass and fail counts, the last summary line winning, a suite's
-#      seconds cover its own run, and a green battery exits 0
+#   1. the report — each suite's start line comes once, before its output;
+#      each summary shape a suite prints becomes that suite's pass and fail
+#      counts, the last summary line winning, a suite's seconds cover its
+#      own run, and a green battery exits 0
 #   2. a red suite — the run exits 1, names the suite in the FAILED block,
 #      prints its stdout and stderr whole under its header, and its line
 #      never reads fail=0; one row per way a suite goes red
 #   3. the worker count — at least 2 suites overlap when nproc reports 2,
 #      and exactly 4 where nproc cannot answer; at 1 no two overlap; a count
 #      that is not a number refuses
+#   4. the ALONE list — each suite run-all.sh names there starts only when
+#      no other suite runs, and no suite starts while it runs
 #
 # Bash 3.2 compatible.
 
@@ -118,6 +122,10 @@ i=0
 while [ "$i" -lt "${#GREEN_NAMES[@]}" ]; do
   assert_eq "$(line_of "${GREEN_NAMES[i]}")" "suite=${GREEN_NAMES[i]} seconds=N ${GREEN_WANT[i]}" \
     "${GREEN_NAMES[i]} reports ${GREEN_WANT[i]}"
+  assert_eq "$(printf '%s\n' "$OUT" | awk -v s="start suite=${GREEN_NAMES[i]}" -v h="──── ${GREEN_NAMES[i]} ────" '
+      $0 == s { n++; if (!head) before++ } $0 == h { head = 1 }
+      END { print "starts=" n + 0 " before-header=" before + 0 }')" "starts=1 before-header=1" \
+    "${GREEN_NAMES[i]} prints one start line, before its output"
   i=$((i + 1))
 done
 assert_eq "$(printf '%s\n' "$OUT" | sed -n 's/^total suites=5 seconds=[0-9][0-9]* /total suites=5 seconds=N /p')" \
@@ -164,6 +172,18 @@ while [ "$i" -lt "${#RED_NAMES[@]}" ]; do
 done
 
 echo "=== 3. the worker count ==="
+# Each suite NAME appends `start NAME` and, a second later, `end NAME` to the
+# file $EV names, so that file's order is the order suites started and
+# finished in.
+event_suites() { # DIR NAME...
+  local dir="$1" name
+  shift
+  for name in "$@"; do
+    printf '#!/usr/bin/env bash\necho "start %s" >>"$EV"\nsleep 1\necho "end %s" >>"$EV"\n' \
+      "$name" "$name" >"$dir/$name.sh"
+  done
+}
+
 # Each meet-* suite marks itself started, then waits for all MEET_N to have
 # started; it passes only when that many run at once.
 meet_battery() { # DIR COUNT
@@ -188,11 +208,8 @@ EOF
 }
 
 # NPROC|SUITES|WAIT SECONDS|EXPECTED
-# A row whose suites cannot all meet shows the cap: the first NPROC time out
-# and the one started after them finds every marker already there.
 WORKER_ROWS='2|2|60|rc=0 failed=
 fail|4|60|rc=0 failed=
-fail|5|2|rc=1 failed=meet-1 meet-2 meet-3 meet-4 
 1|2|2|rc=1 failed=meet-1 '
 while IFS='|' read -r nproc count secs want; do
   B="$TMP_ROOT/meet-$nproc-$count"
@@ -202,11 +219,41 @@ while IFS='|' read -r nproc count secs want; do
     "nproc $nproc runs $count waiting suites: $want"
 done <<<"$WORKER_ROWS"
 
+# The most suites the event file shows running at once, which can only be
+# fewer than the runner had, so it bounds the cap from above whatever the
+# host's load; the fallback row above bounds it from below.
+B="$TMP_ROOT/cap"
+battery "$B"
+event_suites "$B" ev-1 ev-2 ev-3 ev-4 ev-5 ev-6
+run_battery "$B" fail EV="$B.ev"
+most="$(awk '$1 == "start" { if (++n > m) m = n } $1 == "end" { n-- } END { print m + 0 }' "$B.ev")"
+assert_eq "rc=$RC at-most-4=$([ "$most" -le 4 ] && echo yes || echo "no ($most)")" \
+  "rc=0 at-most-4=yes" "nproc fail runs six suites at most 4 at once"
+
 B="$TMP_ROOT/junk"
 green_battery "$B"
 run_battery "$B" x
 assert_eq "rc=$RC $(printf '%s\n' "$OUT" | sed -n '1s/ printed.*//p')" "rc=1 run-all.sh: nproc" \
   "a worker count that is not a number refuses before any suite runs"
+
+echo "=== 4. a suite in the ALONE list runs by itself ==="
+ALONE_NAMES="$(sed -n '/^ALONE=(/,/^)/p' "$TEST_DIR/run-all.sh" | sed '1d;$d' | awk '{print $1}')"
+assert_eq "$([ -n "$ALONE_NAMES" ] && echo found || echo 'none: the sed over run-all.sh ALONE=( ... ) is broken')" \
+  found "the ALONE list is read out of run-all.sh"
+B="$TMP_ROOT/alone"
+battery "$B"
+event_suites "$B" pool-1 pool-2 pool-3 $ALONE_NAMES
+run_battery "$B" 4 EV="$B.ev"
+verdicts="$(printf '%s\n' "$ALONE_NAMES" | awk -v ev="$B.ev" '
+  NR == FNR { alone[$1] = 1; order[++k] = $1; next }
+  $1 == "start" { seen[$2] = 1; if (active > 0 && ($2 in alone)) bad[$2] = 1; if (solo != "") bad[solo] = 1
+                  active++; if ($2 in alone) solo = $2; next }
+  $1 == "end" { active--; if ($2 == solo) solo = "" }
+  END { for (i = 1; i <= k; i++) printf "%s=%s ", order[i],
+          !(order[i] in seen) ? "missing" : (order[i] in bad) ? "overlapped" : "alone" }
+' - "$B.ev")"
+want="$(printf '%s\n' "$ALONE_NAMES" | awk '{printf "%s=alone ", $1}')"
+assert_eq "rc=$RC $verdicts" "rc=0 $want" "every ALONE suite runs with no other suite beside it"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

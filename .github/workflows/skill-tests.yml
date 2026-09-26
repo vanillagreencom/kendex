@@ -56,8 +56,9 @@ name: Skill Tests
 # to name individual suites one at a time, the shard stands at what the seam
 # left and answers to its own step bound instead, and the paragraph above its
 # steps says so. Two legs are that case. `orch-terminal` is the first: its
-# largest suite, open-terminal-lane, is the floor of its wall time under the
-# parallel runner, and the orch shard comment gives both figures. The macOS
+# largest suite, open-terminal-lane, is on run-all.sh's ALONE list and runs
+# after the others, so the leg's wall time is that suite's seconds plus the
+# pooled rest, and the orch shard comment gives the figures. The macOS
 # `kendex-cli` cargo leg splits by `--test` target into `render-lint` and
 # `rest`; `rest` lands
 # at 235-267s, inside the ceiling, while `render-lint` is a target whose cost
@@ -594,7 +595,8 @@ jobs:
       # (approval_wait 51s, round_recover 37s, queue_wait 26s). The macOS
       # legs of that run spent 781s, 1087s, 597s, 1021s and 339s of step
       # time on the same five. run-all.sh runs those suites `nproc` at a
-      # time and prints each one's `suite=<name> seconds=<n>` line, so a
+      # time, save the ones on its ALONE list, which run one at a time after
+      # the rest, and prints each one's `suite=<name> seconds=<n>` line, so a
       # step's wall time is now below its sum and its log carries these
       # figures fresh. Splitting
       # orch-terminal in turn would have to name individual suites rather

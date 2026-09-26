@@ -23,9 +23,13 @@
 # Suites run as many at a time as `nproc` reports, or 4 where it cannot
 # answer (a stock macOS has no nproc). A suite's stdout and stderr are held
 # until it exits and then printed whole under its header, so two suites
-# never interleave; headers come in completion order. After each suite's
-# output comes one line, and after the last suite one total line:
+# never interleave; headers come in completion order. A suite in ALONE
+# below runs by itself after the others. Each suite prints one line when it
+# starts, so a run cut off by a signal or a job timeout still names every
+# suite that was running; after its output comes one line, and after the
+# last suite one total line:
 #
+#   start suite=<name>
 #   suite=<name> seconds=<n> pass=<n> fail=<n>
 #   total suites=<n> seconds=<n> pass=<n> fail=<n>
 #
@@ -74,14 +78,35 @@ wanted() { # BASE
   [ "$keep" -eq 1 ]
 }
 
+# Suites that run alone, one at a time, once every other selected suite has
+# finished: each holds a fixed wall-clock window that the code under test
+# must meet, and a loaded host has made it miss. One name per line, first
+# word, with the window it holds; run-all-parallel.sh reads this list.
+ALONE=(
+  open-terminal-lane      # the lane-tree stub holds the picked account for 2s
+  oversee_watch_lifecycle # a takeover case waits 10s for the takeover line
+)
+
+alone() { # BASE
+  local name
+  for name in "${ALONE[@]}"; do
+    [ "$name" != "$1" ] || return 0
+  done
+  return 1
+}
+
 SUITES=()
+LATER=()
 for test_file in "$TEST_DIR"/*.sh; do
   [[ -f "$test_file" ]] || continue
   base=$(basename "$test_file" .sh)
   [[ "$base" == "run-all" ]] && continue
   wanted "$base" || continue
-  SUITES+=("$base")
+  if alone "$base"; then LATER+=("$base"); else SUITES+=("$base"); fi
 done
+# Suites before POOLED share the workers; the rest run alone.
+POOLED=${#SUITES[@]}
+[ "${#LATER[@]}" -eq 0 ] || SUITES+=("${LATER[@]}")
 RUN=${#SUITES[@]}
 
 if [[ "$RUN" -eq 0 ]]; then
@@ -148,8 +173,9 @@ report() { # BASE STATUS SECONDS
 
 # One slot per worker, each empty or holding the suite it runs. A suite is
 # reaped once `kill -0` finds it gone, and `wait` then returns the status the
-# shell kept for it. A slot is refilled on the pass that reaps it; the loop
-# sleeps only when a pass found nothing to reap.
+# shell kept for it. A slot is refilled on the pass that reaps it, except that
+# a suite from ALONE starts only when no slot is busy; the loop sleeps only
+# when a pass found nothing to reap.
 SLOT=()
 SLOT_PID=()
 SLOT_START=()
@@ -158,6 +184,7 @@ while [ "$k" -lt "$JOBS" ]; do SLOT[k]=""; SLOT_PID[k]=""; SLOT_START[k]=0; k=$(
 started=$SECONDS
 next=0
 finished=0
+running=0
 while [ "$finished" -lt "$RUN" ]; do
   reaped=0
   k=0
@@ -169,13 +196,17 @@ while [ "$finished" -lt "$RUN" ]; do
       report "$base" "$status" "$((SECONDS - SLOT_START[k]))"
       SLOT[k]=""
       finished=$((finished + 1))
+      running=$((running - 1))
       reaped=1
     fi
-    if [ -z "${SLOT[k]}" ] && [ "$next" -lt "$RUN" ]; then
+    if [ -z "${SLOT[k]}" ] && [ "$next" -lt "$RUN" ] &&
+      { [ "$next" -lt "$POOLED" ] || [ "$running" -eq 0 ]; }; then
       SLOT[k]="${SUITES[next]}"
+      printf 'start suite=%s\n' "${SLOT[k]}"
       bash "$TEST_DIR/${SLOT[k]}.sh" >"$OUT_DIR/${SLOT[k]}.out" 2>&1 </dev/null &
       SLOT_PID[k]=$!
       SLOT_START[k]=$SECONDS
+      running=$((running + 1))
       next=$((next + 1))
     fi
     k=$((k + 1))
