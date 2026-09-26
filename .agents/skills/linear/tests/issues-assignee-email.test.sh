@@ -114,11 +114,13 @@ DANA_ID=11111111-2222-3333-4444-555555555555
 OTHER_ID=99999999-8888-7777-6666-555555555555
 printf 'notes\n' >"$TMP_ROOT/notes.txt"
 while IFS='|' read -r name action ref want attach; do
+  # Guarded at each expansion: Bash before 4.4 reads an empty array under
+  # set -u as unbound.
   extra=()
   [[ "$attach" != attach ]] || extra=(--attach "$TMP_ROOT/notes.txt")
   case "$action" in
-  create) run_issues "$name" create --title t --assignee "$ref" "${extra[@]}"; mutation=issueCreate ;;
-  update) run_issues "$name" update CC-760 --assignee "$ref" "${extra[@]}"; mutation=issueUpdate ;;
+  create) run_issues "$name" create --title t --assignee "$ref" ${extra[@]+"${extra[@]}"}; mutation=issueCreate ;;
+  update) run_issues "$name" update CC-760 --assignee "$ref" ${extra[@]+"${extra[@]}"}; mutation=issueUpdate ;;
   esac
   if [[ "$want" == refused ]]; then
     assert_ne "$name: the action fails" "$(cat "$TMP_ROOT/$name.rc")" 0
