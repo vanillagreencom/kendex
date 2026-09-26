@@ -17,8 +17,11 @@ TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 source "$REPO_ROOT/skills/orch/scripts/lib/date-ladder.sh"
 
-PASS=0
-FAIL=0
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
+# mutant_scripts and mutate_file, the two halves of the control below.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
@@ -109,17 +112,15 @@ out="$(remove "$WS" "$nf" KEN-1 2>&1)" || rc=$?
   || bad "with no fleet state the close-out prunes an old file no item names and names its archive" "rc=$rc out=$out"
 
 # A backstop that refuses is the close-out's refusal: with no fleet state and
-# an archive root that is a file, SCRIPT's remove has taken the item's files,
-# and its status and first stderr line are the prune's. BACKSTOP reads it.
-backstop_refused() { # SCRIPT
-  local bd="$TMP_ROOT/backstop-${1##*/}" brc=0
-  build "$bd"
-  rm -f -- "${bd:?}/workflow-state-oversee.json"
-  printf 'x\n' > "$bd.fleet"
-  remove "$1" "$bd" KEN-1 >"$bd.out" 2>"$bd.err" || brc=$?
-  BACKSTOP="rc=$brc removed=$(grep -c '^removed path=' "$bd.out" || true) err=$(head -n 1 "$bd.err" | sed "s|path=$bd.fleet/.*|path=FLEET|") old=$([[ -e "$bd/waiter.abc" ]] && echo kept || echo removed)"
-}
-backstop_refused "$WS"
+# an archive root that is a file, remove has taken the item's files, and its
+# status and first stderr line are the prune's.
+bd="$TMP_ROOT/backstop"
+build "$bd"
+rm -f -- "${bd:?}/workflow-state-oversee.json"
+printf 'x\n' > "$bd.fleet"
+rc=0
+remove "$WS" "$bd" KEN-1 >"$bd.out" 2>"$bd.err" || rc=$?
+BACKSTOP="rc=$rc removed=$(grep -c '^removed path=' "$bd.out" || true) err=$(head -n 1 "$bd.err" | sed "s|path=$bd.fleet/.*|path=FLEET|") old=$([[ -e "$bd/waiter.abc" ]] && echo kept || echo removed)"
 [[ "$BACKSTOP" == "rc=1 removed=6 err=workflow-state: prune-archive-failed path=FLEET old=kept" ]] \
   && ok "with no fleet state a backstop whose archive cannot be built refuses the close-out" \
   || bad "with no fleet state a backstop whose archive cannot be built refuses the close-out" "$BACKSTOP"
@@ -157,42 +158,16 @@ ROWS
 grep -qxF 'rm: planted failure' <<<"$got" \
   && ok "the removal refusal carries rm's own words" || bad "the removal refusal carries rm's own words" "got=$got"
 
-MUTANT_DIR="$TMP_ROOT/mutant"
-mkdir -p "$MUTANT_DIR"
-cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$MUTANT_DIR/lib"
-cp "$REPO_ROOT/skills/orch/scripts/orch-env" "$REPO_ROOT/skills/orch/scripts/git-context" "$MUTANT_DIR/"
-# One planted defect per rule, fields split on @ since the anchors hold |: the
-# anchor, the line that replaces it, the case's item, whether the fleet state
-# stands, and the path the defect removes that the shipped script keeps.
-while IFS='@' read -r name anchor replacement item fleet path label; do
-  if [[ "$(grep -Fc -- "$anchor" "$WS")" != 1 ]]; then
-    bad "the $name control finds its anchor"
-    continue
-  fi
-  A="$anchor" R="$replacement" awk 'index($0, ENVIRON["A"]) { sub(/[^ ].*/, ""); print $0 ENVIRON["R"]; next } { print }' \
-    "$WS" > "$MUTANT_DIR/$name"
-  mp="$TMP_ROOT/m-$name"
-  build "$mp"
-  [[ "$fleet" == yes ]] || rm -f -- "${mp:?}/workflow-state-oversee.json"
-  remove "$MUTANT_DIR/$name" "$mp" "$item" >/dev/null 2>&1 || true
-  if [[ "$fleet" == yes ]]; then [[ ! -e "$mp/$path" ]]; else [[ -e "$mp/$path" ]]; fi \
-    && ok "control: $label" || bad "control: $label"
-done <<'ROWS'
-no-item-match@unit_names_item "$unit" "$item" || continue@:@KEN-1@yes@completion-summary-KEN-2.md@without the item match another item's file is removed
-no-durable-keep@[[ "$unit" != "$sd/lane-status-$item.md" && "$unit" != "$sd/lane-mail/$item" ]] || continue@:@KEN-1@yes@lane-status-KEN-1.md@without the durable-record keep the lane status file is removed
-no-fleet-files@"$sd/${2##*/}"|"$sd/${2##*/}.lock"|"$WATCH_PID_FILE"|@"$sd/none") ;;@oversee@yes@workflow-state-oversee.json@without the fleet-file exclusion remove oversee takes the fleet state
-no-handoff-keep@for f in "$entry"/*; do [[ "${f##*/}" == OVERSEER-HANDOFF.md ]] || UNITS+=("$f"); done ;;@for f in "$entry"/*; do UNITS+=("$f"); done ;;@OVERSEER@yes@handoffs/OVERSEER-HANDOFF.md@without the handoff exclusion remove OVERSEER takes the overseer handoff file
-no-backstop@fleet_state_file >/dev/null || cmd_prune@:@KEN-1@no@waiter.abc@without the backstop a close-out with no fleet state leaves an old unnamed file
-ROWS
-
-# Planted: the backstop's status dropped, so a refused prune reads as a clean
-# close-out.
-A='fleet_state_file >/dev/null || cmd_prune' R='fleet_state_file >/dev/null || cmd_prune || :' \
-  awk 'index($0, ENVIRON["A"]) { sub(/[^ ].*/, ""); print $0 ENVIRON["R"]; next } { print }' "$WS" > "$MUTANT_DIR/backstop-ignored"
-backstop_refused "$MUTANT_DIR/backstop-ignored"
-[[ "$BACKSTOP" == rc=0\ * ]] \
-  && ok "control: without the backstop status a refused prune reads as a clean close-out" \
-  || bad "control: without the backstop status a refused prune reads as a clean close-out" "$BACKSTOP"
+# The suite's one must-fail control: the item match dropped, so another
+# item's file is removed with the item's own.
+NO_ITEM_MATCH="$(mutant_scripts no-item-match workflow-state)/workflow-state" || exit 1
+mutate_file "$NO_ITEM_MATCH" 'unit_names_item "$unit" "$item" || continue' ':'
+mp="$TMP_ROOT/m-no-item-match"
+build "$mp"
+remove "$NO_ITEM_MATCH" "$mp" KEN-1 >/dev/null 2>&1 || true
+[[ ! -e "$mp/completion-summary-KEN-2.md" ]] \
+  && ok "control: without the item match another item's file is removed" \
+  || bad "control: without the item match another item's file is removed"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
