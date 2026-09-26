@@ -329,7 +329,7 @@ fn identity_reaches_git_through_a_linked_root() {
 #[test]
 fn a_source_hash_asks_git_only_where_a_crlf_pair_could_convert() {
     let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path();
+    let root = &crate::test_util::rooted(&tmp);
     let git = |args: &[&str]| {
         let output = crate::process::Hardened::git(args, Some(root))
             .run()
