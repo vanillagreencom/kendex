@@ -90,7 +90,7 @@ The overseer records the ruling per § Recording and sends `lane-mail notice --i
 
 ## Opening question
 
-A session that starts with no item to work, no handoff file and no owner note asks this, as an owner ask with no options and no recommendation, so it waits for the answer:
+A session that starts with no item to work, no handoff file, no owner note and no pending owner ask (`lane-mail pending --item overseer --to owner`) asks this, as an owner ask with no options and no recommendation, so it waits for the answer:
 
 ```text
 What do you want to work on? Reply with issue ids or describe it.
