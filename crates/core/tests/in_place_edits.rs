@@ -13,12 +13,13 @@
 //! in-place answer taken per item rather than per artifact reddens
 //! `a_copy_delivered_from_an_in_place_declaration_is_a_render`, and so
 //! does the inventory skipping every in-place declaration rather than the
-//! source tree alone. The edit hold
+//! source tree alone, and so does the not-text refusal asked of the
+//! declaration rather than of the tree standing at the source. The edit hold
 //! needs no guard of its own: no record owns the source tree
 //! (`engine::owned::installed`), so the hold never finds an entry recorded
 //! there. No production edit reddens `a_namespaced_in_place_name_is_not_
 //! served_and_nothing_is_written` through the internal refusal in
-//! `render_variant`: the in-place source serves directory names alone, so
+//! `in_place_refusal`: the in-place source serves directory names alone, so
 //! a `/` name is not found before that pass runs, and the test holds the
 //! source lookup's refusal, the one place the rule lives; the internal
 //! arm stands for the pass and the source disagreeing, which nothing
@@ -292,15 +293,29 @@ fn a_skill_file_that_is_not_text_is_refused_and_not_written() {
 /// source: it is recorded with a rendered hash, an edit to it is held as a
 /// conflict rather than written over, and removing the declaration takes
 /// it away. Only the tree standing where the source stands is the source,
-/// and with one tool that copies into its own directory, none does.
+/// and with one tool that copies into its own directory, none does: a
+/// `SKILL.md` that is not valid UTF-8 refuses nothing here, and the copy
+/// holds the repaired reading while the person's bytes stand.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_copy_delivered_from_an_in_place_declaration_is_a_render() {
     let world = world();
     world.declare_as("deploy", "\"claude\"", "copy", Some("shared rule"));
+    let mut authored = AUTHORED.as_bytes().to_vec();
+    authored.extend_from_slice(b"Caf\xe9.\n");
+    fs::write(world.skill_file(), &authored).unwrap();
+
     let report = world.apply();
+
     let copy = world.project.join(".claude/skills/deploy");
     assert!(copy.is_dir() && !copy.is_symlink(), "{}", copy.display());
+    assert!(
+        deploy_rows(&report)
+            .iter()
+            .all(|(state, _)| *state != DriftState::Conflict),
+        "{:?}",
+        deploy_rows(&report)
+    );
     // The copy is a render kendex wrote whole, so the inventory carries it;
     // the source it was rendered from is the person's and stays out.
     assert!(
@@ -313,10 +328,12 @@ fn a_copy_delivered_from_an_in_place_declaration_is_a_render() {
         "{:?}",
         report.generated.whole
     );
-    assert!(world.read(&copy.join("SKILL.md")).contains("shared rule"));
+    let rendered = world.read(&copy.join("SKILL.md"));
+    assert!(rendered.contains("shared rule"), "{rendered}");
+    assert!(rendered.ends_with("Caf\u{FFFD}.\n"), "{rendered}");
     assert_eq!(
-        world.read(&world.skill_file()),
-        AUTHORED,
+        fs::read(world.skill_file()).unwrap(),
+        authored,
         "the source is not written"
     );
     let lock = kendex_core::lock::load(&world.lock_path()).unwrap();
@@ -361,7 +378,7 @@ fn a_copy_delivered_from_an_in_place_declaration_is_a_render() {
     .unwrap();
     apply::execute(&world.env, &report.plan).unwrap();
     assert!(!copy.exists(), "{}", copy.display());
-    assert_eq!(world.read(&world.skill_file()), AUTHORED);
+    assert_eq!(fs::read(world.skill_file()).unwrap(), authored);
 }
 
 /// An in-place skill's name is its directory's, which carries no `/`: a

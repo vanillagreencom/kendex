@@ -135,7 +135,16 @@ fn an_unreadable_declaration_is_an_error_not_an_absent_one() {
     let declaration = tree.join("SKILL.md");
     fs::write(&declaration, "---\nname: armer\n---\nBody.\n").unwrap();
     let readable = installed_tree(&env, &scope, &lock, "armer").unwrap();
-    assert_eq!(readable.map(|found| found.root), Some(tree));
+    assert_eq!(readable.map(|found| found.root), Some(tree.clone()));
+
+    // A byte that is not UTF-8 is read the way the install read it, with
+    // U+FFFD in its place, never as a file that will not read.
+    fs::write(&declaration, b"---\nname: armer\n---\nCaf\xe9.\n").unwrap();
+    let repaired = installed_tree(&env, &scope, &lock, "armer").unwrap();
+    assert_eq!(
+        repaired.map(|found| (found.root, found.text)),
+        Some((tree, "---\nname: armer\n---\nCaf\u{FFFD}.\n".to_owned()))
+    );
 
     fs::set_permissions(&declaration, fs::Permissions::from_mode(0o000)).unwrap();
     // Root reads a mode-000 file, so there is no unreadable file to make.
