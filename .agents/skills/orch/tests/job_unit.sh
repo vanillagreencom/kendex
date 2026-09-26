@@ -79,6 +79,7 @@ done <<ROWS
 validate-x $TMP_ROOT/usage.record --cap 0 -- true|a zero cap is refused as usage
 validate-x $TMP_ROOT/usage.record --cap -- true|a cap with no number is refused as usage
 validate-x $TMP_ROOT/usage.record --|a launch with no command is refused as usage
+validate-x $TMP_ROOT/usage.record --memory-max 0 -- true|a zero memory bound is refused as usage
 ROWS
 
 # --- The unit name shape ---------------------------------------------------------
@@ -165,6 +166,18 @@ if command -v setsid >/dev/null 2>&1; then
   run env PATH="$TMP_ROOT/failing-setsid:$FARM" "$MUTANT" launch validate-id-1 "$record" --cap 60 -- sleep 30
   assert_eq "$RC $ERR" "1 " \
     "control: without its own status a failed launch reads as the record-unwritable status"
+
+  # No process group holds a memory bound, so a launch that would run under
+  # setsid refuses one, naming its runner line, and starts nothing.
+  rm -f -- "${TMP_ROOT:?}/memory.record"
+  run env PATH="$FARM" "$JOB_UNIT" launch validate-id-1 "$TMP_ROOT/memory.record" --memory-max 512 -- true
+  assert_eq "$RC $ERR $([[ -e "$TMP_ROOT/memory.record" ]] && echo recorded || echo unrecorded)" \
+    "5 job-unit: memory-max-unheld runner=setsid reason=no-systemd-run unrecorded" \
+    "a --memory-max launch that would run under setsid exits 5 as memory-max-unheld and starts nothing"
+  mutant memory-max-held '  [[ -z "$memory_max" ]] || { job_unit_fail memory-max-unheld "$JOB_UNIT_LINE" 5; return; }' ''
+  run env PATH="$FARM" "$MUTANT" launch validate-id-1 "$TMP_ROOT/memory.record" --memory-max 512 -- true
+  assert_eq "$RC $OUT" "0 runner=setsid reason=no-systemd-run" \
+    "control: without the refusal the setsid job runs with no memory bound"
 else
   echo "  skip  setsid is not installed; the setsid launch rows did not run"
 fi
@@ -251,7 +264,7 @@ ROWS
   run env PATH="$TMP_ROOT/no-linger:$FARM" "$JOB_UNIT" launch validate-linger "$TMP_ROOT/linger.record" --cap 60 -- true
   assert_eq "$RC $(sed 's/-[0-9]*$/-PID/' <<<"$OUT")" "0 runner=systemd unit=orch-validate-linger-PID" \
     "a capped launch keeps its unit where the manager does not linger"
-  mutant linger-capped '    capped=yes' '    :'
+  mutant linger-capped '; capped=yes ;;' ' ;;'
   run env PATH="$TMP_ROOT/no-linger:$FARM" "$MUTANT" launch validate-linger "$TMP_ROOT/linger.record" --cap 60 -- true
   assert_eq "$RC $OUT" "0 runner=setsid reason=no-linger" \
     "control: with the linger rule on every launch a capped job loses its unit"
@@ -285,21 +298,33 @@ if [[ "$(sed -n 's/^runner=//p' "$record" 2>/dev/null)" == systemd ]]; then
   # --cap is the unit's RuntimeMaxSec, and a launch with none, the repeat
   # watch's, sets none.
   # launcher|cap arguments|RuntimeMaxUSec|label
-  cap_bound() { # SCRIPT [--cap SECS]
-    local rec="$TMP_ROOT/cap.record" u
+  unit_property() { # PROPERTY SCRIPT ARG... — exit and PROPERTY of the unit launched
+    local prop="$1" rec="$TMP_ROOT/cap.record" u
+    shift
+    rm -f -- "${rec:?}"
     run "$@" -- sleep 30
     u="$(sed -n 's/^unit=//p' "$rec" 2>/dev/null)"
-    printf '%s %s' "$RC" "$(systemctl --user show -p RuntimeMaxUSec --value -- "${u:-none}.service" 2>/dev/null)"
+    printf '%s %s' "$RC" "$(systemctl --user show -p "$prop" --value -- "${u:-none}.service" 2>/dev/null)"
     [[ -z "$u" ]] || "$JOB_UNIT" stop "$u" >/dev/null 2>&1 || true
   }
-  mutant cap-ignored '    unit_props+=(-p "RuntimeMaxSec=$2")' '    :'
+  mutant cap-ignored ' unit_props+=(-p "RuntimeMaxSec=$2");' ''
   while IFS='|' read -r script cap want label; do
     # shellcheck disable=SC2086 # the cap column is words
-    assert_eq "$(cap_bound "$script" launch validate-cap "$TMP_ROOT/cap.record" $cap)" "$want" "$label"
+    assert_eq "$(unit_property RuntimeMaxUSec "$script" launch validate-cap "$TMP_ROOT/cap.record" $cap)" "$want" "$label"
   done <<ROWS
 $JOB_UNIT|--cap 60|0 1min|a launch with --cap sets that RuntimeMaxSec
 $JOB_UNIT||0 infinity|a launch with no --cap sets no RuntimeMaxSec
 $MUTANT|--cap 60|0 infinity|control: a runner that drops --cap leaves the capped unit unbounded
+ROWS
+  # --memory-max is the unit's MemoryMax in MiB, and a launch with none sets none.
+  mutant memory-max-ignored '      --memory-max) unit_props+=(-p "MemoryMax=${2}M"); memory_max="$2" ;;' '      --memory-max) memory_max="$2" ;;'
+  while IFS='|' read -r script mem want label; do
+    # shellcheck disable=SC2086 # the memory column is words
+    assert_eq "$(unit_property MemoryMax "$script" launch validate-memory "$TMP_ROOT/cap.record" $mem)" "$want" "$label"
+  done <<ROWS
+$JOB_UNIT|--memory-max 512|0 536870912|a launch with --memory-max 512 sets MemoryMax=536870912
+$JOB_UNIT||0 infinity|a launch with no --memory-max sets no MemoryMax
+$MUTANT|--memory-max 512|0 infinity|control: a runner that drops --memory-max leaves the unit unbounded
 ROWS
 
   # A service ignores SIGPIPE by default; a unit job takes it at its default,
