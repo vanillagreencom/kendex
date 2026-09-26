@@ -412,11 +412,11 @@ One filing: the creation bar, a title-level duplicate check, the label set and t
 4. **Duplicates by title.** One read of the open titles; keep only rows § 1.1.1 scopes in:
 
    ```bash
-   .agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review" --max --format=compact | jq -r '.[] | "\(.id)\t\(.title)"'   # TRACKER=linear
-   gh issue list --repo [REPOSITORY] --state open --limit 200 --json number,title --jq '.[] | "#\(.number)\t\(.title)"'                                            # TRACKER=github
+   .agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review" --max --format=compact   # TRACKER=linear
+   gh issue list --repo [REPOSITORY] --state open --limit 200 --json number,title                                                                # TRACKER=github
    ```
 
-   A title naming the item's problem makes the item `skip` with that issue as `target` and reason `covered by [ISSUE_ID]`. Read a matched issue's body (`cache issues get [ISSUE_ID]`, or `gh issue view [N] --repo [REPOSITORY] --json body`) only when its title alone leaves the match open; read no other body.
+   Read `id` and `title` from each row, `number` and `title` on GitHub; neither read takes a pipe, which a Codex session refuses ([codex-runtime.md](../../orch/references/codex-runtime.md)). A title naming the item's problem makes the item `skip` with that issue as `target` and reason `covered by [ISSUE_ID]`. Read a matched issue's body (`cache issues get [ISSUE_ID]`, or `gh issue view [N] --repo [REPOSITORY] --json body`) only when its title alone leaves the match open; read no other body.
 
 5. **Action.** § 10.1, then `create` or `skip`; no other action. A `create` fills `create_fields` per § 10.2, with `hierarchy: {"action": "none", "parent": null}`.
 
