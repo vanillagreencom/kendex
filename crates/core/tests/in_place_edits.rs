@@ -7,7 +7,9 @@
 //! the tree's bytes again reddens `an_edit_to_the_tree_raises_no_row_and_
 //! moves_no_record` and `an_old_record_is_re_recorded_by_one_refresh`; the
 //! block never written reddens `apply_writes_the_instructions_block_and_
-//! nothing_else` and `a_changed_instruction_rewrites_the_block_alone`; the
+//! nothing_else` and `a_changed_instruction_rewrites_the_block_alone`; a
+//! `SKILL.md` decode read as exact whatever it repaired reddens
+//! `a_skill_file_that_is_not_text_is_refused_and_not_written`; the
 //! in-place answer taken per item rather than per artifact reddens
 //! `a_copy_delivered_from_an_in_place_declaration_is_a_render`, and so
 //! does the inventory skipping every in-place declaration rather than the
@@ -254,6 +256,36 @@ fn a_changed_instruction_rewrites_the_block_alone() {
         format!("{AUTHORED}Another edit.\n")
     );
     assert_eq!(world.check_text(), "");
+}
+
+/// A `SKILL.md` that is not valid UTF-8 has no rendering kendex may write
+/// back: the block goes into the file whole from its decoded text, and a
+/// decode that repaired the bytes would put U+FFFD where the person's
+/// bytes were. The plan refuses the skill as a conflict, writes nothing
+/// and links nothing, and the bytes stand as they were.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_skill_file_that_is_not_text_is_refused_and_not_written() {
+    let world = world();
+    let mut authored = AUTHORED.as_bytes().to_vec();
+    authored.extend_from_slice(b"Caf\xe9.\n");
+    fs::write(world.skill_file(), &authored).unwrap();
+
+    let report = world.apply();
+
+    assert_eq!(
+        deploy_rows(&report),
+        vec![
+            (
+                DriftState::Conflict,
+                "its SKILL.md is not valid UTF-8, and the project-instructions block cannot be written into it without changing its bytes".to_owned()
+            );
+            3
+        ]
+    );
+    assert!(report.plan.ops.is_empty(), "{:?}", report.plan.ops);
+    assert_eq!(fs::read(world.skill_file()).unwrap(), authored);
+    assert!(!world.project.join(".claude/skills/deploy").exists());
 }
 
 /// A copy delivered from an in-place declaration is a render, not the

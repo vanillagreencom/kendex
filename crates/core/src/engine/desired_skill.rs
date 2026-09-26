@@ -5,7 +5,7 @@ use crate::hash::{hash_files, in_place_installation_hash, installation_hash};
 use crate::lock::{EmittedArtifact, entry_key};
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::render::skill::render_skill;
+use crate::render::skill::{SKILL_FILE, SkillText, render_skill};
 
 use super::desired::{
     Artifact, Desired, DesiredState, IN_PLACE_DISABLED, ItemCtx, effective_method, in_place_source,
@@ -358,7 +358,22 @@ fn render_variant(
     enabled: bool,
     in_place: bool,
 ) -> Result<Variant> {
-    let mut rendered = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
+    let (mut rendered, read_as) = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
+    // An in-place tree's rendering is written back over the person's own
+    // SKILL.md whole, so a decode that repaired its bytes has nothing kendex
+    // may write: the write would put U+FFFD where the person's bytes were,
+    // and the file would never match its rendering again. A copy keeps the
+    // repaired reading as its own render.
+    if in_place && read_as == SkillText::Repaired {
+        return Ok(refuse(
+            ctx,
+            state,
+            group,
+            &format!(
+                "its {SKILL_FILE} is not valid UTF-8, and the project-instructions block cannot be written into it without changing its bytes"
+            ),
+        ));
+    }
     // `SKILL.md.disabled` is the name kendex keeps a switched-off
     // installation's content under, so a catalog shipping one of its own
     // has written down a tree that cannot be installed both ways: turning

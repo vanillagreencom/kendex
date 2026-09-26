@@ -1,0 +1,1 @@
+- An in-place skill whose `SKILL.md` is not valid UTF-8 is refused as a conflict, so `apply` never writes replacement characters into it.
