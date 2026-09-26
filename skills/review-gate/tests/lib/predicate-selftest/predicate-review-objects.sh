@@ -158,3 +158,26 @@ while IFS= read -r row; do
     failures=$((failures + 1))
   fi
 done <<<"$content_rows"
+
+# The review-comment listing is read last, only when the verdict turns on it,
+# so a failing listing never costs a verdict another term decides. Each row
+# pairs a bodyless reply at head with that term under a failing listing.
+# name|verdict|term
+while IFS='|' read -r name want term; do
+  reset
+  CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE=any; CFG_CARRY=""
+  reply="$(review "reviewer" COMMENTED "2026-01-01T01:00:00Z" "$HEAD" "" 8)"
+  case "$term" in
+    objection) reviews_set "$(review "objector" CHANGES_REQUESTED "2026-01-01T00:00:00Z" "$OTHER" "" 7)" "$reply" ;;
+    status) reviews_set "$reply"; CFG_CONTEXTS=mech-ctx; status_ctx mech-ctx success 'analysis complete' ;;
+    override) reviews_set "$reply"; CFG_OUTAGE=mech-outage; CFG_PUBLISHER_REJECT=""
+      status_ctx mech-outage success 'reviewer outage attested' ;;
+    *) exit 1 ;;
+  esac
+  export GH_SHIM_FAIL=review-comments
+  run "$name" "$want"
+done <<'CASES'
+failing review-comment listing: a standing objection still decides|changes-requested|objection
+failing review-comment listing: a clean-analysis status still decides|approved|status
+failing review-comment listing: an operator override still decides|approved|override
+CASES

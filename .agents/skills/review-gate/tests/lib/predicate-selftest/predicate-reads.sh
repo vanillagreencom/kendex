@@ -15,7 +15,10 @@ while IFS='|' read -r endpoint request; do
   reset
   CFG_CONTEXTS=mech-ctx; CFG_THREADS=enforce
   if [ "$endpoint" = graphql ]; then status_ctx mech-ctx success 'analysis complete'; fi
-  [ "$endpoint" != review-comments ] || reviews_set "$(review "$(trusted_reviewer)" COMMENTED)"
+  if [ "$endpoint" = review-comments ]; then
+    CFG_MIN_STATE=any
+    reviews_set "$(review "$(trusted_reviewer)" COMMENTED)"
+  fi
   export GH_SHIM_FAIL="$endpoint"
   run "$endpoint read failure" "" 2
   printf -v quoted '%q' "1:$request"

@@ -5,7 +5,10 @@ while IFS='|' read -r endpoint body code; do
   CFG_CONTEXTS=mech-ctx
   CFG_REVIEWERS='mech-bot[bot]:Reviewed commit:'
   # The review-comment listing is read only for a row with no content of its own.
-  [ "$endpoint" != review-comments ] || reviews_set "$(review "$(trusted_reviewer)" COMMENTED)"
+  if [ "$endpoint" = review-comments ]; then
+    CFG_MIN_STATE=any
+    reviews_set "$(review "$(trusted_reviewer)" COMMENTED)"
+  fi
   if [ "$body" = empty ]; then
     export GH_SHIM_EMPTY="$endpoint"
   else
