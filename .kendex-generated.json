@@ -846,6 +846,7 @@
   ".agents/skills/orch/scripts/lib/lane-state.sh",
   ".agents/skills/orch/scripts/lib/mailbox-append.sh",
   ".agents/skills/orch/scripts/lib/open-terminal-text.sh",
+  ".agents/skills/orch/scripts/lib/oversee-watch-text.sh",
   ".agents/skills/orch/scripts/lib/pane-write.sh",
   ".agents/skills/orch/scripts/lib/pr-watch-pass.sh",
   ".agents/skills/orch/scripts/lib/review-artifact-gates.sh",
