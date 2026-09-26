@@ -16,6 +16,7 @@ import {
 } from "@/lib/copy-commit-offer";
 import { askingAgain, forgetRoot, isForgotten } from "@/lib/forgotten-roots";
 import { readOrder } from "@/lib/read-state";
+import { writingRepo } from "@/lib/rescan";
 import { useProblemsStore } from "./problems";
 
 /** Which of the three the person picked. `leave` is not one: leaving is
@@ -318,17 +319,17 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
   const head = () => get().queue[0];
 
   /** Read the head project again after a step this dialog ran, through the
-   *  one door a single project is read by, handing it the reading the
-   *  offer was scoped to: the action's own work plus what the step wrote,
-   *  with the earlier edits still asked about. An offer a person opened
-   *  keeps no reading and reads as they opened it. A read that fails or
-   *  finds the project blocked says so, and leaves the offer and its
+   *  one door a single project is read by, handing it `since`, the reading
+   *  the offer was scoped to: the action's own work plus what the step
+   *  wrote, with the earlier edits still asked about. An offer a person
+   *  opened has no reading and reads as they opened it. A read that fails
+   *  or finds the project blocked says so, and leaves the offer and its
    *  reading where they were. */
-  const reread = async (root: string): Promise<OpenedFor> => {
-    const response = await commands.commitOfferOpen(
-      root,
-      get().baselines[root] ?? null,
-    );
+  const reread = async (
+    root: string,
+    since: ProjectBaseline | null,
+  ): Promise<OpenedFor> => {
+    const response = await commands.commitOfferOpen(root, since);
     if (response.status === "error") {
       return { at: "failed", error: response.error };
     }
@@ -777,18 +778,33 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
     setUp: async () => {
       const offer = head();
       if (!offer || offer.stale.length === 0) return;
-      set({ stage: { at: "settingUp" } });
-      for (const held of offer.stale) {
-        const armed = await commands.repoEffectsApply(
-          { scope: "project", root: offer.root },
-          held.disclosure.declared,
-        );
-        if (armed.status === "error") {
-          set({ stage: { at: "setUpFailed", error: armed.error } });
-          return;
-        }
+      // Taken before the write: the write's own reading of the projects
+      // records one for an offer a person opened, which has none and reads
+      // as they opened it.
+      const since = get().baselines[offer.root] ?? null;
+      // The setup reaches `repo_effects`, so it runs inside the one write
+      // lifecycle and the machine is read again behind it, landed or
+      // refused. The offer that lifecycle asks for reads this project
+      // against the same reading as the read below, and leaves the head
+      // alone while its answer is on screen.
+      const refused = await writingRepo(
+        async () => {
+          for (const held of offer.stale) {
+            const armed = await commands.repoEffectsApply(
+              { scope: "project", root: offer.root },
+              held.disclosure.declared,
+            );
+            if (armed.status === "error") return armed.error;
+          }
+          return null;
+        },
+        () => set({ stage: { at: "settingUp" } }),
+      );
+      if (refused !== null) {
+        set({ stage: { at: "setUpFailed", error: refused } });
+        return;
       }
-      const read = await reread(offer.root);
+      const read = await reread(offer.root, since);
       switch (read.at) {
         case "offer": {
           const next = head();
@@ -805,7 +821,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
           advance();
           return;
         // The project's card carries the state that stops an offer, from
-        // the read behind it.
+        // the read behind the setup's write.
         case "blocked":
           advance();
           return;

@@ -8,7 +8,7 @@
 //
 // Nothing waits on those reads, so `rescansSettled` is what a test waits on.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuditView, Disclosure, Scope } from "@/bindings";
+import type { AuditView, Disclosure, ProjectOffer, Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { emptyDraft } from "@/lib/editor-draft";
@@ -16,6 +16,7 @@ import { enableChecks } from "@/lib/package-checks";
 import { READ_LANDED } from "@/lib/read-state";
 import { rescansSettled } from "@/lib/rescan";
 import { useAuditStore } from "./audit";
+import { useCommitOfferStore } from "./commit-offer";
 import { useEditorStore } from "./editor";
 import { useMarketplacesStore } from "./marketplaces";
 import { useProvenanceStore } from "./provenance";
@@ -47,6 +48,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
     libraryProvenance: vi.fn(),
     commitOfferScan: vi.fn(),
     commitOfferBaseline: vi.fn(),
+    commitOfferOpen: vi.fn(),
     projectChangesScan: vi.fn(),
   },
 }));
@@ -335,6 +337,76 @@ describe("a write that reaches repo_effects and is refused", () => {
 // that may have written throughout — `bindings.ts`'s `typedError` rethrows
 // an Error rather than folding it into a refusal, so this reaches the stores
 // as a rejection.
+// The commit offer's setup of a held package runs the package's installer
+// in the repository, the same command as the repository effect above, so
+// the machine and each project's pending changes are read again behind it
+// whether it landed or was refused.
+describe("the setup of a package holding the commit", () => {
+  const root = "/home/me/app";
+  const held: ProjectOffer = {
+    root,
+    name: "app",
+    files: [
+      {
+        path: ".agents/skills/guards/SKILL.md",
+        did: "action",
+        added: false,
+        removed: false,
+      },
+    ],
+    actionPaths: [".agents/skills/guards/SKILL.md"],
+    choice: false,
+    tangled: [],
+    shared: [],
+    manifest: null,
+    others: 0,
+    branch: "main",
+    remote: null,
+    push: { kind: "noRemote" },
+    pullRequest: { kind: "noRemote" },
+    openNumber: null,
+    message: "chore: kendex app",
+    newBranch: "kendex/renders",
+    repo: null,
+    tracked: false,
+    stale: [{ name: "guards", why: "notSetUp", said: [], disclosure }],
+  };
+
+  it.each([
+    {
+      name: "landed",
+      armed: { status: "ok", data: { stdout: [], stderr: [] } },
+      stage: { at: "offer" },
+    },
+    {
+      name: "refused",
+      armed: { status: "error", error: "the installer exited 1" },
+      stage: { at: "setUpFailed", error: "the installer exited 1" },
+    },
+  ] as const)("reads the machine again behind it: $name", async (row) => {
+    vi.mocked(commands.repoEffectsApply).mockResolvedValue(row.armed as never);
+    vi.mocked(commands.commitOfferOpen).mockResolvedValue({
+      status: "ok",
+      data: { kind: "offer", offer: { ...held, stale: [] } },
+    });
+    useCommitOfferStore.setState({
+      queue: [held],
+      stage: { at: "offer" },
+      baselines: { [root]: { root, held: [] } },
+      asked: null,
+    });
+
+    await useCommitOfferStore.getState().setUp();
+    await rescansSettled();
+
+    expect(useCommitOfferStore.getState().stage).toEqual(row.stage);
+    readAgain();
+    expect(commands.projectChangesScan).toHaveBeenCalledWith(
+      useSettingsStore.getState().settings?.projects,
+    );
+  });
+});
+
 describe("a write that reaches repo_effects and throws", () => {
   it("reads the machine again when the command rejects rather than refuses", async () => {
     vi.mocked(commands.marketplaceInstall).mockRejectedValue(
