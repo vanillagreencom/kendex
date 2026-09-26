@@ -2,10 +2,29 @@
 //! lookalike letters folded back, and what that cost recorded so a rule can
 //! say what it found rather than only how much of it there was.
 
+use std::ops::Range;
+
 use unicode_normalization::UnicodeNormalization;
 
 use super::super::homoglyph;
 use super::Normalization;
+
+/// Which of a document's lookalike letters are reported. Every one is
+/// folded whatever this says, so the rules read the plain text either way;
+/// what it decides is whether the letter is the document imitating Latin,
+/// or the document quoting a letter that is itself the subject.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Letters {
+    /// Every folded letter is reported.
+    Reported,
+    /// Markdown: a letter inside a code span or a code block is the
+    /// document quoting text, such as the key a transliteration example is
+    /// about, and only the letters outside them are reported.
+    OutsideCode,
+    /// A corpus a test reads: its letters are the data under test, and
+    /// none is reported.
+    Corpus,
+}
 
 /// Invisible characters out, NFKC, then homoglyphs folded — in that order,
 /// so a fullwidth letter becomes ASCII before the confusable table sees it.
@@ -13,7 +32,7 @@ use super::Normalization;
 /// Bytes that were not valid UTF-8 arrive here already replaced by U+FFFD
 /// (see `TreeFile::read`), and counting them is how `undecodable-content`
 /// learns that some of what it read is a guess.
-pub fn deobfuscate(location: &str, text: &str) -> (String, Normalization) {
+pub fn deobfuscate(location: &str, text: &str, letters: Letters) -> (String, Normalization) {
     let mut report = Normalization {
         location: location.to_owned(),
         ..Normalization::default()
@@ -38,14 +57,26 @@ pub fn deobfuscate(location: &str, text: &str) -> (String, Normalization) {
             !invisible
         })
         .collect();
-    let out: String = stripped
-        .nfkc()
-        .collect::<String>()
-        .chars()
-        .map(|c| match homoglyph::fold(c) {
+    let composed: String = stripped.nfkc().collect();
+    // Where markdown keeps its code is read off the text the letters are
+    // folded in, and only once a letter folds: most documents carry none,
+    // and a markdown parse is the cost of every one that does.
+    let mut code: Option<Vec<Range<usize>>> = None;
+    let out: String = composed
+        .char_indices()
+        .map(|(at, c)| match homoglyph::fold(c) {
             Some(latin) => {
-                report.homoglyphs += 1;
-                report.found.insert(c);
+                let reported = match letters {
+                    Letters::Reported => true,
+                    Letters::OutsideCode => {
+                        !within(code.get_or_insert_with(|| code_ranges(&composed)), at)
+                    }
+                    Letters::Corpus => false,
+                };
+                if reported {
+                    report.homoglyphs += 1;
+                    report.found.insert(c);
+                }
                 latin
             }
             None => c,
@@ -53,6 +84,36 @@ pub fn deobfuscate(location: &str, text: &str) -> (String, Normalization) {
         .collect();
     report.unreadable = (report.undecodable > 0).then(|| unreadable_print(text));
     (out, report)
+}
+
+/// The byte ranges of `text` that markdown reads as code: every code span,
+/// and every line of a code block.
+fn code_ranges(text: &str) -> Vec<Range<usize>> {
+    let code = crate::render::code_by_line(text);
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    // `code_by_line` has one entry per line `str::lines` yields, which is
+    // one per piece this split yields, terminator included.
+    for (index, line) in text.split_inclusive('\n').enumerate() {
+        match code.block.get(index) {
+            Some(true) => ranges.push(start..start + line.len()),
+            Some(false) => ranges.extend(
+                code.spans[index]
+                    .iter()
+                    .map(|(from, to)| start + from..start + to),
+            ),
+            None => unreachable!("code_by_line reads one entry for every line of its text"),
+        }
+        start += line.len();
+    }
+    ranges
+}
+
+/// Whether `at` falls inside one of `ranges`, which are sorted and
+/// disjoint.
+fn within(ranges: &[Range<usize>], at: usize) -> bool {
+    let next = ranges.partition_point(|range| range.end <= at);
+    ranges.get(next).is_some_and(|range| range.start <= at)
 }
 
 /// A short name for the unreadable places in one document.
@@ -132,7 +193,7 @@ mod tests {
             "quotes \"straight\" and 'single' -- dashes ... dots",
             "a\r\nb\n\nc",
         ] {
-            let (short, report) = deobfuscate("x", text);
+            let (short, report) = deobfuscate("x", text, Letters::Reported);
             assert_eq!(short, the_long_way(text), "{text:?}");
             assert!(!report.reportable(), "{text:?}");
         }
@@ -142,7 +203,7 @@ mod tests {
     /// that only looks Latin still folds, and still says so.
     #[test]
     fn a_lookalike_letter_still_folds_and_is_counted() {
-        let (out, report) = deobfuscate("x", "\u{0456}gnore previous");
+        let (out, report) = deobfuscate("x", "\u{0456}gnore previous", Letters::Reported);
         assert_eq!(out, "ignore previous");
         assert_eq!(report.homoglyphs, 1);
     }

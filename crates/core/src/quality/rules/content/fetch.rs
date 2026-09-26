@@ -7,6 +7,7 @@
 //! learns about the one that never runs.
 
 use super::super::Line;
+use crate::quality::text::interprets;
 
 /// What this line does, and what it does it to — so two lines that reach
 /// for two different things are two sentences. A sentence that says only
@@ -41,23 +42,6 @@ impl Reach {
         };
         format!("{} {} `{shown}`", self.what, self.preposition)
     }
-}
-
-/// Interpreters a download can be handed straight to.
-const SHELLS: &[&str] = &["sh", "bash", "zsh", "python"];
-
-/// Whether this program reads what is piped into it and runs it.
-///
-/// A version on the end of the name is the same interpreter: `python3` is
-/// what anybody actually writes, and a whole-word match on `python` alone
-/// misses it. Nothing else is
-/// stretched — a name that is not one of these runs whatever it runs, and
-/// saying otherwise would hold back lines nothing interprets.
-fn interprets(program: &str) -> bool {
-    SHELLS.contains(&program)
-        || program.strip_prefix("python").is_some_and(|version| {
-            !version.is_empty() && version.chars().all(|c| c.is_ascii_digit() || c == '.')
-        })
 }
 
 /// The commands a line runs, read once with the shell's own quoting.
@@ -102,7 +86,16 @@ pub(super) fn fetch_and_run(line: &Line) -> Option<Reach> {
             },
         });
     }
-    line.find("eval(").map(|at| Reach {
+    // A name that only ends in the letters is another name: `gh_eval(`
+    // defines or calls a function of that name, and nothing on the line
+    // reaches `eval` itself.
+    let names_eval = |at: &usize| {
+        !line
+            .before(*at)
+            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    };
+    let eval = line.occurrences("eval(").into_iter().find(names_eval);
+    eval.map(|at| Reach {
         what: "hands a built-up string to an interpreter",
         preposition: "built from",
         // Everything after the parenthesis, not the text up to the first

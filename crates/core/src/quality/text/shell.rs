@@ -18,12 +18,26 @@
 //! quotes it stands in: `eval "rm -rf /"` and `bash -c 'rm -rf /'` are
 //! commands, and so is the same text inside `$( )`.
 //!
+//! A test is read one step further. Its shell file hands stubs and
+//! assertions the launch lines it checks, so in a file under a test
+//! directory a quoted string it assigns or passes to any command but a
+//! shell is data, and so is every word it passes to a function the tests
+//! define. A switch the test runs, as an argument of a program it does not
+//! define or inside a string handed to `eval` or a shell, is still a
+//! command.
+//!
+//! A line ending in a backslash goes on to the next, and the lines are read
+//! as the one command the shell reads, so an argument on a continuation
+//! line is an argument of the command its first line names.
+//!
 //! Every reading errs toward the command. Past `MAX_NESTING` the rest of
 //! a line is one opaque word, a function judged past that many calls is
 //! not diagnostic, and a name defined twice is diagnostic only when every
 //! definition is.
 
 use std::collections::{BTreeMap, BTreeSet};
+
+use super::Quotation;
 
 /// Builtins that print what they are handed.
 const SPEAKS: &[&str] = &["echo", "printf"];
@@ -81,6 +95,9 @@ struct Lexer<'a> {
     i: usize,
     depth: usize,
     toks: Vec<Tok>,
+    /// The line ended in a comment, which a trailing backslash does not
+    /// continue.
+    comment: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -123,6 +140,7 @@ impl<'a> Lexer<'a> {
                 }
                 b'#' if word_start => {
                     self.i = self.s.len();
+                    self.comment = true;
                     return;
                 }
                 b'(' => {
@@ -257,15 +275,27 @@ impl<'a> Lexer<'a> {
     }
 }
 
-fn lex(line: &str) -> Vec<Tok> {
+fn lexed(line: &str) -> Lexer<'_> {
     let mut lexer = Lexer {
         s: line.as_bytes(),
         i: 0,
         depth: 0,
         toks: Vec::new(),
+        comment: false,
     };
     lexer.commands(Until::End);
-    lexer.toks
+    lexer
+}
+
+fn lex(line: &str) -> Vec<Tok> {
+    lexed(line).toks
+}
+
+/// Whether the shell reads the next line as more of this one: an odd run
+/// of backslashes ends it, and it does not end in a comment.
+fn continues(line: &str) -> bool {
+    let trailing = line.bytes().rev().take_while(|b| *b == b'\\').count();
+    trailing % 2 == 1 && !lexed(line).comment
 }
 
 /// Whether this word is `name=` or `name+=`, with or without a value.
@@ -298,6 +328,10 @@ struct Simple {
     head: Option<Head>,
     /// The quoted strings among its arguments.
     strings: Vec<(usize, usize)>,
+    /// Its bare arguments, redirections left out.
+    words: Vec<(usize, usize)>,
+    /// The quoted strings an assignment before its name takes as a value.
+    values: Vec<(usize, usize)>,
     /// Its output reaches the next command.
     piped: bool,
     /// Its output is redirected somewhere that is not the terminal.
@@ -336,15 +370,17 @@ fn commands(line: &str) -> Vec<Simple> {
                     None if KEYWORDS.contains(&word) => {}
                     None if is_assignment(word) => cur.value_pending = true,
                     None => cur.head = Some(Head::Named(start, end)),
-                    Some(_) => {
-                        if let Some((_, after)) = word.split_once('>') {
+                    Some(_) => match word.split_once('>') {
+                        Some((_, after)) => {
                             let after = after.trim_start_matches('>');
                             match after.is_empty() {
                                 true => cur.target_pending = true,
                                 false => cur.away |= !to_terminal(after),
                             }
                         }
-                    }
+                        None if word.contains('<') => {}
+                        None => cur.words.push((start, end)),
+                    },
                 }
             }
             // A quoted target is the ordinary way to name a file to write:
@@ -356,7 +392,11 @@ fn commands(line: &str) -> Vec<Simple> {
             Tok::Str(start, end) => match cur.head {
                 // The value runs to the next bare word, however many
                 // fragments and substitutions it is made of.
-                None if cur.value_pending => {}
+                None if cur.value_pending => {
+                    if start < end {
+                        cur.values.push((start, end));
+                    }
+                }
                 None => cur.head = Some(Head::Opaque),
                 Some(_) => {
                     if start < end {
@@ -522,6 +562,138 @@ pub fn named_spans(line: &str, diagnostic: &BTreeSet<String>) -> Vec<(usize, usi
         .collect()
 }
 
+/// Whether this program runs the program text it is handed, piped in or
+/// as an argument.
+///
+/// A version on the end of the name is the same interpreter: `python3` is
+/// what anybody actually writes, and a whole-word match on `python` alone
+/// misses it. Nothing else is stretched — a name that is not one of these
+/// runs whatever it runs, and saying otherwise would hold back lines
+/// nothing interprets.
+pub fn interprets(program: &str) -> bool {
+    const SHELLS: &[&str] = &["sh", "bash", "zsh", "python"];
+    SHELLS.contains(&program)
+        || program.strip_prefix("python").is_some_and(|version| {
+            !version.is_empty() && version.chars().all(|c| c.is_ascii_digit() || c == '.')
+        })
+}
+
+/// The functions a shell file's lines are read against.
+#[derive(Debug, Clone, Copy)]
+pub struct Context<'a> {
+    /// The tree's diagnostic functions (see [`diagnostic_functions`]).
+    pub diagnostic: &'a BTreeSet<String>,
+    /// In a file under a test directory, the functions the tree's tests
+    /// define (see [`fixture_spans`]); `None` in every other file.
+    pub helpers: Option<&'a BTreeSet<String>>,
+}
+
+impl Context<'static> {
+    /// A file read against no function at all: a hook's command line, or a
+    /// document that is not part of a tree.
+    pub fn none() -> Self {
+        static NONE: BTreeSet<String> = BTreeSet::new();
+        Context {
+            diagnostic: &NONE,
+            helpers: None,
+        }
+    }
+}
+
+/// Every function name these shell sources define.
+pub fn defined_functions(sources: &[&str]) -> BTreeSet<String> {
+    sources
+        .iter()
+        .flat_map(|source| source.lines())
+        .filter_map(defined)
+        .map(|(name, _)| name.to_owned())
+        .collect()
+}
+
+/// Byte ranges of this line a test hands over as data: each quoted string
+/// that is an argument of a command other than `eval` or an interpreter,
+/// or an assignment's value, and each bare argument of one of `helpers`,
+/// the functions the tests define. What such a function then does with
+/// its argument is not read: a stub records it, an assertion compares it,
+/// and a helper that launches the script under test hands it to that
+/// script's stubbed programs. A command's name is never data, and neither
+/// is a bare argument of a program the tests do not define.
+pub fn fixture_spans(line: &str, helpers: &BTreeSet<String>) -> Vec<(usize, usize)> {
+    commands(line)
+        .into_iter()
+        .flat_map(|command| {
+            let (strings, words) = match command.head {
+                Some(Head::Named(start, end)) => {
+                    let word = &line[start..end];
+                    let program = word.rsplit('/').next().unwrap_or(word);
+                    let runs = word == "eval" || interprets(program);
+                    (!runs, helpers.contains(word))
+                }
+                Some(Head::Opaque) => (true, false),
+                None => (false, false),
+            };
+            let mut spans = command.values;
+            if strings {
+                spans.extend(command.strings);
+            }
+            if words {
+                spans.extend(command.words);
+            }
+            spans
+        })
+        .collect()
+}
+
+/// Each line's quoted ranges, one list per line of `lines`, with the
+/// quotation that names each. A run of lines joined by trailing
+/// backslashes is read as the one line the shell reads, and each range is
+/// handed back to the lines it covers.
+pub fn quoted(lines: &[String], context: Context<'_>) -> Vec<Vec<(usize, usize, Quotation)>> {
+    let mut found = vec![Vec::new(); lines.len()];
+    let mut first = 0;
+    while first < lines.len() {
+        let mut last = first;
+        while last + 1 < lines.len() && continues(&lines[last]) {
+            last += 1;
+        }
+        // The backslash that joins two lines becomes a space, and one more
+        // space stands for the newline, so each line keeps its own offsets
+        // from where it starts in the joined text.
+        let mut joined = String::new();
+        let mut starts = Vec::new();
+        for (at, line) in lines[first..=last].iter().enumerate() {
+            starts.push(joined.len());
+            match first + at < last {
+                true => {
+                    joined.push_str(&line[..line.len() - 1]);
+                    joined.push_str("  ");
+                }
+                false => joined.push_str(line),
+            }
+        }
+        let mut spans: Vec<(usize, usize, Quotation)> = named_spans(&joined, context.diagnostic)
+            .into_iter()
+            .map(|(start, end)| (start, end, Quotation::ShellText))
+            .collect();
+        if let Some(helpers) = context.helpers {
+            spans.extend(
+                fixture_spans(&joined, helpers)
+                    .into_iter()
+                    .map(|(start, end)| (start, end, Quotation::Fixture)),
+            );
+        }
+        for (at, line) in lines[first..=last].iter().enumerate() {
+            let (from, to) = (starts[at], starts[at] + line.len());
+            found[first + at].extend(spans.iter().filter_map(|(start, end, by)| {
+                let (start, end) = ((*start).max(from), (*end).min(to));
+                (start < end).then(|| (start - from, end - from, *by))
+            }));
+        }
+        first = last + 1;
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -634,6 +806,35 @@ mod tests {
         ];
         for (line, want) in rows {
             assert_eq!(named(line, &diagnostic), *want, "{line:?}");
+        }
+    }
+
+    /// Lines joined by a trailing backslash are read as one command, and
+    /// each named range is handed back to the line it sits on. One row per
+    /// shape: the lines, and the text named on each.
+    #[test]
+    fn a_continued_line_is_read_with_the_command_it_continues() {
+        let rows: &[(&[&str], &[&[&str]])] = &[
+            (
+                &["echo \"a\" \\", "  \"--no-verify\""],
+                &[&["a"], &["--no-verify"]],
+            ),
+            (&["echo \"rm -rf /\" \\", "  | sh"], &[&[], &[]]),
+            (&["say \\", "  \"--no-verify\""], &[&[], &[]]),
+            (&["echo \"a\" \\\\", "  \"--no-verify\""], &[&["a"], &[]]),
+            (
+                &["# refuses rm -rf / \\", "rm -rf /"],
+                &[&["# refuses rm -rf / \\"], &[]],
+            ),
+        ];
+        for (lines, want) in rows {
+            let lines: Vec<String> = lines.iter().map(|line| (*line).to_owned()).collect();
+            let named: Vec<Vec<&str>> = quoted(&lines, Context::none())
+                .iter()
+                .zip(&lines)
+                .map(|(spans, line)| spans.iter().map(|(s, e, _)| &line[*s..*e]).collect())
+                .collect();
+            assert_eq!(named, *want, "{lines:?}");
         }
     }
 

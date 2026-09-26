@@ -6,7 +6,7 @@
 # `crates/core/tests/allowance.rs` fails while the table is stale. Read by
 # `crates/core/src/quality/allowance.rs`.
 
-ruleset = 6
+ruleset = 7
 
 [[package]]
 kind = "skill"

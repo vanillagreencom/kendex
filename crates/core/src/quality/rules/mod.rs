@@ -27,7 +27,7 @@
 //! quoting rather than instructing: a blockquote, and every line of a
 //! skill's supporting files. What weighs nothing is a switch the file
 //! only names — a markdown code span, a shell comment, a string a script
-//! prints — which [`Line::standing`] tells from a use and the audit keeps
+//! prints, a literal a test hands its stubs — which [`Line::standing`] tells from a use and the audit keeps
 //! as a mention. The one exception is `plaintext-secrets`: a credential
 //! in a code block is exactly as leaked as one in prose, so it never
 //! downgrades anywhere.

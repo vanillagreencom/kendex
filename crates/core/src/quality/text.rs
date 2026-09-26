@@ -13,7 +13,8 @@ use std::collections::BTreeSet;
 
 mod normalize;
 mod shell;
-pub use normalize::deobfuscate;
+pub use normalize::{Letters, deobfuscate};
+pub use shell::interprets;
 
 use super::phrase::find_phrase;
 use super::{AuditInput, Content, Doc, Prepared, Severity, TreeFile};
@@ -84,8 +85,9 @@ pub struct Line {
     /// are the inline code spans, read for the whole document at once
     /// because a span may open on one line and close on a later one (see
     /// `lines`); in a shell file they are a full-line comment and the
-    /// strings a diagnostic command prints (see [`shell::named_spans`]).
-    /// Any other file has none.
+    /// strings a diagnostic command prints (see [`shell::named_spans`]),
+    /// and in a test's shell file the literals it hands over as data (see
+    /// [`shell::fixture_spans`]). Any other file has none.
     pub spans: Vec<Span>,
 }
 
@@ -109,6 +111,11 @@ pub enum Quotation {
     /// A shell comment, or a string a shell script prints to the
     /// terminal.
     ShellText,
+    /// In a shell file under a test directory, a literal the test hands
+    /// over as data: a quoted string it assigns, prints or passes to any
+    /// command but one that runs it as shell, and every word it passes to
+    /// a function the tests define.
+    Fixture,
 }
 
 /// Where a needle stands on a line.
@@ -175,17 +182,19 @@ impl Line {
     /// Whether what stands at `at` counts as code, or is the file naming
     /// it under one of the quotations `reads`.
     ///
-    /// Two quotations exist. A markdown code span: a README writing
+    /// Three quotations exist. A markdown code span: a README writing
     /// `--no-verify` in backticks is naming the switch, and the same
-    /// characters standing in the open are the switch. And, in a shell
-    /// file, a full-line comment or a string that `echo`, `printf` or a
-    /// function that only prints hands to the terminal: a guard that
-    /// refuses the switch spells it in exactly those two places, and
-    /// nowhere the shell would run it. Everything else counts — a `case`
-    /// arm's pattern, a string handed to any other command, a string in a
-    /// language this does not parse — because each of those is a switch
-    /// written into a file a harness loads, and no reading of what the
-    /// file would then do with it holds for every shape a file takes.
+    /// characters standing in the open are the switch. In a shell file, a
+    /// full-line comment or a string that `echo`, `printf` or a function
+    /// that only prints hands to the terminal: a guard that refuses the
+    /// switch spells it in exactly those two places, and nowhere the shell
+    /// would run it. And in a test's shell file, the literals it hands its
+    /// stubs and assertions as data. Everything else counts — a `case`
+    /// arm's pattern, a string handed to any other command outside a test,
+    /// a string in a language this does not parse — because each of those
+    /// is a switch written into a file a harness loads, and no reading of
+    /// what the file would then do with it holds for every shape a file
+    /// takes.
     fn counts_at(&self, at: usize, reads: &[Quotation]) -> bool {
         !self
             .spans
@@ -213,9 +222,8 @@ pub enum Reading<'a> {
     /// Markdown: inline code spans name their text.
     Markdown,
     /// A shell script: comments and the strings a diagnostic command
-    /// prints name their text. The set is the tree's diagnostic functions
-    /// (see [`shell::diagnostic_functions`]).
-    Shell(&'a BTreeSet<String>),
+    /// prints name their text, and so do a test's own literals.
+    Shell(shell::Context<'a>),
     /// Every other file is code from its first byte and quotes nothing.
     Plain,
 }
@@ -224,8 +232,8 @@ pub enum Reading<'a> {
 pub fn prepare(input: AuditInput) -> Prepared {
     let mut normalized = Vec::new();
     let mut docs = Vec::new();
-    let mut clean = |location: String, text: &str| -> String {
-        let (out, report) = deobfuscate(&location, text);
+    let mut clean = |location: String, text: &str, letters: Letters| -> String {
+        let (out, report) = deobfuscate(&location, text, letters);
         if report.reportable() {
             normalized.push(report);
         }
@@ -234,13 +242,17 @@ pub fn prepare(input: AuditInput) -> Prepared {
     let content = match input.content {
         Content::Document { text } => {
             let digest = digest(&text);
-            let text = clean(input.location.clone(), &text);
+            let text = clean(
+                input.location.clone(),
+                &text,
+                letters(&input.location, None),
+            );
             docs.push(Doc {
                 location: input.location.clone(),
                 role: super::DocRole::Text,
                 lines: lines(
                     &text,
-                    language(&input.location, &text).reading(&BTreeSet::new()),
+                    language(&input.location, &text).reading(shell::Context::none()),
                 ),
                 digest,
             });
@@ -289,20 +301,22 @@ pub fn prepare(input: AuditInput) -> Prepared {
 fn tree_docs(
     root: &str,
     files: Vec<TreeFile>,
-    clean: &mut impl FnMut(String, &str) -> String,
+    clean: &mut impl FnMut(String, &str, Letters) -> String,
     docs: &mut Vec<Doc>,
 ) -> Vec<TreeFile> {
     // The location a deobfuscation report is filed under is the one every
-    // line rule cites, spelled once here for both.
-    let placed: Vec<(TreeFile, String, Option<Cleaned>)> = files
+    // line rule cites, spelled once here for both, and what the file is to
+    // its skill is decided once here for every pass below.
+    let placed: Vec<(TreeFile, String, Option<Supporting>, Option<Cleaned>)> = files
         .into_iter()
         .map(|file| {
             let location = format!("{root}/{}", crate::paths::slashed(&file.path));
+            let supports = supporting(&file.path);
             let cleaned = file.text.map(|text| Cleaned {
                 digest: digest(&text),
-                text: clean(location.clone(), &text),
+                text: clean(location.clone(), &text, letters(&location, supports)),
             });
-            (TreeFile { text: None, ..file }, location, cleaned)
+            (TreeFile { text: None, ..file }, location, supports, cleaned)
         })
         .collect();
     // A script calls the message helpers its tree's library files define,
@@ -311,32 +325,51 @@ fn tree_docs(
     // language is decided once, here, for both passes.
     let languages: Vec<Option<Language>> = placed
         .iter()
-        .map(|(_, location, cleaned)| {
+        .map(|(_, location, _, cleaned)| {
             cleaned
                 .as_ref()
                 .map(|cleaned| language(location, &cleaned.text))
         })
         .collect();
-    let shell: Vec<&str> = placed
+    let shell: Vec<(&str, Option<Supporting>)> = placed
         .iter()
         .zip(&languages)
         .filter(|(_, language)| **language == Some(Language::Shell))
-        .filter_map(|((_, _, cleaned), _)| cleaned.as_ref().map(|cleaned| cleaned.text.as_str()))
+        .filter_map(|((_, _, supports, cleaned), _)| {
+            cleaned
+                .as_ref()
+                .map(|cleaned| (cleaned.text.as_str(), *supports))
+        })
         .collect();
-    let diagnostic = shell::diagnostic_functions(&shell);
+    let every: Vec<&str> = shell.iter().map(|(text, _)| *text).collect();
+    let diagnostic = shell::diagnostic_functions(&every);
+    // A test calls the helpers its tree's other tests and their libraries
+    // define, so they are read off every test file before any is split.
+    let tests: Vec<&str> = shell
+        .iter()
+        .filter(|(_, supports)| *supports == Some(Supporting::Test))
+        .map(|(text, _)| *text)
+        .collect();
+    let helpers = shell::defined_functions(&tests);
     placed
         .into_iter()
         .zip(languages)
-        .map(|((file, location, cleaned), language)| {
+        .map(|((file, location, supports, cleaned), language)| {
             let Some(cleaned) = cleaned else {
                 return file;
             };
             if let Some(language) = language {
-                let split = lines(&cleaned.text, language.reading(&diagnostic));
+                let context = shell::Context {
+                    diagnostic: &diagnostic,
+                    helpers: (supports == Some(Supporting::Test)).then_some(&helpers),
+                };
+                let split = lines(&cleaned.text, language.reading(context));
                 docs.push(Doc {
-                    lines: match is_supporting(&file.path) {
-                        true => split.into_iter().map(Line::as_description).collect(),
-                        false => split,
+                    lines: match supports {
+                        Some(Supporting::Test | Supporting::Reference) => {
+                            split.into_iter().map(Line::as_description).collect()
+                        }
+                        None => split,
                     },
                     role: super::DocRole::Text,
                     location,
@@ -366,21 +399,51 @@ fn tree_docs(
 ///
 /// The primary file — SKILL.md, an agent or command body, a hook's script —
 /// is never supporting, whatever it puts inside a fence.
-fn is_supporting(path: &std::path::Path) -> bool {
-    path.components().any(|component| {
-        matches!(
-            component.as_os_str().to_str(),
-            Some(
-                "tests"
-                    | "test"
-                    | "__tests__"
-                    | "fixtures"
-                    | "testdata"
-                    | "references"
-                    | "reference"
-            )
-        )
-    })
+///
+/// A file under both kinds of directory is a test's: what a test reads is
+/// its fixture wherever the tree keeps it.
+fn supporting(path: &std::path::Path) -> Option<Supporting> {
+    let under = |names: &[&str]| {
+        path.components().any(|component| {
+            component
+                .as_os_str()
+                .to_str()
+                .is_some_and(|name| names.contains(&name))
+        })
+    };
+    if under(&["tests", "test", "__tests__", "fixtures", "testdata"]) {
+        Some(Supporting::Test)
+    } else if under(&["references", "reference"]) {
+        Some(Supporting::Reference)
+    } else {
+        None
+    }
+}
+
+/// What a supporting file is to the skill it comes with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Supporting {
+    /// A test, a fixture, or a corpus a test reads.
+    Test,
+    /// Background reading the model pulls in when it needs the detail.
+    Reference,
+}
+
+/// Which lookalike letters a document reports: markdown quotes a letter
+/// in its code, and a plain-text file under a test directory is a corpus
+/// whose letters are the data a test feeds in. The `.txt` extension is the
+/// file saying it is text and no program; any other file under a test
+/// directory may be code, and its letters are reported.
+fn letters(location: &str, supporting: Option<Supporting>) -> Letters {
+    if is_markdown(location) {
+        Letters::OutsideCode
+    } else if supporting == Some(Supporting::Test)
+        && location.to_ascii_lowercase().ends_with(".txt")
+    {
+        Letters::Corpus
+    } else {
+        Letters::Reported
+    }
 }
 
 /// A hook's documents — its command, the values it stores, and its script
@@ -391,24 +454,24 @@ fn hook_docs(
     command: String,
     values: Option<String>,
     script: Option<String>,
-    clean: &mut impl FnMut(String, &str) -> String,
+    clean: &mut impl FnMut(String, &str, Letters) -> String,
     docs: &mut Vec<Doc>,
 ) -> (String, Option<String>, Option<String>) {
     // The command line is run by a shell, and its script defines nothing
     // the command line can call.
     let command_digest = digest(&command);
-    let command = clean(format!("{root} (command)"), &command);
+    let command = clean(format!("{root} (command)"), &command, Letters::Reported);
     docs.push(Doc {
         location: format!("{root} (command)"),
         role: super::DocRole::Text,
-        lines: lines(&command, Reading::Shell(&BTreeSet::new())),
+        lines: lines(&command, Reading::Shell(shell::Context::none())),
         digest: command_digest,
     });
     // What the harness stores beside the command, not what it runs: one
     // value per line, one document, for the rules about values.
     let values = values.map(|values| {
         let digest = digest(&values);
-        let values = clean(format!("{root} (entry)"), &values);
+        let values = clean(format!("{root} (entry)"), &values, Letters::Reported);
         docs.push(Doc {
             location: format!("{root} (entry)"),
             role: super::DocRole::Values,
@@ -419,7 +482,7 @@ fn hook_docs(
     });
     let script = script.map(|body| {
         let digest = digest(&body);
-        let body = clean(root.to_owned(), &body);
+        let body = clean(root.to_owned(), &body, letters(root, None));
         let language = language(root, &body);
         let diagnostic = match language {
             Language::Shell => shell::diagnostic_functions(&[&body]),
@@ -428,7 +491,13 @@ fn hook_docs(
         docs.push(Doc {
             location: root.to_owned(),
             role: super::DocRole::Text,
-            lines: lines(&body, language.reading(&diagnostic)),
+            lines: lines(
+                &body,
+                language.reading(shell::Context {
+                    diagnostic: &diagnostic,
+                    helpers: None,
+                }),
+            ),
             digest,
         });
         body
@@ -489,9 +558,14 @@ pub fn lines(text: &str, reading: Reading<'_>) -> Vec<Line> {
             .into_iter()
             .map(marked(Quotation::CodeSpan))
             .collect(),
-        Reading::Shell(diagnostic) => lower
-            .iter()
-            .map(|line| marked(Quotation::ShellText)(shell::named_spans(line, diagnostic)))
+        Reading::Shell(context) => shell::quoted(&lower, context)
+            .into_iter()
+            .map(|spans| {
+                spans
+                    .into_iter()
+                    .map(|(start, end, by)| Span { start, end, by })
+                    .collect()
+            })
             .collect(),
         Reading::Plain => vec![Vec::new(); raw.len()],
     };
@@ -544,12 +618,12 @@ enum Language {
 }
 
 impl Language {
-    /// How to read a document of this language, given the tree's
-    /// diagnostic functions.
-    fn reading(self, diagnostic: &BTreeSet<String>) -> Reading<'_> {
+    /// How to read a document of this language, given the functions a
+    /// shell file is read against.
+    fn reading(self, context: shell::Context<'_>) -> Reading<'_> {
         match self {
             Language::Markdown => Reading::Markdown,
-            Language::Shell => Reading::Shell(diagnostic),
+            Language::Shell => Reading::Shell(context),
             Language::Plain => Reading::Plain,
         }
     }

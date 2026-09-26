@@ -133,60 +133,90 @@ fn the_guard_hooks_scan_clean() {
     }
 }
 
-/// Thirty-one lines of this skill spell `--dangerously-skip-permissions`
-/// as code. One is a row of the launch table's source, six are in the
-/// open-terminal fixture, twenty are in the oversee-succeed fixture and
-/// four are in the overseer-watch fixture. Every one of them is the switch
-/// written as code in a file a harness loads, and the rule counts it there
-/// rather than deciding which program the string reaches. The launch
-/// table's comment naming the switch is the one mention. The fixture line
-/// handing it to `assert_eq` is not a mention: the tests define that name
-/// many times over, not every body only prints, and a name is diagnostic
-/// only when every definition is.
+/// Thirty-one lines of this skill spell `--dangerously-skip-permissions`.
+/// One is a row of the launch table's source, which a lane launch really
+/// runs: the one Critical finding, which kendex's own table accepts for
+/// exactly those bytes and a verbose reading still lists. The launch
+/// table's comment naming the switch is a mention.
 ///
-/// That is the cost of the reading, pinned to a real tree: one Critical
-/// finding in production, which kendex's own table accepts for exactly
-/// those bytes and a verbose reading still lists, and thirty High
-/// findings in supporting files, which stay findings: a fixture string is
-/// nobody's to accept. A reading that went quiet on them would be reading
-/// an argument list again, and this is where that fails; so does a table
-/// that lets an edit to the launcher keep its acceptance
+/// The other thirty are in the open-terminal, oversee-succeed and
+/// overseer-watch tests, which hand the launch lines they check to their
+/// stubs and assertions: a string a test assigns, prints or passes on,
+/// and a word it passes to a function the tests define, on the line that
+/// names the function or a line continuing it. Each is a mention, and the
+/// skill scores clean. A reading that counted them again would be reading
+/// a test's data as a command, and this is where that fails; so does a
+/// table that lets an edit to the launcher keep its acceptance
 /// (`allowance.rs::a_finding_is_accepted_only_for_kendex_at_the_exact_text_the_table_names`).
 #[test]
-fn orch_keeps_its_fixture_findings_and_its_launcher_row_is_accepted() {
+fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
     let result = shipped("orch");
     let lane_launch = "skills/orch/scripts/lib/lane-launch.sh";
     let open_terminal = "skills/orch/tests/open-terminal-claude-handoff.sh";
     let oversee_succeed = "skills/orch/tests/oversee_succeed.sh";
     let overseer_watch = "skills/orch/tests/oversee_watch_overseer.sh";
-    assert_eq!(
-        found(&result),
-        [
-            vec![("safety-bypass", Severity::High, open_terminal); 6],
-            vec![("safety-bypass", Severity::High, oversee_succeed); 20],
-            vec![("safety-bypass", Severity::High, overseer_watch); 4],
-        ]
-        .concat(),
-        "{:#?}",
-        result.findings
-    );
-    assert_eq!(result.safety.score, 70);
+    assert_eq!(found(&result), vec![], "{:#?}", result.findings);
+    assert_eq!(result.safety.score, 100);
     assert_eq!(
         found_in(&result.accepted),
         vec![("safety-bypass", Severity::Critical, lane_launch)],
         "{:#?}",
         result.accepted
     );
-    let mentioned: Vec<(&str, Option<u32>)> = result
-        .mentions
-        .iter()
-        .filter(|mention| !mention.location.ends_with(".md"))
-        .map(|mention| (mention.location.as_str(), mention.line))
-        .collect();
+    let mentioned = |location: &str| {
+        result
+            .mentions
+            .iter()
+            .filter(|mention| mention.location == location)
+            .map(|mention| (mention.rule.as_str(), mention.line))
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
-        mentioned,
-        vec![(lane_launch, Some(97))],
+        mentioned(lane_launch),
+        vec![("safety-bypass", Some(97))],
         "{:#?}",
         result.mentions
     );
+    for (fixture, lines) in [
+        (open_terminal, 6),
+        (oversee_succeed, 20),
+        (overseer_watch, 4),
+    ] {
+        let rules: Vec<&str> = mentioned(fixture)
+            .into_iter()
+            .map(|(rule, _)| rule)
+            .collect();
+        assert_eq!(
+            rules,
+            vec!["safety-bypass"; lines],
+            "{fixture}: {:#?}",
+            result.mentions
+        );
+    }
+    let elsewhere: Vec<&str> = result
+        .mentions
+        .iter()
+        .map(|mention| mention.location.as_str())
+        .filter(|location| !location.ends_with(".md"))
+        .filter(|location| {
+            ![lane_launch, open_terminal, oversee_succeed, overseer_watch].contains(location)
+        })
+        .collect();
+    assert_eq!(elsewhere, Vec::<&str>::new(), "{:#?}", result.mentions);
+}
+
+/// The iced-rs keyboard reference spells a Cyrillic letter inside the code
+/// block of its `to_latin` example, the letter the example is about; the
+/// review-gate decline corpus holds a reason written in Russian, the text
+/// a test feeds the gate; and the harness-ci workflow library defines a
+/// function named `gh_eval`. None of them is the package disguising or
+/// running anything, so none is a finding, and the rows kendex's own table
+/// accepts in review-gate and harness-ci cost the score nothing.
+#[test]
+fn a_quoted_letter_a_corpus_and_a_function_named_for_eval_are_not_findings() {
+    for name in ["iced-rs", "review-gate", "harness-ci"] {
+        let result = shipped(name);
+        assert_eq!(found(&result), vec![], "{name}: {:#?}", result.findings);
+        assert_eq!(result.safety.score, 100, "{name}");
+    }
 }

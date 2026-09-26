@@ -254,3 +254,26 @@ fn a_word_merely_ending_in_a_shells_name_runs_nothing() {
         );
     }
 }
+
+/// `eval(` is `eval` only where no name runs into it: a function named
+/// `gh_eval` defines or calls that function, and nothing reaches `eval`.
+/// One row per line, and whether `rce` fires on it.
+#[test]
+fn a_name_only_ending_in_eval_is_not_eval() {
+    let rows: &[(&str, bool)] = &[
+        ("gh_eval() { # MODE CONTEXT_JSON [EXPR]", false),
+        ("out=\"$(gh_eval(ctx))\"", false),
+        ("python: eval(user_input)", true),
+        ("window.eval(payload)", true),
+        ("gh_eval(a); eval(b)", true),
+    ];
+    for (line, fires) in rows {
+        let doc = document(ItemKind::Skill, &format!("{line}\n"));
+        assert_eq!(
+            doc.findings.iter().any(|finding| finding.rule == "rce"),
+            *fires,
+            "{line:?}: {:#?}",
+            doc.findings
+        );
+    }
+}
