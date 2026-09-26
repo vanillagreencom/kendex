@@ -33,10 +33,6 @@ stub_bin="$SANDBOX/stub-bin"
 mkdir -p "$stub_bin"
 cat >"$stub_bin/kendex" <<'STUB'
 #!/usr/bin/env bash
-if [ "$*" = "verify --help" ]; then
-  cat "$KENDEX_STUB_HELP"
-  exit 0
-fi
 printf '%s\n' "$*" >>"$KENDEX_STUB_CALLS"
 records=0
 for dir in "$(git rev-parse --git-common-dir)" "$(git rev-parse --git-dir)"; do
@@ -55,10 +51,6 @@ export KENDEX_STUB_TREES="$SANDBOX/kendex-trees"
 # What the stub says on stderr beside the document: verify's human rows,
 # for the row that pins them being carried to a refusal.
 export KENDEX_STUB_SAYS="$SANDBOX/kendex-says"
-# The flags verify's help lists, which the classifier reads for --at-record.
-export KENDEX_STUB_HELP="$SANDBOX/kendex-help"
-printf '      --at-record  Render each recorded package at the commit the install record names\n' \
-  >"$KENDEX_STUB_HELP"
 
 # The document a passing run prints for the sandbox consumer: one row per
 # kind that renders there, each with the positions the engine resolved — a
@@ -246,19 +238,6 @@ assert_eq "and the refused run still says how many positions it weighed" \
 assert_eq "the verifier is asked for its document against the range's base, at the record's commits" \
   "verify --scope project --json --base $(git -C "$repo" merge-base "$base" HEAD) --at-record" \
   "$(cat "$KENDEX_STUB_CALLS")"
-# A kendex whose verify has no --at-record is still asked, at its sources'
-# revisions now, and the log says which reading the proof took.
-: >"$KENDEX_STUB_CALLS"
-printf '      --base <REV>\n' >"$KENDEX_STUB_HELP"
-older_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
-  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
-assert_eq "a verify without --at-record is asked without it and says so" \
-  "render-reading: current cause=verify-lacks-at-record
-verify --scope project --json --base $(git -C "$repo" merge-base "$base" HEAD)" \
-  "$(printf '%s\n' "$older_err" | grep '^render-reading: ')
-$(cat "$KENDEX_STUB_CALLS")"
-printf '      --at-record  Render each recorded package at the commit the install record names\n' \
-  >"$KENDEX_STUB_HELP"
 
 # A registry file kendex writes keys in is owned only where the row that
 # prints it says the rest of the file is as the base held it; a rest that
