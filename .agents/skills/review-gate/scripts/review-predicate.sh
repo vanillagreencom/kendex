@@ -56,7 +56,9 @@ Predicate: review evidence present for the CURRENT head — any of
       comment that opens a thread. Answering a thread submits a bodyless
       COMMENTED row whose every comment is a reply; that row is
       NOT-EVIDENCE the same way. A bodyless COMMENTED row is judged from
-      the review-comment listing, read only when such a row exists, and a
+      the review-comment listing, read only under min_state 'any' and only
+      when such a row could decide the verdict: at the head when no other
+      row there has content, at an ancestor once the carry walk runs. A
       failed read of it is exit 2;
   (b) a trusted clean-analysis CHECK-RUN or legacy COMMIT STATUS succeeding
       on this head, whose title/summary/description carries no skip-pattern
@@ -1050,8 +1052,9 @@ cr="$(jq '[.[] | select(.state != "DISMISSED" and .state != "PENDING") | select(
 # submits an empty-bodied APPROVED), a non-blank body, or a review comment
 # that opens a thread rather than answering one. The review row carries no
 # comments, so which threads a bodyless COMMENTED row opened is read from the
-# review-comment listing into $openers below, and only when some candidate
-# row needs it. orch's approval-wait applies the same rule to the same rows.
+# review-comment listing into $openers below, and only where that answer can
+# change the verdict. orch's approval-wait applies the same rule to the same
+# rows.
 #
 # Defined ONCE and concatenated in front of EVERY jq program that accepts
 # review rows, because what the gate accepts as a review must never drift
@@ -1089,21 +1092,38 @@ def accepted_rows($t; $mk; $author; $openers):
   [ candidate_rows($t; $mk; $author)[]
     | select(own_content or (.id as $id | any($openers[]; . == $id))) ];'
 
-# The review-comment listing is read with the reviews read contract: every
-# page, and a failed, zero-byte or non-array read is exit 2. A read that
-# failed must never become an empty opener list, which would drop a bodyless
-# review that did open a thread and turn a reviewed head into awaiting on an
-# API hiccup.
-needs_openers="$(jq --arg author "$PR_AUTHOR" --arg trusted "$TRUSTED_LOGINS_N" \
-        --arg errmarks "$ERROR_PATTERNS" "$ACCEPTED_ROWS_DEF"'
-  trust_list($trusted) as $t
-  | error_marks($errmarks) as $mk
-  | any(candidate_rows($t; $mk; $author)[]; own_content | not)' <<<"$reviews")" || {
-  rg_message error predicate-review-content "$PR_NUMBER" "::error::could not evaluate review content for PR #$PR_NUMBER" >&2
-  exit 2
-}
+# The review-comment listing is read only where its answer can change the
+# verdict, so a failed read of it never costs a head that is decided without
+# it. Under min_state=approved a COMMENTED row is never evidence and carry takes
+# only APPROVED rows, so the listing is never read. Under "any" it is read for
+# the head when a bodyless row there is the only possible evidence, and for
+# the ancestors only once the carry walk runs. The suppressed-finding scan
+# never needs it: a row the listing would admit has an empty body, which holds
+# no entry. Once read it follows the reviews read contract: every page, and a
+# failed, zero-byte or non-array read is exit 2. A read that failed must never
+# become an empty opener list, which would drop a bodyless review that did
+# open a thread and turn a reviewed head into awaiting on an API hiccup.
 THREAD_OPENERS='[]'
-if [ "$needs_openers" = "true" ]; then
+thread_openers_loaded=0
+load_thread_openers() { # head|ancestors
+  local scope="$1" needed raw_review_comments
+  [ "$thread_openers_loaded" = "0" ] || return 0
+  [ "$MIN_STATE" = "any" ] || return 0
+  needed="$(jq --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" --arg scope "$scope" \
+          --arg trusted "$TRUSTED_LOGINS_N" --arg errmarks "$ERROR_PATTERNS" "$ACCEPTED_ROWS_DEF"'
+    trust_list($trusted) as $t
+    | error_marks($errmarks) as $mk
+    | candidate_rows($t; $mk; $author)
+    | if $scope == "head" then
+        [ .[] | select(.commit_id == $sha) ]
+        | (any(.[]; own_content) | not) and any(.[]; own_content | not)
+      else
+        any(.[] | select((.commit_id // "") != "" and .commit_id != $sha); own_content | not)
+      end' <<<"$reviews")" || {
+    rg_message error predicate-review-content "$PR_NUMBER" "::error::could not evaluate review content for PR #$PR_NUMBER" >&2
+    exit 2
+  }
+  [ "$needed" = "true" ] || return 0
   raw_review_comments="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER/comments?per_page=100" --paginate)" || {
     rg_message error predicate-review-comments-read "$PR_NUMBER" "::error::could not read review comments for PR #$PR_NUMBER" >&2
     exit 2
@@ -1119,7 +1139,9 @@ if [ "$needs_openers" = "true" ]; then
     rg_message error predicate-review-comments-pages "$PR_NUMBER" "::error::review-comments read for PR #$PR_NUMBER returned non-array pages or a vacuous body (broken read)" >&2
     exit 2
   }
-fi
+  thread_openers_loaded=1
+}
+load_thread_openers head
 
 # Review-object evidence. NOT a latest-review-per-reviewer reduction (see the
 # header): in "any" mode every accepted row counts; in "approved" mode a
@@ -1597,6 +1619,7 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
   # withdrawal by the same login is a standing CR and fails the gate before
   # carry could matter), newest-first, distinct, never the head itself,
   # bounded so a force-push-heavy PR cannot turn the walk into an API storm.
+  load_thread_openers ancestors
   carry_candidates="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
       --arg trusted "$TRUSTED_LOGINS_N" --arg minstate "$MIN_STATE" \
       --arg errmarks "$ERROR_PATTERNS" --argjson openers "$THREAD_OPENERS" \
