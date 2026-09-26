@@ -88,12 +88,13 @@ fn report_budget_counts_its_truncation_line_and_never_cuts_a_line() {
 ///
 /// A project scope is ordinarily the directory a command is typed in, and
 /// the command carries no destination at all. Where it is a linked git
-/// worktree the destination has to be in the words for `refresh`, `apply`
-/// and `updates --apply`, which have a flag for it. The verbs without one
-/// run as they are in a worktree carrying its own manifest when they write
-/// the project they are typed in, and are otherwise marked as running
-/// somewhere else: a reader left with the drift line and no remedy has
-/// nothing to act on.
+/// worktree writing the main checkout's project, the destination has to be
+/// in the words for `refresh`, `apply` and `updates --apply`, which have a
+/// flag for it, and the verbs without one are marked as running somewhere
+/// else: a reader left with the drift line and no remedy has nothing to
+/// act on. A worktree carrying its own manifest is written by every bare
+/// verb typed in it, so no command names it and only `update-pi`, which
+/// the hook runs there at global scope alone, is marked.
 #[test]
 fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_run() {
     let main = ProjectTarget::MainCheckout("/w/app".into());
@@ -109,28 +110,28 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_
             Remedy::Apply { global: false },
             here("kendex apply"),
             here("kendex apply --project-path '/w/app'"),
-            here("kendex apply --project-path '/w/lane'"),
+            here("kendex apply"),
         ),
         (
             "apply --replace-unmanaged",
             Remedy::ReplaceUnmanaged { global: false },
             here("kendex apply --replace-unmanaged"),
             here("kendex apply --replace-unmanaged --project-path '/w/app'"),
-            here("kendex apply --replace-unmanaged --project-path '/w/lane'"),
+            here("kendex apply --replace-unmanaged"),
         ),
         (
             "refresh",
             Remedy::Refresh { global: false },
             here("kendex refresh"),
             here("kendex refresh --project-path '/w/app'"),
-            here("kendex refresh --project-path '/w/lane'"),
+            here("kendex refresh"),
         ),
         (
             "apply --plan",
             Remedy::Plan { global: false },
             here("kendex apply --plan"),
             here("kendex apply --plan --project-path '/w/app'"),
-            here("kendex apply --plan --project-path '/w/lane'"),
+            here("kendex apply --plan"),
         ),
         (
             "update-pi, which runs in a linked worktree only at global scope",
@@ -221,7 +222,7 @@ fn a_non_utf8_project_target_keeps_the_row_and_omits_the_command() {
                 remedy: Some(Remedy::Apply { global: false }),
             }],
         }],
-        project_target: Some(ProjectTarget::Worktree(target.clone())),
+        project_target: Some(ProjectTarget::MainCheckout(target.clone())),
         ..check_report()
     };
 
@@ -229,6 +230,13 @@ fn a_non_utf8_project_target_keeps_the_row_and_omits_the_command() {
     assert!(text.contains("'orch' does not match its source"), "{text}");
     assert!(!text.contains("fix:"), "{text}");
     assert!(!text.contains('\u{fffd}'), "{text}");
+    // The worktree's own project never reaches the command, so its
+    // spelling cannot cost the row its fix.
+    let own = render_plain(&CheckReport {
+        project_target: Some(ProjectTarget::Worktree(target.clone())),
+        ..report.clone()
+    });
+    assert!(own.contains("— fix: kendex apply\n"), "{own}");
     let json = serde_json::to_string(&report).expect("the full report remains serializable");
     assert!(json.contains("'orch' does not match its source"), "{json}");
     assert!(!json.contains("projectTarget"), "{json}");
@@ -346,17 +354,15 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
     assert!(text.ends_with("Next: kendex check --global to list global packages; kendex refresh --global --yes for global packages; kendex refresh --scope project --project-path '/w/app' --yes in that checkout for project packages.\n"));
 
     let text = render_plain(&report(ProjectTarget::Worktree("/w/lane".into())));
-    assert!(
-        text.contains("— fix: kendex refresh --project-path '/w/lane'\n"),
-        "{text}"
-    );
+    assert!(text.contains("— fix: kendex refresh\n"), "{text}");
+    assert!(!text.contains("/w/lane"), "{text}");
     for command in commands {
         assert!(
             text.contains(&format!("— fix: {command}\n")),
             "{command} marked as running elsewhere in its own worktree: {text}"
         );
     }
-    assert!(text.ends_with("Next: kendex check --global to list global packages; kendex refresh --global --yes for global packages; kendex refresh --scope project --project-path '/w/lane' --yes in this checkout for project packages.\n"));
+    assert!(text.ends_with("Next: kendex check --global to list global packages; kendex refresh --global --yes for global packages; kendex refresh --scope project --yes in this checkout for project packages.\n"));
 }
 
 #[test]

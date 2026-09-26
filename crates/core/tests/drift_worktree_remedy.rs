@@ -197,14 +197,14 @@ fn the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_ho
     );
 }
 
-/// What the reader actually reads. The target is only useful if it reaches
-/// the rendered command, and a report whose fix cannot be run where it is
-/// printed is the defect this exists to end. A verb with no
-/// `--project-path` form that writes the project it is typed in runs bare
-/// in the worktree that declares, with no marker sending the reader away.
+/// What the reader actually reads. A report whose fix cannot be run where
+/// it is printed is the defect this exists to end: every verb typed in the
+/// worktree that declares writes that worktree, so its fix is the bare
+/// command, with no path and no marker sending the reader away — the one
+/// spelling that runs on a kendex with or without `--project-path`.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_rendered_fix_inside_a_worktree_names_the_project_it_writes() {
+fn a_rendered_fix_inside_a_worktree_that_declares_is_the_bare_command() {
     let (_tmp, env, _main, linked) = repository();
     let scope = scope(&linked);
     declare(&env, &scope);
@@ -234,21 +234,16 @@ fn a_rendered_fix_inside_a_worktree_names_the_project_it_writes() {
     }];
 
     let text = report::render_plain(&checked);
-    assert!(
-        text.contains(&format!(
-            "fix: kendex apply --project-path '{}'",
-            kendex_core::paths::canonical(&linked).unwrap().display()
-        )),
-        "{text}"
-    );
+    assert!(text.contains("fix: kendex apply\n"), "{text}");
     assert!(text.contains("fix: kendex remove gh\n"), "{text}");
+    assert!(!text.contains("--project-path"), "{text}");
 }
 
 /// A current manifest can still want the recorded name in another harness.
-/// The preview names the linked worktree without choosing a write.
+/// The preview runs bare in the worktree that declares, without choosing a write.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn record_cleanup_alone_names_the_linked_worktree_in_its_plan_command() {
+fn record_cleanup_alone_keeps_the_plan_command_bare_in_the_worktree_that_declares() {
     let (_tmp, env, _main, linked) = repository();
     let scope = scope(&linked);
     declare(&env, &scope);
@@ -267,13 +262,7 @@ fn record_cleanup_alone_names_the_linked_worktree_in_its_plan_command() {
     );
 
     let text = report::render_plain(&checked);
-    assert!(
-        text.contains(&format!(
-            "see: kendex apply --plan --project-path '{}'",
-            kendex_core::paths::canonical(&linked).unwrap().display()
-        )),
-        "{text}"
-    );
+    assert!(text.contains("see: kendex apply --plan\n"), "{text}");
 }
 
 /// A worktree whose own manifest will not load still names itself.

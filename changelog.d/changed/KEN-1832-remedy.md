@@ -1,0 +1,1 @@
+- The session-start check's remedies for a linked worktree with its own `kendex.toml` are the bare verbs; only the main checkout's project is named with `--project-path`.
