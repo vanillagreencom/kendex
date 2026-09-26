@@ -401,34 +401,54 @@ run_close "$SCRIPT"
 assert_eq "rc=$RC host=$(host_call_count) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE") kept=$(grep -c '^kept=' <<<"$OUT" || true)" \
   'rc=0 host=1 kill=1 status=done kept=1' 'an exited hosted Pi lane closes the provider once, kills by pane id and records done'
 
-echo "=== a full close removes the item's files through workflow-state remove ==="
-# label|option|remove status|expected
-ITEM_FILE_ROWS=(
-  "a full close removes the item's files in the state directory it was handed|-|0|rc=0 remove=1 kill=1 status=done"
-  "a removal that fails refuses with the window and record unchanged|-|5|rc=1 remove=1 kill=0 status=running refused=1"
-  "a close that keeps the sandbox keeps the item's files|--keep-sandbox|0|rc=0 remove=0 kill=1 status=stopped"
-)
-item_files_row() { # SCRIPT OPTION REMOVE_STATUS
+echo "=== a full close of a finished item removes its files through workflow-state remove ==="
+# An exited hosted lane, closed by SCRIPT under OPTION with the remove stub
+# answering REMOVE_STATUS, the host close HOST_STATUS and the tracker as
+# TRACKER_ENV sets it. ITEM_FILES reads what the close did: the removal, the
+# host close, the window kill, the record, and the kept and refused lines.
+item_files_row() { # SCRIPT OPTION REMOVE_STATUS HOST_STATUS TRACKER_ENV
   local option=()
   [[ "$2" == - ]] || option=("$2")
   write_state running pi /host; write_panes bash; printf '\n' >"$SCREEN"
-  LANE_CLOSE_REMOVE_STATUS="$3" run_close "$1" --state-dir "$FLEET_DIR" ${option[@]+"${option[@]}"}
-  ITEM_FILES="rc=$RC remove=$(grep -c -x -- "--state-dir $FLEET_DIR remove KEN-1" "$STATE_CALLS" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
-  [[ "$3" -eq 0 ]] || ITEM_FILES+=" refused=$(grep -c -x 'lane-close: item-files-failed item=KEN-1 status=5' <<<"$ERR" || true)"
+  export "$5"
+  LANE_CLOSE_REMOVE_STATUS="$3" LANE_CLOSE_HOST_STATUS="$4" run_close "$1" --state-dir "$FLEET_DIR" ${option[@]+"${option[@]}"}
+  unset "${5%%=*}"
+  ITEM_FILES="rc=$RC remove=$(grep -c -x -- "--state-dir $FLEET_DIR remove KEN-1" "$STATE_CALLS" || true) close=$(close_call_count) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE") kept=$(sed -n 's/^lane-close: item-files-kept item=KEN-1 cause=//p' <<<"$OUT") refused=$(grep -c -x "lane-close: item-files-failed item=KEN-1 status=$3" <<<"$ERR" || true)"
 }
+# label|option|remove status|host status|tracker env|expected
+ITEM_FILE_ROWS=(
+  "a finished item's full close removes its files in the state directory it was handed|-|0|0|LANE_CLOSE_NONE=1|rc=0 remove=1 close=1 kill=1 status=done kept= refused=0"
+  "a removal that fails refuses before the host close, with host, window and record unchanged|-|5|0|LANE_CLOSE_NONE=1|rc=1 remove=1 close=0 kill=0 status=running kept= refused=1"
+  "a host close that refuses after the removal leaves the record running|-|0|3|LANE_CLOSE_NONE=1|rc=3 remove=1 close=1 kill=0 status=running kept= refused=0"
+  "a close that keeps the sandbox keeps the item's files|--keep-sandbox|0|0|LANE_CLOSE_NONE=1|rc=0 remove=0 close=0 kill=1 status=stopped kept= refused=0"
+  "an exited lane whose item is still open closes and keeps its files|-|0|0|LANE_CLOSE_TRACKER_STATE_TYPE=started|rc=0 remove=0 close=1 kill=1 status=done kept=open refused=0"
+  "an exited lane whose tracker does not answer closes and keeps its files|-|0|0|LANE_CLOSE_TRACKER_FAIL=1|rc=0 remove=0 close=1 kill=1 status=done kept=read-failed refused=0"
+)
 for row in "${ITEM_FILE_ROWS[@]}"; do
-  IFS='|' read -r label option remove_status want <<<"$row"
-  item_files_row "$SCRIPT" "$option" "$remove_status"
+  IFS='|' read -r label option remove_status host_status tracker_env want <<<"$row"
+  item_files_row "$SCRIPT" "$option" "$remove_status" "$host_status" "$tracker_env"
   assert_eq "$ITEM_FILES" "$want" "$label"
 done
-MUTANT="$(mutant lane-close-no-item-files 'close_host || exit $?; remove_item_files; fi' 'close_host || exit $?; fi')"
-item_files_row "$MUTANT" - 0
-assert_eq "$ITEM_FILES" 'rc=0 remove=0 kill=1 status=done' \
-  "control: without the removal a full close leaves the item's files behind"
-MUTANT="$(mutant lane-close-item-files-ignored '[[ "$rc" -eq 0 ]] || { message item-files-failed' ': || { message item-files-failed')"
-item_files_row "$MUTANT" - 5
-assert_eq "$ITEM_FILES" 'rc=0 remove=1 kill=1 status=done refused=0' \
-  "control: without the refusal a failed removal still records the lane done"
+# The retry the refusal promises: after a failed removal, a second close
+# reaches the removal and the host close, and records the lane done.
+item_files_row "$SCRIPT" - 5 0 LANE_CLOSE_NONE=1
+LANE_CLOSE_REMOVE_STATUS=0 run_close "$SCRIPT" --state-dir "$FLEET_DIR"
+assert_eq "rc=$RC remove=$(grep -c -x -- "--state-dir $FLEET_DIR remove KEN-1" "$STATE_CALLS" || true) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 remove=1 close=1 status=done' 'a second close after a failed removal removes the files, closes the host and records done'
+
+# Fields split on @, since the anchors hold |: label, mutant name, anchor,
+# replacement, the row's remove status, its tracker env, and what the
+# planted defect lets through.
+while IFS='@' read -r label name anchor replacement remove_status tracker_env want; do
+  MUTANT="$(mutant "lane-close-$name" "$anchor" "$replacement")"
+  item_files_row "$MUTANT" - "$remove_status" 0 "$tracker_env"
+  assert_eq "$ITEM_FILES" "$want" "control: $label"
+done <<'ROWS'
+without the removal a finished item's full close leaves its files behind@no-item-files@remove_item_files; close_host || exit $?; fi@close_host || exit $?; fi@0@LANE_CLOSE_NONE=1@rc=0 remove=0 close=1 kill=1 status=done kept= refused=0
+without the refusal a failed removal still records the lane done@item-files-ignored@[[ "$rc" -eq 0 ]] || { message item-files-failed@: || { message item-files-failed@5@LANE_CLOSE_NONE=1@rc=0 remove=1 close=1 kill=1 status=done kept= refused=0
+with the host closed first a failed removal has already closed the host@host-first@remove_item_files; close_host || exit $?; fi@close_host || exit $?; remove_item_files; fi@5@LANE_CLOSE_NONE=1@rc=1 remove=1 close=1 kill=0 status=running kept= refused=1
+without the finished check an open item's close removes its workflow state@no-finished-check@if [[ "$ITEM_FINISHED" == false ]]; then@if false; then@0@LANE_CLOSE_TRACKER_STATE_TYPE=started@rc=0 remove=1 close=1 kill=1 status=done kept= refused=0
+ROWS
 
 echo '=== a local lane ends the validations its worktree still runs ==='
 validate_calls() { awk 'END { print NR + 0 }' "$LANE_CLOSE_VALIDATE_CALLS"; }
@@ -951,7 +971,7 @@ assert_eq "ambiguous=$(grep -c '^lane-close: pane-ambiguous ' <<<"$ERR" || true)
 MUTANT="$(mutant live '  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;' '  *) ;;')"
 write_state running codex /host; write_panes python; printf '› run\n  press to interrupt\n' >"$SCREEN"; run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' 'control: removing the live-state refusal closes a working lane'
-MUTANT="$(mutant provider '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || exit $?; remove_item_files; fi' '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || :; remove_item_files; fi')"
+MUTANT="$(mutant provider '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else remove_item_files; close_host || exit $?; fi' '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else remove_item_files; close_host || :; fi')"
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; LANE_CLOSE_HOST_STATUS=3 run_close "$MUTANT"
 assert_eq "rc=$RC kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true)" 'rc=0 kill=1' 'control: ignoring provider exit 3 destroys the window'
 MUTANT="$(mutant pane-id '      0) tmux kill-window -t "$pane_id" \' '      0) tmux kill-window -t "$window_name" \')"
@@ -1044,7 +1064,7 @@ MUTANT="$(mutant exit-timeout '      || { message exit-timeout "item=$ITEM" "har
 write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_NO_EXIT=1 run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: removing the exit timeout closes a lane whose harness still runs'
-MUTANT="$(mutant stopped-provider '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || exit $?; remove_item_files; fi' '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || :; remove_item_files; fi')"
+MUTANT="$(mutant stopped-provider '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else remove_item_files; close_host || exit $?; fi' '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else remove_item_files; close_host || :; fi')"
 write_state stopped claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"; LANE_CLOSE_HOST_STATUS=9 run_close "$MUTANT"
 assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 status=done' \
   'control: ignoring a stopped provider failure records the sandbox done'
