@@ -44,6 +44,7 @@ case "$STUB_CLASS" in
   unmeasured)
     echo "class: class=standard measured=false cause=unresolved-endpoint endpoint=b" >&2
     printf 'change_class=standard\n' ;;
+  nomarker) printf 'change_class=small\n' ;; # a change-class from before KEN-1638
   *)
     printf 'class: class=%s measured=true cause=stub\n' "$STUB_CLASS" >&2
     printf 'change_class=%s\n' "$STUB_CLASS" ;;
@@ -105,6 +106,7 @@ ROWS=(
   "active|-|--production 1 --path $PR_MERGE|tier=standard brief=start cause=excluded-path rc=0|a merge-gate Location is never micro whatever the estimate"
   "active|-|--production 1 --path skills/orch/workflows/review-pr.md|tier=micro brief=micro cause=estimate-within-micro rc=0|a Location off the list leaves the estimate's class"
   "active|unmeasured|--floor micro --base b --head h|tier=standard brief=start cause=classifier-unmeasured rc=0|a standard the classifier did not measure says so"
+  "active|nomarker|--floor micro --base b --head h|tier=standard brief=start cause=classifier-unmeasured rc=0|a class with no measured marker is standard"
   "active|docs|--floor micro --base b --head h|tier=standard brief=start cause=classifier-unreadable rc=0|a classifier word outside the classes is standard"
   "active|render|--base b --head h|tier=micro brief=micro cause=classifier rc=0|a render branch counts as micro"
   "active|-|--production $SMALL_MAX --floor small|tier=small brief=small cause=estimate-within-small rc=0|of two inputs naming one class the first names the cause"
