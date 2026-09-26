@@ -86,7 +86,7 @@ chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex" "$BIN/hclaude"
 # move with the setting instead of pinning 90 and 89 by hand. It follows the
 # script's own default, which the rows below leave unset; the two rows that
 # pin the SHIPPED default state their figures literally and say why.
-TRIGGER=10
+TRIGGER=5
 AT_TRIGGER=$((100 - TRIGGER))
 ABOVE_TRIGGER=$((100 - TRIGGER - 1))
 
@@ -196,6 +196,7 @@ cm=""
 ttl=""
 [ -z "\${USAGE_TTL:-}" ] || ttl="ORCH_LANES_USAGE_TTL=\$USAGE_TTL"
 wall="ORCH_OVERSEER_WALL_MINUTES=\${WALL_MINUTES:-0}"
+[ "\$wall" != ORCH_OVERSEER_WALL_MINUTES=default ] || wall=""
 successors="ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=\${SUCCESSOR_ACCOUNTS:-0}"
 qt=""
 [ -z "\${QUESTION_TOOL:-}" ] || qt="ORCH_OVERSEER_QUESTION_TOOL=\$QUESTION_TOOL"
@@ -795,6 +796,18 @@ WALL_MINUTES=30 run_succeed rateslow '' --check-marks
 check "a projected wall beyond the setting does not fire" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=78|0"
+stage_usage_pair ratedefaultat 60 40 600
+new_caller "$UNDER_MARK"
+WALL_MINUTES=default run_succeed ratedefaultat '' --check-marks
+check "the default wall notice fires at twenty projected minutes" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: mark-reached kind=rate value=20 mark=20 succession=on account=claude|0"
+stage_usage_pair ratedefaultabove 58 38 600
+new_caller "$UNDER_MARK"
+WALL_MINUTES=default run_succeed ratedefaultabove '' --check-marks
+check "the default wall notice stays clear at twenty-one projected minutes" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=42|0"
 for rate_row in \
   "rateone|40|none|0|one-sample" \
   "rateclose|40|20|30|samples-too-close" \
@@ -1275,31 +1288,30 @@ check "caller one percent above the trigger falls through to the context mark" \
 
 # The SHIPPED default, which no row above pins: every one of them derives its
 # fixtures from TRIGGER, so a default that drifts carries them along with it.
-# These two rows state their figures literally instead. The 15 in each sits
-# above the default and below twice it, so a default raised to that doubled
-# figure flips both answers, and between them the pair covers both jobs the
-# one number does.
+# These two rows state their figures literally instead. The 7 in each sits
+# above the shipped default and below 10. Raising the default to 10 flips
+# both answers. The pair covers both jobs the number does.
 #
 # The mark side: a caller with room to spare under the shipped default is not
 # succeeded on its account, and the context mark answers for it instead.
 new_caller "$UNDER_MARK"
-claude_usage 85 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 93 0 0 Opus > "$FIXTURE_DIR/.claude.json"
 run_succeed defaultspares 'claude:1:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-check "the shipped default leaves a caller at 15 percent headroom unsucceeded" \
+check "the shipped default leaves a caller at 7 percent headroom unsucceeded" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=15|0|none"
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=7|0|none"
 
 # The floor side, which is the job the shipped default answers: the caller is
-# past its own mark and the only candidate sits at 15, so the successor opens
+# past its own mark and the only candidate sits at 7, so the successor opens
 # there. A larger default rules that candidate out and refuses the succession.
 new_caller "$UNDER_MARK"
-claude_usage 92 0 0 Opus > "$FIXTURE_DIR/.claude.json"
-claude_usage 85 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+claude_usage 95 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 93 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed defaultfloor 'claude:1:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
-check "the shipped default opens the successor on a candidate at 15 percent headroom" \
+check "the shipped default opens the successor on a candidate at 7 percent headroom" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
   "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;"
 
