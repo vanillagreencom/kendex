@@ -175,7 +175,8 @@ class LaneHostCallersTests(unittest.TestCase):
         return found
 
     def target(self, scripts, path, word, function, depth=0):
-        """`wrapper`, `other` for another package script, or None: unresolved."""
+        """`wrapper`, `provider` for a provider the package ships, `other` for
+        another package script, or None: unresolved."""
         name = re.fullmatch(r'"\$\{?(\w+)\}?"', word)
         value = word.strip('"') if not name else None
         text = (scripts / path).read_text(errors="replace")
@@ -208,11 +209,15 @@ class LaneHostCallersTests(unittest.TestCase):
         script = self.SCRIPT.match(value or "")
         if not script:
             return None
-        return "wrapper" if script.group(1) == "lane-host" else "other"
+        if script.group(1) == "lane-host":
+            return "wrapper"
+        # The providers the package ships are named for the dispatcher, as
+        # lane-host-ssh is; run directly, one bypasses the slot cap.
+        return "provider" if script.group(1).startswith("lane-host-") else "other"
 
     def unbounded(self, scripts):
         return [(path, number, word) for path, number, word, function in self.sites(scripts)
-                if self.target(scripts, path, word, function) is None]
+                if self.target(scripts, path, word, function) in (None, "provider")]
 
     def test_every_provider_call_runs_the_wrapper(self):
         scripts = PACKAGE / "scripts"
@@ -227,6 +232,7 @@ class LaneHostCallersTests(unittest.TestCase):
     def test_a_direct_provider_call_is_named(self):
         rows = [("lane-mail", '  "$ORCH_LANE_HOST" cat --item "$ITEM" /remote\n', "lane-mail"),
                 ("open-terminal", '  "$LANE_HOST" touch --item "$1"\n', "open-terminal"),
+                ("lanes", '  "$SCRIPT_DIR/lane-host-ssh" cat --item "$ITEM" /remote\n', "lanes"),
                 ("oversee-watch", '  lane_host_fetch "$ORCH_LANE_HOST" "$1" /remote "$WORK_DIR/x" "$WORK_DIR/e"\n', "lib/lane-gitfile.sh")]
         for path, planted, named in rows:
             with self.subTest(path=path):
