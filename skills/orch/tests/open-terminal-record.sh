@@ -223,12 +223,12 @@ logged() { awk -v op="$1" '$1 == op { t = $2 } END { print t }' "$TMUX_LOG"; }
 session_row() {
   local state="$TMP_ROOT/$1"
   : > "$TMUX_LOG"
-  STUB_TMUX_LOG="$TMUX_LOG" RUN_TMUX=stub,1,0 run_ot STATE_DIR="$state" --tmux --cmd true "$2"
+  STUB_TMUX_LOG="$TMUX_LOG" RUN_TMUX="${RUN_TMUX-stub,1,0}" run_ot STATE_DIR="$state" --tmux --cmd true "$2"
   printf 'rc=%s target=%s list=%s pane=%s window=%s recorded=%s refused=%s' "$RC" \
     "$(logged new-window)" "$(logged list-windows)" "$(logged session-read)" \
     "$("$WS" --state-dir "$state" get oversee "[.lanes[]? | select(.item == \"$2\") | .window] | first // \"none\"" 2>/dev/null || echo none)" \
     "$("$WS" --state-dir "$state" get oversee '.tmux.session // "none"' 2>/dev/null || echo none)" \
-    "$(awk '/^open-terminal: (tmux-session-|session-record-failed|tmux-failed operation=has-session)/ { sub(/^open-terminal: /, ""); print; exit }' <<<"$ERR" | tr ' ' '+')"
+    "$(awk '/^open-terminal: (tmux-session-|session-record-failed|tmux-failed operation=has-session|tmux-missing)/ { sub(/^open-terminal: /, ""); print; exit }' <<<"$ERR" | tr ' ' '+')"
 }
 assert_eq "$(RUN_SESSION=fleetx session_row sess-env CC-100)" \
   "rc=0 target==fleetx:1 list==fleetx pane= window=fleetx:CC-100 recorded=fleetx refused=" \
@@ -249,6 +249,17 @@ assert_eq "$(cat "$TMP_ROOT/unread-row") above=$(awk '/^error connecting to / { 
 assert_eq "$(RUN_SESSION=fleetz STUB_DEAD_SESSIONS=fleetz session_row sess-typo CC-106)" \
   "rc=1 target= list= pane= window=none recorded=none refused=tmux-session-missing+item=CC-106+session=fleetz+source=ORCH_TMUX_SESSION+server=stub" \
   "a first launch naming a session tmux does not hold refuses, naming it, its source and the server, and records nothing"
+# From outside tmux, with no $TMUX at all: ORCH_TMUX_SESSION names the fleet
+# session, and the launch reaches it on the person's own tmux server, the
+# socket tmux derives from their uid (lib/tmux-server.sh), which a session
+# that server does not hold is refused naming.
+OWN_SOCKET="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default"
+assert_eq "$(RUN_TMUX= RUN_SESSION=fleetx session_row sess-outside CC-130)" \
+  "rc=0 target==fleetx:1 list==fleetx pane= window=fleetx:CC-130 recorded=fleetx refused=" \
+  "a launch with no \$TMUX and ORCH_TMUX_SESSION set opens in that session on the person's own server"
+assert_eq "$(RUN_TMUX= RUN_SESSION=fleetz STUB_DEAD_SESSIONS=fleetz session_row sess-outside-typo CC-131)" \
+  "rc=1 target= list= pane= window=none recorded=none refused=tmux-session-missing+item=CC-131+session=fleetz+source=ORCH_TMUX_SESSION+server=$OWN_SOCKET" \
+  "a launch with no \$TMUX naming a session the person's server does not hold refuses naming that server"
 assert_eq "$(RUN_SESSION= RUN_PANE=%9 STUB_SESSION_NAME=fleety session_row sess-pane CC-102)" \
   "rc=0 target==fleety:1 list==fleety pane=%9 window=fleety:CC-102 recorded=fleety refused=" \
   "the fleet's first launch from a pane opens in that pane's session and records it"

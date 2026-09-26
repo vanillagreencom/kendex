@@ -2,7 +2,8 @@
 # Terminal-mode selection and the environment a GUI lane receives.
 #
 # With neither --tmux nor --ghostty, open-terminal picks tmux when $TMUX is set
-# and a GUI terminal otherwise. Either flag overrides that. A caller who passes
+# or ORCH_TMUX_SESSION names the fleet session on the person's own server, and
+# a GUI terminal otherwise. Either flag overrides that. A caller who passes
 # --ghostty from inside tmux (the flag inferred from what the screen looked
 # like) is warned that the override moved the lane out of the workspace, and the
 # GUI window it opens carries neither TMUX nor TMUX_PANE: without that scrub the
@@ -119,8 +120,9 @@ REPO="$TMP_ROOT/repo"
 stage "$REPO" "$SRC_OT"
 
 # run NAME OT WHERE ARGS... — WHERE is `in` (a tmux controller: TMUX and
-# TMUX_PANE set) or `out` (neither present, whatever this suite itself runs
-# under). $RUN_PATH is the launch PATH and $RUN_TERMINAL the $TERMINAL value
+# TMUX_PANE set), `out` (neither present, whatever this suite itself runs
+# under) or `setting` (neither present, ORCH_TMUX_SESSION naming the fleet
+# session on the person's own server). $RUN_PATH is the launch PATH and $RUN_TERMINAL the $TERMINAL value
 # (empty: unset), both defaulting to the `term` arm. Sets RC, ERR,
 # TERM_LOG_TEXT and TMUX_LOG_TEXT.
 RUN_PATH=""
@@ -137,7 +139,8 @@ run() {
   case "$where" in
     in)  launch_env+=(TMUX=stub,1,0 TMUX_PANE=%7 ORCH_TMUX_SESSION=stub) ;;
     out) launch_env+=(-u TMUX -u TMUX_PANE) ;;
-    *) echo "run: WHERE must be in or out, got '$where'" >&2; exit 2 ;;
+    setting) launch_env+=(-u TMUX -u TMUX_PANE ORCH_TMUX_SESSION=stub) ;;
+    *) echo "run: WHERE must be in, out or setting, got '$where'" >&2; exit 2 ;;
   esac
   [[ -z "$RUN_TERMINAL" ]] || launch_env+=("TERMINAL=$RUN_TERMINAL")
   set +e
@@ -171,10 +174,13 @@ WARNING='open-terminal: mode-override option=--ghostty detected=tmux'
 # rejects before its first tmux call; the flag still won, since no GUI opened.
 MODE_ROWS='in||tmux|nowarn
 out||gui|nowarn
+setting||tmux|nowarn
 in|--ghostty|gui|warn
 out|--ghostty|gui|nowarn
+setting|--ghostty|gui|nowarn
 in|--tmux|tmux|nowarn
-out|--tmux|refused|nowarn'
+out|--tmux|refused|nowarn
+setting|--tmux|tmux|nowarn'
 
 # check_mode_rows LABEL OT — runs every row against OT and asserts it.
 check_mode_rows() {
@@ -213,7 +219,7 @@ check_mode_rows() {
   done <<<"$MODE_ROWS"
 }
 
-echo "=== open-terminal: mode is auto-detected from \$TMUX and a flag overrides it ==="
+echo "=== open-terminal: mode is auto-detected from \$TMUX or ORCH_TMUX_SESSION and a flag overrides it ==="
 check_mode_rows main "$REPO/scripts/open-terminal"
 
 echo

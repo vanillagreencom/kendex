@@ -953,15 +953,12 @@ if [[ "$MODE" == dead ]]; then
 elif [[ "$MODE" == print || "$MODE" == walled ]]; then
   ENTRIES=(caller)
 else
-  rest="${ORCH_OVERSEER_PREFERENCE:-}"
-  [[ -z "$rest" ]] || rest+=","
-  while [[ -n "$rest" ]]; do
-    entry="${rest%%,*}"
-    rest="${rest#*,}"
-    matches "$entry" '^(claude|codex):[1-9][0-9]*:[a-z]+$' || die invalid-preference "entry=$entry"
-    ENTRIES+=("$entry")
-    NAMED_ENTRIES=$((NAMED_ENTRIES + 1))
-  done
+  # The parse is lib/overseer-launch.sh's ol_preference_entries, the one
+  # `oversee launch` reads the same setting with, so the two launchers cannot
+  # come to admit different entries.
+  ol_preference_entries "${ORCH_OVERSEER_PREFERENCE:-}" || die invalid-preference "entry=$OL_BAD_ENTRY"
+  ENTRIES=(${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"})
+  NAMED_ENTRIES="$OL_NAMED"
   # The walk ALWAYS ends here, whatever the setting says. The caller entry is
   # the fleet-wide sweep of this overseer's own harness with no model named,
   # and it was once reachable only with an empty preference: a preference was
