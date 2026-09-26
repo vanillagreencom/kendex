@@ -10,7 +10,7 @@ use crate::scope::ScopeFilter;
 pub struct SourceArgs {
     #[arg(short = 'g', long, global = true)]
     global: bool,
-    /// project | global | all (default project)
+    /// project | global | all (default project; all for refresh --stale)
     #[arg(long, global = true)]
     scope: Option<String>,
     #[command(subcommand)]
