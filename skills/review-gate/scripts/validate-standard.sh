@@ -125,20 +125,10 @@ die() { # CODE VALUE MESSAGE
   exit 2
 }
 
-STANDARD="$SCRIPT_DIR/../standard.json"
-[ -r "$STANDARD" ] || die standard-missing "$STANDARD" "the standard manifest is missing or unreadable — re-run \`kendex refresh\`"
-jq -e '
-  (.required_contexts | type == "array" and length > 0 and all(.[]; type == "string" and length > 0))
-  and (.app | type == "string" and length > 0)
-  and (.environment | type == "string" and length > 0)
-  and (.environment_secrets | type == "array" and length > 0 and all(.[]; type == "string" and length > 0))
-' "$STANDARD" >/dev/null 2>&1 ||
-  die standard-malformed "$STANDARD" "the standard manifest does not parse, or lacks a non-empty required_contexts, app, environment or environment_secrets"
-std() { jq -r "$1" "$STANDARD"; }
-WANT_CONTEXTS="$(std '.required_contexts | unique | join(";")')" || die standard-read "$STANDARD" "could not read required_contexts"
-WANT_APP="$(std '.app')" || die standard-read "$STANDARD" "could not read app"
-WANT_ENV="$(std '.environment')" || die standard-read "$STANDARD" "could not read environment"
-WANT_SECRETS="$(std '.environment_secrets | unique | .[]')" || die standard-read "$STANDARD" "could not read environment_secrets"
+if [ ! -r "$SCRIPT_DIR/lib/standard.sh" ] || ! . "$SCRIPT_DIR/lib/standard.sh" 2>/dev/null; then
+  die standard-lib-load "$SCRIPT_DIR/lib/standard.sh" "could not load the standard library"
+fi
+rg_standard_load "$SCRIPT_DIR/../standard.json" || exit 2
 
 SCRATCH="$(mktemp -d)" || die scratch "${TMPDIR:-/tmp}" "could not create a scratch directory"
 trap 'rm -rf -- "$SCRATCH"' EXIT
@@ -158,18 +148,7 @@ read_api() { # ENDPOINT FILTER [--paginate]
   fi
   return 1
 }
-uri() { jq -rn --arg v "$1" '$v | @uri'; }
 jq_string() { jq -n --arg v "$1" '$v'; }
-# The names among WANT_SECRETS present in the newline list LISTED, one per
-# line; an exact whole-line match, so APP_ID_OLD is not APP_ID.
-held_names() { # LISTED
-  local name
-  for name in $WANT_SECRETS; do
-    if grep -qxF -- "$name" <<<"$1"; then
-      printf '%s\n' "$name"
-    fi
-  done
-}
 
 read_api "repos/{owner}/{repo}" '[.full_name, .default_branch] | @tsv' ||
   die repository-read "${GH_REPO:-}" "could not read the repository: $READ_ERR"
@@ -182,7 +161,7 @@ esac
 [ -n "$BRANCH" ] && [ "$BRANCH" != "$READ_OUT" ] ||
   die repository-read "$READ_OUT" "the repository read named no default branch"
 OWNER="${FULL%%/*}"
-BRANCH_URI="$(uri "$BRANCH")"
+BRANCH_URI="$(rg_uri "$BRANCH")"
 
 PASS=0
 FAILED=0
@@ -309,7 +288,10 @@ fi
 
 # --------------------------------------------------------- environment ---
 
-ENV_URI="$(uri "$WANT_ENV")"
+ENV_URI="$(rg_uri "$WANT_ENV")"
+# The environment rows' one remedy: no lane credential may create an
+# environment or write its secrets, so the owner converges it.
+PROVISION="The organization owner converges it from their own machine: scripts/provision-environment.sh --org $OWNER in this skill"
 # ENVS is the environments list as one JSON array, or empty when the read
 # failed; every environment row and the other-environment scopes below
 # branch on it.
@@ -329,19 +311,19 @@ if [ -n "$ENVS" ]; then
   policy="$(jq -r --arg n "$WANT_ENV" 'map(select(.name == $n)) | if length == 0 then "" else (.[0].deployment_branch_policy | @json) end' <<<"$ENVS")" ||
     die environments-query "$WANT_ENV" "jq could not evaluate a query over the parsed environments"
   case "$policy" in
-    "") ENV_PRESENT=no; bad standard-environment absent "the environment $WANT_ENV does not exist" ;;
-    null) ENV_PRESENT=yes; bad standard-environment unrestricted "$WANT_ENV deploys from every branch; the standard allows the default branch only" ;;
+    "") ENV_PRESENT=no; bad standard-environment absent "the environment $WANT_ENV does not exist. $PROVISION" ;;
+    null) ENV_PRESENT=yes; bad standard-environment unrestricted "$WANT_ENV deploys from every branch; the standard allows the default branch only. $PROVISION" ;;
     *)
       ENV_PRESENT=yes
       kind="$(jq -r 'if .custom_branch_policies == true and .protected_branches == false then "custom" elif .protected_branches == true then "protected-branches" else "malformed" end' <<<"$policy" 2>/dev/null)" || kind=malformed
       if [ "$kind" != custom ]; then
-        bad standard-environment "$kind" "$WANT_ENV does not deploy from a custom branch policy; the standard allows the default branch only"
+        bad standard-environment "$kind" "$WANT_ENV does not deploy from a custom branch policy; the standard allows the default branch only. $PROVISION"
       elif read_api "repos/$FULL/environments/$ENV_URI/deployment-branch-policies" '.branch_policies[] | "\(.type // "branch"):\(.name)"' --paginate; then
         observed="custom:$(printf '%s' "$READ_OUT" | tr '\n' ',')"
         if [ "$READ_OUT" = "branch:$BRANCH" ]; then
           ok standard-environment "$observed" "$WANT_ENV deploys from $BRANCH only"
         else
-          bad standard-environment "$observed" "$WANT_ENV deploys from these branch policies; the standard allows branch:$BRANCH only"
+          bad standard-environment "$observed" "$WANT_ENV deploys from these branch policies; the standard allows branch:$BRANCH only. $PROVISION"
         fi
       else
         bad standard-environment unreadable "the branch policies of $WANT_ENV could not be read: $READ_ERR"
@@ -356,23 +338,17 @@ case "$ENV_PRESENT" in
   yes)
     if read_api "repos/$FULL/environments/$ENV_URI/secrets" '.secrets[].name' --paginate; then
       listed="$READ_OUT"
-      held="$(held_names "$listed" | paste -sd ';' -)"
-      missing=""
-      for name in $WANT_SECRETS; do
-        if ! grep -qxF -- "$name" <<<"$listed"; then
-          missing="${missing:+$missing;}$name"
-        fi
-      done
-      if [ -z "$missing" ]; then
+      held="$(rg_standard_held "$listed" | paste -sd ';' -)"
+      if missing="$(rg_standard_missing "$listed" | paste -sd ';' -)" && [ -z "$missing" ]; then
         ok standard-environment-secrets "$held" "$WANT_ENV holds every secret the standard names"
       else
-        bad standard-environment-secrets "$held" "$WANT_ENV lacks: $missing"
+        bad standard-environment-secrets "$held" "$WANT_ENV lacks: $missing. $PROVISION"
       fi
     else
       bad standard-environment-secrets unreadable "the secrets of $WANT_ENV could not be read: $READ_ERR"
     fi
     ;;
-  no) bad standard-environment-secrets absent "the environment $WANT_ENV does not exist, so it holds no secret" ;;
+  no) bad standard-environment-secrets absent "the environment $WANT_ENV does not exist, so it holds no secret. $PROVISION" ;;
   unknown) bad standard-environment-secrets unreadable "the environments could not be read, so $WANT_ENV's secrets were not asked for" ;;
 esac
 
@@ -394,7 +370,7 @@ if [ -n "$ENVS" ]; then
   while IFS= read -r env_name; do
     [ -n "$env_name" ] || continue
     scopes="$scopes
-environment:$env_name	repos/$FULL/environments/$(uri "$env_name")/secrets"
+environment:$env_name	repos/$FULL/environments/$(rg_uri "$env_name")/secrets"
   done <<EOF_OTHERS
 $others
 EOF_OTHERS
@@ -408,7 +384,7 @@ while IFS='	' read -r label endpoint; do
       [ -n "$name" ] || continue
       outside="${outside:+$outside;}$label:$name"
     done <<EOF_HELD
-$(held_names "$READ_OUT")
+$(rg_standard_held "$READ_OUT")
 EOF_HELD
   else
     unreadable="${unreadable:+$unreadable,}$label"
