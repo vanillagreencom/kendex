@@ -76,7 +76,7 @@ A dead or walled terminal lane uses native resume, as [lane-directive.md § Reco
 
 ### Lane record
 
-The fleet's record is the oversee workflow state ([schemas/workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)), at one address for the whole session: `[OVERSEE_STATE]` is the file `workflow-state path oversee` prints from the overseer's checkout, which § 4 passes as `--state`, and `[OVERSEE_STATE_DIR]` is the directory it sits in, which every `open-terminal` launch, relaunch and wake passes as `--state-dir`, so a launch run from another repository (the proposal sweep) records into the same fleet and not into that repository's own state.
+The fleet's record is the oversee workflow state ([schemas/workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)), at one address for the whole session: `[OVERSEE_STATE]` is the file `workflow-state path oversee` prints from the overseer's checkout, which § 4 passes as `--state`, and `[OVERSEE_STATE_DIR]` is the directory it sits in, which every `open-terminal` launch, relaunch and wake passes as `--state-dir`, so a launch run from another repository records into the same fleet and not into that repository's own state.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state path oversee
@@ -104,7 +104,7 @@ A record's `item` is the lane's record key, `[ITEM_KEY]` throughout this workflo
 .agents/skills/orch/scripts/workflow-state get oversee '.lanes[0].launched_at'
 ```
 
-`mail_root` is the lane's worktree path as its own host sees it, and the lane's status file is `[MAIL_ROOT]/tmp/lane-status-[ISSUE_ID].md`. Every later mailbox call for a lane whose record carries `host` runs with `ORCH_LANE_HOST` set to that value and names the root: `lane-mail send --root [MAIL_ROOT] --host`, and `lane-host cat` or `touch`; `lane-close` reads the host from the record. A lane on this host needs neither, and a local lane whose `mail_root` is a worktree of another repository (the proposal sweep) still takes `--root [MAIL_ROOT]`, run from a checkout of that repository: `lane-mail` refuses a cross-repository `send` as `lane-foreign`.
+`mail_root` is the lane's worktree path as its own host sees it, and the lane's status file is `[MAIL_ROOT]/tmp/lane-status-[ISSUE_ID].md`. Every later mailbox call for a lane whose record carries `host` runs with `ORCH_LANE_HOST` set to that value and names the root: `lane-mail send --root [MAIL_ROOT] --host`, and `lane-host cat` or `touch`; `lane-close` reads the host from the record. A lane on this host needs neither, and a local lane whose `mail_root` is a worktree of another repository still takes `--root [MAIL_ROOT]`, run from a checkout of that repository: `lane-mail` refuses a cross-repository `send` as `lane-foreign`.
 
 ## 4. Watch And Advance
 
