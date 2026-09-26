@@ -587,15 +587,19 @@ echo '=== a limit banner the account has outlived does not hold a finished lane 
 # resets. The account the record names settles it: room lifts a banner that
 # dates no reset still ahead, and the finished lane closes like any idle one.
 # A clock reset leaves the account to answer alone; a dated one, the weekly
-# wall's shape, printing its year, lifts once that date is behind.
-while IFS='|' read -r reset name; do
+# wall's shape, printing its year, lifts once that date is behind. The account
+# is read for the model the record names, the one the launch gate judged it on,
+# and over the whole account where the record names none.
+while IFS='|' read -r model reset argv name; do
   write_state running claude /host; write_panes python; walled_screen "$reset"; : >"$LANE_CLOSE_LANES_CALLS"
+  jq --arg model "$model" '.lanes[0].model = (if $model == "-" then null else $model end)' "$STATE" >"$STATE.next" && mv -- "$STATE.next" "$STATE"
   run_close "$SCRIPT" </dev/null
   assert_eq "rc=$RC lanes=$(cat "$LANE_CLOSE_LANES_CALLS") stop=$(stop_count KEN-1 claude) status=$(jq -r '.lanes[0].status' "$STATE")" \
-    'rc=0 lanes=pick --lane /lane --harness claude stop=1 status=done' "$name"
+    "rc=0 lanes=pick --lane /lane --harness claude$argv stop=1 status=done" "$name"
 done <<'ROWS'
-21:00|a lifted banner over an account reading room closes the finished lane
-Oct 7, 2020, 11:32am (UTC)|a dated banner whose reset is behind, over an account reading room, closes the finished lane
+model|21:00| --model model|a lifted banner over an account reading room for the recorded model closes the finished lane
+model|Oct 7, 2020, 11:32am (UTC)| --model model|a dated banner whose reset is behind, over an account reading room, closes the finished lane
+-|21:00||a record naming no model reads the whole account
 ROWS
 # Each reading the wall stands on refuses, naming it.
 while IFS='|' read -r lanes_status reset want name; do
