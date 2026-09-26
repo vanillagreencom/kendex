@@ -11,6 +11,9 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# mutant_scripts, for the must-fail control and the missing-helper row.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 REPORT_BIN="$(cd "$TEST_DIR/../scripts" && pwd)/oversee-report"
 TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
@@ -43,8 +46,7 @@ EOF
 # gh: `pr list --state merged` answers merged.json narrowed to --head and
 # capped at --limit, as gh narrows it; `pr list --state open` open.json, and
 # `issue view N` issue-N.json, each from the case directory; a `--search
-# merged:>=STAMP` keeps what merged at or after STAMP, unless the case holds
-# search-unfiltered. A file named
+# merged:>=STAMP` keeps what merged at or after STAMP. A file named
 # <base>.<SLUG>.json answers that --repo alone, SLUG being the repo with `/`
 # as `_`. gh-fail fails every list, gh-fail-open the open list alone. Every
 # call's argv is appended to gh.calls. `auth status`, the keyring's answer,
@@ -78,7 +80,6 @@ case "$verb" in
     src="$(pick "$state")"
     [[ -f "$src" ]] || { echo '[]'; exit 0; }
     # A merged:>= search keeps what merged at or after its stamp, as GitHub's does.
-    [[ ! -f "$CASE/search-unfiltered" ]] || search=""
     jq -c --arg head "$head" --argjson limit "$limit" --arg since "${search#merged:>=}" \
       '[.[] | select($head == "" or .headRefName == $head) | select($since == "" or .mergedAt >= $since)] | .[:$limit]' "$src" ;;
   "issue view")
@@ -783,75 +784,29 @@ run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)|$(grep -c '^kendex-env: table-header ' "$CASE/err" || true)" "2|oversee-report: settings-load=$CASE|1" \
   "a malformed settings file refuses as settings-load, the loader's line after the key"
 
-echo "=== must-fail controls ==="
-# Without the shared filter's since clause, a merge older than the last report
-# is news again. The clause lives in lib/lane-state.sh, which the watch's
-# merged check reads too.
-# The copy sits in a skills layout beside the github skill, whose shared auth
-# helper lib/gh-auth.sh reaches through ../../../github.
-MUTANT="$TMP_ROOT/mutant/orch/scripts/oversee-report"
-LIB="$(cd "$TEST_DIR/../scripts/lib" && pwd)/lane-state.sh"
-mkdir -p "$TMP_ROOT/mutant/orch"
-cp -R "$TEST_DIR/../scripts" "$TMP_ROOT/mutant/orch/scripts"
-ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/mutant/github"
-filter="    | select(.at >= \$since) ];'"
-assert_eq "$(grep -cxF -- "$filter" "$LIB")" "1" "control: the since clause is one line to strip"
-awk -v line="$filter" '$0 == line { print "    ];'"'"'"; next } { print }' "$LIB" > "$TMP_ROOT/mutant/orch/scripts/lib/lane-state.sh"
-seed_fleet render_mutant
-# The search's own qualifier would hide the older merge before the clause
-# ever saw it; search-unfiltered makes the stub return the whole list, so the
-# clause alone stands between that merge and Landed.
-touch "$CASE/search-unfiltered"
-REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$(grep -c '^| KEN-3 (#13, 1234567)' <<<"$OUT")" "1" "control: without the clause Landed carries the merge from before the last report"
-cp -- "$LIB" "$TMP_ROOT/mutant/orch/scripts/lib/lane-state.sh"
-
-# Without the ceiling guard, a search that stopped at GitHub's ceiling renders
-# as if it were whole.
-guard='      if length >= $page then "page-full"'
-assert_eq "$(grep -cxF -- "$guard" "$REPORT_BIN")" "1" "control: the ceiling guard is one line to strip"
-awk -v line="$guard" '$0 == line { print "      if false then \"page-full\""; next } { print }' "$REPORT_BIN" > "$MUTANT"
-new_case page_mutant
-report -3600
-fleet '' "$(lane KEN-1 done)"
-issue KEN-1 "Title 1" "Outcome 1"
-jq -n --arg at "$(at -60)" '[range(1000) | {number: (1000 + .), headRefName: "other-\(.)", headRepositoryOwner: {login: "owner"}, mergedAt: $at, mergeCommit: {oid: "ffffffffff"}}]' > "$CASE/merged.json"
-REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC" "0" "control: without the guard a search at the ceiling renders instead of refusing"
-
-# Without the stop line, a lane held by a post-PR stop reads as waiting on
-# nothing.
-line='      [[ -z "$stop" ]] || BLOCKERS+="$stop"$'"'"'\n'"'"''
-assert_eq "$(grep -cxF -- "$line" "$REPORT_BIN")" "1" "control: the stop line is one line to strip"
-# ENVIRON, not -v: awk -v would turn the line's backslash-n into a newline.
-line="$line" awk '$0 == ENVIRON["line"] { print "      :"; next } { print }' "$REPORT_BIN" > "$MUTANT"
-seed_fleet render_stop_mutant
-REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(grep -c '^- KEN-3 waits on a stopped' <<<"$OUT")" "0|0" "control: without it the stopped lane is missing from Waiting on you"
-
 # Without the github skill beside orch, the shared auth helper cannot load,
 # and the report refuses by its own key rather than end on the helper's.
-mkdir -p "$TMP_ROOT/nohelper/orch"
-cp -R "$TEST_DIR/../scripts" "$TMP_ROOT/nohelper/orch/scripts"
+NOHELPER="$(mutant_scripts nohelper/orch)" || exit 1
 seed_fleet auth_helper_missing
-REPORT_UNDER_TEST="$TMP_ROOT/nohelper/orch/scripts/oversee-report" run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(first_err)" "2|oversee-report: auth-helper=$TMP_ROOT/nohelper/orch/scripts/lib/gh-auth.sh" \
+REPORT_UNDER_TEST="$NOHELPER/oversee-report" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: auth-helper=$NOHELPER/lib/gh-auth.sh" \
   "render, no github skill beside orch: refused as auth-helper"
 
-# Without the ladder, a revoked env token reads GitHub as it stands: the
-# fallback row refuses on the list, and the no-credential row names the list,
-# not the credential.
+echo "=== must-fail control ==="
+# One mutant for both verbs: without the auth ladder, a revoked env token reads
+# GitHub as it stands, and render's list and due's count each refuse on it.
+# The copy sits in a skills layout beside the github skill, whose shared auth
+# helper lib/gh-auth.sh reaches through ../../../github.
+MUTANT="$(mutant_scripts mutant/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/mutant/github"
 ladder='  github_auth'
-assert_eq "$(grep -cxF -- "$ladder" "$REPORT_BIN")" "2" "control: the ladder is two call lines to strip"
+assert_eq "$(grep -cxF -- "$ladder" "$MUTANT")" "2" "control: the ladder is two call lines to strip"
 awk -v line="$ladder" '$0 == line { print "  :"; next } { print }' "$REPORT_BIN" > "$MUTANT"
+assert_eq "$(grep -cxF -- "$ladder" "$MUTANT")" "0" "control: both call lines are stripped"
 seed_fleet auth_bot_fallback_mutant
 touch "$CASE/auth-fail"
 REPORT_UNDER_TEST="$MUTANT" run GH_TOKEN=ghp_stale0000 GH_BOT_TOKEN=ghp_bot00000 -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" "control: without the ladder a revoked GH_TOKEN fails the list"
-seed_fleet auth_none_mutant
-touch "$CASE/auth-fail"
-REPORT_UNDER_TEST="$MUTANT" run GH_TOKEN=ghp_stale0000 GH_BOT_TOKEN=ghp_stale_bot -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" "control: without the ladder no credential is named as the list failing"
+assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" "control: without the ladder a revoked GH_TOKEN fails render's list"
 new_case auth_due_fallback_mutant
 report -60
 fleet '' "$(lane KEN-1 running -86400)"
@@ -859,116 +814,6 @@ echo "[$(merged_pr 11 ken-1 -30 abcdef1234)]" > "$CASE/merged.json"
 touch "$CASE/auth-fail"
 REPORT_UNDER_TEST="$MUTANT" run ORCH_REPORT_EVERY_ISSUES=1 GH_TOKEN=ghp_stale0000 GH_BOT_TOKEN=ghp_bot00000 -- due --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" "control: without the ladder due's count fails on a revoked GH_TOKEN"
-
-# Without the hold, the settings loader's line reaches the caller first and the
-# refusal's key is no longer the first stderr line.
-hold='exec 2>"$WORK_DIR/held.err"'
-assert_eq "$(grep -cxF -- "$hold" "$REPORT_BIN")" "1" "control: the stderr hold is one line to strip"
-awk -v line="$hold" '$0 == line { print ":"; next } { print }' "$REPORT_BIN" > "$MUTANT"
-seed_fleet refuse_settings_mutant
-echo '[env] # a comment' > "$CASE/kendex.settings.toml"
-REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(first_err)" "2|kendex-env: table-header file=$CASE/kendex.settings.toml lineno=1" \
-  "control: without the hold the loader's line comes before the key"
-
-# Filtering launched items to running and preparing ones keeps a queued item
-# whose lane is done in Next, as though it had not launched.
-launched='[.lanes[].item]'
-assert_eq "$(grep -cF -- "$launched" "$REPORT_BIN")" "1" "control: the launched-item list is one expression to narrow"
-launched="$launched" awk '{ i = index($0, ENVIRON["launched"]); if (i) $0 = substr($0, 1, i - 1) "[.lanes[] | select(.status == \"running\" or .status == \"preparing\") | .item]" substr($0, i + length(ENVIRON["launched"])); print }' \
-  "$REPORT_BIN" > "$MUTANT"
-seed_fleet next_launched_mutant
-jq '.launch_queue = ["KEN-2", "KEN-1", "KEN-4", "KEN-7", "KEN-5"]' "$CASE/state.json" > "$CASE/state.next"
-mv -- "$CASE/state.next" "$CASE/state.json"
-REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(awk '/^Next/ { on = 1; next } on && /^$/ { on = 0 } on && /^\| KEN-/ { print $2 }' <<<"$OUT" | paste -sd, -)" "0|KEN-1,KEN-4,KEN-5" \
-  "control: narrowed to running and preparing lanes, Next keeps the queued item whose lane is done"
-
-# Without the empty GH_BOT_TOKEN, github.sh picks the inherited bot token over
-# the keyring the ladder settled on, and the failing-check list fails.
-blank="GH_BOT_TOKEN='' GH_REPO="
-assert_eq "$(grep -cF -- "$blank" "$REPORT_BIN")" "1" "control: the empty GH_BOT_TOKEN is one assignment to strip"
-blank="$blank" awk '{ i = index($0, ENVIRON["blank"]); if (i) $0 = substr($0, 1, i - 1) "GH_REPO=" substr($0, i + length(ENVIRON["blank"])); print }' \
-  "$REPORT_BIN" > "$MUTANT"
-seed_fleet auth_keyring_stale_bot_mutant
-REPORT_UNDER_TEST="$MUTANT" run GH_BOT_TOKEN=ghp_stale_bot -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" \
-  "control: without the empty GH_BOT_TOKEN an inherited revoked GH_BOT_TOKEN fails the list the keyring would read"
-
-# Without the kind filter, an unread directive reads as a question the lane
-# waits on the overseer to answer.
-filter='select(.kind == "ask") | '
-assert_eq "$(grep -cF -- "$filter" "$REPORT_BIN")" "1" "control: the kind filter is one clause to strip"
-filter="$filter" awk '{ i = index($0, ENVIRON["filter"]); if (i) $0 = substr($0, 1, i - 1) substr($0, i + length(ENVIRON["filter"])); print }' \
-  "$REPORT_BIN" > "$MUTANT"
-seed_fleet pending_directive_mutant
-echo '{"id":"1790000000-2-b","kind":"directive","text":"Rebase first."}' >> "$CASE/pending-KEN-2.jsonl"
-REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(grep -c '^- KEN-2 waits on the overseer to answer: Rebase first\.$' <<<"$OUT")" "0|1" \
-  "control: without the filter the unread directive is listed as a question for the overseer"
-
-# Without the skip, the report reads the unreadable lane's state from the host
-# its mailbox read could not reach, and that read refuses the whole report.
-skip='[[ "$mail" == host-unreachable && -n "$host" ]] || '
-assert_eq "$(grep -cF -- "$skip" "$REPORT_BIN")" "1" "control: the unreachable-host skip is one guard to strip"
-skip="$skip" awk '{ i = index($0, ENVIRON["skip"]); if (i) $0 = substr($0, 1, i - 1) substr($0, i + length(ENVIRON["skip"])); print }' \
-  "$REPORT_BIN" > "$MUTANT"
-seed_unreadable mail_unreadable_mutant
-REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(first_err)" "2|oversee-report: item-state=KEN-8" \
-  "control: without the skip the unreachable lane's state read refuses the report"
-
-# Without the host condition, a local lane whose mailbox read fails loses the
-# stop its readable state holds.
-cond=' && -n "$host"'
-assert_eq "$(grep -cF -- "$cond ]] ||" "$REPORT_BIN")" "1" "control: the host condition is one clause to strip"
-cond="$cond ]] ||" awk '{ i = index($0, ENVIRON["cond"]); if (i) $0 = substr($0, 1, i - 1) " ]] ||" substr($0, i + length(ENVIRON["cond"])); print }' \
-  "$REPORT_BIN" > "$MUTANT"
-seed_fleet mail_unreadable_local_mutant
-echo 'lane-mail: host-unreachable=KEN-3' > "$CASE/mail-fail-KEN-3"
-REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(grep -c '^- KEN-3 waits on a stopped review gate' <<<"$OUT")" "0|0" \
-  "control: without the host condition the local lane's stored stop vanishes"
-
-# One mutant per rule of the mailbox-refusal classifier and the host-unreachable
-# state skip: each row weakens one rule, seeds the case that rule decides and
-# expects the weakened script to misreport KEN-8. Rows: name@text@replacement.
-while IFS='@' read -r name text with; do
-  assert_eq "$(grep -cF -- "$text" "$REPORT_BIN")" "1" "control: the $name rule is one clause to weaken"
-  text="$text" with="$with" awk '{ i = index($0, ENVIRON["text"]); if (i) $0 = substr($0, 1, i - 1) ENVIRON["with"] substr($0, i + length(ENVIRON["text"])); print }' \
-    "$REPORT_BIN" > "$MUTANT"
-  seed_unreadable "mutant_$name"
-  case "$name" in
-    exit-status) echo 1 > "$CASE/mail-exit-KEN-8" ;;
-    refusal-key | skip-kind)
-      # The host answers, so the state read the mutant reaches does not refuse.
-      rm -f -- "${CASE:?}/host-gone-KEN-8"
-      mkdir -p "$CASE/host/w/KEN-8" "$CASE/host/clone/tmp"
-      echo "gitdir: /clone/.git/worktrees/KEN-8" > "$CASE/host/w/KEN-8/.git"
-      if [[ "$name" == refusal-key ]]; then
-        echo 'lane-mail: item-case-variant=KEN-8' > "$CASE/mail-fail-KEN-8"
-      else
-        echo 'lane-mail: mail-read-failed=KEN-8' > "$CASE/mail-fail-KEN-8"
-        echo '{"post_pr_stop": {"name": "ci-fix-cap", "gate": "ci", "remaining": ["test"]}}' > "$CASE/host/clone/tmp/workflow-state-KEN-8.json"
-      fi ;;
-    refusal-item) echo 'lane-mail: host-unreachable=KEN-9 state=unknown' > "$CASE/mail-fail-KEN-8" ;;
-    validation-unread) ;;
-    *) echo "oversee_report: unknown mutant row $name" >&2; exit 1 ;;
-  esac
-  REPORT_UNDER_TEST="$MUTANT" run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
-  case "$name" in
-    exit-status | refusal-key | refusal-item) got="$RC|$(grep -c '^- KEN-8 mailbox unreadable' <<<"$OUT" || true)"; want="0|1" ;;
-    skip-kind) got="$RC|$(grep -c '^- KEN-8 waits on a stopped ci gate' <<<"$OUT" || true)"; want="0|0" ;;
-    validation-unread) got="$RC|$(grep -c '^- KEN-8: no validation run recorded$' <<<"$OUT" || true)"; want="0|1" ;;
-  esac
-  assert_eq "$got" "$want" "control: without the $name rule the report misreports KEN-8"
-done <<'ROWS'
-exit-status@"$rc" -eq 2 && @
-refusal-key@(host-unreachable|mail-read-failed)=@([a-z-]+)=
-refusal-item@ && "${BASH_REMATCH[2]}" == "$item" ]]@ ]]
-skip-kind@"$mail" == host-unreachable && -n "$host" ]] ||@"$mail" != read && -n "$host" ]] ||
-validation-unread@if [[ "$mail" == host-unreachable && -n "$host" ]]; then@if false; then
-ROWS
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

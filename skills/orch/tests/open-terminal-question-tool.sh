@@ -76,7 +76,7 @@ chmod +x "$STUB"
 
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/scripts/lib"
-cp "${OPEN_TERMINAL_UNDER_TEST:-$SCRIPTS_DIR/open-terminal}" "$REPO/scripts/open-terminal"
+cp "$SCRIPTS_DIR/open-terminal" "$REPO/scripts/open-terminal"
 cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$REPO/scripts/"
 cp "$SCRIPTS_DIR"/lib/*.sh "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"

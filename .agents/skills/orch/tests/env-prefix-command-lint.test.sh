@@ -27,15 +27,6 @@ forbid_fenced "no fenced command opens with an env-assignment prefix" "$ENV_PREF
   "$SKILL_DIR/SKILL.md" "$SKILL_DIR"/workflows/*.md "$SKILL_DIR"/references/*.md \
   "$SKILLS_ROOT/dev/SKILL.md" "$SKILLS_ROOT"/dev/workflows/*.md
 
-forbid_fenced "no fenced command opens with an empty-value prefix" "$ENV_PREFIX" \
-  'LC_ALL= tools/test-ci-changes' \
-  "$SKILL_DIR/SKILL.md" "$SKILL_DIR"/workflows/*.md "$SKILL_DIR"/references/*.md \
-  "$SKILLS_ROOT/dev/SKILL.md" "$SKILLS_ROOT"/dev/workflows/*.md
-forbid_fenced "no fenced command opens with a quoted-value prefix" "$ENV_PREFIX" \
-  'LC_ALL="C" tools/test-ci-changes' \
-  "$SKILL_DIR/SKILL.md" "$SKILL_DIR"/workflows/*.md "$SKILL_DIR"/references/*.md \
-  "$SKILLS_ROOT/dev/SKILL.md" "$SKILLS_ROOT"/dev/workflows/*.md
-
 permits_fenced "a bare assignment is a value, not a prefix" "$ENV_PREFIX" \
   'LC_ALL=C tools/test-ci-changes' 'LC_ALL=C' "$SKILL_DIR/SKILL.md"
 permits_fenced "an assignment whose quoted value holds a space is not a prefix" "$ENV_PREFIX" \

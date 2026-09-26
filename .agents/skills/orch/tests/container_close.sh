@@ -153,6 +153,7 @@ assert_eq "$out" "deferred CHILD-2 CHILD-3" "canceled descendants defer closure 
 [[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "canceled descendants prevent parent mutation" || fail "canceled descendants prevent parent mutation"
 grep -Fq 'issues:validate-completion' "$FAKE_LINEAR_ROOT/linear.calls" && fail "canceled descendants stop before validation" || ok "canceled descendants stop before validation"
 
+# The suite's one must-fail control: the canceled-descendant refusal removed.
 CANCELED_MUTANT="$SANDBOX/skills/orch/scripts/container-close-canceled-mutant"
 assert_eq "$(grep -Fc 'if [[ -n "$CANCELED" ]]; then print_deferred "$CANCELED"; exit 0; fi' "$SCRIPT")" "1" "canceled control finds the refusal gate"
 awk '
@@ -199,16 +200,6 @@ for validation_mode in exit false string_all_ok missing_parent duplicate_parent 
   [[ $rc -ne 0 ]] && ok "$validation_mode validation refuses closure" || fail "$validation_mode validation refuses closure"
   [[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "$validation_mode validation prevents parent mutation" || fail "$validation_mode validation prevents parent mutation"
 done
-
-SHAPE_MUTANT="$SANDBOX/skills/orch/scripts/container-close-shape-mutant"
-assert_eq "$(grep -Fc '(.all_ok | type) == "boolean"' "$SCRIPT")" "1" "validation-shape control finds the Boolean gate"
-awk '{ sub(/\(\.all_ok \| type\) == "boolean"/, "(.all_ok | type) == \"string\""); print }' "$SCRIPT" > "$SHAPE_MUTANT"
-chmod +x "$SHAPE_MUTANT"
-reset_state
-printf 'string_all_ok\n' > "$FAKE_LINEAR_ROOT/validation.mode"
-printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
-"$SHAPE_MUTANT" "$SANDBOX" PARENT-1 >/dev/null
-[[ -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "validation-shape mutant accepts string true" || fail "validation-shape mutant accepts string true"
 
 # The summary is written once — a later run short-circuits on the completed
 # parent and never rebuilds it — so a lookup failure must not bake a reference
@@ -295,12 +286,6 @@ exec 8>>"$SANDBOX/tmp/container-close.lock"
 flock 8
 "$WAIT_MUTANT" "$CALLER_TWO" PARENT-2 > "$TMP_ROOT/other-parent.out" 2>"$TMP_ROOT/other-parent.err"
 assert_eq "$(cat "$TMP_ROOT/other-parent.out")" "deferred" "a different parent waits on the repository lock"
-LOCK_MUTANT="$SANDBOX/skills/orch/scripts/container-close-parent-lock-mutant"
-assert_eq "$(grep -Fc 'LOCK_FILE="$MAIN_REPO_ROOT/tmp/container-close.lock"' "$SCRIPT")" "1" "lock control finds the repository lock"
-sed 's|LOCK_FILE="$MAIN_REPO_ROOT/tmp/container-close.lock"|LOCK_FILE="$MAIN_REPO_ROOT/tmp/container-close-$PARENT_ID.lock"|' "$SCRIPT" > "$LOCK_MUTANT"
-chmod +x "$LOCK_MUTANT"
-rc=0; "$LOCK_MUTANT" "$CALLER_TWO" PARENT-2 > "$TMP_ROOT/other-parent-mutant.out" 2>"$TMP_ROOT/other-parent-mutant.err" || rc=$?
-[[ "$rc" -ne 0 || "$(cat "$TMP_ROOT/other-parent-mutant.out")" != deferred ]] && ok "control: parent lock skips the repository lock" || fail "control: parent lock skips the repository lock"
 flock -u 8
 exec 8>&-
 

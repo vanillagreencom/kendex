@@ -64,54 +64,26 @@
 # position: `## 4. Present And Fix` must not select `## 4. Present And Fix
 # Notes` sitting above it.
 #
-# CONTROL REGIME. `md_report` closes every suite and proves each registered
-# rule can go red. What it proves differs by form, and only `rule` and
-# `rule_fenced` get the cross-rule check:
+# CONTROL REGIME. `md_report` closes every suite and proves each rule FORM
+# the suite registered can go red: the form is the instrument, so it takes one
+# control however many rules invoke it.
 #
-#   rule, rule_fenced  every occurrence of the rule's first token is deleted
-#                      from the line the rule matched, then every rule that
-#                      HELD before the mutation is re-evaluated against it.
-#                      Exactly the mutated rule must go red. One that reddens
-#                      a second rule is redundant with it; one that reddens
-#                      nothing has no teeth. Both fail. A rule already red on
-#                      the unmutated tree is left out: it reported its own
-#                      failure, and counting it here would blame this control.
+#   rule, rule_fenced  the first registered rule of that form that holds on
+#                      the unmutated tree has every occurrence of its first
+#                      token deleted from the line it matched, and must then
+#                      go red. A rule already red reported its own failure,
+#                      so it is never the one planted.
 #   forbid, forbid_fenced
-#                      the SAMPLE is appended to a scratch copy of EVERY
-#                      registered file in turn, and each must be flagged.
-#   permits_fenced     no registry and no control loop: it carries its own
-#                      positive half, the PROBE, in line.
+#                      the first registered forbid of that form has its
+#                      SAMPLE appended to a scratch copy of its first file,
+#                      which must be flagged.
+#   permits_fenced     no control: it carries its own positive half, the
+#                      PROBE, in line.
 #
-# Both forms that can pass on an empty search result — `forbid` and
-# `permits_fenced` — carry a positive control, so neither can report a proof it
-# did not perform. That is the whole of it: every other `pass` here follows a
-# match that was found, or a mutation that was verified to have planted
-# something.
-#
-# The rule control re-evaluates every held rule once per rule, so a suite's
-# control pass costs O(N^2) file reads in its rule count. Measure the law
-# rather than trusting a number here, which is one machine's on one day:
-#
-#   for n in 10 20 30 40; do   # N rules, each matching its own fixture line
-#     ... build the fixture and the suite, then: time bash the-suite
-#   done
-#   time (for f in skills/orch/tests/*lint*.test.sh; do bash "$f"; done)
-#   grep -cE '^(rule|rule_fenced) ' skills/orch/tests/*lint*.test.sh
-#
-# Doubling the rules costs roughly four times the time, while every orch lint
-# suite together finishes in a few seconds,
-# well inside the orch shard's timeout — `timeout-minutes` on the
-# skill-suites-shard job in `.github/workflows/skill-tests.yml`, which is where
-# to read it rather than here. What the law means for an author is that a suite
-# growing past roughly thirty rules is paying a superlinear price and is better
-# split by contract.
-#
-# One optimization is applied, above: the held-set pre-check is loop-invariant,
-# so computing it once takes the control pass from 2N^2 reads to N^2 + N. The
-# commands above are what measure what that is worth on a given machine.
-# Per-path memoization of the reader, a pre-stripped control scratch, and a
-# file-grouped loop each measure at 20 percent or worse against the orch
-# shard's budget, which does not pay for the redesign they point at.
+# Both forms that can pass on an empty search result, `forbid` and
+# `permits_fenced`, carry a positive control, so neither can report a proof it
+# did not perform. Every other `pass` here follows a match that was found, or
+# a mutation that was verified to have planted something.
 
 MD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TESTS_DIR="$(cd "$MD_LIB_DIR/.." && pwd)"
@@ -511,89 +483,68 @@ _md_strike() {
   ' "$1" >"$4"
 }
 
-# _md_controls — the planted control for every registered rule.
-_md_controls() {
-  local i j k rec scratch ln reddened victim
-  # Which rules hold on the UNMUTATED tree. A rule already red reported its own
-  # failure above, and counting it inside a control would blame that control
-  # for it. The answer does not depend on which rule is being mutated, so it is
-  # computed once here rather than N times inside the inner loop: it is the
-  # difference between N^2 + N reads and 2N^2. Bash 3.2 has no associative
-  # array, so membership is a space-delimited index string.
-  local held=" "
-  for k in $(_md_indices "${#MD_RULES[@]}"); do
-    if _md_holds "${MD_RULES[$k]}" "" ""; then held="$held$k "; fi
-  done
+# _md_rule_control MODE — the one control for a rule form: the first rule of
+# MODE that holds is planted and must go red. Nothing when the suite
+# registered no rule of MODE, or none of them holds.
+_md_rule_control() {
+  local want="$1" i rec ln scratch
   for i in $(_md_indices "${#MD_RULES[@]}"); do
     rec="${MD_RULES[$i]}"
     _md_fields "$rec"
-    local name="${MD_F[0]}" mode="${MD_F[1]}" file="${MD_F[2]}"
-    # `|| true` or the first rule matching nothing aborts this function under
-    # `set -e`, which is what the guard below exists to prevent: a maintainer
-    # fixing one broken rule would learn nothing about the rest of the suite.
-    ln="$(_md_match "$mode" "$file" "${MD_F[3]}" "${MD_F[@]:4}" || true)"
-    # No match: the rule itself already reported FAIL above, and a control over
-    # a line that is not there would only repeat it.
-    if [ -z "$ln" ]; then continue; fi
-    scratch="$MD_TMP/rule-$i.md"
+    [ "${MD_F[1]}" = "$want" ] || continue
+    # `|| true`: a rule matching nothing reported its own FAIL above, and
+    # under `set -e` the bare substitution would end the suite here.
+    ln="$(_md_match "$want" "${MD_F[2]}" "${MD_F[3]}" "${MD_F[@]:4}" || true)"
+    [ -n "$ln" ] || continue
+    local name="${MD_F[0]}" file="${MD_F[2]}"
+    scratch="$MD_TMP/rule-$want.md"
     _md_strike "$file" "$ln" "${MD_F[4]}" "$scratch"
     if cmp -s "$file" "$scratch"; then
       fail "control for '$name' planted nothing — '${MD_F[4]}' is not on line $ln"
-      continue
-    fi
-    reddened=""
-    for j in $(_md_indices "${#MD_RULES[@]}"); do
-      case "$held" in *" $j "*) ;; *) continue ;; esac
-      if _md_holds "${MD_RULES[$j]}" "$file" "$scratch"; then :; else
-        _md_fields "${MD_RULES[$j]}"
-        reddened="$reddened ${MD_F[0]}"
-      fi
-    done
-    victim=" $name"
-    if [ "$reddened" = "$victim" ]; then
-      pass "control: '$name' goes red alone when its token is dropped"
-    elif [ -z "$reddened" ]; then
-      fail "control for '$name' reddened nothing — the rule has no teeth"
+    elif _md_holds "$rec" "$file" "$scratch"; then
+      fail "control for '$name' reddened nothing — the $want rule has no teeth"
     else
-      fail "control for '$name' reddened:$reddened — the rules overlap"
+      pass "control: the $want rule '$name' goes red when its token is dropped"
     fi
+    return 0
   done
+}
 
-  # Every registered file, not the first: a forbid spanning a glob otherwise
-  # proves its regex on one file and never proves the rest are readable.
+# _md_forbid_control MODE — the one control for a forbid form: the first
+# forbid of MODE has its sample appended to a copy of its first file, and the
+# scan must flag it. Nothing when the suite registered no forbid of MODE.
+_md_forbid_control() {
+  local want="$1" i scratch
   for i in $(_md_indices "${#MD_FORBIDS[@]}"); do
     _md_fields "${MD_FORBIDS[$i]}"
-    local fname="${MD_F[0]}" fre="${MD_F[1]}" fsample="${MD_F[2]}" mode="${MD_F[3]}"
-    local base missed=0 checked=0 k
-    for k in $(_md_indices "${#MD_F[@]}"); do
-      [ "$k" -lt 4 ] && continue
-      base="${MD_F[$k]}"
-      scratch="$MD_TMP/forbid-$i-$k.md"
-      # Tested before `cp`, which on a directory dies under `set -e` and takes
-      # the tally with it, leaving a cp error where the verdict should be.
-      if ! _md_scannable "$base"; then
-        fail "control for '$fname' — ${base#$REPO_ROOT/} is not a readable file"
-        missed=$((missed + 1))
-        continue
-      fi
-      cp "$base" "$scratch"
-      checked=$((checked + 1))
-      if [ "$mode" = fenced ]; then
-        printf '\n```bash\n%s\n```\n' "$fsample" >>"$scratch"
-        [ -n "$(_md_fenced_hits "$fre" "$scratch")" ] && continue
-      else
-        printf '\n%s\n' "$fsample" >>"$scratch"
-        [ -n "$(_md_offenders "$fre" "$scratch")" ] && continue
-      fi
-      fail "control for '$fname' — the sample is not flagged in ${base#$REPO_ROOT/}"
-      missed=$((missed + 1))
-    done
-    if [ "$checked" -eq 0 ]; then
-      fail "control for '$fname' — no registered file could be read, so it proved nothing"
-    elif [ "$missed" -eq 0 ]; then
-      pass "control: '$fname' flags its sample in every file it read ($checked)"
+    [ "${MD_F[3]}" = "$want" ] || continue
+    local fname="${MD_F[0]}" fre="${MD_F[1]}" fsample="${MD_F[2]}" base="${MD_F[4]}"
+    # Tested before `cp`, which on a directory dies under `set -e` and takes
+    # the tally with it; the forbid itself already reported the path.
+    if ! _md_scannable "$base"; then
+      fail "control for '$fname' — ${base#$REPO_ROOT/} is not a readable file"
+      return 0
     fi
+    scratch="$MD_TMP/forbid-$want.md"
+    cp "$base" "$scratch"
+    if [ "$want" = fenced ]; then
+      printf '\n```bash\n%s\n```\n' "$fsample" >>"$scratch"
+      [ -n "$(_md_fenced_hits "$fre" "$scratch")" ] && { pass "control: the $want forbid '$fname' flags its sample"; return 0; }
+    else
+      printf '\n%s\n' "$fsample" >>"$scratch"
+      [ -n "$(_md_offenders "$fre" "$scratch")" ] && { pass "control: the $want forbid '$fname' flags its sample"; return 0; }
+    fi
+    fail "control for '$fname' — the sample is not flagged in ${base#$REPO_ROOT/}"
+    return 0
   done
+}
+
+# _md_controls — one planted control per rule form the suite registered.
+_md_controls() {
+  _md_rule_control line
+  _md_rule_control fenced
+  _md_forbid_control line
+  _md_forbid_control fenced
 }
 
 # md_report — controls, then the tally. Every suite ends with this.

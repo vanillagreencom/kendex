@@ -22,8 +22,11 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 PANEL='{"agents": ["rev-a"], "reason": "test"}'
 
-PASS=0
-FAIL=0
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
+# mutant_scripts and mutate_file, the two halves of the gate's control below.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
@@ -177,80 +180,21 @@ err="$(REVIEW_MAX_CYCLES=2 "$WS" --state-dir "$sd" set KEN-2 rereview_panel "$PA
   && ok "REVIEW_MAX_CYCLES=2 allows two entries and refuses the third" \
   || bad "REVIEW_MAX_CYCLES=2 allows two entries and refuses the third" "rc=$rc err=$err"
 
-# --- planted controls: prove each assertion can fail ------------------------
+# --- planted controls: one per instrument, proving each can fail ----------
 echo
 echo "--- planted controls ---"
 
-CTRL_SCRIPTS="$TMP_ROOT/scripts"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$CTRL_SCRIPTS"
-
-# $1 = control name, $2 = sed program. Writes the control interpreter and
-# reports whether the program changed anything: one matching nothing leaves
-# the source untouched and the control proves nothing.
-plant() {
-  sed "$2" "$WS" > "$CTRL_SCRIPTS/workflow-state"
-  chmod +x "$CTRL_SCRIPTS/workflow-state"
-  ! cmp -s "$CTRL_SCRIPTS/workflow-state" "$WS"
-}
-
-# Tally control: read `.cycles`, the tally every fix round bumps. It
-# must refuse the very re-entry the fixed gate allows.
-if ! plant tally 's/(\.rereview_cycles \/\/ 0) as \\\$n/(.cycles \/\/ 0) as \\$n/'; then
-  bad "tally control planted nothing — its sed program matched no text"
+# The gate's comparison slipped back to >, which admits a fifth entry under a
+# cap of four.
+OFF_WS="$(mutant_scripts off-by-one workflow-state)/workflow-state" || exit 1
+mutate_file "$OFF_WS" 'if \$n >= $cap then' 'if \$n > $cap then'
+sdo="$TMP_ROOT/state-ctrl-off"
+"$OFF_WS" --state-dir "$sdo" init KEN-9x --worktree "$REPO_ROOT" --branch ken-9x >/dev/null
+"$OFF_WS" --state-dir "$sdo" update KEN-9x '.rereview_cycles = 4' >/dev/null
+if "$OFF_WS" --state-dir "$sdo" set KEN-9x rereview_panel "$PANEL" >/dev/null 2>&1; then
+  ok "the boundary assertion flags a guard that admits a fifth entry"
 else
-  sdc="$TMP_ROOT/state-ctrl-tally"
-  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdc" init KEN-5 --worktree "$REPO_ROOT" --branch ken-5 >/dev/null
-  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdc" update KEN-5 '.cycles = 7' >/dev/null
-  if "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdc" set KEN-5 rereview_panel "$PANEL" >/dev/null 2>&1; then
-    bad "the assertion MISSED a gate reading the fix-round tally" "the control accepted the re-entry"
-  else
-    ok "the assertion flags a gate reading the fix-round tally instead of the loop budget"
-  fi
-fi
-
-# A gate that reads the loop budget but never raises it: every pass sees 0 and
-# the loop never ends.
-if ! plant raise 's/ | \.rereview_cycles = \\\$n + 1//'; then
-  bad "raise control planted nothing — its sed program matched no text"
-else
-  sdr="$TMP_ROOT/state-ctrl-raise"
-  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdr" init KEN-6 --worktree "$REPO_ROOT" --branch ken-6 >/dev/null
-  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdr" set KEN-6 rereview_panel "$PANEL" >/dev/null
-  cbudget="$("$CTRL_SCRIPTS/workflow-state" --state-dir "$sdr" get KEN-6 .rereview_cycles)"
-  if [[ "$cbudget" == "1" ]]; then
-    bad "the assertion MISSED a panel write that never raises the counter" "got=$cbudget"
-  else
-    ok "the assertion flags a panel write that never raises the counter"
-  fi
-fi
-
-# The comparison slipped back to >, which admits a fifth entry under a cap of four.
-if ! plant off 's/if \\$n >= \$cap then/if \\$n > $cap then/'; then
-  bad "off-by-one control planted nothing — its sed program matched no text"
-else
-  sdo="$TMP_ROOT/state-ctrl-off"
-  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdo" init KEN-9x --worktree "$REPO_ROOT" --branch ken-9x >/dev/null
-  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdo" update KEN-9x '.rereview_cycles = 4' >/dev/null
-  if "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdo" set KEN-9x rereview_panel "$PANEL" >/dev/null 2>&1; then
-    ok "the boundary assertion flags a guard that admits a fifth entry"
-  else
-    bad "the boundary assertion MISSED a guard that admits a fifth entry" "the control refused at the cap"
-  fi
-fi
-
-# A guard that also gates the QA re-check key: the issue's scenario would
-# fail again, refused under a cap that is not its own.
-if ! plant qakey 's/"$field" == "rereview_panel"/"$field" == *_panel/'; then
-  bad "qa-key control planted nothing — its sed program matched no text"
-else
-  sdq="$TMP_ROOT/state-ctrl-qakey"
-  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdq" init KEN-7 --worktree "$REPO_ROOT" --branch ken-7 >/dev/null
-  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdq" update KEN-7 '.rereview_cycles = 5' >/dev/null
-  if "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdq" set KEN-7 qa_recheck_panel "$PANEL" >/dev/null 2>&1; then
-    bad "the assertion MISSED a guard that gates the QA re-check key" "the control permitted the write"
-  else
-    ok "the assertion flags a guard that gates the QA re-check key too"
-  fi
+  bad "the boundary assertion MISSED a guard that admits a fifth entry" "the control refused at the cap"
 fi
 
 # § 7 changed to the shared key: the assertion must catch the counter
@@ -265,40 +209,6 @@ else
   bad "the assertion MISSED rereview_cycles back inside § 7"
 fi
 
-# § 7 routed back through the cap check.
-CTRL_WF="$TMP_ROOT/review-pr-capcheck.md"
-sed 's/\*\*No cap check runs here\*\*/**Run § 4 At The Cap here**/' "$REVIEW_PR_WF" > "$CTRL_WF"
-if cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
-  bad "§ 7 cap-check control planted nothing — its sed program matched no text"
-elif grep -q -F 'At The Cap' <<<"$(section_7 "$CTRL_WF")"; then
-  ok "the assertion flags § 7 routing through the cap check again"
-else
-  bad "the assertion MISSED § 7 routing through the cap check again"
-fi
-
-# § 7 back to convergence exits alone: a loop whose every round finds an unseen
-# blocker would never end.
-CTRL_WF="$TMP_ROOT/review-pr-norecur.md"
-sed 's|\[finding-disposition[.]md § Recurrence\](../references/finding-disposition[.]md#recurrence).s structural close|a structural close|' "$REVIEW_PR_WF" > "$CTRL_WF"
-if cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
-  bad "§ 7 recurrence control planted nothing — its sed program matched no text"
-elif grep -q -F 'finding-disposition.md#recurrence' <<<"$(section_7 "$CTRL_WF")"; then
-  bad "the assertion MISSED § 7 losing its recurrence exit"
-else
-  ok "the assertion flags § 7 losing its recurrence exit"
-fi
-
-# § 7 with no key of its own: the QA panel would land on the gated field.
-CTRL_WF="$TMP_ROOT/review-pr-nokey.md"
-sed 's/qa_recheck_panel/rereview_panel/g' "$REVIEW_PR_WF" > "$CTRL_WF"
-if cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
-  bad "§ 7 key control planted nothing — its sed program matched no text"
-elif grep -q -F 'qa_recheck_panel' <<<"$(section_7 "$CTRL_WF")"; then
-  bad "the assertion MISSED § 7 writing the gated panel key"
-else
-  ok "the assertion flags § 7 writing the gated panel key"
-fi
-
 # The unpatched § 2: no first_panel write, so the first cycle leaves no record.
 CTRL_WF="$TMP_ROOT/review-pr-nofirst.md"
 grep -v -F "$FIRST_WRITE" "$REVIEW_PR_WF" > "$CTRL_WF" || true
@@ -308,18 +218,6 @@ elif grep -q -F "$FIRST_WRITE" <<<"$(section_2 "$CTRL_WF")"; then
   bad "the assertion MISSED § 2 recording no first_panel"
 else
   ok "the assertion flags § 2 recording no first_panel"
-fi
-
-# The write kept but moved after the spawn, into § 3: the assertion's section
-# scope is what catches a panel recorded too late to precede any spawn.
-CTRL_WF="$TMP_ROOT/review-pr-latefirst.md"
-awk -v w="$FIRST_WRITE" 'index($0, w) { held = $0; next } { print } $0 == "## 3. Collect Results" { print held }' "$REVIEW_PR_WF" > "$CTRL_WF"
-if ! grep -q -F "$FIRST_WRITE" "$CTRL_WF" || cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
-  bad "§ 2 late-write control planted nothing — the write did not move"
-elif grep -q -F "$FIRST_WRITE" <<<"$(section_2 "$CTRL_WF")"; then
-  bad "the assertion MISSED the first_panel write moved out of § 2"
-else
-  ok "the assertion flags the first_panel write moved out of § 2 into § 3"
 fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

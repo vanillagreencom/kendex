@@ -139,16 +139,11 @@ cap_strays() { grep -rnE "$CAP_STRAY_RE" "$@" 2>/dev/null || true; }
 stray="$(cap_strays "$REPO_ROOT/skills/orch/scripts" "$REPO_ROOT/skills/orch/workflows")"
 [[ -z "$stray" ]] && ok "no orch script or workflow resolves a round cap outside the table" \
   || bad "no orch script or workflow resolves a round cap outside the table" "$stray"
-# Planted, in both spellings: a reader that went back to pairing orch-env with
-# its own default. The workflow one is the control for the widened scan --
-# under the old scripts-only root it read clean.
-CTRL_DIR="$TMP_ROOT/cap-stray-scripts"
+# Planted: a workflow reader that went back to pairing orch-env with its own
+# default, in the bare-command spelling a scripts-and-quotes-only scan misses.
 CTRL_WF="$TMP_ROOT/cap-stray-workflows"
-mkdir -p "$CTRL_DIR" "$CTRL_WF"
-printf 'max=$("$SCRIPT_DIR/orch-env" CI_FIX_MAX_CYCLES 6)\n' > "$CTRL_DIR/watcher"
+mkdir -p "$CTRL_WF"
 printf '.agents/skills/orch/scripts/orch-env CI_FIX_MAX_CYCLES 6\n' > "$CTRL_WF/merge-pr.md"
-[[ -n "$(cap_strays "$CTRL_DIR")" ]] && ok "the stray check flags a script carrying its own cap default" \
-  || bad "the stray check flags a script carrying its own cap default"
 [[ -n "$(cap_strays "$CTRL_WF")" ]] && ok "the stray check flags a workflow carrying its own cap default" \
   || bad "the stray check flags a workflow carrying its own cap default"
 

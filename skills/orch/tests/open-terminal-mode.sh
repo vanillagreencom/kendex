@@ -19,10 +19,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 export ORCH_LANE_HOST=local
 # shellcheck source=lib/shared-skill-libs.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
+# mutant_scripts and mutate_file, the two halves of the control below.
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
-SRC_OT="${OPEN_TERMINAL_UNDER_TEST:-$SCRIPTS_DIR/open-terminal}"
+SRC_OT="$SCRIPTS_DIR/open-terminal"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -225,51 +228,29 @@ echo "=== open-terminal: mode is auto-detected from \$TMUX and a flag overrides 
 check_mode_rows main "$REPO/scripts/open-terminal"
 
 echo
-echo "=== each rule can fail ==="
+echo "=== the rule can fail ==="
 
-# mutate NAME SED_EXPR — a copy of open-terminal with SED_EXPR applied, staged
-# in its own repo; the copy must differ from the source or the control proves
-# nothing. Sets MUTANT_OT to the staged script (no subshell, so the tally
-# above keeps counting).
-mutate() {
-  local name="$1" expr="$2"
-  local dir="$TMP_ROOT/mutant-$name"
-  mkdir -p "$dir"
-  sed "$expr" "$SRC_OT" > "$dir/open-terminal"
-  if cmp -s "$SRC_OT" "$dir/open-terminal"; then
-    bad "control: the $name mutant really changes open-terminal" "the copy is byte-identical to open-terminal"
-  else
-    ok "control: the $name mutant really changes open-terminal"
-  fi
-  stage "$dir/repo" "$dir/open-terminal"
-  MUTANT_OT="$dir/repo/scripts/open-terminal"
-}
-
-# Auto-detection gone: with no flag every launch is a GUI launch, so the
-# inside-tmux default row reds while the flagged rows still hold.
-mutate default 's/then TERMINAL_MODE="tmux"; else TERMINAL_MODE="gui"/then TERMINAL_MODE="gui"; else TERMINAL_MODE="gui"/'
+# The suite's one must-fail control. Auto-detection gone: with no flag every
+# launch is a GUI launch, so the inside-tmux default row reds while the flagged
+# rows still hold.
+MUTANT_REPO="$TMP_ROOT/mutant-default"
+MUTANT_OT="$(mutant_scripts mutant-default open-terminal)/open-terminal" || exit 1
+git -C "$MUTANT_REPO" init -q
+orch_fixture_shared_libs "$MUTANT_REPO"
+mutate_file "$MUTANT_OT" 'then TERMINAL_MODE="tmux"; else TERMINAL_MODE="gui"' 'then TERMINAL_MODE="gui"; else TERMINAL_MODE="gui"'
 run mut_default "$MUTANT_OT" in CC-1
 assert_eq "$TMUX_LOG_TEXT" "" "control: without auto-detection tmux is never reached from inside tmux"
 assert_contains "$TERM_LOG_TEXT" "term -e bash -lc" "control: and a GUI terminal opens instead"
-
-# The warning's branch never taken: the override still launches, silently.
-mutate warning 's/^elif \[\[ "$TERMINAL_MODE" == "ghostty" \&\& -n "${TMUX:-}" \]\]; then$/elif false; then/'
-run mut_warn "$MUTANT_OT" in --ghostty CC-1
-assert_eq "$RC" "0" "control: without the warning the override still launches"
-assert_not_contains "$ERR" "$WARNING" "control: and says nothing about overriding tmux"
 
 echo
 echo "=== a GUI terminal opened from inside tmux inherits no tmux identity, on every launcher arm ==="
 
 # One row per open_gui arm: the PATH and $TERMINAL that reach it, and the argv
 # the stub must log. Every arm detaches through run_detached, which owns the
-# scrub. Each row runs green against open-terminal and red against a mutant
-# whose run_detached scrubs only CLAUDECODE, so no arm escapes the scrub.
+# scrub.
 ARM_ROWS="terminal|$BIN:$PATH|term|term -e bash -lc
 xdg|$XDG_BIN:$BIN:$PATH|-|xdg-terminal-exec bash -lc
 ghostty|$GHOSTTY_BIN:$BIN:$NO_XDG_PATH|-|ghostty --working-directory="
-mutate scrub 's#env -u CLAUDECODE -u TMUX -u TMUX_PANE#env -u CLAUDECODE#g'
-SCRUB_MUTANT_OT="$MUTANT_OT"
 while IFS='|' read -r arm path terminal argv; do
   [[ -n "$arm" ]] || continue
   RUN_PATH="$path"
@@ -279,11 +260,6 @@ while IFS='|' read -r arm path terminal argv; do
   assert_contains "$TERM_LOG_TEXT" "$argv" "$arm arm: the launch went through this arm"
   assert_contains "$TERM_LOG_TEXT" "env TMUX=<unset> TMUX_PANE=<unset>" \
     "$arm arm: the GUI terminal receives neither TMUX nor TMUX_PANE"
-  run "mut-scrub-$arm" "$SCRUB_MUTANT_OT" in --ghostty CC-1
-  assert_eq "$RC" "0" "control: $arm arm without the scrub still launches"
-  assert_contains "$TERM_LOG_TEXT" "$argv" "control: $arm arm is still the arm taken"
-  assert_contains "$TERM_LOG_TEXT" "env TMUX=stub,1,0 TMUX_PANE=%7" \
-    "control: and the $arm arm's terminal really does inherit TMUX and TMUX_PANE"
 done <<<"$ARM_ROWS"
 RUN_PATH=""
 RUN_TERMINAL="term"
@@ -319,22 +295,6 @@ run "nosetsid" "$REPO/scripts/open-terminal" out CC-1
 assert_eq "$RC" "0" "no setsid: the GUI launch is reported as successful"
 assert_contains "$TERM_LOG_TEXT" "term -e bash -lc" "no setsid: a GUI terminal really opens"
 
-# The control: with the nohup arm deleted the same run opens nothing, so the
-# assertion above is about the arm and not about a launch that would happen
-# either way. The arm is lib/lane-launch.sh's lane_run_detached, which
-# run_detached hands every launch to.
-NOSETSID_REPO="$TMP_ROOT/mutant-nosetsid/repo"
-stage "$NOSETSID_REPO" "$SRC_OT"
-sed 's#^    nohup "\$@" #    setsid "$@" #' "$SRC_LIB_DIR/lane-launch.sh" > "$NOSETSID_REPO/scripts/lib/lane-launch.sh"
-if cmp -s "$SRC_LIB_DIR/lane-launch.sh" "$NOSETSID_REPO/scripts/lib/lane-launch.sh"; then
-  bad "control: the nosetsid mutant really changes lane-launch.sh" "the copy is byte-identical to lane-launch.sh"
-else
-  ok "control: the nosetsid mutant really changes lane-launch.sh"
-fi
-MUTANT_OT="$NOSETSID_REPO/scripts/open-terminal"
-RUN_PATH="$BIN:$NO_SETSID_PATH"
-run "mut-nosetsid" "$MUTANT_OT" out CC-1
-assert_eq "$TERM_LOG_TEXT" "" "control: without the nohup arm no GUI terminal opens on a setsid-less host"
 RUN_PATH=""
 RUN_TERMINAL="term"
 

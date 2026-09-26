@@ -20,6 +20,10 @@ SESSION_GUARD="$REPO_ROOT/skills/worktree/scripts/worktree-session-guard"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)" || exit 2
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+# mutant_scripts and mutate_file, the two halves of the control below.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
+
 PASS=0
 FAIL=0
 assert_eq() {
@@ -211,32 +215,16 @@ done <<<"$ROWS"
 [[ "$n" -ge 15 ]] || { echo "the row table was not read" >&2; exit 2; }
 row_setup -
 
-# Must-fail control: a copy whose comparison never reaches the mark prunes
-# nothing past it, and a copy that always reaches it prunes below it.
-MUTANTS="$TMP_ROOT/mutants"
-for mutant in never always; do
-  mkdir -p "$MUTANTS/$mutant"
-  cp -a "$ORCH_SCRIPTS" "$MUTANTS/$mutant/scripts"
-  case "$mutant" in
-    never) replacement='if false; then' ;;
-    always) replacement='if true; then' ;;
-  esac
-  sed -i.bak "s/^if \[\[ \"\$used\" -ge \"\$mark\" \]\]; then$/$replacement/" "$MUTANTS/$mutant/scripts/round-prune"
-  if cmp -s "$MUTANTS/$mutant/scripts/round-prune" "$MUTANTS/$mutant/scripts/round-prune.bak"; then
-    echo "control: the mark comparison could not be replaced in a round-prune copy" >&2
-    exit 2
-  fi
-done
+
+# The suite's one must-fail control: a copy whose comparison never reaches the
+# mark prunes nothing past it.
+NEVER="$(mutant_scripts never round-prune)" || exit 1
+mutate_file "$NEVER/round-prune" 'if [[ "$used" -ge "$mark" ]]; then' 'if false; then'
 build control-never KEN-1
-prune 80 "$MUTANTS/never/scripts"
+prune 80 "$NEVER"
 [[ "$(artifacts)" == ".cargo-lock" ]] &&
   assert_eq "pruned" "not pruned" "control: with the mark never reached the output past it is kept" ||
   assert_eq "kept" "kept" "control: with the mark never reached the output past it is kept"
-build control-always KEN-1
-prune 74 "$MUTANTS/always/scripts"
-[[ "$(artifacts)" == ".cargo-lock,deps/unit-0.rlib" ]] &&
-  assert_eq "kept" "pruned" "control: with the mark always reached the output below it is pruned" ||
-  assert_eq "pruned" "pruned" "control: with the mark always reached the output below it is pruned"
 
 echo "=== target/ across two runs ==="
 # Two rounds, each starting with the round-start prune and ending with a

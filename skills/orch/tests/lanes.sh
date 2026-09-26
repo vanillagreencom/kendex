@@ -41,7 +41,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 source "$TEST_DIR/lib/waiter-assertions.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$TEST_DIR/lib/lanes-fixture.sh"
-# mutate_file, the substitution half of the must-fail control below.
+# mutant_scripts and mutate_file, the two halves of the must-fail controls below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 
@@ -226,24 +226,19 @@ observe() {
   printf '%s' "${got# }"
 }
 
-# lanes_mutant NAME FILE PATTERN [REPLACEMENT] — a copy of the scripts under
-# $TMP_ROOT/NAME with one line of FILE, a path inside that copy, mutated; its
-# caller then runs $TMP_ROOT/NAME/lanes. PATTERN is a basic regular expression;
-# its occurrence count is asserted as 1 before and 0 after, so a pattern that
-# stopped matching reddens a row instead of leaving a control that mutates
-# nothing. With no REPLACEMENT the line is deleted. One planted defect per copy:
-# a copy carrying two would pass its rows while either one was caught, so each
-# control takes its own NAME. It prints nothing but those assertions — a caller
-# capturing its output would capture them too.
+# lanes_mutant NAME FILE PATTERN [REPLACEMENT] — mutant_scripts NAME FILE with
+# one line of FILE, a path relative to scripts/, mutated; its caller then runs
+# $TMP_ROOT/NAME/scripts/lanes. PATTERN is a basic regular expression; its
+# occurrence count is asserted as 1 before and 0 after, so a pattern that
+# stopped matching reddens a row instead of leaving a mutant that mutates
+# nothing. With no REPLACEMENT the line is deleted. It prints nothing but those
+# assertions — a caller capturing its output would capture them too.
 #
-# The after-count is 0, so a control whose REPLACEMENT keeps the matched text
+# The after-count is 0, so a mutation whose REPLACEMENT keeps the matched text
 # cannot use this helper and asserts its own post-condition instead.
 lanes_mutant() {
-  local dir="$TMP_ROOT/$1" file="$2"
-  mkdir -p "$dir/lib"
-  cp "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$dir/"
-  cp "$SCRIPTS_DIR/lib"/*.sh "$dir/lib/"
-  chmod +x "$dir/lanes" "$dir/lane-host"
+  local dir file="$2"
+  dir="$(mutant_scripts "$1" "$file")" || exit 1
   assert_eq "$(grep -c -e "$3" "$dir/$file")" "1" "control $1 finds exactly one line to mutate"
   if [[ $# -ge 4 ]]; then sed -i.bak "s/$3/$4/" "$dir/$file"
   else sed -i.bak "/$3/d" "$dir/$file"; fi
@@ -317,8 +312,10 @@ table \
 NO_CLIENT_CAUSE="access_token_expired_and_could_not_be_renewed:_no_OAuth_client_id_is_configured_(ORCH_LANES_CLAUDE_CLIENT_ID)"
 table \
   "an expired lane with no client id configured reads error, naming the setting|ORCH_LANES_CLAUDE_CLIENT_ID=|$LIST|claude.status=error claude.cause=$NO_CLIENT_CAUSE"
+# The suite's one must-fail control on `list`: the missing client id read as
+# expired again.
 lanes_mutant mutant-no-client lanes "token_refusal error '' '' 'no OAuth client id" "token_refusal expired '' '' 'no OAuth client id"
-LANES="$TMP_ROOT/mutant-no-client/lanes"
+LANES="$TMP_ROOT/mutant-no-client/scripts/lanes"
 table \
   "control: with the missing client id read as expired, the lane sends its operator to a re-login|ORCH_LANES_CLAUDE_CLIENT_ID=|$LIST|claude.status=expired"
 LANES="$SCRIPTS_DIR/lanes"
@@ -509,23 +506,6 @@ claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 table \
   "the renewal posts a claude-cli User-Agent, and puts it on no argument vector|$REFRESH_ENV;TOKEN_UA_LOG=$UA_LOG|$LIST|claude.status=ok claude.refreshable=true ua=claude-cli/V_(external,_cli) uaargv=argv="
 
-# The must-fail control: the renewal posts with no User-Agent again, which is
-# the request the endpoint answers 429 to whatever the rate. Substituted rather
-# than deleted, because the line carries the POST itself.
-lanes_mutant mutant-ua lanes 'LANES_USER_AGENT="\$CLAUDE_TOKEN_UA"' 'LANES_USER_AGENT='
-new_home token-ua-control
-make_lane "$H" claude -60
-claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-: > "$UA_LOG"
-RUN="$TMP_ROOT/runs/mutant-ua"; mkdir -p "$RUN/store"
-( cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
-  LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" FIXTURE_DIR="$FIXTURE_DIR" \
-  OVERSEE_WATCH_STATE_DIR="$RUN/store" TMUX_PANES_FILE="$RUN/panes" PATH="$CLAIM_BIN:$PATH" \
-  ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_OK" TOKEN_UA_LOG="$UA_LOG" \
-  "$TMP_ROOT/mutant-ua/lanes" list --harness claude --json >/dev/null 2>&1 )
-assert_eq "$(sed -n '1p' "$UA_LOG")|$(sed -n '2p' "$UA_LOG")" "|argv=" \
-  "control: without that word the renewal still reaches the endpoint, naming no User-Agent to it"
-
 echo "=== a refused endpoint is reported by its HTTP code, never as an expired login ==="
 # `expired` means a proven-dead login downstream: open-terminal turns it into a
 # remedy line telling the operator to log in again on this machine. A rate limit
@@ -561,19 +541,6 @@ table \
   "a token endpoint answering 401 reads expired too|$RL_ENV;TOKEN_STATUS=401;TOKEN_ERR_TYPE=invalid_grant;TOKEN_ERR_MSG=Refresh token not found|$LIST|claude.status=expired claude.cause=access_token_expired_and_could_not_be_renewed:_the_token_endpoint_refused_the_renewal_with_HTTP_401_(invalid_grant:_Refresh_token_not_found)" \
   "a 200 answer carrying an error object but no token names that error beside the missing token|$RL_ENV;TOKEN_STATUS=200;TOKEN_ERR_TYPE=invalid_request;TOKEN_ERR_MSG=bad body|$LIST|claude.status=expired claude.cause=access_token_expired_and_could_not_be_renewed:_the_token_endpoint_returned_no_access_token_(invalid_request:_bad_body)"
 
-# The must-fail control for the split. With the 429 arm gone every code falls to
-# the caller's default, so the rate limit reads as the dead login again and the
-# remedy line sends the operator to a sign-in that is fine.
-lanes_mutant mutant-429 lanes "429) printf 'rate_limited'"
-RUN="$TMP_ROOT/runs/mutant-429"; mkdir -p "$RUN/store"
-MUTANT_OUT="$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
-  LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
-  OVERSEE_WATCH_STATE_DIR="$RUN/store" TMUX_PANES_FILE="$RUN/panes" PATH="$CLAIM_BIN:$PATH" \
-  ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_STATUS_STUB" \
-  "$TMP_ROOT/mutant-429/lanes" list --harness claude --json 2>/dev/null)"
-assert_eq "$(jq -r '.[] | select(.alias=="claude") | .status' <<<"$MUTANT_OUT")" "expired" \
-  "control: without the 429 arm the rate limit reads as the dead login again"
-
 # A token POST that never reached the endpoint (DNS, a refused connection, the
 # timeout) proves nothing about the login, and carries no code, so no window is
 # recorded for it and the next run posts again. The pair shares one state
@@ -596,26 +563,6 @@ assert_eq "$(find "$UNREACHED_STATE" -path '*/usage/*.json' 2>/dev/null | grep -
   "and it records no refusal window, since no endpoint answered"
 table \
   "so the next run on that state directory posts again and renews the lane|$REFRESH_ENV;OVERSEE_WATCH_STATE_DIR=$UNREACHED_STATE|$LIST|claude.status=ok claude.refreshable=true tokencalls=1"
-
-# The must-fail controls, one planted defect each. First the transport failure
-# read as the dead login again.
-lanes_mutant mutant-unreached lanes \
-  "token_refusal unreachable '' '' 'the token endpoint could not be reached'" \
-  "token_refusal expired '' '' 'the token endpoint could not be reached'"
-unreached_home
-LANES="$TMP_ROOT/mutant-unreached/lanes"
-table \
-  "control: with the transport failure read as expired, the lane sends its operator to a re-login|$UNREACHED_ENV|$LIST|claude.status=expired statuses=expired"
-LANES="$SCRIPTS_DIR/lanes"
-# Then a code-less refusal recorded as a window, which parks the lane with
-# nothing left to re-try it.
-lanes_mutant mutant-codeless lanes '\[\[ -z "\$code" \]\] ||' 'true \&\&'
-unreached_home
-LANES="$TMP_ROOT/mutant-codeless/lanes"
-run_lanes "$UNREACHED_ENV" $LIST
-table \
-  "control: with a code-less refusal recorded, the next run reads that window and posts nothing|$REFRESH_ENV;OVERSEE_WATCH_STATE_DIR=$UNREACHED_STATE|$LIST|claude.status=unreachable tokencalls=0"
-LANES="$SCRIPTS_DIR/lanes"
 
 new_home usage-refused
 make_lane "$H" claude 3600
@@ -658,8 +605,8 @@ table \
 stage_refusal 45 120
 table \
   "--no-cache declines a cached figure, never a live refusal window: the one caller asking for a fresh reading is not the one that re-posts|$RL_ENV;OVERSEE_WATCH_STATE_DIR=$REFUSAL_STATE|$LIST --no-cache|claude.status=rate_limited tokencalls=0"
-# The must-fail control for the window: a refusal that parked a lane for good
-# would be the worse failure, so the run after it passes posts again.
+# The window's far side: a refusal that parked a lane for good would be the
+# worse failure, so the run after it passes posts again.
 stage_refusal 45 -1
 table \
   "once the window has passed the next run posts to the endpoint again|$RL_ENV;OVERSEE_WATCH_STATE_DIR=$REFUSAL_STATE|$LIST|claude.status=rate_limited tokencalls=1"
@@ -672,16 +619,6 @@ table \
   "the window is the answer's own Retry-After where it named one|$RL_ENV;TOKEN_RETRY=900|$LIST|claude.status=rate_limited refusalwindow=900" \
   "and the script's own five minutes where the answer named none|$RL_ENV|$LIST|claude.status=rate_limited refusalwindow=300" \
   "a Retry-After written as an HTTP date names no seconds to wait, so the default window stands|$RL_ENV;TOKEN_RETRY=Wed, 21 Oct 2026 07:28:00 GMT|$LIST|claude.status=rate_limited refusalwindow=300"
-# The must-fail control: `write_usage_refusal` is the one judge of whether a
-# Retry-After names seconds, so with its check reduced to presence the date
-# reaches the window arithmetic, which ends the run before any window is
-# recorded.
-lanes_mutant mutant-retry-numeric lanes \
-  '\[\[ "\$window" =~ ^\[0-9\]+\$ && "\$window" -gt 0 \]\]' '[[ -n "$window" ]]'
-LANES="$TMP_ROOT/mutant-retry-numeric/lanes"
-table \
-  "control: without the numeric check an HTTP-date Retry-After records no window|$RL_ENV;TOKEN_RETRY=Wed, 21 Oct 2026 07:28:00 GMT|$LIST|refusalwindow=none"
-LANES="$SCRIPTS_DIR/lanes"
 
 new_home usage-refusal-window
 make_lane "$H" claude 3600
@@ -693,18 +630,12 @@ table \
   "a recorded usage refusal is read the same way, and the second run fetches nothing even though the endpoint would now answer|OVERSEE_WATCH_STATE_DIR=$USAGE_REFUSAL_STATE|$LIST|first.status=unreachable claude.cause=usage_query_refused_with_HTTP_503 fetched=none"
 
 # The usage endpoint's own Retry-After sets its window as the token endpoint's
-# does. The control drops that argument from the usage call alone.
+# does.
 new_home usage-refusal-retry-after
 make_lane "$H" claude 3600
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 table \
   "a usage refusal is waited out for the endpoint's own Retry-After|FETCH_STATUS=429;FETCH_RETRY_AFTER=900|$LIST|first.status=rate_limited refusalwindow=900"
-lanes_mutant mutant-usage-retry lanes \
-  'usage "\$status" "\$HTTP_CODE" "\$detail" "\$HTTP_RETRY"' 'usage "$status" "$HTTP_CODE" "$detail"'
-LANES="$TMP_ROOT/mutant-usage-retry/lanes"
-table \
-  "control: without the answer's Retry-After the usage refusal takes the default window|FETCH_STATUS=429;FETCH_RETRY_AFTER=900|$LIST|first.status=rate_limited refusalwindow=300"
-LANES="$SCRIPTS_DIR/lanes"
 
 # A refusal the state directory cannot hold leaves every caller re-posting each
 # pass, so the failure is a keyed notice naming the directory; the lane is still
@@ -718,11 +649,6 @@ mkdir -p "$UNRECORDED_STATE"
 : > "$UNRECORDED_STATE/usage"
 table \
   "a refusal that cannot be recorded is a notice naming the state directory, and the lane is still reported|FETCH_STATUS=429;OVERSEE_WATCH_STATE_DIR=$UNRECORDED_STATE|$LIST|rc=0 first.status=rate_limited keyed.refusal-unrecorded=refusal-unrecorded,dir=$UNRECORDED_STATE/usage"
-lanes_mutant mutant-unrecorded-silent lanes 'message refusal-unrecorded "\$USAGE_CACHE_DIR" >&2' ':'
-LANES="$TMP_ROOT/mutant-unrecorded-silent/lanes"
-table \
-  "control: without the notice the unrecorded refusal is silent|FETCH_STATUS=429;OVERSEE_WATCH_STATE_DIR=$UNRECORDED_STATE|$LIST|rc=0 first.status=rate_limited keyed.refusal-unrecorded=none"
-LANES="$SCRIPTS_DIR/lanes"
 
 echo "=== the real POST and GET, read through a curl shim ==="
 # Every other row injects ORCH_LANES_TOKEN_CMD or ORCH_LANES_FETCH_CMD, so none
@@ -797,31 +723,6 @@ table \
 curl_home curl-usage-interim 3600
 table \
   "a Retry-After on an interim block is not the refusal's, so a 429 naming none takes the default window|$CURL_ENV;CURL_USAGE_ANSWER=$CAPTURES/usage-429-interim-retry|$LIST|first.status=rate_limited refusalwindow=300"
-
-# The must-fail controls. The POST with its User-Agent line deleted, which is
-# the request the endpoint answers 429 to whatever the rate.
-lanes_mutant mutant-curl-ua lanes '-A "\$CLAUDE_TOKEN_UA"'
-curl_home curl-renew-control -60
-LANES="$TMP_ROOT/mutant-curl-ua/lanes"
-table \
-  "control: without the -A line the real POST names no User-Agent|$CURL_RENEW_ENV|$LIST|ua=UNSET"
-LANES="$SCRIPTS_DIR/lanes"
-# The parser with its Retry-After rule deleted, so every real refusal window
-# would fall back to the default.
-lanes_mutant mutant-http-retry lanes 'tolower(\$1) == "retry-after:"'
-curl_home curl-429-control -60
-LANES="$TMP_ROOT/mutant-http-retry/lanes"
-table \
-  "control: without the parser's Retry-After rule the real 429 takes the default window|$CURL_429_ENV|$LIST|claude.status=rate_limited refusalwindow=300"
-LANES="$SCRIPTS_DIR/lanes"
-# The parser carrying one Retry-After across blocks, so the interim block's
-# header is recorded as the refusal's window.
-lanes_mutant mutant-http-hop lanes 'blank = 0; retry = ""; next' 'blank = 0; next'
-curl_home curl-usage-interim-control 3600
-LANES="$TMP_ROOT/mutant-http-hop/lanes"
-table \
-  "control: without the per-block reset the interim block's Retry-After is the window|$CURL_ENV;CURL_USAGE_ANSWER=$CAPTURES/usage-429-interim-retry|$LIST|first.status=rate_limited refusalwindow=900"
-LANES="$SCRIPTS_DIR/lanes"
 
 echo "=== codex windows route by duration, not by position ==="
 # OpenAI's primary/secondary windows do not map to session/weekly by position:
@@ -991,44 +892,6 @@ else
     "the one-lane form notices an unreadable store and still answers the wall, which no claim count enters|live:%7|keepme:live:%7:claude|store|pick --lane $H/.claude --harness claude --json|rc=0 claims=null wall=20 key=pick-lane-claims,claims=null" \
     "one unreadable claim file is enough for pick to refuse|live:%7|keepme:live:%7:claude|file:keepme|$PICK|rc=1" \
     "an unreadable claim file is left in place|live:%7|keepme:live:%7:claude|file:keepme|$LIST|files=keepme"
-
-  # The two halves of the one-lane notice row, one defect per copy: a copy
-  # carrying both would pass while either was caught.
-  #
-  # Refusing on the store stops a launch over a field this form never reads,
-  # which is what the fleet chooser must do and this form must not: the chooser
-  # SORTS on the claim count, and this one judges a wall no count enters.
-  CLAIMSCTL="$TMP_ROOT/mutant-claims-refuse"
-  mkdir -p "$CLAIMSCTL/lib"
-  cp "$SCRIPTS_DIR/lanes" "$CLAIMSCTL/"
-  cp "$SCRIPTS_DIR/lib"/*.sh "$CLAIMSCTL/lib/"
-  chmod +x "$CLAIMSCTL/lanes"
-  assert_eq "$(grep -c -F '|| message pick-lane-claims >&2' "$CLAIMSCTL/lanes")" "1" \
-    "control finds exactly one claims notice to turn back into a refusal"
-  sed -i.bak 's/|| message pick-lane-claims >&2/|| { message pick-lane-claims >\&2; return 6; }/' "$CLAIMSCTL/lanes"
-  assert_eq "$(grep -c -F 'return 6; }' "$CLAIMSCTL/lanes")" "1" "control applied its mutation"
-  LANES_PATCHED="$LANES"
-  LANES="$CLAIMSCTL/lanes"
-  claims_table \
-    "control: refusing on the store stops a named lane whose wall was answerable|live:%7|keepme:live:%7:claude|store|pick --lane $H/.claude --harness claude --json|rc=6"
-  LANES="$LANES_PATCHED"
-
-  # And the field itself: defaulted to 0 rather than null, a store nobody could
-  # read reports an account with a session in flight as idle.
-  NULLCTL="$TMP_ROOT/mutant-claims-zero"
-  mkdir -p "$NULLCTL/lib"
-  cp "$SCRIPTS_DIR/lanes" "$NULLCTL/"
-  cp "$SCRIPTS_DIR/lib"/*.sh "$NULLCTL/lib/"
-  chmod +x "$NULLCTL/lanes"
-  assert_eq "$(grep -c -F 'local claims="null"' "$NULLCTL/lanes")" "1" \
-    "control finds exactly one unread-store claims default"
-  sed -i.bak 's/local claims="null"/local claims="0"/' "$NULLCTL/lanes"
-  assert_eq "$(grep -c -F 'local claims="null"' "$NULLCTL/lanes")" "0" "control applied its mutation"
-  LANES_PATCHED="$LANES"
-  LANES="$NULLCTL/lanes"
-  claims_table \
-    "control: defaulting the unread store to zero reports an account with a session in flight as idle|live:%7|keepme:live:%7:claude|store|pick --lane $H/.claude --harness claude --json|claims=0"
-  LANES="$LANES_PATCHED"
 fi
 
 echo "=== exclusion and retirement overlay discovery ==="
@@ -1180,64 +1043,54 @@ table "fractional +00:00 resets on both samples still expose the rate|ORCH_LANE_
 stage_cache 0
 table "one sample reports an unmeasured rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.projected_wall_minutes=null claude.usage_rate_state=one-sample"
 
-retain_rate_samples() { # LANES_BIN STATE
-  local bin="$1" state="$2" f
+retain_rate_samples() { # STATE
+  local state="$1" f
   rm -rf -- "${state:?}"
   claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.claude.json"
   env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
     OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
-    "$bin" list --harness claude --json --no-cache >/dev/null
+    "$LANES" list --harness claude --json --no-cache >/dev/null
   f="$(find "$state/usage" -type f -name '*.json' -print -quit)"
   jq --argjson at "$(( $(date +%s) - 600 ))" '.fetched_at = $at' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
   claude_usage 40 20 5 Opus > "$FIXTURE_DIR/.claude.json"
   env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
     OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
-    "$bin" list --harness claude --json --no-cache >/dev/null
+    "$LANES" list --harness claude --json --no-cache >/dev/null
   OUT="$(env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
     OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
-    "$bin" list --harness claude --json)"
+    "$LANES" list --harness claude --json)"
 }
 
-retain_rate_samples "$LANES" "$TMP_ROOT/retained-rate"
+retain_rate_samples "$TMP_ROOT/retained-rate"
 assert_eq "$(jq -r '.[0].usage_rate_state' <<<"$OUT")" "measured" \
   "two real fetches retain the displaced first sample for the next cache read"
-
-lanes_mutant no-retained-rate lanes 'argjson p "$prior"' 'argjson p "null"'
-retain_rate_samples "$TMP_ROOT/no-retained-rate/lanes" "$TMP_ROOT/mutant-retained-rate"
-assert_eq "$(jq -r '.[0].usage_rate_state' <<<"$OUT")" "one-sample" \
-  "control: without persisted retention the next cache read loses the rate sample"
 
 # A refresh answered after a usage 429 takes the figure kept beside that
 # refusal as its prior, under the figure's own stamp: the refusal's stamp
 # would read two samples ten minutes apart as seconds apart.
-refused_prior_rate() { # LANES_BIN STATE
-  local bin="$1" state="$2" f
+refused_prior_rate() { # STATE
+  local state="$1" f
   rm -rf -- "${state:?}"
   claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.claude.json"
   env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
     OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
-    "$bin" list --harness claude --json --no-cache >/dev/null
+    "$LANES" list --harness claude --json --no-cache >/dev/null
   age_usage_record "$state" "$H/.claude" 600
   env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
     OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
     FETCH_STATUS=429 FETCH_RETRY_AFTER=600 \
-    "$bin" list --harness claude --json >/dev/null
+    "$LANES" list --harness claude --json >/dev/null
   f="$(find "$state/usage" -type f -name '*.json' -print -quit)"
   jq '.refusal.expires_at = 0' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
   claude_usage 40 20 5 Opus > "$FIXTURE_DIR/.claude.json"
   OUT="$(env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
     OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
-    "$bin" list --harness claude --json)"
+    "$LANES" list --harness claude --json)"
 }
 
-refused_prior_rate "$LANES" "$TMP_ROOT/refused-prior"
+refused_prior_rate "$TMP_ROOT/refused-prior"
 assert_eq "$(jq -r '.[0] | "\(.status) \(.usage_rate_state)"' <<<"$OUT")" "ok measured" \
   "an answer after a 429 rates against the kept figure's own stamp"
-
-lanes_mutant refusal-stamped-prior lanes '{fetched_at: $at, usage}' '{fetched_at, usage}'
-refused_prior_rate "$TMP_ROOT/refusal-stamped-prior/lanes" "$TMP_ROOT/mutant-refused-prior"
-assert_eq "$(jq -r '.[0].usage_rate_state' <<<"$OUT")" "samples-too-close" \
-  "control: stamped with the refusal's instant, the same two samples read as seconds apart"
 
 echo "=== a refused usage refresh serves the last figures rather than walling the host ==="
 # The control VM's failure: eleven accounts answered HTTP 429 with valid
@@ -1279,17 +1132,6 @@ table \
   "a later caller inside that window posts nothing and still reports the figures|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=rate_limited first.headroom_pct=80 fetched=none" \
   "--no-cache inside it posts nothing either: it asks for a fresh figure, not to re-post a refused request|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST --no-cache|first.status=rate_limited first.headroom_pct=80 fetched=none" \
   "and pick judges those served figures instead of walling every launch on the host|$RL_ENV;ORCH_LANES_USAGE_TTL=0|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
-# The control: the served row left as `unreachable`, the word this served
-# figure replaced. The lane then measures nothing and `pick` refuses the fleet
-# for as long as the burst lasts.
-lanes_mutant mutant-rate-limited lanes \
-  'status="rate_limited"$' 'status="unreachable"'
-RL_PATCHED="$LANES"
-LANES="$TMP_ROOT/mutant-rate-limited/lanes"
-table \
-  "control: reported as unreachable instead, the same account measures nothing|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=unreachable first.headroom_pct=null" \
-  "control: and the whole host is walled for the length of a transient burst|$RL_ENV;ORCH_LANES_USAGE_TTL=0|pick --harness claude|rc=3"
-LANES="$RL_PATCHED"
 
 # A refusal the endpoint keeps giving never replaces the figure, so the figure
 # it serves only grows older. Past the 5-hour session window it cannot say what
@@ -1299,15 +1141,6 @@ age_usage_record "$RL_STATE" "$H/.claude" 86400
 table \
   "a figure a day old is not served under a refusal: the lane reports the refusal with no windows|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=rate_limited first.headroom_pct=null claude.cause=usage_query_refused_with_HTTP_429 fetched=none" \
   "and pick refuses the host rather than launching on that figure|$RL_ENV;ORCH_LANES_USAGE_TTL=0|pick --harness claude|rc=3"
-# The control: the age bound dropped, so any figure the host ever read stands
-# in for the refused one.
-lanes_mutant mutant-rate-limited-unbounded lanes \
-  '"\$SESSION_WINDOW_S")" || return 1' '"")" || return 1'
-LANES="$TMP_ROOT/mutant-rate-limited-unbounded/lanes"
-table \
-  "control: unbounded, the day-old figure is served as rate_limited|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=rate_limited first.headroom_pct=80" \
-  "control: and pick launches on it|$RL_ENV;ORCH_LANES_USAGE_TTL=0|pick --harness claude|rc=0"
-LANES="$RL_PATCHED"
 rm -f -- "${FIXTURE_DIR:?}/.claude.status"
 
 echo "=== a refusal's window is counted from when the refusal arrived ==="
@@ -1367,7 +1200,7 @@ printf '429 600\n' > "$FIXTURE_DIR/.claude.status.2"
 table \
   "refused twice with a cold cache, the lane reports the refusal with no windows|$COLD_ENV|$LIST|first.status=rate_limited first.headroom_pct=null fetched=claude,claude" \
   "the caller after it posts nothing and reports the refusal, the retry's being on record|$COLD_ENV|$LIST|first.status=rate_limited fetched=none"
-# The must-fail inverse: the SECOND request answers, so a retry that never
+# The inverse row: the SECOND request answers, so a retry that never
 # happened would leave this row on the first refusal. A state directory of its
 # own, so the window recorded above does not gate it. The answer also replaces
 # the refusal the first request recorded: a refusal left standing would keep
@@ -1389,14 +1222,6 @@ printf '429 1\n' > "$FIXTURE_DIR/.eclaude.status"
 COLD_PAIR_DIRS="ORCH_LANE_DIRS=$H/.claude:$H/.eclaude"
 table \
   "two cold lanes refused in one run spend one retry between them|$COLD_PAIR_DIRS;OVERSEE_WATCH_STATE_DIR=$TMP_ROOT/cold-pair-state|$LIST|claude.status=rate_limited eclaude.status=rate_limited fetched=claude,claude,eclaude"
-# The control: the per-run guard dropped, so every cold lane sleeps and posts
-# its own retry.
-lanes_mutant mutant-retry-per-lane lanes 'USAGE_RETRY_SPENT" == "false"'
-COLD_PATCHED="$LANES"
-LANES="$TMP_ROOT/mutant-retry-per-lane/lanes"
-table \
-  "control: unguarded, each cold lane posts a retry of its own|$COLD_PAIR_DIRS;OVERSEE_WATCH_STATE_DIR=$TMP_ROOT/cold-pair-mutant-state|$LIST|fetched=claude,claude,eclaude,eclaude"
-LANES="$COLD_PATCHED"
 rm -f -- "${FIXTURE_DIR:?}/.claude.status" "${FIXTURE_DIR:?}/.eclaude.status"
 
 echo "=== a caller naming its own pass interval is served its last figure ==="
@@ -1425,40 +1250,17 @@ table \
   "an interval shorter than the TTL never narrows it|$MA_ENV|$LIST --max-age 10|claude.aged=30+ fetched=none"
 table \
   "a TTL of 0 is never widened, so every run still fetches|$MA_ENV;ORCH_LANES_USAGE_TTL=0|$LIST --max-age 300|fetched=claude"
-# The control: the TTL-0 arm dropped, so the caller's interval serves a cached
-# figure to an operator who asked for a fetch on every run.
-lanes_mutant mutant-ttl-zero-widened lanes \
-  'if \[\[ "\$USAGE_TTL" -eq 0 \]\]; then' 'if false; then'
-MA_PATCHED="$LANES"
-LANES="$TMP_ROOT/mutant-ttl-zero-widened/lanes"
-table \
-  "control: widened, the TTL-0 run is served the cache instead|$MA_ENV;ORCH_LANES_USAGE_TTL=0|$LIST --max-age 300|fetched=none"
-LANES="$MA_PATCHED"
 # The setting is the only road oversee-watch has to this reader: it hands the
 # window to its judgement through the environment, never through argv.
 age_usage_record "$MA_STATE" "$H/.claude" 120
 table \
   "the setting widens the TTL the way --max-age does|$MA_ENV;ORCH_LANES_USAGE_MAX_AGE=300|$LIST|first.status=ok claude.aged=30+ fetched=none" \
   "a setting that is not a whole number of seconds is refused before any lane is measured|$MA_ENV;ORCH_LANES_USAGE_MAX_AGE=4m|$LIST|rc=1 key=invalid-usage-max-age,value=4m"
-# The control: the setting never read, so the watch's window is dropped.
-lanes_mutant mutant-max-age-setting-unread lanes \
-  'USAGE_MAX_AGE="\${ORCH_LANES_USAGE_MAX_AGE:-0}"' 'USAGE_MAX_AGE=0'
-LANES="$TMP_ROOT/mutant-max-age-setting-unread/lanes"
-table \
-  "control: unread, the same setting leaves the figure past the TTL and it is fetched|$MA_ENV;ORCH_LANES_USAGE_MAX_AGE=300|$LIST|fetched=claude"
-LANES="$MA_PATCHED"
 # A TTL written with a leading zero is decimal: 0300 is 300 seconds, so a
 # shorter named pass leaves it deciding and a figure 250 seconds old is served.
 age_usage_record "$MA_STATE" "$H/.claude" 250
 table \
   "a zero-padded TTL is read in base 10 and a shorter pass never narrows it|$MA_ENV;ORCH_LANES_USAGE_TTL=0300|$LIST --max-age 200|claude.aged=30+ fetched=none"
-# The control: the TTL left as written, so 0300 compares as octal 192 and the
-# named 200 seconds replaces it.
-lanes_mutant mutant-ttl-octal lanes 'USAGE_TTL=\$((10#\$USAGE_TTL))'
-LANES="$TMP_ROOT/mutant-ttl-octal/lanes"
-table \
-  "control: read as octal, the shorter pass narrows the TTL and the figure is fetched|$MA_ENV;ORCH_LANES_USAGE_TTL=0300|$LIST --max-age 200|fetched=claude"
-LANES="$MA_PATCHED"
 
 echo "=== one host-wide refresh per window, whatever the number of callers ==="
 # The TTL alone cannot do this: at expiry every caller's fetch lands in the
@@ -1472,7 +1274,7 @@ make_lane "$H" eclaude 3600
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 80 30 10 Opus > "$FIXTURE_DIR/.eclaude.json"
 LOCK_LOG="$TMP_ROOT/lockshare-fetch.log"
-# concurrent_fetches SCRIPT STATE_DIR ARGS... -- two `lanes ARGS` runs started
+# concurrent_fetches STATE_DIR ARGS... -- two `lanes ARGS` runs started
 # together against one state directory and one log; prints the lanes fetched
 # across both, each repeated once per request it served. Each call takes its OWN empty
 # state directory rather than clearing a shared one, so no run can read a
@@ -1480,36 +1282,25 @@ LOCK_LOG="$TMP_ROOT/lockshare-fetch.log"
 # enough that two unsynchronized callers provably overlap, so a single count is
 # the lock and not the scheduler.
 concurrent_fetches() {
-  local i script="$1" state="$2"
-  shift 2
+  local i state="$1"
+  shift
   : > "$LOCK_LOG"
   for i in 1 2; do
     ( cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" \
       FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" FETCH_LOG="$LOCK_LOG" \
       FETCH_DELAY=1 ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" \
       OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
-      "$script" "$@" >/dev/null 2>&1 ) &
+      "$LANES" "$@" >/dev/null 2>&1 ) &
   done
   wait
   fetched_lanes "$LOCK_LOG"
 }
-assert_eq "$(concurrent_fetches "$LANES" "$TMP_ROOT/lockshare-locked" list --harness claude --json)" "claude,eclaude" \
+assert_eq "$(concurrent_fetches "$TMP_ROOT/lockshare-locked" list --harness claude --json)" "claude,eclaude" \
   "two callers arriving together are one refresh of each account, not two"
 # The single-account read open-terminal and lane-mail-check make before every
 # launch and every turn end goes through the same lock on a miss.
-assert_eq "$(concurrent_fetches "$LANES" "$TMP_ROOT/lockshare-pick" pick --lane "$H/.claude" --harness claude --json)" "claude" \
+assert_eq "$(concurrent_fetches "$TMP_ROOT/lockshare-pick" pick --lane "$H/.claude" --harness claude --json)" "claude" \
   "two pick --lane callers arriving together are one refresh of that account"
-# The control: without the lock each caller fetches every account for itself,
-# which is the burst the endpoint refused. The take is deleted and the release
-# kept, and a release with nothing held is a no-op.
-lanes_mutant mutant-usage-lock lanes \
-  'usage_lock_take$'
-assert_eq "$(concurrent_fetches "$TMP_ROOT/mutant-usage-lock/lanes" "$TMP_ROOT/lockshare-unlocked" list --harness claude --json)" \
-  "claude,claude,eclaude,eclaude" \
-  "control: unlocked, the same two callers post one request per account each"
-assert_eq "$(concurrent_fetches "$TMP_ROOT/mutant-usage-lock/lanes" "$TMP_ROOT/lockshare-pick-unlocked" pick --lane "$H/.claude" --harness claude --json)" \
-  "claude,claude" \
-  "control: unlocked, the two pick --lane callers post one request each"
 
 # NOFLOCK is this PATH with flock taken out, so a run takes the mkdir mutex
 # file-lock.sh falls back to where flock is absent.
@@ -1533,17 +1324,6 @@ assert_eq "$(PATH="$NOFLOCK" command -v flock > /dev/null 2>&1 && echo found || 
 NF_ENV="ORCH_LANE_DIRS=$H/.claude:$H/.eclaude;PATH=$CLAIM_BIN:$NOFLOCK"
 table \
   "without flock, one run refreshing two cold lanes frees the mutex between them|$NF_ENV|$LIST|key=none fetched=claude,eclaude"
-# The control: the mutex release deleted. The second lane's take then waits on
-# the run's own first one and names it.
-lanes_mutant mutant-noflock-release lanes \
-  '	orch_release_lock$'
-NF_PATCHED="$LANES"
-LANES="$TMP_ROOT/mutant-noflock-release/lanes"
-run_lanes "$NF_ENV" $LIST
-assert_eq "$(observe 'key= fetched=')" \
-  "key=usage-lock-timeout,lock-file=$RUN/store/usage/.usage-refresh.lock,wait-s=10 fetched=claude,eclaude" \
-  "control: with the release deleted, the run waits on its own mutex and names it" "$ERR"
-LANES="$NF_PATCHED"
 
 echo "=== a lane the cache can answer never waits for the refresh lock ==="
 # `pick --lane` runs under lane-mail-check's 20-second ceiling. A lane whose
@@ -1580,18 +1360,6 @@ release_usage_lock() {
   LOCK_HOLDER=""
   rmdir -- "$1.d" 2> /dev/null || true
 }
-# waited_s ENV ARGS... — runs `lanes` and sets LW_WAIT to how many whole
-# seconds it took. It sets OUT, RC and ERR as run_lanes does, so it runs in this
-# shell. Only a control reads LW_WAIT, as a floor the lock wait itself enforces;
-# no row bounds a run from above with the clock.
-LW_WAIT=0
-waited_s() {
-  local start env="$1"
-  shift
-  start="$(date +%s)"
-  run_lanes "$env" "$@"
-  LW_WAIT=$(( $(date +%s) - start ))
-}
 hold_usage_lock "$LW_LOCK"
 # No clock bounds this row: a read that queued behind the holder names the lock
 # it waited on, so the absence of that notice is the pin, on any runner.
@@ -1599,16 +1367,6 @@ run_lanes "$LW_ENV" pick --lane "$H/.claude" --harness claude --json
 assert_eq "$(observe 'rc= key= fetched=')" \
   "rc=0 key=none fetched=none" \
   "with the lock held elsewhere, pick --lane answers a warm lane off the cache at once" "$ERR"
-# The control: the cache read before the lock skipped, which is the lock
-# covering the read. The same pick then waits the whole lock wait out.
-lanes_mutant mutant-lock-over-read lanes \
-  'if ! usage_from_record "\$now_s"; then' 'if true; then'
-LW_PATCHED="$LANES"
-LANES="$TMP_ROOT/mutant-lock-over-read/lanes"
-waited_s "$LW_ENV" pick --lane "$H/.claude" --harness claude --json
-assert_eq "$([[ "$LW_WAIT" -ge 10 ]] && echo waited || echo "prompt:${LW_WAIT}s")" "waited" \
-  "control: with the lock over the read, the warm lane waits for the holder"
-LANES="$LW_PATCHED"
 # A lock that never comes free is a keyed notice, and the lane is still
 # refreshed and answered. The figure is expired first, so this read needs the
 # lock it cannot have.
@@ -1679,20 +1437,6 @@ release_usage_lock "$LR_LOCK"
 assert_eq "$(observe 'rc= key= fetched=')" \
   "rc=0 key=none fetched=none" \
   "after a renewal that waited, pick --lane answers off the peer's figure without the usage lock" "$ERR"
-# The control: the clock the read judges by left at the one measure_lane
-# started with. The same pick then misses the peer's figure, waits the whole
-# lock wait out and names the lock it could not take.
-lanes_mutant mutant-stale-read-clock lanes \
-  '	now_s="\$(date +%s)"$'
-LR_PATCHED="$LANES"
-LANES="$TMP_ROOT/mutant-stale-read-clock/lanes"
-lr_expire_and_hold
-waited_s "$LR_ENV" pick --lane "$H/.claude" --harness claude --json
-release_usage_lock "$LR_LOCK"
-assert_eq "$(observe 'key=') $([[ "$LW_WAIT" -ge 10 ]] && echo waited || echo "prompt:${LW_WAIT}s")" \
-  "key=usage-lock-timeout,lock-file=$LR_LOCK,wait-s=10 waited" \
-  "control: with the stale clock, the same pick waits for the lock over a figure already there"
-LANES="$LR_PATCHED"
 
 echo "=== the usage TTL default outlasts the longest watch interval on the host ==="
 # A TTL under `oversee-watch --interval` has every pass find the figure expired
@@ -1876,53 +1620,6 @@ jq -n '{
 table \
   "a lane is picked when its shared and named model buckets are below the bound||$SHARED_PICK|rc=0 binding_bucket=model binding_resets_at=2026-08-02T06:00:00Z wall=70 key=none"
 
-# Control: remove the shared candidates from the one judge. The account with a
-# spent 5-hour window then passes on its low model bucket.
-jq -n '{
-  five_hour: {utilization: 85, resets_at: "2026-07-27T06:00:00Z"},
-  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
-  limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-02T06:00:00Z",
-            scope: {model: {display_name: "Fable"}}},
-           {kind: "weekly_scoped", percent: 95, resets_at: "2026-08-03T06:00:00Z",
-            scope: {model: {display_name: "Opus"}}}]
-}' > "$FIXTURE_DIR/.claude.json"
-SHARED_MUTANT="$TMP_ROOT/mutant-shared-model-wall"
-mkdir -p "$SHARED_MUTANT/lib"
-cp "$SCRIPTS_DIR/lanes" "$SHARED_MUTANT/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$SHARED_MUTANT/lib/"
-chmod +x "$SHARED_MUTANT/lanes"
-assert_eq "$(grep -c -F '| (shared_bindings' "$SHARED_MUTANT/lib/lane-model.sh")" "1" \
-  "control finds exactly one shared-window input to drop"
-sed -i.bak 's/| (shared_bindings/| ([]/' "$SHARED_MUTANT/lib/lane-model.sh"
-assert_eq "$(grep -c -F '| (shared_bindings' "$SHARED_MUTANT/lib/lane-model.sh")" "0" \
-  "control applied its mutation"
-LANES_PATCHED="$LANES"
-LANES="$SHARED_MUTANT/lanes"
-table \
-  "control: without shared buckets the spent account passes on its model bucket||$SHARED_PICK|rc=0 binding_bucket=model wall=10 key=none"
-LANES="$LANES_PATCHED"
-table \
-  "the patched judge refuses the same account on its shared 5-hour bucket||$SHARED_PICK|rc=3 binding_bucket=session wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=session,max-pct=80"
-
-# Control: preserve the wall but stop carrying its bucket into the returned
-# record. The refusal then misnames the unrelated model bucket as its cause.
-BUCKET_MUTANT="$TMP_ROOT/mutant-binding-bucket"
-mkdir -p "$BUCKET_MUTANT/lib"
-cp "$SCRIPTS_DIR/lanes" "$BUCKET_MUTANT/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$BUCKET_MUTANT/lib/"
-chmod +x "$BUCKET_MUTANT/lanes"
-assert_eq "$(grep -c -F 'binding_bucket: ($binding.bucket // null)' "$BUCKET_MUTANT/lib/lane-model.sh")" "1" \
-  "control finds exactly one returned bucket field to break"
-sed -i.bak 's/binding_bucket: ($binding.bucket \/\/ null)/binding_bucket: .binding_bucket/' "$BUCKET_MUTANT/lib/lane-model.sh"
-assert_eq "$(grep -c -F 'binding_bucket: ($binding.bucket // null)' "$BUCKET_MUTANT/lib/lane-model.sh")" "0" \
-  "control applied its mutation"
-LANES="$BUCKET_MUTANT/lanes"
-table \
-  "control: without the returned decision bucket the refusal names the unrelated model maximum||$SHARED_PICK|rc=3 binding_bucket=model wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=model,max-pct=80"
-LANES="$LANES_PATCHED"
-table \
-  "the patched record names the shared bucket that produced the wall||$SHARED_PICK|rc=3 binding_bucket=session wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=session,max-pct=80"
-
 # A lane measured on its scoped window alone answers nothing about a model that
 # window does not name, and an unanswered question is never read as "it is free".
 new_home model-only
@@ -1969,120 +1666,6 @@ table \
   "the legacy window scoped to the model being passed walls the lane||$MODELPICK --model opus|rc=3" \
   "a model neither legacy field names is judged on the session and weekly windows alone||$MODELPICK --model fable|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
 
-# Control: with the unnamed-window clause gone, a window that names no model
-# matches no model, and the account it walls is handed back for that launch.
-new_home model-unnamed-control
-make_lane "$H" claude 3600
-jq -n '{
-  five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
-  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
-  limits: [{kind: "weekly_scoped", percent: 99, resets_at: "2026-08-01T06:00:00Z",
-            scope: {model: {}}}]
-}' > "$FIXTURE_DIR/.claude.json"
-UNNAMED="$TMP_ROOT/mutant-unnamed"
-mkdir -p "$UNNAMED/lib"
-cp "$SCRIPTS_DIR/lanes" "$UNNAMED/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$UNNAMED/lib/"
-chmod +x "$UNNAMED/lanes"
-assert_eq "$(grep -c -F 'select(.label == null' "$UNNAMED/lib/lane-model.sh")" "1" \
-  "control finds exactly one unnamed-window clause to drop"
-sed -i.bak 's/select(\.label == null/select(false/' "$UNNAMED/lib/lane-model.sh"
-assert_eq "$(grep -c -F 'select(.label == null' "$UNNAMED/lib/lane-model.sh")" "0" \
-  "control applied its mutation"
-LANES_PATCHED="$LANES"
-LANES="$UNNAMED/lanes"
-table \
-  "control: with the unnamed-window clause gone the walled account is handed back||$MODELPICK --model opus|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
-LANES="$LANES_PATCHED"
-
-# Control: with the scoped windows out of the judge, --model reads the session
-# and weekly windows alone and hands back the very account it was asked about.
-# The mutation is one term of one line, so the row it reddens is the rule and
-# not the plumbing around it.
-new_home model-wall-control
-make_lane "$H" claude 3600
-jq -n '{
-  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
-  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
-  limits: [{kind: "weekly_scoped", percent: 95, resets_at: "2026-08-01T06:00:00Z",
-            scope: {model: {display_name: "Fable 5.1"}}}]
-}' > "$FIXTURE_DIR/.claude.json"
-MUTANT="$TMP_ROOT/mutant-model"
-mkdir -p "$MUTANT/lib"
-cp "$SCRIPTS_DIR/lanes" "$MUTANT/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$MUTANT/lib/"
-chmod +x "$MUTANT/lanes"
-assert_eq "$(grep -c -F '(.model_buckets // [])[]' "$MUTANT/lib/lane-model.sh")" "1" \
-  "control finds exactly one scoped-window term to drop"
-sed -i.bak 's/(\.model_buckets \/\/ \[\])\[\]/([])[]/' "$MUTANT/lib/lane-model.sh"
-assert_eq "$(grep -c -F '(.model_buckets // [])[]' "$MUTANT/lib/lane-model.sh")" "0" \
-  "control applied its mutation"
-LANES_PATCHED="$LANES"
-LANES="$MUTANT/lanes"
-table \
-  "control: with the scoped windows out of the judge the walled account is handed back||$MODELPICK --model fable|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
-LANES="$LANES_PATCHED"
-table \
-  "the same fixture and the same question refuses on the patched judge||$MODELPICK --model fable|rc=3"
-
-# Control: with the separator stripping gone the label match is raw containment
-# again, and neither `fable 5.1` nor `claude-fable-5-1` sits inside the other,
-# so the account with no window left for that very model is handed back for a
-# launch on it.
-new_home model-norm-control
-make_lane "$H" claude 3600
-jq -n '{
-  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
-  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
-  limits: [{kind: "weekly_scoped", percent: 95, resets_at: "2026-08-01T06:00:00Z",
-            scope: {model: {display_name: "Fable 5.1"}}}]
-}' > "$FIXTURE_DIR/.claude.json"
-NORM="$TMP_ROOT/mutant-norm"
-mkdir -p "$NORM/lib"
-cp "$SCRIPTS_DIR/lanes" "$NORM/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$NORM/lib/"
-chmod +x "$NORM/lanes"
-assert_eq "$(grep -c -F 'ascii_downcase | gsub("[^a-z0-9]"; "")' "$NORM/lib/lane-model.sh")" "1" \
-  "control finds exactly one separator-stripping term to drop"
-sed -i.bak 's#ascii_downcase | gsub("\[^a-z0-9]"; "")#ascii_downcase#' "$NORM/lib/lane-model.sh"
-assert_eq "$(grep -c -F 'ascii_downcase | gsub("[^a-z0-9]"; "")' "$NORM/lib/lane-model.sh")" "0" \
-  "control applied its mutation"
-LANES_PATCHED="$LANES"
-LANES="$NORM/lanes"
-table \
-  "control: with the stripping gone the full model id misses its own window and the walled account is handed back||$MODELPICK --model claude-fable-5-1|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
-LANES="$LANES_PATCHED"
-table \
-  "the same fixture and the same question refuses on the patched judge||$MODELPICK --model claude-fable-5-1|rc=3"
-
-# Control: with the legacy Opus window gone from the parse the account keeps
-# only its Sonnet window, and the one walled for Opus is handed back.
-new_home legacy-model-control
-make_lane "$H" claude 3600
-jq -n '{
-  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
-  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
-  seven_day_sonnet: {utilization: 10, resets_at: "2026-08-01T06:00:00Z"},
-  seven_day_opus: {utilization: 97, resets_at: "2026-08-01T06:00:00Z"}
-}' > "$FIXTURE_DIR/.claude.json"
-LEGACY="$TMP_ROOT/mutant-legacy"
-mkdir -p "$LEGACY/lib"
-cp "$SCRIPTS_DIR/lanes" "$LEGACY/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$LEGACY/lib/"
-chmod +x "$LEGACY/lanes"
-assert_eq "$(grep -c -F 'if .seven_day_opus != null then' "$LEGACY/lanes")" "1" \
-  "control finds exactly one legacy Opus append to drop"
-sed -i.bak 's#if \.seven_day_opus != null then#if false then#' "$LEGACY/lanes"
-assert_eq "$(grep -c -F 'if .seven_day_opus != null then' "$LEGACY/lanes")" "0" \
-  "control applied its mutation"
-LANES_PATCHED="$LANES"
-LANES="$LEGACY/lanes"
-table \
-  "control: with the legacy Opus window out of the parse the walled account is handed back||$MODELPICK --model opus|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
-LANES="$LANES_PATCHED"
-table \
-  "the same fixture and the same question refuses on the patched parse||$MODELPICK --model opus|rc=3"
-
 echo "=== pick --lane judges one named account, and says which outcome it reached ==="
 # The form open-terminal calls. Every exit it can reach is driven here directly,
 # because a launcher asserting its OWN keys proves nothing about the ones this
@@ -2110,28 +1693,6 @@ table \
   "a directory no lane record covers refuses 4, which a launcher reads as nothing to judge||pick --lane $TMP_ROOT/not-a-lane --harness claude --model opus|rc=4 key=pick-lane-unlisted,lane=$TMP_ROOT/not-a-lane,harness=claude" \
   "a threshold the parser refuses never reaches a lane at all||$ONE --model opus --max-pct 90%|rc=1 key=invalid-percent,option=--max-pct" \
   "a codex lane prints the codex spelling of the prefix||pick --lane $H/.codex --harness codex --model fable|rc=0 out=CODEX_HOME=$H/.codex key=none"
-
-echo "=== one verdict classifier: both pick forms redden together ==="
-# Room, walled and unmeasured are named once, in lib/lane-model.sh's
-# wall_verdict, and BOTH pick forms classify through it. The control mutates
-# that one definition so an unmeasured lane reads as room, and asserts the
-# fleet chooser AND the named form each hand the lane back: a second copy of
-# the predicate in either form would leave that form's row green.
-new_home shared-verdict
-make_lane "$H" claude 3600
-jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
-                  scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.claude.json"
-lanes_mutant mutant-verdict lib/lane-model.sh \
-  'if \. == null then "unmeasured"' 'if false then "unmeasured"'
-LANES_PATCHED="$LANES"
-LANES="$TMP_ROOT/mutant-verdict/lanes"
-table \
-  "control: with the unmeasured arm gone the fleet chooser hands the lane back||$MODELPICK --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
-  "control: and the named form hands the same lane back, so the two read one definition||pick --lane $H/.claude --harness claude --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
-LANES="$LANES_PATCHED"
-table \
-  "the fleet chooser refuses on the patched classifier, naming the unmeasured cause and the model||$MODELPICK --model sonnet|rc=3 key=no-candidate-unmeasured,harness=claude,model=sonnet,unmeasured=1" \
-  "and the named form refuses 5 on the same fixture and the same question||pick --lane $H/.claude --harness claude --model sonnet|rc=5 key=pick-lane-unmeasured,lane=$H/.claude,model=sonnet"
 
 echo "=== the bound is one number, in either spelling ==="
 # Strictly MORE headroom than the bound qualifies, so a lane sitting exactly on
@@ -2201,17 +1762,6 @@ table \
   "a codex account the provider holds is not listed in a claude listing|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-mixed.tsv|list --harness claude --json|rc=0 through=claude:local length=1 key=none" \
   "the default listing carries the host row, so the harness a caller did not name is every harness|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --json|rc=0 through=claude:local,claude:host length=2 key=none"
 
-# Control: keep the hosted model percentage and label, but drop its reset at
-# the protocol parser. The hosted row still carries the model bucket, while
-# the returned reset becomes null.
-lanes_mutant mutant-host-model-reset lanes \
-  'model: nz(\$mr)' 'model: null'
-LANES_PATCHED="$LANES"
-LANES="$TMP_ROOT/mutant-host-model-reset/lanes"
-table \
-  "control: without the hosted model reset propagation the hosted model bucket has no reset|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json --no-cache|last.measured_through=host last.binding_bucket=model last.binding_resets_at=null"
-LANES="$LANES_PATCHED"
-
 # The verb is OPTIONAL: a provider without it gives no answer, which is not a
 # failure. Both listings are captured whole and compared, because the claim is
 # that the verb-absent listing is EXACTLY the no-provider one rather than merely
@@ -2225,32 +1775,6 @@ run_lanes "$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1" list --harness claude --json
 assert_eq "rc=$RC json=$([[ "$OUT" == "$NO_PROVIDER_OUT" ]] && echo same || echo differs) stderr=$([[ "$(cat "$ERR")" == "$NO_PROVIDER_ERR" ]] && echo same || echo "$(cat "$ERR")")" \
   "rc=0 json=same stderr=same" \
   "a provider without the verb lists exactly what the no-provider reading lists, and says nothing"
-
-# Control: without the arm that reads exit 2 as the absent verb, a provider that
-# never implemented it is reported as one that failed, and its parser's own
-# bytes land in a listing the overseer runs constantly. The mutation is the one
-# status term, so the row it reddens is that rule and not the merge around it.
-lanes_mutant mutant-optional-verb lanes \
-  'if \[\[ "\$rc" -ne 2 \]\]; then' 'if [[ "$rc" -ne 0 ]]; then'
-LANES_PATCHED="$LANES"
-LANES="$TMP_ROOT/mutant-optional-verb/lanes"
-table \
-  "control: without the absent-verb status a provider that never implemented it is reported as failing|$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1|list --harness claude --json|through=claude:local length=1 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=2"
-LANES="$LANES_PATCHED"
-
-# The two settings that remove a local lane remove a host row, one control each:
-# without the exclusion the account comes back as host capacity, and without the
-# retirement arm it comes back as an ok row with headroom the overseer would
-# place an item on. Each mutant is its own copy, so a row names one rule.
-lanes_mutant mutant-host-exclude lanes 'if lane_excluded "\$account"; then' 'if false; then'
-LANES="$TMP_ROOT/mutant-host-exclude/lanes"
-table \
-  "control: without the exclusion the excluded account is listed again through the host|$HOST_ENV;ORCH_LANE_EXCLUDE=eclaude;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-two.tsv|list --harness claude --json|length=3 eclaude.measured_through=host"
-lanes_mutant mutant-host-retire lanes 'if retire="\$(lane_retired "\$account")"; then' 'if false; then'
-LANES="$TMP_ROOT/mutant-host-retire/lanes"
-table \
-  "control: without the retirement arm the retired account is listed as ok, with headroom to place an item on|$HOST_ENV;ORCH_LANE_RETIRE=eclaude=2000-01-01;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-two.tsv|list --harness claude --json|eclaude.status=ok eclaude.headroom_pct=91"
-LANES="$LANES_PATCHED"
 
 # --local is what the launcher's own lookups pass: resolving a config dir by
 # alias must cost no provider round trip. Each half writes its own call log, so
@@ -2295,17 +1819,6 @@ run_lanes "$TTL_ENV;LANE_HOST_STUB_LOG=$MALFORMED_LOG" list --harness claude --j
 assert_eq "calls=$(grep -c '^accounts' "$MALFORMED_LOG" || true) $(observe 'through=claude:local,claude:host key=none')" \
   "calls=1 through=claude:local,claude:host key=none" \
   "a cached record this script cannot read is a miss: the provider is asked again and no row is invented from it"
-# Control: without the cache read every invocation forks its own provider call,
-# which is the cost this cache exists to remove.
-lanes_mutant mutant-accounts-uncached lanes \
-  'if \[\[ "\$USE_CACHE" == "true" \]\] && cached="\$(read_usage_cache host-accounts "\$host" "\$now_s" "\$(usage_serve_max_age)")"; then' 'if false; then'
-UNCACHED_LOG="$TMP_ROOT/accounts-uncached.log"; : > "$UNCACHED_LOG"
-LANES_PATCHED="$LANES"
-LANES="$TMP_ROOT/mutant-accounts-uncached/lanes"
-run_lanes "$TTL_ENV;LANE_HOST_STUB_LOG=$UNCACHED_LOG" list --harness claude --json
-assert_eq "calls=$(grep -c '^accounts' "$UNCACHED_LOG" || true)" "calls=1" \
-  "control: without the cache read the same second listing forks its own provider call"
-LANES="$LANES_PATCHED"
 run_lanes "$TTL_ENV;LANE_HOST_STUB_LOG=$TTL_THIRD" list --harness claude --json --no-cache
 assert_eq "calls=$(grep -c '^accounts' "$TTL_THIRD" || true) $(observe 'through=claude:local,claude:host')" \
   "calls=1 through=claude:local,claude:host" \
@@ -2353,29 +1866,14 @@ OCTAL_ENV="ORCH_LANE_HOST=$SLOW_HOST;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=08;ACCOUN
 if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
   table \
     "a provider that does not return inside the bound is the verb failing, and the listing stays local|$SLOW_ENV|list --harness claude --json|rc=0 through=claude:local length=1 key=host-accounts-unreadable,host=$SLOW_HOST,exit=124"
-  # Control: with the bound not applied the same provider is waited out in full
-  # and answers nothing, which is the unbounded wait on every overseer cycle.
-  lanes_mutant mutant-accounts-unbound lanes \
-    '\-n "\$ACCOUNTS_TIMEOUT_CMD" \]\]; then' '-z "$ACCOUNTS_TIMEOUT_CMD" ]]; then'
-  LANES_PATCHED="$LANES"
-  LANES="$TMP_ROOT/mutant-accounts-unbound/lanes"
-  table \
-    "control: with the bound not applied the slow provider is waited out and reports nothing|$SLOW_ENV|list --harness claude --json|rc=0 through=claude:local key=none"
-  LANES="$LANES_PATCHED"
   # Bash arithmetic reads a leading zero as an octal literal, and 08 is not one:
   # every `-ne 0` test on the raw setting errors, which skips the bound and the
   # unbounded-read refusal alike and leaves the overseer waiting on the provider.
   # The setting is normalized to its decimal reading once, at validation.
   table \
     "a bound written with a leading zero is read in base 10 and still bounds the provider|$OCTAL_ENV|list --harness claude --json|rc=0 through=claude:local length=1 key=host-accounts-unreadable,host=$SLOW_HOST,exit=124"
-  lanes_mutant mutant-accounts-octal lanes 'ACCOUNTS_TIMEOUT_S=\$((10#\$ACCOUNTS_TIMEOUT_S))'
-  LANES_PATCHED="$LANES"
-  LANES="$TMP_ROOT/mutant-accounts-octal/lanes"
-  table \
-    "control: without that normalization the leading-zero bound is never applied and the provider is waited out|$OCTAL_ENV|list --harness claude --json|rc=0 through=claude:local key=none"
-  LANES="$LANES_PATCHED"
 else
-  echo "  skip  neither timeout nor gtimeout is installed; the accounts bound rows and their controls did not run"
+  echo "  skip  neither timeout nor gtimeout is installed; the accounts bound rows did not run"
 fi
 table \
   "a bound the parser cannot read refuses before any provider runs, named as the setting|ORCH_LANE_HOST=$SLOW_HOST;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=soon|list --harness claude --json|rc=1 key=invalid-accounts-timeout,value=soon"
@@ -2389,7 +1887,7 @@ table \
 # the gate path, so this is the launcher's probe.
 lanes_mutant mutant-accounts-nobound lanes 'for _accounts_timeout in timeout gtimeout; do' 'for _accounts_timeout in; do'
 LANES_PATCHED="$LANES"
-LANES="$TMP_ROOT/mutant-accounts-nobound/lanes"
+LANES="$TMP_ROOT/mutant-accounts-nobound/scripts/lanes"
 table \
   "with no timeout command a cached listing still asks the provider and answers|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|rc=0 through=claude:local,claude:host length=2 key=none" \
   "with no timeout command the uncached probe is refused, naming the bound it could not apply|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness claude --no-cache|rc=1 lines=0 key=host-accounts-unbounded,host=$HOST_FIXTURE,bound-s=10" \
@@ -2427,17 +1925,15 @@ echo "=== a renewal a ceiling lands on finishes, keeps the rotated token and rel
 # workflow-state-flockless.sh builds its own: the real PATH minus flock, so it
 # stays true as `lanes` changes.
 #
-# The two mutex assertions read the SETTLED state rather than the instant the
+# The mutex assertion reads the SETTLED state rather than the instant the
 # ceiling returns, through lib/lanes-fixture.sh's `settled_mutex`, the one
 # reading of a reaped lock these suites share. The credentials check reads the
 # file only once the mutex assertion before it has waited for the release,
 # which comes after the rename.
 #
-# Each run gets its own OVERSEE_WATCH_STATE_DIR, because `lanes` also takes the
-# host-wide usage mutex under that directory and the control below reaps a run
-# whose release is gutted: sharing the fallback under the checkout would leave
-# that mutex for the next row to wait out, and its own reading would then be of
-# a renewal that never started.
+# The run gets its own OVERSEE_WATCH_STATE_DIR, because `lanes` also takes the
+# host-wide usage mutex under that directory, and the fallback under the
+# checkout is shared with every other run on this host.
 #
 # The library rule has its own rows in file-lock-messages.sh; what those cannot
 # reach is whether the SHIPPED caller takes it. The ceiling row below lands
@@ -2491,35 +1987,6 @@ if command -v timeout > /dev/null 2>&1; then
   assert_eq "$(jq -r '.claudeAiOauth.refreshToken + " " + .claudeAiOauth.accessToken' "$H/.claude/.credentials.json" 2>/dev/null || echo UNREADABLE)" \
     "rotated-refresh renewed-token" \
     "and the credentials file holds the rotated refresh token the endpoint answered with"
-
-  # The must-fail control: every handler orch_take_lock arms dropped and the
-  # renewal left as it was, so the mutex is taken and nothing runs to give it
-  # back once the renewal ends. A control that removed the lock instead would prove the assertion
-  # runs rather than that the release does.
-  CEILCTL="$TMP_ROOT/mutant-ceiling"
-  mkdir -p "$CEILCTL/lib"
-  cp "$SCRIPTS_DIR/lanes" "$CEILCTL/"
-  cp "$SCRIPTS_DIR/lib"/*.sh "$CEILCTL/lib/"
-  chmod +x "$CEILCTL/lanes"
-  assert_eq "$(grep -c -E '^  trap .*orch_release_lock' "$CEILCTL/lib/file-lock.sh")" "3" \
-    "control finds the three handlers that carry the release"
-  # Substituted, never deleted: two of the three are the whole body of
-  # orch_arm_lock_signals, and a function left empty is a parse error, which
-  # would redden the row for a reason that is not the missing release.
-  sed -i.bak -E 's/^  trap (.*orch_release_lock.*)$/  :/' "$CEILCTL/lib/file-lock.sh"
-  assert_eq "$(grep -c -E '^  trap .*orch_release_lock' "$CEILCTL/lib/file-lock.sh")" "0" \
-    "control applied its mutation"
-  assert_eq "$(bash -n "$CEILCTL/lib/file-lock.sh" 2>&1 && echo parses || echo broken)" "parses" \
-    "and the mutated library still parses, so the row measures the release and nothing else"
-  new_home ceiling-control
-  make_lane "$H" claude -60
-  claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-  PATH="$NOFLOCK" LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
-    OVERSEE_WATCH_STATE_DIR="$H/state" \
-    ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_SLOW" \
-    timeout 2 "$CEILCTL/lanes" pick --lane "$H/.claude" --harness claude --json > /dev/null 2>&1 || true
-  assert_eq "$(settled_mutex "$H/.claude/.lanes-refresh.lock.d" 50)" "held" \
-    "control: without those handlers the renewal leaves the mutex behind"
 else
   printf '  skip  a renewal a ceiling lands on: this host has no timeout to bound one with\n'
 fi
@@ -2539,16 +2006,10 @@ table \
   "the flag still outranks the setting|ORCH_LANE_MAX_PCT=94|pick --harness claude --max-pct 95|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "a setting outside 0-100 is refused before any lane is measured|ORCH_LANE_MAX_PCT=94%|pick --harness claude|rc=1 key=invalid-lane-max-pct,value=94%"
 
-# The control moves the default back to the number this change replaced: the
-# account at 94 percent is then refused, and the launchable headroom between 90
-# and 95 that the owner rule opens is unused again. The whole lib directory
-# comes with the copy because `lanes` sources its libraries beside itself, so a
-# lone copy of the script would die on startup and credit a pass to nothing.
-MUTANT_DIR="$TMP_ROOT/mutant-default"
-mkdir -p "$MUTANT_DIR/lib"
-cp "$SCRIPTS_DIR/lanes" "$MUTANT_DIR/" || { printf 'control: copy failed\n' >&2; exit 1; }
-cp "$SCRIPTS_DIR/lib"/*.sh "$MUTANT_DIR/lib/" || { printf 'control: lib copy failed\n' >&2; exit 1; }
-chmod +x "$MUTANT_DIR/lanes"
+# The suite's one must-fail control on `pick`: the default moved back to 90, so
+# the account at 94 percent is refused and the launchable headroom between 90
+# and 95 that the owner rule opens is unused again.
+MUTANT_DIR="$(mutant_scripts mutant-default lanes)" || exit 1
 mutate_file "$MUTANT_DIR/lanes" 'ORCH_LANE_MAX_PCT:-95' 'ORCH_LANE_MAX_PCT:-90'
 LANES_REAL="$LANES"; LANES="$MUTANT_DIR/lanes"
 table \

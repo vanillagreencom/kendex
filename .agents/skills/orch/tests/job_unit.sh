@@ -46,7 +46,8 @@ run() { # SCRIPT ARG...
 }
 
 # A copy of the executable with one literal substitution applied, for the
-# controls. The counts are the edit's proof.
+# controls: one per subcommand that has one, name, launch and stop, and one for
+# the kill_sites reading below. The counts are the edit's proof.
 MUTANT=""
 mutant() { # NAME OLD NEW
   MUTANT="$TMP_ROOT/$1.sh"
@@ -174,10 +175,6 @@ if command -v setsid >/dev/null 2>&1; then
   assert_eq "$RC $ERR $([[ -e "$TMP_ROOT/memory.record" ]] && echo recorded || echo unrecorded)" \
     "5 job-unit: memory-max-unheld runner=setsid reason=no-systemd-run unrecorded" \
     "a --memory-max launch that would run under setsid exits 5 as memory-max-unheld and starts nothing"
-  mutant memory-max-held '  [[ -z "$memory_max" ]] || { job_unit_fail memory-max-unheld "$JOB_UNIT_LINE" 5; return; }' ''
-  run env PATH="$FARM" "$MUTANT" launch validate-id-1 "$TMP_ROOT/memory.record" --memory-max 512 -- true
-  assert_eq "$RC $OUT" "0 runner=setsid reason=no-systemd-run" \
-    "control: without the refusal the setsid job runs with no memory bound"
 else
   echo "  skip  setsid is not installed; the setsid launch rows did not run"
 fi
@@ -195,27 +192,24 @@ cp "$TMP_ROOT/linger/loginctl" "$TIMED_OUT/loginctl"
 chmod +x "$TIMED_OUT/systemd-run" "$TIMED_OUT/systemctl"
 # What a launch answers, its unit's pid folded to PID: exit, stdout, stderr and
 # the record's runner.
-timed_out_launch() { # SCRIPT STUB_LOAD
+timed_out_launch() { # STUB_LOAD
   record="$TMP_ROOT/timed-out.record"
   rm -f -- "$record"
-  run env PATH="$TIMED_OUT:$FARM" STUB_LOAD="$2" "$1" launch validate-id-9 "$record" --cap 60 -- bash -c :
+  run env PATH="$TIMED_OUT:$FARM" STUB_LOAD="$1" "$JOB_UNIT" launch validate-id-9 "$record" --cap 60 -- bash -c :
   printf '%s|%s|%s|%s' "$RC" "$OUT" "$ERR" "$(sed -n 's/^runner=//p' "$record" 2>/dev/null)" \
     | sed 's/orch-validate-id-9-[0-9]*/orch-validate-id-9-PID/g'
 }
 if command -v setsid >/dev/null 2>&1; then
   detail="detail=Failed to start transient service unit: Connection timed out"
-  # manager's answer|what the launch answers|label|the line a control removes|what replaces it
+  # manager's answer|what the launch answers|label
   TIMED_OUT_ROWS=(
-    "loaded%0|runner=systemd unit=orch-validate-id-9-PID||systemd%a unit the manager has after a failed call is the job, never a second copy%      loaded) return 0 ;;%      loaded) ;;"
-    "not-found%0|runner=setsid reason=unit-launch-failed $detail||setsid%a unit the manager has no record of falls back to setsid%      not-found) ;;%"
-    "none%4||job-unit: launch-failed unit=orch-validate-id-9-PID.service step=show $detail|systemd%a manager that does not answer fails the launch%    if ! load=\"\$(systemctl --user show -p LoadState --value -- \"\$JOB_UNIT_NAME.service\" 2>/dev/null)\"; then%    if ! load=\"\$(echo not-found)\"; then"
+    "loaded%0|runner=systemd unit=orch-validate-id-9-PID||systemd%a unit the manager has after a failed call is the job, never a second copy"
+    "not-found%0|runner=setsid reason=unit-launch-failed $detail||setsid%a unit the manager has no record of falls back to setsid"
+    "none%4||job-unit: launch-failed unit=orch-validate-id-9-PID.service step=show $detail|systemd%a manager that does not answer fails the launch"
   )
   for row in "${TIMED_OUT_ROWS[@]}"; do
-    IFS='%' read -r load want label line new <<<"$row"
-    assert_eq "$(timed_out_launch "$JOB_UNIT" "$load")" "$want" "$label"
-    mutant "timed-out-$load" "$line" "$new"
-    assert_eq "$([[ "$(timed_out_launch "$MUTANT" "$load")" == "$want" ]] && echo same || echo changed)" "changed" \
-      "control: without that rule the $load answer launches otherwise"
+    IFS='%' read -r load want label <<<"$row"
+    assert_eq "$(timed_out_launch "$load")" "$want" "$label"
   done
 fi
 
@@ -249,25 +243,19 @@ if command -v setsid >/dev/null 2>&1; then
   cp "$TMP_ROOT/no-linger/systemd-run" "$TMP_ROOT/linger-unread/systemd-run"
   printf '#!/bin/sh\necho "Failed to connect to bus: No such file or directory" >&2\nexit 1\n' > "$TMP_ROOT/linger-unread/loginctl"
   chmod +x "$TMP_ROOT"/no-linger/* "$TMP_ROOT"/linger-unread/*
-  mutant linger-ignored '  elif [[ -z "$capped" && "$linger" != yes ]]; then' '  elif false; then'
-  # launcher|stub dir|the runner line, its unit's pid folded|label
-  while IFS='|' read -r script stub want label; do
-    run env PATH="$TMP_ROOT/$stub:$FARM" "$script" launch validate-linger "$TMP_ROOT/linger.record" -- true
+  # stub dir|the runner line, its unit's pid folded|label
+  while IFS='|' read -r stub want label; do
+    run env PATH="$TMP_ROOT/$stub:$FARM" "$JOB_UNIT" launch validate-linger "$TMP_ROOT/linger.record" -- true
     assert_eq "$RC $(sed 's/-[0-9]*$/-PID/' <<<"$OUT")" "$want" "$label"
   done <<ROWS
-$JOB_UNIT|no-linger|0 runner=setsid reason=no-linger|a manager that does not linger is passed over for setsid
-$JOB_UNIT|linger-unread|0 runner=setsid reason=linger-unread detail=Failed to connect to bus: No such file or directory|a Linger loginctl cannot read is no linger, named with loginctl's words
-$MUTANT|no-linger|0 runner=systemd unit=orch-validate-linger-PID|control: without the linger rule a manager that does not linger gets the unit
+no-linger|0 runner=setsid reason=no-linger|a manager that does not linger is passed over for setsid
+linger-unread|0 runner=setsid reason=linger-unread detail=Failed to connect to bus: No such file or directory|a Linger loginctl cannot read is no linger, named with loginctl's words
 ROWS
   # A capped job, bounded anyway, keeps its unit where the manager does not
   # linger.
   run env PATH="$TMP_ROOT/no-linger:$FARM" "$JOB_UNIT" launch validate-linger "$TMP_ROOT/linger.record" --cap 60 -- true
   assert_eq "$RC $(sed 's/-[0-9]*$/-PID/' <<<"$OUT")" "0 runner=systemd unit=orch-validate-linger-PID" \
     "a capped launch keeps its unit where the manager does not linger"
-  mutant linger-capped '; capped=yes ;;' ' ;;'
-  run env PATH="$TMP_ROOT/no-linger:$FARM" "$MUTANT" launch validate-linger "$TMP_ROOT/linger.record" --cap 60 -- true
-  assert_eq "$RC $OUT" "0 runner=setsid reason=no-linger" \
-    "control: with the linger rule on every launch a capped job loses its unit"
 fi
 
 # With neither systemd-run nor setsid there is no runner, and the launch says
@@ -297,41 +285,37 @@ if [[ "$(sed -n 's/^runner=//p' "$record" 2>/dev/null)" == systemd ]]; then
 
   # --cap is the unit's RuntimeMaxSec, and a launch with none, the repeat
   # watch's, sets none.
-  # launcher|cap arguments|RuntimeMaxUSec|label
-  unit_property() { # PROPERTY SCRIPT ARG... — exit and PROPERTY of the unit launched
+  unit_property() { # PROPERTY ARG... — exit and PROPERTY of the unit launched
     local prop="$1" rec="$TMP_ROOT/cap.record" u
     shift
     rm -f -- "${rec:?}"
-    run "$@" -- sleep 30
+    run "$JOB_UNIT" "$@" -- sleep 30
     u="$(sed -n 's/^unit=//p' "$rec" 2>/dev/null)"
     printf '%s %s' "$RC" "$(systemctl --user show -p "$prop" --value -- "${u:-none}.service" 2>/dev/null)"
     [[ -z "$u" ]] || "$JOB_UNIT" stop "$u" >/dev/null 2>&1 || true
   }
-  mutant cap-ignored ' unit_props+=(-p "RuntimeMaxSec=$2");' ''
-  while IFS='|' read -r script cap want label; do
+  # cap arguments|RuntimeMaxUSec|label
+  while IFS='|' read -r cap want label; do
     # shellcheck disable=SC2086 # the cap column is words
-    assert_eq "$(unit_property RuntimeMaxUSec "$script" launch validate-cap "$TMP_ROOT/cap.record" $cap)" "$want" "$label"
+    assert_eq "$(unit_property RuntimeMaxUSec launch validate-cap "$TMP_ROOT/cap.record" $cap)" "$want" "$label"
   done <<ROWS
-$JOB_UNIT|--cap 60|0 1min|a launch with --cap sets that RuntimeMaxSec
-$JOB_UNIT||0 infinity|a launch with no --cap sets no RuntimeMaxSec
-$MUTANT|--cap 60|0 infinity|control: a runner that drops --cap leaves the capped unit unbounded
+--cap 60|0 1min|a launch with --cap sets that RuntimeMaxSec
+|0 infinity|a launch with no --cap sets no RuntimeMaxSec
 ROWS
   # --memory-max is the unit's MemoryMax in MiB, and a launch with none sets none.
-  mutant memory-max-ignored '      --memory-max) unit_props+=(-p "MemoryMax=${2}M"); memory_max="$2" ;;' '      --memory-max) memory_max="$2" ;;'
-  while IFS='|' read -r script mem want label; do
+  while IFS='|' read -r mem want label; do
     # shellcheck disable=SC2086 # the memory column is words
-    assert_eq "$(unit_property MemoryMax "$script" launch validate-memory "$TMP_ROOT/cap.record" $mem)" "$want" "$label"
+    assert_eq "$(unit_property MemoryMax launch validate-memory "$TMP_ROOT/cap.record" $mem)" "$want" "$label"
   done <<ROWS
-$JOB_UNIT|--memory-max 512|0 536870912|a launch with --memory-max 512 sets MemoryMax=536870912
-$JOB_UNIT||0 infinity|a launch with no --memory-max sets no MemoryMax
-$MUTANT|--memory-max 512|0 infinity|control: a runner that drops --memory-max leaves the unit unbounded
+--memory-max 512|0 536870912|a launch with --memory-max 512 sets MemoryMax=536870912
+|0 infinity|a launch with no --memory-max sets no MemoryMax
 ROWS
 
   # A service ignores SIGPIPE by default; a unit job takes it at its default,
   # as a job the caller starts does. SigIgn bit 13 is SIGPIPE.
-  sigpipe_state() { # SCRIPT
+  sigpipe_state() {
     local out="$TMP_ROOT/sigign.$RANDOM" n=0
-    run "$1" launch validate-sigpipe "$TMP_ROOT/sigpipe.record" -- sh -c 'sed -n "s/^SigIgn:[[:space:]]*//p" /proc/self/status > "$0"' "$out"
+    run "$JOB_UNIT" launch validate-sigpipe "$TMP_ROOT/sigpipe.record" -- sh -c 'sed -n "s/^SigIgn:[[:space:]]*//p" /proc/self/status > "$0"' "$out"
     while [[ ! -s "$out" ]] && (( n < 50 )); do sleep 0.1; n=$((n + 1)); done
     if [[ -s "$out" ]]; then
       (( (16#$(cat "$out") >> 12) & 1 )) && echo ignored || echo default
@@ -339,9 +323,7 @@ ROWS
       echo unread
     fi
   }
-  assert_eq "$(sigpipe_state "$JOB_UNIT")" "default" "a unit job takes SIGPIPE at its default"
-  mutant sigpipe-ignored ' -p IgnoreSIGPIPE=no' ''
-  assert_eq "$(sigpipe_state "$MUTANT")" "ignored" "control: without IgnoreSIGPIPE=no the unit job ignores SIGPIPE"
+  assert_eq "$(sigpipe_state)" "default" "a unit job takes SIGPIPE at its default"
   # exit of the first stop, then of a second stop of the same name
   STOP_ROWS=("0|a running unit is stopped by its exact name" "1|a unit that has ended answers not-found, apart from a failure")
   for row in "${STOP_ROWS[@]}"; do

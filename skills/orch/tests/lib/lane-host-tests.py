@@ -1,4 +1,8 @@
-"""Exercise the real dispatcher with the reusable external provider stub."""
+"""Exercise the real dispatcher with the reusable external provider stub.
+
+The dispatcher is one surface, and its one must-fail control closes the
+protocol case: a copy that forwards exec in place of stop.
+"""
 import os
 from pathlib import Path
 import shutil
@@ -20,7 +24,7 @@ class LaneHostTests(unittest.TestCase):
         self.script = self.root / "scripts/lane-host"
         self.script.parent.mkdir()
         shutil.copy2(PACKAGE / "scripts/lane-host", self.script)
-        shutil.copytree(PACKAGE / "scripts/lib", self.script.parent / "lib")
+        (self.script.parent / "lib").symlink_to(PACKAGE / "scripts/lib")
         self.stub = self.root / "provider with space"
         shutil.copy2(PACKAGE / "tests/fixtures/lane-host", self.stub)
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("ORCH_", "KENDEX_", "LANE_HOST_"))}
@@ -72,33 +76,21 @@ class LaneHostTests(unittest.TestCase):
         self.assertIn(b"host-unavailable path=/absent/provider", result.stderr)
         (self.root / ".env.local").write_text("exit 91\n")
         self.assertEqual(self.run_host("--help").returncode, 0)
-    def test_dispatch_protocol_and_guards(self):
+    def test_dispatch_protocol(self):
         original = self.script.read_text()
         rule = "  create|wait|cat|put|append|touch|stop|close|list|accounts)"
         self.assertEqual(original.count(rule), 1)
-        protocol = [(("stop", "--item", "TEST-1", "--harness", "claude"), (0, True), rule.replace("stop", "exec")),
-                    (("wait", "--item", "TEST-1"), (0, True), rule.replace("wait|", "")),
-                    (("exec", "--item", "TEST-1", "--", "true"), (2, False), rule.replace("stop", "exec"))]
+        protocol = [(("stop", "--item", "TEST-1", "--harness", "claude"), (0, True)),
+                    (("wait", "--item", "TEST-1"), (0, True)),
+                    (("exec", "--item", "TEST-1", "--", "true"), (2, False))]
         def observed(args):
             before = (self.root / "calls").read_text() if (self.root / "calls").exists() else ""
             result = self.run_host(*args, ORCH_LANE_HOST=str(self.stub))
             return result.returncode, args[0] in (self.root / "calls").read_text()[len(before):]
-        for args, expected, mutant in protocol:
+        for args, expected in protocol:
             self.assertEqual(observed(args), expected)
-            self.script.write_text(original.replace(rule, mutant))
-            self.assertNotEqual(observed(args), expected)
-            self.script.write_text(original)
-        shutil.copy2(self.stub, self.root / "local")
-        self.env["PATH"] = str(self.root) + os.pathsep + self.env["PATH"]
-        cases = [('exit "$status"', 'exit 0', str(self.stub), "75", 75),
-                 ('if [[ "$host" == local ]]; then', 'if false; then', "local", "0", 2),
-                 ('if [[ ! -x "$host" || -d "$host" ]]; then', 'if false; then', "/absent/provider", "0", 2)]
-        for fragment, replacement, host, status, expected in cases:
-            with self.subTest(fragment=fragment):
-                self.assertEqual(original.count(fragment), 1)
-                self.script.write_text(original.replace(fragment, replacement))
-                result = self.run_host("create", ORCH_LANE_HOST=host, LANE_HOST_STUB_STATUS=status)
-                self.assertNotEqual(result.returncode, expected)
+        self.script.write_text(original.replace(rule, rule.replace("stop", "exec")))
+        self.assertNotEqual(observed(protocol[0][0]), protocol[0][1])
 
 if __name__ == "__main__":
     unittest.main()

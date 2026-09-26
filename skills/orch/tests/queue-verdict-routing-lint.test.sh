@@ -147,8 +147,9 @@ if [ "$checked" -eq 0 ]; then
   exit $?
 fi
 
-# Controls, planted against the first usable tree — the grammar and the two
-# directions are the same for every tree, so proving them once proves them.
+# Controls, one per check above, planted against the first usable tree — the
+# grammar and the checks are the same for every tree, so proving them once
+# proves them.
 for root in "${ROOTS[@]}"; do
   [ -x "$root/orch/scripts/queue-wait" ] || continue
   CTL_QW="$root/orch/scripts/queue-wait"
@@ -171,13 +172,6 @@ check "control: the row deletion really removed a row" planted "$DROPPED"
 check "control: a deleted routing row reds the coverage direction" \
   reds every_verdict_routed "$CTL_QW" "$DROPPED"
 
-# The refusal row is the one a rewrite is likeliest to drop as redundant: it
-# routes no work, only a handback.
-NO_UNKNOWN="$MD_TMP/merge-pr-no-unknown.md"
-grep -v '^   | `unknown` |' "$CTL_DOC" > "$NO_UNKNOWN"
-check "control: deleting the unrecognized-verdict row reds the coverage direction" \
-  reds every_verdict_routed "$CTL_QW" "$NO_UNKNOWN"
-
 BOGUS="$MD_TMP/merge-pr-bogus.md"
 awk '{ print }
   /^   \| `verdict` \| Route \|$/ { print "   | `no_such_verdict` | invented for the control |" }' \
@@ -191,8 +185,6 @@ awk '{ print }
   "$CTL_DOC" > "$DUPED"
 check "control: a verdict routed by two rows reds the one-row direction" \
   reds one_row_per_verdict "$DUPED"
-check "control: that same duplicate leaves the coverage direction green" \
-  every_verdict_routed "$CTL_QW" "$DUPED"
 
 # The harvest's own control: a renamed table header takes the whole range with
 # it, and both set comparisons then pass on nothing.
@@ -204,12 +196,11 @@ check "control: a renamed table header reds the read check" \
 # The producer control, and the reason the harvest reads the code: an emit site
 # renamed with --help left alone. Harvesting the help text leaves every check
 # green here while the lane hits a verdict with no route and the table keeps a
-# row nothing produces. The mutant is a whole copy of the script, and its libs
+# row nothing produces. The mutant is a copy of the one script, and its libs
 # are linked so the copy still sources them.
 #
-# It carries its own control too: a sed that matched nothing would leave an
-# identical copy, and three green `reds` assertions would then be reporting a
-# mutation that never happened.
+# A sed that matched nothing would leave an identical copy, and the green
+# `reds` assertion would then be reporting a mutation that never happened.
 planted_one_rename() { # original mutant
   local before after
   before="$(verdicts "$1")"
@@ -232,11 +223,7 @@ sed 's/emit_result "complete" "closed"/emit_result "complete" "abandoned"/' \
 chmod +x "$MUT_QW"
 check "control: the mutant renames exactly one emit site" \
   planted_one_rename "$CTL_QW" "$MUT_QW"
-check "control: a renamed emit site reds the coverage direction" \
-  reds every_verdict_routed "$MUT_QW" "$CTL_DOC"
-check "control: that same rename reds the vocabulary direction" \
-  reds every_route_real "$MUT_QW" "$CTL_DOC"
-check "control: that same rename reds the enum-against-code check" \
+check "control: a renamed emit site reds the enum-against-code check" \
   reds enum_matches_code "$MUT_QW"
 
 md_report

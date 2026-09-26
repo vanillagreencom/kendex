@@ -122,9 +122,7 @@ forbid "no ask gate states the ask set for itself" \
   "$SKILL_DIR"/*.md "$SKILL_DIR/workflows"/*.md "$EVENTS" "$DISPOSITION" \
   "$SKILL_DIR/references/skill-rules.md"
 
-# The same defect in one phrase, registered on its own rather than as a fourth
-# alternative above. md.sh appends one sample per forbid, so an alternation
-# proves only the alternative that sample matches and the rest go unexercised.
+# The same defect in one phrase.
 forbid "no ask gate names an always-ask set of its own" \
   'always-ask set' \
   'The always-ask set in SKILL.md still applies.' \
@@ -132,8 +130,7 @@ forbid "no ask gate names an always-ask set of its own" \
   "$SKILL_DIR/references/skill-rules.md"
 
 # A gate that leaves the set alone and then sends one class of call to the user
-# anyway has narrowed nothing and widened the set. Registered on its own rather
-# than as another alternative above, for the reason stated there.
+# anyway has narrowed nothing and widened the set.
 forbid "no ask gate sends a call of its own to the user" \
   'waits? for the user' \
   'An irreversible call outside the set waits for the user.' \

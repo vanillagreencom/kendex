@@ -25,6 +25,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
 # shellcheck source=lib/question-off.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/question-off.sh"
+# mutant_scripts and mutate_file, the two halves of the control below.
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
@@ -502,7 +505,7 @@ assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened ' <<<"$OUT" 
   "a state directory under a file refuses the whole batch as state-unwritable, with no window opened and no summary"
 
 # fixture_copy NAME — a copy of the launcher beside its helpers under
-# $TMP_ROOT/NAME, for a control and for the row that takes a helper away.
+# $TMP_ROOT/NAME, for the row that takes a helper away.
 fixture_copy() {
   local dir="$TMP_ROOT/$1"
   mkdir -p "$dir/scripts/lib"
@@ -520,177 +523,16 @@ assert_eq "rc=$RC first=$(sed -n 1p <<<"$ERR") opened=$(grep -c '^open-terminal:
   "rc=1 first=open-terminal: helper-missing path=$TMP_ROOT/nohelper/scripts/workflow-state opened=0" \
   "the missing helper is named first and no terminal opens"
 
-echo "=== must-fail controls ==="
-# The placement control: the creation block hoisted above the item loop and
-# ungated, so a refused id and a wake both mint an empty state.
-fixture_copy hoisted
-python3 - "$TMP_ROOT/hoisted/scripts/open-terminal" <<'PY'
-import sys
-p = sys.argv[1]
-s = open(p).read()
-block_start = s.index('  if [[ "$FLEET" == true && "$state_ready" != true ]]; then\n')
-block_end = s.index('    state_ready=true\n  fi\n', block_start) + len('    state_ready=true\n  fi\n')
-block = s[block_start:block_end]
-s = s[:block_start] + s[block_end:]
-hoisted = ('if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then\n'
-           '  "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} init oversee >/dev/null || exit 1\n'
-           'fi\n')
-anchor = 'repo="$(resolve_repo)"\n'
-assert s.count(anchor) == 1
-s = s.replace(anchor, hoisted + anchor)
-open(p, "w").write(s)
-PY
-assert_eq "$(grep -c 'state_ready' "$TMP_ROOT/hoisted/scripts/open-terminal")" "1" "control hoisted removed the gated block"
-HOISTED_STATE="$TMP_ROOT/hoisted-state"
-run_ot SCRIPT="$TMP_ROOT/hoisted/scripts/open-terminal" STATE_DIR="$HOISTED_STATE" --ghostty --cmd true bad_id
-assert_eq "rc=$RC state=$([[ -e "$HOISTED_STATE/workflow-state-oversee.json" ]] && echo written || echo none)" "rc=1 state=written" \
-  "control: hoisted and ungated, a refused id mints an empty state"
-rm -f "$HOISTED_STATE/workflow-state-oversee.json"
-run_ot SCRIPT="$TMP_ROOT/hoisted/scripts/open-terminal" STATE_DIR="$HOISTED_STATE" --wake --harness claude CC-40
-assert_eq "rc=$RC state=$([[ -e "$HOISTED_STATE/workflow-state-oversee.json" ]] && echo written || echo none)" "rc=1 state=written" \
-  "control: hoisted and ungated, a wake mints an empty state and then reads as record-missing"
-# One defect per copy: the write call gone, the in-place match gone, the
-# state address dropped, and each hosted field written as a local lane's.
-mutant() { # NAME OLD NEW
-  local dir="$TMP_ROOT/$1"
-  fixture_copy "$1"
-  assert_eq "$(grep -cF -- "$2" "$dir/scripts/open-terminal")" "1" "control $1 finds one line to mutate"
-  python3 - "$dir/scripts/open-terminal" "$2" "$3" <<'PY'
-import sys
-p, old, new = sys.argv[1:]
-s = open(p).read()
-assert s.count(old) == 1
-open(p, "w").write(s.replace(old, new))
-PY
-  assert_eq "$(grep -cF -- "$2" "$dir/scripts/open-terminal")" "0" "control $1 applied its mutation"
-}
-mutant unwritten '    lane_record_write "$RECORD_MODE" "$wt_id" "$record_window" "$record_root" "$record_session" "$launched_at" || record_rc=$?' '    :'
-run_ot SCRIPT="$TMP_ROOT/unwritten/scripts/open-terminal" STATE_DIR="$TMP_ROOT/unwritten-state" --ghostty --cmd true CC-30
+echo "=== the must-fail control ==="
+# The suite's one control: the record write gone from a copy of the launcher,
+# beside links to its helpers in a git repo of its own.
+UNWRITTEN_OT="$(mutant_scripts unwritten open-terminal)/open-terminal" || exit 1
+git -C "$TMP_ROOT/unwritten" init -q
+orch_fixture_shared_libs "$TMP_ROOT/unwritten"
+mutate_file "$UNWRITTEN_OT" '    lane_record_write "$RECORD_MODE" "$wt_id" "$record_window" "$record_root" "$record_session" "$launched_at" || record_rc=$?' '    :'
+run_ot SCRIPT="$UNWRITTEN_OT" STATE_DIR="$TMP_ROOT/unwritten-state" --ghostty --cmd true CC-30
 assert_eq "rc=$RC records=$("$WS" --state-dir "$TMP_ROOT/unwritten-state" get oversee '(.lanes // []) | length')" "rc=0 records=0" \
   "control: without the write a launch leaves the created state with no record and reports success"
-mutant appended 'if any($l[]; .item == $rec.item)' 'if false'
-run_ot SCRIPT="$TMP_ROOT/appended/scripts/open-terminal" --relaunch --ghostty --harness claude CC-1
-assert_eq "rc=$RC records=$(records CC-1)" "rc=0 records=2" \
-  "control: without the in-place match a relaunch appends a second record for the item"
-mutant unguarded '  elif [[ "$record_rc" -ne 0 ]]; then' '  elif false; then'
-run_ot SCRIPT="$TMP_ROOT/unguarded/scripts/open-terminal" STATE_DIR="$TMP_ROOT/unguarded-state" --ghostty --cmd true CC-82
-"$WS" --state-dir "$TMP_ROOT/unguarded-state" update oversee '.lanes += [42]' >/dev/null
-run_ot SCRIPT="$TMP_ROOT/unguarded/scripts/open-terminal" STATE_DIR="$TMP_ROOT/unguarded-state" --ghostty --cmd true CC-83
-assert_eq "rc=$RC refused=$(grep -c '^open-terminal: record-write-failed item=CC-83 ' <<<"$ERR" || true) summary=$(grep -o 'launched=[0-9]* skipped=[0-9]* failed=[0-9]*' <<<"$OUT$ERR")" \
-  "rc=0 refused=0 summary=launched=1 skipped=0 failed=0" \
-  "control: with the record-write-failed branch gone a failed write counts launched with no diagnostic"
-mutant stateless '[[ -z "$STATE_DIR" ]] || { FLEET=true; WORKFLOW_STATE_ARGS=(--state-dir "$STATE_DIR"); }' '[[ -z "$STATE_DIR" ]] || FLEET=true'
-run_ot SCRIPT="$TMP_ROOT/stateless/scripts/open-terminal" STATE_DIR= CWD="$ELSEWHERE" --ghostty --cmd true --state-dir "$TMP_ROOT/named-control" CC-51
-assert_eq "rc=$RC named=$([[ -e "$TMP_ROOT/named-control/workflow-state-oversee.json" ]] && echo written || echo none) launch_dir=$([[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" \
-  "rc=0 named=none launch_dir=written" \
-  "control: with --state-dir dropped the record lands in the launch directory's checkout and reports success"
-mutant restamped '    lane_record_write "$RECORD_MODE" "$wt_id" "$record_window" "$record_root" "$record_session" "$launched_at" || record_rc=$?' '    lane_record_write "$RECORD_MODE" "$wt_id" "$record_window" "$record_root" "$record_session" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" || record_rc=$?'
-STUB_OPENED_AT="$OPENED_AT" STUB_OPEN_DELAY=2 RUN_TMUX=stub,1,0 run_ot SCRIPT="$TMP_ROOT/restamped/scripts/open-terminal" --tmux --cmd true CC-96
-assert_eq "rc=$RC order=$([[ "$(field "$(record CC-96)" launched_at)" > "$(cat "$OPENED_AT")" ]] && echo later || echo not-later)" "rc=0 order=later" \
-  "control: stamped after the open, launched_at is later than the moment the window opened"
-mutant fleetless 'FLEET=false' 'FLEET=true'
-NOFLEET_CONTROL="$TMP_ROOT/nofleet-control"
-mkdir -p "$NOFLEET_CONTROL"
-git -C "$NOFLEET_CONTROL" init -q
-run_ot SCRIPT="$TMP_ROOT/fleetless/scripts/open-terminal" STATE_DIR= CWD="$NOFLEET_CONTROL" --ghostty --cmd true CC-91
-assert_eq "rc=$RC launch_dir=$([[ -e "$NOFLEET_CONTROL/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" "rc=0 launch_dir=written" \
-  "control: with every launch a fleet launch a flagless handoff writes the launch checkout's oversee state"
-mutant hostless '  [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"' '  [[ "$LANE_HOST" == local ]] || host=""'
-STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
-  run_ot SCRIPT="$TMP_ROOT/hostless/scripts/open-terminal" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-61
-assert_eq "rc=$RC host=$(field "$(record CC-61)" host) mail_root=$(field "$(record CC-61)" mail_root)" "rc=0 host=null mail_root=/srv/lane" \
-  "control: with the host assignment blanked a hosted lane records a null host and reports success"
-mutant rootless '  [[ "$LANE_HOST" == local ]] || record_root="$remote_path"' '  [[ "$LANE_HOST" == local ]] || record_root="$wt"'
-STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
-  run_ot SCRIPT="$TMP_ROOT/rootless/scripts/open-terminal" CWD="$REPO" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-62
-assert_eq "rc=$RC host=$(field "$(record CC-62)" host) mail_root=$(field "$(record CC-62)" mail_root)" "rc=0 host=$HOST_STUB mail_root=$REPO" \
-  "control: with the remote root dropped a hosted lane records the caller checkout as mail_root and reports success"
-mutant hostblind '  if [[ "$WAKE" != true && -d "$wt" ]] && ! write_lane_marker' '  if [[ "$WAKE" != true && "$LANE_HOST" == local && -d "$wt" ]] && ! write_lane_marker'
-STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
-  run_ot SCRIPT="$TMP_ROOT/hostblind/scripts/open-terminal" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-67
-assert_eq "rc=$RC marker=$(marker_at cc-67) summary=$(grep -c '^open-terminal: summary launched=1 ' <<<"$OUT" || true)" "rc=0 marker=none summary=1" \
-  "control: with the write site naming a local host again a hosted launch reports itself launched and leaves its lane unmarked"
-mutant causeless '  LANE_MARKER_REASON=host-gitfile-unread' '  LANE_MARKER_REASON=marker-failed'
-STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" \
-  LANE_HOST_STUB_CAT_STATUS=2 LANE_HOST_STUB_CAT_PATH=/srv/lane/.git RUN_TMUX=stub,1,0 \
-  run_ot SCRIPT="$TMP_ROOT/causeless/scripts/open-terminal" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-71
-assert_eq "rc=$RC unread=$(grep -c '^open-terminal: host-gitfile-unread ' <<<"$ERR" || true) marker_failed=$(grep -c '^open-terminal: marker-failed item=CC-71 ' <<<"$ERR" || true)" \
-  "rc=1 unread=0 marker_failed=1" \
-  "control: with the read carrying the write's reason a .git the host cannot produce is reported as a failed marker write"
-mutant unreadback '  [[ "$read_back" == "$2" ]]' '  [[ -n "$read_back" ]]'
-STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" \
-  LANE_HOST_STUB_PUT_BYTES=/srv/stale RUN_TMUX=stub,1,0 \
-  run_ot SCRIPT="$TMP_ROOT/unreadback/scripts/open-terminal" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-72
-assert_eq "rc=$RC marker=$(marker_at cc-72) records=$(records CC-72) summary=$(grep -c '^open-terminal: summary launched=1 ' <<<"$OUT" || true)" \
-  "rc=0 marker=other records=1 summary=1" \
-  "control: with the read-back asking only for bytes a marker holding another root is reported as launched"
-
-mutant trackerless '--arg tracker "$TRACKER"' '--arg tracker ""'
-run_ot SCRIPT="$TMP_ROOT/trackerless/scripts/open-terminal" --ghostty --cmd true CC-63
-assert_eq "rc=$RC tracker=$(field "$(record CC-63)" tracker)" 'rc=0 tracker=null' \
-  'control: with tracker output dropped a Linear launch reports success with no tracker identity'
-
-mutant repoless '  [[ "$TRACKER" != github ]] || record_repo="$repo"' '  :'
-STUB_GH_REPO=o/resolved run_ot SCRIPT="$TMP_ROOT/repoless/scripts/open-terminal" --ghostty --tracker github --cmd true 2710
-assert_eq "rc=$RC repo=$(field "$(record issue-2710)" repo)" 'rc=0 repo=null' \
-  'control: with the record back on the raw option a resolved GitHub launch is recorded with no repository'
-
-mutant harnessless '--arg harness "$LAUNCH_HARNESS"' '--arg harness ""'
-run_ot SCRIPT="$TMP_ROOT/harnessless/scripts/open-terminal" --ghostty --harness claude --cmd "true $QUESTION_OFF_ALL" CC-64
-assert_eq "rc=$RC harness=$(field "$(record CC-64)" harness)" 'rc=0 harness=null' \
-  'control: with harness output dropped a harness launch reports success with no close-out path'
-
-# One defect per rule of the session resolution: the refusal gone, the
-# existence check gone, the first launch's record gone, the target's session
-# dropped, and the recorded session ranked above ORCH_TMUX_SESSION.
-mutant unrefused '  [[ -n "$session" ]] || { ot_message tmux-session-unresolved "item=$1" "consulted=$consulted" "pane=$pane_read" >&2; return 1; }' '  :'
-assert_eq "$(OT="$TMP_ROOT/unrefused/scripts/open-terminal" RUN_SESSION= session_row unrefused-state CC-110)" \
-  "rc=1 target= list= pane= window=none recorded=none refused=tmux-failed+operation=has-session+item=CC-110+detail=no+mouse+target" \
-  "control: without the refusal a launch from no pane with no session is reported as some other tmux failure"
-mutant unchecked '  if ! err="$(tmux has-session -t "=$session" 2>&1)"; then' '  if false; then'
-assert_eq "$(OT="$TMP_ROOT/unchecked/scripts/open-terminal" RUN_SESSION=fleetz STUB_DEAD_SESSIONS=fleetz session_row unchecked-state CC-116)" \
-  "rc=0 target==fleetz:1 list==fleetz pane= window=fleetz:CC-116 recorded=fleetz refused=" \
-  "control: without the existence check a mistyped session is launched into and recorded for every later launch"
-mutant unrecorded "'.tmux.session //= \$s'" "'.'"
-RUN_SESSION= RUN_PANE=%9 STUB_SESSION_NAME=fleety OT="$TMP_ROOT/unrecorded/scripts/open-terminal" session_row unrecorded-state CC-111 >/dev/null
-assert_eq "$(OT="$TMP_ROOT/unrecorded/scripts/open-terminal" RUN_SESSION= session_row unrecorded-state CC-112)" \
-  "rc=1 target= list= pane= window=none recorded=none refused=tmux-session-unresolved+item=CC-112+consulted=ORCH_TMUX_SESSION,tmux.session,TMUX_PANE+pane=unset" \
-  "control: without the first launch's record a later launch from no pane has no session to open in"
-mutant untargeted 'tmux new-window -a -t "=$LAUNCH_SESSION:$last_idx"' 'tmux new-window -a -t ":$last_idx"'
-assert_eq "$(OT="$TMP_ROOT/untargeted/scripts/open-terminal" RUN_SESSION=fleetx session_row untargeted-state CC-113)" \
-  "rc=0 target=:1 list==fleetx pane= window=fleetx:CC-113 recorded=fleetx refused=" \
-  "control: with the session dropped from the target the window opens in the client's session while the record names another"
-mutant outranked 'if [[ -z "$session" && -n "$recorded" ]]; then' 'if [[ -n "$recorded" ]]; then'
-RUN_SESSION= RUN_PANE=%9 STUB_SESSION_NAME=fleety OT="$TMP_ROOT/outranked/scripts/open-terminal" session_row outranked-state CC-114 >/dev/null
-assert_eq "$(OT="$TMP_ROOT/outranked/scripts/open-terminal" RUN_SESSION=fleetx session_row outranked-state CC-115)" \
-  "rc=0 target==fleety:1 list==fleety pane= window=fleety:CC-115 recorded=fleety refused=" \
-  "control: with the record ranked first ORCH_TMUX_SESSION no longer moves a fleet's windows"
-mutant unlisted 'tmux list-windows -t "=$LAUNCH_SESSION" -F' 'tmux list-windows -F'
-assert_eq "$(OT="$TMP_ROOT/unlisted/scripts/open-terminal" RUN_SESSION=fleetx session_row unlisted-state CC-119)" \
-  "rc=0 target==fleetx:1 list=none pane= window=fleetx:CC-119 recorded=fleetx refused=" \
-  "control: without the list-windows target the window index is read from the client's session"
-mutant paneless 'tmux display-message -p -t "$TMUX_PANE" '"'"'#{session_name}'"'" 'tmux display-message -p '"'"'#{session_name}'"'"
-assert_eq "$(OT="$TMP_ROOT/paneless/scripts/open-terminal" RUN_SESSION= RUN_PANE=%9 STUB_SESSION_NAME=own nofleet_row CC-120)" \
-  "rc=0 target==client:1 pane=none" \
-  "control: without the pane target the launch opens in the attached client's session"
-mutant paneranked '  if [[ -z "$session" ]]; then' '  if [[ -z "$session" || "$FLEET" != true && -n "${TMUX_PANE:-}" ]]; then'
-assert_eq "$(OT="$TMP_ROOT/paneranked/scripts/open-terminal" RUN_SESSION=fleetx RUN_PANE=%9 STUB_SESSION_NAME=other nofleet_row CC-121)" \
-  "rc=0 target==other:1 pane=%9" \
-  "control: with the pane ranked first a launch naming no fleet ignores ORCH_TMUX_SESSION"
-mutant silentread '    ot_message session-record-failed "item=$title" "state=oversee" >&2' '    :'
-session_row silentread-state CC-122 >/dev/null
-"$WS" --state-dir "$TMP_ROOT/silentread-state" update oversee '.tmux = 42' >/dev/null
-assert_eq "$(OT="$TMP_ROOT/silentread/scripts/open-terminal" RUN_SESSION=fleetx session_row silentread-state CC-123)" \
-  "rc=1 target= list= pane= window=none recorded=none refused=" \
-  "control: without the session-record-failed line an unreadable tmux entry fails the launch with no key"
-mutant gonefailed '      pane_read=none' '      pane_read=read-failed'
-assert_eq "$(OT="$TMP_ROOT/gonefailed/scripts/open-terminal" RUN_SESSION= RUN_PANE=%9 STUB_PANE_GONE=1 session_row gonefailed-state CC-126)" \
-  "rc=1 target= list= pane=%9 window=none recorded=none refused=tmux-session-unresolved+item=CC-126+consulted=ORCH_TMUX_SESSION,tmux.session,TMUX_PANE+pane=read-failed" \
-  "control: with the empty answer read as a failure a pane tmux does not hold is reported as a failed read with no tmux line above"
-mutant silentcheck '      ot_message tmux-failed "operation=has-session" "item=$1" "detail=$err" >&2' '      :'
-assert_eq "$(OT="$TMP_ROOT/silentcheck/scripts/open-terminal" RUN_SESSION=fleetx STUB_HAS_SESSION_ERR='no server running on /tmp/tmux-1000/default' session_row silentcheck-state CC-129)" \
-  "rc=1 target= list= pane= window=none recorded=none refused=" \
-  "control: without the has-session tmux-failed line a failed check refuses with no key"
 
 echo "=== a host still preparing the item hands the launch to a background job ==="
 # The provider accepts the item with state=preparing and holds wait shut until
@@ -833,26 +675,6 @@ group_killed() { # SCRIPT ITEM
 }
 assert_eq "record=$(group_killed "$OT" CC-84)" "record=running prepare none" \
   "a launch job survives a kill of the caller's process group and finishes the launch"
-
-# The must-fail inverses. With the hand-off gone the launch waits for the host
-# itself, returning only once a gate a background writer opens a second later
-# has let the preparation finish, with the lane already running. With the job
-# left in the caller's group, the group kill ends it and the lane never leaves
-# preparing.
-mutant waiting '  if [[ "$host_state" == preparing && "$FLEET" == true && "$RESUME_LINELESS" != true ]]; then' '  if false; then'
-(sleep 1; touch "$TMP_ROOT/gate-76") &
-hand_off CC-76 LANE_HOST_STUB_WAIT_GATE="$TMP_ROOT/gate-76" -- SCRIPT="$TMP_ROOT/waiting/scripts/open-terminal"
-wait
-assert_eq "rc=$RC record=$(prepared CC-76) marker=$(marker_at cc-76)" \
-  "rc=0 record=running none none marker=root" \
-  "control: without the hand-off the launch blocks until the host is prepared"
-mutant grouped '  set -m' '  :'
-assert_eq "record=$(group_killed "$TMP_ROOT/grouped/scripts/open-terminal" CC-85)" "record=preparing prepare none" \
-  "control: a job left in the caller's process group dies with it and its lane stays preparing"
-mutant swallowed "  panes=\"\$(tmux list-panes -a -F '#{pane_id}')\" || { ot_message tmux-failed \"operation=list-panes\" \"item=\$2\" >&2; return 1; }" "  panes=\"\$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)\" || return 0"
-hand_off CC-90 LANE_HOST_STUB_WAIT_STATUS=1 STUB_LIST_PANES_FAIL=1 -- SCRIPT="$TMP_ROOT/swallowed/scripts/open-terminal"
-assert_eq "logged=$(log_line "$STATE/lane-prepare-CC-90.log" 'open-terminal: lane-prepare-failed item=CC-90 reason=wait-failed') read=$(grep -c '^open-terminal: tmux-failed operation=list-panes ' "$STATE/lane-prepare-CC-90.log" || true)" \
-  "logged=1 read=0" "control: a pane read failure taken as a closed window reports nothing"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

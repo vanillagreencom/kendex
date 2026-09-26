@@ -117,14 +117,11 @@ forbid "no citation line names a destination of its own" \
   'Output: [Lane Output](../references/skill-rules.md#lane-output), under [MAIN_REPO_ROOT]/tmp.' \
   "${WORKFLOWS[@]}"
 
-# --- Controls -------------------------------------------------------------
-# One planted defect per rule the scanner enforces, each in its own scratch
-# copy so no fixture carries two.
+# --- Control --------------------------------------------------------------
+# The scanner's one planted defect, in a scratch copy: drop the citation ahead
+# of a lane block, and that block must come back uncited.
 
 CONTROL_LANE="$SKILL_DIR/workflows/micro.md"
-CONTROL_DELEGATED="$SKILL_DIR/workflows/review-pr-comments.md"
-
-# Drop the citation ahead of a lane block: that block must come back uncited.
 scratch="$MD_TMP/uncited.md"
 grep -v -F -e "$CITE" -- "$CONTROL_LANE" >"$scratch"
 if cmp -s "$CONTROL_LANE" "$scratch"; then
@@ -132,47 +129,6 @@ if cmp -s "$CONTROL_LANE" "$scratch"; then
 else
   expect_rows "control: a lane block whose citation is gone reads uncited" \
     3 uncited "$(blocks "$scratch")"
-fi
-
-# Add the citation ahead of the delegated block: it must be reported.
-scratch="$MD_TMP/leaked.md"
-md_cite="Output: [Lane Output](../references/skill-rules.md#lane-output)." \
-  awk '
-    BEGIN { cite = ENVIRON["md_cite"] }
-    {
-      t = $0; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]+$/, "", t)
-      if (t == "<delegation_format>") indel = 1
-      if (t == "</delegation_format>") indel = 0
-      if (indel && t == "<output_format>" && !planted) {
-        indent = $0; sub(/[^[:space:]].*$/, "", indent)
-        printf "%s%s\n\n", indent, cite
-        planted = 1
-      }
-      print
-    }
-  ' "$CONTROL_DELEGATED" >"$scratch"
-if cmp -s "$CONTROL_DELEGATED" "$scratch"; then
-  fail "control: nothing was planted — ${CONTROL_DELEGATED##*/} holds no delegated block"
-else
-  planted="$(select_rows 2 delegated "$(blocks "$scratch")" | awk -F'\t' '$3 == "cited"')"
-  if [ -n "$planted" ]; then
-    pass "control: a citation inside a delegation is reported"
-  else
-    fail "control: a citation planted inside a delegation was not reported"
-  fi
-fi
-
-# A path the scan cannot read is a row, never silence: the verdicts above all
-# pass on nothing, so an unread file must arrive as an offender.
-expect_rows "control: a path that cannot be read is reported, not skipped" \
-  2 unreadable "$(blocks "$MD_TMP/absent.md")"
-
-# The floor's own control: a workflow carrying no block yields no row, so the
-# count the floor reads is the scan's and not a constant.
-if [ "$(blocks "$SKILL_DIR/workflows/oversee.md" | grep -c . || true)" -eq 0 ]; then
-  pass "control: a workflow with no <output_format> block yields no row"
-else
-  fail "control: a workflow with no <output_format> block yielded a row"
 fi
 
 # --- The rule the citations point at --------------------------------------

@@ -8,7 +8,8 @@
 # so a row asserting silence waits for polls that ran rather than for a fixed
 # time. A tmux on PATH records every call, so a directive that reaches an idle
 # lane with no pane write is observed, not assumed. The must-fail controls close
-# the file.
+# the file, one per surface: the watch verb, and the send receipt's reading of
+# the liveness record the watch writes.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -16,6 +17,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
 TMP_ROOT="$(mktemp -d)"
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)"
+# mutant_scripts and mutate_file, the two halves of the controls at the end.
+# shellcheck source=lib/growth-state.sh
+source "$REPO_ROOT/skills/orch/tests/lib/growth-state.sh"
 WATCH_PID=""
 stop_watch() {
   [ -n "$WATCH_PID" ] || return 0
@@ -228,7 +232,7 @@ stop_watch
 # The liveness record the receipt reads, judged on its age alone. At interval
 # 5 the window is fifteen seconds: rows sit either side of it, and a record
 # stamped ahead of the sender's clock is no evidence of a poll.
-liveness_rows() { # [BIN]
+liveness_rows() { # [BIN] — with BIN, only collects LIVENESS
   local row age rest
   new_lane "liveness${1:+-mutant}"
   for row in "17|none|a record just past twice its interval plus five seconds reads as no monitor" \
@@ -279,10 +283,10 @@ assert_eq "$RC=$(head -n 1 "$WATCH_ERR")" "2=lane-mail: mailbox-missing=$BOX" \
 
 # A long interval, so a stop that waited out the sleep would be seen. TERM ends
 # the wait at once and the EXIT trap withdraws the liveness record.
-term_row() { # [BIN] — sets TERMED to how the watch ended
+term_row() { # sets TERMED to how the watch ended
   local tries=0
-  new_lane "term${1:+-mutant}"
-  start_watch "${1:-$LANE_MAIL}" --item KEN-1 --interval 30
+  new_lane term
+  start_watch "$LANE_MAIL" --item KEN-1 --interval 30
   while [ ! -e "$BOX/to-lane.watch" ] && [ "$tries" -lt 25 ]; do sleep 0.2; tries=$((tries + 1)); done
   kill -TERM "$WATCH_PID"
   tries=0
@@ -303,14 +307,12 @@ assert_eq "$TERMED" "exited:record-withdrawn" \
 # poll removed before its wait: no copy of the mailbox under the watch's TMPDIR.
 # The work directory itself stays, and counting it is what makes the copy count
 # a reading of the watch's own files rather than of an empty directory.
-kill_row() { # [BIN] — sets KILLED to the mailbox copies left behind, WORK_DIRS to the work directories there
-  local tries=0 tag=real dir
-  [ -z "${1:-}" ] || tag="$(basename -- "$(dirname -- "$1")")"
-  dir="$TMP_ROOT/kill-tmp-$tag"
-  new_lane "kill-$tag"
+kill_row() { # sets KILLED to the mailbox copies left behind, WORK_DIRS to the work directories there
+  local tries=0 dir="$TMP_ROOT/kill-tmp"
+  new_lane kill
   send_directive 'A message worth keeping private.'
   mkdir -p "$dir"
-  TMPDIR="$dir" start_watch "${1:-$LANE_MAIL}" --item KEN-1 --interval 30
+  TMPDIR="$dir" start_watch "$LANE_MAIL" --item KEN-1 --interval 30
   await_announced 1
   while [ -n "$(find "$dir" \( -name lane.raw -o -name lane.jsonl -o -name unread \) -print)" ] && [ "$tries" -lt 25 ]; do
     sleep 0.2
@@ -326,21 +328,16 @@ kill_row
 assert_eq "$KILLED/$WORK_DIRS" "0/1" \
   "a watch killed in its wait leaves no copy of the lane's mailbox in the work directory it made under TMPDIR"
 
-# Controls, each a copy of lane-mail beside the libraries and siblings it
-# sources, with one line of the watch removed.
-mutant() { # NAME SED-EXPRESSION — MUTANT holds the copy
-  local dir="$TMP_ROOT/mutant-$1"
-  mkdir -p "$dir"
-  sed "$2" "$LANE_MAIL" >"$dir/lane-mail"
-  chmod +x "$dir/lane-mail"
-  ln -s "$REPO_ROOT/skills/orch/scripts/lib" "$dir/lib"
-  ln -s "$REPO_ROOT/skills/orch/scripts/git-context" "$dir/git-context"
-  assert_eq "$(cmp -s "$dir/lane-mail" "$LANE_MAIL" && echo same || echo differs)" "differs" \
-    "control: the $1 mutant really differs from lane-mail"
+# The controls, each a private copy of lane-mail beside links to the shipped
+# libraries and siblings it sources, with one line of it changed.
+mutant() { # NAME OLD NEW — MUTANT holds the copy
+  local dir
+  dir="$(mutant_scripts "mutant-$1" lane-mail)" || exit 1
+  mutate_file "$dir/lane-mail" "$2" "$3"
   MUTANT="$dir/lane-mail"
 }
 
-mutant announces-again 's@^      ANNOUNCED="\$(lm_count "\$WORK_DIR/lane.jsonl")"$@      :@'
+mutant announces-again '      ANNOUNCED="$(lm_count "$WORK_DIR/lane.jsonl")"' '      :'
 new_lane control_again
 send_directive 'Once.'
 start_watch "$MUTANT"
@@ -350,103 +347,7 @@ assert_eq "$([ "$(announced)" -gt 1 ] && echo repeated || echo once)" "repeated"
   "control: without the announced count the same directive is announced at every poll"
 stop_watch
 
-mutant cursor-ignored 's@^      \[ "\$ANNOUNCED" -ge "\$SEEN" \] || ANNOUNCED="\$SEEN"$@      :@'
-new_lane control_cursor
-send_directive 'Already read.'
-lm inbox --item KEN-1 >/dev/null
-start_watch "$MUTANT"
-await_polls 1
-send_directive 'Not yet read.'
-await_announced 1
-await_polls 2
-assert_eq "$([ "$(mail_lines | tr '\n' '|')" = "lane-mail: mail=KEN-1 new=1|" ] && echo alone || echo read-mail-announced)" \
-  "read-mail-announced" "control: without the cursor raise a watch announces mail the lane already read"
-stop_watch
-
-mutant root-dropped "s@printf -v WATCH_READ '%q inbox --item %q --root %q' \"\\\$SCRIPT_DIR/lane-mail\" \"\\\$ITEM\" \"\\\$ROOT\"@printf -v WATCH_READ '%q inbox --item %q' \"\$SCRIPT_DIR/lane-mail\" \"\$ITEM\"@"
-new_lane control_root
-OTHER="$TMP_ROOT/other-control"
-mkdir -p "$OTHER"
-git -C "$OTHER" init -q
-git -C "$OTHER" config gc.auto 0
-git -C "$OTHER" config maintenance.auto false
-start_watch "$MUTANT"
-await_polls 1
-send_directive 'Hold the PR.'
-await_announced 1
-READ=""
-if [ "$(announced)" -ge 1 ]; then
-  READ="$(cd "$OTHER" && PATH="$STUB_BIN:$PATH" eval "$(sed -n 3p "$WATCH_OUT")" 2>/dev/null)" || :
-fi
-assert_eq "$([ "$(jq -r '.kind + " " + .text' <<<"${READ:-null}" 2>/dev/null)" = "directive Hold the PR." ] && echo read || echo unread)" \
-  "unread" "control: an announced command without --root, run from another checkout, misses the lane's directive"
-stop_watch
-
-mutant answer-announced 's@NEW="\$(lm_inbox_objects "\$WORK_DIR/unread"@NEW="$(lm_objects "$WORK_DIR/unread"@'
-new_lane control_answer
-start_watch "$MUTANT"
-await_polls 1
-ASK="$(lm ask --item KEN-1 --file "$(text q 'Merge now?')")"
-ASK="${ASK#id=}"
-lm send --item KEN-1 --root "$LANE" --re "$ASK" --file "$(text a 'Merge it.')" >/dev/null
-send_directive 'Also tag it.'
-await_announced 1
-await_polls 2
-assert_eq "$([ "$(mail_lines | tr '\n' '|')" = "lane-mail: mail=KEN-1 new=1|" ] && echo directive-alone || echo answer-announced)" \
-  "answer-announced" "control: counting every object a watch announces the answer its ask's wait keeps"
-stop_watch
-
-# The watch checks its mailbox before its first poll and at every poll. The
-# first poll's check refuses a mailbox missing at the start with the same key,
-# so no edit to the start check alone reddens the row for a mailbox no launch
-# created; this copy drops the per-poll check, which the removed-mailbox row holds.
-mutant mailbox-unchecked 's@^      \[ -d "\$BOX" \] || refuse mailbox-missing "\$BOX"$@      :@'
-new_lane control_removed
-start_watch "$MUTANT"
-await_polls 1
-rm -rf -- "${LANE:?}/tmp"
-TRIES=0
-while kill -0 "$WATCH_PID" 2>/dev/null && [ "$TRIES" -lt 10 ]; do
-  sleep 0.2
-  TRIES=$((TRIES + 1))
-done
-RC=0
-if kill -0 "$WATCH_PID" 2>/dev/null; then RC=running; else wait "$WATCH_PID" || RC=$?; fi
-stop_watch
-assert_eq "$([ "$RC=$(head -n 1 "$WATCH_ERR")" = "2=lane-mail: mailbox-missing=$BOX" ] && echo refused-missing || echo not-refused)" \
-  "not-refused" "control: without the per-poll check a removed mailbox is not refused as mailbox-missing"
-
-mutant cursor-moved 's@^      ANNOUNCED="\$(lm_count "\$WORK_DIR/lane.jsonl")"$@&; printf "%s\\n" "$ANNOUNCED" >"$CURSOR"@'
-new_lane control_moves
-send_directive 'Unread still.'
-start_watch "$MUTANT"
-await_announced 1
-await_polls 1
-assert_eq "$([ -e "$BOX/to-lane.cursor" ] && echo moved || echo none)" "moved" \
-  "control: a watch that writes the cursor it polls leaves the lane's unread mail marked read"
-stop_watch
-
-mutant foreground-sleep 's@^      sleep "\$INTERVAL" &$@      sleep "$INTERVAL"@;s@^      wait "\$!"$@      :@'
-term_row "$MUTANT"
-assert_eq "$TERMED" "running:record-kept" \
-  "control: with the wait in the foreground a TERM waits out the interval"
-
-mutant copies-kept 's@^      rm -f -- "\$WORK_DIR/lane.raw".*@      :@'
-kill_row "$MUTANT"
-assert_eq "$([ "$KILLED" -gt 0 ] && echo kept || echo none)" "kept" \
-  "control: without the per-poll removal a killed watch leaves the mailbox copies behind"
-
-# BSD mktemp, the one macOS ships, ignores TMPDIR for a bare template; this
-# copy names another root the same way, so the row finds no work directory.
-mutant tmpdir-ignored 's@^TMP_ROOT="\${TMPDIR:-/tmp}"$@TMP_ROOT="$KILL_ELSEWHERE"@'
-export KILL_ELSEWHERE="$TMP_ROOT/kill-elsewhere"
-mkdir -p "$KILL_ELSEWHERE"
-kill_row "$MUTANT"
-unset KILL_ELSEWHERE
-assert_eq "$WORK_DIRS" "0" \
-  "control: a work directory made outside TMPDIR leaves the killed-watch row nothing of its own to count"
-
-mutant wider-window 's@now - at <= 2 \* interval + 5@now - at <= 4 * interval + 5@'
+mutant wider-window 'now - at <= 2 * interval + 5' 'now - at <= 4 * interval + 5'
 LIVENESS=""
 liveness_rows "$MUTANT"
 assert_eq "${LIVENESS%%|*}" "monitor=live" \

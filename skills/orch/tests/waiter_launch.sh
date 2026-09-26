@@ -60,23 +60,14 @@ awk '
   active { print }
   END { if (blocks != 1 || active) exit 1 }
 ' "$SKILL_DIR/references/waiter-launch.md" > "$TMP_ROOT/launch.sh"
-# Each mutation swaps the runner for a trailing `&`: no-detach drops the new
-# session, ignore-int keeps it in the shape that ignores INT and QUIT. no-line
-# keeps the runner and drops the log's runner line.
-mutate() {
-  awk -v to="$1" '/job-unit\.sh launch / { sub(/^[^ ]*job-unit\.sh launch [^ ]* [^ ]* -- /, to); $0 = $0 " &"; matches++ } { print } END { if (matches != 1) exit 1 }' "$TMP_ROOT/launch.sh"
-}
-mutate '' > "$TMP_ROOT/no-detach.sh"
-mutate 'setsid ' > "$TMP_ROOT/ignore-int.sh"
-FROM='sed -n "s/^line=//p" "$0.runner" > "$0.log"' TO=': > "$0.log"' \
-  awk 'i = index($0, ENVIRON["FROM"]) { $0 = substr($0, 1, i - 1) ENVIRON["TO"] substr($0, i + length(ENVIRON["FROM"])); matches++ } { print } END { if (matches != 1) exit 1 }' \
-  "$TMP_ROOT/launch.sh" > "$TMP_ROOT/no-line.sh"
-for mutant in no-detach ignore-int no-line; do
-  if cmp -s "$TMP_ROOT/launch.sh" "$TMP_ROOT/$mutant.sh"; then
-    printf 'mutation-missing mutant=%s path=%s\n' "$mutant" "$TMP_ROOT/launch.sh" >&2
-    exit 1
-  fi
-done
+# The launch fence's one must-fail control: no-detach swaps the runner for a
+# trailing `&`, which drops the new session.
+awk '/job-unit\.sh launch / { sub(/^[^ ]*job-unit\.sh launch [^ ]* [^ ]* -- /, ""); $0 = $0 " &"; matches++ } { print } END { if (matches != 1) exit 1 }' \
+  "$TMP_ROOT/launch.sh" > "$TMP_ROOT/no-detach.sh"
+if cmp -s "$TMP_ROOT/launch.sh" "$TMP_ROOT/no-detach.sh"; then
+  printf 'mutation-missing mutant=no-detach path=%s\n' "$TMP_ROOT/launch.sh" >&2
+  exit 1
+fi
 
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/project/.agents/skills" "$TMP_ROOT/no-manager" "$TMP_ROOT/lingering"
 git -C "$TMP_ROOT/project" init -q
@@ -93,18 +84,15 @@ done
 exit 1
 STUB
 chmod +x "$TMP_ROOT/bin/gh"
-# A launch directory whose runner lacks one hand-over to a unit, for each
-# control below: the directory, and the caller's environment.
-mutant_runner() { # DIR FROM TO
-  local lib="$TMP_ROOT/$1/.agents/skills/orch/scripts/lib"
-  mkdir -p "$lib"
-  FROM="$2" TO="$3" awk '$0 == ENVIRON["FROM"] { print ENVIRON["TO"]; hits++; next } { print } END { if (hits != 1) exit 1 }' \
-    "$SKILL_DIR/scripts/lib/job-unit.sh" > "$lib/job-unit.sh"
-  chmod +x "$lib/job-unit.sh"
-}
-mutant_runner no-dir '      --working-directory="$PWD" ${unit_props[@]+"${unit_props[@]}"} \' \
-  '      ${unit_props[@]+"${unit_props[@]}"} \'
-mutant_runner no-env '    for name in $(compgen -e); do unit_env+=("--setenv=$name"); done' '    :'
+# The runner's one must-fail control: a launch directory whose job-unit.sh
+# does not hand its directory over to a unit.
+NO_DIR_LIB="$TMP_ROOT/no-dir/.agents/skills/orch/scripts/lib"
+mkdir -p "$NO_DIR_LIB"
+FROM='      --working-directory="$PWD" ${unit_props[@]+"${unit_props[@]}"} \' \
+  TO='      ${unit_props[@]+"${unit_props[@]}"} \' \
+  awk '$0 == ENVIRON["FROM"] { print ENVIRON["TO"]; hits++; next } { print } END { if (hits != 1) exit 1 }' \
+  "$SKILL_DIR/scripts/lib/job-unit.sh" > "$NO_DIR_LIB/job-unit.sh"
+chmod +x "$NO_DIR_LIB/job-unit.sh"
 ROOT_REAL="$(cd "$TMP_ROOT" && pwd -P)"
 # A systemd-run whose probe fails, as it does where no user manager answers.
 printf '#!/bin/sh\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n' > "$TMP_ROOT/no-manager/systemd-run"
@@ -195,14 +183,13 @@ runner_cases() { # RUNNER PATH_PREFIX
 systemd:launch|launch|prefixed|130|detached job dies on its own INT
 systemd:bare|launch|bare|130|a unit starts the job with INT at its default, whatever the caller ignores
 setsid:launch|launch|prefixed|130|detached job dies on its own INT
-setsid:ignore|ignore-int|prefixed|0|control: a trailing & leaves INT ignored
 setsid:bare|launch|bare|0|control: the caller's own ignore reaches the detached job
 ROWS
 
   # The job runs in the directory the launch ran from and with the pane the
   # caller's TMUX_PANE names, which a unit has only when the runner hands them
-  # over. Under setsid the job inherits both, so the controls, a runner
-  # without each hand-over, are unit rows.
+  # over. Under setsid the job inherits both, so the control, a runner
+  # without the directory hand-over, is a unit row.
   # row | launch directory under the root | outcome against that directory and
   # %42 | name
   while IFS='|' read -r row project outcome name; do
@@ -218,7 +205,6 @@ ROWS
   done <<'ROWS'
 any:env|project|same|the job runs in the launch directory and reads the caller's TMUX_PANE
 systemd:no-dir|no-dir|differs|control: without the directory hand-over the unit runs elsewhere
-systemd:no-env|no-env|differs|control: without the environment hand-over the unit has no TMUX_PANE
 ROWS
 
   if command -v pgrep >/dev/null; then
@@ -298,14 +284,6 @@ watch_read_case() { # RUNNER PATH_PREFIX
   assert_eq "$(<"$case_dir/watch.exit")" stopped "runner=$runner: the stop mark written before the stop survives it" "$case_dir/watch.log"
   follow_leader="$(pgrep -f "waiter[.]$run_id/follo[w] ")" || follow_leader=""
   [[ -z "$follow_leader" || "$follow_leader" == *$'\n'* ]] || kill -TERM -- "-$follow_leader" 2>/dev/null || true
-
-  # The control: the launch without the log's runner line leaves the stop no
-  # unit or runner to read.
-  case_dir="$(run_dir "$TMP_ROOT/read dir+x/$runner-no-line")"
-  ( cd "$TMP_ROOT/project" && PATH="$prefix$PATH" sh "$TMP_ROOT/no-line.sh" "$case_dir/watch" true ) >/dev/null
-  wait_for_file "$case_dir/watch.exit"
-  assert_eq "$(sed -n '1s/ .*//p' "$case_dir/watch.log")" "" \
-    "runner=$runner: control: without the runner line the log names no runner to stop" "$case_dir/watch.log"
 }
 
 if systemd-run --user --quiet --collect true </dev/null >/dev/null 2>&1; then

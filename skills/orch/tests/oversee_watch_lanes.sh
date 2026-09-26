@@ -19,6 +19,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
+# mutant_scripts and mutate_file, the two halves of the control below.
+# shellcheck source=lib/growth-state.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 
 HEARTBEAT1='EVENT+heartbeat+loops=1+interval=0s+since=none'
 HEARTBEAT2='EVENT+heartbeat+loops=2+interval=0s+since=none'
@@ -399,101 +402,21 @@ lane_table \
   "an exited sibling's first pass is remembered the same way|new|fish_prompt|walled_bash|1|out~EVENT+usage-limit+gh-1=true out~EVENT+lane-exited=false" \
   "...and the next run reports it exited, the standing wall not again|cont|fish_prompt|walled_bash|1|rc=0 out~EVENT+usage-limit+gh-1=false out~EVENT+lane-exited+gh-2=true"
 
-# The must-fail controls: the reported mark never consulted, one arm each, so
-# the same screen is news on every run. Each copy must differ from the source
-# or the control proves nothing. The copy keeps orch's place in a skills
-# tree: its libraries resolve the github skill beside it.
+# The suite's one must-fail control: the model-capacity classifier removed, so
+# a capacity screen reads as nothing and then as idle. MODEL_CAPACITY is the
+# shared judge's, in lib/lane-state.sh, so the mutant is the LIBRARY the watch
+# sources and not the watch. The copy keeps orch's place in a skills tree: its
+# libraries resolve the github skill beside it.
 MUTANT_DIR="$TMP_ROOT/mutant"
-mkdir -p "$MUTANT_DIR/orch"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
+MUTANT_SCRIPTS="$(mutant_scripts mutant/orch lib/lane-state.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-# MODEL_CAPACITY is the shared judge's, in lib/lane-state.sh, so the mutant is
-# the LIBRARY the watch sources and not the watch. The copy is put back below,
-# beside the watch the following controls restore.
-assert_eq "$(grep -cF "MODEL_CAPACITY='Selected model is at capacity'" "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" || true)" "1" \
-  "control: the model-capacity classifier has one match to replace"
-sed "s/MODEL_CAPACITY='Selected model is at capacity'/MODEL_CAPACITY='__never_model_capacity__'/" \
-  "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" > "$MUTANT_DIR/orch/scripts/lib/lane-state.sh"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/lib/lane-state.sh" "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" && echo same || echo differs)" "differs" \
-  "control: the mutant really removes the model-capacity classifier"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
+mutate_file "$MUTANT_SCRIPTS/lib/lane-state.sh" "MODEL_CAPACITY='Selected model is at capacity'" "MODEL_CAPACITY='__never_model_capacity__'"
+WATCH_BIN="$MUTANT_SCRIPTS/oversee-watch" lane_table \
   "control: without the classifier the first capacity pass emits nothing|new|codex:codex-model-capacity|codex|1|first=$HEARTBEAT1 out~EVENT+model-capacity=false" \
   "control: without the classifier the second pass records idle|cont|codex:codex-model-capacity|codex|1|first=EVENT+idle-after-return+gh-2 out~EVENT+model-capacity=false"
-cp "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" "$MUTANT_DIR/orch/scripts/lib/lane-state.sh"
+# The shipped watch over the idle row the mutant's second pass left.
 WATCH_BIN="$REPO_ROOT/skills/orch/scripts/oversee-watch" lane_table \
   "an old idle row cannot suppress the first capacity event|cont|codex:codex-model-capacity|codex|1|first=EVENT+model-capacity+gh-2 out~EVENT+idle-after-return=false"
-sed 's/^    if \[\[ "$prior" == "$screen_key|reported" \]\]; then continue; fi$/    prior="${prior%|reported}"/' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really ignores the idle row's reported mark"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
-  "control: the idle lane is still reported on the run that finds it|new|idle|claude|2|rc=0 first=EVENT+idle-after-return+gh-2" \
-  "control: without the mark a re-run over the same screen reports it again|cont|idle|claude|2|rc=0 first=EVENT+idle-after-return+gh-2"
-sed 's/^    if \[\[ "$prior" == "$pane_key|reported" \]\]; then continue; fi$/    prior="${prior%|reported}"/' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really ignores the exited row's reported mark"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
-  "control: the exited lane is still reported on the run that finds it|new|fish_prompt|bash|2|rc=0 first=EVENT+lane-exited+gh-2" \
-  "control: without the mark a re-run over the same pane reports it again|cont|fish_prompt|bash|2|rc=0 first=EVENT+lane-exited+gh-2"
-sed 's/^    if \[\[ "$seen_reported" == "$event" \]\]; then continue; fi$//' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really ignores the wall's reported mark"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
-  "control: the parked lane is still reported on the run that finds it|new|-|walled|1|rc=0 out~EVENT+usage-limit+gh-1=true" \
-  "control: without the mark a re-run reports the standing wall again|cont|-|walled|1|rc=0 out~EVENT+usage-limit+gh-1=true"
-
-# The must-fail for the marker this change adds to the shared predicate: with
-# it cut out of WORKING_RE, the scrolled frame comes back idle.
-cp "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MUTANT_DIR/orch/scripts/oversee-watch"
-sed 's/|Jump to bottom \[(\]//' \
-  "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" > "$MUTANT_DIR/orch/scripts/lib/lane-state.sh"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/lib/lane-state.sh" "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" && echo same || echo differs)" "differs" \
-  "control: the mutant really drops the scrolled-view marker"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
-  "control: without the scrolled-view marker the scrolled pane reads idle|new|scrolled|claude|2|first=EVENT+idle-after-return+gh-2"
-
-# The must-fail for the cap: without it bounded_tail is the whole non-blank
-# slice again, so the model picker comes back at its full height. Restores
-# lane-state.sh, which the control above left mutated.
-cp "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" "$MUTANT_DIR/orch/scripts/lib/lane-state.sh"
-CAP_LINE='  grep -v '"'"'^[[:space:]]*$'"'"' <<<"$1" | tail -n "$WATCH_TAIL_LINES" || true'
-assert_eq "$(grep -cxF -- "$CAP_LINE" "$REPO_ROOT/skills/orch/scripts/oversee-watch" || true)" "1" \
-  "control: the cap has one line to replace"
-awk -v want="$CAP_LINE" '$0 == want { print "  grep -v \047^[[:space:]]*$\047 <<<\"$1\" || true"; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really drops the cap"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
-  "control: uncapped, the model picker's payload is its whole slice|new|codex:codex-dialog-model|codex|1|rc=0 first=EVENT+lane-asking+gh-2 tail=19 out~OpenAI+Codex=true"
-
-# The must-fail for the noise arm: with the filter cut out of report_tail, a
-# removed worktree's prompt noise is the whole closing-report payload again
-# and the all-noise slice prints it in place of the marker.
-NOISE_LINE='  rc=0; kept="$(grep -Ev -- "$WATCH_NOISE_RE" <<<"$lines")" || rc=$?'
-assert_eq "$(grep -cxF -- "$NOISE_LINE" "$REPO_ROOT/skills/orch/scripts/oversee-watch" || true)" "1" \
-  "control: the noise arm has one line to replace"
-awk -v want="$NOISE_LINE" '$0 == want { print "  rc=0; kept=\"$lines\""; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really drops the noise arm"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
-  "control: unfiltered, the removed worktree's prompt noise is the payload|new|exited_noise|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=5 out~Hook+failed=true" \
-  "control: unfiltered, the all-noise slice prints the noise and no marker|new|exited_all_noise|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=2 out~payload-noise-only=false"
-
-# The must-fail for the pattern's anchors: unanchored, the filter reaches a
-# closing report merely quoting a missing path and eats the line that says
-# why the lane stopped.
-ANCHOR_LINE="WATCH_NOISE_RE='^Hook failed:|^bash: cd: .*: No such file or directory'"
-assert_eq "$(grep -cxF -- "$ANCHOR_LINE" "$REPO_ROOT/skills/orch/scripts/oversee-watch" || true)" "1" \
-  "control: the noise pattern has one line to replace"
-awk -v want="$ANCHOR_LINE" '$0 == want { print "WATCH_NOISE_RE=\047Hook failed|No such file or directory\047"; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really unanchors the noise pattern"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
-  "control: unanchored, both quoted shapes go and the report reads as suppression|new|exited_quotes_missing_path|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=1 out~payload-noise-only+lines=2=true out~the+build+failed=false out~the+commit+was+blocked=false"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

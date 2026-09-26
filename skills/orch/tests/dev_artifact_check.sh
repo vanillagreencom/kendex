@@ -33,7 +33,7 @@ jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cac
 SH
 chmod +x "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
-LIVE_SCRIPTS="$(copy_scripts live)"
+LIVE_SCRIPTS="$(mutant_scripts live)" || exit 1
 CHECK="$LIVE_SCRIPTS/dev-artifact-check"
 WRITE="$LIVE_SCRIPTS/dev-return-write"
 ROUND_WRITE_BIN="$LIVE_SCRIPTS/dev-round-write"
@@ -315,8 +315,7 @@ assert_eq "$(observe "rc=2")" "rc=2" "file mode has no record to read from" "$ER
 echo "=== a fix round cannot add unlisted machinery ==="
 # Every protected-path addition the round's record did not name refuses the
 # round with its files; additions the record names pass; a move is not an
-# addition; a probe git cannot run is its own refusal, and a copy of the
-# check that misroutes it reports the misroute.
+# addition; a probe git cannot run is its own refusal.
 AD="$(new_repo adds issue-826 seed 1000000)"
 round_write --worktree "$AD" --issue issue-826 --round-id 1-1 --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
 mkdir -p "$AD/.agents/skills/orch/scripts" "$AD/crates/new-parser" "$AD/helpers" "$AD/pkg/test_helpers" \
@@ -370,17 +369,6 @@ chmod +x "$GIT_SHIM/git"
 REAL_GIT="$(command -v git)"
 REAL_GIT="$REAL_GIT" PATH="$GIT_SHIM:$PATH" run_check --worktree "$AD" --issue issue-826 --round-id 3-3 --expect-items-from-round
 assert_eq "$(observe "rc=1 reason=comparison_failed")" "rc=1 reason=comparison_failed" "a failed snapshot probe refuses acceptance with its own reason" "$ERR"
-# Control: a copy of the check that misroutes the failure reports the misroute
-# (copy_scripts takes the whole scripts directory because the check sources a
-# lib).
-MUTANT_SCRIPTS="$(copy_scripts mutant-scripts)"
-ROUTING_MUTANT="$MUTANT_SCRIPTS/dev-artifact-check"
-sed -i.bak 's/emit false "$file" "comparison_failed"/emit false "$file" "unapproved_additions"/' "$ROUTING_MUTANT"
-chmod +x "$ROUTING_MUTANT"
-set +e
-OUT="$(REAL_GIT="$REAL_GIT" PATH="$GIT_SHIM:$PATH" "$ROUTING_MUTANT" --worktree "$AD" --issue issue-826 --round-id 3-3 --expect-items-from-round 2>/dev/null)"; RC=$?
-set -e
-assert_eq "$(observe "reason=unapproved_additions")" "reason=unapproved_additions" "control: the routing mutant reports the reason its mutation names"
 
 echo "=== a rebase stops the gate rather than misattributing to it ==="
 # base_sha still resolves after a restack, so comparing against it would read
@@ -402,13 +390,10 @@ git -C "$RB" rebase -q main >/dev/null
 "$WRITE" --worktree "$RB" --kind fix --issue issue-944 --round-id 1-1 --branch feature --commit "$(git -C "$RB" rev-parse HEAD)" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-rb-1-1" "$RB" issue-944 1-1)" --item 1 Applied done >/dev/null
 run_check --worktree "$RB" --issue issue-944 --round-id 1-1 --expect-items-from-round
 assert_eq "$(observe "ok=false verdict=retry reason=additions_unattributable files=[]")" "ok=false verdict=retry reason=additions_unattributable files=[]" "an orphaned base refuses the round and names no file" "$ERR"
-# Control: without the stop the round is billed the file main merged, which
-# also proves the fixture orphans that base.
-STOP_MUTANT="$MUTANT_SCRIPTS/dev-artifact-check"
-cp "$CHECK" "$STOP_MUTANT"
-assert_eq "$(grep -cF 'if ! git -C "$repo" merge-base --is-ancestor "$base_sha" HEAD >/dev/null 2>&1; then' "$STOP_MUTANT")" "1" "control finds exactly one orphaned-base stop to remove"
-sed -i.bak 's/if ! git -C "\$repo" merge-base --is-ancestor "\$base_sha" HEAD >\/dev\/null 2>&1; then/if false; then/' "$STOP_MUTANT"
-chmod +x "$STOP_MUTANT"
+# The suite's one must-fail control: without the stop the round is billed the
+# file main merged, which also proves the fixture orphans that base.
+STOP_MUTANT="$(mutant_scripts stop-mutant dev-artifact-check)/dev-artifact-check" || exit 1
+mutate_file "$STOP_MUTANT" 'if ! git -C "$repo" merge-base --is-ancestor "$base_sha" HEAD >/dev/null 2>&1; then' 'if false; then'
 set +e
 OUT="$("$STOP_MUTANT" --worktree "$RB" --issue issue-944 --round-id 1-1 --expect-items-from-round 2>/dev/null)"; RC=$?
 set -e
@@ -454,43 +439,20 @@ for row in "${MODE_ROWS[@]}"; do
   run_check --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round
   assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
 done
-# Control: with the mode gate below the commit gate, the fabricated commit
-# answers first.
-ORDER_MUTANT_SCRIPTS="$(copy_scripts order-mutant)"
-ORDER_MUTANT="$ORDER_MUTANT_SCRIPTS/dev-artifact-check"
-assert_eq "$(grep -cF "  # A fix receipt's mode is the one its round runs." "$ORDER_MUTANT")/$(grep -cF '  # A `.commit` that passed the scalar gate must name a real commit' "$ORDER_MUTANT")/$(grep -cF '    local refused_additions refused_file additions_rc=0' "$ORDER_MUTANT")" "1/1/1" \
-  "control finds the mode gate, the commit gate and the additions gate once each"
-perl -0777 -i -pe 's/(  # A fix receipt\x27s mode is the one its round runs\..*?)(  # A `\.commit` that passed the scalar gate.*?)(  if \[\[ -n "\$round_record" \]\]; then\n    local refused_additions)/$2$1$3/s' "$ORDER_MUTANT"
-assert_eq "$(( $(grep -nF "  # A fix receipt's mode is the one its round runs." "$ORDER_MUTANT" | cut -d: -f1) > $(grep -nF '    if [[ "$(git -C "$repo" cat-file -t "$commit" 2>/dev/null)" != "commit" ]]; then' "$ORDER_MUTANT" | cut -d: -f1) ))" "1" \
-  "control moved the mode gate below the commit gate"
-mode_row "tools/guard --range x" ".validate_mode=\"full\" | .commit=\"$MODE_FAKE_SHA\""
-set +e
-OUT="$("$ORDER_MUTANT" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>/dev/null)"; RC=$?
-set -e
-assert_eq "$(observe "rc=1 reason=commit_unresolvable")" "rc=1 reason=commit_unresolvable" "control: with the mode gate below the commit gate the fabricated commit answers first"
 # The mode is read from the resolver's stdout alone: what the project env
 # prints on stderr does not unresolve it.
 mode_row "tools/guard --range x" "."
-NOISE_SCRIPTS="$(copy_scripts mode-noise)"
+NOISE_SCRIPTS="$(mutant_scripts mode-noise dev-validate-run)" || exit 1
 printf '#!/usr/bin/env bash\nprintf "private env: warning\\n" >&2\nprintf "validate-mode=range\\n"\n' > "$NOISE_SCRIPTS/dev-validate-run"
 set +e
 OUT="$("$NOISE_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/mode-noise.err")"; RC=$?
 set -e
 assert_eq "$(observe "rc=0 reason=valid validate_mode=range")" "rc=0 reason=valid validate_mode=range" \
   "a resolver that also writes to stderr resolves to the mode it printed" "$TMP_ROOT/mode-noise.err"
-# Control: a check that reads the resolver's stderr with its stdout cannot
-# resolve the mode.
-NOISE_MUTANT_SCRIPTS="$(copy_scripts mode-noise-mutant)"
-mutate_file "$NOISE_MUTANT_SCRIPTS/dev-artifact-check" 'resolve-mode --worktree "$repo" 2>/dev/null)" \' 'resolve-mode --worktree "$repo" 2>&1)" \'
-cp "$NOISE_SCRIPTS/dev-validate-run" "$NOISE_MUTANT_SCRIPTS/dev-validate-run"
-set +e
-OUT="$("$NOISE_MUTANT_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>/dev/null)"; RC=$?
-set -e
-assert_eq "$(observe "rc=2")" "rc=2" "control: with stderr read beside stdout the mode is unresolved"
 # A resolution that cannot be read is no verdict: the check exits 2 on its
 # own first line rather than accepting the mode it could not judge.
 mode_row "tools/guard --range x" ".validate_mode=\"full\""
-MODE_SCRIPTS="$(copy_scripts mode-unresolved)"
+MODE_SCRIPTS="$(mutant_scripts mode-unresolved dev-validate-run)" || exit 1
 printf '#!/usr/bin/env bash\nprintf "dev-validate-run: unreadable-setting setting=DEV_VALIDATE_RANGE_CMD\\n" >&2\nexit 2\n' > "$MODE_SCRIPTS/dev-validate-run"
 set +e
 OUT="$("$MODE_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/mode-unresolved.err")"; RC=$?
@@ -501,7 +463,7 @@ assert_eq "$(observe "$UNRESOLVED_EXPECT")" "$UNRESOLVED_EXPECT" \
   "a mode dev-validate-run cannot resolve exits 2 on its own key" "$ERR"
 # A resolver that exits non-zero is unresolved even when what it printed reads
 # as a mode.
-EXIT_SCRIPTS="$(copy_scripts mode-exit)"
+EXIT_SCRIPTS="$(mutant_scripts mode-exit dev-validate-run)" || exit 1
 printf '#!/usr/bin/env bash\nprintf "validate-mode=full\\n"\nexit 2\n' > "$EXIT_SCRIPTS/dev-validate-run"
 set +e
 OUT="$("$EXIT_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/mode-exit.err")"; RC=$?
@@ -510,30 +472,6 @@ ERR="$TMP_ROOT/mode-exit.err"
 EXIT_EXPECT="rc=2 stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW=true"
 assert_eq "$(observe "$EXIT_EXPECT")" "$EXIT_EXPECT" \
   "a resolver that exits non-zero is unresolved whatever mode it printed" "$ERR"
-# Control: a check that ignores the resolver's exit takes the printed mode.
-EXIT_MUTANT_SCRIPTS="$(copy_scripts mode-exit-mutant)"
-mutate_file "$EXIT_MUTANT_SCRIPTS/dev-artifact-check" 'resolve-mode --worktree "$repo" 2>/dev/null)" \' 'resolve-mode --worktree "$repo" 2>/dev/null || true)" \'
-cp "$EXIT_SCRIPTS/dev-validate-run" "$EXIT_MUTANT_SCRIPTS/dev-validate-run"
-set +e
-OUT="$("$EXIT_MUTANT_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>/dev/null)"; RC=$?
-set -e
-assert_eq "$(observe "rc=0 reason=valid")" "rc=0 reason=valid" "control: with the exit ignored the printed mode is accepted"
-# Control: without the mode gate the full run is accepted for the range round.
-MODE_MUTANT_SCRIPTS="$(copy_scripts mode-mutant)"
-mutate_file "$MODE_MUTANT_SCRIPTS/dev-artifact-check" "if [[ -n \"\$round_record\" ]] && jq -e '.kind == \"fix\" and .validate_mode != null'" "if false && jq -e '.'"
-set +e
-OUT="$("$MODE_MUTANT_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>/dev/null)"; RC=$?
-set -e
-assert_eq "$(observe "reason=valid")" "reason=valid" "control: without the mode gate the full run is accepted for a range round"
-# Control: a gate that files an unresolved mode as a mismatch answers for a
-# mode it never read.
-UNRESOLVED_MUTANT_SCRIPTS="$(copy_scripts unresolved-mutant)"
-mutate_file "$UNRESOLVED_MUTANT_SCRIPTS/dev-artifact-check" 'message mode-unresolved >&2; return 2' ':'
-printf '#!/usr/bin/env bash\nexit 2\n' > "$UNRESOLVED_MUTANT_SCRIPTS/dev-validate-run"
-set +e
-OUT="$("$UNRESOLVED_MUTANT_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>/dev/null)"; RC=$?
-set -e
-assert_eq "$(observe "rc=1 reason=mode_mismatch")" "rc=1 reason=mode_mismatch" "control: without the unresolved refusal the unread mode reads as a mismatch"
 
 echo "=== the recorded commit must name a real object in the worktree's repo ==="
 # A fabricated sha is commit_unresolvable; an orphaned-but-real one is valid

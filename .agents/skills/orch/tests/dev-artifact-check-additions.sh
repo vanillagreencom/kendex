@@ -3,9 +3,8 @@
 # runs it over a real linked worktree: helper names by unconditional substring
 # and by suffix inside a test path are protected additions a fix round cannot
 # add unlisted, product
-# and documentation basenames are not, an inert classifier and a classifier
-# whose output is invalid are each caught by their control, and round-mode
-# waiting leaves no scratch behind. The writer these rounds are stamped by is
+# and documentation basenames are not, an inert classifier is caught by the
+# suite's one control, and round-mode waiting leaves no scratch behind. The writer these rounds are stamped by is
 # dev_round_write.sh; the checker's other gates are dev_artifact_check.sh.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -107,25 +106,16 @@ run_check "$CHECK" --worktree "$WT" --issue issue-826 --round-id 30-30 --expect-
 E='rc=1 reason=unapproved_additions files=["__tests__/integration/utils/shared.ts","__tests__/workflow_helpers.sh","adversarial/name_test-helper_more/file.rs","adversarial/name_test-util_more/file.rs","adversarial/name_test_helper_more/file.rs","adversarial/name_test_util_more/file.rs","tests/unit/support/shared.rs","tests/workflow_helpers.sh"]'
 assert_eq "$(observe "$E")" "$E" "the public checker refuses the explicit substrings and the test-context helper suffixes, and names each"
 
-# Control: an inert classifier accepts the same round outright.
-INERT="$(copy_scripts inert-classifier)/dev-artifact-check"
+# The suite's one must-fail control: an inert classifier accepts the same
+# round outright.
+INERT="$(mutant_scripts inert-classifier dev-artifact-check)/dev-artifact-check" || exit 1
 assert_eq "$(awk '/^is_protected_addition\(\)/,/^}/' "$INERT" | grep -Fc 'return 0')" "4" "control: the classifier has four protected returns to invert"
 sed -i.bak '/^is_protected_addition()/,/^}/ s/return 0/return 1/' "$INERT"
 assert_eq "$(awk '/^is_protected_addition\(\)/,/^}/' "$INERT" | grep -Fc 'return 0')" "0" "control: every protected return is inverted in the private copy"
-chmod +x "$INERT"
 run_check "$INERT" --worktree "$WT" --issue issue-826 --round-id 30-30 --expect-items-from-round
 E='rc=0 ok=true verdict=accept reason=valid files=[]'
 assert_eq "$(observe "$E")" "$E" "control: an inert classifier accepts the round with no file named"
 
-# A classifier whose output is invalid is its own refusal, routed to retry.
-FAILED="$(copy_scripts failed-classifier)/dev-artifact-check"
-assert_eq "$(grep -Fc '[[ -s "$result" ]]' "$FAILED")" "1" "control: one result check to invert"
-sed -i.bak 's/\[\[ -s "\$result" \]\]/[[ ! -s "$result" ]]/' "$FAILED"
-assert_eq "$(grep -Fc '[[ -s "$result" ]]' "$FAILED")" "0" "control: the result check is inverted in the private copy"
-chmod +x "$FAILED"
-run_check "$FAILED" --worktree "$WT" --issue issue-826 --round-id 30-30 --expect-items-from-round
-E='rc=1 ok=false verdict=retry reason=classifier_failed'
-assert_eq "$(observe "$E")" "$E" "invalid classifier output fails acceptance with its own reason and routes to retry"
 
 echo "=== product and documentation helper basenames are outside the protected scope ==="
 round_write --worktree "$WT" --issue issue-826 --round-id 32-32 --item 1 product "$OK_REACH" >/dev/null

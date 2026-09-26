@@ -21,8 +21,11 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 
-PASS=0
-FAIL=0
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
+# mutant_scripts and mutate_file, the two halves of the control below.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
@@ -85,21 +88,12 @@ count="$(PATH="$NOFLOCK" "$WS" --state-dir "$RACE_SD" get KEN-RACE '.fixed_items
 # The control: a copy whose lock helper only ever calls flock must refuse every
 # write on this PATH, so the assertions above are about the mutex arm and not
 # about a write that would land unlocked anyway.
-BROKEN="$TMP_ROOT/broken"
-mkdir -p "$BROKEN/scripts/lib"
-cp "$WS" "$BROKEN/scripts/workflow-state"
-cp "$REPO_ROOT"/skills/orch/scripts/lib/*.sh "$BROKEN/scripts/lib/"
-chmod +x "$BROKEN/scripts/workflow-state"
-perl -pi -e 's/^  if command -v flock >\/dev\/null 2>&1; then$/  if true; then/' "$BROKEN/scripts/lib/file-lock.sh"
-if grep -q '^  if true; then$' "$BROKEN/scripts/lib/file-lock.sh"; then
-  ok "control: the mutant really removes the mkdir arm"
-else
-  bad "control: the mutant really removes the mkdir arm" "file-lock.sh unchanged"
-fi
+BROKEN="$(mutant_scripts broken lib/file-lock.sh)" || exit 1
+mutate_file "$BROKEN/lib/file-lock.sh" 'if command -v flock >/dev/null 2>&1; then' 'if true; then'
 BSD="$TMP_ROOT/broken-state"
-PATH="$NOFLOCK" "$BROKEN/scripts/workflow-state" --state-dir "$BSD" init KEN-BROKEN --worktree "$REPO_ROOT" --branch ken-broken >/dev/null 2>&1 || true
+PATH="$NOFLOCK" "$BROKEN/workflow-state" --state-dir "$BSD" init KEN-BROKEN --worktree "$REPO_ROOT" --branch ken-broken >/dev/null 2>&1 || true
 rc=0
-PATH="$NOFLOCK" "$BROKEN/scripts/workflow-state" --state-dir "$BSD" set KEN-BROKEN phase implementing >/dev/null 2>&1 || rc=$?
+PATH="$NOFLOCK" "$BROKEN/workflow-state" --state-dir "$BSD" set KEN-BROKEN phase implementing >/dev/null 2>&1 || rc=$?
 [[ "$rc" -ne 0 ]] && ok "control: with only the flock arm every write refuses on this PATH" \
   || bad "control: with only the flock arm every write refuses on this PATH" "rc=$rc"
 
