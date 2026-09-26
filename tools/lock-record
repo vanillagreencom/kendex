@@ -47,7 +47,7 @@
 # passes through as is:
 #   option=<arg>                unknown option, or one with no value (exit 2)
 #   repo=<dir>                  not a git checkout (exit 2)
-#   status=<dir>                git could not read the checkout (exit 2), what the refresh wrote, or apply the rolling commit onto the head (exit 1)
+#   status=<dir>                git could not read the checkout (exit 2), what the refresh wrote, or apply the rolling commit onto the head, which every run repeats until that pull request is closed or its branch replaced (exit 1)
 #   dirty=<n>                   the checkout has n uncommitted paths; nothing was judged (exit 2)
 #   source-refresh=<status>     `kendex source refresh` failed (exit 1)
 #   current=<sha>               the record matches the tree at that head; nothing was written
@@ -187,7 +187,8 @@ if [[ -n "$rolling" && -n "$number" ]]; then
   case "$rc" in
     0 | 1) ;;
     *)
-      say status "$repo" "git could not apply the rolling commit $rolling onto $head, so nothing was pushed; what git printed is above" >&2
+      say status "$repo" "git could not apply the rolling commit $rolling onto $head, so nothing was pushed; what git printed is above" \
+        "every run will refuse here until pull request $number is closed or $branch is replaced with one commit on $base's head; the next run then re-records" >&2
       git -C "$repo" reset -q --hard HEAD
       exit 1 ;;
   esac

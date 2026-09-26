@@ -952,7 +952,10 @@ impl Main {
 /// fail, the exit status, the first notice line on stderr, where every
 /// refusal goes and no success notice does, and what `git status` lists
 /// afterwards: the record the refresh staged where the refusal came after
-/// it, and nothing where it came before or where the judge reset.
+/// it, and nothing where it came before or where the judge reset. `above`
+/// is text stderr must carry before that first line, what git printed on
+/// its own where the notice says it passed through, and empty where the
+/// row pins nothing above it.
 struct Refusal {
     main: Main,
     args: &'static [&'static str],
@@ -961,6 +964,7 @@ struct Refusal {
     code: i32,
     first: &'static str,
     left: &'static str,
+    above: &'static str,
 }
 
 const REFUSALS: &[Refusal] = &[
@@ -972,6 +976,7 @@ const REFUSALS: &[Refusal] = &[
         code: 2,
         first: "lock-record: repo=EMPTY\n",
         left: "",
+        above: "",
     },
     Refusal {
         main: Main::Current,
@@ -981,6 +986,7 @@ const REFUSALS: &[Refusal] = &[
         code: 2,
         first: "lock-record: option=--bogus\n",
         left: "",
+        above: "",
     },
     Refusal {
         main: Main::Current,
@@ -990,6 +996,7 @@ const REFUSALS: &[Refusal] = &[
         code: 2,
         first: "lock-record: option=--base\n",
         left: "",
+        above: "",
     },
     Refusal {
         main: Main::Dirty,
@@ -999,6 +1006,7 @@ const REFUSALS: &[Refusal] = &[
         code: 2,
         first: "lock-record: dirty=1\n",
         left: "?? scratch\n",
+        above: "",
     },
     Refusal {
         main: Main::Current,
@@ -1008,6 +1016,7 @@ const REFUSALS: &[Refusal] = &[
         code: 1,
         first: "lock-record: source-refresh=7\n",
         left: "",
+        above: "",
     },
     Refusal {
         main: Main::Stale,
@@ -1017,6 +1026,7 @@ const REFUSALS: &[Refusal] = &[
         code: 1,
         first: "lock-record: rolling-read=128\n",
         left: "",
+        above: "",
     },
     Refusal {
         main: Main::Stale,
@@ -1026,6 +1036,7 @@ const REFUSALS: &[Refusal] = &[
         code: 1,
         first: "lock-record: pull-request-list=kendex/lock\n",
         left: "",
+        above: "",
     },
     Refusal {
         main: Main::StaleUnderOpenPullRequest,
@@ -1035,6 +1046,7 @@ const REFUSALS: &[Refusal] = &[
         code: 1,
         first: "lock-record: pull-request-state=41\n",
         left: "",
+        above: "",
     },
     Refusal {
         main: Main::StaleUnderRollingMergeCommit,
@@ -1044,6 +1056,7 @@ const REFUSALS: &[Refusal] = &[
         code: 1,
         first: "lock-record: status=MAIN\n",
         left: "",
+        above: "is a merge but no -m option was given",
     },
     Refusal {
         main: Main::Stale,
@@ -1053,6 +1066,7 @@ const REFUSALS: &[Refusal] = &[
         code: 1,
         first: "lock-record: refresh=7\n",
         left: "",
+        above: "",
     },
     Refusal {
         main: Main::Current,
@@ -1062,6 +1076,7 @@ const REFUSALS: &[Refusal] = &[
         code: 1,
         first: "lock-record: stale-after-refresh=HEAD\n",
         left: "",
+        above: "",
     },
     Refusal {
         main: Main::Current,
@@ -1071,6 +1086,7 @@ const REFUSALS: &[Refusal] = &[
         code: 1,
         first: "lock-record: refresh-wrote-nothing=HEAD\n",
         left: "",
+        above: "",
     },
     Refusal {
         main: Main::StaleUnderOpenPullRequest,
@@ -1080,6 +1096,7 @@ const REFUSALS: &[Refusal] = &[
         code: 1,
         first: "lock-record: disarm=41\n",
         left: "M  .kendex-lock.json\n",
+        above: "",
     },
     Refusal {
         main: Main::StaleUnderQueuedPullRequest,
@@ -1089,6 +1106,7 @@ const REFUSALS: &[Refusal] = &[
         code: 1,
         first: "lock-record: dequeue=41\n",
         left: "M  .kendex-lock.json\n",
+        above: "",
     },
 ];
 
@@ -1122,11 +1140,18 @@ fn assert_refused(row: &Refusal) {
     let first = fill(row.first.trim_end_matches('\n'));
     assert_eq!(refused.status.code(), Some(row.code), "{args:?}: {output}");
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let notice = stderr
-        .lines()
-        .find(|line| line.starts_with("lock-record: "))
+    let at = stderr
+        .match_indices("lock-record: ")
+        .map(|(at, _)| at)
+        .find(|at| *at == 0 || stderr.as_bytes()[at - 1] == b'\n')
         .unwrap_or_else(|| panic!("{args:?}: no notice on stderr in\n{output}"));
+    let notice = stderr[at..].lines().next().unwrap_or_default();
     assert_eq!(notice, first, "{args:?}: {output}");
+    assert!(
+        stderr[..at].contains(row.above),
+        "{args:?}: {:?} is not above the notice in\n{output}",
+        row.above
+    );
     let asked = world.gh_log();
     let asked = asked.strip_prefix(&before).unwrap_or(&asked);
     assert!(!asked.contains("pr create"), "{args:?}: {asked}");
