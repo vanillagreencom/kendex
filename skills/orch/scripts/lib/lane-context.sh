@@ -260,7 +260,8 @@ lane_context_record_fields() { # RECORD
 }
 
 # lane_context_record_judged RECORD PCT — RECORD with `handoff_due` set from
-# lane_context_handoff_due: true, false, or null where its window is unnamed.
+# lane_context_handoff_due: true, false, or null where capacity is unknown
+# below the independent token limit.
 # Exit 1 where RECORD is not a record lane_context_record wrote, 2 where PCT is
 # out of range; nothing is printed then.
 lane_context_record_judged() { # RECORD PCT
@@ -374,8 +375,8 @@ lane_context_collect() {
       judged="$(lane_context_record_judged "$out" "$pct")" || rc=$?
       case "$rc" in
         0)
-          # A reading with no window is judged neither due nor room, and its
-          # row says so rather than reading `ok` beside a blank handoff cell.
+          # Below the token limit, unknown capacity is neither due nor room.
+          # The row reports that gap instead of an ok row with a blank handoff.
           if [[ "$(jq -r '.handoff_due' <<<"$judged")" == null ]]; then
             lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" window-unread \
               "the harness adapter named no context window for this session's model" "$server" "$caller" "$judged"
