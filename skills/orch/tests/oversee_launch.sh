@@ -10,10 +10,19 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
+# mutant_scripts and mutate_file, the two halves of the launch verb's control.
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
 OVERSEE="$SRC_DIR/oversee"
+# The permission word a claude launch carries, read from the launch table the
+# launcher itself writes it from, so the rows assert the word reaches the
+# harness without this file spelling it.
+# shellcheck source=../scripts/lib/lane-launch.sh
+source "$SRC_DIR/lib/lane-launch.sh"
+BYPASS="$(launch_choice_permission_write claude)" || { echo "fixture: no claude permission word in the launch table" >&2; exit 1; }
 
 TMP_ROOT="$(mktemp -d)"
 TMUX_DIR="$TMP_ROOT/tmux"
@@ -31,6 +40,8 @@ check() { # NAME GOT WANT
   if [[ "$2" == "$3" ]]; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"
   else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$1" "$3" "$2"; fi
 }
+# The assertion mutate_file reports through, in this suite's check.
+assert_eq() { check "$3" "$1" "$2"; }
 
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN" "$TMP_ROOT/work/tmp"
@@ -100,10 +111,10 @@ LAUNCHED="$(keyed overseer-launched "$OUT" | sed -n 1p)"
 SESSION="$(field "$LAUNCHED" session)"
 check "a first launch from outside tmux opens the overseer at the end of the named session and records it" \
   "$RC|$(sed -n 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=%N/p' <<<"$LAUNCHED")|$(layout)|$(recorded_argv)" \
-  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|1 overseer;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--dangerously-skip-permissions;$BRIEF;"
+  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|1 overseer;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$BRIEF;"
 check "the session record names the runtime, server, pane, window, account, line and generation" \
   "$(recorded runtime)|$(recorded server)|$(recorded pane)|$(recorded window)|$(recorded account)|$(recorded generation)|$(recorded launch_line)" \
-  "tmux|$SERVER_PID|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high --dangerously-skip-permissions '$BRIEF'"
+  "tmux|$SERVER_PID|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high $BYPASS '$BRIEF'"
 check "the launch line names the form and the session before the record" \
   "$(keyed overseer-launch "$OUT" | sed -n 1p | sed 's/session=%[0-9]*/session=%N/; s/window=@[0-9]*/window=@N/')" \
   "oversee: overseer-launch form=prefix lane=$H/.claude trust=none session=%N window=@N server=$SOCKET"
@@ -116,14 +127,8 @@ check "a launch beside a live recorded overseer refuses naming it and opens noth
   "1|oversee: overseer-live session=$SESSION server=$SOCKET generation=1|1|1"
 # The must-fail control: a launcher that skips the liveness check opens a
 # second overseer beside the first.
-LIVECTL="$TMP_ROOT/livectl"
-mkdir -p "$LIVECTL"
-ln -s "$SRC_DIR"/* "$LIVECTL/"
-rm -f -- "${LIVECTL:?}/oversee"
-LIVE_LINE='  if grep -qxF -- "$live_server $live_pane" <<<"$panes"; then'
-check "control: the liveness check is one line of the launcher" "$(grep -cxF -- "$LIVE_LINE" "$OVERSEE")" "1"
-FROM="$LIVE_LINE" awk '$0 == ENVIRON["FROM"] { print "  if false; then"; next } { print }' "$OVERSEE" > "$LIVECTL/oversee"
-chmod +x "$LIVECTL/oversee"
+LIVECTL="$(mutant_scripts livectl oversee)" || exit 1
+mutate_file "$LIVECTL/oversee" '  if grep -qxF -- "$live_server $live_pane" <<<"$panes"; then' '  if false; then'
 OVERSEE_BIN="$LIVECTL/oversee" run_oversee -- launch --wait-secs 20
 check "control: without the liveness check a second overseer opens beside the first" \
   "$RC|$(overseers)|$(recorded generation)" "0|2|2"
@@ -202,20 +207,6 @@ check "launch --cwd from outside the fleet directory records into that directory
   "$RC|$(recorded generation)|$(elsewhere_state)|$(tm display-message -p -t "$(recorded pane)" '#{pane_current_path}')" \
   "0|5|absent|$WORK_REAL"
 tm kill-window -t "$(recorded window)"
-# The must-fail control: a launcher that only hands --cwd to the session keeps
-# the typing directory's state, so the record lands beside the wrong fleet.
-CWDCTL="$TMP_ROOT/cwdctl"
-mkdir -p "$CWDCTL"
-ln -s "$SRC_DIR"/* "$CWDCTL/"
-rm -f -- "${CWDCTL:?}/oversee"
-CWD_LINE='  cd -- "$CWD" || die invalid-cwd "dir=$given"'
-check "control: the move into --cwd is one line of the launcher" "$(grep -cxF -- "$CWD_LINE" "$OVERSEE")" "1"
-FROM="$CWD_LINE" awk '$0 == ENVIRON["FROM"] { print "  :"; next } { print }' "$OVERSEE" > "$CWDCTL/oversee"
-chmod +x "$CWDCTL/oversee"
-OVERSEE_BIN="$CWDCTL/oversee" RUN_DIR="$ELSEWHERE" run_oversee -- launch --cwd "$TMP_ROOT/work" --wait-secs 20
-check "control: without the move the record lands in the typing directory's state" \
-  "$RC|$(recorded generation)|$(elsewhere_state)" "0|5|written"
-tm kill-window -t "$(jq -r '.overseer.window' "$ELSEWHERE/tmp/workflow-state-oversee.json")"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

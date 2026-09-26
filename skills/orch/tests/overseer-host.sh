@@ -7,6 +7,9 @@
 # window placement a succession depends on.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# mutant_scripts and mutate_file, the two halves of the stop verb's control.
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
@@ -28,6 +31,8 @@ check() { # NAME GOT WANT
   if [[ "$2" == "$3" ]]; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"
   else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$1" "$3" "$2"; fi
 }
+# The assertion mutate_file reports through, in this suite's check.
+assert_eq() { check "$3" "$1" "$2"; }
 
 echo "=== overseer-host ==="
 
@@ -159,15 +164,10 @@ check "stop --successor swaps the successor into the predecessor's slot and clos
   "0|stopped session=$PRED window=$PRED_WINDOW|3 overseer;5 w5;7 w7;8 w8;9 w9;10 w10;|$SUCC_WINDOW"
 # The must-fail control: a provider whose stop only kills the predecessor
 # leaves the successor at its own index and a gap where the caller sat.
-MUTANT="$TMP_ROOT/mutant"
-mkdir -p "$MUTANT/lib"
-ln -s "$SRC_DIR"/lib/* "$MUTANT/lib/"
-FROM='      tmux swap-window -d -s "$succ_window" -t "$window" \; kill-window -t "$window" \; select-window -t "$succ_window" \'
-check "control: the swap line is one line of the provider" "$(grep -cxF -- "$FROM" "$PROVIDER")" "1"
-FROM="$FROM" awk '$0 == ENVIRON["FROM"] { print "      tmux kill-window -t \"$window\" \\"; next } { print }' "$PROVIDER" > "$MUTANT/overseer-host-tmux"
-chmod +x "$MUTANT/overseer-host-tmux"
-check "control: the mutant differs from the provider" \
-  "$(cmp -s "$PROVIDER" "$MUTANT/overseer-host-tmux" && echo same || echo differs)" "differs"
+MUTANT="$(mutant_scripts mutant overseer-host-tmux)" || exit 1
+mutate_file "$MUTANT/overseer-host-tmux" \
+  '      tmux swap-window -d -s "$succ_window" -t "$window" \; kill-window -t "$window" \; select-window -t "$succ_window" \' \
+  '      tmux kill-window -t "$window" \'
 tm kill-window -a -t fleet:0
 PRED2="$(new_pane 3 'exec sleep 100000')"
 new_pane 5 'exec sleep 100000' >/dev/null

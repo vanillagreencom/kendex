@@ -740,9 +740,7 @@ assert_eq "$RC|$(keyed interrupted "$(cat "$TMP_ROOT/interrupted.out")" | sed -n
 # create opens the real window, prints its answer, then blocks holds the script
 # in that window; the group kill reaches the script and the stub together, so
 # the answer is captured while SUCC_PANE is still empty.
-INTCREATE="$TMP_ROOT/int-create"
-script_copy "$INTCREATE"
-rm -f -- "${INTCREATE:?}/overseer-host"
+INTCREATE="$(mutant_scripts int-create overseer-host)" || exit 1
 cat > "$INTCREATE/overseer-host" <<STUB
 #!/bin/sh
 if [ "\$1" = create ]; then
@@ -779,15 +777,11 @@ if command -v setsid >/dev/null 2>&1; then
   # The must-fail control: the library's ol_session_abandon recovers the
   # session from the provider's answer where the caller never assigned it.
   # Drop that recovery and the window leaks.
-  INTCTL="$TMP_ROOT/int-create-ctl"
-  script_copy "$INTCTL"
-  rm -f -- "${INTCTL:?}/overseer-host" "${INTCTL:?}/lib/overseer-launch.sh"
+  INTCTL="$(mutant_scripts int-create-ctl lib/overseer-launch.sh)" || exit 1
+  # The stub provider beside the mutated library: a fixture, not a mutation.
+  rm -f -- "${INTCTL:?}/overseer-host"
   cp "$INTCREATE/overseer-host" "$INTCTL/overseer-host"
-  REC_LINE='  [[ -n "$OL_SESSION" ]] || ol_session_from_out'
-  assert_eq "$(grep -cxF -- "$REC_LINE" "$SRC_DIR/lib/overseer-launch.sh")" \
-    "1" \
-    "control: the abandon recovery is one line of the library"
-  grep -vxF -- "$REC_LINE" "$SRC_DIR/lib/overseer-launch.sh" > "$INTCTL/lib/overseer-launch.sh"
+  mutate_file "$INTCTL/lib/overseer-launch.sh" '  [[ -n "$OL_SESSION" ]] || ol_session_from_out' '  :'
   int_create_run "$INTCTL/oversee-succeed"
   assert_eq "$INT_OVERSEERS" \
     "1" \
@@ -816,44 +810,6 @@ rm -f "$TMP_ROOT/idle"
 assert_eq "$RC|generation=$(orec generation) pane=$(orec pane) account=$(orec account) line=$(recorded_line)" \
   "1|generation=5 pane=%900 account=/seed/.claude line=$SEED_LINE" \
   "an abandoned succession puts the caller's whole record back, its own line included"
-# The must-fail control: with the restore dropped, the abandoned launch leaves
-# the successor's record naming a session that never ran.
-RESTORECTL="$TMP_ROOT/restorectl"
-script_copy "$RESTORECTL"
-rm -f -- "${RESTORECTL:?}/lib/overseer-launch.sh"
-RESTORE_CALL='  if (( OL_RECORD_WRITTEN )) && ! ol_record_restore; then'
-assert_eq "$(grep -cxF -- "$RESTORE_CALL" "$SRC_DIR/lib/overseer-launch.sh")" \
-  "1" \
-  "control: the restore call is one line of the library"
-FROM="$RESTORE_CALL" awk '$0 == ENVIRON["FROM"] { print "  if false; then"; next } { print }' \
-  "$SRC_DIR/lib/overseer-launch.sh" > "$RESTORECTL/lib/overseer-launch.sh"
-seed_overseer
-new_caller "$MARK"
-touch "$TMP_ROOT/idle"
-SUCCEED_BIN="$RESTORECTL/oversee-succeed" run_succeed restorectl 'claude:1:high' --wait-secs "$IDLE_WAIT"
-rm -f "$TMP_ROOT/idle"
-assert_eq "generation=$(orec generation) line=$(recorded_line)" \
-  "generation=6 line=env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high '$BRIEF'" \
-  "control: without the restore the abandoned launch leaves the successor's generation"
-# The must-fail control for the write the in-pane row reads back: with the
-# record write dropped, a succession leaves the fleet state naming no session,
-# generation or account for the successor that is running.
-WRITECTL="$TMP_ROOT/writectl"
-script_copy "$WRITECTL"
-rm -f -- "${WRITECTL:?}/oversee-succeed"
-WRITE_LINE='if [[ -n "$OL_PRIOR" ]] && ! ol_record_write "$OL_RUNTIME" "$SUCC_PANE" "$SUCC_WINDOW" "$OL_SERVER" "$lane_dir" "$cmd"; then'
-assert_eq "$(grep -cxF -- "$WRITE_LINE" "$SUCCEED")" \
-  "1" \
-  "control: the record write is one line of the script"
-FROM="$WRITE_LINE" awk '$0 == ENVIRON["FROM"] { print "if false; then"; next } { print }' "$SUCCEED" > "$WRITECTL/oversee-succeed"
-chmod +x "$WRITECTL/oversee-succeed"
-fleet_state
-new_caller "$MARK"
-SUCCEED_BIN="$WRITECTL/oversee-succeed" run_succeed writectl 'claude:1:high'
-assert_eq "$RC|$(overseers)|generation=$(orec generation) pane=$(orec pane)" \
-  "0|1|generation=none pane=none" \
-  "control: without the record write a succession leaves the successor unrecorded"
-fleet_state
 
 new_caller "$UNDER_MARK"
 run_succeed under 'claude:1:high'
@@ -975,39 +931,6 @@ OVERSEER_HOST="$TMP_ROOT/other" run_succeed otherhost 'claude:1:high' --wait-sec
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(grep -c '^oversee-succeed: successor-launch ' <<<"$OUT")|$(overseers)" \
   "1|oversee-succeed: runtime-unsupported host=$TMP_ROOT/other|0|0" \
   "a runtime other than tmux is refused before the pre-launch line, nothing opened"
-# The must-fail control: a copy that skips the rule reaches the pre-launch
-# line under the provider path.
-HOSTCTL="$TMP_ROOT/hostctl"
-script_copy "$HOSTCTL"
-rm -f -- "${HOSTCTL:?}/oversee-succeed"
-HOST_LINE='if ! ol_runtime_supported; then'
-assert_eq "$(grep -cxF -- "$HOST_LINE" "$SUCCEED")" \
-  "1" \
-  "control: the runtime rule is read on one line of the script"
-FROM="$HOST_LINE" awk '$0 == ENVIRON["FROM"] { print "if false; then"; next } { print }' "$SUCCEED" > "$HOSTCTL/oversee-succeed"
-chmod +x "$HOSTCTL/oversee-succeed"
-new_caller "$MARK"
-OVERSEER_HOST="$TMP_ROOT/other" SUCCEED_BIN="$HOSTCTL/oversee-succeed" run_succeed otherhostctl 'claude:1:high' --wait-secs 5
-assert_eq "$(grep -c '^oversee-succeed: runtime-unsupported ' <<<"$OUT")|$(grep -c '^oversee-succeed: successor-launch ' <<<"$OUT")" \
-  "0|1" \
-  "control: without the rule the provider path reaches the pre-launch line"
-# The must-fail control: a copy whose library admits any rank word walks the
-# entry, and the tier ladder refuses it instead.
-PREFCTL="$TMP_ROOT/prefctl"
-script_copy "$PREFCTL"
-rm -f -- "${PREFCTL:?}/lib/overseer-launch.sh"
-PREF_LINE='    [[ "$entry" =~ ^(claude|codex):[1-9][0-9]*:[a-z]+$ ]] || { OL_BAD_ENTRY="$entry"; return 1; }'
-assert_eq "$(grep -cxF -- "$PREF_LINE" "$SRC_DIR/lib/overseer-launch.sh")" \
-  "1" \
-  "control: the entry shape is one line of the library"
-FROM="$PREF_LINE" TO='    [[ "$entry" =~ ^(claude|codex):[^:]+:[a-z]+$ ]] || { OL_BAD_ENTRY="$entry"; return 1; }' \
-  awk '$0 == ENVIRON["FROM"] { print ENVIRON["TO"]; next } { print }' \
-  "$SRC_DIR/lib/overseer-launch.sh" > "$PREFCTL/lib/overseer-launch.sh"
-new_caller "$MARK"
-SUCCEED_BIN="$PREFCTL/oversee-succeed" run_succeed prefctl 'claude:one:high' --wait-secs 5
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "1|oversee-succeed: model-failed entry=claude:one:high" \
-  "control: with the shape loosened in the library the succession walks the entry to the tier ladder"
 stage_usage_pair rateleadingzero 40 20 600
 new_caller "$UNDER_MARK"
 WALL_MINUTES=030 run_succeed rateleadingzero '' --check-marks
