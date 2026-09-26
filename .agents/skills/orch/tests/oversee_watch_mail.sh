@@ -334,6 +334,57 @@ err="$TMP_ROOT/ask-due-b"
 out="$(run_watch -- --max-loops 1 2>"$err")"
 assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" "a resolved deadline is not reported again" "$err"
 
+# The deadline step's three refusal arms, driven through a lane-mail wrapper
+# that answers one call by the arm STUB_DIR/ask-arm names and hands every
+# other call to the real script: the due listing failing, a resolve refused
+# resolved-already, which is the owner's answer landing first and no failure,
+# and a resolve refused for any other cause. The mailbox is read in the same
+# pass whatever the step did, so the owner note behind it is still reported.
+mkdir -p "$TMP_ROOT/bin"
+cat > "$TMP_ROOT/bin/lane-mail-ask-arm.sh" <<'EOF'
+#!/usr/bin/env bash
+arm="$(cat "$STUB_DIR/ask-arm")"
+case "$arm:$1:$2:$3:$4:$5:$6" in
+  due-fail:pending:--item:overseer:--to:owner:--due)
+    printf 'lane-mail: lock-failed=/srv/box\nThe refusal.\n' >&2; exit 2 ;;
+  resolved-already:resolve:--item:overseer:--id:*:--default)
+    printf 'lane-mail: resolved-already=%s id=x\nThe refusal.\n' "$5" >&2; exit 2 ;;
+  write-failed:resolve:--item:overseer:--id:*:--default)
+    printf 'lane-mail: write-failed=/srv/box/to-lane.jsonl\nThe refusal.\n' >&2; exit 2 ;;
+esac
+exec "$REAL_LANE_MAIL" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/lane-mail-ask-arm.sh"
+printf 'Hold KEN-8.\n' > "$TMP_ROOT/arm-note.txt"
+ask_arm() { # ARM -> ARM_RC, ARM_OUT, ARM_ERR, ARM_ASK, ARM_NOTE
+  mail_reset overseer
+  owner_ask 'Cut the scanner?' cut 0
+  ARM_ASK="$ASK"
+  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item overseer --directive --file "$TMP_ROOT/arm-note.txt") >/dev/null
+  ARM_NOTE="$(jq -r 'select(.kind == "directive") | .id' "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")"
+  printf '%s' "$1" > "$STUB_DIR/ask-arm"
+  ARM_ERR="$TMP_ROOT/ask-arm-$1"
+  ARM_RC=0
+  ARM_OUT="$(run_watch OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-ask-arm.sh" \
+    REAL_LANE_MAIL="$LANE_MAIL" -- --max-loops 1 2>"$ARM_ERR")" || ARM_RC=$?
+}
+arm_facts() { printf 'rc=%s due-unread=%s resolve-failed=%s first=%s' "$ARM_RC" \
+  "$(grep -c '^oversee-watch: ask-due-unread exit=2' "$ARM_ERR" || :)" \
+  "$(grep -c "^oversee-watch: ask-resolve-failed id=$ARM_ASK exit=2" "$ARM_ERR" || :)" \
+  "$(head -1 <<<"$ARM_OUT")"; }
+new_case mail_owner_ask_due_unread
+ask_arm due-fail
+assert_eq "$(arm_facts)" "rc=2 due-unread=1 resolve-failed=0 first=EVENT owner-note $ARM_NOTE" \
+  "a due listing that fails is reported once and fails the pass, and the mailbox is still read in that pass" "$ARM_ERR"
+new_case mail_owner_ask_resolved_race
+ask_arm resolved-already
+assert_eq "$(arm_facts)" "rc=0 due-unread=0 resolve-failed=0 first=EVENT owner-note $ARM_NOTE" \
+  "a resolve refused resolved-already is the owner's answer landing first: no failure, and the pass goes on" "$ARM_ERR"
+new_case mail_owner_ask_resolve_failed
+ask_arm write-failed
+assert_eq "$(arm_facts)" "rc=2 due-unread=0 resolve-failed=1 first=EVENT owner-note $ARM_NOTE" \
+  "a resolve refused for any other cause is reported once, naming the ask, and fails the pass" "$ARM_ERR"
+
 # One mailbox, two checkouts. lane-mail resolves the overseer mailbox to the
 # main checkout from a linked worktree as well, and every fleet lane runs in
 # one, so a watch started there reads the same mailbox through the same cursor
