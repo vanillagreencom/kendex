@@ -15,6 +15,11 @@ vi.mock("@/bindings", () => ({
     accountLoginPoll: vi.fn(),
     accountLogout: vi.fn(),
     openUrl: vi.fn(),
+    // Every build but the macOS app: the command section draws nothing.
+    commandLinkState: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { command: { kind: "notCarried" }, ask: false },
+    }),
     termsState: vi.fn().mockResolvedValue({
       status: "ok",
       data: { ask: false, accepted: null },

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Toaster } from "sonner";
 import { commands } from "@/bindings";
+import { CommandLinkDialog } from "@/components/command-link-dialog";
 import { CommitOfferDialog } from "@/components/commit-offer-dialog";
 import { ErrorDialog } from "@/components/error-dialog";
 import { InstallDialog } from "@/components/install/install-dialog";
@@ -31,6 +32,7 @@ import { UnmanagedPage } from "@/pages/unmanaged";
 import { UpdatesPage } from "@/pages/updates";
 import { useAccountStore } from "@/stores/account";
 import { useAuditStore } from "@/stores/audit";
+import { useCommandLinkStore } from "@/stores/command-link";
 import { useNavStore } from "@/stores/nav";
 import { useNoticeStore } from "@/stores/notice";
 import { useProjectChangesStore } from "@/stores/project-changes";
@@ -208,6 +210,9 @@ export function useStartupLoads() {
       // is away, so what is waiting here is exactly the fact focus has to
       // re-read. It still opens nothing.
       void useProjectChangesStore.getState().refresh(trackedProjects());
+      // A kendex command installed by Homebrew or by hand while the window
+      // was away changes what Settings offers.
+      void useCommandLinkStore.getState().load();
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
@@ -267,6 +272,9 @@ export default function App() {
         {/* The question a write leaves behind: what to do with the files
             kendex wrote in a git project. */}
         <CommitOfferDialog />
+        {/* The macOS app's first-launch question; last in the order
+            `lib/asks-first.ts` holds, and drawn nowhere else. */}
+        <CommandLinkDialog />
         <div className="flex flex-1 overflow-hidden">
           <Sidebar />
           <main className="relative flex flex-1 flex-col overflow-hidden">

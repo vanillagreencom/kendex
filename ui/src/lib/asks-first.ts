@@ -29,10 +29,16 @@
 // offer's is read by a scan per write, and one reader action writes many
 // times, so an offer drawn while another scan is out states a project's
 // files as they stood one write ago.
+//
+// The macOS app's first-launch question, whether to install the kendex
+// command, is last: it is asked once, it loses nothing by waiting, and it
+// waits for the terms screen too, which covers the whole window and is
+// answered before anything else is.
 import { useCommitOfferStore } from "@/stores/commit-offer";
 import { useInstallFlow } from "@/stores/install-flow";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useProblemsStore } from "@/stores/problems";
+import { useTermsStore } from "@/stores/terms";
 
 /** The questions, in the order they are asked. The commit offer's scan
  *  failure is one of them rather than a detail of the offer: it has its own
@@ -41,7 +47,8 @@ export type Question =
   | "install"
   | "repoEffects"
   | "commitOfferFailure"
-  | "commitOffer";
+  | "commitOffer"
+  | "commandLink";
 
 /** Whether this question may be on screen now: every question ahead of it
  *  has to be silent first, and so does anything it has itself put up.
@@ -59,6 +66,10 @@ export function useMayAsk(question: Question): boolean {
   const scanFailure = useCommitOfferStore((s) => s.scanFailure !== null);
   const scanning = useCommitOfferStore((s) => s.scanning);
   const problems = useProblemsStore((s) => s.dialog.open);
+  const offered = useCommitOfferStore((s) => s.queue.length > 0);
+  // Answered, not merely unread: a terms read that has not landed or that
+  // failed is no evidence the screen will stay down.
+  const termsAnswered = useTermsStore((s) => s.state?.ask === false);
   switch (question) {
     case "install":
       return true;
@@ -68,5 +79,15 @@ export function useMayAsk(question: Question): boolean {
       return !installing && !effects && !problems && !scanning;
     case "commitOffer":
       return !installing && !effects && !scanFailure && !problems && !scanning;
+    case "commandLink":
+      return (
+        termsAnswered &&
+        !installing &&
+        !effects &&
+        !scanFailure &&
+        !problems &&
+        !scanning &&
+        !offered
+      );
   }
 }

@@ -147,6 +147,14 @@ export const commands = {
 	 *  file over whatever else has been saved since.
 	 */
 	acceptTerms: () => typedError<TermsState, string>(__TAURI_INVOKE("accept_terms")),
+	commandLinkState: () => typedError<CommandLinkState, string>(__TAURI_INVOKE("command_link_state")),
+	/**
+	 *  Link the command through the administrator prompt. Blocks until the
+	 *  person answers it.
+	 */
+	commandLinkInstall: () => typedError<CommandLinkState, LinkRefused>(__TAURI_INVOKE("command_link_install")),
+	/**  Record that the first-launch question was answered. */
+	commandLinkPromptAnswered: () => typedError<CommandLinkState, string>(__TAURI_INVOKE("command_link_prompt_answered")),
 	registerProject: (path: string) => typedError<RegisteredProject, string>(__TAURI_INVOKE("register_project", { path })),
 	unregisterProject: (path: string) => typedError<SettingsRead, string>(__TAURI_INVOKE("unregister_project", { path })),
 	/**
@@ -789,6 +797,11 @@ export type AppSettings = {
 	 *  is asked is theirs, not their project's, and both shells read it.
 	 */
 	"commit-offer"?: CommitOffer,
+	/**
+	 *  Whether the macOS app's first launch still asks to put the kendex
+	 *  command it carries on `PATH`. [`crate::command_link`] owns the rule.
+	 */
+	"command-link-prompt"?: CommandLinkPrompt,
 };
 
 export type AppUpdateStatus = { kind: "neverChecked" } | { kind: "upToDate"; version: string } | { kind: "updateAvailable"; version: string; releaseNotesUrl: string; cliAssetAvailable: boolean; muted: boolean } | { kind: "feedOlder"; version: string };
@@ -1316,6 +1329,53 @@ export type Chosen = {
 	 *  selection.
 	 */
 	customizations?: boolean,
+};
+
+/**  Where the kendex command stands for the running app. */
+export type CommandLink = 
+/**
+ *  The running app holds no command: a build that was not bundled, or
+ *  a platform whose installer puts the command on `PATH` itself.
+ */
+{ kind: "notCarried" } | 
+/**
+ *  The app runs from where it will not stay — a copy macOS translocated,
+ *  or a mounted disk image — so a link to it would stop working, and no
+ *  kendex command is installed. Opening it from Applications lifts this.
+ */
+{ kind: "transient" } | 
+/**  `link` already runs this app's command at `target`. */
+{ kind: "linked"; link: string; target: string } | 
+/**
+ *  Installing creates `link` pointing at `target`. `replaces` is set
+ *  where the link leads into another copy of kendex now, which the
+ *  install points at this one instead.
+ */
+{ kind: "offered"; link: string; target: string; replaces: string | null } | 
+/**
+ *  A kendex command is already installed at `path`, and it is not a
+ *  link into a kendex app at `link`.
+ */
+{ kind: "elsewhere"; path: string } | 
+/**
+ *  Something other than a link into a kendex app is at `link`, and no
+ *  searched place holds a command. kendex leaves it alone.
+ */
+{ kind: "taken"; link: string };
+
+/**
+ *  Whether the first-launch question about the kendex command is still to
+ *  be asked. Once answered it stays answered, whatever the answer and
+ *  whatever happens to the link afterwards: the Settings row is the way
+ *  back, and a question that returned would be one a person already gave.
+ */
+export type CommandLinkPrompt = "ask" | "answered";
+
+/**  What the first-launch question and the Settings row read. */
+export type CommandLinkState = {
+	command: CommandLink,
+	/**  Whether the first launch puts the question. */
+	ask: boolean,
 };
 
 /**
@@ -2818,6 +2878,15 @@ export type Line = {
 };
 
 export type LineKind = "context" | "add" | "remove";
+
+/**  Why an install did not leave the link in place. */
+export type LinkRefused = 
+/**  The administrator prompt was dismissed. Nothing changed. */
+{ kind: "cancelled" } | 
+/**  What is there now takes no install; `command` says what it is. */
+{ kind: "notOffered"; command: CommandLink } | 
+/**  The link is not in place, in words. */
+{ kind: "failed"; message: string };
 
 /**  Where one poll of the device flow left the sign-in. */
 export type LoginPoll = { kind: "pending" } | { kind: "slow-down" } | { kind: "signed" };

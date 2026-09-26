@@ -58,6 +58,22 @@ pub struct AppSettings {
     /// is asked is theirs, not their project's, and both shells read it.
     #[serde(default, rename = "commit-offer")]
     pub commit_offer: CommitOffer,
+    /// Whether the macOS app's first launch still asks to put the kendex
+    /// command it carries on `PATH`. [`crate::command_link`] owns the rule.
+    #[serde(default, rename = "command-link-prompt")]
+    pub command_link_prompt: CommandLinkPrompt,
+}
+
+/// Whether the first-launch question about the kendex command is still to
+/// be asked. Once answered it stays answered, whatever the answer and
+/// whatever happens to the link afterwards: the Settings row is the way
+/// back, and a question that returned would be one a person already gave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum CommandLinkPrompt {
+    #[default]
+    Ask,
+    Answered,
 }
 
 /// What a kendex write in a git project does about the files it left
@@ -112,6 +128,7 @@ impl Default for AppSettings {
             zoom: ZOOM.default,
             terms: None,
             commit_offer: CommitOffer::Ask,
+            command_link_prompt: CommandLinkPrompt::Ask,
         }
     }
 }

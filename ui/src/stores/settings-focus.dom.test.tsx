@@ -22,6 +22,7 @@ vi.mock("@/bindings", () => ({
     appUpdateChannel: vi.fn(),
     appUpdateCommandChannel: vi.fn(),
     appVersion: vi.fn(),
+    commandLinkState: vi.fn(),
     commitOfferScan: vi.fn(),
     relocateProject: vi.fn(),
     projectChangesScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
@@ -75,6 +76,10 @@ describe("the project registry on window focus", () => {
     vi.clearAllMocks();
     useSettingsStore.setState({ settings: null, base: null });
     useCommitOfferStore.setState({ queue: [], scanning: false });
+    vi.mocked(commands.commandLinkState).mockResolvedValue({
+      status: "ok",
+      data: { command: { kind: "notCarried" }, ask: false },
+    });
     vi.mocked(commands.accountStatus).mockResolvedValue({
       status: "ok",
       data: { state: { state: "signed-out" }, endpoint: "https://kendex.ai" },

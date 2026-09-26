@@ -3,6 +3,7 @@ mod app_settings;
 mod app_update;
 pub mod audit;
 mod bookmarks;
+mod command_link;
 mod commands;
 pub mod commit_offer;
 mod community;
@@ -125,6 +126,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         app_settings::save_zoom,
         legal::terms_state,
         legal::accept_terms,
+        command_link::command_link_state,
+        command_link::command_link_install,
+        command_link::command_link_prompt_answered,
         app_settings::register_project,
         app_settings::unregister_project,
         app_settings::project_relocation,
