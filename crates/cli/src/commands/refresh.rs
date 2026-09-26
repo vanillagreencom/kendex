@@ -122,7 +122,10 @@ fn finish_scopes(env: &Env, reached: &[kendex_core::model::Scope], closing: Vec<
             refreshed(scope.count),
             &scope.attention.blocked,
             &scope.scored,
-            Folded::BehindVerbose(scope.attention.folded),
+            match scope.attention.folded {
+                true => Folded::BehindVerbose,
+                false => Folded::None,
+            },
         );
     }
 }

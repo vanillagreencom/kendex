@@ -323,23 +323,50 @@ fn drawn(tone: Tone, line: &str) {
 /// With no frame open it is the summary component, a step a row under it:
 /// the plain rendering is the same head and two-space steps, and a rich
 /// one sets the outcome off from the report above it.
-pub fn ledger(head: &str, steps: &[String]) {
+pub fn ledger(head: &str, steps: &[Step]) {
     if mode() == Mode::Plain {
-        let style = style();
-        let status = match steps.is_empty() {
-            true => Status::Done,
-            false => Status::Decision,
-        };
-        let mut lines = style.summary(status, head);
-        for step in steps {
-            lines.extend(style.row(Status::Decision, &[Span::Prose(step)], None));
-        }
-        stderr(&lines);
+        stderr(&ledger_lines(&style(), head, steps));
         return;
     }
     let head = escaped(head);
-    let steps: Vec<String> = steps.iter().map(|step| escaped(step)).collect();
+    let steps: Vec<String> = steps.iter().map(|step| escaped(step.text())).collect();
     blocks::open(Tone::Done, &head, true, &steps);
+}
+
+/// One next step under a closing line.
+pub enum Step {
+    /// Something the run left for the reader to decide or do.
+    Decision(String),
+    /// A pointer to more of what the run already said: nothing waits on
+    /// it, so it never turns the run's outcome into a decision.
+    Hint(String),
+}
+
+impl Step {
+    fn text(&self) -> &str {
+        match self {
+            Step::Decision(text) | Step::Hint(text) => text,
+        }
+    }
+}
+
+/// The closing line as components: a decision among the steps makes the
+/// outcome one, a hint alone leaves it done.
+fn ledger_lines(style: &Style, head: &str, steps: &[Step]) -> Vec<String> {
+    let decided = steps.iter().any(|step| matches!(step, Step::Decision(_)));
+    let status = match decided {
+        true => Status::Decision,
+        false => Status::Done,
+    };
+    let mut lines = style.summary(status, head);
+    for step in steps {
+        let status = match step {
+            Step::Decision(_) => Status::Decision,
+            Step::Hint(_) => Status::Notice,
+        };
+        lines.extend(style.row(status, &[Span::Prose(step.text())], None));
+    }
+    lines
 }
 
 /// Styles and a readable spelling of drawn lines, for the tests of the
@@ -468,6 +495,45 @@ mod tests {
         // What `lines` does to the same text: two lines, each escaped.
         let split: Vec<String> = "a\u{1b}[31m\nb".split('\n').map(escaped).collect();
         assert_eq!(split, vec!["a\\u{1b}[31m".to_owned(), "b".to_owned()]);
+    }
+
+    /// A closing line takes the outcome of its steps: a hint alone leaves a
+    /// run done, a decision makes it one, and each step carries its own
+    /// mark. One row per step set.
+    #[test]
+    fn a_hint_leaves_the_outcome_done_and_a_decision_does_not() {
+        use testing::{rich, tagged};
+        let hint = || Step::Hint("folded — --verbose draws them".to_owned());
+        let decision = || Step::Decision("flagged — the safety lines above".to_owned());
+        let rows: [(&str, Vec<Step>, &[&str]); 3] = [
+            ("no step", vec![], &["", "<32>✓</> <1>done</>"]),
+            (
+                "a hint alone",
+                vec![hint()],
+                &[
+                    "",
+                    "<32>✓</> <1>done</>",
+                    "  <36>•</> folded — --verbose draws them",
+                ],
+            ),
+            (
+                "a decision beside a hint",
+                vec![decision(), hint()],
+                &[
+                    "",
+                    "<33>!</> <1>done</>",
+                    "  <33>!</> flagged — the safety lines above",
+                    "  <36>•</> folded — --verbose draws them",
+                ],
+            ),
+        ];
+        for (case, steps, want) in rows {
+            assert_eq!(
+                tagged(&ledger_lines(&rich(100), "done", &steps)),
+                want,
+                "{case}"
+            );
+        }
     }
 
     /// One redirected stream is enough to make a run plain: a pipe on

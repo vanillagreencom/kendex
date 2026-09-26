@@ -2,9 +2,9 @@
 //! order a reader acts on it: the conflicts that stopped an install, then
 //! the packages safety found something in, then the notes. What needs no
 //! attention — a clean package, a hook its own header keeps off a tool
-//! nothing asked it onto — is left out of a compact report and counted in
-//! the lines a verbose run would draw for it, so refresh's closing ledger
-//! can say what was left out and which flag shows it.
+//! nothing asked it onto, a finding's other sites, what the rules read past
+//! — is left out of a compact report, so refresh's closing ledger can say
+//! detail was left out and which flag shows it.
 //!
 //! A line said the same way many times is said once: one note class with
 //! the same consequence across many packages is one row naming each of
@@ -24,12 +24,11 @@ pub struct Attention {
     /// The items the plan refused, read once for the lines drawn and the
     /// closing ledger's count alike.
     pub blocked: Vec<Blocked>,
-    /// Lines a compact report left out, counted as the lines a verbose run
-    /// draws for them: one per package safety read in full and found
-    /// nothing in, and one for the hook exclusions no declaration
-    /// contradicts, however many there are. Zero on a verbose run, which
-    /// draws them all.
-    pub folded: usize,
+    /// Whether a compact report left out anything a verbose run draws.
+    /// Read off the two drawings themselves, never counted beside them, so
+    /// it cannot miss a kind of line the verbose drawing adds. False on a
+    /// verbose run, which draws it all.
+    pub folded: bool,
 }
 
 /// Draw the report on stderr, as much of it as `listing` asks for. A
@@ -49,25 +48,24 @@ fn attention(
 ) -> (Vec<String>, Attention) {
     let rows = conflict_rows(report);
     let blocked = blocked_items(env, &rows);
-    let verbose = listing == Listing::Verbose;
-    let mut lines = match verbose {
-        true => drift(style, report, &rows, &blocked),
-        false => conflicts(style, report, &rows, &blocked),
+    let draw = |listing: Listing| {
+        let verbose = listing == Listing::Verbose;
+        let mut lines = match verbose {
+            true => drift(style, report, &rows, &blocked),
+            false => conflicts(style, report, &rows, &blocked),
+        };
+        lines.extend(safety_section(style, &report.safety, listing));
+        lines.extend(notes_section(
+            style,
+            &report.notes,
+            &report.excluded_hooks,
+            verbose,
+        ));
+        lines
     };
-    let safety = safety_section(style, &report.safety, listing);
-    lines.extend(safety.lines);
-    let notes = notes_section(style, &report.notes, &report.excluded_hooks, verbose);
-    lines.extend(notes.lines);
-    let attention = Attention {
-        blocked,
-        folded: safety.folded + notes.folded,
-    };
-    (lines, attention)
-}
-
-struct Notes {
-    lines: Vec<String>,
-    folded: usize,
+    let lines = draw(listing);
+    let folded = listing == Listing::Attention && draw(Listing::Verbose) != lines;
+    (lines, Attention { blocked, folded })
 }
 
 /// What the plan wrote about itself. A note is its record line and the
@@ -80,23 +78,15 @@ fn notes_section(
     notes: &[String],
     excluded: &[ExcludedHook],
     verbose: bool,
-) -> Notes {
+) -> Vec<String> {
     let groups = grouped_notes(notes);
     let exclusions = match (verbose, excluded.is_empty()) {
         (true, false) => Some(exclusions_line(excluded)),
         _ => None,
     };
-    // The one line a verbose run draws for all of them.
-    let folded = match verbose {
-        true => 0,
-        false => usize::from(!excluded.is_empty()),
-    };
     let count = groups.len() + usize::from(exclusions.is_some());
     if count == 0 {
-        return Notes {
-            lines: Vec::new(),
-            folded,
-        };
+        return Vec::new();
     }
     let mut lines = style.section("notes", count, Status::Notice);
     for group in &groups {
@@ -108,7 +98,7 @@ fn notes_section(
     if let Some(exclusions) = exclusions {
         lines.extend(style.row(Status::Notice, &[Span::Prose(&exclusions)], None));
     }
-    Notes { lines, folded }
+    lines
 }
 
 /// Notes that fold into one row: one class, and the same lines under

@@ -1,7 +1,8 @@
 //! The design system's renderings, held at the binary: `NO_COLOR` and
 //! `TERM=dumb` on a run forced rich with `KENDEX_UI=pretty` print what a
 //! pipe gets, and a rich run of a given width gets no line past it. `check` is the verb they are held on,
-//! the first one built only from the components.
+//! the first one built only from the components; a clean `refresh` holds
+//! the closing line's outcome mark.
 
 use super::*;
 
@@ -136,4 +137,47 @@ fn stripped(line: &str) -> String {
         text.push_str(part.split_once('m').map_or(part, |(_, rest)| rest));
     }
     text
+}
+
+/// A clean refresh whose compact report left detail out closes done, not
+/// on a decision: the folded part's step is a pointer to more, and the
+/// closing line keeps the done mark it has with nothing folded.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_clean_refresh_with_folded_detail_closes_done() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let project = home.join("dev/app");
+    let catalog = home.join("catalog");
+    skill(&catalog, "tidy", "Nothing alarming here.\n");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.tidy]\nsource = \"cat\"\n",
+            source_path(&catalog)
+        ),
+    )
+    .unwrap();
+
+    let printed = said(&kendex(
+        home,
+        &project,
+        "pretty",
+        &["refresh", "-y", "--scope", "project"],
+    ));
+    let closing = printed
+        .lines()
+        .find(|line| stripped(line).contains(": refreshed "))
+        .unwrap_or_else(|| panic!("no closing line: {printed:?}"));
+    assert!(
+        stripped(closing).starts_with("✓ ") && stripped(closing).ends_with("details folded"),
+        "the clean run closed on something other than done: {printed:?}"
+    );
+    assert!(
+        printed
+            .lines()
+            .any(|line| stripped(line) == "  • folded — --verbose draws them"),
+        "the folded step is not a hint row: {printed:?}"
+    );
 }

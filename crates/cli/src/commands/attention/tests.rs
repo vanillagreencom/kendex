@@ -172,8 +172,7 @@ fn drawn(style: &Style, listing: Listing) -> (Vec<String>, Attention) {
 /// and the note class said for three packages as one row, its two
 /// sentences each a line of their own, beside the fourth that says it in
 /// other words. Nothing of the clean forty, and nothing of the six
-/// exclusions, which the fold counts as the one line a verbose run draws
-/// for them.
+/// exclusions, and the report says it left detail out.
 #[test]
 fn a_compact_report_holds_only_what_needs_the_reader() {
     let (lines, attention) = drawn(&plain(), Listing::Attention);
@@ -204,18 +203,13 @@ fn a_compact_report_holds_only_what_needs_the_reader() {
         ]
     );
     assert_eq!(attention.blocked.len(), 2);
-    assert_eq!(
-        attention.folded,
-        40 + 1,
-        "a line for each clean package and one for the exclusions"
-    );
+    assert!(attention.folded, "the report left detail out");
 }
 
 /// A verbose report draws every package, clean ones included, every site a
 /// finding fired at, what the rules read past, every drift row in place of
 /// the conflict rows, and the exclusions as one line with the count and
-/// each hook's tools. It folds nothing, and the lines it adds over the
-/// compact report are the ones that report counted as folded.
+/// each hook's tools. It folds nothing.
 #[test]
 fn a_verbose_report_draws_every_package_and_the_exclusions() {
     let (lines, attention) = drawn(&plain(), Listing::Verbose);
@@ -251,7 +245,31 @@ fn a_verbose_report_draws_every_package_and_the_exclusions() {
         ),
         "{lines:#?}"
     );
-    assert_eq!(attention.folded, 0);
+    assert!(!attention.folded);
+}
+
+/// A compact report that leaves nothing out says so: one flagged package
+/// with one finding at one site, and nothing else, draws what a verbose
+/// run draws.
+#[test]
+fn a_compact_report_hiding_nothing_folds_nothing() {
+    let plan = Plan::landed(Scope::Global, Vec::new())
+        .unwrap_or_else(|error| panic!("an empty global plan lands: {error}"));
+    let mut report = EngineReport::observed(plan);
+    report.safety = vec![scored(
+        "lint",
+        HarnessId::Claude,
+        &[(Severity::Low, "reads the environment")],
+    )];
+    let home = tempfile::tempdir().unwrap_or_else(|error| panic!("a temp home: {error}"));
+    let (lines, attention) = attention(
+        &plain(),
+        &Env::host_rooted(home.path()),
+        &report,
+        Listing::Attention,
+    );
+    assert!(!lines.is_empty(), "the fixture draws nothing");
+    assert!(!attention.folded, "{lines:#?}");
 }
 
 /// On a terminal each severity has its own glyph in its own colour, and a

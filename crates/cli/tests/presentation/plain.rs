@@ -49,9 +49,10 @@ fn the_blocked_refresh_prints_the_lines_scripts_parse() {
             "<project>: this changes what is installed",
             "  - install skill tidy for Claude Code — asked for",
             "  - install skill tidy for Codex — asked for",
-            "<project>: refreshed 3 changes · skipped 1 item on conflict · flagged 2 items on safety",
+            "<project>: refreshed 3 changes · skipped 1 item on conflict · flagged 2 items on safety · details folded",
             "  skipped — kendex apply --replace-unmanaged, or the kendex adopt line under each conflict above",
             "  flagged — the safety lines above",
+            "  folded — --verbose draws them",
         ],
         "{printed}"
     );

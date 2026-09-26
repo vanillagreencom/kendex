@@ -57,14 +57,15 @@ fn wrote(verb: &str, count: Option<usize>, skipped: usize) -> String {
     }
 }
 
-/// Lines the report above the ledger left out, and the flag that draws
-/// them.
+/// Whether the report above the ledger left detail out, and the flag that
+/// draws it. No count: what a verbose run adds is lines of several kinds,
+/// and a number kept beside them would drift from the drawing.
 pub enum Folded {
     /// Nothing the verb could draw more of: it drew every line, or it has
     /// no flag that draws more.
     None,
-    /// This many lines left out, which `--verbose` draws.
-    BehindVerbose(usize),
+    /// Detail left out, which `--verbose` draws.
+    BehindVerbose,
 }
 
 /// What a run wrote, said in its own verb, for a verb whose count is
@@ -111,12 +112,12 @@ fn ledger(
     blocked: &[Blocked],
     scored: &[ItemSafety],
     folded: Folded,
-) -> (String, Vec<String>) {
+) -> (String, Vec<ui::Step>) {
     let skipped = blocked.len();
     let flagged = flagged(scored);
     let unread = unread(scored);
     let mut parts = vec![wrote(said.verb, said.count, skipped)];
-    let mut steps: Vec<String> = Vec::new();
+    let mut steps: Vec<ui::Step> = Vec::new();
     // What this run's commit offer did in this project, read back off the
     // run's own record rather than passed down by each verb: the part has
     // to name what actually ran, and only the offer knows that.
@@ -126,7 +127,10 @@ fn ledger(
             "skipped {skipped} item{} on conflict",
             plural(skipped)
         ));
-        steps.push(format!("skipped — {}", conflict_exit(scope, blocked)));
+        steps.push(ui::Step::Decision(format!(
+            "skipped — {}",
+            conflict_exit(scope, blocked)
+        )));
     }
     // A scored run says what safety found either way: a clean scan and
     // a scan nobody ran would otherwise close on the same line. Clean is
@@ -141,7 +145,9 @@ fn ledger(
         ));
         // No verb reads these back: every surface that writes prints its
         // own advisory block, and this run's is the one printed above.
-        steps.push("flagged — the safety lines above".to_owned());
+        steps.push(ui::Step::Decision(
+            "flagged — the safety lines above".to_owned(),
+        ));
     }
     if unread > 0 {
         parts.push(format!(
@@ -152,12 +158,13 @@ fn ledger(
         parts.push("safety: clean".to_owned());
     }
     // Last: what the report above left out is not an outcome of the run,
-    // and every part before it points at lines that are there.
+    // and every part before it points at lines that are there. Its step is
+    // a hint, not a decision: nothing waits on reading more.
     match folded {
-        Folded::None | Folded::BehindVerbose(0) => {}
-        Folded::BehindVerbose(n) => {
-            parts.push(format!("folded {n} line{}", plural(n)));
-            steps.push("folded — --verbose draws them".to_owned());
+        Folded::None => {}
+        Folded::BehindVerbose => {
+            parts.push("details folded".to_owned());
+            steps.push(ui::Step::Hint("folded — --verbose draws them".to_owned()));
         }
     }
     (

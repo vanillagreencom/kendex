@@ -15,8 +15,7 @@ use crate::ui::{self, Span, Status, Style};
 pub enum Listing {
     /// What needs the reader: the packages with a finding or a rule that
     /// had nothing to read, each finding said once with how many sites say
-    /// it. The clean packages it leaves out are counted, for a verb whose
-    /// closing line speaks for them.
+    /// it. For a verb whose closing line speaks for what it leaves out.
     Attention,
     /// Every package, clean ones included, and every finding at its own
     /// site: for a verb that closes on no ledger, where a clean package
@@ -27,38 +26,23 @@ pub enum Listing {
     Verbose,
 }
 
-/// The safety section a plan draws, and how many scored packages it left
-/// out.
-pub struct Safety {
-    pub lines: Vec<String>,
-    /// Packages every rule read in full and found nothing in, which
-    /// [`Listing::Attention`] draws no line for. What speaks for them is
-    /// the count itself: refresh's closing line says how many lines it
-    /// folded and which flag draws them.
-    pub folded: usize,
-}
-
 /// What the safety rules found in the content this plan would write —
 /// advisory, drawn beside the plan, as much of it as `listing` asks for.
-pub fn safety_section(style: &Style, rows: &[ItemSafety], listing: Listing) -> Safety {
-    let (shown, folded): (Vec<_>, Vec<_>) =
-        grouped_safety(rows, listing)
-            .into_iter()
-            .partition(|(row, _)| {
-                listing != Listing::Attention || standing(&row.advisory) != Standing::Clean
-            });
-    let folded = folded.len();
+pub fn safety_section(style: &Style, rows: &[ItemSafety], listing: Listing) -> Vec<String> {
+    let shown: Vec<_> = grouped_safety(rows, listing)
+        .into_iter()
+        .filter(|(row, _)| {
+            listing != Listing::Attention || standing(&row.advisory) != Standing::Clean
+        })
+        .collect();
     let Some(worst) = shown.iter().map(|(row, _)| standing(&row.advisory)).max() else {
-        return Safety {
-            lines: Vec::new(),
-            folded,
-        };
+        return Vec::new();
     };
     let mut lines = style.section("safety", shown.len(), worst.status());
     for (row, targets) in &shown {
         lines.extend(safety_block_lines(style, row, targets, listing));
     }
-    Safety { lines, folded }
+    lines
 }
 
 /// One package's block: its score, then each finding under it with the
@@ -209,7 +193,7 @@ fn finding_lines(
 /// Every scored package on stderr, for a verb that draws no other part of
 /// a plan's report and closes on no ledger.
 pub fn print_safety(rows: &[ItemSafety]) {
-    ui::stderr(&safety_section(&ui::style(), rows, Listing::Every).lines);
+    ui::stderr(&safety_section(&ui::style(), rows, Listing::Every));
 }
 
 /// One block per item and reading, worst score first, each carrying every
