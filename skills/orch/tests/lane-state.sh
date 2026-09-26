@@ -14,8 +14,9 @@
 #   § composer    whether the lane's live input line is empty, the one question
 #                a caller about to TYPE into the pane must ask
 #   § process ownership
-#                the host process table, zombie states and unreadable processes,
-#                with one must-fail control on lane_owned_processes
+#                the host process table, zombie states, unreadable processes and
+#                a removed worktree, with one must-fail control each on
+#                lane_owned_processes and lane_stop_owned
 #   § agreement  one screen read by BOTH the watch and the wake. The pane rungs
 #                are shared, so above idle the two answer the same word; the
 #                idle rung falls through to the harness-process read that only
@@ -40,7 +41,8 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 # shellcheck source=lib/process-table.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
-# mutant_scripts and mutate_file, the two halves of the verb's control.
+# mutant_scripts and mutate_file, the two halves of the verb's control;
+# mutate_file also plants lane_stop_owned's.
 # shellcheck source=lib/growth-state.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
@@ -83,41 +85,46 @@ screen_for() {
 
 echo "=== lane-state § states: one row per state, over screens and process reads ==="
 
-# NAME|WINDOW|CMD|PID|SCREEN|SESSION|WANT
+# NAME|WINDOW|CMD|PID|SCREEN|SESSION|ACCOUNT|WANT
 #
 # Every state the judge can name has a row, and each row is the inverse of a
-# neighbour: the same screen under a different process observation, or the same
-# process under a different screen, lands elsewhere in the table. WANT is the
-# one word plus the status, so a row fails on the fact it names.
-while IFS='|' read -r name window cmd pid screen session want; do
+# neighbour: the same screen under a different process observation or account
+# reading, or the same process under a different screen, lands elsewhere in the
+# table. WANT is the one word plus the status, so a row fails on the fact it
+# names.
+while IFS='|' read -r name window cmd pid screen session account want; do
   [[ -n "$name" ]] || continue
   row_state=""
   row_rc=0
-  lane_state row_state "$window" "$cmd" "$pid" "$(screen_for "$screen")" "$session" || row_rc=$?
+  lane_state row_state "$window" "$cmd" "$pid" "$(screen_for "$screen")" "$session" "$account" || row_rc=$?
   assert_eq "$row_state rc=$row_rc" "$want rc=0" "$name"
 done <<'ROWS'
-no window is gone, whatever its last screen said|gone|claude|100|idle||gone
-a bare shell with nothing under it is exited|listed|bash|101|shell||exited
-a login shell reports itself dashed and is exited all the same|listed|-bash|101|shell||exited
-a bare shell WITH a child is the lane, not its grave|listed|fish|100|idle||idle
-a probe that cannot run leaves the screen to answer, never exited|listed|bash|102|idle||idle
-a spent account outranks the prompt its banner sits above|listed|claude|100|walled||walled
-a dialog waiting on an answer is asking|listed|claude|100|asking||asking
-a permission dialog is the same question|listed|claude|100|claude_dialog||asking
-a streaming token counter is a turn in flight|listed|claude|100|working||working
-a codex turn in flight is the same answer|listed|codex|100|codex_working||working
-a composer under a finished turn is idle|listed|claude|100|idle||idle
-a codex composer under a finished turn is idle|listed|codex|100|codex_idle||idle
-a codex capacity refusal parks the lane, so it is idle|listed|codex|100|capacity||idle
-a screen with no marker at all and no process read is unjudged|listed|claude|100|blank||unjudged
-a markerless screen takes the harness process when there is one|listed|claude|100|blank|busy|working
-an idle harness process answers a markerless screen too|listed|claude|100|blank|idle|idle
-a session read that could not judge leaves the lane unjudged|listed|claude|100|blank|unjudged|unjudged
-the screen outranks the process: a working pane is not idle|listed|claude|100|working|idle|working
-a busy process answers before the idle rung, since a turn's first seconds draw a marker and no working hint|listed|claude|100|idle|busy|working
-a process read that could not tell never becomes idle, however plainly the screen reads it|listed|claude|100|idle|unjudged|unjudged
-the same for the codex screen a live session between tool calls draws|listed|codex|100|codex_idle|unjudged|unjudged
-a process read that says idle agrees with the marker and the lane is idle|listed|claude|100|idle|idle|idle
+no window is gone, whatever its last screen said|gone|claude|100|idle|||gone
+a bare shell with nothing under it is exited|listed|bash|101|shell|||exited
+a login shell reports itself dashed and is exited all the same|listed|-bash|101|shell|||exited
+a bare shell WITH a child is the lane, not its grave|listed|fish|100|idle|||idle
+a probe that cannot run leaves the screen to answer, never exited|listed|bash|102|idle|||idle
+a spent account outranks the prompt its banner sits above|listed|claude|100|walled|||walled
+a banner whose account reads room again is a lifted wall, and the prompt under it answers|listed|claude|100|walled||room|idle
+a banner whose account still reads walled stays walled|listed|claude|100|walled||walled|walled
+an account reading the judge has no word for is unjudged, never a lifted wall|listed|claude|100|walled||lifted|unjudged
+a room reading lifts nothing on a screen with no banner|listed|claude|100|working||room|working
+a dialog waiting on an answer is asking|listed|claude|100|asking|||asking
+a permission dialog is the same question|listed|claude|100|claude_dialog|||asking
+a streaming token counter is a turn in flight|listed|claude|100|working|||working
+a codex turn in flight is the same answer|listed|codex|100|codex_working|||working
+a composer under a finished turn is idle|listed|claude|100|idle|||idle
+a codex composer under a finished turn is idle|listed|codex|100|codex_idle|||idle
+a codex capacity refusal parks the lane, so it is idle|listed|codex|100|capacity|||idle
+a screen with no marker at all and no process read is unjudged|listed|claude|100|blank|||unjudged
+a markerless screen takes the harness process when there is one|listed|claude|100|blank|busy||working
+an idle harness process answers a markerless screen too|listed|claude|100|blank|idle||idle
+a session read that could not judge leaves the lane unjudged|listed|claude|100|blank|unjudged||unjudged
+the screen outranks the process: a working pane is not idle|listed|claude|100|working|idle||working
+a busy process answers before the idle rung, since a turn's first seconds draw a marker and no working hint|listed|claude|100|idle|busy||working
+a process read that could not tell never becomes idle, however plainly the screen reads it|listed|claude|100|idle|unjudged||unjudged
+the same for the codex screen a live session between tool calls draws|listed|codex|100|codex_idle|unjudged||unjudged
+a process read that says idle agrees with the marker and the lane is idle|listed|claude|100|idle|idle||idle
 ROWS
 
 # A scan that fails is not an answer: exit 2 and `unjudged`, never a verdict a
@@ -344,6 +351,48 @@ PY
     || PROCESS_FAIL_PS_RC=$?
   assert_eq "$PROCESS_FAIL_PS_RC" 2 \
     "a failed process-table read returns status 2 without caller pipefail"
+
+  # A merged lane's close-out removes its worktree while the harness still sits
+  # there, which /proc then names as the removed path. The ownership read finds
+  # that harness by the path the record still holds, and the stop ends it.
+  PROCESS_REMOVED="$TMP_ROOT/removed-parent/lane"
+  mkdir -p "$PROCESS_REMOVED"
+  PROCESS_REMOVED_REAL="$(cd "$PROCESS_REMOVED" && pwd -P)" || exit 1
+  (cd "$PROCESS_REMOVED" && exec "$PROCESS_HARNESS" -c 'trap "exit 0" TERM; while :; do sleep 0.1; done') &
+  PROCESS_REMOVED_PID=$!
+  PROCESS_FIXTURE_PIDS+=" $PROCESS_REMOVED_PID"
+  for _process_try in {1..100}; do
+    [[ "$(lane_process_cwd "$PROCESS_REMOVED_PID" || true)" != "$PROCESS_REMOVED_REAL" ]] || break
+    sleep 0.02
+  done
+  rmdir -- "$PROCESS_REMOVED"
+  PROCESS_REMOVED_RC=0
+  lane_owned_processes "$PROCESS_REMOVED" 'kz)harness' || PROCESS_REMOVED_RC=$?
+  assert_eq "$LANE_OWNED_PROCESS_PIDS rc=$PROCESS_REMOVED_RC" "$PROCESS_REMOVED_PID rc=0" \
+    "a harness sitting in a removed worktree is owned by the path the record still holds"
+  PROCESS_REMOVED_RC=0
+  lane_stop_owned "$PROCESS_REMOVED" 'kz)harness' || PROCESS_REMOVED_RC=$?
+  assert_eq "count=$LANE_STOP_COUNT cause=${LANE_STOP_CAUSE:-none} rc=$PROCESS_REMOVED_RC state=$(lane_process_state "$PROCESS_REMOVED_PID")" \
+    "count=1 cause=none rc=0 state=" \
+    "the stop ends a harness sitting in a removed worktree"
+  # With its harness gone, the removed worktree has nothing left to signal by
+  # its directory, which the stop names rather than answering none found.
+  PROCESS_REMOVED_RC=0
+  lane_stop_owned "$PROCESS_REMOVED" 'kz)harness' || PROCESS_REMOVED_RC=$?
+  assert_eq "cause=$LANE_STOP_CAUSE rc=$PROCESS_REMOVED_RC" "cause=worktree-removed rc=1" \
+    "a removed worktree holding no harness refuses as worktree-removed"
+  # lane_stop_owned's one must-fail control: without its own cause, a removed
+  # worktree reads as a stop that found no harness to signal.
+  PROCESS_REMOVED_MUTANT="$PROCESS_ROOT/mutant-removed-lane-state.sh"
+  cp -- "$SCRIPTS_DIR/lib/lane-state.sh" "$PROCESS_REMOVED_MUTANT"
+  mutate_file "$PROCESS_REMOVED_MUTANT" '  if [[ "$removed" == true && -z "$LANE_OWNED_PROCESS_PIDS" ]]; then' '  if false; then'
+  PROCESS_REMOVED_CONTROL="$(source "$PROCESS_REMOVED_MUTANT"; rc=0; lane_stop_owned "$PROCESS_REMOVED" 'kz)harness' || rc=$?; printf 'rc=%s count=%s' "$rc" "$LANE_STOP_COUNT")"
+  assert_eq "$PROCESS_REMOVED_CONTROL" "rc=0 count=0" \
+    "control: without its own cause a removed worktree reads as a stop that found no harness"
+  PROCESS_REMOVED_RC=0
+  lane_stop_owned "$TMP_ROOT/absent-parent/lane" 'kz)harness' || PROCESS_REMOVED_RC=$?
+  assert_eq "cause=$LANE_STOP_CAUSE rc=$PROCESS_REMOVED_RC" "cause=worktree-removed rc=1" \
+    "a worktree whose parent does not resolve either refuses as removed"
 
   process_fixture_cleanup
   PROCESS_FIXTURE_PIDS=""
