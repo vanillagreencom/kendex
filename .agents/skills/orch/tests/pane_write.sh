@@ -132,7 +132,6 @@ ROWS=(
   "an empty expect names no process|-|--window;lane;--expect;;--file;$HELLO|rc=1 key=expect-missing received="
   "a second target option is refused|-|--window;lane;--window;lane;--expect;cat;--file;$HELLO|rc=1 key=argument-invalid received="
   "a process table that cannot be read is refused as such|-|--window;lane;--expect;claude;--file;$HELLO|rc=1 key=pane-read-failed received=|$FAILPS"
-  "a paste that fails after the checks passed is exit 2|-|--window;lane;--expect;cat;--file;$HELLO|rc=2 key=write-failed received=|$FAILPASTE"
   "a pane running a program is not a shell|-|--window;lane;--expect;shell;--file;$HELLO|rc=1 key=process-mismatch received="
   "a key outside the list is refused|-|--window;lane;--expect;cat;--key;Escape|rc=1 key=key-invalid received="
   "the expected process receives the paste and its Enter|-|--window;lane;--expect;cat;--file;$HELLO|rc=0 key=none received=hello,"
@@ -151,6 +150,29 @@ done
 # drive the copy-mode cursor were it not cancelled first.
 assert_eq "$(observe "$REF" "" "--window;lane;--expect;cat;--file;$HELLO" 'tm copy-mode -t "$LANE_PANE"')" \
   "rc=0 key=none received=hello," "a pane in copy mode is returned to its program before the Enter"
+
+# buffers_left — how many pane-write buffers the fixture server holds, each
+# deleted once counted so the next count starts from none.
+buffers_left() {
+  local names name n=0
+  names="$(tm list-buffers -F '#{buffer_name}')" || { printf list-failed; return; }
+  while IFS= read -r name; do
+    [[ "$name" == pane-write-* ]] || continue
+    n=$((n + 1))
+    tm delete-buffer -b "$name"
+  done <<<"$names"
+  printf '%s' "$n"
+}
+# A paste that fails after its buffer loaded is exit 2, and takes the buffer
+# with it: left on the server, a later paste could type that text into
+# another pane.
+failed_paste() { # DIR
+  local seen
+  seen="$(observe "$1" "" "--window;lane;--expect;cat;--file;$HELLO" "" "$FAILPASTE")"
+  printf '%s buffers=%s' "$seen" "$(buffers_left)"
+}
+assert_eq "$(failed_paste "$REF")" "rc=2 key=write-failed received= buffers=0" \
+  "a paste that fails after the checks passed is exit 2 and leaves no buffer behind"
 
 # Two background jobs of one shell, the shape open-terminal's background
 # launches take, write two panes at once. Every job of a script shares its $$,
@@ -202,7 +224,6 @@ CONTROLS=(
   "lib/pane-write.sh@expect-missing@  [[ -n \"\$1\" ]] || { pane_write_refuse 1 expect-missing@  [[ -n \"\$1\" ]] || true || { pane_write_refuse 1 expect-missing@-@--window;lane;--expect;;--file;$HELLO@rc=1 key=process-mismatch received="
   "pane-write@repeated-target@      [[ -z \"\$kind\" ]] || refuse_args@      [[ -z \"\$kind\" ]] || true || refuse_args@-@--window;lane;--window;lane;--expect;cat;--file;$HELLO@rc=0 key=none received=hello,"
   "lib/pane-write.sh@table-read@    table=\"\$(lane_process_table)\"@    table=\"\$(lane_process_table || true)\"@-@--window;lane;--expect;claude;--file;$HELLO@rc=1 key=process-mismatch received=@$FAILPS"
-  "lib/pane-write.sh@paste-failed@    || { pane_write_refuse 2 write-failed \"pane=\$PANE_WRITE_ID\" step=paste-buffer@    || true || { pane_write_refuse 2 write-failed \"pane=\$PANE_WRITE_ID\" step=paste-buffer@-@--window;lane;--expect;cat;--file;$HELLO@rc=0 key=none received=,@$FAILPASTE"
 )
 for r in "${CONTROLS[@]}"; do
   IFS='@' read -r file name old new self args want prefix <<<"$r"
@@ -210,6 +231,13 @@ for r in "${CONTROLS[@]}"; do
   mutant "$name" "$old" "$new" "$file"
   assert_eq "$(observe "$MUTANT" "$self" "$args" "" "$prefix")" "$want" "control: without the $name rule the row reads otherwise"
 done
+mutant paste-failed '    pane_write_refuse 2 write-failed "pane=$PANE_WRITE_ID" step=paste-buffer' \
+  '    : pane_write_refuse 2 write-failed "pane=$PANE_WRITE_ID" step=paste-buffer'
+assert_eq "$(failed_paste "$MUTANT")" "rc=0 key=none received= buffers=0" \
+  "control: without the paste-failed refusal a paste that never landed reads as written"
+mutant buffer-delete '    tmux delete-buffer -b "$buffer" 2>/dev/null || :' '    : tmux delete-buffer -b "$buffer" 2>/dev/null || :'
+assert_eq "$(failed_paste "$MUTANT")" "rc=2 key=write-failed received= buffers=1" \
+  "control: without the delete a failed paste leaves its text in a buffer on the server"
 mutant shared-buffer 'buffer="pane-write-$$-${PANE_WRITE_ID#%}"' 'buffer="pane-write-$$"'
 assert_eq "$(concurrent "$MUTANT")" "rc=0,2 lane=two, pair=" \
   "control: a buffer named for the script alone hands one job's text to the other's pane"

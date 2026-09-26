@@ -208,7 +208,13 @@ pane_write() { # KIND TARGET EXPECT ACTION VALUE
   else
     tmux load-buffer -b "$buffer" "$value" 2>/dev/null
   fi || { pane_write_refuse 2 write-failed "pane=$PANE_WRITE_ID" step=load-buffer; return; }
-  tmux paste-buffer -p -d -b "$buffer" -t "$PANE_WRITE_ID" 2>/dev/null \
-    || { pane_write_refuse 2 write-failed "pane=$PANE_WRITE_ID" step=paste-buffer; return; }
+  if ! tmux paste-buffer -p -d -b "$buffer" -t "$PANE_WRITE_ID" 2>/dev/null; then
+    # -d deletes only a buffer that was pasted. Left on the server, this text,
+    # a hosted lane's ssh line among it, is there for a later paste to type
+    # into another pane; the refusal stands whether the delete lands or not.
+    tmux delete-buffer -b "$buffer" 2>/dev/null || :
+    pane_write_refuse 2 write-failed "pane=$PANE_WRITE_ID" step=paste-buffer
+    return
+  fi
   pane_write_key Enter
 }
