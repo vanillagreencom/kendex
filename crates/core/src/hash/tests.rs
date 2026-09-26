@@ -321,6 +321,74 @@ fn identity_reaches_git_through_a_linked_root() {
     );
 }
 
+/// A source hash asks Git only where its text conversion could change the
+/// bytes. An LF checkout starts no Git process, which keeps a plan's cost
+/// in bytes rather than in one process per source file; a CRLF checkout of
+/// the same commit still reads Git's policy and hashes as the LF bytes, the
+/// identity a committed lock carries.
+#[test]
+fn a_source_hash_asks_git_only_where_a_crlf_pair_could_convert() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let git = |args: &[&str]| {
+        let output = crate::process::Hardened::git(args, Some(root))
+            .run()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["config", "core.autocrlf", "false"]);
+    std::fs::create_dir_all(root.join("skill")).unwrap();
+    std::fs::write(root.join("skill/SKILL.md"), b"one\ntwo\n").unwrap();
+    std::fs::write(root.join("skill/notes.md"), b"three\n").unwrap();
+    git(&["add", "skill"]);
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-qm",
+        "fixture",
+    ]);
+    let sealed = crate::source_read::SealedSource::open(root).unwrap();
+    let skill = sealed.root().join("skill");
+    let manifest = Manifest {
+        schema: MANIFEST_SCHEMA,
+        ..Manifest::default()
+    };
+    let hash = || {
+        GIT_QUERY_COUNT.with(|count| count.set(0));
+        let hash = installation_hash(
+            &sealed,
+            &skill,
+            &manifest,
+            ItemKind::Skill,
+            "skill",
+            HarnessId::Claude,
+        )
+        .unwrap();
+        (hash, GIT_QUERY_COUNT.with(|count| count.get()))
+    };
+
+    let (lf, lf_queries) = hash();
+    assert_eq!(lf_queries, 0, "an LF source started Git");
+
+    git(&["config", "core.autocrlf", "true"]);
+    std::fs::remove_dir_all(root.join("skill")).unwrap();
+    git(&["checkout", "--", "skill"]);
+    assert_eq!(
+        std::fs::read(root.join("skill/SKILL.md")).unwrap(),
+        b"one\r\ntwo\r\n"
+    );
+    let (crlf, _) = hash();
+    assert_eq!(crlf, lf, "a CRLF checkout lost the committed identity");
+}
+
 #[test]
 fn editing_a_shared_key_invalidates_dependents() {
     let tmp = tempfile::tempdir().unwrap();

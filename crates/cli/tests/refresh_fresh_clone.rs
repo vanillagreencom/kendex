@@ -175,57 +175,98 @@ fn fresh_clone(home: &Path, origin: &Path) -> PathBuf {
 /// clone as cloned and reports the packages as installed, not blocked. The
 /// must-fail control for the record's portability through the whole verb:
 /// read as the origin's paths, every position would be a conflict here.
+///
+/// The inverse is the same clone with one source edited: that package is
+/// recorded again and nothing else is. One row per `core.autocrlf`, since
+/// an LF checkout hashes its sources without asking git and a CRLF one
+/// through git's text policy.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_clone_carrying_the_committed_record_has_nothing_to_settle() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let origin = committed_consumer(&home, NO_DEPENDENCIES);
-    // The consumer's own rule taken out; the managed block stays, so this
-    // machine's half of the record stays out of the commit.
-    let rules = fs::read_to_string(origin.join(".gitignore")).unwrap();
-    assert_eq!(rules.matches("/.kendex-lock.json\n").count(), 1, "{rules}");
-    write(
-        &origin.join(".gitignore"),
-        &rules.replace("/.kendex-lock.json\n", ""),
-    );
-    git(&home, &origin, &["add", "-A"]);
-    git(&home, &origin, &["commit", "-q", "-m", "carry the record"]);
-    write(&home.join(".gitconfig"), "[core]\nautocrlf = true\n");
-    let tracked = git(&home, &origin, &["ls-files"]);
-    assert!(
-        tracked.lines().any(|line| line == ".kendex-lock.json"),
-        "{tracked}"
-    );
-    assert!(!tracked.contains("lock-local.json"), "{tracked}");
-    let clone = home.join("elsewhere/clone");
-    fs::create_dir_all(clone.parent().unwrap()).unwrap();
-    git(
-        &home,
-        &origin,
-        &["clone", "--quiet", ".", &clone.display().to_string()],
-    );
-    assert!(clone.join(".kendex-lock.json").is_file());
+    for autocrlf in ["false", "true"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let origin = committed_consumer(&home, NO_DEPENDENCIES);
+        // The consumer's own rule taken out; the managed block stays, so
+        // this machine's half of the record stays out of the commit.
+        let rules = fs::read_to_string(origin.join(".gitignore")).unwrap();
+        assert_eq!(rules.matches("/.kendex-lock.json\n").count(), 1, "{rules}");
+        write(
+            &origin.join(".gitignore"),
+            &rules.replace("/.kendex-lock.json\n", ""),
+        );
+        git(&home, &origin, &["add", "-A"]);
+        git(&home, &origin, &["commit", "-q", "-m", "carry the record"]);
+        write(
+            &home.join(".gitconfig"),
+            &format!("[core]\nautocrlf = {autocrlf}\n"),
+        );
+        let tracked = git(&home, &origin, &["ls-files"]);
+        assert!(
+            tracked.lines().any(|line| line == ".kendex-lock.json"),
+            "{tracked}"
+        );
+        assert!(!tracked.contains("lock-local.json"), "{tracked}");
+        let clone = home.join("elsewhere/clone");
+        fs::create_dir_all(clone.parent().unwrap()).unwrap();
+        git(
+            &home,
+            &origin,
+            &["clone", "--quiet", ".", &clone.display().to_string()],
+        );
+        assert!(clone.join(".kendex-lock.json").is_file());
 
-    let refreshed = kendex(&home, &clone, &["refresh", "--scope", "project", "--leave"]);
+        let refreshed = kendex(&home, &clone, &["refresh", "--scope", "project", "--leave"]);
 
-    let output = said(&refreshed);
-    assert_eq!(refreshed.status.code(), Some(0), "{output}");
-    let status = git(&home, &clone, &["status", "--porcelain"]);
-    let diff = git(&home, &clone, &["diff", "--", ".kendex-lock.json"]);
-    assert_eq!(status, "", "{output}\n{diff}");
-    for absent in ["settling", "conflict", "--record-existing", "--yes"] {
-        assert!(!output.contains(absent), "{absent}: {output}");
-    }
-    let record = kendex_core::lock::load(&clone.join(".kendex-lock.json")).unwrap();
-    let here = kendex_core::paths::canonical(&clone).unwrap();
-    for entry in record.entries.values() {
-        for position in entry.emitted.iter().flat_map(|emitted| &emitted.paths) {
-            assert!(position.starts_with(&here), "{}", position.display());
+        let output = said(&refreshed);
+        assert_eq!(refreshed.status.code(), Some(0), "{autocrlf}: {output}");
+        let status = git(&home, &clone, &["status", "--porcelain"]);
+        let diff = git(&home, &clone, &["diff", "--", ".kendex-lock.json"]);
+        assert_eq!(status, "", "{autocrlf}: {output}\n{diff}");
+        for absent in ["settling", "conflict", "--record-existing", "--yes"] {
+            assert!(!output.contains(absent), "{autocrlf}: {absent}: {output}");
         }
+        let record = kendex_core::lock::load(&clone.join(".kendex-lock.json")).unwrap();
+        let here = kendex_core::paths::canonical(&clone).unwrap();
+        for entry in record.entries.values() {
+            for position in entry.emitted.iter().flat_map(|emitted| &emitted.paths) {
+                assert!(position.starts_with(&here), "{}", position.display());
+            }
+        }
+        let checked = kendex(&home, &clone, &["check"]);
+        assert_eq!(checked.status.code(), Some(0), "{}", said(&checked));
+
+        write(
+            &clone.join("catalog/skills/deploy/SKILL.md"),
+            "---\nname: deploy\ndescription: ship the service\n---\nRun the new deploy.\n",
+        );
+        let edited = kendex(&home, &clone, &["refresh", "--scope", "project", "--leave"]);
+        assert_eq!(
+            edited.status.code(),
+            Some(0),
+            "{autocrlf}: {}",
+            said(&edited)
+        );
+        let rerecorded = kendex_core::lock::load(&clone.join(".kendex-lock.json")).unwrap();
+        let moved: Vec<_> = record
+            .entries
+            .iter()
+            .filter(|(key, entry)| {
+                rerecorded.entries.get(*key).map(|now| &now.source_hash) != Some(&entry.source_hash)
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        assert_eq!(
+            moved,
+            [kendex_core::lock::entry_key(
+                kendex_core::model::ItemKind::Skill,
+                "deploy",
+                kendex_core::model::HarnessId::Claude,
+            )],
+            "{autocrlf}: {}",
+            said(&edited)
+        );
     }
-    let checked = kendex(&home, &clone, &["check"]);
-    assert_eq!(checked.status.code(), Some(0), "{}", said(&checked));
 }
 
 /// Under `core.autocrlf=true`, Git for Windows' installer default and the
