@@ -433,6 +433,8 @@ round_write --worktree "$MW" --issue issue-50 --round-id 1-1 --item 1 "fix findi
   --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-mw-1-1" "$MW" issue-50 1-1 range)" --item 1 Applied done >/dev/null
 MODE_RECEIPT="$MW/tmp/dev-return-issue-50-1-1.json"
 MODE_WRITTEN="$(cat "$MODE_RECEIPT")"
+MODE_HEAD="$(git -C "$MW" rev-parse HEAD)"
+MODE_FAKE_SHA="${MODE_HEAD:0:8}00000000000000000000000000000000"
 mode_row() { # RANGE_CMD MODE_FILTER — the project's setting and the receipt's mode
   rm -f "$MW/kendex.settings.toml"
   [[ -z "$1" ]] || printf '[env]\nDEV_VALIDATE_RANGE_CMD = "%s"\n' "$1" > "$MW/kendex.settings.toml"
@@ -444,6 +446,7 @@ MODE_ROWS=(
   "a full run in a project with no range command is valid^^.validate_mode=\"full\"^rc=0 reason=valid validate_mode=full"
   "a range run in a project with no range command is refused^^.^rc=1 reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=range+round-mode=full=true"
   "a failing round that started no run is not judged on a mode^tools/guard --range x^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null^rc=0 verdict=retry reason=valid validate_mode=null"
+  "a wrong mode outranks a fabricated commit^tools/guard --range x^.validate_mode=\"full\" | .commit=\"$MODE_FAKE_SHA\"^rc=1 reason=mode_mismatch"
 )
 for row in "${MODE_ROWS[@]}"; do
   IFS='^' read -r label range_cmd filter expect <<<"$row"
@@ -451,9 +454,41 @@ for row in "${MODE_ROWS[@]}"; do
   run_check --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round
   assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
 done
+# Control: with the mode gate below the commit gate, the fabricated commit
+# answers first.
+ORDER_MUTANT_SCRIPTS="$(copy_scripts order-mutant)"
+ORDER_MUTANT="$ORDER_MUTANT_SCRIPTS/dev-artifact-check"
+assert_eq "$(grep -cF "  # A fix receipt's mode is the one its round runs." "$ORDER_MUTANT")/$(grep -cF '  # A `.commit` that passed the scalar gate must name a real commit' "$ORDER_MUTANT")/$(grep -cF '    local refused_additions refused_file additions_rc=0' "$ORDER_MUTANT")" "1/1/1" \
+  "control finds the mode gate, the commit gate and the additions gate once each"
+perl -0777 -i -pe 's/(  # A fix receipt\x27s mode is the one its round runs\..*?)(  # A `\.commit` that passed the scalar gate.*?)(  if \[\[ -n "\$round_record" \]\]; then\n    local refused_additions)/$2$1$3/s' "$ORDER_MUTANT"
+assert_eq "$(( $(grep -nF "  # A fix receipt's mode is the one its round runs." "$ORDER_MUTANT" | cut -d: -f1) > $(grep -nF '    if [[ "$(git -C "$repo" cat-file -t "$commit" 2>/dev/null)" != "commit" ]]; then' "$ORDER_MUTANT" | cut -d: -f1) ))" "1" \
+  "control moved the mode gate below the commit gate"
+mode_row "tools/guard --range x" ".validate_mode=\"full\" | .commit=\"$MODE_FAKE_SHA\""
+set +e
+OUT="$("$ORDER_MUTANT" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>/dev/null)"; RC=$?
+set -e
+assert_eq "$(observe "rc=1 reason=commit_unresolvable")" "rc=1 reason=commit_unresolvable" "control: with the mode gate below the commit gate the fabricated commit answers first"
+# The mode is read from the resolver's stdout alone: what the project env
+# prints on stderr does not unresolve it.
+mode_row "tools/guard --range x" "."
+NOISE_SCRIPTS="$(copy_scripts mode-noise)"
+printf '#!/usr/bin/env bash\nprintf "private env: warning\\n" >&2\nprintf "validate-mode=range\\n"\n' > "$NOISE_SCRIPTS/dev-validate-run"
+set +e
+OUT="$("$NOISE_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/mode-noise.err")"; RC=$?
+set -e
+assert_eq "$(observe "rc=0 reason=valid validate_mode=range")" "rc=0 reason=valid validate_mode=range" \
+  "a resolver that also writes to stderr resolves to the mode it printed" "$TMP_ROOT/mode-noise.err"
+# Control: a check that reads the resolver's stderr with its stdout cannot
+# resolve the mode.
+NOISE_MUTANT_SCRIPTS="$(copy_scripts mode-noise-mutant)"
+mutate_file "$NOISE_MUTANT_SCRIPTS/dev-artifact-check" 'resolve-mode --worktree "$repo" 2>/dev/null)" \' 'resolve-mode --worktree "$repo" 2>&1)" \'
+cp "$NOISE_SCRIPTS/dev-validate-run" "$NOISE_MUTANT_SCRIPTS/dev-validate-run"
+set +e
+OUT="$("$NOISE_MUTANT_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>/dev/null)"; RC=$?
+set -e
+assert_eq "$(observe "rc=2")" "rc=2" "control: with stderr read beside stdout the mode is unresolved"
 # A resolution that cannot be read is no verdict: the check exits 2 on its
-# own first line, naming the resolver's refusal as its cause, rather than
-# accepting the mode it could not judge.
+# own first line rather than accepting the mode it could not judge.
 mode_row "tools/guard --range x" ".validate_mode=\"full\""
 MODE_SCRIPTS="$(copy_scripts mode-unresolved)"
 printf '#!/usr/bin/env bash\nprintf "dev-validate-run: unreadable-setting setting=DEV_VALIDATE_RANGE_CMD\\n" >&2\nexit 2\n' > "$MODE_SCRIPTS/dev-validate-run"
@@ -461,19 +496,9 @@ set +e
 OUT="$("$MODE_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/mode-unresolved.err")"; RC=$?
 set -e
 ERR="$TMP_ROOT/mode-unresolved.err"
-UNRESOLVED_EXPECT="rc=2 stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW+cause=dev-validate-run:+unreadable-setting+setting=DEV_VALIDATE_RANGE_CMD=true"
+UNRESOLVED_EXPECT="rc=2 stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW=true"
 assert_eq "$(observe "$UNRESOLVED_EXPECT")" "$UNRESOLVED_EXPECT" \
   "a mode dev-validate-run cannot resolve exits 2 on its own key" "$ERR"
-# Control: a check that drops the resolver's stderr names no cause.
-CAUSE_MUTANT_SCRIPTS="$(copy_scripts cause-mutant)"
-mutate_file "$CAUSE_MUTANT_SCRIPTS/dev-artifact-check" 'resolve-mode --worktree "$repo" 2>&1)" \' 'resolve-mode --worktree "$repo" 2>/dev/null)" \'
-cp "$MODE_SCRIPTS/dev-validate-run" "$CAUSE_MUTANT_SCRIPTS/dev-validate-run"
-set +e
-OUT="$("$CAUSE_MUTANT_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/cause-mutant.err")"; RC=$?
-set -e
-ERR="$TMP_ROOT/cause-mutant.err"
-assert_eq "$(observe "stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW+cause==true")" "stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW+cause==true" \
-  "control: with the resolver's stderr dropped the refusal names no cause" "$ERR"
 # A resolver that exits non-zero is unresolved even when what it printed reads
 # as a mode.
 EXIT_SCRIPTS="$(copy_scripts mode-exit)"
@@ -482,12 +507,12 @@ set +e
 OUT="$("$EXIT_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/mode-exit.err")"; RC=$?
 set -e
 ERR="$TMP_ROOT/mode-exit.err"
-EXIT_EXPECT="rc=2 stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW+cause=validate-mode=full=true"
+EXIT_EXPECT="rc=2 stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW=true"
 assert_eq "$(observe "$EXIT_EXPECT")" "$EXIT_EXPECT" \
   "a resolver that exits non-zero is unresolved whatever mode it printed" "$ERR"
 # Control: a check that ignores the resolver's exit takes the printed mode.
 EXIT_MUTANT_SCRIPTS="$(copy_scripts mode-exit-mutant)"
-mutate_file "$EXIT_MUTANT_SCRIPTS/dev-artifact-check" 'resolve-mode --worktree "$repo" 2>&1)" \' 'resolve-mode --worktree "$repo" 2>&1 || true)" \'
+mutate_file "$EXIT_MUTANT_SCRIPTS/dev-artifact-check" 'resolve-mode --worktree "$repo" 2>/dev/null)" \' 'resolve-mode --worktree "$repo" 2>/dev/null || true)" \'
 cp "$EXIT_SCRIPTS/dev-validate-run" "$EXIT_MUTANT_SCRIPTS/dev-validate-run"
 set +e
 OUT="$("$EXIT_MUTANT_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>/dev/null)"; RC=$?

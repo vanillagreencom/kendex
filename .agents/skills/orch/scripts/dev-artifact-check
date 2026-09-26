@@ -396,7 +396,7 @@ message() {
       printf 'The emitted artifact verdict could not be read.\n'
       ;;
     mode-unresolved)
-      printf 'dev-artifact-check: mode-unresolved worktree=%s cause=%s\n' "$repo" "$mode_cause"
+      printf 'dev-artifact-check: mode-unresolved worktree=%s\n' "$repo"
       printf 'dev-validate-run --resolve-mode could not name the mode this fix round runs.\n'
       ;;
     mode-mismatch)
@@ -719,16 +719,15 @@ validate_artifact() {
   # commit gate, whose warning would otherwise precede this gate's status 2
   # refusal on stderr.
   if [[ -n "$round_record" ]] && jq -e '.kind == "fix" and .validate_mode != null' "$file" >/dev/null 2>&1; then
-    local recorded_mode round_mode mode_cause
+    local recorded_mode round_mode
     recorded_mode="$(jq -r '.validate_mode' "$file")"
-    # Captured whole, stderr included, so a refusal's keyed line becomes the
-    # cause this check names rather than a line printed ahead of its own.
-    # A resolution that exits non-zero is unresolved whatever it printed.
-    if round_mode="$("$SCRIPT_DIR/dev-validate-run" --resolve-mode --worktree "$repo" 2>&1)" \
+    # The mode is read from stdout alone: the resolver loads the project env,
+    # whose private file writes to stderr. A resolution that exits non-zero is
+    # unresolved whatever it printed.
+    if round_mode="$("$SCRIPT_DIR/dev-validate-run" --resolve-mode --worktree "$repo" 2>/dev/null)" \
       && [[ "$round_mode" == validate-mode=full || "$round_mode" == validate-mode=range ]]; then
       round_mode="${round_mode#validate-mode=}"
     else
-      IFS= read -r mode_cause <<<"$round_mode" || mode_cause=""
       message mode-unresolved >&2; return 2
     fi
     if [[ "$recorded_mode" != "$round_mode" ]]; then

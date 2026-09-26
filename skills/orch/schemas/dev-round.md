@@ -49,7 +49,7 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
 | `round_id` | Yes | `--round-id` | Per-delegation token; equals the filename token and the round's `dev_round_id` |
 | `issue` | Yes | `--issue` | Normalized workflow-state key |
 | `base_sha` | Yes | captured from `HEAD` | Commit at delegation time; exactly 40 lowercase hex with nothing before or after, and readers refuse anything else — it reaches `git diff` as a revision argument |
-| `delegated_at` | Yes | captured from the clock | Epoch second of the record's first write. An identical retry keeps it: identity compares every other field |
+| `delegated_at` | Yes | captured from the clock | Epoch second the round's first `dev-round-write` invocation started. An identical retry keeps it: identity compares every other field |
 | `adds` | Yes | `--adds "PATH [PATH...]"` | Exact protected additions the round may make; an empty array allows none in the protected scope |
 | `cut` | Yes | `--cut` | Whether the round was declared a branch cut. Readers treat a missing or `null` `cut` as `false`, and refuse any other non-boolean value |
 | `size_check` | Yes | captured from `branch-size-check` | The current report defined by [workflow-state.md § Field Definitions](workflow-state.md#field-definitions), recorded at delegation |

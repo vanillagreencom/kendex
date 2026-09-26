@@ -58,8 +58,8 @@
 #     "round_id": "[ROUND_ID]",             // required, matches the filename token
 #     "issue": "[ISSUE_ID]",                // required, normalized state key
 #     "base_sha": "[HEAD_AT_DELEGATION]",    // required, full commit id
-#     "delegated_at": 1769600000,             // required, epoch seconds of the
-#                                             // first write
+#     "delegated_at": 1769600000,             // required, epoch second the
+#                                             // round's first invocation started
 #     "adds": ["tools/allowed-file"],        // required, protected additions
 #     "cut": false,                          // required, true for a declared cut
 #     "size_check": {"verdict": "pass", "…": "…"}, // branch-size-check record
@@ -245,8 +245,9 @@ so a path containing whitespace is read as two paths and cannot be authorized
 as one. Absolute, traversing, empty-component, and duplicate paths are
 rejected.
 The record captures the worktree's current HEAD as base_sha, and the epoch
-second of its first write as delegated_at; a worktree with
-no resolvable HEAD is rejected.
+second the round's first dev-round-write invocation started as delegated_at
+(an identical retry keeps it; identity compares every other field); a
+worktree with no resolvable HEAD is rejected.
 Before writing the round, branch-size-check measures additions and records
 its report in size_check. Over-allowance and unsized branches continue.
 A malformed Expected delta exits 3; a read or measurement failure exits 2.
@@ -385,8 +386,9 @@ done
 [[ -d "$worktree" ]] || die not-directory "$@"
 check_id_token --issue "$issue"
 check_id_token --round-id "$round_id"
-# A retry keeps the first write's time: the identity comparison below leaves
-# it out, so the round's start is when it was first delegated.
+# Taken when the invocation starts. A retry keeps the first invocation's time:
+# the identity comparison below leaves it out, so the round's start is when it
+# was first delegated.
 delegated_at="$(date +%s)"
 base_sha="$(git -C "$worktree" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" \
   || die missing-head "$@"
@@ -526,7 +528,8 @@ jq -n \
 # delegated — e.g. a retry with a partial list shrinking the set the
 # completion artifact is checked against. Identity is every field but
 # delegated_at, which a retry stamps again and the placed record keeps from
-# its first write; jq output is deterministic, so the rest compares as text.
+# its first invocation; jq output is deterministic, so the rest compares as
+# text.
 # A record jq cannot read is never the same.
 same_record() {
   local a b

@@ -172,13 +172,13 @@ assert_eq "$(rec '.items[1].text')" "$ITEM2" "an item's formatted block is prese
 assert_eq "$([[ -e "$WT/.git/kendex" ]] && echo yes || echo no)" "no" "nothing is written outside the worktree"
 run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" --adds "$ADDS"
 assert_eq "$(observe "rc=0 out=$FIRST [.items[].n]|tojson=[1,2]")" "rc=0 out=$FIRST [.items[].n]|tojson=[1,2]" "an identical re-invocation is idempotent: same path, record unchanged" "$ERR"
-# A retry a minute after the first write stamps a later time, which is not a
-# different delegation: the record keeps the first write's.
+# A retry a minute after the first invocation stamps a later time, which is
+# not a different delegation: the record keeps the first invocation's.
 FIRST_AT="$(( $(jq -r '.delegated_at' "$FIRST") - 60 ))"
 jq --argjson at "$FIRST_AT" '.delegated_at = $at' "$FIRST" > "$FIRST.next"
 mv "$FIRST.next" "$FIRST"
 run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" --adds "$ADDS"
-assert_eq "$(observe "rc=0 .delegated_at=$FIRST_AT")" "rc=0 .delegated_at=$FIRST_AT" "a later identical retry is idempotent and keeps the first write's delegation time" "$ERR"
+assert_eq "$(observe "rc=0 .delegated_at=$FIRST_AT")" "rc=0 .delegated_at=$FIRST_AT" "a later identical retry is idempotent and keeps the first invocation's delegation time" "$ERR"
 # Control: an identity that counts the time refuses that retry as a conflict.
 TIME_MUTANT_SCRIPTS="$(copy_scripts round-time-mutant)"
 mutate_file "$TIME_MUTANT_SCRIPTS/dev-round-write" 'a="$(jq -c '"'"'del(.delegated_at)'"'"' "$1" 2>/dev/null)" || return 1' 'a="$(jq -c . "$1" 2>/dev/null)" || return 1'
