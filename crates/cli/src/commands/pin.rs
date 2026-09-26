@@ -3,6 +3,7 @@ use clap::Args;
 use kendex_core::env::Env;
 use kendex_core::model::ItemKind;
 
+use super::advisory::Listing;
 use super::engine_common::{confirm_and_execute, print_report};
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
@@ -63,7 +64,7 @@ pub fn run(env: &Env, args: PinArgs) -> CliResult {
         args.version.as_deref(),
         &kendex_core::engine::PlanOptions::for_package(kind, &args.name),
     )?;
-    print_report(env, &report);
+    print_report(env, &report, Listing::Every);
     confirm_and_execute(env, &report, args.yes)?;
     match args.version {
         Some(version) => say(&format!(

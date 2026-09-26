@@ -2,6 +2,7 @@ use kendex_core::engine::{PlanOptions, plan_apply};
 use kendex_core::env::Env;
 use kendex_core::manifest::{self, ManifestFile};
 
+use super::advisory::Listing;
 use super::engine_common::{confirm_and_apply, print_report, print_unmanaged};
 use super::ledger::{Folded, Wrote, say_ledger, say_preview};
 use super::{CliResult, fail_refusal, resolve_scopes_at, say, scope_label, warn};
@@ -101,7 +102,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
     }
     let scopes = planned.len();
     for (index, (scope, report)) in planned.into_iter().enumerate() {
-        let blocked = print_report(env, &report);
+        let blocked = print_report(env, &report, Listing::Attention);
         // Only here and in verify: a report is printed by add and pin too,
         // and an inventory of hand-made content is not what those were
         // asked for.

@@ -698,8 +698,10 @@ fn an_edit_is_named_beside_the_safety_findings() {
 /// included, and the score never gates: apply, fork (a write like any
 /// other), adopt (the managed replacement it renders) and refresh (which
 /// installs content with a critical finding like any other). A clean render
-/// draws no score line of its own: nothing in it needs the reader, and the
-/// closing line says the scan was clean. One row per verb.
+/// under a verb that closes on a ledger draws no score line of its own: the
+/// closing line says the scan was clean. A verb that closes on none, adopt
+/// here, still scores a clean render out loud, or a scan that never ran
+/// would read the same. One row per verb and shape.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn every_writing_verb_prints_the_score_beside_the_write() {
@@ -710,7 +712,7 @@ fn every_writing_verb_prints_the_score_beside_the_write() {
         Option<&'static str>,
         Option<&'static str>,
     );
-    let rows: [Row; 5] = [
+    let rows: [Row; 6] = [
         (
             &["apply", "-y"],
             |home| declared(home, "Read the plan, then the diff.\n"),
@@ -748,6 +750,22 @@ fn every_writing_verb_prints_the_score_beside_the_write() {
             },
             Some("scores 75/100"),
             Some("[critical]"),
+        ),
+        (
+            &["adopt", "skill", "deploy"],
+            |home| {
+                let project = home.join("dev/app");
+                fs::create_dir_all(project.join(".claude/skills/deploy")).unwrap();
+                fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
+                fs::write(
+                    project.join(".claude/skills/deploy/SKILL.md"),
+                    "---\nname: deploy\ndescription: ship it\n---\nRead the plan, then the diff.\n",
+                )
+                .unwrap();
+                project
+            },
+            Some("scores 100/100"),
+            None,
         ),
         (
             &["refresh", "-y", "--scope", "project"],

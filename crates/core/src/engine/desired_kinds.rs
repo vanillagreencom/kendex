@@ -70,7 +70,9 @@ pub(super) fn declared(
 ///   every requirer a derived companion exists for, or a companion whose
 ///   catalog does not answer (`DesiredState::withheld`, spread by
 ///   `deps::withhold_requirers`);
-/// - its own harnesses line leaves the tool out (`HookSpec::applies_to`);
+/// - its own harnesses line leaves the tool out (`HookSpec::applies_to`),
+///   and whether the person's own declaration names that tool, which is
+///   the one case the two lines disagree;
 /// - undeliverable: `hook::delivery` answers `NotInstallable`, which is an
 ///   event the tool never fires (`codex_event`, `pi_listener`, the Gemini,
 ///   Copilot and Antigravity event maps), a tool that holds no hooks at
@@ -107,7 +109,7 @@ pub(super) enum NotWritten {
     UnreadableHeader(String),
     OtherTools,
     Withheld,
-    OwnHarnessesLine,
+    OwnHarnessesLine { declared: bool },
     Undeliverable(String),
     RevConflict,
 }
@@ -148,7 +150,11 @@ pub(super) fn not_written(
     }
     if let Some(own) = header {
         if !own.applies_to(harness) {
-            return Some(NotWritten::OwnHarnessesLine);
+            // A declaration listing harnesses that left this tool out
+            // returned above, so a list here names it.
+            return Some(NotWritten::OwnHarnessesLine {
+                declared: declared.is_some_and(|decl| decl.harnesses.is_some()),
+            });
         }
         if let crate::hook::Delivery::NotInstallable(reason) =
             crate::hook::delivery(env, scope, harness, own)
@@ -220,7 +226,7 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
             Some(NotWritten::KeptRemoved | NotWritten::OtherTools) => continue,
             // The finding on the hook already says why.
             Some(NotWritten::Withheld) => continue,
-            Some(NotWritten::OwnHarnessesLine) => {
+            Some(NotWritten::OwnHarnessesLine { declared }) => {
                 // The hook's own header deciding where it runs is expected
                 // state, and every consumer rendering for that tool would
                 // otherwise read the same note on every run. It becomes a
@@ -229,13 +235,7 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
                 // note names both. The hook script's frontmatter is what
                 // decides the skip, so a remedy only naming the manifest
                 // would change nothing.
-                let named = ctx
-                    .manifest
-                    .declared(ItemKind::Hook)
-                    .get(ctx.name)
-                    .and_then(|decl| decl.harnesses.as_ref())
-                    .is_some_and(|listed| listed.contains(&harness));
-                match named {
+                match declared {
                     true => state.notes.push(format!(
                         "kendex-hook-excluded: hook={record_arg0} harness={record_arg1} source=catalog field=harnesses\nkendex.toml lists {arg2} in this hook's harnesses, and the hook's own harnesses line in the catalog leaves it out; add {arg2} to the catalog line, or take it off the hook's harnesses in kendex.toml",
                         arg2 = harness.name(),

@@ -2,6 +2,7 @@ use kendex_core::engine::{EngineReport, PlanOptions, plan_apply};
 use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
+use super::advisory::Listing;
 use super::attention::{Attention, print_attention};
 use super::commit_offer::after_writing;
 use super::engine_common::{
@@ -84,6 +85,15 @@ fn print_changes_needing_consent(
         say(&format!(
             "  - install pi-extension {name} for Pi — listed, not installed here yet"
         ));
+    }
+}
+
+/// A refresh draws what needs the reader, and every line with `--verbose`;
+/// its closing ledger counts what the compact report left out.
+fn listing(verbose: bool) -> Listing {
+    match verbose {
+        true => Listing::Verbose,
+        false => Listing::Attention,
     }
 }
 
@@ -280,7 +290,7 @@ fn print_refusal_context(env: &Env, prepared: &[PreparedScope], verbose: bool) {
         match &scope.planned {
             Ok((report, pending)) => {
                 if pending.is_empty() {
-                    print_attention(env, report, verbose);
+                    print_attention(env, report, listing(verbose));
                     failures.extend(refresh_failures(report));
                 }
             }
@@ -443,7 +453,7 @@ pub fn run(
         // carrying a refusal is never passed over. A scope that settles is
         // reported off the plan derived after its settle.
         if pending.is_empty() {
-            attention = print_attention(env, &report, verbose);
+            attention = print_attention(env, &report, listing(verbose));
             let reported = refresh_failures(&report);
             let failed = !prepared.synced.failures.is_empty() || !reported.is_empty();
             failures.extend(reported);
@@ -472,7 +482,7 @@ pub fn run(
             yes,
             |after| {
                 prepared.synced.suppress_busy_pending(&mut after.notes);
-                attention = print_attention(env, after, verbose);
+                attention = print_attention(env, after, listing(verbose));
             },
         ) {
             Ok(written) => {

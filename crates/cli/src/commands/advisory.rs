@@ -1,5 +1,7 @@
-//! One advisory block, in the one shape every verb that scores content
-//! prints it, and the key that decides when two rows share one.
+//! A package's safety score and findings, as a plan's report draws them
+//! and as `check --catalog` prints them, and the key that decides when two
+//! plan rows share one block. Both say the severity in words, what the
+//! rule matched and where it fired, and neither prints a fix line.
 
 use kendex_core::engine::{CatalogSource, ItemSafety, SafetyTarget};
 use kendex_core::model::ItemKind;
@@ -8,25 +10,43 @@ use kendex_core::quality::{AuditResult, Finding, Severity, place_within};
 use super::say;
 use crate::ui::{self, Span, Status, Style};
 
+/// How much of a scored plan a report draws.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Listing {
+    /// What needs the reader: the packages with a finding or a rule that
+    /// had nothing to read, each finding said once with how many sites say
+    /// it. The clean packages it leaves out are counted, for a verb whose
+    /// closing line speaks for them.
+    Attention,
+    /// Every package, clean ones included, and every finding at its own
+    /// site: for a verb that closes on no ledger, where a clean package
+    /// going silent would read as one nobody scored.
+    Every,
+    /// Every package and every site, and what the rules read past as a
+    /// mention or kendex's own table accepted.
+    Verbose,
+}
+
 /// The safety section a plan draws, and how many scored packages it left
 /// out.
 pub struct Safety {
     pub lines: Vec<String>,
-    /// Packages every rule read in full and found nothing in: a compact
-    /// run draws no line for them, and the closing ledger's clean part is
-    /// what speaks for them.
+    /// Packages every rule read in full and found nothing in, which
+    /// [`Listing::Attention`] draws no line for. What speaks for them is
+    /// the count itself: refresh's closing line says how many lines it
+    /// folded and which flag draws them.
     pub folded: usize,
 }
 
 /// What the safety rules found in the content this plan would write —
-/// advisory, drawn beside the plan. A compact run draws only the packages
-/// a reader has something to read about: a finding, or a rule that had
-/// nothing to read. A verbose run draws every package, clean ones
-/// included, and what the rules read past as a mention.
-pub fn safety_section(style: &Style, rows: &[ItemSafety], verbose: bool) -> Safety {
-    let (shown, folded): (Vec<_>, Vec<_>) = grouped_safety(rows, verbose)
-        .into_iter()
-        .partition(|(row, _)| verbose || needs_reading(&row.advisory));
+/// advisory, drawn beside the plan, as much of it as `listing` asks for.
+pub fn safety_section(style: &Style, rows: &[ItemSafety], listing: Listing) -> Safety {
+    let (shown, folded): (Vec<_>, Vec<_>) =
+        grouped_safety(rows, listing)
+            .into_iter()
+            .partition(|(row, _)| {
+                listing != Listing::Attention || standing(&row.advisory) != Standing::Clean
+            });
     let folded = folded.len();
     let Some(worst) = shown.iter().map(|(row, _)| standing(&row.advisory)).max() else {
         return Safety {
@@ -36,7 +56,7 @@ pub fn safety_section(style: &Style, rows: &[ItemSafety], verbose: bool) -> Safe
     };
     let mut lines = style.section("safety", shown.len(), worst.status());
     for (row, targets) in &shown {
-        lines.extend(safety_block_lines(style, row, targets, verbose));
+        lines.extend(safety_block_lines(style, row, targets, listing));
     }
     Safety { lines, folded }
 }
@@ -54,7 +74,7 @@ fn safety_block_lines(
     style: &Style,
     row: &ItemSafety,
     targets: &[SafetyTarget],
-    verbose: bool,
+    listing: Listing,
 ) -> Vec<String> {
     let advisory = &row.advisory;
     let tools: Vec<&str> = targets
@@ -69,20 +89,21 @@ fn safety_block_lines(
         advisory.safety.score
     );
     let source = row.source.as_ref();
+    let fold = listing == Listing::Attention;
     let mut lines = style.row(standing(advisory).status(), &[Span::Prose(&head)], None);
-    for line in folded(&advisory.findings, targets, source) {
+    for line in finding_lines(&advisory.findings, targets, source, fold) {
         let text = format!("[{}] {}", line.severity.name(), line.text);
         lines.extend(style.detail(
             Some(Standing::Found(line.severity).status()),
             &[Span::Prose(&text)],
         ));
     }
-    if verbose {
-        for line in folded(&advisory.mentions, targets, source) {
+    if listing == Listing::Verbose {
+        for line in finding_lines(&advisory.mentions, targets, source, false) {
             let text = format!("named, not run: {}", line.text);
             lines.extend(style.detail(None, &[Span::Prose(&text)]));
         }
-        for line in folded(&advisory.accepted, targets, source) {
+        for line in finding_lines(&advisory.accepted, targets, source, false) {
             let text = format!("accepted in kendex's own package: {}", line.text);
             lines.extend(style.detail(None, &[Span::Prose(&text)]));
         }
@@ -93,14 +114,10 @@ fn safety_block_lines(
     lines
 }
 
-/// Whether a compact run draws this package: something was found, or a
-/// rule had no bytes to read, so its score is not one anybody earned.
-fn needs_reading(advisory: &AuditResult) -> bool {
-    !advisory.findings.is_empty() || !advisory.skipped.is_empty()
-}
-
 /// Where a scored package stands, least to most serious, so the section
-/// takes the most serious of its packages.
+/// takes the most serious of its packages. Clean is the one standing
+/// [`Listing::Attention`] leaves out: an unread rule is a score nobody
+/// earned.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Standing {
     Clean,
@@ -135,27 +152,30 @@ impl Standing {
     }
 }
 
-/// One line for every finding that says the same thing: the first site it
-/// was cited at, and how many sites say it. A rule firing on six lines of
-/// one file is one thing to read, not six.
+/// One finding line: the message, where it fired, and, where findings
+/// that say the same thing were folded into it, how many sites say it.
 #[derive(PartialEq)]
-struct FoldedFinding {
+struct FindingLine {
     severity: Severity,
-    /// The message and the first site, and the count where there is more
-    /// than one.
     text: String,
 }
 
-fn folded(
+/// A line per finding, or with `fold` one per thing said: the first site
+/// it was cited at and how many sites say it. A rule firing on six lines
+/// of one file is one thing to read, not six, where the reader asked for
+/// what needs them; every other listing names every site.
+fn finding_lines(
     findings: &[Finding],
     targets: &[SafetyTarget],
     source: Option<&CatalogSource>,
-) -> Vec<FoldedFinding> {
+    fold: bool,
+) -> Vec<FindingLine> {
     let mut groups: Vec<(&Finding, usize)> = Vec::new();
     for finding in findings {
-        match groups.iter_mut().find(|(first, _)| {
-            first.severity == finding.severity && first.message == finding.message
-        }) {
+        let same = groups.iter_mut().find(|(first, _)| {
+            fold && first.severity == finding.severity && first.message == finding.message
+        });
+        match same {
             Some((_, sites)) => *sites += 1,
             None => groups.push((finding, 1)),
         }
@@ -178,7 +198,7 @@ fn folded(
                 1 => String::new(),
                 n => format!(" at {n} sites"),
             };
-            FoldedFinding {
+            FindingLine {
                 severity: first.severity,
                 text: format!("{}{sites}{at}", first.message),
             }
@@ -186,20 +206,20 @@ fn folded(
         .collect()
 }
 
-/// The compact safety section on stderr, for a verb that draws no other
-/// part of a plan's report.
+/// Every scored package on stderr, for a verb that draws no other part of
+/// a plan's report and closes on no ledger.
 pub fn print_safety(rows: &[ItemSafety]) {
-    ui::stderr(&safety_section(&ui::style(), rows, false).lines);
+    ui::stderr(&safety_section(&ui::style(), rows, Listing::Every).lines);
 }
 
 /// One block per item and reading, worst score first, each carrying every
 /// harness it covers. The same rendering installed for four tools is one
 /// reading of one set of bytes, and four identical blocks read as four
 /// separate problems.
-fn grouped_safety(rows: &[ItemSafety], verbose: bool) -> Vec<(&ItemSafety, Vec<SafetyTarget>)> {
+fn grouped_safety(rows: &[ItemSafety], listing: Listing) -> Vec<(&ItemSafety, Vec<SafetyTarget>)> {
     let mut blocks: Vec<(SafetyBlock, &ItemSafety, Vec<SafetyTarget>)> = Vec::new();
     for row in rows {
-        let block = safety_block(row, verbose);
+        let block = safety_block(row, listing);
         let same = blocks.iter_mut().find(|(seen, first, _)| {
             *seen == block && first.kind == row.kind && first.name == row.name
         });
@@ -233,28 +253,31 @@ struct SafetyBlock {
     /// cited differently — one a verbatim copy, the other rewritten — and
     /// folding those would let the first row decide whether the other's
     /// line prints.
-    findings: Vec<FoldedFinding>,
+    findings: Vec<FindingLine>,
     /// The mention lines a verbose run prints; empty otherwise, so a
     /// difference no line shows splits no block.
-    mentions: Vec<FoldedFinding>,
+    mentions: Vec<FindingLine>,
     /// The accepted lines a verbose run prints, under the same rule.
-    accepted: Vec<FoldedFinding>,
+    accepted: Vec<FindingLine>,
     /// The line [`unread_line`] draws, `None` where it draws none.
     skipped: Option<String>,
 }
 
-fn safety_block(row: &ItemSafety, verbose: bool) -> SafetyBlock {
+fn safety_block(row: &ItemSafety, listing: Listing) -> SafetyBlock {
     let advisory = &row.advisory;
-    let printed = |findings: &[Finding]| folded(findings, &row.targets, row.source.as_ref());
+    let printed = |findings: &[Finding], fold: bool| {
+        finding_lines(findings, &row.targets, row.source.as_ref(), fold)
+    };
+    let verbose = listing == Listing::Verbose;
     SafetyBlock {
         score: advisory.safety.score,
-        findings: printed(&advisory.findings),
+        findings: printed(&advisory.findings, listing == Listing::Attention),
         mentions: match verbose {
-            true => printed(&advisory.mentions),
+            true => printed(&advisory.mentions, false),
             false => Vec::new(),
         },
         accepted: match verbose {
-            true => printed(&advisory.accepted),
+            true => printed(&advisory.accepted, false),
             false => Vec::new(),
         },
         skipped: unread_line(advisory),
@@ -287,7 +310,7 @@ pub fn print_advisory(kind: ItemKind, name: &str, path: &str, advisory: &AuditRe
         name,
         advisory.safety.score
     ));
-    for line in folded(&advisory.findings, &[], None) {
+    for line in finding_lines(&advisory.findings, &[], None, false) {
         say(&format!("  [{}] {}", line.severity.name(), line.text));
     }
     if let Some(unread) = unread_line(advisory) {
@@ -432,7 +455,7 @@ mod tests {
 
     /// The harnesses each block would name, in the order they print.
     fn blocks(rows: &[ItemSafety]) -> Vec<Vec<HarnessId>> {
-        grouped_safety(rows, false)
+        grouped_safety(rows, Listing::Every)
             .iter()
             .map(|(_, targets)| targets.iter().map(|target| target.harness).collect())
             .collect()

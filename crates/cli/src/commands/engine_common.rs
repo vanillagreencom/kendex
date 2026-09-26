@@ -4,6 +4,7 @@ use kendex_core::model::HarnessId;
 
 use std::io::IsTerminal;
 
+use super::advisory::Listing;
 use super::{CliResult, note, say, warn};
 use crate::ui;
 
@@ -66,8 +67,16 @@ fn print_trashed(removed: usize) {
 /// The whole plan on a terminal, and back to the caller the items it
 /// refused — one derivation, so a closing count and the conflict lines it
 /// sends the reader to are one reading of one set of rows.
-pub fn print_report(env: &Env, report: &EngineReport) -> Vec<super::offers::Blocked> {
-    let blocked = super::attention::print_attention(env, report, false).blocked;
+///
+/// A verb that closes on a ledger passes [`Listing::Attention`]; one that
+/// closes on none passes [`Listing::Every`], so a clean package still says
+/// it was scored.
+pub fn print_report(
+    env: &Env,
+    report: &EngineReport,
+    listing: Listing,
+) -> Vec<super::offers::Blocked> {
+    let blocked = super::attention::print_attention(env, report, listing).blocked;
     for warning in &report.warnings {
         let target = match warning.harness {
             Some(harness) => format!("{} ({})", warning.name, harness.display_name()),

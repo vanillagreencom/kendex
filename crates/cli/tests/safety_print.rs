@@ -1,12 +1,13 @@
-//! The one advisory format, and the absence of any verb, flag, or prompt
-//! that decides on it.
+//! The advisory lines, and the absence of any verb, flag, or prompt that
+//! decides on it.
 //!
-//! Every verb that writes content shows the same block: the package's
-//! score, then each finding on a line of its own — severity in words,
+//! Every verb that writes content, and the catalog check, shows a
+//! package's score, then each finding on a line of its own — severity in words,
 //! what the rule matched, and where it fired as subtext. No fix line, no
 //! recommendation, no prompt, and no score anywhere in the exit code. A
-//! plan's report draws a package only where something was found in it,
-//! under its `safety` section; the catalog check draws every item.
+//! compact plan report draws a package only where a finding or a rule with
+//! nothing to read needs the reader, under its `safety` section; a verb
+//! that closes on no ledger, and the catalog check, draw every item.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -556,11 +557,11 @@ fn a_clean_package_is_said_by_the_closing_line() {
 }
 
 /// What the catalog check prints for an item, one row per catalog shape:
-/// a risky skill prints the same block an install does (the score line
-/// naming its catalog path, one finding line citing the file and line, no
-/// fix line, and safety fails nothing); a clean item scores out loud too,
-/// for the same reason a clean install does; a skill at the catalog root
-/// scores with no empty path after its name.
+/// a risky skill prints its score line naming its catalog path, one
+/// finding line citing the file and line, no fix line, and safety fails
+/// nothing; a clean item scores out loud too, since a catalog check is an
+/// inventory of what it scored; a skill at the catalog root scores with no
+/// empty path after its name.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_catalog_check_prints_the_score_and_the_findings() {

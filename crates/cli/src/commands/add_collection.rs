@@ -10,6 +10,7 @@ use kendex_core::model::Scope;
 use kendex_core::registry::{CurlFetch, collections};
 use kendex_core::source_ops::{self, SourceAction};
 
+use super::advisory::Listing;
 use super::advisory::print_safety;
 use super::engine_common::{apply_report, ask_before_writing, print_report};
 use super::ledger::{Folded, Wrote, say_ledger};
@@ -322,7 +323,9 @@ fn install_step(
     // whole collection at once. Nothing here runs an effect.
     wrote.effects.extend(report.repo_effects.iter().cloned());
     wrote.planned = !report.plan.is_empty();
-    wrote.blocked.extend(print_report(env, &report));
+    wrote
+        .blocked
+        .extend(print_report(env, &report, Listing::Attention));
     wrote.scored.extend(report.safety.iter().cloned());
     wrote.applied += apply_report(env, &report)?;
     if let Some(name) = subscribed {

@@ -2,8 +2,9 @@
 //! order a reader acts on it: the conflicts that stopped an install, then
 //! the packages safety found something in, then the notes. What needs no
 //! attention — a clean package, a hook its own header keeps off a tool
-//! nothing asked it onto — is left out of a compact report and counted, so
-//! the closing ledger can say what was left out and which flag shows it.
+//! nothing asked it onto — is left out of a compact report and counted in
+//! the lines a verbose run would draw for it, so refresh's closing ledger
+//! can say what was left out and which flag shows it.
 //!
 //! A line said the same way many times is said once: one note class with
 //! the same consequence across many packages is one row naming each of
@@ -12,7 +13,7 @@
 use kendex_core::engine::{EngineReport, ExcludedHook};
 use kendex_core::env::Env;
 
-use super::advisory::safety_section;
+use super::advisory::{Listing, safety_section};
 use super::blocked::{conflict_rows, conflicts, drift};
 use super::offers::{Blocked, blocked_items};
 use crate::ui::{self, Span, Status, Style};
@@ -23,17 +24,19 @@ pub struct Attention {
     /// The items the plan refused, read once for the lines drawn and the
     /// closing ledger's count alike.
     pub blocked: Vec<Blocked>,
-    /// Lines a compact report left out: every package safety read in full
-    /// and found nothing in, and every hook exclusion no declaration
-    /// contradicts. Zero on a verbose run, which draws them all.
+    /// Lines a compact report left out, counted as the lines a verbose run
+    /// draws for them: one per package safety read in full and found
+    /// nothing in, and one for the hook exclusions no declaration
+    /// contradicts, however many there are. Zero on a verbose run, which
+    /// draws them all.
     pub folded: usize,
 }
 
-/// Draw the report on stderr. A verbose run lists every drift row where a
-/// compact one lists the conflicts, every scored package, and the hook
-/// exclusions as one line.
-pub fn print_attention(env: &Env, report: &EngineReport, verbose: bool) -> Attention {
-    let (lines, attention) = attention(&ui::style(), env, report, verbose);
+/// Draw the report on stderr, as much of it as `listing` asks for. A
+/// verbose run lists every drift row where the others list the conflicts,
+/// and the hook exclusions as one line.
+pub fn print_attention(env: &Env, report: &EngineReport, listing: Listing) -> Attention {
+    let (lines, attention) = attention(&ui::style(), env, report, listing);
     ui::stderr(&lines);
     attention
 }
@@ -42,15 +45,16 @@ fn attention(
     style: &Style,
     env: &Env,
     report: &EngineReport,
-    verbose: bool,
+    listing: Listing,
 ) -> (Vec<String>, Attention) {
     let rows = conflict_rows(report);
     let blocked = blocked_items(env, &rows);
+    let verbose = listing == Listing::Verbose;
     let mut lines = match verbose {
         true => drift(style, report, &rows, &blocked),
         false => conflicts(style, report, &rows, &blocked),
     };
-    let safety = safety_section(style, &report.safety, verbose);
+    let safety = safety_section(style, &report.safety, listing);
     lines.extend(safety.lines);
     let notes = notes_section(style, &report.notes, &report.excluded_hooks, verbose);
     lines.extend(notes.lines);
@@ -82,9 +86,10 @@ fn notes_section(
         (true, false) => Some(exclusions_line(excluded)),
         _ => None,
     };
+    // The one line a verbose run draws for all of them.
     let folded = match verbose {
         true => 0,
-        false => excluded.len(),
+        false => usize::from(!excluded.is_empty()),
     };
     let count = groups.len() + usize::from(exclusions.is_some());
     if count == 0 {

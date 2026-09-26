@@ -5,6 +5,7 @@ use kendex_core::model::Scope;
 
 use kendex_core::manifest::Method;
 
+use super::advisory::Listing;
 use super::engine_common::{confirm_and_apply, parse_harnesses, print_report};
 use super::ledger::{Folded, Wrote, say_ledger};
 use super::{CliResult, fail_refusal, harness_picker, install_destination};
@@ -260,7 +261,7 @@ fn write_and_close(
     yes: bool,
     allow_effects: bool,
 ) -> CliResult {
-    let blocked = print_report(env, report);
+    let blocked = print_report(env, report, Listing::Attention);
     let applied = confirm_and_apply(env, report, yes)?;
     let walked = super::repo_effects::disclose_and_finish(
         env,
