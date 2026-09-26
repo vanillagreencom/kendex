@@ -101,7 +101,10 @@ lm notice --item overseer --to owner --file "$(text n 'A note.')"
 NOTE_TO_OWNER="$(field "$BOX/to-overseer.jsonl" '.id')"
 lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
 OWNER_NOTE="$(field "$BOX/to-lane.jsonl" '.id')"
-# ARGS|WANT (rc=first stderr line); F is the message file.
+owner_ask 'Which?' a,b
+ASK_TO_OWNER="$ASK"
+# ARGS|WANT (rc=first stderr line); F is the message file. A --ref answers an
+# owner note or an owner ask; a notice of this overseer's own is neither.
 F="$TMP_ROOT/q.txt"
 while IFS='|' read -r args want; do
   # shellcheck disable=SC2086  # a row's arguments are its own words.
@@ -120,6 +123,7 @@ notice --item KEN-1 --ref $OWNER_NOTE --file $F|2=lane-mail: option-unknown=--re
 notice --item overseer --to owner --ref no/such --file $F|2=lane-mail: ref-invalid=no/such
 notice --item overseer --to owner --ref 1790000000-1-1 --file $F|2=lane-mail: ref-unknown=1790000000-1-1
 notice --item overseer --to owner --ref $NOTE_TO_OWNER --file $F|2=lane-mail: ref-unknown=$NOTE_TO_OWNER
+notice --item overseer --to owner --ref $ASK_TO_OWNER --file $F|0=
 notice --item KEN-1 --attach x --file $F|2=lane-mail: option-unknown=--attach
 send --item overseer --re $OWNER_NOTE --file $F|2=lane-mail: resolve-required=$OWNER_NOTE
 send --item overseer --directive --host --root $LANE --delivery-id k --file $F|2=lane-mail: option-conflict=--host,--delivery-id
@@ -291,6 +295,12 @@ LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 
 LANE_MAIL_BIN="$MUTANT_DIR/delivery-twice" lm send --item overseer --directive --file "$(text d 'Once.')" --delivery-id k1
 assert_eq "$RC=$(wc -l < "$BOX/to-lane.jsonl" | tr -d ' ')" "0=2" \
   "control: without the delivery guard the retry lands a second time"
+
+mutant ref-lane-only 's@^        lm_objects "\$WORK_DIR/over.jsonl" | jq -e .*$@        false ||@'
+new_repo control_ref
+LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b
+LANE_MAIL_BIN="$MUTANT_DIR/ref-lane-only" lm notice --item overseer --to owner --file "$(text n 'Ruled.')" --ref "$ASK"
+assert_eq "$RC=$ERR" "2=lane-mail: ref-unknown=$ASK" "control: without the to-overseer read a reply naming an owner ask is refused"
 
 mutant attach-anywhere 's@\[ "\$dir" = "\$reports" \] || refuse attach-outside "\$ATTACH"@:@'
 new_repo control_attach

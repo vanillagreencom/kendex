@@ -98,8 +98,9 @@ REVIEWER_SLOT_BUDGET = "0"
 # values: off | overseer
 ORCH_QUESTION_TOOL = "off"
 
-# How long an unanswered question waits, in minutes, before the overseer takes
-# the option it recommended and tells you. Every question states this.
+# How long a question that carries a recommendation waits, in minutes, before
+# the watch takes that option and reports it. A question with no
+# recommendation waits for an answer.
 ORCH_ASK_WAIT_MINUTES = "120"
 
 # Who the session is talking to. "ceo" asks only about outcomes, in plain

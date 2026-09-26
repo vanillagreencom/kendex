@@ -4,9 +4,9 @@
 #
 # The prose oversee-watch prints: its --help text, which is also the reference
 # for its EVENT records, settings and failure contracts, and its message
-# catalog, every refusal and notice keyed by REASON. Sourced where the script
-# once defined them, ahead of its argument parser, which answers a help
-# request before any configuration is read.
+# catalog, every refusal and notice keyed by REASON. Sourced ahead of the
+# argument parser, which answers a help request before any configuration is
+# read.
 #
 # Sourced, never run.
 
