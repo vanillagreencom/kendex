@@ -6,8 +6,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../scripts" && pwd)"
 SCRATCH="$(mktemp -d)"; trap 'rm -rf -- "$SCRATCH"' EXIT
 git init -q "$SCRATCH/seed"; git -C "$SCRATCH/seed" config user.email test@example.com; git -C "$SCRATCH/seed" config user.name test
-git -C "$SCRATCH/seed" commit -qm initial --allow-empty; git -C "$SCRATCH/seed" branch -M main
-mkdir "$SCRATCH/bin"; printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*"' '[[ "$1" != "$FAIL_STEP" ]]' > "$SCRATCH/bin/kendex"; chmod +x "$SCRATCH/bin/kendex"
+printf '{}\n' > "$SCRATCH/seed/.kendex-lock.json"; git -C "$SCRATCH/seed" add -A; git -C "$SCRATCH/seed" commit -qm initial; git -C "$SCRATCH/seed" branch -M main
+# The stub's refresh re-records the committed record, as a refresh on a main
+# whose record its rolling pull request has not landed yet does.
+mkdir "$SCRATCH/bin"; printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*"' '[[ "$1" != refresh ]] || printf stale > .kendex-lock.json' '[[ "$1" != "$FAIL_STEP" ]]' > "$SCRATCH/bin/kendex"; chmod +x "$SCRATCH/bin/kendex"
 export PATH="$SCRATCH/bin:$PATH"; unset ORCH_POST_MERGE_CMD WORKTREE_DEFAULT_BRANCH
 # Each row runs the real sync and command; kendex is the external boundary.
 while IFS='|' read -r FAIL_STEP expected_rc expected; do
@@ -19,14 +21,22 @@ while IFS='|' read -r FAIL_STEP expected_rc expected; do
   rc=0; out="$(bash "${POST_MERGE_UNDER_TEST:-$DIR/post-merge}" "$SCRATCH/$FAIL_STEP" 2>"$SCRATCH/error")" || rc=$?
   out="$(printf '%s\n' "$out" | sed '/^main$/d' | tr '\n' ',')"
   assert_eq "$rc:$out" "$expected_rc:$expected" "$FAIL_STEP" "$SCRATCH/error"
-  case "$FAIL_STEP" in command) FAIL_STEP=retry; bash "${POST_MERGE_UNDER_TEST:-$DIR/post-merge}" "$SCRATCH/command" >/dev/null ;; success) before=$after; bash "${POST_MERGE_UNDER_TEST:-$DIR/post-merge}" "$SCRATCH/success" >/dev/null ;; esac
+  case "$FAIL_STEP" in
+    command) FAIL_STEP=retry; bash "${POST_MERGE_UNDER_TEST:-$DIR/post-merge}" "$SCRATCH/command" >/dev/null ;;
+    success)
+      # A run leaves the checkout as sync-base needs it: the record the
+      # refresh re-wrote is restored, so the next run's sync-base passes.
+      dirty="$(git -C "$SCRATCH/success" status --porcelain --untracked-files=no)"
+      assert_eq "$dirty" "" "success: the run left the checkout clean"
+      before=$after; bash "${POST_MERGE_UNDER_TEST:-$DIR/post-merge}" "$SCRATCH/success" >/dev/null || fail "success: the second run refused" ;;
+  esac
 done <<'ROWS'
 sync-base|1|post-merge: sync-base=1,
 command|1|post-merge: sync-base=0,post-merge: command=1,
 refresh|1|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=1,
 verify|1|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=1,
-success|0|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=0,
-empty|0|post-merge: sync-base=0,post-merge: command=skipped,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=0,
+success|0|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=0,post-merge: restore=0,
+empty|0|post-merge: sync-base=0,post-merge: command=skipped,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=0,post-merge: restore=0,
 absent|0|post-merge: sync-base=0,post-merge: command=0,post-merge: refresh=skipped,post-merge: verify=skipped,
 ROWS
 

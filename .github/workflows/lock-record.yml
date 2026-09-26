@@ -37,8 +37,12 @@ concurrency:
 
 jobs:
   record:
-    # Reads this repository with the workflow token; the App's token pushes
-    # the rolling branch and opens and arms the pull request.
+    # The workflow token checks out the tree, held to contents: read and
+    # persisted nowhere. The App's token reaches the last step alone: git
+    # pushes the rolling branch through the credential helper gh installs
+    # for it there, and gh opens and arms the pull request. The build and
+    # the refresh, which run dependency build scripts and package sources
+    # from the tree, never see it.
     permissions:
       contents: read
     environment: kendex
@@ -78,10 +82,9 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The head just pushed, or main on a dispatch. The App's token is
-          # what the push of the rolling branch authenticates with.
+          # The head just pushed, or main on a dispatch.
           ref: ${{ github.sha }}
-          token: ${{ steps.token.outputs.token }}
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -111,4 +114,5 @@ jobs:
           export HOME="$home" KENDEX_REAL_HOME=1 KENDEX_BACKGROUND_REFRESH=off \
             XDG_CONFIG_HOME="$home/.config" XDG_CACHE_HOME="$home/.cache" \
             XDG_DATA_HOME="$home/.local/share"
+          gh auth setup-git
           tools/lock-record --repo "$GITHUB_WORKSPACE" --base main

@@ -26,6 +26,12 @@ git update-ref refs/kendex/post-merge-base "$ORCH_POST_MERGE_AFTER" || { status 
 if [[ -f kendex.toml ]]; then
   step refresh kendex refresh --scope project --yes --leave || exit $?
   step verify kendex verify --scope project || exit $?
+  # The refresh judges and the checkout keeps the committed record: a
+  # project that records on its default branch after each merge
+  # (docs/decisions/D007-lock-record-on-main.md) leaves that record stale
+  # until its rolling pull request lands, and the next sync-base refuses a
+  # dirty checkout.
+  step restore git checkout -q -- . || exit $?
 else
   status refresh skipped; status verify skipped
 fi

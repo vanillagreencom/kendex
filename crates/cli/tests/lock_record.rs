@@ -8,11 +8,12 @@
 //! scripts, its record committed, on a bare origin the checkout under test
 //! pushes to. The merge queue is the test itself, squash-merging each
 //! branch and then the rolling branch into `main`. `gh` is a stub that logs
-//! what it was asked and keeps the pull request's open and armed state in
-//! files. The must-fail control for this surface: the script with its
-//! `kendex refresh` line deleted answers the first run with
-//! `stale-after-refresh`, and with its `current=` exit deleted answers the
-//! third run with `refresh-wrote-nothing`.
+//! what it was asked and keeps the pull request's open, armed and queued
+//! state in files. The must-fail control for this surface: the script with
+//! its `kendex refresh` line deleted answers the first run with
+//! `stale-after-refresh`, and with its `rolling-current` stand-down deleted
+//! pushes over the open rolling pull request a record-free merge left
+//! current.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -94,6 +95,49 @@ fn executable(path: &Path, text: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+/// Where `needle` first occurs in the `gh` log, as an assertion that it
+/// does.
+fn at(log: &str, needle: &str) -> usize {
+    log.find(needle)
+        .unwrap_or_else(|| panic!("{needle:?} is not in the gh log:\n{log}"))
+}
+
+/// The `gh` stub. `pr list` prints the open pull request's number and node
+/// id from `state/open` or nothing; `pr create` writes that file from the
+/// `state/next` counter and prints a URL; `pr merge` writes `state/armed`;
+/// `api graphql` answers the arming and queue read from `state/armed` and
+/// `state/queued` and removes each for its mutation. `GH_FAIL` names the
+/// one read that fails: `list` or `state`.
+const GH_STUB: &str = "#!/bin/sh
+printf '%s\\n' \"$*\" >> \"$GH_LOG\"
+case \"$1 $2\" in
+  'pr list')
+    [ \"$GH_FAIL\" != list ] || { echo 'gh stub: list refused' >&2; exit 1; }
+    [ ! -f \"$GH_STATE/open\" ] || { n=$(cat \"$GH_STATE/open\"); printf '%s PR_node%s\\n' \"$n\" \"$n\"; }
+    exit 0 ;;
+  'pr create')
+    n=$(cat \"$GH_STATE/next\")
+    printf '%s\\n' \"$n\" > \"$GH_STATE/open\"; printf '%s\\n' $((n + 1)) > \"$GH_STATE/next\"
+    printf 'https://example.test/pull/%s\\n' \"$n\"; exit 0 ;;
+  'pr merge') : > \"$GH_STATE/armed\"; exit 0 ;;
+  'api graphql')
+    case \"$*\" in
+      *isInMergeQueue*)
+        [ \"$GH_FAIL\" != state ] || { echo 'gh stub: state refused' >&2; exit 1; }
+        if [ -f \"$GH_STATE/armed\" ]; then a=true; else a=false; fi
+        if [ -f \"$GH_STATE/queued\" ]; then q=true; else q=false; fi
+        printf '%s\\t%s\\n' \"$a\" \"$q\"; exit 0 ;;
+      *disablePullRequestAutoMerge*)
+        rm -f \"$GH_STATE/armed\"
+        printf '{\"data\":{\"disablePullRequestAutoMerge\":{\"clientMutationId\":null}}}\\n'; exit 0 ;;
+      *dequeuePullRequest*)
+        rm -f \"$GH_STATE/queued\"
+        printf '{\"data\":{\"dequeuePullRequest\":{\"mergeQueueEntry\":null}}}\\n'; exit 0 ;;
+    esac ;;
+esac
+echo \"gh stub: $*\" >&2; exit 97
+";
+
 /// The consumer, its bare origin, the checkout the script judges, and where
 /// the `gh` stub keeps its log and its pull request's state.
 struct World {
@@ -107,11 +151,7 @@ struct World {
 
 /// A consumer with one skill of two scripts from a path source, installed
 /// on `claude` and committed with its record, cloned bare as the origin and
-/// again as the checkout of `main` the script runs against. The `gh` stub
-/// answers the four questions the script asks: `pr list` prints the open
-/// pull request's number from `state/open` or nothing, `pr create` writes
-/// that file and prints a URL, `pr view` prints whether `state/armed`
-/// exists, and `pr merge` writes it.
+/// again as the checkout of `main` the script runs against.
 #[allow(clippy::unwrap_used)]
 fn world() -> World {
     let tmp = tempfile::tempdir().unwrap();
@@ -121,18 +161,8 @@ fn world() -> World {
     std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_kendex"), bin.join("kendex")).unwrap();
     let gh_log = home.join("gh.log");
     let gh_state = home.join("gh-state");
-    fs::create_dir_all(&gh_state).unwrap();
-    executable(
-        &bin.join("gh"),
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$GH_LOG\"\n\
-         case \"$1 $2\" in\n\
-           'pr list') [ ! -f \"$GH_STATE/open\" ] || cat \"$GH_STATE/open\"; exit 0 ;;\n\
-           'pr create') printf '41\\n' > \"$GH_STATE/open\"; printf 'https://example.test/pull/41\\n'; exit 0 ;;\n\
-           'pr view') if [ -f \"$GH_STATE/armed\" ]; then echo true; else echo false; fi; exit 0 ;;\n\
-           'pr merge') : > \"$GH_STATE/armed\"; exit 0 ;;\n\
-         esac\n\
-         echo \"gh stub: $*\" >&2; exit 97\n",
-    );
+    write(&gh_state.join("next"), "41\n");
+    executable(&bin.join("gh"), GH_STUB);
 
     let seed = home.join("seed");
     write(
@@ -151,6 +181,7 @@ fn world() -> World {
         &seed.join("catalog/skills/deploy/scripts/roll"),
         "#!/bin/sh\necho roll\n",
     );
+    write(&seed.join("README.md"), "the consumer\n");
     git_ok(&home, &seed, &["init", "-q", "-b", "main"]);
     git_ok(&home, &seed, &["config", "commit.gpgsign", "false"]);
     git_ok(&home, &seed, &["config", "core.hooksPath", ".git/hooks"]);
@@ -206,21 +237,20 @@ fn world() -> World {
 }
 
 impl World {
-    /// The script against the checkout of `main`, under the fixture home.
+    /// The script with these arguments in place of `--repo main --base
+    /// main`, under the fixture home, with `GH_FAIL` set to `fail`.
     #[allow(clippy::expect_used)]
-    fn lock_record(&self) -> Output {
+    fn run(&self, args: &[&str], fail: &str) -> Output {
         Command::new("bash")
             .arg(script())
-            .arg("--repo")
-            .arg(&self.main)
-            .arg("--base")
-            .arg("main")
+            .args(args)
             .env_clear()
             .envs(test_util::fixture_env(&self.home))
             .env("KENDEX_BACKGROUND_REFRESH", "off")
             .env("PATH", fixture_path(&self.home))
             .env("GH_LOG", &self.gh_log)
             .env("GH_STATE", &self.gh_state)
+            .env("GH_FAIL", fail)
             .env("GIT_AUTHOR_NAME", "t")
             .env("GIT_AUTHOR_EMAIL", "t@t")
             .env("GIT_COMMITTER_NAME", "t")
@@ -229,24 +259,48 @@ impl World {
             .expect("bash runs the script")
     }
 
+    /// The script against the checkout of `main`, every `gh` read answered.
+    fn lock_record(&self) -> Output {
+        self.run(
+            &["--repo", &self.main.display().to_string(), "--base", "main"],
+            "",
+        )
+    }
+
     /// A branch off `main` that changes one script of the package, with
     /// its render landed beside it and the record left alone: the shape a
     /// lane's branch takes under the rule.
     fn branch(&self, name: &str, script: &str) {
+        let text = format!("#!/bin/sh\necho {script} on {name}\n");
+        self.branch_writing(
+            name,
+            &[
+                (
+                    &format!("catalog/skills/deploy/scripts/{script}"),
+                    text.as_str(),
+                ),
+                (
+                    &format!(".agents/skills/deploy/scripts/{script}"),
+                    text.as_str(),
+                ),
+            ],
+        );
+    }
+
+    /// A branch off `main` that moves nothing the record covers.
+    fn branch_outside_the_package(&self, name: &str) {
+        self.branch_writing(name, &[("README.md", "the consumer, changed\n")]);
+    }
+
+    fn branch_writing(&self, name: &str, files: &[(&str, &str)]) {
         git_ok(
             &self.home,
             &self.main,
             &["checkout", "-q", "-b", name, "main"],
         );
-        let text = format!("#!/bin/sh\necho {script} on {name}\n");
-        write(
-            &self.main.join("catalog/skills/deploy/scripts").join(script),
-            &text,
-        );
-        write(
-            &self.main.join(".agents/skills/deploy/scripts").join(script),
-            &text,
-        );
+        for (path, text) in files {
+            write(&self.main.join(path), text);
+        }
         git_ok(&self.home, &self.main, &["add", "-A"]);
         git_ok(&self.home, &self.main, &["commit", "-q", "-m", name]);
         git_ok(&self.home, &self.main, &["checkout", "-q", "main"]);
@@ -266,6 +320,29 @@ impl World {
         merged
     }
 
+    /// The rolling pull request merged: its branch squashed onto `main`,
+    /// and the pull request closed, so `gh` lists none open and the next
+    /// record opens a new one.
+    fn merge_rolling(&self) {
+        let merged = self.queue_merge("origin/kendex/lock");
+        assert!(merged.status.success(), "{}", said(&merged));
+        for state in ["open", "armed", "queued"] {
+            let _ = fs::remove_file(self.gh_state.join(state));
+        }
+    }
+
+    fn rolling_head(&self) -> String {
+        git_ok(&self.home, &self.main, &["rev-parse", "origin/kendex/lock"])
+            .trim()
+            .to_owned()
+    }
+
+    fn main_head(&self) -> String {
+        git_ok(&self.home, &self.main, &["rev-parse", "main"])
+            .trim()
+            .to_owned()
+    }
+
     fn gh_log(&self) -> String {
         fs::read_to_string(&self.gh_log).unwrap_or_default()
     }
@@ -274,6 +351,7 @@ impl World {
     /// verifies clean and stays clean: the record on `main` is current.
     fn fresh_clone_verifies_clean(&self) -> PathBuf {
         let fresh = self.home.join("fresh");
+        let _ = fs::remove_dir_all(&fresh);
         git_ok(
             &self.home,
             &self.home,
@@ -294,6 +372,49 @@ impl World {
     }
 }
 
+/// One record run over a stale `main`: recorded on the rolling branch from
+/// `main`'s head with the record and nothing else, pushed, its pull
+/// request `number` opened and armed on the pushed head.
+fn assert_recorded_and_opened(world: &World, output: &str, number: u32) {
+    let head = world.main_head();
+    assert!(
+        output.contains(&format!("lock-record: recorded={head} paths=")),
+        "{output}"
+    );
+    assert!(
+        output.contains("lock-record: pushed=origin/kendex/lock"),
+        "{output}"
+    );
+    assert!(
+        output.contains(&format!("lock-record: pull-request={number} action=opened")),
+        "{output}"
+    );
+    assert!(
+        output.contains(&format!("lock-record: armed={number}")),
+        "{output}"
+    );
+    let rolling = world.rolling_head();
+    let parent = git_ok(
+        &world.home,
+        &world.main,
+        &["rev-parse", "origin/kendex/lock^"],
+    );
+    assert_eq!(parent.trim(), head, "{output}");
+    let changed = git_ok(
+        &world.home,
+        &world.main,
+        &["diff", "--name-only", &format!("{rolling}^"), &rolling],
+    );
+    assert_eq!(changed.trim(), ".kendex-lock.json", "{output}");
+    let log = world.gh_log();
+    assert!(
+        log.contains(&format!(
+            "pr merge {number} --squash --auto --match-head-commit {rolling}\n"
+        )),
+        "{log}"
+    );
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_branches_on_one_package_merge_in_sequence_and_main_records_after_each() {
@@ -303,88 +424,32 @@ fn two_branches_on_one_package_merge_in_sequence_and_main_records_after_each() {
 
     let merged = world.queue_merge("a");
     assert!(merged.status.success(), "{}", said(&merged));
-
     let first = world.lock_record();
     let output = said(&first);
     assert_eq!(first.status.code(), Some(0), "{output}");
-    let head = git_ok(&world.home, &world.main, &["rev-parse", "main"]);
-    assert!(
-        output.contains(&format!("lock-record: recorded={} paths=", head.trim())),
-        "{output}"
-    );
-    assert!(
-        output.contains("lock-record: pushed=origin/kendex/lock"),
-        "{output}"
-    );
-    assert!(
-        output.contains("lock-record: pull-request=41 action=opened"),
-        "{output}"
-    );
-    assert!(output.contains("lock-record: armed=41"), "{output}");
+    assert_recorded_and_opened(&world, &output, 41);
     let log = world.gh_log();
+    assert_eq!(
+        log.matches("pr list --head kendex/lock --base main --state open")
+            .count(),
+        1,
+        "{log}"
+    );
     assert!(
         log.contains("pr create --base main --head kendex/lock --title chore(lock): record the install record at "),
         "{log}"
     );
-    assert!(
-        log.contains("pr merge 41 --squash --auto --match-head-commit "),
-        "{log}"
-    );
-    // The commit on the rolling branch carries the record and nothing a
-    // branch would carry: the head it records is main's, one commit ahead.
-    let rolling = git_ok(
-        &world.home,
-        &world.main,
-        &["rev-parse", "origin/kendex/lock"],
-    );
-    let parent = git_ok(
-        &world.home,
-        &world.main,
-        &["rev-parse", "origin/kendex/lock^"],
-    );
-    assert_eq!(parent.trim(), head.trim(), "{output}");
-    let changed = git_ok(
-        &world.home,
-        &world.main,
-        &[
-            "diff",
-            "--name-only",
-            &format!("{}^", rolling.trim()),
-            rolling.trim(),
-        ],
-    );
-    assert_eq!(changed.trim(), ".kendex-lock.json", "{output}");
-
-    let merged = world.queue_merge("origin/kendex/lock");
-    assert!(merged.status.success(), "{}", said(&merged));
+    world.merge_rolling();
 
     // The second branch on the same package: no conflict, because neither
-    // branch carries the record.
+    // branch carries the record, and a new pull request for its record.
     let merged = world.queue_merge("b");
     assert!(merged.status.success(), "{}", said(&merged));
-
     let second = world.lock_record();
     let output = said(&second);
     assert_eq!(second.status.code(), Some(0), "{output}");
-    assert!(
-        output.contains("lock-record: pull-request=41 action=updated"),
-        "{output}"
-    );
-    assert!(output.contains("lock-record: armed=already"), "{output}");
-    assert_eq!(
-        world.gh_log().matches("pr create").count(),
-        1,
-        "{}",
-        world.gh_log()
-    );
-    assert_eq!(
-        world.gh_log().matches("pr merge").count(),
-        1,
-        "{}",
-        world.gh_log()
-    );
-    let merged = world.queue_merge("origin/kendex/lock");
-    assert!(merged.status.success(), "{}", said(&merged));
+    assert_recorded_and_opened(&world, &output, 42);
+    world.merge_rolling();
 
     // The record on main is current after both: a fresh clone verifies clean.
     let fresh = world.fresh_clone_verifies_clean();
@@ -399,39 +464,243 @@ fn two_branches_on_one_package_merge_in_sequence_and_main_records_after_each() {
     let third = world.lock_record();
     let output = said(&third);
     assert_eq!(third.status.code(), Some(0), "{output}");
-    let head = git_ok(&world.home, &world.main, &["rev-parse", "main"]);
     assert!(
-        output.contains(&format!("lock-record: current={}", head.trim())),
+        output.contains(&format!("lock-record: current={}", world.main_head())),
         "{output}"
     );
     assert!(!output.contains("lock-record: recorded="), "{output}");
     assert_eq!(world.gh_log(), before);
 }
 
-/// The refusals before anything is judged, each with its stable first line.
+#[test]
+fn a_merge_that_moves_no_record_leaves_the_open_rolling_pull_request_untouched() {
+    let world = world();
+    world.branch("a", "ship");
+    world.branch_outside_the_package("c");
+    let merged = world.queue_merge("a");
+    assert!(merged.status.success(), "{}", said(&merged));
+    let first = world.lock_record();
+    assert_eq!(first.status.code(), Some(0), "{}", said(&first));
+    let rolling = world.rolling_head();
+
+    // Main moves on under the open pull request without touching what the
+    // record covers: the rolling branch already carries the record this
+    // tree writes, so a push would only restart its checks.
+    let merged = world.queue_merge("c");
+    assert!(merged.status.success(), "{}", said(&merged));
+    let before = world.gh_log();
+    let second = world.lock_record();
+    let output = said(&second);
+    assert_eq!(second.status.code(), Some(0), "{output}");
+    assert!(
+        output.contains(&format!(
+            "lock-record: rolling-current={rolling} pull-request=41"
+        )),
+        "{output}"
+    );
+    assert!(!output.contains("lock-record: recorded="), "{output}");
+    assert_eq!(world.rolling_head(), rolling, "{output}");
+    let asked = world.gh_log();
+    let asked = asked.strip_prefix(&before).unwrap_or(&asked);
+    assert_eq!(
+        asked.lines().count(),
+        1,
+        "one gh read, the pull request list:\n{asked}"
+    );
+    assert!(
+        asked.starts_with("pr list --head kendex/lock --base main --state open"),
+        "{asked}"
+    );
+    let status = git_ok(&world.home, &world.main, &["status", "--porcelain"]);
+    assert_eq!(
+        status, "",
+        "the stand-down left the checkout as it found it"
+    );
+
+    // The queue merges the untouched pull request onto the newer main.
+    world.merge_rolling();
+    world.fresh_clone_verifies_clean();
+}
+
+#[test]
+fn a_push_over_an_armed_and_queued_rolling_pull_request_disarms_and_dequeues_first() {
+    let world = world();
+    world.branch("a", "ship");
+    world.branch("b", "roll");
+    let merged = world.queue_merge("a");
+    assert!(merged.status.success(), "{}", said(&merged));
+    let first = world.lock_record();
+    assert_eq!(first.status.code(), Some(0), "{}", said(&first));
+    write(&world.gh_state.join("queued"), "");
+
+    // A second record-moving merge lands while the armed pull request
+    // waits in the queue.
+    let merged = world.queue_merge("b");
+    assert!(merged.status.success(), "{}", said(&merged));
+    let before = world.gh_log();
+    let second = world.lock_record();
+    let output = said(&second);
+    assert_eq!(second.status.code(), Some(0), "{output}");
+    for line in [
+        "lock-record: disarmed=41\n",
+        "lock-record: dequeued=41\n",
+        "lock-record: pull-request=41 action=updated\n",
+        "lock-record: armed=41\n",
+    ] {
+        assert!(output.contains(line), "{line:?} missing:\n{output}");
+    }
+    let rolling = world.rolling_head();
+    let parent = git_ok(
+        &world.home,
+        &world.main,
+        &["rev-parse", "origin/kendex/lock^"],
+    );
+    assert_eq!(parent.trim(), world.main_head(), "{output}");
+    let asked = world.gh_log();
+    let asked = asked.strip_prefix(&before).unwrap_or(&asked);
+    let disarm = at(asked, "disablePullRequestAutoMerge");
+    let dequeue = at(asked, "dequeuePullRequest");
+    let arm = at(
+        asked,
+        &format!("pr merge 41 --squash --auto --match-head-commit {rolling}\n"),
+    );
+    assert!(disarm < dequeue && dequeue < arm, "{asked}");
+    assert!(!asked.contains("pr create"), "{asked}");
+    assert!(world.gh_state.join("armed").exists(), "{asked}");
+    assert!(!world.gh_state.join("queued").exists(), "{asked}");
+}
+
+/// What `main` looks like when a refusal row runs.
+#[derive(Clone, Copy)]
+enum Main {
+    /// The record current.
+    Current,
+    /// An uncommitted path in the checkout.
+    Dirty,
+    /// A merge moved the record and no rolling pull request is open.
+    Stale,
+    /// A merge moved the record under an open rolling pull request.
+    StaleUnderOpenPullRequest,
+}
+
+impl Main {
+    /// `main` arranged so, and the rolling branch's head where one exists,
+    /// which the refusal must leave where it is.
+    fn arrange(self, world: &World) -> Option<String> {
+        match self {
+            Main::Current => None,
+            Main::Dirty => {
+                write(&world.main.join("scratch"), "x\n");
+                None
+            }
+            Main::Stale => {
+                world.branch("a", "ship");
+                assert!(world.queue_merge("a").status.success());
+                None
+            }
+            Main::StaleUnderOpenPullRequest => {
+                world.branch("a", "ship");
+                world.branch("b", "roll");
+                assert!(world.queue_merge("a").status.success());
+                let first = world.lock_record();
+                assert_eq!(first.status.code(), Some(0), "{}", said(&first));
+                assert!(world.queue_merge("b").status.success());
+                Some(world.rolling_head())
+            }
+        }
+    }
+}
+
+/// The refusals, each with its stable first line, and each leaving the
+/// rolling branch where it was with no pull request opened or armed.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn an_uncommitted_path_or_a_bad_option_refuses_before_the_record_is_judged() {
-    let world = world();
-    write(&world.main.join("scratch"), "x\n");
-    let dirty = world.lock_record();
-    let output = said(&dirty);
-    assert_eq!(dirty.status.code(), Some(2), "{output}");
-    assert!(output.contains("lock-record: dirty=1\n"), "{output}");
-    assert!(output.contains("?? scratch"), "{output}");
-    fs::remove_file(world.main.join("scratch")).unwrap();
-
-    #[allow(clippy::expect_used)]
-    let bad = Command::new("bash")
-        .arg(script())
-        .arg("--repo")
-        .env_clear()
-        .envs(test_util::fixture_env(&world.home))
-        .env("PATH", fixture_path(&world.home))
-        .output()
-        .expect("bash runs the script");
-    let output = said(&bad);
-    assert_eq!(bad.status.code(), Some(2), "{output}");
-    assert!(output.contains("lock-record: option=--repo\n"), "{output}");
-    assert_eq!(world.gh_log(), "");
+fn a_refusal_names_its_cause_first_and_pushes_nothing() {
+    let rows: &[(Main, &[&str], &str, i32, &str)] = &[
+        (
+            Main::Current,
+            &["--repo", "EMPTY"],
+            "",
+            2,
+            "lock-record: repo=EMPTY\n",
+        ),
+        (
+            Main::Current,
+            &["--repo", "MAIN", "--bogus"],
+            "",
+            2,
+            "lock-record: option=--bogus\n",
+        ),
+        (
+            Main::Current,
+            &["--repo", "MAIN", "--base"],
+            "",
+            2,
+            "lock-record: option=--base\n",
+        ),
+        (
+            Main::Dirty,
+            &["--repo", "MAIN"],
+            "",
+            2,
+            "lock-record: dirty=1\n",
+        ),
+        (
+            Main::Stale,
+            &["--repo", "MAIN"],
+            "list",
+            1,
+            "lock-record: pull-request-list=kendex/lock\n",
+        ),
+        (
+            Main::StaleUnderOpenPullRequest,
+            &["--repo", "MAIN"],
+            "state",
+            1,
+            "lock-record: pull-request-state=41\n",
+        ),
+    ];
+    assert!(!rows.is_empty(), "the refusal table is empty");
+    for (main, args, fail, code, first) in rows {
+        let world = world();
+        let empty = world.home.join("empty");
+        fs::create_dir_all(&empty).unwrap();
+        let rolling = main.arrange(&world);
+        let fill = |text: &str| {
+            text.replace("EMPTY", &empty.display().to_string())
+                .replace("MAIN", &world.main.display().to_string())
+        };
+        let args: Vec<String> = args.iter().map(|arg| fill(arg)).collect();
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let before = world.gh_log();
+        let refused = world.run(&args, fail);
+        let output = said(&refused);
+        let first = fill(first.trim_end_matches('\n'));
+        assert_eq!(refused.status.code(), Some(*code), "{args:?}: {output}");
+        let notice = output
+            .lines()
+            .find(|line| line.starts_with("lock-record: "))
+            .unwrap_or_else(|| panic!("{args:?}: no notice in\n{output}"));
+        assert_eq!(notice, first, "{args:?}: {output}");
+        let asked = world.gh_log();
+        let asked = asked.strip_prefix(&before).unwrap_or(&asked);
+        assert!(!asked.contains("pr create"), "{args:?}: {asked}");
+        assert!(!asked.contains("pr merge"), "{args:?}: {asked}");
+        match rolling {
+            Some(head) => assert_eq!(world.rolling_head(), head, "{args:?}: {output}"),
+            None => {
+                let absent = git(
+                    &world.home,
+                    &world.main,
+                    &[
+                        "ls-remote",
+                        "--exit-code",
+                        "origin",
+                        "refs/heads/kendex/lock",
+                    ],
+                );
+                assert_eq!(absent.status.code(), Some(2), "{args:?}: {}", said(&absent));
+            }
+        }
+    }
 }

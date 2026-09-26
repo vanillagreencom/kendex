@@ -16,20 +16,30 @@
 # records is part of what moves the record. The run refreshes the source
 # mirrors, then asks `kendex verify` whether the committed record is what
 # this tree would write. A current record ends the run. A stale one is
-# re-recorded with `kendex refresh`, verified again, committed on the rolling
-# branch from the checkout's head, force-pushed, and put up as one pull
-# request the merge queue takes; a pull request already open on the branch is
-# updated by that push. Nothing here pushes to the default branch: the
-# organization ruleset takes every change to it through the merge queue
+# re-recorded with `kendex refresh` and verified again. Where the rolling
+# branch already carries byte for byte what the refresh wrote, under an open
+# pull request, nothing is pushed: the queue merges that pull request onto
+# the newer head, since no branch touches the record, and a push would only
+# restart its checks or eject it from the queue. Otherwise the record is
+# committed on the rolling branch from the checkout's head, force-pushed,
+# and put up as one pull request the merge queue takes; a pull request
+# already open on the branch is disarmed and dequeued before the push, as
+# skills/orch/workflows/merge-pr-restack.md step 1 does, and armed again
+# after it. Nothing here pushes to the default branch: the organization
+# ruleset takes every change to it through the merge queue
 # (docs/decisions/D003-one-merge-path.md), and the record takes the same
 # route (docs/decisions/D007-lock-record-on-main.md). The rule a branch
 # follows is skills/AGENTS.md.
 #
-# `gh` reads its token from GH_TOKEN, git pushes with the credential the
-# checkout carries, and the commit identity is GIT_AUTHOR_* and
-# GIT_COMMITTER_*. The suite is crates/cli/tests/lock_record.rs.
+# `gh` reads its token from GH_TOKEN, git pushes through the credential
+# helper `gh auth setup-git` installed for that token, and the commit
+# identity is GIT_AUTHOR_* and GIT_COMMITTER_*. The disarm and dequeue
+# mutations are the github skill's, .agents/skills/github/scripts/lib/merge-queue.sh.
+# The suite is crates/cli/tests/lock_record.rs.
 #
-# Every line this script writes opens `lock-record: <key>=<value>`:
+# Every notice this script writes opens `lock-record: <key>=<value>`; the
+# lines after a keyed line explain it, and what kendex, git and gh print
+# passes through as is:
 #   option=<arg>                unknown option, or one with no value (exit 2)
 #   repo=<dir>                  not a git checkout (exit 2)
 #   status=<dir>                git status could not read the checkout (exit 2 before the judge, 1 after the refresh)
@@ -39,12 +49,19 @@
 #   refresh=<status>            `kendex refresh` failed (exit 1)
 #   stale-after-refresh=<sha>   verify still fails after the refresh; the paths it wrote follow (exit 1)
 #   refresh-wrote-nothing=<sha> verify failed, and the refresh changed no tracked path (exit 1)
+#   rolling-read=<status>       the remote could not say whether the rolling branch exists (exit 1)
+#   pull-request-list=<branch>  gh could not list the branch's pull requests; nothing pushed (exit 1)
+#   rolling-current=<sha> pull-request=<n>
+#                               the rolling branch already carries what the refresh wrote, under that open pull request; nothing pushed
+#   pull-request-state=<n>      the open pull request's arming and queue state could not be read; nothing pushed (exit 1)
+#   disarm=<n>                  auto-merge could not be disabled on it; nothing pushed (exit 1)
+#   dequeue=<n>                 it could not be removed from the merge queue; nothing pushed (exit 1)
+#   disarmed=<n>                auto-merge was disabled on it ahead of the push
+#   dequeued=<n>                it left the merge queue ahead of the push
 #   recorded=<sha> paths=<n>    the commit on the rolling branch; its paths follow
 #   pushed=<remote>/<branch>    the branch reached the remote
-#   pull-request-list=<branch>  gh could not list the branch's pull requests; nothing opened or armed (exit 1)
 #   pull-request=<n> action=<opened|updated>
-#   pull-request-view=<n>       gh could not read the pull request's auto-merge state; not armed (exit 1)
-#   armed=<n|already>           auto-merge enabled on it, or found enabled
+#   armed=<n>                   auto-merge enabled on it for the pushed head
 set -euo pipefail
 
 say() { # KEY VALUE [LINE...] — the keyed line, then each explanation line
@@ -52,8 +69,15 @@ say() { # KEY VALUE [LINE...] — the keyed line, then each explanation line
   shift 2
   for line in "$@"; do printf '%s\n' "$line"; done
 }
+count_lines() { # TEXT — how many lines it holds, none for the empty string
+  if [[ -z "$1" ]]; then printf '0\n'; else printf '%s\n' "$1" | wc -l | tr -d ' '; fi
+}
 
-repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../.agents/skills/github/scripts/lib/merge-queue.sh
+source "$here/../.agents/skills/github/scripts/lib/merge-queue.sh"
+
+repo="$(cd -- "$here/.." && pwd)"
 base=main
 remote=origin
 branch=kendex/lock
@@ -71,7 +95,7 @@ while [[ $# -gt 0 ]]; do
         --branch) branch="$2" ;;
       esac
       shift 2 ;;
-    -h | --help) sed -n '2,47p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h | --help) sed -n '2,64p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) say option "$1" "usage: tools/lock-record [--repo DIR] [--base BRANCH] [--remote NAME] [--branch NAME]" >&2; exit 2 ;;
   esac
 done
@@ -84,12 +108,14 @@ repo="$top"
 
 # The record is judged against a commit: an uncommitted path would be judged
 # and could be committed as the record's, under a head that does not hold it.
+# A clean start is also what lets a stand-down restore the tree with one
+# reset: everything the tree then carries beyond HEAD, the refresh wrote.
 if ! dirty="$(git -C "$repo" status --porcelain --untracked-files=all)"; then
   say status "$repo" "git status could not read the checkout, so nothing was judged" >&2
   exit 2
 fi
 if [[ -n "$dirty" ]]; then
-  say dirty "$(printf '%s\n' "$dirty" | wc -l | tr -d ' ')" \
+  say dirty "$(count_lines "$dirty")" \
     "the checkout at $repo has uncommitted paths, so the tree is not the commit the record would be judged against:" \
     "$dirty" >&2
   exit 2
@@ -119,8 +145,10 @@ if [[ $rc -ne 0 ]]; then
   exit 1
 fi
 
-if ! changed="$(git -C "$repo" status --porcelain --untracked-files=all)"; then
-  say status "$repo" "git status could not read what the refresh wrote, so nothing was committed" >&2
+# What the refresh wrote, staged so one diff against any commit reads the
+# tracked and the new paths alike.
+if ! git -C "$repo" add -A || ! changed="$(git -C "$repo" diff --cached --name-only --no-renames HEAD)"; then
+  say status "$repo" "git could not read what the refresh wrote, so nothing was committed" >&2
   exit 1
 fi
 rc=0
@@ -136,11 +164,81 @@ if [[ -z "$changed" ]]; then
     "kendex verify failed before the refresh and passes after it, yet the refresh changed no tracked path; what verify read moved outside the tree" >&2
   exit 1
 fi
-count="$(printf '%s\n' "$changed" | wc -l | tr -d ' ')"
+count="$(count_lines "$changed")"
 short="$(git -C "$repo" rev-parse --short "$head")"
 
+# The rolling branch as the remote holds it, when it holds one: exit 2 from
+# ls-remote is the one answer that means absent, and any other failure is
+# no answer, since a push over a branch nothing could read may eject a
+# queued pull request for nothing.
+rc=0
+git -C "$repo" ls-remote --exit-code --quiet "$remote" "refs/heads/$branch" >/dev/null || rc=$?
+case "$rc" in
+  0) git -C "$repo" fetch --quiet "$remote" "refs/heads/$branch"; rolling="$(git -C "$repo" rev-parse FETCH_HEAD)" ;;
+  2) rolling="" ;;
+  *) say rolling-read "$rc" "git ls-remote could not say whether $remote holds $branch; nothing was pushed" >&2; exit 1 ;;
+esac
+
+# One pull request per branch, read before the push: its arming and queue
+# state decide what the push must undo first, and its content whether a
+# push is needed at all.
+if ! listed="$(cd -- "$repo" && gh pr list --head "$branch" --base "$base" --state open --json number,id --jq '.[0] | select(. != null) | "\(.number) \(.id)"')"; then
+  say pull-request-list "$branch" "gh could not list the branch's open pull requests; nothing was pushed" >&2
+  exit 1
+fi
+number="${listed%% *}"
+node_id="${listed#* }"
+
+if [[ -n "$rolling" && -n "$number" ]]; then
+  # The paths the refresh wrote and the paths the rolling commit carries,
+  # compared as the index against that commit: byte-identical means the
+  # open pull request already records this tree, and a merge that moved no
+  # record has landed under it since. The reset returns the clean start.
+  paths=()
+  while IFS= read -r -d '' path; do paths+=("$path"); done < <(
+    git -C "$repo" diff --cached --name-only --no-renames -z HEAD
+    git -C "$repo" diff --name-only --no-renames -z "$rolling^" "$rolling"
+  )
+  rc=0
+  git -C "$repo" diff --cached --quiet "$rolling" -- "${paths[@]}" || rc=$?
+  case "$rc" in
+    0)
+      git -C "$repo" reset -q --hard HEAD
+      say rolling-current "$rolling pull-request=$number" \
+        "the rolling branch already carries what the refresh wrote, and pull request $number is open on it; the queue merges it onto $head, so nothing was pushed"
+      exit 0 ;;
+    1) ;;
+    *) say status "$repo" "git diff could not compare the refresh against $branch, so nothing was pushed" >&2; exit 1 ;;
+  esac
+fi
+
+if [[ -n "$number" ]]; then
+  # An armed pull request re-enters the queue the moment its checks pass,
+  # and a push onto a queued one ejects it: disarm first, then dequeue,
+  # then push, then arm the pushed head.
+  if ! state="$(cd -- "$repo" && gh api graphql -F id="$node_id" -f query='query($id: ID!) { node(id: $id) { ... on PullRequest { isInMergeQueue autoMergeRequest { enabledAt } } } }' --jq '[.data.node.autoMergeRequest != null, .data.node.isInMergeQueue == true] | @tsv')"; then
+    say pull-request-state "$number" "gh could not read whether pull request $number is armed or queued; nothing was pushed" >&2
+    exit 1
+  fi
+  armed="${state%%$'\t'*}"
+  queued="${state##*$'\t'}"
+  if [[ "$armed" == true ]]; then
+    if ! reason="$(cd -- "$repo" && kendex_merge_queue_mutation disablePullRequestAutoMerge "$node_id")"; then
+      say disarm "$number" "auto-merge could not be disabled on pull request $number, so a push would let it re-enter the queue: $reason" >&2
+      exit 1
+    fi
+    say disarmed "$number"
+  fi
+  if [[ "$queued" == true ]]; then
+    if ! reason="$(cd -- "$repo" && kendex_merge_queue_mutation dequeuePullRequest "$node_id")"; then
+      say dequeue "$number" "pull request $number could not leave the merge queue, so a push would eject it: $reason" >&2
+      exit 1
+    fi
+    say dequeued "$number"
+  fi
+fi
+
 git -C "$repo" checkout -q -B "$branch"
-git -C "$repo" add -A
 git -C "$repo" commit -q \
   -m "chore(lock): record the install record at $short" \
   -m "kendex refresh, built from $head, wrote these paths on main after the merges up to that head. The record is recorded here and never on a branch: skills/AGENTS.md states the rule, docs/decisions/D007-lock-record-on-main.md the reason."
@@ -149,12 +247,6 @@ say recorded "$head paths=$count" "$changed"
 git -C "$repo" push --quiet --force "$remote" "refs/heads/$branch:refs/heads/$branch"
 say pushed "$remote/$branch"
 
-# One pull request per branch: a push updates an open one, and a branch
-# with none gets one. `gh` binds itself to the checkout's remote.
-if ! number="$(cd -- "$repo" && gh pr list --head "$branch" --base "$base" --state open --json number --jq '.[0].number // empty')"; then
-  say pull-request-list "$branch" "gh could not list the branch's open pull requests; the push stands, and no pull request was opened or armed" >&2
-  exit 1
-fi
 if [[ -n "$number" ]]; then
   action=updated
 else
@@ -164,15 +256,7 @@ else
   number="${url##*/}"
   action=opened
 fi
-printf 'lock-record: pull-request=%s action=%s\n' "$number" "$action"
+say pull-request "$number action=$action"
 
-if ! armed="$(cd -- "$repo" && gh pr view "$number" --json autoMergeRequest --jq '.autoMergeRequest != null')"; then
-  say pull-request-view "$number" "gh could not read whether the pull request is armed; it was not armed" >&2
-  exit 1
-fi
-if [[ "$armed" == true ]]; then
-  say armed already
-else
-  (cd -- "$repo" && gh pr merge "$number" --squash --auto --match-head-commit "$(git -C "$repo" rev-parse HEAD)")
-  say armed "$number"
-fi
+(cd -- "$repo" && gh pr merge "$number" --squash --auto --match-head-commit "$(git -C "$repo" rev-parse HEAD)")
+say armed "$number"
