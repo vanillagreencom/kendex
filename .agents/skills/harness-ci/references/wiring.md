@@ -268,9 +268,9 @@ The classify step can instead call the composite action kendex publishes, which 
 A repository under the organization ruleset reports one aggregate context named `CI` on `pull_request` and `merge_group`, green only when every job the repository runs is green. The ruleset that requires it is [adoption.md § Repo-side wiring](../../review-gate/references/adoption.md#repo-side-wiring). One of two routes gives the repository that context:
 
 - **The template.** Copy [the CI template](#the-ci-template) and move the repository's lanes into it.
-- **The repository's own workflow.** Keep the workflow and its job names. Add Shape 1's `changes` job and give every lane its condition, then add Shape 3's aggregate with `name: CI`, its `needs:` naming every job in the workflow and each gated lane in a `--skippable`. A lane in another workflow moves into this one, because a job waits only on jobs in its own workflow. An aggregate the repository already runs under another name takes the name `CI` rather than running beside a second one.
+- **The repository's own workflow.** Keep the workflow and its job names, and put `merge_group:` beside `pull_request:` under `on:`. Add Shape 1's `changes` job and give every lane its condition, then add Shape 3's aggregate with `name: CI`, its `needs:` naming every job in the workflow and each gated lane in a `--skippable`. A lane in another workflow moves into this one, because a job waits only on jobs in its own workflow. An aggregate the repository already runs under another name takes the name `CI` rather than running beside a second one.
 
-review-gate's `validate-standard.sh` reports the context in its `standard-ci-context` row. Its values, and the row state that lets the owner set the ruleset, are in the script's `--help` and [adoption.md § Repo-side wiring](../../review-gate/references/adoption.md#repo-side-wiring).
+The order of this change and the ruleset change, and the check that confirms both, are [adoption.md § Repo-side wiring](../../review-gate/references/adoption.md#repo-side-wiring).
 
 ## The CI template
 

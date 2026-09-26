@@ -90,18 +90,8 @@ JSON
 printf '{"workflow_runs": [{"id": 7}, {"id": 8}]}\n' >"$BASE/workflow-runs.json"
 printf '{"jobs": [{"name": "lint-typecheck"}, {"name": "build"}, {"name": "CI"}]}\n' >"$BASE/jobs-7.json"
 printf '{"jobs": [{"name": "writer"}]}\n' >"$BASE/jobs-8.json"
-printf '{"workflow_runs": [{"id": 9}]}\n' >"$BASE/workflow-runs-merge-group-dead.json"
+printf '{"workflow_runs": [{"id": 9}]}\n' >"$BASE/workflow-runs-merge-group.json"
 printf '{"jobs": [{"name": "lint-typecheck"}, {"name": "build"}, {"name": "CI"}]}\n' >"$BASE/jobs-9.json"
-# The repository's merge groups, latest first: one into another branch, then
-# an earlier one into main, which stands for a head merged around the queue.
-cat >"$BASE/workflow-runs-merge-group-latest.json" <<'JSON'
-{"workflow_runs": [
-  {"id": 12, "head_branch": "gh-readonly-queue/release/pr-20-cafe", "head_sha": "cafe"},
-  {"id": 11, "head_branch": "gh-readonly-queue/main/pr-10-f00d", "head_sha": "f00d"}
-]}
-JSON
-printf '{"workflow_runs": [{"id": 11}]}\n' >"$BASE/workflow-runs-merge-group-f00d.json"
-printf '{"jobs": [{"name": "lint-typecheck"}, {"name": "build"}, {"name": "CI"}]}\n' >"$BASE/jobs-11.json"
 
 BASELINE='ok check=standard-ruleset-source value=Organization
 ok check=standard-merge-queue value=present
@@ -195,9 +185,7 @@ an aggregate whose name only starts with CI~~jobs-7.json~.jobs |= map(if .name =
 no job ran on the pull request~~workflow-runs.json~.workflow_runs = []~standard-ci-context=ci-context-missing:pull_request:none
 the CI job on the second page of a run's jobs~~jobs-7.json,jobs-7.page2.json~if . == null then {"jobs": [{"name": "CI"}]} else .jobs |= map(select(.name != "CI")) end~
 the CI run on the second page of runs~~jobs-7.json,workflow-runs.page2.json,jobs-10.json~if . == null then {"workflow_runs": [{"id": 10}], "jobs": [{"name": "CI"}]} else .jobs |= map(select(.name != "CI")) end~
-CI on the pull request, and no merge queue has run~~workflow-runs-merge-group-dead.json,workflow-runs-merge-group-latest.json~.workflow_runs = []~standard-ci-context=merge-group-unobserved:CI\;build\;lint-typecheck\;writer
-a head merged around the queue after merge groups that ran CI~~workflow-runs-merge-group-dead.json~.workflow_runs = []~
-a head merged around the queue after a merge group without CI~~workflow-runs-merge-group-dead.json,jobs-11.json~if has("workflow_runs") then .workflow_runs = [] else .jobs |= map(select(.name != "CI")) end~standard-ci-context=ci-context-missing:merge_group:build\;lint-typecheck
+a head that did not come through the merge queue~~workflow-runs-merge-group.json~.workflow_runs = []~standard-ci-context=merge-group-unobserved:CI\;build\;lint-typecheck\;writer
 a merge group that ran no CI job~~jobs-9.json~.jobs |= map(select(.name != "CI"))~standard-ci-context=ci-context-missing:merge_group:build\;lint-typecheck
 a head no merged pull request produced~~commit-pulls.json~map(.merged_at = null)~standard-ci-context=no-associated-pull-request
 a head merged only into another branch~~commit-pulls.json~map(select(.base.ref != "main"))~standard-ci-context=no-associated-pull-request
@@ -206,8 +194,7 @@ a merged head that is not a sha~~commit-pulls.json~.[2].head.sha = "main"~standa
 the branch head unreadable~commit~~~standard-ci-context=unreadable
 the head's pull requests unreadable~commit-pulls~~~standard-ci-context=unreadable
 pull_request runs unreadable~workflow-runs~~~standard-ci-context=unreadable
-the head's merge_group runs unreadable~workflow-runs-merge-group-dead~~~standard-ci-context=unreadable
-the latest merge groups unreadable~workflow-runs-merge-group-latest~workflow-runs-merge-group-dead.json~.workflow_runs = []~standard-ci-context=unreadable
+the head's merge_group runs unreadable~workflow-runs-merge-group~~~standard-ci-context=unreadable
 a run's jobs unreadable~jobs-8~~~standard-ci-context=unreadable
 the environment deploys from every branch~~environments.json~.environments[1].deployment_branch_policy = null~standard-environment=unrestricted
 the environment deploys from protected branches~~environments.json~.environments[1].deployment_branch_policy = {"protected_branches": true, "custom_branch_policies": false}~standard-environment=protected-branches

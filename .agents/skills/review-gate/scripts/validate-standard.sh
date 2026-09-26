@@ -63,12 +63,9 @@ One verdict line per row, VALUE being what was observed:
                                     ci-context-missing:LEG:JOBS (LEG ran no
                                     such job; JOBS is what ran, or none),
                                     merge-group-unobserved:JOBS (the
-                                    pull_request leg ran CI and no merge
-                                    queue into the branch has run),
-                                    no-associated-pull-request or unreadable.
-                                    A head merged around the queue has no
-                                    merge group, and the latest merge group
-                                    into the branch stands for the leg
+                                    pull_request leg ran CI and the head did
+                                    not come through the merge queue),
+                                    no-associated-pull-request or unreadable
   standard-app                      the standard's app is installed on every
                                     repository of the organization
   standard-environment              the standard's environment exists and
@@ -300,12 +297,11 @@ fi
 # CI never runs for a merge group, never merges. An Actions job reports its
 # name as a check context on the commit it ran for. The pull request the
 # default branch's head merged holds the head where the pull_request leg ran.
-# The merge_group leg is the head's own merge group where the head came
-# through the queue; a head merged around it has none, so the leg is the
-# latest merge group into the branch instead, and a merge around the queue
-# never decides the row. Commit statuses are not read: the CI context is an
-# Actions job, and statuses need a permission the standard's app does not
-# hold.
+# The merge_group leg ran on the head itself, which the merge queue merged;
+# a head that did not come through the queue has none, and the leg stays
+# unconfirmed rather than read from another commit. Commit statuses are not
+# read: the CI context is an Actions job, and statuses need a permission the
+# standard's app does not hold.
 
 # The names of the jobs that ran on SHA for EVENT, one per line, sorted and
 # unique, in LEG_JOBS; LEG_RUNS counts the runs. A failed read returns 1
@@ -381,39 +377,16 @@ ci_context_row() {
     return 0
   fi
 
-  local group="$head" around=""
-  if ! leg_jobs "$group" merge_group; then
+  if ! leg_jobs "$head" merge_group; then
     bad standard-ci-context unreadable "$READ_ERR"
     return 0
   fi
   if [ "$LEG_RUNS" -eq 0 ]; then
-    # A queue branch is gh-readonly-queue/BRANCH/pr-N-SHA.
-    if ! read_api "repos/$FULL/actions/runs?event=merge_group&per_page=100" \
-      "[.workflow_runs[] | select((.head_branch // \"\") | startswith($(jq_string "gh-readonly-queue/$BRANCH/")))] | if length == 0 then \"\" else .[0].head_sha end"; then
-      bad standard-ci-context unreadable "the latest merge_group runs of $FULL could not be read: $READ_ERR"
-      return 0
-    fi
-    group="$READ_OUT"
-    if [ -z "$group" ]; then
-      bad standard-ci-context "merge-group-unobserved:$pr_list" "$FULL reported $WANT_CI for pull request #$number on $pr_sha, and no merge queue into $BRANCH has run yet, so the merge_group leg is unobserved. The row reads it once the queue runs a merge group."
-      return 0
-    fi
-    case "$group" in
-      *[!0123456789abcdef]*)
-        bad standard-ci-context unreadable "the latest merge group's head is not a commit sha: $group"
-        return 0
-        ;;
-    esac
-    around=" $head, the head of $BRANCH, merged around the merge queue, so the merge_group leg is the latest merge group, on $group."
-    if ! leg_jobs "$group" merge_group; then
-      bad standard-ci-context unreadable "$READ_ERR"
-      return 0
-    fi
-  fi
-  if ! grep -qxF -- "$WANT_CI" <<<"$LEG_JOBS"; then
-    bad standard-ci-context "ci-context-missing:merge_group:$(leg_list "$LEG_JOBS")" "$FULL reported no $WANT_CI job for the merge group on $group, so the merge queue waits on a $WANT_CI context nothing reports.$around Give the job that aggregates every lane the name $WANT_CI and run it on merge_group: .agents/skills/harness-ci/references/wiring.md § The CI context"
+    bad standard-ci-context "merge-group-unobserved:$pr_list" "$FULL reported $WANT_CI for pull request #$number on $pr_sha. No merge_group run ran on $head, the head of $BRANCH, so the head did not come through the merge queue, and the merge_group leg is unconfirmed until the next merge through the queue."
+  elif ! grep -qxF -- "$WANT_CI" <<<"$LEG_JOBS"; then
+    bad standard-ci-context "ci-context-missing:merge_group:$(leg_list "$LEG_JOBS")" "$FULL reported no $WANT_CI job for the merge group on $head, the head of $BRANCH, so the merge queue waits on a $WANT_CI context nothing reports: .agents/skills/harness-ci/references/wiring.md § The CI context"
   else
-    ok standard-ci-context "$pr_list" "$FULL reported $WANT_CI for pull request #$number on $pr_sha and for the merge group on $group.$around"
+    ok standard-ci-context "$pr_list" "$FULL reported $WANT_CI for pull request #$number on $pr_sha and for its merge group on $head"
   fi
 }
 ci_context_row
