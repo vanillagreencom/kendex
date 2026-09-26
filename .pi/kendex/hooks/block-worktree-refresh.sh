@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, `source add|remove|enable|disable`, `marketplace subscribe|unsubscribe`) when the working directory is a linked git worktree, the command does not name the global scope, and the project the write lands in is not the worktree's own; and whenever a `cd`, `pushd`, `env -C` or `sudo -D` stands before the verb in the same command, since the directory the write lands in cannot then be read from the command. The project a bare verb writes is the one kendex resolves from the working directory; where that project has no manifest of its own in the linked worktree (kendex.toml, or kendex-local.toml for a source catalog), its declarations are the main checkout's, so a project-scope write renders into that checkout and removes what it does not expect there. Where it has one, it is a project in its own right and its target is unambiguous, so every writing verb but `update-pi` passes there bare. `refresh`, `apply` and `updates --apply` pass in any worktree once they name their target with `--project-path PATH`: the directory the write lands in is then the command's own word; `update-pi` is refused in every worktree at the project scope. Names the forms that are right: `--project-path PATH` where the verb takes it and the installed kendex lists the flag, the same command from the main checkout, or the verb's global form where its parser has one (`--global` for add, `--scope global` for update-pi, none for the `source` subcommands, either for the rest). An installed kendex whose `refresh --help` does not list `--project-path` is named with its version instead of the flag it lacks.
 # summary: Stops a kendex command that writes a project from inside a linked git worktree, where the write would land somewhere the command does not name.
-# safety: Reads the command text and asks git whether the tool call's working directory has a git dir that differs from its common dir, which is what makes a worktree linked, and for a linked worktree its root; walks up from the working directory to that root for the project kendex would write, and tests whether its manifest exists, reading its kendex.toml only for the text `is_source_catalog`; writes nothing. A git that cannot answer refuses. The verb is the first word naming one after a `kendex` word, anywhere in the command except the text the shell would not run: the words inside a quoted span, a heredoc body its command reads as data, and a comment are masked out before the command is read, so prose spelling the pair is not refused, while a span or a heredoc body that a shell, `eval`, `source` or `.` word runs is read as the command it is; a quote that cannot be paired leaves the whole text to be read, so a command this hook could not take apart is refused rather than passed. The command is read by the commit-guards skill's command-position library, found in the install beside the hook; without it every call is refused. The bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex help VERB`, a matched verb with `--help`, `-h` or `--plan` among the words Bash passes it, `kendex updates` without `--apply`, `kendex verify`, `list`, `report`, `check` — whose one write, the scope's install record for copies it proves against their source, renders nothing into any checkout — and every other verb pass. `-g`/`--global`, `--scope`, `--project-path`, `--apply`, `--help`, `-h` and `--plan` are read from the words Bash passes kendex after the verb in its own segment: a redirection operator and the file it opens are not arguments, a standalone `--` ends the options, and a word there the shell settles only when it runs (a parameter expansion, a glob, a brace, or a backslash) grants no exemption and counts as `--apply`; a command substitution, and a quoted span the command reader opens as command text with the words after it, are cut out of the segment and not read. update-pi's `--check` is read from the segment's text. A command carrying `-g`, `--global` or `--scope global` there, with no other `--scope` beside it, passes because it names the scope this hook does not guard, and a `refresh`, `apply` or `updates` carrying `--project-path` there passes because it names the project it writes, the value itself being read by kendex, which refuses the flag without one. On the refusal path only, and only where the refusal would name `--project-path`, the hook runs `kendex refresh --help` and `kendex --version` once from the PATH it was given, reads whether the help lists the flag, and captures what both wrote; a kendex that is not on PATH or whose help cannot be read is named as unasked, and the flag is not offered. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the command text and asks git whether the tool call's working directory has a git dir that differs from its common dir, which is what makes a worktree linked, and for a linked worktree its root; walks up from the working directory to that root for the project kendex would write, and tests whether its manifest exists, reading its kendex.toml only for the text `is_source_catalog`; the hook itself writes nothing. A git that cannot answer refuses. The verb is the first word naming one after a `kendex` word, anywhere in the command except the text the shell would not run: the words inside a quoted span, a heredoc body its command reads as data, and a comment are masked out before the command is read, so prose spelling the pair is not refused, while a span or a heredoc body that a shell, `eval`, `source` or `.` word runs is read as the command it is; a quote that cannot be paired leaves the whole text to be read, so a command this hook could not take apart is refused rather than passed. The command is read by the commit-guards skill's command-position library, found in the install beside the hook; without it every call is refused. The bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex help VERB`, a matched verb with `--help`, `-h` or `--plan` among the words Bash passes it, `kendex updates` without `--apply`, `kendex verify`, `list`, `report`, `check` — whose one write, the scope's install record for copies it proves against their source, renders nothing into any checkout — and every other verb pass. `-g`/`--global`, `--scope`, `--project-path`, `--apply`, `--help`, `-h` and `--plan` are read from the words Bash passes kendex after the verb in its own segment: a redirection operator and the file it opens are not arguments, a standalone `--` ends the options, and a word there the shell settles only when it runs (a parameter expansion, a glob, a brace, or a backslash) grants no exemption and counts as `--apply`; a command substitution, and a quoted span the command reader opens as command text with the words after it, are cut out of the segment and not read. update-pi's `--check` is read from the segment's text. A command carrying `-g`, `--global` or `--scope global` there, with no other `--scope` beside it, passes because it names the scope this hook does not guard, and a `refresh`, `apply` or `updates` carrying `--project-path` there passes because it names the project it writes, the value itself being read by kendex, which refuses the flag without one. On the refusal path only, and only where the refusal of `refresh`, `apply` or `updates --apply` would offer `--project-path`, the hook runs `kendex refresh --help` and `kendex --version` once from the PATH it was given, reads whether the help lists the flag, and captures what both wrote; a kendex that is not on PATH or whose help cannot be read is named as unasked, and the flag is not offered. That kendex is a binary of its own: its first run on a machine records the command's path under kendex's data directory, and it writes into no checkout. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # ---
 
@@ -28,7 +28,7 @@ REASON=""
 # dispatches on: `target` for the three that write a whole scope and take
 # `--project-path PATH`; `pi` for update-pi, which runs in a linked worktree
 # only as `kendex update-pi --scope global`; `typed` for every other writing
-# verb, which writes the one project it is typed in and has no such form.
+# verb, which writes the one project it is typed in and has no such flag.
 verb_kind() { # VERB -> KIND
   case "$1" in
     refresh | apply | updates) KIND=target ;;
@@ -36,11 +36,14 @@ verb_kind() { # VERB -> KIND
     *) KIND=typed ;;
   esac
 }
-# Whether the installed kendex takes `--project-path`, asked once and only on
-# the refusal path: the one judge of a verb's flags is the installed CLI's own
-# parser, read through `kendex refresh --help`, since a version number cannot
-# tell a main build from the release and a table of flags per version here
-# would be a second copy of that parser. CLI_FLAG is `listed`, `missing` or
+# Whether the installed kendex takes `--project-path`, asked once and only
+# where a refusal would offer the flag: the one judge of a verb's flags is
+# the installed CLI's own parser, read through `kendex refresh --help`, since
+# a version number cannot tell a main build from the release and a table of
+# flags per version here would be a second copy of that parser. Running the
+# installed kendex is running a binary of its own: its first run on a
+# machine records the command's path under the data directory, and it
+# writes into no checkout. CLI_FLAG is `listed`, `missing` or
 # `unasked`; CLI_VERSION is the first line `kendex --version` wrote, and
 # CLI_REASON why the CLI could not be asked. What either command writes is
 # captured here, never left to precede the keyed line.
@@ -67,38 +70,41 @@ probe_cli() { # -> CLI_FLAG, CLI_VERSION, CLI_REASON
     *) CLI_FLAG=missing ;;
   esac
 }
-# The forms of VERB that are right, set by `forms` for the refusal naming
-# them: its global form where its parser takes one, empty for the `source`
-# subcommands, which have none; its named-target form where it has one and
-# the installed kendex lists the flag, else the reason the flag is not
-# offered; and its writing form, which for updates carries the `--apply`
-# that makes it a write.
+# The forms of VERB that are right, for the refusal naming them. `global_form`
+# sets its global form where its parser takes one, empty for the `source`
+# subcommands, which have none. `target_form` sets its named-target form
+# where it has one and the installed kendex lists the flag, else the reason
+# the flag is not offered; only a whole-scope verb has such a form, so only
+# that kind asks the installed kendex anything.
 GLOBAL_FORM=""
 TARGET_FORM=""
 NO_TARGET=""
-WRITE_FORM=""
-forms() { # VERB -> GLOBAL_FORM, TARGET_FORM, NO_TARGET, WRITE_FORM
+global_form() { # VERB -> GLOBAL_FORM
   case "$1" in
     add) GLOBAL_FORM='--global' ;;
     update-pi) GLOBAL_FORM='--scope global' ;;
     "source "*) GLOBAL_FORM="" ;;
     *) GLOBAL_FORM='--scope global (or --global)' ;;
   esac
-  case "$1" in
-    updates) WRITE_FORM='updates --apply' ;;
-    *) WRITE_FORM=$1 ;;
-  esac
-  # Offering the flag to a verb without it, or to a kendex without it, would
-  # name a command the installed kendex refuses.
-  verb_kind "$1"
-  probe_cli
+}
+target_form() { # VERB -> TARGET_FORM, NO_TARGET
   TARGET_FORM=""
   NO_TARGET=""
-  case "$CLI_FLAG:$KIND" in
-    listed:target) TARGET_FORM="--project-path PATH" ;;
-    listed:pi | listed:typed) TARGET_FORM="--project-path PATH on refresh, apply or updates --apply; $1 has no such form" ;;
-    missing:*) NO_TARGET="the installed kendex ($CLI_VERSION) predates --project-path, so no command from here names the project it writes; update it with kendex update" ;;
-    unasked:*) NO_TARGET="the installed kendex could not be asked whether it takes --project-path ($CLI_REASON), so the flag is not offered" ;;
+  verb_kind "$1"
+  case "$KIND" in
+    pi | typed)
+      NO_TARGET="$1 has no --project-path form"
+      return 0
+      ;;
+    target) ;;
+  esac
+  # Offering the flag to a kendex without it would name a command the
+  # installed kendex refuses.
+  probe_cli
+  case "$CLI_FLAG" in
+    listed) TARGET_FORM="--project-path PATH" ;;
+    missing) NO_TARGET="the installed kendex ($CLI_VERSION) predates --project-path, so no command from here names the project it writes; update it with kendex update" ;;
+    unasked) NO_TARGET="the installed kendex could not be asked whether it takes --project-path ($CLI_REASON), so the flag is not offered" ;;
     *)
       echo "internal: the CLI probe left CLI_FLAG as '$CLI_FLAG', which is none of listed, missing or unasked" >&2
       exit 2
@@ -135,7 +141,8 @@ refuse() { # KEY VALUE [CAUSE]
       echo "the payload's cwd is not a string; refusing rather than skipping the guard" >&2
       ;;
     moved=*)
-      forms "$VERB"
+      global_form "$VERB"
+      target_form "$VERB"
       echo "refusing 'kendex $VERB' at project scope after a cd, pushd, env -C or sudo -D in the same command: the directory the write lands in cannot be established from the command's words." >&2
       if [ -n "$TARGET_FORM" ]; then
         echo "  Name the project in the command instead: $TARGET_FORM. Or run kendex as its own command from the project it writes${GLOBAL_FORM:+, or pass $GLOBAL_FORM for a global change}." >&2
@@ -144,7 +151,7 @@ refuse() { # KEY VALUE [CAUSE]
       fi
       ;;
     refused=*)
-      forms "$VERB"
+      global_form "$VERB"
       echo "refusing 'kendex $VERB' at project scope from the linked worktree $CWD." >&2
       verb_kind "$VERB"
       case "$OWNER:$KIND" in
@@ -152,6 +159,7 @@ refuse() { # KEY VALUE [CAUSE]
           echo "  In a linked worktree update-pi runs only as: kendex update-pi $GLOBAL_FORM" >&2
           ;;
         main:*)
+          target_form "$VERB"
           echo "  The project here, $PROJECT, has no $MANIFEST of its own in this worktree, so its declarations are the main checkout's (the first line of 'git worktree list'); a project-scope write from here renders into that checkout and removes what it does not expect there." >&2
           if [ -n "$TARGET_FORM" ]; then
             echo "  Name the project in the command instead: $TARGET_FORM. Or run the same command from the main checkout${GLOBAL_FORM:+, or pass $GLOBAL_FORM for a global change}. Reads (kendex verify, check, list) are not refused." >&2

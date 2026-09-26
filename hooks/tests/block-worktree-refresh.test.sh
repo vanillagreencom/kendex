@@ -560,20 +560,28 @@ done <<ROWS
 a kendex whose help lists the flag is offered it|worktree|with|2|block-worktree-refresh: refused=refresh|--project-path PATH|predates|kendex refresh
 a kendex whose help predates the flag is named with its version instead|worktree|without|2|block-worktree-refresh: refused=refresh|kendex 0.9.0-stub) predates --project-path|--project-path PATH|kendex refresh
 and the route that works on it is the main checkout|worktree|without|2|block-worktree-refresh: refused=refresh|from the main checkout|-|kendex refresh
-a verb with no such form says so where the kendex has the flag|worktree|with|2|block-worktree-refresh: refused=add|add has no such form|-|kendex add orch
-and offers nothing named --project-path where the kendex lacks it|worktree|without|2|block-worktree-refresh: refused=add|predates --project-path|--project-path PATH|kendex add orch
+a verb with no such form says so, whichever kendex is installed|worktree|with|2|block-worktree-refresh: refused=add|add has no --project-path form|--project-path PATH|kendex add orch
+and is not told to update kendex for a flag it takes on no version|worktree|without|2|block-worktree-refresh: refused=add|add has no --project-path form|predates|kendex add orch
+nor is update-pi|worktree|without|2|block-worktree-refresh: refused=update-pi|update-pi has no --project-path form|predates|kendex update-pi
+a moved verb with no such form says so too|main|without|2|block-worktree-refresh: moved=add|add has no --project-path form|predates|cd $WT && kendex add orch
 a moved write names the flag where the kendex has it|main|with|2|block-worktree-refresh: moved=refresh|--project-path PATH|-|cd $WT && kendex refresh
 and names the skew where it lacks it|main|without|2|block-worktree-refresh: moved=refresh|predates --project-path|--project-path PATH|cd $WT && kendex refresh
 no kendex on PATH is named as unasked, and the flag is not offered|worktree|none|2|block-worktree-refresh: refused=refresh|could not be asked whether it takes --project-path (kendex is not on PATH)|--project-path PATH|kendex refresh
 a worktree that owns its manifest passes the bare refresh whichever kendex is installed|own|without|0|-|-|-|kendex refresh
 and with the flag listed too|own|with|0|-|-|-|kendex refresh
 ROWS
-# The probe runs on the refusal path only: a pass asks the kendex on PATH
-# nothing, a refusal asks it once for its version and once for its help.
+# The probe runs only where the refusal would offer --project-path: a pass
+# asks the kendex on PATH nothing, a refusal of a verb without the flag asks
+# it nothing, and a refusal of a whole-scope verb asks it once for its
+# version and once for its help.
 run_with_cli "$OWN" 'kendex refresh' "$CLI_CALLS"
 assert_eq "rc=$rc calls=$(cat "$CLI_CALLS/log" 2>/dev/null || printf none)" 'rc=0 calls=none' 'a passing command never runs the installed kendex'
 run_with_cli "$WT" 'kendex verify' "$CLI_CALLS"
 assert_eq "rc=$rc calls=$(cat "$CLI_CALLS/log" 2>/dev/null || printf none)" 'rc=0 calls=none' 'nor does a read'
+run_with_cli "$OWN" 'kendex update-pi' "$CLI_CALLS"
+assert_eq "rc=$rc calls=$(cat "$CLI_CALLS/log" 2>/dev/null || printf none)" 'rc=2 calls=none' 'nor does the update-pi refusal in a worktree that owns its manifest'
+run_with_cli "$WT" 'kendex add orch' "$CLI_CALLS"
+assert_eq "rc=$rc calls=$(cat "$CLI_CALLS/log" 2>/dev/null || printf none)" 'rc=2 calls=none' 'nor the refusal of a verb that takes no --project-path on any kendex'
 run_with_cli "$WT" 'kendex refresh' "$CLI_CALLS"
 # Read through cat rather than a redirection: a `<` inside a command
 # substitution is what tools/bash32-parse cannot follow.
