@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::compared::of_tree;
-use super::desired::{Artifact, Desired, in_place_source};
+use super::desired::{Artifact, Desired};
 use super::file_plan::{TAKEN_OVER, set_aside};
 use super::item_plan::{Planned, unmanaged, unmanaged_compared};
 use super::written::Written;
@@ -36,12 +36,12 @@ pub(super) fn plan_tree(
         canonical,
         files,
         link,
+        in_place,
     } = &item.artifact
     else {
         return Ok(Planned::Clean);
     };
-    let identity = (item.kind, item.source_name.as_str(), item.name.as_str());
-    if in_place_source(env, scope, identity).as_ref() == Some(canonical) {
+    if *in_place {
         return plan_in_place_tree(scope, item, replace_unmanaged, owned, written, ops);
     }
     let collapsed = match collapsed_link(env, scope, item, canonical, files, owned) {
@@ -160,6 +160,7 @@ fn plan_in_place_tree(
         canonical,
         files,
         link,
+        ..
     } = &item.artifact
     else {
         return Ok(Planned::Clean);
@@ -186,9 +187,9 @@ fn plan_in_place_tree(
 /// date in its own `SKILL.md`. The rendering of an in-place tree is the
 /// tree itself with that block injected, so the rendered `SKILL.md` is the
 /// one file that can differ from disk, and the write is that file whole
-/// under the hash of what is there: every other byte of it is the render's
-/// own copy of the person's text, and strip and inject are exact inverses.
-/// Planned once per tree however many tools read it.
+/// under the hash of the bytes the comparison read: every other byte of it
+/// is the render's own copy of the person's text, and strip and inject are
+/// exact inverses. Planned once per tree however many tools read it.
 fn plan_instructions_block(
     item: &Desired,
     canonical: &Path,
@@ -216,10 +217,6 @@ fn plan_instructions_block(
         return Ok(Planned::Clean);
     }
     if written.claim_canonical(canonical) {
-        let hash = match hash_tree(&path) {
-            Ok(hash) => hash,
-            Err(error) => return Ok(uncomparable(&path, &error)),
-        };
         ops.push(PlannedOp {
             description: format!(
                 "Bring the project-instructions block in {} {}'s {} up to date",
@@ -231,7 +228,9 @@ fn plan_instructions_block(
             op: Op::WriteFile {
                 path,
                 bytes: wanted.clone(),
-                pre: Pre::HashIs { hash },
+                pre: Pre::HashIs {
+                    hash: observed.exact().to_owned(),
+                },
             },
         });
     }

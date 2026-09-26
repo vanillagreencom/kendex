@@ -45,16 +45,31 @@ impl World {
 
     #[allow(clippy::unwrap_used)]
     fn declare(&self, instructions: Option<&str>) {
+        self.declare_as(
+            "deploy",
+            "\"claude\", \"codex\", \"pi\"",
+            "symlink",
+            instructions,
+        );
+    }
+
+    #[allow(clippy::unwrap_used)]
+    fn declare_as(&self, name: &str, harnesses: &str, method: &str, instructions: Option<&str>) {
         let instructions = instructions
             .map(|text| format!("[skill-instructions]\nall = \"{text}\"\n\n"))
             .unwrap_or_default();
         fs::write(
             self.project.join("kendex.toml"),
             format!(
-                "schema = 6\n\n{instructions}[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"in-place\"\n"
+                "schema = 6\n\n{instructions}[install]\nharnesses = [{harnesses}]\nmethod = \"{method}\"\n\n[skills.\"{name}\"]\nsource = \"in-place\"\n"
             ),
         )
         .unwrap();
+    }
+
+    #[allow(clippy::unwrap_used)]
+    fn plan(&self) -> kendex_core::engine::EngineReport {
+        plan_apply(&self.env, &self.scope, &PlanOptions::default()).unwrap()
     }
 
     #[allow(clippy::unwrap_used)]
@@ -224,4 +239,106 @@ fn a_changed_instruction_rewrites_the_block_alone() {
         format!("{AUTHORED}Another edit.\n")
     );
     assert_eq!(world.check_text(), "");
+}
+
+/// A copy delivered from an in-place declaration is a render, not the
+/// source: it is recorded with a rendered hash, an edit to it is held as a
+/// conflict rather than written over, and removing the declaration takes
+/// it away. Only the tree standing where the source stands is the source,
+/// and with one tool that copies into its own directory, none does.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_copy_delivered_from_an_in_place_declaration_is_a_render() {
+    let world = world();
+    world.declare_as("deploy", "\"claude\"", "copy", Some("shared rule"));
+    world.apply();
+    let copy = world.project.join(".claude/skills/deploy");
+    assert!(copy.is_dir() && !copy.is_symlink(), "{}", copy.display());
+    assert!(world.read(&copy.join("SKILL.md")).contains("shared rule"));
+    assert_eq!(
+        world.read(&world.skill_file()),
+        AUTHORED,
+        "the source is not written"
+    );
+    let lock = kendex_core::lock::load(&world.lock_path()).unwrap();
+    let claude = lock.entries.get("skill:deploy:claude").unwrap();
+    assert!(claude.rendered_hash.is_some(), "{claude:?}");
+    assert!(
+        claude
+            .emitted
+            .as_ref()
+            .is_some_and(|emitted| emitted.paths.contains(&copy)),
+        "{claude:?}"
+    );
+
+    let mut edited = world.read(&copy.join("SKILL.md"));
+    edited.push_str("Edited copy.\n");
+    fs::write(copy.join("SKILL.md"), &edited).unwrap();
+    let report = world.plan();
+    assert!(
+        deploy_rows(&report)
+            .iter()
+            .any(|(state, detail)| *state == DriftState::Conflict && detail.contains("edited")),
+        "{:?}",
+        deploy_rows(&report)
+    );
+    assert!(
+        !report
+            .plan
+            .ops
+            .iter()
+            .any(|op| matches!(op.op, kendex_core::apply::Op::WriteTree { .. })),
+        "{:?}",
+        report.plan.ops
+    );
+
+    let report = kendex_core::engine::ops::remove(
+        &world.env,
+        &world.scope,
+        &["deploy".to_owned()],
+        None,
+        false,
+    )
+    .unwrap();
+    apply::execute(&world.env, &report.plan).unwrap();
+    assert!(!copy.exists(), "{}", copy.display());
+    assert_eq!(world.read(&world.skill_file()), AUTHORED);
+}
+
+/// An in-place skill's name is its directory's, which carries no `/`: a
+/// namespaced declaration, which would install under another spelling and
+/// put that spelling into the person's own name line, is not found in the
+/// in-place source, so nothing is rendered, written or linked for it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_namespaced_in_place_name_is_not_served_and_nothing_is_written() {
+    let world = world();
+    let source = world.project.join(".agents/skills/pl__deploy");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("SKILL.md"), AUTHORED).unwrap();
+    world.declare_as(
+        "pl/deploy",
+        "\"claude\", \"codex\", \"pi\"",
+        "symlink",
+        Some("shared rule"),
+    );
+
+    let report = world.plan();
+
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.starts_with("pl/deploy: not found in source 'in-place'")),
+        "{:?}",
+        report.notes
+    );
+    assert!(
+        report.drift.iter().all(|row| row.name != "pl/deploy"),
+        "{:?}",
+        report.drift
+    );
+    apply::execute(&world.env, &report.plan).unwrap();
+    assert_eq!(world.read(&source.join("SKILL.md")), AUTHORED);
+    assert!(!world.project.join(".claude/skills/pl__deploy").exists());
 }

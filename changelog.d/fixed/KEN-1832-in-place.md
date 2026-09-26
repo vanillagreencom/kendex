@@ -1,1 +1,1 @@
-- Editing an in-place skill no longer turns `refresh`, `check` or `verify` red or moves the install record; `apply` writes only the project-instructions block into its `SKILL.md`.
+- Editing an in-place skill no longer turns `refresh`, `check` or `verify` red or moves the record, after one refresh re-records it; `apply` writes only its project-instructions block.

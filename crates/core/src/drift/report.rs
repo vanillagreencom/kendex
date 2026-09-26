@@ -165,7 +165,10 @@ pub enum ProjectTarget {
     /// its own, readable or not, whether it is the worktree's root or a
     /// folder below it. A bare verb typed there writes it and nothing
     /// else, so every remedy but `update-pi` runs there as it is, with no
-    /// path in the command.
+    /// path in the command: the path reaches no command and is carried
+    /// for `kendex check --json`, which prints the target as its path
+    /// alone, and for the serialization guard that path shares with the
+    /// main checkout's.
     Worktree(std::path::PathBuf),
     /// The project at the same place inside the main checkout, where the
     /// checked worktree carries no manifest and the declarations are the

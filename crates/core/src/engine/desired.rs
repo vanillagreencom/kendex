@@ -92,6 +92,14 @@ pub enum Artifact {
         canonical: PathBuf,
         files: Vec<(PathBuf, Vec<u8>)>,
         link: Option<PathBuf>,
+        /// Whether `canonical` is the person's in-place source itself, so
+        /// kendex writes its project-instructions block and its link there
+        /// and no other byte, and records no rendered hash for it. Decided
+        /// once where the artifact is built — an in-place declaration
+        /// delivered by copy renders a tree of its own, which is not the
+        /// source — and read everywhere the answer matters, so no pass can
+        /// answer it differently.
+        in_place: bool,
     },
     /// An entry inside shared harness config, optionally backed by a script
     /// or instruction file. Each edit is in sync exactly when re-applying it

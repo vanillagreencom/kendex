@@ -144,7 +144,8 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
         return Ok(());
     }
     let identity = (ItemKind::Skill, ctx.decl.source.as_str(), ctx.name);
-    if !enabled && in_place_source(ctx.env, ctx.scope, identity).is_some() {
+    let in_place = in_place_source(ctx.env, ctx.scope, identity);
+    if !enabled && in_place.is_some() {
         for group in &groups {
             refuse(ctx, state, group, IN_PLACE_DISABLED);
         }
@@ -169,7 +170,13 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
     }
     let mut variants: Vec<Variant> = Vec::new();
     for group in &groups {
-        variants.push(render_variant(ctx, state, group, enabled)?);
+        variants.push(render_variant(
+            ctx,
+            state,
+            group,
+            enabled,
+            in_place.is_some(),
+        )?);
     }
 
     // The base tree is the scope's shared location; the group that natively
@@ -205,10 +212,14 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
         } else {
             (group.native.clone(), None)
         };
+        // The one place the question is answered: this tree is the source
+        // exactly where the source is where it stands.
+        let in_place = in_place.as_ref() == Some(&canonical);
         let artifact = Artifact::Tree {
             canonical,
             files: variant.files.clone(),
             link,
+            in_place,
         };
         push_installs(ctx, state, group, artifact, enabled, method)?;
     }
@@ -231,13 +242,20 @@ fn push_installs(
     // Where the tree and the link landed goes on the record. A tool's
     // directory moves between kendex versions, and a pass that derived
     // the place again would name one this install never wrote — the
-    // link it did write is then findable only through the record.
-    let identity = (ItemKind::Skill, ctx.decl.source.as_str(), ctx.name);
-    let in_place = in_place_source(ctx.env, ctx.scope, identity);
+    // link it did write is then findable only through the record. The
+    // person's own source tree is never on it.
+    let Artifact::Tree {
+        canonical,
+        in_place,
+        ..
+    } = &artifact
+    else {
+        unreachable!("a skill installs as a tree artifact");
+    };
     let paths = artifact
         .paths()
         .into_iter()
-        .filter(|path| in_place.as_ref() != Some(path))
+        .filter(|path| !(*in_place && path == canonical))
         .collect();
     let emitted = Some(EmittedArtifact {
         kind: ItemKind::Skill,
@@ -250,11 +268,11 @@ fn push_installs(
         // of it, so no rendered hash anchors an edit, and the inputs it
         // records are the sections that shape the block it does write.
         let (hash, rendered_hash) = match in_place {
-            Some(_) => (
+            true => (
                 in_place_installation_hash(ctx.manifest, ItemKind::Skill, ctx.name, *harness),
                 None,
             ),
-            None => (
+            false => (
                 installation_hash(
                     ctx.sealed,
                     ctx.item_path,
@@ -318,6 +336,7 @@ fn render_variant(
     state: &mut DesiredState,
     group: &SurfaceGroup,
     enabled: bool,
+    in_place: bool,
 ) -> Result<Variant> {
     let mut rendered = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
     // `SKILL.md.disabled` is the name kendex keeps a switched-off
@@ -330,8 +349,25 @@ fn render_variant(
         return Ok(refuse(ctx, state, group, &reason));
     }
     // A skill from a plugin-registry catalog installs under its plugin, and the
-    // catalog's own SKILL.md knows nothing of that.
+    // catalog's own SKILL.md knows nothing of that. An in-place skill's
+    // SKILL.md is the person's, and its name line is a byte kendex never
+    // writes; the in-place source serves its skills under their directory
+    // names, which carry no `/`, so a declaration that would install under
+    // another spelling is not found there and never reaches this rename.
+    // Reaching it would be the source and this pass disagreeing about what
+    // a name is, said so rather than written into the person's file.
     if group.installed != ctx.name {
+        if in_place {
+            return Ok(refuse(
+                ctx,
+                state,
+                group,
+                &format!(
+                    "internal: in-place skill {} would render under the name {}, and the in-place source serves directory names alone",
+                    ctx.name, group.installed
+                ),
+            ));
+        }
         rendered.set_skill_name(&group.installed);
     }
     // The group's members share one physical tree, so a rendering one of

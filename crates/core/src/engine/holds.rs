@@ -215,9 +215,7 @@ pub(super) fn hold_local_edit(
     // An in-place tree is the source itself, so nothing on it is an edit
     // since install: the one thing kendex renders into it, the
     // project-instructions block, is planned by the tree pass.
-    if super::desired::in_place_source(env, scope, (item.kind, &item.source_name, &item.name))
-        .is_some()
-    {
+    if matches!(item.artifact, Artifact::Tree { in_place: true, .. }) {
         return false;
     }
     let (Some((read_at, disk)), Some(compared)) = (

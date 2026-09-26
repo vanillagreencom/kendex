@@ -200,6 +200,7 @@ fn as_skill(
         canonical: tree.clone(),
         files,
         link: None,
+        in_place: false,
     };
     let mut item = declared(ctx, ItemKind::Command, harness, artifact)?;
     item.emitted = Some(EmittedArtifact {

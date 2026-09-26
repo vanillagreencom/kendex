@@ -181,7 +181,9 @@ fn positions(artifact: &Artifact) -> (Vec<PathBuf>, Vec<PathBuf>) {
 
 /// The paths this pass renders, by group.
 ///
-/// In-place sources are out: they are executable source, not renders.
+/// An in-place source tree is out, its links with it: it is the person's
+/// source, not a render. A copy delivered from an in-place declaration is
+/// a render like any other.
 fn collect(
     state: &DesiredState,
     shims: &[ShimStanding],
@@ -189,7 +191,7 @@ fn collect(
 ) -> GeneratedPaths {
     let mut generated = GeneratedPaths::default();
     for item in &state.items {
-        if item.source_name == crate::manifest::INPLACE_SOURCE_NAME {
+        if matches!(item.artifact, Artifact::Tree { in_place: true, .. }) {
             continue;
         }
         let refused = drift.iter().any(|row| {
