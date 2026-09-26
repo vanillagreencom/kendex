@@ -190,10 +190,11 @@ fn finding_lines(
         .collect()
 }
 
-/// Every scored package on stderr, for a verb that draws no other part of
-/// a plan's report and closes on no ledger.
-pub fn print_safety(rows: &[ItemSafety]) {
-    ui::stderr(&safety_section(&ui::style(), rows, Listing::Every));
+/// The safety section alone on stderr, for a write that draws no other part
+/// of a plan's report: [`Listing::Every`] where the verb closes on no
+/// ledger, [`Listing::Attention`] where a ledger speaks for what it folds.
+pub fn print_safety(rows: &[ItemSafety], listing: Listing) {
+    ui::stderr(&safety_section(&ui::style(), rows, listing));
 }
 
 /// One block per item and reading, worst score first, each carrying every

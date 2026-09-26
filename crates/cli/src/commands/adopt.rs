@@ -2,7 +2,7 @@ use kendex_core::engine::{adopt, audit};
 use kendex_core::env::Env;
 use kendex_core::model::{HarnessId, ItemKind};
 
-use super::advisory::print_safety;
+use super::advisory::{Listing, print_safety};
 use super::engine_common::apply_report;
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
@@ -46,7 +46,7 @@ pub fn run(
     // Second transaction renders the managed replacement — with its score
     // beside the write, like every other write path.
     let report = audit(env, &scope)?;
-    print_safety(&report.safety);
+    print_safety(&report.safety, Listing::Every);
     apply_report(env, &report)?;
     say(&format!("kendex now manages {} '{}'", kind.name(), name));
     Ok(())

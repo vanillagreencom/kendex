@@ -10,8 +10,7 @@ use kendex_core::model::Scope;
 use kendex_core::registry::{CurlFetch, collections};
 use kendex_core::source_ops::{self, SourceAction};
 
-use super::advisory::Listing;
-use super::advisory::print_safety;
+use super::advisory::{Listing, print_safety};
 use super::engine_common::{apply_report, ask_before_writing, print_report};
 use super::ledger::{Folded, Wrote, say_ledger};
 use super::offers::Blocked;
@@ -336,7 +335,9 @@ fn install_step(
     {
         for (kind, name) in &members {
             let pinned = kendex_core::package::set_rev(env, scope, *kind, name, Some(commit))?;
-            print_safety(&pinned.safety);
+            // The pin's rows reach the collection's closing ledger with
+            // the step's own, which speaks for what this folds.
+            print_safety(&pinned.safety, Listing::Attention);
             wrote.scored.extend(pinned.safety.iter().cloned());
             wrote.applied += apply_report(env, &pinned)?;
         }

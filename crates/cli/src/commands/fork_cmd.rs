@@ -4,7 +4,7 @@ use kendex_core::engine::audit;
 use kendex_core::env::Env;
 use kendex_core::model::HarnessId;
 
-use super::advisory::print_safety;
+use super::advisory::{Listing, print_safety};
 use super::engine_common::apply_report;
 use super::pin::parse_kind;
 use super::{CliResult, resolve_scopes, say};
@@ -72,7 +72,7 @@ pub fn run(env: &Env, args: ForkArgs) -> CliResult {
         )?,
         None => audit(env, &scope)?,
     };
-    print_safety(&report.safety);
+    print_safety(&report.safety, Listing::Every);
     apply_report(env, &report)?;
     match args.rename {
         Some(new) => say(&format!("your own copy is renamed to {}", new)),
