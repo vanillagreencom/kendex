@@ -54,7 +54,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `ORCH_OVERSEER_LANES`, `ORCH_LANE_ACCOUNT_CLAIMS` | Fleet, account (`0` off) lane caps: `open-terminal --help` | `3`, `3` |
 | `ORCH_LANE_OUTPUT` | Lane pane output: [skill-rules.md](references/skill-rules.md) § Lane Output | `quiet` |
 | `ORCH_ROUND_PRUNE_DISK_PCT` | Disk use percent at or past which `round-prune` clears the item worktree's Cargo output before a dev round: [skill-rules.md](references/skill-rules.md) § Round Closure | `75` |
-| `ORCH_HANDOFF_CONTEXT_PCT` | Percent (1 to 100) of a session's own context window at which its turn end is refused until its handoff record stands; the lane hook, `oversee-succeed` and `lanes context` judge on it | `90` |
+| `ORCH_HANDOFF_CONTEXT_PCT` | Earlier handoff percentage (1 to 100, capped at 90); strict comparison and independent token limit: [context rule](references/oversee-events.md#judgement-rules) | `90` |
 | `ORCH_HANDOFF_HEADROOM_PCT` | Account headroom at or below which `lanes context` marks a live lane for handoff and the `lane-mail-check` turn-end hook refuses that lane's turn end, read against the binding bucket | `3` |
 | `ORCH_OVERSEER_PREFERENCE` | Comma-separated `harness:rank:effort` entries `oversee launch` and `oversee-succeed` try in order, `rank` a kendex tier ladder position, 1 the top: each one's `--help` | empty |
 | Owner-ask settings | `ORCH_QUESTION_TOOL`, `ORCH_ASK_WAIT_MINUTES`: [kendex.settings.toml.example](kendex.settings.toml.example) § Talking to you | |
@@ -78,7 +78,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |
 | `ORCH_SIZE_TEST_PATHS` | Path globs counted as test lines in size reports and cut comparisons | empty |
 
-Launches turn harness compaction off where the model's window is named: [skill-rules.md](references/skill-rules.md), Compaction.
+Launch settings and Codex compaction limits: [skill-rules.md](references/skill-rules.md#coordination), Compaction.
 
 Every lane merges its own pull request through the merge queue. `ORCH_MERGE_BYPASS`, `ORCH_ADMIN_MERGE_GH_CONFIG_DIR` and `ORCH_ADMIN_MERGE_CLASSES` are retired and refused while set; `pr-merge --help` § Retired settings names where to delete them.
 

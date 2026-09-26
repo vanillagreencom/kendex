@@ -108,11 +108,19 @@ echo "=== the one judge answers at a share of the reading's own window ==="
 while IFS='|' read -r tokens window pct want; do
   assert_eq "$(due "$LIB" "$tokens" "$window" "$pct")" "$want" "$tokens of ${window:-no window} at $pct: $want"
 done <<'ROWS'
-232560|258400|90|rc=0 due
+232560|258400|90|rc=0 room
+232561|258400|90|rc=0 due
 232559|258400|90|rc=0 room
-900000|1000000|90|rc=0 due
-899999|1000000|90|rc=0 room
-500000|1000000|90|rc=0 room
+399999|1000000|90|rc=0 room
+400000|1000000|90|rc=0 due
+400000||90|rc=0 due
+400000|0|90|rc=0 due
+399999||90|rc=1
+400000|2000000|100|rc=0 due
+180000|200000|100|rc=0 room
+180001|200000|100|rc=0 due
+160000|200000|80|rc=0 room
+160001|200000|80|rc=0 due
 0|258400|90|rc=0 room
 258400|258400|100|rc=0 due
 5||90|rc=1
@@ -155,7 +163,7 @@ assert_eq "$(jq -c 'del(.at)' "$BOX/context.json")" \
   '{"harness":"codex","model":"gpt-6-astra","tokens":232560,"window":258400,"used_pct":90,"session_id":"s1","pane_key":"7000 %9"}' \
   "the record names the reading, the share used, and the session and pane it belongs to"
 assert_eq "$(bash -c 'source "$1"; lane_context_record_judged "$(cat "$2")" 90' _ "$LIB" "$BOX/context.json" | jq -c '.handoff_due')" \
-  "true" "the report judges a recorded reading by the same judge"
+  "false" "the report judges a recorded reading by the same judge"
 bash -c 'source "$1"; lane_context_record "$2" pi 1000 "" m' _ "$LIB" "$BOX"
 assert_eq "$(bash -c 'source "$1"; lane_context_record_judged "$(cat "$2")" 90' _ "$LIB" "$BOX/context.json" | jq -c '[.window, .used_pct, .handoff_due]')" \
   "[null,null,null]" "a reading with no window is recorded unmeasured and judged neither due nor room"
@@ -186,8 +194,12 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'pi reads pi-last as: rc=0 1000|200000|m'
   control codex-window adapters/codex.sh '\($i.model_context_window // "")' '' \
     'codex reads codex-last as'
-  control strict-mark lane-context.sh '-ge $(($2 * $3))' '-gt $(($2 * $3))' \
-    '232560 of 258400 at 90: rc=0 due'
+  control strict-mark lane-context.sh '-gt $(($2 * pct))' '-ge $(($2 * pct))' \
+    '232560 of 258400 at 90: rc=0 room'
+  control absolute-cap lane-context.sh '[ "$1" -ge 400000 ]' '[ "$1" -gt 400000 ]' \
+    '400000 of no window at 90: rc=0 due'
+  control mandatory-pct lane-context.sh 'printf '90\n'' 'printf '100\n'' \
+    '180001 of 200000 at 100: rc=0 due'
   control window-read-as-room lane-context.sh "case \"\${2:-}\" in '' | 0) return 1 ;;" "case \"\${2:-}\" in '' | 0) printf 'room\\n'; return 0 ;;" \
     '5 of no window at 90: rc=1'
   control project-ignored adapters/pi.sh '[ "$LANE_ADAPTER_PI_ENABLED" = true ] && return 0' ':' \

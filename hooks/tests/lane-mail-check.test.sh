@@ -585,7 +585,7 @@ record_handoff() { # ITEM [RESUMED_AT]
 TRANSCRIPT="$TMP_ROOT/transcript.jsonl"
 
 new_handoff_lane handoff_context KEN-50
-write_transcript "$TRANSCRIPT" 499999
+write_transcript "$TRANSCRIPT" 399999
 stop_at "$TRANSCRIPT" false
 expect 0 "$GAP" "a lane under the context mark ends its turn"
 write_transcript "$TRANSCRIPT" 500000
@@ -645,15 +645,17 @@ expect 2 "lane-mail-check: context=600000" "a transcript path holding a space is
 # alone.
 #
 #   HOOK DIR|SPELLING|TOKENS|PAYLOAD WINDOW|FIRST LINE|RECORDED
-ADAPTER_ROWS='.claude/hooks|claude|899999||GAP|claude 899999 1000000
-.claude/hooks|claude|900000||context=900000|claude 900000 1000000
-.claude/hooks|claude|500000||GAP|claude 500000 1000000
-.claude/hooks|sonnet|999999||window-unread=claude-sonnet-5|claude 999999 null
-.codex/hooks|codex|232559||GAP|codex 232559 258400
-.codex/hooks|codex|232560||context=232560|codex 232560 258400
-.pi/kendex/hooks|pi|179999|200000|GAP|pi 179999 200000
-.pi/kendex/hooks|pi|180000|200000|context=180000|pi 180000 200000
-.pi/kendex/hooks|pi|999999||window-unread=m|pi 999999 null'
+ADAPTER_ROWS='.claude/hooks|claude|399999||GAP|claude 399999 1000000
+.claude/hooks|claude|400000||context=400000|claude 400000 1000000
+.claude/hooks|claude|500000||context=500000|claude 500000 1000000
+.claude/hooks|sonnet|399999||window-unread=claude-sonnet-5|claude 399999 null
+.claude/hooks|sonnet|400000||context=400000|claude 400000 null
+.codex/hooks|codex|232560||GAP|codex 232560 258400
+.codex/hooks|codex|232561||context=232561|codex 232561 258400
+.pi/kendex/hooks|pi|180000|200000|GAP|pi 180000 200000
+.pi/kendex/hooks|pi|180001|200000|context=180001|pi 180001 200000
+.pi/kendex/hooks|pi|399999||window-unread=m|pi 399999 null
+.pi/kendex/hooks|pi|400000||context=400000|pi 400000 null'
 new_handoff_lane handoff_adapters KEN-90
 while IFS='|' read -r ROW_DIR ROW_SPELLING ROW_TOKENS ROW_WINDOW ROW_FIRST ROW_RECORDED; do
   install_hook "$HOOK" "$LANE/$ROW_DIR/lane-mail-check.sh"
@@ -693,9 +695,9 @@ assert_eq "$(grep -cx "$GAP" "$ERR_FILE")" "1" \
 new_handoff_lane handoff_setting KEN-51
 write_transcript "$TRANSCRIPT" 500000
 stop_at "$TRANSCRIPT" false ORCH_HANDOFF_CONTEXT_PCT=90
-expect 0 "$GAP" "a mark the setting raises is not reached at the same figure"
+expect 2 "lane-mail-check: context=500000" "a raised percentage keeps the independent absolute cap"
 CONTEXT_PCT_ENV='' stop_at "$TRANSCRIPT" false
-expect 0 "$GAP" "the package default, 90 percent, is not reached at half the window"
+expect 2 "lane-mail-check: context=500000" "the package default keeps the independent absolute cap"
 # orch-env falls back to its default only on a NON-numeric value, so a value
 # in a shape no comparison can take reaches the hook and is named here.
 for VALUE in 050 101 0; do

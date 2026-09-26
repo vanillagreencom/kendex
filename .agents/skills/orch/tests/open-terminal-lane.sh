@@ -991,7 +991,7 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash 
   "rc=0 creates=nolog launched=1 remote=1" \
   "a hosted pi relaunch continues natively with the continuation line"
 run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=-m gpt-6-astra -c model_reasoning_effort=high" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
-assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec codex $Q-c$Q ${Q}check_for_update_on_startup=false$Q $Q-c$Q ${Q}model_auto_compact_token_limit=9223372036854775807$Q $Q-c$Q ${Q}features.default_mode_request_user_input=false$Q $Q-m$Q ${Q}gpt-6-astra$Q $Q-c$Q ${Q}model_reasoning_effort=high$Q resume --last'") line=$(typed "Resume the orch workflow for CC-49")" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec codex $Q-c$Q ${Q}check_for_update_on_startup=false$Q $Q-c$Q ${Q}model_auto_compact_token_limit=9223372036854775807$Q $Q-c$Q ${Q}model_auto_compact_token_limit_scope=body_after_prefix$Q $Q-c$Q ${Q}model_post_turn_compact_threshold_percent=0$Q $Q-c$Q ${Q}features.default_mode_request_user_input=false$Q $Q-m$Q ${Q}gpt-6-astra$Q $Q-c$Q ${Q}model_reasoning_effort=high$Q resume --last'") line=$(typed "Resume the orch workflow for CC-49")" \
   "rc=0 creates=nolog launched=1 remote=1 line=0" \
   "a hosted codex relaunch resumes promptless, so no sentence is rendered into the session-id slot"
 # The lane comes up idle, so the launcher owes the operator a record saying the
@@ -1018,7 +1018,7 @@ if command -v codex >/dev/null 2>&1; then
   # escape, which is what the remote shell does before codex sees its argv.
   RENDERED="$(sed -n "s/.*exec bash -lc 'cd \/srv\/lane \&\& exec \(codex .*\)'.*/\1/p" "$RUN/tmux.log" \
     | tail -1 | sed "s/'\\\\''/'/g")"
-  assert_eq "${RENDERED:-MISSING}" "codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'features.default_mode_request_user_input=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high' resume --last" \
+  assert_eq "${RENDERED:-MISSING}" "codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high' resume --last" \
     "the rendered remote command is recovered from the pane log"
   CODEX_PARSE_RC=0
   CODEX_HOME="$TMP_ROOT/codex-parse-home" timeout 20 bash -c "$RENDERED zz-appended-session" </dev/null >/dev/null 2>&1 || CODEX_PARSE_RC=$?
