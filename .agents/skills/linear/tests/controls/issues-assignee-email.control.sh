@@ -32,3 +32,11 @@ control_expect "create-email-miss: the action fails"
 control_replace scripts/commands/issues.sh 1 \
     '    if [ -z "$assignee_id" ]; then' \
     '    if false; then'
+
+# Leave the assignee to be resolved after the upload whenever files are
+# attached. A miss then uploads the asset first and refuses only after it.
+control_expect "create-attach-miss: no file is uploaded"
+control_expect "update-attach-miss: no file is uploaded"
+control_replace scripts/commands/issues.sh 2 \
+    '    if [ -n "$assignee" ]; then' \
+    '    if [ -n "$assignee" ] && [ ${#attach_paths[@]} -eq 0 ]; then'

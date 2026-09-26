@@ -1303,6 +1303,13 @@ create_issue() {
         fi
     fi
 
+    # A miss refuses here, before the upload, so an unknown assignee leaves
+    # no orphaned asset behind.
+    local assignee_id=""
+    if [ -n "$assignee" ]; then
+        assignee_id=$(resolve_assignee_id "$assignee") || return 1
+    fi
+
     # Uploads run only after the routing guard and the resolvers above.
     if [ ${#attach_paths[@]} -gt 0 ]; then
         # Resolve declared agent labels BEFORE uploading: under a declared
@@ -1408,9 +1415,8 @@ create_issue() {
         input_parts+=("\"stateId\": \"$state_id\"")
     fi
 
-    if [ -n "$assignee" ]; then
-        local assignee_id
-        assignee_id=$(resolve_assignee_id "$assignee") || return 1
+    # Resolved above, before the attachment upload.
+    if [ -n "$assignee_id" ]; then
         input_parts+=("\"assigneeId\": \"$assignee_id\"")
     fi
 
@@ -1841,6 +1847,13 @@ update_issue() {
         )
     fi
 
+    # A miss refuses here, before the upload, so an unknown assignee leaves
+    # no orphaned asset behind.
+    local assignee_id=""
+    if [ -n "$assignee" ]; then
+        assignee_id=$(resolve_assignee_id "$assignee") || return 1
+    fi
+
     # Upload --attach files. Image embeds append to the description being
     # written; when this update does not itself rewrite the description,
     # seed it from the issue's current one so the embed is an append, not a
@@ -1931,9 +1944,8 @@ update_issue() {
         input_parts+=("\"projectId\": \"$project_id\"")
     fi
 
-    if [ -n "$assignee" ]; then
-        local assignee_id
-        assignee_id=$(resolve_assignee_id "$assignee") || return 1
+    # Resolved above, before the attachment upload.
+    if [ -n "$assignee_id" ]; then
         input_parts+=("\"assigneeId\": \"$assignee_id\"")
     fi
 

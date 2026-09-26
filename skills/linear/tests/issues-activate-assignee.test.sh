@@ -23,6 +23,8 @@ cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # throwaway root — without this, cache writes land in the real project's
 # `.cache/linear`.
 git -C "$TMP_ROOT" init -q -b main
+git -C "$TMP_ROOT" config gc.auto 0
+git -C "$TMP_ROOT" config maintenance.auto false
 
 # FAKE_ASSIGNEE is the issue's current assignee as JSON (null for nobody).
 # FAKE_FAIL names the one call that fails: `users` and `issue` answer a

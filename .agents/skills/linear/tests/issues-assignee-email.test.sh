@@ -23,6 +23,8 @@ cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # throwaway root — without this, cache writes land in the real project's
 # `.cache/linear`.
 git -C "$TMP_ROOT" init -q -b main
+git -C "$TMP_ROOT" config gc.auto 0
+git -C "$TMP_ROOT" config maintenance.auto false
 
 # The one user answers only a lookup filtered on the address itself, compared
 # as Linear compares under eqIgnoreCase (case folded), eq (exact) or
@@ -104,31 +106,40 @@ inputs() {
     '[.[] | select(.query | contains($mutation)) | .variables.input]' "$TMP_ROOT/$1.jsonl"
 }
 
-# One row per case: case, action, --assignee value, and the assigneeId the
-# mutation carries, or `refused` for a miss that sends no mutation at all.
+# One row per case: case, action, --assignee value, the assigneeId the
+# mutation carries, or `refused` for a miss that sends no mutation at all, and
+# whether the action also carries --attach. A refusal comes before any upload,
+# so a miss leaves no asset behind.
 DANA_ID=11111111-2222-3333-4444-555555555555
 OTHER_ID=99999999-8888-7777-6666-555555555555
-while IFS='|' read -r name action ref want; do
+printf 'notes\n' >"$TMP_ROOT/notes.txt"
+while IFS='|' read -r name action ref want attach; do
+  extra=()
+  [[ "$attach" != attach ]] || extra=(--attach "$TMP_ROOT/notes.txt")
   case "$action" in
-  create) run_issues "$name" create --title t --assignee "$ref"; mutation=issueCreate ;;
-  update) run_issues "$name" update CC-760 --assignee "$ref"; mutation=issueUpdate ;;
+  create) run_issues "$name" create --title t --assignee "$ref" "${extra[@]}"; mutation=issueCreate ;;
+  update) run_issues "$name" update CC-760 --assignee "$ref" "${extra[@]}"; mutation=issueUpdate ;;
   esac
   if [[ "$want" == refused ]]; then
     assert_ne "$name: the action fails" "$(cat "$TMP_ROOT/$name.rc")" 0
     assert_jq "$name: the refusal names the value" "$(cat "$TMP_ROOT/$name.err")" \
       ".error == \"Assignee not found: $ref\""
     assert_jq "$name: no $mutation is sent" "$(inputs "$name" "$mutation")" 'length == 0'
+    assert_eq "$name: no file is uploaded" \
+      "$(jq -s '[.[] | select(.query | contains("fileUpload"))] | length' "$TMP_ROOT/$name.jsonl")" 0
   else
     assert_eq "$name: the action exits zero" "$(cat "$TMP_ROOT/$name.rc")" 0
     assert_jq "$name: the $mutation carries the user's id" \
       "$(inputs "$name" "$mutation")" "length == 1 and .[0].assigneeId == \"$want\""
   fi
 done <<ROWS
-create-email|create|dana@EXAMPLE.com|$DANA_ID
-create-email-miss|create|nobody@example.com|refused
-update-email|update|dana@example.com|$DANA_ID
-update-email-miss|update|nobody@example.com|refused
-update-email-partial|update|ana@example.com|refused
-update-name|update|Dana|$DANA_ID
-update-id|update|$OTHER_ID|$OTHER_ID
+create-email|create|dana@EXAMPLE.com|$DANA_ID|-
+create-email-miss|create|nobody@example.com|refused|-
+create-attach-miss|create|nobody@example.com|refused|attach
+update-email|update|dana@example.com|$DANA_ID|-
+update-email-miss|update|nobody@example.com|refused|-
+update-attach-miss|update|nobody@example.com|refused|attach
+update-email-partial|update|ana@example.com|refused|-
+update-name|update|Dana|$DANA_ID|-
+update-id|update|$OTHER_ID|$OTHER_ID|-
 ROWS
