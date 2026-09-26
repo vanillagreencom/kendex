@@ -22,7 +22,32 @@ fn age_word(secs: u64) -> String {
     }
 }
 
-fn next_action(report: &CheckReport) -> Option<String> {
+/// Text a reader reads with the commands in it marked: a rendering may
+/// break prose between words, and never a command, which split at a space
+/// reads as a shorter one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Span {
+    Prose(String),
+    Command(String),
+}
+
+/// Spans read in order: their plain spelling is each span's text, joined
+/// with nothing between.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sentence(pub Vec<Span>);
+
+impl fmt::Display for Sentence {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for span in &self.0 {
+            match span {
+                Span::Prose(text) | Span::Command(text) => out.write_str(text)?,
+            }
+        }
+        Ok(())
+    }
+}
+
+fn next_action(report: &CheckReport) -> Option<Sentence> {
     let mut global = false;
     let mut project = false;
     for remedy in report
@@ -38,31 +63,42 @@ fn next_action(report: &CheckReport) -> Option<String> {
     }
     let command =
         |global| match Remedy::render_refresh_action(global, report.project_target.as_ref()) {
-            Some(Fix::Here(command)) => Some(format!("{command} --yes")),
+            Some(Fix::Here(command)) => Some(Span::Command(format!("{command} --yes"))),
             Some(Fix::Elsewhere(_)) | None => None,
         };
+    let prose = |text: &str| Span::Prose(text.to_owned());
+    let list_global = || Span::Command("kendex check --global".to_owned());
     let checkout = match report.project_target {
-        Some(ProjectTarget::MainCheckout(_)) => "in that checkout",
-        Some(ProjectTarget::Worktree(_)) | None => "in this checkout",
+        Some(ProjectTarget::MainCheckout(_)) => " in that checkout",
+        Some(ProjectTarget::Worktree(_)) | None => " in this checkout",
     };
-    match (global, project) {
-        (false, false) => None,
-        (true, false) => Some(format!(
-            "Next: kendex check --global to list global packages; {} to refresh them.",
-            command(true)?
-        )),
-        (false, true) => Some(format!(
-            "Next: {} {} to refresh project packages.",
-            command(false)?,
-            checkout
-        )),
-        (true, true) => Some(format!(
-            "Next: kendex check --global to list global packages; {} for global packages; {} {} for project packages.",
+    let spans = match (global, project) {
+        (false, false) => return None,
+        (true, false) => vec![
+            prose("Next: "),
+            list_global(),
+            prose(" to list global packages; "),
             command(true)?,
+            prose(" to refresh them."),
+        ],
+        (false, true) => vec![
+            prose("Next: "),
             command(false)?,
-            checkout
-        )),
-    }
+            prose(checkout),
+            prose(" to refresh project packages."),
+        ],
+        (true, true) => vec![
+            prose("Next: "),
+            list_global(),
+            prose(" to list global packages; "),
+            command(true)?,
+            prose(" for global packages; "),
+            command(false)?,
+            prose(checkout),
+            prose(" for project packages."),
+        ],
+    };
+    Some(Sentence(spans))
 }
 
 /// A report as its complete rendering shows it: every item with the remedy
@@ -76,7 +112,7 @@ pub struct Page {
     /// `(package evaluation: 5m ago)`, where anything was evaluated.
     pub age: Option<String>,
     /// The refresh a reader runs next, where every line points at one.
-    pub next: Option<String>,
+    pub next: Option<Sentence>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,7 +247,7 @@ pub fn render_plain(report: &CheckReport) -> String {
         }
     }
     lines.extend(page.age);
-    let action = page.next;
+    let action = page.next.map(|next| next.to_string());
 
     // Whole-report budgets, overflow line counted inside them: drop whole
     // lines from the end until the truncation line itself fits.

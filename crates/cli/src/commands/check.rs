@@ -7,7 +7,7 @@ use kendex_core::model::Scope;
 use super::{answer, out, resolve_scopes};
 mod commit_hooks;
 use crate::scope::ScopeFilter;
-use crate::ui::{self, Channel, Status, Style, Value};
+use crate::ui::{self, Channel, Span, Status, Style, Value};
 use commit_hooks::fold_commit_hooks;
 
 /// The session-start contract: exit 0 clean / 1 drift or not yet
@@ -109,8 +109,19 @@ fn screen(style: &Style, checked: &CheckReport, target: &str) -> Screen {
             report.extend(style.row(status(item.class), &item.text, value));
         }
     }
-    for footnote in page.age.iter().chain(&page.next) {
-        report.extend(style.note(footnote));
+    if let Some(age) = &page.age {
+        report.extend(style.note(&[Span::Prose(age)]));
+    }
+    if let Some(next) = &page.next {
+        let spans: Vec<Span<'_>> = next
+            .0
+            .iter()
+            .map(|span| match span {
+                report::Span::Prose(text) => Span::Prose(text),
+                report::Span::Command(text) => Span::Command(text),
+            })
+            .collect();
+        report.extend(style.note(&spans));
     }
     Screen {
         head: style.header("check", target),

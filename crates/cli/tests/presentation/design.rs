@@ -116,11 +116,7 @@ fn an_80_column_terminal_gets_no_line_past_80() {
 /// A row's command line: `fix:` or `see:` once its indent and colour are
 /// taken off.
 fn is_command(line: &str) -> bool {
-    let mut parts = line.split('\u{1b}');
-    let mut text = parts.next().unwrap_or_default().to_owned();
-    for part in parts {
-        text.push_str(part.split_once('m').map_or(part, |(_, rest)| rest));
-    }
+    let text = stripped(line);
     let text = text.trim_start();
     text.starts_with("fix: ") || text.starts_with("see: ")
 }
@@ -128,19 +124,16 @@ fn is_command(line: &str) -> bool {
 /// Terminal cells in a drawn line: escape sequences take none, and every
 /// other character here takes one.
 fn cells(line: &str) -> usize {
-    let mut count = 0;
-    let mut chars = line.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '\u{1b}' => {
-                for end in chars.by_ref() {
-                    if end == 'm' {
-                        break;
-                    }
-                }
-            }
-            _ => count += 1,
-        }
+    stripped(line).chars().count()
+}
+
+/// A drawn line with its colour escapes taken out: each runs from the
+/// escape character to the `m` that ends it.
+fn stripped(line: &str) -> String {
+    let mut parts = line.split('\u{1b}');
+    let mut text = parts.next().unwrap_or_default().to_owned();
+    for part in parts {
+        text.push_str(part.split_once('m').map_or(part, |(_, rest)| rest));
     }
-    count
+    text
 }

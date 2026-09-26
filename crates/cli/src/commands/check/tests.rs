@@ -152,6 +152,28 @@ fn the_check_draws_every_kind_of_row_rich() {
     );
 }
 
+/// At 40 columns the next step's sentence wraps and its command does not:
+/// `kendex refresh --scope project --yes` moves to a line of its own rather
+/// than leaving `--scope project --yes` to read as a second command.
+#[test]
+fn a_narrow_terminal_keeps_the_next_steps_command_whole() {
+    let drawn = screen(&rich(40), &every_kind(), "here");
+    let at = drawn
+        .report
+        .iter()
+        .position(|line| line.contains("Next:"))
+        .unwrap_or_else(|| panic!("no next step: {:?}", drawn.report));
+    assert_eq!(
+        tagged(&drawn.report[at..]),
+        [
+            "<90>Next:</>",
+            "<90>kendex refresh --scope project --yes in</>",
+            "<90>this checkout to refresh project</>",
+            "<90>packages.</>",
+        ]
+    );
+}
+
 /// The same run in the plain rendering: no header, and the report and the
 /// verdict as the lines a script has always read.
 #[test]

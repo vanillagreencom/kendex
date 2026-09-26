@@ -837,6 +837,6 @@ mod tests_evidence;
 mod tests_render;
 mod text;
 
-pub use render::{Page, PageFix, PageItem, PageSection, page, render_plain};
+pub use render::{Page, PageFix, PageItem, PageSection, Sentence, Span, page, render_plain};
 use scope::check_scope;
 pub use text::{Text, fold};

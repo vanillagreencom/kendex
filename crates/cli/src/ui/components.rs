@@ -15,7 +15,7 @@
 use std::path::Path;
 
 use super::escaped;
-use super::modes::{Look, Style, cells, wrap};
+use super::modes::{Look, Span, Style, cells, wrap};
 use super::symbols::{Glyphs, Symbol};
 use super::tokens::{Token, paint, strong};
 
@@ -53,8 +53,7 @@ impl Status {
 /// What goes with a [`Style::row`]: something a reader copies — a
 /// command, a version, a path — and a remark about it.
 pub struct Value<'a> {
-    /// Drawn whole, never broken across lines: a command split at a space
-    /// reads as a shorter command. A terminal narrower than it wraps it.
+    /// Drawn as a command: [`Span::Command`], never broken across lines.
     pub copy: &'a str,
     pub remark: Option<&'a str>,
 }
@@ -85,7 +84,7 @@ impl Style {
         symbol.glyph(self.glyphs)
     }
 
-    /// The verb and what it acts on, one line. Chrome: plain draws nothing,
+    /// The verb and what it acts on. Chrome: plain draws nothing,
     /// since whoever reads a pipe already knows what they ran.
     pub fn header(&self, verb: &str, target: &str) -> Vec<String> {
         let Look::Rich { palette, width } = self.look else {
@@ -98,7 +97,7 @@ impl Style {
             &lead,
             cells(&title) + 2,
             2,
-            &escaped(target),
+            &[Span::Prose(&escaped(target))],
             |chunk| paint(palette, Token::Muted, chunk),
         )
     }
@@ -135,13 +134,25 @@ impl Style {
                     "  {} ",
                     paint(palette, status.token(), self.glyph(status.symbol()))
                 );
-                let mut lines = fitted(width, &lead, 4, 4, &label, str::to_owned);
+                let mut lines = fitted(width, &lead, 4, 4, &[Span::Prose(&label)], str::to_owned);
                 if let Some((copy, remark)) = value {
-                    lines.push(format!("    {}", paint(palette, Token::Info, &copy)));
+                    lines.extend(fitted(
+                        width,
+                        "    ",
+                        4,
+                        4,
+                        &[Span::Command(&copy)],
+                        |chunk| paint(palette, Token::Info, chunk),
+                    ));
                     if let Some(remark) = remark {
-                        lines.extend(fitted(width, "    ", 4, 4, &remark, |chunk| {
-                            paint(palette, Token::Muted, chunk)
-                        }));
+                        lines.extend(fitted(
+                            width,
+                            "    ",
+                            4,
+                            4,
+                            &[Span::Prose(&remark)],
+                            |chunk| paint(palette, Token::Muted, chunk),
+                        ));
                     }
                 }
                 lines
@@ -189,10 +200,17 @@ impl Style {
             Look::Rich { palette, width } => {
                 let lead = format!("{} ", paint(palette, Token::Warn, mark));
                 let mut lines = vec![String::new()];
-                lines.extend(fitted(width, &lead, 2, 2, &what, |chunk| {
+                lines.extend(fitted(width, &lead, 2, 2, &[Span::Prose(&what)], |chunk| {
                     strong(palette, Token::Emphasis, chunk)
                 }));
-                lines.extend(fitted(width, "  ", 2, 2, &why, str::to_owned));
+                lines.extend(fitted(
+                    width,
+                    "  ",
+                    2,
+                    2,
+                    &[Span::Prose(&why)],
+                    str::to_owned,
+                ));
                 lines
             }
         };
@@ -353,7 +371,7 @@ impl Style {
             paint(palette, status.token(), self.glyph(status.symbol()))
         );
         let mut lines = vec![String::new()];
-        lines.extend(fitted(width, &lead, 2, 2, &text, |chunk| {
+        lines.extend(fitted(width, &lead, 2, 2, &[Span::Prose(&text)], |chunk| {
             strong(palette, Token::Emphasis, chunk)
         }));
         lines
@@ -381,31 +399,48 @@ impl Style {
         }
     }
 
-    /// A footnote to what is above it: an age, a pointer onward.
-    pub fn note(&self, text: &str) -> Vec<String> {
-        let text = escaped(text);
+    /// A footnote to what is above it: an age, a pointer onward. The
+    /// commands in it are marked, so the rich rendering never breaks one.
+    pub fn note(&self, spans: &[Span<'_>]) -> Vec<String> {
+        let texts: Vec<(bool, String)> = spans
+            .iter()
+            .map(|span| match span {
+                Span::Prose(text) => (false, escaped(text)),
+                Span::Command(text) => (true, escaped(text)),
+            })
+            .collect();
         match self.look {
-            Look::Plain => vec![text],
-            Look::Rich { palette, width } => fitted(width, "", 0, 0, &text, |chunk| {
-                paint(palette, Token::Muted, chunk)
-            }),
+            Look::Plain => vec![texts.into_iter().map(|(_, text)| text).collect()],
+            Look::Rich { palette, width } => {
+                let spans: Vec<Span<'_>> = texts
+                    .iter()
+                    .map(|(command, text)| match command {
+                        true => Span::Command(text),
+                        false => Span::Prose(text),
+                    })
+                    .collect();
+                fitted(width, "", 0, 0, &spans, |chunk| {
+                    paint(palette, Token::Muted, chunk)
+                })
+            }
         }
     }
 }
 
-/// `text` as rich lines no wider than `width`, behind `lead` (already
-/// painted, `lead_cells` wide), continuation lines indented by `indent`
-/// cells, each chunk painted by `paint_chunk`.
+/// `spans` as rich lines no wider than `width` — a command excepted, which
+/// [`wrap`] never breaks — behind `lead` (already painted, `lead_cells`
+/// wide), continuation lines indented by `indent` cells, each chunk painted
+/// by `paint_chunk`.
 fn fitted(
     width: usize,
     lead: &str,
     lead_cells: usize,
     indent: usize,
-    text: &str,
+    spans: &[Span<'_>],
     paint_chunk: impl Fn(&str) -> String,
 ) -> Vec<String> {
     let room = |used: usize| width.saturating_sub(used);
-    wrap(text, room(lead_cells), room(indent))
+    wrap(spans, room(lead_cells), room(indent))
         .iter()
         .enumerate()
         .map(|(at, chunk)| match at {

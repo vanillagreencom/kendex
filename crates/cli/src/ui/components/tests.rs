@@ -81,7 +81,14 @@ fn drawn(style: &Style) -> Vec<(&'static str, Vec<String>)> {
             "details open",
             style.details("installer output", &["one", "two"], false),
         ),
-        ("note", style.note("(package evaluation: 5m ago)")),
+        (
+            "note",
+            style.note(&[
+                Span::Prose("Next: "),
+                Span::Command("kendex refresh --yes"),
+                Span::Prose(" here."),
+            ]),
+        ),
     ]
 }
 
@@ -159,7 +166,7 @@ fn each_component_draws_rich() {
                 "    <90>two</>",
             ],
         ),
-        ("note", &["<90>(package evaluation: 5m ago)</>"]),
+        ("note", &["<90>Next: kendex refresh --yes here.</>"]),
     ];
     pinned(&rich(100), &want);
 }
@@ -207,7 +214,7 @@ fn each_component_draws_plain() {
             "details open",
             &["  installer output", "    one", "    two"],
         ),
-        ("note", &["(package evaluation: 5m ago)"]),
+        ("note", &["Next: kendex refresh --yes here."]),
     ];
     pinned(&plain(), &want);
 }
@@ -264,7 +271,7 @@ fn a_hostile_value_is_escaped_by_every_component() {
             style.progress(1, 2, hostile),
             style.summary(Status::Failed, hostile),
             style.details(hostile, &[hostile], false),
-            style.note(hostile),
+            style.note(&[Span::Prose(hostile), Span::Command(hostile)]),
         ];
         for line in drawn.iter().flatten() {
             assert!(!line.contains('\n'), "a value split a line: {line:?}");
@@ -301,7 +308,7 @@ fn a_rich_line_wraps_inside_its_width() {
         ),
         style.callout(long, long, &[]),
         style.summary(Status::Decision, long),
-        style.note(long),
+        style.note(&[Span::Prose(long)]),
     ];
     for lines in &drawn {
         assert!(lines.len() > 2, "{long:?} did not wrap at 40: {lines:?}");

@@ -140,30 +140,65 @@ fn resolve(probe: &Probe) -> Style {
     }
 }
 
-/// `text` broken at spaces into lines no wider than `width` terminal
-/// cells, a word wider than that broken where it reaches the edge. The
-/// first line has `first` cells to fill, the rest `rest`: the room each
-/// has after its indent.
-pub(super) fn wrap(text: &str, first: usize, rest: usize) -> Vec<String> {
+/// A piece of text a component draws. Prose breaks between words where a
+/// line runs out of room; a command never breaks, since split at a space it
+/// reads as a shorter command. [`wrap`] is the one place that rule is kept.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Span<'a> {
+    Prose(&'a str),
+    Command(&'a str),
+}
+
+/// `spans` broken into lines no wider than their room in terminal cells:
+/// the first line has `first` cells to fill, the rest `rest`, the room each
+/// has after its indent. Prose breaks at spaces, and a word wider than the
+/// room where it reaches the edge. A command starts a new line where it
+/// does not fit on the current one and is never broken: one wider than a
+/// whole line is that line, and the terminal wraps it.
+pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut line = String::new();
     let mut room = first.max(1);
-    for word in text.split(' ').filter(|word| !word.is_empty()) {
-        let used = cells(&line);
-        if used > 0 && used + 1 + cells(word) > room {
-            lines.push(std::mem::take(&mut line));
-            room = rest.max(1);
-        } else if used > 0 {
-            line.push(' ');
-        }
-        for c in word.chars() {
+    // Whether a space separates the next piece from the one before it:
+    // the spans are one text, so a space at a span's edge is still a space.
+    let mut spaced = false;
+    for span in spans {
+        let (text, whole) = match span {
+            Span::Prose(text) => (*text, false),
+            Span::Command(text) => (*text, true),
+        };
+        let pieces: Vec<&str> = match whole {
+            true => vec![text],
+            false => text.split(' ').collect(),
+        };
+        for (at, piece) in pieces.into_iter().enumerate() {
+            spaced |= at > 0;
+            if piece.is_empty() {
+                continue;
+            }
             let used = cells(&line);
-            if used > 0 && used + cells(c.encode_utf8(&mut [0; 4])) > room {
+            let gap = usize::from(used > 0 && spaced);
+            if used > 0 && used + gap + cells(piece) > room {
                 lines.push(std::mem::take(&mut line));
                 room = rest.max(1);
+            } else if gap == 1 {
+                line.push(' ');
             }
-            line.push(c);
+            spaced = false;
+            if whole {
+                line.push_str(piece);
+                continue;
+            }
+            for c in piece.chars() {
+                let used = cells(&line);
+                if used > 0 && used + cells(c.encode_utf8(&mut [0; 4])) > room {
+                    lines.push(std::mem::take(&mut line));
+                    room = rest.max(1);
+                }
+                line.push(c);
+            }
         }
+        spaced |= !whole && text.ends_with(' ');
     }
     if !line.is_empty() {
         lines.push(line);
@@ -281,15 +316,59 @@ mod tests {
     /// Words stay whole where they fit, and no line passes its room.
     #[test]
     fn wrapping_breaks_at_spaces_within_the_room() {
-        assert_eq!(wrap("one two three", 7, 7), ["one two", "three"]);
-        assert_eq!(wrap("one two three", 3, 9), ["one", "two three"]);
-        assert_eq!(wrap("abcdefgh", 3, 3), ["abc", "def", "gh"]);
-        assert_eq!(wrap("", 10, 10), Vec::<String>::new());
-        for line in wrap("a b cc ddd eeee fffff gggggg ✓✓✓✓✓", 5, 4)
+        let prose = |text| wrap(&[Span::Prose(text)], 7, 7);
+        assert_eq!(prose("one two three"), ["one two", "three"]);
+        assert_eq!(
+            wrap(&[Span::Prose("one two three")], 3, 9),
+            ["one", "two three"]
+        );
+        assert_eq!(wrap(&[Span::Prose("abcdefgh")], 3, 3), ["abc", "def", "gh"]);
+        assert_eq!(prose(""), Vec::<String>::new());
+        for line in wrap(&[Span::Prose("a b cc ddd eeee fffff gggggg ✓✓✓✓✓")], 5, 4)
             .iter()
             .skip(1)
         {
             assert!(cells(line) <= 4, "{line:?}");
         }
+    }
+
+    /// A command moves whole to the next line rather than split, and one
+    /// wider than any line is a line of its own; the prose around it keeps
+    /// its spaces, and a span edge with no space stays joined.
+    #[test]
+    fn a_command_is_never_broken() {
+        let next = [
+            Span::Prose("Next: "),
+            Span::Command("kendex refresh --scope project --yes"),
+            Span::Prose(" in this checkout."),
+        ];
+        assert_eq!(
+            wrap(&next, 40, 40),
+            [
+                "Next:",
+                "kendex refresh --scope project --yes in",
+                "this checkout."
+            ]
+        );
+        assert_eq!(
+            wrap(&next, 20, 20),
+            [
+                "Next:",
+                "kendex refresh --scope project --yes",
+                "in this checkout."
+            ]
+        );
+        assert_eq!(
+            wrap(
+                &[
+                    Span::Prose("("),
+                    Span::Command("kendex check"),
+                    Span::Prose(")")
+                ],
+                40,
+                40
+            ),
+            ["(kendex check)"]
+        );
     }
 }

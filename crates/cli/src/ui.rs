@@ -97,7 +97,7 @@ pub use blocks::{finish, flush, intro};
 pub use components::{Choice, Target};
 pub use components::{Status, Value};
 pub use live::Spinner;
-pub use modes::{Channel, Style, channel};
+pub use modes::{Channel, Span, Style, channel};
 pub use prompt::{ask, cancelled, confirm, spinner};
 pub use refusal::{Lines, fail_refusal, outro_fail, outro_refusal};
 

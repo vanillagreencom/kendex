@@ -7,7 +7,7 @@ One output is not drawn with the components: `check --quiet`, the session hook's
 | Rendering | When | Draws |
 |---|---|---|
 | Rich | a terminal on both streams, or `KENDEX_UI=pretty`, unless `NO_COLOR` or `TERM=dumb` is set or a Windows console refuses escape sequences | colour, glyphs, a blank line before each section, callout and summary, lines wrapped at the terminal width up to 100 columns (`COLUMNS` pins it) |
-| Plain | a pipe, `KENDEX_UI=plain`, `NO_COLOR`, `TERM=dumb` | the script grammar: a line at column 0 opens a block, two spaces make detail, no colour, no wrapping, no chrome |
+| Plain | a pipe, `KENDEX_UI=plain`, `NO_COLOR`, `TERM=dumb`, a Windows console that refuses escape sequences | the script grammar: a line at column 0 opens a block, two spaces make detail, no colour, no wrapping, no chrome |
 | JSON | the verb's `--json` | the serialized answer, no component |
 
 | Token | Use | ANSI 16 | Truecolor (`COLORTERM=truecolor` or `24bit`) |
@@ -39,7 +39,7 @@ ASCII applies when `LC_ALL`, `LC_CTYPE` or `LANG`, first non-empty, names no UTF
 |---|---|---|
 | `header(verb, target)` | `kendex <verb>` and the target | nothing |
 | `section(title, count, status)` | blank line, bold title in the status colour, muted count | `title:` |
-| `row(status, label, Value)` | glyph and label; under it the value's copy on one unbroken line, then its remark wrapped | `  label — copy remark` |
+| `row(status, label, Value)` | glyph and label; under it the value's copy as a command, then its remark wrapped | `  label — copy remark` |
 | `change(name, old, new, scope)` | `name  old → new  [scope]` | the same, uncoloured |
 | `callout(what, why, choices)` | blank line, `!` and what, then why and the choices | `! what`, then why and the choices, indented |
 | `choices(&[Choice])` | `[Enter] Set up · [s] Skip`, the recommended one bold | the same, uncoloured |
@@ -49,9 +49,9 @@ ASCII applies when `LC_ALL`, `LC_CTYPE` or `LANG`, first non-empty, names no UTF
 | `progress(done, total, label)` | a 20-cell bar and the count | nothing |
 | `summary(status, text)` | blank line, glyph and bold text: the run's last line | the text |
 | `details(title, lines, folded)` | folded: the title and a line count | the title indented two spaces, every line indented four |
-| `note(text)` | muted text | the text |
+| `note(&[Span])` | muted text, its commands never broken | the spans joined |
 
-Each component escapes the values it is handed; `ui::stdout` and `ui::stderr` print what it drew unchanged. Snapshot tests per component in both renderings sit in `src/ui/components/tests.rs`; `tests/presentation/design.rs` holds `NO_COLOR` output equal to a pipe's and a rich run at `COLUMNS=80` to 80 cells, commands aside. `tests/tapes/check.tape` records the pilot with vhs.
+Rich wraps prose between words and never breaks a command: text a component takes as `Span::Command`, or a `Value`'s copy, starts a new line where it does not fit and is drawn whole, and the terminal wraps one wider than a line. Each component escapes the values it is handed; `ui::stdout` and `ui::stderr` print what it drew unchanged. Snapshot tests per component in both renderings sit in `src/ui/components/tests.rs`; `tests/presentation/design.rs` holds `NO_COLOR` output equal to a pipe's and a rich run at `COLUMNS=80` to 80 cells, commands aside. `tests/tapes/check.tape` records the pilot with vhs.
 
 ## cliclack
 
