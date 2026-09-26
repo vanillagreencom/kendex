@@ -99,14 +99,17 @@ export function staleLine(stale: StalePackage): string {
 }
 export const STALE_NOTE =
   "Committing now would carry those files out of date, so kendex does not offer the commit.";
-export const settingUpNote = (name: string, summary: string) =>
-  `Setting ${name} up: ${summary}`;
 export const setUpLabel = (names: string[]) =>
   `Set up ${names.join(" and ")} here`;
 export const SETTING_UP_LABEL = "Setting up…";
+/** The installer or the read after it failed: nothing was committed. */
 export const SET_UP_FAILED_TITLE = "The setup did not finish";
-export const STILL_STALE =
-  "It is still not ready after its setup ran. Nothing was committed.";
+/** The setup ran and the package still holds the commit. The fresh
+ *  reading's words are drawn under it; one setup per offer, as the
+ *  terminal's. */
+export const STILL_HELD_TITLE = "Set up, and still not ready to commit";
+export const STILL_HELD_NOTE =
+  "The setup ran, and kendex still does not offer the commit. Nothing was committed.";
 
 export const LEAVE_LABEL = "Leave as diffs";
 export const LEAVE_IT_HERE_LABEL = "Leave it here";

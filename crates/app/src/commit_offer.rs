@@ -23,7 +23,7 @@ use kendex_core::commit_offer::{
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
 use kendex_core::package::diff::PackageDiff;
-use kendex_core::repo_effects::DeclaredEffects;
+use kendex_core::repo_effects::Disclosure;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -175,13 +175,13 @@ pub struct StalePackage {
     pub why: StaleWhy,
     /// What the package's check said, escaped. Empty where it did not run.
     pub said: Vec<String>,
-    /// The package as installed here, handed back to `repo_effects_apply`
-    /// by the setup choice. Its `summary` is what the setup
-    /// changes, in the package's own words.
-    pub declared: DeclaredEffects,
+    /// What the setup changes, the block the dialog shows before its yes.
+    /// Its `declared` is handed back to `repo_effects_apply` untouched;
+    /// every word drawn is the disclosure's own display text.
+    pub disclosure: Disclosure,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub enum StaleWhy {
     /// kendex has not set the package up in this checkout.
@@ -200,10 +200,10 @@ impl From<Stale> for StalePackage {
             Staleness::Unchecked(said) => (StaleWhy::Unchecked, said),
         };
         StalePackage {
-            name: stale.declared.name.clone(),
+            name: stale.disclosure.name.clone(),
             why,
             said,
-            declared: stale.declared,
+            disclosure: stale.disclosure,
         }
     }
 }
@@ -1610,16 +1610,26 @@ mod tests {
 
     /// The window's offer carries each package the terminal would hold the
     /// commit over, with the package's own words: a rendered surface whose
-    /// check says it is out of date is listed, one whose check passes is
-    /// not.
+    /// check says it is out of date, or cannot answer, is listed with why;
+    /// one whose check passes is not.
     #[test]
     #[cfg(unix)]
     fn an_offer_lists_the_packages_that_hold_its_commit() {
         use kendex_core::env::{Env, FakeOs};
 
         for (check, held) in [
-            ("exit 0", false),
-            ("echo 'drift: fixture' >&2; exit 1", true),
+            ("exit 0", None),
+            (
+                "echo 'drift: fixture' >&2; exit 1",
+                Some((StaleWhy::OutOfDate, "drift: fixture")),
+            ),
+            (
+                "echo 'fixture-check: the manifest would not read' >&2; exit 2",
+                Some((
+                    StaleWhy::Unchecked,
+                    "fixture-check: the manifest would not read",
+                )),
+            ),
         ] {
             let tmp = tempfile::tempdir().expect("a fixture directory");
             let home = tmp.path().join("home");
@@ -1651,22 +1661,16 @@ mod tests {
                 panic!("check {check:?}: no offer was read");
             };
 
-            let stale: Vec<(&str, bool, &[String])> = offer
+            let stale: Vec<(&str, StaleWhy, &[String])> = offer
                 .stale
                 .iter()
-                .map(|one| {
-                    (
-                        one.name.as_str(),
-                        matches!(one.why, StaleWhy::OutOfDate),
-                        one.said.as_slice(),
-                    )
-                })
+                .map(|one| (one.name.as_str(), one.why, one.said.as_slice()))
                 .collect();
-            let said = ["drift: fixture".to_owned()];
-            let want: Vec<(&str, bool, &[String])> = match held {
-                true => vec![("bot-instructions", true, &said[..])],
-                false => Vec::new(),
-            };
+            let said: Vec<String> = held.iter().map(|(_, words)| (*words).to_owned()).collect();
+            let want: Vec<(&str, StaleWhy, &[String])> = held
+                .iter()
+                .map(|(why, _)| ("bot-instructions", *why, said.as_slice()))
+                .collect();
             assert_eq!(stale, want, "check {check:?}");
         }
     }

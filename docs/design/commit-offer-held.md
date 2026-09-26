@@ -8,14 +8,15 @@ A package can declare an effect on files in the checkout, the way bot-instructio
 
 | Standing | How kendex reads it | Why named |
 | --- | --- | --- |
+| Declares no installer | Its declaration; no setup could clear a hold | not named |
 | Not set up here | No arming record for this checkout; no package code runs | `not set up in this checkout` |
 | Set up, its check exits 1 | The declared checker, licensed by the record | `out of date`, with the check's words |
 | Set up, its check could not answer | The declared checker exits above 1 or does not run | `could not say`, with its words or why |
 | Set up, its check exits 0, or it declares none | The declared checker | not named |
 
-The setup choice runs each named package's declared installer, the same run the package page makes, then reads the project again: the files the setup rendered join the set, and each package is asked again. One setup per offer. A package still named after its own setup ran ends the offer with nothing committed.
+Each named package comes with its disclosure from `repo_effects::offers_for`, the block every other setup's yes is given against: what it changes, what it writes, its companions, its notes, and how to undo it. The setup choice runs each named package's declared installer, the same run the package page makes, then reads the project again against the reading the offer was scoped to: the files the setup rendered join the set, and each package is asked again. One setup per offer. A package still named after its own setup ran ends the offer with nothing committed, its fresh words shown.
 
-A linked work tree reads its own arming record, never its main checkout's: the work tree's copy of the package is the code a record there would license. Where the main checkout set a checkout effect up, the skipped-render line names the main checkout, and the CLI asks at the same point whether to set the package up in this work tree too.
+A linked work tree reads its own arming record, never its main checkout's: the work tree's copy of the package is the code a record there would license. Where the main checkout set a checkout effect up, the skipped-render line names the main checkout, and the CLI prints the package's disclosure and asks at the same point whether to set the package up in this work tree too.
 
 ## CLI
 
@@ -25,13 +26,17 @@ The block replaces the commit choices:
 /home/method/dev/site: 90 files kendex wrote are not committed
   bot-instructions is not set up in this checkout, so its files in this repository were not brought up to date
   committing now would carry those files out of date, so kendex does not offer the commit
-  setting bot-instructions up: Renders the enabled review-bot instruction files, the pointed code-review file and the owned Code Review Rules region in this repository.
+
+bot-instructions changes how this repository works, beyond the files above:
+  Renders the enabled review-bot instruction files, the pointed code-review file and the owned Code Review Rules region in this repository.
+  …the rest of the disclosure, as the repository-effects block prints it…
+
   1  set up bot-instructions here, then offer the commit with its files
   2  leave them as diffs
 1-2, or Enter to leave them as diffs:
 ```
 
-With no terminal, or a flag naming a commit, the block ends on `set it up here first: at a terminal, where kendex offers it, or with Set up on its package page in the app`. A flag's run exits 1, `not committed`.
+After a setup that leaves the package still named, the block is printed again with the package's fresh words and ends on `it is still not ready after its setup ran; nothing was committed`, exit 1. With no terminal, or a flag naming a commit, the block ends on `set it up here first: at a terminal, where kendex offers it, or with Set up on its package page in the app`. A flag's run exits 1, `not committed`.
 
 ## App
 
@@ -42,9 +47,9 @@ The held state is drawn in place of the offer state.
 | Title | `12 files kendex wrote in site are not committed` |
 | Description | `Committing now would carry those files out of date, so kendex does not offer the commit.` |
 | Section heading | `Not ready to commit` |
-| Per package | `bot-instructions is not set up in this checkout, so its files in this repository were not brought up to date.`, `… says its files in this repository are out of date.` or `… could not say whether its files in this repository are up to date.`, the check's words under it, then `Setting bot-instructions up: <its summary>` |
+| Per package | `bot-instructions is not set up in this checkout, so its files in this repository were not brought up to date.`, `… says its files in this repository are out of date.` or `… could not say whether its files in this repository are up to date.`, the check's words under it, then the disclosure block the repository-effects dialog draws |
 | Section heading | `Files` |
 | Footer, outline | `Leave as diffs` |
 | Footer, primary | `Set up bot-instructions here`; `Setting up…` while it runs |
 
-A setup that fails, or leaves a package still named, ends in `The setup did not finish` with the words, and `Leave as diffs` only.
+A setup whose installer, or the read after it, fails ends in `The setup did not finish` with the words, and `Leave as diffs` only. A setup that ran and leaves a package still named ends in `Set up, and still not ready to commit`, described `The setup ran, and kendex still does not offer the commit. Nothing was committed.`, with each package's line and fresh words, and `Leave as diffs` only.

@@ -91,8 +91,9 @@ export function RepoEffectsDialog() {
  *  written, which packages take part, whatever the package itself wants
  *  read, and how to undo it. Every line is the package's own words or a
  *  fact kendex knows about this machine; nothing here explains what a
- *  declaration means, because that is the package's contract. */
-function DisclosureBody({ disclosure }: { disclosure: Disclosure }) {
+ *  declaration means, because that is the package's contract. The commit
+ *  offer draws it too, above a held package's setup. */
+export function DisclosureBody({ disclosure }: { disclosure: Disclosure }) {
   const shared = disclosure.writes.some((written) => written.shared);
   return (
     <div className="space-y-4 text-sm">

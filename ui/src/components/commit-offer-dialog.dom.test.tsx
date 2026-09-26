@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProjectOffer, Refused } from "@/bindings";
+import type { ProjectOffer, Refused, StalePackage } from "@/bindings";
 import { EARLIER_WORD } from "@/components/project-changes/change-rows";
 import {
   ACCEPT_EARLIER_LABEL,
@@ -65,36 +65,50 @@ beforeEach(() => {
   });
 });
 
-// A held offer draws the package's setup and leaving the files, never a
-// commit route: the commit would carry the package's files out of date.
+// A held offer draws why each package holds it, the disclosure its setup's
+// yes is given against, and the setup and leaving the files, never a commit
+// route. After a setup that left it held, the fresh reading's words are
+// drawn with leaving the only choice.
 describe("an offer a package holds", () => {
-  it("offers the setup and no commit", async () => {
-    useCommitOfferStore.setState({
-      queue: [
-        {
-          ...offer,
-          stale: [
-            {
-              name: "bot-instructions",
-              why: "notSetUp",
-              said: [],
-              declared: {
-                name: "bot-instructions",
-                root: "/home/method/dev/site/.agents/skills/bot-instructions",
-                summary: "Renders the review-bot files.",
-                writes: [],
-                installer: "scripts/bot-instructions render",
-                uninstaller: null,
-                checker: null,
-                removal: null,
-                notes: [],
-                companions: [],
-              },
-            },
-          ],
-        },
-      ],
-    });
+  const held = (why: StalePackage["why"], said: string[]): StalePackage => ({
+    name: "bot-instructions",
+    why,
+    said,
+    disclosure: {
+      declared: {
+        name: "bot-instructions",
+        root: "/home/method/dev/site/.agents/skills/bot-instructions",
+        summary: "raw summary",
+        writes: [],
+        installer: "scripts/bot-instructions render",
+        uninstaller: null,
+        checker: null,
+        removal: null,
+        notes: [],
+        companions: [],
+      },
+      name: "bot-instructions",
+      summary: "Renders the review-bot files.",
+      writes: [],
+      companions: [],
+      notes: [],
+      undo: null,
+    },
+  });
+
+  it.each([
+    {
+      name: "not set up",
+      held: held("notSetUp", []),
+      line: "bot-instructions is not set up in this checkout, so its files in this repository were not brought up to date.",
+    },
+    {
+      name: "out of date",
+      held: held("outOfDate", ["drift: AGENTS.md differs from a fresh render"]),
+      line: "bot-instructions says its files in this repository are out of date.",
+    },
+  ])("offers the setup and no commit: $name", async (row) => {
+    useCommitOfferStore.setState({ queue: [{ ...offer, stale: [row.held] }] });
     mount(<CommitOfferDialog />);
     await settle();
 
@@ -102,9 +116,36 @@ describe("an offer a package holds", () => {
     expect(labels).toContain("Set up bot-instructions here");
     expect(labels).toContain("Leave as diffs");
     expect(labels).not.toContain(COMMIT_LABEL);
-    expect(document.body.textContent ?? "").toContain(
-      "Setting bot-instructions up: Renders the review-bot files.",
+    const text = document.body.textContent ?? "";
+    for (const said of [row.line, ...row.held.said])
+      expect(text).toContain(said);
+    expect(text).toContain("Renders the review-bot files.");
+    expect(text).not.toContain("raw summary");
+  });
+
+  it("draws the fresh reading's words once the setup ran", async () => {
+    useCommitOfferStore.setState({
+      queue: [
+        {
+          ...offer,
+          stale: [
+            held("unchecked", ["fail-check: the manifest would not read"]),
+          ],
+        },
+      ],
+      stage: { at: "stillHeld" },
+    });
+    mount(<CommitOfferDialog />);
+    await settle();
+
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("Set up, and still not ready to commit");
+    expect(text).toContain(
+      "bot-instructions could not say whether its files in this repository are up to date.",
     );
+    expect(text).toContain("fail-check: the manifest would not read");
+    expect(buttons()).toContain("Leave as diffs");
+    expect(buttons()).not.toContain("Set up bot-instructions here");
   });
 });
 

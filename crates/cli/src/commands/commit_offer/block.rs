@@ -105,7 +105,7 @@ pub fn not_vouched(root: &Path, why: &str) {
 pub fn stale(scan: &Scan, stale: &[Stale]) {
     say(&head(&scan.root, scan.count()));
     for held in stale {
-        let name = &held.declared.name;
+        let name = &held.disclosure.name;
         match &held.why {
             Staleness::NotSetUp => detail(&format!(
                 "{name} is not set up in this checkout, so its files in this repository were not brought up to date"
@@ -159,19 +159,18 @@ pub enum Held {
     Leave,
 }
 
-/// The two choices a held offer carries, each package's own account of
-/// what its setup changes above them, and the answer. As with the offer,
-/// any answer but the setup's number leaves the files as diffs.
+/// The two choices a held offer carries, the disclosure of what each
+/// package's setup changes above them, and the answer. The same block
+/// every other setup's yes is given against. As with the offer, any answer
+/// but the setup's number leaves the files as diffs.
 pub fn pick_stale(stale: &[Stale]) -> std::io::Result<Held> {
     for held in stale {
-        detail(&format!(
-            "setting {} up: {}",
-            held.declared.name, held.declared.effects.summary
-        ));
+        super::super::repo_effects::print_disclosure(&held.disclosure);
     }
+    say("");
     let names: Vec<&str> = stale
         .iter()
-        .map(|held| held.declared.name.as_str())
+        .map(|held| held.disclosure.name.as_str())
         .collect();
     detail(&format!(
         "1  set up {} here, then offer the commit with {} files",

@@ -189,30 +189,37 @@ impl Failed {
     /// Where the first findings block in a refused commit's words sits, or
     /// `None` where the commit's words carry none.
     ///
-    /// A pre-commit chain prints every lane it ran, the passing ones too,
-    /// and git hands back its stdout before its stderr. The lane that
-    /// refused is therefore rarely first, and the reader needs it first.
-    /// The block starts at a `<check>: findings=N` record with N above
-    /// zero, the first line of the family's findings protocol. It runs to
-    /// the line before the next keyed record, `<name>: <key>=<value>`,
-    /// which is the next check or the chain's own verdict, or to the end.
-    /// Only a commit's words are read this way: no other step runs a hook
-    /// that speaks the protocol.
+    /// A pre-commit chain runs every lane whatever an earlier one said, and
+    /// git hands back its stdout before its stderr, so the refusing lane's
+    /// findings sit among passing lanes' output. The block is the first
+    /// `<check>: findings=N` record with N above zero and the finding lines
+    /// around it. A check prints its findings after that record
+    /// (bot-instructions) or before it (preflight), so the block reaches
+    /// back over the unindented lines that open no keyed record,
+    /// `<name>: <key>=<value>`, and forward to the line before the next
+    /// keyed record, or to the end. An indented line explains the record
+    /// above it, which keeps a preceding record's explanation out. Only a
+    /// commit's words are read this way: no other step runs a hook that
+    /// speaks the protocol.
     pub fn findings(&self) -> Option<std::ops::Range<usize>> {
         if self.step != Step::Commit {
             return None;
         }
         let lines = self.said();
-        let start = lines.iter().position(|line| {
+        let at = lines.iter().position(|line| {
             let Some((name, count)) = line.rsplit_once(": findings=") else {
                 return false;
             };
             !name.is_empty() && count.parse::<u64>().is_ok_and(|count| count > 0)
         })?;
-        let end = lines[start + 1..]
+        let start = lines[..at]
+            .iter()
+            .rposition(|line| keyed(line) || line.starts_with(char::is_whitespace))
+            .map_or(0, |before| before + 1);
+        let end = lines[at + 1..]
             .iter()
             .position(|line| keyed(line))
-            .map_or(lines.len(), |after| start + 1 + after);
+            .map_or(lines.len(), |after| at + 1 + after);
         Some(start..end)
     }
 

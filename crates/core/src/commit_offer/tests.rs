@@ -244,14 +244,18 @@ fn a_refused_commits_findings_block_is_found_where_the_chain_put_it() {
             Some(4..7),
         ),
         (
-            "a block another check's record ends",
+            "preflight's findings, printed before its record",
             Step::Commit,
             &[
-                "preflight: findings=1",
-                "across 3 changed file(s)",
+                "commit-guards: step=preflight",
+                "  === pre-commit: preflight",
+                "a.md:3: [lane] msg",
+                "b.md:0: [lane] other msg",
+                "preflight: findings=2",
+                "across 2 changed file(s)",
                 "commit-guards: result=1",
             ],
-            Some(0..2),
+            Some(2..6),
         ),
         (
             "a count of none",
