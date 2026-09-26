@@ -397,30 +397,42 @@ fn the_write_leaves_a_directory_link_that_arrived_late() {
     );
 }
 
-/// A `/usr/local/bin` that is itself a link is refused before anything is
-/// written, so the step never writes into the directory it points at.
+/// A `/usr/local/bin`, or a `/usr/local` above it, that is a link is
+/// refused before anything is written, so the step never writes into the
+/// directory the link points at.
 #[test]
 fn the_step_refuses_a_directory_that_is_a_link() {
-    let tmp = tempfile::tempdir().unwrap();
-    let mac = Mac::new(&tmp);
-    let elsewhere = mac.root.join("opt/homebrew/bin");
-    std::fs::create_dir_all(&elsewhere).unwrap();
-    let bin = mac.places.link.parent().unwrap();
-    std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
-    symlink(&elsewhere, bin).unwrap();
+    for linked in ["usr/local/bin", "usr/local"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let mac = Mac::new(&tmp);
+        let elsewhere = mac.root.join("opt/homebrew");
+        std::fs::create_dir_all(elsewhere.join("bin")).unwrap();
+        let at = mac.root.join(linked);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        let points_at = if linked.ends_with("bin") {
+            elsewhere.join("bin")
+        } else {
+            elsewhere.clone()
+        };
+        symlink(&points_at, &at).unwrap();
 
-    let plan = LinkPlan {
-        link: mac.places.link.clone(),
-        target: mac.target.clone(),
-        was: None,
-    };
-    let output = run_script(LINK_SCRIPT, &plan);
-    assert_ne!(output.status.code(), Some(0), "the step reported success");
-    assert_eq!(
-        std::fs::read_dir(&elsewhere).unwrap().count(),
-        0,
-        "the step wrote into the directory the link names"
-    );
+        let plan = LinkPlan {
+            link: mac.places.link.clone(),
+            target: mac.target.clone(),
+            was: None,
+        };
+        let output = run_script(LINK_SCRIPT, &plan);
+        assert_ne!(
+            output.status.code(),
+            Some(0),
+            "{linked}: the step reported success"
+        );
+        assert_eq!(
+            std::fs::read_dir(elsewhere.join("bin")).unwrap().count(),
+            0,
+            "{linked}: the step wrote into the directory the link names"
+        );
+    }
 }
 
 /// What an install does over each shape, through the real privileged

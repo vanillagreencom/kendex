@@ -20,6 +20,7 @@ vi.mock("@/bindings", () => ({
     appUpdateChannel: vi.fn(),
     appUpdateCommandChannel: vi.fn(),
     appVersion: vi.fn(),
+    commandLinkState: vi.fn(),
   },
   ZOOM: { min: 50, max: 200, step: 10, default: 100 },
 }));
@@ -34,6 +35,10 @@ describe("the account read on window focus", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useAccountStore.setState({ account: { kind: "loading" }, error: null });
+    vi.mocked(commands.commandLinkState).mockResolvedValue({
+      status: "ok",
+      data: { command: { kind: "notCarried" }, ask: false },
+    });
     vi.mocked(commands.accountStatus).mockResolvedValue({
       status: "ok",
       data: { state: { state: "signed-out" }, endpoint: "https://kendex.ai" },

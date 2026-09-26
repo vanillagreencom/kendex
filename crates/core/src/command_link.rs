@@ -75,12 +75,17 @@ const ADMIN_PROMPT_TIMEOUT: Duration = Duration::from_secs(300);
 /// directory it names, as root. [`install`] then judges again and reports
 /// what is there.
 ///
-/// `$1` itself must not be a link: one pointing elsewhere, such as at
-/// Homebrew's `bin`, would have the step write there as root.
+/// Neither `$1` nor any directory above it may be a link: one pointing
+/// elsewhere, such as `/usr/local` at `/opt/homebrew`, would have the step
+/// write there as root.
 ///
 /// Constant text; every value reaches it as an argument.
 const LINK_SCRIPT: &str = r#"dir=$1 link=$2 target=$3 was=$4
-if [ -L "$dir" ]; then echo "$dir is a link, not a directory" >&2; exit 1; fi
+d=$dir
+while [ "$d" != / ]; do
+  if [ -L "$d" ]; then echo "$d is a link, not a directory" >&2; exit 1; fi
+  d=$(/usr/bin/dirname "$d")
+done
 /bin/mkdir -p "$dir" || exit 1
 if [ -z "$was" ]; then
   if [ -e "$link" ] || [ -L "$link" ]; then exit 3; fi

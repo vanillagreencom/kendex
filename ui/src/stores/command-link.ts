@@ -2,6 +2,7 @@ import { toast } from "sonner";
 import { create } from "zustand";
 import { type CommandLink, type CommandLinkState, commands } from "@/bindings";
 import { answerNotRecorded } from "@/lib/copy-command-link";
+import { readOrder } from "@/lib/read-state";
 import { isShapedRefusal } from "@/lib/refusal";
 import { settled } from "@/lib/settled";
 
@@ -48,6 +49,8 @@ interface CommandLinkStore {
  * `kendex_core::command_link`'s answers; this holds them and the stage of
  * the attempt in flight.
  */
+const order = readOrder();
+
 export const useCommandLinkStore = create<CommandLinkStore>((set, get) => ({
   state: null,
   readError: null,
@@ -56,7 +59,11 @@ export const useCommandLinkStore = create<CommandLinkStore>((set, get) => ({
   answered: false,
 
   load: async () => {
+    const ticket = order.begin();
     const read = await settled(commands.commandLinkState());
+    // The dialog, Settings and window focus each read this; an older
+    // answer landing after a newer one would put a stale state back.
+    if (!order.lands(ticket)) return;
     if (read.status !== "ok") {
       set({ state: null, readError: read.error });
       return;
