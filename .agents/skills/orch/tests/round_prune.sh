@@ -54,7 +54,9 @@ fill() { head -c "$2" /dev/zero >"$1"; }
 KEY="" BRANCH=""
 build() { # NAME [LEASE_OWNER] [STATE_WORKTREE] [STATE_KEY] [BRANCH]
   # STATE_WORKTREE: "branch" records the branch alone, "none" a branch no
-  # worktree has checked out, anything else the worktree and its branch.
+  # worktree has checked out, "main" the main checkout and its branch as an
+  # ad-hoc local review key records them, anything else the worktree and its
+  # branch.
   ROOT="$TMP_ROOT/$1"
   MAIN="$ROOT/main"
   WT="$ROOT/trees/topic"
@@ -82,6 +84,8 @@ build() { # NAME [LEASE_OWNER] [STATE_WORKTREE] [STATE_KEY] [BRANCH]
     "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" init "$KEY" --branch "$BRANCH" >/dev/null
   elif [[ "${3:-}" == none ]]; then
     "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" init "$KEY" --branch gone-branch >/dev/null
+  elif [[ "${3:-}" == main ]]; then
+    "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" init "$KEY" --worktree "$MAIN" --branch main >/dev/null
   else
     "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" init "$KEY" --worktree "$WT" --branch "$BRANCH" >/dev/null
   fi
@@ -186,6 +190,7 @@ a state keyed apart from the lease prunes under the owner its branch names|80|pr
 a branch naming no issue is pruned under the state key|80|KEN-1|topic|KEN-1|-|-|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
 a state carrying only a branch prunes the worktree that has it checked out|80|pr-5|ken-1|KEN-1|branch|-|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
 a state whose branch no worktree holds records no-worktree and lets the round go|80|pr-5|ken-1|KEN-1|none|-|0|no-worktree used-pct=0 mark-pct=75 bytes=0|no-worktree used=0 mark=75 bytes=0|.cargo-lock,deps/unit-0.rlib
+a state naming the main checkout records no-worktree and prunes nothing|80|pr-5|ken-1|KEN-1|main|-|0|no-worktree used-pct=0 mark-pct=75 bytes=0|no-worktree used=0 mark=75 bytes=0|.cargo-lock,deps/unit-0.rlib
 a relative CARGO_TARGET_DIR naming the worktree's target/ is pruned|80|KEN-1|ken-1|KEN-1|-|target-relative|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
 an absolute CARGO_TARGET_DIR at the worktree's target/ is pruned|80|KEN-1|ken-1|KEN-1|-|target-absolute|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
 past the mark a CARGO_TARGET_DIR outside the worktree fails closed and prunes nothing|10|KEN-1|ken-1|KEN-1|-|target-outside-full|1|target-elsewhere used-pct=80 mark-pct=75 bytes=0|target-elsewhere used=80 mark=75 bytes=0|.cargo-lock,deps/unit-0.rlib outside=deps/unit-9.rlib
@@ -200,7 +205,7 @@ while IFS='|' read -r label used key branch owner state_wt setup rc action recor
   prune "$used"
   row_teardown
   assert_eq "rc=$RC $(line) | $(recorded) | $(artifacts)$(js_left)$(outside_left)" \
-    "rc=$rc round-prune: action=$action round=<round> worktree=$([[ "$state_wt" == none ]] || echo '<wt>') | $record | $left" "$label"
+    "rc=$rc round-prune: action=$action round=<round> worktree=$([[ "$state_wt" == none || "$state_wt" == main ]] || echo '<wt>') | $record | $left" "$label"
 done <<<"$ROWS"
 [[ "$n" -ge 15 ]] || { echo "the row table was not read" >&2; exit 2; }
 row_setup -
@@ -215,6 +220,19 @@ prune 80 "$NEVER"
 [[ "$(artifacts)" == ".cargo-lock" ]] &&
   assert_eq "pruned" "not pruned" "control: with the mark never reached the output past it is kept" ||
   assert_eq "kept" "kept" "control: with the mark never reached the output past it is kept"
+
+# Must-fail control: a copy that takes the state's worktree field as it stands
+# takes the main checkout for a lane's tree.
+mkdir -p "$MUTANTS/raw-worktree"
+cp -a "$ORCH_SCRIPTS" "$MUTANTS/raw-worktree/scripts"
+LW_ANCHOR='worktree="$("$GIT_CONTEXT" lane-worktree "$worktree" "$branch")" || { message worktree-list "$branch" >&2; exit 2; }'
+[[ "$(grep -Fc -- "$LW_ANCHOR" "$ORCH_SCRIPTS/round-prune")" == 1 ]] || { echo "control: the lane-worktree call could not be found in round-prune" >&2; exit 2; }
+A="$LW_ANCHOR" awk 'index($0, ENVIRON["A"]) { print ":"; next } { print }' "$ORCH_SCRIPTS/round-prune" >"$MUTANTS/raw-worktree/scripts/round-prune"
+build control-raw-worktree KEN-1 main pr-5
+prune 80 "$MUTANTS/raw-worktree/scripts"
+[[ "$(line)" == *"action=no-worktree"* ]] &&
+  assert_eq "no-worktree" "another action" "control: taking the worktree field as it stands takes the main checkout for a lane's tree" ||
+  assert_eq "taken" "taken" "control: taking the worktree field as it stands takes the main checkout for a lane's tree"
 
 echo "=== target/ across two runs ==="
 # Two rounds, each starting with the round-start prune and ending with a

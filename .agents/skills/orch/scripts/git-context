@@ -80,17 +80,43 @@ case "$cmd" in
             exit 1
         fi
         ;;
-    branch-worktree)
-        # The linked worktree that has BRANCH checked out, or nothing where none
-        # does. The first tree git lists is the main checkout, never a lane's,
-        # so it answers for no branch. A listing git cannot give fails.
-        want="${1:-}"
-        worktree="$(worktree_arg "${2:-}")"
+    lane-worktree)
+        # The linked worktree a workflow state names, never the main checkout:
+        # WORKTREE where it is one of this repository's linked worktrees, else
+        # the linked worktree that has BRANCH checked out, else nothing. Git is
+        # asked only when there is a candidate, and a listing it cannot give
+        # fails.
+        want_tree="${1:-}"
+        want_branch="${2:-}"
+        worktree="$(worktree_arg "${3:-}")"
+        [[ -n "$want_tree" && -d "$want_tree" ]] || want_tree=""
+        [[ -n "$want_tree" || -n "$want_branch" ]] || exit 0
+        if [[ -n "$want_tree" ]]; then
+            want_tree="$(cd -P -- "$want_tree" && pwd -P)" || exit 1
+        fi
         listing="$(git -C "$worktree" worktree list --porcelain)" || exit 1
-        awk -v want="refs/heads/$want" '
-          /^worktree / { path = substr($0, 10); n++ }
-          $0 == "branch " want && n > 1 { print path; exit }
-        ' <<<"$listing"
+        # One "PATH<TAB>BRANCH" line per linked tree. Each tree is one
+        # paragraph of the porcelain listing, and the first is the main
+        # checkout, which is never a lane's.
+        linked="$(awk 'BEGIN { RS = ""; FS = "\n" }
+          NR > 1 {
+            p = ""; b = ""
+            for (i = 1; i <= NF; i++) {
+              if ($i ~ /^worktree /) p = substr($i, 10)
+              if ($i ~ /^branch refs\/heads\//) b = substr($i, 19)
+            }
+            print p "\t" b
+          }' <<<"$listing")" || exit 1
+        branch_hit=""
+        while IFS=$'\t' read -r path branch; do
+            [[ -n "$path" ]] || continue
+            if [[ -n "$want_tree" && -d "$path" ]]; then
+                resolved="$(cd -P -- "$path" && pwd -P)" || resolved=""
+                [[ "$resolved" != "$want_tree" ]] || { printf '%s\n' "$path"; exit 0; }
+            fi
+            [[ -n "$branch_hit" || -z "$want_branch" || "$branch" != "$want_branch" ]] || branch_hit="$path"
+        done <<<"$linked"
+        [[ -z "$branch_hit" ]] || printf '%s\n' "$branch_hit"
         ;;
     repo-root)
         worktree="$(worktree_arg "$@")"
@@ -130,10 +156,11 @@ Commands:
   issue-from-branch [worktree]    Print issue id matched from branch
   issue-canonical ID [pattern]    Print the canonical spelling of an id the
                                   pattern accepts in any case
-  branch-worktree BRANCH [worktree]
-                                  Print the linked worktree, never the main
-                                  checkout, that has BRANCH checked out; nothing
-                                  where none does
+  lane-worktree WORKTREE BRANCH [worktree]
+                                  Print the linked worktree a workflow state
+                                  names, never the main checkout: WORKTREE where
+                                  it is a linked worktree, else the one with
+                                  BRANCH checked out, else nothing
   repo-root [worktree]            Print git worktree root
   common-root [worktree]          Print main checkout root for worktree sets
   timestamp [compact|epoch|iso]   Print workflow timestamp (iso is UTC RFC-3339)
