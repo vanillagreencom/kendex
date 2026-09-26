@@ -381,7 +381,7 @@ Repeat cancellation, decline and deferred-cleanup bullets per entry; omit empty 
 **Mismatches**: [any § 7.5 discrepancy, or omit this line]
 </output_format>
 
-When M is 0 and N is not, say why the cancellation sweep found nothing; a `single` run says it ran none.
+When M is 0 and N is not, say why the cancellation sweep found nothing. A `single` run always says it ran no sweep, whatever N and M are.
 
 ## 9. Return State
 
