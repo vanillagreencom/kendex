@@ -213,9 +213,10 @@ else
 fi
 
 # Which harness gets a lane's mail by which mechanism is read out of the
-# `lane-mail-check` row of hooks/README.md, and a table answering for one
-# harness less would leave that harness's row skipped — a run that says nothing
-# about delivery and passes. Both reads happen before any row, so a stand-in
+# `lane-mail-check` row of hooks/README.md, and whether it refuses the question
+# tool out of the `lane-mail-halt` row. A table answering for one harness less
+# would leave that harness's row skipped — a run that says nothing about
+# delivery or the question tool and passes. Both reads happen before any row, so a stand-in
 # checkout holding only the script and the two files they read reaches them and
 # the real checkout is never edited. The control is that same tree unmutated,
 # which gets past both reads to the row table.
@@ -253,6 +254,8 @@ plant() { # FILE SED-SCRIPT — an edit that has to change the file
 stand_case "the committed table and hook reach the rows" 1 -
 plant "$STAND_TABLE" 's/^| `lane-mail-check` |/| `lane-mail-checked` |/'
 stand_case "a table with no lane-mail-check row is refused" 2 "mail-delivery=$STAND_TABLE"
+plant "$STAND_TABLE" 's/^| `lane-mail-halt` |/| `lane-mail-halted` |/'
+stand_case "a table with no lane-mail-halt row is refused" 2 "mail-delivery=$STAND_TABLE"
 plant "$STAND_TABLE" 's/^| Hook | claude |/| Hook | claudius |/'
 stand_case "a table with no column for a harness is refused" 2 "mail-delivery=$STAND_TABLE"
 mv -- "$STAND_TABLE" "$STAND_TABLE.away"
@@ -327,26 +330,26 @@ printf 'SMOKE-MAIL-DELIVERED\n'
 [ "$STANDIN_ECHO" = 0 ] || printf '%s\n' "$announcement"
 STANDIN
 chmod +x "$ROWS_BIN/claude"
-wake_run() { # SMOKE ECHO — sets WAKE_ROW to the claude mail-wake row that run printed
+stand_row() { # QUESTION SMOKE ENV=VAL — sets STAND_ROW to the claude row of QUESTION that run printed
   rm -rf -- "${TMP:?}/rows-dir"
   mkdir -p "$TMP/rows-dir"
-  (cd "$ROWS_REPO" && PATH="$ROWS_BIN:$PATH" CLAUDE_CONFIG_DIR="$ROWS_CFG" STANDIN_ECHO="$2" \
-    "$BASH" "$1" --only claude --dir "$TMP/rows-dir" >"$TMP/wake-out" 2>&1) || :
-  WAKE_ROW="$(awk '$1 == "claude" && $2 == "mail-wake" { print; exit }' "$TMP/wake-out")"
+  (cd "$ROWS_REPO" && PATH="$ROWS_BIN:$PATH" CLAUDE_CONFIG_DIR="$ROWS_CFG" env "$3" \
+    "$BASH" "$2" --only claude --dir "$TMP/rows-dir" >"$TMP/stand-row-out" 2>&1) || :
+  STAND_ROW="$(awk -v q="$1" '$1 == "claude" && $2 == q { print; exit }' "$TMP/stand-row-out")"
 }
-wake_case() { # LABEL SMOKE ECHO RESULT CLAUSE — CLAUSE is the text only that verdict's branch prints
-  wake_run "$2" "$3"
-  if [ "$(awk '{ print $3 }' <<<"$WAKE_ROW")" = "$4" ] && grep -qF -- "$5" <<<"$WAKE_ROW"; then
+verdict_case() { # LABEL QUESTION SMOKE ENV=VAL RESULT CLAUSE — CLAUSE is the text only that verdict's branch prints
+  stand_row "$2" "$3" "$4"
+  if [ "$(awk '{ print $3 }' <<<"$STAND_ROW")" = "$5" ] && grep -qF -- "$6" <<<"$STAND_ROW"; then
     ok "$1"
   else
-    bad "$1" "want $4 with '$5', got: ${WAKE_ROW:--}"
+    bad "$1" "want $5 with '$6', got: ${STAND_ROW:--}"
   fi
 }
 ANNOUNCED_CLAUSE="'lane-mail: mail=SMOKE-2 new=1'"
-wake_case "a lane its monitor woke, that read the directive and repeated the announcement, passes" \
-  "$SMOKE" 1 pass "delivery=monitor:"
-wake_case "a lane that moved the cursor and answered with no announcement fails on it" \
-  "$SMOKE" 0 fail "$ANNOUNCED_CLAUSE"
+verdict_case "a lane its monitor woke, that read the directive and repeated the announcement, passes" \
+  mail-wake "$SMOKE" STANDIN_ECHO=1 pass "delivery=monitor:"
+verdict_case "a lane that moved the cursor and answered with no announcement fails on it" \
+  mail-wake "$SMOKE" STANDIN_ECHO=0 fail "$ANNOUNCED_CLAUSE"
 
 # The controls run a copy of the script in the stand-in tree, which reaches
 # lane-mail through its own skills directory, with one guard changed.
@@ -354,12 +357,33 @@ ln -s -- "$REPO/skills" "$STAND/skills"
 STAND_SMOKE="$STAND/tools/harness-smoke"
 cp "$STAND_SMOKE" "$STAND_SMOKE.intact"
 plant "$STAND_SMOKE" 's/^WAKE_ANNOUNCED="lane-mail: mail=\$WAKE_ITEM new=1"$/WAKE_ANNOUNCED="lane-mail: mail=$MAIL_ITEM new=1"/'
-wake_case "control: an announcement guard that misses the real announcement fails the monitored delivery" \
-  "$STAND_SMOKE" 1 fail "'lane-mail: mail=SMOKE-1 new=1'"
+verdict_case "control: an announcement guard that misses the real announcement fails the monitored delivery" \
+  mail-wake "$STAND_SMOKE" STANDIN_ECHO=1 fail "'lane-mail: mail=SMOKE-1 new=1'"
 plant "$STAND_SMOKE" '/! grep -qF -- "\$WAKE_ANNOUNCED"/s/^  elif /  elif false \&\& /'
-wake_case "control: with no announcement guard an answer with no announcement passes" \
-  "$STAND_SMOKE" 0 pass "delivery=monitor:"
+verdict_case "control: with no announcement guard an answer with no announcement passes" \
+  mail-wake "$STAND_SMOKE" STANDIN_ECHO=0 pass "delivery=monitor:"
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
+
+# A lane asked to call its question tool: the stand-in echoes the prompt, as a
+# harness that prints it does, which carries NO-QUESTION-TOOL mid-line, then
+# says STANDIN_SAYS on a line of its own when that is set. Only a whole line
+# is an answer, so the echo alone is a lane that never relayed a refusal.
+echo "=== the lane-question row reads only a whole-line answer ==="
+cat >"$ROWS_BIN/claude" <<'STANDIN'
+#!/usr/bin/env bash
+for prompt; do :; done
+case "$prompt" in "Ask me one question with your "*) ;; *) exit 0 ;; esac
+printf '%s\n' "$prompt"
+[ -z "$STANDIN_SAYS" ] || printf '%s\n' "$STANDIN_SAYS"
+STANDIN
+chmod +x "$ROWS_BIN/claude"
+while IFS='|' read -r label says result clause; do
+  verdict_case "$label" lane-question "$SMOKE" "STANDIN_SAYS=$says" "$result" "$clause"
+done <<'EOF'
+a relayed refusal on its own line passes|lane-mail-check: question-tool=AskUserQuestion|pass|refusal=question-tool:
+a whole-line NO-QUESTION-TOOL is unanswerable|NO-QUESTION-TOOL|unanswerable|said NO-QUESTION-TOOL:
+the echoed prompt alone fails: its NO-QUESTION-TOOL is mid-line||fail|refusal=none:
+EOF
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

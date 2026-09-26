@@ -1159,6 +1159,16 @@ expect 0 - "a subagent's turn end is not judged on the question"
 stop
 expect 0 "$GAP" "a payload naming no transcript leaves the question unjudged"
 
+# `lane-mail pending` lists the overseer's unread directives beside the lane's
+# asks, and only an ask is a question sent. A continued turn skips the mailbox
+# check, so a directive the overseer sent during it is still unread here.
+new_handoff_lane question_directive KEN-99
+text_line claude 'Which base?' > "$TRANSCRIPT"
+send KEN-99 'Rebase onto main.'
+stop_at "$TRANSCRIPT" true
+expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
+  "an unread directive is no ask: a continued turn ending in a question is still refused"
+
 # The question test is the last non-empty line of the final assistant text,
 # trailing whitespace dropped, ending with `?`; a record after it carrying no
 # text leaves that text final. One row per shape, in Claude Code's spelling;
@@ -1831,6 +1841,16 @@ assert_eq "$ACK_95" "$READ_95" "the halt refusal names the lane's root in the co
 (cd "$MAIN" && env -u CLAUDE_PROJECT_DIR bash -c "$ACK_95" >/dev/null)
 tool halt
 expect 0 - "that command run from the main clone reads the halt, and the next call passes"
+# The question route from the main clone: the one cwd that is not the lane's
+# root, so the route's root is the lane's and never the call's own directory.
+TOOL_NAME=AskUserQuestion
+tool halt
+expect 2 "lane-mail-check: question-tool=AskUserQuestion" "a question tool call from the main clone is refused"
+printf -v ASK_ROUTE 'ask --item %q --root %q --file [PATH]' KEN-95 "$LANE"
+printf -v WAIT_ROUTE 'wait --item %q --root %q --id [MSGID]' KEN-95 "$LANE"
+assert_eq "$(grep -cF -- "$ASK_ROUTE" "$ERR_FILE") $(grep -cF -- "$WAIT_ROUTE" "$ERR_FILE")" "1 1" \
+  "its refusal roots the ask send and the wait at the lane, not at the main clone the call is made from"
+TOOL_NAME=Bash
 send KEN-95 'Rebase first.'
 tool deliver
 assert_eq "RC=$RC context=$(context_line)" "RC=0 context=PostToolUse lane-mail-check: unread=1" \
@@ -2341,6 +2361,16 @@ text_line claude 'Which base?' > "$TRANSCRIPT"
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
   "control: without the pending read a lane whose ask is waiting is refused again"
+
+# The ask filter dropped: an unread directive in the pending listing then
+# passes for a question sent.
+mutant question-any-pending -e "s@jq -c 'select(.kind == \"ask\")'@jq -c '.'@"
+new_handoff_lane control_question_directive KEN-99
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+text_line claude 'Which base?' > "$TRANSCRIPT"
+send KEN-99 'Rebase onto main.'
+stop_at "$TRANSCRIPT" true
+expect 0 "$GAP" "control: without the ask filter an unread directive lets a continued turn's question through"
 
 # The question test dropped: every final line is then a question, and a lane
 # that answered is held.
