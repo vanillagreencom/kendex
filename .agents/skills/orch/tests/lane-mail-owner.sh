@@ -4,9 +4,10 @@
 # once under the lock, `events` reading both files, and `pending --to` and
 # `--due`. Each case builds an overseer checkout under TMP_ROOT and drives the
 # real script; the lane-side verbs are tests/lane-mail.sh. The must-fail
-# controls close the file, one per rule: the one resolution, the delivery id,
-# the attachment's confinement, the audience filter and the deadline filter,
-# each a copy of lane-mail with that rule removed.
+# controls close the file, one per rule, each a copy of lane-mail with that
+# rule removed: the one resolution, the delivery id, the attachment's
+# confinement, the audience and deadline filters, the cursor rule, the reply's
+# owner-ask read, the ask's deadline field and the box `events` stamps.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -103,6 +104,13 @@ lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
 OWNER_NOTE="$(field "$BOX/to-lane.jsonl" '.id')"
 owner_ask 'Which?' a,b
 ASK_TO_OWNER="$ASK"
+# A peer ask leaves the asker's own record in this mailbox with `to: peer`,
+# which resolve closes no more than it closes this overseer's own notice.
+REFUSALS="$LANE"
+new_repo peer
+LANE="$REFUSALS"; BOX="$LANE/tmp/lane-mail/overseer"
+lm peer ask --repo peer --file "$(text q 'Yours?')" --options yes,no
+PEER_ASK="${OUT#id=}"
 # ARGS|WANT (rc=first stderr line); F is the message file. A --ref answers an
 # owner note or an owner ask; a notice of this overseer's own is neither.
 F="$TMP_ROOT/q.txt"
@@ -133,6 +141,8 @@ resolve --item overseer --default|2=lane-mail: option-required=--id
 resolve --item overseer --id x|2=lane-mail: option-required=--text
 resolve --item overseer --id x --default --text $F|2=lane-mail: option-conflict=--text,--default
 resolve --item overseer --id 1790000000-1-1 --default|2=lane-mail: ask-unknown=1790000000-1-1
+resolve --item overseer --id $PEER_ASK --text $F|2=lane-mail: ask-unknown=$PEER_ASK
+resolve --item overseer --id $NOTE_TO_OWNER --text $F|2=lane-mail: ask-unknown=$NOTE_TO_OWNER
 drain --item overseer --after 0 --to owner|2=lane-mail: option-unknown=--to
 inbox --item overseer --due|2=lane-mail: option-unknown=--due
 ROWS
@@ -301,6 +311,18 @@ new_repo control_ref
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b
 LANE_MAIL_BIN="$MUTANT_DIR/ref-lane-only" lm notice --item overseer --to owner --file "$(text n 'Ruled.')" --ref "$ASK"
 assert_eq "$RC=$ERR" "2=lane-mail: ref-unknown=$ASK" "control: without the to-overseer read a reply naming an owner ask is refused"
+
+mutant no-deadline 's@, deadline: ((\$now + (\$wait | tonumber) \* 60) | todate)@@'
+new_repo control_deadline
+LANE_MAIL_BIN="$MUTANT_DIR/no-deadline" owner_ask 'Cut?' cut,keep cut 30
+assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '[has("wait"), has("deadline")] | map(tostring) | join(",")')" "0=true,false" \
+  "control: without the deadline clause an ask carries its wait and no deadline"
+
+mutant boxless 's@ + {box: "to-lane"}@@'
+new_repo control_box
+LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
+LANE_MAIL_BIN="$MUTANT_DIR/boxless" lm events --item overseer
+assert_eq "$RC=$(jq -r '.box // "none"' <<<"$OUT")" "0=none" "control: without the box field a to-lane envelope names no file"
 
 mutant attach-anywhere 's@\[ "\$dir" = "\$reports" \] || refuse attach-outside "\$ATTACH"@:@'
 new_repo control_attach
