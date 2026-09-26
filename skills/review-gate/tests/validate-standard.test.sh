@@ -186,6 +186,7 @@ no job ran on the pull request~~workflow-runs.json~.workflow_runs = []~standard-
 the CI job on the second page of a run's jobs~~jobs-7.json,jobs-7.page2.json~if . == null then {"jobs": [{"name": "CI"}]} else .jobs |= map(select(.name != "CI")) end~
 the CI run on the second page of runs~~jobs-7.json,workflow-runs.page2.json,jobs-10.json~if . == null then {"workflow_runs": [{"id": 10}], "jobs": [{"name": "CI"}]} else .jobs |= map(select(.name != "CI")) end~
 a head that did not come through the merge queue~~workflow-runs-merge-group.json~.workflow_runs = []~standard-ci-context=merge-group-unobserved:CI\;build\;lint-typecheck\;writer
+a head outside the queue after an older merge group that ran CI~~workflow-runs-merge-group.json,workflow-runs-merge-group-latest.json,workflow-runs-merge-group-f00d.json,jobs-11.json~if . == null then {"workflow_runs": [{"id": 11, "head_branch": "gh-readonly-queue/main/pr-10-f00d", "head_sha": "f00d"}], "jobs": [{"name": "CI"}]} else .workflow_runs = [] end~standard-ci-context=merge-group-unobserved:CI\;build\;lint-typecheck\;writer
 a merge group that ran no CI job~~jobs-9.json~.jobs |= map(select(.name != "CI"))~standard-ci-context=ci-context-missing:merge_group:build\;lint-typecheck
 a head no merged pull request produced~~commit-pulls.json~map(.merged_at = null)~standard-ci-context=no-associated-pull-request
 a head merged only into another branch~~commit-pulls.json~map(select(.base.ref != "main"))~standard-ci-context=no-associated-pull-request

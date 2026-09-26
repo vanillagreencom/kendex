@@ -9,9 +9,11 @@
 # org-ruleset-<id>.json through the organization endpoint and
 # ruleset-<id>.json through the repository one, an environment's secrets from
 # environment-secrets-<name>.json, and a workflow run's jobs from
-# jobs-<run id>.json, so each can carry its own answer. A runs read filtered
-# to event=merge_group is served from workflow-runs-merge-group.json, every
-# other runs read from workflow-runs.json. A
+# jobs-<run id>.json, so each can carry its own answer. A merge_group runs
+# read for a head is served from workflow-runs-merge-group-<sha>.json where
+# that exists and workflow-runs-merge-group.json otherwise, one naming no head
+# from workflow-runs-merge-group-latest.json; every other runs read from
+# workflow-runs.json. A
 # repos/OWNER/NAME/... read is served from the directory
 # repos/OWNER/NAME/ under the fixtures when that directory exists, so one
 # world can hold several repositories.
@@ -125,7 +127,16 @@ case "$url" in
     run="${url#*/actions/runs/}"
     name="jobs-${run%%/*}"
     ;;
-  *"/actions/runs?"*"event=merge_group"*) name=workflow-runs-merge-group ;;
+  *"/actions/runs?"*"event=merge_group"*)
+    name=workflow-runs-merge-group
+    case "$url" in
+      *"head_sha="*)
+        sha="${url#*head_sha=}"
+        [ ! -f "$GH_SHIM_FIXTURES/$name-${sha%%&*}.json" ] || name="$name-${sha%%&*}"
+        ;;
+      *) name="$name-latest" ;;
+    esac
+    ;;
   *"/actions/runs?"*) name=workflow-runs ;;
   *) printf 'gh-shim-error=request value=%q\n' "$url" >&2; exit 90 ;;
 esac
