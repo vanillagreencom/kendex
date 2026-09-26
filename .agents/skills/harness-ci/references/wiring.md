@@ -1,6 +1,6 @@
 # Wiring shapes
 
-Four shapes cover the repositories this package targets. Copy one, keep the repository's own job names and required contexts, and change nothing else. A repository under the organization ruleset, which requires one `CI` context beside `Review gate`, copies [the CI template](#the-ci-template) instead, which assembles shapes 3 and 4 under that name.
+Four shapes cover the repositories this package targets. Copy one, keep the repository's own job names and required contexts, and change nothing else. A repository under the organization ruleset, which requires one `CI` context beside `Review gate`, reports that context by one of the two routes in [§ The CI context](#the-ci-context).
 
 Every shape passes the event and the endpoints through `env:` rather than interpolating `${{ }}` into the shell — a workflow expression pasted into a command line is an injection surface.
 
@@ -262,6 +262,15 @@ The classify step can instead call the composite action kendex publishes, which 
 - **`--base` must name a commit the `subject` checkout holds**, which `fetch-depth: 0` gives. The classifier measures the range this call names, so nothing depends on what the runner thinks the default branch is called.
 
 **The class is never asserted by the change's author.** The script reads no label, branch name or pull request title, takes no flag that would carry one, and reads no configuration out of the tree it judges.
+
+## The CI context
+
+A repository under the organization ruleset reports one aggregate context named `CI` on `pull_request` and `merge_group`, green only when every job the repository runs is green. The ruleset that requires it is [adoption.md § Repo-side wiring](../../review-gate/references/adoption.md#repo-side-wiring). One of two routes gives the repository that context:
+
+- **The template.** Copy [the CI template](#the-ci-template) and move the repository's lanes into it.
+- **The repository's own workflow.** Keep the workflow and its job names. Add Shape 1's `changes` job and give every lane its condition, then add Shape 3's aggregate with `name: CI`, its `needs:` naming every job in the workflow and each gated lane in a `--skippable`. A lane in another workflow moves into this one, because a job waits only on jobs in its own workflow. An aggregate the repository already runs under another name takes the name `CI` rather than running beside a second one.
+
+review-gate's `validate-standard.sh` reports, in its `standard-ci-context` row, a repository whose most recently merged pull request ran no job named `CI` on its head, with the job names that did run there.
 
 ## The CI template
 

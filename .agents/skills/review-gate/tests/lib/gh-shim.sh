@@ -8,7 +8,8 @@
 # real gh filters each page. A ruleset read is served from
 # org-ruleset-<id>.json through the organization endpoint and
 # ruleset-<id>.json through the repository one, an environment's secrets from
-# environment-secrets-<name>.json, so each can carry its own answer. A
+# environment-secrets-<name>.json, and a workflow run's jobs from
+# jobs-<run id>.json, so each can carry its own answer. A
 # repos/OWNER/NAME/... read is served from the directory
 # repos/OWNER/NAME/ under the fixtures when that directory exists, so one
 # world can hold several repositories.
@@ -116,6 +117,12 @@ case "$url" in
     esac
     name=organization
     ;;
+  *"/pulls?"*) name=pulls ;;
+  *"/actions/runs/"*"/jobs"*)
+    run="${url#*/actions/runs/}"
+    name="jobs-${run%%/*}"
+    ;;
+  *"/actions/runs?"*) name=workflow-runs ;;
   *) printf 'gh-shim-error=request value=%q\n' "$url" >&2; exit 90 ;;
 esac
 if [ -n "$method" ] && [ "$method" != GET ]; then

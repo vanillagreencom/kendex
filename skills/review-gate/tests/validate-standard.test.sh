@@ -27,7 +27,8 @@ mkdir -p "$SKILL" "$BIN" "$BASE"
 cp -R "$SKILL_DIR/scripts" "$SKILL/scripts"
 cat >"$SKILL/standard.json" <<'JSON'
 {
-  "required_contexts": ["Review gate", "CI"],
+  "ci_context": "CI",
+  "gate_context": "Review gate",
   "app": "lanes-app",
   "environment": "kendex",
   "environment_secrets": ["APP_ID", "APP_KEY"]
@@ -72,6 +73,20 @@ printf '{"secrets": [{"name": "SHARED"}]}\n' >"$BASE/organization-secrets.json"
 printf '{"secrets": [{"name": "SHARED"}, {"name": "ELSEWHERE"}]}\n' >"$BASE/organization-actions-secrets.json"
 printf '{"secrets": [{"name": "NPM_TOKEN"}]}\n' >"$BASE/dependabot-secrets.json"
 printf '{"secrets": []}\n' >"$BASE/organization-dependabot-secrets.json"
+# The page lists the later update first and the later merge second, so a
+# read that takes the first merged pull request reads the older head.
+cat >"$BASE/pulls.json" <<'JSON'
+[
+  {"number": 12, "merged_at": null, "head": {"sha": "cccccccccccccccccccccccccccccccccccccccc"}},
+  {"number": 10, "merged_at": "2026-09-20T09:00:00Z", "head": {"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+  {"number": 11, "merged_at": "2026-09-21T09:00:00Z", "head": {"sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
+]
+JSON
+# The CI workflow's run carries the lanes and their aggregate; the second run
+# is another workflow's.
+printf '{"workflow_runs": [{"id": 7}, {"id": 8}]}\n' >"$BASE/workflow-runs.json"
+printf '{"jobs": [{"name": "lint-typecheck"}, {"name": "build"}, {"name": "CI"}]}\n' >"$BASE/jobs-7.json"
+printf '{"jobs": [{"name": "writer"}]}\n' >"$BASE/jobs-8.json"
 
 BASELINE='ok check=standard-ruleset-source value=Organization
 ok check=standard-merge-queue value=present
@@ -80,6 +95,7 @@ ok check=standard-conversation-resolution value=true
 ok check=standard-copilot-review value=present
 ok check=standard-bypass-actors value=0
 ok check=standard-classic-protection value=off
+ok check=standard-ci-context value=CI\;build\;lint-typecheck\;writer
 ok check=standard-app value=all
 ok check=standard-environment value=custom:branch:main
 ok check=standard-environment-secrets value=APP_ID\;APP_KEY
@@ -159,6 +175,14 @@ the branch unreadable~branch~~~standard-classic-protection=unreadable
 the app on selected repositories~~installations.json~.installations[1].repository_selection = "selected"~standard-app=selected
 the app not installed~~installations.json~.installations |= [.[0]]~standard-app=absent
 installations unreadable~installations~~~standard-app=unreadable
+lanes reporting their own names and no CI aggregate~~jobs-7.json~.jobs |= map(select(.name != "CI"))~standard-ci-context=build\;lint-typecheck\;writer
+an aggregate whose name only starts with CI~~jobs-7.json~.jobs |= map(if .name == "CI" then .name = "CI Required" else . end)~standard-ci-context=CI\ Required\;build\;lint-typecheck\;writer
+no job ran on the head~~workflow-runs.json~.workflow_runs = []~standard-ci-context=none
+no pull request merged~~pulls.json~map(.merged_at = null)~standard-ci-context=no-merged-pull-request
+a merged head that is not a sha~~pulls.json~.[2].head.sha = "main"~standard-ci-context=unreadable
+pull requests unreadable~pulls~~~standard-ci-context=unreadable
+workflow runs unreadable~workflow-runs~~~standard-ci-context=unreadable
+a run's jobs unreadable~jobs-8~~~standard-ci-context=unreadable
 the environment deploys from every branch~~environments.json~.environments[1].deployment_branch_policy = null~standard-environment=unrestricted
 the environment deploys from protected branches~~environments.json~.environments[1].deployment_branch_policy = {"protected_branches": true, "custom_branch_policies": false}~standard-environment=protected-branches
 the environment deploys from a second branch~~branch-policies.json~.branch_policies += [{"name": "dev", "type": "branch"}]~standard-environment=custom:branch:main\,branch:dev
@@ -217,6 +241,17 @@ else
   bad "a failed secret read keeps its cause after later reads succeed" "$RAW"
 fi
 
+echo "=== the CI context is read on the latest merge ==="
+dir="$TMP/case-latest-merge"
+cp -R "$BASE" "$dir"
+run "$dir" ""
+if grep -qxF 'repos/acme/widgets/actions/runs?head_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&per_page=100' "$dir/.urls.log" &&
+  ! grep -qF 'head_sha=aaaa' "$dir/.urls.log"; then
+  ok "the runs read names the head of the pull request merged last"
+else
+  bad "the runs read names the head of the pull request merged last" "$(cat "$dir/.urls.log")"
+fi
+
 echo "=== the check could not run ==="
 # name ~ shim failure ~ manifest replacement (empty keeps the test's) ~ argument ~ first error line
 while IFS='~' read -r name fail manifest arg key; do
@@ -236,8 +271,9 @@ while IFS='~' read -r name fail manifest arg key; do
   fi
 done <<'ROWS'
 the repository unreadable~repository~~~review-gate-error=repository-read
-a manifest without an app~~{"required_contexts": ["CI"], "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
-a manifest with no contexts~~{"required_contexts": [], "app": "a", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
+a manifest without an app~~{"ci_context": "CI", "gate_context": "Review gate", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
+a manifest without a CI context~~{"gate_context": "Review gate", "app": "a", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
+a manifest whose two contexts are one~~{"ci_context": "CI", "gate_context": "CI", "app": "a", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
 an argument~~~--repo~review-gate-error=unknown-arguments
 ROWS
 

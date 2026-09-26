@@ -48,7 +48,7 @@ The rail carries one change from a consumer pull request to the default branch, 
 | Which jobs read the verdict | the repository | copied once from `skills/harness-ci/references/wiring.md` | KEN-1596 |
 | The gate engine and its predicate | kendex, `skills/review-gate/scripts/` | `kendex refresh` | KEN-1638 |
 | The gate writer workflow | kendex ships a template; the copy is the repository's | copied verbatim at adoption; re-installed by `validate-workflow.sh --adopt`, run in the consumer after `kendex refresh` | none |
-| The `CI` required-context name | kendex, the same in every repository | the job name in `skills/harness-ci/templates/ci.yml`, copied once | KEN-1778 |
+| The `CI` required-context name | kendex, the same in every repository | the aggregate job's name: `skills/harness-ci/references/wiring.md` § The CI context | KEN-1778 |
 | Which contexts are required, the rulesets, the merge queue | the repository's own rulesets today; at KEN-1778, the end state, organization rulesets that target every repository and carry no standing bypass actor | set in GitHub, never rendered; at KEN-1778 set once at the organization level | KEN-1778 |
 | `REVIEW_GATE_*` values | the repository | `kendex.settings.toml` | KEN-1638 |
 | The merge route: the lane arms auto-merge with the lanes app's installation token | kendex, `skills/orch/workflows/merge-pr.md` | `kendex refresh` | KEN-1777 |

@@ -4,7 +4,7 @@
 #
 # READ-ONLY: every GitHub call below is a GET. It answers whether the
 # repository's GitHub-side settings match the organization standard. The
-# standard's values (required contexts, app, environment, secret names)
+# standard's values (the CI and gate contexts, app, environment, secret names)
 # live in ../standard.json; the rows that hold no value (organization
 # source, merge queue, thread resolution, Copilot review, no classic
 # protection, zero bypass actors) are fixed here. Its subject is GitHub
@@ -46,7 +46,7 @@ One verdict line per row, VALUE being what was observed:
                                     from an organization ruleset
   standard-merge-queue              the default branch requires the merge queue
   standard-required-contexts        the required contexts are exactly the
-                                    standard's required_contexts
+                                    standard's ci_context and gate_context
   standard-conversation-resolution  a pull-request rule requires every review
                                     thread resolved
   standard-copilot-review           a rule requests a Copilot review
@@ -54,6 +54,11 @@ One verdict line per row, VALUE being what was observed:
                                     actor
   standard-classic-protection       the default branch has no classic branch
                                     protection beside the rulesets
+  standard-ci-context               an Actions job named the standard's
+                                    ci_context ran on the head of the pull
+                                    request merged into the default branch
+                                    most recently; VALUE lists the job names
+                                    that ran there
   standard-app                      the standard's app is installed on every
                                     repository of the organization
   standard-environment              the standard's environment exists and
@@ -83,6 +88,9 @@ as a match. The permission each row's reads need, as GitHub App permissions:
                                     organization's for an organization
                                     ruleset); a withheld field is unreadable
   classic-protection                the branch: Contents read
+  ci-context                        the closed pull requests: Pull requests
+                                    read; the workflow runs on their head
+                                    and each run's jobs: Actions read
   app                               the organization's installations:
                                     organization Administration read
   environment                       environments and branch policies:
@@ -273,6 +281,64 @@ if read_api "repos/$FULL/branches/$BRANCH_URI" '.protection.enabled | if type ==
 else
   bad standard-classic-protection unreadable "the branch $BRANCH could not be read: $READ_ERR"
 fi
+
+# ---------------------------------------------------------- CI context ---
+
+# The ruleset requires the CI context by name, so a repository whose jobs
+# carry other names never merges. An Actions job reports its name as a check
+# context on the commit it ran for, and the head of the pull request merged
+# most recently is where the repository's CI last reported. Commit statuses
+# are not read: the CI context is an Actions job, and statuses need a
+# permission the standard's app does not hold. The pull requests come from
+# one page ordered by update, and a merge updates its pull request, so the
+# latest merge is on it.
+ci_context_row() {
+  local merged number sha runs run_id names="" emitted
+  if ! read_api "repos/$FULL/pulls?state=closed&base=$BRANCH_URI&sort=updated&direction=desc&per_page=100" \
+    'map(select(.merged_at != null)) | if length == 0 then "" else (max_by(.merged_at) | "\(.number) \(.head.sha)") end'; then
+    bad standard-ci-context unreadable "the pull requests closed into $BRANCH could not be read: $READ_ERR"
+    return 0
+  fi
+  merged="$READ_OUT"
+  if [ -z "$merged" ]; then
+    bad standard-ci-context no-merged-pull-request "no pull request has merged into $BRANCH, so no commit shows which contexts $FULL's CI reports"
+    return 0
+  fi
+  number="${merged%% *}"
+  sha="${merged#* }"
+  case "$sha" in
+    "" | *[!0123456789abcdef]*)
+      bad standard-ci-context unreadable "the latest merged pull request's head is not a commit sha: $merged"
+      return 0
+      ;;
+  esac
+  if ! read_api "repos/$FULL/actions/runs?head_sha=$sha&per_page=100" '.workflow_runs[].id' --paginate; then
+    bad standard-ci-context unreadable "the workflow runs on $sha, the head of pull request #$number, could not be read: $READ_ERR"
+    return 0
+  fi
+  runs="$READ_OUT"
+  while IFS= read -r run_id; do
+    [ -n "$run_id" ] || continue
+    if ! read_api "repos/$FULL/actions/runs/$run_id/jobs?per_page=100" '.jobs[].name' --paginate; then
+      bad standard-ci-context unreadable "the jobs of workflow run $run_id on $sha could not be read: $READ_ERR"
+      return 0
+    fi
+    names="${names:+$names
+}$READ_OUT"
+  done <<EOF_RUNS
+$runs
+EOF_RUNS
+  emitted="$(printf '%s\n' "$names" | LC_ALL=C sort -u | sed '/^$/d' | paste -sd ';' -)" ||
+    die ci-context-names "$sha" "could not list the job names read for $sha"
+  if [ -z "$emitted" ]; then
+    bad standard-ci-context none "no Actions job ran on $sha, the head of pull request #$number, the latest merged into $BRANCH; the ruleset's $WANT_CI context never reports there"
+  elif grep -qxF -- "$WANT_CI" <<<"$names"; then
+    ok standard-ci-context "$emitted" "$FULL reported $WANT_CI on $sha, the head of pull request #$number"
+  else
+    bad standard-ci-context "$emitted" "$FULL reported no $WANT_CI job on $sha, the head of pull request #$number, the latest merged into $BRANCH, so the ruleset's required $WANT_CI context never reports and no pull request merges. Give the job that aggregates every lane the name $WANT_CI: .agents/skills/harness-ci/references/wiring.md § The CI context"
+  fi
+}
+ci_context_row
 
 # ------------------------------------------------------------- the app ---
 
