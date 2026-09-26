@@ -76,7 +76,7 @@ run_script() { # SCRIPT ARG...
   # suite also runs under dev-validate-run itself, which sets one. A row that
   # means to hand one in names it in INHERITED_CLASS.
   OUT="$(env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_BASE \
-    -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
+    -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS -u WORKTREE_DEFAULT_BRANCH \
     ${INHERITED_CLASS:+DEV_VALIDATE_CLASS=$INHERITED_CLASS} \
     PATH="${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
   RC=$?
@@ -122,7 +122,7 @@ MUTANT=""
 mutant() { # NAME OLD NEW
   local dir="$TMP_ROOT/$1" file="${MUTANT_FILE:-dev-validate-run}"
   mkdir -p "$dir/lib"
-  cp "$SCRIPTS_DIR/dev-validate-run" "$SCRIPTS_DIR/orch-env" "$dir/"
+  cp "$SCRIPTS_DIR/dev-validate-run" "$SCRIPTS_DIR/orch-env" "$SCRIPTS_DIR/resolve-base-branch" "$dir/"
   cp "$SCRIPTS_DIR/lib"/*.sh "$dir/lib/"
   chmod +x "$dir/dev-validate-run" "$dir/orch-env"
   assert_eq "$(grep -c -F -- "$2" "$dir/$file")" "1" "control $1 finds one line to mutate"
@@ -383,6 +383,68 @@ mutant mutant-range-reads-full '"$SCRIPT_DIR/orch-env" DEV_VALIDATE_RANGE_CMD ""
 run_script "$MUTANT" --worktree "$proj" --poll 1 --validate-mode range --base HEAD
 assert_eq "$(output_of "$OUT")" "full" \
   "control: with the range setting unread the range run logs the full battery" "$ERR"
+
+# --- A range base a rebase left off the branch ---------------------------------
+# A branch that forked from main, committed b1 (the round's recorded base, the
+# pre-rebase head), and was then rebased over the three commits main gained and
+# given the round's own commit r1. The range command prints the files the range
+# it was handed holds.
+orphan_commit() { # DIR FILE — one commit adding FILE
+  : > "$1/$2"
+  git -C "$1" add -- "$2"
+  git -C "$1" -c user.name=t -c user.email=t@example.com commit -q -m "$2"
+}
+proj_orphan="$(make_proj proj-orphan "echo full" 20)"
+printf 'DEV_VALIDATE_RANGE_CMD = "git diff --name-only $DEV_VALIDATE_BASE HEAD"\n' >> "$proj_orphan/kendex.settings.toml"
+git -C "$proj_orphan" config gc.auto 0
+git -C "$proj_orphan" config maintenance.auto false
+git -C "$proj_orphan" checkout -q -b main
+orphan_commit "$proj_orphan" base
+git -C "$proj_orphan" checkout -q -b ken-1
+orphan_commit "$proj_orphan" b1
+pre_rebase="$(git -C "$proj_orphan" rev-parse HEAD)"
+git -C "$proj_orphan" checkout -q main
+for f in m1 m2 m3; do orphan_commit "$proj_orphan" "$f"; done
+git -C "$proj_orphan" update-ref refs/remotes/origin/main main
+git -C "$proj_orphan" checkout -q ken-1
+git -C "$proj_orphan" -c user.name=t -c user.email=t@example.com rebase -q main
+rebased_b1="$(git -C "$proj_orphan" rev-parse HEAD)"
+orphan_commit "$proj_orphan" r1
+fork="$(git -C "$proj_orphan" rev-parse main)"
+
+# Control: a run that keeps the orphaned base spans the commits main gained,
+# and the first row's range and record redden on it.
+mutant mutant-keep-orphaned-base 'base_sha="$(git merge-base HEAD "refs/remotes/origin/$base_branch")"' 'base_sha="$orphaned_sha"'
+# label|script|--base|files the range holds|validate-base|validate-base-orphaned
+ORPHAN_ROWS=(
+  "a base the rebase left off the branch validates the branch's own diff|$RUN|$pre_rebase|b1 r1 |$fork|$pre_rebase"
+  "a base still on the branch validates from that base, as before|$RUN|$rebased_b1|r1 |$rebased_b1|"
+  "control: a run that keeps the orphaned base spans main's commits|$MUTANT|$pre_rebase|m1 m2 m3 r1 |$pre_rebase|$pre_rebase"
+)
+for row in "${ORPHAN_ROWS[@]}"; do
+  IFS='|' read -r label script base want_range want_base want_orphaned <<<"$row"
+  run_script "$script" --worktree "$proj_orphan" --poll 1 --validate-mode range --base "$base"
+  orphan_dir="$(run_dir_of "$OUT")"
+  assert_eq "$RC $(output_of "$OUT" | tr '\n' ' ')" "0 $want_range" "$label" "$ERR"
+  assert_eq "$(start_line "$orphan_dir" validate-base)|$(start_line "$orphan_dir" validate-base-orphaned)" \
+    "$want_base|$want_orphaned" "$label — the start record names the base that ran and the orphaned one" "$ERR"
+done
+
+# An orphaned base with no origin base branch to take a fork point from is
+# refused, never run over the orphaned range.
+git -C "$proj_orphan" update-ref -d refs/remotes/origin/main
+run_script "$RUN" --worktree "$proj_orphan" --poll 1 --validate-mode range --base "$pre_rebase"
+assert_eq "$RC $(grep '^dev-validate-run: ' <<<"$ERR")" "2 dev-validate-run: orphaned-base-unresolved base=$pre_rebase" \
+  "an orphaned base with no origin base branch is refused, naming the base"
+
+# A project with no range command runs its whole battery on an orphaned base,
+# which needs no fork point, so a missing origin base branch refuses nothing.
+proj_orphan_full="$TMP_ROOT/proj-orphan-full"
+cp -R "$proj_orphan" "$proj_orphan_full"
+grep -v '^DEV_VALIDATE_RANGE_CMD' "$proj_orphan/kendex.settings.toml" > "$proj_orphan_full/kendex.settings.toml"
+run_script "$RUN" --worktree "$proj_orphan_full" --poll 1 --validate-mode range --base "$pre_rebase"
+assert_eq "$RC $(output_of "$OUT") $(start_line "$(run_dir_of "$OUT")" validate-mode)" "0 full full" \
+  "an orphaned base in a project with no range command runs the whole battery" "$ERR"
 
 # --- A command that ignores SIGTERM is still ended inside the bound -----------
 # Fixtures in this repository trap TERM by construction. The bound's TERM ends
