@@ -39,9 +39,15 @@ name: Skill Tests
 # macOS runner forks and spawns at less than half the Linux pace, so it
 # reaches five minutes on work Linux runs in two, and it carries the looser
 # ceiling: TEN MINUTES, past which a shard is split even where its Linux leg
-# sits inside five. After the splits below, and by the per-roster seconds
-# measured on run 35467869265, the slowest macOS shell leg is `guards-commit`
-# at 499s of suite time and the slowest Linux one is `orch-terminal` at 324s.
+# sits inside five. Run 36195213656, the first with every split below in
+# place, has legs past their figure on both runners, and none is split here.
+# The orch legs among them ran their suites one at a time;
+# skills/orch/tests/run-all.sh now runs a shard's suites `nproc` at a time
+# and prints one `suite=<name> seconds=<n>` line per suite, so their next CI
+# run re-measures them, and the comment above the orch shard steps holds
+# run 36195213656's figures. `guards-tools` on both runners, `worktree` on
+# macOS, and `linear` and `rest` on Linux do not run through run-all.sh and
+# stand past their figure pending a split.
 #
 # A SPLIT GOES AS FAR AS ITS SEAM REACHES and no further — a name partition, a
 # scans-against-suites cut, a package boundary with its slowest tail moved
@@ -49,9 +55,12 @@ name: Skill Tests
 # which is what keeps a shard set a partition. Where the next cut would have
 # to name individual suites one at a time, the shard stands at what the seam
 # left and answers to its own step bound instead, and the paragraph above its
-# steps says so. Two legs are that case. `orch-terminal` is 306-324s on Linux
-# with open-terminal-lane alone 130-150s of it. The macOS `kendex-cli` cargo
-# leg splits by `--test` target into `render-lint` and `rest`; `rest` lands
+# steps says so. Two legs are that case. `orch-terminal` is the first: its
+# largest suite, open-terminal-lane, is on run-all.sh's ALONE list and runs
+# after the others, so the leg's wall time is that suite's seconds plus the
+# pooled rest, and the orch shard comment gives the figures. The macOS
+# `kendex-cli` cargo leg splits by `--test` target into `render-lint` and
+# `rest`; `rest` lands
 # at 235-267s, inside the ceiling, while `render-lint` is a target whose cost
 # is one expensive test, so no target seam reaches inside it and it stands at
 # 801-1012s, ABOVE the ceiling, until that test is itself divided.
@@ -566,20 +575,33 @@ jobs:
       # selectors are exactly the rejectors `orch-rest` adds, so a selector
       # added to one without the other leaves a suite in both shards or in
       # neither; tools/tests/orch-shard-partition.test.sh reads both filters
-      # out of this file and reds on either. Measured on that cancelled Linux
-      # run: orch-terminal ~306s over 8 files (open-terminal-lane 130s,
-      # open-terminal-claude-handoff 88s, open-terminal-owned-skip 49s),
-      # orch-oversee ~258s over 7 (oversee_succeed 86s, oversee_watch_mail
-      # 61s, oversee_watch 46s, oversee_watch_lanes 39s), orch-rest ~343s
-      # over 62 (approval_wait 40s, lanes 32s, lane-host-ssh 28s, queue_wait
-      # 25s, and 58 files under 25s each). That undivided `orch-rest` ran
+      # out of this file and reds on either. An undivided `orch-rest` ran
       # 567-675s on the macOS leg, so it is now two: `orch-state` takes the
-      # lane, workflow-state and dev/review round-artifact suites, 30 files
-      # holding lanes and lane-host-ssh, and `orch-rest` keeps 34 holding
-      # approval_wait and queue_wait. Splitting orch-terminal in turn would
-      # have to name individual suites rather than a name prefix, since
-      # open-terminal-lane alone is 130s of its 306s, so that is where a name
-      # partition stops.
+      # lane, workflow-state and dev/review round-artifact suites, and
+      # `orch-rest` keeps the rest.
+      #
+      # Measured suite by suite, one at a time, on the Linux leg of run
+      # 36195213656. A shard's figure is the sum of its suites' seconds, read
+      # from the log timestamps; the step time the jobs API reports is within
+      # a second of it. orch-terminal 597s over 10 files (open-terminal-lane
+      # 229s, open-terminal-record 124s, open-terminal-claude-handoff 90s,
+      # open-terminal-owned-skip 76s), orch-oversee 516s over 13
+      # (oversee_watch_lifecycle 128s, oversee_watch 118s,
+      # oversee_watch_overseer 81s, oversee_watch_lanes 62s),
+      # orch-oversee-succeed 462s over 4 (oversee_succeed 191s,
+      # oversee_watch_mail 163s, oversee_succeed_watch 79s, oversee_report
+      # 29s), orch-state 702s over 42 (dev_validate_run 206s, lanes 189s,
+      # lane-host-ssh 50s, lane_close 49s) and orch-rest 221s over 37
+      # (approval_wait 51s, round_recover 37s, queue_wait 26s). The macOS
+      # legs of that run spent 781s, 1087s, 597s, 1021s and 339s of step
+      # time on the same five. run-all.sh runs those suites `nproc` at a
+      # time, save the ones on its ALONE list, which run one at a time after
+      # the rest, and prints each one's `suite=<name> seconds=<n>` line, so a
+      # step's wall time is now below its sum and its log carries these
+      # figures fresh. Splitting
+      # orch-terminal in turn would have to name individual suites rather
+      # than a name prefix, since open-terminal-lane alone is 229s of its
+      # 597s, so that is where a name partition stops.
       #
       # `orch-oversee` then ran 14m37s-14m47s on main's own orch pull requests
       # and was cancelled at 15m16s on PR #2902, inside
@@ -591,9 +613,11 @@ jobs:
       # (oversee_succeed, oversee_succeed_watch, oversee_watch_mail,
       # oversee_report: 463s on that run), and `orch-oversee` keeps every
       # other oversee suite by rejecting exactly those names, the watch loop,
-      # its lanes, receipts and usage limits, about 550s. Its rejectors are the
-      # other shard's selectors, so a new oversee suite lands in `orch-oversee`
-      # and never in neither.
+      # its lanes, receipts and usage limits. Its rejectors are the other
+      # shard's selectors, so a new oversee suite lands in `orch-oversee` and
+      # never in neither. Run 36195213656, PR #2902's own run with the split
+      # in place, confirms it: both shards finished inside each leg's job
+      # ceiling, by the per-suite paragraph above.
       - name: tmux for pane delivery tests
         if: matrix.shard == 'orch-terminal' || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-oversee-succeed' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'node'
         run: |
@@ -621,8 +645,8 @@ jobs:
         if: matrix.shard == 'orch-state'
         run: bash skills/orch/tests/run-all.sh lane workflow-state dev review '!open-terminal' '!oversee'
 
-      # The negation of the three above, so this shard needs no roster of its
-      # own and no suite can fall between the four.
+      # The negation of every selector above, so this shard needs no roster
+      # of its own and no suite can fall between the five.
       - name: orch suites — every suite the shards above do not run
         if: matrix.shard == 'orch-rest'
         run: bash skills/orch/tests/run-all.sh '!open-terminal' '!oversee' '!lane' '!workflow-state' '!dev' '!review'
