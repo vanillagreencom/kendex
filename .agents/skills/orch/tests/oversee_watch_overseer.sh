@@ -567,13 +567,13 @@ assert_eq "notes=$(grep -c '^EVENT owner-note' <<<"$OUT" || true) cursor=$(mail_
 overseer_case record_first_start idle
 printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
 printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
-run TMUX_PANE="$PANE" -- --max-loops 1 --handoff tmp/handoffs/FLEET.md -- --verbose --model fable
+run TMUX_PANE="$PANE" -- --max-loops 1 --handoff tmp/handoffs/FLEET.md --harness codex -- --verbose --model fable
 assert_eq "server=$(recorded server) pane=$(recorded pane) window=$(recorded window)" "server=7000 pane=$PANE window=$WINDOW" \
   "the first start records the tmux server, pane and window" "$ERR"
 assert_eq "$(recorded launch_line)" "$LINE" "and the line a successor of it would run" "$ERR"
 assert_eq "$(grep -- '^--print-launch-line' "$STUB_DIR/succeed.args")" \
-  "--print-launch-line --handoff tmp/handoffs/FLEET.md -- --verbose --model fable" \
-  "the handoff path and the overseer's own flags reach the builder" "$ERR"
+  "--print-launch-line --handoff tmp/handoffs/FLEET.md --harness codex -- --verbose --model fable" \
+  "the handoff path, the harness a node pane cannot name, and the overseer's own flags reach the builder" "$ERR"
 assert_eq "$(succeed_calls --print-launch-line)" "1" \
   "and the line is built once, not once per pass" "$ERR"
 

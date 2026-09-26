@@ -19,6 +19,7 @@
 OVERSEER_LAUNCH_ARGS=()
 overseer_launch_args() {
   OVERSEER_LAUNCH_ARGS=(--handoff "$HANDOFF")
+  [[ -z "$OVERSEER_HARNESS" ]] || OVERSEER_LAUNCH_ARGS+=(--harness "$OVERSEER_HARNESS")
   [[ ${#OVERSEER_FLAGS[@]} -eq 0 ]] || OVERSEER_LAUNCH_ARGS+=(-- "${OVERSEER_FLAGS[@]}")
 }
 
