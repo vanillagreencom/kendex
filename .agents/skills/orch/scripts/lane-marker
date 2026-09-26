@@ -21,7 +21,7 @@ message() { # KEY VALUE [CAUSE]
     printf 'lane-marker: %s=%s\n' "$1" "$2"
     case "$1" in
       args)
-        echo "lane-marker takes the lane's worktree and the item it was launched for, or --marker-path with a common git directory and that item, and nothing else"
+        echo "lane-marker takes WORKTREE ITEM with an optional resumed HARNESS SESSION pair, or --marker-path COMMON_GIT_DIR ITEM"
         ;;
       item)
         echo "the item is not spelled in the alphabet a work item is spelled in, ASCII letters, digits, dot, underscore and hyphen, and is never . or ..; refusing rather than composing a path it does not name"
@@ -34,6 +34,9 @@ message() { # KEY VALUE [CAUSE]
         ;;
       write)
         echo "$2 could not be written, so this lane has no launch record and would be handed no mail:"
+        ;;
+      read)
+        echo "$2 could not be read to identify its session, so the launch cannot decide whether to keep its context reading:"
         ;;
     esac
     [ -z "${3:-}" ] || printf '%s\n' "$3"
@@ -48,6 +51,7 @@ refuse() { # KEY VALUE [CAUSE]
 usage() {
   cat << 'EOF'
 Usage: lane-marker WORKTREE ITEM
+       lane-marker WORKTREE ITEM HARNESS SESSION
        lane-marker --marker-path COMMON_GIT_DIR ITEM
 
 Write a lane's launch record, both halves of it:
@@ -61,9 +65,10 @@ handed its mail and never judged on its handoff marks. A root the first half
 binds with no `tmp/lane-mail` directory is refused as `lane-mail-check:
 mailbox-missing=<path>` before every tool call and at every turn end until
 that directory stands. Each launcher calls this: `open-terminal` locally,
-`lane-host create` over its transport. The mailbox loses the context reading a
-session before this launch recorded in it, `context.json`, so a new session is
-never reported at its predecessor's handoff mark. `--marker-path` writes
+`lane-host create` over its transport. The mailbox keeps `context.json` only
+when HARNESS and the non-empty SESSION match its recorded identity. A launch
+without that matching resumed identity clears the predecessor reading.
+`--marker-path` writes
 nothing, so a launcher using it empties that record over its own transport.
 
 `--marker-path` prints the marker half's path under the common git directory
@@ -81,7 +86,7 @@ and the refusal names the one that broke it.
 Exit status:
   0  both halves stand, or `--marker-path` printed the path
   2  a component is not what it names, the item is outside the alphabet a work
-     item is spelled in, a git read failed, or a write failed; the cause is one
+     item is spelled in, a git or context read failed, or a write failed; the cause is one
      `lane-marker: <key>=<value>` line on stderr with the English under it
 EOF
 }
@@ -115,9 +120,11 @@ if [ "${1:-}" = --marker-path ]; then
   exit 0
 fi
 
-[ "$#" -eq 2 ] || refuse args "$#"
+{ [ "$#" -eq 2 ] || [ "$#" -eq 4 ]; } || refuse args "$#"
 WT="$1"
 ITEM="$2"
+HARNESS="${3:-}"
+SESSION="${4:-}"
 check_item "$ITEM"
 
 COMMON_RC=0
@@ -137,13 +144,26 @@ done
 
 MADE=$(mkdir -p -- "$COMMON/lane-mail" "$BOX" 2>&1) || refuse write "$BOX" "$MADE"
 
-# A launch starts a session with nothing in its context, so the reading the
-# session before it recorded in this mailbox is not this one's: left there, it
-# would report a fresh lane at its predecessor's mark until its first turn end.
+# A resumed session keeps its context. The launcher supplies the selected
+# identity; a fresh or different session cannot inherit this reading.
 # The file's name is lib/lane-context.sh's, the one owner of that record.
 # shellcheck source=lib/lane-context.sh
 source "${BASH_SOURCE[0]%/*}/lib/lane-context.sh"
-CLEARED=$(rm -f -- "${BOX:?}/$LANE_CONTEXT_RECORD" 2>&1) || refuse write "$BOX/$LANE_CONTEXT_RECORD" "$CLEARED"
+KEEP_CONTEXT=false
+if [ -n "$SESSION" ] && [ -f "$BOX/$LANE_CONTEXT_RECORD" ] && [ ! -L "$BOX/$LANE_CONTEXT_RECORD" ]; then
+  MATCH_RC=0
+  MATCH=$(jq -e --arg harness "$HARNESS" --arg session "$SESSION" \
+    'type == "object" and .harness == $harness and .session_id == $session' \
+    "$BOX/$LANE_CONTEXT_RECORD" 2>&1) || MATCH_RC=$?
+  case "$MATCH_RC" in
+    0) KEEP_CONTEXT=true ;;
+    1) ;;
+    *) refuse read "$BOX/$LANE_CONTEXT_RECORD" "$MATCH" ;;
+  esac
+fi
+if [ "$KEEP_CONTEXT" != true ]; then
+  CLEARED=$(rm -f -- "${BOX:?}/$LANE_CONTEXT_RECORD" 2>&1) || refuse write "$BOX/$LANE_CONTEXT_RECORD" "$CLEARED"
+fi
 
 # The root lands through a temporary file renamed over the marker, so the write
 # never follows a link a peer put there between the check above and here.

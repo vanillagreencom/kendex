@@ -1549,18 +1549,18 @@ host_lane_marker() { # ITEM ROOT
 
 # The launch record lane-mail-check reads: the marker under the common git
 # directory and the lane's own mailbox beside it. `lane-marker` owns both and
-# the containment over them, which is lane-mail's own, so this hands it the
-# tree and the item and nothing else. Its own keyed line goes to the stderr
+# the containment over them, which is lane-mail's own. The selected resumed
+# identity lets it retain that session's context reading. Its keyed line goes to the stderr
 # this inherits and does not redirect; the call site adds the line the reason
 # set here names, which carries none of that script's text. A hosted lane's
 # record is on its provider's disk and out of that script's reach, so the
 # branch is here, in the one owner of the record, and not at the call site,
 # which records every lane the same way.
-write_lane_marker() { # WT ITEM REMOTE_ROOT
+write_lane_marker() { # WT ITEM REMOTE_ROOT HARNESS SESSION
   LANE_MARKER_REASON=marker-failed
   LANE_MARKER_FIELDS=("path=$1")
   [[ -z "${3:-}" ]] || { host_lane_marker "$2" "$3"; return; }
-  "$SCRIPT_DIR/lane-marker" "$1" "$2"
+  "$SCRIPT_DIR/lane-marker" "$1" "$2" "$4" "$5"
 }
 
 # The tmux session every lane window of this invocation opens in, resolved on
@@ -1896,8 +1896,7 @@ open_wake() { # DIR TITLE CMD
 # caller checks it, which suspends errexit for this whole body, so every
 # substitution here is checked explicitly.
 launch_finish() {
-  # A launch makes a lane: lane-mail-check reads a mailbox only where this marker binds the item to the root its own session opens in. That root is the tree just made, or the provider's path for a hosted lane, which is what the empty remote root tells apart.
-  if [[ "$WAKE" != true && -d "$wt" ]] && ! write_lane_marker "$wt" "$wt_id" "$remote_path"; then ot_message "$LANE_MARKER_REASON" "item=$item" ${LANE_MARKER_FIELDS[@]+"${LANE_MARKER_FIELDS[@]}"} >&2; return 1; fi
+  local context_session
   session_file=""
   wake_args=()
   if [[ "$WAKE" == true ]]; then wake_args=("$wt"); fi
@@ -1913,6 +1912,17 @@ launch_finish() {
   record_session=""
   if [[ -n "$session_file" ]] && ! record_session="$(session_id_of "$HARNESS" "$session_file")"; then
     ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1
+  fi
+  if [[ "$WAKE" != true && -d "$wt" ]]; then
+    context_session="$record_session"
+    # Pi resumes by file path, but its hook records the session header's id.
+    if [[ "$HARNESS" == pi && -n "$session_file" ]]; then
+      context_session="$(jq -Rrn 'first(inputs|fromjson?|select(.type=="session")|.id)//empty' "$session_file")" \
+        || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1; }
+    fi
+    if ! write_lane_marker "$wt" "$wt_id" "$remote_path" "$HARNESS" "$context_session"; then
+      ot_message "$LANE_MARKER_REASON" "item=$item" ${LANE_MARKER_FIELDS[@]+"${LANE_MARKER_FIELDS[@]}"} >&2; return 1
+    fi
   fi
   # A wake starts a new process on that session, which takes none of the
   # settings the first one was launched with. Its compaction follows the model

@@ -21,6 +21,8 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 # A worktree to mark. LINKED_TMP=1 makes its tmp a symlink to a directory
 # outside it, the shape skills/worktree's WORKTREE_SYMLINKS produces.
@@ -65,6 +67,58 @@ assert_eq "$(mark KEN-1)" "rc=0 first=- marker=root box=made" \
   "a launch writes the marker with the lane's root and opens the lane's own mailbox"
 assert_eq "$(mark KEN-1)" "rc=0 first=- marker=root box=made" \
   "a second launch of the same item leaves both standing"
+
+# The hook writes the harness and session id together. The launcher supplies
+# the selected resumed identity, or no identity for a fresh session.
+while IFS='|' read -r name recorded_harness recorded_session harness session retained; do
+  new_tree "context-$name"
+  CONTEXT="$WT/tmp/lane-mail/KEN-1/context.json"
+  mkdir -p "${CONTEXT%/*}"
+  RECORD="$(jq -nc --arg h "$recorded_harness" --arg s "$recorded_session" \
+    '{harness:$h,session_id:(if $s=="" then null else $s end),tokens:400000,window:1000000}')"
+  printf '%s\n' "$RECORD" > "$CONTEXT"
+  ARGS=()
+  [[ -z "$harness" ]] || ARGS=("$harness" "$session")
+  RC=0
+  ERR="$(env -i HOME="$TMP_ROOT" PATH="$PATH" "$LANE_MARKER" "$WT" KEN-1 ${ARGS[@]+"${ARGS[@]}"} 2>&1)" || RC=$?
+  ACTUAL=absent EXPECTED=absent
+  [[ ! -f "$CONTEXT" ]] || ACTUAL="$(cat "$CONTEXT")"
+  [[ "$retained" != yes ]] || EXPECTED="$RECORD"
+  assert_eq "rc=$RC error=$ERR context=$ACTUAL" "rc=0 error= context=$EXPECTED" \
+    "$name: only the selected resumed identity retains the exact reading"
+done <<'ROWS'
+matching|codex|selected|codex|selected|yes
+different-session|codex|previous|codex|selected|no
+different-harness|claude|selected|codex|selected|no
+fresh|codex|selected|||no
+missing-recorded-session|codex||codex|selected|no
+missing-selected-session|codex|selected|codex||no
+ROWS
+
+# A damaged reading is a failed identity read. It must not become a mismatch
+# that removes the only recorded context before the launch can be judged.
+new_tree context-unreadable
+CONTEXT="$WT/tmp/lane-mail/KEN-1/context.json"
+mkdir -p "${CONTEXT%/*}"
+printf '{broken\n' > "$CONTEXT"
+RC=0
+ERR="$(env -i HOME="$TMP_ROOT" PATH="$PATH" "$LANE_MARKER" "$WT" KEN-1 codex selected 2>&1)" || RC=$?
+assert_eq "rc=$RC first=${ERR%%$'\n'*} context=$(cat "$CONTEXT") marker=$([[ -e "$WT/.git/lane-mail/ken-1" ]] && echo present || echo absent)" \
+  "rc=2 first=lane-marker: read=$CONTEXT context={broken marker=absent" \
+  "an unreadable identity leaves the context intact and reports the read failure"
+
+# Keep the comparison text but remove its mismatch result. A different
+# session then inherits the predecessor's context, which the table rejects.
+CONTEXT_CONTROL="$(mutant_scripts context-control lane-marker)" || exit 1
+mutate_file "$CONTEXT_CONTROL/lane-marker" '    1) ;;' '    1) KEEP_CONTEXT=true ;;'
+new_tree context-control
+CONTEXT="$WT/tmp/lane-mail/KEN-1/context.json"
+mkdir -p "${CONTEXT%/*}"
+printf '%s\n' '{"harness":"codex","session_id":"previous","tokens":400000}' > "$CONTEXT"
+RC=0
+ERR="$(env -i HOME="$TMP_ROOT" PATH="$PATH" "$CONTEXT_CONTROL/lane-marker" "$WT" KEN-1 codex selected 2>&1)" || RC=$?
+assert_eq "rc=$RC error=$ERR context=$([[ -f "$CONTEXT" ]] && echo present || echo absent)" \
+  "rc=0 error= context=present" "control: accepting a mismatched identity keeps the predecessor reading"
 
 # The shape the two hand-rolled copies refused and lane-mail has always
 # allowed: a worktree whose tmp is a link to scratch outside the tree.

@@ -332,7 +332,8 @@ cp "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl" "$SESSION_HOME/
 mkdir -p "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents"
 printf '%s\n' '{"type":"user","message":{"content":"start cc-1"}}' >"$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents/child-agent.jsonl"; touch -t 203001010000 "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents/child-agent.jsonl"
 printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CODEX444\"}}" '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"repository instructions"}]}}' '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-1"}}' >"$SESSION_HOME/.selected-codex/sessions/2026/session.jsonl"
-printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-1"}}' >"$SESSION_HOME/.pi/agent/sessions/repo/session.jsonl"
+PI_SESSION_ID=55555555-5555-5555-5555-555555555555
+printf '%s\n' "{\"type\":\"session\",\"id\":\"$PI_SESSION_ID\"}" '{"type":"message","message":{"role":"user","content":"start CC-1"}}' >"$SESSION_HOME/.pi/agent/sessions/repo/session.jsonl"
 EXIT_DIR="$TMP_ROOT/resume-exit"; EXISTS_DIR="$TMP_ROOT/resume-exists"; mkdir -p "$EXIT_DIR" "$EXISTS_DIR"; touch "$EXISTS_DIR/CC-1"
 #
 # The resumed command carries the continuation line itself on every harness, so
@@ -358,12 +359,36 @@ occurrences() { local rest="${1//"$2"/}"; printf '%s\n' "$(( (${#1} - ${#rest}) 
 # since Codex starts no turn for a monitor's output.
 RELAUNCH_LINE="Resume the orch workflow for CC-1 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 first and act on every directive it prints"
 REARM=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item CC-1 through your harness background wake"
-for row in "claude|claude -n CC-1 $CLAUDE_QUESTION_OFF --resume $CLAUDE222|$REARM" "codex|codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $CODEX444|" "pi|pi $PI_QUESTION_OFF --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl|$REARM"; do
-  IFS='|' read -r harness expected rearm <<<"$row"
+CONTEXT_FILE="$TMP_ROOT/wt/CC-1/tmp/lane-mail/CC-1/context.json"
+mkdir -p "${CONTEXT_FILE%/*}"
+for row in "claude|claude -n CC-1 $CLAUDE_QUESTION_OFF --resume $CLAUDE222|$REARM|$CLAUDE222" "codex|codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $CODEX444||$CODEX444" "pi|pi $PI_QUESTION_OFF --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl|$REARM|$PI_SESSION_ID"; do
+  IFS='|' read -r harness expected rearm context_session <<<"$row"
+  context_record="$(jq -nc --arg h "$harness" --arg s "$context_session" '{harness:$h,session_id:$s,tokens:400000,window:1000000}')"
+  printf '%s\n' "$context_record" > "$CONTEXT_FILE"
   capture="$TMP_ROOT/resume-$harness.cmd"
   OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "resume-$harness" -- --relaunch --harness "$harness" CC-1
   for _ in {1..10000}; do [[ -f "$capture" ]] && break; done; assert_contains "$(cat "$capture")" "$expected '$RELAUNCH_LINE$rearm.'" "$harness relaunch resumes with the continuation line"
+  assert_eq "rc=$RC context=$(cat "$CONTEXT_FILE" 2>/dev/null || true)" "rc=0 context=$context_record" \
+    "$harness relaunch keeps the selected session's exact context reading"
+  for lifetime in different fresh; do
+    context_args=(--relaunch)
+    prior_session=other-session
+    if [[ "$lifetime" == fresh ]]; then context_args=(); prior_session="$context_session"; fi
+    jq -nc --arg h "$harness" --arg s "$prior_session" '{harness:$h,session_id:$s,tokens:400000,window:1000000}' > "$CONTEXT_FILE"
+    LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "context-$harness-$lifetime" -- ${context_args[@]+"${context_args[@]}"} --harness "$harness" CC-1
+    assert_eq "rc=$RC context=$([[ -e "$CONTEXT_FILE" ]] && echo present || echo absent)" "rc=0 context=absent" \
+      "$harness clears the predecessor reading for a $lifetime session"
+  done
 done
+# Without forwarding the selected identity, the marker clears a resumed
+# session's reading. Keep the real session lookup and marker in this control.
+CONTEXT_CONTROL="$REPO/scripts/open-terminal-context-control"
+cp "$OT" "$CONTEXT_CONTROL"
+mutate_file "$CONTEXT_CONTROL" '"$remote_path" "$HARNESS" "$context_session"' '"$remote_path" "$HARNESS" ""'
+jq -nc --arg s "$CLAUDE222" '{harness:"claude",session_id:$s,tokens:400000,window:1000000}' > "$CONTEXT_FILE"
+OT="$CONTEXT_CONTROL" LANES_HOME="$SESSION_HOME" run_case context-control -- --relaunch --harness claude CC-1
+assert_eq "rc=$RC context=$([[ -e "$CONTEXT_FILE" ]] && echo present || echo absent)" "rc=0 context=absent" \
+  "control: dropping the selected identity loses the matching resumed reading"
 OT_CAPTURE="$TMP_ROOT/fresh.cmd" LANES_HOME="$SESSION_HOME" run_case fresh -- --relaunch --harness codex CC-9
 for _ in {1..10000}; do [[ -f "$TMP_ROOT/fresh.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/fresh.cmd")" "execute the orch start workflow for CC-9" "a relaunch with no matching session uses the fresh brief"
 assert_not_contains "$(cat "$TMP_ROOT/fresh.cmd")" "Resume the orch workflow" "the fresh brief carries no continuation line to repeat itself"
