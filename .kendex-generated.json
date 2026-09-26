@@ -846,7 +846,6 @@
   ".agents/skills/orch/scripts/lib/lane-model.sh",
   ".agents/skills/orch/scripts/lib/lane-relaunch.sh",
   ".agents/skills/orch/scripts/lib/lane-state.sh",
-  ".agents/skills/orch/scripts/lib/mail-pass.sh",
   ".agents/skills/orch/scripts/lib/mailbox-append.sh",
   ".agents/skills/orch/scripts/lib/open-terminal-text.sh",
   ".agents/skills/orch/scripts/lib/oversee-watch-text.sh",
