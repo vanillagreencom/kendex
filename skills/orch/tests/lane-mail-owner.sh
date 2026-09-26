@@ -4,11 +4,11 @@
 # once under the lock, `events` reading both files, and `pending --to` and
 # `--due`. Each case builds an overseer checkout under TMP_ROOT and drives the
 # real script; the lane-side verbs are tests/lane-mail.sh. The must-fail
-# controls close the file, one per rule, each a copy of lane-mail with that
-# rule removed: the one resolution, the delivery id, the attachment's
-# confinement, the audience and deadline filters, the cursor rule, the reply's
-# owner-ask read, the owner-note class a reply names, the ask's deadline field
-# and the box `events` stamps.
+# controls close the file, one per rule, each a copy of lane-mail or the
+# library it sources with that rule removed: the one resolution, the delivery
+# id, the attachment's confinement, the audience and deadline filters, the
+# cursor rule, the reply's owner-ask read, the owner-note class a reply names,
+# the ask's deadline field and the box `events` stamps.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -325,7 +325,8 @@ lm notice --item overseer --to owner --file "$(text n 'Ruled.')" --ref "$ASK"
 assert_eq "$RC=$ERR" "2=lane-mail: ref-unknown=$ASK" "control: without the to-overseer read a reply naming an owner ask is refused"
 
 # The owner-note class lives in lib/mailbox-append.sh, which a mutant of
-# lane-mail cannot reach: the copied library calls every line an owner note.
+# lane-mail cannot reach: the copied library files a peer's line as an owner
+# note.
 new_repo control_ref_class
 CLASS_REPO="$LANE"
 new_repo control_ref_peer

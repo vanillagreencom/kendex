@@ -289,6 +289,17 @@ out="$(run_watch -- --max-loops 1 2>"$err")"
 assert_eq "$(head -1 <<<"$out")" "EVENT owner-note ${ids#* }" \
   "an answer carrying owner and no by is never reported, and the note after it is" "$err"
 
+# The class's absent-`from` arm: a directive naming no sender is the owner's,
+# never a peer's with an empty repository.
+new_case mail_owner_note_fromless
+mail_reset overseer
+jq -nc '{id: "1-1-fromless", kind: "directive", at: "2026-01-01T00:00:00Z", text: "Hold KEN-9."}' \
+  >> "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
+err="$TMP_ROOT/fromless"
+out="$(run_watch -- --max-loops 1 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "EVENT owner-note 1-1-fromless" \
+  "a directive with no from is reported as an owner note" "$err"
+
 # owner_ask TEXT RECOMMEND WAIT — an owner ask from the overseer's own
 # checkout, its id in ASK.
 owner_ask() {
