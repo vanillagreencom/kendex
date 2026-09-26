@@ -188,9 +188,9 @@ run_write --worktree "$WT" --issue issue-1230 --round-id 2-2 --item 1 "next roun
 assert_eq "$([[ "$OUT" != "$FIRST" && -f "$FIRST" && -f "$OUT" ]] && echo yes || echo no)" "yes" "a new round id writes a distinct record without clobbering the prior round's"
 
 echo "=== --items-file: the harness-safe route for shell-hostile item text ==="
-# Real review blocks carry backticks and quotes, which Codex rejects in a
-# command even single-quoted, so the orchestrator writes the JSON with the
-# harness file tool and passes one path. Each row writes its own file and
+# Real review blocks carry backticks and quotes, and a finding's text never
+# crosses argv (../SKILL.md § Harness-Safe Shell), so the orchestrator writes the
+# JSON with the harness file tool and passes one path. Each row writes its own file and
 # takes its own round id.
 ITEMS="$TMP_ROOT/items.json"
 # `label^items json^round^expect` (the separator is ^ so item text and jq

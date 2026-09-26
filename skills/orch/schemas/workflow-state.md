@@ -231,7 +231,7 @@ The watch log is rotated, not pruned. Each watch launch writes into a fresh run 
 
 All operations use `.agents/skills/orch/scripts/workflow-state` (run with `help` for full usage).
 
-To target a state directory from a worktree, pass the global `--state-dir <path>` flag before the subcommand — it takes precedence over `ORCH_STATE_DIR`. Prefer it over an `ORCH_STATE_DIR=… workflow-state …` env prefix (rejected under Codex `approval=never`). `ORCH_STATE_DIR` stays supported as an environment fallback.
+To target a state directory from a worktree, pass the global `--state-dir <path>` flag before the subcommand — it takes precedence over `ORCH_STATE_DIR`. Prefer it over an `ORCH_STATE_DIR=… workflow-state …` env prefix, which orch's shell rule does not take ([../SKILL.md](../SKILL.md) § Harness-Safe Shell). `ORCH_STATE_DIR` stays supported as an environment fallback.
 
 `set` values are JSON only when they look like it — a `{`/`[` prefix, exactly `null`/`true`/`false`, or all digits. `append` is narrower: only a `{`/`[` prefix is spliced as JSON (a bare `null`/`true`/`123` appends as a string). Every other value is stored as a raw string: pass plain strings bare — `set PROJ-123 pr_review.mode review`, never `'"review"'`. `update` always takes a jq expression.
 

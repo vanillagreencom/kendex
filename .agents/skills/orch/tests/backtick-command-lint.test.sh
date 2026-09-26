@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# Under Codex `approval=never` a literal backtick anywhere in a command is
-# classified as command substitution and rejected before it runs — a read-only
-# `rg`/`grep` over Markdown inline code included, and even inside double
-# quotes, where the substitution would be real. The canonical rule
-# (references/codex-runtime.md) writes the pattern with the regex hex escape
-# \x60 in single quotes, in regex mode. So no fenced ```bash/```sh command line
-# in the orch or dev docs may carry a literal backtick. Prose and inline-code
-# backticks are untouched: Markdown is full of them, and only a fenced command
-# line is an agent-runnable shape.
+# orch runs one simple command per tool call (../SKILL.md § Harness-Safe Shell),
+# and its docs write a backtick in a fenced command's search pattern with the
+# regex hex escape \x60 in single quotes, in regex mode
+# (../references/codex-runtime.md § Substitutes). So no fenced ```bash/```sh
+# command line in the orch or dev docs may carry a literal backtick. Prose
+# and inline-code backticks are untouched: Markdown is full of them, and only a
+# fenced command line is an agent-runnable shape.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"

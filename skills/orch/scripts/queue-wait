@@ -152,8 +152,8 @@ a final result on stdout: a stable verdict line with English below, or a JSON
 object with --json, so callers can route merged vs ejected vs disarmed vs still-queued
 deterministically (kendex#819); the exceptions are the usage errors, which
 exit 2 and print to stderr, exit 4, and exit 5. It is the merge-pr queue watch as one
-simple command (accepted by the Codex approval=never classifier where a
-sleep-poll loop is rejected) and the only place WAS_QUEUED lives: whether ANY
+simple command, the form orch's shell rule asks for in place of a
+sleep-poll loop, and the only place WAS_QUEUED lives: whether ANY
 earlier poll observed the PR queued or armed. Separate tool calls carry no
 memory, so an orchestrator re-entering per poll cannot tell "ejected from the
 queue" from "never entered it"; this script can. It is NOT a CI waiter:

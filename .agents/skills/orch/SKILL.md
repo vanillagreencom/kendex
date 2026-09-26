@@ -151,7 +151,7 @@ Delegation, agent lifecycle, round closure, coordination, and lane output: [refe
 
 #### Harness-Safe Shell
 
-**Run exactly one simple command per tool call with explicit arguments.** Rejected shapes and substitutes: [references/codex-runtime.md](references/codex-runtime.md). Normalize delegated command lists the same way before they enter a prompt: an env-assignment prefix becomes a precondition check plus the bare command. A finding's location, description, or cause never crosses argv: write it to a file with the harness file-write tool and bind the path (`--items-file`, `append-file`, jq `--slurpfile`).
+**Run exactly one simple command per tool call with explicit arguments.** Substitutes, and what each Codex launch mode refuses: [references/codex-runtime.md](references/codex-runtime.md). Normalize delegated command lists the same way before they enter a prompt: an env-assignment prefix becomes a precondition check plus the bare command. A finding's location, description, or cause never crosses argv: write it to a file with the harness file-write tool and bind the path (`--items-file`, `append-file`, jq `--slurpfile`).
 
 #### Tracker Resolution
 

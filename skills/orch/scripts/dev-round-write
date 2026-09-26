@@ -25,11 +25,11 @@
 # One --item per delegated review item: N is the item's delegated number (the
 # `#[N]` in the formatted items — a set, so duplicates are rejected; canonical
 # integer, no leading zeros), TEXT is that item's full formatted block verbatim
-# (multi-line is fine; plain text, no backticks, so the command stays
-# classifier-safe under Codex approval=never), and REACH names the shipped
-# producer, user action, or fixture that reaches the finding. When the item
-# text is shell-hostile — real review blocks routinely carry backticks, which
-# strict harness classifiers reject even quoted — the orchestrator instead
+# (multi-line is fine; plain text, no backticks, so the command stays one
+# simple command), and REACH names the shipped producer, user action, or
+# fixture that reaches the finding. When the item text is shell-hostile —
+# real review blocks routinely carry backticks and quotes, and a finding's
+# text never crosses argv (../SKILL.md § Harness-Safe Shell) — the orchestrator instead
 # builds a JSON array of {n, text, reach} with its harness file-write tool and
 # passes it as --items-file (mutually exclusive with --item; same
 # n/text/reach rules, extra element keys are dropped on normalization).
