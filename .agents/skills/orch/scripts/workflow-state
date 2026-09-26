@@ -509,7 +509,7 @@ cmd_head_budget() {
         take)
             [[ $# -eq 4 ]] || { state_message budget-fields "$@" >&2; return 2; }
             local head="$4" limit report
-            limit=$(cap_limit "$setting") || return 1
+            limit=$(cap_limit "$setting" "$issue_id") || return 1
             report=$(cmd_update_report "$issue_id" '
               (.post_pr_budgets[$field] // null) as $saved |
               (if $head_keyed and (($saved.head // "") != $head) then 0 else ($saved.attempts // 0) end) as $used |

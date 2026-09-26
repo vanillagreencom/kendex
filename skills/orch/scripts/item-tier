@@ -20,7 +20,9 @@
 #   --base, --head   the item's branch, classified by harness-ci's
 #                    change-class through lib/change-class.sh: the script CI
 #                    runs, so a lane and the gate judging it cannot disagree.
-#                    render and trivial count as micro.
+#                    render and trivial count as micro. A class the
+#                    classifier's `measured=` marker says it did not measure
+#                    answers standard as classifier-unmeasured.
 #
 # At least one of --production, --floor and --base is required. --repo
 # (default .) is the checkout the classifier and the review gate read. No
@@ -31,14 +33,17 @@
 # `review-policy --check-config` answers it. With the policy inactive, the
 # review gate absent, or its answer unreadable, a micro run is certain to
 # escape at micro.md § Escape condition 7, so the item takes small and the
-# cause names why.
+# cause names why. This script reads only whether the policy is active, never
+# its micro row: an active policy that still requires review for micro
+# answers micro here, and that run escapes at condition 7.
 #
 # A ceiling list or a classifier this script cannot read answers standard,
 # naming the cause, never a narrower class.
 #
 # stdout is one line, `tier=CLASS brief=VERB cause=CAUSE[ DETAIL]`. VERB is
 # the orch command the launch brief runs: micro, small, or start for
-# standard. CAUSE names the input that decided. Exit 2 is a usage error and
+# standard. CAUSE names the input that decided. Exit 2 is a usage or
+# environment failure, its `item-tier-error: cause=` line naming which, and
 # prints no tier.
 set -euo pipefail
 
@@ -162,11 +167,25 @@ if [ -n "$base" ]; then
     die scratch-unavailable "a scratch file for the classifier's log could not be created"
   trap 'rm -f -- "$class_err"' EXIT
   if change_class_read "$base" "$head" "$repo" "$class_err"; then
-    case "$CHANGE_CLASS" in
-      render | trivial | micro) consider micro "classifier class=$CHANGE_CLASS" ;;
-      small | standard) consider "$CHANGE_CLASS" "classifier class=$CHANGE_CLASS" ;;
-      *) consider standard "classifier-unreadable class=$CHANGE_CLASS" ;;
-    esac
+    # standard is both a verdict and the classifier's fallback; only the
+    # `measured=` marker on its `class:` line tells them apart.
+    # A log that cannot be read carries no marker, which is unmeasured.
+    measured=""
+    unmeasured=""
+    if ! measured="$(sed -n 's/^class: class=[a-z]* measured=\([a-z]*\).*/\1/p' "$class_err" | tail -1)" ||
+      [ "$measured" != true ]; then
+      cat -- "$class_err" >&2
+      if ! unmeasured="$(sed -n 's/^class: class=[a-z]* measured=[a-z]* //p' "$class_err" | tail -1)"; then
+        unmeasured=""
+      fi
+      consider standard "classifier-unmeasured detail=${unmeasured:-no-marker}"
+    else
+      case "$CHANGE_CLASS" in
+        render | trivial | micro) consider micro "classifier class=$CHANGE_CLASS" ;;
+        small | standard) consider "$CHANGE_CLASS" "classifier class=$CHANGE_CLASS" ;;
+        *) consider standard "classifier-unreadable class=$CHANGE_CLASS" ;;
+      esac
+    fi
   else
     cat -- "$class_err" >&2
     consider standard "classifier-failed detail=$CHANGE_CLASS_CAUSE"

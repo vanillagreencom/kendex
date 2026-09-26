@@ -56,6 +56,12 @@ The full session from inside a worktree: implement → review → submit → fin
 
    `[BRANCH]` is the `git-context branch` output.
 
+   Record the tier this session runs at. It lifts any bound a `small` run left in the state; [small.md](small.md) § 1 records `small` after this step:
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] tier standard
+   ```
+
 5. **Gate on base freshness.** Every route into a worktree lands here — fresh or reused:
 
    ```bash
