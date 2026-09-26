@@ -379,6 +379,13 @@ if [ "$#" -gt 0 ]; then
 fi
 
 . "$script_dir/lib/settings.sh"
+# The merge route's waiver rule, which the thread term below reads. A rule
+# that will not load is no verdict: without it a lapsed waiver would read as
+# a resolved thread.
+if [ ! -r "$script_dir/lib/waiver.sh" ] || ! . "$script_dir/lib/waiver.sh" || [ -z "${RG_WAIVER_JQ:-}" ]; then
+  rg_message error predicate-waiver-load "$script_dir/lib/waiver.sh" "::error::review-predicate: the merge-route waiver rule could not be loaded — no verdict" >&2
+  exit 2
+fi
 
 # `|| exit 2`: rg_setting fails on a present-but-unparseable assignment, and
 # that is a configuration error (no verdict), never an empty value.
@@ -398,19 +405,10 @@ ERROR_PATTERNS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS "encounter
 THREADS_MODE="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 2
 
 # ONE parse of each packed trust list, here at the single place the settings
-# are resolved. Every consumer below works from these: the configuration
-# checks, the evidence reads, and the awaiting label. Entry boundaries and
-# emptiness are decided once, so a value like " ; , " cannot be an open trust
-# model to one reader and a named list to another.
-# pipefail inside, checked at every caller: this decides the trust boundary,
-# and the last stage of the pipeline returns 0 on empty output. A `tr` that
-# died would leave a RESTRICTED list looking empty, which the evidence read
-# takes as "any non-author" — the trust list would open the gate it was set
-# to close. A broken pipeline is exit 2 with no verdict instead.
-rg_pack() { # RAW SEPARATORS -> one trimmed, non-empty entry per line
-  ( set -o pipefail
-    printf '%s\n' "$1" | tr "$2" '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;/^$/d' )
-}
+# are resolved, with lib/settings.sh's rg_pack. Every consumer below works from
+# these: the configuration checks, the evidence reads, and the awaiting label.
+# Entry boundaries and emptiness are decided once, so a value like " ; , "
+# cannot be an open trust model to one reader and a named list to another.
 # Called OUTSIDE the substitutions below: an `exit` inside `$( )` would leave
 # the subshell and the predicate would carry on with the empty value.
 rg_pack_failed() { # KEY
@@ -2016,6 +2014,10 @@ unresolved=0
 untracked=0
 unreasoned=0
 if [ "$THREADS_MODE" = "enforce" ]; then
+# A resolved thread whose merge-route waiver has lapsed counts as unresolved:
+# lib/waiver.sh owns when that is. The term is reached only where the class
+# policy answered other than none, so a waiver still standing here has lapsed.
+#
 # A thread's disposition is its newest non-bot comment that is a Fixed in
 # <sha>/Declined: reply or carries a track-word; other comments never move
 # it. It is an untracked claim when it is not such a reply and names no
@@ -2023,7 +2025,7 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # claimant is also the resolver. Bot comments are exempt (they quote each
 # other); a missing comments field reads as none. A thread past 50 comments
 # cannot be fully read in this page shape, so it fails closed as malformed.
-t_threads_page_jq="$REPLY_FORMS_DEF"'  def replies: [(.comments.nodes // [])[] | select((.author.__typename // "User") != "Bot") | (.body // "")];
+t_threads_page_jq="$REPLY_FORMS_DEF$RG_WAIVER_JQ"'  def replies: [(.comments.nodes // [])[] | select((.author.__typename // "User") != "Bot") | (.body // "")];
   def standing: [replies[] | select(disposition or tracking)] | last // empty;
   def standing_decline: [replies[] | select(disposition or declined or tracking)] | last // empty;
   if ((.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) != "boolean")
@@ -2031,7 +2033,7 @@ t_threads_page_jq="$REPLY_FORMS_DEF"'  def replies: [(.comments.nodes // [])[] |
   then "malformed"
   elif ([.data.repository.pullRequest.reviewThreads.nodes[] | select(.comments.pageInfo.hasNextPage == true)] | length) > 0
   then "malformed"
-  else ([.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length | tostring)
+  else ([.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false or (rg_waiver_view | rg_waiver_stands))] | length | tostring)
     + " " + ([.data.repository.pullRequest.reviewThreads.nodes[]
         | standing
         | select(disposition | not)
@@ -2053,7 +2055,7 @@ while :; do
   fi
   if [ -n "$t_cursor" ]; then
     t_page="$(gh_read graphql \
-      -f query='query($owner:String!,$repo:String!,$number:Int!,$after:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:50){pageInfo{hasNextPage} nodes{body author{__typename}}}}}}}}' \
+      -f query='query($owner:String!,$repo:String!,$number:Int!,$after:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved resolvedBy{login} comments(first:50){pageInfo{hasNextPage} nodes{body author{login __typename}}}}}}}}' \
       -F owner="${GH_REPO%/*}" -F repo="${GH_REPO#*/}" -F number="$PR_NUMBER" -f after="$t_cursor" \
       --jq "$t_threads_page_jq")" || {
       rg_message error predicate-thread-read "$PR_NUMBER" "::error::could not read review threads" >&2
@@ -2061,7 +2063,7 @@ while :; do
     }
   else
     t_page="$(gh_read graphql \
-      -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:50){pageInfo{hasNextPage} nodes{body author{__typename}}}}}}}}' \
+      -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{isResolved resolvedBy{login} comments(first:50){pageInfo{hasNextPage} nodes{body author{login __typename}}}}}}}}' \
       -F owner="${GH_REPO%/*}" -F repo="${GH_REPO#*/}" -F number="$PR_NUMBER" \
       --jq "$t_threads_page_jq")" || {
       rg_message error predicate-thread-read "$PR_NUMBER" "::error::could not read review threads" >&2

@@ -97,6 +97,70 @@ for path in .coderabbit.yaml .pr_agent.toml best_practices.md REVIEW.md \
   [ -f "$repo/$path" ] && ok "wrote $path" || bad "wrote $path"
 done
 
+# The package's default surfaces reach every route a repo surface reaches,
+# though the canonical TOML declares none of them. The expected set is read
+# off the spec copy, floored at one and required to hold `docs-plans`, so an
+# emptied section fails as a broken fixture rather than passing as no work.
+if python3 -B - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PY'; then
+from pathlib import Path
+import sys
+sys.path.insert(0, sys.argv[1] + "/scripts")
+from lib import spec, tree
+defaults = spec.load(tree.Worktree(sys.argv[1]), "SKILL.md", "schemas/renders.md").surfaces
+names = [d["name"] for d in defaults]
+assert "docs-plans" in names, f"the spec copy's default surfaces lost docs-plans: {names}"
+repo = Path(sys.argv[2])
+for d in defaults:
+    copilot = (repo / f".github/instructions/{d['name']}.instructions.md").read_text()
+    assert f'applyTo: "{",".join(d["globs"])}"' in copilot.split("---")[1], copilot
+    assert d["instructions"].strip().split("\n")[0] in copilot, copilot
+    assert (repo / f".macroscope/correctness/{d['name']}.md").is_file(), d["name"]
+    assert f"\n## {d['name']}\n" in (repo / "best_practices.md").read_text(), d["name"]
+    assert d["globs"][0] in (repo / ".coderabbit.yaml").read_text(), d["name"]
+PY
+  ok "every default surface renders on every surface route with no manifest entry"
+else
+  bad "every default surface renders on every surface route with no manifest entry"
+fi
+
+# A repo surface cannot take a default's name: the two would render to one
+# file, and only the later write would survive.
+taken="$(bi_new_repo default-name-taken)" || exit 1
+cat >>"$taken/kendex.toml" <<'TOML'
+
+[[bot-instructions.surface]]
+name = "docs-plans"
+globs = ["docs/**"]
+instructions = """
+A repo's own plan rules.
+"""
+TOML
+expect_clause toml-schema "renders in every repo" \
+  "a repo surface taking a default surface's name is refused" render --dry-run --repo "$taken"
+
+# A repo declaring no surface of its own still carries the default ones, so
+# the renders that turn on having any surface see them: Copilot's Path rules
+# pointer, and the largest surfaces a Qodo budget finding names.
+bare_surfaces="$(bi_new_repo no-repo-surface)" || exit 1
+python3 - "$bare_surfaces/kendex.toml" <<'PY' || bad "the no-surface fixture drops the repo surfaces"
+import sys
+path = sys.argv[1]
+s = open(path).read()
+cut = s.index("\n[[bot-instructions.surface]]")
+open(path, "w").write(s[:cut + 1])
+PY
+if bi_must_adopt --repo "$bare_surfaces" && bi_must render --repo "$bare_surfaces"; then
+  if grep -q '^## Path rules$' "$bare_surfaces/.github/copilot-instructions.md"; then
+    ok "copilot-instructions.md points at the path rules with only default surfaces"
+  else
+    bad "copilot-instructions.md points at the path rules with only default surfaces"
+  fi
+  printf '\n[bot-instructions.budgets]\nqodo_best_practices_lines = 1\n' >>"$bare_surfaces/kendex.toml"
+  expect_clause qodo-best-practices "Largest surfaces — docs-plans: 1" \
+    "a Qodo budget finding names the default surfaces when the repo declares none" \
+    render --dry-run --repo "$bare_surfaces"
+fi
+
 # One title. A consumer that lints every tracked markdown file rejects a
 # second level-one heading, and Copilot reads the levels below all the same.
 for f in .github/copilot-instructions.md .github/instructions/code-review.md; do

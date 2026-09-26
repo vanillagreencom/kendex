@@ -9,7 +9,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "2.2.1"
+  version: "2.3.0"
 tags: [review]
 repo-effects:
   summary: "Renders the enabled review-bot instruction files, the pointed code-review file and the owned Code Review Rules region in this repository."
@@ -62,7 +62,7 @@ Routing per block and surface: [schemas/renders.md](schemas/renders.md) § Doctr
 
 The effective manifest holds `[bot-instructions]`. Its child tables configure bots, repo context, cadence, exclusions, path instructions and doctrine overrides. The generator writes the enabled bots' native files. Table selection and precedence: [schemas/repo-toml.md](schemas/repo-toml.md).
 
-A `[[bot-instructions.surface]]` reaches Copilot, CodeRabbit and Macroscope, plus Qodo through `best_practices.md` when `[bot-instructions.bots] qodo_best_practices` is on. Only Macroscope honors `exclude_globs`, so narrow `globs` where scoping matters. Keys: [schemas/repo-toml.md](schemas/repo-toml.md). Validators: [schemas/validators.md](schemas/validators.md).
+A `[[bot-instructions.surface]]` reaches Copilot, CodeRabbit and Macroscope, plus Qodo through `best_practices.md` when `[bot-instructions.bots] qodo_best_practices` is on. Only Macroscope honors `exclude_globs`, so narrow `globs` where scoping matters. The spec copy's own surfaces, § Default surfaces, reach the same routes in every repo with no manifest entry. Keys: [schemas/repo-toml.md](schemas/repo-toml.md). Validators: [schemas/validators.md](schemas/validators.md).
 
 - `render` writes every enabled surface after validating it.
 - `check` re-renders and diffs, reading the index under `--staged`.
@@ -91,7 +91,7 @@ A repo enables `[bot-instructions.exclusions] derive_render` or lists every rend
 
 - `kendex.toml`, plus `kendex-local.toml` when the root declares `is_source_catalog = true`.
 - `.kendex-generated.json` when `[bot-instructions.exclusions] derive_render` is on.
-- The spec copy's doctrine source and routing table.
+- The spec copy's doctrine source, default surfaces and routing table.
 - `.bot-instructions/coderabbit-schema.json` when CodeRabbit is on.
 - The existing `AGENTS.md` when Codex is on.
 
@@ -145,3 +145,17 @@ Accept review evidence only from a formal review object by a trusted login or an
 ## Adding a repo
 
 [references/checklist.md](references/checklist.md) § Adding a repo.
+
+## Default surfaces
+
+Every render adds the surfaces in the block below to the repo's own `[[bot-instructions.surface]]` set, on each route that set reaches, so no manifest declares them. Keys and refusals are that table's: [schemas/repo-toml.md](schemas/repo-toml.md) § `[[bot-instructions.surface]]`. A repo surface with the same `name` is a `toml-schema` finding. Keep exactly one `toml` block in this section.
+
+```toml
+[[surface]]
+name = "docs-plans"
+globs = ["docs/plans/**"]
+reviewer_only = true
+instructions = """
+A file here is a plan: a design written ahead of the work it describes. It names tracker issues that are still open, and files, settings and behavior that do not exist yet, by design. Neither is a defect, and a reviewer cannot see the tracker. Raise a thread only where the plan contradicts the code it cites as that code stands at this head: a path, symbol, setting or behavior the plan states as current that the code does not bear out. Do not raise wording, structure, sequencing, scope or feasibility.
+"""
+```

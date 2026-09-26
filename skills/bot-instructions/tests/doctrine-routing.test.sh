@@ -116,6 +116,9 @@ a spec version that would close its own comment~SKILL.md~re:(\n  version: ")([^"
 two `## Doctrine` sections~SKILL.md~\n## Adding a repo\n~\n## Doctrine\n\n### x\n\ny\n\n## Adding a repo\n~msg:exactly one is required
 a `---` line under text in doctrine, which forges a section~SKILL.md~### scope\n\nRaise a defect~### scope\n\nForged\n---\n\nRaise a defect~msg:heading refusal
 a heading line in doctrine text, which forges a section~SKILL.md~### scope\n\nRaise a defect~### scope\n\n  #### Forged\n\nRaise a defect~msg:heading refusal
+a default surface the surface schema refuses is the spec copy's refusal~SKILL.md~name = "docs-plans"~name = "Docs-Plans"~msg:SKILL.md § Default surfaces[0] name: 'Docs-Plans' must be non-empty and hold only [a-z0-9-]
+a default surfaces section with no closed toml block~SKILL.md~\n```toml\n[[surface]]~\n[[surface]]~msg:expected exactly one closed `toml` block, found 0
+a default surfaces block carrying a table other than surface~SKILL.md~\n[[surface]]\nname = "docs-plans"~\n[repo]\nx = 1\n\n[[surface]]\nname = "docs-plans"~msg:unknown table or key 'repo'
 ROWS
 spec_table "$rows"
 

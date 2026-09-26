@@ -151,6 +151,32 @@ standard|enforce|none|awaiting|no review evidence at $HEAD yet
 standard|off|none|approved|review gate disabled by settings (REVIEW_GATE_MODE=off)
 ROWS
 
+# A resolution the merge route made under a waived class still stands while
+# its resolver has written nothing since the waiver reply. Under a class sent
+# for review that resolution has lapsed, so the thread term counts it open;
+# once its resolver answered, the thread is theirs and counts resolved.
+WAIVER_REPLY="Resolved by the merge route: change class trivial at 1111111111111111111111111111111111111111, review evidence none under REVIEW_GATE_CLASS_POLICY"
+waiver_thread() { # later comment body by the resolver, or empty -> graphql.json
+  jq -n --arg reply "$WAIVER_REPLY" --arg later "$1" '
+    [{body:"Issue KEN-1 does not exist",author:{login:"copilot-pull-request-reviewer",__typename:"Bot"}},
+     {body:$reply,author:{login:"merge-lane",__typename:"Bot"}}]
+    + (if $later == "" then [] else [{body:$later,author:{login:"merge-lane",__typename:"Bot"}}] end)
+    | {data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},
+        nodes:[{isResolved:true,resolvedBy:{login:"merge-lane[bot]"},comments:{pageInfo:{hasNextPage:false},nodes:.}}]}}}}}'
+}
+while IFS='|' read -r class later want detail; do
+  reset
+  fixtures="$FIXTURES" reviews_set "$(review reviewer APPROVED)"
+  waiver_thread "$later" >"$FIXTURES/graphql.json"
+  out="$(run_gate "$class" enforce)"
+  assert_eq "$out" "verdict=$want detail=$detail" "$class with a waiver resolution${later:+ its resolver answered}"
+done <<ROWS
+standard||threads-open|1 unresolved review thread(s)
+small||threads-open|1 unresolved review thread(s)
+standard|Fixed in 2222222|approved|reviewed at head with no unresolved threads
+small|Fixed in 2222222|approved|reviewed at head with no unresolved threads
+ROWS
+
 # Only the render proof reads prepared sources, so only a diff of generated
 # paths alone prepares them. A product diff resolves its class with no kendex
 # call even where the manifest is past the cap and the refresh would overrun;

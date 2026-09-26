@@ -178,7 +178,10 @@ render-inventory-gain|standard|clean|.kendex-generated.json:1
 instruction-source|standard|clean|AGENTS.md:10
 configuration-source|standard|clean|kendex.settings.toml:2 runtime/product.ts:2
 trivial-at-ceiling|trivial|dirty|docs/guide.md:20
-trivial-one-over|small|dirty|docs/guide.md:21
+trivial-docs-one-over|small|dirty|docs/guide.md:21
+trivial-product-read-docs-past-the-ceiling|small|dirty|docs/authoring/README.md:100
+trivial-plan-past-the-ceiling|trivial|dirty|docs/plans/v2.md:400
+trivial-plan-beside-other-docs-past-the-ceiling|small|dirty|docs/plans/v2.md:90 docs/guide.md:10
 micro-at-ceiling|micro|dirty|runtime/product.ts:20
 micro-counts-production-not-total|micro|dirty|runtime/product.ts:10 runtime/tests/product.test.sh:200
 micro-one-over|small|dirty|runtime/product.ts:21
@@ -880,9 +883,30 @@ git -C "$repo" commit -q -m "configured allowlist"
 PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='runtime/*' \
   assert_class "a configured allowlist decides trivial" trivial \
   --repo "$repo" --event pull_request --base "$base" --head HEAD
-PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_MAX_LINES=1 \
-  assert_class "a configured ceiling refuses trivial" micro \
+PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='runtime/*' HARNESS_CI_TRIVIAL_MAX_LINES=1 \
+  assert_class "a configured ceiling bounds the configured allowlist" micro \
   --repo "$repo" --event pull_request --base "$base" --head HEAD
+
+# With no configured ceiling the allowlist takes the shipped one, and it
+# replaces the plan exemption as well as the documentation set.
+# label | expected | file:lines
+allowlist_rows=0
+while IFS='|' read -r label expected spec; do
+  allowlist_rows=$((allowlist_rows + 1))
+  reset_case
+  set_verifier dirty
+  write_lines "$repo" "${spec%:*}" "${spec##*:}"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "$label"
+  PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='runtime/*' \
+    assert_class "$label" "$expected" \
+    --repo "$repo" --event pull_request --base "$base" --head HEAD
+done <<'CASES'
+allowlisted-at-the-default-ceiling|trivial|runtime/product.ts:20
+allowlisted-one-over-the-default-ceiling|small|runtime/product.ts:21
+plan-outside-a-configured-allowlist|standard|docs/plans/v2.md:400
+CASES
+require_rows change-class-allowlist-table "$allowlist_rows"
 
 # A ceiling that is not a whole number is a wiring error, not a skipped check:
 # without the refusal the comparison below it fails under strict mode and the
