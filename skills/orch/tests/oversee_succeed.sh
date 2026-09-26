@@ -988,8 +988,8 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
 # own is among them where it has room, so the count reads the same from every
 # account it covers. Three accounts above the trigger leave the overseer in
 # place, and so do two with the overseer on one of them, however the two
-# readings stand: the other account here has MORE headroom, the reading that
-# sent the successor straight back when this session's own was left out.
+# readings stand: the other account here has MORE headroom, which is the
+# reading a count without this session's own account would move it on.
 make_lane "$H" nclaude
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
@@ -1006,8 +1006,8 @@ SUCCESSOR_ACCOUNTS=01 LANE_DIRS="$THREE_LANES" run_succeed qualifyingtwo '' --ch
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=40|0" \
   "two accounts above the trigger, the overseer on one of them, do not fire the qualifying-set trigger"
-# The count's one control: this session's own account left out of it again,
-# which is the count that moved the overseer onto the other account.
+# The count's one control: a count without this session's own account, which
+# reads one on the same two accounts.
 EXCLUSIVECTL="$(mutant_scripts exclusivectl oversee-succeed)" || exit 1
 mutate_file "$EXCLUSIVECTL/oversee-succeed" \
   '[[ "$CALLER_STATE" != has-room ]] || QUALIFYING_TOTAL=$((QUALIFYING_COUNT + 1))' ''
@@ -1015,7 +1015,7 @@ new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" SUCCEED_BIN="$EXCLUSIVECTL/oversee-succeed" \
   run_succeed exclusivectl '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "0|oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on headroom=40" \
   "control: a count that leaves this session's own account out fires on the same two accounts"
 
 # One account above the trigger other than this session's own, whose own is
@@ -1025,7 +1025,7 @@ mv "$FIXTURE_DIR/.claude.json" "$FIXTURE_DIR/.claude.json.held"
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyingone '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on|0" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on headroom=none|0" \
   "one account above the trigger, this session's own not, fires the named qualifying-set trigger"
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyinglaunch ''
@@ -1034,21 +1034,32 @@ assert_eq "$RC|$(caller_open)|$(recorded claude)" \
   "0|no|lane=$H/.eclaude;-n;overseer;$BRIEF;" \
   "the qualifying-set trigger succeeds onto the remaining account"
 
-# A setting at the count of two reaches the mark from either account, so the
-# successor would count the same two from the one it lands on and fire again:
-# the walk refuses the launch and this overseer keeps running.
+# A setting at the count of two meets the count from either account, so a
+# successor would read the same two from the one it lands on and fire again once
+# the headroom readings crossed: no entry settles the mark, and it does not fire
+# in the judgement or in a succession.
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES" run_succeed qualifyingtwomark '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on" \
-  "a setting of two fires the qualifying-set trigger on two accounts"
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=40" \
+  "a count no successor settles does not fire the qualifying-set trigger"
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES" run_succeed qualifyingrefires ''
-assert_eq "$RC|$(keyed successor-refires "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "1|oversee-succeed: successor-refires count=2 mark=2 entry=caller|yes|0|none" \
-  "a successor that would fire the same mark again is refused, the caller kept"
-# The refusal's one control: the successor count never judged, so the same
-# walk opens the successor onto the other account.
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=40|yes|0|none" \
+  "and a succession on it launches nothing, the caller kept"
+# The judgement's control: the walk's answer ignored, so the count alone fires
+# a mark no succession can settle.
+SETTLECTL="$(mutant_scripts settlectl oversee-succeed)" || exit 1
+mutate_file "$SETTLECTL/oversee-succeed" '      [[ -n "$chosen" ]] || MARK_KIND=""' ''
+new_caller "$UNDER_MARK"
+SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES" SUCCEED_BIN="$SETTLECTL/oversee-succeed" \
+  run_succeed settlectl '' --check-marks
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
+  "control: a judgement that ignores the walk fires on a count no successor settles"
+# The successor count's control: never judged, so the walk opens the successor
+# onto the other account.
 REFIRECTL="$(mutant_scripts refirectl oversee-succeed)" || exit 1
 mutate_file "$REFIRECTL/oversee-succeed" \
   'if (( successor_count > 0 && successor_count + 1 <= SUCCESSOR_ACCOUNTS )); then' 'if false; then'
@@ -1087,10 +1098,12 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "a known harness with no context line still fires the rate trigger"
 
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+mv "$FIXTURE_DIR/.claude.json" "$FIXTURE_DIR/.claude.json.held"
 new_known_claude_caller "$NO_CONTEXT"
-SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES" run_succeed knownqualifying '' --check-marks
+SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed knownqualifying '' --check-marks
+mv "$FIXTURE_DIR/.claude.json.held" "$FIXTURE_DIR/.claude.json"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on headroom=none" \
   "a known harness with no context line still fires the qualifying-set trigger"
 
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
@@ -2096,7 +2109,7 @@ done
 # caller entry then keeps the account the walled session was spending, and the
 # successor opens straight back into the wall.
 WALLCTL="$(mutant_scripts wallctl oversee-succeed)" || exit 1
-mutate_file "$WALLCTL/oversee-succeed" '  if [[ "$MODE" == succeed || "$MODE" == walled ]] \' '  if [[ "$MODE" == succeed ]] \'
+mutate_file "$WALLCTL/oversee-succeed" '"$MODE" == succeed || "$MODE" == walled || "$MODE" == check' '"$MODE" == succeed || "$MODE" == check'
 new_caller "$MARK"
 SUCCEED_BIN="$WALLCTL/oversee-succeed" run_succeed wallctl '' --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(recorded claude)" \

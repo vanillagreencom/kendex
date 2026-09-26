@@ -1269,7 +1269,7 @@ CONTEXT_MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=
 OFF_MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=500000 succession=off headroom=80"
 HEADROOM_MARK_LINE="oversee-succeed: mark-reached kind=headroom value=4 mark=10 succession=on account=eclaude resets=2026-07-27T06:00:00Z"
 RATE_MARK_LINE="oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=eclaude"
-QUALIFYING_MARK_LINE="oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on"
+QUALIFYING_MARK_LINE="oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on headroom=unreadable"
 BELOW_MARK_LINE="oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"
 
 # An overseer session: a repository on a branch no mailbox is named for, so the
@@ -1397,6 +1397,11 @@ for mark_row in \
   assert_eq "setting=$(grep -cF -- "$mark_setting" "$ERR_FILE") route=$(overseer_route)" \
     "setting=1 route=1" "and the refusal names the setting and succession route"
 done
+# The qualifying mark fires where this session's own account was not measured
+# above the trigger, so its refusal carries the headroom the judgement read and
+# an unread account does not pass for a fleet down to one.
+assert_eq "$(grep -cF -- "reads headroom=unreadable" "$ERR_FILE")" "1" \
+  "the qualifying refusal carries the headroom the judgement read for this session"
 
 # What the marks cannot judge is reported and passed, never refused: an
 # overseer whose marks nothing could measure must still end a turn, exactly as
@@ -1556,6 +1561,17 @@ mutant() { # NAME SED-ARGUMENT... — MUTANT_SOURCE names a file other than the 
   assert_eq "$(cmp -s "$MUTANT_PATH" "$source" && echo same || echo differs)" "differs" \
     "control: the $name mutant really differs from the hook"
 }
+
+# The qualifying refusal's headroom field: its parse gone, the refusal reads
+# the account as unmeasured whatever the judgement said.
+mutant no-headroom -e '/^      headroom=\*) MARK_HEADROOM=\${field#headroom=} ;;$/d'
+new_overseer control_headroom
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+judge_says "${QUALIFYING_MARK_LINE% headroom=*} headroom=40"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+assert_eq "RC=$RC read=$(grep -cF -- "reads headroom=40" "$ERR_FILE")" "RC=2 read=0" \
+  "control: without the headroom parse the qualifying refusal drops the figure the judgement read"
 
 mutant no-block -e 's@^  message unread "\$COUNT"$@  exit 0@'
 BLOCK_MUTANT="$MUTANT_PATH"

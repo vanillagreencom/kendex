@@ -27,6 +27,9 @@ MAILBOX_COMMAND=""
 # refusal. Empty until each is known.
 MARK=""
 PCT=""
+# The overseer's own account headroom as the judgement's line reads it: a
+# number, or none or unreadable where nothing measured it.
+MARK_HEADROOM=""
 HANDOFF_INSTRUCTION=""
 # The two commands a lane asks its overseer through, built by ask_route where
 # a question refusal names them. Empty until one does.
@@ -221,8 +224,8 @@ message() { # KEY VALUE [CAUSE]
           "$2" "$MARK" "$HANDOFF_INSTRUCTION"
         ;;
       qualifying=*)
-        printf 'oversee-succeed finds %s accounts above the headroom mark, the account this session runs on counted where it has room, at or below the ORCH_OVERSEER_SUCCESSOR_ACCOUNTS mark of %s. Succeed this session yourself onto another of them before no account remains.\n%s\n' \
-          "$2" "$MARK" "$HANDOFF_INSTRUCTION"
+        printf 'oversee-succeed finds %s accounts above the headroom mark, the account this session runs on counted where it has room, at or below the ORCH_OVERSEER_SUCCESSOR_ACCOUNTS mark of %s. The account this session runs on reads headroom=%s, where none or unreadable is an account nothing measured rather than one spent. Succeed this session yourself onto another of them before no account remains.\n%s\n' \
+          "$2" "$MARK" "${MARK_HEADROOM:-none}" "$HANDOFF_INSTRUCTION"
         ;;
       question-tool=*)
         if [ "$CALLER" = subagent ]; then
@@ -1103,6 +1106,7 @@ overseer_marks() {
       kind=*) MARK_KIND=${field#kind=} ;;
       value=*) MARK_VALUE=${field#value=} ;;
       mark=*) MARK=${field#mark=} ;;
+      headroom=*) MARK_HEADROOM=${field#headroom=} ;;
       succession=*) SUCCESSION=${field#succession=} ;;
     esac
   done
