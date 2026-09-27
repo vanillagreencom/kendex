@@ -402,7 +402,7 @@ micro_policy_is_closed() { # micro-doc
     grep -Fq 'review-gate/scripts/review-policy --event pull_request --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]' "$1" &&
     grep -Fq 'each followed by `review_evidence=none policy=active`. Any such answer continues.' "$1" &&
     grep -Fq 'independent of the repository'"'"'s `approval` or `review` gate mode' "$1" &&
-    grep -Fq 'a command failure, an inactive policy, an unresolved class, a class above this tier (`small`, `standard`), or another evidence policy.' "$1" &&
+    grep -Fq 'Every other answer escapes (§ Escape condition 7): a command failure, an inactive policy, an unresolved class, a class above this tier (`small`, `standard`), or another evidence policy.' "$1" &&
     grep -Fq '7. § 4 cannot prove both halves of its precheck. Either the review gate'"'"'s answer is outside the accepted set § 4 states, or' "$1" &&
     ! grep -Fq 'exactly `change_class=' "$1" &&
     grep -Fq 'Require a valid readiness object for an open pull request.' "$1" &&
@@ -421,6 +421,11 @@ assert_doc_mutant_fails micro_policy_is_closed "$micro_workflow" \
   'each followed by `review_evidence=none policy=active`. Any such answer continues.' \
   'each followed by `policy=active`. Any such answer continues.' \
   "accepting an unresolved evidence policy"
+
+assert_doc_mutant_fails micro_policy_is_closed "$micro_workflow" \
+  'Every other answer escapes (§ Escape condition 7)' \
+  'Every other answer continues (§ Escape condition 7)' \
+  "continuing on an answer outside the accepted set"
 
 # The accepted set is stated once, in § 4: the classes at or below the tier
 # whose evidence is none. Condition 7 cites it and restates no class. Each
