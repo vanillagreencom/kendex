@@ -1576,12 +1576,12 @@ FAILWRITE
     record=none
     [[ ! -f "$LANE/tmp/lane-mail/overseer/context.json" ]] || \
       record="$(jq -r '"\(.tokens) \(.window) \(.pane_key)"' "$LANE/tmp/lane-mail/overseer/context.json")"
-    assert_eq "$RC|$(first_line)|$(grep -c '^fixture context write failed$' "$ERR_FILE")|$(grep -c '^oversee-succeed: harness-unnamed ' "$ERR_FILE")|$record" \
+    assert_eq "$RC|$(grep -E '^lane-mail-check: (context=[0-9]+|marks=unjudged)$' "$ERR_FILE")|$(grep -c '^fixture context write failed$' "$ERR_FILE")|$(grep -c '^oversee-succeed: harness-unnamed ' "$ERR_FILE")|$(grep -cFx "lane-mail-check: context-unrecorded=$LANE/tmp/lane-mail/overseer/context.json" "$ERR_FILE")|$record" \
       "$expected" "actual marks: writer=$writer judge=${judge##*/} preserves the live due reading"
   done <<ROWS
-kept|$REPO_ROOT/skills/orch/scripts/oversee-succeed|2|lane-mail-check: context=400000|0|0|400000 258400 $OVERSEER_SERVER $OVERSEER_PANE
-failed|$REPO_ROOT/skills/orch/scripts/oversee-succeed|2|lane-mail-check: context=400000|1|0|none
-failed|$VARIANT_PATH|0|lane-mail-check: marks=unjudged|1|1|none
+kept|$REPO_ROOT/skills/orch/scripts/oversee-succeed|2|lane-mail-check: context=400000|0|0|0|400000 258400 $OVERSEER_SERVER $OVERSEER_PANE
+failed|$REPO_ROOT/skills/orch/scripts/oversee-succeed|2|lane-mail-check: context=400000|1|0|1|none
+failed|$VARIANT_PATH|0|lane-mail-check: marks=unjudged|1|1|1|none
 ROWS
   write_transcript "$TRANSCRIPT" 600000
 
