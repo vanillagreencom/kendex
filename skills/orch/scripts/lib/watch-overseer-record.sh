@@ -56,13 +56,20 @@ overseer_command_record() {
   [[ -n "$line" ]] \
     || overseer_record_refuse "" overseer-line-missing "pane=$pane" "path=$SUCCEED"
   # The four fields this watch observes replace the prior's; the launcher's
-  # own, runtime, generation and account, stay only where the prior names
-  # THIS pane on THIS server: another pane's record is another session's.
+  # own, runtime, generation and the launch identity (harness, account, home,
+  # model, effort and cwd), stay only where the prior names THIS pane on THIS
+  # server: another pane's record is another session's, and a start there has
+  # no launch identity to record, which leaves its readers on the pane and the
+  # environment until a launcher or `oversee register` writes one. A `pending`
+  # successor goes either way: the line this start records is the current
+  # session's, as a start always replaced the pending line it met, so a
+  # succession that died before its launch leaves nothing a later death would
+  # replay.
   detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
     update oversee --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" '
-      .overseer = ((.overseer // {})
+      .overseer = ((((.overseer // {})
         | if (.server // "") == $server and (.pane // "") == $pane then . else {} end)
-        + {server: $server, pane: $pane, window: $window, launch_line: $line}' 2>&1)" \
+        + {server: $server, pane: $pane, window: $window, launch_line: $line}) | del(.pending))' 2>&1)" \
     || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=write"
 }
 

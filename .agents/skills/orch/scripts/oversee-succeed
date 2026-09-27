@@ -37,6 +37,18 @@
 #   picks no lane — the recorded line IS its choice, and for a walled overseer
 #   that line names the account that just walled.
 #
+#   Every mode but `--dead-pane` reads the caller's LAUNCH RECORD first: the
+#   fleet state's `overseer` object (schemas/workflow-state.md § Oversee
+#   state), where it names the caller pane on this tmux server. The harness,
+#   account, model, effort and directory it records are this session's own,
+#   and each one it names is taken ahead of the pane's status line and the
+#   account variables, which answer only for a session nothing has recorded
+#   and for a fact its record leaves unknown. A record naming a model gives the
+#   caller's successor that model and effort in place of the pair the flags
+#   after -- spell. The status line still gives the context reading. The
+#   record's `pending` member, the successor a succession wrote before its
+#   launch, is never read as the caller's own.
+#
 #   Its CALLER confirms the wall before calling this. `oversee-watch` does so
 #   with the account judgement of `--check-marks`, because the overseer's own
 #   pane carries the limit banners it relays about other lanes; nothing here
@@ -309,8 +321,10 @@
 #   --print-launch-line
 #                    Print the command a successor of THIS overseer would be
 #                    launched with — the caller's own harness, its own lane,
-#                    the flags after --, and the brief naming --handoff — and
-#                    launch nothing. ORCH_OVERSEER_PREFERENCE is not walked and
+#                    the flags after --, and the brief naming --handoff, each
+#                    as its launch record answers where one names this pane,
+#                    so a session whose status line reads nothing is still
+#                    printed — and launch nothing. ORCH_OVERSEER_PREFERENCE is not walked and
 #                    no account's headroom is read: the line records what this
 #                    session runs, and the preference chooses where a LATER
 #                    successor goes. A codex line still carries the folder-trust
@@ -356,7 +370,13 @@
 #
 # `line-unrecorded` and `record-unwritten` are notices on stderr too: the
 # fleet state could not take this run's launch line or its session record,
-# and the succession stands.
+# and the succession stands. So is `record-unread`, in every mode but
+# --dead-pane, which reads no caller record and reports an unreadable state
+# as `record-unwritten step=read`: the fleet state could not be read, so the
+# caller's launch record was not consulted and --harness, its pane, its
+# context reading and its environment answer for it. Under
+# --print-launch-line it stays out of the line, since the watch start records
+# the print's stdout alone.
 # `succession-off`, `context-unmeasured`, `context-below-mark`,
 # `account-below-mark`, `mark-reached` and `mark-unmeasured` are on stdout
 # and end the run at exit 0. `successor-launch` is on stdout too, but settles no
@@ -387,6 +407,7 @@ message() { # KEY FIELD=VALUE...
     invalid-line-file) text='--line-file names no readable file with a launch line in it.' ;;
     mode-conflict) text='--print-launch-line, --check-marks, --dead-pane, --walled-pane and -- HARNESS_FLAGS name five different runs. --dead-pane needs --line-file and takes none of the others; --line-file is read only with it; --walled-pane takes --handoff, --wait-secs and -- HARNESS_FLAGS and none of the other modes, reading no recorded line because the walled pane still answers for itself; --check-marks takes no other option but --context, --handoff and --wait-secs included, because it opens no window for either to reach; --context is taken by --check-marks and a plain succession alone.' ;;
     line-unrecorded) text='The successor launch line could not be written to the fleet state, so a later dead-overseer relaunch has none to send. The succession itself stands.' ;;
+    record-unread) text='The fleet state could not be read, so this session'\''s launch record was not consulted: its harness, account and model are read off its pane and its environment, as for a session nothing has recorded.' ;;
     record-unwritten) text='The session record in the fleet state could not be written for the successor, or put back after an abandoned launch, so the record does not name the session that is running. The step field says which; the succession itself stands.' ;;
     runtime-unsupported) text='This script reads the successor'\''s account off its tmux pane, so it opens sessions on the tmux runtime alone. ORCH_OVERSEER_HOST names another; nothing was launched and this overseer keeps running.' ;;
     settings-rejected) text='The settings load failed; no successor is chosen from partial settings.' ;;
@@ -766,16 +787,41 @@ CALLER_WINDOW="$(tmux display-message -p -t "$CALLER_PANE" '#{window_id}' 2>"$DE
   || die pane-unreadable "pane=$CALLER_PANE"
 CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}' 2>"$DEP_ERR")" \
   || die pane-unreadable "pane=$CALLER_PANE"
-# --harness precedes the pane command. A record for this pane supplies its
-# model and, for ambiguous commands, its harness. No stored count is judged.
-# A reused pane can retain its predecessor's model until its first turn end.
-# Dead mode instead reads the recorded launch line.
+# The caller's own launch record, where the fleet state's `overseer` object
+# names this pane on this tmux server (lib/overseer-launch.sh §
+# ol_record_current): the harness, account, model, effort and directory the
+# session was launched with, the effort read only beside the model it pairs
+# with (§ walk_entries). Every fact it answers is taken from it ahead of
+# --harness, the pane command, this pane's context reading and the
+# environment below, which stay the reading for a first session nothing has
+# recorded and for any fact its record leaves unknown. Its `pending` successor
+# is never read: that command names the account and model the NEXT session
+# runs, and a run judging this one on them would read another session's marks.
+# A state that cannot be read is a notice and the bootstrap readings stand,
+# since a broken state file would otherwise stop every judgement of a live
+# overseer.
+#
+# Where no record answers, --harness precedes the pane command, and a context
+# reading for this pane supplies its model and, for ambiguous commands, its
+# harness. No stored count is judged. A reused pane can retain its
+# predecessor's model until its first turn end.
+#
+# A dead pane is judged by nothing and its line is handed in whole, so it
+# reads no current-session identity, only the identity the record holds for
+# the line it replays (lib/overseer-launch.sh § ol_record_line_identity).
 CALLER_HARNESS="" CALLER_MODEL=""
 if [[ "$MODE" != dead ]]; then
   CALLER_CMD="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_command}' 2>"$DEP_ERR")" \
     || die pane-unreadable "pane=$CALLER_PANE"
   CALLER_SERVER="$(tmux display-message -p -t "$CALLER_PANE" '#{pid}' 2>"$DEP_ERR")" \
     || die pane-unreadable "pane=$CALLER_PANE"
+  record_rc=0
+  ol_record_current "$CALLER_SERVER" "$CALLER_PANE" || record_rc=$?
+  if (( record_rc > 1 )); then
+    message record-unread "pane=$CALLER_PANE" >&2
+    [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+  fi
+  [[ -z "$OL_CUR_CWD" ]] || CALLER_PATH="$OL_CUR_CWD"
   reading_harness="" reading_model=""
   OVERSEER_BOX="$(lane_context_overseer_box "$PROJECT_ROOT")"
   if [[ -f "$OVERSEER_BOX/$LANE_CONTEXT_RECORD" ]] \
@@ -783,7 +829,9 @@ if [[ "$MODE" != dead ]]; then
      && [[ "$LANE_CTX_PANE_KEY" == "$CALLER_SERVER $CALLER_PANE" ]]; then
     reading_harness="$LANE_CTX_HARNESS" reading_model="$LANE_CTX_MODEL"
   fi
-  if [[ -n "$HARNESS_ARG" ]]; then
+  if [[ -n "$OL_CUR_HARNESS" ]]; then
+    CALLER_HARNESS="$OL_CUR_HARNESS"
+  elif [[ -n "$HARNESS_ARG" ]]; then
     CALLER_HARNESS="$HARNESS_ARG"
   elif ! CALLER_HARNESS="$(lane_context_shape "${CALLER_CMD#-}")"; then
     die harness-unnamed "pane=$CALLER_PANE"
@@ -794,7 +842,10 @@ if [[ "$MODE" != dead ]]; then
       *) die harness-unnamed "pane=$CALLER_PANE" ;;
     esac
   fi
-  CALLER_MODEL="$(lane_context_mark_model "$CALLER_HARNESS" "$reading_model")"
+  # The model passes through the rule a reading takes (lib/lane-context.sh §
+  # lane_context_mark_model), so a codex session is judged on its account's
+  # binding bucket whichever of the record and the reading named its model.
+  CALLER_MODEL="$(lane_context_mark_model "$CALLER_HARNESS" "${OL_CUR_MODEL:-$reading_model}")"
 fi
 
 # The account mark, judged on the account THIS session is spending and on the
@@ -809,11 +860,14 @@ fi
 # or whose harness is judged on its binding bucket, passes the empty string,
 # which that file judges on the account binding bucket instead.
 #
-# The account is `lane_context_caller_cfg`'s answer, the owner of "which
-# account is this session spending". `lanes context` reports the caller's row
-# through that same function, so the two cannot name different accounts; the
-# mark asks it directly because it also needs the model, which that report can
-# only take off a pane whose foreground process is still a harness.
+# The account is the caller's launch record's where that record names this
+# session, and otherwise `lane_context_caller_cfg`'s answer, the owner of
+# "which account is this session spending" for a session nothing recorded.
+# `lanes context` reports the caller's row through that function alone, so
+# for a recorded session whose environment names another account its row
+# names the environment's; the mark asks directly because it also needs the
+# model, which that report can only take off a pane whose foreground process
+# is still a harness.
 #
 # The bound is the trigger itself, so `lanes pick --lane` returns the verdict
 # rather than this script comparing a percentage: MORE than the trigger is
@@ -842,8 +896,27 @@ fi
 # judgement below asks about it, the caller entry launches on it, and `walled`
 # keeps it as the one account its pick may never return. A dead pane names
 # none this run can read, its harness having left the pane.
+#
+# A launch record naming this session answers the account before the
+# environment does: a launcher prefixes one account variable without clearing
+# the other, and a session started from a shell that carried another account's
+# variable would otherwise be judged on that one.
 CALLER_CFG=""
-[[ "$MODE" == dead ]] || CALLER_CFG="$(lane_context_caller_cfg "$CALLER_HARNESS")"
+[[ "$MODE" == dead ]] || CALLER_CFG="${OL_CUR_ACCOUNT:-$(lane_context_caller_cfg "$CALLER_HARNESS")}"
+# The model and effort words this session's successor carries, where its
+# record names the model it was launched on: the record's pair replaces the
+# pair the caller's own flags spell, and every other word stays. Only the modes
+# that build a line from those flags read them: `check` takes none and `dead`
+# is handed its line whole.
+if [[ -n "$OL_CUR_MODEL" && "$MODE" != dead && "$MODE" != check ]]; then
+  launch_choice_strip "$CALLER_HARNESS" ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"} \
+    || die launch-choice-failed "harness=$CALLER_HARNESS"
+  record_words="$(launch_choice_write "$CALLER_HARNESS" "$OL_CUR_MODEL" "$OL_CUR_EFFORT")" \
+    || die launch-choice-failed "harness=$CALLER_HARNESS"
+  HARNESS_FLAGS=()
+  eval "HARNESS_FLAGS=($record_words)"
+  HARNESS_FLAGS+=(${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"})
+fi
 CALLER_STATE=unreadable HEADROOM_FIELD=unreadable
 CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS=""
 RATE_STATE=unreadable WALL_PROJECTED="" QUALIFYING_STATE=unreadable QUALIFYING_COUNT="" QUALIFYING_HEADROOM=""
@@ -972,8 +1045,9 @@ walk_entries() {
       # reading the successor will take of itself, and refuses an account that
       # would have carried it.
       pick_model="$CALLER_MODEL"
-      # The account this session is SPENDING, established once above through
-      # lib/lane-context.sh's owner of that question and judged there, so the
+      # The account this session is SPENDING, established once above from its
+      # launch record or through lib/lane-context.sh's owner of that question,
+      # and judged there, so the
       # successor opens on the account whose room was measured. A raw
       # variable answers two other things: the empty string where the harness runs
       # on its own default, which the trust preparation below would meet as no
@@ -1343,17 +1417,19 @@ if ! ol_record_read; then
   [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
 fi
 # Recorded BEFORE the window opens, not after the close: the close kills this
-# script's own window and a write placed after it may never run. The line
-# stands from here until the session record carries it, and a launch that is
-# abandoned once its window opened puts the caller's line back with the rest
-# of the caller's record read above. The state is the fleet's, so a run outside
-# a fleet has none: that is a notice, never a reason to leave the fleet
-# unattended. `walled` records too: its successor runs a command this run
-# built, and a later death that read the walled session's line would relaunch
-# onto the account this recovery just left.
+# script's own window and a write placed after it may never run. The line and
+# the successor's launch identity are the record's `pending` member, apart from
+# the caller's own fields (lib/overseer-launch.sh § ol_record_pending), from
+# here until the session record names the successor, and a launch that is
+# abandoned once its window opened puts the caller's record back as it was
+# read above. The state is the fleet's, so a run outside a fleet has none: that
+# is a notice, never a reason to leave the fleet unattended. `walled` records
+# too: its successor runs a command this run built, and a later death that read
+# the walled session's line would relaunch onto the account this recovery just
+# left.
 if [[ "$MODE" == succeed || "$MODE" == walled ]]; then
-  if ! "$SCRIPT_DIR/workflow-state" set oversee overseer.launch_line "$cmd" >/dev/null 2>"$DEP_ERR"; then
-    message line-unrecorded "field=overseer.launch_line" >&2
+  if ! ol_record_pending "$cmd"; then
+    message line-unrecorded "field=overseer.pending" >&2
     [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
   fi
 fi
@@ -1393,11 +1469,12 @@ ol_session_open "$CALLER_PATH" overseer "$cmd" --after "$CALLER_PANE" || abandon
 SUCC_PANE="$OL_SESSION" SUCC_WINDOW="$OL_WINDOW"
 
 # The session record, written before the successor's first turn: the runtime,
-# the server, the session, its account, its own launch line and one
-# generation past the record it replaces, over the caller's record read
+# the server, the session, the launch identity the command above was built
+# with (none in `dead`, whose line this run did not build), its own launch
+# line and one generation past the record it replaces, over the caller's record read
 # above, so the hooks and the watch can tell this session from the one it
 # succeeds. A state the read above could not open is not written to.
-if [[ -n "$OL_PRIOR" ]] && ! ol_record_write "$OL_RUNTIME" "$SUCC_PANE" "$SUCC_WINDOW" "$OL_SERVER" "$lane_dir" "$cmd"; then
+if [[ -n "$OL_PRIOR" ]] && ! ol_record_write "$OL_RUNTIME" "$SUCC_PANE" "$SUCC_WINDOW" "$OL_SERVER" "$cmd"; then
   message record-unwritten field=overseer step=write >&2
   [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
 fi

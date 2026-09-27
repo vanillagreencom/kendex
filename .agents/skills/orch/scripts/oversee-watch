@@ -2266,7 +2266,7 @@ check_overseer() {
   [[ -x "$WORKFLOW_STATE" ]] \
     || { overseer_note overseer-unwatched "path=$WORKFLOW_STATE" "setting=OVERSEE_WATCH_WORKFLOW_STATE"; return 0; }
   ov_line="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
-    get oversee '.overseer.launch_line // ""' 2>"$errf")" \
+    get oversee '.overseer.pending.launch_line // .overseer.launch_line // ""' 2>"$errf")" \
     || { overseer_note overseer-unwatched "state=oversee"; return 0; }
 
   overseer_pane_read "$pane" || return 0
@@ -2275,7 +2275,11 @@ check_overseer() {
   screen="$OV_SCREEN"
   # The watch invocation recorded this current session's command before its
   # first pass. Once the pane is dead, that last live-owned record is the only
-  # source that still knows its account, model and permission flags.
+  # source that still knows its account, model and permission flags. A
+  # succession's pending successor command comes first where one stands: it
+  # is the launch the fleet last chose, written before its window opened
+  # (lib/overseer-launch.sh § ol_record_pending), and this relaunch replays a
+  # choice rather than judging the dead session.
   OVERSEER_LINE="$ov_line"
 
   overseer_judge "$pane"

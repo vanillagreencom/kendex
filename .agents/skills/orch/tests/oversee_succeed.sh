@@ -395,6 +395,12 @@ SUCC_REC_PANE="$(sed -n 's/.*successor-working window=@[0-9]* pane=\(%[0-9]*\).*
 assert_eq "runtime=$(orec runtime) generation=$(orec generation) account=$(orec account) pane=$(orec pane)" \
   "runtime=tmux generation=1 account=$H/.claude pane=$SUCC_REC_PANE" \
   "the successor record names the runtime, generation, account and successor pane"
+# The same record's launch identity, read out of the command the successor was
+# built with, and no pending successor: the one this launch wrote before its
+# window opened is the session the record now names.
+assert_eq "harness=$(orec harness) home=$(orec home) model=$(orec model) effort=$(orec effort) cwd=$(orec cwd) pending=$(orec pending)" \
+  "harness=claude home=$H/.claude model=fable effort=high cwd=$(tm display-message -p -t "$SUCC_REC_PANE" '#{pane_current_path}') pending=none" \
+  "the successor record carries its launch identity and drops the pending successor"
 
 # The same launch's record, written before the window opened: the close kills
 # this script's own window, so a write placed after it may never run.
@@ -414,6 +420,12 @@ run_succeed walled 'claude:1:high,codex:1:high' -- --dangerously-skip-permission
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(lane_codex_trusted "$CODEX_LAUNCH_HOME/config.toml" "$CALLER_CWD" && echo trusted || echo untrusted)" \
   "0|1 overseer;|no|none|lane=$CODEX_LAUNCH_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;$CODEX_COMPACT;$BRIEF;|oversee-succeed: successor-launch form=prefix lane=$H/.codex trust=launch-home|trusted" \
   "walled claude entry: codex entry picked, under a home that trusts the caller directory"
+# The account and the private home that launch ran under are two fields: the
+# account is what a judgement measures, the home what the account variable
+# carries.
+assert_eq "harness=$(orec harness) account=$(orec account) home=$(orec home) model=$(orec model) effort=$(orec effort)" \
+  "harness=codex account=$H/.codex home=$CODEX_LAUNCH_HOME model=gpt-6-astra effort=high" \
+  "a codex successor records its account and its private CODEX_HOME apart"
 # The other side of that preparation: an account config that exists and cannot
 # be read refuses the successor rather than launching it onto a config with
 # every table the account was approved for gone. The caller keeps running and
@@ -1552,7 +1564,7 @@ new_caller "$MARK"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 run_succeed nostate ''
 assert_eq "$RC|$(keyed line-unrecorded "$OUT" | sed -n 1p)|$(overseers)|$(caller_open)" \
-  "0|oversee-succeed: line-unrecorded field=overseer.launch_line|1|no" \
+  "0|oversee-succeed: line-unrecorded field=overseer.pending|1|no" \
   "a succession with no fleet state names the unrecorded line and still opens the successor"
 mv -- "$TMP_ROOT/fleet-state.away" "$FLEET_STATE"
 

@@ -57,8 +57,10 @@ The long pass's events, checked and reported in this order:
                              `off`, the watch then launches that successor
                              into the dead pane's window slot through
                              `oversee-succeed --dead-pane`, with the launch
-                             line the fleet state recorded, and stops: the
-                             successor runs a watch of its own
+                             line the fleet state recorded (a succession's
+                             pending successor line ahead of the session's
+                             own), and stops: the successor runs a watch of
+                             its own
   EVENT overseer-walled <pane> window=<window> passes=<N> succession=<on|off>
                              the same pane read `walled` by the same judge on
                              N consecutive passes AND its own account judged
@@ -380,7 +382,10 @@ Options:
                       dead pane can no longer be asked what it was launched
                       with. A watch started without them records a line with
                       no permission flags, and the successor it relaunches
-                      stops at the first prompt nobody is there to answer
+                      stops at the first prompt nobody is there to answer.
+                      A record naming this pane answers the line's harness
+                      and account, and its model and effort as a pair where
+                      it names a model (`oversee-succeed --help`)
   --repeat SECS       the watch for a session: run one watch per pass with
                       the other options, sleep SECS after it exits, or
                       ORCH_WATCH_MAIL_INTERVAL where that is shorter and the

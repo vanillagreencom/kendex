@@ -57,6 +57,10 @@ case "$1:$2:$3" in
 esac
 STUB
 chmod +x "$BIN/claude" "$BIN/kendex"
+# A pane whose foreground process names claude, for `register` to read the
+# harness off: a copy of sleep, since a script or a shell named for the
+# harness can reset the process name tmux reads.
+cp "$(command -v sleep)" "$BIN/hclaude"
 
 new_home fleet
 make_lane "$H" claude
@@ -114,6 +118,10 @@ assert_eq "$RC|$(sed -n 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=
 assert_eq "$(recorded runtime)|$(recorded server)|$(recorded pane)|$(recorded window)|$(recorded account)|$(recorded generation)|$(recorded launch_line)" \
   "tmux|$SERVER_PID|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high $BYPASS $(printf '%q' "$QUESTION_OFF") '$BRIEF'" \
   "the session record names the runtime, server, pane, window, account, line and generation"
+WORK_REAL="$(cd "$TMP_ROOT/work" && pwd -P)"
+identity() { printf '%s|' "$(recorded harness)" "$(recorded account)" "$(recorded home)" "$(recorded model)" "$(recorded effort)" "$(recorded cwd)"; }
+assert_eq "$(identity)" "claude|$H/.claude|$H/.claude|fable|high|$WORK_REAL|" \
+  "the session record carries the launch identity the command was built with"
 assert_eq "$(keyed overseer-launch "$OUT" | sed -n 1p | sed 's/session=%[0-9]*/session=%N/; s/window=@[0-9]*/window=@N/')" \
   "oversee: overseer-launch form=prefix lane=$H/.claude trust=none session=%N window=@N server=$SOCKET" \
   "the launch line names the form and the session before the record"
@@ -186,11 +194,20 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
 
 # register: the record for a hand-opened pane, its generation one past the
 # record's, kept where the record already names that pane.
-HAND="$(tm new-window -d -t fleet:4 -n hand -P -F '#{pane_id}' 'exec sleep 100000')"
+HAND="$(tm new-window -d -t fleet:4 -n hand -P -F '#{pane_id}' "exec '$BIN/hclaude' 100000")"
 run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(recorded runtime)|$(recorded account)" \
   "0|oversee: registered session=$HAND window=$(tm display-message -p -t "$HAND" '#{window_id}') server=$SERVER_PID generation=4 account=$H/.eclaude|tmux|$H/.eclaude" \
   "register writes the record for the caller's pane, one generation past the record"
+HAND_IDENTITY="claude|$H/.eclaude|$H/.eclaude|none|none|$(tm display-message -p -t "$HAND" '#{pane_current_path}')|"
+assert_eq "$(identity)" "$HAND_IDENTITY" \
+  "register records the harness the pane runs, its account and directory, and no model or effort"
+# register's control: a harness read that names none leaves the record without one.
+REGCTL="$(mutant_scripts regctl oversee)" || exit 1
+mutate_file "$REGCTL/oversee" '    claude) harness=claude ;;' '    claude) ;;'
+OVERSEE_BIN="$REGCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
+assert_eq "$RC|$(recorded harness)" "0|none" \
+  "control: a register that reads no harness records none"
 run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" -- register --account "$H/.claude"
 assert_eq "$RC|$(recorded generation)|$(recorded account)" \
   "0|4|$H/.claude" \
@@ -207,7 +224,6 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
 tm kill-window -t "$(recorded window)"
 ELSEWHERE="$TMP_ROOT/elsewhere"
 mkdir -p "$ELSEWHERE"
-WORK_REAL="$(cd "$TMP_ROOT/work" && pwd -P)"
 elsewhere_state() { if [[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]]; then echo written; else echo absent; fi; }
 RUN_DIR="$ELSEWHERE" run_oversee -- launch --cwd "$TMP_ROOT/work" --wait-secs 20
 assert_eq "$RC|$(recorded generation)|$(elsewhere_state)|$(tm display-message -p -t "$(recorded pane)" '#{pane_current_path}')" \
@@ -222,6 +238,17 @@ run_oversee ORCH_QUESTION_TOOL=overseer -- launch --wait-secs 20
 assert_eq "$RC|$(recorded_argv)" \
   "0|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$BRIEF;" \
   "ORCH_QUESTION_TOOL=overseer launches the overseer with its question tool"
+tm kill-window -t "$(recorded window)"
+
+# The writer's control: a record write that leaves the launch identity out,
+# over a fleet with no prior record, records a session nothing says the
+# harness or model of.
+WRITECTL="$(mutant_scripts writectl lib/overseer-launch.sh)" || exit 1
+mutate_file "$WRITECTL/lib/overseer-launch.sh" '      + $identity' '      + {}'
+jq 'del(.overseer)' "$FLEET_STATE" > "$FLEET_STATE.tmp" && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
+OVERSEE_BIN="$WRITECTL/oversee" run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(recorded harness)|$(recorded model)" "0|none|none" \
+  "control: a record write without the launch identity records none of it"
 tm kill-window -t "$(recorded window)"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

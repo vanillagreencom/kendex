@@ -275,6 +275,39 @@ assert_eq "$([[ -n "$FL_AT_EPOCH" && "$FL_AT_EPOCH" -ge "$FL_BEFORE" && "$FL_AT_
   && echo in-window || echo "$FL_AT")" \
   "in-window" "and inside the window this run took, so the append stamped it" "$ERR"
 
+# A succession's pending successor, written before its window opened, is the
+# launch the fleet last chose: a death while it stands replays it, not the
+# dead session's own line.
+PENDING_LINE="env CLAUDE_CONFIG_DIR='/home/me/.eclaude' claude -n overseer --model fable 'brief'"
+pending_state() {
+  state_with "$LINE"
+  jq --arg line "$PENDING_LINE" '.overseer.pending = {launch_line: $line, account: "/home/me/.eclaude"}' \
+    "$STUB_DIR/oversee-state.json" > "$STUB_DIR/oversee-state.json.tmp" \
+    && mv -- "$STUB_DIR/oversee-state.json.tmp" "$STUB_DIR/oversee-state.json"
+}
+overseer_case dead_relaunch_pending exited
+pending_state
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "rc=$RC line=$(cat "$STUB_DIR/succeed.line-file")" "rc=3 line=$PENDING_LINE" \
+  "a death while a pending successor stands relaunches the pending line" "$ERR"
+# The control: a relaunch that reads the session's own line alone replays the
+# command the succession had already moved off.
+PENDING_MUTANT="$TMP_ROOT/pending-mutant"
+mkdir -p "$PENDING_MUTANT/orch"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$PENDING_MUTANT/orch/scripts"
+ln -s "$REPO_ROOT/skills/github" "$PENDING_MUTANT/github"
+FROM="    get oversee '.overseer.pending.launch_line // .overseer.launch_line // \"\"' 2>\"\$errf\")\" \\"
+assert_eq "$(grep -cxF -- "$FROM" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" \
+  "control: the relaunch line read is one line of the watch"
+FROM="$FROM" TO="    get oversee '.overseer.launch_line // \"\"' 2>\"\$errf\")\" \\" \
+  awk '$0 == ENVIRON["FROM"] { print ENVIRON["TO"]; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$PENDING_MUTANT/orch/scripts/oversee-watch"
+overseer_case dead_relaunch_pending_mutant exited
+pending_state
+WATCH_BIN="$PENDING_MUTANT/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "rc=$RC line=$(cat "$STUB_DIR/succeed.line-file")" "rc=3 line=$LINE" \
+  "control: a relaunch that ignores the pending line replays the dead session's own" "$ERR"
+
 # --- one pass is not a death ----------------------------------------------
 # A note that lands while the pane reads exited is held: the mail pass reads no
 # mailbox while a long pass's reading stands, so the note waits for a live
@@ -601,24 +634,30 @@ assert_eq "$(succeed_calls --print-launch-line)" "1" \
 # observes the pane and the launch line and nothing about the generation.
 overseer_case record_keeps_generation idle
 jq -n --arg pane "$PANE" --arg window "$WINDOW" \
-  '{triaged: [], overseer: {runtime: "tmux", generation: 3, account: "/home/me/.claude", server: "7000", pane: $pane, window: $window, launch_line: "old"}}' \
+  '{triaged: [], overseer: {runtime: "tmux", generation: 3, account: "/home/me/.claude", server: "7000", pane: $pane, window: $window, launch_line: "old",
+    harness: "claude", home: "/home/me/.claude", model: "fable", effort: "high", cwd: "/home/me/kendex",
+    pending: {launch_line: "pending", account: "/home/me/.eclaude"}}}' \
   > "$STUB_DIR/oversee-state.json"
 printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
 run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
 assert_eq "runtime=$(recorded runtime) generation=$(recorded generation) account=$(recorded account) line=$(recorded launch_line)" \
   "runtime=tmux generation=3 account=/home/me/.claude line=$LINE" \
   "a start on the recorded pane keeps the session record's runtime, generation and account and replaces the line" "$ERR"
+assert_eq "harness=$(recorded harness) home=$(recorded home) model=$(recorded model) effort=$(recorded effort) cwd=$(recorded cwd) pending=$(recorded pending)" \
+  "harness=claude home=/home/me/.claude model=fable effort=high cwd=/home/me/kendex pending=none" \
+  "and keeps its launch identity, dropping a pending successor as it replaces the line" "$ERR"
 # A record naming another pane is another session's: its generation is not
 # this one's, so the start records only what it observes.
 overseer_case record_drops_other_session idle
 jq -n --arg window "$WINDOW" \
-  '{triaged: [], overseer: {runtime: "tmux", generation: 3, account: "/home/me/.claude", server: "7000", pane: "%4", window: $window, launch_line: "old"}}' \
+  '{triaged: [], overseer: {runtime: "tmux", generation: 3, account: "/home/me/.claude", server: "7000", pane: "%4", window: $window, launch_line: "old",
+    harness: "codex", model: "gpt-6-astra"}}' \
   > "$STUB_DIR/oversee-state.json"
 printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
 run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
-assert_eq "pane=$(recorded pane) generation=$(recorded generation) account=$(recorded account)" \
-  "pane=$PANE generation=none account=none" \
-  "a start on another pane than the record's drops that session's generation and account" "$ERR"
+assert_eq "pane=$(recorded pane) generation=$(recorded generation) account=$(recorded account) harness=$(recorded harness) model=$(recorded model)" \
+  "pane=$PANE generation=none account=none harness=none model=none" \
+  "a start on another pane than the record's drops that session's generation, account and launch identity" "$ERR"
 # The must-fail control: a start that replaces the object whole loses the
 # generation the launcher wrote for this very pane.
 RECORD_MUTANT="$TMP_ROOT/record-mutant"
