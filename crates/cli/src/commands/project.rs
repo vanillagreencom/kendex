@@ -43,7 +43,7 @@ pub enum ProjectCommand {
     },
     /// List the projects on Projects
     List,
-    /// Walk a directory for harness-marked projects
+    /// Find projects in a folder
     Discover {
         root: PathBuf,
         /// Add every project found to Projects

@@ -5,8 +5,9 @@ use kendex_core::model::ItemKind;
 use kendex_core::process::Hardened;
 use kendex_core::report::DEFAULT_UPSTREAM;
 
-use super::{CliResult, out, resolve_scopes, say};
+use super::{CliResult, resolve_scopes};
 use crate::scope::ScopeFilter;
+use crate::ui::{self, Span, Status, Style};
 
 pub struct ReportArgs {
     pub skill: Option<String>,
@@ -89,6 +90,7 @@ fn parse_inputs(args: &ReportArgs) -> Result<Inputs, Box<dyn std::error::Error>>
 }
 
 fn resolve_route(
+    style: &Style,
     env: &Env,
     scope: &kendex_core::model::Scope,
     selector: &Option<(String, Option<ItemKind>)>,
@@ -99,7 +101,7 @@ fn resolve_route(
         .map(|(name, kind)| kendex_core::report::resolve(env, scope, name, *kind, upstream));
     if let Some(resolved) = &resolved {
         for warning in &resolved.warnings {
-            say(&format!("warning: {warning}"));
+            ui::stderr(&style.note(&[Span::Prose("warning: "), Span::Prose(warning)]));
         }
     }
     resolved
@@ -116,6 +118,8 @@ fn append_routing_warnings(body: &mut String, resolved: &kendex_core::report::Re
 }
 
 pub fn run(env: &Env, args: ReportArgs) -> CliResult {
+    let style = ui::style();
+    ui::stderr(&style.header("report", &args.title));
     let Inputs {
         selector,
         body,
@@ -126,9 +130,11 @@ pub fn run(env: &Env, args: ReportArgs) -> CliResult {
 
     let scope = resolve_scopes(env, filter)?.remove(0);
     if selector.is_none() {
-        say("warning: no asset selector — routing to this project's own repo");
+        ui::stderr(&style.note(&[Span::Prose(
+            "warning: no asset selector — routing to this project's own repo",
+        )]));
     }
-    let resolved = resolve_route(env, &scope, &selector, &upstream);
+    let resolved = resolve_route(&style, env, &scope, &selector, &upstream);
     let route = resolved.as_ref().map(|resolved| &resolved.route);
     // The judge names the destination as well as the decision: `gh --repo`
     // takes `owner/repo`, not the URL `--upstream` may be spelled with.
@@ -184,27 +190,29 @@ pub fn run(env: &Env, args: ReportArgs) -> CliResult {
         "project-local"
     };
     if args.dry_run {
-        say(&format!("ownership: {}", ownership));
-        say(&format!(
-            "target: {}",
-            target.as_deref().unwrap_or("current repo origin")
+        ui::stderr(&preview(
+            &style,
+            ownership,
+            target.as_deref(),
+            area,
+            &gh_args,
         ));
-        if let Some(area) = area {
-            say(&format!("label: {}", area));
-        }
-        say(&format!("would run: gh {}", shell_join(&gh_args)));
         return Ok(());
     }
 
+    submit(&style, &gh_args, &args.title, &sent_body)
+}
+
+fn submit(style: &Style, gh_args: &[String], title: &str, body: &str) -> CliResult {
     let gh_args: Vec<&str> = gh_args.iter().map(String::as_str).collect();
     let output = Hardened::gh(&gh_args).run();
     match output {
         Ok(result) if result.status.success() => {
             let url = String::from_utf8_lossy(&result.stdout).trim().to_owned();
             if url.is_empty() {
-                out("Issue filed");
+                ui::stdout(&style.summary(Status::Done, "Issue filed"));
             } else {
-                out(&format!("Issue filed: {url}"));
+                ui::stdout(&style.summary(Status::Done, &format!("Issue filed: {url}")));
             }
             Ok(())
         }
@@ -213,14 +221,45 @@ pub fn run(env: &Env, args: ReportArgs) -> CliResult {
                 Ok(result) => String::from_utf8_lossy(&result.stderr).trim().to_owned(),
                 Err(error) => error.to_string(),
             };
-            let saved = save_body(&args.title, &sent_body);
+            let saved = save_body(title, body);
             if let Some(path) = &saved {
-                say(&format!("report body saved to {}", path.display()));
+                ui::stderr(&style.note(&[
+                    Span::Prose("report body saved to "),
+                    Span::Command(&path.display().to_string()),
+                ]));
             }
-            say("file it manually with the gh command above, or check `gh auth status`");
+            ui::stderr(&style.note(&[
+                Span::Prose("file it manually with the gh command above, or check `"),
+                Span::Command("gh auth status"),
+                Span::Prose("`"),
+            ]));
             Err(format!("failed to file the report via gh: {detail}").into())
         }
     }
+}
+
+/// The dry-run fields are a script protocol. Keep their names, order and
+/// gh argument spelling identical in plain mode.
+fn preview(
+    style: &Style,
+    ownership: &str,
+    target: Option<&str>,
+    area: Option<&str>,
+    gh_args: &[String],
+) -> Vec<String> {
+    let mut lines = style.note(&[Span::Prose("ownership: "), Span::Prose(ownership)]);
+    lines.extend(style.note(&[
+        Span::Prose("target: "),
+        Span::Command(target.unwrap_or("current repo origin")),
+    ]));
+    if let Some(area) = area {
+        lines.extend(style.note(&[Span::Prose("label: "), Span::Prose(area)]));
+    }
+    lines.extend(style.note(&[
+        Span::Prose("would run: "),
+        Span::Command(&format!("gh {}", shell_join(gh_args))),
+    ]));
+    lines
 }
 
 fn save_body(title: &str, body: &str) -> Option<PathBuf> {
@@ -246,3 +285,6 @@ fn shell_join(args: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+
+#[cfg(test)]
+mod tests;

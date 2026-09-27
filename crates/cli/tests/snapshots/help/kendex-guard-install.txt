@@ -1,0 +1,7 @@
+Turn on this repository's Git commit checks
+
+Usage: kendex guard install
+
+Options:
+  -h, --help
+          Print help

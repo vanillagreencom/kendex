@@ -197,12 +197,14 @@ fn report_files_through_a_stubbed_gh() {
     // Triage compares a report with the installed record, so the marker
     // carries what the lock recorded. An installation the lock never dated
     // says so and still files.
-    for (recorded, stamped) in [
+    for (recorded, stamped, rendering) in [
         (
             r#","sourceCommit":"abc1234def5678","renderedHash":"9f8e7d6c5b4a""#,
             "source=vanillagreencom/kendex@abc1234 rendered=9f8e7d6",
+            "plain",
         ),
-        ("", "source=unlocked rendered=unlocked"),
+        ("", "source=unlocked rendered=unlocked", "plain"),
+        ("", "source=unlocked rendered=unlocked", "pretty"),
     ] {
         fs::write(
             proj.join(".kendex-lock.json"),
@@ -220,7 +222,7 @@ fn report_files_through_a_stubbed_gh() {
             &[
                 "report", "--hook", "guard", "--title", "Broken", "--body", "Details",
             ],
-            &[("PATH", path.clone())],
+            &[("PATH", path.clone()), ("KENDEX_UI", rendering.into())],
         );
         assert!(
             output.status.success(),
@@ -231,13 +233,11 @@ fn report_files_through_a_stubbed_gh() {
             String::from_utf8_lossy(&output.stdout).contains("Issue filed: https://github.com/x/1")
         );
         let args = fs::read_to_string(home.join("gh-args.txt")).unwrap();
-        assert!(args.contains("vanillagreencom/kendex"));
-        assert!(args.contains("harness"));
-        assert!(
-            args.contains(&format!(
-                "kendex-report:v1 asset=guard kind=hook ownership=kendex {stamped} -->"
-            )),
-            "{args}"
+        assert_eq!(
+            args,
+            format!(
+                "issue\ncreate\n--repo\nvanillagreencom/kendex\n--label\nharness\n--title\nBroken\n--body\nDetails\n\n<!-- kendex-report:v1 asset=guard kind=hook ownership=kendex {stamped} -->\n"
+            )
         );
     }
 }

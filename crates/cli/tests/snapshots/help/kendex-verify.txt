@@ -1,0 +1,35 @@
+Check that installed files match your saved setup
+
+Usage: kendex verify [OPTIONS] [NAMES]...
+
+Arguments:
+  [NAMES]...
+          
+
+Options:
+      --at-record
+          Render each package that follows its source at the commit the install
+          record names, not at the source's revision now; that commit must be on
+          the source's history and, with --base, no older than the base
+          revision's record names. A package with a revision of its own, or
+          whose installations disagree on a commit, resolves as usual
+
+      --base <REV>
+          A git revision of the project; with --json, each shared file kendex
+          writes keys in under the project scope says whether the rest of it is
+          as that revision held it
+
+  -h, --help
+          Print help
+
+Where:
+  -g, --global
+          Use your personal setup instead of this project
+
+      --scope <SCOPE>
+          project | global | all (default all)
+
+Output:
+      --json
+          Also print one JSON document on stdout: every row with its state and
+          the positions it occupies

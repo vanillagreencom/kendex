@@ -1,0 +1,95 @@
+Install agents, skills, and more from a marketplace or repository
+
+Usage: kendex add [OPTIONS] [SOURCE]
+
+Arguments:
+  [SOURCE]
+          GitHub `owner/repo` or local path
+
+Options:
+      --copy
+          Copy instead of symlink
+
+      --method <METHOD>
+          Delivery: symlink (one shared tree) or copy (a tree per harness)
+          
+          [possible values: symlink, copy]
+
+  -y, --yes
+          Skip confirmation prompts
+
+      --clobber
+          Allow --global --all when your personal setup already has an install
+          record
+
+      --no-auto-skills
+          Skip auto-install of skills referenced by selected agents
+
+      --hold
+          Hold what this installs at the resolved version (manual updates)
+
+      --allow-repo-effects
+          Say yes to the repository changes a package declares
+
+  -h, --help
+          Print help
+
+Where:
+  -g, --global
+          Install to the user-level scope
+
+      --harness <HARNESS>
+          Target harnesses (comma-separated)
+
+      --all-harnesses
+          Target every harness kendex can install to at this scope
+
+      --throwaway
+          Add a throwaway project to Projects: a folder under a temporary path,
+          which is otherwise refused
+
+Packages:
+  -a, --agent <AGENT>
+          Install specific agents (comma-separated)
+
+  -s, --skill <SKILL>
+          Install specific skills (comma-separated)
+
+  -b, --bundle <BUNDLE>
+          Install whole bundles the marketplace offers (comma-separated)
+
+      --with <OPTIONAL>
+          Also take these optional dependencies (comma-separated)
+
+      --hook <HOOK>
+          Install specific hooks (comma-separated)
+
+      --command <COMMAND>
+          Install specific commands (comma-separated)
+
+      --mcp-server <MCP_SERVER>
+          Install specific MCP servers (comma-separated)
+
+      --pi-extension <PI_EXTENSION>
+          Install specific Pi extensions (comma-separated)
+          
+          [alias: --pi-package]
+
+      --all
+          Every package the marketplace offers
+
+Git:
+      --commit
+          Commit the files kendex wrote, without asking
+
+      --push
+          Commit them and push, without asking
+
+      --pull-request
+          Commit them on a new branch and open a pull request, without asking
+
+      --leave
+          Leave them as diffs, without asking
+
+      --message <MESSAGE>
+          The commit message to use instead of the default

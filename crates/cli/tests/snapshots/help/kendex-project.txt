@@ -1,0 +1,15 @@
+Add, list, and find projects
+
+Usage: kendex project <COMMAND>
+
+Commands:
+  add        Add a project folder to Projects
+  remove     Remove a project from Projects (nothing in its folder is deleted)
+  reconnect  Point a project on Projects at the folder it was moved to
+  list       List the projects on Projects
+  discover   Find projects in a folder
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help

@@ -1,0 +1,11 @@
+Add an existing marketplace folder to Mine without changing its files
+
+Usage: kendex marketplace use <DIR>
+
+Arguments:
+  <DIR>
+          
+
+Options:
+  -h, --help
+          Print help

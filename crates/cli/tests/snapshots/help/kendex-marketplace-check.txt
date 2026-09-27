@@ -1,0 +1,11 @@
+Check a marketplace folder for problems
+
+Usage: kendex marketplace check [DIR]
+
+Arguments:
+  [DIR]
+          The marketplace directory (default: the current directory)
+
+Options:
+  -h, --help
+          Print help

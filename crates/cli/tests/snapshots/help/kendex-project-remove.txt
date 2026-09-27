@@ -1,0 +1,11 @@
+Remove a project from Projects (nothing in its folder is deleted)
+
+Usage: kendex project remove <PATH>
+
+Arguments:
+  <PATH>
+          
+
+Options:
+  -h, --help
+          Print help

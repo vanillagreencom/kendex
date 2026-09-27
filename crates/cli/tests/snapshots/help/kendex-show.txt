@@ -1,0 +1,30 @@
+Show a package's files, readme, or source
+
+Usage: kendex show [OPTIONS] <KIND> <NAME>
+
+Arguments:
+  <KIND>
+          agent | skill | hook | command | mcp-server | pi-extension
+
+  <NAME>
+          
+
+Options:
+      --files
+          List the package's files
+
+      --file <FILE>
+          Print one file's content
+
+      --readme
+          Print the package's readme
+
+  -h, --help
+          Print help
+
+Where:
+  -g, --global
+          Use your personal setup instead of this project
+
+      --scope <SCOPE>
+          project | global (default project)

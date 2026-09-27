@@ -1,0 +1,17 @@
+Resume notifications for an ignored package
+
+Usage: kendex updates unignore [OPTIONS] <KIND> <NAME>
+
+Arguments:
+  <KIND>
+          agent | skill | hook | command | mcp-server | pi-extension
+
+  <NAME>
+          
+
+Options:
+  -y, --yes
+          Skip confirmation prompts
+
+  -h, --help
+          Print help

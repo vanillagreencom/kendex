@@ -1,0 +1,15 @@
+Summarize the packages in a marketplace folder
+
+Usage: kendex index [OPTIONS] [DIR]
+
+Arguments:
+  [DIR]
+          
+
+Options:
+  -h, --help
+          Print help
+
+Output:
+      --json
+          Print the summary as JSON

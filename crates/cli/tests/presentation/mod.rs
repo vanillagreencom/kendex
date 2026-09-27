@@ -260,4 +260,5 @@ mod design;
 mod plain;
 mod pretty;
 mod snapshots;
+mod support;
 mod verbs;

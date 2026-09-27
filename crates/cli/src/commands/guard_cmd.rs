@@ -13,18 +13,18 @@ use super::{answer, out, say};
 /// when no kendex binary is present.
 #[derive(Subcommand)]
 pub enum GuardCommand {
-    /// Run a hook lane — the package's own script for it
+    /// Run the checks for a Git hook
     Run {
         /// pre-commit | commit-msg
         hook: String,
         /// commit-msg only: the message file git passed
         message_file: Option<PathBuf>,
     },
-    /// Arm this repository's commit hooks
+    /// Turn on this repository's Git commit checks
     Install,
-    /// Disarm this repository's commit hooks
+    /// Turn off this repository's Git commit checks
     Uninstall,
-    /// Ask the package whether this repository's hooks are armed
+    /// Check whether this repository's Git hooks are active
     Check,
 }
 

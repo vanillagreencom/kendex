@@ -1,0 +1,53 @@
+Find package updates and manage update notifications
+
+Usage: kendex updates [OPTIONS] [COMMAND]
+
+Commands:
+  ignore    Stop notifying about one package's updates
+  unignore  Resume notifications for an ignored package
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+      --refresh
+          Check every marketplace for updates first, held packages' ones
+          included
+
+      --apply
+          Install pending updates (the same run as refresh)
+
+  -y, --yes
+          Skip confirmation prompts
+
+  -h, --help
+          Print help
+
+Where:
+  -g, --global
+          Use your personal setup instead of this project
+
+      --scope <SCOPE>
+          project | global (default project)
+
+      --project-path <PATH>
+          The project this run reads and writes, by path, instead of the one it
+          was typed in
+
+      --throwaway
+          Add a throwaway project to Projects: a folder under a temporary path,
+          which is otherwise refused
+
+Git:
+      --commit
+          Commit the files kendex wrote, without asking
+
+      --push
+          Commit them and push, without asking
+
+      --pull-request
+          Commit them on a new branch and open a pull request, without asking
+
+      --leave
+          Leave them as diffs, without asking
+
+      --message <MESSAGE>
+          The commit message to use instead of the default

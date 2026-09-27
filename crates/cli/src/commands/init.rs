@@ -1,14 +1,20 @@
 use std::fs;
 use std::path::Path;
 
-use super::{CliResult, out, say};
+use super::CliResult;
+use crate::ui::{self, Span, Status, Style};
 
 /// Maintainer scaffolding: create a source-catalog item skeleton in the
 /// current directory (no name → usage + exit 0; a name without --kind, or
 /// with '/' or a leading '-', → error).
 pub fn run(name: Option<String>, kind: Option<String>) -> CliResult {
+    let style = ui::style();
+    ui::stderr(&style.header("init", name.as_deref().unwrap_or("new package")));
     let Some(name) = name else {
-        say("usage: kendex init <name> --kind agent|skill|hook");
+        ui::stderr(&style.note(&[
+            Span::Prose("usage: "),
+            Span::Command("kendex init <name> --kind agent|skill|hook"),
+        ]));
         return Ok(());
     };
     let Some(kind) = kind else {
@@ -27,7 +33,7 @@ pub fn run(name: Option<String>, kind: Option<String>) -> CliResult {
                     "---\nname: {name}\ndescription: What this agent is for. Trigger conditions.\nmodel: sonnet\nrole: engineer\n---\n\n# {name}\n\nOperating instructions.\n"
                 ),
             )?;
-            out(&format!("created {}", path.display()));
+            ui::stdout(&created(&style, &path));
         }
         "skill" | "skills" | "s" => {
             let path = cwd.join("skills").join(&name).join("SKILL.md");
@@ -37,7 +43,7 @@ pub fn run(name: Option<String>, kind: Option<String>) -> CliResult {
                     "---\nname: {name}\ndescription: When to reach for this skill.\n---\n\n# {name}\n\nHow to use it. The body is do-only — commands to run, rules to follow; never how it works inside.\n"
                 ),
             )?;
-            out(&format!("created {}", path.display()));
+            ui::stdout(&created(&style, &path));
         }
         "hook" | "hooks" | "h" => {
             let path = cwd.join("hooks").join(format!("{name}.sh"));
@@ -47,7 +53,7 @@ pub fn run(name: Option<String>, kind: Option<String>) -> CliResult {
                     "#!/usr/bin/env bash\n# ---\n# name: {name}\n# event: PreToolUse\n# matcher: Bash\n# description: What this hook protects against.\n# ---\nset -euo pipefail\nexit 0\n"
                 ),
             )?;
-            out(&format!("created {}", path.display()));
+            ui::stdout(&created(&style, &path));
         }
         other => return Err(format!("unknown --kind '{other}' (agent | skill | hook)").into()),
     }
@@ -79,11 +85,16 @@ fn declare_catalog(cwd: &Path) -> CliResult {
         return Ok(());
     }
     fs::write(&control, catalog_marker())?;
-    say(&format!(
-        "marked this folder as a marketplace ({})",
-        control.display()
-    ));
+    ui::stderr(&ui::style().note(&[
+        Span::Prose("marked this folder as a marketplace ("),
+        Span::Command(&control.display().to_string()),
+        Span::Prose(")"),
+    ]));
     Ok(())
+}
+
+fn created(style: &Style, path: &Path) -> Vec<String> {
+    style.summary(Status::Done, &format!("created {}", path.display()))
 }
 
 fn write_new(path: &Path, content: &str) -> CliResult {
@@ -96,3 +107,6 @@ fn write_new(path: &Path, content: &str) -> CliResult {
     fs::write(path, content)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

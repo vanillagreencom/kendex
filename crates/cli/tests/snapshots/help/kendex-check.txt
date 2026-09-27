@@ -1,0 +1,27 @@
+Check for package changes or problems on this computer
+
+Usage: kendex check [OPTIONS]
+
+Options:
+      --catalog <CATALOG>
+          Check this marketplace directory instead of this computer
+
+      --strict
+          With --catalog, also fail on advisories
+
+  -h, --help
+          Print help
+
+Where:
+  -g, --global
+          Use your personal setup instead of this project
+
+      --scope <SCOPE>
+          project | global | all (default all)
+
+Output:
+      --json
+          Machine-readable report
+
+  -q, --quiet
+          Print a short report, or nothing when all checks pass

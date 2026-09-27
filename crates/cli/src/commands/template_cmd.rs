@@ -19,7 +19,7 @@ use super::{CliResult, fail_refusal, note, out, say, warn};
 pub enum TemplateCommand {
     /// List saved templates
     List,
-    /// What one template installs, and anything it cannot reach
+    /// Show a template's packages and any missing sources
     Show { name: String },
     /// Save a template — from a project with --from-project, or from
     /// packages a marketplace offers

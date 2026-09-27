@@ -1,0 +1,18 @@
+Bookmark a marketplace package or bundle
+
+Usage: kendex bookmark add --kind <KIND> --source <SOURCE> <NAME>
+
+Arguments:
+  <NAME>
+          
+
+Options:
+      --kind <KIND>
+          What it is: a package kind, or `bundle`
+
+      --source <SOURCE>
+          The marketplace it comes from — `owner/repo`, a marketplace link, or a
+          folder
+
+  -h, --help
+          Print help

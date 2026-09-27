@@ -1,0 +1,58 @@
+Make installed packages match your saved setup
+
+Usage: kendex apply [OPTIONS]
+
+Options:
+      --plan
+          Print the plan and change nothing
+
+  -y, --yes
+          Skip the confirmation prompt
+
+      --discard-edits
+          Overwrite installed files edited on disk
+
+      --replace-unmanaged
+          Replace files kendex did not write, wherever a listed package installs
+          in this place — the old files move to the trash
+
+      --allow-repo-effects
+          Say yes to the repository changes a newly installed package asks for
+
+      --record-existing
+          Record matching installed files after moving an unreadable install
+          record aside
+
+  -h, --help
+          Print help
+
+Where:
+  -g, --global
+          Install into your personal setup
+
+      --scope <SCOPE>
+          project | global | all (default project)
+
+      --project-path <PATH>
+          The project this run reads and writes, by path, instead of the one it
+          was typed in
+
+      --throwaway
+          Add a throwaway project to Projects: a folder under a temporary path,
+          which is otherwise refused
+
+Git:
+      --commit
+          Commit the files kendex wrote, without asking
+
+      --push
+          Commit them and push, without asking
+
+      --pull-request
+          Commit them on a new branch and open a pull request, without asking
+
+      --leave
+          Leave them as diffs, without asking
+
+      --message <MESSAGE>
+          The commit message to use instead of the default

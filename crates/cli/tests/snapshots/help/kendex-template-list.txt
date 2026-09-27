@@ -1,0 +1,7 @@
+List saved templates
+
+Usage: kendex template list
+
+Options:
+  -h, --help
+          Print help

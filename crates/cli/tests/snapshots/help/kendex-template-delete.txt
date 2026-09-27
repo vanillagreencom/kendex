@@ -1,0 +1,14 @@
+Delete a template. Packages installed from it stay installed
+
+Usage: kendex template delete [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>
+          
+
+Options:
+  -y, --yes
+          
+
+  -h, --help
+          Print help

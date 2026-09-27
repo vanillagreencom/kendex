@@ -1,0 +1,18 @@
+Check marketplaces for updates
+
+Usage: kendex source refresh [OPTIONS]
+
+Options:
+      --stale
+          Only check marketplaces not checked recently, then record which
+          installed files changed — the background job check starts
+
+  -h, --help
+          Print help
+
+Where:
+  -g, --global
+          Use your personal setup instead of this project
+
+      --scope <SCOPE>
+          project | global | all (default project; all for refresh --stale)

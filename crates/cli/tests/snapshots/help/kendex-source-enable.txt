@@ -1,0 +1,34 @@
+Switch a marketplace back on here and restore the packages installed from it
+
+Usage: kendex source enable [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>
+          
+
+Options:
+  -h, --help
+          Print help
+
+Git:
+      --commit
+          Commit the files kendex wrote, without asking
+
+      --push
+          Commit them and push, without asking
+
+      --pull-request
+          Commit them on a new branch and open a pull request, without asking
+
+      --leave
+          Leave them as diffs, without asking
+
+      --message <MESSAGE>
+          The commit message to use instead of the default
+
+Where:
+  -g, --global
+          Use your personal setup instead of this project
+
+      --scope <SCOPE>
+          project | global | all (default project; all for refresh --stale)

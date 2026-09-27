@@ -1,0 +1,7 @@
+Sign out of kendex.ai on this computer
+
+Usage: kendex logout
+
+Options:
+  -h, --help
+          Print help

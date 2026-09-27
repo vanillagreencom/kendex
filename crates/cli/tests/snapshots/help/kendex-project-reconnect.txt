@@ -1,0 +1,17 @@
+Point a project on Projects at the folder it was moved to
+
+Usage: kendex project reconnect [OPTIONS] --from <FROM> --to <TO>
+
+Options:
+      --from <FROM>
+          The folder Projects lists now
+
+      --to <TO>
+          The folder the project is in
+
+      --consolidate
+          Join this project with the one Projects already lists at the
+          destination
+
+  -h, --help
+          Print help

@@ -2,8 +2,13 @@ mod commands;
 mod dispatch_args;
 use dispatch_args::{check, remove};
 mod flags;
+mod help;
 mod scope;
 mod ui;
+
+#[cfg(test)]
+#[path = "../../test_util.rs"]
+mod test_util;
 
 use std::process::ExitCode;
 
@@ -18,9 +23,9 @@ use flags::{AddFlags, ReportFlags};
 use scope::ScopeFilter;
 
 #[derive(Parser)]
-#[command(name = "kendex", about = "Skills, agents, hooks. Cross-harness.")]
+#[command(name = "kendex")]
 struct Cli {
-    /// Bare form: `kendex <source> [flags]` maps to `add`.
+    /// Marketplace or repository to install from
     source: Option<String>,
     #[command(flatten)]
     add_flags: AddFlags,
@@ -43,17 +48,17 @@ enum Command {
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
     },
-    /// What changed between two versions of a package
+    /// Show changes between two versions of a package
     Diff(commands::diff_cmd::DiffArgs),
-    /// A package's files, one file, its readme, or where it came from
+    /// Show a package's files, readme, or source
     Show(commands::show::ShowArgs),
     /// Keep an edited package as your own copy
     Fork(commands::fork_cmd::ForkArgs),
     /// Hold a package at a version, or let it follow its marketplace again
     Pin(commands::pin::PinArgs),
-    /// The versions a package's marketplace offers
+    /// List available versions of a package
     Versions(commands::versions::VersionsArgs),
-    /// Which packages have newer versions, and per-package notification
+    /// Find package updates and manage update notifications
     Updates(commands::updates_cmd::UpdatesArgs),
     /// Remove installed packages
     Remove {
@@ -76,9 +81,9 @@ enum Command {
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
     },
-    /// Install every listed package again, and the instruction shims
+    /// Update installed packages from your saved setup
     Refresh(commands::refresh::RefreshArgs),
-    /// Check installed files against the install record and the instruction shims; non-zero exit when they differ
+    /// Check that installed files match your saved setup
     Verify {
         names: Vec<String>,
         #[arg(short = 'g', long)]
@@ -89,10 +94,9 @@ enum Command {
         #[command(flatten)]
         output: commands::verify::Output,
     },
-    /// Make installed files match what kendex.toml lists — leftover removal and instruction shims included
+    /// Make installed packages match your saved setup
     Apply(commands::apply_cmd::ApplyArgs),
-    /// Start managing a package kendex found (its files move into
-    /// kendex's folder for your own packages)
+    /// Keep an existing package in your own managed collection
     Adopt {
         /// agent | skill | hook
         kind: String,
@@ -132,9 +136,7 @@ enum Command {
         #[arg(long)]
         harness: Option<String>,
     },
-    /// Whether installed packages still match on this computer (exit 0
-    /// clean / 1 changed or not yet checked / 2 could not check), or check
-    /// a marketplace directory with --catalog
+    /// Check for package changes or problems on this computer
     Check {
         #[arg(short = 'g', long)]
         global: bool,
@@ -144,7 +146,7 @@ enum Command {
         /// Machine-readable report
         #[arg(long)]
         json: bool,
-        /// Bounded plain-text report, silent when clean (the session hook)
+        /// Print a short report, or nothing when all checks pass
         #[arg(short = 'q', long)]
         quiet: bool,
         /// Check this marketplace directory instead of this computer
@@ -154,7 +156,7 @@ enum Command {
         #[arg(long)]
         strict: bool,
     },
-    /// Install package checks, which run when a session starts, for a place
+    /// Set up package checks at the start of each coding session
     #[command(name = "drift-hook")]
     DriftHook {
         #[arg(short = 'g', long)]
@@ -169,13 +171,13 @@ enum Command {
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
     },
-    /// Commit-time quality guards and the git hooks that run them
+    /// Set up and run checks before each Git commit
     #[command(subcommand)]
     Guard(commands::guard_cmd::GuardCommand),
-    /// Changed files that kendex owns as complete files
+    /// List changed files that kendex manages
     #[command(name = "generated-paths", hide = true)]
     GeneratedPaths,
-    /// File an issue about an installed asset, routed by ownership
+    /// Report a problem to the repository that maintains a package
     #[command(hide = true)]
     Report(ReportFlags),
     /// Add, switch on or off, and check marketplaces for updates
@@ -183,18 +185,17 @@ enum Command {
     /// Subscribe to marketplaces and list subscriptions
     #[command(subcommand)]
     Marketplace(commands::marketplace_cmd::MarketplaceCommand),
-    /// What removed files went to, and how to empty it
+    /// List removed files or empty the trash
     #[command(subcommand)]
     Trash(commands::trash_cmd::TrashCommand),
-    /// Sign in to kendex.ai (a code, a browser tab, done)
+    /// Sign in to kendex.ai with a code in your browser
     Login,
     /// Sign out of kendex.ai on this computer
     Logout,
-    /// Emit the summary of a marketplace directory the community directory
-    /// consumes (default: the current directory)
+    /// Summarize the packages in a marketplace folder
     Index {
         dir: Option<std::path::PathBuf>,
-        /// Machine-readable summary (schema 2)
+        /// Print the summary as JSON
         #[arg(long)]
         json: bool,
     },
@@ -205,7 +206,7 @@ enum Command {
         #[arg(long)]
         kind: Option<String>,
     },
-    /// Self-update from the release feed
+    /// Install a newer version of kendex
     Update {
         /// Reinstall even when the version matches
         #[arg(short = 'f', long)]
@@ -214,19 +215,16 @@ enum Command {
         #[arg(long)]
         git: bool,
     },
-    /// Where the first version stands against the second under SemVer
-    /// precedence: newer, same, or older
+    /// Compare two version numbers
     #[command(name = "version-compare")]
     VersionCompare(commands::version_compare::VersionCompareArgs),
-    /// Every project path kendex's harness adapters read, and whether each
-    /// harness reads it as a root, a catalog, a registry or an instruction
-    /// (JSON)
+    /// List the project paths each harness reads, as JSON
     #[command(name = "harness-paths")]
     HarnessPaths,
-    /// The model id a rank on the tier ladder names on one harness
+    /// Find the AI model for a harness and performance tier
     #[command(name = "tier-model")]
     TierModel(commands::tier_model::TierModelArgs),
-    /// Verify and print the monotonic identity of a rolling release feed.
+    /// Check and print the build number of a rolling release
     #[command(name = "release-main-build", hide = true)]
     ReleaseMainBuild(commands::update::ReleaseMainBuildArgs),
     /// Update Pi extension packages
@@ -257,9 +255,7 @@ pub fn main() -> ExitCode {
         bootstrap_the_command_record(&env);
         announce_the_terms_on_first_run(&env);
     }
-    let matches = <Cli as clap::CommandFactory>::command()
-        .version(env!("KENDEX_BUILD_VERSION"))
-        .get_matches();
+    let matches = help::command().get_matches();
     let cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&matches) {
         Ok(cli) => cli,
         Err(error) => error.exit(),
@@ -274,6 +270,10 @@ pub fn main() -> ExitCode {
     // unreadable, scope unresolvable — must exit 2 (could not check), or
     // the session hook reads the empty report as a clean machine.
     let machine_check = matches!(&cli.command, Some(Command::Check { catalog: None, .. }));
+    let support = matches!(
+        &cli.command,
+        Some(Command::Init { .. } | Command::Login | Command::Logout | Command::Report(_))
+    );
     match run(cli) {
         // A Ctrl-C at the commit offer let the verb finish closing its
         // scopes; the run still ends as a cancel.
@@ -315,7 +315,11 @@ pub fn main() -> ExitCode {
                     ExitCode::from(130)
                 }
                 (false, false) => {
-                    ui::outro_refusal(e.as_ref());
+                    if support {
+                        ui::component_refusal(e.as_ref());
+                    } else {
+                        ui::outro_refusal(e.as_ref());
+                    }
                     ExitCode::FAILURE
                 }
             }

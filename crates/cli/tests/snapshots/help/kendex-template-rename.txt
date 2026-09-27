@@ -1,0 +1,14 @@
+Give a template another name
+
+Usage: kendex template rename <NAME> <TO>
+
+Arguments:
+  <NAME>
+          
+
+  <TO>
+          
+
+Options:
+  -h, --help
+          Print help

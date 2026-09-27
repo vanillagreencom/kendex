@@ -1,0 +1,7 @@
+List the projects on Projects
+
+Usage: kendex project list
+
+Options:
+  -h, --help
+          Print help

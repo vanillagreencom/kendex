@@ -20,8 +20,7 @@ use super::{CliResult, note, out, say, warn};
 pub enum BookmarkCommand {
     /// List bookmarks, and whether each one's marketplace still offers it
     List,
-    /// One bookmark: what it is, which marketplace it comes from, and
-    /// whether that marketplace still offers it
+    /// Show a bookmark's source and whether it is still available
     Show {
         name: String,
         #[command(flatten)]

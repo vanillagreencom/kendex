@@ -8,9 +8,9 @@ use crate::scope::ScopeFilter;
 
 #[derive(Subcommand)]
 pub enum MarketplaceCommand {
-    /// Subscriptions per scope, with package counts once fetched
+    /// List marketplace subscriptions and package counts
     List {
-        /// Machine-readable rows (schema 1)
+        /// Print the list as JSON
         #[arg(long)]
         json: bool,
         #[arg(short = 'g', long)]
@@ -56,11 +56,11 @@ pub enum MarketplaceCommand {
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
     },
-    /// Packages and bundles a subscribed marketplace offers
+    /// List packages and bundles from your subscribed marketplaces
     Browse {
         /// The subscription to browse (default: every subscription in scope)
         marketplace: Option<String>,
-        /// Machine-readable rows (schema 1)
+        /// Print the list as JSON
         #[arg(long)]
         json: bool,
         #[arg(short = 'g', long)]
@@ -69,14 +69,12 @@ pub enum MarketplaceCommand {
         #[arg(long)]
         scope: Option<String>,
     },
-    /// Validate a marketplace directory — the alias of
-    /// `check --catalog --strict`
+    /// Check a marketplace folder for problems
     Check {
         /// The marketplace directory (default: the current directory)
         dir: Option<std::path::PathBuf>,
     },
-    /// Create a marketplace: a folder with kendex.toml, README, the check
-    /// workflow and a license, initialised as a git repository
+    /// Create a marketplace folder with package checks and a license
     New {
         name: String,
         #[arg(long)]
@@ -92,12 +90,11 @@ pub enum MarketplaceCommand {
         #[arg(long)]
         dir: Option<std::path::PathBuf>,
     },
-    /// Register a folder you already have under Mine, read as-is — zero
-    /// bytes inside it change
+    /// Add an existing marketplace folder to Mine without changing its files
     Use { dir: std::path::PathBuf },
-    /// The marketplaces you author, with their local readiness
+    /// List your own marketplaces and show whether they are ready to share
     Mine {
-        /// Machine-readable rows (schema 2)
+        /// Print the list as JSON
         #[arg(long)]
         json: bool,
     },
@@ -135,16 +132,15 @@ pub enum MarketplaceCommand {
         /// reason for copying
         #[arg(long)]
         license_basis: Option<String>,
-        /// Machine-readable candidate list (schema 2)
+        /// Print the packages available to copy as JSON
         #[arg(long)]
         json: bool,
     },
-    /// Submit an authored marketplace to the kendex.ai community
-    /// directory (needs `kendex login`); prints the preflight first
+    /// Submit your marketplace to the kendex.ai community directory
     Submit {
         /// The marketplace directory (default: the current directory)
         dir: Option<std::path::PathBuf>,
-        /// Print the preflight and what would be sent, then stop
+        /// Check the marketplace and preview its submission without sending it
         #[arg(long)]
         dry_run: bool,
         /// Show the status of everything you have submitted

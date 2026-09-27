@@ -8,9 +8,7 @@ use super::*;
 mod fixture_url;
 use fixture_url::file_url;
 
-#[path = "../../../../test_util.rs"]
-mod test_util;
-use test_util::no_record_on_this_runner;
+use crate::test_util::no_record_on_this_runner;
 
 #[test]
 fn git_flag_selects_the_main_feed() {

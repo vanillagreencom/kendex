@@ -1,0 +1,14 @@
+Find the AI model for a harness and performance tier
+
+Usage: kendex tier-model <HARNESS> <RANK>
+
+Arguments:
+  <HARNESS>
+          The harness the model is named for
+
+  <RANK>
+          The position on the tier ladder, 1 for the top tier
+
+Options:
+  -h, --help
+          Print help

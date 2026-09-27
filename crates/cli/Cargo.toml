@@ -19,7 +19,7 @@ path = "src/bin/kendex.rs"
 
 [dependencies]
 kendex-core.workspace = true
-clap.workspace = true
+clap = { workspace = true, features = ["wrap_help"] }
 serde_json.workspace = true
 cliclack.workspace = true
 console.workspace = true

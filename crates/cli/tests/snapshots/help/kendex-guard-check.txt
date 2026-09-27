@@ -1,0 +1,7 @@
+Check whether this repository's Git hooks are active
+
+Usage: kendex guard check
+
+Options:
+  -h, --help
+          Print help

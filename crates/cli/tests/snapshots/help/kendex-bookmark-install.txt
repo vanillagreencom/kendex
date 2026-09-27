@@ -1,0 +1,28 @@
+Install a bookmarked package or bundle
+
+Usage: kendex bookmark install [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>
+          
+
+Options:
+      --kind <KIND>
+          What it is, where two bookmarks share a name
+
+      --source <SOURCE>
+          The marketplace it comes from, where two bookmarks share a name
+
+      --project <PROJECT>
+          The project to install into; without it the personal setup
+
+  -y, --yes
+          Skip confirmation prompts
+
+  -h, --help
+          Print help
+
+Where:
+      --throwaway
+          Add a throwaway project to Projects: a folder under a temporary path,
+          which is otherwise refused

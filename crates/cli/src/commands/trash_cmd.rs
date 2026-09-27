@@ -14,7 +14,7 @@ use crate::ui;
 /// wants to see it or take more out.
 #[derive(Subcommand)]
 pub enum TrashCommand {
-    /// What the trash holds: each entry's name, age and size, newest first
+    /// List files in the trash, with their ages and sizes
     List,
     /// Remove entries from the trash: every one, or every one past an age
     Empty {

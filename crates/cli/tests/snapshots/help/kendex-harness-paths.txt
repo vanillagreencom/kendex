@@ -1,0 +1,7 @@
+List the project paths each harness reads, as JSON
+
+Usage: kendex harness-paths
+
+Options:
+  -h, --help
+          Print help

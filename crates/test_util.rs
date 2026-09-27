@@ -32,6 +32,25 @@ pub fn exact_test(module_path: &str, function: &str) -> String {
     }
 }
 
+/// Run one test in a fresh process with only the environment its fixture
+/// supplies. Re-execution isolates cached environment probes from the
+/// other tests sharing this binary.
+#[allow(
+    dead_code,
+    reason = "every test binary includes this whole module and uses the part it needs"
+)]
+pub fn reexecute_test(
+    module_path: &str,
+    function: &str,
+    environment: &[(&str, &str)],
+) -> std::io::Result<std::process::Output> {
+    std::process::Command::new(std::env::current_exe()?)
+        .args(["--exact", &exact_test(module_path, function), "--nocapture"])
+        .env_clear()
+        .envs(environment.iter().copied())
+        .output()
+}
+
 /// The checkout this crate sits in, canonical: the workspace root two levels
 /// above `crates/<name>`, whichever of the three crates compiled this module.
 ///

@@ -112,7 +112,7 @@ pub struct ReportFlags {
     /// Report about an installed hook
     #[arg(long)]
     hook: Option<String>,
-    /// Any installed asset by name, kind auto-detected
+    /// Report about any installed package by name
     #[arg(long)]
     asset: Option<String>,
     /// Issue title
@@ -126,16 +126,16 @@ pub struct ReportFlags {
     body_file: Option<std::path::PathBuf>,
     #[arg(short = 'g', long)]
     global: bool,
-    /// project | global (default project; all rejected)
+    /// Where to read the package: project or global (default project)
     #[arg(long)]
     scope: Option<String>,
-    /// Upstream repo for kendex-owned issues
+    /// Repository for reports about kendex packages
     #[arg(long)]
     upstream: Option<String>,
     /// Routing label: cli | skills | harness | review-gate | docs | tech-debt
     #[arg(long)]
     area: Option<String>,
-    /// Print the decision and exact gh command; file nothing
+    /// Preview the destination and submission arguments without filing an issue
     #[arg(long)]
     dry_run: bool,
 }

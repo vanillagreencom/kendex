@@ -34,6 +34,23 @@ pub fn outro_refusal(error: &(dyn std::error::Error + 'static)) {
     closed(&lines("Error: ", error).join("\n"));
 }
 
+/// A converted verb's refusal, with the same error-owned line boundaries
+/// as the framed path. Plain keeps the existing failure protocol.
+pub fn component_refusal(error: &(dyn std::error::Error + 'static)) {
+    super::stderr(&component_lines(&super::style(), error));
+}
+
+fn component_lines(style: &super::Style, error: &(dyn std::error::Error + 'static)) -> Vec<String> {
+    lines("Error: ", error)
+        .iter()
+        .enumerate()
+        .flat_map(|(at, line)| match at {
+            0 => style.summary(super::Status::Failed, line),
+            _ => style.note(&[super::Span::Prose(line)]),
+        })
+        .collect()
+}
+
 /// A refusal a run says and then carries on past, under a headline the
 /// caller wrote.
 ///
@@ -109,6 +126,25 @@ mod tests {
     use super::*;
 
     use kendex_core::error::CoreError;
+
+    #[test]
+    fn component_refusal_snapshots_keep_owned_breaks_and_escape_values() {
+        use crate::ui::testing::{plain, rich, tagged};
+        let structured = Lines("one\ntwo".into());
+        assert_eq!(
+            component_lines(&plain(), &structured),
+            ["Error: one", "two"]
+        );
+        assert_eq!(
+            tagged(&component_lines(&rich(80), &structured)),
+            ["", "<31>✗</> <1>Error: one</>", "<90>two</>",]
+        );
+        let foreign: Box<dyn std::error::Error> = "name\nwith\u{1b}[31m".into();
+        assert_eq!(
+            component_lines(&plain(), foreign.as_ref()),
+            ["Error: name\\nwith\\u{1b}[31m"]
+        );
+    }
 
     /// The whole table the door is chosen from. Nothing else may reach the
     /// splitting one: an error carrying a break it did not write is a
