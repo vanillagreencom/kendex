@@ -24,9 +24,14 @@
 #      and a refused step writing no lanes output.
 #   4. action.yml: its `outputs:` block declares exactly the names classify
 #      writes, each forwarding the classify step's output of the same name,
-#      with a copy carrying a misspelled `lanes` value as its control. A
-#      workflow reads the action, never the script, so a dropped mapping
-#      there publishes an empty `lanes` with every row above green.
+#      and the classify step's `env:` block maps each declared input to
+#      exactly one variable, its name upper-cased with `-` as `_`, each one
+#      classify's Environment header lists. A copy carrying a misspelled
+#      `lanes` value and one carrying a misspelled `inputs.lanes-from` are
+#      the controls. A workflow reads the action, never the script, and
+#      GitHub reads an undeclared input as empty, so a broken mapping there
+#      publishes an empty `lanes` or `lane_verdicts` with every row above
+#      green.
 #   5. the lane verdicts: one lane reached, two lanes reached, a lane named
 #      on two lines, an unclaimed path outside the docs set and one inside
 #      it, a docs path a lane claims, lanes=false, no changed path, and an
@@ -389,6 +394,69 @@ if [ "$forwarded" != "$(declared "$TMP/action.yml")" ]; then
   ok "must-fail: an action.yml whose lanes value is misspelled fails the forwarding row"
 else
   bad "must-fail: an action.yml whose lanes value is misspelled fails the forwarding row"
+fi
+
+# The inputs, the other way: `NAME: ${{ inputs.<input> }}` per entry of
+# ACTION_YML's `inputs:` block, NAME upper-cased with `-` as `_`, sorted.
+input_mappings() { # ACTION_YML
+  awk '
+    /^inputs:/ { on = 1; next }
+    on && /^[^ ]/ { exit }
+    on && /^  [a-z][a-z-]*:$/ {
+      input = $1; sub(/:$/, "", input)
+      name = toupper(input); gsub(/-/, "_", name)
+      print name ": ${{ inputs." input " }}"
+    }
+  ' "$1" | LC_ALL=C sort
+}
+
+# The classify step's `env:` lines of ACTION_YML, indentation stripped, sorted.
+classify_env() { # ACTION_YML
+  awk '
+    /^    - id: classify$/ { step = 1; next }
+    step && /^    - / { exit }
+    step && /^      env:$/ { env = 1; next }
+    env && /^        [A-Z_]+: / { sub(/^ +/, ""); print; next }
+    env { env = 0 }
+  ' "$1" | LC_ALL=C sort
+}
+
+mapped="$(input_mappings "$ACTION")"
+case "$mapped" in
+  *'LANES_FROM: ${{ inputs.lanes-from }}'*) ;;
+  *) echo "the inputs reader found no lanes-from input in $ACTION, so it is broken: $mapped" >&2; exit 1 ;;
+esac
+check "action.yml maps each input to exactly one classify env line of its own name" \
+  "$mapped" "$(classify_env "$ACTION")"
+
+# The names classify's header lists under `Environment`, but GITHUB_OUTPUT,
+# which the runner sets and no input carries.
+header_env="$(awk '
+  /^# Environment/ { on = 1; next }
+  on && /^# Outputs/ { exit }
+  on && /^#   [A-Z][A-Z_]* / { print $2 }
+' "$CLASSIFY" | grep -vx GITHUB_OUTPUT | LC_ALL=C sort)" ||
+  { echo "the Environment header reader failed on $CLASSIFY" >&2; exit 1; }
+case "$header_env" in
+  *LANES_FROM*) ;;
+  *) echo "the Environment header reader found no LANES_FROM in $CLASSIFY, so it is broken: $header_env" >&2; exit 1 ;;
+esac
+check "classify's env names are the ones its Environment header lists, GITHUB_OUTPUT aside" \
+  "$header_env" "$(classify_env "$ACTION" | sed 's/:.*//')"
+
+needle='LANES_FROM: ${{ inputs.lanes-from }}'
+[ "$(grep -cF -- "$needle" "$ACTION")" -eq 1 ] ||
+  { echo "the lanes-from mapping is no longer one line in $ACTION" >&2; exit 1; }
+NEEDLE="$needle" awk '
+  { i = index($0, ENVIRON["NEEDLE"]) }
+  i > 0 { $0 = substr($0, 1, i - 1) "LANES_FROM: ${{ inputs.lanes_from }}" substr($0, i + length(ENVIRON["NEEDLE"])) }
+  { print }
+' "$ACTION" >"$TMP/action.yml"
+! cmp -s "$ACTION" "$TMP/action.yml" || { echo "the lanes-from mutant changed nothing" >&2; exit 1; }
+if [ "$mapped" != "$(classify_env "$TMP/action.yml")" ]; then
+  ok "must-fail: an action.yml whose lanes-from input is misspelled fails the input mapping row"
+else
+  bad "must-fail: an action.yml whose lanes-from input is misspelled fails the input mapping row"
 fi
 
 # --- 5. The lane verdicts ---------------------------------------------------
