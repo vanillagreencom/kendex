@@ -55,7 +55,7 @@ cache_run() { # STATE POLICY COMMAND...
   (cd "$TMP_ROOT/repo" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$H" \
     REAL_JQ="$REAL_JQ" CREDENTIAL_LOG="$TMP_ROOT/credentials" \
     REAL_RM="$REAL_RM" CACHE_RM_FAIL="${CACHE_RM_FAIL:-0}" \
-    LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude,$H/.eclaude" \
+    LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" \
     ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FIXTURE_DIR="$FIXTURE_DIR" \
     OVERSEE_WATCH_STATE_DIR="$state" ORCH_LANE_HOST="$PROVIDER" \
     LANE_HOST_STUB_ACCOUNTS="$TMP_ROOT/accounts" LANE_HOST_STUB_LOG="$TMP_ROOT/provider-log" \
@@ -89,42 +89,51 @@ done
 
 # Reach the cache reader directly in a disposable script, before discovery or
 # startup pruning can mask a missing read guard. The production reader remains
-# unchanged; only dispatch is replaced in this copy.
-state="$TMP_ROOT/reader"
+# unchanged; only the `check` verb's first step is replaced in this copy, which
+# is the one dispatch site that runs after the cache directory and the clock
+# are initialized and before validate_lane_settings prunes. The parser owns the
+# argv: `check` takes one directory, and --harness names the record's harness.
+# The state dir is named apart from every mutant, which mutant_scripts clears.
+READER_DISPATCH='[[ -n "$LANE_ARG" ]] || die missing-value check'
+READER_BODY='read_usage_cache "$HARNESS" "$LANE_ARG" "$(date +%s)" ""; exit $?'
+state="$TMP_ROOT/reader-state"
 cache_run "$state" ORCH_LANE_EXCLUDE= list --json --no-cache > "$TMP_ROOT/out"
 reader_dir="$(mutant_scripts reader lanes)"
-mutate_file "$reader_dir/lanes" 'parse_argv "$@"' \
-  'read_usage_cache "$1" "$2" "$(date +%s)" ""; exit $?'
+mutate_file "$reader_dir/lanes" "$READER_DISPATCH" "$READER_BODY"
 ORIGINAL_LANES="$LANES"
 LANES="$reader_dir/lanes"
 for row in "claude|$H/.claude" "host-accounts|$PROVIDER"; do
   IFS='|' read -r harness account <<<"$row"
   for policy in ORCH_LANE_EXCLUDE=claude ORCH_LANE_RETIRE=claude=2000-01-01; do
     rc=0
-    cache_run "$state" "$policy" "$harness" "$account" > "$TMP_ROOT/out" || rc=$?
+    cache_run "$state" "$policy" check --harness "$harness" "$account" > "$TMP_ROOT/out" || rc=$?
     assert_eq "$rc:$(cat "$TMP_ROOT/out")" '1:' "$harness reader refuses $policy before discovery"
   done
 done
 LANES="$ORIGINAL_LANES"
 
-# Each policy has its own control. The parser still runs, but the existing
-# matcher no longer reports that policy, so the very same cached body is served.
-for row in 'exclude|lane_excluded() {|ORCH_LANE_EXCLUDE=claude' 'retire|lane_retired() {|ORCH_LANE_RETIRE=claude=2000-01-01'; do
-  IFS='|' read -r name match policy <<<"$row"
+# Each policy has its own control. The parser and the matcher still run, but
+# the matcher's verdict is flipped to "no match", so the very same cached body
+# is served.
+policy_control() { # NAME MATCH REPLACEMENT POLICY
+  local name="$1" match="$2" replacement="$3" policy="$4" control_dir row harness account rc
   control_dir="$(mutant_scripts "control-$name" lanes)"
-  mutate_file "$control_dir/lanes" "$match" "$match return 1;"
-  mutate_file "$control_dir/lanes" 'parse_argv "$@"' \
-    'read_usage_cache "$1" "$2" "$(date +%s)" ""; exit $?'
+  mutate_file "$control_dir/lanes" "$match" "$replacement"
+  mutate_file "$control_dir/lanes" "$READER_DISPATCH" "$READER_BODY"
   LANES="$control_dir/lanes"
   for row in "claude|$H/.claude" "host-accounts|$PROVIDER"; do
     IFS='|' read -r harness account <<<"$row"
     rc=0
-    cache_run "$state" "$policy" "$harness" "$account" > "$TMP_ROOT/out" || rc=$?
+    cache_run "$state" "$policy" check --harness "$harness" "$account" > "$TMP_ROOT/out" || rc=$?
     assert_eq "$rc:$(jq -r 'has("usage")' "$TMP_ROOT/out")" '0:true' \
       "control: disabling $name makes the $harness refusal assertion fail"
   done
-done
-LANES="$ORIGINAL_LANES"
+  LANES="$ORIGINAL_LANES"
+}
+policy_control exclude 'lane_matches "$name" "$1" && return 0' \
+  'lane_matches "$name" "$1" && return 1' ORCH_LANE_EXCLUDE=claude
+policy_control retire '[[ -n "$date" && ! "$TODAY" < "$date" ]] || return 1' \
+  '[[ -n "$date" && ! "$TODAY" < "$date" ]]; return 1' ORCH_LANE_RETIRE=claude=2000-01-01
 
 # The cleanup assertion must fail if startup still judges every file but
 # leaves rejected records on disk. A local read cannot replace the host record.
