@@ -187,6 +187,12 @@ observe() {
         value="$(awk '$1 == "lanes:" { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' "$ERR" 2>/dev/null || true)"
         value="${value:-none}"
         ;;
+      # Every THROUGH the refusal's stderr table gives that lane, comma-joined,
+      # or none: which reading of an account the chooser considered.
+      considered.*)
+        value="$(awk -v a="${name#considered.}" '$1 == a { print $3 }' "$ERR" 2>/dev/null | paste -sd, - || true)"
+        value="${value:-none}"
+        ;;
       # A notice another keyed line can precede: a state directory that cannot
       # hold a refusal cannot hold the refresh lock either, and that notice is
       # printed first.
@@ -1931,6 +1937,39 @@ table \
 run_lanes "$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv" host-accounts --harness claude
 assert_eq "$OUT" "$H/.claude"$'\t'"claude" \
   "the printed row names the config dir the provider was given and that row's harness"
+echo "=== a hosted pick judges the provider's reading of an account it reports ==="
+# A launch on a hosted fleet runs under the provider's copy, so `pick` takes the
+# host row in place of this machine's reading. tclaude holds a stored token and
+# no local credentials file, dclaude a local copy proven dead, and oclaude
+# nothing at all, which no provider row names in any row here.
+new_home hosted-pick
+mkdir -p "$H/.tclaude" "$H/.oclaude"
+printf '{}\n' > "$H/.tclaude/.claude.json"
+printf '{}\n' > "$H/.oclaude/.claude.json"
+make_dead_lane "$H" dclaude
+PICK_ENV="ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_LOG=$TMP_ROOT/accounts.log;ORCH_LANES_CLAUDE_CLIENT_ID=client-1"
+printf 'account=%s\tharness=claude\tsession-5h-pct=10\tweekly-pct=20\n' "$H/.tclaude" > "$TMP_ROOT/pick-token.tsv"
+printf 'account=%s\tharness=claude\tstatus=unreachable\n' "$H/.tclaude" > "$TMP_ROOT/pick-unreachable.tsv"
+printf 'account=%s\tharness=claude\tsession-5h-pct=10\tweekly-pct=20\n' "$H/.dclaude" > "$TMP_ROOT/pick-dead-ok.tsv"
+printf 'account=%s\tharness=claude\tsession-5h-pct=10\tweekly-pct=99\n' "$H/.dclaude" > "$TMP_ROOT/pick-dead-walled.tsv"
+: > "$TMP_ROOT/pick-none.tsv"
+PICK='pick --harness claude --json'
+table \
+  "a token-only folder the provider measures with room is picked through the host|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK|rc=0 config_dir=$H/.tclaude measured_through=host" \
+  "the same folder's host row read unreachable is dropped, not free, and the refusal's table names it through the host|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-unreachable.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.tclaude=host considered.oclaude=local" \
+  "a folder with neither a local file nor a host row is never picked|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-none.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.oclaude=local" \
+  "a local copy proven dead is judged on the provider's reading, which has room|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-dead-ok.tsv|$PICK|rc=0 config_dir=$H/.dclaude measured_through=host" \
+  "the provider's reading replaces the local one rather than joining it, so a walled host row is the account's only candidate|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-dead-walled.tsv|$PICK|rc=3 key=no-candidate,harness=claude,max-pct=95,model=none,walled=1,unmeasured=2 considered.dclaude=host" \
+  "--exclude-lane drops the host row it names too|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK --exclude-lane $H/.tclaude|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=2 considered.tclaude=none"
+# Control: a pick that never asks for the host rows reads the token-only folder
+# as this machine's no_credentials, and nothing is picked.
+lanes_mutant mutant-pick-local-only lanes 'hosted="\$(host_lane_rows "\$harness")"' 'hosted="[]"'
+LANES_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-pick-local-only/scripts/lanes"
+table \
+  "control: without the host rows the token-only folder is listed local and never picked|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK|rc=3 considered.tclaude=local"
+LANES="$LANES_PATCHED"
+
 echo "=== a renewal a ceiling lands on finishes, keeps the rotated token and releases the mutex ==="
 # `refresh_claude_token` takes that mutex inside a command substitution, which
 # a ceiling signals along with the shell that called it: `timeout` signals the

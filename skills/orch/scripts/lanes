@@ -102,6 +102,17 @@
 #         that exit also prints `{"walled":N,"unmeasured":N}` on stdout, the
 #         same two counts, so a caller walking several picks can report what
 #         each sweep found instead of parsing the message written for a person.
+#         Where ORCH_LANE_HOST names a provider that answers `accounts`, the
+#         candidates are the rows `list` merges, with each account the provider
+#         reports judged on the provider's reading IN PLACE OF this machine's:
+#         a launch on that provider runs under its copy. So a config dir with no
+#         local credentials file is picked on the host's windows, and one whose
+#         local copy reads `expired` is judged on the host's. A host row that
+#         measured nothing is dropped like any unmeasured lane, and an account
+#         with neither a local file nor a host row stays `no_credentials`. The
+#         stderr table under exit 3 names each candidate's THROUGH. An absent or
+#         failed verb leaves the local reading alone, as it does for `list`.
+#         `pick --lane` judges the local reading.
 #
 #         With --lane <config-dir> it judges that ONE account instead of
 #         choosing among the fleet, measuring only that directory. A launcher
@@ -1701,19 +1712,63 @@ load_lane_claims() {
 	LANE_CLAIMS_LIVE="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" "${1:-}")" || LANE_CLAIMS_RC=$?
 }
 
+# HOSTED is a JSON array of host rows that STAND IN for this machine's reading
+# of the same config dir, which `pick` passes and `list` does not: a launch on a
+# hosted fleet runs under the provider's copy, so the chooser judges that copy,
+# while a listing shows both readings. A local dir the host reports is not
+# measured at all, and each host row passes the same --exclude-lane test.
 collect_lanes() {
-	local harness_filter="$1" exclude="${2:-}" exclude_id="" d h
+	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" exclude_id="" held="" id d h i n
 	[[ -z "$exclude" ]] || exclude_id="$(lane_claims_canon "$exclude")"
+	# Each host row's config dir through the one normaliser, one per line in row
+	# order, so a dir the provider names with a trailing slash or through a
+	# symlink still replaces the local reading it stands for.
+	n=0
+	[[ "$hosted" == "[]" ]] || n="$(jq length <<<"$hosted")" || return 1
+	for ((i = 0; i < n; i++)); do
+		d="$(jq -r --argjson i "$i" '.[$i].config_dir' <<<"$hosted")" || return 1
+		held="$held$(lane_claims_canon "$d")"$'\n'
+	done
 	{
 		for h in claude codex; do
 			[[ "$harness_filter" == "all" || "$harness_filter" == "$h" ]] || continue
 			while IFS= read -r d; do
 				[[ -n "$d" ]] || continue
-				[[ -z "$exclude_id" || "$(lane_claims_canon "$d")" != "$exclude_id" ]] || continue
+				if [[ -n "$exclude_id" || -n "$held" ]]; then
+					id="$(lane_claims_canon "$d")"
+					[[ "$id" != "$exclude_id" ]] || continue
+					case $'\n'"$held" in *$'\n'"$id"$'\n'*) continue ;; esac
+				fi
 				measure_lane "$h" "$d"
 			done < <(lane_dirs "$h")
 		done
+		i=0
+		while IFS= read -r id; do
+			[[ -n "$id" ]] || continue
+			if [[ "$id" != "$exclude_id" ]]; then jq -c --argjson i "$i" '.[$i]' <<<"$hosted"; fi
+			i=$((i + 1))
+		done <<<"$held"
 	} | jq -s '.'
+}
+
+# The provider's rows for HARNESS as one JSON array, `[]` where ORCH_LANE_HOST
+# names none or there are none to merge. The reader's own status adds nothing
+# here: it has already said on stderr what it did with an absent or failed verb,
+# and either way there are no host rows, so the caller keeps this machine's
+# reading. Only the slurp is this function's to report, so a merge failure is
+# never printed as the provider's answer.
+host_lane_rows() { # HARNESS
+	local rows hosted accounts_rc=0 hosted_rc=0
+	[[ "${ORCH_LANE_HOST:-local}" != local ]] || { printf '[]\n'; return 0; }
+	rows="$(host_account_records "$ORCH_LANE_HOST" "$1")" || accounts_rc=$?
+	[[ "$accounts_rc" -eq 0 ]] || { printf '[]\n'; return 0; }
+	hosted="$(jq -cs . <<<"$rows")" || hosted_rc=$?
+	if [[ "$hosted_rc" -ne 0 ]]; then
+		message host-accounts-merge-failed "$ORCH_LANE_HOST" "$hosted_rc" >&2
+		printf '[]\n'
+		return 0
+	fi
+	printf '%s\n' "$hosted"
 }
 
 # ── Host accounts ────────────────────────────────────────────────────────────
@@ -2150,9 +2205,11 @@ cmd_pick_lane() {
 
 cmd_pick() {
 	local harness="$1" max_pct="$2" as_json="$3" model="$4" binding_floor="$5" exclude="$6"
-	local lanes judged chosen walled unmeasured
+	local lanes hosted judged chosen walled unmeasured
 	load_lane_claims
-	lanes="$(collect_lanes "$harness" "$exclude")"
+	# After the claim load: emit_lane counts claims on every host row it writes.
+	hosted="$(host_lane_rows "$harness")"
+	lanes="$(collect_lanes "$harness" "$exclude" "$hosted")"
 	# An unreadable claim store reads as "no launches in flight", which is the
 	# one thing it must not read as: picking on it can stack a second session
 	# onto an account already running one.
@@ -2498,22 +2555,8 @@ case "$SUB" in
 		# Asked only where a provider is configured. A fleet with no provider
 		# reads the local config dirs and nothing else, exactly as before.
 		if [[ "$LOCAL_ONLY" != true && "${ORCH_LANE_HOST:-local}" != local ]]; then
-			# The reader's own status is read first and adds nothing to this
-			# listing: it has already said on stderr what it did with an absent
-			# or failed verb, and either way there are no host rows to merge.
-			# Only the slurp that follows is this arm's to report, so a merge
-			# failure is never printed as the provider's answer.
-			accounts_rc=0
-			rows="$(host_account_records "${ORCH_LANE_HOST}" "$HARNESS")" || accounts_rc=$?
-			if [[ "$accounts_rc" -eq 0 ]]; then
-				hosted_rc=0
-				hosted="$(jq -cs . <<<"$rows")" || hosted_rc=$?
-				if [[ "$hosted_rc" -ne 0 ]]; then
-					message host-accounts-merge-failed "$ORCH_LANE_HOST" "$hosted_rc" >&2
-				else
-					out="$(jq -c --argjson hosted "$hosted" '. + $hosted' <<<"$out")"
-				fi
-			fi
+			hosted="$(host_lane_rows "$HARNESS")"
+			out="$(jq -c --argjson hosted "$hosted" '. + $hosted' <<<"$out")"
 		fi
 		out="$(jq -c --argjson max "$MAX_PCT" "$LANE_MODEL_JQ"' map(. + {verdict: (.wall | wall_verdict($max))} | lane_public)' <<<"$out")"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else render_table <<<"$out"; fi
