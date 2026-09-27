@@ -202,13 +202,14 @@ Options:
                     refused as unreadable when nothing measures it. A config
                     dir that neither a lane record nor a provider reading
                     covers is used as given, there being nothing to judge it
-                    by. A HOSTED launch is judged on the copy it runs on: where
-                    the provider's accounts row for the account carries a
-                    status or a percentage, that row is judged in place of this
-                    machine's reading, `auto` chooses among those rows, and a
-                    dir the provider reports with a reading is judged even
-                    where lane discovery does not reach it (`lanes --help`,
-                    pick). THE WALL BINDS EVERY LAUNCH SHAPE, a hosted
+                    by. A HOSTED launch is judged on the copy it runs on: the
+                    provider's accounts row stands for the account as
+                    `lanes --help` (pick) states, with its
+                    `lanes: pick-local-reading` line naming the one case where
+                    this machine's reading decides; `auto` chooses among the
+                    rows so resolved, and a dir the provider reports with a
+                    reading is judged even where lane discovery does not reach
+                    it. THE WALL BINDS EVERY LAUNCH SHAPE, a hosted
                     --relaunch included: a usage window belongs to the account,
                     so a window read at the threshold is the window the
                     sandbox meets, and a refused relaunch costs nothing where a
@@ -267,11 +268,12 @@ Options:
                     host is this machine's, sent again. The provider's
                     `accounts` answer is what says which accounts it holds, and
                     nothing here reads the secret itself.
-                    WHAT THE ANSWER DECIDES. Where the provider's accounts row
-                    for an account carries a status or a percentage, both
-                    --lane forms judge the account on that row in place of this
-                    machine's reading; a row with neither, an absent verb and a
-                    failed one each leave this machine's reading. A window so
+                    WHAT THE ANSWER DECIDES. Both --lane forms judge the
+                    account on the provider's accounts row as `lanes --help`
+                    (pick) states, with its `lanes: pick-local-reading` line
+                    naming the one case where this machine's reading decides;
+                    an absent verb and a failed one each leave this machine's
+                    reading. A window so
                     read walls every launch shape alike, hosted relaunch
                     included — see --lane. Whether the provider holds the
                     account then decides the named lane's UNREADABLE case, and

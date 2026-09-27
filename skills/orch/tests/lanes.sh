@@ -2119,6 +2119,30 @@ table \
   "control: and the named form answers the unreachable row|$LOCAL_DARK|$PICK_LANE $H/.fclaude|rc=5 status=unreachable measured_through=host"
 LANES="$LANES_PATCHED"
 
+echo "=== the stand-in measurement keeps the one retry per run ==="
+# Two cold lanes whose provider rows both read unreachable, with the usage
+# endpoint refusing: the first local measurement spends the run's one retry
+# and the second reports its refusal at once, as the local loop's own
+# measurements do. A measurement forked into a command substitution would
+# spend a retry per lane, which the fetch log shows as a fourth request.
+new_home cold-dark
+make_lane "$H" fclaude 3600
+make_lane "$H" gclaude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.fclaude.json"
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.gclaude.json"
+printf 'account=%s\tharness=claude\tstatus=unreachable\naccount=%s\tharness=claude\tstatus=unreachable\n' \
+  "$H/.fclaude" "$H/.gclaude" > "$TMP_ROOT/cold-both-dark.tsv"
+COLD_DARK="$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/cold-both-dark.tsv;FETCH_STATUS=429;FETCH_RETRY_AFTER=1"
+table \
+  "two cold lanes behind unreachable rows spend one retry between them|$COLD_DARK|$PICK|rc=3 fetched=fclaude,fclaude,gclaude"
+# Control: the measurement forked into a subshell, which spends a retry per
+# lane.
+lanes_mutant mutant-stand-in-forked lanes 'measure_lane "\$1" "\$2" >&7' '(measure_lane "$1" "$2") >\&7'
+LANES="$TMP_ROOT/mutant-stand-in-forked/scripts/lanes"
+table \
+  "control: a forked measurement retries for every cold lane|$COLD_DARK|$PICK|rc=3 fetched=fclaude,fclaude,gclaude,gclaude"
+LANES="$LANES_PATCHED"
+
 echo "=== a renewal a ceiling lands on finishes, keeps the rotated token and releases the mutex ==="
 # `refresh_claude_token` takes that mutex inside a command substitution, which
 # a ceiling signals along with the shell that called it: `timeout` signals the

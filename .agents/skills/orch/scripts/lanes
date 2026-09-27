@@ -1808,13 +1808,27 @@ collect_lanes() {
 # no window is shorter than: a TTL of 0 serves nothing and fetches every run,
 # and that fetch's figure stands.
 host_row_or_local() { # HARNESS DIR HOSTROW
-	local status local_record age
+	local status local_record="" age tmp
 	status="$(jq -r '.status' <<<"$3")" || return 1
 	if [[ "$status" != unreachable ]]; then
 		printf '%s\n' "$3"
 		return 0
 	fi
-	local_record="$(measure_lane "$1" "$2")" || return 1
+	# measure_lane runs in THIS shell, never in a command substitution: the
+	# one cold-lane retry per run is USAGE_RETRY_SPENT, which a substitution's
+	# subshell would set and discard, so every held lane after a refused one
+	# would retry and sleep again. Its one record line goes through a file
+	# opened for writing on 7 and reading on 6 and unlinked before the
+	# measurement, so a signal in the window leaves nothing behind without a
+	# trap of this function's own, which would replace the lock handlers
+	# measure_lane arms. 8 and 9 are the usage and credentials locks.
+	tmp="$(mktemp)" || return 1
+	exec 7>"$tmp" 6<"$tmp" || { rm -f -- "${tmp:?}"; return 1; }
+	rm -f -- "${tmp:?}"
+	measure_lane "$1" "$2" >&7 || { exec 7>&- 6<&-; return 1; }
+	exec 7>&-
+	IFS= read -r local_record <&6 || { exec 6<&-; return 1; }
+	exec 6<&-
 	age="$(jq -r --argjson bound "$(usage_serve_max_age)" '
 		if .headroom_pct != null and (.usage_age_s | type) == "number"
 		   and (.usage_age_s == 0 or .usage_age_s < $bound)
