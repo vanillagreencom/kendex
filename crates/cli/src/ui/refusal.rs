@@ -85,7 +85,7 @@ impl super::Style {
                     &[Span::Prose(&headline), Span::Verbatim(line)],
                     "! ",
                 ),
-                _ => self.report_verbatim(None, line, ""),
+                _ => self.report_verbatim(None, line),
             })
             .collect()
     }

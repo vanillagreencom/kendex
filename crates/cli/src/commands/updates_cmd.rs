@@ -5,7 +5,7 @@ use kendex_core::env::Env;
 use super::pin::parse_kind;
 use super::{CliResult, resolve_scopes_at, scope_label};
 use crate::scope::ScopeFilter;
-use crate::ui::{self, Span, Status, Style};
+use crate::ui::{self, Status, Style};
 
 #[derive(Subcommand)]
 pub enum UpdatesCommand {
@@ -166,16 +166,12 @@ fn screen(style: &Style, report: &kendex_core::package::updates::UpdatesReport) 
         ));
     }
     for warning in &report.warnings {
-        lines.extend(style.report_row(
-            Status::Decision,
-            &[Span::Prose(&format!(
-                "{} {}: {}",
-                warning.kind.name(),
-                warning.name,
-                warning.message
-            ))],
-            "warning: ",
-        ));
+        lines.extend(style.report_warning(&format!(
+            "{} {}: {}",
+            warning.kind.name(),
+            warning.name,
+            warning.message
+        )));
     }
     if shown == 0 && report.warnings.is_empty() {
         lines.extend(style.summary(Status::Done, "everything is on its latest version"));

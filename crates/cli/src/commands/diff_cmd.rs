@@ -93,14 +93,14 @@ fn screen(style: &Style, diff: &PackageDiff) -> Vec<String> {
         );
         lines.extend(style.report_group(Status::Notice, &[Span::Prose(&label)], ""));
         for hunk in &file.hunks {
-            lines.extend(style.report_verbatim(None, &hunk.header, ""));
+            lines.extend(style.report_verbatim(None, &hunk.header));
             for line in &hunk.lines {
                 let (marker, status) = match line.kind {
                     LineKind::Context => (' ', None),
                     LineKind::Add => ('+', Some(Status::Done)),
                     LineKind::Remove => ('-', Some(Status::Decision)),
                 };
-                lines.extend(style.report_verbatim(status, &format!("{marker}{}", line.text), ""));
+                lines.extend(style.report_verbatim(status, &format!("{marker}{}", line.text)));
             }
         }
     }

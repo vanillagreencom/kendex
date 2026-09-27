@@ -48,9 +48,7 @@ pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult
     for warning in &result.warnings {
         let text = warning.to_string();
         ui::stderr(&match warning.standing {
-            WarningStanding::Actionable => {
-                style.report_row(Status::Decision, &[Span::Prose(&text)], "warning: ")
-            }
+            WarningStanding::Actionable => style.report_warning(&text),
             WarningStanding::UnusedEmptyContainer => {
                 style.report_row(Status::Notice, &[Span::Prose(&text)], "")
             }

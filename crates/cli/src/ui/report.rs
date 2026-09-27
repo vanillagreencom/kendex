@@ -43,6 +43,12 @@ impl Style {
         }
     }
 
+    /// A warning about the run: the decision status and the plain
+    /// `warning: ` key scripts read, spelled once for every verb.
+    pub fn report_warning(&self, text: &str) -> Vec<String> {
+        self.report_row(Status::Decision, &[Span::Prose(text)], "warning: ")
+    }
+
     /// Detail under a report row, retaining the script's indentation.
     pub fn report_detail(&self, spans: &[Span<'_>], prefix: &'static str) -> Vec<String> {
         match self.look {
@@ -64,14 +70,9 @@ impl Style {
     /// hands it over as prose to be re-spaced. A status puts its glyph in
     /// front rich; without one the line is muted, and an empty line is
     /// the indent alone.
-    pub fn report_verbatim(
-        &self,
-        status: Option<Status>,
-        text: &str,
-        prefix: &'static str,
-    ) -> Vec<String> {
+    pub fn report_verbatim(&self, status: Option<Status>, text: &str) -> Vec<String> {
         match self.look {
-            Look::Plain => vec![format!("{prefix}{}", escaped(text))],
+            Look::Plain => vec![escaped(text)],
             Look::Rich { .. } => self.detail(status, &[Span::Verbatim(text)]),
         }
     }
@@ -245,9 +246,7 @@ pub fn print(status: Status, draw: impl FnOnce(&Style) -> Vec<String>) {
 
 /// A warning about the run, retaining the plain warning key.
 pub fn warning(text: &str) {
-    print(Status::Decision, |style| {
-        style.report_row(Status::Decision, &[Span::Prose(text)], "warning: ")
-    });
+    print(Status::Decision, |style| style.report_warning(text));
 }
 
 /// A failure reported before the run closes.
@@ -328,19 +327,19 @@ mod tests {
             ["  <36>•</> SKILL.md +1 -1"]
         );
         assert_eq!(
-            plain().report_verbatim(Some(Status::Done), "+  a  b", ""),
+            plain().report_verbatim(Some(Status::Done), "+  a  b"),
             ["+  a  b"]
         );
         assert_eq!(
-            tagged(&rich(80).report_verbatim(Some(Status::Done), "+  a  b", "")),
+            tagged(&rich(80).report_verbatim(Some(Status::Done), "+  a  b")),
             ["    <32>✓</> +  a  b"]
         );
         assert_eq!(
-            tagged(&rich(80).report_verbatim(None, "  |     ^", "")),
+            tagged(&rich(80).report_verbatim(None, "  |     ^")),
             ["    <90>  |     ^</>"]
         );
-        assert_eq!(rich(80).report_verbatim(None, "", ""), ["    "]);
-        assert_eq!(plain().report_verbatim(None, "", ""), [""]);
+        assert_eq!(rich(80).report_verbatim(None, ""), ["    "]);
+        assert_eq!(plain().report_verbatim(None, ""), [""]);
         assert_eq!(
             plain().report_totals("changes", 2, Status::Done, "+1 -1"),
             (vec!["+1 -1".to_owned()], vec![])

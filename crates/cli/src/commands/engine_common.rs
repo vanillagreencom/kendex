@@ -91,11 +91,7 @@ fn report_lines(style: &ui::Style, report: &EngineReport, blocked: bool) -> Vec<
             Some(harness) => format!("{} ({})", warning.name, harness.display_name()),
             None => warning.name.clone(),
         };
-        lines.extend(style.report_row(
-            Status::Decision,
-            &[Span::Prose(&format!("{target}: {}", warning.message))],
-            "warning: ",
-        ));
+        lines.extend(style.report_warning(&format!("{target}: {}", warning.message)));
         if let Some(fix) = &warning.remediation {
             lines.extend(style.report_detail(&[Span::Prose("fix: "), Span::Prose(fix)], "  "));
         }
