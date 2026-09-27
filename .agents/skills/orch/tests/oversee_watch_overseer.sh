@@ -64,7 +64,7 @@ printf '%s\n' "$*" >> "$STUB_DIR/succeed.args"
 case "${1:-}" in
   --print-launch-line)
     [[ ! -f "$STUB_DIR/succeed.print-fail" && "$(cat "$STUB_DIR/cmd-${TMUX_PANE}.txt" 2>/dev/null)" != bash ]] \
-      || { echo "oversee-succeed: no-status-line pane=$2" >&2; exit 1; }
+      || { echo "oversee-succeed: harness-unnamed pane=$2" >&2; exit 1; }
     if [[ -f "$STUB_DIR/succeed.then-dead" ]]; then
       printf 'bash\n' > "$STUB_DIR/cmd-${TMUX_PANE}.txt"
       printf 'dev@host ~/kendex $\n' > "$STUB_DIR/pane-${TMUX_PANE}.txt"
@@ -723,7 +723,7 @@ assert_eq "generation=$(recorded generation)" "generation=none" \
 # from the record. What the failed record costs is the line a dead-pane
 # relaunch replays, and only where the fleet state holds none. A refusal here
 # would leave the overseer unwatched with every lane still working, over a
-# status line the builder could not parse.
+# pane whose harness the builder could not name.
 overseer_case record_derivation_failure idle
 state_with "$BYPASS_LINE"
 touch "$STUB_DIR/succeed.print-fail"
@@ -732,7 +732,7 @@ assert_eq "rc=$RC events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true) lau
   "rc=0 events=0 launched=0" "a line the builder cannot build does not stop the watch" "$ERR"
 assert_eq "$(grep -c "^oversee-watch: overseer-line-missing pane=$PANE path=" "$ERR")" "1" \
   "and is noted once on stderr" "$ERR"
-assert_eq "$(grep -c "^oversee-succeed: no-status-line pane=" "$ERR")" "1" \
+assert_eq "$(grep -c "^oversee-succeed: harness-unnamed pane=" "$ERR")" "1" \
   "with the builder's own refusal under it" "$ERR"
 assert_eq "$(fleet_log_kind)|$(fleet_log_text | cut -d: -f1)" "close|overseer-line-missing pane=$PANE path=$TMP_ROOT/bin/succeed-stub.sh" \
   "and in the fleet log, keyed as the stderr line is" "$ERR"
@@ -740,7 +740,7 @@ assert_eq "$(recorded launch_line)" "$BYPASS_LINE" \
   "the line the fleet state already held is left where it was" "$ERR"
 
 # The line held is what a death then replays: a start whose pane already
-# reads exited cannot build a line, since a dead pane draws no status line,
+# reads exited cannot build a line, since a dead pane names no harness,
 # and the death is reported and recovered from the recorded one all the same.
 # Through repeat mode, which is where a start records and then watches.
 overseer_case record_failure_dead exited
