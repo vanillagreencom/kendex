@@ -12,3 +12,10 @@ control_expect "a corrupt issue cache fails the sync"
 control_replace scripts/lib/cache.sh 1 \
     '        cache_unreadable_error "$existing"' \
     '        cache_install_output "$existing" cat "$delta_file"; return 0'
+# Install the full sync's pull without the issue cache's lock. The
+# write-through renames its result in during the install's stall, and the
+# install's rename discards it.
+control_expect "the write-through survives a concurrent full sync"
+control_replace scripts/commands/sync.sh 1 \
+    '        if ! cache_write "issues.json" jq '"'"'[.[]' \
+    '        if ! cache_install_output "$CACHE_DIR/issues.json" jq '"'"'[.[]'
