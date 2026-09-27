@@ -167,6 +167,6 @@ The `changelog-entries` lane owns the shape. Follow the repository's `changelog.
 
 ## Writing
 
-Rewrite from a blank page, never by editing the old text: [workflows/rewrite.md](workflows/rewrite.md).
+A focused change edits the affected text and verifies each claim it touches against the code. Converting a document onto this convention, or restructuring it, follows [workflows/rewrite.md](workflows/rewrite.md), which writes each file from a blank page. Both follow § Per file type.
 
 Templates: [README.md](templates/README.md), [DEVELOPMENT.md](templates/DEVELOPMENT.md), [overview.md](templates/overview.md), [topic.md](templates/topic.md), [reference.md](templates/reference.md), [document.html](templates/document.html), [agent-SKILL.md](templates/agent-SKILL.md), [root-AGENTS.md](templates/root-AGENTS.md), [nested-AGENTS.md](templates/nested-AGENTS.md).

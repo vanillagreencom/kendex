@@ -270,6 +270,29 @@ bash -n "$MUTANT"
 SR="$MUTANT"
 run --staged
 must_fail 1 0 'class table control: disabling comparison fails the over-limit row'
+SR="$SOURCE_COMMAND"
+
+# A shipped class row without its docs-writing rule refuses at startup.
+# AGENTS.md stays one byte over its class limit, so a run past the table exits 1.
+ROW_TAB="$(printf '\t')"
+private_command class-rule
+[ ! -L "$MUTANT" ]
+[ "$(grep -Fxc "*/README.md=12k$ROW_TAB\`README.md\`" "$MUTANT")" -eq 1 ]
+sed "s|^\*/README\.md=12k$ROW_TAB.*\$|*/README.md=12k|" "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+cp "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --staged
+expect 2 'class-rule-missing'
+expect_first_line 'error=class-rule-missing value=\*/README.md=12k' 'class-rule-missing diagnostic'
+[ "$(grep -c '^  \[ -n "\$rule" \] || config_error class-rule-missing ' "$MUTANT")" -eq 1 ]
+sed 's/^  \[ -n "\$rule" \] || config_error class-rule-missing .*$/  :/' "$MUTANT.changed" >"$MUTANT"
+if cmp -s "$MUTANT" "$MUTANT.changed"; then exit 1; fi
+bash -n "$MUTANT"
+run --staged
+must_fail 2 1 'class-rule control: dropping the row check fails the class-rule-missing row'
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

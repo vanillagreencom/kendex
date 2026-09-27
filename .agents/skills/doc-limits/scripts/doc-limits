@@ -11,7 +11,21 @@ source "$SCRIPT_DIR/../../commit-guards/scripts/lib/generated-paths.sh"
 TAB="$(printf '\t')"
 NL='
 '
-SHIPPED_CLASSES="docs/architecture/overview.md=12k;docs/architecture/*.md=16k;AGENTS.md=8k;CLAUDE.md=24k;*/AGENTS.md=6k;*/CLAUDE.md=24k;*/SKILL.md=24k;*/workflows/*.md=40k;README.md=16k;*/README.md=12k;docs/*.html=64k;*.md=64k"
+# One row per shipped class: its pattern=Nk entry, a tab, and the heading in
+# docs-writing SKILL.md § Per file type whose rule decides which remedy a
+# document of that class admits. The row order is the match order.
+SHIPPED_CLASS_ROWS='docs/architecture/overview.md=12k	`docs/architecture/overview.md`
+docs/architecture/*.md=16k	`docs/architecture/<topic>.md`
+AGENTS.md=8k	`AGENTS.md`
+CLAUDE.md=24k	`CLAUDE.md`
+*/AGENTS.md=6k	`AGENTS.md`
+*/CLAUDE.md=24k	`CLAUDE.md`
+*/SKILL.md=24k	`SKILL.md`, `workflows/*.md`, `agents/*.md`
+*/workflows/*.md=40k	`SKILL.md`, `workflows/*.md`, `agents/*.md`
+README.md=16k	`README.md`
+*/README.md=12k	`README.md`
+docs/*.html=64k	Documentation HTML
+*.md=64k	Per file type'
 STAGED=0
 usage() {
   cat <<'EOF'
@@ -53,6 +67,27 @@ notice() {
   local key="$1" field="$2" value="$3" text="$4"
   printf 'notice=%s %s=%q\n' "$key" "$field" "$value"
   printf '%s\n' "$text"
+}
+# A maintainer adding a class row writes its rule heading in the same row; a
+# row without one refuses before any document is read.
+SHIPPED_CLASSES=""
+while IFS="$TAB" read -r entry rule; do
+  [ -n "$rule" ] || config_error class-rule-missing value "$entry" "shipped class '$entry' names no docs-writing rule; add its § Per file type heading to SHIPPED_CLASS_ROWS"
+  SHIPPED_CLASSES="${SHIPPED_CLASSES:+$SHIPPED_CLASSES;}$entry"
+done <<EOF
+$SHIPPED_CLASS_ROWS
+EOF
+class_rule() { # PATTERN: the shipped row's heading, else the whole § Per file type
+  local entry rule
+  CR="Per file type"
+  while IFS="$TAB" read -r entry rule; do
+    if [ "${entry%=*}" = "$1" ]; then
+      CR="$rule"
+      return 0
+    fi
+  done <<EOF
+$SHIPPED_CLASS_ROWS
+EOF
 }
 EXCLUDES_OPT=""
 EXCLUDES_SET=0
@@ -341,6 +376,8 @@ while IFS="$TAB" read -r oid f limit class; do
   if [ "$n" -gt "$limit" ]; then
     notice document-over-limit path "$f" "doc-limits FAIL: $f: $n bytes > $limit bytes (class $class)"
     printf '  remedy: split the document at a natural seam, move detail to a linked reference, or delete content the code or another document already states; a document that must stay whole gets a row in %s with its reason\n' "$EXCLUDES_FILE"
+    class_rule "$class"
+    printf '  rule: docs-writing SKILL.md § %s decides which of these the document admits\n' "$CR"
     violations=$((violations + 1))
   fi
   checked=$((checked + 1))

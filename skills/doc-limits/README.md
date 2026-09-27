@@ -13,6 +13,7 @@ Requires Git, Bash, jq, the commit-guards skill and standard POSIX tools. Bash 3
 ## Features
 
 - Check document sizes against byte limits.
+- Name the docs-writing rule that decides how an over-limit document may change.
 - Apply project limits by path pattern.
 - Exclude generated files through the render inventory and other exceptions through reasoned rows.
 - Check staged documents with staged policy.

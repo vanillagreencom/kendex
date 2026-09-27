@@ -50,19 +50,25 @@ A loud failure beats a silent wrong answer. Handle every error, check invariants
 
 ## Structure
 
-- **One lifetime, one owner.** Resources that share a lifetime (connections, leases, sessions, caches) live in one object whose teardown does every cleanup. Adding a resource touches the owner, never the call sites.
-- **A function that holds a subsystem's whole lifecycle is a module.** Split it at the phase seams (acquire, deliver, recover, tear down) before the next concern lands.
-- **Exports serve the design, not the packaging.** An internal symbol re-exported so tests or vendors can reach it is API the next refactor owes compatibility to. Generate that entry in the build instead.
+- **One lifetime, one owner.** Resources that share a lifetime (connections, leases, sessions, caches) live in one owner whose teardown releases them all. Adding a resource changes its owner, never the call sites.
+- **Independent lifecycles split an owner; phases do not.** A component that holds resources with independent lifecycles gives each resource its own owner, and that owner keeps the resource's acquisition, recovery and release. Acquire, deliver, recover and tear-down phases alone never split an owner; private functions inside it may name them.
+- **Members serve the design, not packaging or tests.** An internal symbol re-exported so tests or vendors can reach it is API the next refactor owes compatibility to; generate that entry in the build instead. Setup and readback that only tests use stay out of shipped components, exported or not: put them in fixtures or a disposable runtime copy. An operational diagnostic stays when a named production consumer uses it, documented where its API is declared.
 - **Compatibility probing carries a floor.** Runtime detection across upstream versions states the minimum version it serves and the version that removes it. An undated shim is a workaround under § Correctness.
 - **Narrowing has one door.** A wire-format union read through repeated casts gets one guard module, and call sites match on the narrowed value. This applies in languages with sum types.
 - **Classification is a table.** Detecting an upstream failure kind from its message text is one pattern table with real examples pinned under test, never a regex at each call site.
 
+## Over-Engineering
+
+Build only what was asked. No speculative abstractions, no extension point for a caller that does not exist, no wrapper that only forwards, and no error handling for impossible scenarios. A new dependency needs a one-line justification in its commit message.
+
+One judge per question: never re-implement a decision (classify, validate, parse, detect state) another component or language already owns; delegate. When real consumers would each make the same decision, one shared owner makes it; caller count neither justifies nor removes that owner. A decision re-derived at each use site in one file is the same defect: compute it once and let each site match on the result. A second spelling is a defect even when both copies agree.
+
 ## Prove Your Guards
 
-A new or modified production gate or guard ships with one must-fail control per rule it enforces: plant one defect the rule catches, and the control passes when the guard turns red once. The control keeps the matched text and removes the behavior; one that deletes the code under test only proves the assertion runs. Reject assertions loose enough to match a skip note, fixtures that never reach the guarded bound, and harness code that keeps alive what the implementation should.
+A new or modified production gate or guard ships with one must-fail control per independent rule it enforces: plant one defect that reaches that rule, and the control passes when the guard turns red once. Rows that exercise the same rule share its control; independent rules in one guard each take their own, and a defect planted for one rule never stands in for another. A mutant control edits a copy of the code under test, never the tracked file. It keeps the matched text and removes the behavior; one that deletes the code under test only proves the assertion runs. Reject assertions loose enough to match a skip note, fixtures that never reach the guarded bound, and harness code that keeps alive what the implementation should.
 
 - **A scripted text substitution asserts its match, or it is not an edit.** Assert the pattern's occurrence count and that the file changed, or use an edit tool that errors on no match. Neither assertion holds on a symlink, which `sed -i` replaces with a new file while its target stands: resolve the path first, or refuse a symlink.
-- **A floor alone is not a control.** Derive the expected set from the artifact under test (the flag's own regex, the function's own body), never from a second list in a test file. Floor it, with a message naming the extractor as broken rather than the subject as sparse. Under-inclusion needs the floor plus a required member; over-inclusion needs a forbidden member. State which direction stays open.
+- **A floor alone is not a control.** An inventory or coverage check derives the members it visits from the artifact under test (the flag's own regex, the function's own body), never from a second list in a test file. Floor it, with a message naming the extractor as broken rather than the subject as sparse. Under-inclusion needs the floor plus a required member; over-inclusion needs a forbidden member. State which direction stays open. A behavior or contract test keeps its expected values independent of the implementation: never derive an expected API set, parser result or accepted input from the code that produces it.
 
 ### Instruments you did not write
 
@@ -72,17 +78,18 @@ A new or modified production gate or guard ships with one must-fail control per 
 
 ## Tests
 
-- A surface is one script, function or command verb. Each changed surface with a test takes one must-fail control: one planted defect that turns its test red once. The control belongs to the instrument, never to a row, however many rows invoke it.
+- A surface is one script, function or command verb: it names where controls live, not how many. Each changed surface with a test takes at least one must-fail control, one planted defect that turns its test red once. A control belongs to the instrument, never to a row, however many rows invoke it; a production guard takes one per rule under § Prove Your Guards.
 - Where no production edit can redden a surface's test, the test states that, why, and what it holds, in place of its control. A test of the mechanism that implements a guarantee moves with the mechanism: assert the guarantee.
 - A test pins values a program parses: keys, codes, enums, exit status, flags, and a text protocol a named consumer reads, stated in the producer's header. A test that pins prose or the test harness's own configuration is deleted.
 - A row pins what only its own guard emits: an expectation a neighbouring gate or a helper on both sides also produces is not a pin, and neither is a value read as a truthiness bit.
 - A dependency is tested in its own suite; a consumer suite asserts only its own use of it.
-- Shaped input (positions, settings keys, tamper classes) is one table: one loop, one assertion per row, the rows visible in the file, and no control beyond its surface's one.
+- A change selects its checks, locally and in CI, from each suite's direct and indirect inputs: its sources, the dependencies it consumes, fixtures, generated-code inputs, configuration and build settings. Select through the suite's existing entry point and the dependency metadata the build already holds; a suite both run goes through the same entry point in both. Missing or unreadable selection evidence runs every check in the requested area. Selection needs no custom selector, dependency table, cache, runner or workflow.
+- Shaped input (positions, settings keys, tamper classes) is one table: one loop, one assertion per row, the rows visible in the file. Rows of one rule share that rule's control.
 - A test reads time through an injectable clock; a real wait names its reason beside it.
-- A collection-driven check fails closed on an empty collection.
+- A collection-driven check states its coverage floor and proves its discovery completed. It rejects an empty result when the floor requires members, and a failed or incomplete discovery never reports a valid empty set. An empty application input the contract permits passes, and a test covers it.
 - A shared fixture is a neutral world (a seeded repository, a fake SDK); a fixture that carries a planted defect is private to its case.
 - A test that spawns a real process passes the child's environment explicitly, never the developer's live environment.
-- Tests live beside the code, one file per surface, named for it. Every suite in a tree sources that tree's one assertion library.
+- Tests live beside the code where the runtime neither loads nor snapshots them, otherwise in a separate test tree; one file per surface, named for it. Every suite in a tree sources that tree's one assertion library.
 - A test file past about 64 KB holds more than one surface; split it at a surface seam.
 
 ## Language Discipline
@@ -108,12 +115,6 @@ Don't:
 Markdown is [`../docs-writing/SKILL.md`](../docs-writing/SKILL.md): the writing standard, and what each file type holds and excludes.
 
 Commit bodies explain intent, never narrate the diff.
-
-## Over-Engineering
-
-Build only what was asked. No speculative abstractions and no error handling for impossible scenarios. In production code, no generalization before a third caller exists, and no wrapper that only forwards; a decision re-derived at N sites already has N callers. Test helpers live in the tree's one assertion library (§ Tests), whatever their caller count. A new dependency needs a one-line justification in its commit message.
-
-One judge per question: never re-implement a decision (classify, validate, parse, detect state) another component or language already owns; delegate. A decision re-derived at each use site in one file is the same defect: compute it once and let each site match on the result. A second spelling is a defect even when both copies agree.
 
 ## Cleanup
 

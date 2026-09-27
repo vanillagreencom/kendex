@@ -16,12 +16,12 @@ kendex also installs decider, which supplies the decision-record format.
 - Define the purpose and contents of each document type.
 - Provide templates for package, developer, agent and reference documents.
 - Provide writing rules and a template for offline documentation HTML.
-- Guide a rewrite from a blank page.
+- Guide a focused edit to existing text, and a rewrite from a blank page when a document is converted or restructured.
 - Link decision-record work to the decider skill.
 
 ## How it works
 
-The author identifies the document type and reads its rules in [SKILL.md](SKILL.md). The author checks existing claims against the code. The matching template provides the structure for the rewrite. Installed markdown guards check formatting and references after the rewrite.
+The author identifies the document type and reads its rules in [SKILL.md](SKILL.md). The author checks existing claims against the code. A focused change edits only the affected text; a rewrite takes its structure from the matching template. Installed markdown guards check formatting and references after the change.
 
 ## Settings
 

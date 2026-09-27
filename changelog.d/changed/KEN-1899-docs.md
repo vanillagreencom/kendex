@@ -1,0 +1,1 @@
+- docs-writing allows a focused edit without the full rewrite, and a doc-limits finding names the docs-writing rule for its document class.

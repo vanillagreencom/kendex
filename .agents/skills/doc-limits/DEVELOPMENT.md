@@ -12,7 +12,7 @@ The shared inventory reader is `../commit-guards/scripts/lib/generated-paths.sh`
 
 Run each suite with Bash. The repository's skill-test CI job runs every suite under `tests/`.
 
-- `tests/shipped-defaults.test.sh`: each document class at its limit and one byte over, reasoned exclusions, and a disabled-comparison control.
+- `tests/shipped-defaults.test.sh`: each document class at its limit and one byte over, reasoned exclusions, a disabled-comparison control, and a shipped class row without its docs-writing rule.
 - `tests/staged-scope.test.sh`: staged document content and policy remain independent of unstaged edits and deletions.
 - `tests/settings-and-config.test.sh`: settings precedence, class ordering, malformed policy, carve-back rows, and failed or incomplete Git collection.
 - `tests/generated-paths.test.sh`: adopted documents, exact generated paths, inventory state, refusal and disabled-exclusion controls.

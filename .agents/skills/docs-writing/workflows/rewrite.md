@@ -1,6 +1,6 @@
 # Rewrite a repository's markdown onto the convention
 
-Rewrite, do not patch. Read the old files for facts and the code for truth, then write each new file from a blank page against its own list in [../SKILL.md](../SKILL.md) § Per file type. Delete old content that list does not admit. The code, the tests, and git history hold it.
+This workflow converts documents onto the convention or restructures them; [../SKILL.md](../SKILL.md) § Writing sets its scope. Rewrite, do not patch: read the old files for facts and the code for truth, then write each new file from a blank page against its own list in [../SKILL.md](../SKILL.md) § Per file type. Delete old content that list does not admit. The code, the tests, and git history hold it.
 
 ## Steps
 
@@ -13,6 +13,6 @@ Rewrite, do not patch. Read the old files for facts and the code for truth, then
 7. Write each `SKILL.md` from [../templates/agent-SKILL.md](../templates/agent-SKILL.md) and each reference doc from [../templates/reference.md](../templates/reference.md). Preserve its canonical schema or pattern and field semantics. Include defaults only when defined. Move rationale out of a `SKILL.md` into `DEVELOPMENT.md` or a decision record.
 8. Run `kendex refresh` so the shims are written, then `kendex verify`.
 9. Reflow every tracked markdown file with the commit-guards `md-reflow` script, set `COMMIT_GUARDS_MD_SCOPE = "all"` in `kendex.settings.toml`, and run the `md-format`, `md-refs` and `prose` lanes over the whole tree. Put test fixtures whose bytes a suite pins and published release notes whose recorded layout must stay fixed in `tools/md-excludes` with their reason.
-10. Supersede any decision record the rewrite shows to be obsolete through the [`decider`](../../decider/SKILL.md) skill. Never delete one.
+10. Hand each decision record the rewrite shows to be obsolete to the [`decider`](../../decider/SKILL.md) skill, which owns the record lifecycle.
 11. Remove every instruction the installed packages now enforce from the prose, and report anything portable the packages lack upstream through `kendex report`.
 12. Run the repository's own validation and the doc-limits check. Bring each document within its class limit before enabling the check.

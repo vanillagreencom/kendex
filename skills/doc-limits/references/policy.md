@@ -6,7 +6,7 @@
 - `DOC_LIMITS_CLASSES` contains project entries. `DOC_LIMITS_DEFAULT_CLASSES` contains the shipped entries. Project entries come first. The first matching entry sets the document's byte ceiling.
 - An entry is `pattern=Nk`, where `N` is a positive integer and `k` means 1024 bytes. Semicolons separate entries. Whitespace around entries and `=` is ignored.
 - Patterns match the full repository-relative path. `*` crosses directory separators.
-- `SHIPPED_CLASSES` in [scripts/doc-limits](../scripts/doc-limits) declares the document classes and their limits.
+- `SHIPPED_CLASS_ROWS` in [scripts/doc-limits](../scripts/doc-limits) declares the document classes, their limits, and for each class the heading of its rule under docs-writing [§ Per file type](../../docs-writing/SKILL.md#per-file-type). A row without that heading refuses with exit `2`.
 - An empty `DOC_LIMITS_DEFAULT_CLASSES` removes the shipped list. A document with no matching class has no limit.
 
 ## Exclusion list
@@ -24,5 +24,5 @@
 | Exit | Meaning |
 | --- | --- |
 | `0` | Every measured document is within its class limit. |
-| `1` | At least one document exceeds its class limit. The output names each document, size and limit. |
+| `1` | At least one document exceeds its class limit. The output names each document, size and limit, and the docs-writing rule for its class. A class the shipped rows do not declare names § Per file type as a whole. |
 | `2` | Usage, configuration or collection failed. The check cannot report a complete size result. |
