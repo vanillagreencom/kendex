@@ -1159,7 +1159,7 @@ assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H
   "an accounts row naming this account under another harness holds nothing for this launch"
 # host-credential-dead reaches claude lanes. `lanes` reads an unrenewable expiry
 # from the claude token alone; a codex account whose own auth.json cannot be used
-# reads `unreachable`, which an offline read also produces, so the refusal stays
+# reads `refused`, which a 403 on a live login also produces, so the refusal stays
 # the unread window and --help says so.
 make_codex_lane "$H/.xcodex"
 printf 'account=%s\tharness=codex\n' "$H/.xcodex" > "$TMP_ROOT/hosted-accounts-xcodex.tsv"

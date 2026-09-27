@@ -604,10 +604,9 @@ lane_check() {
 #
 # Both pick forms run under ORCH_LANE_HOST set to the host this launch resolved,
 # --host included, so the account is judged on the reading of the copy the
-# launch runs on: `lanes` takes a provider row carrying a reading in place of
-# this machine's, and a provider row read `unreachable` gives way to this
-# machine's own reading where that is measured and inside the usage TTL, under
-# its `lanes: pick-local-reading` line.
+# launch runs on: which reading stands for the account is `lanes`'
+# host_row_or_local, which says so on its `lanes: pick-local-reading` line
+# where this machine's reading stands in.
 pick_auto_lane() {
   local model_args=()
   [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
@@ -705,9 +704,9 @@ named_lane_judge() {
     # that status is the only one `lanes` reports for a credential it holds
     # and cannot renew, and it reaches claude lanes alone, since the expiry it
     # reads is the claude token's. A codex account whose local auth.json is
-    # dead reads `unreachable`, which an offline read produces too, so
-    # widening to it would print a login remedy to an operator whose network
-    # is down. A rate-limited read is `rate_limited`: one the host still holds
+    # dead reads `refused`, the usage endpoint's own answer, which a 403 on a
+    # live login produces too, so widening to it would print a login remedy
+    # for a refusal no re-login answers. A rate-limited read is `rate_limited`: one the host still holds
     # a figure for is judged on that figure, and one with none carries no
     # window, which this arm refuses as lane-model-unreadable like any other
     # unread window. --help and the message name both copies.
@@ -836,9 +835,9 @@ if [[ -n "$LANE" ]]; then
   #
   # The judge reads the provider's own row for the account where it carries a
   # reading, so a folder whose credential only the provider holds is judged on
-  # that row rather than read as no credentials; a row the provider could not
-  # read gives way to this machine's fresh reading of the same account, which
-  # is `lanes`' rule and its keyed line. Beyond that reading, what the
+  # that row rather than read as no credentials; which reading stands is
+  # `lanes`' host_row_or_local, with its `lanes: pick-local-reading` line
+  # where this machine's stands in. Beyond that reading, what the
   # provider's answer changes is the UNMEASURED case alone, below: a
   # relaunch onto an account the provider reports holding proceeds where nothing
   # measured that account, since the copy running it is the provider's and the
