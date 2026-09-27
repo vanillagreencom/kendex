@@ -227,9 +227,11 @@ export function selectionOf(state: {
 const NOTHING_HELD: StalePackage[] = [];
 
 /** The packages holding the commit the reader has picked: every pending
- *  change, or only this action's work. An older pending change to a
- *  package's files holds only the commit that carries it, so the two can
- *  differ. Read off the same selection the commit is sent with. */
+ *  change, or only this action's work. A package not set up here holds
+ *  each commit carrying any of its changed files; one set up here holds a
+ *  commit its checks fail for, and its check over each commit can hold
+ *  the one that leaves an older change out. So the two can differ. Read
+ *  off the same selection the commit is sent with. */
 export function heldBy(state: {
   queue: ProjectOffer[];
   scoped: Scoped;

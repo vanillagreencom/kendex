@@ -77,9 +77,7 @@ fn resolve_script<'a>(
     // Only the package's own arguments. kendex injects nothing: a declared
     // script that needed a flag kendex invented would be a script only
     // kendex could run, and the point of the declaration is that a person
-    // can run it too. The one word added anywhere is `--staged`, in
-    // `run_check_staged`, and it is not kendex's: it is how the
-    // repository's own pre-commit chain asks a check about a commit.
+    // can run it too.
     // The declaration is text, so its arguments are text; paths that reach
     // the child as bytes are the ones kendex resolves, not these.
     let argv = args.into_iter().map(Into::into).collect();
@@ -118,18 +116,15 @@ pub fn run_script(
     launch_script(repo, &program, argv, None)
 }
 
-/// Run a declared check over the commit an index file holds: its own words
-/// and `--staged`, with git pointed at `index`. commit-guards' pre-commit
-/// lane runs `bot-instructions check --staged` the same way, over the index
-/// the commit hands its hooks.
-pub(crate) fn run_check_staged(
+/// Run a declared script with git pointed at the index file `index`, the
+/// way a pre-commit hook runs over the index a commit hands it.
+pub(crate) fn run_script_over(
     scope: &crate::model::Scope,
     root: &std::path::Path,
     spec: &str,
     index: &std::path::Path,
 ) -> crate::error::Result<crate::guard::GuardReport> {
-    let (repo, program, mut argv) = resolve_script(scope, root, spec)?;
-    argv.push("--staged".into());
+    let (repo, program, argv) = resolve_script(scope, root, spec)?;
     launch_script(repo, &program, argv, Some(index))
 }
 

@@ -84,6 +84,7 @@ const disclosure: Disclosure = {
     installer: "scripts/arm",
     uninstaller: null,
     checker: null,
+    stagedChecker: null,
     removal: null,
     notes: [],
     companions: [],

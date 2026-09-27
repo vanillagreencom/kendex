@@ -819,6 +819,7 @@ describe("setting up a package that holds the commit", () => {
     installer: "scripts/bot-instructions render",
     uninstaller: null,
     checker: "scripts/bot-instructions check",
+    stagedChecker: null,
     removal: null,
     notes: [],
     companions: [],

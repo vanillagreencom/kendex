@@ -25,6 +25,7 @@ repo-effects:
   installer: "scripts/bot-instructions render"
   uninstaller: "scripts/bot-instructions retire"
   checker: "scripts/bot-instructions check"
+  staged-checker: "scripts/bot-instructions check --staged"
   removal: "Delete each generated surface and the pointed code-review file first, remove the owned Code Review Rules body but keep its heading, disable its [bot-instructions.bots] flag, render, then remove the package."
   notes:
     - "Only surfaces enabled in the effective [bot-instructions] manifest are written."

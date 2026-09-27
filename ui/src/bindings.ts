@@ -4239,6 +4239,17 @@ export type RepoEffects = {
 	 *  names: see `super::armed`.
 	 */
 	checker: string | null,
+	/**
+	 *  The read-only command that says whether the package's files are
+	 *  current in the commit the index holds, rather than in the working
+	 *  tree. Absent means the package has no such check, and kendex judges
+	 *  a commit carrying its files by `checker` alone.
+	 * 
+	 *  kendex runs it as declared, with `GIT_INDEX_FILE` naming the index
+	 *  of the commit it is about to offer, under the same licence and exit
+	 *  taxonomy as `checker`.
+	 */
+	stagedChecker: string | null,
 	/**  How to undo the effect by hand, for the disclosure's last line. */
 	removal: string | null,
 	/**

@@ -38,6 +38,7 @@ const setup = (
       installer: "scripts/install-git-hooks",
       uninstaller: null,
       checker: null,
+      stagedChecker: null,
       removal: null,
       notes: [],
       companions: [],

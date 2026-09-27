@@ -86,6 +86,7 @@ describe("an offer a package holds", () => {
         installer: "scripts/bot-instructions render",
         uninstaller: null,
         checker: null,
+        stagedChecker: null,
         removal: null,
         notes: [],
         companions: [],
@@ -197,10 +198,9 @@ describe("an offer a package holds", () => {
   });
 });
 
-// An older pending change to a package's files holds only the commit that
-// carries it: this action's own commit is offered, and picking every
-// pending change draws the hold, with the choice between them still on
-// screen to go back.
+// The two commits can be held differently: here this action's own commit
+// is offered, and picking every pending change draws the hold, with the
+// choice between them still on screen to go back.
 describe("an offer held for every pending change only", () => {
   it("offers the action's commit and holds the other", async () => {
     const stale: StalePackage = {
@@ -216,6 +216,7 @@ describe("an offer held for every pending change only", () => {
           installer: "scripts/bot-instructions render",
           uninstaller: null,
           checker: null,
+          stagedChecker: null,
           removal: null,
           notes: [],
           companions: [],

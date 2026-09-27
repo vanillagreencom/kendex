@@ -35,6 +35,15 @@ pub struct RepoEffects {
     /// this effect in this repository, never anything the declaration
     /// names: see `super::armed`.
     pub checker: Option<String>,
+    /// The read-only command that says whether the package's files are
+    /// current in the commit the index holds, rather than in the working
+    /// tree. Absent means the package has no such check, and kendex judges
+    /// a commit carrying its files by `checker` alone.
+    ///
+    /// kendex runs it as declared, with `GIT_INDEX_FILE` naming the index
+    /// of the commit it is about to offer, under the same licence and exit
+    /// taxonomy as `checker`.
+    pub staged_checker: Option<String>,
     /// How to undo the effect by hand, for the disclosure's last line.
     pub removal: Option<String>,
     /// Lines the package wants read before anyone says yes — what its
@@ -147,6 +156,7 @@ fn effects(map: &Map) -> Option<RepoEffects> {
         installer: script(map, "installer")?,
         uninstaller: script(map, "uninstaller")?,
         checker: script(map, "checker")?,
+        staged_checker: script(map, "staged-checker")?,
         removal: text(map, "removal")?,
         notes: list(map, "notes")?,
         companions: list(map, "companions")?,
@@ -154,12 +164,13 @@ fn effects(map: &Map) -> Option<RepoEffects> {
 }
 
 /// The fields a declaration may have. Every one of them is read above.
-const FIELDS: [&str; 8] = [
+const FIELDS: [&str; 9] = [
     "summary",
     "writes",
     "installer",
     "uninstaller",
     "checker",
+    "staged-checker",
     "removal",
     "notes",
     "companions",
@@ -255,7 +266,7 @@ fn text(map: &Map, key: &str) -> Option<Option<String>> {
 
 /// A script field: a scalar, and a path that stays inside the package.
 ///
-/// The installer, the uninstaller and the checker are one field shape and
+/// The installer, the uninstaller and both checkers are one field shape and
 /// are read through one function. A second reader for the checker was a
 /// second answer to what kendex may run.
 ///

@@ -54,19 +54,20 @@ pub enum Staleness {
     /// The package's check could not answer, or could not be run. Its
     /// words, or why it could not be run.
     Unchecked(Vec<String>),
-    /// The package's check passes over the working tree and fails over the
-    /// commit: run with `--staged` against the index the commit would hand
-    /// the repository's pre-commit chain, the last commit with the carried
-    /// paths over it. The commit carries the package's files without a
-    /// changed input they were rendered from. No setup clears this; the
-    /// way on is to leave the files and commit them together.
+    /// The package's declared staged checker fails over the commit, run
+    /// against the index the commit would hand the repository's pre-commit
+    /// chain, the last commit with the carried paths over it, while its
+    /// working-tree check passes or is not declared. The commit carries the
+    /// package's files without a changed input they were rendered from. No
+    /// setup clears this; the way on is to leave the files and commit them
+    /// together.
     Split {
         /// The changed inputs the commit leaves out: the package's paths
         /// under its tree or its declared writes, the manifest, which no
         /// commit kendex makes carries, and the inventory. Empty where the
         /// input left out is a change kendex does not own.
         left: Vec<String>,
-        /// What the check said over the commit, escaped.
+        /// What the staged checker said over the commit, escaped.
         said: Vec<String>,
     },
 }
@@ -101,14 +102,22 @@ impl Carried<'_> {
 /// changes, or under one of the paths it declares it writes. A package
 /// declaring no installer holds nothing, since no setup could clear the
 /// hold. One not set up here holds the commit without any of its code
-/// running. One set up here is asked through its declared check, the same
-/// licensed run the package page makes, over the working tree; declaring
-/// no check, it gives kendex nothing to predict with and holds nothing.
-/// Where that check passes, it is asked again over the commit itself
-/// ([`Staleness::Split`]), built once per call in an index of its own,
-/// and it is that answer which holds or offers the commit. A changed
+/// running.
+///
+/// One set up here that declares a staged checker is judged by it, run
+/// over the commit itself, built once per call in an index of its own. It
+/// passes, and the commit is offered whatever the working tree says. It
+/// exits 1, and the working-tree check decides why: it fails too, and the
+/// files are [`Staleness::OutOfDate`], which a setup can clear; it passes,
+/// or none is declared, and the commit is [`Staleness::Split`]. Either
+/// check that cannot answer is [`Staleness::Unchecked`]. So a changed
 /// input the commit leaves out holds it only where the check over the
 /// commit reads it.
+///
+/// One set up here that declares no staged checker is judged by its
+/// declared check over the working tree alone, the same licensed run the
+/// package page makes; declaring no check at all, it gives kendex nothing
+/// to predict with and holds nothing.
 ///
 /// A declaration that will not read is passed over: it names neither the
 /// files nor the check, and `repo_effects::lapsed` is the reading that
@@ -126,6 +135,7 @@ pub fn stale(
         let crate::engine::InstalledDeclaration::Declared(declared) = installed else {
             continue;
         };
+        let declared = *declared;
         if crate::repo_effects::touches_git(&declared.effects) {
             continue;
         }
@@ -141,9 +151,10 @@ pub fn stale(
         let why = match crate::repo_effects::armed_here(scope, &declared)? {
             false => Staleness::NotSetUp,
             true => {
-                let status = crate::repo_effects::status(scope, &declared, Ask::Surface);
-                let holds = match status.state {
-                    SetupState::Active => {
+                let working = || crate::repo_effects::status(scope, &declared, Ask::Surface);
+                let holds = match &declared.effects.staged_checker {
+                    None => standing(working(), Staleness::OutOfDate),
+                    Some(_) => {
                         let candidate = match &mut candidate {
                             Some(built) => built,
                             None => candidate.insert(Candidate::build(
@@ -153,18 +164,14 @@ pub fn stale(
                             )?),
                         };
                         standing(candidate.status(scope, &declared), |said| {
-                            Staleness::Split {
-                                left: left_out(scan, carried, left),
-                                said,
-                            }
+                            standing(working(), Staleness::OutOfDate).unwrap_or_else(|| {
+                                Staleness::Split {
+                                    left: left_out(scan, carried, left),
+                                    said,
+                                }
+                            })
                         })
                     }
-                    SetupState::NeedsRepair
-                    | SetupState::CouldNotCheck
-                    | SetupState::NotActive
-                    | SetupState::Unavailable
-                    | SetupState::NotDeclared
-                    | SetupState::NotARepository => standing(status, Staleness::OutOfDate),
                 };
                 match holds {
                     Some(why) => why,
@@ -182,7 +189,8 @@ pub fn stale(
 
 /// What one reading of a set-up package's check holds the commit with,
 /// `None` where it holds nothing. `failed` names a check that exits 1: out
-/// of date over the working tree, split over the commit.
+/// of date over the working tree; over the commit, the working-tree
+/// check's own standing, or a split where that holds nothing.
 fn standing(
     status: SetupStatus,
     failed: impl FnOnce(Vec<String>) -> Staleness,

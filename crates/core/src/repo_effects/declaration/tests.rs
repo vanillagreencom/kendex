@@ -21,6 +21,7 @@ fn a_declaration_reads_whole() {
         installer: None,
         uninstaller: None,
         checker: None,
+        staged_checker: None,
         removal: None,
         notes: Vec::new(),
         companions: Vec::new(),
@@ -34,6 +35,7 @@ fn a_declaration_reads_whole() {
                 installer: Some("scripts/install-git-hooks".to_owned()),
                 uninstaller: Some("scripts/install-git-hooks --uninstall".to_owned()),
                 checker: None,
+                staged_checker: None,
                 removal: None,
                 notes: Vec::new(),
                 companions: Vec::new(),
@@ -201,10 +203,10 @@ fn a_declaration_that_will_not_read_is_unreadable_and_absent_stays_absent() {
     }
 }
 
-/// The checker field, held to the same rule as the other two scripts: a
-/// scalar that stays inside the package reads, a wrong shape refuses the
-/// whole declaration, and a path that leaves the package is dropped while
-/// the rest stands.
+/// The checker and the staged checker, held to the same rule as the other
+/// two scripts: a scalar that stays inside the package reads, a wrong shape
+/// refuses the whole declaration, and a path that leaves the package is
+/// dropped while the rest stands.
 ///
 /// Nothing else about it is the declaration's to say. What licenses
 /// running the checker is kendex's own record of having armed the effect
@@ -218,6 +220,7 @@ fn the_checker_is_a_script_field_like_the_others() {
         installer: None,
         uninstaller: None,
         checker: None,
+        staged_checker: None,
         removal: None,
         notes: Vec::new(),
         companions: Vec::new(),
@@ -227,8 +230,20 @@ fn the_checker_is_a_script_field_like_the_others() {
             block("  checker: scripts/check --read-only\n"),
             RepoEffects {
                 checker: Some("scripts/check --read-only".to_owned()),
+                staged_checker: None,
                 ..summary_only.clone()
             },
+        ),
+        (
+            block("  staged-checker: scripts/check --staged\n"),
+            RepoEffects {
+                staged_checker: Some("scripts/check --staged".to_owned()),
+                ..summary_only.clone()
+            },
+        ),
+        (
+            block("  staged-checker: ../../elsewhere/check\n"),
+            summary_only.clone(),
         ),
         (block("  checker: ~\n"), summary_only.clone()),
         (
@@ -252,6 +267,7 @@ fn the_checker_is_a_script_field_like_the_others() {
     let refused = [
         block("  checker:\n    - scripts/check\n"),
         block("  checker:\n    script: scripts/check\n"),
+        block("  staged-checker:\n    - scripts/check\n"),
     ];
     for text in refused {
         assert_eq!(declaration(&text), Declaration::Unreadable, "{text}");

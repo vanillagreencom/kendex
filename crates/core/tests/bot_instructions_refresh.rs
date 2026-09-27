@@ -623,7 +623,34 @@ fn no_installer(_: &Path, text: String) -> String {
 }
 
 fn no_checker(_: &Path, text: String) -> String {
-    without(text, "  checker: \"scripts/bot-instructions check\"\n")
+    let text = without(text, "  checker: \"scripts/bot-instructions check\"\n");
+    without(
+        text,
+        "  staged-checker: \"scripts/bot-instructions check --staged\"\n",
+    )
+}
+
+/// A checker that takes no arguments at all, the way a package that never
+/// heard of `--staged` writes one, and no staged checker.
+#[allow(clippy::unwrap_used)]
+fn plain_checker_only(package: &Path, text: String) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let script = package.join("scripts/plain-check");
+    fs::write(
+        &script,
+        "#!/bin/sh\nif [ \"$#\" -ne 0 ]; then\n  echo \"plain-check: unknown argument $1\" >&2\n  exit 2\nfi\nexec \"$(dirname \"$0\")/bot-instructions\" check\n",
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    let text = replaced(
+        text,
+        "  checker: \"scripts/bot-instructions check\"\n",
+        "  checker: \"scripts/plain-check\"\n",
+    );
+    without(
+        text,
+        "  staged-checker: \"scripts/bot-instructions check --staged\"\n",
+    )
 }
 
 fn writes_into_git(_: &Path, text: String) -> String {
@@ -644,10 +671,15 @@ fn check_cannot_answer(package: &Path, text: String) -> String {
     )
     .unwrap();
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
-    replaced(
+    let text = replaced(
         text,
         "  checker: \"scripts/bot-instructions check\"\n",
         "  checker: \"scripts/fail-check\"\n",
+    );
+    replaced(
+        text,
+        "  staged-checker: \"scripts/bot-instructions check --staged\"\n",
+        "  staged-checker: \"scripts/fail-check\"\n",
     )
 }
 
@@ -664,7 +696,7 @@ fn replaced(text: String, from: &str, to: &str) -> String {
     text.replacen(from, to, 1)
 }
 
-const STALE_ROWS: [StaleRow; 8] = [
+const STALE_ROWS: [StaleRow; 9] = [
     StaleRow {
         what: "not set up here",
         armed: false,
@@ -696,6 +728,14 @@ const STALE_ROWS: [StaleRow; 8] = [
         rendered: false,
         declares: check_cannot_answer,
         holds: Holds::Unchecked("fail-check: the manifest would not read"),
+    },
+    StaleRow {
+        what: "set up and rendered, a checker that takes no --staged",
+        armed: true,
+        doctrine_changed: true,
+        rendered: true,
+        declares: plain_checker_only,
+        holds: Holds::Nothing,
     },
     StaleRow {
         what: "not touched by the offer",
@@ -734,9 +774,10 @@ const STALE_ROWS: [StaleRow; 8] = [
 /// Each package the offer touches is asked before the commit is offered,
 /// and one kendex cannot vouch for holds it. One row per standing: not set
 /// up, set up with its files not rendered, set up and rendered, set up
-/// with a check that cannot answer, and the four that hold nothing: not
-/// touched by the offer, no installer to set it up with, an effect inside
-/// `.git`, and set up with no check to ask.
+/// with a check that cannot answer, and the five that hold nothing: set up
+/// and rendered with only a working-tree checker that refuses any
+/// argument, not touched by the offer, no installer to set it up with, an
+/// effect inside `.git`, and set up with no check to ask.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_package_whose_files_the_offer_would_carry_stale_holds_the_commit() {
@@ -918,7 +959,6 @@ enum Edit {
 enum OverCommit {
     Nothing,
     Split(&'static [&'static str]),
-    OutOfDate,
 }
 
 /// An armed fixture, committed, whose doctrine then changed and whose
@@ -971,14 +1011,15 @@ fn edited_offer(what: &str, edit: &Edit) -> (Fixture, GeneratedPaths, commit_off
     (fixture, generated, scan)
 }
 
-/// A set-up package whose check passes over the working tree is asked
-/// again over the commit, its check run with `--staged` against the index
-/// that commit would hand the pre-commit chain, and that answer holds or
-/// offers it. One row per way an input can be left behind while the
-/// package's re-rendered files are carried: a pending doctrine change
+/// A set-up package that declares a staged checker is judged by it, run
+/// against the index the commit would hand the pre-commit chain: it
+/// passes, and the commit is offered whatever the working tree says. One
+/// row per way an input can be left behind while the package's re-rendered
+/// files are carried: a pending doctrine change
 /// outside the commit, `[install] harnesses` gaining a harness whose render
 /// root holds a tracked tree, a manifest key the render does not read, the
-/// manifest deleted, and the inventory dropping a skill tree. The manifest
+/// manifest deleted, which fails the working-tree check and passes the one
+/// over the commit, and the inventory dropping a skill tree. The manifest
 /// is never carried; the inventory is carried in one row and left out in
 /// another. Every row leaves the repository's own index as it found it and
 /// no candidate index behind.
@@ -1016,7 +1057,7 @@ fn a_commit_is_held_only_where_the_check_over_it_fails() {
             "the manifest deleted",
             Edit::DeleteManifest,
             None,
-            OverCommit::OutOfDate,
+            OverCommit::Nothing,
         ),
         (
             "the inventory drops a skill tree, left out of the commit",
@@ -1079,9 +1120,6 @@ fn a_commit_is_held_only_where_the_check_over_it_fails() {
             (OverCommit::Split(want), [Staleness::Split { left, said }]) => {
                 assert_eq!(left, want, "{what}");
                 assert!(findings(said), "{what}: the check's words: {said:?}");
-            }
-            (OverCommit::OutOfDate, [Staleness::OutOfDate(said)]) => {
-                assert!(findings(said), "{what}: {said:?}");
             }
             (_, got) => panic!("{what}: {got:?}"),
         }

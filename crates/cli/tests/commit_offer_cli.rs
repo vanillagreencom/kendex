@@ -318,7 +318,8 @@ fn the_install_record_is_committed_with_the_renders() {
 ///
 /// The fixture answers `region-bounds` by calling the shipped launcher, so
 /// no fixture carries a second copy of the bounds rule. Its `check` says the
-/// files are current: the offer asks it before it offers the commit.
+/// files are current, and it is declared as the staged checker too: the
+/// offer asks it over the commit before it offers the commit.
 #[allow(clippy::unwrap_used)]
 fn region_project(tmp: &tempfile::TempDir, committed: &str, working: &str) -> PathBuf {
     let home = rooted(tmp);
@@ -333,7 +334,7 @@ fn region_project(tmp: &tempfile::TempDir, committed: &str, working: &str) -> Pa
     fs::write(project.join("AGENTS.md"), committed).unwrap();
     fs::write(
         project.join(".agents/skills/bot-instructions/SKILL.md"),
-        "---\nname: bot-instructions\ndescription: fixture\nrepo-effects:\n  summary: fixture render\n  writes: ['.github/copilot-instructions.md']\n  installer: scripts/bot-instructions render\n  checker: scripts/bot-instructions check\n---\n",
+        "---\nname: bot-instructions\ndescription: fixture\nrepo-effects:\n  summary: fixture render\n  writes: ['.github/copilot-instructions.md']\n  installer: scripts/bot-instructions render\n  checker: scripts/bot-instructions check\n  staged-checker: scripts/bot-instructions check --staged\n---\n",
     )
     .unwrap();
     git(&project, &["add", "-A"]);
@@ -552,9 +553,9 @@ fn held_project(tmp: &tempfile::TempDir) -> PathBuf {
 }
 
 /// A manifest edit, which kendex never commits, holds the commit only
-/// where the package's check over that commit reads it: run with
-/// `--staged` against the index the commit hands its hooks, where the
-/// manifest is the last commit's. One row whose check compares the staged
+/// where the package's check over that commit reads it: its declared
+/// staged checker, `check --staged`, run against the index the commit
+/// hands its hooks, where the manifest is the last commit's. One row whose check compares the staged
 /// manifest with the working one, held with the manifest and the check's
 /// words named and no setup offered; one whose check does not read it,
 /// committed.

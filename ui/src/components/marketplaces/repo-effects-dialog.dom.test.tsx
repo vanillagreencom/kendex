@@ -50,6 +50,7 @@ const guards: Disclosure = {
     installer: "scripts/install-git-hooks",
     uninstaller: "scripts/install-git-hooks --uninstall",
     checker: null,
+    stagedChecker: null,
     removal: "run the uninstaller before removing this package",
     notes: ["core.hooksPath is never set."],
     companions: ["doc-limits", "preflight"],

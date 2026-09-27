@@ -17,6 +17,7 @@ fn package(root: &Path, installer: Option<&str>, uninstaller: Option<&str>) -> D
             installer: installer.map(str::to_owned),
             uninstaller: uninstaller.map(str::to_owned),
             checker: None,
+            staged_checker: None,
             removal: Some("delete the hooks by hand".to_owned()),
             notes: Vec::new(),
             companions: Vec::new(),

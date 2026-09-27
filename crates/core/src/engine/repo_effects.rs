@@ -220,7 +220,7 @@ pub fn installed_declaration(
 /// One installed package's declaration as a whole-scope read hands it on.
 #[derive(Debug, Clone, PartialEq)]
 pub enum InstalledDeclaration {
-    Declared(DeclaredEffects),
+    Declared(Box<DeclaredEffects>),
     /// The package's `SKILL.md` at `at` opens a `repo-effects` block that
     /// will not read. Not an error here, because the reader has no record
     /// in hand yet: a scope that never armed the package has nothing to
@@ -254,11 +254,13 @@ pub fn installed_declarations(env: &Env, scope: &Scope) -> Result<Vec<InstalledD
             continue;
         };
         found.push(match declaration(&installed.text) {
-            Declaration::Effects(effects) => InstalledDeclaration::Declared(DeclaredEffects {
-                name: name.clone(),
-                root: installed.root,
-                effects: *effects,
-            }),
+            Declaration::Effects(effects) => {
+                InstalledDeclaration::Declared(Box::new(DeclaredEffects {
+                    name: name.clone(),
+                    root: installed.root,
+                    effects: *effects,
+                }))
+            }
             Declaration::Absent => continue,
             Declaration::Unreadable => InstalledDeclaration::Unreadable {
                 name: name.clone(),

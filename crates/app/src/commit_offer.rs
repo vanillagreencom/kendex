@@ -468,14 +468,14 @@ fn read(
 /// change, and only this action's work.
 ///
 /// Each is `commit_offer::stale` asked of the paths that commit carries,
-/// its package checks run over that commit's own candidate index. The
+/// a staged checker run over that commit's own candidate index. The
 /// terminal commits every pending change and reads the whole scan; the
-/// window starts a write-opened offer on the action's own paths. An older
-/// pending change to a package's files holds only the commit its check
-/// fails over: not set up or out of date, the commit that carries it; a
-/// render whose older doctrine change is left out, the commit that leaves
-/// it. Where no action opened the offer, or both commits are the same set,
-/// one reading answers for both.
+/// window starts a write-opened offer on the action's own paths. A package
+/// not set up here holds each commit carrying any of its changed paths.
+/// One set up here holds a commit its checks fail for; a staged checker
+/// judges each commit apart, so it can hold the action's own commit where
+/// that leaves an older doctrine change out. Where no action opened the
+/// offer, or both commits are the same set, one reading answers for both.
 fn held_by_scope(
     env: &Env,
     scope: &Scope,
@@ -1450,8 +1450,8 @@ mod tests {
     /// Turn [`write_bot_fixture`]'s renderer into one that renders from the
     /// doctrine, the way the package does: the rendered file carries the
     /// doctrine's checksum, and `check` compares the two over the working
-    /// tree, or over the index under `--staged`, the pre-commit lane's
-    /// mode.
+    /// tree, or over the index under `--staged`, which the package declares
+    /// as its staged checker.
     #[cfg(unix)]
     #[allow(clippy::unwrap_used)]
     fn render_from_doctrine(root: &Path) {
@@ -1464,6 +1464,12 @@ mod tests {
         assert_eq!(text.matches("done\n").count(), 1, "the fixture's flag loop");
         let text = text.replacen(render, from, 1).replacen("done\n", check, 1);
         std::fs::write(&script, text).unwrap();
+        let skill = root.join(".agents/skills/bot-instructions/SKILL.md");
+        let text = std::fs::read_to_string(&skill).unwrap();
+        let checker = "  checker: scripts/bot-instructions check\n";
+        assert_eq!(text.matches(checker).count(), 1, "the fixture's checker");
+        let staged = "  checker: scripts/bot-instructions check\n  staged-checker: scripts/bot-instructions check --staged\n";
+        std::fs::write(&skill, text.replacen(checker, staged, 1)).unwrap();
     }
 
     #[cfg(unix)]
@@ -1765,11 +1771,11 @@ mod tests {
         }
     }
 
-    /// An older pending change to a package's files holds only the commit
-    /// that carries it. A doctrine change left as diffs, then an action
-    /// that writes an unrelated file: the action's own commit is clean, and
-    /// a commit of every pending change is held because the package is not
-    /// set up here.
+    /// A package not set up here holds each commit carrying any of its
+    /// changed files, and no other. A doctrine change left as diffs, then
+    /// an action that writes an unrelated file: the action's own commit is
+    /// clean, and a commit of every pending change is held because the
+    /// package is not set up here.
     #[test]
     #[cfg(unix)]
     fn an_older_pending_change_holds_only_the_commit_that_carries_it() {

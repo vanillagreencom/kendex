@@ -397,6 +397,7 @@ mod tests {
                 installer: None,
                 uninstaller: None,
                 checker: None,
+                staged_checker: None,
                 removal: None,
                 notes: Vec::new(),
                 companions: Vec::new(),

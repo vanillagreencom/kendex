@@ -121,6 +121,7 @@ repo-effects:
 - `writes` are repo-relative paths, each of which stays inside the repository. A path under `.git/` maps to the repository's common git directory, which every work tree shares, and is disclosed as shared.
 - `installer` and `uninstaller` are commands relative to the package directory. kendex runs the installer when somebody says yes, and the uninstaller before any verb takes the package away.
 - `checker` is optional and read-only: a command, relative to the package directory, that reports whether the effect stands here.
+- `staged-checker` is optional and read-only: a command, relative to the package directory, that reports whether the package's files are current in the commit the git index holds rather than in the working tree. Declare it where a commit hook judges your files, the way `bot-instructions check --staged` does.
 - Every field is refused whole rather than read short. A shape kendex cannot read is a declaration it will not act on, and a script or evidence path kendex will not use is dropped while the rest of the block stands.
 
 ### The checker contract
@@ -138,6 +139,8 @@ Where kendex recorded arming the effect, `kendex verify` fails, and `kendex refr
 The script writes nothing and changes nothing. Whatever it prints on either stream reaches the person as the package's own words, so put the remedy there.
 
 Nothing the declaration says decides when the checker runs. Your script comes out of a checkout, and a checkout arrives with a fetch, so opening a package's page must not run it. What licenses a run is kendex's own record of having armed the effect in that repository: kendex writes it when your installer exits clean, keeps it in a git directory, which git clones for nobody, and drops it when your uninstaller runs. Which one is your effect's reach: an effect under `.git/` is the whole repository's, so one arming answers for every work tree; an effect elsewhere in the checkout is the work tree it was armed in and no other. A repository nothing here armed runs none of your code.
+
+A `staged-checker` keeps the same exit taxonomy and the same licence. kendex runs it exactly as declared, with `GIT_INDEX_FILE` naming a temporary index that holds the commit it is about to offer, before it offers a commit that carries your files; kendex adds no argument to it or to `checker`. A `0` there leaves the commit on offer whatever the working tree says. A `1` holds it: as out of date, with your setup offered, where `checker` also exits `1`, and otherwise with leaving the files as diffs as the only way on. An effect under `.git/` is never asked, since a commit carries none of its files. A package that declares no staged checker is judged by `checker` over the working tree alone.
 
 That leaves a repository somebody armed by hand, which kendex has no record of. The person can ask for the status themselves — the package page offers it — and their asking is its own licence, so your checker still answers there.
 

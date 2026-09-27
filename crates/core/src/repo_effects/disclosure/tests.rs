@@ -24,6 +24,7 @@ fn declared(writes: &[&str], companions: &[&str]) -> DeclaredEffects {
             installer: Some("scripts/arm".to_owned()),
             uninstaller: None,
             checker: None,
+            staged_checker: None,
             removal: None,
             notes: Vec::new(),
             companions: companions.iter().map(|s| (*s).to_owned()).collect(),

@@ -142,8 +142,9 @@ pub fn status(scope: &Scope, declared: &DeclaredEffects, ask: Ask) -> SetupStatu
 }
 
 /// The declared setup's standing over the commit the index file at `index`
-/// holds, rather than over the working tree: the check run with `--staged`
-/// and git pointed at that index. Licensed as [`Ask::Surface`] is.
+/// holds, rather than over the working tree: the declared staged checker,
+/// run with git pointed at that index. Licensed as [`Ask::Surface`] is, and
+/// [`SetupState::Unavailable`] for a package that declares none.
 pub(crate) fn status_of_index(
     scope: &Scope,
     declared: &DeclaredEffects,
@@ -169,7 +170,11 @@ fn asked(scope: &Scope, declared: &DeclaredEffects, ask: Ask, index: Option<&Pat
             shared,
         };
     };
-    let Some(checker) = &declared.effects.checker else {
+    let checker = match index {
+        None => &declared.effects.checker,
+        Some(_) => &declared.effects.staged_checker,
+    };
+    let Some(checker) = checker else {
         return SetupStatus {
             state: SetupState::Unavailable,
             said: Vec::new(),
@@ -218,7 +223,7 @@ fn run(
 ) -> SetupStatus {
     let report = match index {
         None => super::run_script(scope, &declared.root, checker),
-        Some(index) => super::run_check_staged(scope, &declared.root, checker, index),
+        Some(index) => super::run_script_over(scope, &declared.root, checker, index),
     };
     let report = match report {
         Ok(report) => report,

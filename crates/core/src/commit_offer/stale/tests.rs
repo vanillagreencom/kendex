@@ -21,6 +21,7 @@ fn a_changed_path_touches_the_package_that_owns_or_writes_it() {
             installer: Some("render".to_owned()),
             uninstaller: None,
             checker: None,
+            staged_checker: None,
             removal: None,
             notes: Vec::new(),
             companions: Vec::new(),

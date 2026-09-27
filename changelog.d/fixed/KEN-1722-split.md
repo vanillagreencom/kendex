@@ -1,1 +1,0 @@
-- A commit offer is held for bot-instructions only where its check fails over the commit itself, so a kendex.toml edit the render does not read keeps the commit.
