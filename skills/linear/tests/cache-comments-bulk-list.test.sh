@@ -70,7 +70,10 @@ assert_jq "the default format is the safe comment shape" "$out" \
   '.["CB-1"][0] == {id: "c-1a", body: "first", user: "Ada", created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z"}'
 assert_jq "an issue with no comments reads as an empty list" "$out" '.["CB-3"] == []'
 
-run_cache out err rc comments bulk-list CB-3
+# The only row that reads no comment file at all, where jq would read stdin
+# for input if the command let it, so it is handed a stdin that is not a
+# comment list.
+run_cache out err rc comments bulk-list CB-3 <<<'{"a": 1}'
 assert_eq "an issue with no comments alone exits zero" "$rc" 0
 assert_jq "an issue with no comments alone reads as an empty list" "$out" '. == {"CB-3": []}'
 
@@ -81,6 +84,10 @@ stdin_rc=0
 stdin_out="$(cd "$TMP_ROOT" && printf 'CB-1\n\nCB-3\n' | bash "$LINEAR" cache comments bulk-list --stdin)" || stdin_rc=$?
 assert_eq "--stdin exits zero" "$stdin_rc" 0
 assert_jq "--stdin reads one identifier per line" "$stdin_out" 'keys_unsorted == ["CB-1", "CB-3"]'
+
+# A list written without a final newline (printf '%s', an editor's Write).
+run_cache out err rc comments bulk-list --stdin < <(printf 'CB-3\nCB-2')
+assert_jq "--stdin keeps a last identifier with no newline" "$out" 'keys_unsorted == ["CB-3", "CB-2"]'
 
 # --- a missing issue ---------------------------------------------------------
 run_cache out err rc comments bulk-list CB-1 CB-9 CB-8
@@ -114,8 +121,10 @@ cp "$TMP_ROOT/issues.json.good" "$CACHE/issues.json"
 # --- refused requests --------------------------------------------------------
 run_cache out err rc comments bulk-list
 assert_ne "no identifiers exits nonzero" "$rc" 0
+assert_contains "no identifiers says none were provided" "$err" "No issue identifiers provided"
 run_cache out err rc comments bulk-list CB-1 --since 7d
 assert_ne "an unknown flag exits nonzero" "$rc" 0
+assert_contains "an unknown flag is named as one" "$err" "Unknown flag for cache comments bulk-list: --since"
 run_cache out err rc comments bulk-list $'CB-1\nCB-2'
 assert_ne "an identifier with a line break exits nonzero" "$rc" 0
 

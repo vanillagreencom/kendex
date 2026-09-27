@@ -665,7 +665,7 @@ cache_bulk_get_issues() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
         --stdin)
-            while IFS= read -r line; do [[ -n "$line" ]] && identifiers+=("$line"); done
+            while IFS= read -r line || [[ -n "$line" ]]; do [[ -n "$line" ]] && identifiers+=("$line"); done
             shift
             ;;
         --format)
@@ -925,7 +925,7 @@ cache_bulk_list_comments() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
         --stdin)
-            while IFS= read -r line; do [[ -n "$line" ]] && identifiers+=("$line"); done
+            while IFS= read -r line || [[ -n "$line" ]]; do [[ -n "$line" ]] && identifiers+=("$line"); done
             shift
             ;;
         --format)
@@ -986,11 +986,12 @@ cache_bulk_list_comments() {
 
     # With no path, jq would read stdin instead of nothing.
     local result
-    if ! result=$(jq -n --arg dir "$dir" --argjson ids "$id_json" '
+    if ! result=$(jq -n --arg dir "$dir" --argjson ids "$id_json" --arg format "$FORMAT" "$COMMENT_SAFE_JQ"'
         (reduce inputs as $c ({};
             if ($c | type) == "array" then .[input_filename | ltrimstr($dir) | rtrimstr(".json")] = $c
             else error("not an array") end)) as $read
         | reduce $ids[] as $i ({}; .[$i] = ($read[$i] // []))
+        | if $format == "raw" then . else map_values(map(comment_safe)) end
     ' ${paths[@]+"${paths[@]}"} </dev/null); then
         local path bad="$dir"
         for path in ${paths[@]+"${paths[@]}"}; do
@@ -1003,10 +1004,7 @@ cache_bulk_list_comments() {
         return 1
     fi
 
-    case "$FORMAT" in
-    raw) echo "$result" ;;
-    safe | *) jq "$COMMENT_SAFE_JQ"'map_values(map(comment_safe))' <<<"$result" ;;
-    esac
+    printf '%s\n' "$result"
 }
 
 # =============================================================================

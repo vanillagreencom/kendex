@@ -581,7 +581,7 @@ bulk_get_issues() {
 
     # Read from stdin if requested
     if [ "$from_stdin" = "true" ]; then
-        while IFS= read -r line; do
+        while IFS= read -r line || [ -n "$line" ]; do
             [ -n "$line" ] && identifiers+=("$line")
         done
     fi
@@ -707,7 +707,7 @@ bulk_update_issues() {
 
     # Read from stdin if requested
     if [ "$from_stdin" = "true" ]; then
-        while IFS= read -r line; do
+        while IFS= read -r line || [ -n "$line" ]; do
             [ -n "$line" ] && identifiers+=("$line")
         done
     fi

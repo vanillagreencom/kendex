@@ -35,8 +35,8 @@ control_replace scripts/commands/cache-query.sh 1 \
 # Print the cached nodes under the safe format.
 control_expect "the default format is the safe comment shape"
 control_replace scripts/commands/cache-query.sh 1 \
-    "    safe | *) jq \"\$COMMENT_SAFE_JQ\"'map_values(map(comment_safe))' <<<\"\$result\" ;;" \
-    '    safe | *) echo "$result" ;;'
+    '        | if $format == "raw" then . else map_values(map(comment_safe)) end' \
+    '        | .'
 
 # Read an argument holding a line break as the two identifiers it splits into,
 # while the comment files are looked up under the unsplit name: both issues
@@ -45,3 +45,30 @@ control_expect "an identifier with a line break exits nonzero"
 control_replace scripts/commands/cache-query.sh 1 \
     "            if [[ \"\$1\" == *\$'\\n'* ]]; then" \
     '            if false; then'
+
+# Let the read with no comment file to open take the caller's stdin as input.
+control_expect "an issue with no comments alone exits zero"
+control_replace scripts/commands/cache-query.sh 1 \
+    "    ' \${paths[@]+\"\${paths[@]}\"} </dev/null); then" \
+    "    ' \${paths[@]+\"\${paths[@]}\"}); then"
+
+# Stop at the last line break, dropping an identifier written after it. The
+# line has a twin in cache issues bulk-get, which this suite does not run.
+control_expect "--stdin keeps a last identifier with no newline"
+control_replace scripts/commands/cache-query.sh 2 \
+    '            while IFS= read -r line || [[ -n "$line" ]]; do [[ -n "$line" ]] && identifiers+=("$line"); done' \
+    '            while IFS= read -r line; do [[ -n "$line" ]] && identifiers+=("$line"); done'
+
+# Drop the no-identifier refusal, leaving the missing-issue gate to refuse an
+# empty list under the wrong cause. The line has a twin in cache issues
+# bulk-get, which this suite does not run.
+control_expect "no identifiers says none were provided"
+control_replace scripts/commands/cache-query.sh 2 \
+    '    if [[ ${#identifiers[@]} -eq 0 ]]; then' \
+    '    if false; then'
+
+# Take an unknown flag as an identifier, as a missing arm would.
+control_expect "an unknown flag is named as one"
+control_replace scripts/commands/cache-query.sh 1 \
+    '            cache_unknown_flag "comments bulk-list" "comment" "$1"' \
+    '            identifiers+=("$1"); shift; continue'
