@@ -56,19 +56,27 @@ def check(w):
  assert users[0]['env']['KENDEX_ISSUES_TOKEN']=='${{ steps.issues-token.outputs.token }}'
  assert '$RUNNER_TEMP/refresh-skills/.agents/skills/review-gate/scripts/refresh-reviews.sh' in users[0]['run']
  assert steps.index(upstream)>next(i for i,s in enumerate(steps) if 'refresh-consumer.sh' in s.get('run',''))
+ # The consumer runs the kendex build whose manifest reader accepts the
+ # current catalog; an older pin fails every refresh on that reader.
+ install=next(s for s in steps if s.get('name')=='Install pinned kendex')
+ assert install['env']['KENDEX_VERSION']=='main-build-299-1-cdc4f0ccc7ae152d1ed8a5f7c6e8df4deafcab40'
+ assert install['env']['KENDEX_INSTALLER_REPO']=='vanillagreencom/kendex'
+ assert install['env']['GH_TOKEN']=='""'
+ assert 'raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/${KENDEX_VERSION##*-}/install.sh" | sh -s -- --version "$KENDEX_VERSION"' in install['run']
 check(workflow)
-for mutation in ('repository','permission','exposure','branch','fallback','self'):
+for mutation in ('repository','permission','exposure','branch','fallback','self','pin'):
  w=copy.deepcopy(workflow);job=w['jobs']['refresh'];steps=job['steps'];token=next(s for s in steps if s.get('id')=='issues-token')
  if mutation=='repository': token['with']['repositories']='kendex,consumer'
  elif mutation=='permission': token['with']['permission-contents']='write'
  elif mutation=='exposure': steps[0]['env']={'TOKEN':'${{ steps.issues-token.outputs.token }}'}
  elif mutation=='branch': job['if']='true'
  elif mutation=='self': job['if']=job['if'].split(' && ')[1]
+ elif mutation=='pin': next(s for s in steps if s.get('name')=='Install pinned kendex')['env']['KENDEX_VERSION']='main-build-261-1-d1637e9ee73474603707339935ebaed33d175269'
  else: token['continue-on-error']=False
  try: check(w)
  except AssertionError: pass
  else: raise AssertionError('must-fail control missed '+mutation)
 PY
-then ok 'default-branch environment, consumer and Issues token boundaries, fallback and mutation controls'; else bad 'workflow token boundary'; fi
+then ok 'default-branch environment, consumer and Issues token boundaries, the kendex pin, fallback and mutation controls'; else bad 'workflow token boundary'; fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
