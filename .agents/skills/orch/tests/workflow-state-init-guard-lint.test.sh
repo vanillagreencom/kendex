@@ -22,7 +22,7 @@ echo "=== orch workflow-state init guard lint ==="
 W="$SKILL_DIR/workflows"
 GUARDED=()
 guard_fenced() { GUARDED+=("$2"); rule_fenced "$1 reads exists in its init section" "$W/$2" "$3" "$4"; }
-guard_prose() { GUARDED+=("$2"); rule "$1 reads exists on its init line" "$W/$2" "" "$3" 'workflow-state init'; }
+guard_prose() { GUARDED+=("$2"); rule "$1 reads exists on its init line" "$W/$2" "" 'workflow-state exists --json [ISSUE_ID]' 'workflow-state init'; }
 guard_minted() { GUARDED+=("$2"); rule_fenced "$1 mints the key it inits in its init section" "$W/$2" "$3" "$4"; }
 keeps_state() {
   rule_fenced "$1 keeps existing state: sets worktree" "$W/$2" "$3" 'workflow-state set [ISSUE_ID] worktree'
@@ -37,10 +37,10 @@ guard_fenced dev-start dev-start.md "" 'workflow-state exists --json [ISSUE_ID]'
 guard_fenced ci-fix ci-fix.md "## 1. Identify Failures" 'workflow-state exists --json [STATE_KEY]'
 guard_fenced merge-pr merge-pr.md "## 3. Check Merge Readiness" 'workflow-state exists --json [STATE_KEY]'
 guard_fenced oversee oversee.md "### Lane record" 'workflow-state exists --json oversee'
-guard_prose post-summary post-summary.md 'workflow-state exists --json [ISSUE_ID]` reports false'
-guard_prose review-pr review-pr.md 'workflow-state exists --json [ISSUE_ID]`; when absent'
-guard_prose submit-pr submit-pr.md 'workflow-state exists --json [ISSUE_ID]`; when absent'
-guard_prose review-pr-comments review-pr-comments.md 'workflow-state exists --json [ISSUE_ID]` reports false'
+guard_prose post-summary post-summary.md
+guard_prose review-pr review-pr.md
+guard_prose submit-pr submit-pr.md
+guard_prose review-pr-comments review-pr-comments.md
 guard_minted review review.md "## 4. Present And Fix" 'workflow-state new-local-key'
 
 # init_files DIR — the sorted base names of DIR's workflows that run `init`.

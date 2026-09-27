@@ -3,9 +3,11 @@
 # orch's lints are its callers; a suite in any skill may source it by path.
 #
 # An editorial rephrase must not redden a suite while the contract holds. What
-# a doc lint may pin is an IDENTIFIER — a heading, a state field, an inline
-# code literal, a setting name — and the placement of one identifier relative
-# to another.
+# a doc lint may pin is a MACHINE-READ CONTRACT — a command shape a script
+# parses, a keyed line or setting a program reads, a flag or parameter a tool
+# takes, a path a script reads, a section a script reads by heading. A heading
+# otherwise only selects where a rule looks, and a prose phrase is never a
+# token: a rule that pins wording stays green when the rule it states changes.
 #
 # The rule forms are deliberately few, and these are all of them:
 #

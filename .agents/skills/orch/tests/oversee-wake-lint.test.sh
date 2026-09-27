@@ -1,99 +1,59 @@
 #!/usr/bin/env bash
-# Pins the documented oversee watch delivery: the harness-neutral rule, the
-# per-harness rows and their adapters, the Stop step that ends the watch, and
-# the handoff field. Every bg_task parameter the Pi rows name is read from
-# those rows and must stand in the package instructions that define it, and the
-# numbered follow every harness runs is executed from its fence.
+# Pins the machine-read half of the oversee watch delivery: the commands and
+# status file the watch rules run and read, and the tool and parameter names
+# each harness row hands its harness. Every bg_task parameter the Pi rows name
+# is read from those rows and must stand in the package instructions that
+# define it, and the numbered follow every harness runs is executed from its
+# fence.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
-OVERSEE="$SKILL_DIR/workflows/oversee.md"
 WATCH="$SKILL_DIR/references/watch-delivery.md"
 CODEX="$SKILL_DIR/references/codex-runtime.md"
 PI="$SKILL_DIR/references/pi-runtime.md"
-MODES="$SKILL_DIR/references/communication-modes.md"
 # The render copy sits under .agents/, where md.sh's REPO_ROOT is .agents/
 # itself; the package lives at the work tree's top level in both copies.
 PKG_DIR="$(git -C "$SKILL_DIR" rev-parse --show-toplevel)/pi-extensions/pi-background-tasks"
 BG_TASKS="$PKG_DIR/instructions.md"
 BG_TOOLS="$PKG_DIR/extensions/registrations.ts"
-BG_HEADING='## pi-background-tasks — `bg_task` and `bg_status`'
 DELIVERY="# Watch delivery"
 
 echo "=== orch oversee wake lint ==="
 
-# --- The harness-neutral rule -----------------------------------------------
-rule "the overseer workflow points at the watch delivery reference" \
-  "$OVERSEE" "### Watch delivery" \
-  '[references/watch-delivery.md](../references/watch-delivery.md)'
-rule "a turn without an asynchronous wake holds while a lane runs" "$WATCH" \
-  "$DELIVERY" 'blocking follow' '`running`'
-rule "the repeat watch runs detached through the waiter launch" "$WATCH" \
-  "$DELIVERY" '[Waiter launch](waiter-launch.md)' '`[RUN_DIR]/watch.log`'
-rule "a read that fails is never read as no watch" "$WATCH" "$DELIVERY" \
-  'failed read' "pgrep's stderr" 'Exit 0 is a live watch'
-rule "every delivery and expiry reads the process before the status" \
-  "$WATCH" "$DELIVERY" 'run that read first' 'test -s "[RUN_DIR]/watch.exit"'
-rule "a stop signals only the group the read proved" "$WATCH" "$DELIVERY" \
-  'job-unit.sh stop-job "[RUN_DIR]/watch.runner" [PID]' 'the group the read proved'
-rule "a stop marks the status file before its kill" "$WATCH" "$DELIVERY" \
-  'write `stopped` into `[RUN_DIR]/watch.exit`' 'then run the read'
-rule "the stop mark ends oversight with no restart" "$WATCH" "$DELIVERY" \
-  '`stopped` is the mark' 'no restart'
-rule "a fresh run directory restarts the line count" "$WATCH" "$DELIVERY" \
-  '`[NEXT_LINE]` starts at 1'
-rule "a relaunch moves the follow to the new log" "$WATCH" "$DELIVERY" \
-  'end the current follow' 'new `[RUN_DIR]/watch.log` from line 1'
-rule "every harness follows through the one saved follow script" "$WATCH" \
-  "$DELIVERY" '`[RUN_DIR]/follow.sh`' 'file-write tool'
-rule "Stop ends the detached watch before the handoff" "$OVERSEE" "## 5. Stop" \
-  'Stop a detached repeat watch first' \
-  '[references/watch-delivery.md](../references/watch-delivery.md)'
-rule "a stopped watch is never resumed from the handoff" "$WATCH" \
-  "$DELIVERY" 'After that Stop' '`stopped`'
+# --- The watch's commands and status file -----------------------------------
+rule "a stop runs stop-job on the runner the launch recorded" "$WATCH" "$DELIVERY" \
+  'job-unit.sh stop-job "[RUN_DIR]/watch.runner" [PID]'
+rule "every delivery and expiry reads the waiter's status file" "$WATCH" \
+  "$DELIVERY" 'test -s "[RUN_DIR]/watch.exit"'
 
-# --- One row per harness ----------------------------------------------------
-rule "the Claude Code row names Monitor and re-arms on a stop" "$WATCH" \
-  "$DELIVERY" '| Claude Code |' '`Monitor`' '`timeout_ms`' 'expiry or stop'
-rule "the Codex row names write_stdin polls" "$WATCH" "$DELIVERY" \
-  '| Codex |' '`write_stdin`' 'codex-runtime.md § Standing watch'
-rule "the Pi row names bg_task output wakes" "$WATCH" "$DELIVERY" \
-  '| Pi |' '`bg_task`' 'pi-runtime.md § Standing watch (Pi)'
-rule "the harness picks repeat or single passes before any launch" "$WATCH" \
-  "$DELIVERY" 'picks the path before any launch' '§ Single passes' \
-  'nothing in § Repeat watch applies'
-rule "an exit-only harness runs single passes with no detach" "$WATCH" \
-  "## Single passes" 'without `--repeat`' 'no detach' 'no `[RUN_DIR]`'
-rule "the watch command is conditional on the harness" "$OVERSEE" \
-  "## 4. Watch And Advance" 'single passes without `--repeat`'
-rule "the handoff names the wake in force" "$WATCH" "$DELIVERY" \
-  'handoff names the mechanism in force'
+# --- One row per harness, by the tool and parameter names it takes ----------
+rule "the Claude Code row names Monitor and its timeout" "$WATCH" \
+  "$DELIVERY" '| Claude Code |' '`Monitor`' '`timeout_ms`'
+rule "the Codex row names write_stdin" "$WATCH" "$DELIVERY" \
+  '| Codex |' '`write_stdin`'
+rule "the Pi row names bg_task" "$WATCH" "$DELIVERY" '| Pi |' '`bg_task`'
 
 # --- The Codex adapter ------------------------------------------------------
-rule "Codex arms the numbered follow with exec_command" "$CODEX" \
-  "## Standing watch" '| Arm |' '`exec_command`' '`yield_time_ms` 30000' \
-  'numbered follow command of [watch-delivery.md]'
-rule "Codex waits in write_stdin empty polls" "$CODEX" "## Standing watch" \
+rule "Codex arms the follow with exec_command" "$CODEX" \
+  "## Standing watch" '| Arm |' '`exec_command`' '`yield_time_ms` 30000'
+rule "Codex waits in write_stdin polls" "$CODEX" "## Standing watch" \
   '| Wait |' '`write_stdin`' '`background_terminal_max_timeout`'
-rule "Codex re-arms inside the same turn" "$CODEX" "## Standing watch" \
-  '| Re-arm |' '`running`' '`exit_code`' 'Every poll return'
+rule "Codex re-arms on the poll's running and exit_code fields" "$CODEX" \
+  "## Standing watch" '| Re-arm |' '`running`' '`exit_code`'
 
 # --- The Pi adapter ---------------------------------------------------------
-rule "Pi arms the numbered follow with output wakes and an expiry" "$PI" \
+rule "Pi arms the follow with output wakes and an expiry" "$PI" \
   "## Standing watch (Pi)" '| Arm |' '`notifyOnOutput: true`' \
-  '`notifyMode: "always"`' '`timeoutSeconds: 300`' \
-  'numbered follow command of [watch-delivery.md]'
-rule "Pi re-arms when the wake budget is spent" "$PI" "## Standing watch (Pi)" \
-  '| Re-arm |' '`bg_status action: "stop"`' 'on the kept pid'
-rule "Pi keeps the pid its stop and list read" "$PI" "## Standing watch (Pi)" \
-  'Keep the pid the spawn returns' '`Started [ID] (pid [PID])`'
-rule "Pi spawns on an exit wake only when its follow is not listed running" \
+  '`notifyMode: "always"`' '`timeoutSeconds: 300`'
+rule "Pi re-arms with a bg_status stop" "$PI" "## Standing watch (Pi)" \
+  '| Re-arm |' '`bg_status action: "stop"`'
+rule "Pi keeps the pid the spawn result prints" "$PI" "## Standing watch (Pi)" \
+  '`Started [ID] (pid [PID])`'
+rule "Pi lists its follow on an exit wake" \
   "$PI" "## Standing watch (Pi)" '| Exit |' '`bg_status action: "list"`'
 
 # --- The Pi adapter's source ------------------------------------------------
-rule "the package ends the wake budget with one notice" "$BG_TASKS" \
-  "$BG_HEADING" '"wake budget exhausted'
 
 # pi_params FILE — one row per bg_task parameter a code span in FILE's
 # § Standing watch (Pi) names, tab-separated: `param NAME VALUE` for a span
@@ -242,11 +202,5 @@ if [ "$FOLLOW_OUT" = "$FOLLOW_WANT" ]; then
 else
   fail "with follow.out opened late the follow printed: $FOLLOW_OUT"
 fi
-
-# --- The handoff shape ------------------------------------------------------
-rule "the handoff shape carries the watch row per mode" "$MODES" "## Handoff" \
-  'Watch: [REPEAT MODE: THE WAKE MECHANISM IN FORCE' 'SINGLE PASSES: `single passes` ALONE'
-rule "the single-pass handoff row is the shape's single-pass form" "$WATCH" \
-  "## Single passes" 'Watch row reads `single passes` alone'
 
 md_report

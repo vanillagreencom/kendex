@@ -30,9 +30,5 @@ forbid "no doc routes ci-wait through github.sh" \
 
 rule_fenced "submit-pr invokes ci-wait by its orch path" \
   "$SKILL_DIR/workflows/submit-pr.md" "" '.agents/skills/orch/scripts/ci-wait'
-rule "the Codex guidance names the orch ci-wait path" \
-  "$SKILL_DIR/SKILL.md" "" 'Codex' '.agents/skills/orch/scripts/ci-wait'
-rule "github points CI waiting at the orch script" \
-  "$SKILLS_ROOT/github/SKILL.md" "" 'CI waiting' '.agents/skills/orch/scripts/ci-wait'
 
 md_report
