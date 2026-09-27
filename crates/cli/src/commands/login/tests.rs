@@ -29,6 +29,7 @@ fn approval_snapshots_keep_the_private_device_code_off_screen() {
         [
             "<90>First, open: https://kendex.ai/device?code=ABCD-EFGH</>",
             "<90>Your code: ABCD-EFGH</>",
+            "",
             "<90>Waiting for approval… (expires in 10 minutes)</>",
         ]
     );
