@@ -177,7 +177,10 @@ fn a_name_off_a_foreign_tree_cannot_forge_a_line() {
     for ui in ["plain", "pretty"] {
         let tmp = tempfile::tempdir().unwrap();
         let home = &rooted(&tmp);
-        let project = home.join("dev/app");
+        // The path needs a continuation line even with a short temp root.
+        let project = home.join(
+            "dev/a project whose parent directory makes the unmanaged package path wider than the report/app",
+        );
         blocked_project_at(home, &project);
         // Content nothing manages, named with the two characters that
         // would act on a terminal: a break, and an escape sequence.
@@ -203,11 +206,15 @@ fn a_name_off_a_foreign_tree_cannot_forge_a_line() {
             !printed.contains("ir\u{1b}[31md"),
             "the name's control character reached the terminal ({ui}): {printed:?}"
         );
-        // The line it appears on is one line. Escaped after the message
-        // is composed, the break inside the name would split this in two.
+        assert!(
+            !printed.contains("we\nir"),
+            "the name's line break reached the terminal ({ui}): {printed:?}"
+        );
+        // The label keeps the name and harness together. Its path repeats
+        // the name and can occupy a separate continuation line.
         let carrying: Vec<&str> = printed
             .lines()
-            .filter(|line| line.contains("we\\nir"))
+            .filter(|line| line.contains("skill we\\nir"))
             .collect();
         assert_eq!(
             carrying.len(),
