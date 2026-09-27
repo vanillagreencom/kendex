@@ -284,14 +284,17 @@ DEAD_LINE="claude -n overseer 'relaunched from the record'"
 printf '%s\n' "$DEAD_LINE" > "$TMP_ROOT/line-file"
 # dead_relaunch EXTRA_JSON [SUCCEED_BIN] — a dead pane the record names with
 # EXTRA_JSON merged over its record, relaunched; sets SUCC_PANE to the pane the
-# record then names.
+# record then names, DEAD_PANE_CWD to the dead pane's own directory and
+# SUCC_CWD to the successor pane's.
 dead_relaunch() {
   local dead
   new_caller "$FABLE"
   dead="$(tm new-window -d -t fleet:5 -P -F '#{pane_id}' 'exec sleep 100000')"
+  DEAD_PANE_CWD="$(tm display-message -p -t "$dead" '#{pane_current_path}')"
   state "$(record "$dead" "$H/.eclaude" fable "$1")"
   SUCCEED_BIN="${2:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --dead-pane "$dead" --line-file "$TMP_ROOT/line-file" --wait-secs 20
   SUCC_PANE="$(jq -r '.overseer.pane' "$FLEET_STATE")"
+  SUCC_CWD="$(tm display-message -p -t "$SUCC_PANE" '#{pane_current_path}')"
 }
 # print_on_successor — the successor pane's own --print-launch-line.
 print_on_successor() {
@@ -321,6 +324,20 @@ dead_relaunch "$OWN" "$DEADCTL/oversee-succeed"
 print_on_successor
 assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: no-status-line pane=$SUCC_PANE" \
   "control: a relaunch that records no identity leaves the next print refused"
+# A relaunch of a pending successor opens in the directory that successor was
+# built for, the one its record then names, not the dead pane's own.
+DEAD_CWD="$TMP_ROOT/dead-cwd"
+mkdir -p "$DEAD_CWD"
+DEAD_CWD="$(cd "$DEAD_CWD" && pwd -P)"
+PENDING_CWD="$(jq -c --arg cwd "$DEAD_CWD" '.pending.cwd = $cwd' <<<"$PENDING_OWN")"
+dead_relaunch "$PENDING_CWD"
+assert_eq "$RC|$SUCC_CWD|$(jq -r '.overseer.cwd' "$FLEET_STATE")" "0|$DEAD_CWD|$DEAD_CWD" \
+  "--dead-pane over a pending successor opens in the directory it records"
+DEADCWDCTL="$(mutant_scripts deadcwdctl oversee-succeed)" || exit 1
+mutate_file "$DEADCWDCTL/oversee-succeed" '[[ -z "$replay_cwd" ]] || CALLER_PATH="$replay_cwd"' ':'
+dead_relaunch "$PENDING_CWD" "$DEADCWDCTL/oversee-succeed"
+assert_eq "$RC|$SUCC_CWD" "0|$DEAD_PANE_CWD" \
+  "control: a relaunch that ignores the replayed directory opens in the dead pane's"
 
 # --- the pending successor, as a succession writes it ---------------------
 # A workflow-state stand-in snapshots the record at the moment the succession

@@ -1431,10 +1431,18 @@ fi
 # The launch identity the record writes below carries: the one the command was
 # built with, and in `dead`, which built none, the one the record holds for
 # the line it replays (lib/overseer-launch.sh § ol_record_line_identity), so a
-# session relaunched from its record is still identified by it.
-if [[ "$MODE" == dead ]] && ! ol_record_line_identity "$cmd"; then
-  message record-unwritten field=overseer step=identity >&2
-  [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+# session relaunched from its record is still identified by it. The directory
+# that identity names is where the relaunch opens, as a live succession opens
+# in its caller record's: the line was built for it, a codex line's folder
+# trust included, and the session opened and the record written name one
+# directory. A dead pane's own path answers only where the record names none.
+if [[ "$MODE" == dead ]]; then
+  if ! ol_record_line_identity "$cmd"; then
+    message record-unwritten field=overseer step=identity >&2
+    [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+  fi
+  replay_cwd="$(jq -r '.cwd // empty' <<<"${OL_IDENTITY:-null}" 2>/dev/null)" || replay_cwd=""
+  [[ -z "$replay_cwd" ]] || CALLER_PATH="$replay_cwd"
 fi
 if [[ "$MODE" == succeed || "$MODE" == walled ]]; then
   if ! ol_record_pending "$cmd" "$OL_IDENTITY"; then
