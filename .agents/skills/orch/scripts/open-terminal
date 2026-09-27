@@ -2087,6 +2087,7 @@ launch_finish() {
     else
       ot_message launch-trust-missing "item=$item" "lane=$launch_home" "dir=$wt" \
         "reason=$LANE_TRUST_REASON" >&2
+      [[ -z "$LANE_TRUST_DETAIL" ]] || printf '%s\n' "$LANE_TRUST_DETAIL" >&2
       return 1
     fi
     launch_form="$(lane_launch_form "$cmd" "$HARNESS" "$launch_home" "$CMD_TEMPLATE")" || return 1

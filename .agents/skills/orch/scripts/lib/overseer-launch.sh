@@ -164,8 +164,10 @@ ol_pick_lane() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
 # A codex session reads folder trust for LAUNCH_DIR before it reads its own
 # arguments, and the pane it opens in has nobody at it, so the entry is made
 # through the builder `open-terminal` uses; a launch whose entry could not be
-# made returns 1 with OL_REASON=launch-trust-missing and the builder's reason
-# in OL_TRUST_REASON, rather than opening on the question. The lane reaches
+# made returns 1 with OL_REASON=launch-trust-missing, the builder's reason
+# in OL_TRUST_REASON and its dependency's own words, where the refusal has
+# any, in DEP_ERR for the caller's refusal to print, rather than opening on
+# the question. The lane reaches
 # the harness through the same builder too: on a host whose `claude` is an
 # account shim, an env prefix in front of it is overwritten for the shim's
 # own name and the session starts on the bare account with nothing on screen
@@ -188,6 +190,7 @@ ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
   if ! lane_trust_prepare "$harness" "$lane_dir" "$launch_dir"; then
     OL_REASON=launch-trust-missing
     OL_TRUST_REASON="$LANE_TRUST_REASON"
+    printf '%s' "$LANE_TRUST_DETAIL" > "$DEP_ERR"
     return 1
   fi
   OL_TRUST_ROUTE="${LANE_TRUST_ROUTE:-none}"
@@ -349,9 +352,13 @@ ol_record_get() {
 # repeated and never a second session. On tmux the session is the pane, and
 # the object keeps `pane` as the spelling the turn-end hook and the watch
 # already read it under. `pending` is dropped: the successor it named is the
-# session written here, or a launch that never opened. Every other field the
-# prior carried stays. The generation written is in OL_GENERATION. Returns 1
-# with the writer's words in DEP_ERR.
+# session written here, or a launch that never opened. The prior's
+# `launch_line` goes with it where LINE is empty: `oversee register` writes
+# a session a person opened by hand, whose line nothing here knows, and a
+# line kept from the prior would be replayed for this session's death as if
+# it were its own, the prior's account and permission words included. Every
+# other field the prior carried stays. The generation written is in
+# OL_GENERATION. Returns 1 with the writer's words in DEP_ERR.
 OL_GENERATION=""
 ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
   local prior="${OL_PRIOR:-null}" record
@@ -360,7 +367,7 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
       ($prior // {}) as $p
       | (($p.generation // 0) | if type == "number" then . else 0 end) as $g
       | (if ($p | ol_names($server; $session)) and $g > 0 then $g else $g + 1 end) as $next
-      | ($p | del(.pending)) + {runtime: $runtime, server: $server, window: $window, generation: $next}
+      | ($p | del(.pending, .launch_line)) + {runtime: $runtime, server: $server, window: $window, generation: $next}
       + $identity
       + (if $runtime == "tmux" then {pane: $session} else {session: $session} end)
       + (if $line == "" then {} else {launch_line: $line} end)' 2>"$DEP_ERR")" \

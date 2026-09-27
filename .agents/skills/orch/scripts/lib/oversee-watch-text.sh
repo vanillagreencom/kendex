@@ -409,7 +409,11 @@ Options:
                       overseer-line-missing or overseer-unrecorded, on stderr
                       and in the fleet log, and the watch runs on: the pane
                       is judged from tmux, and a death relaunches from the
-                      line the fleet state already holds
+                      line the fleet state already holds where its record
+                      names this pane, the last line a start recorded
+                      there, which a session restarted by hand may not have
+                      been started with; a record naming another pane, or
+                      none, reports the death with no successor
   --repeat SECS       the watch for a session: run one watch per pass with
                       the other options, sleep SECS after it exits, or
                       ORCH_WATCH_MAIL_INTERVAL where that is shorter and the
@@ -629,9 +633,9 @@ ow_message() { # REASON FIELD=VALUE...
     overseer-wall-unconfirmed) text='The overseer pane read walled and its own account measures room, so the banner on that screen is one this watch relayed about another lane and the overseer is working. Nothing is launched and no window is closed. The fields name the judgement that refuted it.' ;;
     overseer-unwatched) text='The overseer pane is not being watched, so an overseer that dies is reported by nothing. The field names what is missing.' ;;
     overseer-unreadable) text='The overseer pane could not be read, so its state settles nothing this pass.' ;;
-    overseer-line-missing) text='This start could not build the overseer launch line, so the fleet state keeps the line it already holds, or none. The pane is still watched; a death relaunches from the line held, and is reported with no successor where there is none. The detail under this line is the refusal of oversee-succeed --print-launch-line.' ;;
-    overseer-unrecorded) text='This start could not record the overseer pane in the fleet state, so the record stays as it was. The pane is still watched; a death relaunches from the line the record already holds, and is reported with no successor where it holds none. The step field names what failed.' ;;
-    overseer-notice-failed) text='The overseer-dead notice could not be delivered. The field names the channel; the event line still went out.' ;;
+    overseer-line-missing) text='This start could not build the overseer launch line, so the fleet state keeps the line it already holds, or none. The pane is still watched. A death relaunches from the held line only where the record names this pane, and that line is the last one a start did record there, which may not be the command this session was started with; a record naming another pane, or holding no line, reports the death with no successor. The detail under this line is the refusal of oversee-succeed --print-launch-line.' ;;
+    overseer-unrecorded) text='This start could not record the overseer pane in the fleet state, so the record stays as it was. The pane is still watched. A death relaunches from the held line only where the record names this pane, and that line is the last one a start did record there, which may not be the command this session was started with; a record naming another pane, or holding no line, reports the death with no successor. The step field names what failed.' ;;
+    overseer-notice-failed) text='An overseer notice could not be delivered on the channel the field names. A notice from a pass still had its event line printed; a notice from the watch start has none.' ;;
     overseer-relaunch-failed) text='oversee-succeed refused or failed the relaunch; the overseer is not replaced and this watch keeps running. Its own keyed line says why.' ;;
     overseer-recovery-blocked) text='No account in the fleet qualifies for a successor, so the recovery stops rather than retry the same accounts. The fields name the spent account and the reset its banner states; a notice carrying both went to the fleet log and the overseer mailbox.' ;;
     overseer-succeeded) text='A successor holds the dead overseer window and runs its own watch. This one stops rather than read the fleet twice.' ;;

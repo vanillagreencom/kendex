@@ -548,6 +548,9 @@ observe() {
       # count is the assertion, not the catalog line in the source: a catalog
       # line survives a guard that stopped refusing.
       trustfail) value="$(grep -c '^open-terminal: launch-trust-missing ' <<<"$OUT" || true)" ;;
+      # The writer's own words under that refusal, jq's for a claude config
+      # that does not parse: the count of lines carrying its prefix.
+      trustdetail) value="$(grep -c '^jq: ' <<<"$OUT" || true)" ;;
       # Which route made the directory trusted, as the launcher reports it
       # beside the launch. That line is the only place a reader learns which
       # config the session is running under: an account that already answered
@@ -749,6 +752,17 @@ run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus --effo
 assert_eq "$(observe "rc=0 launched=1 walled=none cmd_home=none trust_route=account-config")" \
   "rc=0 launched=1 walled=none cmd_home=none trust_route=account-config" \
   "a --cmd naming a model with room still launches, under no CODEX_HOME, trusted in its own config dir"
+# A claude config dir whose .claude.json does not parse refuses the item, and
+# the refusal carries the parser's own words under its keyed line, the
+# position the operator repairs the file at. A lane of its own with room.
+make_lane "$H" jclaude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.jclaude.json"
+printf '{"projects": ' > "$H/.jclaude/.claude.json"
+run_ot "" --harness claude --lane "$H/.jclaude" --cmd "claude --model opus --effort high $QUESTION_OFF_ALL" CC-93
+assert_eq "$(observe "rc=1 launched=nolog trustfail=1 trustdetail=1")" \
+  "rc=1 launched=nolog trustfail=1 trustdetail=1" \
+  "a claude config that does not parse refuses the item with the parser's words under the refusal"
+rm -rf -- "${H:?}/.jclaude" "${FIXTURE_DIR:?}/.jclaude.json"
 
 make_codex_lane "$H/.codex"
 jq -n '{rate_limit: {primary_window: {used_percent: 95, reset_at: 1785000000,

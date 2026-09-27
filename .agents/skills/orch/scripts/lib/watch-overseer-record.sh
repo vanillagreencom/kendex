@@ -32,10 +32,11 @@ overseer_launch_args() {
 # record is not what the watch judges the pane on: the pane's death and its
 # wall are read off the pane itself, so an overseer whose record could not be
 # written is still watched. What a failed record costs is the line a dead-pane
-# relaunch replays, and only where the fleet state holds none from a launch, a
-# succession or an earlier watch: the record is left as it stood, so a line
-# already there stays, and check_overseer reports a death it cannot relaunch
-# where there is none. Always returns 0.
+# relaunch replays: the record is left as it stood, so a line already there
+# stays where the record names this pane, the last line a start recorded
+# there, and check_overseer replays that one on a death; a record naming
+# another pane, or holding no line, is a death reported with no successor,
+# since the line there is another session's. Always returns 0.
 overseer_command_record() {
   local pane="${TMUX_PANE:-}" key server window line detail errf rc=0
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0

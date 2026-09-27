@@ -2070,6 +2070,19 @@ LANE_DIRS="$H/.tclaude" run_succeed trustclaude 'claude:1:high'
 assert_eq "$RC|$(caller_open)|$(overseers)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(jq -r --arg d "$TCLAUDE_CWD" '[.hasCompletedOnboarding, .projects[$d].hasTrustDialogAccepted] | map(tostring) | join(",")' "$H/.tclaude/.claude.json")" \
   "0|no|1|oversee-succeed: successor-launch form=prefix lane=$H/.tclaude trust=account-config|true,true" \
   "a claude successor on a config dir new to the caller directory is given the trust entry and starts"
+# A picked config dir whose .claude.json does not parse refuses the successor
+# rather than rebuilding the file over the account it keeps there, and the
+# refusal carries the parser's own words under its keyed line. The caller
+# keeps running and its window stands.
+make_lane "$H" jclaude
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.jclaude.json"
+printf '{"projects": ' > "$H/.jclaude/.claude.json"
+new_caller "$MARK"
+JCLAUDE_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+LANE_DIRS="$H/.jclaude" run_succeed trustjson 'claude:1:high'
+assert_eq "$RC|$(caller_open)|$(overseers)|$(keyed launch-trust-missing "$OUT" | sed -n '1p;3p' | sed '2s/ .*//' | tr '\n' ';')" \
+  "1|yes|0|oversee-succeed: launch-trust-missing lane=$H/.jclaude dir=$JCLAUDE_CWD reason=config-unreadable;jq:;" \
+  "a claude config that does not parse refuses the successor, with the parser's words under the refusal"
 # The control: a builder whose claude arm records nothing leaves the config
 # dir without the entry, and the successor opens on the dialog.
 TRUSTCTL="$(mutant_scripts trustctl lib/lane-launch.sh)" || exit 1

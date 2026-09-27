@@ -712,7 +712,7 @@ overseer_record_notice() { # DETAIL REASON FIELD=VALUE...
     ow_message overseer-notice-failed "channel=file" >&2
     return 0
   fi
-  if printf '%s: the watch could not record this overseer session in the fleet state. The pane is still watched; a death relaunches from the launch line the fleet state already holds, or is reported with no successor where it holds none.\n' "$*" > "$notice"
+  if printf '%s: the watch could not record this overseer session in the fleet state. The pane is still watched. A death relaunches from the launch line the fleet state already holds only where its record names this pane, and that line is the last one a start recorded there, which may not be the command this session was started with; a record naming another pane, or holding no line, reports the death with no successor.\n' "$*" > "$notice"
   then
     if ! overseer_fleet_log "$notice" "$record" "$errf"; then
       ow_message overseer-notice-failed "channel=fleet-log" >&2
@@ -2017,7 +2017,7 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN
   case "$5" in
     relaunch) plan_text="$relaunch_text" ;;
     off) plan_text='ORCH_OVERSEER_SUCCESSION is off, so no successor is launched; start one by hand.' ;;
-    no-line) plan_text='The fleet state records no overseer launch line, so no successor is launched; start one by hand.' ;;
+    no-line) plan_text='The fleet state records no overseer launch line for this pane, so no successor is launched; start one by hand.' ;;
     no-launcher) plan_text='oversee-succeed is not installed, so no successor is launched; start one by hand.' ;;
     # Defensive: the four plans above are the whole set check_overseer calls
     # this with, for either case. A fifth would otherwise be described as one
@@ -2357,9 +2357,6 @@ check_overseer() {
     || { overseer_note overseer-unwatched "var=TMUX_PANE"; return 0; }
   [[ -x "$WORKFLOW_STATE" ]] \
     || { overseer_note overseer-unwatched "path=$WORKFLOW_STATE" "setting=OVERSEE_WATCH_WORKFLOW_STATE"; return 0; }
-  ov_line="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
-    get oversee '.overseer.pending.launch_line // .overseer.launch_line // ""' 2>"$errf")" \
-    || { overseer_note overseer-unwatched "state=oversee"; return 0; }
 
   overseer_pane_read "$pane" || return 0
   window="$OV_WINDOW"
@@ -2372,6 +2369,21 @@ check_overseer() {
   # is the launch the fleet last chose, written before its window opened
   # (lib/overseer-launch.sh § ol_record_pending), and this relaunch replays a
   # choice rather than judging the dead session.
+  #
+  # Only where the record names THIS pane on THIS server, by the same
+  # `ol_names` the watch start applies before it keeps a record's launch
+  # identity: a start whose record failed left the record as it stood, and a
+  # record naming another pane is another session's line, with that
+  # session's account and permission words, which a death here must not
+  # replay. The server and pane are the two words overseer_pane_read just
+  # matched against `^[0-9]+$` and `^%[0-9]+$`, so they are spelled into the
+  # filter; the `get` verb takes no binding.
+  ov_line="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
+    get oversee "$OL_JQ_DEFS"'
+      .overseer as $o
+      | if ($o | ol_names("'"${identity%% *}"'"; "'"$pane"'")) then ($o.pending.launch_line // $o.launch_line // "")
+        else "" end' 2>"$errf")" \
+    || { overseer_note overseer-unwatched "state=oversee"; return 0; }
   OVERSEER_LINE="$ov_line"
 
   overseer_judge "$pane"

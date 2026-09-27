@@ -718,14 +718,20 @@ lane_single_quote() { # VALUE
 # link and one config.toml of its own carrying the account's config plus the
 # entry. For claude the config dir's `.claude.json` is the account's own
 # state, the file the harness itself writes the answer given at the pane
-# into, so the entry is written there, in the shape the provider's
-# pre-approval writes.
+# into, so the entry is written there, in the pair the harness records for
+# that answer: the same pair tools/harness-smoke seeds a harness home with,
+# and the one the lane-host provider merges key by key from the
+# operator-staged ACCOUNT/lane-host/.claude.json for a hosted lane.
 #
 # lane_trust_prepare's answer, read by the caller that reports the route
 # beside its own launch line and refuses when the entry could not be made.
+# LANE_TRUST_DETAIL is the dependency's own words behind a refusal, jq's
+# parse position for a claude config that does not parse, for the caller to
+# print under its keyed line; empty where the refusal has none.
 LANE_TRUST_ROUTE=""
 LANE_TRUST_HOME=""
 LANE_TRUST_REASON=""
+LANE_TRUST_DETAIL=""
 
 # lane_codex_trusted CONFIG DIR — what CONFIG says about opening into DIR.
 #
@@ -798,6 +804,7 @@ lane_trust_prepare() { # HARNESS LANE_DIR LAUNCH_DIR
   LANE_TRUST_ROUTE=""
   LANE_TRUST_HOME="$2"
   LANE_TRUST_REASON=""
+  LANE_TRUST_DETAIL=""
   case "$1" in
     codex) lane_codex_trust_prepare "$2" "$3" ;;
     claude) lane_claude_trust_prepare "$2" "$3" ;;
@@ -806,8 +813,8 @@ lane_trust_prepare() { # HARNESS LANE_DIR LAUNCH_DIR
 }
 
 # The claude arm: `projects.<LAUNCH_DIR>.hasTrustDialogAccepted` in
-# LANE_DIR/.claude.json beside `hasCompletedOnboarding`, the entry shape the
-# lane-host provider's pre-approval writes for a hosted lane. The file is the
+# LANE_DIR/.claude.json beside `hasCompletedOnboarding`, the pair the harness
+# itself records when the dialog is answered at the pane. The file is the
 # account's own state and the one the harness writes its own answer into, so
 # the entry goes there and the launch runs under LANE_DIR itself: this arm
 # never builds a private home. Every other key the file holds stays, since the
@@ -820,43 +827,61 @@ lane_trust_prepare() { # HARNESS LANE_DIR LAUNCH_DIR
 # file, so a write that reported success and produced nothing ends here
 # rather than at the pane.
 lane_claude_trust_prepare() { # LANE_DIR LAUNCH_DIR
-  local lane="$1" dir="$2" config="$1/.claude.json" answer staged
-  LANE_TRUST_HOME="$lane"
+  local lane="$1" dir="$2" config="$1/.claude.json" answer staged input detail
   if { [ -e "$config" ] || [ -L "$config" ]; } && { [ ! -f "$config" ] || [ ! -r "$config" ]; }; then
     LANE_TRUST_REASON=config-unreadable
     return 1
   fi
   answer=absent
   if [ -f "$config" ]; then
-    answer="$(jq -r --arg dir "$dir" '
+    # Both streams: on a refusal the capture is jq's own words, the parse
+    # position the operator repairs the file by.
+    if ! answer="$(jq -r --arg dir "$dir" '
       .projects[$dir].hasTrustDialogAccepted
       | if . == null then "absent" elif . == true then "trusted" else "refused" end' \
-      < "$config" 2>/dev/null)" || { LANE_TRUST_REASON=config-unreadable; return 1; }
+      < "$config" 2>&1)"
+    then
+      LANE_TRUST_DETAIL="$answer"
+      LANE_TRUST_REASON=config-unreadable
+      return 1
+    fi
   fi
   case "$answer" in
     trusted) LANE_TRUST_ROUTE=preapproved; return 0 ;;
     refused) LANE_TRUST_REASON=trust-refused; return 1 ;;
     absent) ;;
-    *) LANE_TRUST_REASON=config-unreadable; return 1 ;;
+    *)
+      LANE_TRUST_DETAIL="the trust reader answered: $answer"
+      LANE_TRUST_REASON=config-unreadable
+      return 1 ;;
   esac
-  # The config dir is the account's own secrets by another name, so one this
-  # creates is created private.
+  # The config dir holds the account's credentials and the file its address,
+  # user id and every per-project tool allowance, so a dir this creates is
+  # private and the file it writes is private too, whatever the caller's
+  # umask: the harness itself makes the file 0600, and the rewrite below keeps
+  # it so by creating the staged copy under 077 before anything is written
+  # into it. mv keeps the staged file's mode.
   ( umask 077 && mkdir -p -- "$lane" ) || { LANE_TRUST_REASON=home-create; return 1; }
   # Staged under this shell's own pid and renamed over the target, so a
   # harness reading the file while this writes it meets the whole previous
   # file or the whole new one; every arm from here takes the staged file away
   # before it refuses.
   staged="$config.$$"
-  if [ -f "$config" ]; then
-    jq --arg dir "$dir" '
-      .hasCompletedOnboarding = true
+  ( umask 077 && : > "$staged" ) || { rm -f -- "${staged:?}"; LANE_TRUST_REASON=config-write; return 1; }
+  # One filter for both shapes: an absent file reads as no input, which
+  # `first(inputs) // {}` takes as the empty object the entry is merged into.
+  input=/dev/null
+  [ ! -f "$config" ] || input="$config"
+  if ! detail="$(jq -n --arg dir "$dir" '
+      (first(inputs) // {})
+      | .hasCompletedOnboarding = true
       | .projects[$dir] = ((.projects[$dir] // {}) + {hasTrustDialogAccepted: true})' \
-      < "$config" > "$staged" 2>/dev/null \
-      || { rm -f -- "${staged:?}"; LANE_TRUST_REASON=config-write; return 1; }
-  else
-    jq -n --arg dir "$dir" '{hasCompletedOnboarding: true, projects: {($dir): {hasTrustDialogAccepted: true}}}' \
-      > "$staged" 2>/dev/null \
-      || { rm -f -- "${staged:?}"; LANE_TRUST_REASON=config-write; return 1; }
+      < "$input" 2>&1 > "$staged")"
+  then
+    rm -f -- "${staged:?}"
+    LANE_TRUST_DETAIL="$detail"
+    LANE_TRUST_REASON=config-write
+    return 1
   fi
   mv -f -- "$staged" "$config" \
     || { rm -f -- "${staged:?}"; LANE_TRUST_REASON=config-install; return 1; }

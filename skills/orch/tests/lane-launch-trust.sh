@@ -227,15 +227,21 @@ assert_eq "$(readlink "$LANE_TRUST_HOME/sessions" || printf none) $(cat "$STORE_
 # reads back what else that file held: userID, and the tool allowances of
 # another project and of the launch directory's own entry, which the write
 # merges into rather than replaces. The launch runs under the config dir
-# itself, never a private home.
+# itself, never a private home: `home=` is the dispatcher's answer, so the
+# rows go through it. A refusal carries the writer's own words as its
+# detail where it has any, jq's parse position for a file that is not JSON,
+# and `detail=` is that text's first word, jq's own prefix.
 echo "=== claude: the config dir a claude launch reads ==="
 claude_row() { # NAME CONFIG_JSON
   local lane="$TMP_ROOT/$1/.1claude" dir="$TMP_ROOT/$1/wt" rc=0 config
   mkdir -p "$lane" "$dir"
   config="$lane/.claude.json"
   [ -z "$2" ] || printf '%s\n' "$2" > "$config"
-  lane_claude_trust_prepare "$lane" "$dir" || rc=$?
-  if [ "$rc" -ne 0 ]; then printf 'refused reason=%s\n' "$LANE_TRUST_REASON"; return 0; fi
+  lane_trust_prepare claude "$lane" "$dir" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf 'refused reason=%s detail=%s\n' "$LANE_TRUST_REASON" "${LANE_TRUST_DETAIL%% *}"
+    return 0
+  fi
   printf 'route=%s home=%s %s\n' "$LANE_TRUST_ROUTE" "${LANE_TRUST_HOME#"$TMP_ROOT/"}" \
     "$(jq -r --arg d "$dir" '"trusted=\(.projects[$d].hasTrustDialogAccepted) onboarded=\(.hasCompletedOnboarding) user=\(.userID // "-") other_tools=\(.projects["/elsewhere"].allowedTools // [] | length) own_tools=\(.projects[$d].allowedTools // [] | length)"' < "$config")"
 }
@@ -254,8 +260,8 @@ CLAUDE_ROWS=(
   'trusts-another|route=account-config home=trusts-another/.1claude trusted=true onboarded=true user=u other_tools=1 own_tools=0'
   'already-trusted|route=preapproved home=already-trusted/.1claude trusted=true onboarded=true user=u other_tools=0 own_tools=1'
   'entry-without-answer|route=account-config home=entry-without-answer/.1claude trusted=true onboarded=true user=- other_tools=0 own_tools=2'
-  'answered-no|refused reason=trust-refused'
-  'not-json|refused reason=config-unreadable'
+  'answered-no|refused reason=trust-refused detail='
+  'not-json|refused reason=config-unreadable detail=jq:'
 )
 for row in "${CLAUDE_ROWS[@]}"; do
   name="${row%%|*}"; want="${row#*|}"
@@ -268,6 +274,28 @@ for name in answered-no already-trusted; do
   assert_eq "$(cat "$TMP_ROOT/$name/.1claude/.claude.json")" \
     "$(claude_config_for "$name" | sed "s|\$DIR|$TMP_ROOT/$name/wt|")" \
     "claude: the $name file is left as it was written"
+done
+# The file the arm writes is private whatever the caller's umask and whatever
+# mode the file had: it holds the account's address, user id and every
+# per-project tool allowance, and the harness itself makes it 0600, so a
+# rewrite that took the caller's umask would leave a logged-in account's
+# file world-readable under 022 and group-writable under 002. One row per
+# shape the file can be in before the write, PRIOR_MODE|UMASK, the mode read
+# back off the installed file through ls, which spells it the same way on
+# every platform the suites run on.
+mode_of() { ls -ld -- "$1" | cut -c1-10; }
+for row in 'none|022' '600|022' '644|002'; do
+  prior="${row%%|*}"; mask="${row#*|}"
+  name="mode-$prior-$mask"
+  mkdir -p "$TMP_ROOT/$name/.1claude" "$TMP_ROOT/$name/wt"
+  if [ "$prior" != none ]; then
+    printf '{"userID": "u"}\n' > "$TMP_ROOT/$name/.1claude/.claude.json"
+    chmod "$prior" "$TMP_ROOT/$name/.1claude/.claude.json"
+  fi
+  ( umask "$mask" && lane_trust_prepare claude "$TMP_ROOT/$name/.1claude" "$TMP_ROOT/$name/wt" ) \
+    || fail "mode row $name: the preparation refused as $LANE_TRUST_REASON"
+  assert_eq "$(mode_of "$TMP_ROOT/$name/.1claude/.claude.json")" "-rw-------" \
+    "claude: a config file written from prior mode $prior under umask $mask is private"
 done
 # The dispatcher: one arm per harness, and none for a harness that asks no
 # such question. HARNESS|ROUTE, each on a lane of its own.
@@ -488,9 +516,12 @@ assert_eq "$(mutant_prepare "$MUTANT_LIB" "$TMP_ROOT/control-1/.1codex" "$TMP_RO
 
 # lane_claude_trust_prepare: the entry is read back off the written file
 # before the launch. A write the harness would not read as trust refuses
-# rather than returning the config dir as ready.
+# rather than returning the config dir as ready. The one merge filter serves
+# a present file and an absent one alike, so the mutation is at that filter
+# and the row starts from no file, the shape that once took a filter of its
+# own.
 MUTANT_CLAUDE_LIB="$(mutant_scripts lane-launch-mutant-claude lib/lane-launch.sh)/lib/lane-launch.sh" || exit 1
-mutate_file "$MUTANT_CLAUDE_LIB" "projects: {(\$dir): {hasTrustDialogAccepted: true}}}'" "projects: {(\$dir): {hasTrustDialogAccepted: \"asked\"}}}'"
+mutate_file "$MUTANT_CLAUDE_LIB" "+ {hasTrustDialogAccepted: true})" "+ {hasTrustDialogAccepted: \"asked\"})"
 mkdir -p "$TMP_ROOT/control-claude/.1claude" "$TMP_ROOT/control-claude/wt"
 assert_eq "$(bash -c '
     set -uo pipefail
