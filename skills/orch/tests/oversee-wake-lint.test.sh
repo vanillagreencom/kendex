@@ -17,22 +17,22 @@ PI="$SKILL_DIR/references/pi-runtime.md"
 PKG_DIR="$(git -C "$SKILL_DIR" rev-parse --show-toplevel)/pi-extensions/pi-background-tasks"
 BG_TASKS="$PKG_DIR/instructions.md"
 BG_TOOLS="$PKG_DIR/extensions/registrations.ts"
-DELIVERY="# Watch delivery"
+REPEAT="## Repeat watch"
 
 echo "=== orch oversee wake lint ==="
 
 # --- The watch's commands and status file -----------------------------------
-rule "a stop runs stop-job on the runner the launch recorded" "$WATCH" "$DELIVERY" \
+rule "a stop runs stop-job on the runner the launch recorded" "$WATCH" "$REPEAT" \
   'job-unit.sh stop-job "[RUN_DIR]/watch.runner" [PID]'
 rule "every delivery and expiry reads the waiter's status file" "$WATCH" \
-  "$DELIVERY" 'test -s "[RUN_DIR]/watch.exit"'
+  "$REPEAT" 'test -s "[RUN_DIR]/watch.exit"'
 
 # --- One row per harness, by the tool and parameter names it takes ----------
 rule "the Claude Code row names Monitor and its timeout" "$WATCH" \
-  "$DELIVERY" '| Claude Code |' '`Monitor`' '`timeout_ms`'
-rule "the Codex row names write_stdin" "$WATCH" "$DELIVERY" \
+  "$REPEAT" '| Claude Code |' '`Monitor`' '`timeout_ms`'
+rule "the Codex row names write_stdin" "$WATCH" "$REPEAT" \
   '| Codex |' '`write_stdin`'
-rule "the Pi row names bg_task" "$WATCH" "$DELIVERY" '| Pi |' '`bg_task`'
+rule "the Pi row names bg_task" "$WATCH" "$REPEAT" '| Pi |' '`bg_task`'
 
 # --- The Codex adapter ------------------------------------------------------
 rule "Codex arms the follow with exec_command" "$CODEX" \
