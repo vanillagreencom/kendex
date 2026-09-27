@@ -956,6 +956,8 @@ cache_bulk_list_comments() {
         esac
     done
 
+    linear_require_format "$FORMAT" safe raw || return 1
+
     if [[ ${#identifiers[@]} -eq 0 ]]; then
         echo '{"error": "No issue identifiers provided"}' >&2
         return 1

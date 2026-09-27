@@ -125,6 +125,9 @@ assert_contains "no identifiers says none were provided" "$err" "No issue identi
 run_cache out err rc comments bulk-list CB-1 --since 7d
 assert_ne "an unknown flag exits nonzero" "$rc" 0
 assert_contains "an unknown flag is named as one" "$err" "Unknown flag for cache comments bulk-list: --since"
+run_cache out err rc comments bulk-list CB-1 --format=ids
+assert_ne "an unsupported format exits nonzero" "$rc" 0
+assert_contains "an unsupported format is named as one" "$err" "Invalid format: ids"
 run_cache out err rc comments bulk-list $'CB-1\nCB-2'
 assert_ne "an identifier with a line break exits nonzero" "$rc" 0
 

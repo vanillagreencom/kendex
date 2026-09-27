@@ -72,3 +72,10 @@ control_expect "an unknown flag is named as one"
 control_replace scripts/commands/cache-query.sh 1 \
     '            cache_unknown_flag "comments bulk-list" "comment" "$1"' \
     '            identifiers+=("$1"); shift; continue'
+
+# Drop the format check, so an unsupported --format is served safe output
+# under the name the caller asked for.
+control_expect "an unsupported format is named as one"
+control_replace scripts/commands/cache-query.sh 1 \
+    '    linear_require_format "$FORMAT" safe raw || return 1' \
+    '    :'
