@@ -51,6 +51,7 @@
   ".agents/skills/bot-instructions/tests/toml-schema.test.sh",
   ".agents/skills/code-quality/README.md",
   ".agents/skills/code-quality/SKILL.md",
+  ".agents/skills/code-quality/tests/shell-mktemp-root.test.sh",
   ".agents/skills/commit-guards/CHECKS.md",
   ".agents/skills/commit-guards/DEVELOPMENT.md",
   ".agents/skills/commit-guards/README.md",
