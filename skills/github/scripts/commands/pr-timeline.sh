@@ -140,15 +140,21 @@ MERGE_PATH='.repository.pullRequest.mergeCommit'
 # which commit or suite, since every page fails with gh_graphql's one text.
 #   page_to_end CONN PAGE_CONN QUERY CAP LABEL [GH_ARGS...]
 page_to_end() {
-    local conn="$1" page_conn="$2" query="$3" cap="$4" label="$5" data cursor page pages=1
+    local conn="$1" page_conn="$2" query="$3" cap="$4" label="$5" data cursor page inner pages=1
     shift 5
     data=$(cat)
     while jq -e "$conn | . != null and .pageInfo.hasNextPage == true" >/dev/null <<<"$data"; do
         [ "$pages" -lt "$cap" ] || break
         cursor=$(jq -r "$conn.pageInfo.endCursor // empty" <<<"$data") || return 1
         [ -n "$cursor" ] || { github_error "pr-timeline: $label page past the first names no cursor"; return 1; }
-        page=$(gh_graphql "$query" "$@" -f cursor="$cursor") \
-            || { github_error "pr-timeline: $label page after $cursor unreadable"; return 1; }
+        # stderr rides along: a failed call prints nothing on stdout and one
+        # error object on stderr, which folds into this one refusal, so the
+        # caller reads a single object rather than two.
+        if ! page=$(gh_graphql "$query" "$@" -f cursor="$cursor" 2>&1); then
+            inner=$(jq -rs 'map(.error // empty) | first // empty' <<<"$page" 2>/dev/null) || inner=""
+            github_error "pr-timeline: $label page after $cursor unreadable: ${inner:-$page}"
+            return 1
+        fi
         # A page with no connection where one was asked for: node(id:) and
         # object(oid:) answer null for a suite or commit the token cannot
         # read, and gh_graphql prints null for a response with no data.

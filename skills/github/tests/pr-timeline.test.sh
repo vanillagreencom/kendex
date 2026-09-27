@@ -305,8 +305,9 @@ stage_pages() { gh_stub_answer "api-graphql:query runsPage" '{"data":{"node":nul
 assert_eq "$(run "$OPEN_GROUP_RUNS") $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr")" \
   'rc=1  {"error":"pr-timeline: check-runs of suite MG page after r100 carries no connection"}' "a runs page answering no suite refuses"
 stage_pages() { gh_stub_fail "api-graphql:query suitesPage" 1 'HTTP 502'; }
-assert_eq "$(run "$FIFTY_SUITES") $(cat "$TMP_ROOT/stdout") $(tail -n 1 "$TMP_ROOT/stderr")" \
-  'rc=1  {"error":"pr-timeline: check-suites of h2 page after c50 unreadable"}' "a suites page that does not read names its walk and cursor"
+assert_eq "$(run "$FIFTY_SUITES") $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr")" \
+  'rc=1  {"error":"pr-timeline: check-suites of h2 page after c50 unreadable: GitHub API request failed"}' \
+  "a suites page that does not read is one error naming its walk, cursor and the API's text"
 stage_pages() { :; }
 
 echo "=== a connection still open at the page cap refuses ==="
