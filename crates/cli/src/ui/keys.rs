@@ -14,13 +14,7 @@
 //!
 //! A question needs a terminal on stdin, and [`choose`] refuses to wait on
 //! a pipe. Each caller settles a run with nobody to ask before it reaches a
-//! question: the write consent of `ask_before_writing` refuses before its
-//! first write, naming `--yes`; the repository-effect disclosure asks
-//! nothing, leaves the effects unmade and names `--allow-repo-effects`, and
-//! the linked work tree's setup is skipped; the commit offer, which comes
-//! after the writes, prints one line naming its flags and asks nothing;
-//! `add` asks neither its tool nor its delivery question and keeps the
-//! scope's own.
+//! question; `crates/cli/OUTPUT.md` § Questions says how each one does.
 //!
 //! Keys are read raw where the question is drawn on a terminal. Where
 //! stderr is redirected, as in `2>&1 | tee log`, the answer is a typed line:

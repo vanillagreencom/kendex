@@ -11,7 +11,8 @@
 //! Both questions are keyed (`ui::choose`). The tools are toggles: a number
 //! checks or unchecks the tool it shows, `a` checks every one, and Enter
 //! installs to the checked set, which its button names. Each toggle draws
-//! the buttons again, so the Enter button always names what Enter does.
+//! the buttons again, so the Enter button names the set Enter installs to;
+//! with nothing checked, Enter says so and asks again.
 
 use std::io::IsTerminal;
 
