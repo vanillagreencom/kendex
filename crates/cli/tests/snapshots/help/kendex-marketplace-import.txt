@@ -8,6 +8,24 @@ Arguments:
           The authored marketplace directory to copy into
 
 Options:
+      --skill <SKILLS>
+          
+
+      --agent <AGENTS>
+          
+
+      --hook <HOOKS>
+          
+
+      --command <COMMANDS>
+          
+
+      --mcp <MCP>
+          
+
+      --from-scope <FROM_SCOPE>
+          project | global | all (default all) — where candidates come from
+
       --origin <ORIGIN>
           When one name exists with different bytes in several places: the hash
           (prefix) of the origin to copy
@@ -24,29 +42,8 @@ Options:
           A package from a marketplace with no license found: your reason for
           copying
 
-  -h, --help
-          Print help
-
-Packages:
-      --skill <SKILLS>
-          
-
-      --agent <AGENTS>
-          
-
-      --hook <HOOKS>
-          
-
-      --command <COMMANDS>
-          
-
-      --mcp <MCP>
-          
-
-Where:
-      --from-scope <FROM_SCOPE>
-          project | global | all (default all) — where candidates come from
-
-Output:
       --json
           Print the packages available to copy as JSON
+
+  -h, --help
+          Print help

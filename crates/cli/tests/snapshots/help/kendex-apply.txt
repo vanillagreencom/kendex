@@ -6,6 +6,12 @@ Options:
       --plan
           Print the plan and change nothing
 
+  -g, --global
+          Install into your personal setup
+
+      --scope <SCOPE>
+          project | global | all (default project)
+
   -y, --yes
           Skip the confirmation prompt
 
@@ -19,20 +25,6 @@ Options:
       --allow-repo-effects
           Say yes to the repository changes a newly installed package asks for
 
-      --record-existing
-          Record matching installed files after moving an unreadable install
-          record aside
-
-  -h, --help
-          Print help
-
-Where:
-  -g, --global
-          Install into your personal setup
-
-      --scope <SCOPE>
-          project | global | all (default project)
-
       --project-path <PATH>
           The project this run reads and writes, by path, instead of the one it
           was typed in
@@ -41,7 +33,10 @@ Where:
           Add a throwaway project to Projects: a folder under a temporary path,
           which is otherwise refused
 
-Git:
+      --record-existing
+          Record matching installed files after moving an unreadable install
+          record aside
+
       --commit
           Commit the files kendex wrote, without asking
 
@@ -56,3 +51,6 @@ Git:
 
       --message <MESSAGE>
           The commit message to use instead of the default
+
+  -h, --help
+          Print help

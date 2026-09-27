@@ -19,12 +19,11 @@ Options:
       --readme
           Print the package's readme
 
-  -h, --help
-          Print help
-
-Where:
   -g, --global
           Use your personal setup instead of this project
 
       --scope <SCOPE>
           project | global (default project)
+
+  -h, --help
+          Print help

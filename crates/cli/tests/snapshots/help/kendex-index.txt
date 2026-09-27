@@ -7,9 +7,8 @@ Arguments:
           
 
 Options:
-  -h, --help
-          Print help
-
-Output:
       --json
           Print the summary as JSON
+
+  -h, --help
+          Print help

@@ -229,6 +229,7 @@ fn report_files_through_a_stubbed_gh() {
             &[
                 ("PATH", path.clone()),
                 ("KENDEX_UI", rendering.into()),
+                ("COLUMNS", "40".into()),
                 ("GH_ARGS_FILE", args_file.display().to_string()),
                 ("GH_FAIL", failure.into()),
                 ("TMPDIR", recovery.display().to_string()),
@@ -247,7 +248,7 @@ fn report_files_through_a_stubbed_gh() {
                 .collect();
             assert_eq!(saved.len(), 1);
             assert_eq!(fs::read_to_string(&saved[0]).unwrap(), expected_body);
-            assert!(stderr.contains("report body saved to "), "{stderr}");
+            assert!(stderr.contains("report body saved to"), "{stderr}");
             assert!(stderr.contains(&saved[0].display().to_string()), "{stderr}");
             assert!(stderr.contains("gh auth status"), "{stderr}");
             assert!(stderr.contains("authentication required"), "{stderr}");

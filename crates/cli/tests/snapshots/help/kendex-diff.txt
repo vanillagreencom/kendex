@@ -18,10 +18,6 @@ Options:
           
           [default: installed]
 
-  -h, --help
-          Print help
-
-Where:
       --harness <HARNESS>
           Which harness's installed files to compare (default claude)
 
@@ -30,3 +26,6 @@ Where:
 
       --scope <SCOPE>
           project | global (default project)
+
+  -h, --help
+          Print help

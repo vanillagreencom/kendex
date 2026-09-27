@@ -3,21 +3,20 @@ Update installed packages from your saved setup
 Usage: kendex refresh [OPTIONS]
 
 Options:
-  -y, --yes
-          Accept changes to what is installed without asking
-
-      --discard-edits
-          Overwrite installations you edited by hand
-
-  -h, --help
-          Print help
-
-Where:
   -g, --global
           Use your personal setup instead of this project
 
       --scope <SCOPE>
           project | global | all (default all)
+
+  -v, --verbose
+          Per-item detail instead of the compact summary
+
+  -y, --yes
+          Accept changes to what is installed without asking
+
+      --discard-edits
+          Overwrite installations you edited by hand
 
       --project-path <PATH>
           The project this run reads and writes, by path, instead of the one it
@@ -27,11 +26,6 @@ Where:
           Add a throwaway project to Projects: a folder under a temporary path,
           which is otherwise refused
 
-Output:
-  -v, --verbose
-          Per-item detail instead of the compact summary
-
-Git:
       --commit
           Commit the files kendex wrote, without asking
 
@@ -46,3 +40,6 @@ Git:
 
       --message <MESSAGE>
           The commit message to use instead of the default
+
+  -h, --help
+          Print help

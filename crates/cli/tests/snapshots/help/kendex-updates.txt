@@ -15,18 +15,14 @@ Options:
       --apply
           Install pending updates (the same run as refresh)
 
-  -y, --yes
-          Skip confirmation prompts
-
-  -h, --help
-          Print help
-
-Where:
   -g, --global
           Use your personal setup instead of this project
 
       --scope <SCOPE>
           project | global (default project)
+
+  -y, --yes
+          Skip confirmation prompts
 
       --project-path <PATH>
           The project this run reads and writes, by path, instead of the one it
@@ -36,7 +32,6 @@ Where:
           Add a throwaway project to Projects: a folder under a temporary path,
           which is otherwise refused
 
-Git:
       --commit
           Commit the files kendex wrote, without asking
 
@@ -51,3 +46,6 @@ Git:
 
       --message <MESSAGE>
           The commit message to use instead of the default
+
+  -h, --help
+          Print help

@@ -7,16 +7,14 @@ Arguments:
           The subscription to browse (default: every subscription in scope)
 
 Options:
-  -h, --help
-          Print help
-
-Output:
       --json
           Print the list as JSON
 
-Where:
   -g, --global
           Use your personal setup instead of this project
 
       --scope <SCOPE>
           project | global | all (default all)
+
+  -h, --help
+          Print help

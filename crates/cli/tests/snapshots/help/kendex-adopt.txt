@@ -10,10 +10,6 @@ Arguments:
           
 
 Options:
-  -h, --help
-          Print help
-
-Where:
       --harness <HARNESS>
           The harness whose files to keep; repeat it to keep one package for
           several harnesses in a single pass, which is what a folder they share
@@ -25,7 +21,6 @@ Where:
       --scope <SCOPE>
           project | global (default project)
 
-Git:
       --commit
           Commit the files kendex wrote, without asking
 
@@ -40,3 +35,6 @@ Git:
 
       --message <MESSAGE>
           The commit message to use instead of the default
+
+  -h, --help
+          Print help

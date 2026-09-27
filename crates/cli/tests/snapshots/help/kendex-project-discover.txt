@@ -10,10 +10,9 @@ Options:
       --register
           Add every project found to Projects
 
-  -h, --help
-          Print help
-
-Where:
       --throwaway
           Add a throwaway project to Projects: a folder under a temporary path,
           which is otherwise refused
+
+  -h, --help
+          Print help

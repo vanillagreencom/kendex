@@ -6,14 +6,9 @@ Options:
   -c, --check
           Print the plan and change nothing
 
-  -h, --help
-          Print help
-
-Where:
       --scope <SCOPE>
           project | global | all (default all)
 
-Git:
       --commit
           Commit the files kendex wrote, without asking
 
@@ -28,3 +23,6 @@ Git:
 
       --message <MESSAGE>
           The commit message to use instead of the default
+
+  -h, --help
+          Print help

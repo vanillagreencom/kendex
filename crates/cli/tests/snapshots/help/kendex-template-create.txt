@@ -41,13 +41,6 @@ Options:
           Naming it also tells two members of one kind and name apart; without
           it a removal reaches every member wearing them
 
-  -y, --yes
-          Skip confirmation prompts
-
-  -h, --help
-          Print help
-
-Packages:
   -a, --agent <AGENT>
           
 
@@ -68,3 +61,9 @@ Packages:
 
       --plugin <PLUGIN>
           Plugins, each installed whole like a bundle
+
+  -y, --yes
+          Skip confirmation prompts
+
+  -h, --help
+          Print help

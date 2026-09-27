@@ -3,20 +3,15 @@ Set up package checks at the start of each coding session
 Usage: kendex drift-hook [OPTIONS]
 
 Options:
-  -y, --yes
-          Skip confirmation prompts
-
-  -h, --help
-          Print help
-
-Where:
   -g, --global
           Use your personal setup instead of this project
 
       --scope <SCOPE>
           project | global (default project)
 
-Git:
+  -y, --yes
+          Skip confirmation prompts
+
       --commit
           Commit the files kendex wrote, without asking
 
@@ -31,3 +26,6 @@ Git:
 
       --message <MESSAGE>
           The commit message to use instead of the default
+
+  -h, --help
+          Print help

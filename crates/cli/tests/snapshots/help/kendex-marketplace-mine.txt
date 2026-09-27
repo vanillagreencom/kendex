@@ -3,9 +3,8 @@ List your own marketplaces and show whether they are ready to share
 Usage: kendex marketplace mine [OPTIONS]
 
 Options:
-  -h, --help
-          Print help
-
-Output:
       --json
           Print the list as JSON
+
+  -h, --help
+          Print help

@@ -13,10 +13,6 @@ Options:
       --rename <RENAME>
           Rename your own copy to this name instead of making one
 
-  -h, --help
-          Print help
-
-Where:
       --harness <HARNESS>
           Which harness's installed files hold the edit (agents; default claude)
 
@@ -26,7 +22,6 @@ Where:
       --scope <SCOPE>
           project | global (default project)
 
-Git:
       --commit
           Commit the files kendex wrote, without asking
 
@@ -41,3 +36,6 @@ Git:
 
       --message <MESSAGE>
           The commit message to use instead of the default
+
+  -h, --help
+          Print help

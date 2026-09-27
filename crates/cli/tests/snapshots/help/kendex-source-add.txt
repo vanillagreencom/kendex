@@ -10,15 +10,17 @@ Arguments:
           
 
 Options:
-  -h, --help
-          Print help
-
-Git:
       --commit
           Commit the files kendex wrote, without asking
 
+  -g, --global
+          Use your personal setup instead of this project
+
       --push
           Commit them and push, without asking
+
+      --scope <SCOPE>
+          project | global | all (default project; all for refresh --stale)
 
       --pull-request
           Commit them on a new branch and open a pull request, without asking
@@ -29,9 +31,5 @@ Git:
       --message <MESSAGE>
           The commit message to use instead of the default
 
-Where:
-  -g, --global
-          Use your personal setup instead of this project
-
-      --scope <SCOPE>
-          project | global | all (default project; all for refresh --stale)
+  -h, --help
+          Print help

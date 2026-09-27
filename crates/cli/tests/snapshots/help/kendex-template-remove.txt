@@ -16,10 +16,6 @@ Options:
           Naming it also tells two members of one kind and name apart; without
           it a removal reaches every member wearing them
 
-  -h, --help
-          Print help
-
-Packages:
   -a, --agent <AGENT>
           
 
@@ -40,3 +36,6 @@ Packages:
 
       --plugin <PLUGIN>
           Plugins, each installed whole like a bundle
+
+  -h, --help
+          Print help

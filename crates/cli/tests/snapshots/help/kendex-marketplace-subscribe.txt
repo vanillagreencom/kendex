@@ -11,17 +11,12 @@ Options:
       --name <NAME>
           Name for the subscription (default: the last path segment)
 
-  -h, --help
-          Print help
-
-Where:
   -g, --global
           Use your personal setup instead of this project
 
       --scope <SCOPE>
           project | global (default project)
 
-Git:
       --commit
           Commit the files kendex wrote, without asking
 
@@ -36,3 +31,6 @@ Git:
 
       --message <MESSAGE>
           The commit message to use instead of the default
+
+  -h, --help
+          Print help
