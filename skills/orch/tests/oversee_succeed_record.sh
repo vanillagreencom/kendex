@@ -24,6 +24,9 @@ SRC_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
 # shellcheck source=../scripts/lib/lane-launch.sh
 source "$TEST_DIR/../scripts/lib/lane-launch.sh"
 BYPASS="$(launch_choice_permission_write claude)" || { echo "fixture: no claude permission word in the launch table" >&2; exit 1; }
+# The question-tool words every successor line leads with, ORCH_QUESTION_TOOL
+# being off by default, quoted as the line spells them.
+QOFF="$(printf '%q' "$(launch_choice_question_off claude)")"
 
 TMP_ROOT="$(mktemp -d)"
 SOCK="oversee-succeed-record-$$"
@@ -203,7 +206,7 @@ assert_eq "$RC|$(judged)|$(grep -c "^oversee-succeed: record-unread pane=$CALLER
 # alone on stdout, which is all the watch start records.
 run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS"
 assert_eq "$RC|$OUT|$(sed -n 1p <<<"$ERR")" \
-  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $BYPASS '$BRIEF'|oversee-succeed: record-unread pane=$CALLER_PANE" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $QOFF $BYPASS '$BRIEF'|oversee-succeed: record-unread pane=$CALLER_PANE" \
   "--print-launch-line on an unreadable state: the notice on stderr, the line alone on stdout"
 
 # The control for the pending rule: a reader that takes the pending successor
@@ -252,7 +255,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: no-status-line pane=$
 # The same pane with a record: the harness, account, model and effort are the
 # record's, the permission word the caller's own flags, and the pending
 # successor changes none of it.
-RECORD_LINE="env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer --model fable --effort high $BYPASS '$BRIEF'"
+RECORD_LINE="env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer --model fable --effort high $QOFF $BYPASS '$BRIEF'"
 for pending in '{}' "$PENDING"; do
   state "$(record "$CALLER_PANE" "$H/.eclaude" fable "$pending")"
   run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS" --model opus --effort low
@@ -267,7 +270,7 @@ PAIRCTL="$(mutant_scripts pairctl oversee-succeed)" || exit 1
 mutate_file "$PAIRCTL/oversee-succeed" '[[ "$chosen" == caller && -z "$model" ]]' '[[ "$chosen" == caller ]]'
 state "$(record "$CALLER_PANE" "$H/.eclaude" fable)"
 SUCCEED_BIN="$PAIRCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS" --model opus --effort low
-assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer --model fable --effort high $BYPASS --model opus --effort low '$BRIEF'" \
+assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer --model fable --effort high $QOFF $BYPASS --model opus --effort low '$BRIEF'" \
   "control: a caller entry that keeps its flags beside the record's pair names two models" "$TMP_ROOT/err"
 
 # --- a dead-pane relaunch -------------------------------------------------
@@ -305,7 +308,7 @@ for row in \
     "0|claude $row_account $row_model $row_effort none" \
     "--dead-pane over $row_what records the identity that line was built with" "$TMP_ROOT/err"
   print_on_successor
-  assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$row_account' claude -n overseer --model $row_model --effort $row_effort $BYPASS '$BRIEF'" \
+  assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$row_account' claude -n overseer --model $row_model --effort $row_effort $QOFF $BYPASS '$BRIEF'" \
     "and the relaunched session's own print over $row_what reads its record" "$TMP_ROOT/err"
 done
 # The control: a relaunch that records no identity leaves its session's print
@@ -344,7 +347,7 @@ STUB
   SNAP="$(cat -- "$TMP_ROOT/pending.snap" 2>/dev/null || echo none)"
   SUCC_CWD="$(tm display-message -p -t "$(jq -r '.overseer.pane' "$FLEET_STATE")" '#{pane_current_path}')"
 }
-SUCC_LINE="env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable-next --effort low $BYPASS '$BRIEF'"
+SUCC_LINE="env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable-next --effort low $QOFF $BYPASS '$BRIEF'"
 pending_run "$(mutant_scripts pendingrun)"
 assert_eq "$RC|$(jq -r '.pending | [.launch_line, .harness, .account, .model, .effort, .cwd] | join("|")' <<<"$SNAP")" \
   "0|$SUCC_LINE|claude|$H/.claude|fable-next|low|$RECORDED_CWD" \
