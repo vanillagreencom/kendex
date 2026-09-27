@@ -605,7 +605,9 @@ lane_check() {
 # Both pick forms run under ORCH_LANE_HOST set to the host this launch resolved,
 # --host included, so the account is judged on the reading of the copy the
 # launch runs on: `lanes` takes a provider row carrying a reading in place of
-# this machine's.
+# this machine's, and a provider row read `unreachable` gives way to this
+# machine's own reading where that is measured and inside the usage TTL, under
+# its `lanes: pick-local-reading` line.
 pick_auto_lane() {
   local model_args=()
   [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
@@ -834,7 +836,9 @@ if [[ -n "$LANE" ]]; then
   #
   # The judge reads the provider's own row for the account where it carries a
   # reading, so a folder whose credential only the provider holds is judged on
-  # that row rather than read as no credentials. Beyond that reading, what the
+  # that row rather than read as no credentials; a row the provider could not
+  # read gives way to this machine's fresh reading of the same account, which
+  # is `lanes`' rule and its keyed line. Beyond that reading, what the
   # provider's answer changes is the UNMEASURED case alone, below: a
   # relaunch onto an account the provider reports holding proceeds where nothing
   # measured that account, since the copy running it is the provider's and the

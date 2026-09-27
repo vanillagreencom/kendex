@@ -113,7 +113,16 @@
 #         with neither a local file nor a host row stays `no_credentials`. The
 #         stderr table under exit 3 names each candidate's THROUGH. A host row
 #         carrying no `status` and no percentage says only that the provider
-#         holds the account, so this machine's reading stands for it. An absent
+#         holds the account, so this machine's reading stands for it. A host
+#         row read `unreachable` is a read the provider could not make, not a
+#         reading of its copy: where this machine's own reading of that config
+#         dir is measured and no older than ORCH_LANES_USAGE_TTL, the account
+#         is judged on it instead, under one `lanes: pick-local-reading` line
+#         naming the lane and the figure's age; where the local reading
+#         measures nothing or is older than that, the unreachable row stays,
+#         so the refusal names the read that failed. Every other host status
+#         is the provider's reading of its own copy, `expired` included, and
+#         stands as above. An absent
 #         or failed verb leaves the local reading alone, as it does for `list`.
 #         `pick --lane` judges its one account by this same rule, and a dir
 #         the provider reports with a reading is judged even where discovery
@@ -293,7 +302,8 @@
 #                      defaults to 240 — because a TTL under that interval has
 #                      every pass find the figure expired and fetch again. The
 #                      provider's `accounts` answer is cached under the same
-#                      TTL.
+#                      TTL, and it bounds the age of a local figure `pick`
+#                      judges in place of a provider row read `unreachable`.
 #   ORCH_LANES_USAGE_MAX_AGE  The default of --max-age (default 0, which is the
 #                      TTL alone): the caller's own pass interval, in seconds.
 #                      A pass longer than the TTL serves its last figure rather
@@ -503,6 +513,10 @@ message() {
     pick-lane-unmeasured)
       printf 'lanes: pick-lane-unmeasured lane=%s model=%s\n' "$1" "$2"
       printf '%s\n' "no window of that account measures this model, and an unmeasured window is not an empty one"
+      ;;
+    pick-local-reading)
+      printf 'lanes: pick-local-reading lane=%s host=%s age-s=%s\n' "$1" "$2" "$3"
+      printf '%s\n' "the provider could not read its copy of that account, so this machine's own measured reading of the config dir, no older than ORCH_LANES_USAGE_TTL, is judged in its place"
       ;;
     pick-lane-unlisted)
       printf 'lanes: pick-lane-unlisted lane=%s harness=%s\n' "$1" "$2"
@@ -1728,11 +1742,14 @@ load_lane_claims() {
 # HOSTED is a JSON array of host rows that STAND IN for this machine's reading
 # of the same config dir, which `pick` passes and `list` does not: a launch on a
 # hosted fleet runs under the provider's copy, so the chooser judges that copy,
-# while a listing shows both readings. A local dir the host reports is not
-# measured at all, and each host row passes the same --exclude-lane test. Each
-# row is matched on the `_id` host_lane_rows stamped on it.
+# while a listing shows both readings. A local dir the host reports is measured
+# only where its host row is `unreachable`, through host_row_or_local, and
+# each host row passes the same --exclude-lane test. Each row is matched on the
+# `_id` host_lane_rows stamped on it; a host row discovery reaches is emitted
+# from the local loop, in the local dir's place, and the tail carries only the
+# rows naming a dir discovery does not reach.
 collect_lanes() {
-	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" exclude_id="" held="" id d h
+	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" exclude_id="" held="" reached="" id d h row
 	[[ -z "$exclude" ]] || exclude_id="$(lane_claims_canon "$exclude")"
 	[[ "$hosted" == "[]" ]] || held="$(jq -r '.[]._id' <<<"$hosted")" || return 1
 	{
@@ -1743,13 +1760,64 @@ collect_lanes() {
 				if [[ -n "$exclude_id" || -n "$held" ]]; then
 					id="$(lane_claims_canon "$d")"
 					[[ "$id" != "$exclude_id" ]] || continue
-					case $'\n'"$held"$'\n' in *$'\n'"$id"$'\n'*) continue ;; esac
+					case $'\n'"$held"$'\n' in
+						*$'\n'"$id"$'\n'*)
+							reached+="$id"$'\n'
+							# The judge's failure is its own keyed line, and the
+							# host row stands: unreachable, so unmeasured, which no
+							# caller picks. This group runs in a pipeline, so a
+							# status raised here would reach no caller.
+							row="$(jq -c --arg id "$id" 'map(select(._id == $id)) | first' <<<"$hosted")" \
+								&& host_row_or_local "$h" "$d" "$row" \
+								|| { message pick-lane-failed "$d" local-reading >&2; printf '%s\n' "$row"; }
+							continue
+							;;
+					esac
 				fi
 				measure_lane "$h" "$d"
 			done < <(lane_dirs "$h")
 		done
-		jq -c --arg x "$exclude_id" '.[] | select(._id != $x)' <<<"$hosted"
+		jq -c --arg x "$exclude_id" --arg r "$reached" '
+			($r | split("\n") | map(select(. != ""))) as $reached
+			| .[] | select(._id != $x) | select(._id as $i | any($reached[]; . == $i) | not)' <<<"$hosted"
 	} | jq -s '.'
+}
+
+# The record `pick` judges for a config dir discovery reaches and the provider
+# reports: HOSTROW, since a launch on that provider runs under its copy, or
+# this machine's own reading of DIR where HOSTROW is `unreachable`. That status
+# is a read the provider could not make, an endpoint answering 5xx or nothing
+# read at all, and not a reading of the account: a seat this machine measures
+# is measured, so the local reading stands in when it carries a figure no older
+# than ORCH_LANES_USAGE_TTL, under one keyed line naming the lane and the age.
+# A local figure past the TTL is one a refused refresh served, which says
+# nothing about the window now, and a local reading with no figure measures
+# nothing; either leaves the unreachable row in place, so the refusal names the
+# read that failed. Every other host status is the provider's reading of its
+# own copy, `expired` included, and stands.
+#
+# `headroom_pct` is emit_lane's one word for a lane that measured a figure: it
+# is null for every status that carries no reading and for a measured status
+# with no window, so this asks no second question about the status.
+host_row_or_local() { # HARNESS DIR HOSTROW
+	local status local_record stands
+	status="$(jq -r '.status' <<<"$3")" || return 1
+	if [[ "$status" != unreachable ]]; then
+		printf '%s\n' "$3"
+		return 0
+	fi
+	local_record="$(measure_lane "$1" "$2")" || return 1
+	stands="$(jq -r --argjson ttl "$USAGE_TTL" '
+		if .headroom_pct != null and (.usage_age_s | type) == "number" and .usage_age_s <= $ttl
+		then "local\t\(.usage_age_s)" else "host" end' <<<"$local_record")" || return 1
+	case "$stands" in
+		local$'\t'*)
+			message pick-local-reading "$2" "${ORCH_LANE_HOST:-local}" "${stands#local$'\t'}" >&2
+			printf '%s\n' "$local_record"
+			;;
+		host) printf '%s\n' "$3" ;;
+		*) return 1 ;;
+	esac
 }
 
 # The provider's rows for HARNESS as one JSON array, `[]` where ORCH_LANE_HOST
@@ -2170,12 +2238,16 @@ cmd_pick_lane() {
 	done < <(lane_dirs "$harness")
 	# The chooser's rule for one account: a provider row carrying a reading
 	# stands in for this machine's, since the launch runs under the provider's
-	# copy. It also answers for a dir the provider holds and discovery does not
-	# reach, which is then no longer a lane with no record.
+	# copy, and an unreachable row gives way to a fresh local reading through
+	# the same host_row_or_local the chooser judges by. It also answers for a
+	# dir the provider holds and discovery does not reach, which is then no
+	# longer a lane with no record, and has no local reading to stand in.
 	hosted="$(host_lane_rows "$harness" readings)"
 	record="$(jq -c --arg t "$target" 'map(select(._id == $t)) | first // empty' <<<"$hosted")" || { message pick-lane-failed "$dir" host >&2; return 1; }
 	if [[ -n "$record" && -z "$found" ]]; then
 		found="$(jq -r '.config_dir' <<<"$record")" || { message pick-lane-failed "$dir" host >&2; return 1; }
+	elif [[ -n "$record" ]]; then
+		record="$(host_row_or_local "$harness" "$found" "$record")" || { message pick-lane-failed "$dir" local-reading >&2; return 1; }
 	fi
 	if [[ -z "$found" ]]; then
 		message pick-lane-unlisted "$dir" "$harness" >&2

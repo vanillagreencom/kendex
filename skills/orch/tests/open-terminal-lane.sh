@@ -424,6 +424,9 @@ counted() {
 #                 not judged on this machine's copy of the account
 #   unanswered    the host-accounts-unanswered lines, which say the provider
 #                 failed the accounts verb and the launch kept the local gate
+#   localreading  the keyed lanes: pick-local-reading lines, which say the
+#                 provider could not read the account and the judge took this
+#                 machine's fresh reading of it
 #   claimsnotice  the keyed lanes: pick-lane-claims notice lines, which say the
 #                 claim store could not be read and the wall verdict stands
 #   refused       the first field of the lane-refused line, or none
@@ -517,6 +520,7 @@ observe() {
         ;;
       relaunchgate) value="$(grep -c '^open-terminal: host-relaunch-credential ' <<<"$OUT" || true)" ;;
       unanswered) value="$(grep -c '^open-terminal: host-accounts-unanswered ' <<<"$OUT" || true)" ;;
+      localreading) value="$(grep -c '^lanes: pick-local-reading ' <<<"$OUT" || true)" ;;
       claimsnotice) value="$(grep -c '^lanes: pick-lane-claims claims=null$' <<<"$OUT" || true)" ;;
       # Which CODEX_HOME the launched command runs under, as a shape rather
       # than a path: `private` is a home of this launch's own under the
@@ -1212,6 +1216,33 @@ run_ot "OVERSEE_WATCH_STATE_DIR=$TOKEN_CTL_STATE;LANE_HOST_STUB_ACCOUNTS=$TMP_RO
 assert_eq "$(observe "rc=0 launched=1 relaunchgate=1")" "rc=0 launched=1 relaunchgate=1" \
   "control: an arm trusting the judge's cached host row relaunches onto an account the provider dropped"
 OPEN_TERMINAL="$TOKEN_OT_SHIPPED"
+# A provider row the provider could not read, for an account this machine
+# holds a live copy of and measures fresh: the judge takes this machine's
+# reading, says so, and the fresh launch proceeds. The same row for a folder
+# nothing measures, and for one whose local figure is past the TTL, leaves the
+# unread window and the refusal it always had.
+printf 'account=%s\tharness=claude\tstatus=unreachable\n' "$H/.claude" > "$TMP_ROOT/hosted-accounts-claude-dark.tsv"
+CLAUDE_DARK="LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-claude-dark.tsv;$CHOICE_CMD"
+run_ot "$CLAUDE_DARK" --host "$HOST_STUB" --harness claude --lane "$H/.claude" --repo o/r CC-126
+assert_eq "$(observe "rc=0 launched=1 unreadable=none localreading=1")" "rc=0 launched=1 unreadable=none localreading=1" \
+  "a fresh --host launch on an account the provider cannot read is judged on this machine's fresh reading, under its keyed line, and launches"
+run_ot "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-token-dark.tsv;$CHOICE_CMD" --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r CC-127
+assert_eq "$(observe "rc=1 launched=nolog localreading=0 unreadable=lane=$H/.tokclaude,model=opus,step=windows")" \
+  "rc=1 launched=nolog localreading=0 unreadable=lane=$H/.tokclaude,model=opus,step=windows" \
+  "the same row for a folder this machine holds no credentials for stays the unread window on a fresh launch"
+# The figure the first launch measured is aged past the default TTL and the
+# endpoint set to refuse, so the second launch's refresh serves that old figure
+# as rate_limited: measured, but not fresh.
+DARK_STATE="$TMP_ROOT/claude-dark-state"
+run_ot "OVERSEE_WATCH_STATE_DIR=$DARK_STATE;$CLAUDE_DARK" --host "$HOST_STUB" --harness claude --lane "$H/.claude" --repo o/r CC-128
+assert_eq "$RC" "0" "warm-up: the launch under its own state measures the account fresh"
+age_usage_record "$DARK_STATE" "$H/.claude" 600
+printf '429 0\n' > "$FIXTURE_DIR/.claude.status"
+run_ot "OVERSEE_WATCH_STATE_DIR=$DARK_STATE;$CLAUDE_DARK" --host "$HOST_STUB" --harness claude --lane "$H/.claude" --repo o/r CC-129
+assert_eq "$(observe "rc=1 launched=0 localreading=0 unreadable=lane=$H/.claude,model=opus,step=windows")" \
+  "rc=1 launched=0 localreading=0 unreadable=lane=$H/.claude,model=opus,step=windows" \
+  "a local figure older than the TTL does not stand in for the unreachable row, so the fresh launch is refused"
+rm -f -- "${FIXTURE_DIR:?}/.claude.status"
 # Control: a judge that does not pass the resolved host reads this machine's
 # no_credentials and refuses the unread window.
 TOKEN_OT_SHIPPED="$OPEN_TERMINAL"
