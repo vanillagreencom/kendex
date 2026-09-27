@@ -905,7 +905,10 @@ fi
 # A launch record naming this session answers the account before the
 # environment does: a launcher prefixes one account variable without clearing
 # the other, and a session started from a shell that carried another account's
-# variable would otherwise be judged on that one.
+# variable would otherwise be judged on that one. A session launched from a
+# stored token has no lane variable and no account on its status line, so the
+# record is the one place that says which account it was opened on, and the
+# line `print` records for a dead-pane relaunch opens its successor there.
 CALLER_CFG=""
 [[ "$MODE" == dead ]] || CALLER_CFG="${OL_CUR_ACCOUNT:-$(lane_context_caller_cfg "$CALLER_HARNESS")}"
 CALLER_STATE=unreadable HEADROOM_FIELD=unreadable

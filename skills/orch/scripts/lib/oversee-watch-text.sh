@@ -404,7 +404,12 @@ Options:
                       stops at the first prompt nobody is there to answer.
                       A record naming this pane answers the line's harness
                       and account, and its model and effort as a pair where
-                      it names a model (`oversee-succeed --help`)
+                      it names a model (`oversee-succeed --help`).
+                      A line this start cannot build or record is the notice
+                      overseer-line-missing or overseer-unrecorded, on stderr
+                      and in the fleet log, and the watch runs on: the pane
+                      is judged from tmux, and a death relaunches from the
+                      line the fleet state already holds
   --repeat SECS       the watch for a session: run one watch per pass with
                       the other options, sleep SECS after it exits, or
                       ORCH_WATCH_MAIL_INTERVAL where that is shorter and the
@@ -483,8 +488,8 @@ Exit codes:
      overseer's
      window. This watch is done: the successor runs its own. Repeat mode
      stops on it and exits 0
-  2  usage or global failure, including overseer-command publication, or a
-     lane-local mailbox, clone or workflow-state read failed. A lane-local
+  2  usage or global failure, or a lane-local mailbox, clone or
+     workflow-state read failed. A lane-local
      failure is reported and the pass reads the remaining lanes before it
      exits. An unchanged lane-local failure, a provider-reported stopped state
      among them, stays quiet after its first report until a successful read or
@@ -624,8 +629,8 @@ ow_message() { # REASON FIELD=VALUE...
     overseer-wall-unconfirmed) text='The overseer pane read walled and its own account measures room, so the banner on that screen is one this watch relayed about another lane and the overseer is working. Nothing is launched and no window is closed. The fields name the judgement that refuted it.' ;;
     overseer-unwatched) text='The overseer pane is not being watched, so an overseer that dies is reported by nothing. The field names what is missing.' ;;
     overseer-unreadable) text='The overseer pane could not be read, so its state settles nothing this pass.' ;;
-    overseer-line-missing) text='The fleet state records no overseer launch line, so a dead overseer cannot be relaunched. Start the watch with -- and the overseer flags while the overseer is alive.' ;;
-    overseer-unrecorded) text='The overseer pane could not be recorded in the fleet state. A relaunch reads that record, so this watch reports a death it cannot act on.' ;;
+    overseer-line-missing) text='This start could not build the overseer launch line, so the fleet state keeps the line it already holds, or none. The pane is still watched; a death relaunches from the line held, and is reported with no successor where there is none. The detail under this line is the refusal of oversee-succeed --print-launch-line.' ;;
+    overseer-unrecorded) text='This start could not record the overseer pane in the fleet state, so the record stays as it was. The pane is still watched; a death relaunches from the line the record already holds, and is reported with no successor where it holds none. The step field names what failed.' ;;
     overseer-notice-failed) text='The overseer-dead notice could not be delivered. The field names the channel; the event line still went out.' ;;
     overseer-relaunch-failed) text='oversee-succeed refused or failed the relaunch; the overseer is not replaced and this watch keeps running. Its own keyed line says why.' ;;
     overseer-recovery-blocked) text='No account in the fleet qualifies for a successor, so the recovery stops rather than retry the same accounts. The fields name the spent account and the reset its banner states; a notice carrying both went to the fleet log and the overseer mailbox.' ;;

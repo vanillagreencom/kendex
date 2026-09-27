@@ -3,7 +3,7 @@
 # tail every oversee-succeed call carries, and the `overseer` object of the
 # fleet state. Sourced by oversee-watch, and like the rest of its lib/ it
 # reads that script's globals (HANDOFF, OVERSEER_FLAGS, WORKFLOW_STATE,
-# WORKFLOW_STATE_ARGS, SUCCEED) and calls its `overseer_record_refuse` and
+# WORKFLOW_STATE_ARGS, SUCCEED) and calls its `overseer_record_notice` and
 # `lane_context_caller_key`. Whether the record names this pane is
 # lib/overseer-launch.sh's `ol_names`, the test its launchers write and read
 # the record by.
@@ -27,43 +27,66 @@ overseer_launch_args() {
   [[ ${#OVERSEER_FLAGS[@]} -eq 0 ]] || OVERSEER_LAUNCH_ARGS+=(-- "${OVERSEER_FLAGS[@]}")
 }
 
+# The record, written once at the watch's start. A step that fails is a
+# NOTICE through `overseer_record_notice` and never a refusal, because the
+# record is not what the watch judges the pane on: the pane's death and its
+# wall are read off the pane itself, so an overseer whose record could not be
+# written is still watched. What a failed record costs is the line a dead-pane
+# relaunch replays, and only where the fleet state holds none from a launch, a
+# succession or an earlier watch: the record is left as it stood, so a line
+# already there stays, and check_overseer reports a death it cannot relaunch
+# where there is none. Always returns 0.
 overseer_command_record() {
-  local pane="${TMUX_PANE:-}" key server window line record detail errf rc=0
+  local pane="${TMUX_PANE:-}" key server window line detail errf rc=0
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
   # The key is the orch library's, the same function the lane turn-end hook
   # and `oversee register` read a session's own key with: the hook compares its own
   # against the pair written here, and a second derivation that drifted would
   # leave the overseer's turn end judged by nothing, with no keyed line.
   # That library swallows tmux's own words, and a second read of `#{pid}` here
-  # would be a twin of the verb it owns, so the refusal names the read that
+  # would be a twin of the verb it owns, so the notice names the read that
   # failed instead of replaying a message this script cannot have. The window
   # read below runs here and does replay tmux's. A key that came back in some
   # other shape is its own cause and is replayed as one.
   if ! key="$(lane_context_caller_key)"; then
-    overseer_record_refuse "tmux reported no server pid for pane $pane" \
+    overseer_record_notice "tmux reported no server pid for pane $pane" \
       overseer-unrecorded "pane=$pane" "step=identity"
+    return 0
   fi
-  [[ "$key" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)$ ]] \
-    || overseer_record_refuse "the pane key read back as: $key" \
+  if [[ ! "$key" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)$ ]]; then
+    overseer_record_notice "the pane key read back as: $key" \
       overseer-unrecorded "pane=$pane" "step=identity"
+    return 0
+  fi
   # Taken here, before the next match replaces BASH_REMATCH.
   server="${BASH_REMATCH[1]}"
   if ! window="$(tmux display-message -p -t "$pane" '#{window_id}' 2>&1)"; then
-    overseer_record_refuse "$window" overseer-unrecorded "pane=$pane" "step=window"
+    overseer_record_notice "$window" overseer-unrecorded "pane=$pane" "step=window"
+    return 0
   fi
-  [[ "$window" =~ ^@[0-9]+$ ]] \
-    || overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=window"
+  if [[ ! "$window" =~ ^@[0-9]+$ ]]; then
+    overseer_record_notice "" overseer-unrecorded "pane=$pane" "step=window"
+    return 0
+  fi
   overseer_launch_args
   # The line is the print's stdout alone, so no notice on its stderr enters
-  # the command a relaunch types; that stderr is the refusal's detail or relayed.
-  errf="$(mktemp)" || overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=mktemp"
+  # the command a relaunch types; that stderr is the notice's detail or relayed.
+  if ! errf="$(mktemp)"; then
+    overseer_record_notice "" overseer-unrecorded "pane=$pane" "step=mktemp"
+    return 0
+  fi
   line="$("$SUCCEED" --print-launch-line "${OVERSEER_LAUNCH_ARGS[@]}" 2>"$errf")" || rc=$?
   detail="$(cat -- "$errf")" || detail=""
   rm -f -- "${errf:?}"
-  (( rc == 0 )) || overseer_record_refuse "$detail" overseer-line-missing "pane=$pane" "path=$SUCCEED"
+  if (( rc != 0 )); then
+    overseer_record_notice "$detail" overseer-line-missing "pane=$pane" "path=$SUCCEED"
+    return 0
+  fi
   [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
-  [[ -n "$line" ]] \
-    || overseer_record_refuse "" overseer-line-missing "pane=$pane" "path=$SUCCEED"
+  if [[ -z "$line" ]]; then
+    overseer_record_notice "" overseer-line-missing "pane=$pane" "path=$SUCCEED"
+    return 0
+  fi
   # The four fields this watch observes replace the prior's; the launcher's
   # own, runtime, generation and the launch identity (harness, account, home,
   # model, effort and cwd), stay only where the prior names THIS pane on THIS
@@ -79,6 +102,6 @@ overseer_command_record() {
       .overseer = ((((.overseer // {})
         | if ol_names($server; $pane) then . else {} end)
         + {server: $server, pane: $pane, window: $window, launch_line: $line}) | del(.pending))' 2>&1)" \
-    || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=write"
+    || overseer_record_notice "$detail" overseer-unrecorded "pane=$pane" "step=write"
+  return 0
 }
-

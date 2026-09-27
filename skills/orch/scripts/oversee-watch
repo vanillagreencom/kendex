@@ -683,14 +683,48 @@ fleet_merge() { # [quiet]
   fi
 }
 
-# Repeat mode runs here, ahead of every note and read a single run makes. Each
-# pass is this script in single-run mode, so a pass keeps that contract whole.
-overseer_record_refuse() { # DETAIL REASON FIELD=VALUE...
-  local detail="$1"; shift
+# One `close` row about the overseer in the fleet log: the text in
+# NOTICE_FILE, the record built in RECORD_FILE, jq's and the writer's words in
+# ERR_FILE. The record carries no `at`: `workflow-state append-file` stamps
+# the fleet log's time from its own clock, so the record written here and the
+# one an overseer writes by hand are dated by one reader. Every overseer
+# notice the fleet log carries goes through here, at the watch's start and
+# from its passes alike.
+overseer_fleet_log() { # NOTICE_FILE RECORD_FILE ERR_FILE
+  jq -n --rawfile text "$1" \
+    '{kind: "close", item: "overseer", text: ($text | rtrimstr("\n"))}' > "$2" 2>"$3" || return 1
+  "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
+    append-file oversee fleet_log "$2" >/dev/null 2>"$3"
+}
+
+# A session record the start could not write, said on stderr and in the fleet
+# log and then left behind: the watch goes on to judge the pane, which is
+# read from tmux and not from the record. The reason and its fields are the
+# keyed line's, and the fleet log row repeats them so the successor that
+# reads the log at takeover sees what this watch could not record. Runs
+# before WORK_DIR exists, so its files are its own and removed here.
+overseer_record_notice() { # DETAIL REASON FIELD=VALUE...
+  local detail="$1" notice record errf
+  shift
   ow_message "$@" >&2
   [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
-  exit 2
+  if ! notice="$(mktemp)" || ! record="$(mktemp)" || ! errf="$(mktemp)"; then
+    ow_message overseer-notice-failed "channel=file" >&2
+    return 0
+  fi
+  if printf '%s: the watch could not record this overseer session in the fleet state. The pane is still watched; a death relaunches from the launch line the fleet state already holds, or is reported with no successor where it holds none.\n' "$*" > "$notice"
+  then
+    if ! overseer_fleet_log "$notice" "$record" "$errf"; then
+      ow_message overseer-notice-failed "channel=fleet-log" >&2
+      [[ ! -s "$errf" ]] || cat -- "$errf" >&2
+    fi
+  else
+    ow_message overseer-notice-failed "channel=file" >&2
+  fi
+  rm -f -- "${notice:?}" "${record:?}" "${errf:?}"
 }
+# Repeat mode runs here, ahead of every note and read a single run makes. Each
+# pass is this script in single-run mode, so a pass keeps that contract whole.
 # shellcheck source=lib/watch-overseer-record.sh
 source "$SCRIPT_DIR/lib/watch-overseer-record.sh"
 
@@ -1950,20 +1984,12 @@ overseer_note() { # REASON FIELD=VALUE...
   ow_message "$@" >&2
 }
 
-# The record carries no `at`: `workflow-state append-file` stamps the fleet
-# log's time from its own clock, so the record written here and the one an
-# overseer writes by hand are dated by one reader.
+# The two channels a pass's overseer notice reaches: the fleet log through
+# overseer_fleet_log, and the overseer mailbox as a directive.
 overseer_publish() { # NOTICE RECORD ERR_FILE
   local notice="$1" record="$2" errf="$3"
-  if jq -n --rawfile text "$notice" \
-       '{kind: "close", item: "overseer", text: ($text | rtrimstr("\n"))}' > "$record" 2>"$errf"
-  then
-    "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
-      append-file oversee fleet_log "$record" >/dev/null 2>"$errf" \
-      || overseer_note overseer-notice-failed "channel=fleet-log"
-  else
-    overseer_note overseer-notice-failed "channel=fleet-log"
-  fi
+  overseer_fleet_log "$notice" "$record" "$errf" \
+    || overseer_note overseer-notice-failed "channel=fleet-log"
   "$LANE_MAIL" send --item overseer --directive --file "$notice" >/dev/null 2>"$errf" \
     || overseer_note overseer-notice-failed "channel=lane-mail"
 }

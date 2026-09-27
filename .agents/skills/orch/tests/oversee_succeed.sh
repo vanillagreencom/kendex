@@ -127,6 +127,9 @@ CODEX_AT_MARK='  Context 10% left'
 # A claude tier the claude adapter's window table leaves out, so its reading
 # carries a model and no window.
 NO_TABLE_TIER='  kendex (ken-1453) Sonnet 4.5 47% (fixture@example.com)     /rc'
+# The line a session launched from a stored token draws: no account written
+# into the harness config, so none on the line, which ends at the percentage.
+NO_ADDRESS='  fleet (main) Fable 5.1 20%     /rc'
 
 SRC_DIR="$(cd "$(dirname "$SUCCEED")" && pwd)"
 # The account read's own condition, taken from the library the script under
@@ -1429,6 +1432,45 @@ run_succeed printpref 'codex:1:high' --print-launch-line
 assert_eq "$RC|$OUT|$(recorded codex)" \
   "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|none" \
   "--print-launch-line walks the caller entry whatever the preference names"
+
+# A status line naming no account is a reading, not a refusal, and the account
+# the printed line opens its successor on is the one the fleet state records
+# for this pane, where it records one: `oversee launch`, `oversee register`
+# and a succession write it before the session's first turn, and a session
+# launched from a stored token has no lane variable for the environment to
+# answer with. A record naming another pane is another session's and leaves
+# the environment's answer standing.
+record_account() { # PANE ACCOUNT
+  jq --arg server "$SERVER_PID" --arg pane "$1" --arg account "$2" \
+    '.overseer = {runtime: "tmux", generation: 1, server: $server, pane: $pane, account: $account}' \
+    "$FLEET_STATE" > "$FLEET_STATE.tmp" && mv "$FLEET_STATE.tmp" "$FLEET_STATE"
+}
+new_caller "$NO_ADDRESS" '20%'
+record_account "$CALLER_PANE" "$H/.eclaude"
+run_succeed printrecord '' --print-launch-line
+assert_eq "$RC|$OUT" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer '$BRIEF'" \
+  "a line naming no account prints, on the account the fleet state records for this pane"
+run_succeed checknoaddress '' --check-marks
+assert_eq "$RC|$(sed -n 1p <<<"$OUT" | cut -d' ' -f1-2)" "0|oversee-succeed: context-below-mark" \
+  "a line naming no account is judged on its context, not refused as no status line"
+new_caller "$NO_ADDRESS" '20%'
+record_account '%999' "$H/.eclaude"
+run_succeed printother '' --print-launch-line
+assert_eq "$RC|$OUT" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'" \
+  "a record naming another pane is another session's: the environment's account stands"
+# The control on the record fallback: a copy that never reads the recorded
+# account prints the environment's for the pane the record names.
+PRINTREC="$(mutant_scripts printrec oversee-succeed)" || exit 1
+mutate_file "$PRINTREC/oversee-succeed" 'CALLER_CFG="${OL_CUR_ACCOUNT:-$(lane_context_caller_cfg "$CALLER_HARNESS")}"' 'CALLER_CFG="$(lane_context_caller_cfg "$CALLER_HARNESS")"'
+new_caller "$NO_ADDRESS" '20%'
+record_account "$CALLER_PANE" "$H/.eclaude"
+SUCCEED_BIN="$PRINTREC/oversee-succeed" run_succeed printrecctl '' --print-launch-line
+assert_eq "$RC|$OUT" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'" \
+  "control: a print that ignores the record names the environment's account for the recorded pane"
+fleet_state
 
 # The printed line is replayed verbatim into a DEAD pane, and nobody is at that
 # pane to answer a folder-trust question either. A codex line therefore carries
