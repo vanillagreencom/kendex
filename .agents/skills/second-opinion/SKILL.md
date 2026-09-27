@@ -1,7 +1,7 @@
 ---
 name: second-opinion
 description: "Load for a cross-model review, challenge, audit, or quick consult."
-summary: "Cross-model second opinion: review, challenge, audit, and consult through an external AI CLI (Claude and Codex)."
+summary: "Cross-model second opinion: review, challenge, audit, and consult through an external AI CLI (Claude, Codex and Copilot)."
 license: MIT
 user-invocable: true
 argument-hint: "review [scope] | challenge [description] | audit [path] | quick [question]"
@@ -55,7 +55,7 @@ Cross-model second opinion via external AI CLI. Every mode walks the `SECOND_OPI
 
 ## Session identity
 
-Cross-model is enforced in every mode: a run with no eligible target exits 1 naming every candidate and its reason, writing nothing and invoking nothing. In a multi-model front end (Pi, OpenCode, Cursor) or an undetected harness, export `SECOND_OPINION_CURRENT_MODEL` in that session's own environment (`none` when there is no session model), never in a project settings file. Identity resolution, normalization, and the refusal rules: `second-opinion --help`.
+Cross-model is enforced in every mode: a run with no eligible target exits 1 naming every candidate and its reason, writing nothing and invoking nothing. In a multi-model front end (Pi, OpenCode, Cursor, Copilot) or an undetected harness, export `SECOND_OPINION_CURRENT_MODEL` in that session's own environment (`none` when there is no session model), never in a project settings file. Identity resolution, normalization, and the refusal rules: `second-opinion --help`.
 
 ## Multi-lane review
 
@@ -63,7 +63,7 @@ Cross-model is enforced in every mode: a run with no eligible target exits 1 nam
 
 ## Configuration
 
-Set non-sensitive defaults in `kendex.settings.toml` under `[env]`; `.env.local` wins over it, and a `.env` file is never read. `SECOND_OPINION_FOREGROUND_CAP` is session-only; a project-file foreground-cap declaration is refused, and shipped workflows pass `--foreground` directly. This skill marks no key `# required`, so an install writes nothing into `kendex.settings.toml`; assign a key there only to change a default the scripts already read (`SECOND_OPINION_TARGET` has none). Keys, defaults, and the built-in `claude`/`codex` commands: `second-opinion --help`.
+Set non-sensitive defaults in `kendex.settings.toml` under `[env]`; `.env.local` wins over it, and a `.env` file is never read. `SECOND_OPINION_FOREGROUND_CAP` is session-only; a project-file foreground-cap declaration is refused, and shipped workflows pass `--foreground` directly. This skill marks no key `# required`, so an install writes nothing into `kendex.settings.toml`; assign a key there only to change a default the scripts already read (`SECOND_OPINION_TARGET` has none). Keys, defaults, and the built-in `claude`/`codex`/`copilot` commands: `second-opinion --help`. The `copilot` target runs only once `SECOND_OPINION_COPILOT_MODEL` names its model.
 
 ## Error Handling
 

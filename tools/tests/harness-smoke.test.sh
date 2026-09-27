@@ -389,5 +389,173 @@ verdict_case "control: an unanchored NO-QUESTION-TOOL read takes the echoed prom
   lane-question "$STAND_SMOKE" STANDIN_SAYS= unanswerable "said NO-QUESTION-TOOL:"
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 
+# The Copilot package table lists what its readers find under the checkout, so
+# a reader that finds nothing, or a hook the delivery table has no copilot cell
+# for, is refused before any row. The stand-in tree has hooks and, by the link
+# above, skills; it has no agents directory until one is linked.
+echo "=== the Copilot package table refuses a checkout it cannot list ==="
+copilot_stand_case() { # LABEL WANT-FIRST
+  local rc=0 said=""
+  (cd "$ROWS_REPO" && PATH="$ROWS_BIN:$PATH" "$BASH" "$STAND_SMOKE" \
+    --only copilot --dir "$TMP/stand-dir" >"$TMP/stand-out" 2>&1) || rc=$?
+  said="$(sed -n '1s/^harness-smoke: //p' "$TMP/stand-out")"
+  if [ "$rc" = 2 ] && [ "${said:--}" = "$2" ]; then
+    ok "$1 (exit $rc, first $said)"
+  else
+    bad "$1" "want rc=2 first=$2, got rc=$rc first=${said:--}"
+  fi
+}
+copilot_stand_case "a checkout with no agents is refused" "packages=$STAND/agents"
+ln -s -- "$REPO/agents" "$STAND/agents"
+printf '#!/usr/bin/env bash\n' >"$STAND/hooks/zz-unlisted.sh"
+copilot_stand_case "a hook the delivery table has no copilot cell for is refused" "package-cell=zz-unlisted"
+rm -f -- "$STAND/hooks/zz-unlisted.sh" "$STAND/agents"
+
+# A Copilot stand-in answers each package question from the row's STANDIN_*
+# settings: the skill listing names the project skills in STANDIN_SKILLS and,
+# unless COPILOT_HOME is set without COPILOT_SKILLS_DIRS, the personal skill
+# under HOME; the instruction listing names the four root sources, and
+# sub/AGENTS.md from sub/ or, with STANDIN_NESTED_ROOT=1, from the root too;
+# the agent listing prints STANDIN_AGENTS; the duplicate count and the subagent
+# answer print STANDIN_DUP and STANDIN_SUB. The session of tool calls stands in
+# for Copilot running the repository's hooks: each numbered command is handed
+# as a Copilot payload to a hook script under .github/hooks for every hook in
+# the checkout, each of which reads it with `cat`, and is then run, unless
+# STANDIN_REFUSE=1 holds it back as a refused call would be; STANDIN_HOOKS=0
+# runs no hook at all. The helper, the first command, always runs.
+echo "=== the Copilot package rows ==="
+PKG_BIN="$TMP/pkg-bin"
+mkdir -p "$PKG_BIN"
+cp "$ROWS_BIN/kendex" "$PKG_BIN/kendex"
+cat >"$PKG_BIN/copilot" <<'STANDIN'
+#!/usr/bin/env bash
+prompt="" prev=""
+for a; do [ "$prev" != -p ] || prompt=$a; prev=$a; done
+case "$1 ${2:-}" in
+  "skill list")
+    if [ -z "${COPILOT_HOME:-}" ] || [ -n "${COPILOT_SKILLS_DIRS:-}" ]; then
+      [ ! -d "$HOME/.agents/skills/smoke-personal" ] || printf 'Personal skills:\n  smoke-personal - p\n'
+    fi
+    sed 's/^/  /; s/$/ - s/' <<<"$STANDIN_SKILLS"
+    exit 0 ;;
+  "instruction list")
+    printf '[{"sourcePath":"AGENTS.md"},{"sourcePath":"CLAUDE.md"},{"sourcePath":".github/copilot-instructions.md"},{"sourcePath":".github/instructions/smoke.instructions.md"}'
+    case "$PWD" in
+      */sub) printf ',{"sourcePath":"sub/AGENTS.md"}' ;;
+      *) [ "$STANDIN_NESTED_ROOT" != 1 ] || printf ',{"sourcePath":"sub/AGENTS.md"}' ;;
+    esac
+    printf ']\n'
+    exit 0 ;;
+esac
+case "$prompt" in
+  "List the names of the custom agents"*) printf '%s\n' "$STANDIN_AGENTS" ;;
+  "How many times"*) printf '%s\n' "$STANDIN_DUP" ;;
+  "Use your task tool"*) printf '%s\n' "$STANDIN_SUB" ;;
+  "Run each of these shell commands"*)
+    mkdir -p .github/hooks
+    for h in $STANDIN_HOOK_NAMES; do printf '#!/usr/bin/env bash\nx=$(cat)\n' >".github/hooks/$h.sh"; done
+    while IFS= read -r line; do
+      case "$line" in [0-9]*". "*) cmd=${line#*. } ;; *) continue ;; esac
+      if [ "$STANDIN_HOOKS" != 0 ]; then
+        for h in $STANDIN_HOOK_NAMES; do
+          jq -nc --arg c "$cmd" '{toolName:"bash",toolArgs:{command:$c}}' | bash "$PWD/.github/hooks/$h.sh"
+        done
+      fi
+      case "$cmd" in *smoke-helper*) ;; *) [ "$STANDIN_REFUSE" != 1 ] || continue ;; esac
+      bash -c "$cmd" >/dev/null 2>&1 || :
+    done <<<"$prompt"
+    printf 'ok\n' ;;
+esac
+exit 0
+STANDIN
+chmod +x "$PKG_BIN/copilot"
+cp "$PKG_BIN/copilot" "$TMP/pkg-bin-copilot"
+PKG_SKILLS="$(for f in "$REPO"/skills/*/SKILL.md; do f=${f%/SKILL.md}; printf '%s\n' "${f##*/}"; done)"
+PKG_AGENTS="$(for f in "$REPO"/agents/*.md; do f=${f##*/}; printf '%s\n' "${f%.md}"; done)"
+PKG_HOOKS="$(for f in "$REPO"/hooks/*.sh; do f=${f##*/}; printf '%s ' "${f%.sh}"; done)"
+package_run() { # SMOKE ENV=VAL... — the run's output in $TMP/pkg-out
+  local smoke=$1
+  shift
+  rm -rf -- "${TMP:?}/pkg-dir"
+  mkdir -p "$TMP/pkg-dir"
+  (cd "$ROWS_REPO" && env PATH="$PKG_BIN:$PATH" STANDIN_SKILLS="$PKG_SKILLS" STANDIN_AGENTS="$PKG_AGENTS" \
+    STANDIN_HOOK_NAMES="$PKG_HOOKS" STANDIN_NESTED_ROOT=0 STANDIN_DUP=1 STANDIN_SUB=SMOKE-RULES-REACHED \
+    STANDIN_REFUSE=1 STANDIN_HOOKS=1 "$@" "$BASH" "$smoke" --only copilot --dir "$TMP/pkg-dir" >"$TMP/pkg-out" 2>&1) || :
+}
+package_row() { # ROW — that copilot row's result and evidence
+  awk -v q="$1" '$1 == "copilot" && $2 == q { $1 = ""; $2 = ""; sub(/^  /, ""); print; exit }' "$TMP/pkg-out"
+}
+package_case() { # LABEL ROW RESULT CLAUSE — CLAUSE is text only that verdict's branch prints
+  local got
+  got="$(package_row "$2")"
+  if [ "${got%% *}" = "$3" ] && grep -qF -- "$4" <<<"$got"; then
+    ok "$1"
+  else
+    bad "$1" "want $3 with '$4', got: ${got:--}"
+  fi
+}
+package_run "$SMOKE"
+package_case "a listed skill passes" skill:worktree pass "copilot skill list lists it"
+package_case "a listed agent passes" agent:reviewer-doc pass "lists it"
+package_case "the subagent's relayed rule passes" instruction:subagent pass "SMOKE-RULES-REACHED"
+package_case "a count of one passes the duplicate row" instruction:duplicate pass "counts the AGENTS.md line once"
+package_case "a nested AGENTS.md read from sub/ alone differs" instruction:nested differs "for the working directory only"
+package_case "a hidden personal skill brought back by COPILOT_SKILLS_DIRS differs" skill-dirs:COPILOT_HOME differs "exports both"
+package_case "a hook that ran and held back its refused command passes" hook:block-argv-kill pass "was never written"
+package_case "a hook with no trigger passes on running" hook:command-safety pass "reading the payload Copilot sent"
+package_case "an excluded hook is excluded with the table's reason" hook:lane-mail-check excluded "(hooks/README.md)"
+package_case "effort stays pending" agent:effort pending "proof: tools/harness-smoke --only copilot"
+package_case "the recorded payload carries the command" helper:payload pass "its keys: toolName,toolArgs"
+package_case "a hook and a tool call in the project root pass" helper:cwd pass "both run in the project root"
+package_case "the launch environment reaching both passes" helper:env pass "reaches a hook and a tool call"
+PKG_SKILLS="$(grep -vx worktree <<<"$PKG_SKILLS")"
+PKG_AGENTS="$(grep -vx reviewer-doc <<<"$PKG_AGENTS")"
+package_run "$SMOKE" STANDIN_REFUSE=0 STANDIN_NESTED_ROOT=1 STANDIN_DUP=2 STANDIN_SUB=NO-RULES
+package_case "an unlisted skill fails" skill:worktree fail "does not list it"
+package_case "an unlisted agent fails" agent:reviewer-doc fail "does not list it"
+package_case "a subagent with no rules fails" instruction:subagent fail "NO-RULES"
+package_case "a count of two differs" instruction:duplicate differs "reaches the context twice"
+package_case "a nested AGENTS.md listed from the root too passes" instruction:nested pass "from sub/ and from the project root"
+package_case "a refused command that went through fails its hook" hook:block-unsafe-rm fail "went through"
+package_run "$SMOKE" STANDIN_HOOKS=0
+package_case "tool calls with no hook run fail every hook row" hook:block-repo-copy fail "ran no repository hook"
+package_case "and the helper rows with them" helper:payload fail "ran no repository hook"
+# A run with no copilot: every package row is pending, the excluded hooks keep
+# their reason, and the pending rows count toward exit 3.
+if command -v copilot >/dev/null 2>&1; then
+  printf '  skip  a run with no copilot on PATH (this machine has one)\n'
+else
+  rm -f -- "$PKG_BIN/copilot"
+  pkg_rc=0
+  (cd "$ROWS_REPO" && PATH="$PKG_BIN:$PATH" "$BASH" "$SMOKE" --only copilot --dir "$TMP/pkg-dir" \
+    >"$TMP/pkg-out" 2>&1) || pkg_rc=$?
+  package_case "with no copilot a skill is pending" skill:orch pending "copilot is not on PATH"
+  package_case "with no copilot an excluded hook keeps its reason" hook:task-completed-check excluded "TaskCompleted"
+  pending_seen="$(awk '$1 == "copilot" && $3 == "pending" { n++ } END { print n + 0 }' "$TMP/pkg-out")"
+  unanswered="$(sed -n 's/^harness-smoke: unanswerable=//p' "$TMP/pkg-out")"
+  if [ "$pkg_rc" = 3 ] && [ "$pending_seen" -gt 0 ] && [ "$unanswered" -ge "$pending_seen" ]; then
+    ok "pending rows count toward exit 3 ($pending_seen pending, unanswerable=$unanswered)"
+  else
+    bad "pending rows count toward exit 3" "rc=$pkg_rc pending=$pending_seen unanswerable=${unanswered:--}"
+  fi
+fi
+
+# Controls on the stand-in copy: a marker read that never looks, and a nested
+# reading that ignores the root listing, each pass what their rows fail.
+cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
+ln -s -- "$REPO/agents" "$STAND/agents"
+cp "$REPO"/hooks/*.sh "$STAND/hooks/"
+PKG_SKILLS="$(for f in "$REPO"/skills/*/SKILL.md; do f=${f%/SKILL.md}; printf '%s\n' "${f##*/}"; done)"
+PKG_AGENTS="$(for f in "$REPO"/agents/*.md; do f=${f##*/}; printf '%s\n' "${f%.md}"; done)"
+cp "$ROWS_BIN/kendex" "$PKG_BIN/kendex"
+cp "$TMP/pkg-bin-copilot" "$PKG_BIN/copilot"
+plant "$STAND_SMOKE" 's/^        elif \[ -e "\$marker" \]; then$/        elif false; then/'
+package_run "$STAND_SMOKE" STANDIN_REFUSE=0
+package_case "control: a marker read that never looks passes a command that went through" hook:block-unsafe-rm pass "was never written"
+plant "$STAND_SMOKE" 's/^  elif grep -qFx -- sub\/AGENTS.md <<<"\$PKG_ROOT_SOURCES"; then$/  elif false; then/'
+package_run "$STAND_SMOKE" STANDIN_NESTED_ROOT=1
+package_case "control: a nested reading that ignores the root listing differs where the root lists it" instruction:nested differs "for the working directory only"
+cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
+
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

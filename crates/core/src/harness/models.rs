@@ -5,9 +5,12 @@
 //! only decides *what* the alias means there.
 //!
 //! A tier is a pin, never a synonym for inherit: an agent that wants the
-//! session's model says `inherit`. Only Pi reads the heavy tiers as
-//! inherit, because Pi has no alias for a Claude tier and a pinned id
-//! there would name one provider's model for every session.
+//! session's model says `inherit`. Two harnesses are the exception. Pi
+//! reads the heavy tiers as inherit, because Pi has no alias for a Claude
+//! tier and a pinned id there would name one provider's model for every
+//! session. Copilot reads every tier as inherit, because its agent file's
+//! model outranks the `--model` a launch passes, so any id written there,
+//! `auto` included, replaces the model the operator chose for the session.
 
 use crate::model::HarnessId;
 
@@ -113,10 +116,11 @@ pub fn resolve_model(harness: HarnessId, model: &str) -> ResolvedModel {
             // names are a generation behind (matrix §4, §D2).
             (HarnessId::Gemini, "fable" | "opus") => resolved(Some("gemini-3-pro-preview")),
             (HarnessId::Gemini, _) => resolved(Some("gemini-3-flash-preview")),
-            // Copilot's model list moves monthly and is gated by plan, org
-            // policy, and a per-repo allowlist, so kendex pins nothing and
-            // lets Copilot choose (matrix §4, §D12).
-            (HarnessId::Copilot, _) => resolved(Some("auto")),
+            // A Copilot agent file's model outranks the launch's `--model`,
+            // and the catalogue behind it moves monthly and is gated by
+            // plan, org policy and a per-repo allowlist, so a tier leaves
+            // the key out and the session's model runs the agent (D008).
+            (HarnessId::Copilot, _) => resolved(None),
             // Antigravity's frontmatter takes its own two tiers and inherit.
             (HarnessId::Antigravity, "fable" | "opus") => resolved(Some("pro")),
             (HarnessId::Antigravity, _) => resolved(Some("flash")),
@@ -189,12 +193,10 @@ mod tests {
             resolve_model(HarnessId::Gemini, "haiku").id.as_deref(),
             Some("gemini-3-flash-preview")
         );
-        // Every Copilot tier lands on the same non-answer, on purpose.
+        // Every Copilot tier inherits the session's model: an id there would
+        // outrank the model the launch chose.
         for tier in ["fable", "opus", "sonnet", "haiku"] {
-            assert_eq!(
-                resolve_model(HarnessId::Copilot, tier).id.as_deref(),
-                Some("auto")
-            );
+            assert_eq!(resolve_model(HarnessId::Copilot, tier).id, None);
         }
         assert_eq!(
             resolve_model(HarnessId::Copilot, "claude-sonnet-4.6")

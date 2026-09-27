@@ -26,7 +26,8 @@ unset SECOND_OPINION_MODELS SECOND_OPINION_COUNT SECOND_OPINION_TARGET \
       SECOND_OPINION_CURRENT_MODEL SECOND_OPINION_CLAUDE_CMD \
       SECOND_OPINION_CODEX_CMD SECOND_OPINION_CLAUDE_MODEL \
       SECOND_OPINION_CODEX_MODEL SECOND_OPINION_MY_MODEL_CMD \
-      SECOND_OPINION_MY_MODEL_MODEL SECOND_OPINION_REVIEW_TARGETS \
+      SECOND_OPINION_MY_MODEL_MODEL SECOND_OPINION_COPILOT_CMD \
+      SECOND_OPINION_COPILOT_MODEL SECOND_OPINION_REVIEW_TARGETS \
       SECOND_OPINION_ARTIFACT_DIR SECOND_OPINION_TIMEOUT \
       SECOND_OPINION_FOREGROUND_CAP SECOND_OPINION_REVIEW_INSTRUCTIONS
 
@@ -357,6 +358,7 @@ err_word() {
     ns:*) printf '→ skipping %s: same configuration namespace (SECOND_OPINION_%s_CMD) as an earlier entry' "$a" "$b" ;;
     selected:*) printf '→ skipping %s: model %s already selected' "$a" "$b" ;;
     nocli:*) printf '→ skipping %s: CLI not found — install it or configure SECOND_OPINION_%s_CMD' "$a" "$b" ;;
+    target-undeclared:*) printf '→ skipping %s: model undeclared — %s fronts a selectable model; set SECOND_OPINION_%s_MODEL to the model id it runs' "$a" "$a" "$b" ;;
     roster-empty) printf '→ skipping roster: SECOND_OPINION_MODELS is set but empty — no targets to consider' ;;
     shortfall:*) printf '→ requested %s opinions, selected %s — the roster has no further eligible model (coverage degraded)' "$a" "$b" ;;
     count-invalid) printf 'Error: SECOND_OPINION_COUNT must be a positive integer' ;;

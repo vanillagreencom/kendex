@@ -118,9 +118,13 @@ fn an_agent_installs_with_copilots_double_extension_and_toggles_by_rename() {
     let file = f.project.join(".github/agents/rust.agent.md");
     let text = fs::read_to_string(&file).unwrap();
     assert!(text.starts_with("---\nname: rust\ndescription: \"Rust engineer\"\n"));
-    // Which models a user can reach depends on their plan and their
-    // organization, so kendex pins none of them.
-    assert!(text.contains("model: auto\n"), "{text}");
+    // The agent file's model outranks the launch's, so a tier writes none,
+    // and a subagent reads the repository's rules only when asked to.
+    assert!(!text.contains("model:"), "{text}");
+    assert!(
+        text.contains("\ninclude-custom-instructions: true\n"),
+        "{text}"
+    );
     assert!(text.contains("Use the grep tool."), "{text}");
     assert!(is_clean(&f));
 

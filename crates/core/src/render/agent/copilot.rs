@@ -11,9 +11,12 @@ use crate::render::{RenderWarning, yaml_quoted, yaml_scalar};
 /// ([custom agents configuration](https://docs.github.com/en/copilot/reference/custom-agents-configuration),
 /// matrix §2).
 ///
-/// A model is written only when one was asked for: Copilot inherits its
-/// default when the key is absent, and its own list moves monthly and is
-/// gated by plan, org policy and a per-repository allowlist (matrix §4).
+/// A model is written only for an explicit id: the agent file's model
+/// outranks the launch's `--model`, so a tier or `inherit` leaves the key
+/// out and the session's model runs the agent (D008). Every agent carries
+/// `include-custom-instructions: true`, because a custom agent Copilot
+/// starts as a subagent reads no AGENTS.md or CLAUDE.md without it, and
+/// every kendex agent works under its repository's rules.
 pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     let source = agent.source;
     let mut warnings = Vec::new();
@@ -25,6 +28,7 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
 
     push(format!("name: {}", yaml_scalar(&source.name)));
     push(format!("description: {}", yaml_quoted(&source.description)));
+    push("include-custom-instructions: true".to_owned());
     let model = agent.overrides.model.as_deref().unwrap_or(&source.model);
     let resolved = resolve_model(HarnessId::Copilot, model);
     warnings.extend(resolved.warning.map(RenderWarning::new));
@@ -126,16 +130,21 @@ mod tests {
         }
     }
 
-    /// Every tier lands on `auto` on purpose: which models a user can reach
-    /// depends on their plan and their organization, not on kendex.
+    /// A tier writes no model: the agent file's model would outrank the one
+    /// the launch chose. The repository's rules reach the agent as a
+    /// subagent only through `include-custom-instructions`.
     #[test]
-    fn frontmatter_names_the_agent_and_leaves_the_model_to_copilot() {
+    fn frontmatter_names_the_agent_and_leaves_the_model_to_the_session() {
         let source = engineer();
         let scope = Scope::Project { root: "/p".into() };
         let rendered = generate(&effective(&source, &scope, vec![]));
-        assert!(rendered.text.starts_with(
-            "---\nname: rust\ndescription: \"Rust \\\"systems\\\" engineer\"\nmodel: auto\n---\n"
-        ));
+        assert!(
+            rendered.text.starts_with(
+                "---\nname: rust\ndescription: \"Rust \\\"systems\\\" engineer\"\ninclude-custom-instructions: true\n---\n"
+            ),
+            "{}",
+            rendered.text
+        );
         assert!(
             rendered.text.contains("Use the grep tool."),
             "{}",
@@ -145,12 +154,15 @@ mod tests {
     }
 
     #[test]
-    fn an_inherited_model_leaves_the_key_out_entirely() {
+    fn an_inherited_model_leaves_the_key_out_and_an_explicit_id_is_written() {
         let mut source = engineer();
         source.model = "inherit".into();
         let scope = Scope::Global;
         let text = generate(&effective(&source, &scope, vec![])).text;
         assert!(!text.contains("model:"), "{text}");
+        source.model = "claude-sonnet-5".into();
+        let pinned = generate(&effective(&source, &scope, vec![])).text;
+        assert!(pinned.contains("\nmodel: claude-sonnet-5\n"), "{pinned}");
         assert!(text.contains("- dev: ~/.agents/skills/dev/SKILL.md"));
     }
 
@@ -206,7 +218,8 @@ mod tests {
             agents: HookAgents::One("all".into()),
         };
         let text = generate(&effective(&source, &scope, vec![&hook])).text;
-        assert_eq!(text.lines().filter(|l| l.starts_with("model:")).count(), 1);
+        // A tier writes no model line, so any line here came from the name.
+        assert_eq!(text.lines().filter(|l| l.starts_with("model:")).count(), 0);
         assert!(text.contains("description: \"line one\\nmodel: opus\""));
         // The matcher is said in this harness's own tool name, not
         // Claude's — the model has never heard of `Bash`.

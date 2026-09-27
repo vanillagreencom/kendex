@@ -35,7 +35,7 @@ An agent's `model` and `effort` reach each harness under that harness's own key 
 | OpenCode | `provider/model`; an omitted key inherits | `options.reasoningEffort` | `minimal`, `low`, `medium`, `high`, `xhigh` | the provider's default |
 | Pi | `provider/model`, optionally `:level`; an omitted key inherits | `effort` | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Pi's `defaultThinkingLevel` |
 | Gemini CLI | bare `gemini-*` id or `inherit`; tiers map to the 3.x previews | none | — | — |
-| GitHub Copilot | bare id from Copilot's own list; every tier is `auto`; an omitted key inherits | none | — | — |
+| GitHub Copilot | bare id from Copilot's own list; every tier and `inherit` omit the key, which the agent file's model would otherwise outrank the launch's with ([D008](../decisions/D008-copilot-agent-model.md)) | `reasoningEffort`, never written | — | not yet measured |
 | Cursor | none | none | — | — |
 | Antigravity | its own tiers: `inherit`, `flash`, `pro`; opus and fable are `pro`, sonnet and haiku `flash` | none | — | — |
 

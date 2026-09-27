@@ -58,8 +58,37 @@ a padded session identity resolves instead of refusing as unspelled|current:_cod
 an explicitly empty roster refuses instead of defaulting|models:|review|1|-|roster-empty refused:none:1|$NONE
 control: an unset roster takes the default roster|models:-|review|0|<out>|single:claude:review:none written|calls=claude:1,codex:0,extra:0 art=external-claude/$OWN files=out
 an all-unavailable roster names availability, not identity, as its cause|cmd:claude=missing cmd:codex=missing|review|1|-|nocli:codex:CODEX nocli:claude:CLAUDE refused:none:2 availability|$NONE
+copilot with no declared model has no identity and is skipped, whatever its command: a different harness is not a different model|models:copilot+codex cmd:copilot=extra|review|0|<out>|target-undeclared:copilot:COPILOT single:codex:review:none written|calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out
+control: copilot declared on an OpenAI model is taken from a Claude session|current:claude models:copilot+claude cmd:copilot=extra model:copilot=gpt-5.5|review|0|<out>|single:copilot:review:claude written|calls=claude:0,codex:0,extra:1 art=external-copilot/$OWN files=out
+copilot declared on the session's own model is excluded as that model|current:codex models:copilot+claude cmd:copilot=extra model:copilot=gpt-5.5|review|0|<out>|same:copilot:codex single:claude:review:codex written|calls=claude:1,codex:0,extra:0 art=external-claude/$OWN files=out
 mixed causes: both skip reasons stand with no availability verdict on top|current:claude models:claude+codex cmd:codex=missing|review|1|-|same:claude:claude nocli:codex:CODEX refused:claude:2|$NONE
 "
 
 run_table "target selection" "$DEFAULTS" "$ROWS"
+
+# copilot's built-in command runs the model its identity is read from, at the
+# effort of the built-in command for that identity. The stand-in records its
+# argv and answers as a lane does; a Claude model id gets claude's effort, an
+# OpenAI one codex's, any other none.
+echo "=== copilot's built-in command carries its declared model ==="
+copilot_argv() { # MODEL — the argv the built-in copilot command ran with
+  # shellcheck disable=SC2086 # DEFAULTS is a word list
+  build "copilot-$1" $DEFAULTS current:none models:copilot "model:copilot=$1"
+  cat >"$ROW/bin/copilot" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >"$ROW/argv-copilot"
+exec "$ROW/bin/lane-extra"
+SH
+  chmod +x "$ROW/bin/copilot"
+  run review >/dev/null
+  cat "$ROW/argv-copilot" 2>/dev/null || printf 'never ran'
+}
+COPILOT_BASE="-s --no-auto-update --no-ask-user --allow-all-tools --deny-tool=write"
+while IFS='|' read -r model want; do
+  assert_eq "$(copilot_argv "$model")" "$COPILOT_BASE --model $model$want" "copilot on $model runs --model $model${want:- with no effort}"
+done <<'ROWS_EOF'
+claude-opus-5| --reasoning-effort max
+gpt-5.5| --reasoning-effort xhigh
+gemini-3.8-flash|
+ROWS_EOF
 finish

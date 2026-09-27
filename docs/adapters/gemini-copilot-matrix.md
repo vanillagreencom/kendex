@@ -159,7 +159,7 @@ Documented values for `--model` / `COPILOT_MODEL` / the `model` settings key:
 
 The platform-wide catalog is much larger — Claude Fable 5, Claude Opus 5, Claude Sonnet 5, Claude Opus 4.7/4.8, GPT-5.5, GPT-5.6 Luna/Sol/Terra, Kimi K3, Grok 4.5, and others ([supported models](https://docs.github.com/en/copilot/reference/ai-models/supported-models)) — but the CLI's own `--model` table does not list them, and availability is plan- and policy-dependent. A repository can further restrict IDs with a glob allowlist at `.github/allowed_models.txt` (the official example uses `gpt-5.2`, `gpt-5.4`, `claude-sonnet-*` and a required `fallback:` line).
 
-**Recommendation:** do not ship a hardcoded Copilot tier map. Emit `auto` when no tier is given, pass an explicit user-set string through unchanged, and surface the model as free text rather than a validated enum. Copilot's model list moves monthly and is gated by subscription, org policy, and `allowed_models.txt`.
+**Recommendation:** do not ship a hardcoded Copilot tier map. Emit `auto` when no tier is given, pass an explicit user-set string through unchanged, and surface the model as free text rather than a validated enum. Copilot's model list moves monthly and is gated by subscription, org policy, and `allowed_models.txt`. [D008](../decisions/D008-copilot-agent-model.md) replaces the `auto` half: a tier now omits the key, because the agent file's model outranks the launch's `--model`.
 
 ---
 

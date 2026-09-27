@@ -5,7 +5,7 @@
 # Claude one, and the model of a detected single-model harness beats any
 # declaration: an agreeing one changes nothing, a contradicting one is refused
 # naming both values and where it was declared. Where detection cannot
-# arbitrate (Pi, Cursor, no harness at all) the declaration is the only
+# arbitrate (Pi, Cursor, Copilot, no harness at all) the declaration is the only
 # identity, and only a value exported in the session's own environment counts:
 # a project settings file is refused naming the file that supplied it, a key
 # the loader never reads declares nothing, a set-but-empty export takes the
@@ -38,6 +38,8 @@ the Claude marker alone identifies a claude session when the tree shows no harne
 an undeclared Pi session refuses: no CLI, no artifact, the setting named, no force hint|ps:pi models:codex+claude|review|1|-|undeclared:pi refused:undeclared:1|$NONE
 control: the declared Pi-on-claude session gets codex|ps:pi current:claude|review|0|<out>|$CLAUDE_SESSION
 an undeclared Cursor session refuses the same way; cursor-agent is the harness's own name|ps:cursor-agent|review|1|-|undeclared:cursor refused:undeclared:1|$NONE
+an undeclared Copilot session refuses the same way: copilot fronts a selectable model|ps:copilot|review|1|-|undeclared:copilot refused:undeclared:1|$NONE
+control: a Copilot session declared on a Claude model id gets codex|ps:copilot current:claude-opus-5|review|0|<out>|$CLAUDE_SESSION
 a forced target under an undeclared session is refused for the identity, with no force hint|ps:pi target:codex|review|1|-|undeclared:pi refused:undeclared:1|$NONE
 the innermost harness wins over an inherited CLAUDECODE|ps:codex marker:CLAUDECODE=1 models:codex+claude|review|0|<out>|$CODEX_SESSION
 a detected identity the roster does not name excludes nothing|ps:claude models:codex|review|0|<out>|single:codex:review:claude written|calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out

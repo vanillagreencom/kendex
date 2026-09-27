@@ -8,7 +8,7 @@ Code review and consultation through another AI CLI. It lets a project request a
 kendex add vanillagreencom/kendex --skill second-opinion
 ```
 
-Requires jq, perl and a logged-in external CLI, claude or codex. kendex also installs github, which carries the shared helper that starts each CLI in its own process group.
+Requires jq, perl and a logged-in external CLI: claude, codex or copilot. kendex also installs github, which carries the shared helper that starts each CLI in its own process group.
 
 ## Features
 
@@ -23,10 +23,11 @@ You select a review, audit, challenge or question. The script identifies the cur
 
 ## Settings
 
-Set shared values in `kendex.settings.toml` under `[env]` and personal overrides in `.env.local`; nothing is marked required, so an install writes no settings. Every key, its default and the built-in `claude` and `codex` command lines: `second-opinion --help`. The ones most projects touch:
+Set shared values in `kendex.settings.toml` under `[env]` and personal overrides in `.env.local`; nothing is marked required, so an install writes no settings. Every key, its default and the built-in `claude`, `codex` and `copilot` command lines: `second-opinion --help`. The ones most projects touch:
 
 - `SECOND_OPINION_MODELS`: the priority-ordered roster, default `claude codex`.
 - `SECOND_OPINION_COUNT`: opinions a `review` collects, default `1`.
 - `SECOND_OPINION_<NAME>_CMD`: the full command a roster entry runs; another model CLI is a settings entry, not new code. Keep the sandbox read-only so a second opinion can never write to your worktree.
 - `SECOND_OPINION_TIMEOUT`: seconds per CLI invocation, default `1080`.
-- `SECOND_OPINION_CURRENT_MODEL`: the session model, required in Pi, OpenCode, Cursor or an undetected shell; never store it in a project file.
+- `SECOND_OPINION_COPILOT_MODEL`: the Copilot model id the `copilot` entry runs, such as `gpt-5.5`. Copilot CLI fronts several vendors, so the entry is skipped until this names one.
+- `SECOND_OPINION_CURRENT_MODEL`: the session model, required in Pi, OpenCode, Cursor, Copilot or an undetected shell; never store it in a project file.

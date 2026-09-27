@@ -12,8 +12,9 @@
 #   SECOND_OPINION_MODELS        Priority-ordered target roster (default: "claude codex")
 #   SECOND_OPINION_COUNT         Opinions to collect in review mode (default: 1)
 #   SECOND_OPINION_CURRENT_MODEL Declared model identity of THIS session (overrides detection)
-#   SECOND_OPINION_<NAME>_MODEL  Declared model identity of target <NAME> (default: <NAME>)
-#   SECOND_OPINION_<NAME>_CMD    Full command for target <NAME> (claude/codex have defaults)
+#   SECOND_OPINION_<NAME>_MODEL  Declared model identity of target <NAME> (default: <NAME>;
+#                                copilot has none and is skipped until it is set)
+#   SECOND_OPINION_<NAME>_CMD    Full command for target <NAME> (claude/codex/copilot have defaults)
 #   SECOND_OPINION_TARGET        Force one target (still subject to self-exclusion)
 #   SECOND_OPINION_TIMEOUT       Timeout in seconds (default: 1080)
 #   SECOND_OPINION_FOREGROUND_CAP  Set to 1 instead of passing --foreground
@@ -114,7 +115,8 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              outranks it: an agreeing declaration is not used,
                              a contradicting one is refused naming both values
                              and where the declaration came from. Required in
-                             a multi-model front end (Pi, OpenCode, Cursor) or
+                             a multi-model front end (Pi, OpenCode, Cursor,
+                             Copilot) or
                              an undetected shell — refused until set; "none" =
                              no session model. Model ids normalize, provider
                              prefix included (opus, anthropic/claude-* ->
@@ -127,10 +129,15 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              session in the repo, so a value from one is not a
                              declaration for any of them and is refused
   SECOND_OPINION_<NAME>_MODEL
-                             Model identity of target <NAME> (default: <NAME>)
+                             Model identity of target <NAME> (default: <NAME>).
+                             copilot has no default: Copilot CLI fronts a
+                             selectable model, so the target is skipped until
+                             SECOND_OPINION_COPILOT_MODEL names the Copilot
+                             model id it runs, which its default command
+                             passes as --model and its identity is read from
   SECOND_OPINION_<NAME>_CMD  Full command for target <NAME> (name uppercased,
-                             hyphens become underscores); claude and codex
-                             have defaults (below)
+                             hyphens become underscores); claude, codex and
+                             copilot have defaults (below)
   SECOND_OPINION_TARGET      Force one target; still subject to self-exclusion
   SECOND_OPINION_TIMEOUT     Timeout in seconds (default: 1080), per
                              invocation: review/audit's one retry on a
@@ -198,6 +205,13 @@ Default commands:
             --allowedTools Bash(read-only:true),Read,Glob,Grep
   codex:  codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh
             --ephemeral
+  copilot: copilot -s --no-auto-update --no-ask-user --allow-all-tools
+            --deny-tool=write --model <SECOND_OPINION_COPILOT_MODEL>
+            [--reasoning-effort max|xhigh]
+           The effort is the claude or codex default's, by the identity the
+           model id reads as, and none for any other. --deny-tool=write
+           refuses Copilot's file-writing tools; its shell tool is not
+           restricted to reads, where claude's and codex's are.
 
 Output clearing and ownership:
   No exit leaves a previous run's output behind. Every mode that writes
@@ -704,7 +718,8 @@ detect_current_harness() {
   # itself, making every plain shell in its integrated terminal a multi-model
   # harness that refuses until an identity is declared, and `codex*`/`claude*`
   # claim any wrapper script or monitor that happens to share the prefix. The
-  # Cursor agent's own binary is `cursor-agent`.
+  # Cursor agent's own binary is `cursor-agent`; Copilot CLI's native binary,
+  # the one its npm loader starts, is `copilot`.
   #
   # Exact matching makes the padding some `ps` implementations add (macOS among
   # them) load-bearing, so the name is trimmed before it is compared: untrimmed,
@@ -719,6 +734,7 @@ detect_current_harness() {
     case "$ancestor_cmd" in
       claude)       echo "claude"; return ;;
       codex)        echo "codex"; return ;;
+      copilot)      echo "copilot"; return ;;
       pi)           echo "pi"; return ;;
       opencode)     echo "opencode"; return ;;
       cursor-agent) echo "cursor"; return ;;
@@ -753,8 +769,8 @@ detect_current_harness() {
 }
 
 # --- Model identity -----------------------------------------------------------
-# The guarantee is cross-MODEL, and a CLI is not a model: Pi, OpenCode and
-# Cursor front whichever model the session selected, and a session cannot be
+# The guarantee is cross-MODEL, and a CLI is not a model: Pi, OpenCode, Cursor
+# and Copilot front whichever model the session selected, and a session cannot be
 # probed for it from outside. Identity is therefore DECLARED and compared: the
 # current session's identity is SECOND_OPINION_CURRENT_MODEL when set, else the
 # model the detected harness is known to run (claude, codex). Anything else —
@@ -829,7 +845,7 @@ resolve_current_model() {
     [[ -z "$declared" || "$declared" == "$harness_model" ]] || CURRENT_MODEL_CONFLICT="$declared"
     return
   fi
-  # Detection cannot arbitrate (Pi, OpenCode, Cursor, undetected): the
+  # Detection cannot arbitrate (Pi, OpenCode, Cursor, Copilot, undetected): the
   # declaration is the only identity available, and this is the one place its
   # SOURCE still decides anything — a project file is read by every session in
   # the repo, so only a caller-scoped value is a statement about this one.
@@ -916,21 +932,46 @@ target_var() {
 target_cmd_var() { target_var "$1" CMD; }
 
 # Declared model identity of a target: SECOND_OPINION_<NAME>_MODEL, else the
-# target's own name.
+# target's own name. copilot is a CLI and not a model: with no declaration it
+# has no identity, and an empty identity is what consider_target skips.
 target_model() {
   local var
   var="$(target_var "$1" MODEL)"
-  if [[ -n "${!var:-}" ]]; then canon_identity "${!var}"; else canon_identity "$1"; fi
+  if [[ -n "${!var:-}" ]]; then
+    canon_identity "${!var}"
+  elif [[ "$1" != copilot ]]; then
+    canon_identity "$1"
+  fi
 }
 
 # --- Pluggable target commands ------------------------------------------------
-# A target is a NAME plus a full command line. claude and codex carry built-in
-# default commands; any other name resolves ONLY through its
+# A target is a NAME plus a full command line. claude, codex and copilot carry
+# built-in default commands; any other name resolves ONLY through its
 # SECOND_OPINION_<NAME>_CMD variable, so another local model CLI is a settings
 # entry, not code.
 
-DEFAULT_CLAUDE_CMD="claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
-DEFAULT_CODEX_CMD="codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+DEFAULT_CLAUDE_EFFORT=max
+DEFAULT_CODEX_EFFORT=xhigh
+DEFAULT_CLAUDE_CMD="claude -p --no-session-persistence --model opus --effort $DEFAULT_CLAUDE_EFFORT --allowedTools Bash(read-only:true),Read,Glob,Grep"
+DEFAULT_CODEX_CMD="codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=$DEFAULT_CODEX_EFFORT --ephemeral"
+
+# Copilot's default runs the model SECOND_OPINION_COPILOT_MODEL names, the same
+# value its identity is read from, so the model the guard compares is the model
+# the command runs. The prompt arrives on stdin, which `copilot --help` names
+# beside -p as a prompt source; -s prints the answer alone, and
+# --allow-all-tools is what a run with no terminal to approve in requires.
+# Empty when the model is undeclared.
+default_copilot_cmd() {
+  local model effort=""
+  kendex_trim model "${SECOND_OPINION_COPILOT_MODEL:-}"
+  [[ -n "$model" ]] || return 0
+  case "$(canon_identity "$model")" in
+    claude) effort="$DEFAULT_CLAUDE_EFFORT" ;;
+    codex)  effort="$DEFAULT_CODEX_EFFORT" ;;
+  esac
+  printf 'copilot -s --no-auto-update --no-ask-user --allow-all-tools --deny-tool=write --model %s%s' \
+    "$model" "${effort:+ --reasoning-effort $effort}"
+}
 
 # Full command line for a target: its env override, else the built-in default.
 # Empty output = unconfigured target.
@@ -942,8 +983,9 @@ target_cmd() {
     return
   fi
   case "$target" in
-    claude) printf '%s' "$DEFAULT_CLAUDE_CMD" ;;
-    codex)  printf '%s' "$DEFAULT_CODEX_CMD" ;;
+    claude)  printf '%s' "$DEFAULT_CLAUDE_CMD" ;;
+    codex)   printf '%s' "$DEFAULT_CODEX_CMD" ;;
+    copilot) default_copilot_cmd ;;
   esac
 }
 
@@ -1033,6 +1075,12 @@ consider_target() {
   done
   SEEN_NAMESPACES+=("$ns")
   model="$(target_model "$t")"
+  if [[ -z "$model" ]]; then
+    # Undeclared, so it cannot be compared with this session's model. A
+    # different harness is not a different model.
+    skip_target "$t" "model undeclared — $t fronts a selectable model; set $(target_var "$t" MODEL) to the model id it runs"
+    return 1
+  fi
   if [[ "$model" == "$CURRENT_MODEL" ]]; then
     SKIPPED_SAME_MODEL=true
     skip_target "$t" "runs the same model as this session ($model) — a second opinion must be cross-model"

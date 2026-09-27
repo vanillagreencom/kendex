@@ -69,7 +69,7 @@ Execute workflow sections in order; a "**Skip if**" condition is the workflow's 
 
 **Acceptance is that artifact plus git state, never your message.** Write the artifact, then return exactly once over the harness's agent-to-agent channel; a disk write is not a return. Send the `**Return exactly**` body once and go idle.
 
-- The channel is Claude Code `SendMessage`, Codex `send_input`, OpenCode a resume on the stored `task_id`, Pi background the final assistant message.
+- The channel is Claude Code `SendMessage`, Codex `send_input`, OpenCode a resume on the stored `task_id`, Pi background the final assistant message. Copilot CLI's channel is not yet measured, so this contract names none for it.
 - In a Pi persistent pane, follow the return with `complete_subagent`; background agents must not call it.
 - On Codex the `send_input` MESSAGE is the durable return, and the runtime's `FINAL_ANSWER` echo of it is expected, not a separate return to author or expand.
 

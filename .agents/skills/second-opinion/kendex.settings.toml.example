@@ -8,7 +8,7 @@
 # session runs. Full semantics: second-opinion SKILL.md.
 
 # Priority-ordered roster, space/comma separated. Per entry:
-# SECOND_OPINION_<NAME>_CMD (claude and codex have defaults) and
+# SECOND_OPINION_<NAME>_CMD (claude, codex and copilot have defaults) and
 # SECOND_OPINION_<NAME>_MODEL (identity, when the CLI fronts another model).
 SECOND_OPINION_MODELS = "claude codex"
 
@@ -16,7 +16,7 @@ SECOND_OPINION_MODELS = "claude codex"
 SECOND_OPINION_COUNT = "1"
 
 # The model THIS session runs — needed only where the harness cannot be
-# detected (Pi, OpenCode, Cursor, plain shells); "none" = no session model.
+# detected (Pi, OpenCode, Cursor, Copilot, plain shells); "none" = no session model.
 # SESSION-SCOPED: leave it commented here and export it in the session — a
 # project-file value describes no single session and is refused.
 # SECOND_OPINION_CURRENT_MODEL = "claude"
@@ -26,6 +26,10 @@ SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --e
 
 # Roster command for the codex identity.
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+
+# The Copilot model id the copilot entry runs; its built-in command passes
+# it as --model and its identity is read from it. Unset, copilot is skipped.
+# SECOND_OPINION_COPILOT_MODEL = "gpt-5.5"
 
 # Example extra roster entry: add "pi-deepseek" to SECOND_OPINION_MODELS,
 # give it a command, declare the model it fronts.

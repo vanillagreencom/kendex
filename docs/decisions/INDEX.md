@@ -9,6 +9,7 @@
 | 2026-09-25 | D005 | — | Measure a trash entry once; one size record inside the trash | Entries never change after landing; the walk showed in apply latency | The listing dominates the pass, or an entry gains a writer | Active | [Full](D005-trash-size-record.md) |
 | 2026-09-26 | D006 | — | kendex's own private keys show on every package page with settings | kendex has no page; one key, one line, one answer | A second kendex key, reported noise, or a project-wide settings page | Active | [Full](D006-kendex-own-private-keys.md) |
 | 2026-09-26 | D007 | — | The install record is recorded on main after each merge, through one rolling pull request | Two branches re-recording one package conflict at every merge ahead of them | The rolling pull request stalls at the review gate, or a queue-protected branch admits a workflow commit | Active | [Full](D007-lock-record-on-main.md) |
+| 2026-09-27 | D008 | — | A Copilot agent names no model for a tier and carries the repository's rules | An agent file's model outranks the model the launch chose | Copilot ranks --model above the agent file, or effort is measured | Active | [Full](D008-copilot-agent-model.md) |
 
 ---
 
