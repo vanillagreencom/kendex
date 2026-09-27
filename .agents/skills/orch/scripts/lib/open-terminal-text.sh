@@ -204,12 +204,14 @@ Options:
                     covers is used as given, there being nothing to judge it
                     by. A HOSTED launch is judged on the copy it runs on: the
                     provider's accounts row stands for the account as
-                    `lanes --help` (pick) states, with its
-                    `lanes: pick-local-reading` line naming the one case where
-                    this machine's reading decides; `auto` chooses among the
-                    rows so resolved, and a dir the provider reports with a
-                    reading is judged even where lane discovery does not reach
-                    it. THE WALL BINDS EVERY LAUNCH SHAPE, a hosted
+                    `lanes --help` (pick) states. A row carrying neither a
+                    status nor a percentage, an absent verb and a failed one
+                    each leave this machine's reading, and a row read
+                    `unreachable` gives way to this machine's fresh reading
+                    under its `lanes: pick-local-reading` line. `auto` chooses
+                    among the rows so resolved, and a dir the provider reports
+                    with a reading is judged even where lane discovery does
+                    not reach it. THE WALL BINDS EVERY LAUNCH SHAPE, a hosted
                     --relaunch included: a usage window belongs to the account,
                     so a window read at the threshold is the window the
                     sandbox meets, and a refused relaunch costs nothing where a
@@ -270,10 +272,11 @@ Options:
                     nothing here reads the secret itself.
                     WHAT THE ANSWER DECIDES. Both --lane forms judge the
                     account on the provider's accounts row as `lanes --help`
-                    (pick) states, with its `lanes: pick-local-reading` line
-                    naming the one case where this machine's reading decides;
-                    an absent verb and a failed one each leave this machine's
-                    reading. A window so
+                    (pick) states. A row carrying neither a status nor a
+                    percentage, an absent verb and a failed one each leave
+                    this machine's reading, and a row read `unreachable` gives
+                    way to this machine's fresh reading under its
+                    `lanes: pick-local-reading` line. A window so
                     read walls every launch shape alike, hosted relaunch
                     included — see --lane. Whether the provider holds the
                     account then decides the named lane's UNREADABLE case, and
