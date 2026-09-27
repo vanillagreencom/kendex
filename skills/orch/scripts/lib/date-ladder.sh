@@ -19,9 +19,18 @@ tz_date() {
 # in. Both default to the ISO8601 UTC form, which is what every caller but the
 # reset-banner parser hands it; UTC is load-bearing there, so a `--since` floor
 # is not shifted by the runner's local zone.
+#
+# A stamp naming no instant fails on both arms: a day past its month's length,
+# a clock past 23:59, a leap second, a local clock inside a spring-forward gap.
+# GNU refuses each outright. BSD `date -j -f` is strptime then mktime:
+# strptime bounds a day by 31 whatever the month, and mktime normalizes what
+# it let through, so `2099-02-30` reads as March 2 with a zero status. The BSD
+# arm therefore keeps an epoch only when it renders back, in FMT and ZONE, as
+# the stamp it was read from; a normalized one renders as the day or hour it
+# moved to.
 to_epoch() {
   local stamp="$1" fmt="${2:-%Y-%m-%dT%H:%M:%SZ}" zone="${3-UTC}"
-  local bsd_stamp="$stamp" bsd_fmt="$fmt"
+  local bsd_stamp="$stamp" bsd_fmt="$fmt" epoch
   # BSD `date -j -f` takes every field its format does not name from the
   # CURRENT time, so a format without %S resolves to this minute's seconds
   # instead of to :00 — a clock read seconds late, and a different answer on
@@ -34,8 +43,10 @@ to_epoch() {
       bsd_fmt="$bsd_fmt:%S"
       ;;
   esac
-  tz_date "$zone" -d "$stamp" +%s 2>/dev/null \
-    || tz_date "$zone" -j -f "$bsd_fmt" "$bsd_stamp" +%s 2>/dev/null
+  if tz_date "$zone" -d "$stamp" +%s 2>/dev/null; then return 0; fi
+  epoch="$(tz_date "$zone" -j -f "$bsd_fmt" "$bsd_stamp" +%s 2>/dev/null)" || return 1
+  [[ "$(from_epoch "$epoch" "$bsd_fmt" "$zone")" == "$bsd_stamp" ]] || return 1
+  printf '%s\n' "$epoch"
 }
 
 # The other direction on the same ladder: GNU spells an epoch input `-d @`,

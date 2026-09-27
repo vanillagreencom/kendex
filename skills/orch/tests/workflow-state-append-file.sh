@@ -139,7 +139,7 @@ got="$("$WS" --state-dir "$fl_sd" get oversee '.fleet_log | length')"
 # is judged by the date ladder alone, which refuses it as future on a host
 # whose `date` takes -d and stores it on one whose does not: the same record,
 # two answers, neither caller able to act on the pair. The last row is the
-# round trip's rather than the regex's, and its BSD-arm row is below.
+# date ladder's rather than the regex's, and its BSD-arm row is below.
 while IFS='|' read -r fl_value fl_label; do
   printf '{"at":"%s","kind":"ruling","item":"KEN-4","text":"shape"}\n' "$fl_value" > "$TMP_ROOT/fl-shape.json"
   rc=0
@@ -220,9 +220,9 @@ got="$("$WS" --state-dir "$TMP_ROOT/mutant-cap" get oversee '.fleet_log | length
 [[ "$got" == "1" ]] && pass "control: without the cap comparison the over-cap row is stored" \
   || fail "control: without the cap comparison the over-cap row is stored" "got=$got"
 
-# The instant is judged by a round trip through the epoch, not by whether the
-# date ladder read the string at all, because the ladder's two arms disagree
-# on exactly that. The rows below need the BSD arm's answer, and which side
+# The instant is judged by the date ladder, whose BSD arm reads a date that
+# names no day as the day it normalizes to unless the ladder round-trips it.
+# The rows below need the BSD arm's answer, and which side
 # of the split this host sits on decides where it comes from. A `date` with
 # no -d already IS that arm, so the rows run straight against it. A `date`
 # with -d is the GNU arm, and only there is a stub built to the BSD contract
@@ -281,20 +281,21 @@ chmod +x "$BSD_BIN/date"
 BSD_PATH="$BSD_BIN:$PATH"
 fi
 
-# Whichever of the two the host gave, it is read the way the ladder reads it
-# before any row leans on it: the shipped `to_epoch` under this PATH must
+# Whichever of the two the host gave, it is read the way the ladder's BSD arm
+# calls it before any row leans on it: `date -j -f` under this PATH must
 # return the epoch of the normalized day, which is what a macOS runner
 # returns. The row is unconditional, so on a macOS runner it pins the real
-# implementation and on a Linux one it pins the stub against it.
-bsd_epoch="$(PATH="$BSD_PATH" bash -c \
-  'source "$1"; to_epoch 2020-02-30T00:00:00Z' _ "$REPO_ROOT/skills/orch/scripts/lib/date-ladder.sh")" || bsd_epoch=""
+# implementation and on a Linux one it pins the stub against it; either way
+# the refusal below is the ladder's, not the `date` it runs.
+bsd_epoch="$(PATH="$BSD_PATH" TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' 2020-02-30T00:00:00Z +%s)" \
+  || bsd_epoch=""
 [[ "$bsd_epoch" == "1583020800" ]] \
   && pass "the BSD date arm this host offers normalizes 2020-02-30 rather than refusing it" \
   || fail "the BSD date arm this host offers normalizes 2020-02-30 rather than refusing it" "got=$bsd_epoch"
 
-# On that arm the shape row above passes the ladder, so only the round trip
-# separates a stored record from a refused one. It is refused here as it is
-# on the GNU arm: one answer on both implementations.
+# On that arm the shape row above passes the regex and `date` alike, so only
+# the ladder's round trip separates a stored record from a refused one. It is
+# refused here as it is on the GNU arm: one answer on both implementations.
 printf '{"at":"2020-02-30T00:00:00Z","kind":"ruling","item":"KEN-6","text":"nonday"}\n' \
   > "$TMP_ROOT/fl-nonday.json"
 bsd_sd="$TMP_ROOT/bsd-state"

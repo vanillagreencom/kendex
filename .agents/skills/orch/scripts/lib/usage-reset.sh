@@ -105,7 +105,7 @@ usage_reset_key() {
   [[ -n "$min" || -n "$meridiem" ]] || return 0
   # 12-hour to 24-hour; a clock with no meridiem is already a 24-hour one, as
   # it is for the sibling parser. Nothing range-checks the result: every clock
-  # is handed to `date` on resolution, which rejects an impossible one, and a
+  # is handed to `to_epoch` on resolution, which rejects an impossible one, and a
   # rejected candidate leaves the event without a time — the same answer a
   # range check would give, from the one implementation that has to agree with
   # itself.
@@ -141,9 +141,9 @@ usage_reset_key() {
 # one. In a fall-back hour a local clock names TWO, and `date` resolves the
 # string to a single fold — the prior, on GNU — so the second is reachable
 # only by asking whether an hour later reads back as the same wall clock. In a
-# spring-forward gap the clock names none and `date` shifts it forward; that
-# answer is kept, since a banner cannot name a time its own harness could not
-# have drawn.
+# spring-forward gap the clock names none, `to_epoch` refuses it on both date
+# arms, and the day contributes no instant: a banner cannot name a time its
+# own harness could not have drawn.
 local_instants() {
   local zone="$1" day="$2" stamp="$3" first second
   first="$(to_epoch "$day $stamp" '%Y-%m-%d %H:%M' "$zone")" || return 0

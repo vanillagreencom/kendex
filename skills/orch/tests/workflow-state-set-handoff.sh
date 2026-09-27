@@ -81,8 +81,8 @@ refuses '{"written_at":"2099-01-01T00:00:00Z","branch":"b"}' \
   "a handoff written_at later than the clock is refused as handoff-written-at-future"
 # Every spelling the rule refuses, each its own class, in the order the fleet
 # log suite lists them. Without it the date ladder alone judges them, and its
-# GNU arm reads spellings its BSD arm cannot. The last row is the round
-# trip's rather than the regex's; both fields call one `stamp_judge`, so its
+# GNU arm reads spellings its BSD arm cannot. The last row is the ladder's
+# rather than the regex's; both fields call one `stamp_judge`, so its
 # row under the BSD date stub runs in workflow-state-append-file.sh rather
 # than a second time here.
 while IFS='|' read -r value label; do
