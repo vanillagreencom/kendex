@@ -160,7 +160,7 @@ Ask the review gate's policy owner to classify that range. It calls the shared h
 [MAIN_REPO_ROOT]/.agents/skills/review-gate/scripts/review-policy --event pull_request --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]
 ```
 
-The exact answer `change_class=micro review_evidence=none policy=active` continues. A command failure, an inactive policy, an unresolved class, another class, or another evidence policy escapes (§ Escape condition 7). This route is independent of the repository's `approval` or `review` gate mode because the review gate owns the class exemption. Its [README per-class table](../../review-gate/README.md#class-policy) is the policy statement.
+The accepted set is every class at or below this tier that needs no review evidence under an active policy: `change_class=render`, `change_class=trivial` or `change_class=micro`, each followed by `review_evidence=none policy=active`. Any such answer continues. Every other answer escapes (§ Escape condition 7): a command failure, an inactive policy, an unresolved class, a class above this tier (`small`, `standard`), or another evidence policy. This route is independent of the repository's `approval` or `review` gate mode because the review gate owns the class exemption. Its [README per-class table](../../review-gate/README.md#class-policy) is the policy statement.
 
 Ask the canonical merge gate for its readiness object before any merge attempt:
 
@@ -205,7 +205,7 @@ The tier holds only while the item and its change stay inside it. Each condition
 4. The commit chain refuses the commit over a repository rule. A missing changelog fragment and a rejected commit message are this workflow's own to fix and are not escapes.
 5. `branch-size-check` reports `over`.
 6. A review finding on the pull request needs a change condition 3 or 5 excludes.
-7. § 4 cannot prove both halves of its precheck. Either the review gate does not answer exactly `change_class=micro review_evidence=none policy=active` — an inactive policy, an unresolved class, another class, another evidence policy, or an unreadable result — or `pr-merge --check` returns no valid readiness object for an open pull request.
+7. § 4 cannot prove both halves of its precheck. Either the review gate's answer is outside the accepted set § 4 states, or `pr-merge --check` returns no valid readiness object for an open pull request.
 8. merge-pr.md § 5 step 1 returns to its § 3.2.
 9. merge-pr.md § 5 step 1 refuses: the mode it resolves over the prepared endpoints is not `exempt`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`. The endpoints moved between § 4's classification and that step, by a push or by a retarget that changes the class without moving the head.
 

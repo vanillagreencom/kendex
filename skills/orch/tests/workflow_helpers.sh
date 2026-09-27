@@ -400,9 +400,11 @@ micro_workflow="$SKILL_DIR/workflows/micro.md"
 micro_policy_is_closed() { # micro-doc
   grep -Fq 'env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-view [PR_NUMBER] --json baseRefOid,headRefOid' "$1" &&
     grep -Fq 'review-gate/scripts/review-policy --event pull_request --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]' "$1" &&
-    grep -Fq 'The exact answer `change_class=micro review_evidence=none policy=active` continues.' "$1" &&
+    grep -Fq 'each followed by `review_evidence=none policy=active`. Any such answer continues.' "$1" &&
     grep -Fq 'independent of the repository'"'"'s `approval` or `review` gate mode' "$1" &&
-    grep -Fq 'an inactive policy, an unresolved class, another class, or another evidence policy escapes' "$1" &&
+    grep -Fq 'a command failure, an inactive policy, an unresolved class, a class above this tier (`small`, `standard`), or another evidence policy.' "$1" &&
+    grep -Fq '7. § 4 cannot prove both halves of its precheck. Either the review gate'"'"'s answer is outside the accepted set § 4 states, or' "$1" &&
+    ! grep -Fq 'exactly `change_class=' "$1" &&
     grep -Fq 'Require a valid readiness object for an open pull request.' "$1" &&
     grep -Fq 'binding `[MICRO_ENTRY]` to `true` and `[MICRO_HEAD]` to `[HEAD_SHA]`.' "$1" &&
     grep -Fq '9. merge-pr.md § 5 step 1 refuses: the mode it resolves over the prepared endpoints is not `exempt`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`.' "$1" &&
@@ -416,9 +418,55 @@ else
 fi
 
 assert_doc_mutant_fails micro_policy_is_closed "$micro_workflow" \
-  'The exact answer `change_class=micro review_evidence=none policy=active` continues.' \
-  'Any answer carrying `change_class=micro` continues.' \
+  'each followed by `review_evidence=none policy=active`. Any such answer continues.' \
+  'each followed by `policy=active`. Any such answer continues.' \
   "accepting an unresolved evidence policy"
+
+# The accepted set is stated once, in § 4: the classes at or below the tier
+# whose evidence is none. Condition 7 cites it and restates no class. Each
+# row reads one class against the sentence that opens the set: a class
+# inside it continues the precheck, a class outside it escapes.
+micro_accepted_set() { # micro-doc
+  grep -F 'The accepted set is every class at or below this tier' "$1"
+}
+micro_class_continues() { # FILE CLASS
+  local set_line
+  set_line="$(micro_accepted_set "$1")" || return 1
+  grep -Fq "\`change_class=$2\`" <<<"$set_line"
+}
+micro_class_escapes() { # FILE CLASS
+  local set_line
+  set_line="$(micro_accepted_set "$1")" || return 1
+  ! grep -Fq "\`change_class=$2\`" <<<"$set_line" &&
+    grep -Fq "a class above this tier (\`small\`, \`standard\`)" <<<"$set_line"
+}
+micro_trivial_continues() { micro_class_continues "$1" trivial; }
+micro_small_escapes() { micro_class_escapes "$1" small; }
+
+for class in render trivial micro; do
+  if micro_class_continues "$micro_workflow" "$class"; then
+    pass "micro precheck continues on change_class=$class"
+  else
+    fail "micro precheck must continue on change_class=$class"
+  fi
+done
+for class in small standard; do
+  if micro_class_escapes "$micro_workflow" "$class"; then
+    pass "micro precheck escapes on change_class=$class"
+  else
+    fail "micro precheck must escape on change_class=$class"
+  fi
+done
+
+assert_doc_mutant_fails micro_trivial_continues "$micro_workflow" \
+  '`change_class=render`, `change_class=trivial` or `change_class=micro`' \
+  '`change_class=render` or `change_class=micro`' \
+  "a trivial answer escaping the micro tier"
+
+assert_doc_mutant_fails micro_small_escapes "$micro_workflow" \
+  '`change_class=render`, `change_class=trivial` or `change_class=micro`' \
+  '`change_class=render`, `change_class=trivial`, `change_class=micro` or `change_class=small`' \
+  "a small answer continuing the micro tier"
 
 micro_dirty_transfer_is_owned() { # micro-doc
   local route=""
