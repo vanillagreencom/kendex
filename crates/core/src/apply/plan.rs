@@ -54,8 +54,8 @@ impl ReadCheck {
 ///
 /// A description that names the position its op acts on is kept as the two
 /// halves that position sits between, never as a sentence with the
-/// position written into it. [`PlannedOp::line`] takes the position from
-/// the op, which is the landed one, so a preview and the write it
+/// position written into it. [`PlannedOp::description_parts`] takes the
+/// position from the op, which is the landed one, so a preview and the write it
 /// describes can only ever name one place.
 ///
 /// Two halves rather than a marker inside the sentence: a marker is text,
@@ -102,21 +102,40 @@ pub struct PlannedOp {
     pub op: Op,
 }
 
+/// One part of an op's preview, retaining a landed path's boundary.
+#[derive(Debug)]
+pub enum DescriptionPart<'a> {
+    Text(&'a str),
+    /// The escaped display spelling of the position the op acts on.
+    Path(String),
+}
+
 impl PlannedOp {
-    /// The line a preview draws for this op, with the position it acts on
-    /// filled in.
-    pub fn line(&self) -> String {
+    /// The description and its landed position, kept separate so a
+    /// presenter can preserve the path when it wraps the surrounding text.
+    pub fn description_parts(&self) -> Vec<DescriptionPart<'_>> {
         let Description { opening, closing } = &self.description;
-        let Some(closing) = closing else {
-            return opening.clone();
-        };
-        let Some(at) = self.op.touched().into_iter().next() else {
-            // Every op names at least one path. Without one there is no
-            // position to draw and the halves close over nothing.
-            return format!("{opening}{closing}");
-        };
-        let at = crate::names::shown(&at.display().to_string());
-        format!("{opening}{at}{closing}")
+        let mut parts = vec![DescriptionPart::Text(opening)];
+        if let Some(closing) = closing {
+            if let Some(at) = self.op.touched().into_iter().next() {
+                parts.push(DescriptionPart::Path(crate::names::shown(
+                    &at.display().to_string(),
+                )));
+            }
+            parts.push(DescriptionPart::Text(closing));
+        }
+        parts
+    }
+
+    /// The flat preview and approval-comparison spelling of the same parts.
+    pub fn line(&self) -> String {
+        self.description_parts()
+            .iter()
+            .map(|part| match part {
+                DescriptionPart::Text(text) => *text,
+                DescriptionPart::Path(path) => path.as_str(),
+            })
+            .collect()
     }
 }
 

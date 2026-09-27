@@ -57,7 +57,7 @@ fn git(dir: &Path, args: &[&str]) {
 #[allow(clippy::unwrap_used)]
 fn project(tmp: &tempfile::TempDir) -> PathBuf {
     let home = rooted(tmp);
-    let project = home.join("dev/app");
+    let project = home.join("dev/project with spaces in its directory name");
     // The harness directory is what marks a project for the verbs run in
     // it; git and the manifest alone do not.
     fs::create_dir_all(project.join(".claude")).unwrap();
@@ -91,7 +91,32 @@ fn verify_names_the_shim_and_apply_writes_it() {
     let output = kendex(&home, &project, &["apply", "--plan"]);
     let text = said(&output);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("Write the Claude Code shim"), "{text}");
+    let shim = project.join("CLAUDE.md").display().to_string();
+    assert!(
+        text.lines().any(|line| line
+            == format!("  - Write the Claude Code shim {shim} (one line, `@AGENTS.md`)")),
+        "{text}"
+    );
+    let rich = Command::new(env!("CARGO_BIN_EXE_kendex"))
+        .args(["apply", "--plan"])
+        .current_dir(&project)
+        .env_clear()
+        .envs(test_util::fixture_env(&home))
+        .env("KENDEX_BACKGROUND_REFRESH", "off")
+        .env("KENDEX_UI", "pretty")
+        .env("COLUMNS", "80")
+        .env("LANG", "C.UTF-8")
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .output()
+        .unwrap();
+    let text = said(&rich);
+    assert!(rich.status.success(), "{text}");
+    assert!(
+        console::strip_ansi_codes(&text)
+            .lines()
+            .any(|line| line.contains(&shim)),
+        "the plan split the shim path: {text}"
+    );
     assert!(!project.join("CLAUDE.md").exists());
 
     let output = kendex(&home, &project, &["apply", "--yes"]);

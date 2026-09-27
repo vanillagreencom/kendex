@@ -13,7 +13,7 @@ mod transaction;
 
 pub use op::{Op, Pre, read_git_config};
 pub(crate) use plan::ReadCheck;
-pub use plan::{Description, Plan, PlannedOp};
+pub use plan::{Description, DescriptionPart, Plan, PlannedOp};
 use transaction::{Close, run_journaled};
 
 /// Filesystem-safe key naming a scope's journal dir and lock file. Keys off

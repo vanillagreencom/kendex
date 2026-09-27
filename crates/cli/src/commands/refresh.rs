@@ -380,12 +380,11 @@ fn write_scope(
         .iter()
         .filter(|change| !report.set_changes.contains(change))
         .collect();
-    let added_ops: Vec<String> = after
+    let added_ops: Vec<_> = after
         .plan
         .ops
         .iter()
-        .map(|op| op.line())
-        .filter(|line| !approved.contains(line))
+        .filter(|op| !approved.contains(&op.line()))
         .collect();
     let added = added_changes.len() + added_ops.len();
     if added > 0 {
@@ -400,8 +399,8 @@ fn write_scope(
         for change in added_changes {
             say_set_change(change);
         }
-        for line in &added_ops {
-            ui::stderr(&ui::style().report_row(ui::Status::Notice, &[Span::Prose(line)], "  - "));
+        for op in added_ops {
+            ui::stderr(&ui::style().plan_row(op));
         }
     }
     let applied = confirm_and_apply(env, &after, yes);

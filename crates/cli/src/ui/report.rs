@@ -5,8 +5,22 @@
 use super::components::Escaped;
 use super::modes::Look;
 use super::{Span, Status, Style, escaped};
+use kendex_core::apply::{DescriptionPart, PlannedOp};
 
 impl Style {
+    /// A plan operation: prose can wrap, but its landed path stays whole.
+    pub fn plan_row(&self, op: &PlannedOp) -> Vec<String> {
+        let parts = op.description_parts();
+        let spans: Vec<_> = parts
+            .iter()
+            .map(|part| match part {
+                DescriptionPart::Text(text) => Span::Prose(text),
+                DescriptionPart::Path(path) => Span::Command(path),
+            })
+            .collect();
+        self.report_row(Status::Notice, &spans, "  - ")
+    }
+
     /// A report row with its existing plain prefix.
     pub fn report_row(
         &self,

@@ -285,6 +285,14 @@ fn the_line_a_confirmation_draws_names_the_landed_position() {
         )),
         "the line names where the trashing happens: {lines:?}"
     );
+    assert!(
+        report.plan.ops.iter().any(|op| matches!(
+            op.description_parts().as_slice(),
+            [apply::DescriptionPart::Text(_), apply::DescriptionPart::Path(path), apply::DescriptionPart::Text(_)]
+                if path == &elsewhere.join("skills/ship").display().to_string()
+        )),
+        "the preview must retain the landed path as a separate part"
+    );
 }
 
 /// An op joining a plan after it was made is landed like every op that

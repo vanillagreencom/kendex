@@ -122,7 +122,7 @@ fn report_lines(style: &ui::Style, report: &EngineReport, blocked: bool) -> Vec<
         "",
     ));
     for op in &report.plan.ops {
-        lines.extend(style.report_row(Status::Notice, &[Span::Prose(&op.line())], "  - "));
+        lines.extend(style.plan_row(op));
     }
     lines
 }
