@@ -46,7 +46,7 @@ impl Style {
     pub fn report_callout(&self, what: &str, why: &str) -> Vec<String> {
         match self.look {
             Look::Plain => vec![String::new(), escaped(what), format!("  {}", escaped(why))],
-            Look::Rich { .. } => self.callout(what, why, &[]),
+            Look::Rich { .. } => self.callout(what, Some(why), &[]),
         }
     }
 }
