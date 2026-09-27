@@ -23,14 +23,19 @@ git -C "$TMP_ROOT/repo" config maintenance.auto false
 printf 'account=%s\tharness=claude\tweekly-pct=20\naccount=%s\tharness=claude\tweekly-pct=40\n' \
   "$H/.claude" "$H/.eclaude" > "$TMP_ROOT/accounts"
 
-# jq is the credential reader in measure_lane. Record attempts independently
-# of fetches, so a cached answer cannot conceal an excluded credential read.
+# jq is the credential reader in measure_lane and the cache reader in
+# usage_cache_permitted. Record both independently of fetches, so a cached
+# answer cannot conceal an excluded credential read, and a startup scan that
+# was skipped is told from one that ran.
 REAL_JQ="$(command -v jq)"
 cat > "$TMP_ROOT/bin/jq" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 for arg in "$@"; do
-  case "$arg" in */.credentials.json|*/auth.json) printf '%s\n' "$arg" >> "$CREDENTIAL_LOG" ;; esac
+  case "$arg" in
+    */.credentials.json|*/auth.json) printf '%s\n' "$arg" >> "$CREDENTIAL_LOG" ;;
+    */usage/*.json) printf '%s\n' "$arg" >> "$CACHE_READ_LOG" ;;
+  esac
 done
 exec "$REAL_JQ" "$@"
 STUB
@@ -59,18 +64,21 @@ STUB
 chmod +x "$TMP_ROOT/bin/date"
 
 # Run the shipped command in an empty environment and a settings-free repo.
+# POLICY is one or more blank-separated `NAME=value` settings.
 cache_run() { # STATE POLICY COMMAND...
-  local state="$1" policy="$2"
+  local state="$1"
+  local -a policy
+  read -ra policy <<<"$2"
   shift 2
   (cd "$TMP_ROOT/repo" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$H" \
-    REAL_JQ="$REAL_JQ" CREDENTIAL_LOG="$TMP_ROOT/credentials" \
+    REAL_JQ="$REAL_JQ" CREDENTIAL_LOG="$TMP_ROOT/credentials" CACHE_READ_LOG="$TMP_ROOT/cache-reads" \
     REAL_RM="$REAL_RM" CACHE_RM_FAIL="${CACHE_RM_FAIL:-0}" \
     REAL_DATE="$REAL_DATE" FAKE_TODAY="${FAKE_TODAY:-}" \
     LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" \
     ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FIXTURE_DIR="$FIXTURE_DIR" \
     OVERSEE_WATCH_STATE_DIR="$state" ORCH_LANE_HOST="$PROVIDER" \
     LANE_HOST_STUB_ACCOUNTS="$TMP_ROOT/accounts" LANE_HOST_STUB_LOG="$TMP_ROOT/provider-log" \
-    "$policy" "$LANES" "$@")
+    "${policy[@]}" "$LANES" "$@")
 }
 
 for row in 'exclude|ORCH_LANE_EXCLUDE=claude|0' 'retire|ORCH_LANE_RETIRE=claude=2000-01-01|1'; do
@@ -99,9 +107,10 @@ for row in 'exclude|ORCH_LANE_EXCLUDE=claude|0' 'retire|ORCH_LANE_RETIRE=claude=
 done
 
 # A provider record is stamped with the policy that shaped it, so a lifted
-# exclusion, a lifted or postponed retirement and a retirement date that
-# arrives each ask the provider again inside the TTL. The provider log counts
-# the calls; the cached answer would leave it unchanged.
+# exclusion, a lifted or postponed retirement, an alias moved to another
+# account under a key naming it, and a retirement date that arrives each ask
+# the provider again inside the TTL. The provider log counts the calls; the
+# cached answer would leave it unchanged.
 provider_calls() { grep -c 'accounts' "$TMP_ROOT/provider-log"; }
 claude_hosted() { # the hosted claude row as STATUS:WEEKLY, or absent
   jq -r '[.[] | select(.alias == "claude")] | if length == 0 then "absent" else "\(.[0].status):\(.[0].weekly_pct)" end' "$TMP_ROOT/out"
@@ -110,7 +119,9 @@ state="$TMP_ROOT/lifted"
 : > "$TMP_ROOT/provider-log"
 for row in 'ORCH_LANE_EXCLUDE=claude|ORCH_LANE_EXCLUDE=|absent|ok:20|a lifted exclusion' \
   'ORCH_LANE_RETIRE=claude=2000-01-01|ORCH_LANE_RETIRE=|retired:null|ok:20|a lifted retirement' \
-  'ORCH_LANE_RETIRE=claude=2000-01-01|ORCH_LANE_RETIRE=claude=2099-01-01|retired:null|ok:20|a postponed retirement'; do
+  'ORCH_LANE_RETIRE=claude=2000-01-01|ORCH_LANE_RETIRE=claude=2099-01-01|retired:null|ok:20|a postponed retirement' \
+  'ORCH_LANE_EXCLUDE=work ORCH_LANE_ALIASES=claude=work|ORCH_LANE_EXCLUDE=work ORCH_LANE_ALIASES=eclaude=work|absent|ok:20|an alias moved under an exclusion' \
+  'ORCH_LANE_RETIRE=work=2000-01-01 ORCH_LANE_ALIASES=claude=work|ORCH_LANE_RETIRE=work=2000-01-01 ORCH_LANE_ALIASES=eclaude=work|absent|ok:20|an alias moved under a retirement'; do
   IFS='|' read -r written read_under before after name <<<"$row"
   cache_run "$state" "$written" host-accounts --json > "$TMP_ROOT/out"
   assert_eq "$(claude_hosted)" "$before" "$name: the record is written under the policy"
@@ -173,7 +184,7 @@ policy_control exclude 'lane_matches "$name" "$1" && return 0' \
   'lane_matches "$name" "$1" && return 1' ORCH_LANE_EXCLUDE=claude claude "$H/.claude"
 policy_control retire '[[ -n "$date" && ! "$TODAY" < "$date" ]] || return 1' \
   '[[ -n "$date" && ! "$TODAY" < "$date" ]]; return 1' ORCH_LANE_RETIRE=claude=2000-01-01 claude "$H/.claude"
-STAMP_MATCH='.policy == usage_policy'
+STAMP_MATCH='.policy == $policy'
 STAMP_REPLACEMENT='.policy == .policy'
 for policy in ORCH_LANE_EXCLUDE=claude ORCH_LANE_RETIRE=claude=2000-01-01; do
   policy_control stamp "$STAMP_MATCH" "$STAMP_REPLACEMENT" "$policy" host-accounts "$PROVIDER"
@@ -193,8 +204,7 @@ LANES="$ORIGINAL_LANES"
 # The cleanup assertion must fail if startup still judges every file but
 # leaves rejected records on disk. A local read cannot replace the host record.
 control_dir="$(mutant_scripts control-prune lanes)"
-mutate_file "$control_dir/lanes" 'rm -f -- "$file" || die usage-cache-prune-failed "$file"' \
-  ': "$file" || die usage-cache-prune-failed "$file"'
+mutate_file "$control_dir/lanes" 'rm -f -- "$file" && continue' ': "$file" && continue'
 LANES="$control_dir/lanes"
 cache_run "$state" ORCH_LANE_EXCLUDE=claude list --local --json > "$TMP_ROOT/out"
 assert_eq "$(jq -s '[.[] | select(.config_dir | endswith("/.claude"))] | length' "$state"/usage/*.json)" \
@@ -211,15 +221,71 @@ cache_run "$TMP_ROOT/writer" ORCH_LANE_EXCLUDE=claude host-accounts --json --no-
 assert_eq "$(jq -r '.usage.rows' "$TMP_ROOT/writer"/usage/host-accounts-*.json | grep -c 'weekly-pct=20' || true)" \
   1 'control: disabling write filtering retains excluded hosted usage'
 
+# The startup scan is skipped only while the `.pruned` marker holds this
+# policy and the cache directory is unchanged since it was written; a policy
+# change, a day change, a write under any policy and the scan's own deletion
+# each send the next process through the scan. The cache-read log counts the
+# files the scan judged: `check` reads no record of its own. The records are
+# seeded under the first policy, so the first scan deletes nothing. A scan
+# that failed leaves no valid marker, so the deletion failure below is
+# refused on every run, not the first.
+scan_ran() { [[ "$(grep -c '' "$TMP_ROOT/cache-reads" || true)" -gt 0 ]] && printf scanned || printf skipped; }
 LANES="$ORIGINAL_LANES"
+state="$TMP_ROOT/marker"
+cache_run "$state" ORCH_LANE_EXCLUDE=sclaude list --json --no-cache > "$TMP_ROOT/out"
+for row in '|ORCH_LANE_EXCLUDE=sclaude||scanned|the first run under a policy scans' \
+  '|ORCH_LANE_EXCLUDE=sclaude||skipped|an unchanged directory under the same policy is not scanned again' \
+  'write|ORCH_LANE_EXCLUDE=sclaude||scanned|a write under another policy sends the next run through the scan' \
+  '|ORCH_LANE_EXCLUDE=sclaude||skipped|the scan after that write marks the directory again' \
+  '|ORCH_LANE_EXCLUDE=sclaude,zclaude||scanned|a policy change scans' \
+  '|ORCH_LANE_EXCLUDE=sclaude,zclaude|2099-01-01|scanned|a day change scans' \
+  '|ORCH_LANE_EXCLUDE=claude||scanned|a tightened policy scans and deletes' \
+  '|ORCH_LANE_EXCLUDE=claude||scanned|a deletion sends the next run through the scan once more' \
+  '|ORCH_LANE_EXCLUDE=claude||skipped|the scan after a deletion marks the directory again'; do
+  IFS='|' read -r prep policy today expected name <<<"$row"
+  [[ "$prep" != write ]] || cache_run "$state" ORCH_LANE_EXCLUDE= list --local --json --no-cache > "$TMP_ROOT/out"
+  : > "$TMP_ROOT/cache-reads"
+  FAKE_TODAY="$today" cache_run "$state" "$policy" check "$H/.eclaude" > "$TMP_ROOT/out"
+  assert_eq "$(scan_ran)" "$expected" "$name"
+done
+assert_eq "$(jq -s '[.[] | select(.config_dir | endswith("/.claude"))] | length' "$state"/usage/*.json)" \
+  0 'the marked directory holds no record the policy refuses'
+# One control per rule the skip reads: the stamp compare made to always agree,
+# and the directory compare made to never find it newer. The directory is
+# marked under SEED-POLICY, each WRITE-POLICY then writes local records, and
+# the exclusion of claude must scan: a mutant that skips leaves the removed
+# record on disk, which the cleanup assertion catches.
+marker_control() { # NAME MATCH REPLACEMENT SEED-POLICY [WRITE-POLICY...]
+  local name="$1" match="$2" replacement="$3" seed="$4" control_dir write state="$TMP_ROOT/marker-$1"
+  shift 4
+  control_dir="$(mutant_scripts "control-marker-$name" lanes)"
+  mutate_file "$control_dir/lanes" "$match" "$replacement"
+  LANES="$control_dir/lanes"
+  cache_run "$state" "$seed" list --json --no-cache > "$TMP_ROOT/out"
+  cache_run "$state" "$seed" check "$H/.eclaude" > "$TMP_ROOT/out"
+  for write in "$@"; do
+    cache_run "$state" "$write" list --local --json --no-cache > "$TMP_ROOT/out"
+  done
+  cache_run "$state" ORCH_LANE_EXCLUDE=claude list --local --json > "$TMP_ROOT/out"
+  assert_eq "$(jq -s '[.[] | select(.config_dir | endswith("/.claude"))] | length' "$state"/usage/*.json)" \
+    1 "control: disabling the marker's $name compare leaves removed local usage on disk"
+  LANES="$ORIGINAL_LANES"
+}
+marker_control stamp '"$stamp" != "$USAGE_POLICY" ||' '"$stamp" != "$stamp" ||' ORCH_LANE_EXCLUDE=sclaude
+marker_control directory '"$USAGE_CACHE_DIR" -nt "$marker"' '"$USAGE_CACHE_DIR" -nt "$USAGE_CACHE_DIR"' \
+  ORCH_LANE_EXCLUDE=claude ORCH_LANE_EXCLUDE=
+
+state="$TMP_ROOT/deletion"
+cache_run "$state" ORCH_LANE_EXCLUDE= list --json --no-cache > "$TMP_ROOT/out"
 CACHE_RM_FAIL=1
-rc=0
-cache_run "$state" ORCH_LANE_EXCLUDE=claude list --local --json > "$TMP_ROOT/out" 2> "$TMP_ROOT/err" || rc=$?
-assert_eq "$rc" 1 'a cache deletion failure refuses the command'
-assert_contains "$(cat "$TMP_ROOT/err")" 'lanes: usage-cache-prune-failed path=' 'a deletion failure names the cache path'
+for attempt in first second; do
+  rc=0
+  cache_run "$state" ORCH_LANE_EXCLUDE=claude list --local --json > "$TMP_ROOT/out" 2> "$TMP_ROOT/err" || rc=$?
+  assert_eq "$rc" 1 "a cache deletion failure refuses the command on the $attempt run"
+  assert_contains "$(cat "$TMP_ROOT/err")" 'lanes: usage-cache-prune-failed path=' "the $attempt deletion failure names the cache path"
+done
 control_dir="$(mutant_scripts control-prune-failure lanes)"
-mutate_file "$control_dir/lanes" 'rm -f -- "$file" || die usage-cache-prune-failed "$file"' \
-  'rm -f -- "$file" || : usage-cache-prune-failed "$file"'
+mutate_file "$control_dir/lanes" 'die usage-cache-prune-failed "$file"' ': usage-cache-prune-failed "$file"'
 LANES="$control_dir/lanes"
 rc=0
 cache_run "$state" ORCH_LANE_EXCLUDE=claude list --local --json > "$TMP_ROOT/out" || rc=$?
