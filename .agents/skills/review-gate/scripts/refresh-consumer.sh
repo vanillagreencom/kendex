@@ -48,7 +48,7 @@ if [ -n "$old" ]; then
 fi
 git checkout -B kendex/refresh "$base"
 kendex refresh --scope project --yes --leave
-.agents/skills/review-gate/scripts/adopt-refresh.sh
+"$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$ROOT/.agents/skills/review-gate/templates"
 kendex verify --scope project
 git add -A
 if git diff --cached --quiet; then

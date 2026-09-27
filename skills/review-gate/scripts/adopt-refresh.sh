@@ -5,9 +5,15 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "${1:-}" = --help ] && [ "$#" -eq 1 ]; then
-  printf '%s\n' 'Usage: adopt-refresh.sh' 'Reads the provisioned kendex environment, adopts the refresh workflow, and records byte-identical writer and refresh copies in .kendex-generated.json.'
+  printf '%s\n' 'Usage: adopt-refresh.sh [--templates-dir DIR]' 'Reads the provisioned kendex environment, adopts the refresh workflow, and records byte-identical writer and refresh copies in .kendex-generated.json.'
   exit 0
 fi
+templates="$SCRIPT_DIR/../templates"
+if [ "$#" -eq 2 ] && [ "$1" = --templates-dir ]; then
+  templates="$2"
+  shift 2
+fi
+templates="$(cd -- "$templates" && pwd)"
 [ "$#" -eq 0 ] || { printf 'refresh-error=arguments value=%s\n' "$#" >&2; exit 2; }
 repository="$(gh api 'repos/{owner}/{repo}' --jq .full_name)" || exit 1
 if [ "$repository" = vanillagreencom/kendex ]; then
@@ -17,10 +23,10 @@ fi
 "$SCRIPT_DIR/validate-standard.sh" --environment-only
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
-"$SCRIPT_DIR/validate-workflow.sh" --adopt --adopted-path-file "$TMP/writer-path"
+"$SCRIPT_DIR/validate-workflow.sh" --adopt --templates-dir "$templates" --adopted-path-file "$TMP/writer-path"
 # Python supplies the same SHA-256 on every supported host. Template paths
 # remain repository-relative so verification resolves them against its plan.
-python3 - "$SCRIPT_DIR/../templates" "$TMP/writer-path" <<'PY'
+python3 - "$templates" "$TMP/writer-path" <<'PY'
 import hashlib
 import json
 from pathlib import Path

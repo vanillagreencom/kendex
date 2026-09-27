@@ -6,7 +6,8 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "$TMP"' EXIT
-. "$TEST_DIR/lib/sandbox.sh"
+. "$TEST_DIR/lib/refresh-fixture.sh"
+cp "$BIN/gh" "$TMP/standard-gh"
 mkdir -p "$TMP/bin" "$TMP/home" "$TMP/state"
 cat >"$TMP/bin/gh" <<'SH'
 #!/usr/bin/env bash
@@ -19,7 +20,7 @@ case "$*" in
   'api --method POST repos/acme/test/pulls '*) printf '1\n' >"$TEST_STATE/pr"; printf 'created\n' >>"$TEST_STATE/creates"; printf '1\n' ;;
   'auth setup-git') : >"$TEST_STATE/auth" ;;
   'pr merge '*|'pr close '*) ;;
-  *) printf 'unexpected-gh=%s\n' "$*" >&2; exit 2 ;;
+  *) exec "$TEST_GH_SHIM" "$@" ;;
 esac
 SH
 cat >"$TMP/bin/kendex" <<'SH'
@@ -27,7 +28,15 @@ cat >"$TMP/bin/kendex" <<'SH'
 set -euo pipefail
 printf '%s\n' "$*" >>"$TEST_STATE/kendex"
 case "$1" in
-  refresh) printf '%s\n' "$TEST_CONTENT" >rendered.txt ;;
+  refresh)
+    printf '%s\n' "$TEST_CONTENT" >rendered.txt
+    if [ -n "${TEST_HOSTILE:-}" ]; then
+      cp "$TEST_FRESH_TEMPLATES/"*.yml .agents/skills/review-gate/templates/
+      for path in adopt-refresh.sh validate-standard.sh validate-workflow.sh lib/diagnostics.sh lib/standard.sh; do
+        printf '#!/usr/bin/env bash\nprintf "executed=%%s\\n" "$0" >>"$TEST_STATE/hostile"\nexit 89\n' >".agents/skills/review-gate/scripts/$path"
+      done
+    fi
+    ;;
   verify) [ "$TEST_VERIFY" = pass ] ;;
   *) exit 2 ;;
 esac
@@ -72,7 +81,7 @@ runner="$repo/.agents/skills/review-gate/scripts/refresh-consumer.sh"
 run_refresh() { # CONTENT VERIFY CLASS
   local result=0
   rm -f -- "${TMP:?}/state/auth"
-  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" TMPDIR="$TMP" GH_TOKEN=test-token GH_REPO=acme/test REFRESH_APP_SLUG=lanes TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" bash "$runner" 2>&1)" || result=$?
+  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" TMPDIR="$TMP" GH_TOKEN=test-token GH_REPO=acme/test REFRESH_APP_SLUG=lanes TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_HOSTILE="${HOSTILE:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" bash "$runner" 2>&1)" || result=$?
   RC="$result"
 }
 reset_default() {
@@ -113,5 +122,61 @@ git -C "$repo" commit -qm 'mutate create decision'
 git -C "$repo" push -q origin main
 run_refresh stale pass render
 if [ "$RC" -eq 0 ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -gt 1 ]; then ok 'control exposes duplicate pull creation'; else bad 'control exposes duplicate pull creation' "$OUT"; fi
+# The shipped workflow preserves a trusted checkout before refresh replaces
+# catalog files. Real adoption must read new template bytes without executing
+# any refreshed script or shell library, including for a renamed writer.
+sandbox
+repo="$DIR"
+git -C "$repo" branch -M main
+git -C "$repo" mv .github/workflows/review-gate-writer.yml .github/workflows/gate.yml
+printf '[]\n' >"$repo/.kendex-generated.json"
+printf 'current\n' >"$repo/rendered.txt"
+cp "$TMP/case.1/.agents/skills/harness-ci/scripts/change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n' >"$repo/.agents/skills/review-gate/scripts/refresh-reviews.sh"
+commit "$repo"
+git init --bare -q "$TMP/secure-remote"
+git --git-dir="$TMP/secure-remote" config gc.auto 0
+git --git-dir="$TMP/secure-remote" config maintenance.auto false
+git -C "$repo" remote add origin "$TMP/secure-remote"
+git -C "$repo" push -q origin main
+git -C "$repo" worktree add --detach "$TMP/trusted" HEAD
+runner="$TMP/trusted/.agents/skills/review-gate/scripts/refresh-consumer.sh"
+cp -R "$repo/.agents/skills/review-gate/templates" "$TMP/fresh-templates"
+file_edit "$TMP/fresh-templates" review-gate-writer.yml 1 '^    timeout-minutes: 15$' \
+  's/^    timeout-minutes: 15$/    timeout-minutes: 16/'
+printf '\n# fresh refresh template\n' >>"$TMP/fresh-templates/kendex-refresh.yml"
+: >"$TMP/state/pr"
+: >"$TMP/state/creates"
+HOSTILE=1
+run_refresh refreshed pass render
+if [ "$RC" -eq 0 ] && [ ! -e "$TMP/state/hostile" ] &&
+    cmp -s "$repo/.github/workflows/gate.yml" "$TMP/fresh-templates/review-gate-writer.yml" &&
+    cmp -s "$repo/.github/workflows/kendex-refresh.yml" "$TMP/fresh-templates/kendex-refresh.yml" &&
+    python3 - "$repo" <<'INVENTORY'
+import hashlib,json,sys
+from pathlib import Path
+root=Path(sys.argv[1]); entries=json.loads((root/'.kendex-generated.json').read_text())
+assert {e['path'] for e in entries}=={'.github/workflows/gate.yml','.github/workflows/kendex-refresh.yml'}
+for entry in entries:
+ assert entry['templateHash']=='sha256:'+hashlib.sha256((root/entry['path']).read_bytes()).hexdigest()
+ assert (root/entry['path']).read_bytes()==(root/entry['template']).read_bytes()
+INVENTORY
+then ok 'trusted adoption reads fresh templates and records a renamed writer without executing refreshed code'
+else bad 'trusted adoption boundary and fresh data' "$OUT"; fi
+# Restoring execution from the refreshed checkout must reach the hostile
+# script before verification, even when that script retains the expected name.
+python3 - "$runner" <<'TRUST_CONTROL'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text(); needle='"$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$ROOT/.agents/skills/review-gate/templates"'
+assert s.count(needle)==1
+replacement='.agents/skills/review-gate/scripts/adopt-refresh.sh --templates-dir "$ROOT/.agents/skills/review-gate/templates" # '+needle
+p.write_text(s.replace(needle,replacement))
+TRUST_CONTROL
+reset_default
+run_refresh refreshed pass render
+if [ "$RC" -eq 89 ] && [ -s "$TMP/state/hostile" ]; then
+  ok 'control: refreshed adoption code executes when the trusted path is removed'
+else bad 'trusted adoption control' "$OUT"; fi
 printf 'pass=%s fail=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
