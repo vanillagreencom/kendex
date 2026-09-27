@@ -5,7 +5,7 @@ use kendex_core::manifest::{self, ManifestFile};
 use super::advisory::Listing;
 use super::engine_common::{confirm_and_apply, print_report, print_unmanaged};
 use super::ledger::{Folded, Wrote, say_ledger, say_preview};
-use super::{CliResult, fail_refusal, resolve_scopes_at, say, scope_label, warn};
+use super::{CliResult, fail_refusal, resolve_scopes_at, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
@@ -76,7 +76,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         match manifest::load(&path) {
             Ok(ManifestFile::Current(_)) => {}
             Ok(ManifestFile::Absent) => {
-                say(&format!(
+                ui::report::notice(&format!(
                     "{}: nothing listed to install",
                     scope_label(&scope)
                 ));
@@ -142,7 +142,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
                 // warning under the run's own closing line reads as a line
                 // from the next one.
                 if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
-                    warn(&format!("warning: snapshot not derived ({})", error));
+                    ui::report::warning(&format!("snapshot not derived ({})", error));
                 }
                 // The last scope's writes are the run's last, so the
                 // trash is brought within its bounds here, before the

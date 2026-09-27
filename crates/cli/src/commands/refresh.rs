@@ -10,7 +10,7 @@ use super::engine_common::{
     require_yes_in_non_interactive,
 };
 use super::ledger::{Folded, Wrote, say_ledger};
-use super::{CliResult, resolve_scopes_at, say, scope_label, warn};
+use super::{CliResult, resolve_scopes_at, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
@@ -52,9 +52,10 @@ fn print_set_changes(
     scope: &kendex_core::model::Scope,
     report: &kendex_core::engine::EngineReport,
 ) {
-    say(&format!(
-        "{}: this changes what is installed",
-        scope_label(scope)
+    ui::stderr(&ui::style().report_row(
+        ui::Status::Decision,
+        &format!("{}: this changes what is installed", scope_label(scope)),
+        "",
     ));
     for change in &report.set_changes {
         say_set_change(change);
@@ -66,12 +67,16 @@ fn say_set_change(change: &kendex_core::engine::SetChange) {
         kendex_core::engine::SetDirection::Add => "install",
         kendex_core::engine::SetDirection::Remove => "remove",
     };
-    say(&format!(
-        "  - {verb} {} {} for {} — {}",
-        change.kind.name(),
-        change.name,
-        change.harness.display_name(),
-        change.reason
+    ui::stderr(&ui::style().report_row(
+        ui::Status::Decision,
+        &format!(
+            "{verb} {} {} for {} — {}",
+            change.kind.name(),
+            change.name,
+            change.harness.display_name(),
+            change.reason
+        ),
+        "  - ",
     ));
 }
 
@@ -82,8 +87,10 @@ fn print_changes_needing_consent(
 ) {
     print_set_changes(scope, report);
     for name in pending {
-        say(&format!(
-            "  - install pi-extension {name} for Pi — listed, not installed here yet"
+        ui::stderr(&ui::style().report_row(
+            ui::Status::Decision,
+            &format!("install pi-extension {name} for Pi — listed, not installed here yet"),
+            "  - ",
         ));
     }
 }
@@ -139,7 +146,7 @@ fn record_snapshots(env: &Env, scopes: &[kendex_core::model::Scope]) {
         if declares(env, scope)
             && let Err(error) = kendex_core::drift::snapshot::record(env, scope)
         {
-            warn(&format!("warning: snapshot not derived ({})", error));
+            ui::report::warning(&format!("snapshot not derived ({})", error));
         }
     }
 }
@@ -301,7 +308,7 @@ fn print_refusal_context(env: &Env, prepared: &[PreparedScope], verbose: bool) {
         }
     }
     for failure in failures {
-        super::fail(&format!("failed: {failure}"));
+        ui::report::failure(&failure);
     }
     for scope in prepared {
         if let Ok((report, pending)) = &scope.planned
@@ -377,15 +384,19 @@ fn write_scope(
         .collect();
     let added = added_changes.len() + added_ops.len();
     if added > 0 {
-        say(&format!(
-            "{}: settling added to what this run writes",
-            scope_label(scope)
+        ui::stderr(&ui::style().report_row(
+            ui::Status::Decision,
+            &format!(
+                "{}: settling added to what this run writes",
+                scope_label(scope)
+            ),
+            "",
         ));
         for change in added_changes {
             say_set_change(change);
         }
         for line in &added_ops {
-            say(&format!("  - {line}"));
+            ui::stderr(&ui::style().report_row(ui::Status::Notice, line, "  - "));
         }
     }
     let applied = confirm_and_apply(env, &after, yes);
@@ -535,7 +546,7 @@ pub fn run(
     }
 
     for failure in &failures {
-        super::fail(&format!("failed: {}", failure));
+        ui::report::failure(failure);
     }
     finish_scopes(env, &reached, closing);
     if let Some(error) = cancelled {
@@ -543,7 +554,7 @@ pub fn run(
     }
 
     if !refreshed_anything && failures.is_empty() {
-        say("nothing installed");
+        ui::stderr(&ui::style().summary(ui::Status::Done, "nothing installed"));
         return Ok(());
     }
     if !failures.is_empty() {

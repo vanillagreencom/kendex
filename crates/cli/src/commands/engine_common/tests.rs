@@ -1,0 +1,70 @@
+use super::*;
+use crate::ui::testing::{plain, rich, tagged};
+use kendex_core::apply::{Op, Plan, PlannedOp, Pre};
+use kendex_core::engine::ItemWarning;
+use kendex_core::model::{ItemKind, Scope};
+
+/// These snapshots hold the plain report grammar and its rich counterpart.
+/// The producers are the engine's plans and per-item render warnings.
+#[test]
+#[allow(clippy::expect_used)]
+fn clean_changed_blocked_and_warning_reports_keep_their_content() {
+    let tmp = tempfile::tempdir().expect("fixture");
+    let root = tmp.path().canonicalize().expect("canonical fixture");
+    let mut changed = EngineReport::observed(
+        Plan::landed(
+            Scope::Global,
+            vec![PlannedOp {
+                description: "Save kendex.toml".into(),
+                op: Op::WriteFile {
+                    path: root.join("kendex.toml"),
+                    bytes: vec![],
+                    pre: Pre::Absent,
+                },
+            }],
+        )
+        .expect("plan lands"),
+    );
+    changed.warnings.push(ItemWarning {
+        kind: ItemKind::Skill,
+        name: "tidy".into(),
+        harness: Some(HarnessId::Claude),
+        message: "missing description".into(),
+        remediation: Some("add a description".into()),
+    });
+    let empty = EngineReport::observed(Plan::landed(Scope::Global, vec![]).expect("empty plan"));
+    let cases = [
+        (
+            &empty,
+            false,
+            vec!["nothing to do"],
+            vec!["  <36>•</> nothing to do"],
+        ),
+        (
+            &empty,
+            true,
+            vec!["nothing to do until you settle the conflicts above"],
+            vec!["  <36>•</> nothing to do until you settle the conflicts above"],
+        ),
+        (
+            &changed,
+            false,
+            vec![
+                "warning: tidy (Claude Code): missing description",
+                "  fix: add a description",
+                "plan: 1 change",
+                "  - Save kendex.toml",
+            ],
+            vec![
+                "  <33>!</> tidy (Claude Code): missing description",
+                "    <90>fix: add a description</>",
+                "  <36>•</> plan: 1 change",
+                "  <36>•</> Save kendex.toml",
+            ],
+        ),
+    ];
+    for (report, blocked, want_plain, want_rich) in cases {
+        assert_eq!(report_lines(&plain(), report, blocked), want_plain);
+        assert_eq!(tagged(&report_lines(&rich(80), report, blocked)), want_rich);
+    }
+}

@@ -4,9 +4,10 @@ use kendex_core::model::HarnessId;
 
 use std::io::IsTerminal;
 
+use super::CliResult;
 use super::advisory::Listing;
-use super::{CliResult, note, say, warn};
 use crate::ui;
+use crate::ui::{Span, Status};
 
 pub fn parse_harnesses(values: &[String]) -> Result<Vec<HarnessId>, String> {
     values
@@ -26,11 +27,11 @@ pub fn parse_harnesses(values: &[String]) -> Result<Vec<HarnessId>, String> {
 /// that removed nothing prints no count.
 pub fn print_synced(synced: &kendex_core::remote::Synced) {
     for line in &synced.notes {
-        warn(&format!("warning: {line}"));
+        ui::report::warning(line);
     }
     let removed = synced.removed_snapshots;
     if removed > 0 {
-        note(&format!(
+        ui::report::notice(&format!(
             "cache: removed {removed} older marketplace snapshot{}",
             if removed == 1 { "" } else { "s" }
         ));
@@ -49,7 +50,7 @@ pub fn tidy_trash(env: &Env) {
         Ok(removed) => print_trashed(removed),
         Err(kendex_core::trash::Stopped { removed, reason }) => {
             print_trashed(removed);
-            warn(&format!("warning: trash: pass stopped ({reason})"));
+            ui::report::warning(&format!("trash: pass stopped ({reason})"));
         }
     }
 }
@@ -57,7 +58,7 @@ pub fn tidy_trash(env: &Env) {
 /// A pass that removed nothing prints no count.
 fn print_trashed(removed: usize) {
     if removed > 0 {
-        note(&format!(
+        ui::report::notice(&format!(
             "trash: removed {removed} older entr{}",
             if removed == 1 { "y" } else { "ies" }
         ));
@@ -77,34 +78,55 @@ pub fn print_report(
     listing: Listing,
 ) -> Vec<super::offers::Blocked> {
     let blocked = super::attention::print_attention(env, report, listing).blocked;
+    ui::stderr(&report_lines(&ui::style(), report, !blocked.is_empty()));
+    blocked
+}
+
+fn report_lines(style: &ui::Style, report: &EngineReport, blocked: bool) -> Vec<String> {
+    let mut lines = Vec::new();
     for warning in &report.warnings {
         let target = match warning.harness {
             Some(harness) => format!("{} ({})", warning.name, harness.display_name()),
             None => warning.name.clone(),
         };
-        warn(&format!("warning: {target}: {}", warning.message));
+        lines.extend(style.report_row(
+            Status::Decision,
+            &format!("{target}: {}", warning.message),
+            "warning: ",
+        ));
         if let Some(fix) = &warning.remediation {
-            say(&format!("  fix: {}", fix));
+            lines.extend(style.report_detail(&[Span::Prose("fix: "), Span::Command(fix)], "  "));
         }
     }
     if report.plan.is_empty() {
         // "nothing to do" directly under a conflict reads as "and nothing
         // you can do" — the run has plenty to do, once the reader picks.
-        say(match blocked.is_empty() {
-            false => "nothing to do until you settle the conflicts above",
-            true => "nothing to do",
-        });
-        return blocked;
+        lines.extend(style.report_row(
+            Status::Notice,
+            match blocked {
+                true => "nothing to do until you settle the conflicts above",
+                false => "nothing to do",
+            },
+            "",
+        ));
+        return lines;
     }
     let ops = report.plan.ops.len();
     // The op list is what the confirm below is an answer to: a reader
     // asked to approve a count was never shown what it covers.
-    say(&format!("plan: {} change{}", ops, plural(ops)));
+    lines.extend(style.report_row(
+        Status::Notice,
+        &format!("plan: {} change{}", ops, plural(ops)),
+        "",
+    ));
     for op in &report.plan.ops {
-        say(&format!("  - {}", op.line()));
+        lines.extend(style.report_row(Status::Notice, &op.line(), "  - "));
     }
-    blocked
+    lines
 }
+
+#[cfg(test)]
+mod tests;
 
 fn plural(n: usize) -> &'static str {
     match n {
@@ -127,22 +149,32 @@ pub fn print_unmanaged(drift: &[DriftRow]) {
     }
     // A footnote, not one more verdict: said in its own voice so it does
     // not join the block of rows above it.
-    note(&format!(
+    ui::report::notice(&format!(
         "not managed: {} package{} kendex did not install and does not touch",
         rows.len(),
         if rows.len() == 1 { "" } else { "s" }
     ));
     for row in rows.iter().take(UNMANAGED_SHOWN) {
-        say(&format!(
-            "  - {} {} [{}] {}",
-            row.kind.name(),
-            row.name,
-            row.harness.display_name(),
-            row.detail
+        ui::stderr(&ui::style().report_row(
+            Status::Notice,
+            &format!(
+                "{} {} [{}] {}",
+                row.kind.name(),
+                row.name,
+                row.harness.display_name(),
+                row.detail
+            ),
+            "  - ",
         ));
     }
     if rows.len() > UNMANAGED_SHOWN {
-        say(&format!("  … and {} more", rows.len() - UNMANAGED_SHOWN));
+        ui::stderr(&ui::style().report_detail(
+            &[Span::Prose(&format!(
+                "… and {} more",
+                rows.len() - UNMANAGED_SHOWN
+            ))],
+            "  ",
+        ));
     }
 }
 
@@ -159,7 +191,7 @@ pub fn confirm_and_execute(env: &Env, report: &EngineReport, yes: bool) -> CliRe
         return Ok(());
     }
     let applied = confirm_and_apply(env, report, yes)?;
-    say(&format!("wrote {applied} change(s)"));
+    ui::stderr(&ui::style().summary(Status::Done, &format!("wrote {applied} change(s)")));
     Ok(())
 }
 
@@ -215,7 +247,7 @@ pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn s
     let mut generated = report.generated.clone();
     let bot_instructions = kendex_core::bot_instructions::render(env, &report.plan.scope)?;
     if let Some(skipped) = bot_instructions.skipped() {
-        say(&skipped.line());
+        ui::report::notice(&skipped.line());
         if super::repo_effects::set_up_beside_main(env, &report.plan.scope, skipped)? {
             kendex_core::bot_instructions::add_to_generated(
                 env,

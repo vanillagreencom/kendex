@@ -1,0 +1,1 @@
+- Refresh, apply and add use terminal colours, status marks and wrapped lines for warnings, planned writes and repository change disclosures. Plain output stays unchanged.

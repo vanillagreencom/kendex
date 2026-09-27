@@ -86,6 +86,7 @@ mod live;
 mod modes;
 mod prompt;
 mod refusal;
+pub mod report;
 mod symbols;
 mod tokens;
 

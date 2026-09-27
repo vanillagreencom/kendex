@@ -57,7 +57,8 @@ use kendex_core::env::Env;
 use kendex_core::model::Scope;
 use kendex_core::repo_effects::{DeclaredEffects, Disclosure, Spoken};
 
-use super::{CliResult, answer, fail, fail_refusal, say, scope_label};
+use super::{CliResult, answer, fail_refusal, scope_label};
+use crate::ui::{self, Span, Status};
 
 mod disclose;
 pub use disclose::{disclose, print_disclosure};
@@ -115,9 +116,13 @@ pub fn say_lapsed(env: &Env, scope: &Scope, names: &[String]) -> usize {
                 "whether its effect is in force could not be checked".to_owned()
             }
         };
-        fail(&format!("✗ setup {}: {row}", package.name));
+        ui::stderr(&ui::style().report_row(
+            Status::Failed,
+            &format!("setup {}: {row}", package.name),
+            "✗ ",
+        ));
         for line in &package.said {
-            say(&format!("  ! {line}"));
+            ui::stderr(&ui::style().report_detail(&[Span::Prose(line)], "  ! "));
         }
         named += 1;
     }
@@ -168,7 +173,7 @@ pub fn walkthrough(scope: &Scope, shown_to_them: &[Disclosure], allowed: bool) -
         return Ok(());
     }
     for disclosure in shown_to_them {
-        say(&format!(
+        ui::report::notice(&format!(
             "{}: installed; its repository changes were not made",
             disclosure.name
         ));
@@ -188,7 +193,7 @@ pub fn confirm(pending: &[Disclosure], allowed: bool) -> Result<bool, Box<dyn st
         return Ok(true);
     }
     if !std::io::stdin().is_terminal() {
-        say(
+        ui::report::notice(
             "repository changes not made: no terminal to ask at — pass --allow-repo-effects to say yes here",
         );
         return Ok(false);
@@ -221,7 +226,7 @@ pub fn apply(scope: &Scope, declared: &DeclaredEffects) -> CliResult {
             Ok(())
         }
         Err(error @ kendex_core::repo_effects::ArmError::NothingToRun { .. }) => {
-            say(&error.to_string());
+            ui::report::notice(&error.to_string());
             Ok(())
         }
         Err(error) => {
@@ -270,7 +275,7 @@ pub fn set_up_beside_main(
 /// by a person, so it goes out as a line like any other.
 fn relay(report: &kendex_core::guard::GuardReport) {
     for line in &report.stderr {
-        say(line);
+        ui::report::notice(line);
     }
     for line in &report.stdout {
         answer(line);
@@ -290,7 +295,7 @@ pub fn undo(scope: &Scope, report: &EngineReport) -> CliResult {
         &report.repo_effects_leaving,
         &mut |spoken| match spoken {
             Spoken::Stdout(line) => answer(&line),
-            Spoken::Note(line) | Spoken::Stderr(line) => say(&line),
+            Spoken::Note(line) | Spoken::Stderr(line) => ui::report::notice(&line),
         },
     )
     .map_err(|error| error.to_string().into())

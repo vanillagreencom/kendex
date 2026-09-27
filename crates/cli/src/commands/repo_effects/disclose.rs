@@ -11,7 +11,7 @@ use kendex_core::env::Env;
 use kendex_core::model::Scope;
 use kendex_core::repo_effects::{DeclaredEffects, Disclosure};
 
-use super::super::say;
+use crate::ui::{self, Span, Status, Style};
 
 /// The block, in the order a reader needs it: what changes, what is
 /// written, which packages take part, whatever the package itself wants
@@ -33,7 +33,7 @@ pub fn disclose(
 ) -> Result<Vec<Disclosure>, Box<dyn std::error::Error>> {
     let offers = kendex_core::repo_effects::offers_for(env, scope, effects)?;
     for withheld in &offers.withheld {
-        say(&format!(
+        ui::report::notice(&format!(
             "{}: not disclosed — {}",
             withheld.name, withheld.reason
         ));
@@ -46,64 +46,71 @@ pub fn disclose(
 
 /// One package's block, for a surface that already holds the disclosure.
 pub fn print_disclosure(disclosure: &Disclosure) {
-    let name = &disclosure.name;
-    say("");
-    say(&format!(
-        "{name} changes how this repository works, beyond the files above:"
-    ));
-    say(&format!("  {}", disclosure.summary));
+    ui::stderr(&disclosure_lines(&ui::style(), disclosure));
+}
+
+fn disclosure_lines(style: &Style, disclosure: &Disclosure) -> Vec<String> {
+    let mut lines = style.report_callout(
+        &format!(
+            "{} changes how this repository works, beyond the files above:",
+            disclosure.name
+        ),
+        &disclosure.summary,
+    );
     if !disclosure.writes.is_empty() {
-        say("");
-        say("  writes");
-        // Marked one by one. A package that writes into `.git/hooks` and
-        // into `.github` writes one file every work tree sees and one only
-        // this checkout has, and a sentence under the whole list would
-        // claim the first about both.
+        lines.push(String::new());
+        lines.extend(style.report_row(Status::Notice, "writes", "  "));
         for written in &disclosure.writes {
             let mark = match written.shared {
                 true => "  (shared)",
                 false => "",
             };
-            say(&format!("    {}{mark}", written.path));
+            lines.extend(
+                style.report_detail(&[Span::Command(&written.path), Span::Prose(mark)], "    "),
+            );
         }
         if disclosure.writes.iter().any(|written| written.shared) {
-            say("");
-            say("  the paths marked shared are the repository's, not this");
-            say("  checkout's: every work tree of it sees those files");
+            lines.push(String::new());
+            lines.extend(style.report_detail(
+                &[Span::Prose(
+                    "the paths marked shared are the repository's, not this",
+                )],
+                "  ",
+            ));
+            lines.extend(style.report_detail(
+                &[Span::Prose(
+                    "checkout's: every work tree of it sees those files",
+                )],
+                "  ",
+            ));
         }
     }
     if !disclosure.companions.is_empty() {
-        say("");
-        say("  companion packages");
+        lines.push(String::new());
+        lines.extend(style.report_row(Status::Notice, "companion packages", "  "));
         for companion in &disclosure.companions {
-            say(&format!(
-                "    {} ({})",
-                companion.name,
-                match companion.installed {
-                    true => "installed",
-                    false => "not installed",
-                }
+            let state = match companion.installed {
+                true => "installed",
+                false => "not installed",
+            };
+            lines.extend(style.report_detail(
+                &[Span::Prose(&format!("{} ({state})", companion.name))],
+                "    ",
             ));
         }
-        // The names and whether each is here, and nothing about what that
-        // means. What a companion's presence or absence does is the
-        // package's own contract, and kendex stating it here would state
-        // commit-guards' for every package that declares any. A package
-        // with something to say about its companions says it in `notes`.
     }
     for note in &disclosure.notes {
-        say("");
-        say(&format!("  {}", note));
+        lines.push(String::new());
+        lines.extend(style.report_detail(&[Span::Prose(note)], "  "));
     }
-    say("");
-    match &disclosure.undo {
-        Some(undo) => say(&format!("  to undo: {}", undo)),
-        // Not "remove the package". Removal runs whatever uninstaller
-        // the package declared, and this one declared none: its files
-        // would go and the effect would stay — shims in .git/hooks
-        // outlive the tree they point at, and then fail every commit
-        // closed. What is true is that the package said nothing about
-        // undoing this.
-        None => say("  to undo: the package declares no way to undo it"),
-    }
+    lines.push(String::new());
+    let undo = disclosure
+        .undo
+        .as_deref()
+        .unwrap_or("the package declares no way to undo it");
+    lines.extend(style.report_detail(&[Span::Prose("to undo: "), Span::Prose(undo)], "  "));
+    lines
 }
+
+#[cfg(test)]
+mod tests;

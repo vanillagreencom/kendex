@@ -190,3 +190,75 @@ fn a_clean_refresh_with_folded_detail_closes_done() {
         "the folded step is not a hint row: {printed:?}"
     );
 }
+
+/// These report-only runs finish before writes, so each rendering reads
+/// the same fixture. They exercise the report shared by apply and add,
+/// plus refresh's disclosure of the set that needs consent.
+#[test]
+#[allow(clippy::expect_used)]
+fn writing_reports_honor_plain_overrides_and_wrap_at_80_columns() {
+    let at = fixture();
+    for args in [
+        vec!["apply", "--plan", "--scope", "project"],
+        vec!["refresh", "--scope", "project"],
+        vec!["add", "--skill", "tidy"],
+    ] {
+        let run = |ui: &str, extra: &[(&str, &str)]| {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+            command
+                .args(&args)
+                .current_dir(&at.project)
+                .env_clear()
+                .envs(test_util::fixture_env(&at.home))
+                .env("KENDEX_BACKGROUND_REFRESH", "off")
+                .env("KENDEX_UI", ui)
+                .env("LANG", "C.UTF-8")
+                .env("COLUMNS", "80")
+                .env("PATH", std::env::var("PATH").unwrap_or_default());
+            command.envs(extra.iter().copied());
+            let output = command.output().expect("kendex runs");
+            assert!(
+                output.stdout.is_empty(),
+                "human reports polluted stdout: {output:?}"
+            );
+            (output.status.code(), said(&output))
+        };
+        let piped = run("auto", &[]);
+        for extra in [[("NO_COLOR", "1")], [("TERM", "dumb")]] {
+            assert_eq!(run("pretty", &extra), piped, "{args:?}: {extra:?}");
+        }
+        let rich = run("pretty", &[]);
+        assert_eq!(rich.0, piped.0, "presentation changed exit status");
+        let expected_row = match args[0] {
+            "refresh" => "  ! install skill tidy for Claude Code — asked for",
+            "apply" | "add" => "  • Write skill tidy's files for Claude Code",
+            other => panic!("unexpected report fixture: {other}"),
+        };
+        assert!(
+            rich.1
+                .lines()
+                .map(stripped)
+                .any(|line| line == expected_row),
+            "{args:?}: missing converted row: {rich:?}"
+        );
+
+        assert!(rich.1.contains('\u{1b}'), "no rich rendering: {rich:?}");
+        assert!(
+            piped.1.lines().any(|line| cells(line) > 80),
+            "fixture never reaches width"
+        );
+        for line in rich.1.lines().filter(|line| {
+            !is_command(line) && !line.contains("kendex adopt") && !line.contains("kendex apply")
+        }) {
+            assert!(
+                cells(line) <= 80,
+                "{args:?}: {} cells: {line:?}",
+                cells(line)
+            );
+        }
+        assert!(
+            !at.project.join(".claude/skills/tidy").exists(),
+            "a report wrote before consent"
+        );
+    }
+}
