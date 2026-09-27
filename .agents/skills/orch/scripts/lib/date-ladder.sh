@@ -24,10 +24,10 @@ tz_date() {
 # a clock past 23:59, a leap second, a local clock inside a spring-forward gap.
 # GNU refuses each outright. BSD `date -j -f` is strptime then mktime:
 # strptime bounds a day by 31 whatever the month, and mktime normalizes what
-# it let through, so `2099-02-30` reads as March 2 with a zero status. The BSD
-# arm therefore keeps an epoch only when it renders back, in FMT and ZONE, as
-# the stamp it was read from; a normalized one renders as the day or hour it
-# moved to.
+# it let through, so a thirtieth of February reads as the second of March with
+# a zero status. The BSD arm therefore keeps an epoch only when it renders
+# back, in FMT and ZONE, as the stamp it was read from; a normalized one
+# renders as the day or hour it moved to.
 to_epoch() {
   local stamp="$1" fmt="${2:-%Y-%m-%dT%H:%M:%SZ}" zone="${3-UTC}"
   local bsd_stamp="$stamp" bsd_fmt="$fmt" epoch
