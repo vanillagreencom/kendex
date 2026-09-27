@@ -31,6 +31,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 OPEN_TERMINAL="$SCRIPTS_DIR/open-terminal"
+CODEX_COMPACTION='{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}'
 
 # Physical: on macOS the temp root sits under /var -> /private/var, and the
 # scripts print the resolved path.
@@ -1016,9 +1017,9 @@ if command -v codex >/dev/null 2>&1; then
   # The pane log holds the command as it was TYPED, so every quote start_cmd put
   # round a flag token reads as the `bash -lc` escape; the second sed undoes that
   # escape, which is what the remote shell does before codex sees its argv.
-  RENDERED="$(sed -n "s/.*exec bash -lc 'cd \/srv\/lane \&\& exec \(codex .*\)'.*/\1/p" "$RUN/tmux.log" \
+  RENDERED="$(sed -n "s/.*exec bash -lc 'cd \/srv\/lane \&\& exec \(env ORCH_COMPACTION_OVERRIDES=.* codex .*\)'.*/\1/p" "$RUN/tmux.log" \
     | tail -1 | sed "s/'\\\\''/'/g")"
-  assert_eq "${RENDERED:-MISSING}" "codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high' resume --last" \
+  assert_eq "${RENDERED:-MISSING}" "env ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high' resume --last" \
     "the rendered remote command is recovered from the pane log"
   CODEX_PARSE_RC=0
   CODEX_HOME="$TMP_ROOT/codex-parse-home" timeout 20 bash -c "$RENDERED zz-appended-session" </dev/null >/dev/null 2>&1 || CODEX_PARSE_RC=$?
@@ -1659,7 +1660,10 @@ lane_launch() {
   # The value the prefix must name: the lane itself, or the home `home=` gives
   # a row whose launch builds one.
   local want="clear; env $var='$prefix_home' "
-  [[ -n "$template" ]] || want+="$harness "
+  if [[ -z "$template" ]]; then
+    [[ "$harness" != codex ]] || want+="ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' "
+    want+="$harness "
+  fi
   grep -qF "$want" "$runs/tmux.log" && form=prefix
   grep -qF "clear; '$LNBIN/$launcher' " "$runs/tmux.log" && form=launcher
   for f in $fields; do
