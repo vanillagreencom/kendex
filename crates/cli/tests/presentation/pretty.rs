@@ -153,9 +153,7 @@ fn the_frame_costs_the_run_a_fixed_number_of_lines() {
 /// ledger's own, and costs the run nothing.
 const FRAME_LINES: usize = 2;
 
-/// A run of one-line verdicts is one block, not one block each. Twenty
-/// installations checked is the case this is for: a rule drawn between
-/// every tick is the wall the module exists to stop printing.
+/// Verification draws adjacent verdict rows with no frame between them.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_line_verdicts_are_drawn_as_one_group() {
@@ -178,35 +176,33 @@ fn one_line_verdicts_are_drawn_as_one_group() {
     ));
     let ticks: Vec<&str> = pretty
         .lines()
-        .filter(|line| line.contains("✓ skill "))
+        .filter(|line| line.contains("skill tidy ["))
         .collect();
     assert_eq!(ticks.len(), 2, "the fixture needs two clean rows: {pretty}");
     assert!(
-        ticks[0].starts_with('◇') && ticks[1].starts_with('│'),
-        "each verdict opened a block of its own: {ticks:?}\n{pretty}"
+        ticks
+            .iter()
+            .all(|line| line.starts_with("  ") && line.contains('✓')),
+        "a verdict is not a component row: {ticks:?}\n{pretty}"
     );
 }
 
-/// A run that ends on anything but its ledger still closes its frame.
-/// `FRAMED` records that a frame was opened and nothing records that one
-/// was closed, so a ledger drawn as an ordinary block — because output
-/// followed it — would leave the reader a gutter bar hanging off the
-/// bottom of the run with no closing line under it.
+/// JSON stays on stdout while the human verification summary uses components.
 #[test]
-fn a_run_ending_outside_its_ledger_still_closes_the_frame() {
-    // The answer on stdout follows the ledger, so the ledger is drawn as
-    // an ordinary block and the frame is left for the run's end to close.
-    let printed = said(&nothing_declared(&[
-        "verify", "--json", "--scope", "project",
-    ]));
+fn verify_json_keeps_its_human_summary_out_of_stdout() {
+    let output = nothing_declared(&["verify", "--json", "--scope", "project"]);
+    let printed = said(&output);
     assert!(
         printed.contains("nothing installed"),
         "the fixture no longer reaches the case: {printed}"
     );
     assert!(
-        printed.contains("\n\u{2514}"),
-        "the frame was left open: {printed}"
+        printed.contains('✓') && !printed.contains('└'),
+        "the summary is not a component: {printed}"
     );
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid JSON: {error}"));
+    assert_eq!(document["clean"], true);
 }
 
 /// The closing line is genuinely last, even when the work after the

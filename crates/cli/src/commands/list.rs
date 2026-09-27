@@ -3,8 +3,9 @@ use kendex_core::model::{HarnessId, Scope};
 use kendex_core::scan::WarningStanding;
 use kendex_core::{scan, settings};
 
-use super::{CliResult, note, resolve_scopes, say};
+use super::{CliResult, resolve_scopes};
 use crate::scope::ScopeFilter;
+use crate::ui::{self, Span, Status, Style};
 
 pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult {
     let harness = harness
@@ -35,33 +36,59 @@ pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult
         })
         .collect();
 
+    let style = ui::style();
+    let target = scopes
+        .iter()
+        .map(Scope::label)
+        .collect::<Vec<_>>()
+        .join(", ");
+    ui::stderr(&style.header("list", &target));
+    ui::stderr(&listing(&style, &rows));
+    for warning in &result.warnings {
+        let text = warning.to_string();
+        ui::stderr(&match warning.standing {
+            WarningStanding::Actionable => {
+                style.report_row(Status::Decision, &[Span::Prose(&text)], "warning: ")
+            }
+            WarningStanding::UnusedEmptyContainer => {
+                style.report_row(Status::Notice, &[Span::Prose(&text)], "")
+            }
+        });
+    }
+    Ok(())
+}
+
+fn listing(style: &Style, rows: &[[String; 5]]) -> Vec<String> {
     if rows.is_empty() {
-        say("no packages found");
-    } else {
+        return style.summary(Status::Done, "no packages found");
+    }
+    if matches!(style.look, ui::Look::Plain) {
+        // Keep the existing byte-padded, headerless script table.
         let mut widths = [0usize; 5];
-        for row in &rows {
+        for row in rows {
             for (w, cell) in widths.iter_mut().zip(row) {
                 *w = (*w).max(cell.len());
             }
         }
-        for row in &rows {
+        let mut lines = Vec::new();
+        for row in rows {
             let line = row
                 .iter()
                 .zip(widths)
                 .map(|(cell, w)| format!("{cell:w$}"))
                 .collect::<Vec<_>>()
                 .join("  ");
-            say(line.trim_end());
+            lines.extend(style.note(&[Span::Prose(line.trim_end())]));
         }
+        return lines;
     }
-    for warning in &result.warnings {
-        match warning.standing {
-            WarningStanding::Actionable => say(&format!("warning: {warning}")),
-            // The reading stands; the word asking for a repair does not.
-            // Nothing here is missing, so the line is a diagnostic and the
-            // reader is not sent to edit another program's file.
-            WarningStanding::UnusedEmptyContainer => note(&warning.to_string()),
-        }
-    }
-    Ok(())
+    let mut lines = style.section("packages", rows.len(), Status::Notice);
+    lines.extend(style.table(
+        &["kind", "name", "harness", "scope", "state"],
+        &rows.iter().map(|row| row.to_vec()).collect::<Vec<_>>(),
+    ));
+    lines
 }
+
+#[cfg(test)]
+mod tests;

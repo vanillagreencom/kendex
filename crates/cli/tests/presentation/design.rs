@@ -30,8 +30,13 @@ fn fixture() -> Fixture {
 /// top of the suite's environment: stdout and stderr.
 #[allow(clippy::expect_used)]
 fn check(at: &Fixture, ui: &str, extra: &[(&str, &str)]) -> (String, String) {
+    inspection(at, &["check", "--scope", "project"], ui, extra)
+}
+
+#[allow(clippy::expect_used)]
+fn inspection(at: &Fixture, args: &[&str], ui: &str, extra: &[(&str, &str)]) -> (String, String) {
     let mut run = Command::new(env!("CARGO_BIN_EXE_kendex"));
-    run.args(["check", "--scope", "project"])
+    run.args(args)
         .current_dir(&at.project)
         .env_clear()
         .envs(test_util::fixture_env(&at.home))
@@ -47,6 +52,69 @@ fn check(at: &Fixture, ui: &str, extra: &[(&str, &str)]) -> (String, String) {
         String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
     )
+}
+
+#[test]
+fn inspection_verbs_respect_no_color_and_terminal_width() {
+    let at = fixture();
+    let verbs: &[&[&str]] = &[
+        &["list", "--scope", "project"],
+        &["show", "skill", "commit-guards"],
+        &["show", "skill", "commit-guards", "--files"],
+        &["updates", "--scope", "project"],
+        &["verify", "--scope", "project"],
+        &["diff", "skill", "commit-guards", "--from", "installed"],
+    ];
+    for args in verbs {
+        let piped = inspection(&at, args, "auto", &[]);
+        assert!(!piped.1.is_empty(), "empty report: {args:?}");
+        assert_eq!(
+            inspection(&at, args, "pretty", &[("NO_COLOR", "1")]),
+            piped,
+            "{args:?}"
+        );
+        assert_eq!(
+            inspection(&at, args, "pretty", &[("TERM", "dumb")]),
+            piped,
+            "{args:?}"
+        );
+        let rich = inspection(&at, args, "pretty", &[("COLUMNS", "80")]);
+        assert!(
+            rich.1.contains('\u{1b}') && rich != piped,
+            "no rich report: {args:?} {rich:?}"
+        );
+        for line in rich.1.lines() {
+            assert!(
+                console::measure_text_width(line) <= 80,
+                "{args:?}: {line:?}"
+            );
+        }
+        assert!(rich.0.is_empty(), "human report reached stdout: {args:?}");
+    }
+}
+
+#[test]
+fn inspection_file_payload_is_identical_in_every_mode() {
+    let at = fixture();
+    let args = ["show", "skill", "commit-guards", "--file", "SKILL.md"];
+    let plain = inspection(&at, &args, "plain", &[]);
+    for (mode, extra) in [
+        ("pretty", vec![]),
+        ("pretty", vec![("NO_COLOR", "1")]),
+        ("auto", vec![]),
+    ] {
+        assert_eq!(inspection(&at, &args, mode, &extra), plain);
+    }
+    // The payload is the source file, line by line, and nothing of the
+    // report around it: one terminator past the file's own bytes.
+    let source = fs::read_to_string(at.home.join("catalog/skills/commit-guards/SKILL.md"))
+        .unwrap_or_else(|error| panic!("the fixture's source file: {error}"));
+    assert!(
+        source.ends_with(RISKY),
+        "the fixture no longer reaches the case"
+    );
+    assert_eq!(plain.1.strip_suffix('\n'), Some(source.as_str()));
+    assert!(plain.0.is_empty(), "payload reached stdout: {plain:?}");
 }
 
 /// A run forced rich with `KENDEX_UI=pretty` and `NO_COLOR` set, or

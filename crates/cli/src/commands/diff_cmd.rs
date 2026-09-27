@@ -1,11 +1,12 @@
 use clap::Args;
 
 use kendex_core::env::Env;
-use kendex_core::package::diff::{FileStatus, LineKind, VersionSel};
+use kendex_core::package::diff::{FileStatus, LineKind, PackageDiff, VersionSel};
 
 use super::pin::parse_kind;
-use super::{CliResult, resolve_scopes, say};
+use super::{CliResult, resolve_scopes};
 use crate::scope::ScopeFilter;
+use crate::ui::{self, Look, Span, Status, Style};
 
 #[derive(Args)]
 pub struct DiffArgs {
@@ -52,16 +53,26 @@ pub fn run(env: &Env, args: DiffArgs) -> CliResult {
     let diff = kendex_core::package::diff::package_diff(
         env, &scope, kind, &args.name, &from, &to, harness,
     )?;
+    let style = ui::style();
+    ui::stderr(&style.header("diff", &args.name));
+    ui::stderr(&screen(&style, &diff));
+    Ok(())
+}
+
+fn screen(style: &Style, diff: &PackageDiff) -> Vec<String> {
     if diff.files.is_empty() {
-        say("no changes");
-        return Ok(());
+        return style.summary(Status::Done, "no changes");
     }
-    say(&format!(
+    let summary = format!(
         "+{} -{}{}",
         diff.total_additions,
         diff.total_deletions,
         if diff.truncated { "  (truncated)" } else { "" }
-    ));
+    );
+    let mut lines = match style.look {
+        Look::Plain => style.note(&[Span::Prose(&summary)]),
+        Look::Rich { .. } => style.section("changes", diff.files.len(), Status::Notice),
+    };
     for file in &diff.files {
         let status = match file.status {
             FileStatus::Added => " (added)",
@@ -70,25 +81,51 @@ pub fn run(env: &Env, args: DiffArgs) -> CliResult {
             FileStatus::Binary => " (binary)",
             FileStatus::TooLarge => " (too large to show)",
         };
-        // The blank line before each heading is said rather than written
-        // into the line: a break in a value is a value's break, and only
-        // a call is a break of this verb's own.
-        say("");
-        say(&format!(
+        let label = format!(
             "{}{status}  +{} -{}",
             file.path, file.additions, file.deletions
-        ));
+        );
+        // The plain grammar sets each file off with a blank line; a rich
+        // row is its own boundary.
+        if matches!(style.look, Look::Plain) {
+            lines.push(String::new());
+        }
+        lines.extend(style.report_row(Status::Notice, &[Span::Prose(&label)], ""));
         for hunk in &file.hunks {
-            say(&hunk.header);
+            lines.extend(style.report_detail(&[Span::Prose(&hunk.header)], ""));
             for line in &hunk.lines {
                 let marker = match line.kind {
                     LineKind::Context => ' ',
                     LineKind::Add => '+',
                     LineKind::Remove => '-',
                 };
-                say(&format!("{marker}{}", line.text));
+                let text = format!("{marker}{}", line.text);
+                lines.extend(match style.look {
+                    Look::Plain => style.note(&[Span::Prose(&text)]),
+                    Look::Rich { .. } => style.detail(
+                        match line.kind {
+                            LineKind::Context => None,
+                            LineKind::Add => Some(Status::Done),
+                            LineKind::Remove => Some(Status::Decision),
+                        },
+                        &[Span::Prose(&text)],
+                    ),
+                });
             }
         }
     }
-    Ok(())
+    if matches!(style.look, Look::Rich { .. }) {
+        lines.extend(style.summary(
+            if diff.truncated {
+                Status::Notice
+            } else {
+                Status::Done
+            },
+            &summary,
+        ));
+    }
+    lines
 }
+
+#[cfg(test)]
+mod tests;

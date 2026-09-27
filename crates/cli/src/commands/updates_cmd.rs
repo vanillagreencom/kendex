@@ -3,8 +3,9 @@ use clap::{Args, Subcommand};
 use kendex_core::env::Env;
 
 use super::pin::parse_kind;
-use super::{CliResult, resolve_scopes_at, say, scope_label};
+use super::{CliResult, resolve_scopes_at, scope_label};
 use crate::scope::ScopeFilter;
+use crate::ui::{self, Look, Span, Status, Style};
 
 #[derive(Subcommand)]
 pub enum UpdatesCommand {
@@ -96,6 +97,19 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
         return super::refresh::run(env, filter, &target, false, yes, false);
     }
     let report = kendex_core::package::updates::updates(env, &scope)?;
+    let style = ui::style();
+    ui::stderr(&style.header("updates", &scope.label()));
+    ui::stderr(&screen(&style, &report));
+    // The deep work just ran; write it down so the next session-start check
+    // reads verdicts instead of guesses.
+    if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
+        ui::report::warning(&format!("snapshot not derived ({})", error));
+    }
+    Ok(())
+}
+
+fn screen(style: &Style, report: &kendex_core::package::updates::UpdatesReport) -> Vec<String> {
+    let mut lines = Vec::new();
     let mut shown = 0;
     for row in &report.rows {
         // Mixed installs, packages gone upstream and installs edited on
@@ -113,60 +127,81 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
         shown += 1;
         let mut notes = Vec::new();
         if row.pinned {
-            notes.push("held");
+            notes.push((Status::Decision, "held"));
         }
         if row.ignored {
-            notes.push("ignored");
+            notes.push((Status::Decision, "ignored"));
         }
         if row.mixed {
-            notes.push("mixed installs");
+            notes.push((Status::Decision, "mixed installs"));
         }
         if row.removed_upstream {
-            notes.push("no longer in its marketplace");
+            notes.push((Status::Failed, "no longer in its marketplace"));
         }
         if row.blocked_by_local_edit {
-            notes.push("edited on disk — keep it as your own copy, or discard the edits");
+            notes.push((
+                Status::Failed,
+                "edited on disk — keep it as your own copy, or discard the edits",
+            ));
+        }
+        let current = row
+            .current
+            .as_ref()
+            .map(show_version)
+            .unwrap_or_else(|| "?".into());
+        let latest = row
+            .latest
+            .as_ref()
+            .map(show_version)
+            .unwrap_or_else(|| "?".into());
+        if matches!(style.look, Look::Rich { .. }) {
+            let name = format!("{} {}", row.kind.name(), row.name);
+            lines.extend(style.change(&name, &current, &latest, Some(&scope_label(&row.scope))));
+            for (status, note) in notes {
+                lines.extend(style.detail(Some(status), &[Span::Prose(note)]));
+            }
+            continue;
         }
         let notes = if notes.is_empty() {
             String::new()
         } else {
-            format!("  [{}]", notes.join(", "))
+            format!(
+                "  [{}]",
+                notes
+                    .iter()
+                    .map(|(_, text)| *text)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
         };
         // The place leads the line: the same package can be out of date
         // in several projects, and a line that does not say which one
         // reads as a duplicate.
-        say(&format!(
+        lines.extend(style.note(&[Span::Prose(&format!(
             "{}  {} {}  {} -> {}{notes}",
             scope_label(&row.scope),
             row.kind.name(),
             row.name,
-            row.current
-                .as_ref()
-                .map(show_version)
-                .unwrap_or_else(|| "?".into()),
-            row.latest
-                .as_ref()
-                .map(show_version)
-                .unwrap_or_else(|| "?".into()),
-        ));
+            current,
+            latest,
+        ))]));
     }
     for warning in &report.warnings {
-        say(&format!(
-            "warning: {} {}: {}",
-            warning.kind.name(),
-            warning.name,
-            warning.message
+        lines.extend(style.report_row(
+            Status::Decision,
+            &[Span::Prose(&format!(
+                "{} {}: {}",
+                warning.kind.name(),
+                warning.name,
+                warning.message
+            ))],
+            "warning: ",
         ));
     }
     if shown == 0 && report.warnings.is_empty() {
-        say("everything is on its latest version");
+        lines.extend(style.summary(Status::Done, "everything is on its latest version"));
     }
-    // The deep work just ran; write it down so the next session-start check
-    // reads verdicts instead of guesses.
-    if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
-        say(&format!("warning: snapshot not derived ({})", error));
-    }
-    Ok(())
+    lines
 }
 
 /// Bring every source's mirror up to date, pinned ones included. A source
@@ -178,7 +213,7 @@ fn fetch_sources(env: &Env, scope: &kendex_core::model::Scope) {
         kendex_core::manifest::load(&path)
     {
         for warning in kendex_core::remote::fetch_all(env, &manifest) {
-            say(&format!("warning: {}", warning));
+            ui::report::warning(&warning.to_string());
         }
     }
 }
@@ -208,12 +243,14 @@ fn set_ignored(
         .into());
     };
     kendex_core::package::updates::set_ignored(env, scope, kind, &name, &row.repo, ignored)?;
-    match ignored {
-        true => say(&format!(
-            "updates for {} are muted — `kendex updates unignore` brings them back",
-            name
-        )),
-        false => say(&format!("updates for {} notify again", name)),
-    }
+    ui::report::notice(&match ignored {
+        true => {
+            format!("updates for {name} are muted — `kendex updates unignore` brings them back")
+        }
+        false => format!("updates for {name} notify again"),
+    });
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

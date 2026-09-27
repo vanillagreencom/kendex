@@ -64,6 +64,23 @@ pub fn fail_refusal(headline: &str, error: &(dyn std::error::Error + 'static)) {
     }
 }
 
+impl super::Style {
+    /// A refusal within a component report: the same door choice as
+    /// [`fail_refusal`], each line drawn as a failed report row.
+    pub fn refusal(
+        &self,
+        headline: &str,
+        error: &(dyn std::error::Error + 'static),
+    ) -> Vec<String> {
+        lines(headline, error)
+            .into_iter()
+            .flat_map(|line| {
+                self.report_row(super::Status::Failed, &[super::Span::Prose(&line)], "")
+            })
+            .collect()
+    }
+}
+
 /// The lines a refusal prints on: the headline on the first, then the
 /// error's own text, escaped a line at a time where it wrote the breaks and
 /// escaped whole where it did not.
@@ -143,6 +160,25 @@ mod tests {
         assert_eq!(
             component_lines(&plain(), foreign.as_ref()),
             ["Error: name\\nwith\\u{1b}[31m"]
+        );
+    }
+
+    #[test]
+    fn inspection_refusal_keeps_error_boundaries_and_escapes_values() {
+        use crate::ui::testing::{plain, rich, tagged};
+        let error = Lines("first\nsecond".into());
+        assert_eq!(
+            plain().refusal("bad\npath: ", &error),
+            ["bad\\npath: first", "second"]
+        );
+        assert_eq!(
+            tagged(&rich(80).refusal("bad\npath: ", &error)),
+            ["  <31>✗</> bad\\npath: first", "  <31>✗</> second"]
+        );
+        let value: Box<dyn std::error::Error> = "first\nsecond".into();
+        assert_eq!(
+            plain().refusal("error: ", value.as_ref()),
+            ["error: first\\nsecond"]
         );
     }
 

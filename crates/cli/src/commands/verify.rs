@@ -14,9 +14,12 @@ use kendex_core::manifest::Manifest;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
 
 use super::engine_common::print_unmanaged;
-use super::{fail, fail_refusal, note, resolve_scopes, say, scope_label};
+use super::{resolve_scopes, scope_label};
 use crate::scope::ScopeFilter;
-use crate::ui;
+use crate::ui::{self, Span, Status, Style};
+
+mod display;
+use display::{record_warnings, row as draw_row, scope_refusal};
 
 /// What the run renders against and what the machine-readable mode asks
 /// for: the document, and the revision each shared file's foreign part is
@@ -59,14 +62,18 @@ impl Output {
     }
 }
 
-fn report_record_problem(scope: &Scope, path: &Path, problem: Option<&str>) {
+fn report_record_problem(style: &Style, scope: &Scope, path: &Path, problem: Option<&str>) {
     let detail = problem.map_or_else(
         || format!("no install record at {}", path.display()),
         |problem| format!("install record unreadable: {problem}"),
     );
-    fail(&format!(
-        "! {}: {detail} — checking what this place lists against its installed files",
-        scope_label(scope)
+    ui::stderr(&style.report_row(
+        Status::Failed,
+        &[Span::Prose(&format!(
+            "! {}: {detail} — checking what this place lists against its installed files",
+            scope_label(scope)
+        ))],
+        "",
     ));
 }
 
@@ -150,18 +157,29 @@ pub fn run(
     filter: ScopeFilter,
     output: Output,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
-    ui::intro("kendex verify");
+    let style = ui::style();
+    let scopes = resolve_scopes(env, filter)?;
+    ui::stderr(
+        &style.header(
+            "verify",
+            &scopes
+                .iter()
+                .map(Scope::label)
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+    );
     let mut tally = Tally::default();
-    for scope in resolve_scopes(env, filter)? {
-        check_scope(env, scope, &names, &output, &mut tally)?;
+    for scope in scopes {
+        check_scope(env, scope, &names, &output, &mut tally, &style)?;
     }
     print_unmanaged(&tally.unmanaged);
-    print_gaps(&tally.gaps);
-    ui::ledger(
-        &head(tally.checked, tally.failed, !tally.gaps.is_empty()),
-        &[],
-    );
+    print_gaps(&style, &tally.gaps);
     let clean = tally.clean();
+    ui::stderr(&style.summary(
+        if clean { Status::Done } else { Status::Failed },
+        &head(tally.checked, tally.failed, !tally.gaps.is_empty()),
+    ));
     if output.json {
         super::answer(&serde_json::to_string_pretty(&Document::new(
             clean,
@@ -185,6 +203,7 @@ fn check_scope(
     names: &[String],
     output: &Output,
     tally: &mut Tally,
+    style: &Style,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let reading = output.reading();
     let path = lock_path(env, &scope);
@@ -192,17 +211,15 @@ fn check_scope(
     let fallback = records.fallback;
     let manifest = records.manifest.as_deref();
     if records.record_problem.is_some() || fallback && manifest.is_some_and(declares_items) {
-        report_record_problem(&scope, &path, records.record_problem.as_deref());
+        report_record_problem(style, &scope, &path, records.record_problem.as_deref());
         tally.recordless = true;
     }
     if let Some(error) = &records.manifest_problem {
-        fail_refusal(&format!("! {} not checked: ", scope_label(&scope)), error);
+        scope_refusal(style, &scope, error);
         tally.recordless |= records.record_problem.is_some() || !records.lock.entries.is_empty();
         return Ok(());
     }
-    for warning in &records.warnings {
-        fail(&format!("! {}: {warning}", scope_label(&scope)));
-    }
+    record_warnings(style, &scope, &records.warnings);
     if manifest.is_none() && !records.warnings.is_empty() {
         tally.recordless = true;
         return Ok(());
@@ -211,14 +228,16 @@ fn check_scope(
         match kendex_core::ownership::audit(env, &scope, &records, &reading.plan_options()) {
             Ok(audited) => audited,
             Err(error) => {
-                fail_refusal(&format!("! {} not checked: ", scope_label(&scope)), &error);
+                scope_refusal(style, &scope, &error);
                 tally.recordless = true;
                 return Ok(());
             }
         };
     let lock = audited.matching;
     let report = audited.report;
-    tally.stale.extend(trailed(&scope, &lock, &report, reading));
+    tally
+        .stale
+        .extend(trailed(style, &scope, &lock, &report, reading));
     let placer = Placer::new(env, &scope, output.base.as_deref(), &report);
     let named = |name: &str| names.is_empty() || names.iter().any(|wanted| wanted == name);
     tally.unmanaged.extend(
@@ -241,7 +260,7 @@ fn check_scope(
             continue;
         }
         tally.checked += 1;
-        let problem = say_row(entry, &report);
+        let problem = say_row(style, entry, &report);
         tally.failed += usize::from(problem.is_some());
         let positions = report
             .installations
@@ -261,7 +280,7 @@ fn check_scope(
         if !named(&shim.name) {
             continue;
         }
-        let problem = say_shim(shim);
+        let problem = say_shim(style, shim);
         tally.shims_failed += usize::from(problem.is_some());
         tally.rows.push(placer.row(
             "shim",
@@ -277,7 +296,7 @@ fn check_scope(
         true => None,
         false => attest::record(env, &scope, &lock, &report, &output.floor(&scope))?,
     };
-    bookkeeping_rows(&scope, record, &report, &placer, tally)?;
+    bookkeeping_rows(&scope, record, &report, &placer, tally, style)?;
     Ok(())
 }
 
@@ -285,6 +304,7 @@ fn check_scope(
 /// rows where the run rendered at the record's commits: the rows then
 /// pass on a render the source has moved past, and this is its age.
 fn trailed(
+    style: &Style,
     scope: &Scope,
     lock: &kendex_core::lock::Lock,
     report: &kendex_core::engine::EngineReport,
@@ -293,12 +313,16 @@ fn trailed(
     let stale = attest::stale(scope, lock, report);
     if reading == Reading::Recorded {
         for behind in &stale {
-            note(&format!(
-                "{}: source {} checked at recorded commit {}; it resolves to {} now",
-                scope_label(scope),
-                behind.source,
-                behind.recorded,
-                behind.resolved
+            ui::stderr(&style.report_row(
+                Status::Notice,
+                &[Span::Prose(&format!(
+                    "{}: source {} checked at recorded commit {}; it resolves to {} now",
+                    scope_label(scope),
+                    behind.source,
+                    behind.recorded,
+                    behind.resolved
+                ))],
+                "",
             ));
         }
     }
@@ -314,6 +338,7 @@ fn bookkeeping_rows(
     report: &kendex_core::engine::EngineReport,
     placer: &Placer,
     tally: &mut Tally,
+    style: &Style,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for (kind, standing) in [
         ("record", record),
@@ -329,7 +354,7 @@ fn bookkeeping_rows(
             continue;
         };
         let name = placer.spelled(&standing.path);
-        let problem = say_bookkeeping(kind, &name, &standing);
+        let problem = say_bookkeeping(style, kind, &name, &standing);
         tally.bookkeeping_failed += usize::from(problem.is_some());
         let position = Position {
             path: standing.path.clone(),
@@ -570,17 +595,21 @@ fn declares_items(manifest: &Manifest) -> bool {
 /// `[bundles.x]` prints every member and everything those members require,
 /// and a large set makes a long list; the names are what a reader looking
 /// at an empty record came for.
-fn print_gaps(scopes: &[(Scope, Vec<(ItemKind, String)>)]) {
+fn print_gaps(style: &Style, scopes: &[(Scope, Vec<(ItemKind, String)>)]) {
     for (scope, items) in scopes {
-        note(&format!(
-            "{}: {} package{} listed and not in the install record",
-            scope_label(scope),
-            items.len(),
-            if items.len() == 1 { "" } else { "s" }
+        ui::stderr(&style.report_row(
+            Status::Notice,
+            &[Span::Prose(&format!(
+                "{}: {} package{} listed and not in the install record",
+                scope_label(scope),
+                items.len(),
+                if items.len() == 1 { "" } else { "s" }
+            ))],
+            "",
         ));
         for (kind, name) in items {
-            say(&format!(
-                "  - {} {name} — {}",
+            let text = format!(
+                "{} {name} — {}",
                 kind.name(),
                 match kind {
                     ItemKind::PiExtension => "kendex update-pi records it",
@@ -591,7 +620,8 @@ fn print_gaps(scopes: &[(Scope, Vec<(ItemKind, String)>)]) {
                     | ItemKind::McpServer
                     | ItemKind::Plugin => "kendex apply records it",
                 }
-            ));
+            );
+            ui::stderr(&style.report_row(Status::Decision, &[Span::Prose(&text)], "  - "));
         }
     }
 }
@@ -599,30 +629,27 @@ fn print_gaps(scopes: &[(Scope, Vec<(ItemKind, String)>)]) {
 /// One instruction shim's row, and the problem that failed it. A shim is
 /// content, not a lock entry: the row reads its state off the engine's
 /// standing for it, which compared the bytes (invariant 12).
-fn say_shim(shim: &ShimStanding) -> Option<String> {
+fn say_shim(style: &Style, shim: &ShimStanding) -> Option<String> {
     let harness = shim.harness.name();
     let name = &shim.name;
-    match shim.problem() {
-        Some(problem) => {
-            fail(&format!("✗ shim {name} [{harness}]: {problem}"));
-            Some(problem)
-        }
-        None => {
-            say(&format!("✓ shim {name} [{harness}]"));
-            None
-        }
-    }
+    let problem = shim.problem();
+    ui::stderr(&draw_row(
+        style,
+        &format!("shim {name} [{harness}]"),
+        problem.as_deref(),
+    ));
+    problem
 }
 
 /// One bookkeeping file's row, printed only where it fails: a passing one
 /// is the ordinary state of every project and says nothing a reader came
 /// for, while the machine-readable document carries it either way.
-fn say_bookkeeping(kind: &str, name: &str, standing: &Standing) -> Option<String> {
+fn say_bookkeeping(style: &Style, kind: &str, name: &str, standing: &Standing) -> Option<String> {
     if standing.problems.is_empty() {
         return None;
     }
     let problem = standing.problems.join("; ");
-    fail(&format!("✗ {kind} {name}: {problem}"));
+    ui::stderr(&draw_row(style, &format!("{kind} {name}"), Some(&problem)));
     Some(problem)
 }
 
@@ -634,6 +661,7 @@ fn say_bookkeeping(kind: &str, name: &str, standing: &Standing) -> Option<String
 /// missing, stale, in conflict, or recorded here while nothing declares
 /// it — and on a source it cannot reach.
 fn say_row(
+    style: &Style,
     entry: &kendex_core::lock::LockEntry,
     report: &kendex_core::engine::EngineReport,
 ) -> Option<String> {
@@ -662,20 +690,18 @@ fn say_row(
     let name = &entry.name;
     let harness = entry.harness.name();
     let bad = match problem {
-        Some(row) => {
-            fail(&format!("✗ {kind} {name} [{harness}]: {}", row.detail));
-            Some(row.detail.clone())
-        }
+        Some(row) => Some(row.detail.clone()),
         None if unreachable_source => {
             let detail = "where this package comes from is unavailable".to_owned();
-            fail(&format!("✗ {kind} {name} [{harness}]: {detail}"));
             Some(detail)
         }
-        None => {
-            say(&format!("✓ {kind} {name} [{harness}]"));
-            None
-        }
+        None => None,
     };
+    ui::stderr(&draw_row(
+        style,
+        &format!("{kind} {name} [{harness}]"),
+        bad.as_deref(),
+    ));
     // An installation can match its declaration exactly and still do
     // nothing — switched off machine-wide, outranked by a system file, or
     // advisory on this tool. That is not drift, so it does not fail the
@@ -688,7 +714,7 @@ fn say_row(
                 .harness
                 .is_none_or(|harness| harness == entry.harness)
     }) {
-        say(&format!("  ! {}", warning.message));
+        ui::stderr(&style.report_detail(&[Span::Prose(&warning.message)], "  ! "));
     }
     bad
 }

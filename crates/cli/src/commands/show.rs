@@ -5,8 +5,9 @@ use kendex_core::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME};
 use kendex_core::package::detail;
 
 use super::pin::parse_kind;
-use super::{CliResult, payload, resolve_scopes, say};
+use super::{CliResult, payload, resolve_scopes};
 use crate::scope::ScopeFilter;
+use crate::ui::{self, Look, Span, Status, Style, Target};
 
 #[derive(Args)]
 pub struct ShowArgs {
@@ -33,10 +34,11 @@ pub fn run(env: &Env, args: ShowArgs) -> CliResult {
     let kind = parse_kind(&args.kind)?;
     let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::Project)?;
     let scope = resolve_scopes(env, filter)?.remove(0);
+    let style = ui::style();
     if args.files {
-        for file in detail::package_files(env, &scope, kind, &args.name)? {
-            say(&format!("{}  {} bytes", file.path, file.size));
-        }
+        let files = detail::package_files(env, &scope, kind, &args.name)?;
+        ui::stderr(&style.header("show", &args.name));
+        ui::stderr(&file_list(&style, &files));
         return Ok(());
     }
     if let Some(rel) = &args.file {
@@ -45,7 +47,7 @@ pub fn run(env: &Env, args: ShowArgs) -> CliResult {
         // sentence: escaping it would collapse the file onto one line.
         payload(&source.content);
         if source.truncated {
-            say("… (truncated at 64 KB)");
+            ui::report::notice("… (truncated at 64 KB)");
         }
         return Ok(());
     }
@@ -53,33 +55,83 @@ pub fn run(env: &Env, args: ShowArgs) -> CliResult {
         match detail::package_readme(env, &scope, kind, &args.name)? {
             // A readme is the payload too, printed as its own lines.
             Some(readme) => payload(&readme.content),
-            None => say("no readme"),
+            None => ui::stderr(&style.summary(Status::Notice, "no readme")),
         }
         return Ok(());
     }
     let meta = detail::package_meta(env, &scope, kind, &args.name)?;
+    ui::stderr(&style.header("show", &args.name));
+    ui::stderr(&metadata(&style, &meta));
+    Ok(())
+}
+
+fn file_list(style: &Style, files: &[detail::PackageFile]) -> Vec<String> {
+    match style.look {
+        Look::Plain => files
+            .iter()
+            .flat_map(|file| {
+                style.note(&[Span::Prose(&format!("{}  {} bytes", file.path, file.size))])
+            })
+            .collect(),
+        Look::Rich { .. } => {
+            let mut lines = style.section("files", files.len(), Status::Notice);
+            lines.extend(
+                style.table(
+                    &["path", "bytes"],
+                    &files
+                        .iter()
+                        .map(|file| vec![file.path.clone(), file.size.to_string()])
+                        .collect::<Vec<_>>(),
+                ),
+            );
+            lines
+        }
+    }
+}
+
+fn metadata(style: &Style, meta: &detail::PackageMeta) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut field = |label: &str, value: &str, status, url: Option<&str>| {
+        let text = format!("{label}: {value}");
+        lines.extend(match (style.look, url) {
+            (Look::Rich { .. }, Some(url)) => style.link(&text, Target::Url(url)),
+            (Look::Rich { .. }, None) | (Look::Plain, _) => {
+                style.report_row(status, &[Span::Prose(&text)], "")
+            }
+        });
+    };
     match meta.source.as_str() {
-        LOCAL_SOURCE_NAME | INPLACE_SOURCE_NAME => say("marketplace: none — your own package"),
-        source => say(&format!("marketplace: {}", source)),
+        LOCAL_SOURCE_NAME | INPLACE_SOURCE_NAME => field(
+            "marketplace",
+            "none — your own package",
+            Status::Notice,
+            None,
+        ),
+        source => field("marketplace", source, Status::Notice, None),
     }
     if let Some(repo) = &meta.repo {
-        say(&format!("repository: {}", repo));
+        field("repository", repo, Status::Notice, meta.repo_url.as_deref());
     }
     if let Some(current) = &meta.current {
         let label = current
             .label
             .clone()
             .unwrap_or_else(|| current.commit[..7.min(current.commit.len())].to_owned());
-        say(&format!("version: {}", label));
+        field("version", &label, Status::Done, None);
     }
     if let Some(rev) = &meta.rev {
-        say(&format!("held at: {}", &rev[..7.min(rev.len())]));
+        field("held at", &rev[..7.min(rev.len())], Status::Decision, None);
     }
     if let Some(installed_at) = &meta.installed_at {
-        say(&format!("installed: {}", installed_at));
+        field("installed", installed_at, Status::Done, None);
     }
     if meta.fork.is_some() {
-        say("own copy: yes — updates from its marketplace are paused");
+        field(
+            "own copy",
+            "yes — updates from its marketplace are paused",
+            Status::Decision,
+            None,
+        );
     }
     if let Some(catalog) = &meta.catalog {
         for (label, value) in [
@@ -88,9 +140,17 @@ pub fn run(env: &Env, args: ShowArgs) -> CliResult {
             ("homepage", &catalog.homepage),
         ] {
             if let Some(value) = value {
-                say(&format!("{}: {}", label, value));
+                field(
+                    label,
+                    value,
+                    Status::Notice,
+                    (label == "homepage").then_some(value.as_str()),
+                );
             }
         }
     }
-    Ok(())
+    lines
 }
+
+#[cfg(test)]
+mod tests;

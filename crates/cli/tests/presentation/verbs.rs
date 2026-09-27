@@ -6,23 +6,21 @@
 use super::*;
 
 /// The verbs routed through the module and given a frame.
-const FRAMED: [&[&str]; 2] = [
-    &[
-        "remove",
-        "commit-guards",
-        "--no-sweep",
-        "--scope",
-        "project",
-    ],
-    &["verify", "--scope", "project"],
-];
+const FRAMED: [&[&str]; 1] = [&[
+    "remove",
+    "commit-guards",
+    "--no-sweep",
+    "--scope",
+    "project",
+]];
 
 /// Verbs that route through the module with no frame of their own. They
 /// are the reason framing is armed rather than detected: a verb with no
 /// frame has to keep printing plain lines on a terminal, not block glyphs
 /// hanging off a gutter nobody drew. A verb built from the design system's
 /// components is one of them: it draws its own layout and never a frame.
-const UNFRAMED: [&[&str]; 8] = [
+const UNFRAMED: [&[&str]; 9] = [
+    &["verify", "--scope", "project"],
     &["check", "--scope", "project"],
     &["refresh", "-y", "--scope", "project"],
     &["apply", "--plan", "--scope", "project"],
@@ -74,7 +72,8 @@ fn a_verb_with_no_frame_stays_plain_on_a_terminal() {
         let printed = said(&output);
         let found: Vec<char> = FRAMING
             .into_iter()
-            .filter(|symbol| printed.contains(*symbol))
+            // Tables use the separator without opening a cliclack frame.
+            .filter(|symbol| *symbol != '─' && printed.contains(*symbol))
             .collect();
         assert!(
             found.is_empty(),

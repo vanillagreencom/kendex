@@ -1,7 +1,45 @@
 use std::path::Path;
 
 use super::*;
-use crate::ui::testing::{ascii, plain, rich, tagged};
+use crate::ui::testing::{ascii, plain, rich, tagged, width};
+
+#[test]
+fn inspection_components_wrap_content_within_80_cells() {
+    let long = "界".repeat(90);
+    let columns = vec![vec![long.clone(), "switched off".into()]];
+    let cases = [
+        (
+            "table",
+            rich(80).table(&["name", "state"], &columns),
+            plain().table(&["name", "state"], &columns),
+        ),
+        (
+            "change",
+            rich(80).change(&long, "v1", "v2", Some(&long)),
+            plain().change(&long, "v1", "v2", Some(&long)),
+        ),
+        (
+            "link",
+            rich(80).link(&long, Target::Url("https://example.com")),
+            plain().link(&long, Target::Url("https://example.com")),
+        ),
+    ];
+    for (case, drawn, plain) in cases {
+        assert!(
+            plain.iter().any(|line| width(line) > 80),
+            "{case} did not reach the bound"
+        );
+        assert!(
+            drawn.iter().all(|line| width(line) <= 80),
+            "{case}: {drawn:?}"
+        );
+        assert_eq!(
+            drawn.join("").matches('界').count(),
+            plain.join("").matches('界').count(),
+            "{case} lost content"
+        );
+    }
+}
 
 const CHOICES: [Choice<'static>; 3] = [
     Choice {
