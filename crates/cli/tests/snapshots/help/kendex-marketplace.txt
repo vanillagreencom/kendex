@@ -9,7 +9,7 @@ Commands:
   unsubscribe  Unsubscribe from a marketplace, removing or keeping its packages
   browse       List packages and bundles from your subscribed marketplaces
   check        Check a marketplace folder for problems
-  new          Create a marketplace folder with package checks and a license
+  new          Create a marketplace folder with package checks
   use          Add an existing marketplace folder to Mine without changing its
                files
   mine         List your own marketplaces and show whether they are ready to

@@ -1,4 +1,4 @@
-Create a marketplace folder with package checks and a license
+Create a marketplace folder with package checks
 
 Usage: kendex marketplace new [OPTIONS] <NAME>
 

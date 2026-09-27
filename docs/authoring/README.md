@@ -8,7 +8,7 @@ A kendex marketplace is a git repository of skills, agents, hooks, commands, MCP
 kendex marketplace new my-marketplace
 ```
 
-That creates a folder holding a `kendex.toml`, a README, the check workflow and a licence, initialised as a git repository. Templates for each file are in [templates/](templates/); `kendex init --kind agent|skill|hook <name>` scaffolds one item.
+That creates a folder holding a `kendex.toml`, a README and the check workflow, initialised as a git repository. `--license mit|apache-2.0` adds the licence that submission needs. Templates for each file are in [templates/](templates/); `kendex init --kind agent|skill|hook <name>` scaffolds one item.
 
 ## Layout
 

@@ -74,7 +74,7 @@ pub enum MarketplaceCommand {
         /// The marketplace directory (default: the current directory)
         dir: Option<std::path::PathBuf>,
     },
-    /// Create a marketplace folder with package checks and a license
+    /// Create a marketplace folder with package checks
     New {
         name: String,
         #[arg(long)]
