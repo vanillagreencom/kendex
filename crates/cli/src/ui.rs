@@ -69,9 +69,10 @@
 //! **The design system.** A converted verb draws only through the
 //! components on [`Style`] — tokens, symbols, components and the three
 //! renderings in `tokens`, `symbols`, `components` and `modes` — and
-//! prints what they drew through [`stdout`] and [`stderr`]. The framed
-//! calls above serve the verbs not yet converted. `crates/cli/OUTPUT.md`
-//! is the reference.
+//! prints what they drew through [`stdout`] and [`stderr`]. It asks
+//! through [`choose`], a question answered by one key, and [`typed`], one
+//! whose answer is text. The framed calls above serve the verbs not yet
+//! converted. `crates/cli/OUTPUT.md` is the reference.
 
 mod blocks;
 #[cfg_attr(
@@ -82,6 +83,7 @@ mod blocks;
     )
 )]
 mod components;
+mod keys;
 mod live;
 mod modes;
 mod prompt;
@@ -93,10 +95,11 @@ mod tokens;
 pub use blocks::{finish, flush, intro};
 #[expect(
     unused_imports,
-    reason = "the types a callout and a link take; the verbs converted after the pilot name them"
+    reason = "the type a link takes; the verbs converted after the pilot name it"
 )]
-pub use components::{Choice, Target};
-pub use components::{Status, Value};
+pub use components::Target;
+pub use components::{Choice, Key, Status, Value};
+pub use keys::{choose, typed};
 pub use live::Spinner;
 pub use modes::{Channel, Span, Style, channel, style};
 pub use prompt::{ask, cancelled, confirm, spinner};
@@ -393,6 +396,27 @@ pub(crate) mod testing {
             look: Look::Plain,
             glyphs: Glyphs::Unicode,
         }
+    }
+
+    /// A question drawn in `style` and answered by `keys`, in order: what
+    /// it drew, and the answer. Keys run out as the end of input.
+    pub fn asked<T: Copy>(
+        style: &Style,
+        options: &[(super::Choice<'_>, T)],
+        keys: &[console::Key],
+    ) -> (Vec<String>, std::io::Result<T>) {
+        let mut keys = keys.iter().cloned();
+        let mut drawn = Vec::new();
+        let answer = super::keys::asked(
+            style,
+            options,
+            || {
+                keys.next()
+                    .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::UnexpectedEof))
+            },
+            |lines| drawn.extend_from_slice(lines),
+        );
+        (drawn, answer)
     }
 
     pub fn ascii(style: Style) -> Style {

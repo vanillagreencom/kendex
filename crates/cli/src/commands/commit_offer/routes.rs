@@ -11,6 +11,7 @@ use kendex_core::engine::GeneratedPaths;
 
 use super::block::{self, AfterRefusal, Recover, Retry};
 use super::{Asking, Choice, Outcome};
+use crate::ui;
 
 type Taken = Result<Outcome, Box<dyn std::error::Error>>;
 
@@ -60,6 +61,7 @@ fn straight(
     asking: Asking,
     then: Push,
 ) -> Taken {
+    let style = ui::style();
     let root = &offer.scan.root;
     // Read before the commit: it is the commit a recovery would put the
     // branch back to, and after the commit it is no longer what `HEAD`
@@ -69,20 +71,21 @@ fn straight(
     loop {
         match commit_offer::commit(root, generated, &message, &Selection::All) {
             Ok(Committed::Nothing { .. }) => {
-                block::nothing_to_commit();
+                ui::stderr(&block::nothing_to_commit(&style));
                 return Ok(Outcome::Nothing);
             }
             Ok(Committed::Made { sha, files, .. }) => {
-                block::committed(&sha, files, None);
+                ui::stderr(&block::committed(&style, &sha, files, None));
                 return match then {
                     Push::No => Ok(Outcome::Committed(files)),
                     Push::Yes => pushed(offer, files, &message, before.as_deref(), asking),
                 };
             }
             Err(refused) => {
-                let more = block::commit_refused(&refused.failed, asking);
+                let (lines, more) = block::commit_refused(&style, &refused.failed, asking);
+                ui::stderr(&lines);
                 if let Some(count) = refused.still_staged {
-                    block::still_staged(count);
+                    ui::stderr(&block::still_staged(&style, count));
                 }
                 match again(asking, more.then_some(&refused.failed))? {
                     Retry::Leave => return Ok(Outcome::CommitRefused),
@@ -106,7 +109,7 @@ fn again(asking: Asking, mut unshown: Option<&commit_offer::Failed>) -> std::io:
         match block::after_refusal(unshown.is_some())? {
             AfterRefusal::Retry(retry) => return Ok(retry),
             AfterRefusal::Show => match unshown.take() {
-                Some(failed) => block::everything(failed),
+                Some(failed) => ui::stderr(&block::everything(&ui::style(), failed)),
                 None => unreachable!("the show choice was picked from a list without it"),
             },
         }
@@ -121,6 +124,7 @@ fn pushed(
     before: Option<&str>,
     asking: Asking,
 ) -> Taken {
+    let style = ui::style();
     let Some(remote) = offer.remote.as_ref() else {
         return Err("the push route ran with no remote".into());
     };
@@ -131,14 +135,15 @@ fn pushed(
         remote.tracked,
     ) {
         Ok(_) => {
-            block::pushed(&remote.name, &offer.branch);
+            ui::stderr(&block::pushed(&style, &remote.name, &offer.branch));
             Ok(Outcome::Pushed(files))
         }
         Err(failed) => {
-            block::refused("the push was refused", &failed);
-            block::commit_is_on(&offer.branch);
+            ui::stderr(&block::refused(&style, "the push was refused", &failed));
+            ui::stderr(&block::commit_is_on(&style, &offer.branch));
             if failed.pull_request_required() {
-                block::branch_rules(
+                ui::stderr(&block::branch_rules(
+                    &style,
                     &offer.branch,
                     &remote.name,
                     &commit_offer::by_hand(
@@ -150,7 +155,7 @@ fn pushed(
                         message,
                         files,
                     ),
-                );
+                ));
             }
             // The recovery for a refused push is to put the commit on a
             // branch of its own, so it is offered only where a pull
@@ -172,15 +177,16 @@ fn pushed(
 /// the message the commit was made with, which is the one the person
 /// settled on.
 fn recover(offer: &Offer, files: usize, message: &str, before: Option<&str>) -> Taken {
+    let style = ui::style();
     let Some(remote) = offer.remote.as_ref() else {
         return Err("the recovery ran with no remote".into());
     };
     if let Err(failed) = commit_offer::push_head(&offer.scan.root, &remote.name, &offer.new_branch)
     {
-        block::refused("the push was refused", &failed);
+        ui::stderr(&block::refused(&style, "the push was refused", &failed));
         return Ok(Outcome::PushRefused);
     }
-    block::pushed(&remote.name, &offer.new_branch);
+    ui::stderr(&block::pushed(&style, &remote.name, &offer.new_branch));
     match commit_offer::open_pull_request(
         &remote.url,
         &offer.new_branch,
@@ -189,18 +195,26 @@ fn recover(offer: &Offer, files: usize, message: &str, before: Option<&str>) -> 
         files,
     ) {
         Err(failed) => {
-            block::refused("the pull request was refused", &failed);
-            block::branch_is_on(&remote.name, &offer.new_branch);
+            ui::stderr(&block::refused(
+                &style,
+                "the pull request was refused",
+                &failed,
+            ));
+            ui::stderr(&block::branch_is_on(
+                &style,
+                &remote.name,
+                &offer.new_branch,
+            ));
             Ok(Outcome::PullRequestRefused)
         }
         Ok(opened) => {
-            block::opened(&opened.url);
+            ui::stderr(&block::opened(&style, &opened.url));
             // The local branch is left carrying the commit, and the run
             // says how to put it back without doing it: kendex never
             // moves a branch ref backwards.
             match before {
-                Some(before) => block::how_to_put_back(&offer.branch, before),
-                None => block::first_commit_stays(&offer.branch),
+                Some(before) => ui::stderr(&block::how_to_put_back(&style, &offer.branch, before)),
+                None => ui::stderr(&block::first_commit_stays(&style, &offer.branch)),
             }
             Ok(Outcome::PullRequest(files))
         }
@@ -218,11 +232,16 @@ fn pull_request(
     given: Option<String>,
     asking: Asking,
 ) -> Taken {
+    let style = ui::style();
     let root = &offer.scan.root;
-    block::will_move(&offer.new_branch, &offer.branch);
+    ui::stderr(&block::will_move(&style, &offer.new_branch, &offer.branch));
     let message = message(offer, given, asking)?;
     if let Err(failed) = commit_offer::start_branch(root, &offer.new_branch) {
-        block::refused("the branch could not be made", &failed);
+        ui::stderr(&block::refused(
+            &style,
+            "the branch could not be made",
+            &failed,
+        ));
         // The checkout has not moved and nothing is staged, so the other
         // choices still stand — carrying the message already settled on,
         // so it is not asked for twice.
@@ -233,14 +252,14 @@ fn pull_request(
             // The checkout already moved to a branch that will now carry
             // no commit, so kendex clears that leftover the way it does
             // after a refused commit.
-            block::nothing_to_commit();
+            ui::stderr(&block::nothing_to_commit(&style));
             return match commit_offer::abandon_branch(root, &offer.new_branch) {
                 Ok(()) => {
-                    block::back_on(&offer.branch, &offer.new_branch);
+                    ui::stderr(&block::back_on(&style, &offer.branch, &offer.new_branch));
                     Ok(Outcome::Nothing)
                 }
                 Err(failed) => {
-                    block::refused(block::NOT_PUT_BACK, &failed);
+                    ui::stderr(&block::refused(&style, block::NOT_PUT_BACK, &failed));
                     Ok(Outcome::CommitRefused)
                 }
             };
@@ -248,19 +267,24 @@ fn pull_request(
         Ok(Committed::Made { sha, files, .. }) => (sha, files),
         Err(refused) => return abandoned(offer, generated, refused, message, asking),
     };
-    block::committed(&sha, files, Some(&offer.new_branch));
+    ui::stderr(&block::committed(
+        &style,
+        &sha,
+        files,
+        Some(&offer.new_branch),
+    ));
     let Some(remote) = offer.remote.as_ref() else {
         return Err("the pull-request route ran with no remote".into());
     };
     if let Err(failed) = commit_offer::push(root, &remote.name, &offer.new_branch, false) {
-        block::refused("the push was refused", &failed);
+        ui::stderr(&block::refused(&style, "the push was refused", &failed));
         // The commit is already on a branch of its own, which is what the
         // refused-push recovery would have made, so there is no further
         // way on to offer.
-        block::commit_is_on(&offer.new_branch);
+        ui::stderr(&block::commit_is_on(&style, &offer.new_branch));
         return Ok(Outcome::PushRefused);
     }
-    block::pushed(&remote.name, &offer.new_branch);
+    ui::stderr(&block::pushed(&style, &remote.name, &offer.new_branch));
     match commit_offer::open_pull_request(
         &remote.url,
         &offer.new_branch,
@@ -269,13 +293,21 @@ fn pull_request(
         files,
     ) {
         Err(failed) => {
-            block::refused("the pull request was refused", &failed);
-            block::branch_is_on(&remote.name, &offer.new_branch);
+            ui::stderr(&block::refused(
+                &style,
+                "the pull request was refused",
+                &failed,
+            ));
+            ui::stderr(&block::branch_is_on(
+                &style,
+                &remote.name,
+                &offer.new_branch,
+            ));
             Ok(Outcome::PullRequestRefused)
         }
         Ok(opened) => {
-            block::opened(&opened.url);
-            block::now_on(&offer.new_branch);
+            ui::stderr(&block::opened(&style, &opened.url));
+            ui::stderr(&block::now_on(&style, &offer.new_branch));
             Ok(Outcome::PullRequest(files))
         }
     }
@@ -291,17 +323,19 @@ fn abandoned(
     message: String,
     asking: Asking,
 ) -> Taken {
-    let more = block::commit_refused(&refused.failed, asking);
+    let style = ui::style();
+    let (lines, more) = block::commit_refused(&style, &refused.failed, asking);
+    ui::stderr(&lines);
     if let Some(count) = refused.still_staged {
-        block::still_staged(count);
+        ui::stderr(&block::still_staged(&style, count));
     }
     if let Err(failed) = commit_offer::abandon_branch(&offer.scan.root, &offer.new_branch) {
         // Reported, and the run stops here rather than trying anything
         // else: the checkout is on the branch kendex made.
-        block::refused(block::NOT_PUT_BACK, &failed);
+        ui::stderr(&block::refused(&style, block::NOT_PUT_BACK, &failed));
         return Ok(Outcome::CommitRefused);
     }
-    block::back_on(&offer.branch, &offer.new_branch);
+    ui::stderr(&block::back_on(&style, &offer.branch, &offer.new_branch));
     // Committing again is the route the person chose, run again from its
     // start: the branch is made once more and the commit lands on it. The
     // message is the one they settled on, not the default.

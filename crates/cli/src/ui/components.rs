@@ -71,12 +71,19 @@ pub struct Value<'a> {
 }
 
 /// One keyed choice of a [`Style::choices`] line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Choice<'a> {
-    /// What to press: `Enter`, `s`, `?`.
-    pub key: &'a str,
+    pub key: Key,
     pub label: &'a str,
-    /// The one drawn as the default.
-    pub recommended: bool,
+}
+
+/// What to press for a [`Choice`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Key {
+    /// The stated default, drawn as the recommended choice: `[Enter]`.
+    Enter,
+    /// One character: `[s]`, `[?]`.
+    Char(char),
 }
 
 /// What a [`Style::link`] opens.
@@ -226,66 +233,104 @@ impl Style {
         }
     }
 
-    /// Something that needs the reader: what it is, why, and what they can
-    /// press about it.
-    pub fn callout(&self, what: &str, why: &str, choices: &[Choice<'_>]) -> Vec<String> {
+    /// Something that needs the reader: what it is, why where there is more
+    /// to say than what, and what they can press about it.
+    pub fn callout(&self, what: &str, why: Option<&str>, choices: &[Choice<'_>]) -> Vec<String> {
         let mark = self.glyph(Symbol::Decision);
-        let (what, why) = (escaped(what), escaped(why));
+        let (what, why) = (escaped(what), why.map(escaped));
         let mut lines = match self.look {
-            Look::Plain => vec![format!("{mark} {what}"), format!("  {why}")],
+            Look::Plain => std::iter::once(format!("{mark} {what}"))
+                .chain(why.map(|why| format!("  {why}")))
+                .collect(),
             Look::Rich { palette, width } => {
                 let lead = format!("{} ", paint(palette, Token::Warn, mark));
                 let mut lines = vec![String::new()];
                 lines.extend(fitted(width, &lead, 2, 2, &[Span::Prose(&what)], |chunk| {
                     strong(palette, Token::Emphasis, chunk)
                 }));
-                lines.extend(fitted(
-                    width,
-                    "  ",
-                    2,
-                    2,
-                    &[Span::Prose(&why)],
-                    str::to_owned,
-                ));
+                if let Some(why) = why {
+                    lines.extend(fitted(
+                        width,
+                        "  ",
+                        2,
+                        2,
+                        &[Span::Prose(&why)],
+                        str::to_owned,
+                    ));
+                }
                 lines
             }
         };
-        lines.extend(
-            self.choices(choices)
-                .into_iter()
-                .map(|line| format!("  {line}")),
-        );
+        lines.extend(self.choices(choices));
         lines
     }
 
-    /// Keyed buttons on one line, the recommended one drawn as the default:
-    /// `[Enter] Set up · [s] Skip · [?] Details`.
+    /// Keyed buttons under what they answer, the default drawn as the
+    /// recommended one: `[Enter] Set up · [s] Skip · [?] Details`. Rich
+    /// wraps between buttons, never inside one.
     pub fn choices(&self, choices: &[Choice<'_>]) -> Vec<String> {
         if choices.is_empty() {
             return Vec::new();
         }
         let divider = format!(" {} ", self.glyph(Symbol::Divider));
-        let each = choices.iter().map(|choice| {
-            let (key, label) = (format!("[{}]", escaped(choice.key)), escaped(choice.label));
-            match (self.look, choice.recommended) {
+        let buttons = choices.iter().map(|choice| {
+            let key = match choice.key {
+                Key::Enter => "[Enter]".to_owned(),
+                Key::Char(key) => format!("[{}]", escaped(&key.to_string())),
+            };
+            let label = escaped(choice.label);
+            let drawn = match (self.look, choice.key) {
                 (Look::Plain, _) => format!("{key} {label}"),
-                (Look::Rich { palette, .. }, true) => format!(
+                (Look::Rich { palette, .. }, Key::Enter) => format!(
                     "{} {}",
                     strong(palette, Token::Accent, &key),
                     strong(palette, Token::Emphasis, &label)
                 ),
-                (Look::Rich { palette, .. }, false) => format!(
+                (Look::Rich { palette, .. }, Key::Char(_)) => format!(
                     "{} {}",
                     paint(palette, Token::Accent, &key),
                     paint(palette, Token::Muted, &label)
                 ),
-            }
+            };
+            (cells(&key) + 1 + cells(&label), drawn)
         });
-        let divider = match self.look {
-            Look::Plain => divider,
-            Look::Rich { palette, .. } => paint(palette, Token::Muted, &divider),
+        let Look::Rich { palette, width } = self.look else {
+            let plain: Vec<String> = buttons.map(|(_, drawn)| drawn).collect();
+            return vec![format!("  {}", plain.join(&divider))];
         };
-        vec![each.collect::<Vec<_>>().join(&divider)]
+        let room = width.saturating_sub(2);
+        let gap = cells(&divider);
+        let divider = paint(palette, Token::Muted, &divider);
+        let mut lines: Vec<(usize, String)> = Vec::new();
+        for (wide, drawn) in buttons {
+            match lines.last_mut() {
+                Some((used, line)) if *used + gap + wide <= room => {
+                    line.push_str(&divider);
+                    line.push_str(&drawn);
+                    *used += gap + wide;
+                }
+                _ => lines.push((wide, drawn)),
+            }
+        }
+        lines
+            .into_iter()
+            .map(|(_, line)| format!("  {line}"))
+            .collect()
+    }
+
+    /// The choice a key picked, under the buttons it was picked from. A key
+    /// read echoes nothing, so this is what keeps the answer on the screen
+    /// and in a log.
+    pub fn picked(&self, label: &str) -> Vec<String> {
+        let (mark, label) = (self.glyph(Symbol::Current), escaped(label));
+        match self.look {
+            Look::Plain => vec![format!("  {mark} {label}")],
+            Look::Rich { palette, .. } => vec![format!(
+                "  {} {}",
+                paint(palette, Token::Accent, mark),
+                strong(palette, Token::Emphasis, &label)
+            )],
+        }
     }
 
     /// A file or a URL the reader can open. Rich wraps it in an OSC 8

@@ -274,16 +274,45 @@ pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn s
 /// The answer every verb needs before it writes, asked one way. `--yes`
 /// skips it; a run with nobody to ask refuses before its first write
 /// rather than guessing, and says which flag would have answered it.
+///
+/// Asked as a callout and answered by one key. Enter is no, the answer a
+/// stray key is likeliest to be; Escape and Ctrl-C cancel, which the run
+/// exits 130 on, where a no exits 1.
 pub fn ask_before_writing(question: &str, yes: bool) -> CliResult {
     require_yes_in_non_interactive(yes)?;
     if yes {
         return Ok(());
     }
-    match ui::confirm(question)? {
-        true => Ok(()),
-        false => Err("cancelled — these changes were not written".into()),
+    ui::stderr(&ui::style().callout(question, None, &[]));
+    match ui::choose(&CONSENT)? {
+        Consent::Write => Ok(()),
+        Consent::Keep => Err("cancelled — these changes were not written".into()),
     }
 }
+
+/// An answer to [`ask_before_writing`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Consent {
+    Write,
+    Keep,
+}
+
+const CONSENT: [(ui::Choice<'static>, Consent); 2] = [
+    (
+        ui::Choice {
+            key: ui::Key::Char('y'),
+            label: "yes",
+        },
+        Consent::Write,
+    ),
+    (
+        ui::Choice {
+            key: ui::Key::Enter,
+            label: "no",
+        },
+        Consent::Keep,
+    ),
+];
 
 /// Refuse a write that needs consent when no prompt can be shown.
 ///
@@ -323,4 +352,74 @@ pub fn refresh_failures(report: &EngineReport) -> Vec<String> {
                 .map(|row| format!("{}: {}", row.name, row.detail)),
         )
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CONSENT, Consent};
+    use crate::ui::testing::{asked, plain, rich, tagged};
+    use console::Key as Pressed;
+
+    /// The consent question in both renderings, and what each answer
+    /// draws: `y` writes, Enter is the default no, and Escape cancels with
+    /// no choice drawn. One row per answer.
+    #[test]
+    fn the_consent_draws_accept_decline_and_cancel() {
+        type Row = (
+            &'static str,
+            Vec<Pressed>,
+            Option<Consent>,
+            &'static [&'static str],
+            &'static [&'static str],
+        );
+        let asked_for = [
+            "",
+            "<33>!</> <1>write 3 changes?</>",
+            "  <34>[y]</> <90>yes</><90> · </><1;34>[Enter]</> <1>no</>",
+        ];
+        let plain_for = ["! write 3 changes?", "  [y] yes · [Enter] no"];
+        let rows: [Row; 4] = [
+            (
+                "accept",
+                vec![Pressed::Char('y')],
+                Some(Consent::Write),
+                &["  <34>›</> <1>yes</>"],
+                &["  › yes"],
+            ),
+            (
+                "decline",
+                vec![Pressed::Enter],
+                Some(Consent::Keep),
+                &["  <34>›</> <1>no</>"],
+                &["  › no"],
+            ),
+            (
+                "a key it does not show, then a decline",
+                vec![Pressed::Char('n'), Pressed::Enter],
+                Some(Consent::Keep),
+                &["  <34>›</> <1>no</>"],
+                &["  › no"],
+            ),
+            ("cancel", vec![Pressed::Escape], None, &[], &[]),
+        ];
+        for (what, keys, want, rich_tail, plain_tail) in rows {
+            for (style, head, tail) in [
+                (rich(100), &asked_for[..], rich_tail),
+                (plain(), &plain_for[..], plain_tail),
+            ] {
+                let mut drawn = style.callout("write 3 changes?", None, &[]);
+                let (lines, answer) = asked(&style, &CONSENT, &keys);
+                drawn.extend(lines);
+                let wanted: Vec<&str> = head.iter().chain(tail.iter()).copied().collect();
+                assert_eq!(tagged(&drawn), wanted, "{what}");
+                match want {
+                    Some(want) => assert_eq!(answer.ok(), Some(want), "{what}"),
+                    None => assert!(
+                        answer.is_err_and(|error| crate::ui::cancelled(&error)),
+                        "{what}"
+                    ),
+                }
+            }
+        }
+    }
 }

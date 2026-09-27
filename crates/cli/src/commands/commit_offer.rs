@@ -6,9 +6,11 @@
 //! A verb cannot be added without the offer, and no verb can offer twice
 //! for one project: the session below records which roots have been asked.
 //!
-//! What it says: every line the offer prints lives in [`block`], the way
+//! What it says: every line the offer draws lives in [`block`], the way
 //! the app keeps its own wording in one copy module. The two are reviewed
 //! beside each other, and they say the same things in the same order.
+//! The offer is drawn from the CLI's components and asked with keyed
+//! choices; `crates/cli/OUTPUT.md` is their reference.
 
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
@@ -21,6 +23,7 @@ use kendex_core::env::Env;
 use kendex_core::model::Scope;
 
 use super::CliResult;
+use crate::ui;
 
 mod block;
 mod routes;
@@ -248,7 +251,7 @@ pub fn after_writing(env: &Env, scope: &Scope, generated: &GeneratedPaths) -> Cl
         // that renders the hook.
         Ok(None) => return Ok(()),
         Ok(Some(outcome)) => outcome,
-        Err(error) if crate::ui::cancelled(error.as_ref()) => {
+        Err(error) if ui::cancelled(error.as_ref()) => {
             CANCELLED.store(true, std::sync::atomic::Ordering::Relaxed);
             Outcome::Nothing
         }
@@ -277,6 +280,7 @@ fn make(
         command: String::new(),
     };
     let session = SESSION.get().unwrap_or(&default);
+    let style = ui::style();
     let mut generated = generated.clone();
     let mut set_up = false;
     // Read again after a setup: the renders kendex reads back join the
@@ -290,7 +294,7 @@ fn make(
             // offer unbuildable. The verb's own writes still stand, so this
             // is one line rather than a failure of the run.
             Err(failed) => {
-                block::unreadable(root, &failed);
+                ui::stderr(&block::unreadable(&style, root, &failed));
                 return Ok(Some(Outcome::Nothing));
             }
         };
@@ -299,11 +303,11 @@ fn make(
         // all: a commit would land somewhere nobody asked for.
         match &scan.branch {
             Branch::Detached => {
-                block::no_branch(root, scan.count());
+                ui::stderr(&block::no_branch(&style, root, scan.count()));
                 return Ok(Some(Outcome::Nothing));
             }
             Branch::InProgress(operation) => {
-                block::in_progress(root, scan.count(), *operation);
+                ui::stderr(&block::in_progress(&style, root, scan.count(), *operation));
                 return Ok(Some(Outcome::Nothing));
             }
             Branch::On(_) => {}
@@ -330,7 +334,7 @@ fn make(
         ) {
             Ok(stale) => stale,
             Err(error) => {
-                block::not_vouched(root, &error.to_string());
+                ui::stderr(&block::not_vouched(&style, root, &error.to_string()));
                 return Ok(Some(match answered {
                     None => Outcome::Nothing,
                     Some(_) => Outcome::CommitRefused,
@@ -352,7 +356,7 @@ fn make(
             }
         }
         if answered.is_none() && !person {
-            block::no_terminal(root, scan.count());
+            ui::stderr(&block::no_terminal(&style, root, scan.count()));
             return Ok(Some(Outcome::Nothing));
         }
         // A flag that already chose `commit` never pushes, so `gh` is not
@@ -366,7 +370,7 @@ fn make(
         let offer = match commit_offer::offer(scan, &session.command, probe) {
             Ok(offer) => offer,
             Err(failed) => {
-                block::unreadable(root, &failed);
+                ui::stderr(&block::unreadable(&style, root, &failed));
                 return Ok(Some(Outcome::Nothing));
             }
         };
@@ -377,7 +381,7 @@ fn make(
                 // writes still stand. Nothing was committed, which is what
                 // the ledger says.
                 if let Some(reason) = block::not_on_offer(&offer, choice) {
-                    block::flag_refused(&offer, choice, &reason);
+                    ui::stderr(&block::flag_refused(&style, &offer, choice, &reason));
                     return Ok(Some(Outcome::CommitRefused));
                 }
                 routes::take(
@@ -421,14 +425,15 @@ fn hold(
     held: Held,
     generated: &mut GeneratedPaths,
 ) -> Result<Hold, Box<dyn std::error::Error>> {
-    block::stale(scan, stale);
+    let style = ui::style();
+    ui::stderr(&block::stale(&style, scan, stale));
     // A commit that would split a package's changed files is not one any
     // setup clears: the files are left for the person to commit together.
     if stale
         .iter()
         .any(|one| matches!(one.why, commit_offer::Staleness::Split { .. }))
     {
-        block::split_way_on();
+        ui::stderr(&block::split_way_on(&style));
         return Ok(Hold::Ended(match held.answered {
             None => Outcome::Nothing,
             Some(_) => Outcome::CommitRefused,
@@ -437,7 +442,7 @@ fn hold(
     // One setup per offer. A package still not ready after its own setup
     // ran is not one a second run of it fixes.
     if held.set_up || !held.person {
-        block::stale_way_on(held.set_up);
+        ui::stderr(&block::stale_way_on(&style, held.set_up));
         return Ok(Hold::Ended(match (held.set_up, held.answered) {
             (false, None) => Outcome::Nothing,
             (true, _) | (false, Some(_)) => Outcome::CommitRefused,
@@ -448,7 +453,7 @@ fn hold(
         block::Held::SetUp => match set_up_here(env, scope, stale, generated) {
             Ok(()) => Ok(Hold::SetUp),
             Err(error) => {
-                block::set_up_failed(&error.to_string());
+                ui::stderr(&block::set_up_failed(&style, &error.to_string()));
                 Ok(Hold::Ended(Outcome::CommitRefused))
             }
         },
@@ -490,7 +495,7 @@ fn ask(
     generated: &GeneratedPaths,
     message: Option<String>,
 ) -> Result<Outcome, Box<dyn std::error::Error>> {
-    block::offer(offer);
+    ui::stderr(&block::offer(&ui::style(), offer));
     let choices = block::choices(offer);
     let choice = block::pick(&choices)?;
     routes::take(offer, generated, choice, message, Asking::Yes)

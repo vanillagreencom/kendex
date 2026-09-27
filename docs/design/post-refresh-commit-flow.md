@@ -213,17 +213,17 @@ A step that times out is reported as that step's failure, naming the step and th
 ## Surfacing a refusal
 
 - Both halves are shown whole, one line at a time, in order: stdout first, then stderr, so the block ends on the refusal itself. A refused commit whose words carry a findings block is the one exception to that order, in the next bullet but one. git and gh both write their refusal to stderr. stdout carries whatever ran and passed on the way, such as a pre-push hook's own report, which git keeps there.
-- Each line goes through the surface's escaping: `ui::say` on the CLI, React text on the app. A control character in a hook's output must not move a cursor or colour a line.
+- Each line goes through the surface's escaping: the CLI's components, React text on the app. A control character in a hook's output must not move a cursor or colour a line.
 - A refused commit whose words carry a findings block leads with it (`Failed::findings`). The block is the first `<check>: findings=N` record with N above zero and its finding lines: back over the unindented lines before it that open no `<name>: <key>=<value>` record, where a check such as preflight prints its findings first, and forward to the line before the next such record. The commit-guards chain runs every lane whatever an earlier one said, in the fixed order doc-limits, preflight, bot-instructions, `commit-guards all`, the repo-local entry, then its result line, and git returns stdout before stderr. The refusing lane's findings therefore sit among passing lanes' output. The CLI puts the rest behind a choice at the prompt, and a flag's run prints it after the block for the log. The app keeps the whole output, block first.
 - Beyond that order, nothing is summarised, reworded, or truncated to a first line. The one pattern read from the words is GitHub refusing a push for want of a pull request: a `remote: ` line carrying `GH013` (a ruleset) or `GH006` (branch protection), and a `remote: ` line naming the rule, `Changes must be made through a pull request` or `Changes must be made through the merge queue`. Both codes also cover refusals a pull request does not get past, such as a secret in the push or an unsigned commit, so the code alone is not read as the rule. The reading adds a way on and takes none of the words away.
 - No output cap. `Hardened::max_output` refuses the whole call when the cap is passed, and its error carries none of what the program said, which would lose exactly the words the contract promises. A hook's output is bounded by the hook, and no cap is worth a refusal that says nothing.
 
 ## CLI
 
-The head line carries the scope label, as `print_set_changes` and the ledger do. Detail is indented two spaces. Ten paths are listed, then the overflow line the CLI already uses for a list it cut: `  … and {n} more`, from `engine_common.rs`, whose `UNMANAGED_SHOWN` is the same ten.
+The block is drawn from the CLI's components ([`crates/cli/OUTPUT.md`](../../crates/cli/OUTPUT.md)). The transcripts below are the plain rendering; a terminal adds colour, a status glyph on each line under the head, and wrapping. The head line is a callout and carries the scope label, as `print_set_changes` and the ledger do. Detail is indented two spaces, and another program's words four. Ten paths are listed, then the overflow line the CLI already uses for a list it cut: `  … and {n} more`, from `engine_common.rs`, whose `UNMANAGED_SHOWN` is the same ten.
 
 ```
-/home/method/dev/site: 12 files kendex wrote are not committed
+! /home/method/dev/site: 12 files kendex wrote are not committed
   .claude/CLAUDE.md
   .claude/skills/dev/SKILL.md
   .claude/skills/dev/workflows/dev-fix.md
@@ -235,24 +235,18 @@ The head line carries the scope label, as `print_set_changes` and the ledger do.
   .codex/skills/reviewer/SKILL.md
   .kendex-generated.json
   … and 2 more
-  kendex also changed 2 shared files; it writes one key in each, so
-  committing them would commit your own changes to them too
+  kendex also changed 2 shared files; it writes one key in each, so committing them would commit your own changes to them too
     .claude/settings.json
     .codex/config.toml
   4 other files in this repository changed; kendex leaves those alone
-  1  commit them
-  2  commit them and push to origin/main
-  3  commit them on a new branch and open a pull request
-  4  leave them as diffs
-1-4, or Enter to leave them as diffs:
+  [c] commit them · [p] commit them and push to origin/main · [r] commit them on a new branch and open a pull request · [Enter] leave them as diffs
+  › commit them
 ```
 
-The choices are numbered in the order above, skipping the ones the preconditions removed, and renumbered so the printed numbers are contiguous. `leave` is always last and is always the default.
-
-The answer is read with `ui::ask`, which returns the typed line. An answer that is not one of the printed numbers is `leave` — a typo, a `9`, an `x`, a bare Enter and an end of input alike. That is how `ui::confirm` already reads its answer, where everything but a typed yes is a no, and it puts the safe outcome behind every wrong key rather than behind a retry loop nobody asked for.
+The choices are keyed buttons in the order above, skipping the ones the preconditions removed: `c` commits, `p` pushes, `r` opens a pull request, and Enter takes `leave`, which is always last and always the default. The answer is one key, read by `ui::choose`, and the choice it picked is drawn under the buttons. A key the offer does not show picks nothing, so a stray key cannot commit. Escape and Ctrl-C cancel the offer (see **Flags and exit codes**).
 
 
-A precondition that removed a choice prints its reason as a detail line under the paths, before the numbered list:
+A precondition that removed a choice prints its reason as a detail line under the paths, before the choices:
 
 ```
   no push: this repository has no remote
@@ -267,11 +261,12 @@ A precondition that removed a choice prints its reason as a detail line under th
 
 The last two are `gh`'s own first line for the repository it was bound to, whatever it turns out to be; the lines above show the shape, not a fixed list.
 
-The reader is asked for the message next, through `ui::ask`, where an empty answer accepts what is offered:
+The reader is asked for the message next. Enter uses what is offered; `e` reads a different one as a typed line through `ui::typed`, where an empty line keeps the offered one:
 
 ```
   message: chore: kendex refresh
-press Enter to use this message, or type a different one:
+  [Enter] use this message · [e] type a different one
+  › use this message
 ```
 
 The `pr` choice states what it moves before it runs, as the line above the message question:
@@ -306,10 +301,7 @@ A refused commit prints git's words and asks again. The words below are one repo
     commit-msg: crates/ changed without a changelog entry
       write one of: changelog.d/*/*.md
       or put [no-changelog] in the header when the commit changes nothing a consumer sees
-  1  commit again with the same message
-  2  commit again with a different message
-  3  leave them as diffs
-1-3, or Enter to leave them as diffs:
+  [a] commit again with the same message · [m] commit again with a different message · [Enter] leave them as diffs
 ```
 
 A refused commit whose words carry a findings block leads with it, and the rest waits behind a choice. The words below are one check's findings, shown to fix the shape and the indent, not to fix what any check says:
@@ -323,11 +315,7 @@ A refused commit whose words carry a findings block leads with it, and the rest 
     drift: the ## Code Review Rules owned region differs from a fresh render [AGENTS.md]
       remedy: run `.agents/skills/bot-instructions/scripts/bot-instructions render`, then stage every file it changes
   the commit check printed 41 more lines
-  1  commit again with the same message
-  2  commit again with a different message
-  3  show everything the commit check printed
-  4  leave them as diffs
-1-4, or Enter to leave them as diffs:
+  [a] commit again with the same message · [m] commit again with a different message · [?] show everything the commit check printed · [Enter] leave them as diffs
 ```
 
 A refused push names what landed and what did not, and offers the way on:
@@ -341,12 +329,10 @@ A refused push names what landed and what did not, and offers the way on:
     To github.com:acme/site.git
      ! [remote rejected] main -> main (protected branch hook declined)
   the commit is on main in this checkout; kendex did not undo it
-  1  push the commit to a new branch and open a pull request
-  2  leave it here
-1-2, or Enter to leave it here:
+  [r] push the commit to a new branch and open a pull request · [Enter] leave it here
 ```
 
-Where GitHub refused the push for want of a pull request, as **Surfacing a refusal** reads it, two lines and the commands follow `kendex did not undo it`, before the choices. The commands are the words choice 1 runs, from `commit_offer::by_hand`, each quoted, for a run with no one to ask. The git line adds `-C <project root>`: choice 1 runs in the project, and a pasted line runs wherever the terminal stands. The remote's URL is printed without the user name and password a URL can carry, while `gh` is handed it whole:
+Where GitHub refused the push for want of a pull request, as **Surfacing a refusal** reads it, two lines and the commands follow `kendex did not undo it`, before the choices. The commands are the words the `r` choice runs, from `commit_offer::by_hand`, each quoted, for a run with no one to ask. The git line adds `-C <project root>`: the `r` choice runs in the project, and a pasted line runs wherever the terminal stands. The remote's URL is printed without the user name and password a URL can carry, while `gh` is handed it whole:
 
 ```
   main on origin accepts changes only through a pull request
@@ -357,7 +343,7 @@ Where GitHub refused the push for want of a pull request, as **Surfacing a refus
 
 That block is the `commit` and `push` routes. On the `pr` route the commit is already on the branch kendex made, so a refused push there offers only `leave it here`: the recovery below is to put the commit on a branch, and it is there.
 
-Choice 1 pushes the commit that already exists rather than making a branch locally: `git push <remote> HEAD:refs/heads/<branch>`, then `gh pr create --repo <url> --head <branch> --base <current branch> --title <message> --body <body>`. `<branch>` is picked by the first-free rule above, so the push cannot fast-forward a branch somebody else named. The title and body are the ones the `pr` route uses: `gh pr create` with no terminal to prompt at refuses without them. The local branch is left carrying the commit, and the run says how to put it back without doing it:
+The `r` choice pushes the commit that already exists rather than making a branch locally: `git push <remote> HEAD:refs/heads/<branch>`, then `gh pr create --repo <url> --head <branch> --base <current branch> --title <message> --body <body>`. `<branch>` is picked by the first-free rule above, so the push cannot fast-forward a branch somebody else named. The title and body are the ones the `pr` route uses: `gh pr create` with no terminal to prompt at refuses without them. The local branch is left carrying the commit, and the run says how to put it back without doing it:
 
 ```
   pushed to origin/kendex/renders
@@ -386,10 +372,7 @@ The `pr` route's own failures, each ending the block:
   the branch could not be made
   git said:
     fatal: a branch named 'kendex/renders' already exists
-  1  commit them
-  2  commit them and push to origin/main
-  3  leave them as diffs
-1-3, or Enter to leave them as diffs:
+  [c] commit them · [p] commit them and push to origin/main · [Enter] leave them as diffs
 ```
 
 ```
@@ -397,10 +380,7 @@ The `pr` route's own failures, each ending the block:
   git said:
     commit-msg: crates/ changed without a changelog entry
   this checkout is back on main and kendex/renders is gone
-  1  commit again with the same message
-  2  commit again with a different message
-  3  leave them as diffs
-1-3, or Enter to leave them as diffs:
+  [a] commit again with the same message · [m] commit again with a different message · [Enter] leave them as diffs
 ```
 
 ```
@@ -415,7 +395,7 @@ The `pr` route's own failures, each ending the block:
 The steps around the commit, each ending the block. A status, branch or remote read that fails leaves the offer unbuildable, and the verb's writes still stand:
 
 ```
-/home/method/dev/site: the files kendex wrote could not be checked
+! /home/method/dev/site: the files kendex wrote could not be checked
   git said:
     fatal: not a git repository (or any of the parent directories): .git
 ```
@@ -426,10 +406,7 @@ A `git add` that fails happens before any commit:
   the files could not be staged
   git said:
     fatal: Unable to create '/home/method/dev/site/.git/index.lock': File exists.
-  1  commit again with the same message
-  2  commit again with a different message
-  3  leave them as diffs
-1-3, or Enter to leave them as diffs:
+  [a] commit again with the same message · [m] commit again with a different message · [Enter] leave them as diffs
 ```
 
 A cleanup `git reset` that fails after a refused commit leaves kendex's own paths staged, against the rule that the index ends as it began, and says so under the refusal it followed:
@@ -458,10 +435,7 @@ A step that ran out of time reads as that step's refusal, with the bound in plac
 
 ```
   the commit did not finish within 300 seconds
-  1  commit again with the same message
-  2  commit again with a different message
-  3  leave them as diffs
-1-3, or Enter to leave them as diffs:
+  [a] commit again with the same message · [m] commit again with a different message · [Enter] leave them as diffs
 ```
 
 The other three read `the push did not finish within 120 seconds`, `the pull request did not finish within 120 seconds`, and, for a step from the 30 second row, `<step> did not finish within 30 seconds`.
@@ -469,9 +443,9 @@ The other three read `the push did not finish within 120 seconds`, `the pull req
 The single lines the preconditions print, each on its own with the scope label:
 
 ```
-/home/method/dev/site: 12 files kendex wrote are not committed; this checkout is on no branch
-/home/method/dev/site: 12 files kendex wrote are not committed; a rebase (rebase-merge) is in progress
-/home/method/dev/site: 12 files kendex wrote are not committed; run again with --commit, --push, --pull-request or --leave
+! /home/method/dev/site: 12 files kendex wrote are not committed; this checkout is on no branch
+! /home/method/dev/site: 12 files kendex wrote are not committed; a rebase (rebase-merge) is in progress
+! /home/method/dev/site: 12 files kendex wrote are not committed; run again with --commit, --push, --pull-request or --leave
 ```
 
 The in-progress line names the operation it found: `a merge`, `a rebase (rebase-merge)`, `a rebase (rebase-apply)`, `a cherry-pick`, `a bisect`.
@@ -506,7 +480,7 @@ A flag answers the offer without asking. A precondition that removed the choice 
 | A flag named a choice the remote or `gh` preconditions removed | 1 |
 | The files could not be staged, or the checkout could not be put back | 1 |
 | No offer at all — a detached `HEAD`, an operation in progress, a read that failed — whatever flag was passed | the verb's own code |
-| Ctrl-C at the offer | 130 |
+| Escape or Ctrl-C at the offer | 130 |
 
 Terminal cancellation before Pi settlement drops the current scope from refresh's reached list because it wrote nothing there. Cancellation at the final confirmation after settlement retains the installed package and its record. The scope stays on the reached list for its snapshot and closing ledger, but refresh stops before later scopes and skips the commit offer. A typed refusal after settlement also retains those writes, but reaches the commit offer and prints failure details before the closing ledger. Terminal cancellation at the commit offer retains the scope's writes, snapshot, and closing ledger. It skips offers in that project and later projects the run reaches. Terminal cancellation exits 130 after the reached scopes close; a typed refusal exits 1. The refresh cases are covered by `crates/cli/tests/refresh_fresh_clone.rs`.
 

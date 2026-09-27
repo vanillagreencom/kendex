@@ -541,9 +541,9 @@ fn an_unchanged_risky_plan_can_be_refused_after_its_safety_report() {
     use kendex_core::drift::snapshot::{SnapshotFile, load};
     use kendex_core::{env::Env, model::Scope};
     for (answer, status, installed, mode) in [
-        ("y\nn\n", 1, false, "plain"),
-        ("y\ny\n", 0, true, "plain"),
-        ("y\n\x1b", 130, false, "pretty"),
+        ("y\n", 1, false, "plain"),
+        ("yy", 0, true, "plain"),
+        ("y\x1b", 130, false, "pretty"),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
@@ -576,7 +576,7 @@ fn an_unchanged_risky_plan_can_be_refused_after_its_safety_report() {
         let partial = printed.contains("refreshed 1 change");
         assert_eq!(partial, !installed, "{printed}");
         let safety = printed.find("[critical]").unwrap();
-        let confirm = printed.rfind("[y/N]").unwrap();
+        let confirm = printed.rfind("[y]").unwrap();
         assert!(safety < confirm, "{printed}");
         let target = project.join(".claude/skills/deploy/SKILL.md");
         assert_eq!(target.is_file(), installed, "{printed}");

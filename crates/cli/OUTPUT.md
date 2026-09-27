@@ -45,8 +45,9 @@ ASCII applies when `LC_ALL`, `LC_CTYPE` or `LANG`, first non-empty, names no UTF
 | `row(status, &[Span], Value)` | glyph and label, its commands never broken; under it the value's copy as a command, then its remark wrapped | `  label — copy remark` |
 | `detail(status, &[Span])` | a line one level under its row: the status glyph and the text, or muted text without one | `    text` |
 | `change(name, old, new, scope)` | `name  old → new  [scope]` | the same, uncoloured |
-| `callout(what, why, choices)` | blank line, `!` and what, then why and the choices | `! what`, then why and the choices, indented |
-| `choices(&[Choice])` | `[Enter] Set up · [s] Skip`, the recommended one bold | the same, uncoloured |
+| `callout(what, why, choices)` | blank line, `!` and what, then why where there is one, and the choices | `! what`, then why and the choices, indented |
+| `choices(&[Choice])` | `[Enter] Set up · [s] Skip`, indented two spaces, the Enter default bold, wrapped between buttons | the same on one line, uncoloured |
+| `picked(label)` | `›` and the choice a key picked, under its buttons | the same, uncoloured |
 | `link(text, Target)` | OSC 8 hyperlink to a file or URL | the text, indented two spaces |
 | `table(headers, rows)` | columns sized to content, a rule under the header | the columns, no rule |
 | `spinner(label, tick)`, `ui::Spinner` | one line on stderr, cleared when dropped | nothing |
@@ -55,15 +56,25 @@ ASCII applies when `LC_ALL`, `LC_CTYPE` or `LANG`, first non-empty, names no UTF
 | `details(title, lines, folded)` | folded: the title and a line count | the title indented two spaces, every line indented four |
 | `note(&[Span])` | muted text, its commands never broken | the spans joined |
 
+A `Choice` is a label and its `Key`: `Key::Enter`, the stated default, or `Key::Char`.
+
 A `Status` is `Done`, `Failed`, `Decision` or `Notice`, or a safety finding's severity: `Critical` (danger), `High` (warn) or `Low` (muted, medium included).
 
 A plan's report (`src/commands/attention.rs`) is drawn from these: a `conflicts` section, then a `safety` section, then a `notes` section, each item a `row` with its `detail` lines. `advisory::Listing` says how much it draws. `refresh`, `apply` and `add` draw `Attention`: only the packages with a finding or a rule that had nothing to read, each finding once with its site count, and no hook exclusion a declaration does not contradict. `refresh` alone closes on `details folded` where the compact drawing differs from the verbose one, and draws it all under `--verbose`; `apply` and `add` have no flag that draws more. `pin`, `adopt`, `fork` and the drift-hook install close on no ledger and draw `Every` package, clean ones included.
 
 Rich wraps prose between words and never breaks a command: text a component takes as `Span::Command` (core marks the commands in a report line and its next step with `report::Sentence`), or a `Value`'s copy, starts a new line where it does not fit and is drawn whole, and the terminal wraps one wider than a line. Each component escapes the values it is handed; `ui::stdout` and `ui::stderr` print what it drew unchanged. Snapshot tests per component in both renderings sit in `src/ui/components/tests.rs`; `tests/presentation/design.rs` holds `NO_COLOR` output equal to a pipe's and a rich run at `COLUMNS=80` to 80 cells, commands aside. `tests/tapes/check.tape` records the pilot with vhs.
 
+## Questions
+
+A converted verb asks through `ui::choose`, in `src/ui/keys.rs`: it draws the `choices` under what the verb drew above, reads one key, and draws the `picked` choice. Enter takes the one `Key::Enter` choice, and every question has exactly one; letters match either case; a key the question does not show is ignored. Escape, Ctrl-C and the end of input cancel with the interrupted error `ui::cancelled` recognises, and the run exits 130 having written nothing the question asked about. `ui::typed` reads a line for a question whose answer is text, with the same cancel.
+
+Keys are read raw where stderr is a terminal. Where only stdin is one, as in `2>&1 | tee log`, the answer is a typed line whose first character is the key and whose empty line is Enter. A run with no terminal on stdin is never asked: the verb refuses before its first write, naming the flag that answers, and `ui::choose` refuses to wait on a pipe.
+
+The write consent (`commands::engine_common::ask_before_writing`) is a `callout` and `[y] yes · [Enter] no`. The commit offer (`src/commands/commit_offer/block.rs`) heads each block with a `callout`, says each thing under it as a `row`, and quotes another program's words as a bare `detail`, whole; its keys are `c`, `p` and `r` for commit, push and pull request, and Enter leaves the files as diffs. `tests/tapes/refresh.tape` and `tests/tapes/commit-offer.tape` record both.
+
 ## cliclack
 
-The framed verbs still draw through cliclack. Its `Theme` cannot render `choices`: `Select` lists one item per line inside the frame's gutter, and its key handling, which no theme method reaches, takes `h`, `j`, `k` and `l` for navigation and binds no other letter, so `[s] Skip` cannot be a key. A `callout` through its `Theme` is a string the theme composes whole, which the component already is. Prompts move to the components as their verbs convert, and the dependency goes with the last framed call.
+The framed verbs still draw through cliclack. Its `Theme` cannot render `choices`: `Select` lists one item per line inside the frame's gutter, and its key handling, which no theme method reaches, takes `h`, `j`, `k` and `l` for navigation and binds no other letter, so `[s] Skip` cannot be a key. A `callout` through its `Theme` is a string the theme composes whole, which the component already is. Prompts move to the components as their verbs convert: `ui::ask`, the harness and delivery questions of `add`, and `ui::confirm`, the typed yes of `remove`, of `add` into a folder that is not a project yet and of the repository-effect disclosure, still draw the cliclack widget on a rich terminal, and the dependency goes with the last of them.
 
 Report lines whose plain prefixes scripts read use `Style::report_row`, `report_detail` and `report_callout` from `src/ui/report.rs`. They retain that plain grammar and delegate rich drawing to `row`, `detail` and `callout`. Rows and detail take spans: paths and executable commands stay whole; prose wraps. Shared reports emit through `ui::report::print`, which feeds the plain grammar into an active legacy frame and uses the components directly otherwise. The plan and disclosure snapshots live beside `commands/engine_common.rs` and `commands/repo_effects/disclose.rs`; `tests/presentation/design.rs` checks the writing verbs' plain overrides, wrapping and refusal before writes.
 

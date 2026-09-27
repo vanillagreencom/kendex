@@ -1,11 +1,11 @@
-//! The question a run asks, and what it shows while it works.
+//! The questions a verb not yet converted asks, and what a run shows while
+//! it works. A converted verb asks through `keys` instead.
 //!
 //! A question carries its own consequence — what a yes does, in the
 //! question itself — so the answer is given against the change rather
-//! than against the verb's name. Both modes ask for the same thing: the
-//! word, then Enter. A framed prompt that submitted on one keystroke
-//! would let a stray `y` authorise a write, which is not a trade a
-//! prettier widget is worth.
+//! than against the verb's name. Both modes here ask for the same thing:
+//! the word, then Enter. The keyed read answers on one key, and its
+//! default, the key a stray press is likeliest to be, never writes.
 
 use std::io::Write;
 
@@ -56,8 +56,9 @@ pub fn confirm(question: &str) -> std::io::Result<bool> {
 /// Ask for a line of typed input, for a question whose answer is not a
 /// yes or a no.
 ///
-/// This and [`confirm`] are the only places the CLI reads from a person,
-/// and both draw whatever block is still open before they read. A
+/// This, [`confirm`] and the keyed read in `keys` are the only places the
+/// CLI reads from a person, and each draws whatever block is still open
+/// before it reads. A
 /// question asked over an undrawn block is a question about lines the
 /// reader has not been shown yet, and no call site can reach a read
 /// without coming through one of these.

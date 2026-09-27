@@ -2,7 +2,8 @@
 //! setup a linked work tree is offered where its main checkout has it, and
 //! the refused commit's choice to show everything the commit check printed.
 //! Each drives the binary through a pseudoterminal with its answers typed
-//! ahead; `commit_offer_cli.rs` holds the runs with no terminal.
+//! ahead: the offer's keys, and a typed line for the questions still asked
+//! as one. `commit_offer_cli.rs` holds the runs with no terminal.
 #![cfg(unix)]
 
 use crate::pty;
@@ -131,7 +132,7 @@ fn installed_then_changed(home: &Path, check: &str) -> PathBuf {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_held_offer_sets_the_package_up_once_and_offers_the_commit_with_its_files() {
-    for (check, answers, committed) in [("", "1\n1\n\nn\n", true), ("  exit 1", "1\nn\n", false)] {
+    for (check, answers, committed) in [("", "sc\nn\n", true), ("  exit 1", "s", false)] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = installed_then_changed(&home, check);
@@ -146,7 +147,7 @@ fn the_held_offer_sets_the_package_up_once_and_offers_the_commit_with_its_files(
             assert!(text.contains(line), "{check:?}: missing {line:?}:\n{text}");
         }
         assert_eq!(
-            text.matches("1  set up bot-instructions here, then offer the commit with its files")
+            text.matches("[s] set up bot-instructions here, then offer the commit with its files")
                 .count(),
             1,
             "{check:?}: the setup was offered other than once:\n{text}"
@@ -158,7 +159,7 @@ fn the_held_offer_sets_the_package_up_once_and_offers_the_commit_with_its_files(
         match committed {
             true => {
                 assert_eq!(output.status.code(), Some(0), "{text}");
-                assert!(text.contains("1  commit them"), "{text}");
+                assert!(text.contains("[c] commit them"), "{text}");
                 let files = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
                 for path in [
                     ".github/copilot-instructions.md",
@@ -178,7 +179,7 @@ fn the_held_offer_sets_the_package_up_once_and_offers_the_commit_with_its_files(
                     ),
                     "{text}"
                 );
-                assert!(!text.contains("1  commit them"), "{text}");
+                assert!(!text.contains("[c] commit them"), "{text}");
                 assert_eq!(head_subject(&project), "install", "{text}");
             }
         }
@@ -218,7 +219,7 @@ fn a_linked_work_tree_is_offered_the_setup_its_main_checkout_has() {
         ],
     );
 
-    let (output, text) = at_a_terminal(&home, &linked, &["apply", "--yes"], "y\n1\n\nn\n");
+    let (output, text) = at_a_terminal(&home, &linked, &["apply", "--yes"], "y\nc\nn\n");
 
     assert_eq!(output.status.code(), Some(0), "{text}");
     let skipped = format!(
@@ -241,15 +242,11 @@ fn a_linked_work_tree_is_offered_the_setup_its_main_checkout_has() {
     );
 }
 
-/// A refused commit at a terminal leads with the findings block and keeps
-/// the rest of what the commit check printed behind a choice. Picking it
-/// prints everything, and the choices come back without it.
-#[test]
+/// A repository with no packages and its files committed: an apply writes
+/// the harness's instruction file into it, and the offer covers that.
 #[allow(clippy::unwrap_used)]
-fn a_refused_commit_shows_everything_the_check_printed_on_asking() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let project = consumer(&home, "");
+fn committed_without_packages(home: &Path) -> PathBuf {
+    let project = consumer(home, "");
     fs::remove_dir_all(project.join("catalog")).unwrap();
     write(
         &project.join("kendex.toml"),
@@ -258,6 +255,65 @@ fn a_refused_commit_shows_everything_the_check_printed_on_asking() {
     write(&project.join("AGENTS.md"), "# app\n");
     git(&project, &["add", "-A"]);
     git(&project, &["commit", "-q", "-m", "files"]);
+    project
+}
+
+/// The offer's keys at a terminal, in both renderings: a key takes its
+/// choice, `e` reads the message as a typed line where a backspace takes
+/// back a character, Enter leaves the files as diffs, and Escape cancels.
+/// A cancel keeps the write and the closing ledger, commits nothing, and
+/// exits 130; a leave exits as the verb does.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_offer_is_answered_by_its_keys() {
+    let rows: [(&str, &str, &str, Option<i32>, &str); 5] = [
+        ("commit", "plain", "c\n", Some(0), "chore: kendex apply"),
+        ("commit", "pretty", "c\n", Some(0), "chore: kendex apply"),
+        (
+            "a typed message",
+            "plain",
+            "cefix: rendersX\x7f\n",
+            Some(0),
+            "fix: renders",
+        ),
+        ("leave", "pretty", "\n", Some(0), "files"),
+        ("cancel", "plain", "\x1b", Some(130), "files"),
+    ];
+    for (what, rendering, keys, code, subject) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = committed_without_packages(&home);
+        let mut run = command(&home, &project, &["apply", "--yes"]);
+        run.env("KENDEX_UI", rendering);
+        let output = pty::sent_to_a_terminal(run, keys.as_bytes());
+        let text = String::from_utf8_lossy(&output.stderr).into_owned();
+
+        assert_eq!(output.status.code(), code, "{what} {rendering}:\n{text}");
+        assert_eq!(
+            head_subject(&project),
+            subject,
+            "{what} {rendering}:\n{text}"
+        );
+        assert!(
+            text.contains("[c]") && text.contains("[Enter]"),
+            "{what} {rendering}: the keys were not drawn:\n{text}"
+        );
+        assert!(
+            text.contains("applied 3 changes"),
+            "{what} {rendering}: no closing ledger:\n{text}"
+        );
+    }
+}
+
+/// A refused commit at a terminal leads with the findings block and keeps
+/// the rest of what the commit check printed behind a choice. Picking it
+/// prints everything, and the choices come back without it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refused_commit_shows_everything_the_check_printed_on_asking() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = committed_without_packages(&home);
     let hook = project.join(".git/hooks/pre-commit");
     write(
         &hook,
@@ -265,7 +321,7 @@ fn a_refused_commit_shows_everything_the_check_printed_on_asking() {
     );
     fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let (output, text) = at_a_terminal(&home, &project, &["apply", "--yes"], "1\n\n3\n3\n");
+    let (output, text) = at_a_terminal(&home, &project, &["apply", "--yes"], "c\n?\n");
 
     assert_eq!(output.status.code(), Some(1), "{text}");
     let at = |line: &str| {
@@ -278,17 +334,17 @@ fn a_refused_commit_shows_everything_the_check_printed_on_asking() {
         "{text}"
     );
     assert_eq!(
-        text.matches("show everything the commit check printed")
+        text.matches("[?] show everything the commit check printed")
             .count(),
         1,
         "the second menu offered the show again:\n{text}"
     );
-    let shown = at("show everything the commit check printed");
+    let shown = at("> show everything the commit check printed");
     let rest = text[shown..]
         .find("commit-guards: step=doc-limits")
         .unwrap_or_else(|| panic!("the rest was never shown:\n{text}"));
     assert!(
-        text[shown + rest..].contains("3  leave them as diffs"),
+        text[shown + rest..].contains("[Enter] leave them as diffs"),
         "no second menu after the full output:\n{text}"
     );
     assert_eq!(head_subject(&project), "files");

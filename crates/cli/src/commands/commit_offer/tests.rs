@@ -12,6 +12,8 @@ use kendex_core::commit_offer::{
 
 use super::block;
 use super::{Choice, Outcome};
+use crate::ui::Style;
+use crate::ui::testing::{asked, plain, rich, tagged};
 
 fn scan() -> Scan {
     Scan {
@@ -267,21 +269,236 @@ fn a_removed_choice_prints_its_reason() {
     }
 }
 
-/// An answer that is not one of the printed numbers is `leave`: a typo, a
-/// `9`, an `x`, a bare Enter and an end of input alike.
+/// Each choice is taken by its key, Enter takes `leave`, a key the offer
+/// does not show picks nothing, and Escape cancels. With `pr` gone its key
+/// is one of those that pick nothing.
 #[test]
-fn an_answer_off_the_list_leaves_the_files_as_diffs() {
-    let choices = block::choices(&offer());
-    assert_eq!(block::picked(&choices, "1"), Choice::Commit);
-    assert_eq!(block::picked(&choices, " 2\n"), Choice::Push);
-    assert_eq!(block::picked(&choices, "3"), Choice::Pr);
-    assert_eq!(block::picked(&choices, "4"), Choice::Leave);
-    for off in ["", "0", "5", "9", "x", "yes"] {
-        assert_eq!(block::picked(&choices, off), Choice::Leave, "{off:?}");
-    }
-    // Renumbered: with `pr` gone, `3` is `leave`.
+fn each_choice_is_taken_by_its_key() {
+    use console::Key as Pressed;
+    let everything = block::choices(&offer());
     let without = block::without_pull_request(&offer());
-    assert_eq!(block::picked(&without, "3"), Choice::Leave);
+    type Row<'a> = (
+        &'a str,
+        &'a [(Choice, String)],
+        Vec<Pressed>,
+        Option<Choice>,
+    );
+    let rows: [Row; 7] = [
+        (
+            "c",
+            &everything,
+            vec![Pressed::Char('c')],
+            Some(Choice::Commit),
+        ),
+        (
+            "p",
+            &everything,
+            vec![Pressed::Char('p')],
+            Some(Choice::Push),
+        ),
+        ("r", &everything, vec![Pressed::Char('r')], Some(Choice::Pr)),
+        (
+            "Enter",
+            &everything,
+            vec![Pressed::Enter],
+            Some(Choice::Leave),
+        ),
+        (
+            "a number, then Enter",
+            &everything,
+            vec![Pressed::Char('1'), Pressed::Enter],
+            Some(Choice::Leave),
+        ),
+        (
+            "r with no pull request on offer, then c",
+            &without,
+            vec![Pressed::Char('r'), Pressed::Char('c')],
+            Some(Choice::Commit),
+        ),
+        ("Escape", &everything, vec![Pressed::Escape], None),
+    ];
+    for (what, choices, keys, want) in rows {
+        let (_, answer) = asked(&plain(), &block::keyed(choices), &keys);
+        match want {
+            Some(want) => assert_eq!(answer.ok(), Some(want), "{what}"),
+            None => assert!(
+                answer.is_err_and(|error| crate::ui::cancelled(&error)),
+                "{what}"
+            ),
+        }
+    }
+    for (keys, want) in [
+        (
+            vec![Pressed::Char('a')],
+            Some(block::AfterRefusal::Retry(block::Retry::Same)),
+        ),
+        (
+            vec![Pressed::Char('m')],
+            Some(block::AfterRefusal::Retry(block::Retry::Different)),
+        ),
+        (vec![Pressed::Char('?')], Some(block::AfterRefusal::Show)),
+        (
+            vec![Pressed::Enter],
+            Some(block::AfterRefusal::Retry(block::Retry::Leave)),
+        ),
+    ] {
+        let (_, answer) = asked(&plain(), &block::after_refusal_choices(true), &keys);
+        assert_eq!(answer.ok(), want, "{keys:?}");
+    }
+    let (_, hidden) = asked(
+        &plain(),
+        &block::after_refusal_choices(false),
+        &[Pressed::Char('?'), Pressed::Enter],
+    );
+    assert_eq!(
+        hidden.ok(),
+        Some(block::AfterRefusal::Retry(block::Retry::Leave)),
+        "the show key picked a choice the question did not draw"
+    );
+}
+
+/// A small offer: two paths, a shared file, one other file, and no `gh`.
+fn small() -> Offer {
+    let mut small = offer();
+    small.scan.owned.truncate(2);
+    small.scan.others = 1;
+    small.pull_request = Err(Unavailable::GhMissing);
+    small
+}
+
+/// The offer and its question in both renderings, and what each answer
+/// draws: a key takes its choice, Enter leaves the files as diffs, and
+/// Escape cancels with no choice drawn.
+#[test]
+fn the_offer_draws_accept_decline_and_cancel() {
+    use console::Key as Pressed;
+    let rich_offer = [
+        "",
+        "<33>!</> <1>/home/method/dev/site: 2 files kendex wrote are not committed</>",
+        "  <36>•</> .claude/skills/1/SKILL.md",
+        "  <36>•</> .claude/skills/2/SKILL.md",
+        "  <33>!</> kendex also changed 1 shared file; it writes one key in each, so committing them would commit",
+        "    your own changes to them too",
+        "    <90>.claude/settings.json</>",
+        "  <36>•</> 1 other file in this repository changed; kendex leaves those alone",
+        "  <36>•</> no pull request: gh is not installed",
+        "  <34>[c]</> <90>commit them</><90> · </><34>[p]</> <90>commit them and push to origin/main</><90> · </><1;34>[Enter]</> <1>leave them as diffs</>",
+    ];
+    let plain_offer = [
+        "! /home/method/dev/site: 2 files kendex wrote are not committed",
+        "  .claude/skills/1/SKILL.md",
+        "  .claude/skills/2/SKILL.md",
+        "  kendex also changed 1 shared file; it writes one key in each, so committing them would commit your own changes to them too",
+        "    .claude/settings.json",
+        "  1 other file in this repository changed; kendex leaves those alone",
+        "  no pull request: gh is not installed",
+        "  [c] commit them · [p] commit them and push to origin/main · [Enter] leave them as diffs",
+    ];
+    type Row = (
+        &'static str,
+        Pressed,
+        Option<Choice>,
+        &'static [&'static str],
+        &'static [&'static str],
+    );
+    let rows: [Row; 3] = [
+        (
+            "accept",
+            Pressed::Char('c'),
+            Some(Choice::Commit),
+            &["  <34>›</> <1>commit them</>"],
+            &["  › commit them"],
+        ),
+        (
+            "decline",
+            Pressed::Enter,
+            Some(Choice::Leave),
+            &["  <34>›</> <1>leave them as diffs</>"],
+            &["  › leave them as diffs"],
+        ),
+        ("cancel", Pressed::Escape, None, &[], &[]),
+    ];
+    let offered = small();
+    for (what, key, want, rich_tail, plain_tail) in rows {
+        for (style, head, tail) in [
+            (rich(100), &rich_offer[..], rich_tail),
+            (plain(), &plain_offer[..], plain_tail),
+        ] {
+            let mut drawn = block::offer(&style, &offered);
+            let (lines, answer) = asked(
+                &style,
+                &block::keyed(&block::choices(&offered)),
+                std::slice::from_ref(&key),
+            );
+            drawn.extend(lines);
+            let wanted: Vec<&str> = head.iter().chain(tail.iter()).copied().collect();
+            assert_eq!(tagged(&drawn), wanted, "{what}");
+            match want {
+                Some(want) => assert_eq!(answer.ok(), Some(want), "{what}"),
+                None => assert!(
+                    answer.is_err_and(|error| crate::ui::cancelled(&error)),
+                    "{what}"
+                ),
+            }
+        }
+    }
+}
+
+/// A refusal in both renderings: a flag naming a choice the offer lost,
+/// and a commit the repository's check refused, its findings first and
+/// the rest behind the show key.
+#[test]
+fn a_refusal_draws_its_reason_and_the_programs_words() {
+    let offered = small();
+    let reason = block::not_on_offer(&offered, Choice::Pr).expect("gh is missing");
+    let failed = Failed {
+        step: Step::Commit,
+        refusal: Refusal::Said(vec![
+            "commit-guards: step=doc-limits".to_owned(),
+            "bot-instructions: findings=1".to_owned(),
+            "drift: AGENTS.md differs from a fresh render".to_owned(),
+            "commit-guards: result=1".to_owned(),
+        ]),
+    };
+    let rows: [(Style, &[&str]); 2] = [
+        (
+            rich(100),
+            &[
+                "",
+                "<33>!</> <1>/home/method/dev/site: 2 files kendex wrote are not committed</>",
+                "  <31>✗</> no pull request: gh is not installed",
+                "  <31>✗</> the commit was refused",
+                "  <36>•</> the repository's commit check found problems:",
+                "    <90>bot-instructions: findings=1</>",
+                "    <90>drift: AGENTS.md differs from a fresh render</>",
+                "  <36>•</> the commit check printed 2 more lines",
+                "  <34>[a]</> <90>commit again with the same message</><90> · </><34>[m]</> <90>commit again with a different message</>",
+                "  <34>[?]</> <90>show everything the commit check printed</><90> · </><1;34>[Enter]</> <1>leave them as diffs</>",
+            ],
+        ),
+        (
+            plain(),
+            &[
+                "! /home/method/dev/site: 2 files kendex wrote are not committed",
+                "  no pull request: gh is not installed",
+                "  the commit was refused",
+                "  the repository's commit check found problems:",
+                "    bot-instructions: findings=1",
+                "    drift: AGENTS.md differs from a fresh render",
+                "  the commit check printed 2 more lines",
+                "  [a] commit again with the same message · [m] commit again with a different message · [?] show everything the commit check printed · [Enter] leave them as diffs",
+            ],
+        ),
+    ];
+    for (style, want) in rows {
+        let mut drawn = block::flag_refused(&style, &offered, Choice::Pr, &reason);
+        let (lines, more) = block::commit_refused(&style, &failed, super::Asking::Yes);
+        assert!(more, "the rest of the check's words did not wait");
+        drawn.extend(lines);
+        let (lines, _) = asked(&style, &block::after_refusal_choices(more), &[]);
+        drawn.extend(lines);
+        assert_eq!(tagged(&drawn), want);
+    }
 }
 
 /// A timed-out step reads as that step's refusal with the bound in place

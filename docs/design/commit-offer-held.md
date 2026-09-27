@@ -30,17 +30,14 @@ A linked work tree reads its own arming record, never its main checkout's: the w
 The block replaces the commit choices:
 
 ```
-/home/method/dev/site: 90 files kendex wrote are not committed
+! /home/method/dev/site: 90 files kendex wrote are not committed
   bot-instructions is not set up in this checkout, so its files in this repository were not brought up to date
   committing now would carry those files out of date, so kendex does not offer the commit
 
 bot-instructions changes how this repository works, beyond the files above:
   Renders the enabled review-bot instruction files, the pointed code-review file and the owned Code Review Rules region in this repository.
   …the rest of the disclosure, as the repository-effects block prints it…
-
-  1  set up bot-instructions here, then offer the commit with its files
-  2  leave them as diffs
-1-2, or Enter to leave them as diffs:
+  [s] set up bot-instructions here, then offer the commit with its files · [Enter] leave them as diffs
 ```
 
 After a setup that leaves the package still named, the block is printed again with the package's fresh words and ends on `it is still not ready after its setup ran; nothing was committed`, exit 1. A split prints `the commit would carry some of bot-instructions's changed files and leave these out:` over the changed inputs left out, or, with none of kendex's left out, `… and leave out a change they were rendered from`, then `bot-instructions's check over the commit says:` over its words. It ends on `they are left as diffs; commit them together yourself`, with no setup offered and no question asked; a flag's run exits 1. With no terminal, or a flag naming a commit, the block ends on `set it up here first: at a terminal, where kendex offers it, or with Set up on its package page in the app`. A flag's run exits 1, `not committed`.

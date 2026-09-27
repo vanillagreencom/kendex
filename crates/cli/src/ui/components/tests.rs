@@ -5,19 +5,16 @@ use crate::ui::testing::{ascii, plain, rich, tagged};
 
 const CHOICES: [Choice<'static>; 3] = [
     Choice {
-        key: "Enter",
+        key: Key::Enter,
         label: "Set up and re-render",
-        recommended: true,
     },
     Choice {
-        key: "s",
+        key: Key::Char('s'),
         label: "Skip",
-        recommended: false,
     },
     Choice {
-        key: "?",
+        key: Key::Char('?'),
         label: "Details",
-        recommended: false,
     },
 ];
 
@@ -70,11 +67,13 @@ fn drawn(style: &Style) -> Vec<(&'static str, Vec<String>)> {
             "callout",
             style.callout(
                 "commit-guards wants a git hook",
-                "it runs before every commit",
+                Some("it runs before every commit"),
                 &CHOICES,
             ),
         ),
+        ("callout bare", style.callout("write 3 changes?", None, &[])),
         ("choices", style.choices(&CHOICES)),
+        ("picked", style.picked("Skip")),
         (
             "link",
             style.link("docs", Target::Url("https://kendex.dev/docs")),
@@ -114,7 +113,7 @@ fn drawn(style: &Style) -> Vec<(&'static str, Vec<String>)> {
 /// with, and the header only a terminal gets.
 #[test]
 fn each_component_draws_rich() {
-    let want: [(&str, &[&str]); 18] = [
+    let want: [(&str, &[&str]); 20] = [
         (
             "header",
             &["<1;34>kendex check</>  <90>/home/me/dev/app, global</>"],
@@ -150,12 +149,14 @@ fn each_component_draws_rich() {
                 "  <1;34>[Enter]</> <1>Set up and re-render</><90> · </><34>[s]</> <90>Skip</><90> · </><34>[?]</> <90>Details</>",
             ],
         ),
+        ("callout bare", &["", "<33>!</> <1>write 3 changes?</>"]),
         (
             "choices",
             &[
-                "<1;34>[Enter]</> <1>Set up and re-render</><90> · </><34>[s]</> <90>Skip</><90> · </><34>[?]</> <90>Details</>",
+                "  <1;34>[Enter]</> <1>Set up and re-render</><90> · </><34>[s]</> <90>Skip</><90> · </><34>[?]</> <90>Details</>",
             ],
         ),
+        ("picked", &["  <34>›</> <1>Skip</>"]),
         (
             "link",
             &["  <link https://kendex.dev/docs><36>docs</></link>"],
@@ -200,7 +201,7 @@ fn each_component_draws_rich() {
 /// no escape, no blank line and no chrome.
 #[test]
 fn each_component_draws_plain() {
-    let want: [(&str, &[&str]); 18] = [
+    let want: [(&str, &[&str]); 20] = [
         ("header", &[]),
         ("section", &["stale:"]),
         ("row", &["  skill tidy — fix: kendex apply (not from here)"]),
@@ -219,10 +220,12 @@ fn each_component_draws_plain() {
                 "  [Enter] Set up and re-render · [s] Skip · [?] Details",
             ],
         ),
+        ("callout bare", &["! write 3 changes?"]),
         (
             "choices",
-            &["[Enter] Set up and re-render · [s] Skip · [?] Details"],
+            &["  [Enter] Set up and re-render · [s] Skip · [?] Details"],
         ),
+        ("picked", &["  › Skip"]),
         ("link", &["  docs"]),
         ("link file", &["  /tmp/a b/SKILL.md"]),
         (
@@ -274,11 +277,16 @@ fn without_a_utf8_locale_every_glyph_is_ascii() {
 #[test]
 fn a_hostile_value_is_escaped_by_every_component() {
     let hostile = "evil\u{1b}[2J\nname\u{202e}";
-    let pick = [Choice {
-        key: hostile,
-        label: hostile,
-        recommended: true,
-    }];
+    let pick = [
+        Choice {
+            key: Key::Enter,
+            label: hostile,
+        },
+        Choice {
+            key: Key::Char('\u{1b}'),
+            label: hostile,
+        },
+    ];
     let rows = [vec![hostile.to_owned()]];
     for style in [rich(100), plain()] {
         let drawn = [
@@ -297,7 +305,8 @@ fn a_hostile_value_is_escaped_by_every_component() {
                 &[Span::Prose(hostile), Span::Command(hostile)],
             ),
             style.change(hostile, hostile, hostile, Some(hostile)),
-            style.callout(hostile, hostile, &pick),
+            style.callout(hostile, Some(hostile), &pick),
+            style.picked(hostile),
             style.link(hostile, Target::Url(hostile)),
             style.link(hostile, Target::File(Path::new(hostile))),
             style.table(&[hostile], &rows),
@@ -341,7 +350,7 @@ fn a_rich_line_wraps_inside_its_width() {
             }),
         ),
         style.detail(Some(Status::Low), &[Span::Prose(long)]),
-        style.callout(long, long, &[]),
+        style.callout(long, Some(long), &[]),
         style.summary(Status::Decision, long),
         style.note(&[Span::Prose(long)]),
     ];
@@ -383,6 +392,56 @@ fn a_command_wider_than_the_room_is_drawn_whole() {
     for line in &drawn[2..] {
         assert!(cells(line) <= 40, "{} cells: {line:?}", cells(line));
     }
+}
+
+/// Buttons that do not fit on one line wrap between buttons: each one is
+/// whole on some line, and every line stays inside the width.
+#[test]
+fn choices_wrap_between_buttons() {
+    let labels = [
+        "commit them",
+        "commit them and push to origin/main",
+        "commit them on a new branch and open a pull request",
+        "leave them as diffs",
+    ];
+    let keyed = [
+        Choice {
+            key: Key::Char('c'),
+            label: labels[0],
+        },
+        Choice {
+            key: Key::Char('p'),
+            label: labels[1],
+        },
+        Choice {
+            key: Key::Char('r'),
+            label: labels[2],
+        },
+        Choice {
+            key: Key::Enter,
+            label: labels[3],
+        },
+    ];
+    let drawn = rich(80).choices(&keyed);
+    assert!(drawn.len() > 1, "four long buttons fit in 80: {drawn:?}");
+    let text: Vec<String> = drawn
+        .iter()
+        .map(|line| console::strip_ansi_codes(line).into_owned())
+        .collect();
+    for line in &drawn {
+        assert!(cells(line) <= 80, "{} cells: {line:?}", cells(line));
+    }
+    for label in labels {
+        assert!(
+            text.iter().any(|line| line.contains(label)),
+            "{label:?} was broken across lines: {text:?}"
+        );
+    }
+    assert_eq!(
+        plain().choices(&keyed).len(),
+        1,
+        "plain wrapped its buttons"
+    );
 }
 
 #[track_caller]
