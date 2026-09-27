@@ -83,7 +83,7 @@ End state: the code-quality skill states each rule once, and the guards that enf
 
 End state: the orch test battery reads time through a virtual clock, runs launches as table rows, and keeps every suite file at or under 64 KB.
 
-- KEN-1820 is the container. Families A, B and C (KEN-1823, KEN-1824, KEN-1825) are Done. KEN-1826 (family D, virtual clock and table-driven launches) is ready. KEN-1827 (family E, file size) follows it; six files stand over 64 KB at fa2c538d. KEN-1856 fixes the rendered workflow-state suite reading hooks from a path that does not exist.
+- KEN-1820 is the container. Families A, B and C (KEN-1823, KEN-1824, KEN-1825) are Done. KEN-1826 (family D, virtual clock and table-driven launches) is ready. KEN-1827 (family E, file size) follows it; seven files under `skills/orch/tests/` stand over 64 KB at fa2c538d, `lib/lane-host-ssh-tests.py` among them. KEN-1856 fixes the rendered workflow-state suite reading hooks from a path that does not exist.
 
 ### Propagation
 
@@ -169,7 +169,7 @@ The scout verified each lead against the tree at fa2c538d and its tests. A verdi
 Leads the scout judged not duplication:
 
 - **Four readers of branch protection**: `required_contexts` and `merge_gate_gap` in `skills/github/scripts/commands/pr-merge.sh`, the CI probe in `ci-wait`, and the ruleset audit in `skills/review-gate/scripts/validate-standard.sh` each answer a different question. `merge_gate_gap` errs toward caution on a read-only token.
-- **Two context measures**: `skills/orch/scripts/lib/lane-context.sh` reads the pane status line and multiplies the used percentage by the window size. `transcript_tokens` in `hooks/lane-mail-check.sh` sums the harness's own usage counters. Both compare against `ORCH_HANDOFF_CONTEXT_TOKENS`; they read different sources by design. The Pi extension `context-usage.ts` is Pi's own code.
+- **Two context measures**: `skills/orch/scripts/lib/lane-context.sh` reads the pane status line and multiplies the used percentage by the window size. `transcript_tokens` in `hooks/lane-mail-check.sh` sums the harness's own usage counters. Both compare against `ORCH_HANDOFF_CONTEXT_TOKENS`; they read different sources by design. `pi-extensions/pi-qol/extensions/qol/context-usage.ts` is the pi-qol extension's own reader of Pi's transcript, a third source beside the pane line and the hook, tracked in this repository and outside the orch scripts' scope.
 - **`json_or_default`**: the GitHub copy prints the error and returns non-zero; the Linear copy drops errors and returns zero. Same name, different contract. A reader can pick the wrong one. Report only.
 - **Vendored `kendex-env.sh`**: seven byte-identical copies under `skills/*/scripts/lib/`, held equal by `tools/tests/vendored-settings-libs.test.sh`. The POSIX `gg_git_path` copy in the commit-guards helper is deliberate; a git hook helper cannot source anything.
 - **Rendered copies**: § Propagation.
@@ -197,12 +197,12 @@ The overseer applied these in the KEN-1916 lane. Every re-fetched row matched th
 | Created | 0 | none |
 | Canceled | 4 | KEN-1783 (obsolete, KEN-1832 shipped the in-place contract), KEN-1774 (obsolete, KEN-1832 changed `block-worktree-refresh.sh`), KEN-1702 (below the creation bar), KEN-1559 (absorbed into KEN-1653) |
 | Held | 1 | KEN-1939 until PR #2961 merges |
-| Corrections | 44 | 8 priorities, 6 agent labels, 9 label sets, 20 relations, 2 reparents, 3 Sub-Issues rebuilds, 4 project moves, 1 project dependency |
+| Corrections | 53 | 8 priorities, 6 agent labels, 9 label sets, 20 relations, 2 reparents, 3 Sub-Issues rebuilds, 4 project moves, 1 project dependency. The breakdown counts corrections, not issues: KEN-1859, KEN-1860 and KEN-1919 each carry an agent-label and a label-set correction. |
 | Bodies updated | 4 | KEN-1818, KEN-1857, KEN-1861, KEN-1919; KEN-1735's Location corrected |
-| Declined | 4 | Pi compaction check at hosted launch (covered by the proposal route after PR #2961), per-issue comment reads in the proposal sweep (KEN-1932), `oversee-watch` at 95 percent of its byte ceiling (the near-ceiling record binds the next change), KEN-1736 residual round counting (covered by KEN-1736) |
+| Declined | 4 | Pi compaction check at hosted launch (covered by the proposal route after PR #2961), per-issue comment reads in the proposal sweep (KEN-1932), `oversee-watch` stands at 91 percent of the 200 KB byte-ceiling lane, past its 90 percent near-ceiling mark (the near-ceiling record binds the next change), KEN-1736 residual round counting (covered by KEN-1736) |
 | Ready to schedule | 15 | KEN-787, KEN-1779, KEN-1493, KEN-1887, KEN-1888, KEN-1890, KEN-1893, KEN-1581, KEN-1538, KEN-1649, KEN-1636, KEN-1482, KEN-1653, KEN-1818, KEN-1826 |
 
-Notable structural corrections: KEN-1921 and KEN-1925 moved from KEN-1661 to KEN-1659 (a leaf In Review cannot carry open children). KEN-1826 and KEN-1827 became children of KEN-1820. KEN-1922 blocks KEN-1906. KEN-1861 blocks KEN-1553. Agent Harness Integrations is blocked by Skills & Agents Library.
+Notable structural corrections: KEN-1921 and KEN-1925 moved from KEN-1661 to KEN-1659 (a leaf In Review cannot carry open children). KEN-1826 and KEN-1827 were found already parented under KEN-1820 at execution time, so no reparent was needed. KEN-1922 blocks KEN-1906. KEN-1861 blocks KEN-1553. Agent Harness Integrations is blocked by Skills & Agents Library.
 
 ## Dispositions
 
@@ -314,7 +314,7 @@ State and priority are as read on 2026-09-27 before the corrections. A dispositi
 |---|---|---|---|---|
 | KEN-1820 | Triage P2 | keep, container | orch test diet; families A-C Done (1823, 1824, 1825), D and E open as children | orch: the orch test diet under code-quality section Tests, one PR per family, deleting first, with lines and seconds reported before and after |
 | KEN-1826 | Triage P2 | keep, ready | family D: virtual clock and table-driven launches; KEN-1825 Done | orch tests: the five slowest suites read time through lib/virtual-clock.sh and run per-value launches as table-driven rows |
-| KEN-1827 | Triage P3 | keep | family E: files at or under 64 KB; blocked by KEN-1826; six files over at fa2c538d | orch tests: every file under skills/orch/tests/ is at or under 64 KB, split at surface seams after the diet |
+| KEN-1827 | Triage P3 | keep | family E: files at or under 64 KB; blocked by KEN-1826; seven files over at fa2c538d, `lib/lane-host-ssh-tests.py` among them | orch tests: every file under skills/orch/tests/ is at or under 64 KB, split at surface seams after the diet |
 | KEN-1856 | Triage P3 | keep | rendered suite reads hooks from a nonexistent .agents/hooks; four-line fix | orch tests: the rendered workflow-state-handoff-standing suite reads hooks/lane-mail-check.sh from the work tree top level, so it passes under .agents as the source copy does |
 
 ### Propagation (2)
