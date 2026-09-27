@@ -100,7 +100,9 @@ assert_eq "CI needs every other job" \
 
 # EVENT|ACTION'S LANES|CLASS|LANES THAT RUN
 # The standard rows at lanes=false are a docs-only diff past the trivial
-# ceiling, the answer a template reading the class would get wrong.
+# ceiling, the answer a template reading the class would get wrong. Each
+# pull_request row has a merge_group twin with the same answer, which is the
+# claim that a merge group runs the lanes its pull request ran.
 job_rows=0
 while IFS='|' read -r event lanes class expected; do
   job_rows=$((job_rows + 1))
@@ -116,11 +118,6 @@ pull_request|false|standard|none
 pull_request|true|standard|$LANES
 ROWS
 require_rows job "$job_rows"
-for lanes in true false; do
-  assert_eq "a merge group at lanes=$lanes runs its pull request's lanes" \
-    "$(running "$TEMPLATE" pull_request success "$lanes" standard)" \
-    "$(running "$TEMPLATE" merge_group success "$lanes" standard)"
-done
 for event in pull_request merge_group; do
   assert_eq "a dead classifier runs every lane on $event" "$LANES" "$(running "$TEMPLATE" "$event" failure "" "")"
 done

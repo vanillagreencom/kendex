@@ -7,24 +7,31 @@
 # rows drive it through its CLASSIFIER input against a stub scripts root, so
 # each output can be traced to the stub line that produced it.
 #
-# Three surfaces:
+# Four surfaces:
 #   1. the outputs: one diff per class, a docs-only diff at `standard` size
 #      and a `trivial` one off the docs set, asserting every output line the
 #      step writes, and the arguments each wrapped script was called with.
 #   2. the must-fail inverses: a copy of classify that prints a class of its
 #      own instead of reading the wrapped script's fails the render row, and
 #      one copy per lanes rule with that rule planted wrong fails the row the
-#      rule decides.
+#      rule decides. Each copy must also run to completion, so a copy that
+#      dies for another reason is never counted as a kill.
 #   3. the refusals: one row per cause the header documents, each asserting
 #      exit 2 and the `change-class-action: wiring-error: cause=` key, the
 #      wrapped classifier's own wiring error and the delimiter guard included,
 #      and a refused step writing no lanes output.
+#   4. action.yml: its `outputs:` block declares exactly the names classify
+#      writes, each forwarding the classify step's output of the same name,
+#      with a copy carrying a misspelled `lanes` value as its control. A
+#      workflow reads the action, never the script, so a dropped mapping
+#      there publishes an empty `lanes` with every row above green.
 set -euo pipefail
 
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 ROOT="$(git rev-parse --show-toplevel)"
 CLASSIFY="$ROOT/.github/actions/change-class/classify"
+ACTION="$ROOT/.github/actions/change-class/action.yml"
 
 mkdir -p "$ROOT/tmp"
 TMP="$(mktemp -d "$ROOT/tmp/change-class-action.XXXXXX")"
@@ -128,14 +135,21 @@ docs-only-standard|standard|true|docs/guide.md changelog.d/fixed/x.md README.md|
 ROWS
 }
 
-# Whether ROW's outputs from SCRIPT are the ones the table expects.
-row_holds() { # SCRIPT ROW — prints yes or no
+# Whether ROW's outputs from SCRIPT are the ones the table expects:
+# `crashed` where SCRIPT did not run to completion, so a mutant that dies for
+# an unrelated reason is told apart from one whose outputs the row refuses.
+row_holds() { # SCRIPT ROW — prints yes, no or crashed
   local line name class docs paths expected
   line="$(class_rows | grep -m1 "^$2|")" ||
     { echo "no class row named $2" >&2; exit 1; }
   IFS='|' read -r name class docs paths expected <<<"$line"
-  [ "$(run "$1" STUB_CLASS="$class" STUB_DOCS="$docs" STUB_PATHS="$paths")" = 0 ] &&
-    [ "$(outputs)" = "$expected" ] && echo yes || echo no
+  if [ "$(run "$1" STUB_CLASS="$class" STUB_DOCS="$docs" STUB_PATHS="$paths")" != 0 ]; then
+    echo crashed
+  elif [ "$(outputs)" = "$expected" ]; then
+    echo yes
+  else
+    echo no
+  fi
 }
 
 rows=0
@@ -183,7 +197,7 @@ check "must-fail: a classify that decides its own class fails the render row" \
   no "$(row_holds "$mutant" render)"
 
 # One copy per lanes rule, the rule planted wrong and every other line kept.
-# Each copy must fail the row its rule decides and still run to completion.
+# Each copy must run to completion and fail the row its rule decides.
 # NEEDLE@REPLACEMENT@ROW THE RULE DECIDES, split on `@` because a rule spells
 # the shell's `||`.
 mutants=0
@@ -261,6 +275,49 @@ check "a refused delimiter writes no changed_paths output" "" \
   "$(grep '^changed_paths' "$OUT" || true)"
 check "a refused step writes no lanes output" "" \
   "$(grep '^lanes' "$OUT" || true)"
+
+# --- 4. action.yml forwards every output classify writes -------------------
+
+# The names one classify run writes, heredoc-delimited values skipped. The
+# standard row reaches every writer, lanes last.
+run "$CLASSIFY" STUB_CLASS=standard STUB_PATHS=skills/orch/SKILL.md >/dev/null
+written="$(awk '
+  collecting { if ($0 == delim) collecting = 0; next }
+  /^[a-z_]+<</ { delim = $0; sub(/^[^<]*<</, "", delim); sub(/<<.*/, ""); print; collecting = 1; next }
+  /^[a-z_]+=/ { sub(/=.*/, ""); print }
+' "$OUT" | LC_ALL=C sort)"
+case "$written" in
+  *change_class*lanes*) ;;
+  *) echo "classify wrote no change_class or lanes output, so the name reader is broken: $written" >&2; exit 1 ;;
+esac
+forwarded="$(printf '%s\n' "$written" | awk '{ printf "%s ${{ steps.classify.outputs.%s }}\n", $1, $1 }')"
+
+# NAME VALUE per entry of ACTION_YML's `outputs:` block, sorted.
+declared() { # ACTION_YML
+  awk '
+    /^outputs:/ { on = 1; next }
+    on && /^[^ ]/ { exit }
+    on && /^  [a-z_]+:$/ { name = $1; sub(/:$/, "", name); next }
+    on && /^    value: / { value = $0; sub(/^    value: /, "", value); print name " " value }
+  ' "$1" | LC_ALL=C sort
+}
+check "action.yml declares exactly the outputs classify writes, each forwarded by name" \
+  "$forwarded" "$(declared "$ACTION")"
+
+needle='value: ${{ steps.classify.outputs.lanes }}'
+[ "$(grep -cF -- "$needle" "$ACTION")" -eq 1 ] ||
+  { echo "the lanes mapping is no longer one line in $ACTION" >&2; exit 1; }
+NEEDLE="$needle" awk '
+  { i = index($0, ENVIRON["NEEDLE"]) }
+  i > 0 { $0 = substr($0, 1, i - 1) "value: ${{ steps.classify.outputs.lane }}" substr($0, i + length(ENVIRON["NEEDLE"])) }
+  { print }
+' "$ACTION" >"$TMP/action.yml"
+! cmp -s "$ACTION" "$TMP/action.yml" || { echo "the action.yml mutant changed nothing" >&2; exit 1; }
+if [ "$forwarded" != "$(declared "$TMP/action.yml")" ]; then
+  ok "must-fail: an action.yml whose lanes value is misspelled fails the forwarding row"
+else
+  bad "must-fail: an action.yml whose lanes value is misspelled fails the forwarding row"
+fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

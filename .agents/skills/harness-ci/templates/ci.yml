@@ -72,7 +72,8 @@ jobs:
           classifier/.agents/skills/harness-ci/scripts/harness-only
           --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"
       # Neither network step fails this job: without them the render proof is
-      # unavailable and the class falls to `standard`, which runs every lane.
+      # unavailable, the class falls to `standard`, and the action answers
+      # `lanes` from the docs verdict alone.
       # The warning step annotates the run when either did not succeed.
       - id: kendex
         name: kendex, for the render class
@@ -111,8 +112,12 @@ jobs:
 
   # THE REPOSITORY'S LANES. Replace this job with the repository's own, one
   # job per lane, each with this `needs:` and this `if:`, and name each one in
-  # CI's `needs:` and in a `--skippable` of its aggregate step. Copied as it
-  # stands, this lane fails, and CI with it.
+  # CI's `needs:` and in a `--skippable` of its aggregate step. A lane that
+  # reads a file under docs/ or changelog.d/, or a root .md or .markdown file,
+  # is the exception: `lanes` is false on a docs-only diff of any size, so
+  # that lane keeps `needs: changes`, takes `if: ${{ !cancelled() }}` with no
+  # `lanes` term, and stays out of every `--skippable`. Copied as it stands,
+  # this lane fails, and CI with it.
   test:
     name: Test
     needs: changes
