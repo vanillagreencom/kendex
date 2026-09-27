@@ -1,0 +1,21 @@
+# The relay unit `slack install` writes to the systemd user directory, with
+# @EXEC_START@ and @WORKING_DIRECTORY@ filled in from the roots it was given.
+# The relay reads its settings at start, so a changed token or owners list is
+# a restart of this unit; `slack setup` restarts it itself.
+[Unit]
+Description=kendex slack relay: the overseer mailbox to one private channel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@WORKING_DIRECTORY@
+ExecStart=@EXEC_START@
+Restart=on-failure
+RestartSec=60
+# One poll's messages and one streamed upload: tens of megabytes. The cap
+# holds a runaway relay to that order and lets the slice keep the rest.
+MemoryMax=256M
+
+[Install]
+WantedBy=default.target

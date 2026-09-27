@@ -1,0 +1,69 @@
+"""The package's settings, read from the process environment.
+
+The launcher loads the checkout's settings files into the environment through
+kendex's one settings reader, so this module reads names and never files.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from dataclasses import dataclass
+from typing import List
+
+from refusals import Refusal
+
+DEFAULT_API_URL = "https://slack.com/api"
+DEFAULT_POLL_SECONDS = 15
+DEFAULT_THREAD_DAYS = 7
+EMAIL = re.compile(r"^[^\s@,]+@[^\s@,]+$")
+
+
+@dataclass
+class Settings:
+    token: str
+    owners: List[str]
+    poll_seconds: int
+    thread_days: int
+    api_url: str
+
+
+def _positive_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if raw == "":
+        return default
+    if not raw.isdigit() or int(raw) < 1:
+        raise Refusal("setting-invalid", f"{name}={raw}")
+    return int(raw)
+
+
+def owners_from_env() -> List[str]:
+    raw = os.environ.get("SLACK_OWNERS", "").strip()
+    if raw == "":
+        raw = os.environ.get("KENDEX_USER_EMAIL", "").strip()
+    owners = [part.strip() for part in raw.split(",") if part.strip()]
+    for owner in owners:
+        if not EMAIL.match(owner):
+            raise Refusal("setting-invalid", f"SLACK_OWNERS={owner}")
+    return owners
+
+
+def load(need_token: bool = True, need_owners: bool = True) -> Settings:
+    token = os.environ.get("SLACK_BOT_TOKEN", "").strip()
+    owners = owners_from_env()
+    missing = []
+    if need_token and token == "":
+        missing.append("SLACK_BOT_TOKEN")
+    if need_owners and not owners:
+        missing.append("SLACK_OWNERS")
+    if missing:
+        raise Refusal(
+            "setting-missing", missing[0], *[("setting-missing", m) for m in missing[1:]]
+        )
+    return Settings(
+        token=token,
+        owners=owners,
+        poll_seconds=_positive_int("SLACK_POLL_SECONDS", DEFAULT_POLL_SECONDS),
+        thread_days=_positive_int("SLACK_THREAD_DAYS", DEFAULT_THREAD_DAYS),
+        api_url=os.environ.get("SLACK_API_URL", "").strip() or DEFAULT_API_URL,
+    )

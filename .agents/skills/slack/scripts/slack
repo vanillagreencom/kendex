@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# slack: relay one checkout's overseer mailbox to one private Slack channel
+# and back, by polling, reading and writing the mailbox through lane-mail.
+#
+# The relay is Python because it holds a JSON journal, an HTTP client and a
+# poll loop, and it needs the standard library alone (3.8 or newer). This
+# launcher does the two things Python should not: it loads the checkout's
+# settings through the one kendex settings reader, and it names the orch
+# package the relay reads lane-mail and the secret-value pattern from, so the
+# relay itself never spells a machine's layout.
+set -euo pipefail
+
+here="$(cd -- "$(dirname -- "$0")" && pwd -P)"
+orch="$here/../../orch"
+
+refuse() { # KEY=VALUE LINES...
+  printf 'slack: %s\n' "$1" >&2
+  shift
+  printf '%s\n' "$@" >&2
+  exit 2
+}
+
+if ! command -v python3 >/dev/null 2>&1; then
+  refuse "python3=missing" "python3 is not on PATH; the relay needs Python 3.8 or newer"
+fi
+if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)'; then
+  refuse "python3=$(python3 -V 2>&1 | tr ' ' '-')" "needs Python 3.8 or newer"
+fi
+if [ ! -f "$orch/scripts/lib/kendex-env.sh" ] || [ ! -f "$orch/references/secret-value.ere" ]; then
+  refuse "orch-missing=$orch" \
+    "the orch skill is not installed beside this one; the relay reads its settings loader and its secret-value pattern from there"
+fi
+
+# The settings of the checkout the command runs in: the process environment
+# first, then that checkout's private env file and settings files. A relay
+# serving several roots takes every setting from here, once.
+# shellcheck source=../../orch/scripts/lib/kendex-env.sh
+source "$orch/scripts/lib/kendex-env.sh"
+project="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+if ! kendex_load_project_env "$project"; then
+  refuse "settings-unreadable=$project" "a settings file of this checkout could not be loaded; the lines above say which"
+fi
+
+export PYTHONDONTWRITEBYTECODE=1
+exec python3 -B "$here/lib/main.py" "$@"

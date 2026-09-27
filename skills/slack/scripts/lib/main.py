@@ -1,0 +1,164 @@
+"""Entry point: argv to one verb, every refusal one keyed line, exit 2."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+import time
+from pathlib import Path
+from typing import List
+
+from refusals import Refusal, print_refusal
+
+HELP = """\
+Usage: slack setup [--root ROOT] [--name NAME | --take CHANNEL_ID]
+       slack listen --root ROOT [--root ROOT]... [--once]
+       slack listen --status --root ROOT [--root ROOT]...
+       slack post [--root ROOT] [--channel ID] --text TEXT [--mention]
+                  [--file PATH] [--thread TS] [--update TS]
+       slack compact [--root ROOT]...
+       slack install --root ROOT [--root ROOT]... [--print]
+
+Relays one checkout's overseer mailbox to one private Slack channel and back,
+by polling, reading and writing the mailbox only through that checkout's
+lane-mail. A root is a checkout; without --root, the checkout the command
+runs in.
+
+setup     resolve every SLACK_OWNERS address to a Slack user, create the
+          private channel or find it by name (--name; default
+          <checkout>-<owner's local part>), or adopt an existing one by id
+          (--take), invite the owners, write the binding tmp/slack/binding.json,
+          and restart the relay unit `install` wrote when one stands
+listen    the relay: every SLACK_POLL_SECONDS, per root, one history read since
+          the journal's position, the thread of every open question, every
+          tenth poll the other bound threads younger than SLACK_THREAD_DAYS,
+          then the mailbox's events; owner text lands as a directive or, in
+          a question's thread, as its answer, each with --delivery-id
+          channel:ts; asks, notices and rulings land in Slack, a report as
+          its file. One relay per checkout, held by an OS lock; --once polls
+          each root once and exits 0 when every poll succeeded, 1 otherwise
+  --status  one `slack-relay=ROOT state=ok|failing|stale|never` line per
+          root from the relay's status record, then the summed call budget
+post      one message to the bound channel, or --channel for another; --mention
+          prefixes every owner; --file uploads the file with the text as its
+          comment; --thread replies in a thread; --update edits the message
+          at that ts. Text and file bytes are refused when they match the
+          secret-value pattern
+compact   drop journal lines resolved or ignored longer ago than
+          SLACK_THREAD_DAYS; open questions and positions stay. The relay runs
+          it once a day
+install   write the systemd user unit for `listen` over the roots given, then
+          daemon-reload and enable it; --print writes the unit to stdout only
+
+Settings, read from the process environment after the checkout's private env
+file and settings files: SLACK_BOT_TOKEN, SLACK_OWNERS (default
+KENDEX_USER_EMAIL), SLACK_POLL_SECONDS (15), SLACK_THREAD_DAYS (7).
+SLACK_API_URL names another API endpoint (default https://slack.com/api).
+
+Keyed lines, `slack: <key>=<value>` first: bound, posted, uploaded, updated,
+compacted, installed, enabled, restarted, listening, slack-relay,
+slack-relay-budget on stdout; refusals on stderr with exit 2: usage,
+setting-missing, setting-invalid, orch-missing, root-unbound, root-unreadable,
+binding-invalid, journal-invalid, slack-auth-failed, slack-api-failed,
+slack-unreachable, slack-rate-limited, slack-owner-unknown,
+slack-channel-unjoined, relay-running, secret-value, secret-pattern-invalid,
+file-unreadable, lane-mail-failed, unit-unwritable, systemctl-missing,
+systemctl-failed.
+"""
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:  # type: ignore[override]
+        raise Refusal("usage", message)
+
+
+def roots_of(values: List[str]) -> List[Path]:
+    roots = []
+    for value in values or [str(Path.cwd())]:
+        path = Path(value)
+        if not path.is_dir():
+            raise Refusal("root-unreadable", value)
+        roots.append(Path(os.path.realpath(path)))
+    return roots
+
+
+def build() -> Parser:
+    parser = Parser(prog="slack", add_help=False)
+    parser.add_argument("-h", "--help", action="store_true")
+    verbs = parser.add_subparsers(dest="verb")
+    p = verbs.add_parser("setup", add_help=False)
+    p.add_argument("--root")
+    p.add_argument("--name")
+    p.add_argument("--take")
+    p = verbs.add_parser("listen", add_help=False)
+    p.add_argument("--root", action="append")
+    p.add_argument("--once", action="store_true")
+    p.add_argument("--status", action="store_true")
+    p = verbs.add_parser("post", add_help=False)
+    p.add_argument("--root")
+    p.add_argument("--channel")
+    p.add_argument("--text")
+    p.add_argument("--file")
+    p.add_argument("--mention", action="store_true")
+    p.add_argument("--thread")
+    p.add_argument("--update")
+    p = verbs.add_parser("compact", add_help=False)
+    p.add_argument("--root", action="append")
+    p = verbs.add_parser("install", add_help=False)
+    p.add_argument("--root", action="append")
+    p.add_argument("--print", action="store_true")
+    return parser
+
+
+def run(argv: List[str]) -> int:
+    import verbs
+
+    args = build().parse_args(argv)
+    if args.help or args.verb is None:
+        sys.stdout.write(HELP)
+        return 0
+    if args.verb == "setup":
+        if args.name and args.take:
+            raise Refusal("usage", "--name and --take are exclusive")
+        return verbs.setup(roots_of([args.root] if args.root else [])[0], args.name, args.take)
+    if args.verb == "listen":
+        if not args.root:
+            raise Refusal("usage", "listen needs at least one --root")
+        roots = roots_of(args.root)
+        if args.status:
+            return verbs.status(roots, time.time())
+        from relay import Relay
+        from settings import load
+
+        settings = load()
+        relay = Relay(roots, settings, verbs.api_for(settings))
+        return relay.run(args.once)
+    if args.verb == "post":
+        if not args.text and not args.file:
+            raise Refusal("usage", "post needs --text or --file")
+        if args.update and args.file:
+            raise Refusal("usage", "--update edits text and takes no --file")
+        root = roots_of([args.root] if args.root else [])[0]
+        return verbs.post(root, args.channel, args.text, args.file, args.mention, args.thread, args.update)
+    if args.verb == "compact":
+        return verbs.compact_roots(roots_of(args.root or []))
+    if args.verb == "install":
+        if not args.root:
+            raise Refusal("usage", "install needs at least one --root")
+        return verbs.install(roots_of(args.root), args.print)
+    raise Refusal("usage", f"unknown verb {args.verb}")
+
+
+def main() -> int:
+    try:
+        return run(sys.argv[1:])
+    except Refusal as err:
+        print_refusal(err)
+        return 2
+    except KeyboardInterrupt:
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

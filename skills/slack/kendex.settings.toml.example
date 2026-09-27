@@ -1,0 +1,25 @@
+[env]
+
+# SLACK — the relay between an overseer's mailbox and a private Slack channel.
+# Nothing below is marked `# required`, so installing this skill writes
+# nothing into <project>/kendex.settings.toml. The defaults are what the
+# owner runs. Full key reference: slack README.md § Settings.
+
+# The bot token of your Slack app. It lives in the private env file or the
+# process environment only, never in this file. Unset, Slack is off: setup
+# and the relay refuse and name the key.
+# SLACK_BOT_TOKEN = ""
+
+# The email addresses of the people whose messages steer, comma-separated.
+# Anyone else in a channel can read but not steer. A change here re-resolves
+# the ids before the next delivery. Empty uses KENDEX_USER_EMAIL; with that
+# unset too, setup and the relay refuse and name the key.
+SLACK_OWNERS = ""
+
+# How often the relay reads each channel, in seconds. Lower is faster and
+# uses more of Slack's call allowance, which every relay of one app shares.
+SLACK_POLL_SECONDS = "15"
+
+# How many days a thread stays open for replies. A reply under an older
+# topic is not routed; the owner writes top-level instead.
+SLACK_THREAD_DAYS = "7"

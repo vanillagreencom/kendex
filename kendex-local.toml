@@ -353,6 +353,11 @@ harnesses = [
 ]
 enabled = true
 
+[skills.slack]
+source = "."
+harnesses = ["claude", "codex", "pi"]
+enabled = true
+
 [skills.second-opinion]
 source = "."
 harnesses = [
