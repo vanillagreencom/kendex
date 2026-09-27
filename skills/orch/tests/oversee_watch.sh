@@ -1202,8 +1202,16 @@ assert_eq "merged=$(grep -c '^EVENT merged 2 issue-2' <<<"$out" || true) closes=
 parked_fleet parked_other_pr
 printf '[{"number": 3, "headRefName": "issue-2", "mergedAt": "2026-09-20T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
 parked_run --
-assert_eq "rc=$rc events=$EVENTS host=$HOST_VERBS" "rc=0 events=merged 3 host=" \
-  "another pull request merged on the parked branch's name is reported and closes nothing" "$err"
+assert_eq "rc=$rc events=$EVENTS host=$HOST_VERBS note=$(grep -c '^oversee-watch: parked-merge-unmatched item=issue-2 recorded=owner/repo#2 seen=owner/repo#3$' "$err" || true)" "rc=0 events=merged 3 host= note=1" \
+  "another pull request merged on the parked branch's name is reported, named as not the record's, and closes nothing" "$err"
+# The record carries the repository as gh repo view spells it; the watch's
+# --repo set is lowercased on entry, and GitHub reads both the same.
+parked_fleet parked_mixed_case_repo
+jq '(.lanes[] | select(.item == "issue-2")).parked.repo = "Owner/Repo"' "$STUB_DIR/state.json" > "$STUB_DIR/state.next" && mv -- "$STUB_DIR/state.next" "$STUB_DIR/state.json"
+printf '[{"number": 2, "headRefName": "issue-2", "mergedAt": "2026-09-20T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+parked_run -- --repo owner/repo
+assert_eq "rc=$rc events=$EVENTS host=$HOST_VERBS" "rc=0 events=merged 2,lane-closed issue-2 host=close issue-2,delete issue-2" \
+  "a record spelling the repository Owner/Repo closes on the merge the watch lists under owner/repo" "$err"
 parked_fleet parked_other_repo
 printf '[]\n' > "$STUB_DIR/merged.json"
 printf '[{"number": 2, "headRefName": "issue-2", "mergedAt": "2026-09-20T00:00:00Z"}]\n' > "$STUB_DIR/merged.other_repo.json"

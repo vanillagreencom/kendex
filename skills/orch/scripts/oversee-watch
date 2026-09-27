@@ -602,12 +602,16 @@ PREPARE_ROWS=""
 # The parked records, one per line as item and `<repo>#<number>`: a lane
 # lane-close --park stopped with its disk kept, and the pull request its park
 # judged, whose merge alone the merged check closes it on. Nothing else reads
-# it: its pane is gone and its mailbox is on a stopped disk.
+# it: its pane is gone and its mailbox is on a stopped disk. The repository
+# is lowercased here, the one spelling check_repo_set gives every --repo, so
+# the key meets the merged side's whatever case the record's writer used:
+# GitHub reads owner and repository names case-insensitively, and a record
+# carries the spelling gh repo view or the launch's --repo gave it.
 PARKED_ROWS_FILTER='
   (.lanes // [])[] | select(type == "object" and .status == "parked")
   | if ((.item? | type) != "string" or (.item | length) == 0) then error("lane-field field=item value=\(.item | tojson)")
     elif ((.parked.pr? | type) != "number" or (.parked.repo? | type) != "string") then error("lane-field field=parked value=\(.parked | tojson)")
-    else "\(.item)\u001f\(.parked.repo)#\(.parked.pr)" end'
+    else "\(.item)\u001f\(.parked.repo | ascii_downcase)#\(.parked.pr)" end'
 PARKED_ITEMS=()
 PARKED_KEYS=()
 
@@ -1249,7 +1253,13 @@ check_merged() {
       PASS_EVENT=1
     done <<<"$hits"
     state="$(lane_row_set merged "$state" "$item" "$keys")"
-    item_parked "$item" && [[ " $fresh " == *" $PARKED_KEY "* ]] || continue
+    item_parked "$item" && [[ -n "$fresh" ]] || continue
+    # A parked item's fresh merges that are not its own are named, so a park
+    # left standing over a merge has a line saying which merge it was not.
+    if [[ " $fresh " != *" $PARKED_KEY "* ]]; then
+      ow_message parked-merge-unmatched "item=$item" "recorded=$PARKED_KEY" "seen=${fresh// /,}" >&2
+      continue
+    fi
     lane_row_commit "$state"
     if ! close_hosted_lane "$item"; then
       if [[ -n "$prior" ]]; then state="$(lane_row_set merged "$state" "$item" "$prior")"

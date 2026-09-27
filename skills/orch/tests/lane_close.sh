@@ -1182,6 +1182,12 @@ write_state running codex /host linear owner/repo; write_panes python; working_s
 LANE_CLOSE_STOP_SANDBOX_OUT='' run_close "$SCRIPT" --park --pr 7
 assert_eq "rc=$RC failed=$(grep -c '^lane-close: park-failed item=KEN-1 pr=7 cause=answer-unparsed$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 failed=1 status=stopped' 'a stop-sandbox that prints no sandbox-stopped line is not a parked sandbox'
+# The check's refusal at the cap is the same transient, named as such and never
+# as a provider without the pair, and nothing is read or signalled after it.
+write_state running codex /host linear owner/repo; write_panes python; working_screen
+LANE_CLOSE_STOP_SANDBOX_CHECK_STATUS=69 run_close "$SCRIPT" --park --pr 7
+assert_eq "rc=$RC busy=$(grep -c '^lane-close: lane-host-busy item=KEN-1 pr=7 step=stop-sandbox-check$' <<<"$ERR" || true) refused=$(grep -c '^lane-close: park-refused ' <<<"$ERR" || true) gh=$(awk 'END { print NR + 0 }' "$GH_CALLS") stop=$(stop_count KEN-1 codex) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=69 busy=1 refused=0 gh=0 stop=0 status=running' 'a stop-sandbox --check lane-host refused at its cap is lane-host-busy, not a provider without the pair, and signals nothing'
 write_state running codex /host linear owner/repo; write_panes python; working_screen
 LANE_CLOSE_STOP_SANDBOX_STATUS=69 run_close "$SCRIPT" --park --pr 7
 assert_eq "rc=$RC busy=$(grep -c '^lane-close: lane-host-busy item=KEN-1 pr=7 step=stop-sandbox$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \

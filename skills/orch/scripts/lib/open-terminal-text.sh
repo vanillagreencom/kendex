@@ -103,7 +103,7 @@ ot_message() { # REASON FIELD=VALUE...
     host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex or pi. Nothing was created.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
     host-start-failed) text='The item is recorded parked, its sandbox stopped with its disk kept, and the lane host could not bring that sandbox back: exit= is the start verb'"'"'s status, its own words above this line, and cause=answer-unparsed a start that succeeded without its sandbox-started item=ID line, so nothing confirms the sandbox is up. No create ran and the record still reads parked: fix what the provider names and relaunch the item again.' ;;
-    host-started) text='The parked item'"'"'s sandbox is up again on the disk the park kept, and its record now reads stopped with parked dropped, which is that sandbox'"'"'s state from here: up, no harness in it. create --relaunch now resumes the harness on it; a create that fails after this line leaves the stopped record, which a plain relaunch recovers, its start answered again for a sandbox already up.' ;;
+    host-started) text='The parked item'"'"'s sandbox is up again on the disk the park kept, and its record now reads stopped with parked dropped, which is that sandbox'"'"'s state from here: up, no harness in it. create --relaunch now resumes the harness on it; a create that fails after this line leaves the stopped record, which a plain relaunch recovers with no start, going straight to create --relaunch.' ;;
     parked-record-failed) text='The parked item'"'"'s sandbox is up again, but its record could not be rewritten from parked to stopped, so it still reads parked over a running sandbox and nothing was created. Fix what workflow-state names above and relaunch the item again: the start is answered again for a sandbox already up.' ;;
     state-read-failed) text='The fleet state could not be read for this item'"'"'s record, so whether the item is parked is unknown. Nothing was launched: fix what workflow-state names above.' ;;
     lane-host-busy) text='lane-host refused the call step names at its per-home cap on provider calls, after waiting ORCH_LANE_HOST_BUSY_WAIT_SECS for a slot; its own line is above and the provider ran nothing. After a refused create nothing was made: launch the item again. After a refused wait or marker call the host holds the item: relaunch it with --relaunch.' ;;
@@ -399,8 +399,7 @@ Options:
                     rewrites the record stopped with `parked` dropped before
                     the create, since that is the sandbox's state from then
                     on, so a create that fails after it leaves a stopped
-                    record, which a plain relaunch recovers, and a start the
-                    provider answers for a sandbox already up costs nothing.
+                    record, which a plain relaunch recovers with no start.
                     A parked record is not a running or
                     preparing one, so this relaunch is judged as adding a
                     lane under --state-dir's caps: at the fleet cap it is

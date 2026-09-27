@@ -654,6 +654,7 @@ ow_message() { # REASON FIELD=VALUE...
     tracker-list-invalid) text='The tracker list output could not be parsed.' ;;
     handoff-read-failed) text='The handoff record could not be read.' ;;
     lane-close-failed) text='lane-close failed before it completed the close. The next run reports the exit again and retries.' ;;
+    parked-merge-unmatched) text='A pull request merged on the parked item'"'"'s branch name, reported above as merged, is not the one its record names, so the parked sandbox stays stopped: recorded= is the record'"'"'s <repo>#<number> in lower case and seen= the merged keys this pass found. The lane closes when the recorded pull request merges in that repository.' ;;
     hosted-invalid) text='Spell --hosted as ITEM=REMOTE_ROOT, with the item in letters, digits, dot, underscore and hyphen.' ;;
     hosted-unknown-item) text='The --hosted item is not one this run watches. Name it with --item, or drop the entry.' ;;
     root-invalid) text='Spell --root as ITEM=PATH, with the item in letters, digits, dot, underscore and hyphen.' ;;
