@@ -76,17 +76,19 @@ EOF
 }
 
 # The pages past the first of one commit's check suites and of one suite's
-# check runs, each read at the cursor the page before ended on. The three
-# queries share the suite node's selection, so a page carries what the first
-# page carried.
+# check runs, each read at the cursor the page before ended on. The two
+# suite queries share the suite node's selection and all three the run
+# node's, so a page carries what the first page carried. Each query defines
+# only the fragments it spreads: GitHub refuses one defined and unused.
+RUN_PAGE_FRAGMENT='fragment runPage on CheckRunConnection {
+  pageInfo { hasNextPage endCursor }
+  nodes { name status conclusion startedAt completedAt detailsUrl }
+}'
 SUITE_PAGE_FRAGMENTS='fragment suitePage on CheckSuiteConnection {
   pageInfo { hasNextPage endCursor }
   nodes { id workflowRun { event url workflow { name } } checkRuns(first: 100, filterBy: { checkType: LATEST }) { ...runPage } }
 }
-fragment runPage on CheckRunConnection {
-  pageInfo { hasNextPage endCursor }
-  nodes { name status conclusion startedAt completedAt detailsUrl }
-}'
+'"$RUN_PAGE_FRAGMENT"
 SUITES_PAGE_QUERY='query suitesPage($owner: String!, $name: String!, $oid: GitObjectID!, $cursor: String!) {
   repository(owner: $owner, name: $name) {
     object(oid: $oid) { ... on Commit { checkSuites(first: 50, after: $cursor) { ...suitePage } } }
@@ -96,7 +98,7 @@ SUITES_PAGE_QUERY='query suitesPage($owner: String!, $name: String!, $oid: GitOb
 RUNS_PAGE_QUERY='query runsPage($id: ID!, $cursor: String!) {
   node(id: $id) { ... on CheckSuite { checkRuns(first: 100, after: $cursor, filterBy: { checkType: LATEST }) { ...runPage } } }
 }
-'"$SUITE_PAGE_FRAGMENTS"
+'"$RUN_PAGE_FRAGMENT"
 QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -134,17 +136,25 @@ MERGE_PATH='.repository.pullRequest.mergeCommit'
 # its end: each further page is QUERY under GH_ARGS plus the cursor the last
 # page ended on, its connection at PAGE_CONN in the page. The walk stops at
 # CAP pages, the first page counted, and leaves hasNextPage true for FILTER
-# to refuse.
-#   page_to_end CONN PAGE_CONN QUERY CAP [GH_ARGS...]
+# to refuse. LABEL names the connection in each refusal: which walk, of
+# which commit or suite, since every page fails with gh_graphql's one text.
+#   page_to_end CONN PAGE_CONN QUERY CAP LABEL [GH_ARGS...]
 page_to_end() {
-    local conn="$1" page_conn="$2" query="$3" cap="$4" data cursor page pages=1
-    shift 4
+    local conn="$1" page_conn="$2" query="$3" cap="$4" label="$5" data cursor page pages=1
+    shift 5
     data=$(cat)
     while jq -e "$conn | . != null and .pageInfo.hasNextPage == true" >/dev/null <<<"$data"; do
         [ "$pages" -lt "$cap" ] || break
         cursor=$(jq -r "$conn.pageInfo.endCursor // empty" <<<"$data") || return 1
-        [ -n "$cursor" ] || { github_error 'pr-timeline: a page past the first names no cursor'; return 1; }
-        page=$(gh_graphql "$query" "$@" -f cursor="$cursor") || return 1
+        [ -n "$cursor" ] || { github_error "pr-timeline: $label page past the first names no cursor"; return 1; }
+        page=$(gh_graphql "$query" "$@" -f cursor="$cursor") \
+            || { github_error "pr-timeline: $label page after $cursor unreadable"; return 1; }
+        # A page with no connection where one was asked for: node(id:) and
+        # object(oid:) answer null for a suite or commit the token cannot
+        # read, and gh_graphql prints null for a response with no data.
+        # Merging that would close the walk over part of the history.
+        jq -e "$page_conn | type == \"object\" and has(\"pageInfo\")" >/dev/null <<<"$page" \
+            || { github_error "pr-timeline: $label page after $cursor carries no connection"; return 1; }
         # Both values reach jq on stdin: a page of check runs can exceed
         # ARG_MAX as an argument.
         data=$(printf '%s\n%s\n' "$data" "$page" | jq -sc "(.[1] | $page_conn) as \$next | .[0]
@@ -162,11 +172,11 @@ page_commit_checks() {
     data=$(cat)
     oid=$(jq -r "$path.oid // empty" <<<"$data") || return 1
     data=$(page_to_end "$path.checkSuites" '.repository.object.checkSuites' "$SUITES_PAGE_QUERY" "$SUITE_PAGES" \
-        -f owner="$owner" -f name="$name" -f oid="$oid" <<<"$data") || return 1
+        "check-suites of $oid" -f owner="$owner" -f name="$name" -f oid="$oid" <<<"$data") || return 1
     for i in $(jq -r "[$path.checkSuites.nodes[]?] | to_entries[] | select(.value.checkRuns.pageInfo.hasNextPage == true) | .key" <<<"$data"); do
         id=$(jq -r "$path.checkSuites.nodes[$i].id" <<<"$data") || return 1
         data=$(page_to_end "$path.checkSuites.nodes[$i].checkRuns" '.node.checkRuns' "$RUNS_PAGE_QUERY" "$RUN_PAGES" \
-            -f id="$id" <<<"$data") || return 1
+            "check-runs of suite $id" -f id="$id" <<<"$data") || return 1
     done
     printf '%s\n' "$data"
 }

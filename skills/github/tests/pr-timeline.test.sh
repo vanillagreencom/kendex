@@ -93,7 +93,9 @@ HISTORY_B1="10:05:success"
 HISTORY_H2="10:25:success"
 
 # The pages past the first, staged by the paging cases; every other case
-# stages none, so a page the code asks for there is refused.
+# stages none. The PR response is staged under a selector its query alone
+# carries, so a page the code asks for in such a case is refused rather than
+# answered with the PR.
 stage_pages() { :; }
 
 BIN="$PR_TIMELINE"
@@ -101,7 +103,7 @@ run() { # EDIT [ARGS...]
   local edit="$1" rc=0
   shift
   gh_stub_reset
-  gh_stub_answer api-graphql "$(response "$edit")"
+  gh_stub_answer "api-graphql:pullRequest(number" "$(response "$edit")"
   stage_pages
   gh_stub_answer "api-repos/owner/repo/commits/b1/statuses?per_page=100" "$(status_history "$HISTORY_B1")"
   gh_stub_answer "api-repos/owner/repo/commits/h2/statuses?per_page=100" "$(status_history "$HISTORY_H2")"
@@ -231,9 +233,65 @@ assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_merge_group_secs]' "$T
 assert_eq "$(gh_stub_calls | grep -c 'query runsPage') $(gh_stub_calls | grep -o -- '-f id=MG -f cursor=r100')" \
   "1 -f id=MG -f cursor=r100" "the second page is asked for once, at the suite's id and the first page's cursor"
 
+# The merge commit's suites open at cursor c50: the merge_group suite on the
+# second page ends the group's CI at 11:30 in place of 11:15.
+OPEN_MERGE_SUITES='.data.repository.pullRequest.mergeCommit.checkSuites.pageInfo = {hasNextPage: true, endCursor: "c50"}'
+stage_pages() {
+  gh_stub_answer "api-graphql:query suitesPage" "$(suites_page "$(jq -cn "$LATE_GROUP_RUN")" false null \
+    | jq -c '.data.repository.object.checkSuites.nodes[0].workflowRun = {event: "merge_group", url: "https://github.com/owner/repo/actions/runs/1100", workflow: {name: "ci-merge_group"}}')"
+}
+run "$OPEN_MERGE_SUITES" >/dev/null
+assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_merge_group_secs]' "$TMP_ROOT/stdout")" \
+  '["2026-09-20T10:45:00Z",1500,1800]' "a merge commit with suites past its first page: the merge_group suite on the second page ends its CI"
+assert_eq "$(gh_stub_calls | grep -c 'query suitesPage') $(gh_stub_calls | grep -o -- '-f oid=m1 -f cursor=c50')" \
+  "1 -f oid=m1 -f cursor=c50" "the second page is asked for once, at the merge commit and the first page's cursor"
+
+# Every query on the wire in one run that reads all three: each defines
+# exactly the fragments it spreads, which GitHub refuses otherwise and the
+# stub never judges.
+stage_pages() {
+  gh_stub_answer "api-graphql:query suitesPage" "$(suites_page "$(jq -cn "$LATE_HEAD_RUN")" false null)"
+  gh_stub_answer "api-graphql:query runsPage" "$(runs_page "$(jq -cn "$LATE_GROUP_RUN")" false null)"
+}
+run "$FIFTY_SUITES | $OPEN_GROUP_RUNS" >/dev/null
+assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_merge_group_secs]' "$TMP_ROOT/stdout")" \
+  '["2026-09-20T10:50:00Z",1800,1800]' "the head's suites and the group's runs page in one run"
+# Each GraphQL call's operation name with the fragments it defines and the
+# ones it spreads, both as sorted sets.
+fragments_per_query() {
+  gh_stub_calls | awk '
+    function flush() { if (name != "") printf "%s defined:%s spread:%s\n", name, sorted(d), sorted(u) }
+    function sorted(set,   k, n, keys, i, j, t, out) {
+      n = 0; for (k in set) keys[++n] = k
+      for (i = 2; i <= n; i++) { t = keys[i]; for (j = i - 1; j >= 1 && keys[j] > t; j--) keys[j + 1] = keys[j]; keys[j + 1] = t }
+      out = ""; for (i = 1; i <= n; i++) out = out " " keys[i]
+      return out }
+    /^api graphql/ { flush(); name = ""; delete d; delete u
+      name = ($0 ~ /query [A-Za-z]+\(/) ? substr($0, match($0, /query [A-Za-z]+\(/) + 6, RLENGTH - 7) : "pullRequest" }
+    /^[^a]/ || /^api graphql/ { line = $0
+      while (match(line, /fragment [A-Za-z]+/)) { d[substr(line, RSTART + 9, RLENGTH - 9)] = 1; line = substr(line, RSTART + RLENGTH) }
+      line = $0
+      while (match(line, /\.\.\.[A-Za-z]+/)) { u[substr(line, RSTART + 3, RLENGTH - 3)] = 1; line = substr(line, RSTART + RLENGTH) } }
+    END { flush() }'
+}
+assert_eq "$(fragments_per_query | sort | tr '\n' ';')" \
+  "pullRequest defined: gate runPage suitePage suites spread: gate runPage suitePage suites;runsPage defined: runPage spread: runPage;suitesPage defined: runPage suitePage spread: runPage suitePage;" \
+  "each query defines the fragments it spreads and no other"
+
+echo "=== a page that cannot be followed refuses ==="
 stage_pages() { :; }
-assert_eq "$(run '.data.repository.pullRequest.mergeCommit.checkSuites.pageInfo.hasNextPage = true') $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr")" \
-  'rc=1  {"error":"pr-timeline: a page past the first names no cursor"}' "an open connection with no cursor cannot be followed"
+assert_eq "$(run "$OPEN_MERGE_SUITES | .data.repository.pullRequest.mergeCommit.checkSuites.pageInfo.endCursor = null") $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr")" \
+  'rc=1  {"error":"pr-timeline: check-suites of m1 page past the first names no cursor"}' "an open connection with no cursor cannot be followed"
+stage_pages() { gh_stub_answer "api-graphql:query suitesPage" '{"data":{"repository":{"object":null}}}'; }
+assert_eq "$(run "$FIFTY_SUITES") $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr")" \
+  'rc=1  {"error":"pr-timeline: check-suites of h2 page after c50 carries no connection"}' "a suites page answering no commit refuses"
+stage_pages() { gh_stub_answer "api-graphql:query runsPage" '{"data":{"node":null}}'; }
+assert_eq "$(run "$OPEN_GROUP_RUNS") $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr")" \
+  'rc=1  {"error":"pr-timeline: check-runs of suite MG page after r100 carries no connection"}' "a runs page answering no suite refuses"
+stage_pages() { gh_stub_fail "api-graphql:query suitesPage" 1 'HTTP 502'; }
+assert_eq "$(run "$FIFTY_SUITES") $(cat "$TMP_ROOT/stdout") $(tail -n 1 "$TMP_ROOT/stderr")" \
+  'rc=1  {"error":"pr-timeline: check-suites of h2 page after c50 unreadable"}' "a suites page that does not read names its walk and cursor"
+stage_pages() { :; }
 
 echo "=== a connection still open at the page cap refuses ==="
 # Every page past the first is open at the next cursor, and the one page past
