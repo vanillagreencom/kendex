@@ -9,7 +9,10 @@ import time
 from pathlib import Path
 from typing import List
 
+import verbs
 from refusals import Refusal, print_refusal
+from relay import Relay
+from settings import load
 
 HELP = """\
 Usage: slack setup [--root ROOT] [--name NAME | --take CHANNEL_ID]
@@ -60,14 +63,16 @@ KENDEX_USER_EMAIL), SLACK_POLL_SECONDS (15), SLACK_THREAD_DAYS (7).
 SLACK_API_URL names another API endpoint (default https://slack.com/api).
 
 Keyed lines, `slack: <key>=<value>` first: bound, posted, uploaded, updated,
-compacted, installed, enabled, restarted, listening, slack-relay,
-slack-relay-budget on stdout; refusals on stderr with exit 2: usage,
+compacted, installed, enabled, active, restarted, listening, slack-relay,
+slack-relay-budget on stdout; refusals on stderr with exit 2: python3 and
+settings-unreadable from the launcher before Python starts, then usage,
 setting-missing, setting-invalid, orch-missing, root-unbound, root-unreadable,
-binding-invalid, journal-invalid, slack-auth-failed, slack-api-failed,
-slack-unreachable, slack-response-lost, slack-rate-limited,
-slack-owner-unknown, slack-channel-unjoined, slack-invite-refused, relay-running, secret-value, secret-pattern-invalid,
+binding-invalid, journal-invalid, channel-changed, slack-auth-failed,
+slack-api-failed, slack-unreachable, slack-response-lost, slack-rate-limited,
+slack-owner-unknown, slack-channel-unjoined, slack-invite-refused,
+relay-running, lock-failed, secret-value, secret-pattern-invalid,
 file-unreadable, lane-mail-failed, unit-unwritable, systemctl-missing,
-systemctl-failed.
+systemctl-failed, unit-inactive.
 """
 
 
@@ -115,8 +120,6 @@ def build() -> Parser:
 
 
 def run(argv: List[str]) -> int:
-    import verbs
-
     args = build().parse_args(argv)
     if args.help or args.verb is None:
         sys.stdout.write(HELP)
@@ -131,9 +134,6 @@ def run(argv: List[str]) -> int:
         roots = roots_of(args.root)
         if args.status:
             return verbs.status(roots, time.time())
-        from relay import Relay
-        from settings import load
-
         settings = load()
         relay = Relay(roots, settings, verbs.api_for(settings))
         return relay.run(args.once)

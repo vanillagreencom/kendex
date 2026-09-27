@@ -2,9 +2,10 @@
 # `slack setup`: the owners resolved by email, the channel created or found
 # by name or adopted by id, the invite, the binding it writes, and the
 # refusals a partial configuration, an unknown owner, a channel the bot is
-# not in and a dead token get. The control at the end plants a mutant whose
-# owner lookup no longer maps Slack's users_not_found to the owner-unknown
-# key, which turns that row red.
+# not in, a dead token, a refused invite and a rebind over a standing journal
+# get. The controls at the end plant one mutant per rule: the owner lookup no
+# longer mapping users_not_found, the invite refusal tolerated, and the
+# rebind rule gone.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -62,6 +63,16 @@ assert_eq "$RC=$ERR1" "2=slack: slack-auth-failed=invalid_auth fix=set a live SL
   "a token Slack refuses is slack-auth-failed with its remedy"
 sk_run -- setup --root "$SK_TMP/nowhere"
 assert_eq "$RC=$ERR1" "2=slack: root-unreadable=$SK_TMP/nowhere" "a root that is no directory is refused"
+IOTA="$(sk_new_root iota)"
+sk_bind "$IOTA"
+IOTA_CH="$(sk_channel "$IOTA")"
+sk_poll "$IOTA"
+sk_run -- setup --root "$IOTA" --take C900
+assert_eq "$RC=$ERR1" "2=slack: channel-changed=$IOTA channel=$IOTA_CH new=C900 fix=stop the relay and move tmp/slack/journal.jsonl aside, then run setup again" \
+  "a rebind to another channel while a journal stands is refused with the remedy"
+assert_eq "$(sk_channel "$IOTA")" "$IOTA_CH" "the binding keeps its channel"
+sk_bind "$IOTA"
+assert_eq "$RC=$(sk_channel "$IOTA")" "0=$IOTA_CH" "a setup to the same channel with a journal is allowed"
 KAPPA="$(sk_new_root kappa)"
 sk_ctl /_test/fault '{"method": "conversations.invite", "error": "cant_invite", "times": 1}' >/dev/null
 sk_run -- setup --root "$KAPPA"
@@ -71,7 +82,7 @@ assert_eq "$RC=$(printf '%s' "$ERR1" | sed 's/refused=C[0-9]*/refused=CID/')" \
 assert_eq "$([ -e "$KAPPA/tmp/slack/binding.json" ] && echo present || echo absent)" "absent" "no binding is written after a refused invite"
 
 # --- controls, one mutant per rule ---------------------------------------------
-sk_mutant owner relay.py 'error=users_not_found' 'error=never_this'
+sk_mutant owner relay.py 'err\.error == "users_not_found"' 'err.error == "never_this"'
 sk_run SLACK_OWNERS="nobody@example.test" -- setup --root "$ROOT"
 assert_eq "${ERR1%%=*}" "slack: slack-api-failed" "control: the mapping removed, the unknown owner is a bare API failure"
 sk_bin_reset
@@ -81,6 +92,11 @@ sk_ctl /_test/fault '{"method": "conversations.invite", "error": "cant_invite", 
 sk_run -- setup --root "$KAPPA"
 assert_eq "$RC=$([ -e "$KAPPA/tmp/slack/binding.json" ] && echo present || echo absent)" "0=present" \
   "control: the refusal tolerated, setup binds a channel the owners are not in"
+sk_bin_reset
+
+sk_mutant rebind verbs.py 'bound_before\.channel != channel:' 'bound_before.channel != channel and False:'
+sk_run -- setup --root "$IOTA" --take C900
+assert_eq "$RC=$(sk_channel "$IOTA")" "0=C900" "control: the rebind rule gone, a journaled root is bound to another channel"
 sk_bin_reset
 
 sk_summary

@@ -81,7 +81,7 @@ class Slack:
             error = str(answer.get("error", "unknown"))
             if error in AUTH_ERRORS:
                 raise Refusal("slack-auth-failed", f"{error} {AUTH_FIX}")
-            raise Refusal("slack-api-failed", f"{method} error={error}")
+            raise Refusal("slack-api-failed", f"{method} error={error}", error=error)
         return answer
 
     def get(self, method: str, **params: object) -> Dict:

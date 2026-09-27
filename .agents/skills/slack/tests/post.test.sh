@@ -62,7 +62,7 @@ sk_run -- post --root "$ROOT" --text 'key xoxb-0123456789-abcdefghij'
 assert_eq "$RC" "0" "control: the text check gone, the token posts"
 sk_bin_reset
 
-sk_mutant file-bytes verbs.py 'secret_check\(data, f"file=\{file\}"\)' 'secret_check(b"", f"file={file}")'
+sk_mutant file-bytes secret.py 'check\(data, what\)\n    return data' 'check(b"", what)\n    return data'
 sk_run -- post --root "$ROOT" --text 'clean' --file "$SK_TMP/leak.md"
 assert_eq "$RC=$(sk_state '[.uploads[] | select(. | contains("ghp_"))] | length')" "0=1" "control: the file check gone, the token uploads"
 sk_bin_reset

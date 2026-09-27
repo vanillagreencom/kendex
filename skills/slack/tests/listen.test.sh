@@ -352,13 +352,13 @@ sk_poll "$ZETA"
 assert_lacks "$(posts "$ZETA_CH")" "$F2 | Only text is routed" "control: the no-text gate open, a file alone gets no reply"
 sk_bin_reset
 
-sk_mutant notice-text relay.py 'secret_check\(text\.encode\(\), f"id=\{env_id\}"\)\n        except Refusal' 'secret_check(b"", f"id={env_id}")\n        except Refusal'
+sk_mutant notice-text relay.py 'lambda: secret_check\(text\.encode\(\), f"id=\{env_id\}"\)' 'lambda: secret_check(b"", f"id={env_id}")'
 sk_lm "$ZETA" notice --item overseer --to owner --file "$(sk_text s2 'leak xoxb-0123456789-abcdefghij')" >/dev/null
 sk_poll "$ZETA"
 assert_eq "$(asks "$ZETA_CH" 'xoxb-0123456789')" "1" "control: the notice text unchecked, a token posts"
 sk_bin_reset
 
-sk_mutant report-bytes relay.py 'secret_check\(data, f"id=\{env_id\} file=\{attach\}"\)' 'secret_check(b"", f"id={env_id} file={attach}")'
+sk_mutant report-bytes relay.py 'checked_file\(str\(attach\), f"id=\{env_id\} file=\{attach\}"\)' 'checked_file(str(attach), f"id={env_id} file={attach}") if False else Path(attach).read_bytes()'
 mkdir -p "$ZETA/tmp/progress-reports"
 printf 'ghp_%s\n' "abcdefghijklmnopqrstuvwxyz0123456789" > "$ZETA/tmp/progress-reports/leak.md"
 sk_lm "$ZETA" notice --item overseer --to owner --attach "$ZETA/tmp/progress-reports/leak.md" --file "$(sk_text n8 'Leaky report.')" >/dev/null
@@ -378,7 +378,7 @@ sk_poll "$GAMMA"
 assert_eq "$(asks C002 'Aging notice.')" "2" "control: the envelope horizon removed, the compacted notice posts again"
 sk_bin_reset
 
-sk_mutant start relay.py 'elif start is not None and at <= start:' 'elif start is not None and at <= start and False:'
+sk_mutant start relay.py 'elif start is not None and \(at < start or at == start and env_id in self\.state\.start_ids\):' 'elif start is not None and False:'
 ETA="$(sk_new_root eta)"
 sk_lm "$ETA" notice --item overseer --to owner --file "$(sk_text n9 'Before the start.')" >/dev/null
 sk_bind "$ETA"
@@ -390,7 +390,8 @@ sk_mutant seed relay.py 'self\.journal\.append\(t="seen", ts=self\.binding\.boun
 THETA="$(sk_new_root theta)"
 sk_run -- setup --root "$THETA" --take C777
 sk_poll "$THETA"
-assert_eq "$(directives "$THETA" | wc -l | tr -d ' ')" "4" "control: the history seed at zero, the channel's earlier messages are delivered"
+assert_eq "$(directives "$THETA" | wc -l | tr -d ' ')" "$(sk_state '[.messages.C777[] | select(.user == "U001")] | length')" \
+  "control: the history seed at zero, every earlier owner message in the channel is delivered"
 sk_bin_reset
 
 sk_summary

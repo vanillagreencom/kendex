@@ -8,6 +8,7 @@ shapes are schemas/journal.md. Nothing here holds a message body.
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
 import os
@@ -94,6 +95,7 @@ class State:
 
     seen_ts: str = "0"
     start_at: str = ""
+    start_ids: Set[str] = field(default_factory=set)
     carried: Set[str] = field(default_factory=set)
     delivered: Dict[str, str] = field(default_factory=dict)
     threads: Dict[str, Thread] = field(default_factory=dict)
@@ -109,6 +111,7 @@ class State:
             self.seen_ts = str(line["ts"])
         elif kind == "start":
             self.start_at = str(line["at"])
+            self.start_ids = {str(i) for i in line["ids"]}
         elif kind == "in":
             ts = str(line["ts"])
             if line["kind"] == "ignored":
@@ -274,11 +277,13 @@ class RelayLock:
         handle = self.path.open("a+")
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
+        except OSError as err:
             handle.seek(0)
             holder = handle.read().strip() or "unknown"
             handle.close()
-            raise Refusal("relay-running", f"{self.path.parent.parent.parent} pid={holder}")
+            if err.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                raise Refusal("relay-running", f"{self.path.parent.parent.parent} pid={holder}") from err
+            raise Refusal("lock-failed", f"{self.path} ({err.strerror})") from err
         handle.seek(0)
         handle.truncate()
         handle.write(str(os.getpid()))

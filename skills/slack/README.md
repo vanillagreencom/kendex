@@ -85,7 +85,7 @@ A workstation runs the relay by hand:
 .agents/skills/slack/scripts/slack listen --root "$PWD"
 ```
 
-The relay prints `slack: listening=1 poll_seconds=15` and polls until it is stopped. `--once` polls each root one time and exits, which is the form a test or a doctor probe uses. A second relay on the same checkout is refused `relay-running`.
+The relay prints `slack: listening=1 poll_seconds=15` and polls until it is stopped. `--once` polls each root one time and exits, which is the form a test uses; the doctor reads `listen --status`, which polls nothing. A second relay on the same checkout is refused `relay-running`.
 
 ## Steering contract
 
@@ -127,20 +127,4 @@ Slack's call allowance is shared by every relay of one app. A relay's calls per 
 
 ## Proof
 
-Each row below needs the owner's Slack app and channel. A host with no `SLACK_BOT_TOKEN` cannot run them, so each stands pending with the command that proves it; the suites under `tests/` prove the same behaviour against a fake Slack API and the real `lane-mail`.
-
-| Row | Command | State |
-|-----|---------|-------|
-| The owner writes in the channel and the overseer's notice lands in that thread within a minute | Write top-level; the overseer answers with `lane-mail notice --item overseer --to owner --ref <ID>`; read the thread | pending |
-| An ask with an @mention, the reply as the answer, a second reply as a directive | `lane-mail ask --item overseer --to owner --options a,b --recommend a --file q.txt`; reply twice in the thread; `lane-mail events --item overseer` | pending |
-| A second ask answered in the chat shows in the thread | `lane-mail resolve --item overseer --id <ASK> --text a.txt`; read the thread | pending |
-| A third ask left unanswered proceeds at the deadline with a notice in the thread | `lane-mail ask ... --wait 1`; wait for the watch; read the thread | pending |
-| A report lands with its file | `oversee-report write`; read the channel | pending |
-| A forced stall posts one @mention alert to the overseer's channel and the alert channel | `slack post --mention --text "..."` and `slack post --channel <ALERTS> --mention --text "..."` | pending |
-| The crash between the mailbox append and the journal mark delivers each note once | kill the relay after a delivery, remove that delivery's `in` line from `tmp/slack/journal.jsonl`, write again, restart; `lane-mail events --item overseer` | pending |
-| A second relay on the same checkout is refused | `slack listen --root <checkout> --once` beside the running unit | pending |
-| A reply in a thread older than `SLACK_THREAD_DAYS` is not routed | reply under a week-old message; `lane-mail events --item overseer` | pending |
-| One answer in chat and one in Slack; a second answer to either is refused and delivered as a directive | `lane-mail resolve ...` then reply in the thread, and the reverse | pending |
-| The relay's resident memory under the user slice with three bound checkouts | `systemctl --user status slack-listen.service` after an hour | pending |
-| The same on a workstation with a local overseer, token from the private env file | the Setup steps above with `--name kendex-<name>-local` | pending |
-| The same for a Codex and a Pi overseer | the Setup steps above in each checkout | pending |
+The suites under `tests/` prove the package's behaviour against a fake Slack API and the real `lane-mail`. The rows that need the owner's Slack app and channel, each with the command that proves it, are listed in [DEVELOPMENT.md § Live proof](DEVELOPMENT.md#live-proof).

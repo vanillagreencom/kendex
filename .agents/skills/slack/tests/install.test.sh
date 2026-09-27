@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # `slack install`: the unit printed with --print and written under the
 # systemd user directory otherwise, its ExecStart naming every root, the
-# daemon-reload and enable that follow, the refusals for a missing or failing
-# systemctl, an unbound root and no root, and `setup` restarting the unit
-# that stands. Two controls, one per rule: a mutant whose ExecStart names no
-# root, and one whose setup no longer restarts the unit.
+# daemon-reload and enable that follow and the state read after them, the
+# refusals for a missing or failing systemctl, a unit that did not stay
+# active, an unbound root and no root, and `setup` restarting the unit that
+# stands. Two controls, one per rule: a mutant whose ExecStart names no root,
+# and one whose setup no longer restarts the unit.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -31,10 +32,15 @@ assert_eq "$([ -e "$UNIT" ] && echo present || echo absent)" "absent" "--print w
 # --- install writes the unit, then reloads and enables it -----------------------------
 sk_run XDG_CONFIG_HOME="$CFG" PATH="$BIN:$PATH" -- install --root "$ROOT"
 assert_eq "$RC=$OUT" "0=slack: installed=$UNIT
-slack: enabled=slack-listen.service" "install prints the unit path and the enabled unit"
+slack: enabled=slack-listen.service
+slack: active=slack-listen.service" "install prints the unit path, the enabled unit and its active state"
 assert_eq "$(sed -n 's/^ExecStart=//p' "$UNIT")" "$SK_SLACK listen --root $ROOT" "the written unit runs listen over the root"
 assert_eq "$(cat "$LOG")" "--user daemon-reload
---user enable --now slack-listen.service" "install reloads the user manager, then enables and starts the unit"
+--user enable --now slack-listen.service
+--user is-active slack-listen.service" "install reloads the user manager, enables and starts the unit, then reads its state"
+sk_run XDG_CONFIG_HOME="$CFG" PATH="$BIN:$PATH" FAKE_SYSTEMCTL_ACTIVE=activating -- install --root "$ROOT"
+assert_eq "$RC=$ERR1" "2=slack: unit-inactive=slack-listen.service state=activating fix=journalctl --user -u slack-listen.service" \
+  "a unit not active after the start wait is refused with the log to read"
 
 # --- setup restarts the unit that stands, and only then ----------------------------------
 : > "$LOG"

@@ -198,11 +198,12 @@ PY
 sk_bin_reset() { SK_BIN="$SK_SLACK"; }
 
 # sk_fake_systemctl — a systemctl of its own that appends its arguments to
-# SK_TMP/systemctl.log and exits FAKE_SYSTEMCTL_EXIT (default 0); prints the
-# directory to put first on PATH.
+# SK_TMP/systemctl.log, answers is-active with FAKE_SYSTEMCTL_ACTIVE (default
+# active) and exits FAKE_SYSTEMCTL_EXIT (default 0); prints the directory to
+# put first on PATH.
 sk_fake_systemctl() {
   mkdir -p "$SK_TMP/bin"
-  printf '#!/usr/bin/env bash\nprintf '"'"'%%s\\n'"'"' "$*" >> "%s/systemctl.log"\nexit "${FAKE_SYSTEMCTL_EXIT:-0}"\n' "$SK_TMP" > "$SK_TMP/bin/systemctl"
+  printf '#!/usr/bin/env bash\nprintf '"'"'%%s\\n'"'"' "$*" >> "%s/systemctl.log"\ncase "$*" in *is-active*) printf '"'"'%%s\\n'"'"' "${FAKE_SYSTEMCTL_ACTIVE:-active}" ;; esac\nexit "${FAKE_SYSTEMCTL_EXIT:-0}"\n' "$SK_TMP" > "$SK_TMP/bin/systemctl"
   chmod +x "$SK_TMP/bin/systemctl"
   printf '%s' "$SK_TMP/bin"
 }

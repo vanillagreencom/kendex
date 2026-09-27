@@ -26,8 +26,17 @@ EXPLAIN = {
         " addresses."
     ),
     "orch-missing": (
-        "The root has no orch skill installed, so it has no lane-mail to read"
-        " or write its mailbox through. Install kendex's orch skill there."
+        "The orch skill is not where the value names it: a root with no"
+        " lane-mail to read or write its mailbox through, or a package run"
+        " without its launcher, which names the orch install the secret-value"
+        " pattern is read from. Install kendex's orch skill there, and run"
+        " the package through scripts/slack."
+    ),
+    "channel-changed": (
+        "The root's journal records deliveries in another channel, and its"
+        " thread stamps mean nothing in the new one. fix= names the remedy:"
+        " stop the relay, move the journal aside, then run setup again; the"
+        " new channel then starts from the binding moment."
     ),
     "root-unbound": (
         "The root has no Slack binding. Run `slack setup` in that checkout"
@@ -89,6 +98,11 @@ EXPLAIN = {
         " One relay serves one checkout. A channel moved between hosts is a"
         " stop there and a setup here."
     ),
+    "lock-failed": (
+        "The lock file could not be locked, for a reason other than another"
+        " relay holding it; the value names the file and the error. A"
+        " checkout on a mount without lock support cannot run a relay."
+    ),
     "secret-value": (
         "The text or file matches the secret-value pattern and is not sent."
         " Nothing that matches leaves this host through the relay."
@@ -98,7 +112,6 @@ EXPLAIN = {
         " line; the relay sends nothing until it does."
     ),
     "file-unreadable": "The file to send could not be read.",
-    "post-failed": "The post did not land; the line above says why. The file stays on disk.",
     "lane-mail-failed": (
         "lane-mail refused a write the relay needed; the value is its first"
         " line. The Slack message is read again on the next poll."
@@ -112,16 +125,26 @@ EXPLAIN = {
         "systemctl refused the command named, with that exit status; the"
         " unit was written. Run the command by hand and read its error."
     ),
+    "unit-inactive": (
+        "The unit was enabled and started, and a moment later it is not"
+        " active: the relay refused at start, and systemd restarts it every"
+        " minute. fix= names the log that holds the relay's own refusal."
+    ),
 }
 
 
 class Refusal(Exception):
-    """A condition the package stops on, printed as one keyed line."""
+    """A condition the package stops on, printed as one keyed line.
 
-    def __init__(self, key: str, value: str = "", *extra_keyed: tuple) -> None:
+    `error` is Slack's own error code on a `slack-api-failed` refusal, carried
+    as data for the callers that act on one code and empty otherwise; the
+    printed value carries it as text for a reader."""
+
+    def __init__(self, key: str, value: str = "", *extra_keyed: tuple, error: str = "") -> None:
         super().__init__(f"{key}={value}")
         self.key = key
         self.value = value
+        self.error = error
         self.extra_keyed = list(extra_keyed)
 
 

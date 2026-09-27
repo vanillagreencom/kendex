@@ -16,10 +16,14 @@ from api import Slack
 from refusals import Refusal, keyed, notice
 from relay import mention, resolve_owner_ids
 from secret import check as secret_check
+from secret import checked_file
 from settings import Settings, load
-from store import Binding, compact, read_binding, read_status, write_binding
+from store import Binding, compact, journal_exists, read_binding, read_status, write_binding
 
 UNIT = "slack-listen.service"
+# Seconds between `enable --now` and the read of the unit's state: long
+# enough for a relay refusing its settings or its binding to have exited.
+START_WAIT_SECONDS = 2
 UNIT_TEMPLATE = Path(__file__).resolve().parents[2] / "systemd" / UNIT
 LAUNCHER = Path(__file__).resolve().parents[1] / "slack"
 CHANNEL_NAME = re.compile(r"[^a-z0-9_-]+")
@@ -60,15 +64,21 @@ def setup(root: Path, name: Optional[str], take: Optional[str]) -> int:
     try:
         api.post("conversations.invite", channel=channel, users=",".join(ids.values()))
     except Refusal as err:
-        error = err.value.rsplit("error=", 1)[-1]
         if err.key != "slack-api-failed":
             raise
-        if error not in TOLERATED_INVITE:
+        if err.error not in TOLERATED_INVITE:
             raise Refusal(
                 "slack-invite-refused",
-                f"{channel} error={error} owners={','.join(ids)}"
+                f"{channel} error={err.error} owners={','.join(ids)}"
                 f" fix=invite the owners to #{channel_name} in Slack, then run setup again",
             ) from err
+    bound_before = read_binding(root) if journal_exists(root) else None
+    if bound_before is not None and bound_before.channel != channel:
+        raise Refusal(
+            "channel-changed",
+            f"{root} channel={bound_before.channel} new={channel}"
+            " fix=stop the relay and move tmp/slack/journal.jsonl aside, then run setup again",
+        )
     write_binding(root, Binding(channel, channel_name, f"{time.time():.6f}", list(settings.owners), ids))
     notice("bound", f"{channel} root={root} name={channel_name} owners={len(ids)}")
     restart_unit()
@@ -119,11 +129,7 @@ def post(
         notice("updated", f"{update} channel={channel}")
         return 0
     if file:
-        try:
-            data = Path(file).read_bytes()
-        except OSError as err:
-            raise Refusal("file-unreadable", file) from err
-        secret_check(data, f"file={file}")
+        data = checked_file(file, f"file={file}")
         file_id = api.upload(Path(file).name, data, channel, body, thread)
         notice("uploaded", f"{file_id} channel={channel}")
         return 0
@@ -169,6 +175,14 @@ def install(roots: List[Path], print_only: bool) -> int:
         if proc.returncode != 0:
             raise Refusal("systemctl-failed", f"systemctl --user {' '.join(args)} exit={proc.returncode}")
     notice("enabled", UNIT)
+    # `enable --now` returns once the start job is queued, so a relay that
+    # refuses at start is seen only by asking again after it had time to exit.
+    time.sleep(START_WAIT_SECONDS)
+    proc = subprocess.run(["systemctl", "--user", "is-active", UNIT], stdout=subprocess.PIPE, text=True, check=False)
+    state = proc.stdout.strip() or f"exit={proc.returncode}"
+    if state != "active":
+        raise Refusal("unit-inactive", f"{UNIT} state={state} fix=journalctl --user -u {UNIT}")
+    notice("active", UNIT)
     return 0
 
 

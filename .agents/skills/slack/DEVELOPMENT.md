@@ -4,11 +4,11 @@ Maintainer notes. Consumer docs: [README.md](README.md); the agent contract: [SK
 
 ## Layout
 
-- `scripts/slack`: the Bash launcher. It loads the checkout's settings through the orch skill's `kendex-env.sh`, checks for Python 3.8 and the orch install, and execs `scripts/lib/main.py`.
+- `scripts/slack`: the Bash launcher. It loads the checkout's settings through the orch skill's `kendex-env.sh`, checks for Python 3.8 and the orch install, names that install in `SLACK_ORCH_DIR`, and execs `scripts/lib/main.py`.
 - `scripts/lib/main.py`: argv to one verb; `verbs.py` holds setup, post, compact, install and status; `relay.py` the listener.
 - `scripts/lib/api.py`: the Slack Web API client, `mailbox.py` the `lane-mail` calls, `store.py` the binding, journal, status record and lock, `secret.py` the secret-value check, `settings.py` the environment, `refusals.py` every keyed line and its explanation.
 - `systemd/slack-listen.service`: the unit template `install` fills.
-- The orch skill must be installed beside this package: the launcher sources `../orch/scripts/lib/kendex-env.sh`, `secret.py` reads `../orch/references/secret-value.ere`, and each root's `.agents/skills/orch/scripts/lane-mail` is the mailbox.
+- The orch skill must be installed beside this package: the launcher sources `../orch/scripts/lib/kendex-env.sh` and is the one place that spells the location, which `secret.py` reads from `SLACK_ORCH_DIR` for `references/secret-value.ere`. Each root's `.agents/skills/orch/scripts/lane-mail` is that root's mailbox.
 
 ## Constraints
 
@@ -37,3 +37,23 @@ Each suite starts `tests/lib/fake_slack.py`, a fake Slack Web API with a control
 | `install.test.sh` | The unit written or printed, the systemctl calls, `setup` restarting the unit, and the refusals |
 
 The suites run on the `rest` shard of `.github/workflows/skill-tests.yml`, on Linux and macOS.
+
+## Live proof
+
+The rows the fake cannot prove. Each needs the owner's Slack app and channel; a host with no `SLACK_BOT_TOKEN` cannot run them, so each stands pending with the command that proves it.
+
+| Row | Command | State |
+|-----|---------|-------|
+| The owner writes in the channel and the overseer's notice lands in that thread within a minute | Write top-level; the overseer answers with `lane-mail notice --item overseer --to owner --ref <ID>`; read the thread | pending |
+| An ask with an @mention, the reply as the answer, a second reply as a directive | `lane-mail ask --item overseer --to owner --options a,b --recommend a --file q.txt`; reply twice in the thread; `lane-mail events --item overseer` | pending |
+| A second ask answered in the chat shows in the thread | `lane-mail resolve --item overseer --id <ASK> --text a.txt`; read the thread | pending |
+| A third ask left unanswered proceeds at the deadline with a notice in the thread | `lane-mail ask ... --wait 1`; wait for the watch; read the thread | pending |
+| A report lands with its file | `oversee-report write`; read the channel | pending |
+| A forced stall posts one @mention alert to the overseer's channel and the alert channel | `slack post --mention --text "..."` and `slack post --channel <ALERTS> --mention --text "..."` | pending |
+| The crash between the mailbox append and the journal mark delivers each note once | kill the relay after a delivery, remove that delivery's `in` line from `tmp/slack/journal.jsonl`, write again, restart; `lane-mail events --item overseer` | pending |
+| A second relay on the same checkout is refused | `slack listen --root <checkout> --once` beside the running unit | pending |
+| A reply in a thread older than `SLACK_THREAD_DAYS` is not routed | reply under a week-old message; `lane-mail events --item overseer` | pending |
+| One answer in chat and one in Slack; a second answer to either is refused and delivered as a directive | `lane-mail resolve ...` then reply in the thread, and the reverse | pending |
+| The relay's resident memory under the user slice with three bound checkouts | `systemctl --user status slack-listen.service` after an hour | pending |
+| The same on a workstation with a local overseer, token from the private env file | the Setup steps above with `--name kendex-<name>-local` | pending |
+| The same for a Codex and a Pi overseer | the Setup steps above in each checkout | pending |

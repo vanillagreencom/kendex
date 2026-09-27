@@ -25,6 +25,7 @@ from api import Slack
 from mailbox import LaneMail
 from refusals import Refusal, keyed, print_refusal
 from secret import check as secret_check
+from secret import checked_file
 from settings import Settings
 from store import (
     Binding,
@@ -64,7 +65,7 @@ def resolve_owner_ids(api: Slack, owners: List[str]) -> Dict[str, str]:
         try:
             answer = api.get("users.lookupByEmail", email=email)
         except Refusal as err:
-            if err.key == "slack-api-failed" and err.value.endswith("error=users_not_found"):
+            if err.key == "slack-api-failed" and err.error == "users_not_found":
                 raise Refusal("slack-owner-unknown", f"{email} fix=set SLACK_OWNERS to addresses this workspace knows") from err
             raise
         ids[email] = str(answer["user"]["id"])
@@ -115,11 +116,17 @@ class RootRelay:
         restart keeps them: Slack's history past the binding moment, and the
         mailbox past its newest envelope."""
         self.journal.append(t="seen", ts=self.binding.bound_at)
+        # `at` is a whole second, so the envelopes stamped in the newest
+        # second are named by id: one written later in that second is new.
         newest = ""
+        ids: List[str] = []
         for envelope in self.mail.events():
-            if newest == "" or at_epoch(str(envelope["at"])) > at_epoch(newest):
-                newest = str(envelope["at"])
-        self.journal.append(t="start", at=newest)
+            at = str(envelope["at"])
+            if newest == "" or at_epoch(at) > at_epoch(newest):
+                newest, ids = at, [str(envelope["id"])]
+            elif at == newest:
+                ids.append(str(envelope["id"]))
+        self.journal.append(t="start", at=newest, ids=ids)
         self.fresh = False
 
     # -- inbound: Slack to the mailbox --------------------------------------
@@ -235,7 +242,7 @@ class RootRelay:
                     self.skipped.add(env_id)
                 else:
                     self.post_ask(envelope)
-            elif start is not None and at <= start:
+            elif start is not None and (at < start or at == start and env_id in self.state.start_ids):
                 self.skipped.add(env_id)
             elif box == "to-overseer" and envelope.get("to") == "owner" and kind == "notice":
                 self.post_notice(envelope)
@@ -257,21 +264,36 @@ class RootRelay:
         if self.post_failed is None:
             self.post_failed = Refusal(err.key, f"{err.value} id={env_id}")
 
-    def _post(self, envelope: Dict, kind: str, text: str, thread_ts: Optional[str]) -> Optional[str]:
-        """One chat.postMessage, or None when it did not land."""
+    def _deliver(
+        self, envelope: Dict, kind: str, prepare: Callable[[], None], send: Callable[[], str]
+    ) -> Optional[str]:
+        """The one outbound rule. `prepare` reads and checks what is sent: its
+        refusal, a secret value or an unreadable file, is journaled refused
+        and printed. `send` makes the Slack call and returns the id it landed
+        as: Slack's refusal goes to `post_refused`. Either way None means the
+        envelope did not land."""
         env_id = str(envelope["id"])
         try:
-            secret_check(text.encode(), f"id={env_id}")
+            prepare()
         except Refusal as err:
             self.journal.append(t="out", channel=self.channel, id=env_id, kind=kind, state="refused", reason=err.key)
             print_refusal(err)
             return None
         try:
-            answer = self.api.post("chat.postMessage", channel=self.channel, text=text, thread_ts=thread_ts)
+            return send()
         except Refusal as err:
             self.post_refused(err, env_id, kind)
             return None
-        return str(answer["ts"])
+
+    def _post(self, envelope: Dict, kind: str, text: str, thread_ts: Optional[str]) -> Optional[str]:
+        """One chat.postMessage, or None when it did not land."""
+        env_id = str(envelope["id"])
+        return self._deliver(
+            envelope,
+            kind,
+            lambda: secret_check(text.encode(), f"id={env_id}"),
+            lambda: str(self.api.post("chat.postMessage", channel=self.channel, text=text, thread_ts=thread_ts)["ts"]),
+        )
 
     def post_ask(self, envelope: Dict) -> None:
         options = ", ".join(envelope.get("options") or [])
@@ -302,24 +324,18 @@ class RootRelay:
                     t="out", channel=self.channel, id=env_id, kind="notice", state="resolved", thread=thread_ts or ts
                 )
             return
-        try:
-            data = Path(attach).read_bytes()
+        payload: Dict[str, bytes] = {}
+
+        def prepare() -> None:
             secret_check(text.encode(), f"id={env_id}")
-            secret_check(data, f"id={env_id} file={attach}")
-        except OSError:
-            self.journal.append(t="out", channel=self.channel, id=env_id, kind="notice", state="refused", reason="file-unreadable")
-            print_refusal(Refusal("file-unreadable", str(attach)))
-            return
-        except Refusal as err:
-            self.journal.append(t="out", channel=self.channel, id=env_id, kind="notice", state="refused", reason=err.key)
-            print_refusal(err)
-            return
-        try:
-            file_id = self.api.upload(Path(attach).name, data, self.channel, text, thread_ts)
-        except Refusal as err:
-            self.post_refused(err, env_id, "notice")
-            return
-        self.journal.append(t="out", channel=self.channel, id=env_id, kind="notice", state="file", file=file_id)
+            payload["data"] = checked_file(str(attach), f"id={env_id} file={attach}")
+
+        def send() -> str:
+            return self.api.upload(Path(attach).name, payload["data"], self.channel, text, thread_ts)
+
+        file_id = self._deliver(envelope, "notice", prepare, send)
+        if file_id is not None:
+            self.journal.append(t="out", channel=self.channel, id=env_id, kind="notice", state="file", file=file_id)
 
     def post_answer(self, envelope: Dict) -> None:
         env_id = str(envelope["id"])

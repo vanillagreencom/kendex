@@ -6,8 +6,9 @@
 # poll loop, and it needs the standard library alone (3.8 or newer). This
 # launcher does the two things Python should not: it loads the checkout's
 # settings through the one kendex settings reader, and it names the orch
-# package the relay reads lane-mail and the secret-value pattern from, so the
-# relay itself never spells a machine's layout.
+# install beside this package in SLACK_ORCH_DIR, which the relay reads the
+# secret-value pattern from, so the relay itself never spells a machine's
+# layout. Each root's mailbox is that root's own lane-mail.
 set -euo pipefail
 
 here="$(cd -- "$(dirname -- "$0")" && pwd -P)"
@@ -42,4 +43,6 @@ if ! kendex_load_project_env "$project"; then
 fi
 
 export PYTHONDONTWRITEBYTECODE=1
+SLACK_ORCH_DIR="$orch"
+export SLACK_ORCH_DIR
 exec python3 -B "$here/lib/main.py" "$@"
