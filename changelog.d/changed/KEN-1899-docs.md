@@ -1,1 +1,0 @@
-- docs-writing allows a focused edit without the full rewrite; doc-limits now requires docs-writing, and each over-limit finding names the docs-writing rule for its class.

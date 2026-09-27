@@ -1,1 +1,0 @@
-- Package inspection reports use terminal colours, status marks, links and wrapping. Package lists fit the terminal width. Plain reports and file output keep their existing format.

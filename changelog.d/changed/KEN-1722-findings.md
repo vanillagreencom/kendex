@@ -1,1 +1,0 @@
-- A commit refused by the pre-commit check now leads with the failing check's findings; at a terminal the rest of the output is one choice away.

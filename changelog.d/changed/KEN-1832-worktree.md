@@ -1,1 +1,0 @@
-- The worktree guard passes a bare `refresh` or `apply` in a worktree with its own `kendex.toml`, reads every help form as a read, and offers `--project-path` only where the installed kendex has it.

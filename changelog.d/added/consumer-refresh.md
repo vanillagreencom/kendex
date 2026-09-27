@@ -1,1 +1,0 @@
-- Refresh installed kendex packages through a scheduled GitHub workflow that keeps one rolling pull request and uses an app token for auto-merge.

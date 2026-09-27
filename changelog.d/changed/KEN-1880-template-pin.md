@@ -1,1 +1,0 @@
-- The harness-ci and review-gate workflow templates pin kendex main build 250, whose `kendex verify` takes `--at-record`.

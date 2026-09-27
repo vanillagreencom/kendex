@@ -1,1 +1,0 @@
-- In a linked work tree, a skipped bot-instructions render names the main checkout that set it up, and the CLI offers to set it up in this work tree too.

@@ -8,6 +8,58 @@ change came from an outside contributor.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-27
+
+### Added
+
+- In a launched lane, the hooks refuse the harness question tool and, on Claude Code and Pi, a turn ending in an unsent question, naming `lane-mail ask` as the route to the overseer.
+- `kendex harness-paths` prints, as JSON, every project path kendex's harness adapters read and whether each harness reads it as a root, a catalog, a registry or an instruction file.
+- review-gate: `scripts/provision-environment.sh` sets up the app-secret environment, its default-branch policy and its secrets in every unarchived repository of an organization.
+- The Customize tab takes your email address as `KENDEX_USER_EMAIL`, and the linear package assigns each unassigned issue it starts to the Linear user with that address.
+- orch: `oversee launch` opens a fleet's first overseer through the `overseer-host` adapter and `oversee register` records one opened by hand; `ORCH_TMUX_SESSION` drives lanes from outside tmux.
+- review-gate: `validate-standard.sh` reports `ci-context-missing` when a pull request or merge group ran no job named `CI`, and `merge-group-unobserved` when its head skipped the queue.
+- harness-ci: lanes declared in `.github/ci-lanes.conf` get one change-class verdict each, and `aggregate-needs --lane` accepts a job's skip where its own lane verdict stood it down.
+- Verify checks adopted workflow copies against their declared package templates and records template hashes in the generated-file inventory.
+- Refresh installed kendex packages through a scheduled GitHub workflow that keeps one rolling pull request and uses an app token for auto-merge.
+
+### Changed
+
+- `kendex refresh`, `apply` and `add` list conflicts first, then only packages with a finding or an unread rule; `refresh` says when detail was folded, and `--verbose` shows it.
+- A commit refused by the pre-commit check now leads with the failing check's findings; at a terminal the rest of the output is one choice away.
+- In a linked work tree, a skipped bot-instructions render names the main checkout that set it up, and the CLI offers to set it up in this work tree too.
+- The session-start check's remedies for a linked worktree with its own `kendex.toml` are the bare verbs; only the main checkout's project is named with `--project-path`.
+- The worktree guard passes a bare `refresh` or `apply` in a worktree with its own `kendex.toml`, reads every help form as a read, and offers `--project-path` only where the installed kendex has it.
+- The code-quality skill asks for one must-fail control per test surface, however many rows invoke it, and adds structure rules for resource ownership, module seams and exports.
+- `kendex check` on a terminal shows colour-coded sections, one symbol per item with its fix beneath, and a verdict; pipes, `NO_COLOR` and `TERM=dumb` get plain lines.
+- The harness-ci and review-gate workflow templates pin kendex main build 250, whose `kendex verify` takes `--at-record`.
+- The change classifier always passes `kendex verify --at-record`; a kendex without it answers `standard` for render diffs: an older CI pin, and v1.0.1 on PATH in dev-validate-run and pr-merge.
+- At a terminal, most write consents, the commit offer and the tool and delivery questions of `add` take one key; Escape cancels. `remove` and `add` into a new folder still ask for a typed yes.
+- docs-writing allows a focused edit without the full rewrite; doc-limits now requires docs-writing, and each over-limit finding names the docs-writing rule for its class.
+- code-quality asks for a control per independent guard rule, accepts a permitted empty input, keeps each resource's lifecycle with one owner and keeps test-only access out of shipped code.
+- harness-ci: the change-class action publishes `lanes` and `lanes_cause`, and the CI template forwards `lanes` rather than naming classes, so a docs-only diff runs no lane at any size.
+- Copilot agents: a tier alias no longer writes `model: auto`, so the agent runs the session's model, and every agent sets `include-custom-instructions: true` to read AGENTS.md.
+- CLI setup, sign-in and problem reports use the shared terminal style. Help opens with a command description before usage and options.
+- Package inspection reports use terminal colours, status marks, links and wrapping. Package lists fit the terminal width. Plain reports and file output keep their existing format.
+- Refresh, apply and add use terminal colours, status marks and wrapped lines for warnings, planned writes and repository change disclosures. Plain output stays unchanged.
+
+### Removed
+
+- The code-quality skill drops its React rules, kendex-specific Bash notes (preflight lanes, jq 1.7.1, gg_chars), and the host-binary, numeral and one-row-per-planted-defect rules.
+
+### Fixed
+
+- A hook whose `env` table sets `PATH` now starts its script: `bash` is found under the launching `PATH` first, and under the declared one only when the launching one has none.
+- orch: an edit to `resolve-base-branch` or `lib/kendex-env.sh`, which the micro-tier measurement resolves its range and settings through, is refused the narrow classes.
+- A refresh no longer offers a commit the pre-commit check will refuse over stale bot-instructions files; it offers their setup or leaving them as diffs, and still offers a commit that check passes.
+- `kendex apply` keeps a hook, agent or command moved to a catalog that refuses or skips it on a tool, and reports the conflict and why, instead of trashing it.
+- An edited hook companion that another hook still requires now names applying with edits discarded as its remedy, so following it no longer withholds that hook on every tool.
+- The safety scan no longer marks a package down for a switch its tests hand to stubs, a lookalike letter quoted in code or a test corpus, or a function named like `eval`.
+- Editing an in-place skill no longer turns `refresh`, `check` or `verify` red or moves the record, after one refresh re-records it; `apply` writes only its project-instructions block.
+- An in-place skill whose `SKILL.md` is not valid UTF-8 is refused where its own tree would be written, so `apply` never writes replacement characters into it; a copy of it still installs and removes.
+- With a kendex whose `verify` takes `--at-record`, a render pull request the catalog moved past since its push is classed `render`, checked at the commits its install record names.
+- `kendex source` verbs, `refresh --stale` included, take `--global` and `--scope` and work outside every project; a script no longer needs to change into `~/.config/kendex` first.
+- A hook with an empty matcher is now written with no `matcher` key, and apply rewrites an existing `"matcher": ""`, so Copilot CLI stops ignoring `.claude/settings.json`.
+
 ## [1.0.1] - 2026-09-26
 
 ### Added
@@ -998,6 +1050,7 @@ change came from an outside contributor.
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.1.0
 [1.0.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.0.1
 [1.0.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.0.0
