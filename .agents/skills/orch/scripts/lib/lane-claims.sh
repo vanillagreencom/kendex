@@ -86,7 +86,9 @@ lane_claims_canon() {
 # time it is read is a claim the later listing finds, or a record for a caller
 # that reads its records after this.
 # The four-field form is the default because lane-context appends its own
-# fifth field. $1: claims directory. Exits 2 when the store cannot be read at
+# fifth field. Mode `fleet` retains fleet identity without adding reservations;
+# a context selector removes that field before the caller flag is appended.
+# $1: claims directory. Exits 2 when the store cannot be read at
 # all: a caller deciding where to launch must fail closed on that, and only
 # the caller knows whether it is deciding or reporting.
 lane_claims_read() {
@@ -180,7 +182,7 @@ lane_claims_read() {
       # Canonical on the way out, whatever spelling the record carries: the
       # count compares strings, and a hand-written or older record must still
       # land on the account discovery reports.
-      if [[ "$mode" == count ]]; then
+      if [[ "$mode" == count || "$mode" == fleet ]]; then
         printf '%s\t%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane" "$fleet"
       else
         printf '%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane"
@@ -188,6 +190,39 @@ lane_claims_read() {
     done
   done
   return "$rc"
+}
+
+# The ownership condition shared by fleet reports and cap_count. `owned` maps
+# each held record's bare window plus canonical account. A claim of this fleet
+# or of no named fleet is that record's own only when both fields match.
+LANE_CLAIM_OWNERSHIP_AWK='function lane_claim_owned(fleet, expected, window, account, owned) {
+  return (fleet == expected || fleet == "") && ((window "\t" account) in owned)
+}'
+
+# Select context claims from the fleet-field form, emitting the normal four
+# fields. Explicit fleet identity owns even an in-flight claim with no record;
+# an empty identity needs a held record's window and canonical account.
+# Reservations never enter: the caller reads mode `fleet`, not mode `count`.
+lane_claims_for_fleet() { # CLAIMS FLEET LANES_JSON
+  local rows account window owned=""
+  [[ -n "$2" ]] || return 0
+  rows=$(jq -r "$LANE_RUNNING_JQ"'
+    .[] | select(held) | [(.account // ""), (.window // "" | sub("^[^:]*:"; ""))]
+    | join("\u001f")' <<<"$3") || return 1
+  while IFS=$'\037' read -r account window; do
+    [[ -n "$window" ]] || continue
+    account=$(lane_claims_canon "$account") || return 1
+    owned+="$window"$'\t'"$account"$'\n'
+  done <<<"$rows"
+  CLAIM_OWNED="$owned" CLAIM_FLEET="$2" awk -F'\t' "$LANE_CLAIM_OWNERSHIP_AWK"'
+    BEGIN {
+      OFS = "\t"
+      n = split(ENVIRON["CLAIM_OWNED"], rows, "\n")
+      for (i = 1; i <= n; i++) if (rows[i] != "") owned[rows[i]] = 1
+    }
+    NF && ($5 == ENVIRON["CLAIM_FLEET"] || lane_claim_owned($5, ENVIRON["CLAIM_FLEET"], $2, $1, owned)) {
+      print $1, $2, $3, $4
+    }' <<<"$1"
 }
 
 # Live claims against one config dir. $1: `lane_claims_read` output, $2: dir.

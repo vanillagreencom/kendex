@@ -119,21 +119,21 @@
 #         which no claim count enters, and the record's `claims` is null. The
 #         record printed on 3 under --json carries `wall`, the percentage
 #         judged, so a caller names what it refused on.
-#   context  Print each LIVE WORK LANE's context use, as its own turn-end
-#         hook recorded it: the tokens the last response left in the
+#   context  Print context use for each live work lane in this fleet, as its
+#         own turn-end hook recorded it: the tokens the last response left in the
 #         context, read from the transcript by the harness adapter
-#         (lib/lane-context.sh), and the window its model has. No pane is
+#         (lib/lane-context.sh), and its effective compaction point. No pane is
 #         read. A lane's reading is in its own mailbox, which the running
 #         lane record of the fleet state (`workflow-state get oversee`)
-#         places, read through its host where that record names one. The
+#         places, read through the provider that record names. The
 #         caller's own row with no lane record is the overseer, which is
 #         judged at its own turn end and reads `unrecorded` here.
-#         CONTEXT_USED_PCT is the share of that window CONSUMED. A row
+#         CONTEXT_USED_PCT is the share of that effective capacity CONSUMED. A row
 #         with no reading is `unrecorded`, never empty; one whose reading names
 #         no window is `window-unread`; one whose record could not be read, or
 #         a claimed window no running lane record places, is `unreadable`. HANDOFF is
-#         `required` at or past ORCH_HANDOFF_CONTEXT_PCT of the window
-#         (default 90), the judge the hook uses, or at a HEADROOM at or
+#         `required` when lib/lane-context.sh's shared context rule requires
+#         handoff, the judge the hook uses, or at a HEADROOM at or
 #         below ORCH_HANDOFF_HEADROOM_PCT (default 3).
 #         --json carries `binding_resets_at` beside it, the time the account's
 #         binding bucket frees up, as whole-second UTC with a Z for either
@@ -1698,7 +1698,7 @@ emit_lane() {
 # subshell instead of reaching the decision.
 load_lane_claims() {
 	LANE_CLAIMS_RC=0
-	LANE_CLAIMS_LIVE="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")")" || LANE_CLAIMS_RC=$?
+	LANE_CLAIMS_LIVE="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" "${1:-}")" || LANE_CLAIMS_RC=$?
 }
 
 collect_lanes() {
@@ -1975,13 +1975,13 @@ context_record_fetch() { # LANE CALLER
 	# A hosted read that fails with 2 is a file the host does not hold, or a
 	# host lane-host could not reach at all, which answers 2 as well; the probe
 	# tells them apart, as lane-mail's own hosted read does.
-	out="$("$SCRIPT_DIR/lane-host" cat --item "$item" "$path" 2>/dev/null)" || rc=$?
+	out="$(ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lane-host" cat --item "$item" "$path" 2>/dev/null)" || rc=$?
 	if [[ "$rc" -eq 0 ]]; then
 		[[ -n "$out" ]] || return 1
 		printf '%s\n' "$out"
 		return 0
 	fi
-	"$SCRIPT_DIR/lane-host" touch --item "$item" >/dev/null 2>&1 || probe_rc=$?
+	ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lane-host" touch --item "$item" >/dev/null 2>&1 || probe_rc=$?
 	[[ "$probe_rc" -eq 0 ]] || { printf 'the host of %s did not answer\n' "$item"; return 2; }
 	[[ "$rc" -ne 2 ]] || return 1
 	printf 'the host of %s answered and the read of %s failed with exit %s\n' "$item" "$path" "$rc"
@@ -2625,7 +2625,7 @@ case "$SUB" in
 		lane_context_handoff_due 0 1 "$HANDOFF_CONTEXT_PCT" >/dev/null || context_rc=$?
 		[[ "$context_rc" -ne 2 ]] || die invalid-handoff-context "$HANDOFF_CONTEXT_PCT"
 		validate_lane_settings
-		load_lane_claims
+		load_lane_claims fleet
 		# An unreadable claim store is not an empty fleet: reporting no lanes
 		# would read as "every lane has room", which is the answer that sends
 		# a lane into its wall.
@@ -2645,16 +2645,23 @@ case "$SUB" in
 		# No fleet state is a session outside any fleet, whose rows are the
 		# caller's alone; a state that is there and cannot be read is refused.
 		CONTEXT_LANES='[]'
+		context_fleet="" context_records='[]'
 		fleet_exists="$("$SCRIPT_DIR/workflow-state" exists --json oversee 2>/dev/null | jq -r '.exists')" \
 			|| die context-fleet oversee
 		if [[ "$fleet_exists" == true ]]; then
-			CONTEXT_LANES="$("$SCRIPT_DIR/workflow-state" get oversee '[.lanes // [] | .[] | select(.status == "running")]' 2>/dev/null)" \
+			context_state="$("$SCRIPT_DIR/workflow-state" path oversee)" || die context-fleet oversee
+			context_fleet="$(lane_claims_canon "${context_state%/*}")/${context_state##*/}"
+			context_records="$("$SCRIPT_DIR/workflow-state" get oversee '.lanes // []' 2>/dev/null)" \
+				|| die context-fleet oversee
+			CONTEXT_LANES="$(jq -c "$LANE_RUNNING_JQ"'[.[] | select(running)]' <<<"$context_records")" \
 				|| die context-fleet oversee
 		fi
+		context_claims="$(lane_claims_for_fleet "$LANE_CLAIMS_LIVE" "$context_fleet" "$context_records")" \
+			|| die context-claims "$@"
 		# A separate list, never LANE_CLAIMS_LIVE itself: the caller's pane is
 		# a pane to measure and not a launch in flight, and the usage pass
 		# below counts that global's rows against each account.
-		panes_to_measure="$(lane_context_with_caller "$LANE_CLAIMS_LIVE" "$(lane_claims_canon "$caller_cfg")")"
+		panes_to_measure="$(lane_context_with_caller "$context_claims" "$(lane_claims_canon "$caller_cfg")")"
 		out="$(lane_context_collect "$panes_to_measure" lane_alias_for context_record_fetch "$HANDOFF_CONTEXT_PCT")"
 		usage="$(collect_lanes all)"
 		usage_i=0; usage_count="$(jq -r length <<<"$usage")"

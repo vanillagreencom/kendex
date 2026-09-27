@@ -118,13 +118,24 @@ case "${1:-}" in
 esac
 PROVIDER
 chmod +x "$BIN/provider"
+# A different ambient host answers a different context. An unbound read would
+# return plausible tokens from the wrong machine, and its probe always answers.
+cat > "$BIN/other-provider" <<'PROVIDER'
+#!/usr/bin/env bash
+case "${1:-}" in
+  cat) printf '%s\n' '{"harness":"codex","tokens":42,"window":258400,"model":"wrong-host"}' ;;
+  touch) exit 0 ;;
+  *) exit 1 ;;
+esac
+PROVIDER
+chmod +x "$BIN/other-provider"
 
 LIVE_PID="$$"
 
-write_claim() { # <name> <pane id> <config dir> <window>
+write_claim() { # <name> <pane id> <config dir> <window> [fleet]
   mkdir -p "$STATE/claims"
-  printf '%s\t%s\t%s\t%s\t2026-08-16T00:00:00Z\n' \
-    "$LIVE_PID" "$2" "$3" "$4" > "$STATE/claims/$1.claim"
+  printf '%s\t%s\t%s\t%s\t2026-08-16T00:00:00Z\t%s\n' \
+    "$LIVE_PID" "$2" "$3" "$4" "${5-$FLEET_FILE}" > "$STATE/claims/$1.claim"
 }
 
 # A reading as the turn-end hook records it, through the library's own writer.
@@ -136,39 +147,43 @@ record_reading() { # BOX HARNESS TOKENS WINDOW MODEL [PANE_KEY]
 
 run_ctx() { # [args...]
   ( cd "$WORK" && GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
-    LANES_HOME="$H" OVERSEE_WATCH_STATE_DIR="$STATE" ORCH_STATE_DIR="$FLEET" \
-    ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_HOST="$BIN/provider" \
+    LANES_HOME="$H" OVERSEE_WATCH_STATE_DIR="$STATE" ORCH_STATE_DIR="${CTX_FLEET:-$FLEET}" \
+    ORCH_LANES_FETCH_CMD="$FETCHER" \
     HOSTED_DIR="$HOSTED_DIR" HOST_DOWN="${CTX_HOST_DOWN:-}" TMUX_LOG="$TMUX_LOG" \
     ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.codex" \
     TMUX_PANES_FILE="$PANES" \
     TMUX_PANE="${CTX_TMUX_PANE:-}" TMUX_STUB_SERVER_PID="$LIVE_PID" \
     TMUX_STUB_WINDOW_NAME="${CTX_WINDOW_NAME:-}" CLAUDE_CONFIG_DIR="${CTX_CONFIG_DIR:-}" \
     ORCH_HANDOFF_HEADROOM_PCT="${CTX_HANDOFF_PCT:-}" PATH="$BIN:$PATH" \
-    env ${CTX_CONTEXT_PCT:+"ORCH_HANDOFF_CONTEXT_PCT=$CTX_CONTEXT_PCT"} "${CTX_LANES:-$LANES}" context "$@" )
+    env -u ORCH_LANE_HOST ${CTX_AMBIENT_HOST:+"ORCH_LANE_HOST=$CTX_AMBIENT_HOST"} ${CTX_CONTEXT_PCT:+"ORCH_HANDOFF_CONTEXT_PCT=$CTX_CONTEXT_PCT"} "${CTX_LANES:-$LANES}" "${CTX_COMMAND:-context}" "$@" )
 }
 
 echo "=== lanes context ==="
 
 {
-  for n in 1 2 3 4 5 6 34; do printf '%s %%%s claude\n' "$LIVE_PID" "$n"; done
+  for n in 1 2 3 4 5 6 34 41 42 43 44 45 46 47; do printf '%s %%%s claude\n' "$LIVE_PID" "$n"; done
 } > "$PANES"
 
 # The fleet state: one running lane record per claimed window but ken-105's,
 # and a done record for ken-106's window, which is no running lane. ken-102 is
 # hosted, its mailbox a path on its host.
+ln -s "$H/.claude" "$H/claude-link"
 LOCAL_ROOT="$TMP_ROOT/lanes/ken-101"
 HOSTED_ROOT=/remote/.worktrees/work/lane
 "$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" init oversee >/dev/null
+FLEET_FILE="$("$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" path oversee)"
 "$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee lanes "$(jq -nc \
-  --arg local "$LOCAL_ROOT" --arg hosted "$HOSTED_ROOT" --arg three "$TMP_ROOT/lanes/ken-103" \
-  --arg four "$TMP_ROOT/lanes/ken-104" --arg six "$TMP_ROOT/lanes/ken-106" '[
-  {item: "KEN-101", window: "fleet:ken-101", host: null, mail_root: $local, status: "running"},
-  {item: "KEN-102", window: "fleet:ken-102", host: "static", mail_root: $hosted, status: "running"},
+  --arg provider "$BIN/provider" --arg local "$LOCAL_ROOT" --arg hosted "$HOSTED_ROOT" --arg three "$TMP_ROOT/lanes/ken-103" \
+  --arg four "$TMP_ROOT/lanes/ken-104" --arg six "$TMP_ROOT/lanes/ken-106" \
+  --arg claude "$H/claude-link/" --arg other "$H/.eclaude" '[
+  {item: "KEN-101", window: "fleet:ken-101", account: $claude, host: null, mail_root: $local, status: "running"},
+  {item: "KEN-102", window: "fleet:ken-102", host: $provider, mail_root: $hosted, status: "running"},
   {item: "KEN-103", window: "fleet:ken-103", host: null, mail_root: $three, status: "running"},
   {item: "KEN-104", window: "fleet:ken-104", host: null, mail_root: $four, status: "running"},
-  {item: "KEN-106", window: "fleet:ken-106", host: null, mail_root: $six, status: "done"}]')" >/dev/null
+  {item: "KEN-106", window: "fleet:ken-106", account: $claude, host: null, mail_root: $six, status: "done"},
+  {item: "KEN-107", window: "fleet:ken-107", account: $other, status: "preparing"}]')" >/dev/null
 
-write_claim one   "%1" "$H/.claude"  "ken-101"
+write_claim one   "%1" "$H/.claude"  "ken-101" ""
 write_claim two   "%2" "$H/.codex"   "ken-102"
 write_claim three "%3" "$H/.eclaude" "ken-103"
 write_claim four  "%4" "$H/.claude"  "ken-104"
@@ -229,6 +244,49 @@ lanes_table "$OUT" \
   "account headroom still joins the row, and marks the lane at its own mark|ken-104|headroom_pct=3 handoff_required=true"
 assert_eq "$(grep -c 'capture-pane' "$TMUX_LOG" || true)" "0" "no pane is captured to read a context"
 
+echo "=== only this fleet owns context rows; accounts keep global claims ==="
+FOREIGN_FLEET="$TMP_ROOT/other-fleet/oversee.json"
+# name|pane|account|window|fleet
+for row in \
+  "foreign-account|%41|$H/.eclaude|ken-101|$FOREIGN_FLEET" \
+  "foreign-same|%42|$H/.claude|ken-101|$FOREIGN_FLEET" \
+  "foreign-name|%43|$H/.claude|foreign-window|$FOREIGN_FLEET" \
+  "empty-account|%44|$H/.eclaude|ken-101|" \
+  "empty-unrecorded|%45|$H/.claude|unknown-window|" \
+  "empty-stopped|%46|$H/.claude|ken-106|" \
+  "empty-preparing|%47|$H/.eclaude|ken-107|"; do
+  IFS='|' read -r name pane account window fleet <<<"$row"
+  write_claim "$name" "$pane" "$account" "$window" "$fleet"
+done
+# A live reservation belongs in cap counts, never in a pane report.
+printf '%s\t-\t%s\treserved-window\t2026-08-16T00:00:00Z\t%s\n' \
+  "$LIVE_PID" "$H/.claude" "$FLEET_FILE" > "$STATE/claims/report.reserve"
+OWNED="$(run_ctx --json)"
+assert_eq "$(jq -c '[.[].pane] | sort' <<<"$OWNED")" '["%1","%2","%3","%4","%47","%5","%6"]' \
+  'current fleet claims and matching empty-fleet held records are the only context rows'
+assert_eq "$(jq -c '[.[] | select(.lane == "ken-101") | [.pane,.context_tokens,.context_handoff_due]]' <<<"$OWNED")" \
+  '[["%1",950000,true]]' 'a foreign equal-name window never receives this fleet reading'
+GLOBAL="$(CTX_COMMAND=list run_ctx --json)"
+assert_eq "$(jq -c '[.[] | select(.config_dir | endswith("/.claude")) | .claims]' <<<"$GLOBAL")" \
+  '[8]' 'account claims still include foreign and unowned lanes, excluding reservations'
+ln -s "$FLEET" "$TMP_ROOT/fleet-link"
+assert_eq "$(CTX_FLEET="$TMP_ROOT/fleet-link" run_ctx --json | jq -c '[.[].pane] | sort')" \
+  '["%1","%2","%3","%4","%47","%5","%6"]' 'the fleet state path is canonical before ownership matching'
+assert_eq "$(CTX_FLEET="$TMP_ROOT/no-fleet" CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json | jq -c '[.[].pane]')" \
+  '["%34"]' 'a session outside any fleet retains only its caller row'
+
+OWNERSHIP_CTRL="$(mutant_scripts mutant-ownership lib/lane-claims.sh)" || exit 1
+mutate_file "$OWNERSHIP_CTRL/lib/lane-claims.sh" \
+  'return (fleet == expected || fleet == "") && ((window "\t" account) in owned)' \
+  'return ((window "\t" account) in owned)'
+assert_eq "$(CTX_LANES="$OWNERSHIP_CTRL/lanes" run_ctx --json | jq -c '[.[] | select(.pane == "%42") | .context_tokens]')" \
+  '[950000]' 'control: omitting fleet ownership attributes this fleet reading to the foreign claim'
+RESERVATION_CTRL="$(mutant_scripts mutant-context-reservation lanes)" || exit 1
+mutate_file "$RESERVATION_CTRL/lanes" 'load_lane_claims fleet' 'load_lane_claims count'
+assert_eq "$(CTX_LANES="$RESERVATION_CTRL/lanes" run_ctx --json | jq -c '[.[] | select(.pane == "-") | .lane]')" \
+  '["reserved-window"]' 'control: count mode leaks a reservation into the context report'
+rm -f "${STATE:?}"/claims/foreign-*.claim "${STATE:?}"/claims/empty-*.claim "${STATE:?}/claims/report.reserve"
+
 echo "=== the context mark is the setting, and defaults to ninety percent ==="
 # The same readings judged at 96 percent: ken-101 at 95 is room, and its
 # account at 10 percent headroom above the mark leaves nothing required.
@@ -249,9 +307,38 @@ err="$(CTX_CONTEXT_PCT=101 run_ctx --json 2>&1 >/dev/null)" && rc=0 || rc=$?
 assert_eq "rc=$rc first=${err%%$'\n'*}" "rc=1 first=lanes: invalid-handoff-context value=101" \
   "a context mark outside whole percents 1 to 100 is refused by name"
 
-echo "=== a hosted read the host cannot answer is unreadable, never unrecorded ==="
-lanes_table "$(CTX_HOST_DOWN=1 run_ctx --json)" \
-  "a host that does not answer leaves the hosted lane unreadable|ken-102|status=unreadable detail~did+not+answer=true"
+echo "=== the recorded provider decides both the read and its probe ==="
+# ambient|record|down|expected. A missing record and an unreachable host both
+# return 2 from cat. Only a probe of that same recorded provider separates them.
+HOSTED_READING="$HOSTED_DIR$HOSTED_ROOT/tmp/lane-mail/KEN-102/context.json"
+while IFS='|' read -r ambient present down expected; do
+  if [[ "$present" == missing ]]; then mv "$HOSTED_READING" "$HOSTED_READING.saved"; fi
+  ambient_path=""
+  [[ "$ambient" != different ]] || ambient_path="$BIN/other-provider"
+  result="$(CTX_AMBIENT_HOST="$ambient_path" CTX_HOST_DOWN="$down" run_ctx --json)"
+  lanes_table "$result" "$ambient ambient provider, $present record, host down=$down|ken-102|$expected"
+  if [[ "$present" == missing ]]; then mv "$HOSTED_READING.saved" "$HOSTED_READING"; fi
+done <<'ROWS'
+absent|present||status=ok context_tokens=232560 model=gpt-6-astra
+different|present||status=ok context_tokens=232560 model=gpt-6-astra
+absent|missing||status=unrecorded context_tokens=null
+different|missing||status=unrecorded context_tokens=null
+absent|present|1|status=unreadable detail~did+not+answer=true
+different|present|1|status=unreadable detail~did+not+answer=true
+ROWS
+
+HOST_READ_CTRL="$(mutant_scripts mutant-host-read lanes)" || exit 1
+mutate_file "$HOST_READ_CTRL/lanes" \
+  'ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lane-host" cat --item "$item" "$path"' \
+  '"$SCRIPT_DIR/lane-host" cat --item "$item" "$path"'
+lanes_table "$(CTX_LANES="$HOST_READ_CTRL/lanes" CTX_AMBIENT_HOST="$BIN/other-provider" run_ctx --json)" \
+  'control: an unbound read accepts the other host context|ken-102|context_tokens=42 model=wrong-host'
+HOST_PROBE_CTRL="$(mutant_scripts mutant-host-probe lanes)" || exit 1
+mutate_file "$HOST_PROBE_CTRL/lanes" \
+  'ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lane-host" touch --item "$item"' \
+  '"$SCRIPT_DIR/lane-host" touch --item "$item"'
+lanes_table "$(CTX_LANES="$HOST_PROBE_CTRL/lanes" CTX_AMBIENT_HOST="$BIN/other-provider" CTX_HOST_DOWN=1 run_ctx --json)" \
+  'control: an unbound probe mistakes the unavailable host for a missing record|ken-102|status=unrecorded'
 
 echo "=== the headroom mark is the setting, and defaults to three percent ==="
 lanes_table "$(CTX_HANDOFF_PCT=10 run_ctx --json)" \

@@ -145,14 +145,14 @@ cap_count() { # ITEM KEY LANE
   done <<<"$held"
   # A held record's own claims are that record's lane, counted above; this
   # fleet's other claims are the fleet cap's in-flight lanes.
-  counts="$(CAP_OWNED="$owned" CAP_FLEET="$CAP_FLEET" CAP_LANE="$3" awk -F'\t' '
+  counts="$(CAP_OWNED="$owned" CAP_FLEET="$CAP_FLEET" CAP_LANE="$3" awk -F'\t' "$LANE_CLAIM_OWNERSHIP_AWK"'
     BEGIN {
       n = split(ENVIRON["CAP_OWNED"], w, "\n")
       for (i = 1; i <= n; i++) if (w[i] != "") { owned[w[i]] = 1; sub(/\t.*/, "", w[i]); window[w[i]] = 1 }
     }
     NF && $5 == ENVIRON["CAP_FLEET"] && !($2 in window) { f++ }
     NF && ENVIRON["CAP_LANE"] != "" && $1 == ENVIRON["CAP_LANE"] &&
-      !(($5 == ENVIRON["CAP_FLEET"] || $5 == "") && (($2 "\t" $1) in owned)) { a++ }
+      !lane_claim_owned($5, ENVIRON["CAP_FLEET"], $2, $1, owned) { a++ }
     END { print f + 0, a + 0 }' <<<"$claims")"
   CAP_INFLIGHT="${counts% *}"
   CAP_ACCOUNT_OTHER="${counts#* }"
