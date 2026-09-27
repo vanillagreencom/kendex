@@ -33,12 +33,16 @@ overseer_launch_args() {
 # wall are read off the pane itself, so an overseer whose record could not be
 # written is still watched. What a failed record costs is the line a dead-pane
 # relaunch replays: the record is left as it stood, so a line already there
-# stays where the record names this pane, the last line a start recorded
-# there, and check_overseer replays that one on a death; a record naming
-# another pane, or holding no line, is a death reported with no successor,
-# since the line there is another session's. Always returns 0.
+# stays where the record names this pane, the last line a launch, a
+# succession or a watch start recorded for it, and check_overseer replays
+# that one on a death; a record naming another pane, or holding no line, is a
+# death reported with no successor, since the line there is another
+# session's. Each notice from here carries that held line as `held=`, so the
+# operator sees which command a death would replay without opening the
+# state; `unread` where the record, or the pane key that names it, was not
+# read. Always returns 0.
 overseer_command_record() {
-  local pane="${TMUX_PANE:-}" key server window line detail errf rc=0
+  local pane="${TMUX_PANE:-}" key server window line detail errf rc=0 held=unread
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
   # The key is the orch library's, the same function the lane turn-end hook
   # and `oversee register` read a session's own key with: the hook compares its own
@@ -50,42 +54,48 @@ overseer_command_record() {
   # read below runs here and does replay tmux's. A key that came back in some
   # other shape is its own cause and is replayed as one.
   if ! key="$(lane_context_caller_key)"; then
-    overseer_record_notice "tmux reported no server pid for pane $pane" \
+    overseer_record_notice "tmux reported no server pid for pane $pane" "$held" \
       overseer-unrecorded "pane=$pane" "step=identity"
     return 0
   fi
   if [[ ! "$key" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)$ ]]; then
-    overseer_record_notice "the pane key read back as: $key" \
+    overseer_record_notice "the pane key read back as: $key" "$held" \
       overseer-unrecorded "pane=$pane" "step=identity"
     return 0
   fi
   # Taken here, before the next match replaces BASH_REMATCH.
   server="${BASH_REMATCH[1]}"
+  # The line a death would replay as the record stands, for every notice
+  # below: the read's own words, where it fails, go to stderr ahead of the
+  # notice, which then says `unread`.
+  if overseer_record_read "$server" "$pane"; then
+    held="${OVERSEER_RECORD_LINE:-none}"
+  fi
   if ! window="$(tmux display-message -p -t "$pane" '#{window_id}' 2>&1)"; then
-    overseer_record_notice "$window" overseer-unrecorded "pane=$pane" "step=window"
+    overseer_record_notice "$window" "$held" overseer-unrecorded "pane=$pane" "step=window"
     return 0
   fi
   if [[ ! "$window" =~ ^@[0-9]+$ ]]; then
-    overseer_record_notice "" overseer-unrecorded "pane=$pane" "step=window"
+    overseer_record_notice "" "$held" overseer-unrecorded "pane=$pane" "step=window"
     return 0
   fi
   overseer_launch_args
   # The line is the print's stdout alone, so no notice on its stderr enters
   # the command a relaunch types; that stderr is the notice's detail or relayed.
   if ! errf="$(mktemp)"; then
-    overseer_record_notice "" overseer-unrecorded "pane=$pane" "step=mktemp"
+    overseer_record_notice "" "$held" overseer-unrecorded "pane=$pane" "step=mktemp"
     return 0
   fi
   line="$("$SUCCEED" --print-launch-line "${OVERSEER_LAUNCH_ARGS[@]}" 2>"$errf")" || rc=$?
   detail="$(cat -- "$errf")" || detail=""
   rm -f -- "${errf:?}"
   if (( rc != 0 )); then
-    overseer_record_notice "$detail" overseer-line-missing "pane=$pane" "path=$SUCCEED"
+    overseer_record_notice "$detail" "$held" overseer-line-missing "pane=$pane" "path=$SUCCEED"
     return 0
   fi
   [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
   if [[ -z "$line" ]]; then
-    overseer_record_notice "" overseer-line-missing "pane=$pane" "path=$SUCCEED"
+    overseer_record_notice "" "$held" overseer-line-missing "pane=$pane" "path=$SUCCEED"
     return 0
   fi
   # The four fields this watch observes replace the prior's; the launcher's
@@ -103,6 +113,32 @@ overseer_command_record() {
       .overseer = ((((.overseer // {})
         | if ol_names($server; $pane) then . else {} end)
         + {server: $server, pane: $pane, window: $window, launch_line: $line}) | del(.pending))' 2>&1)" \
-    || overseer_record_notice "$detail" overseer-unrecorded "pane=$pane" "step=write"
+    || overseer_record_notice "$detail" "$held" overseer-unrecorded "pane=$pane" "step=write"
   return 0
+}
+
+# overseer_record_read SERVER PANE — the fleet state's overseer record as the
+# two questions this watch asks of it, into OVERSEER_RECORD_KEY and
+# OVERSEER_RECORD_LINE: the record's own `<server> <pane>` key, empty where
+# the state holds no record, and the line a death of SERVER PANE would
+# replay, a standing `pending.launch_line` ahead of `launch_line`, only where
+# the record names that pane on that server by `ol_names`, and empty
+# otherwise. One reader for the start's `held=` field and check_overseer's
+# relaunch, so the two cannot disagree about which line a death replays.
+# SERVER and PANE are spelled into the filter: every caller matched them
+# against `^[0-9]+$` and `^%[0-9]+$` first, and the `get` verb takes no
+# binding. Returns 1 where the state could not be read, with the reader's
+# words on stderr.
+OVERSEER_RECORD_KEY="" OVERSEER_RECORD_LINE=""
+overseer_record_read() { # SERVER PANE
+  local out sep=$'\x1f'
+  OVERSEER_RECORD_KEY="" OVERSEER_RECORD_LINE=""
+  out="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
+    get oversee "$OL_JQ_DEFS"'
+      .overseer as $o
+      | [ (if ($o | type) == "object" then (($o.server // "") + " " + ($o.pane // $o.session // "")) else "" end),
+          (if ($o | ol_names("'"$1"'"; "'"$2"'")) then ($o.pending.launch_line // $o.launch_line // "") else "" end) ]
+      | join("\u001f")')" || return 1
+  OVERSEER_RECORD_KEY="${out%%"$sep"*}"
+  OVERSEER_RECORD_LINE="${out#*"$sep"}"
 }

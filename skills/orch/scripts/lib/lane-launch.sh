@@ -858,21 +858,20 @@ lane_claude_trust_prepare() { # LANE_DIR LAUNCH_DIR
   # The config dir holds the account's credentials and the file its address,
   # user id and every per-project tool allowance, so a dir this creates is
   # private and the file it writes is private too, whatever the caller's
-  # umask: the harness itself makes the file 0600, and the rewrite below keeps
-  # it so by creating the staged copy under 077 before anything is written
-  # into it. mv keeps the staged file's mode.
+  # umask: the harness itself makes the file 0600, and the write below
+  # creates the staged copy under 077, inside the capture's own subshell. mv
+  # keeps the staged file's mode.
   ( umask 077 && mkdir -p -- "$lane" ) || { LANE_TRUST_REASON=home-create; return 1; }
   # Staged under this shell's own pid and renamed over the target, so a
   # harness reading the file while this writes it meets the whole previous
   # file or the whole new one; every arm from here takes the staged file away
   # before it refuses.
   staged="$config.$$"
-  ( umask 077 && : > "$staged" ) || { rm -f -- "${staged:?}"; LANE_TRUST_REASON=config-write; return 1; }
   # One filter for both shapes: an absent file reads as no input, which
   # `first(inputs) // {}` takes as the empty object the entry is merged into.
   input=/dev/null
   [ ! -f "$config" ] || input="$config"
-  if ! detail="$(jq -n --arg dir "$dir" '
+  if ! detail="$(umask 077 && jq -n --arg dir "$dir" '
       (first(inputs) // {})
       | .hasCompletedOnboarding = true
       | .projects[$dir] = ((.projects[$dir] // {}) + {hasTrustDialogAccepted: true})' \

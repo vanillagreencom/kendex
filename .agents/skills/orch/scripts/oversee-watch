@@ -701,18 +701,27 @@ overseer_fleet_log() { # NOTICE_FILE RECORD_FILE ERR_FILE
 # log and then left behind: the watch goes on to judge the pane, which is
 # read from tmux and not from the record. The reason and its fields are the
 # keyed line's, and the fleet log row repeats them so the successor that
-# reads the log at takeover sees what this watch could not record. Runs
-# before WORK_DIR exists, so its files are its own and removed here.
-overseer_record_notice() { # DETAIL REASON FIELD=VALUE...
-  local detail="$1" notice record errf
-  shift
-  ow_message "$@" >&2
+# reads the log at takeover sees what this watch could not record. HELD is
+# the line a death would replay as the record stands, `none` or `unread`: the
+# keyed line carries it whole as `held=`, and the fleet-log row, bounded by
+# ORCH_FLEET_LOG_ROW_BYTES, says whether one is held and where it is read,
+# since the row and the line sit in the same state file. Runs before
+# WORK_DIR exists, so its files are its own and removed here.
+overseer_record_notice() { # DETAIL HELD REASON FIELD=VALUE...
+  local detail="$1" held="$2" notice record errf held_text
+  shift 2
+  ow_message "$@" "held=$held" >&2
   [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
   if ! notice="$(mktemp)" || ! record="$(mktemp)" || ! errf="$(mktemp)"; then
     ow_message overseer-notice-failed "channel=file" >&2
     return 0
   fi
-  if printf '%s: the watch could not record this overseer session in the fleet state. The pane is still watched. A death relaunches from the launch line the fleet state already holds only where its record names this pane, and that line is the last one a start recorded there, which may not be the command this session was started with; a record naming another pane, or holding no line, reports the death with no successor.\n' "$*" > "$notice"
+  case "$held" in
+    none) held_text='No line is held for this pane.' ;;
+    unread) held_text='Whether a line is held was not read.' ;;
+    *) held_text='A line is held for this pane, at overseer.launch_line.' ;;
+  esac
+  if printf '%s: the start could not record this session; the pane is still watched. %s %s\n' "$*" "$OW_REPLAY_RULE" "$held_text" > "$notice"
   then
     if ! overseer_fleet_log "$notice" "$record" "$errf"; then
       ow_message overseer-notice-failed "channel=fleet-log" >&2
@@ -2002,8 +2011,10 @@ overseer_publish() { # NOTICE RECORD ERR_FILE
 # it decides three words and nothing else: the notice's own key, the reading
 # that was taken, and how a relaunch describes where the successor's account
 # came from. Every other plan reads the same for both, because the reason no
-# successor opens is the same reason.
-overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN
+# successor opens is the same reason. RECORD is the fleet state's overseer
+# record key, `<server> <pane>` or empty for none, and IDENTITY this pane's;
+# the no-line plan names which of the three shapes left it with no line.
+overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD IDENTITY
   local kind="$1" notice="$WORK_DIR/overseer-$1.txt" record="$WORK_DIR/overseer-$1.json"
   local errf="$WORK_DIR/overseer-deliver.err" now plan_text reading relaunch_text
   now="$(from_epoch "$PASS_NOW" '%Y-%m-%dT%H:%M:%SZ')" || now=""
@@ -2017,7 +2028,14 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN
   case "$5" in
     relaunch) plan_text="$relaunch_text" ;;
     off) plan_text='ORCH_OVERSEER_SUCCESSION is off, so no successor is launched; start one by hand.' ;;
-    no-line) plan_text='The fleet state records no overseer launch line for this pane, so no successor is launched; start one by hand.' ;;
+    no-line)
+      if [[ -z "$6" ]]; then
+        plan_text='The fleet state holds no overseer record, so no successor is launched; start one by hand.'
+      elif [[ "$6" == "$7" ]]; then
+        plan_text='The fleet state record for this pane holds no launch line, so no successor is launched; start one by hand.'
+      else
+        plan_text="The fleet state record names another session, tmux server ${6%% *} pane ${6#* }, whose launch line is not replayed as this pane's, so no successor is launched; start one by hand."
+      fi ;;
     no-launcher) plan_text='oversee-succeed is not installed, so no successor is launched; start one by hand.' ;;
     # Defensive: the four plans above are the whole set check_overseer calls
     # this with, for either case. A fifth would otherwise be described as one
@@ -2347,7 +2365,7 @@ overseer_judge() { # PANE
 
 check_overseer() {
   local pane="${TMUX_PANE:-}" window screen prior count succession plan
-  local ov_line identity rows attempt completed
+  local record record_field identity rows attempt completed
   local ov_case row other succeed_rc below banner banner_rc
   local errf="$WORK_DIR/overseer.err"
   # Off tmux there is no overseer pane to read, and with no workflow-state
@@ -2375,16 +2393,13 @@ check_overseer() {
   # identity: a start whose record failed left the record as it stood, and a
   # record naming another pane is another session's line, with that
   # session's account and permission words, which a death here must not
-  # replay. The server and pane are the two words overseer_pane_read just
-  # matched against `^[0-9]+$` and `^%[0-9]+$`, so they are spelled into the
-  # filter; the `get` verb takes no binding.
-  ov_line="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
-    get oversee "$OL_JQ_DEFS"'
-      .overseer as $o
-      | if ($o | ol_names("'"${identity%% *}"'"; "'"$pane"'")) then ($o.pending.launch_line // $o.launch_line // "")
-        else "" end' 2>"$errf")" \
+  # replay. The reader is lib/watch-overseer-record.sh's, the one the start
+  # names its `held=` line with, and it answers the record's own key too, so
+  # a death no line is replayed for can say which record stood in the way.
+  overseer_record_read "${identity%% *}" "$pane" 2>"$errf" \
     || { overseer_note overseer-unwatched "state=oversee"; return 0; }
-  OVERSEER_LINE="$ov_line"
+  OVERSEER_LINE="$OVERSEER_RECORD_LINE"
+  record="$OVERSEER_RECORD_KEY"
 
   overseer_judge "$pane"
   ov_case=""
@@ -2457,13 +2472,24 @@ check_overseer() {
   # recorded does not stop it.
   elif [[ "$ov_case" == dead && -z "$OVERSEER_LINE" ]]; then plan=no-line
   fi
+  # The record a no-line death was judged against, on the event and in the
+  # notice: the fleet state holding no record, this pane's record holding no
+  # line, and another session's record standing where this pane's should be
+  # are three different remedies, and a reader of the death line alone, with
+  # no start-time notice beside it, could not tell them apart.
+  record_field=""
+  if [[ "$plan" == no-line ]]; then
+    if [[ -z "$record" ]]; then record_field=" record=none"
+    else record_field=" record=${record%% *}:${record#* }"
+    fi
+  fi
   if [[ "$prior" != pending:* ]]; then
     if [[ "$plan" == relaunch ]]; then
       lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" pending:0)"
     else
       lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" reported)"
     fi
-    echo "EVENT $row $pane window=$window passes=$DEAD_PASSES succession=$succession"
+    echo "EVENT $row $pane window=$window passes=$DEAD_PASSES succession=$succession$record_field"
     # The wall's own window under the line, as every lane usage-limit event
     # carries one: the overseer's handling reads the banner with the screen on
     # both sides of it, and the reader of THIS event has the same question
@@ -2479,7 +2505,7 @@ check_overseer() {
       banner_payload "$below" "$banner" || die limit-banner-missing "" "pane=$pane"
     fi
     PASS_EVENT=1
-    overseer_deliver "$ov_case" "$pane" "$window" "$succession" "$plan"
+    overseer_deliver "$ov_case" "$pane" "$window" "$succession" "$plan" "$record" "$identity"
   fi
   if [[ "$plan" != relaunch ]]; then
     OVERSEER_STOP=1

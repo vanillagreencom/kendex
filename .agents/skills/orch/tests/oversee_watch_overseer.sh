@@ -303,9 +303,9 @@ assert_eq "rc=$RC line=$(cat "$STUB_DIR/succeed.line-file")" "rc=3 line=$PENDING
   "a death while a pending successor stands relaunches the pending line" "$ERR"
 # The control: a relaunch that reads the session's own line alone replays the
 # command the succession had already moved off.
-PENDING_MUTANT="$(mutant_scripts pending-mutant/orch oversee-watch)" || exit 1
+PENDING_MUTANT="$(mutant_scripts pending-mutant/orch lib/watch-overseer-record.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/pending-mutant/github"
-mutate_file "$PENDING_MUTANT/oversee-watch" \
+mutate_file "$PENDING_MUTANT/lib/watch-overseer-record.sh" \
   'then ($o.pending.launch_line // $o.launch_line // "")' 'then ($o.launch_line // "")'
 overseer_case dead_relaunch_pending_mutant exited
 pending_state
@@ -542,10 +542,10 @@ overseer_case no_line exited
 state_with ""
 run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT")" \
-  "rc=4 first=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on" \
-  "a death with no recorded line is still the event" "$ERR"
+  "rc=4 first=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on record=7000:$PANE" \
+  "a death with no recorded line is still the event, naming the record it was judged against" "$ERR"
 assert_eq "$(succeed_calls --dead-pane)" "0" "and launches nothing" "$ERR"
-assert_contains "$(fleet_log_text)" "The fleet state records no overseer launch line for this pane, so no successor is launched; start one by hand." \
+assert_contains "$(fleet_log_text)" "The fleet state record for this pane holds no launch line, so no successor is launched; start one by hand." \
   "the notice names the missing line as the reason" "$ERR"
 assert_eq "$(succeed_calls --print-launch-line)" "0" \
   "the child does not try to replace the command its owner published" "$ERR"
@@ -680,16 +680,22 @@ assert_eq "harness=$(recorded harness) home=$(recorded home) model=$(recorded mo
   "and keeps its launch identity, dropping a pending successor as it replaces the line" "$ERR"
 # A record naming another pane is another session's: its generation is not
 # this one's, so the start records only what it observes.
-overseer_case record_drops_other_session idle
-jq -n --arg window "$WINDOW" \
-  '{triaged: [], overseer: {runtime: "tmux", generation: 3, account: "/home/me/.claude", server: "7000", pane: "%4", window: $window, launch_line: "old",
-    harness: "codex", model: "gpt-6-astra"}}' \
-  > "$STUB_DIR/oversee-state.json"
-printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
-run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
-assert_eq "pane=$(recorded pane) generation=$(recorded generation) account=$(recorded account) harness=$(recorded harness) model=$(recorded model)" \
-  "pane=$PANE generation=none account=none harness=none model=none" \
-  "a start on another pane than the record's drops that session's generation, account and launch identity" "$ERR"
+# Both halves of that test, one row each: a record naming another pane on this
+# server, and one naming this pane id on another server, which is what a
+# fleet state left by a previous tmux server holds, pane ids restarting at %0.
+for row in "7000|%4|another pane" "7001|$PANE|this pane id on another server"; do
+  IFS='|' read -r row_server row_pane row_what <<<"$row"
+  overseer_case "record_drops_other_session_${row_server}" idle
+  jq -n --arg window "$WINDOW" --arg server "$row_server" --arg pane "$row_pane" \
+    '{triaged: [], overseer: {runtime: "tmux", generation: 3, account: "/home/me/.claude", server: $server, pane: $pane, window: $window, launch_line: "old",
+      harness: "codex", model: "gpt-6-astra"}}' \
+    > "$STUB_DIR/oversee-state.json"
+  printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+  run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
+  assert_eq "server=$(recorded server) pane=$(recorded pane) generation=$(recorded generation) account=$(recorded account) harness=$(recorded harness) model=$(recorded model)" \
+    "server=7000 pane=$PANE generation=none account=none harness=none model=none" \
+    "a start over a record naming $row_what drops that session's generation, account and launch identity" "$ERR"
+done
 # The must-fail control: a start that replaces the object whole loses the
 # generation the launcher wrote for this very pane.
 RECORD_MUTANT="$TMP_ROOT/record-mutant"
@@ -724,14 +730,16 @@ touch "$STUB_DIR/succeed.print-fail"
 run TMUX_PANE="$PANE" -- --max-loops 2 -- --model fable
 assert_eq "rc=$RC events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true) launched=$(succeed_calls --dead-pane)" \
   "rc=0 events=0 launched=0" "a line the builder cannot build does not stop the watch" "$ERR"
-assert_eq "$(grep -c "^oversee-watch: overseer-line-missing pane=$PANE path=" "$ERR")" "1" \
-  "and is noted once on stderr" "$ERR"
+assert_eq "$(grep -c -x -F -- "oversee-watch: overseer-line-missing pane=$PANE path=$TMP_ROOT/bin/succeed-stub.sh held=$BYPASS_LINE" "$ERR")" "1" \
+  "and is noted once on stderr, naming the line a death would replay" "$ERR"
 assert_eq "$(grep -c "^oversee-succeed: harness-unnamed pane=" "$ERR")" "1" \
   "with the builder's own refusal under it" "$ERR"
 assert_eq "$(fleet_log_kind)|$(fleet_log_text | cut -d: -f1)" "close|overseer-line-missing pane=$PANE path=$TMP_ROOT/bin/succeed-stub.sh" \
   "and in the fleet log, keyed as the stderr line is" "$ERR"
 assert_eq "$(recorded launch_line)" "$BYPASS_LINE" \
   "the line the fleet state already held is left where it was" "$ERR"
+assert_contains "$(fleet_log_text)" "A line is held for this pane, at overseer.launch_line." \
+  "and the fleet log row says a line is held, and where" "$ERR"
 
 # The line held is what a death then replays: a start whose pane already
 # reads exited cannot build a line, since a dead pane names no harness,
@@ -748,37 +756,56 @@ assert_eq "$(grep -c "^oversee-watch: overseer-line-missing pane=$PANE" "$ERR")"
 assert_eq "$(cat "$STUB_DIR/succeed.line-file")" "$LINE" \
   "and the relaunch sent the line the fleet state held" "$ERR"
 
-# The held line is replayed only where the record binds it to THIS pane. A
-# record naming another pane is another session's, and its line carries that
-# session's account and permission words: a start whose print fails leaves
-# such a record standing, and the death here is reported with no successor
-# rather than relaunched as the other session. The same row shape as the one
-# above, the record's pane the one difference.
-other_pane_dead_run() { # [WATCH_BIN]
-  overseer_case "record_failure_dead_other_pane${1:+_mutant}" exited
-  jq -n --arg window "$WINDOW" --arg line "$BYPASS_LINE" \
-    '{triaged: [], overseer: {server: "7000", pane: "%4", window: $window, launch_line: $line}}' \
+# The held line is replayed only where the record binds it to THIS pane on
+# THIS server. A record naming another session is that session's, and its
+# line carries that session's account and permission words: a start whose
+# print fails leaves such a record standing, and the death here is reported
+# with no successor, naming that record, rather than relaunched as the other
+# session. Two rows, one per half of the binding: another pane on this
+# server, and this pane id on another server, which is the record a previous
+# tmux server left behind, pane ids restarting at %0 on the next. The same
+# row shape as the one above, the record's key the one difference.
+other_dead_run() { # SERVER PANE [WATCH_BIN]
+  overseer_case "record_failure_dead_other_$1_${2#%}${3:+_mutant}" exited
+  jq -n --arg window "$WINDOW" --arg line "$BYPASS_LINE" --arg server "$1" --arg pane "$2" \
+    '{triaged: [], overseer: {server: $server, pane: $pane, window: $window, launch_line: $line}}' \
     > "$STUB_DIR/oversee-state.json"
   jq -n '{issue_id: "oversee", triaged: [], lanes: []}' > "$STUB_DIR/state.json"
-  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" -- --max-loops 2 --repeat 0 --state "$STUB_DIR/state.json"
+  WATCH_BIN="${3:-}" run TMUX_PANE="$PANE" -- --max-loops 2 --repeat 0 --state "$STUB_DIR/state.json"
 }
-other_pane_dead_run
-assert_eq "rc=$RC events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true) launched=$(succeed_calls --dead-pane) noted=$(grep -c "^oversee-watch: overseer-line-missing pane=$PANE" "$ERR")" \
-  "rc=0 events=1 launched=0 noted=1" \
-  "a death over a record naming another pane is reported and never relaunched from that pane's line" "$ERR"
-assert_contains "$(fleet_log_text)" "The fleet state records no overseer launch line for this pane, so no successor is launched; start one by hand." \
-  "and the notice says the line missing is this pane's" "$ERR"
-# The control: a watch that reads the held line whatever pane the record names
-# relaunches the other session's full-bypass line into this window.
-PANE_MUTANT="$(mutant_scripts mutant-pane/orch oversee-watch)" || exit 1
+for row in "7000|%4|another pane" "7001|$PANE|this pane id on another server"; do
+  IFS='|' read -r row_server row_pane row_what <<<"$row"
+  other_dead_run "$row_server" "$row_pane"
+  assert_eq "rc=$RC event=$(grep '^EVENT overseer-dead' <<<"$OUT" || true) launched=$(succeed_calls --dead-pane) noted=$(grep -c -x -F -- "oversee-watch: overseer-line-missing pane=$PANE path=$TMP_ROOT/bin/succeed-stub.sh held=none" "$ERR")" \
+    "rc=0 event=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on record=$row_server:$row_pane launched=0 noted=1" \
+    "a death over a record naming $row_what is reported with that record and never relaunched from its line" "$ERR"
+  assert_contains "$(fleet_log_text)" "The fleet state record names another session, tmux server $row_server pane $row_pane, whose launch line is not replayed as this pane's, so no successor is launched; start one by hand." \
+    "and the notice names the record that stood in the way" "$ERR"
+done
+# Two controls on the shared reader, one per half. A reader that takes the
+# held line whatever record stands relaunches the other session's full-bypass
+# line into this window on both rows; one that compares the pane id alone
+# passes the other-pane row and replays the previous server's line on the
+# other-server row.
+PANE_MUTANT="$(mutant_scripts mutant-pane/orch lib/watch-overseer-record.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mutant-pane/github"
-mutate_file "$PANE_MUTANT/oversee-watch" \
-  '        else "" end'"'"' 2>"$errf")" \' \
-  '        else ($o.pending.launch_line // $o.launch_line // "") end'"'"' 2>"$errf")" \'
-other_pane_dead_run "$PANE_MUTANT/oversee-watch"
+mutate_file "$PANE_MUTANT/lib/watch-overseer-record.sh" \
+  'else "" end) ]' 'else ($o.pending.launch_line // $o.launch_line // "") end) ]'
+for row in "7000|%4" "7001|$PANE"; do
+  IFS='|' read -r row_server row_pane <<<"$row"
+  other_dead_run "$row_server" "$row_pane" "$PANE_MUTANT/oversee-watch"
+  assert_eq "launched=$(succeed_calls --dead-pane) line=$(cat "$STUB_DIR/succeed.line-file" 2>/dev/null || echo none)" \
+    "launched=1 line=$BYPASS_LINE" \
+    "control: a reader that takes the line whatever record stands replays the other session's command over $row_server $row_pane" "$ERR"
+done
+SERVER_MUTANT="$(mutant_scripts mutant-server/orch lib/watch-overseer-record.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mutant-server/github"
+mutate_file "$SERVER_MUTANT/lib/watch-overseer-record.sh" \
+  $'($o | ol_names("\'"$1"\'"; "\'"$2"\'"))' $'(($o.pane // $o.session // "") == "\'"$2"\'")'
+other_dead_run 7001 "$PANE" "$SERVER_MUTANT/oversee-watch"
 assert_eq "launched=$(succeed_calls --dead-pane) line=$(cat "$STUB_DIR/succeed.line-file" 2>/dev/null || echo none)" \
   "launched=1 line=$BYPASS_LINE" \
-  "control: a watch that takes the line whatever pane it names replays the other session's command" "$ERR"
+  "control: a reader that compares the pane id alone replays the previous server's command" "$ERR"
 
 # A walled overseer whose start could not record it: the wall is read from
 # the pane and confirmed by the account judgement, and the recovery picks its
@@ -808,8 +835,8 @@ done
 REG_MUTANT="$(mutant_scripts mutant-reg/orch lib/watch-overseer-record.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mutant-reg/github"
 mutate_file "$REG_MUTANT/lib/watch-overseer-record.sh" \
-  '    overseer_record_notice "$detail" overseer-line-missing "pane=$pane" "path=$SUCCEED"' \
-  '    overseer_record_notice "$detail" overseer-line-missing pane="$pane" "path=$SUCCEED"; exit 2'
+  '    overseer_record_notice "$detail" "$held" overseer-line-missing "pane=$pane" "path=$SUCCEED"' \
+  '    overseer_record_notice "$detail" "$held" overseer-line-missing pane="$pane" "path=$SUCCEED"; exit 2'
 overseer_case record_failure_walled_mutant walled
 state_with "$LINE"
 touch "$STUB_DIR/succeed.print-fail"
@@ -824,8 +851,8 @@ overseer_case record_write_failure idle
 state_with "$BYPASS_LINE"
 printf '2\n' > "$STUB_DIR/workflow-state.rc"
 run TMUX_PANE="$PANE" -- --max-loops 2 -- --model fable
-assert_eq "line=$(grep -c "^oversee-watch: overseer-unrecorded pane=$PANE step=write\$" "$ERR") launched=$(succeed_calls --dead-pane)" \
-  "line=1 launched=0" "a state-write failure is noted on its step and reaches no launcher" "$ERR"
+assert_eq "line=$(grep -c -x -F -- "oversee-watch: overseer-unrecorded pane=$PANE step=write held=unread" "$ERR") launched=$(succeed_calls --dead-pane)" \
+  "line=1 launched=0" "a state-write failure is noted on its step and reaches no launcher; a state that fails every verb reads no held line" "$ERR"
 assert_eq "$(grep -c "^oversee-watch: overseer-notice-failed channel=fleet-log\$" "$ERR")" "1" \
   "and the fleet log row that could not be written on the same state is named too" "$ERR"
 assert_eq "$(recorded launch_line)" "$BYPASS_LINE" \
@@ -839,8 +866,8 @@ overseer_case record_window_unreadable idle
 state_with "$BYPASS_LINE"
 touch "$STUB_DIR/window-id-fail-$PANE"
 run TMUX_PANE="$PANE" -- --max-loops 1
-assert_eq "rc=$RC line=$(grep -c "^oversee-watch: overseer-unrecorded pane=$PANE step=window\$" "$ERR")" \
-  "rc=0 line=1" "a window tmux will not report leaves the record unwritten, naming the step" "$ERR"
+assert_eq "rc=$RC line=$(grep -c -x -F -- "oversee-watch: overseer-unrecorded pane=$PANE step=window held=$BYPASS_LINE" "$ERR")" \
+  "rc=0 line=1" "a window tmux will not report leaves the record unwritten, naming the step and the line a death would replay" "$ERR"
 assert_eq "$(grep -c "^E_WINDOW pane=$PANE\$" "$ERR")" "1" \
   "and tmux's own words are replayed under that line, not swallowed" "$ERR"
 assert_eq "$(recorded launch_line)" "$BYPASS_LINE" \
@@ -850,7 +877,7 @@ overseer_case record_window_malformed idle
 state_with "$BYPASS_LINE"
 printf 'window7\n' > "$STUB_DIR/window-id-$PANE.txt"
 run TMUX_PANE="$PANE" -- --max-loops 1
-assert_eq "rc=$RC line=$(grep -c "^oversee-watch: overseer-unrecorded pane=$PANE step=window\$" "$ERR")" \
+assert_eq "rc=$RC line=$(grep -c -x -F -- "oversee-watch: overseer-unrecorded pane=$PANE step=window held=$BYPASS_LINE" "$ERR")" \
   "rc=0 line=1" "a window id that is not @N leaves the record unwritten on the same step" "$ERR"
 
 # The key is read through the orch library, which discards tmux's stderr, so a
@@ -861,8 +888,8 @@ overseer_case record_identity_unreadable idle
 state_with "$BYPASS_LINE"
 printf 'E_PID pane=%s\n' "$PANE" > "$STUB_DIR/pane-key-fail-$PANE"
 run TMUX_PANE="$PANE" -- --max-loops 1
-assert_eq "rc=$RC line=$(grep -c "^oversee-watch: overseer-unrecorded pane=$PANE step=identity\$" "$ERR")" \
-  "rc=0 line=1" "a key tmux will not answer leaves the record unwritten, naming the step" "$ERR"
+assert_eq "rc=$RC line=$(grep -c -x -F -- "oversee-watch: overseer-unrecorded pane=$PANE step=identity held=unread" "$ERR")" \
+  "rc=0 line=1" "a key tmux will not answer leaves the record unwritten, naming the step; with no key the held line is unread" "$ERR"
 assert_eq "$(grep -c "^tmux reported no server pid for pane $PANE\$" "$ERR")" "1" \
   "and the notice carries a reason of its own, since the library keeps tmux's" "$ERR"
 assert_eq "$(recorded launch_line)" "$BYPASS_LINE" \
@@ -872,7 +899,7 @@ overseer_case record_identity_malformed idle
 state_with "$BYPASS_LINE"
 printf 'not-a-pid\n' > "$STUB_DIR/pane-key-$PANE.txt"
 run TMUX_PANE="$PANE" -- --max-loops 1
-assert_eq "rc=$RC line=$(grep -c "^oversee-watch: overseer-unrecorded pane=$PANE step=identity\$" "$ERR")" \
+assert_eq "rc=$RC line=$(grep -c -x -F -- "oversee-watch: overseer-unrecorded pane=$PANE step=identity held=unread" "$ERR")" \
   "rc=0 line=1" "a key that is not <pid> <pane> leaves the record unwritten on the same step" "$ERR"
 assert_eq "$(grep -c "^the pane key read back as: not-a-pid $PANE\$" "$ERR")" "1" \
   "and the notice replays what it read" "$ERR"
