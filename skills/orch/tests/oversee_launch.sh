@@ -23,6 +23,10 @@ OVERSEE="$SRC_DIR/oversee"
 # shellcheck source=../scripts/lib/lane-launch.sh
 source "$SRC_DIR/lib/lane-launch.sh"
 BYPASS="$(launch_choice_permission_write claude)" || { echo "fixture: no claude permission word in the launch table" >&2; exit 1; }
+# The word that takes claude's question tool away, from the same table: an
+# unset ORCH_QUESTION_TOOL is off, so a first launch carries it.
+QUESTION_OFF="$(launch_choice_question_off claude)"
+[[ -n "$QUESTION_OFF" && "$QUESTION_OFF" != *" "* ]] || { echo "fixture: claude's question-tool words are not one word in the launch table" >&2; exit 1; }
 
 TMP_ROOT="$(mktemp -d)"
 TMUX_DIR="$TMP_ROOT/tmux"
@@ -99,15 +103,16 @@ echo "=== oversee ==="
 
 # A first launch from outside tmux: the window at the end of the named
 # session, the harness on the picked lane with the entry's model and effort
-# and claude's full-bypass word, and the record written with generation 1.
+# and claude's full-bypass and question-tool words, and the record written
+# with generation 1.
 run_oversee -- launch --wait-secs 20
 LAUNCHED="$(keyed overseer-launched "$OUT" | sed -n 1p)"
 SESSION="$(field "$LAUNCHED" session)"
 assert_eq "$RC|$(sed -n 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=%N/p' <<<"$LAUNCHED")|$(layout)|$(recorded_argv)" \
-  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|1 overseer;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$BRIEF;" \
+  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|1 overseer;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$QUESTION_OFF;$BRIEF;" \
   "a first launch from outside tmux opens the overseer at the end of the named session and records it"
 assert_eq "$(recorded runtime)|$(recorded server)|$(recorded pane)|$(recorded window)|$(recorded account)|$(recorded generation)|$(recorded launch_line)" \
-  "tmux|$SERVER_PID|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high $BYPASS '$BRIEF'" \
+  "tmux|$SERVER_PID|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high $BYPASS $(printf '%q' "$QUESTION_OFF") '$BRIEF'" \
   "the session record names the runtime, server, pane, window, account, line and generation"
 assert_eq "$(keyed overseer-launch "$OUT" | sed -n 1p | sed 's/session=%[0-9]*/session=%N/; s/window=@[0-9]*/window=@N/')" \
   "oversee: overseer-launch form=prefix lane=$H/.claude trust=none session=%N window=@N server=$SOCKET" \
