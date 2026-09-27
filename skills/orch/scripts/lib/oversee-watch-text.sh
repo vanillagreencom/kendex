@@ -147,12 +147,14 @@ The long pass's events, checked and reported in this order:
                              when that output has no `kept=` line because the
                              close archived nothing. A lane exiting while its
                              worktree stands is not closed. A parked close
-                             that fails is lane-close-failed on stderr with
-                             its merged row put back and committed at once,
-                             so the next pass reports the merge again and
-                             retries the close, while this pass runs on to
-                             its remaining checks and exits 2 at its end;
-                             lane-close-refused commits it and is never retried
+                             that fails is lane-close-failed on stderr and
+                             drops the parked pull request's key alone from
+                             its merged row, committed at once, so the next
+                             pass reports that merge again and retries the
+                             close, while the pass's other merges stay
+                             delivered and this pass runs on to its remaining
+                             checks and exits 2 at its end; lane-close-refused
+                             commits it and is never retried
   EVENT lane-close-refused <item>
                              the same close exited 3: its clone or worktree
                              has user-owned changes. Generated whole-file render
