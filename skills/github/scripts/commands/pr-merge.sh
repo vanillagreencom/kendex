@@ -136,9 +136,9 @@ Review-thread gate:
   --review-bots naming no bot, so nothing is waived there. A
   review_evidence=none answer waives the threads only a review bot has
   written in: the first comment and every other comment by an author GitHub
-  types Bot whose login review-policy --review-bots names, or the merge
-  route's own reply, with the whole thread read. It reports them as
-  unresolved_threads_waived, a warning that gates nothing, and names them in
+  types Bot whose login review-policy --review-bots names, or a waiver reply
+  by an author GitHub types Bot, with the whole thread read. It reports them
+  as unresolved_threads_waived, a warning that gates nothing, and names them in
   thread_waiver, outdated ones included, because GitHub's thread-resolution
   rule counts those. Every other unresolved thread blocks with
   unresolved_threads under that answer, outdated or not, for the same reason:
@@ -153,8 +153,8 @@ Review-thread gate:
   failed reply or resolve, or a head that moved, is BLOCKED with nothing armed.
 
   A waiver resolution lapses while it is still the thread's last word (the
-  resolver posted the newest waiver reply and has written nothing since) and
-  the answer at the current head does not waive the thread. A lapsed waiver
+  resolver's newest comment in the thread is a waiver reply) and the answer
+  at the current head does not waive the thread. A lapsed waiver
   counts under unresolved_threads and is named in thread_reopen; the merge
   modes, never --check or --dry-run, reopen it and report REOPENED THREAD
   <id> on stderr, or pr-merge: thread-reopen-failed id=<id>. A thread someone

@@ -163,8 +163,9 @@ threads_of() {
     resolved100) jq -cn '[range(0; 100) | {id: ("PRRT_resolved_" + tostring), isResolved: true, isOutdated: false, path: "src/first-page.rs", line: ., comments: {nodes: [{author: {login: "reviewer"}, body: "Resolved"}]}}]' ;;
     # a code-scanning alert: a Bot, and not a review bot the gate reads
     codeql) printf '[{"id":"PRRT_codeql","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":1,"nodes":[{"author":{"login":"github-advanced-security","__typename":"Bot"},"body":"Code scanning alert"}]}}]' ;;
-    # a review bot's thread a person has answered in
-    bot-with-reply) printf '[{"id":"PRRT_bot_reply","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":2,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"reviewer","__typename":"User"},"body":"It does, and this line is wrong"}]}}]' ;;
+    # a review bot's thread a person has answered in, in the waiver reply's
+    # own words, which only a Bot's waiver reply may be
+    bot-with-reply) printf '[{"id":"PRRT_bot_reply","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":2,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"reviewer","__typename":"User"},"body":"%s"}]}}]' "$WAIVER_REPLY" ;;
     # a review bot's thread whose comments were not all read
     bot-partial) printf '[{"id":"PRRT_bot_partial","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":101,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"}]}}]' ;;
     # a thread the merge route resolved under an earlier waiver
@@ -174,8 +175,9 @@ threads_of() {
     waived-twice) printf '[{"id":"PRRT_waived_twice","isResolved":true,"isOutdated":false,"resolvedBy":{"login":"vanillagreen-fleet-lanes[bot]"},"path":"docs/plans/a.md","line":4,"comments":{"totalCount":3,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"%s"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"%s"}]}}]' "$WAIVER_REPLY" "${WAIVER_REPLY/1111111111111111111111111111111111111111/3333333333333333333333333333333333333333}" ;;
     # that thread after a reopen: its resolver answered and resolved it again
     waived-answered) printf '[{"id":"PRRT_answered","isResolved":true,"isOutdated":false,"resolvedBy":{"login":"vanillagreen-fleet-lanes[bot]"},"path":"docs/plans/a.md","line":4,"comments":{"totalCount":3,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"%s"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"Fixed in 2222222"}]}}]' "$WAIVER_REPLY" ;;
-    # the waiver still the resolution, with a person's reply after it
-    waived-person-reply) printf '[{"id":"PRRT_waived_reply","isResolved":true,"isOutdated":false,"resolvedBy":{"login":"vanillagreen-fleet-lanes[bot]"},"path":"docs/plans/a.md","line":4,"comments":{"totalCount":3,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"%s"},{"author":{"login":"reviewer","__typename":"User"},"body":"This is still wrong"}]}}]' "$WAIVER_REPLY" ;;
+    # the waiver still the resolution, with a person's reply after it in the
+    # waiver reply's own words: the newest reply in them, but not the resolver's
+    waived-person-reply) printf '[{"id":"PRRT_waived_reply","isResolved":true,"isOutdated":false,"resolvedBy":{"login":"vanillagreen-fleet-lanes[bot]"},"path":"docs/plans/a.md","line":4,"comments":{"totalCount":3,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"%s"},{"author":{"login":"reviewer","__typename":"User"},"body":"%s"}]}}]' "$WAIVER_REPLY" "$WAIVER_REPLY" ;;
     # a person's account spelling the review bot's login
     bot-login-user) printf '[{"id":"PRRT_impostor","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":1,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"User"},"body":"Issue KEN-1 does not exist"}]}}]' ;;
     -) printf '[]' ;;

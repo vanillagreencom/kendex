@@ -7,9 +7,11 @@
 #
 # A waiver resolution lapses when the merge route's resolution is still the
 # thread's last word and the class policy at the current head does not waive
-# the thread. Its last word: the resolver is the identity that posted the
-# newest waiver reply in the thread, and that identity has written nothing
-# since. A thread someone answered and resolved again is theirs, not a waiver.
+# the thread. Its last word: the resolver's newest comment in the thread is a
+# waiver reply, the merge route's own, so a reply in its words from anyone
+# else neither keeps a waiver standing nor ends one. Only a waiver reply whose
+# author GitHub types Bot leaves a thread waivable; a person's, in any words,
+# does not. A thread someone answered and resolved again is theirs.
 # review-predicate.sh's thread term and pr-merge count a lapsed waiver as an
 # open thread. Readers of isResolved alone (pr-watch's threads-open, github
 # pr-threads' unresolved_count, orch queue-wait's late-findings guard) see it
@@ -30,8 +32,8 @@ rg_waiver_reply() { # CLASS HEAD -> the reply body
 # reviewThreads node (isResolved, resolvedBy{login}, comments{totalCount
 # nodes{body author{login __typename}}}) onto it. $bots is the review-bot
 # login list `review-policy --review-bots` names, in GraphQL's spelling.
-#   rg_waivable($bots)           every comment a listed Bot's or a waiver
-#                                reply, the first a listed Bot's, all read
+#   rg_waivable($bots)           every comment a listed Bot's or a Bot's
+#                                waiver reply, the first a listed Bot's, all read
 #   rg_waiver_stands             resolved, and the waiver is the last word
 #   rg_lapsed_waiver($ev; $bots) stands, and evidence $ev does not waive it
 # A resolver login carries GitHub's `[bot]` suffix where a comment author's
@@ -44,12 +46,11 @@ def rg_waivable($bots):
   (.comment_count == (.comments | length))
   and ((.comments | length) > 0)
   and (.comments[0] | rg_by_review_bot($bots))
-  and all(.comments[]; rg_by_review_bot($bots) or rg_waiver_reply);
+  and all(.comments[]; rg_by_review_bot($bots) or (.author_type == "Bot" and rg_waiver_reply));
 def rg_waiver_stands:
   ((.resolved_by // "") | sub("\\[bot\\]$"; "")) as $resolver
-  | ([.comments | to_entries[] | select(.value | rg_waiver_reply)] | last) as $reply
-  | (.is_resolved == true) and ($resolver != "") and ($reply != null)
-    and ($reply.value.author == $resolver)
+  | ([.comments | to_entries[] | select(.value.author == $resolver and (.value | rg_waiver_reply))] | last) as $reply
+  | (.is_resolved == true) and ($reply != null)
     and all(.comments[($reply.key + 1):][]; .author != $resolver);
 def rg_lapsed_waiver($evidence; $bots):
   rg_waiver_stands and (($evidence != "none") or (rg_waivable($bots) | not));
