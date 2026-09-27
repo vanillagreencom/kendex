@@ -15,7 +15,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
-TMP_ROOT="$(mktemp -d)"
+# Canonical at creation: lane-mail records an attachment at its physical path,
+# so every expectation built from LANE or BOX must name the same one.
+TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # mutant_scripts and mutate_file, the two halves of the controls at the end.
 # shellcheck source=lib/growth-state.sh
