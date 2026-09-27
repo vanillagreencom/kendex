@@ -1,5 +1,6 @@
 use super::{FileStatus, LineKind, PackageDiff, screen};
 use crate::ui::testing::{plain, rich, tagged};
+use crate::width::visible_width;
 use kendex_core::package::diff::{FileDiff, Hunk, Line};
 
 #[test]
@@ -27,15 +28,13 @@ fn inspection_diff_wraps_long_changed_lines() {
     };
     let lines = screen(&rich(80), &diff);
     assert!(
-        lines
-            .iter()
-            .all(|line| console::measure_text_width(line) <= 80),
+        lines.iter().all(|line| visible_width(line) <= 80),
         "{lines:?}"
     );
     assert!(
         screen(&plain(), &diff)
             .iter()
-            .any(|line| console::measure_text_width(line) > 80)
+            .any(|line| visible_width(line) > 80)
     );
 }
 
@@ -64,6 +63,18 @@ fn inspection_diff_snapshots() {
                             old_no: None,
                             new_no: Some(1),
                         },
+                        Line {
+                            kind: LineKind::Remove,
+                            text: "  - nested  item".into(),
+                            old_no: Some(2),
+                            new_no: None,
+                        },
+                        Line {
+                            kind: LineKind::Context,
+                            text: "    fn foo()  bar".into(),
+                            old_no: Some(3),
+                            new_no: Some(2),
+                        },
                     ],
                 }],
             },
@@ -89,10 +100,14 @@ fn inspection_diff_snapshots() {
             "@@ -1 +1 @@",
             "-old",
             "+new",
+            "-  - nested  item",
+            "     fn foo()  bar",
             "",
             "large.bin (too large to show)  +0 -0"
         ]
     );
+    // A diff line keeps its indentation and its runs of spaces rich: the
+    // text after the glyph is the plain line.
     assert_eq!(
         tagged(&screen(&rich(80), &diff)),
         [
@@ -102,6 +117,8 @@ fn inspection_diff_snapshots() {
             "    <90>@@ -1 +1 @@</>",
             "    <33>!</> -old",
             "    <32>✓</> +new",
+            "    <33>!</> -  - nested  item",
+            "    <90>     fn foo()  bar</>",
             "  <36>•</> large.bin (too large to show) +0 -0",
             "",
             "<36>•</> <1>+1 -1 (truncated)</>"

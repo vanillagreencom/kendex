@@ -18,9 +18,6 @@ use super::{resolve_scopes, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui::{self, Span, Status, Style};
 
-mod display;
-use display::{record_warnings, row as draw_row, scope_refusal};
-
 /// What the run renders against and what the machine-readable mode asks
 /// for: the document, and the revision each shared file's foreign part is
 /// compared against.
@@ -70,11 +67,29 @@ fn report_record_problem(style: &Style, scope: &Scope, path: &Path, problem: Opt
     ui::stderr(&style.report_row(
         Status::Failed,
         &[Span::Prose(&format!(
-            "! {}: {detail} — checking what this place lists against its installed files",
+            "{}: {detail} — checking what this place lists against its installed files",
             scope_label(scope)
         ))],
-        "",
+        "! ",
     ));
+}
+
+/// A scope the run could not check, said and passed over: the refusal's
+/// own lines under the scope's headline.
+fn scope_refusal(style: &Style, scope: &Scope, error: &(dyn std::error::Error + 'static)) {
+    ui::stderr(&style.refusal(&format!("{} not checked: ", scope_label(scope)), error));
+}
+
+/// What the record read could not settle, one failed row per warning,
+/// each opening on the scope it is about.
+fn record_warnings(style: &Style, scope: &Scope, warnings: &[String]) {
+    for warning in warnings {
+        ui::stderr(&style.report_row(
+            Status::Failed,
+            &[Span::Prose(&format!("{}: {warning}", scope_label(scope)))],
+            "! ",
+        ));
+    }
 }
 
 /// Everything a run gathers across its scopes, and what closes it.
@@ -633,11 +648,7 @@ fn say_shim(style: &Style, shim: &ShimStanding) -> Option<String> {
     let harness = shim.harness.name();
     let name = &shim.name;
     let problem = shim.problem();
-    ui::stderr(&draw_row(
-        style,
-        &format!("shim {name} [{harness}]"),
-        problem.as_deref(),
-    ));
+    ui::stderr(&style.report_verdict(&format!("shim {name} [{harness}]"), problem.as_deref()));
     problem
 }
 
@@ -649,7 +660,7 @@ fn say_bookkeeping(style: &Style, kind: &str, name: &str, standing: &Standing) -
         return None;
     }
     let problem = standing.problems.join("; ");
-    ui::stderr(&draw_row(style, &format!("{kind} {name}"), Some(&problem)));
+    ui::stderr(&style.report_verdict(&format!("{kind} {name}"), Some(&problem)));
     Some(problem)
 }
 
@@ -697,11 +708,7 @@ fn say_row(
         }
         None => None,
     };
-    ui::stderr(&draw_row(
-        style,
-        &format!("{kind} {name} [{harness}]"),
-        bad.as_deref(),
-    ));
+    ui::stderr(&style.report_verdict(&format!("{kind} {name} [{harness}]"), bad.as_deref()));
     // An installation can match its declaration exactly and still do
     // nothing — switched off machine-wide, outranked by a system file, or
     // advisory on this tool. That is not drift, so it does not fail the

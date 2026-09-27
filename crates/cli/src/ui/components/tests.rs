@@ -1,7 +1,24 @@
 use std::path::Path;
 
 use super::*;
-use crate::ui::testing::{ascii, plain, rich, tagged, width};
+use crate::ui::testing::{ascii, plain, rich, tagged};
+use crate::width::visible_width;
+
+/// The one-line form is measured as drawn: with the two-cell ASCII arrow,
+/// a change landing on the eightieth cell stays one line and one cell past
+/// it stacks.
+#[test]
+fn a_change_stacks_exactly_where_its_one_line_form_overflows() {
+    let style = ascii(rich(80));
+    let fits = "n".repeat(58);
+    let line = style.change(&fits, "v1", "v2", Some("global"));
+    assert_eq!(line.len(), 1, "{line:?}");
+    assert_eq!(visible_width(&line[0]), 80);
+    let over = "n".repeat(59);
+    let stacked = style.change(&over, "v1", "v2", Some("global"));
+    assert_eq!(stacked.len(), 3, "{stacked:?}");
+    assert!(stacked.iter().all(|line| visible_width(line) <= 80));
+}
 
 #[test]
 fn inspection_components_wrap_content_within_80_cells() {
@@ -26,11 +43,11 @@ fn inspection_components_wrap_content_within_80_cells() {
     ];
     for (case, drawn, plain) in cases {
         assert!(
-            plain.iter().any(|line| width(line) > 80),
+            plain.iter().any(|line| visible_width(line) > 80),
             "{case} did not reach the bound"
         );
         assert!(
-            drawn.iter().all(|line| width(line) <= 80),
+            drawn.iter().all(|line| visible_width(line) <= 80),
             "{case}: {drawn:?}"
         );
         assert_eq!(

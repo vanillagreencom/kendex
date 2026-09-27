@@ -66,16 +66,23 @@ pub fn fail_refusal(headline: &str, error: &(dyn std::error::Error + 'static)) {
 
 impl super::Style {
     /// A refusal within a component report: the same door choice as
-    /// [`fail_refusal`], each line drawn as a failed report row.
+    /// [`fail_refusal`], each line drawn as a failed report row. The plain
+    /// first line opens on the `! ` refusal key; rich draws the failed
+    /// glyph in its place.
     pub fn refusal(
         &self,
         headline: &str,
         error: &(dyn std::error::Error + 'static),
     ) -> Vec<String> {
         lines(headline, error)
-            .into_iter()
-            .flat_map(|line| {
-                self.report_row(super::Status::Failed, &[super::Span::Prose(&line)], "")
+            .iter()
+            .enumerate()
+            .flat_map(|(at, line)| {
+                let prefix = match at {
+                    0 => "! ",
+                    _ => "",
+                };
+                self.report_row(super::Status::Failed, &[super::Span::Prose(line)], prefix)
             })
             .collect()
     }
@@ -169,7 +176,7 @@ mod tests {
         let error = Lines("first\nsecond".into());
         assert_eq!(
             plain().refusal("bad\npath: ", &error),
-            ["bad\\npath: first", "second"]
+            ["! bad\\npath: first", "second"]
         );
         assert_eq!(
             tagged(&rich(80).refusal("bad\npath: ", &error)),
@@ -178,7 +185,7 @@ mod tests {
         let value: Box<dyn std::error::Error> = "first\nsecond".into();
         assert_eq!(
             plain().refusal("error: ", value.as_ref()),
-            ["error: first\\nsecond"]
+            ["! error: first\\nsecond"]
         );
     }
 

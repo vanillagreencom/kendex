@@ -96,7 +96,7 @@ pub use blocks::{finish, flush, intro};
 pub use components::{Choice, Key, Status, Target, Value};
 pub use keys::{choose, consent, typed};
 pub use live::Spinner;
-pub use modes::{Channel, Look, Span, Style, channel, style};
+pub use modes::{Channel, Span, Style, channel, style};
 pub use prompt::{cancelled, confirm, spinner};
 pub use refusal::{Lines, component_refusal, fail_refusal, outro_fail, outro_refusal};
 
@@ -403,21 +403,6 @@ pub(crate) mod testing {
     /// as it is, so a snapshot shows it rather than hiding it.
     pub fn tagged(lines: &[String]) -> Vec<String> {
         lines.iter().map(|line| tag(line)).collect()
-    }
-
-    /// Visible cells only. Console measures SGR but not OSC 8 targets.
-    pub fn width(line: &str) -> usize {
-        let mut rest = line;
-        let mut visible = String::new();
-        while let Some((before, after)) = rest.split_once("\x1b]8;;") {
-            visible.push_str(before);
-            let (_, after) = after
-                .split_once("\x1b\\")
-                .unwrap_or_else(|| panic!("unterminated hyperlink: {line:?}"));
-            rest = after;
-        }
-        visible.push_str(rest);
-        console::measure_text_width(&visible)
     }
 
     fn tag(line: &str) -> String {

@@ -147,6 +147,9 @@ fn resolve(probe: &Probe) -> Style {
 pub enum Span<'a> {
     Prose(&'a str),
     Command(&'a str),
+    /// Another program's line, spaces and all: a diff line, a hunk header.
+    /// Broken by cells where it does not fit, never re-spaced.
+    Verbatim(&'a str),
 }
 
 impl<'a> From<kendex_core::drift::report::Span<'a>> for Span<'a> {
@@ -164,7 +167,8 @@ impl<'a> From<kendex_core::drift::report::Span<'a>> for Span<'a> {
 /// has after its indent. Prose breaks at spaces, and a word wider than the
 /// room where it reaches the edge. A command starts a new line where it
 /// does not fit on the current one and is never broken: one wider than a
-/// whole line is that line, and the terminal wraps it.
+/// whole line is that line, and the terminal wraps it. Verbatim text keeps
+/// every space and breaks by cells alone.
 pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut line = String::new();
@@ -176,6 +180,18 @@ pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String>
         let (text, whole) = match span {
             Span::Prose(text) => (*text, false),
             Span::Command(text) => (*text, true),
+            Span::Verbatim(text) => {
+                for c in text.chars() {
+                    let used = cells(&line);
+                    if used > 0 && used + cells(c.encode_utf8(&mut [0; 4])) > room {
+                        lines.push(std::mem::take(&mut line));
+                        room = rest.max(1);
+                    }
+                    line.push(c);
+                }
+                spaced = false;
+                continue;
+            }
         };
         let pieces: Vec<&str> = match whole {
             true => vec![text],
@@ -333,6 +349,14 @@ mod tests {
             ["one", "two three"]
         );
         assert_eq!(wrap(&[Span::Prose("abcdefgh")], 3, 3), ["abc", "def", "gh"]);
+        assert_eq!(
+            wrap(&[Span::Verbatim("+    fn foo()  bar")], 80, 80),
+            ["+    fn foo()  bar"]
+        );
+        assert_eq!(
+            wrap(&[Span::Verbatim("  - nested  item")], 6, 6),
+            ["  - ne", "sted  ", "item"]
+        );
         assert_eq!(prose(""), Vec::<String>::new());
         for line in wrap(&[Span::Prose("a b cc ddd eeee fffff gggggg ✓✓✓✓✓")], 5, 4)
             .iter()

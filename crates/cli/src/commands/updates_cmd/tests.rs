@@ -1,5 +1,6 @@
 use super::screen;
 use crate::ui::testing::{plain, rich, tagged};
+use crate::width::visible_width;
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::package::updates::{UpdateRow, UpdatesReport, VersionRef};
 
@@ -115,14 +116,12 @@ fn inspection_updates_wraps_scope_and_notes() {
     };
     let lines = screen(&rich(80), &report);
     assert!(
-        lines
-            .iter()
-            .all(|line| console::measure_text_width(line) <= 80),
+        lines.iter().all(|line| visible_width(line) <= 80),
         "{lines:?}"
     );
     assert!(
         screen(&plain(), &report)
             .iter()
-            .any(|line| console::measure_text_width(line) > 80)
+            .any(|line| visible_width(line) > 80)
     );
 }

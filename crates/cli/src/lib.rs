@@ -1,3 +1,9 @@
+// The one measurer of a drawn line's width, shared with the integration
+// harness under the same name.
+#[cfg(test)]
+#[path = "../tests/support/width.rs"]
+mod width;
+
 mod commands;
 mod dispatch_args;
 use dispatch_args::{check, remove};

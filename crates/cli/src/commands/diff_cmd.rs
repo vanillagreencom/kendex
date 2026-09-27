@@ -6,7 +6,7 @@ use kendex_core::package::diff::{FileStatus, LineKind, PackageDiff, VersionSel};
 use super::pin::parse_kind;
 use super::{CliResult, resolve_scopes};
 use crate::scope::ScopeFilter;
-use crate::ui::{self, Look, Span, Status, Style};
+use crate::ui::{self, Span, Status, Style};
 
 #[derive(Args)]
 pub struct DiffArgs {
@@ -69,10 +69,16 @@ fn screen(style: &Style, diff: &PackageDiff) -> Vec<String> {
         diff.total_deletions,
         if diff.truncated { "  (truncated)" } else { "" }
     );
-    let mut lines = match style.look {
-        Look::Plain => style.note(&[Span::Prose(&summary)]),
-        Look::Rich { .. } => style.section("changes", diff.files.len(), Status::Notice),
-    };
+    let (mut lines, closing) = style.report_totals(
+        "changes",
+        diff.files.len(),
+        if diff.truncated {
+            Status::Notice
+        } else {
+            Status::Done
+        },
+        &summary,
+    );
     for file in &diff.files {
         let status = match file.status {
             FileStatus::Added => " (added)",
@@ -85,14 +91,11 @@ fn screen(style: &Style, diff: &PackageDiff) -> Vec<String> {
             "{}{status}  +{} -{}",
             file.path, file.additions, file.deletions
         );
-        // The plain grammar sets each file off with a blank line; a rich
-        // row is its own boundary.
-        if matches!(style.look, Look::Plain) {
-            lines.push(String::new());
-        }
-        lines.extend(style.report_row(Status::Notice, &[Span::Prose(&label)], ""));
+        lines.extend(style.report_group(Status::Notice, &[Span::Prose(&label)], ""));
+        // Another program's lines, spaces and all: an indented line is the
+        // content, not prose to re-space.
         for hunk in &file.hunks {
-            lines.extend(style.report_detail(&[Span::Prose(&hunk.header)], ""));
+            lines.extend(style.report_detail(&[Span::Verbatim(&hunk.header)], ""));
             for line in &hunk.lines {
                 let marker = match line.kind {
                     LineKind::Context => ' ',
@@ -100,30 +103,16 @@ fn screen(style: &Style, diff: &PackageDiff) -> Vec<String> {
                     LineKind::Remove => '-',
                 };
                 let text = format!("{marker}{}", line.text);
-                lines.extend(match style.look {
-                    Look::Plain => style.note(&[Span::Prose(&text)]),
-                    Look::Rich { .. } => style.detail(
-                        match line.kind {
-                            LineKind::Context => None,
-                            LineKind::Add => Some(Status::Done),
-                            LineKind::Remove => Some(Status::Decision),
-                        },
-                        &[Span::Prose(&text)],
-                    ),
+                let spans = [Span::Verbatim(&text)];
+                lines.extend(match line.kind {
+                    LineKind::Context => style.report_detail(&spans, ""),
+                    LineKind::Add => style.report_marked(Status::Done, &spans, ""),
+                    LineKind::Remove => style.report_marked(Status::Decision, &spans, ""),
                 });
             }
         }
     }
-    if matches!(style.look, Look::Rich { .. }) {
-        lines.extend(style.summary(
-            if diff.truncated {
-                Status::Notice
-            } else {
-                Status::Done
-            },
-            &summary,
-        ));
-    }
+    lines.extend(closing);
     lines
 }
 

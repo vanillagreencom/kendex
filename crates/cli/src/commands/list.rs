@@ -5,6 +5,7 @@ use kendex_core::{scan, settings};
 
 use super::{CliResult, resolve_scopes};
 use crate::scope::ScopeFilter;
+use crate::ui::report::PlainColumns;
 use crate::ui::{self, Span, Status, Style};
 
 pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult {
@@ -15,12 +16,12 @@ pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult
     let app_settings = settings::load(env)?;
     let result = scan::scan_scopes(env, &app_settings.harness_roots, &scopes);
 
-    let rows: Vec<[String; 5]> = result
+    let rows: Vec<Vec<String>> = result
         .items
         .iter()
         .filter(|i| harness.is_none_or(|h| i.harness == h))
         .map(|i| {
-            [
+            vec![
                 i.kind.name().to_owned(),
                 i.name.clone(),
                 i.harness.name().to_owned(),
@@ -58,36 +59,16 @@ pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult
     Ok(())
 }
 
-fn listing(style: &Style, rows: &[[String; 5]]) -> Vec<String> {
+fn listing(style: &Style, rows: &[Vec<String>]) -> Vec<String> {
     if rows.is_empty() {
         return style.summary(Status::Done, "no packages found");
     }
-    if matches!(style.look, ui::Look::Plain) {
-        // Keep the existing byte-padded, headerless script table.
-        let mut widths = [0usize; 5];
-        for row in rows {
-            for (w, cell) in widths.iter_mut().zip(row) {
-                *w = (*w).max(cell.len());
-            }
-        }
-        let mut lines = Vec::new();
-        for row in rows {
-            let line = row
-                .iter()
-                .zip(widths)
-                .map(|(cell, w)| format!("{cell:w$}"))
-                .collect::<Vec<_>>()
-                .join("  ");
-            lines.extend(style.note(&[Span::Prose(line.trim_end())]));
-        }
-        return lines;
-    }
-    let mut lines = style.section("packages", rows.len(), Status::Notice);
-    lines.extend(style.table(
+    style.report_table(
+        "packages",
         &["kind", "name", "harness", "scope", "state"],
-        &rows.iter().map(|row| row.to_vec()).collect::<Vec<_>>(),
-    ));
-    lines
+        rows,
+        PlainColumns::Padded,
+    )
 }
 
 #[cfg(test)]

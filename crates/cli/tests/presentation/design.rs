@@ -85,7 +85,7 @@ fn inspection_verbs_respect_no_color_and_terminal_width() {
         );
         for line in rich.1.lines() {
             assert!(
-                console::measure_text_width(line) <= 80,
+                crate::width::visible_width(line) <= 80,
                 "{args:?}: {line:?}"
             );
         }
@@ -101,6 +101,8 @@ fn inspection_file_payload_is_identical_in_every_mode() {
     for (mode, extra) in [
         ("pretty", vec![]),
         ("pretty", vec![("NO_COLOR", "1")]),
+        ("pretty", vec![("TERM", "dumb")]),
+        ("pretty", vec![("COLUMNS", "80")]),
         ("auto", vec![]),
     ] {
         assert_eq!(inspection(&at, &args, mode, &extra), plain);

@@ -15,6 +15,8 @@ mod test_util;
 mod installer_message;
 #[path = "support/pty.rs"]
 mod pty;
+#[path = "support/width.rs"]
+mod width;
 
 mod add_kinds;
 mod add_picker_terminal;

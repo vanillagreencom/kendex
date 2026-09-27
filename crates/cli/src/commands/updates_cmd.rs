@@ -5,7 +5,7 @@ use kendex_core::env::Env;
 use super::pin::parse_kind;
 use super::{CliResult, resolve_scopes_at, scope_label};
 use crate::scope::ScopeFilter;
-use crate::ui::{self, Look, Span, Status, Style};
+use crate::ui::{self, Span, Status, Style};
 
 #[derive(Subcommand)]
 pub enum UpdatesCommand {
@@ -154,37 +154,16 @@ fn screen(style: &Style, report: &kendex_core::package::updates::UpdatesReport) 
             .as_ref()
             .map(show_version)
             .unwrap_or_else(|| "?".into());
-        if matches!(style.look, Look::Rich { .. }) {
-            let name = format!("{} {}", row.kind.name(), row.name);
-            lines.extend(style.change(&name, &current, &latest, Some(&scope_label(&row.scope))));
-            for (status, note) in notes {
-                lines.extend(style.detail(Some(status), &[Span::Prose(note)]));
-            }
-            continue;
-        }
-        let notes = if notes.is_empty() {
-            String::new()
-        } else {
-            format!(
-                "  [{}]",
-                notes
-                    .iter()
-                    .map(|(_, text)| *text)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        };
-        // The place leads the line: the same package can be out of date
-        // in several projects, and a line that does not say which one
+        // The place leads the plain line: the same package can be out of
+        // date in several projects, and a line that does not say which one
         // reads as a duplicate.
-        lines.extend(style.note(&[Span::Prose(&format!(
-            "{}  {} {}  {} -> {}{notes}",
-            scope_label(&row.scope),
-            row.kind.name(),
-            row.name,
-            current,
-            latest,
-        ))]));
+        lines.extend(style.report_change(
+            &scope_label(&row.scope),
+            &format!("{} {}", row.kind.name(), row.name),
+            &current,
+            &latest,
+            &notes,
+        ));
     }
     for warning in &report.warnings {
         lines.extend(style.report_row(

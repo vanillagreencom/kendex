@@ -7,7 +7,8 @@ use kendex_core::package::detail;
 use super::pin::parse_kind;
 use super::{CliResult, payload, resolve_scopes};
 use crate::scope::ScopeFilter;
-use crate::ui::{self, Look, Span, Status, Style, Target};
+use crate::ui::report::PlainColumns;
+use crate::ui::{self, Span, Status, Style, Target};
 
 #[derive(Args)]
 pub struct ShowArgs {
@@ -66,38 +67,24 @@ pub fn run(env: &Env, args: ShowArgs) -> CliResult {
 }
 
 fn file_list(style: &Style, files: &[detail::PackageFile]) -> Vec<String> {
-    match style.look {
-        Look::Plain => files
+    style.report_table(
+        "files",
+        &["path", "size"],
+        &files
             .iter()
-            .flat_map(|file| {
-                style.note(&[Span::Prose(&format!("{}  {} bytes", file.path, file.size))])
-            })
-            .collect(),
-        Look::Rich { .. } => {
-            let mut lines = style.section("files", files.len(), Status::Notice);
-            lines.extend(
-                style.table(
-                    &["path", "bytes"],
-                    &files
-                        .iter()
-                        .map(|file| vec![file.path.clone(), file.size.to_string()])
-                        .collect::<Vec<_>>(),
-                ),
-            );
-            lines
-        }
-    }
+            .map(|file| vec![file.path.clone(), format!("{} bytes", file.size)])
+            .collect::<Vec<_>>(),
+        PlainColumns::Joined,
+    )
 }
 
 fn metadata(style: &Style, meta: &detail::PackageMeta) -> Vec<String> {
     let mut lines = Vec::new();
     let mut field = |label: &str, value: &str, status, url: Option<&str>| {
         let text = format!("{label}: {value}");
-        lines.extend(match (style.look, url) {
-            (Look::Rich { .. }, Some(url)) => style.link(&text, Target::Url(url)),
-            (Look::Rich { .. }, None) | (Look::Plain, _) => {
-                style.report_row(status, &[Span::Prose(&text)], "")
-            }
+        lines.extend(match url {
+            Some(url) => style.report_link(&text, Target::Url(url)),
+            None => style.report_row(status, &[Span::Prose(&text)], ""),
         });
     };
     match meta.source.as_str() {

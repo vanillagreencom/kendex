@@ -218,15 +218,22 @@ impl Style {
                 .trim_end()
                 .to_owned(),
             ],
-            Look::Rich { palette, width }
-                if 2 + cells(&name)
-                    + 2
-                    + cells(&old)
-                    + 3
-                    + cells(&new)
-                    + scope.as_ref().map_or(0, |scope| 2 + cells(scope))
-                    > width =>
-            {
+            Look::Rich { palette, width } => {
+                let line = format!(
+                    "  {}  {} {} {}  {}",
+                    strong(palette, Token::Emphasis, &name),
+                    paint(palette, Token::Muted, &old),
+                    paint(palette, Token::Accent, arrow),
+                    new,
+                    paint(palette, Token::Muted, scope.as_deref().unwrap_or_default()),
+                )
+                .trim_end()
+                .to_owned();
+                if cells(&line) <= width {
+                    return vec![line];
+                }
+                // Stacked where the one line does not fit: the name, then
+                // the versions and the scope indented under it.
                 let mut lines = fitted(width, "  ", 2, 2, &[Span::Prose(&name)], |chunk| {
                     strong(palette, Token::Emphasis, chunk)
                 });
@@ -250,18 +257,6 @@ impl Style {
                 }
                 lines
             }
-            Look::Rich { palette, .. } => vec![
-                format!(
-                    "  {}  {} {} {}  {}",
-                    strong(palette, Token::Emphasis, &name),
-                    paint(palette, Token::Muted, &old),
-                    paint(palette, Token::Accent, arrow),
-                    new,
-                    paint(palette, Token::Muted, &scope.unwrap_or_default()),
-                )
-                .trim_end()
-                .to_owned(),
-            ],
         }
     }
 
@@ -557,8 +552,16 @@ impl Style {
     }
 }
 
-/// Spans with each run escaped, and whether it is a command kept.
-pub(super) struct Escaped(Vec<(bool, String)>);
+/// Which kind of span a run of text was, kept beside its escaped text.
+#[derive(Clone, Copy)]
+enum Shape {
+    Prose,
+    Command,
+    Verbatim,
+}
+
+/// Spans with each run escaped, and the kind each was kept.
+pub(super) struct Escaped(Vec<(Shape, String)>);
 
 impl From<&[Span<'_>]> for Escaped {
     fn from(spans: &[Span<'_>]) -> Escaped {
@@ -566,8 +569,9 @@ impl From<&[Span<'_>]> for Escaped {
             spans
                 .iter()
                 .map(|span| match span {
-                    Span::Prose(text) => (false, escaped(text)),
-                    Span::Command(text) => (true, escaped(text)),
+                    Span::Prose(text) => (Shape::Prose, escaped(text)),
+                    Span::Command(text) => (Shape::Command, escaped(text)),
+                    Span::Verbatim(text) => (Shape::Verbatim, escaped(text)),
                 })
                 .collect(),
         )
@@ -578,9 +582,10 @@ impl Escaped {
     fn spans(&self) -> Vec<Span<'_>> {
         self.0
             .iter()
-            .map(|(command, text)| match command {
-                true => Span::Command(text),
-                false => Span::Prose(text),
+            .map(|(shape, text)| match shape {
+                Shape::Prose => Span::Prose(text),
+                Shape::Command => Span::Command(text),
+                Shape::Verbatim => Span::Verbatim(text),
             })
             .collect()
     }

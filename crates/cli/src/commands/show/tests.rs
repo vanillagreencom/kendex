@@ -1,5 +1,6 @@
 use super::{detail, file_list, metadata};
-use crate::ui::testing::{plain, rich, tagged, width};
+use crate::ui::testing::{plain, rich, tagged};
+use crate::width::visible_width;
 
 #[test]
 fn inspection_show_snapshots() {
@@ -31,20 +32,32 @@ fn inspection_show_snapshots() {
             "  <33>!</> held at: 1234567",
         ]
     );
-    let files = [detail::PackageFile {
-        path: "SKILL.md".into(),
-        size: 42,
-        is_readme: false,
-    }];
-    assert_eq!(file_list(&plain(), &files), ["SKILL.md  42 bytes"]);
+    let files = [
+        detail::PackageFile {
+            path: "SKILL.md".into(),
+            size: 42,
+            is_readme: false,
+        },
+        detail::PackageFile {
+            path: "references/rules.md".into(),
+            size: 7,
+            is_readme: false,
+        },
+    ];
+    // Plain keeps each file's line as written, unpadded.
+    assert_eq!(
+        file_list(&plain(), &files),
+        ["SKILL.md  42 bytes", "references/rules.md  7 bytes"]
+    );
     assert_eq!(
         tagged(&file_list(&rich(80), &files)),
         [
             "",
-            "<1;36>files</>  <90>1</>",
-            "  <1;90>path</>      <1;90>bytes</>",
-            "  <90>───────────────</>",
-            "  SKILL.md  42"
+            "<1;36>files</>  <90>2</>",
+            "  <1;90>path</>                 <1;90>size</>",
+            "  <90>─────────────────────────────</>",
+            "  SKILL.md             42 bytes",
+            "  references/rules.md  7 bytes"
         ]
     );
     let local = detail::PackageMeta {
@@ -88,10 +101,13 @@ fn inspection_show_wraps_links_and_file_paths() {
         .into_iter()
         .chain(file_list(&rich(80), &files))
         .collect::<Vec<_>>();
-    assert!(drawn.iter().all(|line| width(line) <= 80), "{drawn:?}");
+    assert!(
+        drawn.iter().all(|line| visible_width(line) <= 80),
+        "{drawn:?}"
+    );
     assert!(
         metadata(&plain(), &meta)
             .iter()
-            .any(|line| console::measure_text_width(line) > 80)
+            .any(|line| visible_width(line) > 80)
     );
 }
