@@ -18,8 +18,6 @@ tmp/
 
 # Filled-in local working copies of docs (backed up privately, never committed).
 docs/*-local.md
-# Plan drafts stay local in this repository; docs/plans is persistent content in consumer repositories only.
-docs/plans/
 
 # Python bytecode caches, written beside any script this repo runs with python3
 __pycache__/
