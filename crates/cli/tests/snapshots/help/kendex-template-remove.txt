@@ -16,9 +16,6 @@ Options:
           Naming it also tells two members of one kind and name apart; without
           it a removal reaches every member wearing them
 
-      --plugin <PLUGIN>
-          Plugins, each installed whole like a bundle
-
   -h, --help
           Print help
 
@@ -40,3 +37,6 @@ Packages:
 
   -b, --bundle <BUNDLE>
           Bundles the marketplace offers, each installed whole
+
+      --plugin <PLUGIN>
+          Plugins, each installed whole like a bundle

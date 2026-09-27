@@ -8,21 +8,6 @@ Arguments:
           The authored marketplace directory to copy into
 
 Options:
-      --skill <SKILLS>
-          
-
-      --agent <AGENTS>
-          
-
-      --hook <HOOKS>
-          
-
-      --command <COMMANDS>
-          
-
-      --mcp <MCP>
-          
-
       --origin <ORIGIN>
           When one name exists with different bytes in several places: the hash
           (prefix) of the origin to copy
@@ -41,6 +26,22 @@ Options:
 
   -h, --help
           Print help
+
+Packages:
+      --skill <SKILLS>
+          
+
+      --agent <AGENTS>
+          
+
+      --hook <HOOKS>
+          
+
+      --command <COMMANDS>
+          
+
+      --mcp <MCP>
+          
 
 Where:
       --from-scope <FROM_SCOPE>

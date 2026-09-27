@@ -29,7 +29,8 @@ fn layout(command: Command) -> Command {
                 "global" | "scope" | "from_scope" | "project_path" | "harness"
                 | "all_harnesses" | "throwaway" => "Where",
                 "agent" | "skill" | "hook" | "command" | "mcp_server" | "pi_extension"
-                | "bundle" | "optional" | "all" | "asset" => "Packages",
+                | "bundle" | "optional" | "all" | "asset" | "skills" | "agents" | "hooks"
+                | "commands" | "mcp" | "plugin" => "Packages",
                 "json" | "quiet" | "verbose" | "output" => "Output",
                 "commit" | "push" | "pull_request" | "leave" | "message" => "Git",
                 _ => return arg,
