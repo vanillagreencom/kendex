@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """File accepted rendered-file review claims for upstream triage.
 
-refresh-reviews supplies JSON [{path, body, url}] on stdin after the trusted
+refresh-reviews supplies JSON [{path, body, claim, url}] on stdin after the trusted
 render proof. The head's generated inventory binds each reported path. Review
 text is data; only the upstream verifier confirms a defect. GitHub issue titles
 carry the stable fingerprint consumed by later scheduled runs.
@@ -87,9 +87,9 @@ def main():
             if "--repo" in args and args[args.index("--repo") + 1] == UPSTREAM and "--label" in args:
                 label = args[args.index("--label") + 1]
         evidence = finding.get("url") or f"https://github.com/{repo}/pull/{pr}"
-        # No head/run is part of the identity: scheduled retries and refreshed
-        # commits must find the existing open report of this same claim.
-        identity = json.dumps([repo, path, finding.get("key", ""), finding["body"]], ensure_ascii=False, separators=(",", ":"))
+        # Claim text excludes review IDs and emitted location line numbers.
+        # The original body remains evidence, never an identity input.
+        identity = json.dumps([repo, path, finding["claim"]], ensure_ascii=False, separators=(",", ":"))
         fingerprint = hashlib.sha256(identity.encode()).hexdigest()
         marker = f"[kendex-render:{fingerprint}]"
         title = f"{marker} Review finding in {path}"[:256]

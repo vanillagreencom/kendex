@@ -43,7 +43,7 @@ for number, state, merged, branch in [(1,'open',None,'kendex/refresh'),(2,'close
         'base':{'sha':'c'*40},
         'head':{'ref':branch,'sha':'a'*40,'repo':{'full_name':'acme/repo'}},'user':bot,
         'threads':[{'id':f'T{number}','root':root,'resolved':False},{'id':f'H{number}','root':root+1,'resolved':False}],
-        'comments':[{'pull_request_review_id':root+100,'id':root,'body':'Rendered source defect.','path':'.agents/skill.sh','user':reviewer},
+        'comments':[{'pull_request_review_id':root+100,'id':root,'body':'Rendered source defect.','path':'.agents/skill.sh','html_url':f'https://github.com/acme/repo/pull/{number}#discussion_r{root}','user':reviewer},
                     {'id':root+1,'body':'Human request.','path':'.agents/skill.sh','user':human}],
         'reviews':[{'id':root+100,'html_url':f'https://github.com/acme/repo/pull/{number}#review', 'user':reviewer,'state':'COMMENTED','commit_id':'b'*40,
                     'body':'### Suppressed comments (2)\n**.agents/with space.sh:1**\nDefect A\n**.agents/next.sh:2**\nDefect B'}],
@@ -80,6 +80,37 @@ run_writer --report-only
 if [ "$RC" -eq 0 ] && jq -e '(.reports | length) == 6 and (.writes | length) == 6' "$FIXTURE" >/dev/null; then
   ok 'reporting collects accepted automatic findings after all policy replies exist'
 else bad 'reporting must remain independent of durable policy replies' "$OUT"; fi
+
+# A later refresh assigns new inline IDs and moves suppressed locations.
+# Candidate claim text stays fixed while evidence keeps those new locations.
+cp "$FIXTURE" "$TMP/before-metadata"
+jq '.reports=[] | .prs |= map(.comments[0].id += 1000 | .threads[0].root += 1000
+  | .comments[0].html_url += "0" | .reviews[0].body |= gsub(":1\\*\\*";":11**") | .reviews[0].body |= gsub(":2\\*\\*";":22**"))' "$FIXTURE" >"$TMP/moved-metadata"
+cp "$TMP/moved-metadata" "$FIXTURE"
+run_writer --report-only
+if [ "$RC" -eq 0 ] && jq -e --slurpfile before "$TMP/before-metadata" '
+  ([.reports[] | {path,claim}]) == ([$before[0].reports[] | {path,claim}])
+  and any(.reports[]; (.body | contains(":11**")) and (.claim | contains("**.agents/with space.sh**")))
+  and (.reports[0].url != $before[0].reports[0].url) and all(.reports[]; has("key") | not)
+  ' "$FIXTURE" >/dev/null; then
+  ok 'new inline IDs and moved suppressed locations retain claim text and original evidence'
+else bad 'stable candidate claim text' "$OUT"; fi
+cp -R "$TMP/trusted-scripts" "$TMP/claim-mutant"
+python3 - "$TMP/claim-mutant/refresh-reviews.sh" <<'CLAIM_CONTROL'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text(); needle='($locations | index($token)) != null'
+assert s.count(needle)==1
+p.write_text(s.replace(needle,'false and ('+needle+')'))
+CLAIM_CONTROL
+DRIVER="$TMP/claim-mutant/refresh-reviews.sh"
+cp "$TMP/moved-metadata" "$FIXTURE"
+run_writer --report-only
+if [ "$RC" -eq 0 ] && jq -e '(.reports | length)==6 and any(.reports[]; .claim | contains("**.agents/with space.sh:11**"))' "$FIXTURE" >/dev/null; then
+  ok 'control: disabled metadata normalization changes the claim text'
+else bad 'claim metadata control' "$OUT"; fi
+DRIVER="$TMP/trusted-scripts/refresh-reviews.sh"
+cp "$TMP/before-metadata" "$FIXTURE"
 
 # A late review on a merged PR adds one new suppressed entry. Old entries
 # remain answered even when the review groups have changed.

@@ -178,9 +178,15 @@ while IFS= read -r pr; do
       | [ $actions[] as $a | $comments[]
           | select(.id == $a.root)
           | select(.pull_request_review_id as $id | any($accepted[]; .id == $id))
-          | {path, body, url: .html_url, key: (.id | tostring)} ]
-        + [ $accepted[] | . as $review | (.body | suppressed_scan).list[]
-          | {key: ., path: sub(":[0-9]+$"; ""), body: $review.body, url: $review.html_url} ]')" \
+          | {path, body, claim: .body, url: .html_url} ]
+        + [ $accepted[] | . as $review | (.body | suppressed_scan).list as $locations
+          | ($review.body | split("\n") | map(
+              . as $line | (display_strip | entry_token // "") as $token
+              | if ($locations | index($token)) != null
+                then $line | display_strip | split($token) | join($token | sub(":[0-9]+$"; ""))
+                else $line end) | join("\n")) as $claim
+          | $locations[]
+          | {path: sub(":[0-9]+$"; ""), body: $review.body, claim: $claim, url: $review.html_url} ]')" \
       || fail report-candidates "$PR_NUMBER" 'Could not read accepted automatic findings.'
     printf '%s\n' "$candidates" | KENDEX_ISSUES_TOKEN="${KENDEX_ISSUES_TOKEN:-}" \
       python3 "$script_dir/refresh-report.py" "$HEAD_SHA" "$PR_NUMBER"
