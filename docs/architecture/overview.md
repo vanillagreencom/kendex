@@ -56,7 +56,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 - Catalogs are adversarial input: reads are sealed and budgeted, frontmatter is real YAML with aliases and duplicate keys refused, and every interpolated value in a generated file is quoted.
 - Two scores, safety and quality, are never averaged and are advisory everywhere: install, update and apply proceed regardless.
 - Hook events have one vocabulary, Claude Code's names in `crates/core/src/hook.rs::EVENTS`; every other harness maps from it.
-- The kendex app and CLI open no pull request in a consumer. Off a hosted fleet the consumer train carries each shipped-path merge there; how, and what replaces the train, is [merge-rail.md](merge-rail.md) § Decisions.
+- The kendex app and CLI open no pull request in a consumer. Each consumer's GitHub Actions workflow pulls updates and owns its refresh pull request. [merge-rail.md](merge-rail.md) defines the boundaries.
 - Commits walk through the commit-guards package's committed scripts whatever tool makes them; kendex implements no check of its own and `kendex check` relays the package's verdict.
 - A package's declared check runs only under a licence: kendex's arming record, in a git directory git clones for nobody, or a person pressing the control that asks.
 - kendex never emits a pasteable command line: errors, hints and recovery instructions present the verb and its parameters as data. The one exception is the session-start drift report, whose remedies come from a fixed template set with validated identifiers.
@@ -74,7 +74,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 - [scoring.md](scoring.md): read before changing a safety or quality rule.
 - [updates.md](updates.md): read before changing the release feed, signing, digests or self-replace.
 - [registry.md](registry.md): read before changing the community directory, sign-in or the skills.sh lead.
-- [merge-rail.md](merge-rail.md): read before changing CI, the review gate, the merge route or the consumer train.
+- [merge-rail.md](merge-rail.md): read before changing CI, the review gate, the merge route or consumer refresh.
 - [../adapters/README.md](../adapters/README.md): read when touching one adapter's paths or formats.
 - [../authoring/README.md](../authoring/README.md): read when changing what a catalog may declare.
 - [../decisions/INDEX.md](../decisions/INDEX.md): read before reversing a choice a topic file cites.

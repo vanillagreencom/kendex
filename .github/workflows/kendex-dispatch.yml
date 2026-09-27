@@ -1,0 +1,32 @@
+name: Dispatch kendex refresh
+
+"on":
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: kendex
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: token
+        with:
+          app-id: ${{ secrets.FLEET_GH_APP_ID }}
+          private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-contents: write
+      - name: Signal installed repositories
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: skills/review-gate/scripts/dispatch-refresh.sh

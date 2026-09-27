@@ -47,9 +47,9 @@ done
 # so the proof reads all of them.
 forms="$(sed -n "/^REPLY_FORMS_DEF='/,/^'\$/p" "$PRED" | sed "1s/^REPLY_FORMS_DEF='//; \$d")"
 reduction="$(sed -n "/^t_threads_page_jq=/,/^  end'\$/p" "$PRED" | sed "1s/^t_threads_page_jq=[^']*'//; s/^  end'\$/  end/")"
-# shellcheck source=../scripts/lib/waiver.sh
+. "$SCRIPT_DIR/../scripts/lib/review-findings.sh"
 . "$SCRIPT_DIR/../scripts/lib/waiver.sh"
-prog="$forms
+prog="$AUTOMATIC_AUTHOR_DEF$forms
 $RG_WAIVER_JQ
 $reduction"
 [ -n "$forms" ] && [ -n "$reduction" ] || { echo "FAIL: could not extract the thread program"; exit 1; }

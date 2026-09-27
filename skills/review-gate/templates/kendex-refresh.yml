@@ -1,0 +1,88 @@
+# Copy verbatim into .github/workflows/ with scripts/adopt-refresh.sh.
+# Schedule and manual runs work in any consumer with the app-secret kendex
+# environment. Opening a pull request needs that repository's app token.
+# The instant repository_dispatch signal needs the organization's lanes app
+# and the catalog's dispatch workflow; it is organization wiring.
+name: Refresh kendex
+
+"on":
+  repository_dispatch:
+    types: [kendex-refresh]
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kendex-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    if: github.repository != 'vanillagreencom/kendex' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: kendex
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned kendex
+        env:
+          GH_TOKEN: ""
+          KENDEX_VERSION: main-build-261-1-d1637e9ee73474603707339935ebaed33d175269
+          KENDEX_INSTALLER_REPO: vanillagreencom/kendex
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/${KENDEX_VERSION##*-}/install.sh" | sh -s -- --version "$KENDEX_VERSION"
+      - name: Preserve default-branch scripts
+        run: |
+          set -euo pipefail
+          cp -R .agents/skills "$RUNNER_TEMP/refresh-skills"
+      - name: Mint the repository app token
+        id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.FLEET_GH_APP_ID }}
+          private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+          permission-administration: read
+          permission-metadata: read
+          permission-actions: read
+          permission-environments: read
+          permission-secrets: read
+          permission-organization-secrets: read
+      - name: Refresh and arm the rolling pull request
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          REFRESH_APP_SLUG: ${{ steps.token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          exec "$RUNNER_TEMP/refresh-skills/review-gate/scripts/refresh-consumer.sh"
+      - name: Mint the kendex issue token
+        id: issues-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.FLEET_GH_APP_ID }}
+          private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
+          owner: vanillagreencom
+          repositories: kendex
+          permission-issues: write
+      - name: Report rendered-file findings upstream
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          KENDEX_ISSUES_TOKEN: ${{ steps.issues-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          exec "$RUNNER_TEMP/refresh-skills/review-gate/scripts/refresh-reviews.sh" --report-only

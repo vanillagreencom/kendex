@@ -126,10 +126,12 @@ expected_listing() { # OVERRIDES
   printf '%s' "$out"
 }
 
-run() { # FIXTURES SHIM_FAIL — sets OUT (verdict lines) and RC
+run() { # FIXTURES SHIM_FAIL [ARGS...] — sets OUT (verdict lines) and RC
+  local fixtures="$1" shim_fail="$2"
+  shift 2
   RC=0
-  RAW="$(env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$1" GH_SHIM_FAIL="$2" \
-    "$SKILL/scripts/validate-standard.sh" 2>&1)" || RC=$?
+  RAW="$(env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$fixtures" GH_SHIM_FAIL="$shim_fail" \
+    "$SKILL/scripts/validate-standard.sh" "$@" 2>&1)" || RC=$?
   OUT="$(grep -E '^(ok|FAIL) check=' <<<"$RAW" || true)"
 }
 
@@ -310,6 +312,77 @@ if [ "$RC" -eq 2 ] && [ "${RAW%% value=*}" = "review-gate-error=repository-read"
 else
   bad "the shipped standard.json is well-formed (rc=$RC)" "$RAW"
 fi
+
+# Adoption can validate its environment without owner-only GitHub reads.
+# This fixture omits every unrelated endpoint, so an accidental read fails.
+. "$TEST_DIR/lib/workflow-edit.sh"
+ENV_BASE="$TMP/environment-only"
+mkdir -p "$ENV_BASE"
+for file in repository environments branch-policies environment-secrets-kendex; do
+  cp "$BASE/$file.json" "$ENV_BASE/$file.json"
+done
+ENV_BASELINE='ok check=standard-environment value=custom:branch:main
+ok check=standard-environment-secrets value=APP_ID\;APP_KEY'
+EXPECTED_URLS='repos/{owner}/{repo}
+repos/acme/widgets/environments
+repos/acme/widgets/environments/kendex/deployment-branch-policies
+repos/acme/widgets/environments/kendex/secrets'
+run "$ENV_BASE" '' --environment-only
+if [ "$RC" -eq 0 ] && [ "$OUT" = "$ENV_BASELINE" ] && [ "$(cat "$ENV_BASE/.urls.log")" = "$EXPECTED_URLS" ]; then
+  ok 'environment-only reads only repository identity, policy, and secret names'
+else
+  bad "environment-only baseline (rc=$RC)" "$RAW"
+fi
+
+while IFS='~' read -r name fail file edit overrides; do
+  [ -n "$name" ] || continue
+  dir="$TMP/env-$name"
+  cp -R "$ENV_BASE" "$dir"
+  if [ -n "$file" ]; then
+    jq "$edit" "$dir/$file.json" >"$dir/edited.json"
+    mv "$dir/edited.json" "$dir/$file.json"
+  fi
+  run "$dir" "$fail" --environment-only
+  want="$(expected_listing "$overrides")"
+  want="$(grep -E '^(ok|FAIL) check=standard-environment(-secrets)? ' <<<"$want")"
+  remedy=0
+  [ -z "$fail" ] || remedy=1
+  if [ "$RC" -eq 1 ] && [ "$OUT" = "$want" ] &&
+      { [ "$remedy" -eq 1 ] || grep -qF 'scripts/provision-environment.sh --org acme' <<<"$RAW"; }; then
+    ok "environment-only $name refuses with the matching environment verdict"
+  else
+    bad "environment-only $name (rc=$RC)" "$RAW"
+  fi
+done <<'ROWS'
+missing~~environments~.environments = []~standard-environment=absent^standard-environment-secrets=absent
+unrestricted~~environments~.environments[1].deployment_branch_policy = null~standard-environment=unrestricted
+missing-secret~~environment-secrets-kendex~.secrets |= map(select(.name != "APP_KEY"))~standard-environment-secrets=APP_ID
+unreadable~environments~~~standard-environment=unreadable^standard-environment-secrets=unreadable
+ROWS
+
+# The mode guard's control reaches the real validator with the same argument,
+# but makes it execute unrelated checks. The narrow-mode assertion goes red.
+cp "$SKILL/scripts/validate-standard.sh" "$TMP/standard-script.keep"
+file_edit "$SKILL" scripts/validate-standard.sh 1 '^  ENVIRONMENT_ONLY=1$' 's/^  ENVIRONMENT_ONLY=1$/  ENVIRONMENT_ONLY=0/'
+chmod +x "$SKILL/scripts/validate-standard.sh"
+run "$ENV_BASE" '' --environment-only
+if [ "$RC" -eq 1 ] && [ "$OUT" != "$ENV_BASELINE" ] && grep -q '^FAIL check=standard-ruleset-source ' <<<"$OUT"; then
+  ok 'control: disabled narrow mode reaches unavailable owner-only reads'
+else
+  bad "control: narrow mode (rc=$RC)" "$RAW"
+fi
+cp "$TMP/standard-script.keep" "$SKILL/scripts/validate-standard.sh"
+
+# The exit rule must carry environment failure to the adoption caller.
+file_edit "$SKILL" scripts/validate-standard.sh 1 '^  \[ "\$FAILED" -eq 0 \]$' 's/^  \[ "\$FAILED" -eq 0 \]$/  [ "$FAILED" -ge 0 ]/'
+chmod +x "$SKILL/scripts/validate-standard.sh"
+run "$TMP/env-missing" '' --environment-only
+if [ "$RC" -eq 0 ] && grep -qxF 'FAIL check=standard-environment value=absent' <<<"$OUT"; then
+  ok 'control: lost environment status accepts an absent environment'
+else
+  bad "control: environment failure status (rc=$RC)" "$RAW"
+fi
+cp "$TMP/standard-script.keep" "$SKILL/scripts/validate-standard.sh"
 
 [ "$rows" -gt 0 ] || { bad "the drift table ran no row" ""; }
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

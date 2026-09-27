@@ -89,6 +89,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 case "$url" in
+  "installation/repositories") name=installation-repositories ;;
+  "repos/"*"/dispatches") name=dispatches ;;
   *"/check-runs"*) name=checkruns ;;
   *"/compare/"*) name=compare ;;
   *"/reviews"*)  name=reviews ;;

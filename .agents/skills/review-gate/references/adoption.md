@@ -69,7 +69,30 @@ After `kendex refresh` brings a new template, run `.agents/skills/review-gate/sc
 - A copy equal to an earlier shipped version is re-installed from the current template, keeping its script path and its `check_run` opt-in: `ok check=workflow-readopted`. The re-install writes the template's bytes, so a comment-only edit to the copy is replaced.
 - A copy whose code lines equal no shipped version is one a person edited. It is left untouched and named on one `FAIL check=workflow-edited` line, with the first divergent line under it. Re-copy the template by hand.
 
-Run it after every `kendex refresh`, whatever that refresh changed, so a template change lands in the same pull request as the refresh and its validate check stays green, including when an earlier refresh skipped this repository. The kendex refresh workflow KEN-1779 adds is the step's caller; until it lands, every orch step that refreshes a project runs it through `.agents/skills/orch/scripts/adopt-writer`: `post-merge`, the consumer train ([orch consumer-train.md § 3](../../orch/workflows/consumer-train.md#3-refresh-each-consumer)) and the hosted control host's refresh.
+Run it after every `kendex refresh` so template changes land with the refresh. The consumer refresh workflow calls it through `scripts/adopt-refresh.sh`.
+
+### Automatic consumer refresh
+
+The shipped `templates/kendex-refresh.yml` checks for updates every 30 minutes. A manual run uses the same path. Each run updates `kendex/refresh`, keeps one open pull request, and enables auto-merge with the repository's app token. Required CI checks and the merge queue still control merging. An unchanged result opens no pull request.
+
+Provision the `kendex` environment before adoption. It must contain `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` and allow deployments from the default branch only. The organization owner uses `scripts/provision-environment.sh --org ORG` from their own machine. `scripts/adopt-refresh.sh` reads the existing environment through `validate-standard.sh --environment-only`. A missing secret or branch policy stops adoption with the failed check and provisioning remedy.
+
+After installing the skill and copying the writer verbatim, stage that writer so the validator can find it. Run from the consumer root:
+
+```bash
+git add .github/workflows/review-gate-writer.yml
+.agents/skills/review-gate/scripts/adopt-refresh.sh
+kendex verify --scope project
+git add .github/workflows/kendex-refresh.yml .kendex-generated.json
+```
+
+Commit the workflow copies and inventory with the installed skill. Adoption records each byte-identical copy's template path and SHA-256 hash. `kendex refresh` updates the template and its expected hash. Adoption then updates an unedited copy. Verification and the shared change classifier compare the copy with the declared package template. Verification rejects a registered copy that differs from its template. A writer with local path or trigger changes is not an exact copy and is not registered as a render by this command.
+
+Schedule and manual refresh work in a consumer with the app installation and environment above. Instant refresh also needs organization dispatch wiring. The catalog's `.github/workflows/kendex-dispatch.yml` signals every non-archived consumer repository visible to its app installation after a push to `main`. Adoption and dispatch exclude `vanillagreencom/kendex`, whose build-bound lock workflow owns its refresh under D007. It attempts all destinations and fails the run if any dispatch fails.
+
+Only the default-branch workflow can use the private key. It checks out the default branch before minting a repository-scoped app token. It rebuilds the rolling branch from that checkout and proves the full diff is a render before pushing. It preserves the default-branch review scripts before refreshing. Those scripts prove that each rolling pull request has class `render` and policy `none` before replying to automatic review findings, resolving threads, or posting suppressed-finding dispositions. Findings on other classes remain unchanged.
+
+A separate step requests an Issues-write token scoped only to `vanillagreencom/kendex`. It files accepted automatic findings that name verified rendered paths for upstream confirmation. GitHub-to-Linear sync sends the reports to KEN Triage. The report carries the review evidence, rendered path, consumer run and package label from `kendex report`. Its stable title fingerprint finds an existing open issue on later runs. If the token lacks Issues access, the Actions summary supplies filing links. Policy replies do not prevent later filing.
 
 ### The relay/converge split
 

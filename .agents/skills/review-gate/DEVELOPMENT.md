@@ -24,6 +24,16 @@ Paths as installed in a consuming repo, under `.agents/skills/review-gate/`.
 | `tests/lib/selftest-fixtures.sh` | The fixture writers, one per endpoint shape, sourced by the selftest. |
 | `tests/predicate-re2-engine.test.sh` | The predicate's thread jq, run through the engine that actually ships it: the real `gh --jq` (Go's RE2), pointed at a local HTTP stub. Every other proof reads that program through the local jq, whose Oniguruma accepts lookaround RE2 will not compile. Needs `gh`, `python3` and `jq`, and refuses rather than skipping without them. |
 
+## Consumer refresh
+
+`adopt-refresh.sh` calls the existing environment and writer validators. It records exact copies in the generated-file inventory. The core verifier owns template equality. Before replacing an old refresh workflow, adoption checks its bytes against the committed inventory record. The working inventory already holds the new expected hash after refresh and cannot prove that the old copy was unedited.
+
+`refresh-consumer.sh` preserves the remote commit when its tree already equals the proposed tree. This keeps CI results across scheduled runs. A changed tree is pushed with a lease against the observed remote head. The trusted classifier must prove the complete diff is a render before that push. Tests use local Git repositories to prove current, stale, repeated, failed-verification, and non-render outcomes. A duplicate-creation mutation proves the rolling pull request assertion can fail.
+
+`refresh-reviews.sh` uses `review-findings.sh`, the predicate's shared parser, for automatic finding detection and disposition matching. The trusted predicate must return the exact render/none approval before any review write. A second GitHub read verifies that the head and base still match that proof. Suppressed entries use a `Dispositions at <current head>` marker even when their review refers to an older commit. The review suite proves class refusal, changed-head refusal, API failure, retries, and duplicate suppression.
+
+`refresh-report.py` treats accepted automatic review text as an upstream claim. The upstream verifier confirms it. The reporter checks the named path against the classified commit's inventory and asks `kendex report --dry-run` for package routing. Only the issue API receives the upstream token. `tests/refresh-report.test.sh` checks issue identity, routing, evidence, credential isolation and unavailable-permission links. `tests/refresh-workflow.test.sh` checks the workflow's token inputs and their step boundaries.
+
 ## Diagnostic records
 
 Refusals and notices begin with `review-gate-error=CODE value=VALUE` or `review-gate-notice=CODE value=VALUE`. Values use Bash `printf %q` escaping. English explanation follows the record. Validators use `ok`, `FAIL`, or `note` records with `check=CODE value=VALUE` and indent all explanation lines. The consumer validator, `validate.sh`, ends with `review-gate-failed=COUNT passed=COUNT`; the standalone workflow and standard validators exit after their individual records.

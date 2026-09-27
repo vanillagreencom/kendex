@@ -1,43 +1,8 @@
 # CI and merge rail
 
-Covers: .github/workflows/, .github/actions/, skills/harness-ci/, skills/review-gate/, skills/orch/workflows/merge-pr.md, skills/orch/workflows/consumer-train.md, skills/orch/scripts/adopt-writer
+Covers: .github/workflows/, .github/actions/, skills/harness-ci/, skills/review-gate/, skills/orch/workflows/merge-pr.md
 
-The rail carries one change from a consumer pull request to the default branch, and, off a hosted fleet, carries each kendex merge to a shipped catalog path back out to every consumer; on a hosted fleet that route does not run, and the orch `merged` event in [../../skills/orch/references/oversee-events.md](../../skills/orch/references/oversee-events.md) § Event kinds says what the overseer does instead. One classifier reads the diff, CI gates its lanes on that verdict, the review gate posts one commit status, and the branch ruleset decides the merge, which the merge queue makes. kendex renders the scripts and fixes the `CI` context name through its CI workflow template; the repository owns its workflow files and its settings values. Each repository's own rulesets own the required-context names and the merge queue today; organization rulesets that target every repository replace them at KEN-1778, the owner action [D003](../decisions/D003-one-merge-path.md) sequences.
-
-```text
-  a consumer pull request                     a kendex merge to a shipped path
-            |                                         |
-    +-------+--------+                      +---------+---------+
-    v                v                      v                   v
- classify        review-gate-writer.yml  consumer-train.md  outside the train,
- the diff        runs on its own legs    one chore PR       the repo's own PR
- harness-only    (dispatch, schedule,    per repo           copies the writer
- one job          merge group)              |               template and sets
-    |                |                      v               kendex.settings.toml
-    v                v                   it commits the         |
- CI lanes        review-predicate.sh     refresh output and     |
- gated on        reads the classifier    re-adopted gate writer |
- the verdict     for the docs waiver     alone, plus a bundle's |
-    |                |                   manifest edit when     |
-    |                |                   its members moved      |
-    |                |                      |                   |
-    v                v                      +---------+---------+
- aggregate-      "Review gate"                        v
- needs, the      commit status           the consumer's .agents/,
- required            |                   .github/workflows/ and
- context             |                   kendex.settings.toml
-    |                |
-    +-------+--------+
-            v
-  the branch ruleset's required contexts
-  (the repository's today, the organization's
-  at KEN-1778)
-            v
-  merge-pr.md: the lane arms auto-merge and the
-  merge queue merges
-            v
-          main
-```
+Each repository owns its pull requests and refresh workflow. The classifier determines the change class. CI selects its jobs from that class, and the review gate posts a separate commit status. The merge queue merges the pull request after the required checks pass. Consumers pull kendex updates in their own GitHub Actions runners, per [D003](../decisions/D003-one-merge-path.md).
 
 ## Ownership
 
@@ -47,12 +12,12 @@ The rail carries one change from a consumer pull request to the default branch, 
 | The `change-class` composite action | kendex, `.github/actions/change-class/` | referenced from a workflow at `@main` or a pinned tag; no refresh, and it runs kendex's own classifier at that ref | KEN-1596 |
 | Which jobs read the verdict | the repository | copied once from `skills/harness-ci/references/wiring.md` | KEN-1596 |
 | The gate engine and its predicate | kendex, `skills/review-gate/scripts/` | `kendex refresh` | KEN-1638 |
-| The gate writer workflow | kendex ships a template; the copy is the repository's | copied verbatim at adoption; re-installed by `validate-workflow.sh --adopt` after `kendex refresh` | none |
+| The gate writer workflow | kendex ships a template; each consumer owns its adopted copy | copied at adoption and updated in the consumer | none |
 | The `CI` required-context name | kendex, the same in every repository | the aggregate job's name: `skills/harness-ci/references/wiring.md` § The CI context | KEN-1778 |
 | Which contexts are required, the rulesets, the merge queue | the repository's own rulesets today; at KEN-1778, the end state, organization rulesets that target every repository and carry no standing bypass actor | set in GitHub, never rendered; at KEN-1778 set once at the organization level | KEN-1778 |
 | `REVIEW_GATE_*` values | the repository | `kendex.settings.toml` | KEN-1638 |
 | The merge route: the lane arms auto-merge with the lanes app's installation token | kendex, `skills/orch/workflows/merge-pr.md` | `kendex refresh` | KEN-1777 |
-| The consumer train | kendex, `skills/orch/workflows/consumer-train.md` | `kendex refresh` | KEN-1779 |
+| The consumer refresh workflow | kendex ships `skills/review-gate/templates/kendex-refresh.yml`; each consumer runs its adopted copy | copied at adoption and updated in the consumer | KEN-1779 |
 
 The classifier answers one five-class verdict, `change_class`, beside the two narrow questions `harness_only` and `docs_only`. `.github/actions/change-class` is the composite action that publishes the class, the changed-path families and `lanes`; it wraps the shipped scripts and classifies nothing itself. In this repository `tools/ci-job-set` turns the class and the changed paths, read through `tools/rust-reads`, into one selection per lane of `skill-tests.yml`, and `tools/ci-aggregate` holds each required context to those selections; the `CI` job holds every lane the older aggregators hold, plus `gate-selftest`, Preflight and Markdown, and those aggregators keep the per-repository ruleset's names until that ruleset is retired. A lane reads the same class before it opens a pull request: orch's `dev-validate-run` classifies the worktree through `skills/orch/scripts/lib/change-class.sh`; review-gate's `review-policy` calls the classifier itself for its measured marker, and the `changes` job's action reads the shipped scripts itself from its trusted checkout. `dev-validate-run` exports the class, the docs verdict and the changed paths to `DEV_VALIDATE_CMD`. `tools/guard --full` hands those three to `tools/ci-job-set`, as the `changes` job does. The classifier proves `render` in a private checkout of the range's head, which for `dev-validate-run` is a snapshot commit of the worktree, so a dev-completion run over uncommitted render edits is weighed with those edits. A wrong local class costs a red CI check, since CI classifies the branch again.
 
@@ -60,7 +25,7 @@ The classifier answers one five-class verdict, `change_class`, beside the two na
 
 - `harness-ci` writes nothing under `.github/`, so the repository wires the classifying step itself, from one of the four shapes or the CI template in [../../skills/harness-ci/references/wiring.md](../../skills/harness-ci/references/wiring.md). That the package writes no workflow is stated in [../../skills/harness-ci/SKILL.md](../../skills/harness-ci/SKILL.md) § This package never edits a workflow, and is not mechanically enforced. `skills/harness-ci/tests/wiring-shapes.test.sh` proves only that each shipped shape keeps its expression, ordering and script path, and `skills/harness-ci/tests/ci-template.test.sh` that the template's `CI` job needs every other job and that both events read `lanes` the same way.
 - The review gate answers review and nothing else: it reads no job result and re-runs nothing. Enforced by `skills/review-gate/scripts/review-predicate-selftest.sh`, which pins the predicate's answers and which the `gate-selftest` job runs ungated on every pull request. That no CI lane is conditioned on the verdict is a wiring rule the repository holds, stated in [../../skills/review-gate/references/adoption.md](../../skills/review-gate/references/adoption.md#recommended-ci-shape--the-fastfull-split) and not mechanically enforced.
-- `kendex refresh` renders vendored skill copies and settings. It never writes workflow YAML, so every file under a consumer's `.github/workflows/` is written in that repository, including its copy of the gate writer. A template update reaches the copy through `skills/review-gate/scripts/validate-workflow.sh --adopt`, run after `kendex refresh`: in the refresh workflow KEN-1779 adds, and until then in `skills/orch/scripts/adopt-writer`. What it writes and leaves is [../../skills/review-gate/references/adoption.md](../../skills/review-gate/references/adoption.md) § Updating an already-adopted copy. Without `--adopt` the script fails a copy that diverges from the current template and names that command as the remedy.
+- `kendex refresh` renders skill copies and settings. Workflow adoption owns files under `.github/workflows/`. Adoption records each verbatim workflow copy in `.kendex-generated.json` with its template hash. `kendex verify` checks equality against that template. A changed workflow copy cannot qualify as a render. `skills/review-gate/tests/adopt-refresh.test.sh` checks adoption. [Review-gate adoption](../../skills/review-gate/references/adoption.md) defines setup and updates.
 - `skills/review-gate/scripts/validate-standard.sh` reports, read-only, whether a repository's GitHub settings match [D003](../decisions/D003-one-merge-path.md), whose step 2 carries the environment rows. `skills/review-gate/standard.json` holds the required contexts, the app, the environment and its secret names; the script fixes the remaining rows. The owner-run `provision-environment.sh` beside it, not the script, creates the environment and its secrets.
 - The merge route is chosen in one place, [../../skills/orch/workflows/merge-pr.md](../../skills/orch/workflows/merge-pr.md) § 5 step 1: the lane arms auto-merge on its exact head, on every change class, and waits in `queue-wait` while the merge queue merges it. A force-merge answer takes the same arm. `skills/github/scripts/commands/pr-merge.sh` holds the lane's half: no mode passes `--admin` to GitHub, and it refuses the retired merge settings its `--help` § Retired settings names. Enforced by the merge-queue and retired-settings rows of `skills/github/tests/pr-merge.test.sh`. That no ruleset carries a bypass actor is GitHub configuration the owner holds, not mechanically enforced here.
 
@@ -79,7 +44,7 @@ The classifier answers one five-class verdict, `change_class`, beside the two na
 - Classify inside a job, never in `on.<event>.paths`. A path filter stops the workflow from starting, the required context is never created, and a merge queue waits forever on a check nothing will report.
 - Fail closed everywhere. An empty diff, an unresolvable endpoint and an absent render inventory all answer `false`, which authorizes no skip the verdict would otherwise have allowed.
 - The gate is a commit status, not a CI job. Adoption still changes CI: it adds the ungated validate job, and a repository that wants the docs waiver also takes the fast/full split. What stays untouched is that no job is conditioned on the gate's verdict.
-- The consumer train is the propagation path until KEN-1779 ships the refresh workflow [D003](../decisions/D003-one-merge-path.md) decides. It refreshes each consumer's checkout and commits the refresh output and the re-adopted gate writer, plus a manifest edit where a bundle's member list moved, through that repository's branch, review and merge path. On a hosted fleet the train does not run: the orch `merged` event in [../../skills/orch/references/oversee-events.md](../../skills/orch/references/oversee-events.md) § Event kinds sends each consumer's overseer a note and reports that consumer as not refreshed.
+- Consumer refresh follows [D003](../decisions/D003-one-merge-path.md). `.github/workflows/kendex-dispatch.yml` sends an event. Each consumer's workflow runs `skills/review-gate/scripts/refresh-consumer.sh`, which owns its refresh branch and pull request. `skills/review-gate/tests/refresh-consumer.test.sh` checks this behavior. Consumer secrets stay in that repository's `kendex` environment. The catalog is excluded under [D007](../decisions/D007-lock-record-on-main.md). `adopt-refresh.test.sh` and `dispatch-refresh.test.sh` exercise that exclusion. The overseer takes no part in refresh.
 - In kendex itself `REVIEW_GATE_CARRY_FORWARD` is `docs`: evidence carries across markdown-only deltas, never across a change to an excluded policy path. `REVIEW_GATE_CLASS_POLICY` decides which change classes need evidence, so the legacy `REVIEW_GATE_DOCS_ONLY` and `REVIEW_GATE_RENDER_PATHS` are inert.
 - One merge path, per [D003](../decisions/D003-one-merge-path.md): every lane route goes through the merge queue, armed by the lane itself. The admin merge, the `--admin` and `--force` overrides and `ORCH_MERGE_BYPASS` are retired; `pr-merge --help` § Retired settings states how their settings are refused.
 - The install record is recorded on `main` after each merge by `.github/workflows/lock-record.yml` and landed through one rolling pull request, never on a branch, per [D007](../decisions/D007-lock-record-on-main.md); no pull request check judges it.

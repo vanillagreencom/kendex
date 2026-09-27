@@ -55,7 +55,7 @@ status_ctx mech-ctx success 'analysis complete'
 no_rule="$work/no-waiver-rule"
 mkdir -p "$no_rule/lib"
 cp "$here/review-predicate.sh" "$no_rule/"
-cp "$here/lib/settings.sh" "$here/lib/diagnostics.sh" "$no_rule/lib/"
+cp "$here/lib/settings.sh" "$here/lib/diagnostics.sh" "$here/lib/review-findings.sh" "$no_rule/lib/"
 if [ -e "$no_rule/lib/waiver.sh" ]; then
   echo "FAIL  the no-rule copy of the scripts tree still holds lib/waiver.sh" >&2
   failures=$((failures + 1))

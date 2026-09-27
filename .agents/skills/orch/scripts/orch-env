@@ -21,6 +21,9 @@
 # `orch-env ORCH_USER_MODE ceo` prints, so one unrecognized spelling cannot
 # compose as one mode and be read back as another.
 #
+# Retired settings: ORCH_CONSUMER_REPOS is refused when set, even empty,
+# on every settings read. Consumers refresh through their own Actions workflow.
+#
 # Not for a round cap. Those resolve through `workflow-state cap`, which
 # holds the one table of their defaults; pairing orch-env with a default
 # here would be the second copy that table exists to prevent.
@@ -69,6 +72,10 @@ message() {
   case "$reason" in
   argument-count) printf '%s\n' 'Use orch-env with a variable name and default value.' ;;
   invalid-name) printf '%s\n' 'The variable name is not valid.' ;;
+  retired-setting)
+    printf '%s\n' 'Consumer refresh runs in each consumer repository through GitHub Actions.'
+    printf '%s\n' 'Remove ORCH_CONSUMER_REPOS from the environment, kendex.settings.toml [env], .kendex/settings.toml [env], and the private env file, then retry.'
+    ;;
   esac
 }
 
@@ -100,6 +107,13 @@ export PROJECT_ROOT
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT"
+
+# Consumer-train settings can remain in existing project configuration after
+# its workflow is removed. Refuse at every read, including overseer startup.
+if [[ -n "${ORCH_CONSUMER_REPOS+set}" ]]; then
+  message retired-setting 'key=ORCH_CONSUMER_REPOS' >&2
+  exit 1
+fi
 
 # Read only now: assigned above the loader, the NAME to look up would itself be
 # settable from the configuration being looked up.

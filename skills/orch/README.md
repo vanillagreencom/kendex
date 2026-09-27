@@ -49,7 +49,6 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `ORCH_MERGE_AUTONOMY` | `auto` merges once every gate is green on authorization already given; `ask` requires it per merge | `auto` |
 | `PM_CREATE_AUTONOMY` | Audit creation and cancellation: [project-management settings](../project-management/README.md#settings) | `ask`; `auto` under `ceo` |
 | `ORCH_POST_MERGE_CMD` | Bash command that `scripts/post-merge` runs in the base checkout after synchronization. `ORCH_POST_MERGE_BEFORE` is the base before the oldest unprocessed synchronization; `ORCH_POST_MERGE_AFTER` is the current synchronized head. `sync-base` saves the first in `refs/kendex/post-merge-base`; only a successful or empty command advances it. A failed command stops before project refresh and verification and keeps the range for retry | empty |
-| `ORCH_CONSUMER_REPOS` | Space-separated absolute base-checkout paths that set the consumer train's refresh order. The train also refreshes every other project `kendex project list` names that subscribes to the package | empty |
 | `PR_REVIEW_ON_TIMEOUT` | `proceed` advances only when no reviewer engaged and no thread is open; `block` reports the timeout | `proceed` |
 | `ORCH_OVERSEER_LANES`, `ORCH_LANE_ACCOUNT_CLAIMS` | Fleet, account (`0` off) lane caps: `open-terminal --help` | `3`, `3` |
 | `ORCH_LANE_OUTPUT` | Lane pane output: [skill-rules.md](references/skill-rules.md) § Lane Output | `quiet` |

@@ -159,5 +159,53 @@ mutate_file "$MUTANT" '    composed_value "$VAR_NAME"' '    COMPOSED='
 got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u ORCH_MERGE_AUTONOMY "$MUTANT" ORCH_MERGE_AUTONOMY ask)"
 assert_eq "$got" "ask" "must-fail control: without the mapping ceo falls back to the caller default"
 
+# Overseer startup reads ORCH_OVERSEER_LANES through orch-env. A consumer
+# setting left by the removed train must refuse that unrelated read too.
+for row in \
+  'environment|/consumer' 'environment|' \
+  'settings|/consumer' 'settings|' \
+  'nested|/consumer' 'nested|' \
+  'private|/consumer' 'private|' \
+  'named-private|/consumer' 'named-private|'; do
+  source_kind="${row%%|*}"
+  configured="${row#*|}"
+  project="$TMP_ROOT/retired-$source_kind-${configured:+value}"
+  mkdir -p "$project/.kendex"
+  git init -q "$project"
+  git -C "$project" config gc.auto 0
+  git -C "$project" config maintenance.auto false
+  retired_env=(env -i "PATH=$PATH" "HOME=$TMP_ROOT")
+  case "$source_kind" in
+    environment) retired_env+=("ORCH_CONSUMER_REPOS=$configured") ;;
+    settings) printf '[env]\nORCH_CONSUMER_REPOS = "%s"\n' "$configured" > "$project/kendex.settings.toml" ;;
+    nested) printf '[env]\nORCH_CONSUMER_REPOS = "%s"\n' "$configured" > "$project/.kendex/settings.toml" ;;
+    private) printf 'ORCH_CONSUMER_REPOS="%s"\n' "$configured" > "$project/.env.local" ;;
+    named-private)
+      printf '[env]\nKENDEX_ENV_FILE = "private.env"\n' > "$project/kendex.settings.toml"
+      printf 'ORCH_CONSUMER_REPOS="%s"\n' "$configured" > "$project/private.env"
+      ;;
+  esac
+  status=0
+  got="$(cd "$project" && "${retired_env[@]}" "$ORCH_ENV" ORCH_OVERSEER_LANES 3 2>"$TMP_ROOT/retired.err")" || status=$?
+  diagnostic=''
+  IFS= read -r diagnostic < "$TMP_ROOT/retired.err" || true
+  assert_eq "$status|$got|$diagnostic" '1||orch-env: retired-setting key=ORCH_CONSUMER_REPOS' \
+    "retired setting from $source_kind is refused, including empty values ($configured)"
+done
+
+got="$(cd "$proj_bare" && env -i "PATH=$PATH" "HOME=$TMP_ROOT" "$ORCH_ENV" ORCH_OVERSEER_LANES 3)"
+assert_eq "$got" "3" "overseer startup succeeds when the retired key is absent"
+
+# Guard control: keep the diagnostic and setting name, but suppress the
+# refusal branch. The same startup read must then succeed incorrectly.
+RETIRED_MUTANT="$(mutant_scripts retired-mutant orch-env)/orch-env" || exit 1
+mutate_file "$RETIRED_MUTANT" 'if [[ -n "${ORCH_CONSUMER_REPOS+set}" ]]; then' \
+  'if [[ -n "${ORCH_CONSUMER_REPOS+set}" ]] && false; then'
+status=0
+got="$(cd "$proj_bare" && env -i "PATH=$PATH" "HOME=$TMP_ROOT" ORCH_CONSUMER_REPOS= \
+  "$RETIRED_MUTANT" ORCH_OVERSEER_LANES 3 2>"$TMP_ROOT/retired-mutant.err")" || status=$?
+assert_eq "$status|$got|$(cat "$TMP_ROOT/retired-mutant.err")" '0|3|' \
+  "must-fail control: disabled retirement guard accepts the retired setting"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

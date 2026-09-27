@@ -1,7 +1,7 @@
 ---
 name: kendex-issues
-description: "Load to monitor kendex's issue queue continuously or to run one fix-and-propagate cycle."
-summary: "Stewards the kendex issue queue on a self-paced loop: watches open PRs, polls Linear, triages, fixes defects through orch, merges, propagates with kendex refresh."
+description: "Load to monitor kendex's issue queue continuously or to run one fix cycle."
+summary: "Watches open PRs, polls Linear, triages defects, and fixes them through orch. Consumers refresh through their own GitHub Actions workflow."
 ---
 
 <!-- kendex:project-instructions:start -->
@@ -14,7 +14,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # kendex Issue Steward
 
-watch → poll → triage → fix → merge → propagate → reschedule. One cycle per turn.
+watch → poll → triage → fix → merge → reschedule. One cycle per turn.
 
 | Concern | Owning skill |
 |---|---|
@@ -30,8 +30,7 @@ Hand-rolled PR mechanics (raw `gh api` where a `github.sh` command exists) are a
 1. **PR watch**: `GH_REPO=vanillagreencom/kendex .agents/skills/review-gate/scripts/pr-watch.sh`. Silence + exit 0 = nothing needs you. Attention lines → act through the github skill. After a gate-green, also check `isInMergeQueue` + `autoMergeRequest` (GraphQL). Queue ejection is silent: re-arm once; a second ejection is a flaky required suite. Quarantine, never re-arm loops.
 2. **Poll Linear**: `linear.sh sync --reconcile`, then `linear.sh cache issues list --state "Triage,Backlog,Todo,In Progress" --max`. Linear is the complete queue (GitHub→Linear sync is one-way); Triage holds the GitHub-synced arrivals. Cross-check `gh issue list --repo vanillagreencom/kendex --state open`: an open GH issue whose Linear mirror is Done is residue, so close it naming the PR; one with no mirror means the sync broke, so triage it from GitHub and say so. Nothing on either surface → reschedule.
 3. **Triage** each issue (below); run the fix cycle for each valid defect. Mutate on the issue's home surface: GH-mirrored issues (Linear body links the GH issue) are closed/commented on GitHub; Linear-native ones through the linear skill. PR body carries `Closes KEN-<n>` plus `Closes #<n>` when a mirror exists.
-4. After any merge, **propagate**.
-5. **Reschedule** (Cadence). Stop only if the user asked.
+4. **Reschedule** (Cadence). Stop only if the user asked.
 
 ## Triage
 
@@ -58,16 +57,12 @@ orch owns every step. kendex-specific parameters:
 - Disjoint files → parallel; same file → sequence or bundle.
 - A required check that cannot be rerun gets a fresh head (`commit --amend --no-edit` + `push --force-with-lease`) only where the amend exception in [dev SKILL.md § Engineering Rules](../dev/SKILL.md#engineering-rules) permits it; never a merge past red.
 
-## Propagate
+## Consumer refresh
 
-Only from a change **merged on `origin/main`**. Batch: if open items would force another re-vendor soon, hold and run one train; an immediate train is for a fail-open defect in a consumer gate or an owner ask.
+Consumers pull updates through their own GitHub Actions workflow. [Review-gate adoption](../review-gate/references/adoption.md) owns its setup and operation.
 
-1. `git checkout main && git pull --ff-only`; confirm the source consumers read sits at the `origin/main` tip containing the merge.
-2. Skill/agent/hook changes → `kendex refresh` (all scopes, never `--scope project`; Pi packages are global) + `.agents/skills/orch/scripts/adopt-writer [CONSUMER]` from this checkout + `kendex verify` in each consumer; commit the writer workflow it re-installs with the refresh. CLI-only changes → binary rebuild, no skill refresh.
-3. Consumer commits: `git check-ignore -q <path>` first (ignored = nothing to commit). Stage kendex paths only, never `-A`; revert no-op `.kendex-refreshed` and template-default churn. Branch → PR → `gh pr merge --auto`. Reply to and resolve bot threads. Confirm each push landed and carries only kendex files. While propagation PRs are open, `GH_REPO=vanillagreencom/<repo> pr-watch.sh --heal` each cycle.
-4. New skills do not propagate by refresh: `kendex add --skill <name> -y` per consumer, commit its `kendex.toml` entry through that repo's queue.
-5. Bot findings on propagation PRs: a real defect in vendored content is fixed upstream first (issue → fix → merge → refresh on the branch → resolve citing the fix). Nits on the PR's own payload: fix on the branch.
-6. Capability changes consumers must wire into CI/branch protection: ship the spec in the owning skill, coordinate repo-side through each overseer, verify on each consumer's `origin/main`. Security-relevant capabilities need the user's sign-off first.
+- File defects in rendered content upstream against kendex. Fix them through the fix cycle.
+- Coordinate consumer manifest changes and workflow adoption with the consumer's overseer.
 
 ### This skill's home
 
@@ -77,7 +72,7 @@ Source: `.agents/skills/kendex-issues/SKILL.md` in the kendex checkout, the real
 
 - Never pipe a state-changing or guard command through `tail`/`head`/`grep` in a `&&` chain. Run bare, read the result, then trim. Read `worktree create`'s full output before entering it; an ownership refusal means another session owns the work.
 - **Ownership.** Before a fix cycle, check for a remote branch, open PR, or foreign worktree for the issue. Active peer → hands off. A PR with unresolved threads and no pushes or replies for ~2 h whose session is idle is abandoned: take it over, answer every thread, note the takeover.
-- **Consumer boundary.** The only write lane into consumers is kendex propagation plus hygiene on those PRs. Coordinate everything else over tmux; verify delivery with capture-pane after ~5 s; read a composer's full content before pressing Enter.
+- **Consumer boundary.** Consumers own their refresh branches and pull requests. Coordinate other consumer changes with their overseer through [peer mail](../orch/references/peer-mail.md).
 - **Branch safety.** Never switch or commit on a checkout mid-work; use a worktree off `origin/main`. Never `git stash` in a shared checkout.
 - **Scoped commits, verified pushes.** Inspect diffs, `kendex verify`, confirm it landed.
 - **Box load poisons suites.** A red suite under load: check uptime, rerun in isolation, A/B against clean HEAD.

@@ -19,6 +19,7 @@ Follow [references/adoption.md](references/adoption.md) for workflow and branch-
 - Block approval while review objections or unresolved threads remain.
 - Check that the installed workflow and settings are valid.
 - Report PRs that need attention.
+- Refresh installed kendex packages through one rolling pull request. See [automatic consumer refresh](references/adoption.md#automatic-consumer-refresh).
 
 ## How it works
 

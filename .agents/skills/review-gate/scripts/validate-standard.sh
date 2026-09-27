@@ -34,12 +34,15 @@ fi
 
 print_usage() {
   cat <<'USAGE'
-Usage: validate-standard.sh [--help]   (no positional arguments)
+Usage: validate-standard.sh [--environment-only | --help]   (no positional arguments)
 
 Reports, read-only, whether THIS repository's GitHub settings match the
 organization standard. standard.json in the skill holds its values. The
 repository is the one `gh` resolves: GH_REPO when set, else the checkout's
 remote.
+
+--environment-only reports the environment policy and its secret names.
+Adoption uses this mode without requiring organization ruleset access.
 
 One verdict line per row, VALUE being what was observed:
   standard-ruleset-source           every effective default-branch rule comes
@@ -131,6 +134,11 @@ if [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
   print_usage
   exit 0
 fi
+ENVIRONMENT_ONLY=0
+if [ "${1:-}" = --environment-only ]; then
+  ENVIRONMENT_ONLY=1
+  shift
+fi
 if [ "$#" -gt 0 ]; then
   rg_message error unknown-arguments "$#" "validate-standard.sh: unknown argument list ($# argument(s), first: '${1}') — no positional arguments (run --help)" >&2
   exit 2
@@ -184,6 +192,8 @@ FAILED=0
 ok() { PASS=$((PASS + 1)); rg_report ok "$@"; }
 bad() { FAILED=$((FAILED + 1)); rg_report FAIL "$@"; }
 
+# Adoption needs the environment checks without unrelated owner-only reads.
+if [ "$ENVIRONMENT_ONLY" -eq 0 ]; then
 # ------------------------------------------------------ default branch ---
 
 RULE_ROWS="standard-ruleset-source standard-merge-queue standard-required-contexts standard-conversation-resolution standard-copilot-review standard-bypass-actors"
@@ -403,6 +413,8 @@ else
   bad standard-app unreadable "the installations of $OWNER could not be read: $READ_ERR"
 fi
 
+fi
+
 # --------------------------------------------------------- environment ---
 
 ENV_URI="$(rg_uri "$WANT_ENV")"
@@ -468,6 +480,11 @@ case "$ENV_PRESENT" in
   no) bad standard-environment-secrets absent "the environment $WANT_ENV does not exist, so it holds no secret. $PROVISION" ;;
   unknown) bad standard-environment-secrets unreadable "the environments could not be read, so $WANT_ENV's secrets were not asked for" ;;
 esac
+
+if [ "$ENVIRONMENT_ONLY" -eq 1 ]; then
+  [ "$FAILED" -eq 0 ]
+  exit
+fi
 
 # A secret of the same name anywhere else is readable by a workflow on a
 # branch the environment's policy excludes, which is what that policy
