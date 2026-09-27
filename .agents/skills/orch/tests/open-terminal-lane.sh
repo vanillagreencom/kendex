@@ -743,12 +743,12 @@ assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct
   "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model" \
   "a model named inside the --cmd command gates the lane on that model's wall"
 # cmd_home beside the launch: a claude lane names no CODEX_HOME and builds no
-# home of its own, since the folder-trust record that harness reads is not this
-# file at all.
+# home of its own, since the folder-trust record that harness reads is its
+# own config dir's .claude.json, which the launch writes the entry into.
 run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus --effort high $QUESTION_OFF_ALL" CC-76
-assert_eq "$(observe "rc=0 launched=1 walled=none cmd_home=none trust_route=none")" \
-  "rc=0 launched=1 walled=none cmd_home=none trust_route=none" \
-  "a --cmd naming a model with room still launches, under no CODEX_HOME and no trust route"
+assert_eq "$(observe "rc=0 launched=1 walled=none cmd_home=none trust_route=account-config")" \
+  "rc=0 launched=1 walled=none cmd_home=none trust_route=account-config" \
+  "a --cmd naming a model with room still launches, under no CODEX_HOME, trusted in its own config dir"
 
 make_codex_lane "$H/.codex"
 jq -n '{rate_limit: {primary_window: {used_percent: 95, reset_at: 1785000000,

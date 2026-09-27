@@ -12,7 +12,7 @@
 # names it, and a key is a word to the left of the first `=` inside that table.
 # That is what both callers ask and what every writer of these files emits: the
 # fleet's pre-approval step, the harness answering its own folder-trust
-# question, and lane_codex_trust_prepare all write `[projects."<dir>"]` on a
+# question, and the codex arm of lane_trust_prepare all write `[projects."<dir>"]` on a
 # line of its own. A file carrying the same value as a dotted key or inside an
 # inline table answers nothing here, and each caller reads that as the file not
 # saying.

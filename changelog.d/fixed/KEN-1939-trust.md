@@ -1,0 +1,1 @@
+- A Claude overseer successor is given folder trust for its directory in its config dir before it starts, so it no longer parks on the trust dialog.

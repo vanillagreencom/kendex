@@ -19,8 +19,8 @@
 # shellcheck source=lane-claims.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lane-claims.sh"
 
-# lane_codex_trust_prepare below reads a codex config.toml for one key and
-# writes it back without one table. That reading is shared with `spawn-adapter`,
+# The codex arm of lane_trust_prepare below reads a codex config.toml for one
+# key and writes it back without one table. That reading is shared with `spawn-adapter`,
 # which asks the same file a different question, so it lives in its own library
 # and both callers source it rather than each carrying a scanner of its own.
 # shellcheck source=toml.sh
@@ -698,24 +698,30 @@ lane_single_quote() { # VALUE
   printf "'%s'" "${1//\'/$escaped}"
 }
 
-# The trust record a Codex launch reads BEFORE it reads the arguments it was
-# launched with: `[projects."<dir>"] trust_level = "trusted"` in the config.toml
-# the launch's CODEX_HOME names. Without it the harness opens on `Do you trust
-# the contents of this directory?` and stays there, and an unattended launch —
-# an overseer succession, a lane opened into a worktree nothing has trusted yet
-# — has nobody at the pane to answer, so the whole launch is spent on a
-# question.
+# The trust record a harness reads BEFORE it reads the arguments it was
+# launched with. Codex reads `[projects."<dir>"] trust_level = "trusted"` in
+# the config.toml its CODEX_HOME names; Claude reads
+# `projects.<dir>.hasTrustDialogAccepted` in the `.claude.json` of the config
+# dir it runs under. Without it the harness opens on `Do you trust the
+# contents of this directory?`, or `Do you trust the files in this folder?`,
+# and stays there, and an unattended launch — an overseer succession, a lane
+# opened into a worktree nothing has trusted yet — has nobody at the pane to
+# answer, so the whole launch is spent on a question.
 #
 # A sandboxed lane gets this from the provider's pre-approval step
 # (../../schemas/lane-host.md § Provider protocol). A control-host launch has
-# no such step and cannot be given one by editing the account: a numbered
-# account's config.toml is a link the account shim points at the shared fleet
-# render on every launch, so an entry written there is gone by the next launch
-# and is visible to no fixture. The launch therefore builds a CODEX_HOME OF ITS OWN
-# under the account, holding the account's own files by link and one config.toml
-# of its own carrying the account's config plus the entry.
+# no such step. For codex it cannot be given one by editing the account: a
+# numbered account's config.toml is a link the account shim points at the
+# shared fleet render on every launch, so an entry written there is gone by the
+# next launch and is visible to no fixture. The launch therefore builds a
+# CODEX_HOME OF ITS OWN under the account, holding the account's own files by
+# link and one config.toml of its own carrying the account's config plus the
+# entry. For claude the config dir's `.claude.json` is the account's own
+# state, the file the harness itself writes the answer given at the pane
+# into, so the entry is written there, in the shape the provider's
+# pre-approval writes.
 #
-# lane_codex_trust_prepare's answer, read by the caller that reports the route
+# lane_trust_prepare's answer, read by the caller that reports the route
 # beside its own launch line and refuses when the entry could not be made.
 LANE_TRUST_ROUTE=""
 LANE_TRUST_HOME=""
@@ -769,39 +775,112 @@ lane_codex_recorded() { # DIR CONFIG...
 #
 #   LANE_TRUST_ROUTE   `none` for a harness that asks no such question,
 #                      `preapproved` where the account's own config already
-#                      trusts the directory, `launch-home` where this built a
-#                      private home carrying the entry
-#   LANE_TRUST_HOME    the CODEX_HOME the launch must run under
+#                      trusts the directory, `launch-home` where the codex arm
+#                      built a private home carrying the entry, and
+#                      `account-config` where the claude arm wrote the entry
+#                      into the config dir's own `.claude.json`
+#   LANE_TRUST_HOME    the CODEX_HOME or CLAUDE_CONFIG_DIR the launch must run
+#                      under
 #   LANE_TRUST_REASON  set on a non-zero return, naming what could not be done
 #
 # HARNESS is taken rather than tested by each caller, the way lane_launch_form
 # beside it takes one: a caller then makes one unconditional call and handles
 # one refusal, instead of repeating a harness test, a call, a swap and a
-# refusal around it.
+# refusal around it. Each harness's arm is its own function below, so a suite
+# can call the arm for the file shape it is about.
 #
 # Status 1 is the LAUNCH READINESS answer, and the caller refuses on it rather
-# than opening a pane on a dialog. The closing step reads back the entry the
-# launch needs from the config that was just written: a home another launch
-# rewrote between the write and the read, a write that reported success and
-# produced nothing, and a path that broke the header across lines all end
-# there. A path carrying a quote or a backslash does NOT: the reader here
-# matches the header this wrote, while the harness reads both characters as
-# TOML string syntax and takes the file, or the key, to say something else.
-# Neither reaches here from a path kendex builds.
-lane_codex_trust_prepare() { # HARNESS LANE_DIR LAUNCH_DIR
-  local harness="$1" lane dir="$3" config home entry name staged rc=0
+# than opening a pane on a dialog. An answer already recorded for the
+# directory that is not trust refuses as `trust-refused` on both arms: it is a
+# decision somebody gave in the harness's own spelling, and overwriting it
+# would run the launch at full trust against that answer.
+lane_trust_prepare() { # HARNESS LANE_DIR LAUNCH_DIR
   LANE_TRUST_ROUTE=""
   LANE_TRUST_HOME="$2"
   LANE_TRUST_REASON=""
-  if [ "$harness" != codex ]; then
-    LANE_TRUST_ROUTE=none
-    return 0
+  case "$1" in
+    codex) lane_codex_trust_prepare "$2" "$3" ;;
+    claude) lane_claude_trust_prepare "$2" "$3" ;;
+    *) LANE_TRUST_ROUTE=none; return 0 ;;
+  esac
+}
+
+# The claude arm: `projects.<LAUNCH_DIR>.hasTrustDialogAccepted` in
+# LANE_DIR/.claude.json beside `hasCompletedOnboarding`, the entry shape the
+# lane-host provider's pre-approval writes for a hosted lane. The file is the
+# account's own state and the one the harness writes its own answer into, so
+# the entry goes there and the launch runs under LANE_DIR itself: this arm
+# never builds a private home. Every other key the file holds stays, since the
+# harness keeps its account, its per-project tool allowances and its
+# onboarding marks in the same file.
+#
+# A file that exists and cannot be read or parsed refuses rather than being
+# rebuilt from nothing, because the rebuild would drop the account the
+# harness keeps there. The closing step reads the entry back off the written
+# file, so a write that reported success and produced nothing ends here
+# rather than at the pane.
+lane_claude_trust_prepare() { # LANE_DIR LAUNCH_DIR
+  local lane="$1" dir="$2" config="$1/.claude.json" answer staged
+  LANE_TRUST_HOME="$lane"
+  if { [ -e "$config" ] || [ -L "$config" ]; } && { [ ! -f "$config" ] || [ ! -r "$config" ]; }; then
+    LANE_TRUST_REASON=config-unreadable
+    return 1
   fi
+  answer=absent
+  if [ -f "$config" ]; then
+    answer="$(jq -r --arg dir "$dir" '
+      .projects[$dir].hasTrustDialogAccepted
+      | if . == null then "absent" elif . == true then "trusted" else "refused" end' \
+      < "$config" 2>/dev/null)" || { LANE_TRUST_REASON=config-unreadable; return 1; }
+  fi
+  case "$answer" in
+    trusted) LANE_TRUST_ROUTE=preapproved; return 0 ;;
+    refused) LANE_TRUST_REASON=trust-refused; return 1 ;;
+    absent) ;;
+    *) LANE_TRUST_REASON=config-unreadable; return 1 ;;
+  esac
+  # The config dir is the account's own secrets by another name, so one this
+  # creates is created private.
+  ( umask 077 && mkdir -p -- "$lane" ) || { LANE_TRUST_REASON=home-create; return 1; }
+  # Staged under this shell's own pid and renamed over the target, so a
+  # harness reading the file while this writes it meets the whole previous
+  # file or the whole new one; every arm from here takes the staged file away
+  # before it refuses.
+  staged="$config.$$"
+  if [ -f "$config" ]; then
+    jq --arg dir "$dir" '
+      .hasCompletedOnboarding = true
+      | .projects[$dir] = ((.projects[$dir] // {}) + {hasTrustDialogAccepted: true})' \
+      < "$config" > "$staged" 2>/dev/null \
+      || { rm -f -- "${staged:?}"; LANE_TRUST_REASON=config-write; return 1; }
+  else
+    jq -n --arg dir "$dir" '{hasCompletedOnboarding: true, projects: {($dir): {hasTrustDialogAccepted: true}}}' \
+      > "$staged" 2>/dev/null \
+      || { rm -f -- "${staged:?}"; LANE_TRUST_REASON=config-write; return 1; }
+  fi
+  mv -f -- "$staged" "$config" \
+    || { rm -f -- "${staged:?}"; LANE_TRUST_REASON=config-install; return 1; }
+  jq -e --arg dir "$dir" '.projects[$dir].hasTrustDialogAccepted == true' < "$config" >/dev/null 2>&1 \
+    || { LANE_TRUST_REASON=entry-unreadable; return 1; }
+  LANE_TRUST_ROUTE=account-config
+  return 0
+}
+
+# The codex arm. The closing step reads back the entry the launch needs from
+# the config that was just written: a home another launch rewrote between the
+# write and the read, a write that reported success and produced nothing, and
+# a path that broke the header across lines all end there. A path carrying a
+# quote or a backslash does NOT: the reader here matches the header this
+# wrote, while the harness reads both characters as TOML string syntax and
+# takes the file, or the key, to say something else. Neither reaches here from
+# a path kendex builds.
+lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
+  local lane dir="$2" config home entry name staged rc=0
   # The ACCOUNT, never a private home. A caller inside a launched session reads
   # its own CODEX_HOME to name its lane, and a home taken raw here would hold
   # the next home inside it, one level deeper per launch, each level linking
   # the level above rather than the account.
-  lane="$(lane_launch_home_account "$2")" || { LANE_TRUST_REASON=home-path; return 1; }
+  lane="$(lane_launch_home_account "$1")" || { LANE_TRUST_REASON=home-path; return 1; }
   [ -n "$lane" ] || { LANE_TRUST_REASON=home-path; return 1; }
   LANE_TRUST_HOME="$lane"
   config="$lane/config.toml"

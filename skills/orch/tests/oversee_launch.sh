@@ -123,7 +123,7 @@ identity() { printf '%s|' "$(recorded harness)" "$(recorded account)" "$(recorde
 assert_eq "$(identity)" "claude|$H/.claude|$H/.claude|fable|high|$WORK_REAL|" \
   "the session record carries the launch identity the command was built with"
 assert_eq "$(keyed overseer-launch "$OUT" | sed -n 1p | sed 's/session=%[0-9]*/session=%N/; s/window=@[0-9]*/window=@N/')" \
-  "oversee: overseer-launch form=prefix lane=$H/.claude trust=none session=%N window=@N server=$SOCKET" \
+  "oversee: overseer-launch form=prefix lane=$H/.claude trust=account-config session=%N window=@N server=$SOCKET" \
   "the launch line names the form and the session before the record"
 
 # A second launch while that overseer is live is refused: two overseers never

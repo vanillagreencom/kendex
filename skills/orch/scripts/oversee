@@ -49,7 +49,7 @@
 #        naming --handoff. An unattended overseer takes no flags from the caller:
 #        the words are spelled per harness by lib/lane-launch.sh's table, so a
 #        preference that names two harnesses is never handed one harness's
-#        spelling for the other. A codex launch is made trusted for --cwd
+#        spelling for the other. The launch is made trusted for --cwd
 #        first, refusing `launch-trust-missing` where the entry cannot be made.
 #     6. Open the session through the adapter's `create`, print
 #        `overseer-launch` naming the form, lane, session and window, and
@@ -133,7 +133,7 @@ message() { # KEY FIELD=VALUE...
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     no-lane-qualifies) text='No lane of any harness the preference names is above the headroom trigger; nothing was launched. entries counts the preference entries walked; walled and unmeasured are the accounts the sweeps refused and the accounts nothing could measure.' ;;
     launch-choice-failed) text='The launch flag table cannot state this harness'\''s model, effort or permission words. Nothing was launched.' ;;
-    launch-trust-missing) text='The folder-trust entry for the launch directory could not be made in the config this codex session would read, so nothing was launched; the reason field is lib/lane-launch.sh'\''s.' ;;
+    launch-trust-missing) text='The folder-trust entry for the launch directory could not be made in the config this session would read, so nothing was launched; the reason field is lib/lane-launch.sh'\''s.' ;;
     launch-failed) text='The session could not be opened or read; the step field names the call that failed.' ;;
     record-unwritten) text='The session record could not be written to the fleet state, so the session was closed again: an overseer nothing records is one the hooks and the watch cannot tell from any other session.' ;;
     overseer-launch) text='The command is built and the session opened; the form names how the picked lane reaches the harness.' ;;

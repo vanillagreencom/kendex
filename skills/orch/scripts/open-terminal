@@ -2063,7 +2063,10 @@ launch_finish() {
     # account a launch was aimed at, so the preparation runs for every local
     # codex launch and not only for one under --lane. A launch with no lane
     # opens into a worktree nothing has trusted just the same, and the command
-    # shape workflows/handoff.md § 2 documents passes no --lane at all.
+    # shape workflows/handoff.md § 2 documents passes no --lane at all. A
+    # claude launch under --lane is prepared the same way, into that lane's
+    # own config; one with no lane keeps the launch verification's dialog
+    # nudge below as its answer.
     #
     # Which variable, and which directory it starts from: the resolved lane
     # where one was picked, otherwise the account the pane would have opened on
@@ -2077,7 +2080,7 @@ launch_finish() {
     else
       launch_var=CODEX_HOME; launch_home="$(launch_ambient_codex_home)" || return 1
     fi
-    if lane_codex_trust_prepare "$HARNESS" "$launch_home" "$wt"; then
+    if lane_trust_prepare "$HARNESS" "$launch_home" "$wt"; then
       launch_home="$LANE_TRUST_HOME"
       [[ "$LANE_TRUST_ROUTE" == none ]] ||
         ot_message launch-trusted "item=$item" "route=$LANE_TRUST_ROUTE" "home=$launch_home"

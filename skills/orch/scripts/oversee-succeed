@@ -209,11 +209,12 @@
 #        write to the tracker with it, and the second catches a wrapper that
 #        handed the account over as the harness started. A session stopped at
 #        a folder-trust dialog refuses `successor-dialog` with the pane line
-#        instead of waiting out the deadline. A codex successor is given that
+#        instead of waiting out the deadline. A successor is given that
 #        trust BEFORE it starts, through the same builder: the caller's
-#        directory is made trusted in the config the launch reads, under a
-#        CODEX_HOME of the launch's own where the account's config cannot carry
-#        it, and a launch whose entry could not be made refuses
+#        directory is made trusted in the config the launch reads, for codex
+#        under a CODEX_HOME of the launch's own where the account's config
+#        cannot carry it, for claude in the picked config dir's own
+#        .claude.json, and a launch whose entry could not be made refuses
 #        `launch-trust-missing` rather than opening on the question.
 #     5. Stop the caller's session through the adapter with the successor
 #        named: on tmux the successor is swapped into the caller's window slot
@@ -439,7 +440,7 @@ message() { # KEY FIELD=VALUE...
     model-window-unknown) text='The claude adapter names no context window for the model this entry resolves to, and a successor runs with its compaction off, so it would reach its wall with no handoff mark. Nothing was launched. Name a rank whose model the window table in lib/adapters/claude.sh names.' ;;
     launch-choice-failed) text='The launch flag table cannot state a required model or an equivalent cross-harness permission posture. Nothing was launched.' ;;
     no-lane-qualifies) text='No lane walked is above the headroom trigger; nothing was launched and this overseer keeps running. The walk is every ORCH_OVERSEER_PREFERENCE entry, counted in entries, and then the fleet-wide sweep of the harness the fallback field names, which is none where the walk never reached that entry, so a preference aimed at a spent harness is not what this says. walled and unmeasured are the accounts those sweeps refused and the accounts nothing could measure, counted once per sweep. The mark field names the trigger. At mark=headroom the account and resets fields name the account that ran out and when the bucket this session spends frees up. At mark=wall the caller pane read walled and no mark was judged, so no account is named here; the caller that read that wall names it.' ;;
-    launch-trust-missing) text='The folder-trust entry for the caller directory could not be made in the config this codex successor would read, so nothing was launched and the caller keeps running. The successor would open on the folder-trust question and wait there for an answer nobody at the pane gives. The reason field names what failed: trust-refused is an answer already recorded for that directory that is not trust, which this will not overwrite; config-unreadable is the account config present and unreadable, a dangling shim link being the usual cause; account-store is the account transcript directory that could not be made; home-path, home-create, home-link, home-entry, config-write and config-install are the private CODEX_HOME under the account that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; entry-unreadable is the entry written and not read back.' ;;
+    launch-trust-missing) text='The folder-trust entry for the caller directory could not be made in the config this successor would read, so nothing was launched and the caller keeps running. The successor would open on the folder-trust question and wait there for an answer nobody at the pane gives. The reason field names what failed: trust-refused is an answer already recorded for that directory that is not trust, which this will not overwrite; config-unreadable is the account config present and unreadable or unparseable, a dangling shim link being the usual codex cause; account-store is the account transcript directory that could not be made; home-path, home-create, home-link, home-entry, config-write and config-install are the private CODEX_HOME under the account, or the claude config dir .claude.json, that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; entry-unreadable is the entry written and not read back.' ;;
     launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
     interrupted) text='A signal stopped the script; the successor window was closed and the caller keeps running.' ;;
     successor-launch) text='The successor command is built; the form names how the picked lane reaches the harness.' ;;

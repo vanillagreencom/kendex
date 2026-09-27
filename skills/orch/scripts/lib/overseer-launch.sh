@@ -185,13 +185,13 @@ ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
     cmd+=" $(printf %q "$flag")"
   done
   cmd+=" 'Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $handoff'"
-  if ! lane_codex_trust_prepare "$harness" "$lane_dir" "$launch_dir"; then
+  if ! lane_trust_prepare "$harness" "$lane_dir" "$launch_dir"; then
     OL_REASON=launch-trust-missing
     OL_TRUST_REASON="$LANE_TRUST_REASON"
     return 1
   fi
   OL_TRUST_ROUTE="${LANE_TRUST_ROUTE:-none}"
-  # Always a path where a lane was picked: lane_codex_trust_prepare returns
+  # Always a path where a lane was picked: lane_trust_prepare returns
   # the lane or a home under it.
   OL_LAUNCH_HOME="$LANE_TRUST_HOME"
   OL_FORM="$(lane_launch_form "$cmd" "$harness" "$OL_LAUNCH_HOME" "")"

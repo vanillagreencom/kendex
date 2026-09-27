@@ -47,12 +47,20 @@ in_range() { # NAME VALUE LO HI
 
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN" "$TMP_ROOT/work"
+# The claude stub asks the folder-trust question the real harness asks: with
+# no `hasTrustDialogAccepted` for its working directory in the .claude.json
+# of the config dir it runs under, it draws the dialog line and waits, which
+# is what a successor launched without the entry meets. The codex stub asks
+# none, its trust being the launch-home rows' subject.
 for harness in claude codex; do
   lane_var=CLAUDE_CONFIG_DIR
   [[ "$harness" == claude ]] || lane_var=CODEX_HOME
+  trust_gate=""
+  [[ "$harness" != claude ]] || trust_gate="jq -e --arg d \"\$(pwd -P)\" '.projects[\$d].hasTrustDialogAccepted == true' \"\${CLAUDE_CONFIG_DIR:-\$HOME/.claude}/.claude.json\" >/dev/null 2>&1 || { echo 'Do you trust the files in this folder?'; exec sleep 100000; }"
   cat > "$BIN/$harness" <<STUB
 #!/bin/sh
 { printf 'lane=%s\n' "\${$lane_var:-}"; printf 'argv0=%s\n' "\$0"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.$harness"
+$trust_gate
 if [ -f "$TMP_ROOT/idle" ]; then echo 'FIXTURE successor startup waiting'; else echo 'esc to interrupt'; fi
 [ ! -f "$TMP_ROOT/asking" ] || echo 'Do you want to proceed?'
 exec sleep 100000
@@ -393,7 +401,7 @@ for _ in $(seq 1 100); do kill -0 "$caller_pid" 2>/dev/null || break; sleep 0.2;
 # hands to the successor, here that none runs on the fleet state
 # (oversee_succeed_watch.sh holds the handover itself).
 assert_eq "$(layout)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pane.out" | sed 's/window=@[0-9]*/window=@N/; s/pane=%[0-9]*/pane=%N/; s|path=.*/tmp/workflow-state-oversee.json$|path=STATE|' | tr '\n' ';')|$(recorded claude)" \
-  "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=none;${UNOBSERVED_LINE}oversee-succeed: watch-absent path=STATE;oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;--dangerously-skip-permissions;--verbose;$BRIEF;" \
+  "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=account-config;${UNOBSERVED_LINE}oversee-succeed: watch-absent path=STATE;oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;--dangerously-skip-permissions;--verbose;$BRIEF;" \
   "success in the caller's own pane: successor at the caller's index, caller window gone"
 
 # The record that succession wrote before the successor's first turn, over the
@@ -714,7 +722,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)" \
 new_caller "$MARK" '(fixture@example.com)' "cat '$TMP_ROOT/caller.screen'; exec '$BIN/hclaude' 100000"
 CALLER_LANE=none run_succeed callerdefault ''
 assert_eq "$RC|$(caller_open)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(recorded claude)" \
-  "0|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=none|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=preapproved|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
   "a caller entry naming no account variable launches on the account its room was measured on"
 
 # The same refusal from a CODEX overseer. Its account's reset arrives from the
@@ -1487,7 +1495,7 @@ fleet_state
 # every printed line go through, so the copy whose builder skips it is what a
 # print without the preparation would record.
 PRINTSKIP="$(mutant_scripts printskip lib/overseer-launch.sh)" || exit 1
-awk -v call='  if ! lane_codex_trust_prepare "$harness" "$lane_dir" "$launch_dir"; then' \
+awk -v call='  if ! lane_trust_prepare "$harness" "$lane_dir" "$launch_dir"; then' \
   '$0 == call { print "  LANE_TRUST_HOME=\"$lane_dir\" LANE_TRUST_ROUTE=none LANE_TRUST_REASON=\"\"; if false; then"; calls++; next }
    { print }
    END { if (calls != 1) exit 1 }' "$SRC_DIR/lib/overseer-launch.sh" > "$PRINTSKIP/lib/overseer-launch.sh" \
@@ -1583,7 +1591,9 @@ new_dead_pane() {
 }
 dead_open() { if [[ "$(tm list-windows -t fleet -F '#{window_id}')" == *"$DEAD_WINDOW"* ]]; then echo yes; else echo no; fi; }
 overseer_index() { tm list-windows -t fleet -F '#{window_index} #{window_name}' | awk '$2 == "overseer" { printf "%s", $1 }'; }
-RECORDED_LINE="claude -n overseer 'relaunched from the record'"
+# The recorded line names its lane, as every line the print and succeed modes
+# build does: the harness reads that lane's own folder trust.
+RECORDED_LINE="env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer 'relaunched from the record'"
 printf '%s\n' "$RECORDED_LINE" > "$TMP_ROOT/line-file"
 
 # A mistyped ORCH_QUESTION_TOOL rides along: the recorded line is sent
@@ -1592,7 +1602,7 @@ new_caller "$MARK"
 new_dead_pane
 QUESTION_TOOL=sometimes run_succeed deadpane '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file"
 assert_eq "$RC|$(overseer_index)|$(caller_open)|$(dead_open)|$(recorded claude)" \
-  "0|5|yes|no|lane=;-n;overseer;relaunched from the record;" \
+  "0|5|yes|no|lane=$H/.claude;-n;overseer;relaunched from the record;" \
   "--dead-pane sends the recorded line into the dead overseer's window, asking that pane nothing, a mistyped question-tool setting unread"
 new_caller "$MARK"
 new_dead_pane
@@ -2036,7 +2046,7 @@ succeed_shim() {
 new_caller "$MARK"
 succeed_shim shim 'claude:1:high'
 assert_eq "$RC|$(caller_open)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(recorded_argv0 4claude)|$(recorded 4claude)|$(recorded claude)" \
-  "0|no|oversee-succeed: successor-launch form=launcher:$BIN/4claude lane=$H/.4claude trust=none|$BIN/4claude|lane=;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;|none" \
+  "0|no|oversee-succeed: successor-launch form=launcher:$BIN/4claude lane=$H/.4claude trust=account-config|$BIN/4claude|lane=;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;|none" \
   "a lane whose launcher is on PATH is launched through it by absolute path, with no environment prefix"
 
 # A successor stopped at a folder-trust dialog is reported as that, with the
@@ -2053,6 +2063,30 @@ for spelling in folder directory; do
     "1|oversee-succeed: successor-dialog window=@N waited=N;Do you trust the files in this $spelling?;|yes|0" \
     "a successor at the $spelling spelling of the trust dialog: successor-dialog with the pane line"
 done
+
+# A claude successor is given the folder trust its harness asks for BEFORE it
+# starts, in the picked config dir's own .claude.json, so a config dir that
+# never opened the caller's directory does not park the successor on the
+# dialog. A fresh lane, so nothing an earlier row prepared answers for it.
+make_lane "$H" tclaude
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.tclaude.json"
+new_caller "$MARK"
+TCLAUDE_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+LANE_DIRS="$H/.tclaude" run_succeed trustclaude 'claude:1:high'
+assert_eq "$RC|$(caller_open)|$(overseers)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(jq -r --arg d "$TCLAUDE_CWD" '[.hasCompletedOnboarding, .projects[$d].hasTrustDialogAccepted] | map(tostring) | join(",")' "$H/.tclaude/.claude.json")" \
+  "0|no|1|oversee-succeed: successor-launch form=prefix lane=$H/.tclaude trust=account-config|true,true" \
+  "a claude successor on a config dir new to the caller directory is given the trust entry and starts"
+# The control: a builder whose claude arm records nothing leaves the config
+# dir without the entry, and the successor opens on the dialog.
+TRUSTCTL="$(mutant_scripts trustctl lib/lane-launch.sh)" || exit 1
+mutate_file "$TRUSTCTL/lib/lane-launch.sh" '    claude) lane_claude_trust_prepare "$2" "$3" ;;' '    claude) LANE_TRUST_ROUTE=none ;;'
+make_lane "$H" uclaude
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.uclaude.json"
+new_caller "$MARK"
+LANE_DIRS="$H/.uclaude" SUCCEED_BIN="$TRUSTCTL/oversee-succeed" run_succeed trustctl 'claude:1:high' --wait-secs 30
+assert_eq "$RC|$(keyed successor-dialog "$OUT" | sed -n '1p;3p' | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/' | tr '\n' ';')|$(caller_open)|$(overseers)|$(test -e "$H/.uclaude/.claude.json" && echo entry || echo none)" \
+  "1|oversee-succeed: successor-dialog window=@N waited=N;Do you trust the files in this folder?;|yes|0|none" \
+  "control: a builder that records no claude trust leaves the successor on the dialog and the config dir without the entry"
 
 # A lane directory carrying an apostrophe still reaches the harness. The env
 # prefix crosses the pane's own shell, so a bare pair of quotes around such a
