@@ -35,8 +35,9 @@
 #   5. the lane verdicts: one lane reached, two lanes reached, a lane named
 #      on two lines, an unclaimed path outside the docs set and one inside
 #      it, a docs path a lane claims, lanes=false, no changed path, and an
-#      absent and five malformed declarations, one with a valid lane ahead
-#      of the bad line and one whose name starts with `-`, each row
+#      absent and six malformed declarations, one with a valid lane ahead
+#      of the bad line, one whose name starts with `-` and one that is a
+#      directory, so it exists but cannot be read, each row
 #      asserting the verdict lines and the declaration's state; the judged
 #      tree carries a declaration of its own that no row may read, and
 #      every run starts in a directory holding files the globs would expand
@@ -146,7 +147,8 @@ Bad x
 declare_lanes bad-leading 'check src/*
 -check tests/*
 '
-mkdir -p "$TMP/decl/absent" "$TMP/subject/.github"
+mkdir -p "$TMP/decl/absent" "$TMP/decl/unreadable/.github/ci-lanes.conf" \
+  "$TMP/subject/.github"
 printf 'evil *\n' >"$TMP/subject/.github/ci-lanes.conf"
 
 # Run a classify script with an explicit environment: the defaults below,
@@ -483,6 +485,7 @@ no-globs|no-globs|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=ma
 no-lanes|no-lanes|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=malformed cause=no-lanes
 bad-after-good|bad-after-good|standard|true|docs/guide.md||lane_verdicts= state=malformed cause=bad-name line=2 name=Bad
 bad-leading|bad-leading|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=malformed cause=bad-name line=2 name=-check
+unreadable|unreadable|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=malformed cause=unreadable
 ROWS
 }
 
@@ -517,16 +520,16 @@ while IFS='|' read -r name decl class docs paths outside expected; do
   rows=$((rows + 1))
   check "lane row $name" "$expected" "$(lane_answer "$CLASSIFY" "$name")"
 done < <(lane_rows)
-[ "$rows" -eq 15 ] || { echo "the lane table read $rows rows" >&2; exit 1; }
+[ "$rows" -eq 16 ] || { echo "the lane table read $rows rows" >&2; exit 1; }
 
 # GitHub reads a `::warning` line off the step's stdout; a declaration the
 # step could not use says so there, and one it read says nothing.
-for decl in absent bad-name good; do
+for decl in absent bad-name unreadable good; do
   run "$CLASSIFY" LANES_FROM="$TMP/decl/$decl" STUB_PATHS=src/main.rs \
     STUB_OUTSIDE=src/main.rs >/dev/null
   case "$decl" in
     absent) want='::warning title=lane declaration absent::' ;;
-    bad-name) want='::warning title=lane declaration malformed::' ;;
+    bad-name | unreadable) want='::warning title=lane declaration malformed::' ;;
     good) want='' ;;
   esac
   check "the $decl declaration's warning" "$want" \
@@ -565,8 +568,9 @@ declaration="$lanes_root/.github/ci-lanes.conf"@declaration="$judged_root/.githu
   set -f; for glob in@  for glob in@one-lane
     lane=false lane_cause="cause=lanes-false lanes_cause=$lanes_cause"@    lane=true lane_cause="cause=lanes-false lanes_cause=$lanes_cause"@docs-only
     lane=false lane_cause="cause=unreached"@    lane=true lane_cause="cause=unreached"@one-lane
+{ declaration_note="cause=unreadable"; return 1; }@:@unreadable
 ROWS
-[ "$mutants" -eq 15 ] || { echo "the lane mutant table read $mutants rows" >&2; exit 1; }
+[ "$mutants" -eq 16 ] || { echo "the lane mutant table read $mutants rows" >&2; exit 1; }
 
 # The refusal of a lanes-from naming the judged tree, planted away.
 needle='[ "$lanes_root" != "$judged_root" ] ||'
