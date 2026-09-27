@@ -251,5 +251,25 @@ assert_eq "$RC|$(recorded harness)|$(recorded model)" "0|none|none" \
   "control: a record write without the launch identity records none of it"
 tm kill-window -t "$(recorded window)"
 
+# register on a codex pane running under a private CODEX_HOME: the account is
+# the folder that home was built under, and the home is kept apart from it. A
+# copy of sleep named codex, since only that exact name reads as codex.
+mkdir -p "$TMP_ROOT/codex-bin"
+cp "$(command -v sleep)" "$TMP_ROOT/codex-bin/codex"
+PRIVATE_HOME="$H/.codex/lane-launch/work-1/home"
+CODEX_PANE="$(tm new-window -d -t fleet:6 -n codexhand -P -F '#{pane_id}' "exec '$TMP_ROOT/codex-bin/codex' 100000")"
+register_codex() { # [OVERSEE_BIN]
+  OVERSEE_BIN="${1:-}" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$CODEX_PANE" CODEX_HOME="$PRIVATE_HOME" -- register
+}
+register_codex
+assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded home)" \
+  "0|codex|$H/.codex|$PRIVATE_HOME" \
+  "register on a codex pane records its account and its private CODEX_HOME apart"
+CODEXCTL="$(mutant_scripts codexctl oversee)" || exit 1
+mutate_file "$CODEXCTL/oversee" 'codex) harness=codex; home="${CODEX_HOME:-$ACCOUNT}" ;;' 'codex) harness=codex ;;'
+register_codex "$CODEXCTL/oversee"
+assert_eq "$RC|$(recorded home)" "0|$H/.codex" \
+  "control: a register that takes the account for the home loses the private CODEX_HOME"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

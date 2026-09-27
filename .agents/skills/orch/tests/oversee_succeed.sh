@@ -402,8 +402,9 @@ assert_eq "harness=$(orec harness) home=$(orec home) model=$(orec model) effort=
   "harness=claude home=$H/.claude model=fable effort=high cwd=$(tm display-message -p -t "$SUCC_REC_PANE" '#{pane_current_path}') pending=none" \
   "the successor record carries its launch identity and drops the pending successor"
 
-# The same launch's record, written before the window opened: the close kills
-# this script's own window, so a write placed after it may never run.
+# The successor's own record carries the line it was launched with, which a
+# later dead-overseer relaunch replays. The pending line written before the
+# window opened is oversee_succeed_record.sh's row.
 assert_eq "$(recorded_line)" \
   "env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high $CLAUDE_COMPACT_LINE --dangerously-skip-permissions --verbose '$BRIEF'" \
   "a succession records the line it launched, for a later dead-overseer relaunch"

@@ -25,8 +25,10 @@
 #   context or its account.
 #
 #   `--walled-pane` serves an overseer whose ACCOUNT is spent. That overseer is
-#   not dead: its harness is still the pane's foreground command, so the pane
-#   answers for its harness exactly as a live caller's does, and no
+#   not dead: its harness is still running, so its launch record answers for
+#   its harness, account, model and directory where it names that pane, and
+#   --harness, its foreground command and its context reading where it names
+#   none, exactly as a live caller's do, and no
 #   recorded line is needed to launch its successor. What it cannot do is take
 #   a turn, so it never reaches the mark judgement that would hand it over.
 #   This mode is therefore the succession with the WALL in place of the mark,
@@ -346,8 +348,10 @@
 #   --walled-pane PANE
 #                    The tmux pane of an overseer whose account is spent, in
 #                    place of the caller's own. No mark is judged and no
-#                    recorded line is read: the pane still runs its harness,
-#                    which answers for itself, and step 3 picks the lane
+#                    recorded line is read: its launch record answers for its
+#                    harness, account, model and directory where it names the
+#                    pane, as for a live caller, and --harness and the pane
+#                    where it names none, and step 3 picks the lane
 #                    as it does for a live succession — walking the caller
 #                    entry alone whatever ORCH_OVERSEER_PREFERENCE names, and
 #                    refusing a pick that names the account the walled pane is
@@ -1029,7 +1033,9 @@ walk_entries() {
       [[ -z "$OL_CUR_MODEL" ]] || model="$OL_CUR_MODEL" effort="$OL_CUR_EFFORT"
       FALLBACK_WALKED="${CALLER_HARNESS:-none}"
       # This entry names no model in the LAUNCH — it passes the overseer's own
-      # flags after -- instead — but the successor still runs a model, and it is
+      # flags after -- instead — unless its launch record names a model, in
+      # which case that pair is written and the caller's own is stripped. Either
+      # way the successor runs a model, and it is
       # the one this pane already runs: the same flags, or the same lane default
       # where they name none. So the PICK is judged on it, as a preference
       # entry's pick is judged on the model that entry passes. Judged on no model
@@ -1075,8 +1081,10 @@ walk_entries() {
     # `no-lane-qualifies` rather than reopening on an unchecked account. The
     # pick names a lane of the same harness, and the model it is judged on is
     # this function's own first question, answered in the header above: the
-    # LAUNCH of the caller entry still carries no model or effort word of its
-    # own, and the PICK is judged on the model this pane already runs, which is
+    # LAUNCH of the caller entry carries no model or effort word of its own
+    # unless its launch record names a model, in which case that pair is
+    # written and the caller's own is stripped, and the PICK is judged on the
+    # model this pane already runs, which is
     # what those flags hand on. `print` reads no account at all, so it never
     # reaches the pick: the line it prints is the one this session is already
     # running on. `check` walks only to judge a qualifying mark, so it picks

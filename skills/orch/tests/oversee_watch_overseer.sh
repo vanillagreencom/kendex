@@ -72,6 +72,7 @@ case "${1:-}" in
     fi
     if [[ -f "$STUB_DIR/succeed.line" ]]; then cat "$STUB_DIR/succeed.line"
     else echo "claude -n overseer 'brief'"; fi
+    [[ ! -f "$STUB_DIR/succeed.print-notice" ]] || echo "oversee-succeed: record-unread pane=${TMUX_PANE:-none}" >&2
     exit 0 ;;
   --check-marks)
     # oversee-succeed needs explicit identity for a node pane with no context
@@ -615,6 +616,33 @@ assert_eq "$(grep -- '^--print-launch-line' "$STUB_DIR/succeed.args")" \
   "the handoff path, the harness a node pane cannot name, and the overseer's own flags reach the builder" "$ERR"
 assert_eq "$(succeed_calls --print-launch-line)" "1" \
   "and the line is built once, not once per pass" "$ERR"
+
+# A notice a successful print writes on stderr reaches the watch's stderr and
+# never the recorded line, which a dead-pane relaunch types into a shell.
+print_notice_run() { # [WATCH_BIN]
+  overseer_case "record_print_notice${1:+_mutant}" idle
+  printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
+  printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+  touch "$STUB_DIR/succeed.print-notice"
+  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
+}
+print_notice_run
+assert_eq "line=$(recorded launch_line) notice=$(grep -c "^oversee-succeed: record-unread pane=$PANE\$" "$ERR")" \
+  "line=$LINE notice=1" "a print's notice goes to the watch's stderr, and the line stays the command" "$ERR"
+# The control: a capture that keeps both streams records the notice as part of the line.
+NOTICE_MUTANT="$TMP_ROOT/notice-mutant"
+mkdir -p "$NOTICE_MUTANT/orch"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$NOTICE_MUTANT/orch/scripts"
+ln -s "$REPO_ROOT/skills/github" "$NOTICE_MUTANT/github"
+FROM='  line="$("$SUCCEED" --print-launch-line "${OVERSEER_LAUNCH_ARGS[@]}" 2>"$errf")" || rc=$?'
+assert_eq "$(grep -cxF -- "$FROM" "$REPO_ROOT/skills/orch/scripts/lib/watch-overseer-record.sh")" "1" \
+  "control: the print capture is one line of the record library"
+FROM="$FROM" TO='  line="$("$SUCCEED" --print-launch-line "${OVERSEER_LAUNCH_ARGS[@]}" 2>&1)" || rc=$?' \
+  awk '$0 == ENVIRON["FROM"] { print ENVIRON["TO"]; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/lib/watch-overseer-record.sh" > "$NOTICE_MUTANT/orch/scripts/lib/watch-overseer-record.sh"
+print_notice_run "$NOTICE_MUTANT/orch/scripts/oversee-watch"
+assert_eq "$(recorded launch_line)" "$LINE"$'\n'"oversee-succeed: record-unread pane=$PANE" \
+  "control: a capture of both streams records the notice in the line" "$ERR"
 
 # A manual replacement can reuse the same durable tmux server, pane and window.
 # Its new watch owns the command and replaces the former session's bypass flag.

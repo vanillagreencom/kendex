@@ -28,7 +28,7 @@ overseer_launch_args() {
 }
 
 overseer_command_record() {
-  local pane="${TMUX_PANE:-}" key server window line record detail
+  local pane="${TMUX_PANE:-}" key server window line record detail errf rc=0
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
   # The key is the orch library's, the same function the lane turn-end hook
   # and `oversee register` read a session's own key with: the hook compares its own
@@ -54,9 +54,14 @@ overseer_command_record() {
   [[ "$window" =~ ^@[0-9]+$ ]] \
     || overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=window"
   overseer_launch_args
-  if ! line="$("$SUCCEED" --print-launch-line "${OVERSEER_LAUNCH_ARGS[@]}" 2>&1)"; then
-    overseer_record_refuse "$line" overseer-line-missing "pane=$pane" "path=$SUCCEED"
-  fi
+  # The line is the print's stdout alone, so no notice on its stderr enters
+  # the command a relaunch types; that stderr is the refusal's detail or relayed.
+  errf="$(mktemp)" || overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=mktemp"
+  line="$("$SUCCEED" --print-launch-line "${OVERSEER_LAUNCH_ARGS[@]}" 2>"$errf")" || rc=$?
+  detail="$(cat -- "$errf")" || detail=""
+  rm -f -- "${errf:?}"
+  (( rc == 0 )) || overseer_record_refuse "$detail" overseer-line-missing "pane=$pane" "path=$SUCCEED"
+  [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
   [[ -n "$line" ]] \
     || overseer_record_refuse "" overseer-line-missing "pane=$pane" "path=$SUCCEED"
   # The four fields this watch observes replace the prior's; the launcher's

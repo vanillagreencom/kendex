@@ -17,6 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUCCEED="$TEST_DIR/../scripts/oversee-succeed"
+SRC_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
 # The permission word a claude line carries, read from the launch table the
 # launcher writes it from, so the rows assert the word a caller hands on
 # reaches the line without this file spelling it.
@@ -45,7 +46,10 @@ for harness in claude codex; do
 done
 cat > "$BIN/kendex" <<'STUB'
 #!/bin/sh
-exit 1
+case "$1:$2:$3" in
+  tier-model:claude:1) echo fable-next ;;
+  *) exit 1 ;;
+esac
 STUB
 chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex"
 
@@ -134,7 +138,7 @@ run_succeed() {
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/lanes-state" \
     ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.codex" \
     ORCH_LANES_USAGE_TTL=0 ORCH_OVERSEER_HEADROOM_PCT=5 ORCH_OVERSEER_WALL_MINUTES=0 \
-    ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 ORCH_OVERSEER_PREFERENCE= "$lane" \
+    ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 ORCH_OVERSEER_PREFERENCE="${PREFERENCE:-}" "$lane" \
     "${SUCCEED_BIN:-$SUCCEED}" "$@" 2>"$TMP_ROOT/err")" || RC=$?
   ERR="$(cat -- "$TMP_ROOT/err")"
 }
@@ -167,6 +171,7 @@ for row in \
   "this:$H/.claude:claude-opus-5|$FABLE|CLAUDE_CONFIG_DIR=$H/.claude|-|mark-reached kind=headroom value=1|the record's model decides over the status line's" \
   "this:$H/.claude:fable:pending|$OPUS|CLAUDE_CONFIG_DIR=$H/.eclaude|mail|context-below-mark headroom=90|a pending successor, the pane, the environment and the mailbox all disagree: the current record decides" \
   "other:$H/.eclaude:claude-opus-5|$FABLE|CLAUDE_CONFIG_DIR=$H/.claude|-|context-below-mark headroom=90|a record naming another session is not this one's: the bootstrap readings decide" \
+  "otherserver:$H/.eclaude:claude-opus-5|$FABLE|CLAUDE_CONFIG_DIR=$H/.claude|-|context-below-mark headroom=90|a record naming this pane id on another tmux server is not this one's" \
   ; do
   IFS='|' read -r row_record row_screen row_lane row_mail row_want row_what <<<"$row"
   new_caller "$row_screen"
@@ -180,6 +185,7 @@ for row in \
     none) state none ;;
     this) state "$(record "$CALLER_PANE" "$rec_account" "$rec_model" "$([[ -z "$rec_pending" ]] && echo '{}' || echo "$PENDING")")" ;;
     other) state "$(record %999 "$rec_account" "$rec_model")" ;;
+    otherserver) state "$(record "$CALLER_PANE" "$rec_account" "$rec_model" '{"server": "1"}')" ;;
   esac
   run_succeed "$row_lane" --check-marks
   assert_eq "$RC|$(judged)" "0|$row_want" "--check-marks: $row_what" "$TMP_ROOT/err"
@@ -193,15 +199,12 @@ assert_eq "$RC|$(judged)|$(grep -c "^oversee-succeed: record-unread pane=$CALLER
   "0|context-below-mark headroom=90|1" \
   "--check-marks on an unreadable state: record-unread, and the pane and environment judge"
 
-# A print on an unreadable state says nothing on stderr: the watch start keeps
-# both streams as the line it records.
+# A print on an unreadable state gives the same notice on stderr and the line
+# alone on stdout, which is all the watch start records.
 run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS"
-assert_eq "$RC|$ERR" "0|" "--print-launch-line on an unreadable state keeps stderr clear"
-QUIETCTL="$(mutant_scripts quietctl oversee-succeed)" || exit 1
-mutate_file "$QUIETCTL/oversee-succeed" '(( record_rc > 1 )) && [[ "$MODE" != print ]]' '(( record_rc > 1 ))'
-SUCCEED_BIN="$QUIETCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS"
-assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "0|oversee-succeed: record-unread pane=$CALLER_PANE" \
-  "control: a print that gives the notice puts it where the watch records the line"
+assert_eq "$RC|$OUT|$(sed -n 1p <<<"$ERR")" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $BYPASS '$BRIEF'|oversee-succeed: record-unread pane=$CALLER_PANE" \
+  "--print-launch-line on an unreadable state: the notice on stderr, the line alone on stdout"
 
 # The control for the pending rule: a reader that takes the pending successor
 # as the current session judges the running overseer as the successor's codex
@@ -215,6 +218,16 @@ state "$(record "$CALLER_PANE" "$H/.claude" fable "$PENDING")"
 SUCCEED_BIN="$PENDCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
 assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
   "control: a reader of the pending successor judges the caller as the successor" "$TMP_ROOT/err"
+
+# The control for the server rule: a test that matches the pane id alone takes
+# another tmux server's record, whose pane ids restart at %0, as this one's.
+SERVERCTL="$(mutant_scripts serverctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$SERVERCTL/lib/overseer-launch.sh" 'type == "object" and (.server // "") == $server' 'type == "object"'
+new_caller "$FABLE"
+state "$(record "$CALLER_PANE" "$H/.eclaude" claude-opus-5 '{"server": "1"}')"
+SUCCEED_BIN="$SERVERCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
+assert_eq "$RC|$(judged)" "0|mark-reached kind=headroom value=5" \
+  "control: a test on the pane id alone judges the caller on another server's record" "$TMP_ROOT/err"
 
 # The control for the model rule: a caller that ignores the record's model is
 # judged on the status line's.
@@ -303,6 +316,56 @@ dead_relaunch "$OWN" "$DEADCTL/oversee-succeed"
 print_on_successor
 assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: no-status-line pane=$SUCC_PANE" \
   "control: a relaunch that records no identity leaves the next print refused"
+
+# --- the pending successor, as a succession writes it ---------------------
+# A workflow-state stand-in snapshots the record at the moment the succession
+# writes its pending successor, before that window opens. The caller's record
+# names .eclaude, at its trigger, and a directory of its own; the preference's
+# entry picks .claude on its own model and effort.
+RECORDED_CWD="$TMP_ROOT/recorded-cwd"
+mkdir -p "$RECORDED_CWD"
+RECORDED_CWD="$(cd "$RECORDED_CWD" && pwd -P)"
+# pending_run SCRIPTS_DIR — that succession over SCRIPTS_DIR with the stand-in;
+# sets SNAP to the record the pending write left, CALLER_CWD to the caller
+# pane's own directory and SUCC_CWD to the successor pane's.
+pending_run() {
+  local dir="$1"
+  rm -f -- "${dir:?}/workflow-state" "${TMP_ROOT:?}/pending.snap"
+  cat > "$dir/workflow-state" <<STUB
+#!/usr/bin/env bash
+"$SRC_DIR/workflow-state" "\$@" || exit
+[[ "\$1 \$2 \$3" != "set oversee overseer.pending" ]] || jq -c .overseer "$FLEET_STATE" > "$TMP_ROOT/pending.snap"
+STUB
+  chmod +x "$dir/workflow-state"
+  new_caller "$FABLE"
+  CALLER_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+  state "$(record "$CALLER_PANE" "$H/.eclaude" fable "$(jq -cn --arg cwd "$RECORDED_CWD" '{cwd: $cwd}')")"
+  SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:1:low run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$BYPASS"
+  SNAP="$(cat -- "$TMP_ROOT/pending.snap" 2>/dev/null || echo none)"
+  SUCC_CWD="$(tm display-message -p -t "$(jq -r '.overseer.pane' "$FLEET_STATE")" '#{pane_current_path}')"
+}
+SUCC_LINE="env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable-next --effort low $BYPASS '$BRIEF'"
+pending_run "$(mutant_scripts pendingrun)"
+assert_eq "$RC|$(jq -r '.pending | [.launch_line, .harness, .account, .model, .effort, .cwd] | join("|")' <<<"$SNAP")" \
+  "0|$SUCC_LINE|claude|$H/.claude|fable-next|low|$RECORDED_CWD" \
+  "a succession writes its successor's line and identity as pending before the window opens" "$TMP_ROOT/err"
+assert_eq "$(jq -r '[.account, .model, .launch_line] | join("|")' <<<"$SNAP")" "$H/.eclaude|fable|recorded" \
+  "and leaves the caller's own account, model and line as they were"
+assert_eq "$SUCC_CWD" "$RECORDED_CWD" "the successor opens in the directory the caller's record names"
+# The pending rule's producer control: a pending write under another key leaves
+# a death mid-succession nothing to replay.
+PENDWCTL="$(mutant_scripts pendwctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$PENDWCTL/lib/overseer-launch.sh" '$identity + {launch_line: $line}' '$identity + {line: $line}'
+pending_run "$PENDWCTL"
+assert_eq "$RC|$(jq -r '.pending.launch_line // "none"' <<<"$SNAP")" "0|none" \
+  "control: a pending write under another key records no line to replay"
+# The directory rule's control: a caller that ignores its recorded directory
+# opens the successor in the pane's own.
+CWDCTL="$(mutant_scripts cwdctl oversee-succeed)" || exit 1
+mutate_file "$CWDCTL/oversee-succeed" '[[ -z "$OL_CUR_CWD" ]] || CALLER_PATH="$OL_CUR_CWD"' ':'
+pending_run "$CWDCTL"
+assert_eq "$RC|$SUCC_CWD" "0|$CALLER_CWD" \
+  "control: a caller that ignores its recorded directory opens the successor in the pane's"
 
 # --- the succession -------------------------------------------------------
 # A live succession judges the account and model its record names: .eclaude at

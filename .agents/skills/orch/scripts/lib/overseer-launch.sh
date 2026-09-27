@@ -6,7 +6,8 @@
 # succession cannot come to open, verify or record a session differently.
 # What differs between them is policy and stays with the caller: which marks
 # fire, how a predecessor's flags carry over, which entries the account walk
-# tries. What is shared is here:
+# tries. `oversee-watch` sources it too, through lib/watch-overseer-record.sh,
+# for OL_JQ_DEFS alone. What is shared is here:
 #
 #   ol_preference_entries  the ORCH_OVERSEER_PREFERENCE parse
 #   ol_pick_record         one `lanes pick --json` record, for a caller's
@@ -37,8 +38,9 @@
 # dependency writes its stderr to DEP_ERR, which the caller relays under its
 # keyed line.
 #
-# Requires: SCRIPT_DIR (the orch scripts directory), DEP_ERR (a file), and
-# lib/lane-launch.sh and lib/lane-state.sh sourced by the caller. Sourced,
+# Requires, of a caller that runs its functions: SCRIPT_DIR (the orch scripts
+# directory), DEP_ERR (a file), and lib/lane-launch.sh and lib/lane-state.sh
+# sourced by the caller. Sourcing it defines names and runs nothing. Sourced,
 # never run.
 
 # The runtime the caller launches into, resolved once per process.
