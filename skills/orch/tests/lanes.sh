@@ -1953,6 +1953,12 @@ printf 'account=%s\tharness=claude\tstatus=unreachable\n' "$H/.tclaude" > "$TMP_
 printf 'account=%s\tharness=claude\tsession-5h-pct=10\tweekly-pct=20\n' "$H/.dclaude" > "$TMP_ROOT/pick-dead-ok.tsv"
 printf 'account=%s\tharness=claude\tsession-5h-pct=10\tweekly-pct=99\n' "$H/.dclaude" > "$TMP_ROOT/pick-dead-walled.tsv"
 : > "$TMP_ROOT/pick-none.tsv"
+# Rows naming an account and nothing the provider read, which is what a provider
+# says of an account it holds and does not measure.
+printf 'account=%s\tharness=claude\n' "$H/.tclaude" > "$TMP_ROOT/pick-token-bare.tsv"
+printf 'account=%s\tharness=claude\n' "$H/.dclaude" > "$TMP_ROOT/pick-dead-bare.tsv"
+# An account the provider measures and discovery never reaches on this machine.
+printf 'account=%s\tharness=claude\tsession-5h-pct=10\tweekly-pct=20\n' "$H/.hostonly" > "$TMP_ROOT/pick-hostonly.tsv"
 PICK='pick --harness claude --json'
 table \
   "a token-only folder the provider measures with room is picked through the host|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK|rc=0 config_dir=$H/.tclaude measured_through=host" \
@@ -1960,14 +1966,34 @@ table \
   "a folder with neither a local file nor a host row is never picked|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-none.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.oclaude=local" \
   "a local copy proven dead is judged on the provider's reading, which has room|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-dead-ok.tsv|$PICK|rc=0 config_dir=$H/.dclaude measured_through=host" \
   "the provider's reading replaces the local one rather than joining it, so a walled host row is the account's only candidate|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-dead-walled.tsv|$PICK|rc=3 key=no-candidate,harness=claude,max-pct=95,model=none,walled=1,unmeasured=2 considered.dclaude=host" \
-  "--exclude-lane drops the host row it names too|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK --exclude-lane $H/.tclaude|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=2 considered.tclaude=none"
+  "--exclude-lane drops the host row it names too|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK --exclude-lane $H/.tclaude|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=2 considered.tclaude=none" \
+  "a host row with no reading of its own leaves this machine's reading of the account in place|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token-bare.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.tclaude=local"
 # Control: a pick that never asks for the host rows reads the token-only folder
 # as this machine's no_credentials, and nothing is picked.
-lanes_mutant mutant-pick-local-only lanes 'hosted="\$(host_lane_rows "\$harness")"' 'hosted="[]"'
+lanes_mutant mutant-pick-local-only lanes 'lanes="\$(collect_lanes "\$harness" "\$exclude" "\$hosted")"' 'lanes="$(collect_lanes "$harness" "$exclude")"'
 LANES_PATCHED="$LANES"
 LANES="$TMP_ROOT/mutant-pick-local-only/scripts/lanes"
 table \
   "control: without the host rows the token-only folder is listed local and never picked|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK|rc=3 considered.tclaude=local"
+LANES="$LANES_PATCHED"
+
+# `pick --lane` judges its one account by the chooser's rule, so a launcher
+# handed the token-only folder meets the reading the chooser would have picked.
+PICK_LANE='pick --harness claude --json --lane'
+table \
+  "a named token-only folder the provider measures with room is room through the host|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK_LANE $H/.tclaude|rc=0 config_dir=$H/.tclaude measured_through=host" \
+  "its host row read unreachable answers unmeasured, never room|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-unreachable.tsv|$PICK_LANE $H/.tclaude|rc=5 status=unreachable measured_through=host" \
+  "a named folder with neither a local file nor a host row stays no_credentials|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK_LANE $H/.oclaude|rc=5 status=no_credentials measured_through=local" \
+  "a named local copy proven dead is judged on the provider's reading|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-dead-ok.tsv|$PICK_LANE $H/.dclaude|rc=0 measured_through=host" \
+  "a host row with no reading of its own leaves the named account's local reading in place|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-dead-bare.tsv|$PICK_LANE $H/.dclaude|rc=5 status=expired measured_through=local" \
+  "a dir discovery does not reach is judged on the reading the provider reports for it|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-hostonly.tsv|$PICK_LANE $H/.hostonly|rc=0 config_dir=$H/.hostonly measured_through=host"
+# Control: a named pick that never matches a host row reads the token-only
+# folder as this machine's no_credentials.
+lanes_mutant mutant-pick-lane-local-only lanes '"\$id" == "\$target"' '"$id" == "no-such-lane"'
+LANES_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-pick-lane-local-only/scripts/lanes"
+table \
+  "control: without the host row the named token-only folder is unmeasured through the local reading|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK_LANE $H/.tclaude|rc=5 status=no_credentials measured_through=local"
 LANES="$LANES_PATCHED"
 
 echo "=== a renewal a ceiling lands on finishes, keeps the rotated token and releases the mutex ==="

@@ -110,9 +110,13 @@
 #         local copy reads `expired` is judged on the host's. A host row that
 #         measured nothing is dropped like any unmeasured lane, and an account
 #         with neither a local file nor a host row stays `no_credentials`. The
-#         stderr table under exit 3 names each candidate's THROUGH. An absent or
-#         failed verb leaves the local reading alone, as it does for `list`.
-#         `pick --lane` judges the local reading.
+#         stderr table under exit 3 names each candidate's THROUGH. A host row
+#         carrying no `status` and no percentage says only that the provider
+#         holds the account, so this machine's reading stands for it. An absent
+#         or failed verb leaves the local reading alone, as it does for `list`.
+#         `pick --lane` judges its one account by this same rule, and a dir
+#         the provider reports with a reading is judged even where discovery
+#         does not reach it.
 #
 #         With --lane <config-dir> it judges that ONE account instead of
 #         choosing among the fleet, measuring only that directory. A launcher
@@ -122,7 +126,8 @@
 #         measured for this launch, whether no window names --model or the
 #         account's usage could not be read at all, and under --json its record
 #         is printed too, whose `status` says which; 4 is a directory that is no
-#         configured lane of this harness, which a launcher reads as nothing to
+#         configured lane of this harness and no account the provider reports a
+#         reading for, which a launcher reads as nothing to
 #         judge rather than as a refusal; 1 is the judge itself failing, on a
 #         measurement or on a --max-pct this parser refused. Every exit but 0
 #         puts its keyed line on stderr. A claim store that could not be read is
@@ -1718,17 +1723,9 @@ load_lane_claims() {
 # while a listing shows both readings. A local dir the host reports is not
 # measured at all, and each host row passes the same --exclude-lane test.
 collect_lanes() {
-	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" exclude_id="" held="" id d h i n
+	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" exclude_id="" held id d h i
 	[[ -z "$exclude" ]] || exclude_id="$(lane_claims_canon "$exclude")"
-	# Each host row's config dir through the one normaliser, one per line in row
-	# order, so a dir the provider names with a trailing slash or through a
-	# symlink still replaces the local reading it stands for.
-	n=0
-	[[ "$hosted" == "[]" ]] || n="$(jq length <<<"$hosted")" || return 1
-	for ((i = 0; i < n; i++)); do
-		d="$(jq -r --argjson i "$i" '.[$i].config_dir' <<<"$hosted")" || return 1
-		held="$held$(lane_claims_canon "$d")"$'\n'
-	done
+	held="$(host_row_ids "$hosted")" || return 1
 	{
 		for h in claude codex; do
 			[[ "$harness_filter" == "all" || "$harness_filter" == "$h" ]] || continue
@@ -1737,7 +1734,7 @@ collect_lanes() {
 				if [[ -n "$exclude_id" || -n "$held" ]]; then
 					id="$(lane_claims_canon "$d")"
 					[[ "$id" != "$exclude_id" ]] || continue
-					case $'\n'"$held" in *$'\n'"$id"$'\n'*) continue ;; esac
+					case $'\n'"$held"$'\n' in *$'\n'"$id"$'\n'*) continue ;; esac
 				fi
 				measure_lane "$h" "$d"
 			done < <(lane_dirs "$h")
@@ -1751,16 +1748,28 @@ collect_lanes() {
 	} | jq -s '.'
 }
 
+# Each row's config dir in HOSTED through the one normaliser, one per line in
+# row order, so a dir the provider names with a trailing slash or through a
+# symlink still stands for the local dir it names.
+host_row_ids() { # HOSTED
+	local d i n=0
+	[[ "$1" == "[]" ]] || n="$(jq length <<<"$1")" || return 1
+	for ((i = 0; i < n; i++)); do
+		d="$(jq -r --argjson i "$i" '.[$i].config_dir' <<<"$1")" || return 1
+		lane_claims_canon "$d"
+	done
+}
+
 # The provider's rows for HARNESS as one JSON array, `[]` where ORCH_LANE_HOST
-# names none or there are none to merge. The reader's own status adds nothing
+# names none or there are none to merge. READINGS is host_account_records' own. The reader's own status adds nothing
 # here: it has already said on stderr what it did with an absent or failed verb,
 # and either way there are no host rows, so the caller keeps this machine's
 # reading. Only the slurp is this function's to report, so a merge failure is
 # never printed as the provider's answer.
-host_lane_rows() { # HARNESS
+host_lane_rows() { # HARNESS [READINGS]
 	local rows hosted accounts_rc=0 hosted_rc=0
 	[[ "${ORCH_LANE_HOST:-local}" != local ]] || { printf '[]\n'; return 0; }
-	rows="$(host_account_records "$ORCH_LANE_HOST" "$1")" || accounts_rc=$?
+	rows="$(host_account_records "$ORCH_LANE_HOST" "$1" "${2:-}")" || accounts_rc=$?
 	[[ "$accounts_rc" -eq 0 ]] || { printf '[]\n'; return 0; }
 	hosted="$(jq -cs . <<<"$rows")" || hosted_rc=$?
 	if [[ "$hosted_rc" -ne 0 ]]; then
@@ -1810,15 +1819,19 @@ host_lane_rows() { # HARNESS
 #
 # The answer itself comes from host_accounts_answer, which is where the cache and
 # the time bound are; this function parses and filters it.
-host_account_records() { # HOST HARNESS — one lane record per account it holds
-	local host="$1" want="${2:-all}" rc=0 rows line field key value bad retire
+#
+# READINGS `readings` drops a row carrying no `status` and no percentage: such a
+# row says the provider HOLDS the account and nothing about what its copy
+# measures, so a pick keeps this machine's reading of that account.
+host_account_records() { # HOST HARNESS [READINGS] — one lane record per account it holds
+	local host="$1" want="${2:-all}" mode="${3:-}" rc=0 rows line field key value bad retire said
 	local account harness status s_pct w_pct m_pct m_label s_reset w_reset m_reset
 	local buckets
 	rows="$(host_accounts_answer "$host")" || rc=$?
 	[[ "$rc" -eq 0 ]] || return "$rc"
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
-		account=""; harness=""; status="ok"; bad=""
+		account=""; harness=""; status="ok"; bad=""; said=""
 		s_pct=null; w_pct=null; m_pct=null
 		m_label=""; s_reset=""; w_reset=""; m_reset=""
 		# The row's fields, one per line. `printf '%s\n'`, never `%s`: a last
@@ -1832,7 +1845,7 @@ host_account_records() { # HOST HARNESS — one lane record per account it holds
 			case "$key" in
 				account) account="$value" ;;
 				harness) harness="$value" ;;
-				status) status="$value" ;;
+				status) status="$value"; said="${value:+status}" ;;
 				model-label) m_label="$value" ;;
 				session-resets) s_reset="$value" ;;
 				weekly-resets) w_reset="$value" ;;
@@ -1845,6 +1858,7 @@ host_account_records() { # HOST HARNESS — one lane record per account it holds
 							weekly-pct) w_pct=$((10#$value)) ;;
 							model-pct) m_pct=$((10#$value)) ;;
 						esac
+						said="$key"
 					else
 						bad="$key"
 					fi
@@ -1862,6 +1876,7 @@ host_account_records() { # HOST HARNESS — one lane record per account it holds
 		# whichever harness a caller asked for: a provider emitting a malformed
 		# row says so once, not only to the caller that wanted that harness.
 		[[ "$want" == all || "$harness" == "$want" ]] || continue
+		[[ "$mode" != readings || -n "$said" ]] || continue
 		# The same two settings that remove a local lane remove a hosted row, and
 		# for the same reason: they are the operator saying the account is not
 		# available to this fleet, which a copy of it on another machine does not
@@ -2102,8 +2117,8 @@ render_table() {
 # dependency to an operator.
 #
 # 4 is not a refusal a launcher inherits: a directory outside the discovery
-# glob, or outside ORCH_LANE_DIRS where that is set, has no record here and
-# never had one, so a launch onto it is judged by whatever gate the launcher
+# glob, or outside ORCH_LANE_DIRS where that is set, and not reported with a
+# reading by the provider, has no record here and never had one, so a launch onto it is judged by whatever gate the launcher
 # had before this question existed.
 #
 # A lane whose usage could not be fetched has status other than ok and answers
@@ -2121,7 +2136,7 @@ render_table() {
 # copy on another host may still be live.
 cmd_pick_lane() {
 	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6"
-	local target found="" d record wall bucket verdict
+	local target found="" d record="" wall bucket verdict hosted id i
 	# The same claim load `list` does, for the same reason: the record this form
 	# hands back carries `claims`, and without the store read it would carry 0
 	# for an account with sessions in flight — the one value emit_lane says that
@@ -2146,11 +2161,26 @@ cmd_pick_lane() {
 		found="$d"
 		break
 	done < <(lane_dirs "$harness")
+	# The chooser's rule for one account: a provider row carrying a reading
+	# stands in for this machine's, since the launch runs under the provider's
+	# copy. It also answers for a dir the provider holds and discovery does not
+	# reach, which is then no longer a lane with no record.
+	hosted="$(host_lane_rows "$harness" readings)"
+	i=0
+	while IFS= read -r id; do
+		[[ -n "$id" ]] || continue
+		if [[ "$id" == "$target" ]]; then
+			record="$(jq -c --argjson i "$i" '.[$i]' <<<"$hosted")" || { message pick-lane-failed "$dir" host >&2; return 1; }
+			[[ -n "$found" ]] || found="$(jq -r '.config_dir' <<<"$record")" || { message pick-lane-failed "$dir" host >&2; return 1; }
+			break
+		fi
+		i=$((i + 1))
+	done <<<"$(host_row_ids "$hosted")"
 	if [[ -z "$found" ]]; then
 		message pick-lane-unlisted "$dir" "$harness" >&2
 		return 4
 	fi
-	record="$(measure_lane "$harness" "$found")" || { message pick-lane-failed "$dir" measure >&2; return 1; }
+	[[ -n "$record" ]] || record="$(measure_lane "$harness" "$found")" || { message pick-lane-failed "$dir" measure >&2; return 1; }
 	record="$(jq -c --arg model "$model" --argjson floor "$binding_floor" "$LANE_MODEL_JQ"'
 		with_lane_binding($model; $floor)
 	' <<<"$record")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
@@ -2208,7 +2238,7 @@ cmd_pick() {
 	local lanes hosted judged chosen walled unmeasured
 	load_lane_claims
 	# After the claim load: emit_lane counts claims on every host row it writes.
-	hosted="$(host_lane_rows "$harness")"
+	hosted="$(host_lane_rows "$harness" readings)"
 	lanes="$(collect_lanes "$harness" "$exclude" "$hosted")"
 	# An unreadable claim store reads as "no launches in flight", which is the
 	# one thing it must not read as: picking on it can stack a second session
