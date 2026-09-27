@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
-# The reporter runs with process-boundary doubles for GitHub, git and kendex.
+# The reporter runs with process-boundary doubles for GitHub and git.
+# KENDEX_REPORT_TEST_BIN optionally runs the published CLI in the fixture home;
+# the default double uses that CLI's stderr routing stream.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 . "$TEST_DIR/lib/sandbox.sh"
-if python3 - "$SKILL_DIR" "$TMP" <<'PY'
+if python3 - "$SKILL_DIR" "$TMP" "${KENDEX_REPORT_TEST_BIN:-}" <<'PY'
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 
-skill, root = map(Path, sys.argv[1:])
+skill, root = map(Path, sys.argv[1:3])
+real_cli = sys.argv[3]
 (root / 'bin').mkdir()
 mock = root / 'bin/mock'
 mock.write_text('''#!/usr/bin/env python3
@@ -32,7 +35,9 @@ if name=="git":
 elif name=="kendex":
  assert os.environ["GH_TOKEN"]=="consumer"
  assert sys.argv[1:5]==["report","--asset","review-gate","--scope"]
- print("would run: gh issue create --repo vanillagreencom/kendex --label ci-infra --title test")
+ if os.environ.get("REAL_KENDEX"):
+  os.execv(os.environ["REAL_KENDEX"], ["kendex",*sys.argv[1:]])
+ print("would run: gh issue create --repo vanillagreencom/kendex --label ci-infra --title test",file=sys.stderr)
 else:
  assert name=="gh" and os.environ["GH_TOKEN"]=="upstream"
  assert sys.argv[1]=="api" and sys.argv[2].startswith("repos/vanillagreencom/kendex/issues")
@@ -54,7 +59,12 @@ for name in ('git','kendex','gh'): (root/'bin'/name).symlink_to(mock)
 world=root/'world.json'; summary=root/'summary'
 env={'PATH':str(root/'bin')+':/usr/bin:/bin','HOME':str(root),'GH_TOKEN':'consumer',
      'GH_REPO':'acme/repo','KENDEX_ISSUES_TOKEN':'upstream','GITHUB_RUN_ID':'42',
-     'GITHUB_STEP_SUMMARY':str(summary),'WORLD':str(world)}
+     'GITHUB_STEP_SUMMARY':str(summary),'WORLD':str(world),
+     'REAL_KENDEX':real_cli,'KENDEX_REAL_HOME':'1','KENDEX_BACKGROUND_REFRESH':'off'}
+(root/'kendex.toml').write_text('schema = 6\n')
+(root/'.kendex-lock.json').write_text(json.dumps({'version':11,'entries':{'skill:review-gate:codex':{
+ 'name':'review-gate','kind':'skill','harness':'codex','source':'kendex',
+ 'sourceRepo':'vanillagreencom/kendex','sourceHash':'x','enabled':True}}}))
 findings=[{'path':'.agents/skills/review-gate/scripts/test.sh','body':'The shipped command fails.\n$(touch should-not-exist)',
            'url':'https://github.com/acme/repo/pull/1#discussion_r10'}]
 def reset(**extra):
@@ -88,6 +98,7 @@ source=(skill/'scripts/refresh-report.py').read_text()
 for needle,replacement,rows,expect in [
  ('if path not in records:', 'if True or path not in records:', findings, 'path'),
  ('if existing:', 'if False and existing:', findings, 'dedup'),
+ ('            ).stderr', '            ).stdout', findings, 'stream'),
 ]:
  assert source.count(needle)==1
  mutant=root/(expect+'.py'); mutant.write_text(source.replace(needle,replacement))

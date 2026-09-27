@@ -8,6 +8,9 @@
 # could not be read or a write failed. Upstream-action-needed records name
 # findings that upstream triage assesses against kendex.
 set -euo pipefail
+# The upstream credential belongs only to the reporter child. In particular,
+# predicate source preparation must not inherit it.
+export -n KENDEX_ISSUES_TOKEN
 
 fail() {
   printf 'refresh-reviews-error=%s value=%q\n%s\n' "$1" "$2" "$3" >&2
@@ -179,7 +182,8 @@ while IFS= read -r pr; do
         + [ $accepted[] | . as $review | (.body | suppressed_scan).list[]
           | {key: ., path: sub(":[0-9]+$"; ""), body: $review.body, url: $review.html_url} ]')" \
       || fail report-candidates "$PR_NUMBER" 'Could not read accepted automatic findings.'
-    printf '%s\n' "$candidates" | python3 "$script_dir/refresh-report.py" "$HEAD_SHA" "$PR_NUMBER"
+    printf '%s\n' "$candidates" | KENDEX_ISSUES_TOKEN="${KENDEX_ISSUES_TOKEN:-}" \
+      python3 "$script_dir/refresh-report.py" "$HEAD_SHA" "$PR_NUMBER"
     continue
   fi
 

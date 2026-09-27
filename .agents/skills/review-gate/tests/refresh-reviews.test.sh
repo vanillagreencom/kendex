@@ -23,6 +23,7 @@ PREDICATE
 cat >"$TMP/trusted-scripts/refresh-report.py" <<'REPORT'
 import json, os
 from pathlib import Path
+assert os.environ['KENDEX_ISSUES_TOKEN']=='upstream-fixture-token'
 p=Path(os.environ['GH_FIXTURE']); w=json.loads(p.read_text())
 w.setdefault('reports', []).extend(json.load(__import__('sys').stdin))
 p.write_text(json.dumps(w))
@@ -52,7 +53,7 @@ PY
 run_writer() {
   RC=0
   OUT="$(cd "$TMP" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP/home" \
-    GH_REPO=acme/repo GH_TOKEN=fixture-token GH_FIXTURE="$FIXTURE" GH_MOCK="$BIN/gh" \
+    GH_REPO=acme/repo GH_TOKEN=fixture-token KENDEX_ISSUES_TOKEN=upstream-fixture-token GH_FIXTURE="$FIXTURE" GH_MOCK="$BIN/gh" \
     REVIEW_GATE_SETTINGS_FILE=/dev/null bash "$DRIVER" "$@" 2>&1)" || RC=$?
 }
 
@@ -190,5 +191,21 @@ run_writer
 if [ "$RC" -eq 0 ] && [ "$(jq '.writes | length' "$FIXTURE")" != 0 ]; then
   ok 'must-fail control: removed class guard permits writes for reviewed source changes'
 else bad 'class control did not detect the planted defect' "$OUT"; fi
+# Restoring export must fail at the predicate sentinel before any write.
+cp -R "$TMP/trusted-scripts" "$TMP/token-mutant"
+python3 - "$TMP/token-mutant/refresh-reviews.sh" <<'TOKEN_CONTROL'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text(); needle='export -n KENDEX_ISSUES_TOKEN'
+assert s.count(needle)==1
+p.write_text(s.replace(needle,': # '+needle))
+TOKEN_CONTROL
+DRIVER="$TMP/token-mutant/refresh-reviews.sh"
+cp "$BASE" "$FIXTURE"
+run_writer --report-only
+if [ "$RC" -ne 0 ] && [ "$(jq '.writes | length' "$FIXTURE")" = 0 ] && \
+    grep -q 'refresh-reviews-error=class-proof' <<<"$OUT"; then
+  ok 'must-fail control: exporting the upstream credential fails the predicate boundary'
+else bad 'upstream credential control missed the leak' "$OUT"; fi
 printf 'refresh-reviews: %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

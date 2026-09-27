@@ -197,6 +197,41 @@ a product diff past both bounds|$HEAD|STUB_SOURCE_COUNT=99 STUB_REFRESH_RC=124|
 a diff of generated paths alone|$RENDER|STUB_SOURCE_COUNT=1|source list,source refresh,
 PREPARE
 
+# Execute the workflow's preservation step outside the consumer checkout.
+# The real predicate must still find the trusted Git repository from there.
+python3 - "$SKILL_DIR/templates/kendex-refresh.yml" "$TMP/preserve.sh" "$TMP/preserve-mutant.sh" <<'PRESERVE'
+from pathlib import Path
+import re, sys
+text=Path(sys.argv[1]).read_text().split('        id: token\n',1)[0]
+blocks=re.findall(r'        run: \|\n((?:          .*\n)+)',text)
+assert blocks
+body=''.join(line[10:] for line in blocks[-1].splitlines(True))
+Path(sys.argv[2]).write_text(body)
+needle='git worktree add --detach "$RUNNER_TEMP/refresh-skills" HEAD'
+assert body.count(needle)==1
+replacement='mkdir -p "$RUNNER_TEMP/refresh-skills"; cp -R .agents "$RUNNER_TEMP/refresh-skills/" # '+needle
+Path(sys.argv[3]).write_text(body.replace(needle,replacement))
+PRESERVE
+original_predicate="$PREDICATE"
+for layout in preserve preserve-mutant; do
+  mkdir -p "$TMP/$layout"
+  (cd "$REPO" && env -i PATH="$PATH" HOME="$TMP" RUNNER_TEMP="$TMP/$layout" bash "$TMP/$layout.sh")
+  PREDICATE="$TMP/$layout/refresh-skills/.agents/skills/review-gate/scripts/review-predicate.sh"
+  reset
+  rc=0
+  out="$(run_predicate "$RENDER" render)" || rc=$?
+  if [ "$layout" = preserve ]; then
+    assert_eq "$rc:$out" '0:verdict=approved detail=change class render requires no review evidence or thread wait' \
+      'the preserved default-branch checkout supports active render classification'
+  else
+    assert_eq "$rc:$out" '2:' 'control: a bare script copy cannot prove render class'
+    if grep -q 'review-gate-error=predicate-policy-repo' "$TMP/stderr"; then
+      ok 'control: the missing repository causes the refusal'
+    else bad 'control refused at the wrong boundary' "$(cat "$TMP/stderr")"; fi
+  fi
+done
+PREDICATE="$original_predicate"
+
 # Must-fail inverse: removing the early approval must fail an exempt class.
 count="$(grep -Fc '    none)' "$PREDICATE" || true)"
 assert_eq "$count" "1" "control has one no-review predicate branch"

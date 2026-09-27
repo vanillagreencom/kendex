@@ -54,7 +54,7 @@ def check(w):
  assert len(users)==1 and '--report-only' in users[0]['run']
  assert users[0]['env']['GH_TOKEN']=='${{ steps.token.outputs.token }}'
  assert users[0]['env']['KENDEX_ISSUES_TOKEN']=='${{ steps.issues-token.outputs.token }}'
- assert '$RUNNER_TEMP/refresh-skills/review-gate/scripts/refresh-reviews.sh' in users[0]['run']
+ assert '$RUNNER_TEMP/refresh-skills/.agents/skills/review-gate/scripts/refresh-reviews.sh' in users[0]['run']
  assert steps.index(upstream)>next(i for i,s in enumerate(steps) if 'refresh-consumer.sh' in s.get('run',''))
 check(workflow)
 for mutation in ('repository','permission','exposure','branch','fallback','self'):

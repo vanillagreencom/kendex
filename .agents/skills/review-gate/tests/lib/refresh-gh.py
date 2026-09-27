@@ -8,6 +8,7 @@ import sys
 path = Path(os.environ['GH_FIXTURE'])
 world = json.loads(path.read_text())
 if sys.argv[1:] == ['predicate']:
+    assert 'KENDEX_ISSUES_TOKEN' not in os.environ
     number = int(os.environ['PR_NUMBER'])
     pr = next(p for p in world['prs'] if p['number'] == number)
     assert os.environ['HEAD_SHA'] == pr['head']['sha']

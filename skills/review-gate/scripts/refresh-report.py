@@ -68,8 +68,12 @@ def main():
         label = None
         if len(matches) == 1:
             # kendex report owns package provenance and its surface label.
-            route = read("kendex", "report", "--asset", matches.pop(), "--scope", "project",
-                         "--title", "Automatic rendered-file review", "--body", "Triage report", "--dry-run")
+            # The pinned CLI's say() channel is stderr, including --dry-run.
+            route = subprocess.run(
+                ["kendex", "report", "--asset", matches.pop(), "--scope", "project",
+                 "--title", "Automatic rendered-file review", "--body", "Triage report", "--dry-run"],
+                env=consumer_env, text=True, capture_output=True, check=True,
+            ).stderr
             command = next((s.removeprefix("would run: ") for s in route.splitlines()
                             if s.startswith("would run: ")), "")
             args = shlex.split(command)

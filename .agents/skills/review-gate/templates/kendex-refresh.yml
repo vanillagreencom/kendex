@@ -42,7 +42,7 @@ jobs:
       - name: Preserve default-branch scripts
         run: |
           set -euo pipefail
-          cp -R .agents/skills "$RUNNER_TEMP/refresh-skills"
+          git worktree add --detach "$RUNNER_TEMP/refresh-skills" HEAD
       - name: Mint the repository app token
         id: token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -67,7 +67,7 @@ jobs:
           REFRESH_APP_SLUG: ${{ steps.token.outputs.app-slug }}
         run: |
           set -euo pipefail
-          exec "$RUNNER_TEMP/refresh-skills/review-gate/scripts/refresh-consumer.sh"
+          exec "$RUNNER_TEMP/refresh-skills/.agents/skills/review-gate/scripts/refresh-consumer.sh"
       - name: Mint the kendex issue token
         id: issues-token
         continue-on-error: true
@@ -85,4 +85,4 @@ jobs:
           KENDEX_ISSUES_TOKEN: ${{ steps.issues-token.outputs.token }}
         run: |
           set -euo pipefail
-          exec "$RUNNER_TEMP/refresh-skills/review-gate/scripts/refresh-reviews.sh" --report-only
+          exec "$RUNNER_TEMP/refresh-skills/.agents/skills/review-gate/scripts/refresh-reviews.sh" --report-only
