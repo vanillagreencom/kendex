@@ -185,7 +185,10 @@ message() { # KEY VALUE [CAUSE]
         echo "the last usage line in $2 carries none of the field names this harness's adapter reads a token count from, so the context mark is not judged and this gap is reported rather than held; an unread figure is never summed to zero and read as room, and the account mark is judged as usual"
         ;;
       window-unread=*)
-        echo "the adapter read this session's context and could not name the window of the model $2 runs, so the context mark is not judged and this gap is reported rather than held; a window nobody named is never guessed at, and the account mark is judged as usual"
+        echo "the adapter read this session's tokens but could not verify its compaction point from the effective settings and window for $2. The reading is below the independent token cap. The percentage mark is unmeasured, and the account mark is judged as usual"
+        ;;
+      compaction-unread=*)
+        echo "the $2 compaction settings could not be read. The token cap is still judged; the percentage mark has no verified point:"
         ;;
       harness-unlisted=*)
         echo "$2 is no hook directory of a harness the orch adapters read a transcript for, so this session's context is not read and the context mark is not judged; the gap is reported rather than held"
@@ -1068,11 +1071,14 @@ context_read_and_record() { # BOX PANE_KEY
   fi
   { [ -f "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ]; } || refuse_handoff transcript unreadable
   if ! READING=$(tail -c "$TRANSCRIPT_WINDOW" -- "$TRANSCRIPT" |
-    lane_context_reading "$HARNESS" "$PAYLOAD_WINDOW" 2>"$WORK_DIR/transcript.err"); then
+    lane_context_reading "$HARNESS" "$PAYLOAD_WINDOW" "$LANE_DIR" 2>"$WORK_DIR/transcript.err"); then
     refuse_handoff transcript unread "$(cat -- "$WORK_DIR/transcript.err")"
   fi
-  if [ -z "$READING" ] && ! READING=$(lane_context_reading "$HARNESS" "$PAYLOAD_WINDOW" <"$TRANSCRIPT" 2>"$WORK_DIR/transcript.err"); then
+  if [ -z "$READING" ] && ! READING=$(lane_context_reading "$HARNESS" "$PAYLOAD_WINDOW" "$LANE_DIR" <"$TRANSCRIPT" 2>"$WORK_DIR/transcript.err"); then
     refuse_handoff transcript unread "$(cat -- "$WORK_DIR/transcript.err")"
+  fi
+  if [ -s "$WORK_DIR/transcript.err" ]; then
+    message compaction-unread "$HARNESS" "$(cat -- "$WORK_DIR/transcript.err")"
   fi
   case "$READING" in
     '' | "$LANE_CONTEXT_UNREAD")

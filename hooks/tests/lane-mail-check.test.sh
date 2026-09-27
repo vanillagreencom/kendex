@@ -133,7 +133,9 @@ CONTEXT_PCT_ENV=ORCH_HANDOFF_CONTEXT_PCT=50
 # are cleared rather than inherited, so a case's world is only what it sets.
 OFFLINE_HOME="$TMP_ROOT/offline-home"
 NO_FETCH="$TMP_ROOT/no-fetch"
-mkdir -p "$OFFLINE_HOME"
+mkdir -p "$OFFLINE_HOME/.pi/agent"
+printf '%s\n' '{"compaction":{"enabled":false}}' > "$OFFLINE_HOME/.pi/agent/settings.json"
+CODEX_COMPACTION='{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}'
 printf '#!/bin/sh\nexit 1\n' > "$NO_FETCH"
 chmod +x "$NO_FETCH"
 # The account mark is never judged in that world, so the hook reports the gap
@@ -158,7 +160,8 @@ run_payload() { # RAW-JSON [ENV=VAL...]
     (cd "${CALL_DIR:-$LANE}" && env -u CLAUDE_CONFIG_DIR -u CLAUDE_PROJECT_DIR -u CODEX_HOME -u LANE_MAIL_ITEM \
       -u ORCH_HANDOFF_CONTEXT_PCT -u ORCH_HANDOFF_HEADROOM_PCT -u ORCH_STATE_DIR \
       -u ORCH_OVERSEER_HEADROOM_PCT -u ORCH_OVERSEER_SUCCESSION -u TMUX -u TMUX_PANE \
-      "LANES_HOME=$OFFLINE_HOME" "ORCH_LANES_FETCH_CMD=$NO_FETCH" ${CONTEXT_PCT_ENV:+"$CONTEXT_PCT_ENV"} \
+      "LANES_HOME=$OFFLINE_HOME" "PI_CODING_AGENT_DIR=$OFFLINE_HOME/.pi/agent" \
+      DISABLE_AUTO_COMPACT=1 DISABLE_COMPACT=0 "ORCH_COMPACTION_OVERRIDES=$CODEX_COMPACTION" "ORCH_LANES_FETCH_CMD=$NO_FETCH" ${CONTEXT_PCT_ENV:+"$CONTEXT_PCT_ENV"} \
       ${CALL_ENV[@]+"${CALL_ENV[@]}"} "$@" bash "$CASE_HOOK" ${ARM_ARGS[@]+"${ARM_ARGS[@]}"}) >"$TMP_ROOT/stdout" 2>"$ERR_FILE" || RC=$?
 }
 
@@ -674,6 +677,17 @@ while IFS='|' read -r ROW_DIR ROW_SPELLING ROW_TOKENS ROW_WINDOW ROW_FIRST ROW_R
     "$ROW_WANT recorded=$ROW_RECORDED" \
     "$ROW_SPELLING under $ROW_DIR at $ROW_TOKENS tokens of window ${ROW_WINDOW:-its adapter reads}: $ROW_FIRST, recorded for the report"
 done <<<"$ADAPTER_ROWS"
+# An unreadable configuration cannot erase the independent cap. The hook
+# exposes the cause beside the retained reading instead of calling it room.
+install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
+printf 'not-json\n' > "$OFFLINE_HOME/.pi/agent/settings.json"
+usage_line pi 400000 > "$TRANSCRIPT"
+run_payload "$(jq -nc --arg p "$TRANSCRIPT" \
+  '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:200000}')"
+assert_eq "$RC|$(first_line)|$(grep -c '^lane-mail-check: context=400000$' "$ERR_FILE")|$(jq -c '[.tokens,.window]' "$LANE/tmp/lane-mail/KEN-90/context.json")" \
+  '2|lane-mail-check: compaction-unread=pi|1|[400000,null]' \
+  'a broken Pi configuration retains the cap reading and reports the settings failure'
+printf '%s\n' '{"compaction":{"enabled":false}}' > "$OFFLINE_HOME/.pi/agent/settings.json"
 install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
 # A usage object the adapter does not read. The figure IS there and unread, which

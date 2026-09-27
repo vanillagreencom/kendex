@@ -1947,6 +1947,12 @@ launch_finish() {
   # worktree. A hosted lane's credential is already on its host; the claim alone
   # records the config dir.
   if [[ "$LANE_HOST" != local ]]; then
+    if [[ "$HARNESS" == codex ]]; then
+      local compaction_env compaction_verified=true
+      [[ -z "$CMD_TEMPLATE" ]] || compaction_verified=false
+      compaction_env=$(lane_launch_compaction_env "$cmd" "$HARNESS" "$compaction_verified") || return 1
+      cmd="env $compaction_env $cmd"
+    fi
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && exec $cmd")"
   elif [[ -n "$LANE_ENV" || "$HARNESS" == codex ]]; then
     # Folder trust belongs to the DIRECTORY the harness opens into, not to the

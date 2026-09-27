@@ -37,12 +37,12 @@ lane_adapter_claude_window() { # MODEL
 # input tokens plus the two cache counts, and the response it wrote, which the
 # next request sends back. `fromjson?` skips the partial line a
 # byte window opens on and the line the harness is still appending. The window
-# is lane_adapter_claude_window's answer for the line's model.
+# is the model window only when inherited launch settings disable compaction.
 #
 # A `<synthetic>` line is the harness recording an API error, with every count
 # zero and no model a window belongs to, so it is no reading of the session.
 lane_adapter_claude_reading() { # UNREAD
-  local reading tokens model
+  local reading tokens model window=""
   reading=$(jq -Rnr --arg unread "$1" '
     [inputs | fromjson? | .message? | objects
      | select((.usage | type) == "object" and .model != "<synthetic>")
@@ -58,5 +58,10 @@ lane_adapter_claude_reading() { # UNREAD
   esac
   tokens=${reading%%$'\t'*}
   model=${reading#*$'\t'}
-  printf '%s\t%s\t%s\n' "$tokens" "$(lane_adapter_claude_window "$model")" "$model"
+  # The managed launch inherits this exact disabling value into the hook.
+  # Enabled compaction has other runtime inputs, so its point is unresolved.
+  if [ "${DISABLE_AUTO_COMPACT:-}" = 1 ] || [ "${DISABLE_COMPACT:-}" = 1 ]; then
+    window=$(lane_adapter_claude_window "$model") || return 1
+  fi
+  printf '%s\t%s\t%s\n' "$tokens" "$window" "$model"
 }

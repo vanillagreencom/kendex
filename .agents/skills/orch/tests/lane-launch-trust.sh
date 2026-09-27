@@ -343,6 +343,39 @@ INV_HOME="$(lane_codex_home_path "$TMP_ROOT/inv/.1codex" "$TMP_ROOT/inv/wt")"
 assert_eq "$(lanes_inventory "$INV_HOME")" "$TMP_ROOT/inv/.1codex" \
   "a launch home in CODEX_HOME lists as the one account it was built under"
 
+# The child receives evidence from the same command that supplied its argv.
+# Run the rendered line through a stub process, including an account shim.
+mkdir -p "$TMP_ROOT/compaction-bin"
+cat > "$TMP_ROOT/compaction-bin/codex" <<'STUB'
+#!/usr/bin/env bash
+jq -cn --arg evidence "${ORCH_COMPACTION_OVERRIDES:-}" \
+  '{evidence:(try ($evidence | fromjson) catch null)}'
+STUB
+chmod +x "$TMP_ROOT/compaction-bin/codex"
+cat > "$TMP_ROOT/compaction-bin/account" <<'STUB'
+#!/usr/bin/env bash
+exec codex "$@"
+STUB
+chmod +x "$TMP_ROOT/compaction-bin/account"
+compaction_child() { # LIB FORM CMD
+  PATH="$TMP_ROOT/compaction-bin:$PATH" ORCH_COMPACTION_OVERRIDES='stale-parent-value' \
+    bash -c 'source "$1"; line=$(lane_launch_line "$3" codex CODEX_HOME "$4" "$2") || exit; bash -c "$line"' \
+    _ "$1" "$2" "$3" "$TMP_ROOT/compaction-home"
+}
+# form|actual arguments|effective threshold,scope,post. Later overrides win;
+# an incomplete or custom command cannot borrow the parent process evidence.
+while IFS='|' read -r form args want; do
+  [[ "$form" != account ]] || form="launcher:$TMP_ROOT/compaction-bin/account"
+  actual=$(compaction_child "$SCRIPTS_DIR/lib/lane-launch.sh" "$form" "codex $args" |
+    jq -c '.evidence | if . == null then null else [.settings.model_auto_compact_token_limit,.settings.model_auto_compact_token_limit_scope,.settings.model_post_turn_compact_threshold_percent] end')
+  assert_eq "$actual" "$want" "executed compaction arguments $form $args"
+done <<'ROWS'
+prefix|-c model_auto_compact_token_limit=300000 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0|["300000","body_after_prefix","0"]
+account|-c model_auto_compact_token_limit=300000 --config model_auto_compact_token_limit=200000 --config=model_auto_compact_token_limit_scope=total -cmodel_post_turn_compact_threshold_percent=80|["200000","total","80"]
+prefix|-c model_auto_compact_token_limit=300000|["300000",null,null]
+unchecked|-c model_auto_compact_token_limit=300000|null
+ROWS
+
 # --- § control --------------------------------------------------------------
 #
 # One inverse per function under test. Each mutates a private copy of one
@@ -398,6 +431,12 @@ assert_eq "$(CODEX_HOME="$ACCOUNT_HOME" bash -c '
   ' bash "$MUTANT_FOUR_SCRIPTS/lib/lane-context.sh")" \
   "$ACCOUNT_HOME" \
   "control: without the home-to-account rule a session reports the home as its account"
+
+# Removing transport leaves the stub with only its inherited, invalid value.
+MUTANT_COMPACTION="$(mutant_scripts lane-launch-compaction lib/lane-launch.sh)/lib/lane-launch.sh" || exit 1
+mutate_file "$MUTANT_COMPACTION" '"${compaction:+$compaction }"' '""'
+assert_eq "$(compaction_child "$MUTANT_COMPACTION" prefix 'codex -c model_auto_compact_token_limit=300000' | jq -c '.evidence')" \
+  null 'control: the child loses evidence when the launch line omits transport'
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

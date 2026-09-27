@@ -970,6 +970,42 @@ lane_launch_form() { # CMD HARNESS LANE_DIR [TEMPLATE]
   fi
 }
 
+# Carry only compaction overrides from the normalized command we execute.
+# Custom shell commands have no verified argv. Clear inherited evidence for
+# those commands so the hook cannot reuse its parent's settings. No stored
+# default enters this value; the adapter judges whether it is complete.
+lane_launch_compaction_env() { # CMD HARNESS VERIFIED
+  local cmd="$1" harness="$2" verified="$3" word assignment overrides="" settings='{}'
+  if [[ "$harness" == codex && "$verified" == true ]]; then
+    launch_choice_shell_words "$cmd" || return 1
+    [[ "${LAUNCH_CHOICE_ARGV[0]:-}" == codex ]] || return 1
+    set -- "${LAUNCH_CHOICE_ARGV[@]}"
+    shift
+    while [[ "$#" -gt 0 ]]; do
+      word="$1"; shift
+      assignment=""
+      case "$word" in
+        --) break ;;
+        -c|--config) [[ "$#" -gt 0 ]] || return 1; assignment="$1"; shift ;;
+        --config=*) assignment="${word#--config=}" ;;
+        -c?*) assignment="${word#-c}" ;;
+      esac
+      [[ -n "$assignment" ]] || continue
+      settings=$(jq -cn --argjson settings "$settings" --arg assignment "$assignment" '
+        ($assignment | capture("^\\s*(?<key>[^=]+?)\\s*=(?<value>.*)$")? // {}) as $a
+        | if ($a.key == "model_auto_compact_token_limit"
+              or $a.key == "model_auto_compact_token_limit_scope"
+              or $a.key == "model_post_turn_compact_threshold_percent")
+          then $settings + {($a.key): ($a.value | gsub("^\\s+|\\s+$"; "")
+                | if startswith("\"") and endswith("\"") then .[1:-1] else . end)}
+          else $settings end') || return 1
+    done
+    overrides=$(jq -cn --arg harness "$harness" --argjson settings "$settings" \
+      '{harness:$harness,settings:$settings}') || return 1
+  fi
+  printf 'ORCH_COMPACTION_OVERRIDES=%s' "$(lane_single_quote "$overrides")"
+}
+
 # The launch line for a command that must run on a chosen account, under the
 # form lane_launch_form picked for it.
 #
@@ -989,10 +1025,14 @@ lane_launch_form() { # CMD HARNESS LANE_DIR [TEMPLATE]
 # which turns tmux's automatic rename off, so the title keeps the name it was
 # given and never carries the launch line.
 lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
-  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5"
+  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" compaction="" verified=true
+  if [[ "$harness" == codex ]]; then
+    [[ "$form" != unchecked ]] || verified=false
+    compaction=$(lane_launch_compaction_env "$cmd" "$harness" "$verified") || return 1
+  fi
   case "$form" in
-    launcher:*) printf '%s %s\n' "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
-    *) printf 'env %s=%s %s\n' "$var" "$(lane_single_quote "$dir")" "$cmd" ;;
+    launcher:*) printf '%s%s %s\n' "${compaction:+env $compaction }" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
+    *) printf 'env %s=%s %s%s\n' "$var" "$(lane_single_quote "$dir")" "${compaction:+$compaction }" "$cmd" ;;
   esac
 }
 

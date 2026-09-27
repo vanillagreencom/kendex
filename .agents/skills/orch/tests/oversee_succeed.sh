@@ -16,6 +16,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUCCEED="${OVERSEE_SUCCEED_UNDER_TEST:-$TEST_DIR/../scripts/oversee-succeed}"
+CODEX_COMPACTION='{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}'
 
 TMP_ROOT="$(mktemp -d)"
 SOCK="oversee-succeed-$$"
@@ -1452,7 +1453,7 @@ PRINT_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 PRINT_HOME="$(lane_codex_home_path "$H/.codex" "$PRINT_CWD")"
 CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$PRINTSKIP/oversee-succeed" \
   run_succeed printskip '' --print-launch-line
-assert_eq "$RC|$OUT" "0|env CODEX_HOME='$H/.codex' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'" \
+assert_eq "$RC|$OUT" "0|env CODEX_HOME='$H/.codex' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'" \
   "control: a print that skips the preparation records the bare account, not the prepared home"
 
 # Both arms of lib/lane-context.sh's answer for the caller's own lane: the
@@ -1466,7 +1467,7 @@ for row in \
   IFS='|' read -r row_lane row_what <<<"$row"
   new_caller "$CODEX_SCREEN" 'Context 48% left'
   CALLER_LANE="$row_lane" run_succeed printcodex '' --print-launch-line
-  assert_eq "$RC|$OUT|$(overseers)" "0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'|0" \
+  assert_eq "$RC|$OUT|$(overseers)" "0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'|0" \
     "--print-launch-line on a codex caller records the home trust was made in, under $row_what"
 done
 # A codex caller launched by this script already runs with the startup update
@@ -1475,7 +1476,7 @@ done
 new_caller "$CODEX_SCREEN" 'Context 48% left'
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed printcodex-settings '' --print-launch-line -- \
   --verbose -c check_for_update_on_startup=false
-assert_eq "$RC|$OUT" "0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 --verbose '$BRIEF'" \
+assert_eq "$RC|$OUT" "0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 --verbose '$BRIEF'" \
   "a codex caller entry carrying the update setting keeps it exactly once"
 
 # A codex caller is judged on the window its own rollout names, like any other.
@@ -1508,7 +1509,7 @@ for row in \
   "claude|overseer||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|overseer keeps the claude question tool" \
   "claude|overseer|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose '$BRIEF'|overseer drops the caller's own question-tool words" \
   "claude|off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose '$BRIEF'|off carries a caller's own copy of the words once" \
-  "codex|off||0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false '$BRIEF'|off takes the codex question tool away" \
+  "codex|off||0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false '$BRIEF'|off takes the codex question tool away" \
   "claude|on||1|oversee-succeed: invalid-question-tool ORCH_QUESTION_TOOL=on|on is not a value: refused before a line is built" \
   "claude|sometimes||1|oversee-succeed: invalid-question-tool ORCH_QUESTION_TOOL=sometimes|a value that is neither off nor overseer refuses" \
   ; do

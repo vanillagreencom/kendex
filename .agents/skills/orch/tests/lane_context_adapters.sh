@@ -23,11 +23,20 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
+# A known managed launch for the ordinary transcript rows. Each configuration
+# row below replaces its own evidence, independent of the developer machine.
+export DISABLE_AUTO_COMPACT=1 DISABLE_COMPACT=0
+export ORCH_COMPACTION_OVERRIDES='{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}'
+export PI_CODING_AGENT_DIR="$TMP_ROOT/pi-reading-agent"
+PI_READ_PROJECT="$TMP_ROOT/pi-reading-project"
+mkdir -p "$PI_CODING_AGENT_DIR" "$PI_READ_PROJECT"
+printf '%s\n' '{"compaction":{"enabled":false}}' > "$PI_CODING_AGENT_DIR/settings.json"
+
 # reading LIB HARNESS WINDOW — the adapter's answer for the transcript on
 # stdin, with TABs shown as `|` and the exit status beside it.
 reading() { # LIB HARNESS WINDOW
   local out rc=0
-  out="$(bash -c 'set -euo pipefail; source "$1"; lane_context_reading "$2" "$3"' _ "$1" "$2" "$3")" || rc=$?
+  out="$(bash -c 'set -euo pipefail; source "$1"; lane_context_reading "$2" "$3" "$4"' _ "$1" "$2" "$3" "$PI_READ_PROJECT")" || rc=$?
   printf 'rc=%s%s' "$rc" "${out:+ ${out//$'\t'/|}}"
 }
 
@@ -94,6 +103,61 @@ pi-last|pi|200000|rc=0 1000|200000|m
 pi-last|pi||rc=0 1000||m
 pi-claude-spelled|pi|200000|rc=0 unread
 claude-last|opencode||rc=3
+ROWS
+
+echo "=== effective compaction settings preserve unresolved token use ==="
+# harness|evidence|point. Enabled/unknown configurations keep the token count.
+while IFS='|' read -r harness evidence point; do
+  case "$harness" in
+    claude)
+      answer=$(DISABLE_AUTO_COMPACT="$evidence" reading "$LIB" claude "" < "$T/claude-last")
+      want="rc=0 1000|$point|claude-opus-5-5" ;;
+    codex)
+      answer=$(ORCH_COMPACTION_OVERRIDES="$evidence" reading "$LIB" codex "" < "$T/codex-last")
+      want="rc=0 232560|$point|gpt-6-astra" ;;
+    pi)
+      printf '%s\n' "$evidence" > "$PI_CODING_AGENT_DIR/settings.json"
+      answer=$(reading "$LIB" pi 200000 < "$T/pi-last" 2>"$TMP_ROOT/pi-settings.err")
+      want="rc=0 1000|$point|m" ;;
+  esac
+  assert_eq "$answer" "$want" "$harness configuration $evidence gives point ${point:-unresolved}"
+done <<'ROWS'
+claude|0|
+claude|1|1000000
+codex||
+codex|not-json|
+codex|[]|
+codex|{"harness":"codex","settings":false}|
+codex|{"harness":"claude","settings":{}}|
+codex|{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807"}}|
+codex|{"harness":"codex","settings":{"model_auto_compact_token_limit":"200000","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}|
+codex|{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"total","model_post_turn_compact_threshold_percent":"0"}}|
+codex|{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"80"}}|
+codex|{"harness":"codex","settings":{"model_auto_compact_token_limit":"258400","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}|258400
+pi|not-json|
+pi|{}|
+pi|{"compaction":{"enabled":true}}|
+pi|{"compaction":{"enabled":false}}|200000
+ROWS
+
+# Every harness reaches the common judge through its adapter. The due row is
+# strictly before the verified point; Claude reaches the independent cap first.
+while IFS='|' read -r harness tokens expected; do
+  case "$harness" in
+    claude) claude_line claude-opus-5-5 "$tokens" > "$T/before-point" ;;
+    codex) { codex_context gpt-6-astra; codex_count "$tokens" 258400; } > "$T/before-point" ;;
+    pi) pi_line m "$tokens" > "$T/before-point" ;;
+  esac
+  answer=$(reading "$LIB" "$harness" 200000 < "$T/before-point")
+  point=${answer#*|}; point=${point%%|*}
+  assert_eq "$(due "$LIB" "$tokens" "$point" 90)" "rc=0 $expected" "$harness before-point $tokens is $expected"
+done <<'ROWS'
+claude|399999|room
+claude|400000|due
+codex|232560|room
+codex|232561|due
+pi|180000|room
+pi|180001|due
 ROWS
 
 echo "=== the one judge answers at a share of the reading's own window ==="
@@ -185,8 +249,12 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'claude reads claude-last as'
   control pi-output adapters/pi.sh '(.input // 0) + (.output // 0)' '(.input // 0)' \
     'pi reads pi-last as: rc=0 1000|200000|m'
-  control codex-window adapters/codex.sh '\($i.model_context_window // "")' '' \
+  control codex-window adapters/codex.sh '\(point($i.model_context_window))' '' \
     'codex reads codex-last as'
+  control codex-evidence adapters/codex.sh 'then $window else "" end;' 'then $window else $window end;' \
+    'codex configuration  gives point unresolved'
+  control claude-evidence adapters/claude.sh '[ "${DISABLE_AUTO_COMPACT:-}" = 1 ]' '[ "${DISABLE_AUTO_COMPACT:-}" = 0 ]' \
+    'claude configuration 0 gives point unresolved'
   control strict-mark lane-context.sh '-gt $(($2 * pct))' '-ge $(($2 * pct))' \
     '232560 of 258400 at 90: rc=0 room'
   control absolute-cap lane-context.sh '[ "$1" -ge 400000 ]' '[ "$1" -gt 400000 ]' \

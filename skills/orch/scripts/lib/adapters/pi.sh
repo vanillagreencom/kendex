@@ -17,9 +17,17 @@
 # The context is the message's input plus the cache it was read from and
 # written to, and its output, which the next request sends back: the sum Pi's
 # own `totalTokens` is (`Usage`, @earendil-works/pi-ai). `$2` is the window the payload
-# named, empty where it named none.
-lane_adapter_pi_reading() { # UNREAD WINDOW
-  jq -Rnr --arg unread "$1" --arg window "${2:-}" '
+# named. It is a verified point only while effective settings disable
+# compaction. Settings errors are reported without discarding the token count.
+lane_adapter_pi_reading() { # UNREAD WINDOW [DIR]
+  local window="" rc=0
+  lane_adapter_pi_compaction_on "${3:-$PWD}" || rc=$?
+  case "$rc" in
+    0) ;; # Enabled compaction has no verified point in this reader.
+    1) window="${2:-}" ;;
+    *) printf 'pi-settings=%s\n%s\n' "$LANE_ADAPTER_PI_FILE" "$LANE_ADAPTER_PI_CAUSE" >&2 ;;
+  esac
+  jq -Rnr --arg unread "$1" --arg window "$window" '
     [inputs | fromjson? | .message? | objects
      | select((.usage | type) == "object") | .model as $model | .usage
      | if has("input") or has("output") or has("cacheRead") or has("cacheWrite")

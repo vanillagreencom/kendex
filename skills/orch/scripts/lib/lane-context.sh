@@ -2,7 +2,7 @@
 # Context use per session, read from the records the harness itself writes and
 # never from a pane. A session's turn-end hook reads its own transcript through
 # the adapter for its harness (lib/adapters/), which answers the tokens the last
-# response left in the context and the window the model has, and records that
+# response left in the context and its verified compaction point, and records that
 # reading in the session's mailbox directory. Every other reader, `lanes
 # context`, `oversee-succeed` and the watch through it, reads that record, so a
 # hosted lane reads the same as a local one and a scrolled or quiet pane changes
@@ -168,12 +168,14 @@ lane_context_mark_model() { # HARNESS MODEL
 # LANE_CONTEXT_UNREAD for a usage object the adapter does not read, or nothing
 # for a transcript holding no usage yet. WINDOW is a window the harness named
 # outside its transcript, which only Pi's turn-end payload does. Exit 3 names a
-# harness no adapter reads; any other failure is the adapter's own.
-lane_context_reading() { # HARNESS [WINDOW]
+# harness no adapter reads; any other failure is the adapter's own. DIR is the
+# session project for Pi settings. The reading's window field holds the verified
+# compaction point, empty when the effective configuration is unresolved.
+lane_context_reading() { # HARNESS [WINDOW] [DIR]
   case "${1:-}" in
     claude) lane_adapter_claude_reading "$LANE_CONTEXT_UNREAD" ;;
     codex) lane_adapter_codex_reading "$LANE_CONTEXT_UNREAD" ;;
-    pi) lane_adapter_pi_reading "$LANE_CONTEXT_UNREAD" "${2:-}" ;;
+    pi) lane_adapter_pi_reading "$LANE_CONTEXT_UNREAD" "${2:-}" "${3:-$PWD}" ;;
     *) return 3 ;;
   esac
 }

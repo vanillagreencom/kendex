@@ -90,7 +90,7 @@ launch() {
     # open_gui starts the terminal in the background, so its capture lands
     # after open-terminal has exited.
     for _ in $(seq 1 50); do [[ -s "$cap" ]] && break; sleep 0.1; done
-    [[ ! -s "$cap" ]] || { CMD="$(cat "$cap")"; CMD="${CMD##* && }"; CMD="${CMD#env CODEX_HOME=* }"; }
+    [[ ! -s "$cap" ]] || { CMD="$(cat "$cap")"; CMD="${CMD##* && }"; CMD="${CMD#env CODEX_HOME=* }"; CMD="${CMD#ORCH_COMPACTION_OVERRIDES=* }"; }
   fi
   CREATED=no
   [[ ! -d "$TMP_ROOT/wt/$(tr '[:lower:]' '[:upper:]' <<<"$item")" ]] || CREATED=yes
