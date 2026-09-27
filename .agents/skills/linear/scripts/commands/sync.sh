@@ -678,24 +678,33 @@ main() {
     if [[ "$full" == true ]] || [[ ! -f "$CACHE_DIR/meta.json" ]]; then
         echo "Full sync..." >&2
 
-        sync_issues "" > "$CACHE_DIR/issues.json"
-        # Strip problematic control chars from text fields (Linear descriptions can contain them)
-        # Preserves \n (0a), \r (0d), \t (09) which are valid in markdown
-        jq '[.[] | .description = ((.description // "") | gsub("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]"; "")) | .title = ((.title // "") | gsub("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]"; ""))]' \
-            "$CACHE_DIR/issues.json" > "$CACHE_DIR/issues.json.tmp" && mv "$CACHE_DIR/issues.json.tmp" "$CACHE_DIR/issues.json"
-        local issue_total
-        issue_total=$(jq 'length' "$CACHE_DIR/issues.json")
+        # The pull lands in a scratch file and is installed whole under the
+        # issue cache's lock: a reader or a write-through from another session
+        # meets either the old cache or the new one, never a half-written pull.
+        local pulled="$CACHE_DIR/.full_issues.json"
+        sync_issues "" > "$pulled"
 
         # Remove trashed/archived from full sync result
         local trashed_count
-        trashed_count=$(jq '[.[] | select(.trashed == true or .archivedAt != null)] | length' "$CACHE_DIR/issues.json")
+        trashed_count=$(jq '[.[] | select(.trashed == true or .archivedAt != null)] | length' "$pulled")
         if (( trashed_count > 0 )); then
-            jq '[.[] | select(.trashed != true and .archivedAt == null)]' \
-                "$CACHE_DIR/issues.json" > "$CACHE_DIR/issues.json.tmp"
-            mv "$CACHE_DIR/issues.json.tmp" "$CACHE_DIR/issues.json"
-            issue_total=$(( issue_total - trashed_count ))
             summary_parts+=("filtered $trashed_count archived")
         fi
+        # Strip problematic control chars from text fields (Linear descriptions can contain them)
+        # Preserves \n (0a), \r (0d), \t (09) which are valid in markdown
+        if ! cache_write "issues.json" jq '[.[]
+              | select(.trashed != true and .archivedAt == null)
+              | .description = ((.description // "") | gsub("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]"; ""))
+              | .title = ((.title // "") | gsub("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]"; ""))]' \
+            "$pulled"; then
+            rm -f "$pulled"
+            cache_unlock
+            echo "Sync error: the issues pull could not be installed as the cache. Cache left unchanged; retry sync." >&2
+            return 1
+        fi
+        rm -f "$pulled"
+        local issue_total
+        issue_total=$(cache_jq_file "$CACHE_DIR/issues.json" 0 'length') || return 1
 
         if ! sync_comments "{}" > "$CACHE_DIR/.comments.json"; then
             rm -f "$CACHE_DIR/.comments.json"
@@ -706,9 +715,17 @@ main() {
         rm -f "$CACHE_DIR/.comments.json"
         summary_parts+=("$issue_total issues")
 
-        sync_projects "" > "$CACHE_DIR/projects.json"
+        local pulled_projects="$CACHE_DIR/.full_projects.json"
+        sync_projects "" > "$pulled_projects"
+        if ! cache_write "projects.json" cat "$pulled_projects"; then
+            rm -f "$pulled_projects"
+            cache_unlock
+            echo "Sync error: the projects pull could not be installed as the cache. Cache left unchanged; retry sync." >&2
+            return 1
+        fi
+        rm -f "$pulled_projects"
         local proj_total
-        proj_total=$(jq 'length' "$CACHE_DIR/projects.json")
+        proj_total=$(cache_jq_file "$CACHE_DIR/projects.json" 0 'length') || return 1
         summary_parts+=("$proj_total projects")
 
         sync_cycles > "$CACHE_DIR/cycles.json.tmp" && mv "$CACHE_DIR/cycles.json.tmp" "$CACHE_DIR/cycles.json"
@@ -760,14 +777,14 @@ main() {
                 cache_unlock
                 return 1
             fi
-            # An aborted merge means the issues query returned less than the
-            # cache holds — likely a transient/partial API result. Refusing
-            # the overwrite is correct, but it must fail the sync loudly, not
-            # end as "no changes".
+            # cache_merge has named its cause on stderr: a shrinking result
+            # (a transient or partial API result) or a cache that no longer
+            # parses. Refusing the overwrite is correct, but it must fail the
+            # sync loudly, not end as "no changes".
             if ! cache_merge "issues.json" "$CACHE_DIR/.delta_issues.json"; then
                 rm -f "$CACHE_DIR/.delta_issues.json" "$CACHE_DIR/.delta_issues_raw.json" "$CACHE_DIR/.delta_comments.json"
                 cache_unlock
-                echo "Sync error: issues cache merge aborted — the merge result was smaller than the existing cache, which usually means the issues query returned an incomplete or empty result (transient API failure). Cache left unchanged; retry sync." >&2
+                echo "Sync error: issues cache merge aborted for the reason above. Cache left unchanged." >&2
                 return 1
             fi
             # Held until the merge succeeded: this rewrites the live per-issue
@@ -792,7 +809,7 @@ main() {
             if ! cache_merge "projects.json" "$CACHE_DIR/.delta_projects.json"; then
                 rm -f "$CACHE_DIR/.delta_projects.json"
                 cache_unlock
-                echo "Sync error: projects cache merge aborted — the merge result was smaller than the existing cache, which usually means the projects query returned an incomplete or empty result (transient API failure). Cache left unchanged; retry sync." >&2
+                echo "Sync error: projects cache merge aborted for the reason above. Cache left unchanged." >&2
                 return 1
             fi
             rm -f "$CACHE_DIR/.delta_projects.json"

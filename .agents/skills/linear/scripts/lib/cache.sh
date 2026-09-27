@@ -213,6 +213,9 @@ cache_status() {
 # =============================================================================
 # SYNC LOCKING
 # =============================================================================
+# The sync lock serializes one sync against another and nothing else. A
+# write-through from another session runs during a sync, so the collection
+# rewrites below take a lock of their own, one per file.
 
 cache_lock() {
     local lockfile="$CACHE_DIR/.sync.lock"
@@ -321,51 +324,135 @@ cache_get_comments() {
 }
 
 # =============================================================================
+# COLLECTION REWRITES
+# =============================================================================
+# Every writer of issues.json and projects.json rewrites the file through
+# cache_write or cache_merge: the file's own lock (fd 201 on <file>.lock), a
+# unique temp file beside the target, one rename into place. Two writers that
+# shared one temp path (<file>.tmp) each opened it with O_TRUNC and wrote from
+# offset zero, so the shorter output was followed by the longer one's tail,
+# and whichever renamed first installed that as the cache: a JSON array with
+# trailing bytes no reader parses. The sync lock never covered a write-through
+# from another session, which is how a merge met an upsert on that path.
+
+# cache_with_file_lock <path> <command...>: runs the command with <path>'s
+# lock held. The command runs in a subshell, so the lock is released when it
+# returns whatever its status. Never nest it: a second open of the lock file is
+# a second open file description, and flock blocks it against the first.
+cache_with_file_lock() {
+    local path="$1"
+    shift
+    (
+        if ! flock 201; then
+            echo "cache: could not lock $path.lock" >&2
+            exit 1
+        fi
+        "$@"
+    ) 201>"$path.lock"
+}
+
+# cache_install_output <target> <command...>: replaces <target> with the
+# command's stdout, written to a unique temp file beside it and renamed into
+# place. The caller holds the file's lock. A failed command leaves the target
+# untouched and returns its failure; a partial output never becomes the cache.
+cache_install_output() {
+    local target="$1"
+    shift
+    local tmp
+    if ! tmp=$(mktemp "$target.XXXXXX"); then
+        echo "cache: could not create a temp file beside $target" >&2
+        return 1
+    fi
+    if ! "$@" > "$tmp"; then
+        rm -f -- "${tmp:?}"
+        return 1
+    fi
+    mv -f -- "$tmp" "$target"
+}
+
+# cache_write <file> <command...>: cache_install_output on $CACHE_DIR/<file>
+# under that file's lock. The command reads the file itself; every
+# write-through below is one jq rewrite through here.
+cache_write() {
+    local file="$1"
+    shift
+    cache_with_file_lock "$CACHE_DIR/$file" cache_install_output "$CACHE_DIR/$file" "$@"
+}
+
+# cache_array_length <path>: prints the element count of the one JSON array
+# <path> holds. Fails, printing nothing, when the file does not parse, holds
+# more than one document, or holds something other than an array. A parse
+# error is not a count: a default in its place once read a corrupt file as
+# the two lines "383" and "0" and let the rename that follows install it.
+cache_array_length() {
+    local len
+    len=$(jq 'if type == "array" then length else empty end' "$1" 2>/dev/null) || return 1
+    [[ "$len" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$len"
+}
+
+# =============================================================================
 # MERGE (for incremental sync)
 # =============================================================================
 
 cache_merge() {
     local file="$1" delta_file="$2"
-    local existing="$CACHE_DIR/$file"
-    [[ -f "$existing" ]] || { cp "$delta_file" "$existing"; return; }
+    cache_with_file_lock "$CACHE_DIR/$file" cache_merge_locked "$file" "$delta_file"
+}
 
-    # Validate existing file is a non-empty JSON array before merging
-    local existing_count
-    existing_count=$(jq 'if type == "array" then length else -1 end' "$existing" 2>/dev/null || echo -1)
-    if (( existing_count < 0 )); then
-        echo "cache_merge: $file is not a valid JSON array, replacing with delta" >&2
-        cp "$delta_file" "$existing"
-        return
-    fi
+# The body of cache_merge, run with the file's lock held so the count it
+# compares against is the count it merges over.
+cache_merge_locked() {
+    local file="$1" delta_file="$2"
+    local existing="$CACHE_DIR/$file"
 
     # A malformed delta means the query failed or returned partial data —
-    # never something to merge over a healthy cache
-    local delta_count
-    delta_count=$(jq 'if type == "array" then length else -1 end' "$delta_file" 2>/dev/null || echo -1)
-    if (( delta_count < 0 )); then
+    # never something to install or merge over a cache
+    if ! cache_array_length "$delta_file" >/dev/null; then
         echo "cache_merge: delta for $file is not a valid JSON array, aborting merge" >&2
         return 1
     fi
 
+    if [[ ! -f "$existing" ]]; then
+        cache_install_output "$existing" cat "$delta_file"
+        return
+    fi
+
+    # A cache that does not parse is corrupt, not empty: installing the delta
+    # over it would report a delta's worth of issues as the whole set.
+    local existing_count
+    if ! existing_count=$(cache_array_length "$existing"); then
+        cache_unreadable_error "$existing"
+        return 1
+    fi
+
     # Merge by .id — delta overwrites existing entries
+    local merged
+    if ! merged=$(mktemp "$existing.XXXXXX"); then
+        echo "cache_merge: could not create a temp file beside $existing" >&2
+        return 1
+    fi
     if ! jq -s '(.[0] + .[1]) | group_by(.id) | map(.[-1])' \
-        "$existing" "$delta_file" > "$existing.tmp"; then
+        "$existing" "$delta_file" > "$merged"; then
         echo "cache_merge: merge of $file failed, aborting merge" >&2
-        rm -f "$existing.tmp"
+        rm -f -- "${merged:?}"
         return 1
     fi
 
     # Safety: verify merge didn't lose entries (result >= existing count unless reconciliation ran)
     local result_count
-    result_count=$(jq 'length' "$existing.tmp" 2>/dev/null || echo 0)
-    [[ -n "$result_count" ]] || result_count=0
+    if ! result_count=$(cache_array_length "$merged"); then
+        echo "cache_merge: merge result for $file is not a single JSON array, aborting merge" >&2
+        rm -f -- "${merged:?}"
+        return 1
+    fi
     if (( result_count < existing_count )); then
-        echo "cache_merge: result ($result_count) < existing ($existing_count), aborting merge" >&2
-        rm -f "$existing.tmp"
+        echo "cache_merge: result ($result_count) < existing ($existing_count), which usually means the query returned an incomplete or empty result (transient API failure), aborting merge" >&2
+        rm -f -- "${merged:?}"
         return 1
     fi
 
-    mv "$existing.tmp" "$existing"
+    mv -f -- "$merged" "$existing"
 }
 
 # =============================================================================
@@ -379,13 +466,9 @@ cache_upsert_issue() {
     local id
     id=$(echo "$issue_json" | jq -r '.id')
     [[ -n "$id" && "$id" != "null" ]] || return 0
-    (
-        flock 201
-        jq --argjson new "$issue_json" \
-            '[.[] | select(.id != $new.id)] + [$new]' \
-            "$cache_file" > "$cache_file.tmp"
-        mv "$cache_file.tmp" "$cache_file"
-    ) 201>"$cache_file.lock"
+    cache_write "issues.json" jq --argjson new "$issue_json" \
+        '[.[] | select(.id != $new.id)] + [$new]' \
+        "$cache_file"
 }
 
 cache_touch_issue() {
@@ -395,13 +478,9 @@ cache_touch_issue() {
     [[ -f "$cache_file" ]] || return 0
     [[ -n "$issue_id" && "$issue_id" != "null" ]] || return 0
     [[ -n "$timestamp" && "$timestamp" != "null" ]] || return 0
-    (
-        flock 201
-        jq --arg id "$issue_id" --arg ts "$timestamp" \
-            '[.[] | if (.id == $id or .identifier == $id) then .updatedAt = $ts else . end]' \
-            "$cache_file" > "$cache_file.tmp"
-        mv "$cache_file.tmp" "$cache_file"
-    ) 201>"$cache_file.lock"
+    cache_write "issues.json" jq --arg id "$issue_id" --arg ts "$timestamp" \
+        '[.[] | if (.id == $id or .identifier == $id) then .updatedAt = $ts else . end]' \
+        "$cache_file"
 }
 
 cache_patch_relation_snapshots() {
@@ -417,9 +496,7 @@ cache_patch_relation_snapshots() {
     [[ -n "$uuid" && "$uuid" != "null" ]] || return 0
     [[ -n "$state_name" ]] || return 0
 
-    (
-        flock 201
-        jq --arg uid "$uuid" --arg sn "$state_name" --arg st "$state_type" --arg t "$title" '
+    cache_write "issues.json" jq --arg uid "$uuid" --arg sn "$state_name" --arg st "$state_type" --arg t "$title" '
         [.[] |
             .relations.nodes = [(.relations.nodes // [])[] |
                 if .relatedIssue.id == $uid then
@@ -433,9 +510,7 @@ cache_patch_relation_snapshots() {
                     if $t != "" then .issue.title = $t else . end
                 else . end
             ]
-        ]' "$cache_file" > "$cache_file.tmp"
-        mv "$cache_file.tmp" "$cache_file"
-    ) 201>"$cache_file.lock"
+        ]' "$cache_file"
 }
 
 cache_upsert_project() {
@@ -445,29 +520,21 @@ cache_upsert_project() {
     local id
     id=$(echo "$project_json" | jq -r '.id')
     [[ -n "$id" && "$id" != "null" ]] || return 0
-    (
-        flock 201
-# Merge inputs while preserving relations and inverseRelations from sync
-        # when mutation response (which lacks them) overwrites base fields
-        jq --argjson new "$project_json" \
-            '([.[] | select(.id == $new.id)] | first // {}) as $old |
-            ($old + $new) as $merged |
-            [.[] | select(.id != $new.id)] + [$merged]' \
-            "$cache_file" > "$cache_file.tmp"
-        mv "$cache_file.tmp" "$cache_file"
-    ) 201>"$cache_file.lock"
+    # Merge inputs while preserving relations and inverseRelations from sync
+    # when mutation response (which lacks them) overwrites base fields
+    cache_write "projects.json" jq --argjson new "$project_json" \
+        '([.[] | select(.id == $new.id)] | first // {}) as $old |
+        ($old + $new) as $merged |
+        [.[] | select(.id != $new.id)] + [$merged]' \
+        "$cache_file"
 }
 
 cache_remove_project() {
     local project_id="$1"
     local cache_file="$CACHE_DIR/projects.json"
     [[ -f "$cache_file" ]] || return 0
-    (
-        flock 201
-        jq --arg id "$project_id" '[.[] | select(.id != $id)]' \
-            "$cache_file" > "$cache_file.tmp"
-        mv "$cache_file.tmp" "$cache_file"
-    ) 201>"$cache_file.lock"
+    cache_write "projects.json" jq --arg id "$project_id" '[.[] | select(.id != $id)]' \
+        "$cache_file"
 }
 
 cache_remove_issue() {
@@ -481,12 +548,8 @@ cache_remove_issue() {
         [.[] | select(.id == $id or .identifier == $id)] | first | .identifier // empty
     ')
 
-    (
-        flock 201
-        jq --arg id "$issue_id" '[.[] | select(.id != $id and .identifier != $id)]' \
-            "$cache_file" > "$cache_file.tmp"
-        mv "$cache_file.tmp" "$cache_file"
-    ) 201>"$cache_file.lock"
+    cache_write "issues.json" jq --arg id "$issue_id" '[.[] | select(.id != $id and .identifier != $id)]' \
+        "$cache_file"
 
     # Clean up comment file
     if [[ -n "$identifier" ]]; then
