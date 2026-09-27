@@ -530,7 +530,9 @@ impl Escaped {
 /// `spans` as rich lines no wider than `width` — a command excepted, which
 /// [`wrap`] never breaks — behind `lead` (already painted, `lead_cells`
 /// wide), continuation lines indented by `indent` cells, each chunk painted
-/// by `paint_chunk`.
+/// by `paint_chunk`. Empty spans are still one line, `lead` alone, as the
+/// plain look draws them: a blank line in another program's words keeps
+/// its place.
 fn fitted(
     width: usize,
     lead: &str,
@@ -540,7 +542,11 @@ fn fitted(
     paint_chunk: impl Fn(&str) -> String,
 ) -> Vec<String> {
     let room = |used: usize| width.saturating_sub(used);
-    wrap(spans, room(lead_cells), room(indent))
+    let chunks = wrap(spans, room(lead_cells), room(indent));
+    if chunks.is_empty() {
+        return vec![lead.to_owned()];
+    }
+    chunks
         .iter()
         .enumerate()
         .map(|(at, chunk)| match at {

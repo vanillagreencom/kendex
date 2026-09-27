@@ -489,6 +489,32 @@ fn a_refusal_draws_its_reason_and_the_programs_words() {
     }
 }
 
+/// A blank line in a program's words is still quoted, in both looks: git
+/// splits a hook's output by line and keeps the empty ones (ESLint's and
+/// `rustfmt --check`'s blocks), and the refusal names that output whole.
+#[test]
+fn a_blank_line_in_the_programs_words_keeps_its_place() {
+    let failed = Failed {
+        step: Step::Commit,
+        refusal: Refusal::Said(vec!["a".to_owned(), String::new(), "b".to_owned()]),
+    };
+    let rows: [(Style, &[&str]); 2] = [
+        (
+            rich(100),
+            &[
+                "  <36>•</> git said:",
+                "    <90>a</>",
+                "    ",
+                "    <90>b</>",
+            ],
+        ),
+        (plain(), &["  git said:", "    a", "    ", "    b"]),
+    ];
+    for (style, want) in rows {
+        assert_eq!(tagged(&block::everything(&style, &failed)), want);
+    }
+}
+
 /// A timed-out step reads as that step's refusal with the bound in place
 /// of the program's words; the words otherwise follow `git said:` or
 /// `gh said:`.
