@@ -26,6 +26,9 @@ git -C "$TMP_ROOT" init -q -b main
 # This root's own cache is the subject, so it replaces the assert lib's default
 # sandbox — still scratch, so the exit verdict's containment check holds.
 export LINEAR_CACHE_ROOT="$TMP_ROOT"
+# The rows that pass no --format measure the command's default, not the
+# format a caller's shell exports.
+export LINEAR_FORMAT=safe
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 LINEAR="$TMP_ROOT/.agents/skills/linear/scripts/linear.sh"
 
