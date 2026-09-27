@@ -14,8 +14,8 @@ use super::guarding::{git_without_kendex, offer, spoke};
 ///
 /// The files a package installs land in folders kendex owns and are undone
 /// by removing it. Arming git hooks is not that: it changes what happens on
-/// every commit, for everyone who commits, and `apply? [y/N]` never asked
-/// about that. A scripted install and a CI run both arrive with no
+/// every commit, for everyone who commits, and the write consent never
+/// asked about that. A scripted install and a CI run both arrive with no
 /// terminal, and arming their hooks because nobody was present to decline
 /// is the one outcome this must never have.
 #[test]

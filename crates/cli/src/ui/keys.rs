@@ -6,15 +6,19 @@
 //! back as an interrupted error, which [`super::cancelled`] recognises and
 //! the run exits 130 on, having written nothing the question asked about. A
 //! key the question does not show is ignored and the read waits for another,
-//! so a stray key picks nothing. Keys typed before a question is drawn are
-//! discarded, so the Enter after an earlier answer's key cannot answer the
-//! next question unseen.
+//! so a stray key picks nothing. Keys that reached the terminal before a
+//! question is drawn are discarded. A key typed after it is drawn answers
+//! it, an Enter included that follows a key leading straight to an
+//! instantly drawn question, such as the offer's `c` and the message
+//! question after it.
 //!
 //! A question needs a terminal on stdin, and [`choose`] refuses to wait on
 //! a pipe. Each caller settles a run with nobody to ask before it reaches a
-//! question: the write consent refuses before its first write, naming
-//! `--yes`, and the commit offer, which comes after the writes, prints one
-//! line naming its flags and asks nothing.
+//! question: the write consent of `ask_before_writing` refuses before its
+//! first write, naming `--yes`; the repository-effect disclosure asks
+//! nothing, leaves the effects unmade and names `--allow-repo-effects`, and
+//! the linked work tree's setup is skipped; the commit offer, which comes
+//! after the writes, prints one line naming its flags and asks nothing.
 //!
 //! Keys are read raw where the question is drawn on a terminal. Where
 //! stderr is redirected, as in `2>&1 | tee log`, the answer is a typed line:
@@ -201,7 +205,8 @@ impl Keys {
         })
     }
 
-    /// Opened for a new question: what was typed before it is dropped.
+    /// Opened for a new question: what reached the terminal before it is
+    /// dropped.
     fn ready() -> io::Result<Keys> {
         let keys = Keys::open()?;
         discard_typed_ahead()?;
