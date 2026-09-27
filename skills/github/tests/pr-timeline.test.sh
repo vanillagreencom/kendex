@@ -201,11 +201,12 @@ FIFTY_SUITES='.data.repository.pullRequest.headCommit.nodes[0].commit.checkSuite
   .nodes += [range(48) | suite(null; [run("fill"; "10:30"; "10:31")])]
   | .pageInfo = {hasNextPage: true, endCursor: "c50"})'
 # One page of suites, as a suitesPage query answers it: one app suite holding
-# RUNS, and its pageInfo.
-suites_page() { # RUNS HAS_NEXT CURSOR
-  jq -cn --argjson runs "$1" --argjson next "$2" --arg cursor "$3" '{data: {repository: {object: {checkSuites: {
+# RUNS, its runs open at RUNS_CURSOR when one is given, and its pageInfo.
+suites_page() { # RUNS HAS_NEXT CURSOR [RUNS_CURSOR]
+  jq -cn --argjson runs "$1" --argjson next "$2" --arg cursor "$3" --arg rcursor "${4:-}" '{data: {repository: {object: {checkSuites: {
     pageInfo: {hasNextPage: $next, endCursor: $cursor},
-    nodes: [{id: "S\($cursor)", workflowRun: null, checkRuns: {pageInfo: {hasNextPage: false}, nodes: $runs}}]}}}}}'
+    nodes: [{id: "S\($cursor)", workflowRun: null,
+             checkRuns: {pageInfo: (if $rcursor == "" then {hasNextPage: false} else {hasNextPage: true, endCursor: $rcursor} end), nodes: $runs}}]}}}}}'
 }
 # One page of check runs, as a runsPage query answers it.
 runs_page() { # RUNS HAS_NEXT CURSOR
@@ -221,6 +222,21 @@ assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_merge_group_secs]' "$T
   '["2026-09-20T10:50:00Z",1800,900]' "a 51-suite head: the suite on the second page ends its CI"
 assert_eq "$(gh_stub_calls | grep -c 'query suitesPage') $(gh_stub_calls | grep -o -- '-f oid=h2 -f cursor=c50')" \
   "1 -f oid=h2 -f cursor=c50" "the second page is asked for once, at the head and the first page's cursor"
+
+# The 51st suite, on the second page, arrives with its runs open at r1: the
+# run on its second runs page ends the head's CI at 10:50. The runs walk
+# reads the suite list after the suite walk, so a suite past page one is
+# walked too.
+FILL_RUN='[{name: "fill", status: "COMPLETED", conclusion: "SUCCESS", startedAt: "2026-09-20T10:30:00Z", completedAt: "2026-09-20T10:31:00Z", detailsUrl: "x"}]'
+stage_pages() {
+  gh_stub_answer "api-graphql:query suitesPage" "$(suites_page "$(jq -cn "$FILL_RUN")" false c51 r1)"
+  gh_stub_answer "api-graphql:query runsPage" "$(runs_page "$(jq -cn "$LATE_HEAD_RUN")" false null)"
+}
+run "$FIFTY_SUITES" >/dev/null
+assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_merge_group_secs]' "$TMP_ROOT/stdout")" \
+  '["2026-09-20T10:50:00Z",1800,900]' "a second-page suite with runs past its first page: the run on its second runs page ends the head's CI"
+assert_eq "$(gh_stub_calls | grep -c 'query runsPage') $(gh_stub_calls | grep -o -- '-f id=Sc51 -f cursor=r1')" \
+  "1 -f id=Sc51 -f cursor=r1" "the second-page suite's runs are asked for once, at its id and its first page's cursor"
 
 # The merge group's suite, its runs open at cursor r100 under the id the
 # runsPage query takes: the run on the second page ends the group's CI at
@@ -311,12 +327,22 @@ open_run_pages() { # PAGES
   done
   gh_stub_answer_seq "api-graphql:query runsPage" "$(runs_page '[]' false null)"
 }
+# The cursor each further page was asked at, in call order: the stub answers
+# by call ordinal, so the chain is what pins that each page carried the
+# cursor the page before ended on. The last open page's cursor is never
+# asked at: the cap refuses there.
+cursor_chain() { # PREFIX FIRST LAST
+  local n
+  printf 'cursor=%s ' "$2"
+  for n in $(seq 1 "$3"); do printf 'cursor=%s%s ' "$1" "$n"; done
+}
+cursors_asked() { gh_stub_calls | grep -o 'cursor=[^ ]*' | tr '\n' ' '; }
 stage_pages() { open_suite_pages 19; }
-assert_eq "$(run "$FIFTY_SUITES") $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr") pages=$(gh_stub_calls | grep -c 'api graphql')" \
-  'rc=1  {"error":"truncated: check-suites"} pages=20' "check suites open at the twentieth page"
+assert_eq "$(run "$FIFTY_SUITES") $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr") pages=$(gh_stub_calls | grep -c 'api graphql') $(cursors_asked)" \
+  "rc=1  {\"error\":\"truncated: check-suites\"} pages=20 $(cursor_chain c c50 18)" "check suites open at the twentieth page, each asked at the cursor before it"
 stage_pages() { open_run_pages 9; }
-assert_eq "$(run "$OPEN_GROUP_RUNS") $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr") pages=$(gh_stub_calls | grep -c 'api graphql')" \
-  'rc=1  {"error":"truncated: check-runs"} pages=10' "check runs open at the tenth page"
+assert_eq "$(run "$OPEN_GROUP_RUNS") $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr") pages=$(gh_stub_calls | grep -c 'api graphql') $(cursors_asked)" \
+  "rc=1  {\"error\":\"truncated: check-runs\"} pages=10 $(cursor_chain r r100 8)" "check runs open at the tenth page, each asked at the cursor before it"
 stage_pages() { :; }
 
 echo "=== the repository and gate context reach the query ==="
