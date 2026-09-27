@@ -12,7 +12,8 @@ fn block(field: &str) -> String {
 /// which is the whole point of the mapping the refusals below guard; a
 /// script path that leaves the package is dropped, so nothing outside it
 /// is ever resolved as an installer. The checker field has its own two
-/// tiers and its own case below.
+/// tiers and its own case below, and a key kendex does not know its own
+/// case too: it reads past the key and names it.
 #[test]
 fn a_declaration_reads_whole() {
     let summary_only = RepoEffects {
@@ -25,6 +26,7 @@ fn a_declaration_reads_whole() {
         removal: None,
         notes: Vec::new(),
         companions: Vec::new(),
+        unknown_keys: Vec::new(),
     };
     let rows = [
         (
@@ -39,6 +41,7 @@ fn a_declaration_reads_whole() {
                 removal: None,
                 notes: Vec::new(),
                 companions: Vec::new(),
+                unknown_keys: Vec::new(),
             },
         ),
         (block(""), summary_only.clone()),
@@ -96,8 +99,7 @@ fn a_declaration_reads_whole() {
 /// and nothing to authorize. A field of the wrong shape refuses the
 /// whole declaration, one shape per field because the fail-open
 /// (`unwrap_or_default` reading a `writes:` map as empty while the
-/// installer went on writing) was per field; a key kendex does not know
-/// (`writse:`) is a key it did not read. A written path that leaves the
+/// installer went on writing) was per field. A written path that leaves the
 /// repository is not a written path: these are mapped onto real
 /// locations, so a `..` hop or an absolute path names somewhere else,
 /// and one that climbed out of the git directory and back in would have
@@ -149,10 +151,6 @@ fn a_declaration_that_will_not_read_is_unreadable_and_absent_stays_absent() {
         (block("  uninstaller:\n    a: b\n"), Declaration::Unreadable),
         (
             block("  removal:\n    - by hand\n"),
-            Declaration::Unreadable,
-        ),
-        (
-            block("  writse:\n    - .git/hooks/pre-commit\n"),
             Declaration::Unreadable,
         ),
         (
@@ -224,6 +222,7 @@ fn the_checker_is_a_script_field_like_the_others() {
         removal: None,
         notes: Vec::new(),
         companions: Vec::new(),
+        unknown_keys: Vec::new(),
     };
     let read = [
         (
@@ -272,5 +271,85 @@ fn the_checker_is_a_script_field_like_the_others() {
     for text in refused {
         assert_eq!(declaration(&text), Declaration::Unreadable, "{text}");
         assert_eq!(declared(&text), None, "arming reads it as nothing: {text}");
+    }
+}
+
+/// A key this kendex has no reader for is read past and carried by name,
+/// never refused.
+///
+/// The producer is the catalog moving ahead of the installed binary:
+/// `staged-checker` landed in the bot-instructions declaration and in the
+/// reader in one commit, and every checkout running the release before it
+/// refused the whole declaration on its next refresh, with nothing the
+/// person could repair. So the shipped declaration is read here with one
+/// key added after every field this reader knows, the shape the next such
+/// key takes, and the fields it does know are read as before. A key spelled
+/// wrong takes the same route: `writse:` is not a refusal but a key named
+/// in the disclosure, where the one person who can see it is mistyped
+/// reads it. The required key is still required, and a field of the wrong
+/// shape still refuses: those rows stand in the case above.
+///
+/// The control is the reader before this rule, which refused every row.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_key_this_kendex_does_not_know_is_read_past_and_named() {
+    let shipped = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../skills/bot-instructions/SKILL.md"),
+    )
+    .unwrap();
+    let last_known = "  staged-checker: \"scripts/bot-instructions check --staged\"\n";
+    assert!(
+        shipped.contains(last_known),
+        "the shipped declaration moved"
+    );
+    let ahead = shipped.replace(
+        last_known,
+        &format!("{last_known}  later-key: \"a field this kendex predates\"\n"),
+    );
+    let Declaration::Effects(as_shipped) = declaration(&shipped) else {
+        panic!("the shipped declaration reads: {:?}", declaration(&shipped));
+    };
+    assert!(as_shipped.unknown_keys.is_empty(), "{as_shipped:?}");
+    // The field before the added key is read, so the row below proves the
+    // known fields survive the unknown one rather than two empty reads
+    // agreeing.
+    assert_eq!(
+        as_shipped.staged_checker.as_deref(),
+        Some("scripts/bot-instructions check --staged")
+    );
+    let rows = [
+        (
+            ahead,
+            vec!["later-key".to_owned()],
+            RepoEffects {
+                unknown_keys: vec!["later-key".to_owned()],
+                ..*as_shipped.clone()
+            },
+        ),
+        (
+            block("  writse:\n    - .git/hooks/pre-commit\n  installer: scripts/run\n"),
+            vec!["writse".to_owned()],
+            RepoEffects {
+                summary: "s".to_owned(),
+                writes: Vec::new(),
+                installer: Some("scripts/run".to_owned()),
+                uninstaller: None,
+                checker: None,
+                staged_checker: None,
+                removal: None,
+                notes: Vec::new(),
+                companions: Vec::new(),
+                unknown_keys: vec!["writse".to_owned()],
+            },
+        ),
+    ];
+    for (text, unknown, read) in rows {
+        let Declaration::Effects(effects) = declaration(&text) else {
+            panic!("refused: {text}");
+        };
+        assert_eq!(effects.unknown_keys, unknown, "{text}");
+        assert_eq!(*effects, read, "{text}");
+        assert_eq!(declared(&text), Some(read), "{text}");
     }
 }

@@ -3,7 +3,7 @@ use crate::ui::testing::{plain, rich, tagged};
 use kendex_core::repo_effects::{Companion, RepoEffects, Written};
 
 #[test]
-fn the_disclosure_keeps_every_write_and_shared_mark_in_both_renderings() {
+fn the_disclosure_keeps_every_write_shared_mark_and_unread_key_in_both_renderings() {
     let disclosure = Disclosure {
         declared: DeclaredEffects {
             name: "guards".into(),
@@ -18,6 +18,7 @@ fn the_disclosure_keeps_every_write_and_shared_mark_in_both_renderings() {
                 removal: None,
                 notes: vec![],
                 companions: vec![],
+                unknown_keys: vec![],
             },
         },
         name: "guards".into(),
@@ -37,6 +38,7 @@ fn the_disclosure_keeps_every_write_and_shared_mark_in_both_renderings() {
             installed: true,
         }],
         notes: vec!["Checks each commit.".into()],
+        unknown_keys: vec!["writse".into()],
         undo: None,
     };
     assert_eq!(
@@ -57,6 +59,10 @@ fn the_disclosure_keeps_every_write_and_shared_mark_in_both_renderings() {
             "    preflight (installed)",
             "",
             "  Checks each commit.",
+            "",
+            "  keys this kendex does not read",
+            "    writse",
+            "    a newer kendex may read them; a key spelled wrong is read by none",
             "",
             "  to undo: the package declares no way to undo it",
         ]
@@ -79,6 +85,10 @@ fn the_disclosure_keeps_every_write_and_shared_mark_in_both_renderings() {
             "    <90>preflight (installed)</>",
             "",
             "    <90>Checks each commit.</>",
+            "",
+            "  <36>•</> keys this kendex does not read",
+            "    <90>writse</>",
+            "    <90>a newer kendex may read them; a key spelled wrong is read by none</>",
             "",
             "    <90>to undo: the package declares no way to undo it</>",
         ]

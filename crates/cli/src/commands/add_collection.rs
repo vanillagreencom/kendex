@@ -401,6 +401,7 @@ mod tests {
                 removal: None,
                 notes: Vec::new(),
                 companions: Vec::new(),
+                unknown_keys: Vec::new(),
             },
         }
     }

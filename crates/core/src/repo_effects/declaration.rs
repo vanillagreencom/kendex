@@ -2,7 +2,9 @@
 //!
 //! Its own file because it is one edge with one rule: text a catalog wrote,
 //! turned into values kendex will act on, and refused whole where any of it
-//! cannot be read. Nothing here touches disk or runs anything — that is next
+//! cannot be read. A key kendex has no reader for is not something it
+//! failed to read: it is carried by name, so the disclosure can say what it
+//! left out. Nothing here touches disk or runs anything — that is next
 //! door, and it takes only what this hands back.
 
 use serde::{Deserialize, Serialize};
@@ -55,6 +57,15 @@ pub struct RepoEffects {
     /// installed here is a fact about this repository rather than about the
     /// package, so the declaration names them and kendex answers.
     pub companions: Vec<String>,
+    /// Keys in the block this kendex has no reader for, in the order the
+    /// package wrote them. Two things put one there: a catalog that added
+    /// a field after this binary shipped, and a key spelled wrong. The
+    /// reader cannot tell which, so it reads past both and the disclosure
+    /// names them, where a person can. Never a refusal: the catalog moves
+    /// ahead of the installed binary as a matter of course, and refusing
+    /// its declaration broke every refresh on every checkout that carried
+    /// the package until the next release.
+    pub unknown_keys: Vec<String>,
 }
 
 /// What a package's `SKILL.md` says about the repository: three answers,
@@ -147,9 +158,6 @@ fn names_key(line: &str) -> bool {
 
 /// The block's fields, or `None` where any one of them will not read.
 fn effects(map: &Map) -> Option<RepoEffects> {
-    if !only_known(map) {
-        return None;
-    }
     Some(RepoEffects {
         summary: scalar(map, "summary")?,
         writes: writes(map)?,
@@ -160,10 +168,11 @@ fn effects(map: &Map) -> Option<RepoEffects> {
         removal: text(map, "removal")?,
         notes: list(map, "notes")?,
         companions: list(map, "companions")?,
+        unknown_keys: unknown_keys(map),
     })
 }
 
-/// The fields a declaration may have. Every one of them is read above.
+/// The fields this kendex reads. Every one of them is read above.
 const FIELDS: [&str; 9] = [
     "summary",
     "writes",
@@ -176,20 +185,25 @@ const FIELDS: [&str; 9] = [
     "companions",
 ];
 
-/// Whether every key in the declaration is one kendex knows.
+/// The keys in the declaration this kendex does not read.
 ///
-/// A key kendex does not know is a key it did not read, and the ways to
-/// write one are all typing accidents: `writse:` next to `writes:` is a
-/// package that declares the paths it writes and a block that names none of
-/// them, while the installer writes them anyway. Nothing distinguishes that
-/// from a package which genuinely writes nothing.
-///
-/// So the same rule as every field above — refused whole, not read short.
-/// It costs a package nothing: this is a fixed set of keys with no
-/// extension point, `FIELDS` is the whole of it, and a declaration
-/// carrying one that is not there is one somebody mistyped.
-fn only_known(map: &Map) -> bool {
-    map.entries().all(|(key, _)| FIELDS.contains(&key))
+/// Not a refusal, though a key kendex does not know is a key it did not
+/// read, and `writse:` next to `writes:` is a package that declares the
+/// paths it writes and a block that names none of them. The other way to
+/// write one is a catalog that added a field, `staged-checker` say, after
+/// this binary shipped; the catalog is refreshed on every checkout and the
+/// binary is not, and refusing the whole declaration for the new key
+/// failed every refresh that carried the package, with nothing the
+/// person could fix. So the block reads by the keys kendex knows and
+/// carries the rest by name, for the disclosure to show beside the fields
+/// it did read: a mistyped key is then in front of the one person who can
+/// see it is mistyped.
+fn unknown_keys(map: &Map) -> Vec<String> {
+    map.entries()
+        .map(|(key, _)| key)
+        .filter(|key| !FIELDS.contains(key))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// A list field: absent is empty, present-but-not-a-list is a refusal.

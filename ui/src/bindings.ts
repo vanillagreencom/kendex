@@ -1830,6 +1830,15 @@ export type Disclosure = {
 	companions: Companion[],
 	notes: string[],
 	/**
+	 *  The declaration's keys this kendex did not read, by name: a field a
+	 *  newer catalog added, or one spelled wrong. The block says so beside
+	 *  the fields it did read, because a person authorizing an effect is
+	 *  the one who can tell those apart, and a block that fell silent about
+	 *  a key would read as the complete account it is not. Display text:
+	 *  shown once, printed as it is.
+	 */
+	unknownKeys: string[],
+	/**
 	 *  How the package says to undo the effect: the uninstaller it declared
 	 *  where there is one, else its removal text, else nothing. The same
 	 *  answer the failure message gives, so a person who reads the block
@@ -4265,6 +4274,17 @@ export type RepoEffects = {
 	 *  package, so the declaration names them and kendex answers.
 	 */
 	companions: string[],
+	/**
+	 *  Keys in the block this kendex has no reader for, in the order the
+	 *  package wrote them. Two things put one there: a catalog that added
+	 *  a field after this binary shipped, and a key spelled wrong. The
+	 *  reader cannot tell which, so it reads past both and the disclosure
+	 *  names them, where a person can. Never a refusal: the catalog moves
+	 *  ahead of the installed binary as a matter of course, and refusing
+	 *  its declaration broke every refresh on every checkout that carried
+	 *  the package until the next release.
+	 */
+	unknownKeys: string[],
 };
 
 export type ReportRouteView = {

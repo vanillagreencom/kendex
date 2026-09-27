@@ -75,6 +75,7 @@ impl Fixture {
                 removal: None,
                 notes: Vec::new(),
                 companions: Vec::new(),
+                unknown_keys: Vec::new(),
             },
         }
     }
@@ -531,6 +532,7 @@ impl Linked {
                 removal: None,
                 notes: Vec::new(),
                 companions: Vec::new(),
+                unknown_keys: Vec::new(),
             },
         }
     }
@@ -560,6 +562,7 @@ fn a_project_outside_a_work_tree_has_no_standing_licence() {
             removal: None,
             notes: Vec::new(),
             companions: Vec::new(),
+            unknown_keys: Vec::new(),
         },
     };
 

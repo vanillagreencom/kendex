@@ -22,6 +22,8 @@ import {
   REPO_EFFECTS_SHARED_NOTE,
   REPO_EFFECTS_STANDING,
   REPO_EFFECTS_UNDO_LABEL,
+  REPO_EFFECTS_UNREAD_LABEL,
+  REPO_EFFECTS_UNREAD_NOTE,
   REPO_EFFECTS_WRITES_LABEL,
   repoEffectsTitle,
 } from "@/lib/copy-repo-effects";
@@ -89,7 +91,8 @@ export function RepoEffectsDialog() {
 
 /** The block, in the order a reader needs it: what changes, what is
  *  written, which packages take part, whatever the package itself wants
- *  read, and how to undo it. Every line is the package's own words or a
+ *  read, the keys this kendex did not read, and how to undo it. Every
+ *  line is the package's own words or a
  *  fact kendex knows about this machine; nothing here explains what a
  *  declaration means, because that is the package's contract. The commit
  *  offer draws it too, above a held package's setup. */
@@ -152,6 +155,21 @@ export function DisclosureBody({ disclosure }: { disclosure: Disclosure }) {
           {note}
         </p>
       ))}
+      {disclosure.unknownKeys.length > 0 ? (
+        <section className="space-y-1.5">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            {REPO_EFFECTS_UNREAD_LABEL}
+          </h3>
+          <ul className="space-y-0.5">
+            {disclosure.unknownKeys.map((key) => (
+              <li key={key} className="font-mono text-xs">
+                {key}
+              </li>
+            ))}
+          </ul>
+          <p className="text-muted-foreground">{REPO_EFFECTS_UNREAD_NOTE}</p>
+        </section>
+      ) : null}
       <section className="space-y-1">
         <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
           {REPO_EFFECTS_UNDO_LABEL}

@@ -21,6 +21,7 @@ fn package(root: &Path, installer: Option<&str>, uninstaller: Option<&str>) -> D
             removal: Some("delete the hooks by hand".to_owned()),
             notes: Vec::new(),
             companions: Vec::new(),
+            unknown_keys: Vec::new(),
         },
     }
 }

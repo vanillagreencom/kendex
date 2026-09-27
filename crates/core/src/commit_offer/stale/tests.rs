@@ -25,6 +25,7 @@ fn a_changed_path_touches_the_package_that_owns_or_writes_it() {
             removal: None,
             notes: Vec::new(),
             companions: Vec::new(),
+            unknown_keys: Vec::new(),
         },
     };
     for (path, want) in [

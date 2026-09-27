@@ -16,6 +16,8 @@ import {
   REPO_EFFECTS_NOTHING_TO_RUN,
   REPO_EFFECTS_SHARED_MARK,
   REPO_EFFECTS_SHARED_NOTE,
+  REPO_EFFECTS_UNREAD_LABEL,
+  REPO_EFFECTS_UNREAD_NOTE,
   repoEffectsTitle,
 } from "@/lib/copy-repo-effects";
 import { useInstallFlow } from "@/stores/install-flow";
@@ -54,6 +56,7 @@ const guards: Disclosure = {
     removal: "run the uninstaller before removing this package",
     notes: ["core.hooksPath is never set."],
     companions: ["doc-limits", "preflight"],
+    unknownKeys: [],
   },
   name: "commit-guards",
   summary: "Arms git hooks, so every commit runs the guard chain.",
@@ -63,6 +66,7 @@ const guards: Disclosure = {
     { name: "preflight", installed: false },
   ],
   notes: ["core.hooksPath is never set."],
+  unknownKeys: [],
   undo: "run `'.agents/skills/commit-guards/scripts/install-git-hooks' '--uninstall'` from the repository root",
 };
 
@@ -117,6 +121,19 @@ describe("the account a person reads", () => {
     expect(text).toContain("core.hooksPath is never set.");
     expect(text).toContain(guards.undo ?? "");
     expect(text).not.toContain(REPO_EFFECTS_NOTHING_TO_RUN);
+    // A declaration this kendex read whole says nothing about unread keys.
+    expect(text).not.toContain(REPO_EFFECTS_UNREAD_LABEL);
+  });
+
+  it("names the keys this kendex did not read, beside the fields it did", () => {
+    // A catalog ahead of the binary, or a key spelled wrong: the block
+    // names the key rather than falling silent about what it left out.
+    const body = show([{ ...guards, unknownKeys: ["staged-checker"] }]);
+    const text = body.textContent ?? "";
+    expect(text).toContain(REPO_EFFECTS_UNREAD_LABEL);
+    expect(text).toContain("staged-checker");
+    expect(text).toContain(REPO_EFFECTS_UNREAD_NOTE);
+    expect(text).toContain(guards.summary);
   });
 
   it("never promises an undo the package did not declare", () => {

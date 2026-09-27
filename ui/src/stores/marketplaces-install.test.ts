@@ -50,11 +50,13 @@ const disclosure = (name: string): Disclosure => ({
     removal: null,
     notes: [],
     companions: [],
+    unknownKeys: [],
   },
   name,
   summary: `${name} arms hooks`,
   writes: [{ path: "/home/me/app/.git/hooks/pre-commit", shared: true }],
   companions: [],
+  unknownKeys: [],
   notes: [],
   undo: null,
 });

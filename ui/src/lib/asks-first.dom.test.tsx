@@ -48,11 +48,13 @@ const guards = {
     undo: null,
     notes: [],
     companions: [],
+    unknownKeys: [],
   },
   name: "guards",
   summary: "Arms git hooks.",
   writes: [{ path: "/work/acme/.git/hooks/pre-commit", shared: false }],
   companions: [],
+  unknownKeys: [],
   notes: [],
   undo: null,
 } as unknown as Disclosure;

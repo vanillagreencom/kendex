@@ -122,7 +122,7 @@ repo-effects:
 - `installer` and `uninstaller` are commands relative to the package directory. kendex runs the installer when somebody says yes, and the uninstaller before any verb takes the package away.
 - `checker` is optional and read-only: a command, relative to the package directory, that reports whether the effect stands here.
 - `staged-checker` is optional and read-only: a command, relative to the package directory, that reports whether the package's files are current in the commit the git index holds rather than in the working tree. Declare it where a commit hook judges your files, the way `bot-instructions check --staged` does.
-- Every field is refused whole rather than read short. A shape kendex cannot read is a declaration it will not act on, and a script or evidence path kendex will not use is dropped while the rest of the block stands.
+- A field kendex cannot read refuses the whole declaration; a script path kendex will not use is dropped and the rest stands. A key kendex has no reader for is read past and named in the disclosure: a catalog adds a field before every binary reads it.
 
 ### The checker contract
 

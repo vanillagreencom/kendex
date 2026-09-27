@@ -28,6 +28,7 @@ fn declared(writes: &[&str], companions: &[&str]) -> DeclaredEffects {
             removal: None,
             notes: Vec::new(),
             companions: companions.iter().map(|s| (*s).to_owned()).collect(),
+            unknown_keys: Vec::new(),
         },
     }
 }
@@ -259,6 +260,7 @@ fn companions_are_answered_from_the_installed_set() {
 
     let mut forged = declared(&["tools/\u{202e}tnil"], &["pre\u{200b}flight"]);
     forged.effects.summary = "arms\u{1b}[2Jhooks".to_owned();
+    forged.effects.unknown_keys = vec!["writse\u{200b}".to_owned()];
     let escaped = super::offers(&project(tmp.path()), &[forged], &installed);
     let block = &escaped.shown[0];
     assert!(
@@ -268,6 +270,7 @@ fn companions_are_answered_from_the_installed_set() {
     );
     assert_eq!(block.companions[0].name, "pre\\u{200b}flight");
     assert_eq!(block.summary, "arms\\u{1b}[2Jhooks");
+    assert_eq!(block.unknown_keys, ["writse\\u{200b}"]);
     // And the raw declaration is untouched, for the yes to run.
     assert_eq!(block.declared.effects.summary, "arms\u{1b}[2Jhooks");
 }

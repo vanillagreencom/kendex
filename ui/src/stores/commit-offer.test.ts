@@ -832,6 +832,7 @@ describe("setting up a package that holds the commit", () => {
     removal: null,
     notes: [],
     companions: [],
+    unknownKeys: [],
   };
   const held = (
     why: StalePackage["why"],
@@ -847,6 +848,7 @@ describe("setting up a package that holds the commit", () => {
       summary: "Renders the review-bot files.",
       writes: [],
       companions: [],
+      unknownKeys: [],
       notes: [],
       undo: null,
     },

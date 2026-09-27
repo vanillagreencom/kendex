@@ -244,8 +244,8 @@ pub enum InstalledDeclaration {
 /// cannot read may name a script they must not miss. A whole-scope read
 /// runs nothing on its own: refusing the scope over one package's
 /// frontmatter would fail every project that merely carries the package,
-/// and the default catalog adding a key ahead of the binary is exactly how
-/// such a declaration reaches one.
+/// and a catalog edit that breaks a field's shape reaches every one of
+/// them on its next refresh.
 pub fn installed_declarations(env: &Env, scope: &Scope) -> Result<Vec<InstalledDeclaration>> {
     let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
     let mut found = Vec::new();

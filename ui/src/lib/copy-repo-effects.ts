@@ -19,6 +19,12 @@ export const REPO_EFFECTS_SHARED_NOTE =
 export const REPO_EFFECTS_COMPANIONS_LABEL = "Companion packages";
 export const COMPANION_INSTALLED = "installed";
 export const COMPANION_NOT_INSTALLED = "not installed";
+/** Heads the declaration's keys this kendex did not read. The person
+ * reading the block is the one who can tell a field a newer kendex reads
+ * from a key spelled wrong, so the keys are named, not folded away. */
+export const REPO_EFFECTS_UNREAD_LABEL = "Keys this kendex does not read";
+export const REPO_EFFECTS_UNREAD_NOTE =
+  "A newer kendex may read them; a key spelled wrong is read by none.";
 export const REPO_EFFECTS_UNDO_LABEL = "To undo";
 export const REPO_EFFECTS_NO_UNDO = "The package gives no way to undo it.";
 

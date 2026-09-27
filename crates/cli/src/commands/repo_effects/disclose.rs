@@ -15,7 +15,7 @@ use crate::ui::{self, Span, Status, Style};
 
 /// The block, in the order a reader needs it: what changes, what is
 /// written, which packages take part, whatever the package itself wants
-/// read, and how to undo it.
+/// read, the keys this kendex did not read, and how to undo it.
 ///
 /// Every line of it is either the package's own words or a fact kendex
 /// knows about this machine. Nothing here explains what a declaration
@@ -102,6 +102,26 @@ fn disclosure_lines(style: &Style, disclosure: &Disclosure) -> Vec<String> {
     for note in &disclosure.notes {
         lines.push(String::new());
         lines.extend(style.report_detail(&[Span::Prose(note)], "  "));
+    }
+    if !disclosure.unknown_keys.is_empty() {
+        // Named, not folded into the block: the person reading this is the
+        // one who can tell a key a newer kendex reads from one spelled
+        // wrong, and the block above is short by whatever those keys said.
+        lines.push(String::new());
+        lines.extend(style.report_row(
+            Status::Notice,
+            &[Span::Prose("keys this kendex does not read")],
+            "  ",
+        ));
+        for key in &disclosure.unknown_keys {
+            lines.extend(style.report_detail(&[Span::Command(key)], "    "));
+        }
+        lines.extend(style.report_detail(
+            &[Span::Prose(
+                "a newer kendex may read them; a key spelled wrong is read by none",
+            )],
+            "    ",
+        ));
     }
     lines.push(String::new());
     let undo = disclosure

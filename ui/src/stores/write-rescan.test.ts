@@ -88,11 +88,13 @@ const disclosure: Disclosure = {
     removal: null,
     notes: [],
     companions: [],
+    unknownKeys: [],
   },
   name: "guards",
   summary: "guards arms hooks",
   writes: [{ path: "/home/me/app/.git/hooks/pre-commit", shared: true }],
   companions: [],
+  unknownKeys: [],
   notes: [],
   undo: null,
 };

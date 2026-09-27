@@ -446,10 +446,12 @@ fn a_lapsed_arming_fails_verify_and_is_named_by_refresh() {
 /// arming the package: a scope that merely carries the package stays
 /// green, and one kendex armed hears that the check could not be run.
 ///
-/// The producer is the catalog adding a `repo-effects` key ahead of the
-/// binary, which the declaration reader refuses whole. Refusing the whole
-/// scope over it would fail every clone and every project that declined
-/// the effect, which is the wrong direction for a state nothing measured.
+/// The producer is a hand edit that gives a declared field a shape the
+/// reader has no reading for, a `checker:` written as a list, which
+/// refuses the declaration whole. Refusing the whole scope over it would
+/// fail every clone and every project that declined the effect, which is
+/// the wrong direction for a state nothing measured. A key the reader
+/// does not know is not this producer: that reads, and names the key.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declaration_that_will_not_read_fails_verify_only_where_kendex_armed_it() {
@@ -462,14 +464,11 @@ fn a_declaration_that_will_not_read_fails_verify_only_where_kendex_armed_it() {
     let text = read(&declaration);
     let anchor = "  checker: \"scripts/install-git-hooks --check\"\n";
     assert!(text.contains(anchor), "the declaration moved");
-    fs::write(
-        &declaration,
-        text.replace(anchor, &format!("{anchor}  later-key: \"unknown here\"\n")),
-    )
-    .unwrap();
+    let listed = "  checker:\n    - \"scripts/install-git-hooks --check\"\n";
+    fs::write(&declaration, text.replace(anchor, listed)).unwrap();
     world.run(&["refresh", "--scope", "project"]);
     assert!(
-        read(&world.at(".agents/skills/commit-guards/SKILL.md")).contains("later-key"),
+        read(&world.at(".agents/skills/commit-guards/SKILL.md")).contains(listed),
         "the refresh did not carry the new declaration"
     );
 

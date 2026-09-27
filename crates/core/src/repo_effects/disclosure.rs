@@ -67,6 +67,13 @@ pub struct Disclosure {
     pub writes: Vec<Written>,
     pub companions: Vec<Companion>,
     pub notes: Vec<String>,
+    /// The declaration's keys this kendex did not read, by name: a field a
+    /// newer catalog added, or one spelled wrong. The block says so beside
+    /// the fields it did read, because a person authorizing an effect is
+    /// the one who can tell those apart, and a block that fell silent about
+    /// a key would read as the complete account it is not. Display text:
+    /// shown once, printed as it is.
+    pub unknown_keys: Vec<String>,
     /// How the package says to undo the effect: the uninstaller it declared
     /// where there is one, else its removal text, else nothing. The same
     /// answer the failure message gives, so a person who reads the block
@@ -182,6 +189,12 @@ pub fn offers(scope: &Scope, effects: &[DeclaredEffects], installed: &BTreeSet<S
             name: shown(&declared.name),
             summary: shown(&declared.effects.summary),
             notes: declared.effects.notes.iter().map(|n| shown(n)).collect(),
+            unknown_keys: declared
+                .effects
+                .unknown_keys
+                .iter()
+                .map(|key| shown(key))
+                .collect(),
             undo: declared.undo(root).as_deref().map(shown),
             declared: declared.clone(),
             writes,
