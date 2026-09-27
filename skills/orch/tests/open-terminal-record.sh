@@ -427,7 +427,7 @@ echo "=== a relaunch of a parked record starts its sandbox before create --relau
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-65")) |= (.status = "parked" | .parked = {pr: 65, head: "abc", repo: "o/r", at: "t"})' >/dev/null
 : > "$TMP_ROOT/host.log"
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
-  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-65
+  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-65
 assert_eq "rc=$RC started=$(grep -c '^open-terminal: host-started item=CC-65 ' <<<"$OUT" || true) order=$(awk '$1 == "start" || $1 == "create" { print $1 }' "$TMP_ROOT/host.log" | paste -sd, -) start=$(grep -c '^start --item CC-65 $' "$TMP_ROOT/host.log" || true) status=$(field "$(record CC-65)" status) parked=$("$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "CC-65") | has("parked")] | first')" \
   "rc=0 started=1 order=start,create start=1 status=running parked=false" \
   "a parked record's relaunch starts the sandbox, then creates with --relaunch, and the running record drops parked"
@@ -437,7 +437,7 @@ for row in 'LANE_HOST_STUB_START_STATUS=1|host-start-failed item=CC-65 exit=1' '
   : > "$TMP_ROOT/host.log"
   ( export "$plant"
     STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
-      run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-65
+      run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-65
     printf '%s\n' "$RC" > "$TMP_ROOT/park-rc"; printf '%s\n' "$ERR" > "$TMP_ROOT/park-err" )
   RC="$(cat "$TMP_ROOT/park-rc")"; ERR="$(cat "$TMP_ROOT/park-err")"
   assert_eq "rc=$RC refused=$(grep -c "^open-terminal: $expect\$" <<<"$ERR" || true) creates=$(grep -c '^create ' "$TMP_ROOT/host.log" || true) status=$(field "$(record CC-65)" status)" \
@@ -450,7 +450,7 @@ done
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-65")) |= (.status = "parked" | .parked = {pr: 65, head: "abc", repo: "o/r", at: "t"})' >/dev/null
 : > "$TMP_ROOT/host.log"
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" LANE_HOST_STUB_CREATE_OWNED=CC-65 RUN_TMUX=stub,1,0 \
-  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-65
+  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-65
 assert_eq "rc=$RC started=$(grep -c '^open-terminal: host-started item=CC-65 host=.* status=stopped$' <<<"$OUT" || true) creates=$(grep -c '^create ' "$TMP_ROOT/host.log" || true) status=$(field "$(record CC-65)" status) parked=$("$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "CC-65") | has("parked")] | first')" \
   "rc=75 started=1 creates=1 status=stopped parked=false" \
   "a create that fails after a confirmed start leaves the record stopped with parked dropped, the sandbox being up"
@@ -459,7 +459,7 @@ assert_eq "rc=$RC started=$(grep -c '^open-terminal: host-started item=CC-65 hos
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-65")) |= (.status = "stopped")' >/dev/null
 : > "$TMP_ROOT/host.log"
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
-  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-65
+  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-65
 assert_eq "rc=$RC start=$(grep -c '^start ' "$TMP_ROOT/host.log" || true) creates=$(grep -c '^create --item CC-65 .*--relaunch $' "$TMP_ROOT/host.log" || true)" \
   "rc=0 start=0 creates=1" "a stopped record's relaunch starts no sandbox"
 
