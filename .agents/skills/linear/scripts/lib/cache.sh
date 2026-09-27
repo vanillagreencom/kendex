@@ -248,7 +248,9 @@ cache_unlock() {
 # `path` names the file so a caller can tell this from a lookup that matched
 # nothing, which carries no `path`. The repair is a full sync: a plain sync
 # rewrites only what changed since the last one, so a corrupt comment file
-# survives it and a corrupt issues.json is replaced by the delta alone.
+# survives it, and a corrupt issues.json or projects.json makes the merge
+# refuse with this error rather than merge over it. Only `sync --full`
+# replaces the file whole.
 cache_unreadable_error() {
     jq -cn --arg path "$1" \
         '{error: ("Cache file is not readable as JSON: " + $path + " — the cache is corrupt, not empty. Re-run: linear.sh sync --full"), path: $path}' >&2
