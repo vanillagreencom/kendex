@@ -22,6 +22,8 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 CACHE="$TMP_ROOT/.cache/linear"
 mkdir -p "$TMP_ROOT/.agents/skills" "$CACHE/comments"
 git -C "$TMP_ROOT" init -q -b main
+git -C "$TMP_ROOT" config gc.auto 0
+git -C "$TMP_ROOT" config maintenance.auto false
 
 # This root's own cache is the subject, so it replaces the assert lib's default
 # sandbox — still scratch, so the exit verdict's containment check holds.
