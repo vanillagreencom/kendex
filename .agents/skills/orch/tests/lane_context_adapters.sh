@@ -259,7 +259,6 @@ claude|$CLAUDE_OWNED|s1|$CHOME|0 owned
 claude|$CLAUDE_S2|s1|$CHOME|1 session-mismatch
 claude|$CLAUDE_SUBAGENT|s1|$CHOME|1 session-mismatch
 claude|$CLAUDE_FOREIGN|s1|$CHOME|1 home-mismatch
-claude|$CHOME/projects/repo/s3.jsonl|s3|$CHOME|1 transcript-missing
 claude||s1|$CHOME|1 binding-missing
 claude|$CLAUDE_OWNED||$CHOME|1 binding-missing
 claude|$CLAUDE_OWNED|s1||1 home-unnamed
@@ -314,8 +313,14 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'claude s1.jsonl for s1 under claude-home: 1 home-mismatch'
   control owned-codex-session adapters/codex.sh '*) LANE_ADAPTER_OWNED_REASON=session-mismatch; return 1 ;;' '*) ;;' \
     'codex rollout-2026-09-27T00-00-00-s2.jsonl for s1 under codex-home: 1 session-mismatch'
-  control owned-file-exists lane-context.sh 'if [ ! -f "$2" ] || [ ! -r "$2" ]; then' 'if false; then' \
-    'claude s3.jsonl for s3 under claude-home: 1 transcript-missing'
+  control owned-codex-home adapters/codex.sh '*) LANE_ADAPTER_OWNED_REASON=home-mismatch; return 1 ;;' '*) ;;' \
+    'codex rollout-2026-09-27T00-00-00-s1.jsonl for s1 under other-codex-home: 1 home-mismatch'
+  control owned-binding-missing lane-context.sh 'if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then' 'if false; then' \
+    'claude none for s1 under claude-home: 1 binding-missing'
+  control owned-home-unnamed lane-context.sh 'if [ -z "${4:-}" ]; then' 'if false; then' \
+    'claude s1.jsonl for s1 under none: 1 home-unnamed'
+  control owned-harness-unlisted lane-context.sh '*) LANE_CONTEXT_OWNED_REASON=harness-unlisted; return 3 ;;' '*) ;;' \
+    'opencode s1.jsonl for s1 under claude-home: 3 harness-unlisted'
 fi
 
 echo

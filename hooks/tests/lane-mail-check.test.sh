@@ -1345,8 +1345,8 @@ new_overseer() { # NAME [PANE] [SERVER]
   record_overseer "${2:-$OVERSEER_PANE}" "${3:-$OVERSEER_SERVER}"
 }
 
-# The launch home the sibling KEN-1921 record names for the overseer session,
-# which the transcript ownership gate holds the payload's transcript to.
+# The launch home the fleet record's `.overseer.home` names for the overseer
+# session, which the transcript ownership gate holds the payload's transcript to.
 # OVERSEER_HOME_DIR by default, a claude config dir whose projects tree the
 # owned transcript below sits under; a row naming a codex home passes its own.
 OVERSEER_HOME_DIR="$TMP_ROOT/overseer-home"
@@ -1447,8 +1447,12 @@ expect 0 - "a record carrying this session's own pane key ends the turn of a pay
 record_overseer_handoff "" "$OVERSEER_SERVER %4"
 # shellcheck disable=SC2046
 stop_unnamed $(overseer_env)
-expect 2 "lane-mail-check: context=612000" \
-  "and one carrying another pane's key holds nobody"
+# A payload naming no session also binds the transcript to nobody, so the read
+# is reported as unbound ahead of the mark, the judge is handed the install's
+# harness and no reading, and the mark it refuses on is the planted judge's own.
+assert_eq "RC=$RC first=$(first_line) mark=$(grep -c '^lane-mail-check: context=612000$' "$ERR_FILE") argv=$(judge_argv | tail -n 1) reason=$(grep -c 'binding-missing' "$ERR_FILE")" \
+  "RC=2 first=lane-mail-check: transcript-unowned=$TRANSCRIPT mark=1 argv=--check-marks --harness claude reason=1" \
+  "and one carrying another pane's key holds nobody: the unbound transcript is reported once, the judge handed the harness and no reading, and its mark refused" "$ERR_FILE"
 
 # The account mark is the judge's own, on the judge's own setting: this hook
 # reads neither, so the figure and the mark it names come off that one line.
@@ -1472,7 +1476,7 @@ stop_at "$TRANSCRIPT" false $(overseer_env)
 assert_eq "argv=$(judge_argv | tail -n 1) route=$(grep -cF -- "/oversee-succeed --context 999999: -- [THE PERMISSION" "$ERR_FILE")" \
   "argv=--check-marks --context 999999: route=1" \
   "an overseer reading with no window hands its judge and its succession the tokens and no window" "$ERR_FILE"
-variant no-context-arg -e 's|^    ${CONTEXT_ARGS\[@\]+"${CONTEXT_ARGS\[@\]}"} 2>|    2>|'
+variant no-context-arg -e 's|^    ${JUDGE_ARGS\[@\]+"${JUDGE_ARGS\[@\]}"} 2>|    2>|'
 install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 600000
 # shellcheck disable=SC2046
@@ -1510,10 +1514,12 @@ assert_eq "argv=$(judge_argv | tail -n 1) unowned=$(grep -c '^lane-mail-check: t
 # shellcheck disable=SC2046
 owned_payload s2 "$TRANSCRIPT" $(overseer_env)
 assert_eq "RC=$RC first=$(first_line) argv=$(judge_argv | tail -n 1) headroom=$(grep -c '^lane-mail-check: headroom=4' "$ERR_FILE")" \
-  "RC=2 first=lane-mail-check: transcript-unowned=$TRANSCRIPT argv=--check-marks headroom=1" \
+  "RC=2 first=lane-mail-check: transcript-unowned=$TRANSCRIPT argv=--check-marks --harness claude headroom=1" \
   "a predecessor's transcript is not this session's, so its context is unmeasured and the account mark decides" "$ERR_FILE"
-# A record from before the launch-identity change names no launch home, so no
-# binding can be verified at all: context unmeasured, account triggers decide.
+# A record naming no launch home, one `oversee register` wrote for a session
+# with no account, can bind nothing: context unmeasured, account triggers
+# decide, and the judge is handed the harness this install names, since no
+# reading of this session was recorded for it to take one from.
 new_overseer overseer_no_home
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee overseer \
   "$(jq -nc --arg s "$OVERSEER_SERVER" --arg p "$OVERSEER_PANE" \
@@ -1522,12 +1528,30 @@ judge_says "$HEADROOM_MARK_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
 assert_eq "RC=$RC first=$(first_line) argv=$(judge_argv | tail -n 1) reason=$(grep -c 'home-unnamed' "$ERR_FILE")" \
-  "RC=2 first=lane-mail-check: transcript-unowned=$TRANSCRIPT argv=--check-marks reason=1" \
+  "RC=2 first=lane-mail-check: transcript-unowned=$TRANSCRIPT argv=--check-marks --harness claude reason=1" \
   "a record naming no launch home cannot bind the transcript, so context is unmeasured and the account mark decides" "$ERR_FILE"
+# A Pi install states no transcript shape, so its overseer binds nothing and
+# reads the payload's own window as a Pi lane does; nothing is reported.
+new_overseer overseer_pi
+# The Pi hook's walk to its reader stops at the lane root, so the planted
+# judge is offered where that walk looks, as the codex block below does.
+mkdir -p "$LANE/.pi/skills"
+ln -s "$LANE/.claude/skills/orch" "$LANE/.pi/skills/orch"
+install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
+PI_TRANSCRIPT="$TMP_ROOT/pi-overseer.jsonl"
+usage_line pi 180000 > "$PI_TRANSCRIPT"
+judge_says "$HEADROOM_MARK_LINE"
+# shellcheck disable=SC2046
+run_payload "$(jq -nc --arg p "$PI_TRANSCRIPT" \
+  '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:200000}')" $(overseer_env)
+assert_eq "argv=$(judge_argv | tail -n 1) unowned=$(grep -c '^lane-mail-check: transcript-unowned' "$ERR_FILE")" \
+  "argv=--check-marks --context 180000:200000 unowned=0" \
+  "a Pi overseer reads the payload's own window, bound to no transcript shape" "$ERR_FILE"
+install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 # Control: with the ownership gate gone the predecessor's foreign file is read
 # and its reading handed to the judge, the very thing the gate prevents.
 new_overseer overseer_binding_control
-variant read-any-transcript -e 's/! overseer_transcript_owned/false/'
+variant read-any-transcript -e 's/^      if overseer_transcript_owned; then$/      if true; then/'
 install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 judge_says "$HEADROOM_MARK_LINE"
 # shellcheck disable=SC2046
