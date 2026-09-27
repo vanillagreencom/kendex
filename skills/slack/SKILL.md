@@ -33,7 +33,7 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 ## Rules
 
 - A root is a checkout with the orch skill installed. A relay serves every root it is given, and one relay serves one checkout, held by an OS lock.
-- The relay never reads or writes a mailbox file itself. An owner's words land through `lane-mail send --delivery-id` or `lane-mail resolve --delivery-id`; who judges a repeat is kendex decision D008 § Decision, item 3.
+- The relay never reads or writes a mailbox file itself. An owner's words land through `lane-mail send --delivery-id` or `lane-mail resolve --delivery-id`; who judges a repeat is [DEVELOPMENT.md § Constraints](DEVELOPMENT.md#constraints).
 - The first owner reply in a question's thread closes the question. The ruling the overseer records reaches Slack as a notice with `--ref`, per [orch communication-modes.md § Owner asks](../orch/references/communication-modes.md#owner-asks).
 - Every outbound text and file passes the secret-value pattern the orch skill ships at `references/secret-value.ere`. A match is refused, journaled and never sent.
 - A relay reads its settings at start. After changing `SLACK_OWNERS` or the token, restart the relay; `slack setup` restarts the unit `install` wrote.

@@ -1,4 +1,4 @@
-# D008: One polling relay per person carries the overseer mailbox to Slack
+# D009: One polling relay per person carries the overseer mailbox to Slack
 
 [← Decision Index](INDEX.md)
 
