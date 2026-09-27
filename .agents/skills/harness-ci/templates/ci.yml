@@ -7,7 +7,7 @@
 # every lane the repository runs reports into it: a lane in another workflow
 # is a lane no required context holds. The classifier judges the diff on
 # pull_request and merge_group alike, and every lane reads the same `lanes`
-# output on both, so a merge group runs the lanes its pull request ran. Which
+# output on both, so each event runs the lanes its own diff calls for. Which
 # diffs run the lanes is the change-class action's answer, not this file's:
 # the `changes` job forwards it and names no class, so a change to that rule
 # reaches this workflow with no edit to it.

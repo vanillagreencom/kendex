@@ -12,8 +12,8 @@
 #   1. the names: one job named CI, the classifier named `Classify the diff`,
 #      both gated events under `on:`, and CI needing every other job.
 #   2. the job set: per event and action answer, which lanes run. lanes=false
-#      runs none, lanes=true runs them all, a merge group runs what its pull
-#      request ran, a dead classifier runs every lane, and no line of the
+#      runs none, lanes=true runs them all, both events read `lanes` the
+#      same way, a dead classifier runs every lane, and no line of the
 #      template reads the change class.
 #   3. the aggregate: the waiver the template computes, fed to
 #      aggregate-needs, accepts a skipped lane only where the classifier
@@ -101,8 +101,8 @@ assert_eq "CI needs every other job" \
 # EVENT|ACTION'S LANES|CLASS|LANES THAT RUN
 # The standard rows at lanes=false are a docs-only diff past the trivial
 # ceiling, the answer a template reading the class would get wrong. Each
-# pull_request row has a merge_group twin with the same answer, which is the
-# claim that a merge group runs the lanes its pull request ran.
+# pull_request row has a merge_group twin with the same answer, so both
+# events read `lanes` the same way.
 job_rows=0
 while IFS='|' read -r event lanes class expected; do
   job_rows=$((job_rows + 1))
