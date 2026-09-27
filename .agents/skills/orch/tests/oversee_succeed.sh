@@ -245,12 +245,17 @@ done
 if [ "\$judging" -eq 1 ] && [ -z "\${NO_CONTEXT:-}" ] && [ -s "$CALLER_CONTEXT_FILE" ]; then
   set -- --context "\$(cat "$CALLER_CONTEXT_FILE")" "\$@"
 fi
-cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
+# A fleet lane provider answering accounts from the file LANE_HOST_ACCOUNTS
+# names. Such a row sets RUN_DIR to a repository too: lane-host takes its
+# project from the working directory, and the work directory is none.
+lh=""
+[ -z "\${LANE_HOST_ACCOUNTS:-}" ] || lh="ORCH_LANE_HOST=$TEST_DIR/fixtures/lane-host LANE_HOST_STUB_ACCOUNTS=\$LANE_HOST_ACCOUNTS LANE_HOST_STUB_LOG=$TMP_ROOT/host.log"
+cd "\${RUN_DIR:-$TMP_ROOT/work}" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
   \$lane \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
   ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \\
-  \$hp \$cm \$ttl \$wall \$successors \$qt \$host "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
+  \$hp \$cm \$ttl \$wall \$successors \$qt \$host \$lh "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
 # in-pane ARGS... — a caller pane's own command: draw the screen, wait until
 # tmux shows it and its reading is recorded for this pane, then become the
@@ -973,6 +978,28 @@ QUESTION_TOOL=sometimes run_succeed checkunder '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
   "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=80|0|yes" \
   "--check-marks under both marks: the below-mark line, nothing launched, a mistyped question-tool setting unread"
+
+# The caller's headroom is read off this machine's copy of its account, the
+# copy its session spends, even on a fleet whose lane provider reports that
+# account with more room.
+HOSTED_WORK="$TMP_ROOT/hosted-work"
+mkdir -p "$HOSTED_WORK"
+git -C "$HOSTED_WORK" init -q -b main
+printf 'account=%s\tharness=claude\tsession-5h-pct=5\tweekly-pct=5\tmodel-pct=5\tmodel-label=Opus\n' "$H/.claude" > "$TMP_ROOT/accounts-room.tsv"
+new_caller "$UNDER_MARK"
+RUN_DIR="$HOSTED_WORK" LANE_HOST_ACCOUNTS="$TMP_ROOT/accounts-room.tsv" run_succeed hostedcaller '' --check-marks
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80" \
+  "a provider row with more room leaves the caller's headroom at this machine's reading"
+# Control: a caller read that inherits the fleet's provider takes the host row.
+HOSTCALLER="$(mutant_scripts hostcaller oversee-succeed)" || exit 1
+mutate_file "$HOSTCALLER/oversee-succeed" 'caller_record="$(ORCH_LANE_HOST=local "$SCRIPT_DIR/lanes"' 'caller_record="$("$SCRIPT_DIR/lanes"'
+new_caller "$UNDER_MARK"
+RUN_DIR="$HOSTED_WORK" LANE_HOST_ACCOUNTS="$TMP_ROOT/accounts-room.tsv" SUCCEED_BIN="$HOSTCALLER/oversee-succeed" \
+  run_succeed hostedcallerctl '' --check-marks
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=95" \
+  "control: a caller read under the fleet's provider takes the host row's headroom"
 
 # The projected wall is measured from the displaced cache sample. A fast burn
 # reaches the setting. A slow burn does not. Missing, close, and flat samples

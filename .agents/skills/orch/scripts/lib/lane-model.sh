@@ -176,7 +176,7 @@ def with_lane_binding($model; $binding_floor):
             then (((100 - $binding.pct) * ._rate_elapsed_s / ($delta * 60)) | ceil)
             else null end)};
 
-def lane_public: del(._rate_prior, ._rate_elapsed_s);
+def lane_public: del(._rate_prior, ._rate_elapsed_s, ._id);
 
 # One spelling for every reset a lane record carries: whole-second UTC with a
 # Z, the form Codex resets are rendered in. The Claude usage endpoint writes

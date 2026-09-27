@@ -170,6 +170,26 @@ run_oversee -- launch --wait-secs 5
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "3|oversee: no-lane-qualifies entries=1 walled=2 unmeasured=0|0" \
   "no lane above the trigger: refused at 3 with the walk's counts"
+# An overseer opens through overseer-host on this machine, under this machine's
+# copy of the account, so the walk reads that copy even on a fleet whose
+# provider reports the same account with room. Run from a repository of its
+# own, since lane-host takes its project from the working directory.
+HOSTED_WORK="$TMP_ROOT/hosted-work"
+mkdir -p "$HOSTED_WORK/tmp"
+git -C "$HOSTED_WORK" init -q -b main
+printf 'account=%s\tharness=claude\tsession-5h-pct=5\tweekly-pct=5\n' "$H/.claude" > "$TMP_ROOT/accounts-room.tsv"
+HOSTED_ENV=(ORCH_LANE_HOST="$TEST_DIR/fixtures/lane-host" LANE_HOST_STUB_ACCOUNTS="$TMP_ROOT/accounts-room.tsv" LANE_HOST_STUB_LOG="$TMP_ROOT/host.log")
+RUN_DIR="$HOSTED_WORK" run_oversee "${HOSTED_ENV[@]}" -- launch --wait-secs 5
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "3|oversee: no-lane-qualifies entries=1 walled=2 unmeasured=0|0" \
+  "a provider row with room for an account this machine reads walled opens no overseer on it"
+# Control: a walk that inherits the fleet's provider launches on the host row.
+HOSTCTL="$(mutant_scripts hostctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$HOSTCTL/lib/overseer-launch.sh" 'OL_PICK_RECORD="$(ORCH_LANE_HOST=local "$SCRIPT_DIR/lanes" pick' 'OL_PICK_RECORD="$("$SCRIPT_DIR/lanes" pick'
+RUN_DIR="$HOSTED_WORK" OVERSEE_BIN="$HOSTCTL/oversee" run_oversee "${HOSTED_ENV[@]}" -- launch --wait-secs 20
+assert_eq "$RC|$(overseers)" "0|1" \
+  "control: a walk reading the provider's row opens the overseer on the account this machine reads walled"
+tm kill-window -t fleet:overseer
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 # A has-session answer that is not "can't find session" is the call failing,

@@ -1176,16 +1176,42 @@ TOKEN_ROW="LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-token.tsv;$CHOICE_C
 run_ot "$TOKEN_ROW" --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r CC-120
 assert_eq "$(observe "rc=0 launched=1 unreadable=none")" "rc=0 launched=1 unreadable=none" \
   "a --host launch on a token-only folder the provider measures is judged on the provider's row and launches"
-# A judge record measured through the host already says the provider holds the
-# account, so the unmeasured arm reads it and asks the provider nothing more:
-# a relaunch onto the host row that measured nothing proceeds on one accounts
-# read.
+# A relaunch onto a host row that measured nothing proceeds on the provider's
+# answer that it holds the account. The unmeasured arm asks that fresh, beside
+# the judge's own read, so the provider is asked twice.
 printf 'account=%s\tharness=claude\tstatus=unreachable\n' "$H/.tokclaude" > "$TMP_ROOT/hosted-accounts-token-dark.tsv"
-run_ot "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-token-dark.tsv;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
+: > "$TMP_ROOT/hosted-accounts-none.tsv"
+TOKEN_STATE="$TMP_ROOT/token-state"
+run_ot "OVERSEE_WATCH_STATE_DIR=$TOKEN_STATE;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-token-dark.tsv;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
   --harness claude --lane "$H/.tokclaude" --repo o/r --relaunch CC-122
 assert_eq "$(observe "rc=0 launched=1 relaunchgate=1") accounts=$(grep -c '^accounts' "$RUN/host.log" || true)" \
-  "rc=0 launched=1 relaunchgate=1 accounts=1" \
-  "a relaunch whose judge read the provider's own row proceeds on that read, asking the provider once"
+  "rc=0 launched=1 relaunchgate=1 accounts=2" \
+  "a relaunch onto a host row that measured nothing proceeds on the arm's own accounts read"
+# The judge's read is served from the answer the run above cached, which still
+# names the account after the provider has dropped it. The arm's uncached read
+# says it is gone, so the relaunch is refused as the unread window it is. That
+# read also refreshes the cache, so the control below warms a state of its own.
+run_ot "OVERSEE_WATCH_STATE_DIR=$TOKEN_STATE;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-none.tsv;$RELAUNCH_FLAGS" \
+  --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r --relaunch CC-123
+assert_eq "$(observe "rc=1 launched=0 relaunchgate=0 unreadable=lane=$H/.tokclaude,model=fable,step=windows")" \
+  "rc=1 launched=0 relaunchgate=0 unreadable=lane=$H/.tokclaude,model=fable,step=windows" \
+  "a relaunch whose cached host row the provider has since dropped is refused on the arm's fresh read"
+# Control: an arm that takes the judge's host record as the provider holding
+# the account relaunches onto the dropped account.
+TOKEN_CTL_STATE="$TMP_ROOT/token-state-ctl"
+run_ot "OVERSEE_WATCH_STATE_DIR=$TOKEN_CTL_STATE;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-token-dark.tsv;$RELAUNCH_FLAGS" \
+  --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r --relaunch CC-124
+assert_eq "$RC" "0" "control warm-up: the relaunch caches the provider's row naming the account"
+TOKEN_OT_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-held-cached/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-held-cached/orch"
+mutate_file "$OPEN_TERMINAL" '[[ "$LANE_HOST" == local ]] || host_account_read "${LANE_ENV#*=}" "$LAUNCH_HARNESS"' \
+  '[[ "$LANE_HOST" == local ]] || { [[ "$(jq -r .measured_through <<<"$lane_record")" == host ]] && HOST_ACCOUNT=held; } || host_account_read "${LANE_ENV#*=}" "$LAUNCH_HARNESS"'
+run_ot "OVERSEE_WATCH_STATE_DIR=$TOKEN_CTL_STATE;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-none.tsv;$RELAUNCH_FLAGS" \
+  --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r --relaunch CC-125
+assert_eq "$(observe "rc=0 launched=1 relaunchgate=1")" "rc=0 launched=1 relaunchgate=1" \
+  "control: an arm trusting the judge's cached host row relaunches onto an account the provider dropped"
+OPEN_TERMINAL="$TOKEN_OT_SHIPPED"
 # Control: a judge that does not pass the resolved host reads this machine's
 # no_credentials and refuses the unread window.
 TOKEN_OT_SHIPPED="$OPEN_TERMINAL"

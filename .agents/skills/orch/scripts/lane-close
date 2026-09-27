@@ -30,7 +30,7 @@ message() { # REASON FIELD=VALUE...
     pane-read-failed) printf '%s\n' 'The lane pane could not be read.' ;;
     lane-live)
       printf '%s\n' 'The lane is not finished. Close-out changed nothing.' \
-        'state=walled is a limit banner below the lane'"'"'s last turn that its account reading did not lift. account= is that reading, taken for the model the record names, or over the whole account where it names none:' \
+        'state=walled is a limit banner below the lane'"'"'s last turn that its account reading did not lift. account= is that reading, taken for the model the record names, or over the whole account where it names none, and run under the record'"'"'s host, so a hosted lane'"'"'s reading is the provider'"'"'s where its accounts row carries one:' \
         '  room            lanes pick --lane read room, and the banner names a reset still ahead in resets=,' \
         '                  or resets=unresolved: a reset clause this host could not resolve, such as one in a zone it has no zoneinfo for.' \
         '  walled          lanes pick --lane read the account at or above ORCH_LANE_MAX_PCT.' \
@@ -86,11 +86,12 @@ Usage: lane-close [--state-dir PATH] [--keep-sandbox]
 Close one lane recorded in the oversee workflow state. The command refuses a
 live lane. It accepts an exited lane, or an idle lane whose tracker item is
 terminal. A limit banner below the lane's last turn is passed over only where
-`lanes pick --lane` reads the account the record names as room, for the model
-the record names or over the whole account where it names none, and the banner
-names no dated reset still ahead and no reset this host cannot resolve; the
-lane is then judged by the rest of its screen. Every other reading keeps the
-lane walled.
+`lanes pick --lane`, run under the record's host, so a hosted lane is read
+through the provider's copy, reads the account the record names as room, for
+the model the record names or over the whole account where it names none, and
+the banner names no dated reset still ahead and no reset this host cannot
+resolve; the lane is then judged by the rest of its screen. Every other
+reading keeps the lane walled.
 An idle lane's harness is ended by SIGTERM, never by typing into its pane:
 through lane-host stop for a record carrying host, and for a local lane by the
 same stop against the worktree the record's mail_root names. The close then

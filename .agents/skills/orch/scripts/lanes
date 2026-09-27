@@ -81,9 +81,10 @@
 #         provider: `local` is refused rather than answered as an absent verb.
 #         The answer is cached under ORCH_LANES_USAGE_TTL and time-bounded by
 #         ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S; --no-cache asks the provider now,
-#         which is what a caller deciding a launch gate passes, and is refused
-#         as `host-accounts-unbounded` on a machine with no timeout command to
-#         bound that wait with.
+#         which is what a caller deciding whether the host holds an account
+#         passes, and is refused as `host-accounts-unbounded` on a machine with
+#         no timeout command to bound that wait with. `list` and `pick` read the
+#         answer through the cache, as they read every usage window.
 #   pick  Print the launch env prefix for the lane to launch on (e.g.
 #         `CLAUDE_CONFIG_DIR=/home/me/.eclaude`): among the lanes under
 #         --max-pct, the one with the fewest launches already in flight, the
@@ -116,7 +117,9 @@
 #         or failed verb leaves the local reading alone, as it does for `list`.
 #         `pick --lane` judges its one account by this same rule, and a dir
 #         the provider reports with a reading is judged even where discovery
-#         does not reach it.
+#         does not reach it. A caller whose session runs on this machine's
+#         copy runs pick under ORCH_LANE_HOST=local, as the overseer's own
+#         picks do.
 #
 #         With --lane <config-dir> it judges that ONE account instead of
 #         choosing among the fleet, measuring only that directory. A launcher
@@ -303,8 +306,8 @@
 #                      installed, a CACHED read runs unbounded and the cache
 #                      holds its cost to one call per TTL, while a `--no-cache`
 #                      read is refused as `host-accounts-unbounded` rather than
-#                      waiting: the cache covers a listing, not a read that
-#                      asked to ask the provider now.
+#                      waiting: the cache covers a listing or a pick, not a
+#                      read that asked to ask the provider now.
 #   ORCH_LANES_CLAUDE_CLIENT_ID  The OAuth client id the renewal posts with.
 #                      Required for it: with this unset every Claude account
 #                      whose access token has expired reads `error` with the
@@ -361,9 +364,11 @@
 # absent-verb answer is cached too, so a provider that will never implement the
 # verb stops paying a fork per invocation; a FAILED verb is never cached.
 # `--no-cache` refreshes it, and `host-accounts` passes that flag from
-# `open-terminal`, whose read decides a launch gate rather than reporting a
-# figure. Such a read is refused where nothing can bound it, since the cache it
-# declined is what covers an unbounded call everywhere else.
+# `open-terminal`, whose read decides whether the host holds an account for a
+# launch gate rather than reporting a figure. `pick` reads the answer through
+# the cache: what it takes from it is usage windows, on the TTL every window
+# here has. Such a read is refused where nothing can bound it, since the cache
+# it declined is what covers an unbounded call everywhere else.
 #
 # CLAIMS are the launches already in flight on a lane: `open-terminal` records
 # one per tmux lane it launches under a resolved lane, and a claim is live
@@ -1721,11 +1726,12 @@ load_lane_claims() {
 # of the same config dir, which `pick` passes and `list` does not: a launch on a
 # hosted fleet runs under the provider's copy, so the chooser judges that copy,
 # while a listing shows both readings. A local dir the host reports is not
-# measured at all, and each host row passes the same --exclude-lane test.
+# measured at all, and each host row passes the same --exclude-lane test. Each
+# row is matched on the `_id` host_lane_rows stamped on it.
 collect_lanes() {
-	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" exclude_id="" held id d h i
+	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" exclude_id="" held="" id d h
 	[[ -z "$exclude" ]] || exclude_id="$(lane_claims_canon "$exclude")"
-	held="$(host_row_ids "$hosted")" || return 1
+	[[ "$hosted" == "[]" ]] || held="$(jq -r '.[]._id' <<<"$hosted")" || return 1
 	{
 		for h in claude codex; do
 			[[ "$harness_filter" == "all" || "$harness_filter" == "$h" ]] || continue
@@ -1739,39 +1745,36 @@ collect_lanes() {
 				measure_lane "$h" "$d"
 			done < <(lane_dirs "$h")
 		done
-		i=0
-		while IFS= read -r id; do
-			[[ -n "$id" ]] || continue
-			if [[ "$id" != "$exclude_id" ]]; then jq -c --argjson i "$i" '.[$i]' <<<"$hosted"; fi
-			i=$((i + 1))
-		done <<<"$held"
+		jq -c --arg x "$exclude_id" '.[] | select(._id != $x)' <<<"$hosted"
 	} | jq -s '.'
 }
 
-# Each row's config dir in HOSTED through the one normaliser, one per line in
-# row order, so a dir the provider names with a trailing slash or through a
-# symlink still stands for the local dir it names.
-host_row_ids() { # HOSTED
-	local d i n=0
-	[[ "$1" == "[]" ]] || n="$(jq length <<<"$1")" || return 1
-	for ((i = 0; i < n; i++)); do
-		d="$(jq -r --argjson i "$i" '.[$i].config_dir' <<<"$1")" || return 1
-		lane_claims_canon "$d"
-	done
-}
-
 # The provider's rows for HARNESS as one JSON array, `[]` where ORCH_LANE_HOST
-# names none or there are none to merge. READINGS is host_account_records' own. The reader's own status adds nothing
-# here: it has already said on stderr what it did with an absent or failed verb,
-# and either way there are no host rows, so the caller keeps this machine's
-# reading. Only the slurp is this function's to report, so a merge failure is
-# never printed as the provider's answer.
+# names none or there are none to merge. READINGS is host_account_records' own.
+# The reader's own status adds nothing here: it has already said on stderr what
+# it did with an absent or failed verb, and either way there are no host rows,
+# so the caller keeps this machine's reading. Only the merge is this function's
+# to report, so a merge failure is never printed as the provider's answer.
+#
+# Each row carries `_id`, its config dir through the one normaliser, so a dir
+# the provider names with a trailing slash or through a symlink still stands for
+# the local dir it names; lane_public drops it. The provider's rows are read
+# through the usage cache under ORCH_LANES_USAGE_TTL, like every usage figure
+# here: they are windows, and whether the host holds an account for a launch
+# gate is `host-accounts --no-cache`'s answer, never this one.
 host_lane_rows() { # HARNESS [READINGS]
-	local rows hosted accounts_rc=0 hosted_rc=0
+	local rows row stamped="" hosted="" d accounts_rc=0 hosted_rc=0
 	[[ "${ORCH_LANE_HOST:-local}" != local ]] || { printf '[]\n'; return 0; }
 	rows="$(host_account_records "$ORCH_LANE_HOST" "$1" "${2:-}")" || accounts_rc=$?
 	[[ "$accounts_rc" -eq 0 ]] || { printf '[]\n'; return 0; }
-	hosted="$(jq -cs . <<<"$rows")" || hosted_rc=$?
+	# emit_lane writes each row as one compact line.
+	while IFS= read -r row; do
+		[[ -n "$row" ]] || continue
+		d="$(jq -r '.config_dir' <<<"$row")" || { hosted_rc=$?; break; }
+		row="$(jq -c --arg id "$(lane_claims_canon "$d")" '._id = $id' <<<"$row")" || { hosted_rc=$?; break; }
+		stamped+="$row"$'\n'
+	done <<<"$rows"
+	[[ "$hosted_rc" -ne 0 ]] || hosted="$(jq -cs . <<<"$stamped")" || hosted_rc=$?
 	if [[ "$hosted_rc" -ne 0 ]]; then
 		message host-accounts-merge-failed "$ORCH_LANE_HOST" "$hosted_rc" >&2
 		printf '[]\n'
@@ -1919,7 +1922,8 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 	# provider that will never implement the verb it paid that fork to be told so
 	# again. `--no-cache` refreshes it; the launcher's own read passes that flag,
 	# because which accounts a host holds decides a gate rather than reporting a
-	# figure.
+	# figure. `pick` reads through the cache, since what it takes from the answer
+	# is usage windows, read on the TTL every window has.
 	now_s="$(date +%s)" || { message host-accounts-unreadable "$host" clock >&2; return 1; }
 	if [[ "$USE_CACHE" == "true" ]] && cached="$(read_usage_cache host-accounts "$host" "$now_s" "$(usage_serve_max_age)")"; then
 		# ONE read of the record, status on its first line and the rows after it:
@@ -1959,7 +1963,7 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 	# verb that hangs would hold a launch open with nothing on stderr. Refused
 	# instead, as the verb failing, which every caller already reads as a host it
 	# could not ask. A cached read keeps the unbounded call: its cost is one per
-	# window and its caller is a listing, which no launch waits on.
+	# TTL window, whether a listing or a pick makes it.
 	#
 	# lane-host waits ORCH_LANE_HOST_BUSY_WAIT_SECS for a provider slot before it
 	# refuses as lane-host-busy, and a bound that ends first cuts that wait off
@@ -2136,7 +2140,7 @@ render_table() {
 # copy on another host may still be live.
 cmd_pick_lane() {
 	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6"
-	local target found="" d record="" wall bucket verdict hosted id i
+	local target found="" d record="" wall bucket verdict hosted
 	# The same claim load `list` does, for the same reason: the record this form
 	# hands back carries `claims`, and without the store read it would carry 0
 	# for an account with sessions in flight — the one value emit_lane says that
@@ -2166,16 +2170,10 @@ cmd_pick_lane() {
 	# copy. It also answers for a dir the provider holds and discovery does not
 	# reach, which is then no longer a lane with no record.
 	hosted="$(host_lane_rows "$harness" readings)"
-	i=0
-	while IFS= read -r id; do
-		[[ -n "$id" ]] || continue
-		if [[ "$id" == "$target" ]]; then
-			record="$(jq -c --argjson i "$i" '.[$i]' <<<"$hosted")" || { message pick-lane-failed "$dir" host >&2; return 1; }
-			[[ -n "$found" ]] || found="$(jq -r '.config_dir' <<<"$record")" || { message pick-lane-failed "$dir" host >&2; return 1; }
-			break
-		fi
-		i=$((i + 1))
-	done <<<"$(host_row_ids "$hosted")"
+	record="$(jq -c --arg t "$target" 'map(select(._id == $t)) | first // empty' <<<"$hosted")" || { message pick-lane-failed "$dir" host >&2; return 1; }
+	if [[ -n "$record" && -z "$found" ]]; then
+		found="$(jq -r '.config_dir' <<<"$record")" || { message pick-lane-failed "$dir" host >&2; return 1; }
+	fi
 	if [[ -z "$found" ]]; then
 		message pick-lane-unlisted "$dir" "$harness" >&2
 		return 4

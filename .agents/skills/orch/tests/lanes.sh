@@ -176,6 +176,8 @@ observe() {
       # carried it out would put the chooser's own scratch in every consumer's
       # lane record.
       haswall) value="$(json 'has("wall")')" ;;
+      # The key a host row is matched on, which is the chooser's scratch too.
+      hasid) value="$(json 'has("_id")')" ;;
       # Every listed row as `<alias>:<credential it was measured through>`, in
       # listing order, so a row pins which reading each figure came from and
       # not merely that two rows exist.
@@ -1961,7 +1963,7 @@ printf 'account=%s\tharness=claude\n' "$H/.dclaude" > "$TMP_ROOT/pick-dead-bare.
 printf 'account=%s\tharness=claude\tsession-5h-pct=10\tweekly-pct=20\n' "$H/.hostonly" > "$TMP_ROOT/pick-hostonly.tsv"
 PICK='pick --harness claude --json'
 table \
-  "a token-only folder the provider measures with room is picked through the host|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK|rc=0 config_dir=$H/.tclaude measured_through=host" \
+  "a token-only folder the provider measures with room is picked through the host|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK|rc=0 config_dir=$H/.tclaude measured_through=host hasid=false" \
   "the same folder's host row read unreachable is dropped, not free, and the refusal's table names it through the host|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-unreachable.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.tclaude=host considered.oclaude=local" \
   "a folder with neither a local file nor a host row is never picked|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-none.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.oclaude=local" \
   "a local copy proven dead is judged on the provider's reading, which has room|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-dead-ok.tsv|$PICK|rc=0 config_dir=$H/.dclaude measured_through=host" \
@@ -1981,7 +1983,7 @@ LANES="$LANES_PATCHED"
 # handed the token-only folder meets the reading the chooser would have picked.
 PICK_LANE='pick --harness claude --json --lane'
 table \
-  "a named token-only folder the provider measures with room is room through the host|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK_LANE $H/.tclaude|rc=0 config_dir=$H/.tclaude measured_through=host" \
+  "a named token-only folder the provider measures with room is room through the host|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK_LANE $H/.tclaude|rc=0 config_dir=$H/.tclaude measured_through=host hasid=false" \
   "its host row read unreachable answers unmeasured, never room|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-unreachable.tsv|$PICK_LANE $H/.tclaude|rc=5 status=unreachable measured_through=host" \
   "a named folder with neither a local file nor a host row stays no_credentials|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK_LANE $H/.oclaude|rc=5 status=no_credentials measured_through=local" \
   "a named local copy proven dead is judged on the provider's reading|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-dead-ok.tsv|$PICK_LANE $H/.dclaude|rc=0 measured_through=host" \
@@ -1989,11 +1991,18 @@ table \
   "a dir discovery does not reach is judged on the reading the provider reports for it|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-hostonly.tsv|$PICK_LANE $H/.hostonly|rc=0 config_dir=$H/.hostonly measured_through=host"
 # Control: a named pick that never matches a host row reads the token-only
 # folder as this machine's no_credentials.
-lanes_mutant mutant-pick-lane-local-only lanes '"\$id" == "\$target"' '"$id" == "no-such-lane"'
+lanes_mutant mutant-pick-lane-local-only lanes 'select(._id == \$t)' 'select(._id == "no-such-lane")'
 LANES_PATCHED="$LANES"
 LANES="$TMP_ROOT/mutant-pick-lane-local-only/scripts/lanes"
 table \
   "control: without the host row the named token-only folder is unmeasured through the local reading|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK_LANE $H/.tclaude|rc=5 status=no_credentials measured_through=local"
+LANES="$LANES_PATCHED"
+# Control: a public record that keeps the match key carries it out of both forms.
+lanes_mutant mutant-public-id lib/lane-model.sh '_rate_elapsed_s, \._id)' '_rate_elapsed_s)'
+LANES="$TMP_ROOT/mutant-public-id/scripts/lanes"
+table \
+  "control: a record keeping the match key hands it to a pick caller|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK|rc=0 hasid=true" \
+  "control: a record keeping the match key hands it to a pick --lane caller|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK_LANE $H/.tclaude|rc=0 hasid=true"
 LANES="$LANES_PATCHED"
 
 echo "=== a renewal a ceiling lands on finishes, keeps the rotated token and releases the mutex ==="
