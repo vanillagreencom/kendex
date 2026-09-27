@@ -701,8 +701,7 @@ mail_check() {
 # pi-questions registers on Pi, which the pi-hooks carrier hands over under
 # its own id. The one list of those names: the launch words that take each
 # tool away live in the orch skill's lane-launch library, and the table in
-# skills/orch/references/skill-rules.md § Coordination cites this list
-# beside them.
+# the orch skill's skill rules § Coordination cites this list beside them.
 question_tool() { # NAME
   case "$1" in
     AskUserQuestion | EnterPlanMode | request_user_input | question) return 0 ;;
