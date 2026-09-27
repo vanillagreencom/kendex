@@ -277,27 +277,22 @@ fn the_checker_is_a_script_field_like_the_others() {
 /// A key this kendex has no reader for is read past and carried by name,
 /// never refused.
 ///
-/// The producer is the catalog moving ahead of the installed binary:
-/// `staged-checker` landed in the bot-instructions declaration and in the
-/// reader in one commit, and every checkout running the release before it
-/// refused the whole declaration on its next refresh, with nothing the
-/// person could repair. So the shipped declaration is read here with one
-/// key added after every field this reader knows, the shape the next such
-/// key takes, and the fields it does know are read as before. A key spelled
-/// wrong takes the same route: `writse:` is not a refusal but a key named
-/// in the disclosure, where the one person who can see it is mistyped
-/// reads it. The required key is still required, and a field of the wrong
-/// shape still refuses: those rows stand in the case above.
+/// The producer is a catalog key the installed reader predates: the
+/// catalog is refreshed on every checkout and the binary is not, so a key
+/// added to a declaration reaches readers that have no field for it. The
+/// shipped bot-instructions declaration is read here with one key added
+/// after every field this reader knows, the shape the next such key takes,
+/// and the fields it does know are read as before. A key spelled wrong
+/// takes the same route: `writse:` is not a refusal but a key named in the
+/// disclosure, where the one person who can see it is mistyped reads it.
+/// The required key is still required, and a field of the wrong shape
+/// still refuses: those rows stand in the case above.
 ///
 /// The control is the reader before this rule, which refused every row.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_key_this_kendex_does_not_know_is_read_past_and_named() {
-    let shipped = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../skills/bot-instructions/SKILL.md"),
-    )
-    .unwrap();
+    let shipped = shipped_declarations().remove("bot-instructions").unwrap();
     let last_known = "  staged-checker: \"scripts/bot-instructions check --staged\"\n";
     assert!(
         shipped.contains(last_known),
@@ -310,7 +305,6 @@ fn a_key_this_kendex_does_not_know_is_read_past_and_named() {
     let Declaration::Effects(as_shipped) = declaration(&shipped) else {
         panic!("the shipped declaration reads: {:?}", declaration(&shipped));
     };
-    assert!(as_shipped.unknown_keys.is_empty(), "{as_shipped:?}");
     // The field before the added key is read, so the row below proves the
     // known fields survive the unknown one rather than two empty reads
     // agreeing.
@@ -352,4 +346,77 @@ fn a_key_this_kendex_does_not_know_is_read_past_and_named() {
         assert_eq!(*effects, read, "{text}");
         assert_eq!(declared(&text), Some(read), "{text}");
     }
+}
+
+/// Every `repo-effects` declaration this repository's own catalog ships
+/// reads whole, with no key this reader does not know.
+///
+/// The reader reads past a key it has no field for, so a `writse:` in a
+/// shipped declaration is a name in the disclosure rather than a refusal,
+/// and a key that reaches a declaration before the reader for it ships is
+/// the thing `skills/AGENTS.md` forbids. This sweep is where either one in
+/// this catalog fails, before it reaches a checkout.
+///
+/// The discovery is every `skills/*/SKILL.md` the reader finds a
+/// declaration in, floored at two and required to hold `bot-instructions`
+/// and `commit-guards`, so a walk that finds nothing, or a reader that
+/// loses one, fails as a broken sweep rather than passing an empty set.
+/// Over-inclusion stays open: a package the reader wrongly sees declaring
+/// is swept too, and fails on its own read.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn every_shipped_declaration_reads_with_no_unknown_key() {
+    let declarations = shipped_declarations();
+    assert!(
+        declarations.len() >= 2,
+        "the sweep found {} declaring skill(s); the walk is broken, not the catalog sparse: {:?}",
+        declarations.len(),
+        declarations.keys().collect::<Vec<_>>()
+    );
+    for required in ["bot-instructions", "commit-guards"] {
+        assert!(
+            declarations.contains_key(required),
+            "{required} declares repo-effects and the sweep did not find it: {:?}",
+            declarations.keys().collect::<Vec<_>>()
+        );
+    }
+    for (name, text) in &declarations {
+        let Declaration::Effects(effects) = declaration(text) else {
+            panic!(
+                "{name}: the shipped declaration reads: {:?}",
+                declaration(text)
+            );
+        };
+        assert!(
+            effects.unknown_keys.is_empty(),
+            "{name}: the shipped declaration carries a key this reader does not know, \
+             mistyped or ahead of the reader: {:?}",
+            effects.unknown_keys
+        );
+    }
+}
+
+/// The catalog's own `SKILL.md` texts the reader finds a declaration in,
+/// by skill name. A directory without a `SKILL.md` is not a skill; any
+/// other read failure fails the walk, since an unread catalog is never an
+/// empty one.
+#[allow(clippy::unwrap_used)]
+fn shipped_declarations() -> std::collections::BTreeMap<String, String> {
+    let skills = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills");
+    let mut found = std::collections::BTreeMap::new();
+    for entry in std::fs::read_dir(&skills).unwrap() {
+        let entry = entry.unwrap();
+        if !entry.file_type().unwrap().is_dir() {
+            continue;
+        }
+        let text = match std::fs::read_to_string(entry.path().join("SKILL.md")) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => panic!("{}: {error}", entry.path().display()),
+        };
+        if declaration(&text) != Declaration::Absent {
+            found.insert(entry.file_name().to_string_lossy().into_owned(), text);
+        }
+    }
+    found
 }

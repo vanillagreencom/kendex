@@ -62,9 +62,7 @@ pub struct RepoEffects {
     /// a field after this binary shipped, and a key spelled wrong. The
     /// reader cannot tell which, so it reads past both and the disclosure
     /// names them, where a person can. Never a refusal: the catalog moves
-    /// ahead of the installed binary as a matter of course, and refusing
-    /// its declaration broke every refresh on every checkout that carried
-    /// the package until the next release.
+    /// ahead of the installed binary as a matter of course.
     pub unknown_keys: Vec<String>,
 }
 
@@ -192,12 +190,12 @@ const FIELDS: [&str; 9] = [
 /// paths it writes and a block that names none of them. The other way to
 /// write one is a catalog that added a field, `staged-checker` say, after
 /// this binary shipped; the catalog is refreshed on every checkout and the
-/// binary is not, and refusing the whole declaration for the new key
-/// failed every refresh that carried the package, with nothing the
-/// person could fix. So the block reads by the keys kendex knows and
-/// carries the rest by name, for the disclosure to show beside the fields
-/// it did read: a mistyped key is then in front of the one person who can
-/// see it is mistyped.
+/// binary is not, and a refusal over the new key stops the refresh on
+/// every checkout that carries the package, with nothing the person can
+/// fix. So the block reads by the keys kendex knows and carries the rest
+/// by name, for the disclosure to show beside the fields it did read: a
+/// mistyped key is then in front of the one person who can see it is
+/// mistyped.
 fn unknown_keys(map: &Map) -> Vec<String> {
     map.entries()
         .map(|(key, _)| key)

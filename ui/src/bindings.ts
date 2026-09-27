@@ -4280,9 +4280,7 @@ export type RepoEffects = {
 	 *  a field after this binary shipped, and a key spelled wrong. The
 	 *  reader cannot tell which, so it reads past both and the disclosure
 	 *  names them, where a person can. Never a refusal: the catalog moves
-	 *  ahead of the installed binary as a matter of course, and refusing
-	 *  its declaration broke every refresh on every checkout that carried
-	 *  the package until the next release.
+	 *  ahead of the installed binary as a matter of course.
 	 */
 	unknownKeys: string[],
 };
