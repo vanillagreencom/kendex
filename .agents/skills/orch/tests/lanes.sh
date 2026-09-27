@@ -2040,6 +2040,15 @@ printf 'account=%s\tharness=claude\tstatus=expired\n' "$H/.fclaude" > "$TMP_ROOT
 # that copy, which the launch runs under, and never a read the provider
 # skipped.
 printf 'account=%s\tharness=claude\tstatus=refused\n' "$H/.fclaude" > "$TMP_ROOT/local-fresh-refused.tsv"
+# wclaude authenticates and its usage body carries no consumer window, the
+# enterprise shape: a fresh local reading that measures nothing, which no
+# unreachable row gives way to. Its row sits beside fclaude's refused one so
+# the chooser has nothing measured to pick.
+make_lane "$H" wclaude 3600 enterprise
+jq -n '{spend: {}}' > "$FIXTURE_DIR/.wclaude.json"
+printf 'account=%s\tharness=claude\tstatus=refused\naccount=%s\tharness=claude\tstatus=unreachable\n' \
+  "$H/.fclaude" "$H/.wclaude" > "$TMP_ROOT/local-windowless-dark.tsv"
+LOCAL_WINDOWLESS="$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/local-windowless-dark.tsv"
 LOCAL_DARK="$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/local-fresh-dark.tsv"
 LOCAL_BOTH_DARK="$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/local-both-dark.tsv"
 LOCAL_READING="key=pick-local-reading,lane=$H/.fclaude,host=$HOST_FIXTURE,age-s=0"
@@ -2063,7 +2072,7 @@ assert_eq "$RC" "0" "warm-up: the first pick under the stale state measures fcla
 age_usage_record "$STALE_STATE" "$H/.fclaude" 600
 printf '429 0\n' > "$FIXTURE_DIR/.fclaude.status"
 table \
-  "a local figure older than the TTL does not stand in: the chooser refuses on the unreachable row|$LOCAL_STALE|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=2 considered.fclaude=host" \
+  "a local figure older than the TTL does not stand in: the chooser refuses on the unreachable row|$LOCAL_STALE|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.fclaude=host" \
   "nor does it for the named form|$LOCAL_STALE|$PICK_LANE $H/.fclaude|rc=5 status=unreachable measured_through=host"
 # Control: a judge with no freshness bound picks the stale figure.
 lanes_mutant mutant-local-any-age lanes '\.usage_age_s < \$bound' 'true'
@@ -2086,6 +2095,21 @@ age_usage_record "$MAXAGE_STATE" "$H/.fclaude" 400
 table \
   "a figure past the TTL but inside the caller's max-age is served as current and stands in|$LOCAL_MAXAGE;ORCH_LANES_USAGE_MAX_AGE=600|$PICK|rc=0 config_dir=$H/.fclaude measured_through=local fetched=none" \
   "and the named form judges it the same way|$LOCAL_MAXAGE;ORCH_LANES_USAGE_MAX_AGE=600|$PICK_LANE $H/.fclaude|rc=0 measured_through=local fetched=none"
+# A fresh local reading that measures nothing is no stand-in: the account's
+# unreachable row stays, and the refusal names the read the provider never
+# made rather than a window this machine could not parse. The first keyed
+# line pins that no pick-local-reading line was printed.
+table \
+  "a local reading with no window leaves the unreachable row for the named form|$LOCAL_WINDOWLESS|$PICK_LANE $H/.wclaude|rc=5 status=unreachable measured_through=host key=pick-lane-unmeasured,lane=$H/.wclaude,model=none" \
+  "and for the chooser|$LOCAL_WINDOWLESS|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.wclaude=host"
+# Control: a judge that takes any local reading with an age lets the
+# window-less one stand in and names it.
+lanes_mutant mutant-local-unmeasured lanes '\.headroom_pct != null and ' ''
+LANES="$TMP_ROOT/mutant-local-unmeasured/scripts/lanes"
+table \
+  "control: with no figure required, the named form answers the window-less local reading|$LOCAL_WINDOWLESS|$PICK_LANE $H/.wclaude|rc=5 status=no_usage_data measured_through=local key=pick-local-reading,lane=$H/.wclaude,host=$HOST_FIXTURE,age-s=0" \
+  "control: and the chooser says it took that reading|$LOCAL_WINDOWLESS|$PICK|rc=3 key=pick-local-reading,lane=$H/.wclaude,host=$HOST_FIXTURE,age-s=0 considered.wclaude=local"
+LANES="$LANES_PATCHED"
 # Control: a judge that never reads a host row as unreachable refuses the
 # account this machine measured fresh.
 lanes_mutant mutant-host-row-always-stands lanes '!= unreachable \]\]' '!= never-unreachable ]]'
