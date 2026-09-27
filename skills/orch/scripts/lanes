@@ -381,7 +381,10 @@
 # `host-accounts-<provider path checksum>.json`: one record per provider rather
 # than per account, since one answer covers every account it names. The
 # absent-verb answer is cached too, so a provider that will never implement the
-# verb stops paying a fork per invocation; a FAILED verb is never cached.
+# verb stops paying a fork per invocation; a FAILED verb is never cached. The
+# cache drops records containing excluded or retired usage, including prior
+# samples. New provider records omit excluded rows and keep only a retired
+# account's identity. Cleanup reads the cache, never credential directories.
 # `--no-cache` refreshes it, and `host-accounts` passes that flag from
 # `open-terminal`, whose read decides whether the host holds an account for a
 # launch gate rather than reporting a figure. `pick` reads the answer through
@@ -543,6 +546,10 @@ message() {
     invalid-retire)
       printf 'lanes: invalid-retire entry=%s\n' "$1"
       printf '%s\n' "ORCH_LANE_RETIRE entries must be <name>=<YYYY-MM-DD>; a lane whose retirement cannot be read is not picked on a guess"
+      ;;
+    usage-cache-prune-failed)
+      printf 'lanes: usage-cache-prune-failed path=%s\n' "$1"
+      printf '%s\n' "a removed account's usage record could not be deleted; check the cache directory permissions"
       ;;
     lane-scan-failed)
       printf 'lanes: lane-scan-failed item=%s\n' "$1"
@@ -1319,8 +1326,42 @@ take_cached_usage() { # CACHED
 
 usage_cache_file() {
 	local sum
+	if [[ "$1" != host-accounts ]]; then
+		lane_excluded "$2" && return 1
+		lane_retired "$2" >/dev/null && return 1
+	fi
 	sum="$(printf '%s' "$2" | cksum)" || return 1
 	printf '%s/%s-%s.json' "$USAGE_CACHE_DIR" "$1" "${sum// /-}"
+}
+
+# Both current and prior hosted samples can contain an account removed since
+# the provider answered. Judge them with the provider row parser, without
+# inspecting any credential directory. A rejected record is a cache miss.
+usage_cache_permitted() { # FILE
+	local identity harness dir rows filtered
+	[[ -n "${ORCH_LANE_EXCLUDE:-}${ORCH_LANE_RETIRE:-}" ]] || return 0
+	identity="$(jq -er '[.harness, .config_dir] | select(all(.[]; type == "string")) | @tsv' "$1")" || return 1
+	IFS=$'\t' read -r harness dir <<<"$identity" || return 1
+	if [[ "$harness" != host-accounts ]]; then
+		lane_excluded "$dir" && return 1
+		lane_retired "$dir" >/dev/null && return 1
+		return 0
+	fi
+	rows="$(jq -r '[.usage.rows, .prior.usage.rows] | map(select(type == "string" and . != "")) | join("\n")' "$1")" || return 1
+	filtered="$(host_account_rows "$rows" all cache)" || return 1
+	[[ "$filtered" == "$rows" ]]
+}
+
+# Scan the cache itself: discovery no longer names an excluded or removed
+# directory, and a provider that is no longer selected still has a record.
+prune_usage_cache() {
+	local file
+	[[ -n "${ORCH_LANE_EXCLUDE:-}${ORCH_LANE_RETIRE:-}" ]] || return 0
+	for file in "$USAGE_CACHE_DIR"/*.json; do
+		[[ -f "$file" ]] || continue
+		usage_cache_permitted "$file" && continue
+		rm -f -- "$file" || die usage-cache-prune-failed "$file"
+	done
 }
 
 # Prints `{fetched_at, age, usage, prior}` for a cached body of harness $1 and
@@ -1339,6 +1380,7 @@ read_usage_cache() { # HARNESS DIR NOW MAX_AGE_S
 	local file
 	file="$(usage_cache_file "$1" "$2")" || return 1
 	[[ -f "$file" ]] || return 1
+	usage_cache_permitted "$file" || return 1
 	jq -ce --arg h "$1" --arg d "$2" --argjson now "$3" --argjson max "${4:-null}" '
 		(.usage_fetched_at // .fetched_at) as $at
 		| select(.harness == $h and .config_dir == $d
@@ -1370,7 +1412,7 @@ write_usage_cache() {
 	local file tmp prior=null
 	file="$(usage_cache_file "$1" "$2")" || return 1
 	USAGE_PRIOR_AT=""; USAGE_PRIOR_RAW=""
-	if [[ -f "$file" ]]; then
+	if [[ -f "$file" ]] && usage_cache_permitted "$file"; then
 		prior="$(jq -ce --arg h "$1" --arg d "$2" '
 			(.usage_fetched_at // .fetched_at) as $at
 			| select(.harness == $h and .config_dir == $d
@@ -1919,11 +1961,18 @@ host_lane_rows() { # HARNESS [READINGS]
 # row says the provider HOLDS the account and nothing about what its copy
 # measures, so a pick keeps this machine's reading of that account.
 host_account_records() { # HOST HARNESS [READINGS] — one lane record per account it holds
-	local host="$1" want="${2:-all}" mode="${3:-}" rc=0 rows line field key value bad retire said
+	local rows rc=0
+	rows="$(host_accounts_answer "$1")" || rc=$?
+	[[ "$rc" -eq 0 ]] || return "$rc"
+	host_account_rows "$rows" "${2:-all}" "${3:-}"
+}
+
+# CACHE keeps provider rows for eligible accounts and only the identity of a
+# retired account. This preserves retirement reporting without storing usage.
+host_account_rows() { # ROWS HARNESS [READINGS|CACHE]
+	local rows="$1" want="$2" mode="${3:-}" line field key value bad retire said
 	local account harness status s_pct w_pct m_pct m_label s_reset w_reset m_reset
 	local buckets
-	rows="$(host_accounts_answer "$host")" || rc=$?
-	[[ "$rc" -eq 0 ]] || return "$rc"
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
 		account=""; harness=""; status="ok"; bad=""; said=""
@@ -1983,8 +2032,16 @@ host_account_records() { # HOST HARNESS [READINGS] — one lane record per accou
 			continue
 		fi
 		if retire="$(lane_retired "$account")"; then
+			if [[ "$mode" == cache ]]; then
+				printf 'account=%s\tharness=%s\tstatus=retired\n' "$account" "$harness"
+				continue
+			fi
 			emit_lane "$(lane_alias_for "$account")" "$harness" "$account" "retired" \
 				"retired on $retire (ORCH_LANE_RETIRE)" "" '{}' null false host
+			continue
+		fi
+		if [[ "$mode" == cache ]]; then
+			printf '%s\n' "$line"
 			continue
 		fi
 		buckets="$(jq -nc --argjson s "$s_pct" --argjson w "$w_pct" --argjson m "$m_pct" \
@@ -2099,6 +2156,7 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 	fi
 	rm -f -- "$err"
 	trap - INT TERM
+	rows="$(host_account_rows "$rows" all cache)" || return 1
 	record="$(jq -nc --arg r "$rows" '{status: 0, rows: $r}')" || record_rc=$?
 	# A record this script could not build is not cached at all: the answer it
 	# would have held is already on stdout, and the next listing asks the provider
@@ -2658,6 +2716,7 @@ validate_lane_settings() {
 	# and the bound below is neither applied nor refused.
 	ACCOUNTS_TIMEOUT_S=$((10#$ACCOUNTS_TIMEOUT_S))
 	USAGE_TTL=$((10#$USAGE_TTL))
+	prune_usage_cache
 }
 
 parse_argv "$@"

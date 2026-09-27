@@ -968,6 +968,7 @@
   ".agents/skills/orch/tests/lane-state.sh",
   ".agents/skills/orch/tests/lane_close.sh",
   ".agents/skills/orch/tests/lane_context_adapters.sh",
+  ".agents/skills/orch/tests/lanes-cache.sh",
   ".agents/skills/orch/tests/lanes-settings-refusal.sh",
   ".agents/skills/orch/tests/lanes.sh",
   ".agents/skills/orch/tests/lanes_context.sh",
