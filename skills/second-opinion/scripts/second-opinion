@@ -13,8 +13,8 @@
 #   SECOND_OPINION_COUNT         Opinions to collect in review mode (default: 1)
 #   SECOND_OPINION_CURRENT_MODEL Declared model identity of THIS session (overrides detection)
 #   SECOND_OPINION_<NAME>_MODEL  Declared model identity of target <NAME> (default: <NAME>;
-#                                copilot has none and is skipped until it is set)
-#   SECOND_OPINION_<NAME>_CMD    Full command for target <NAME> (claude/codex/copilot have defaults)
+#                                pi/opencode/cursor/copilot have none and are skipped until it is set)
+#   SECOND_OPINION_<NAME>_CMD    Full command for target <NAME> (claude/codex have defaults)
 #   SECOND_OPINION_TARGET        Force one target (still subject to self-exclusion)
 #   SECOND_OPINION_TIMEOUT       Timeout in seconds (default: 1080)
 #   SECOND_OPINION_FOREGROUND_CAP  Set to 1 instead of passing --foreground
@@ -130,14 +130,16 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              declaration for any of them and is refused
   SECOND_OPINION_<NAME>_MODEL
                              Model identity of target <NAME> (default: <NAME>).
-                             copilot has no default: Copilot CLI fronts a
-                             selectable model, so the target is skipped until
-                             SECOND_OPINION_COPILOT_MODEL names the Copilot
-                             model id it runs, which its default command
-                             passes as --model and its identity is read from
+                             A target named for a harness that fronts a
+                             selectable model (pi, opencode, cursor, copilot,
+                             any case) has no default and is skipped until
+                             this names the model its command runs
   SECOND_OPINION_<NAME>_CMD  Full command for target <NAME> (name uppercased,
-                             hyphens become underscores); claude, codex and
-                             copilot have defaults (below)
+                             hyphens become underscores); claude and codex
+                             have defaults (below). copilot has none: Copilot
+                             CLI documents no headless mode that is read-only,
+                             so SECOND_OPINION_COPILOT_CMD names a command you
+                             have checked cannot write
   SECOND_OPINION_TARGET      Force one target; still subject to self-exclusion
   SECOND_OPINION_TIMEOUT     Timeout in seconds (default: 1080), per
                              invocation: review/audit's one retry on a
@@ -205,13 +207,6 @@ Default commands:
             --allowedTools Bash(read-only:true),Read,Glob,Grep
   codex:  codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh
             --ephemeral
-  copilot: copilot -s --no-auto-update --no-ask-user --allow-all-tools
-            --deny-tool=write --model <SECOND_OPINION_COPILOT_MODEL>
-            [--reasoning-effort max|xhigh]
-           The effort is the claude or codex default's, by the identity the
-           model id reads as, and none for any other. --deny-tool=write
-           refuses Copilot's file-writing tools; its shell tool is not
-           restricted to reads, where claude's and codex's are.
 
 Output clearing and ownership:
   No exit leaves a previous run's output behind. Every mode that writes
@@ -779,12 +774,30 @@ detect_current_harness() {
 # SECOND_OPINION_CURRENT_MODEL=none is the operator's statement that there is
 # no session model (CI, a plain terminal) and every roster entry is
 # cross-model. A target's identity is SECOND_OPINION_<NAME>_MODEL, defaulting
-# to the target name. Identities are lowercase tokens canonicalized from the
+# to the model harness_model names for the target, and to the target name for a
+# name that is no harness; a harness fronting a selectable model names none, so
+# such a target has no identity until it is declared. Identities are lowercase
+# tokens canonicalized from the
 # obvious model-id forms — a Claude model id (claude-*, opus, sonnet, haiku) is
 # "claude", an OpenAI one (gpt-*, o3, codex) is "codex" — so the natural value
 # of the one mandatory key compares equal to the built-in roster identities.
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# What a harness name says about the model it runs, the one table detection,
+# target identities and the built-in commands read: claude and codex each run
+# their own vendor's models and name them; pi, opencode, cursor and copilot
+# front a selectable model and name none. Any case. Prints the model or
+# nothing; returns 1 for a name that is no harness detect_current_harness
+# returns.
+harness_model() {
+  case "$(lower "$1")" in
+    claude)                     printf 'claude' ;;
+    codex)                      printf 'codex' ;;
+    pi|opencode|cursor|copilot) ;;
+    *)                          return 1 ;;
+  esac
+}
 
 canon_identity() {
   local id
@@ -828,7 +841,7 @@ CURRENT_MODEL_CONFLICT=""
 resolve_current_model() {
   CURRENT_HARNESS=$(detect_current_harness)
   local harness_model="" declared=""
-  case "$CURRENT_HARNESS" in claude|codex) harness_model="$CURRENT_HARNESS" ;; esac
+  harness_model=$(harness_model "$CURRENT_HARNESS") || harness_model=""
   [[ -z "${SECOND_OPINION_CURRENT_MODEL:-}" ]] || declared=$(canon_identity "$SECOND_OPINION_CURRENT_MODEL")
   if [[ -n "$harness_model" ]]; then
     # ONE rule for a harness that can be identified: detection wins, whatever
@@ -932,46 +945,29 @@ target_var() {
 target_cmd_var() { target_var "$1" CMD; }
 
 # Declared model identity of a target: SECOND_OPINION_<NAME>_MODEL, else the
-# target's own name. copilot is a CLI and not a model: with no declaration it
-# has no identity, and an empty identity is what consider_target skips.
+# model harness_model names for it, else the target's own name. A harness that
+# fronts a selectable model names none, and an empty identity is what
+# consider_target skips.
 target_model() {
-  local var
+  local var named
   var="$(target_var "$1" MODEL)"
   if [[ -n "${!var:-}" ]]; then
     canon_identity "${!var}"
-  elif [[ "$1" != copilot ]]; then
+  elif named=$(harness_model "$1"); then
+    printf '%s' "$named"
+  else
     canon_identity "$1"
   fi
 }
 
 # --- Pluggable target commands ------------------------------------------------
-# A target is a NAME plus a full command line. claude, codex and copilot carry
-# built-in default commands; any other name resolves ONLY through its
+# A target is a NAME plus a full command line. claude and codex carry built-in
+# default commands; any other name resolves ONLY through its
 # SECOND_OPINION_<NAME>_CMD variable, so another local model CLI is a settings
 # entry, not code.
 
-DEFAULT_CLAUDE_EFFORT=max
-DEFAULT_CODEX_EFFORT=xhigh
-DEFAULT_CLAUDE_CMD="claude -p --no-session-persistence --model opus --effort $DEFAULT_CLAUDE_EFFORT --allowedTools Bash(read-only:true),Read,Glob,Grep"
-DEFAULT_CODEX_CMD="codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=$DEFAULT_CODEX_EFFORT --ephemeral"
-
-# Copilot's default runs the model SECOND_OPINION_COPILOT_MODEL names, the same
-# value its identity is read from, so the model the guard compares is the model
-# the command runs. The prompt arrives on stdin, which `copilot --help` names
-# beside -p as a prompt source; -s prints the answer alone, and
-# --allow-all-tools is what a run with no terminal to approve in requires.
-# Empty when the model is undeclared.
-default_copilot_cmd() {
-  local model effort=""
-  kendex_trim model "${SECOND_OPINION_COPILOT_MODEL:-}"
-  [[ -n "$model" ]] || return 0
-  case "$(canon_identity "$model")" in
-    claude) effort="$DEFAULT_CLAUDE_EFFORT" ;;
-    codex)  effort="$DEFAULT_CODEX_EFFORT" ;;
-  esac
-  printf 'copilot -s --no-auto-update --no-ask-user --allow-all-tools --deny-tool=write --model %s%s' \
-    "$model" "${effort:+ --reasoning-effort $effort}"
-}
+DEFAULT_CLAUDE_CMD="claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
+DEFAULT_CODEX_CMD="codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 
 # Full command line for a target: its env override, else the built-in default.
 # Empty output = unconfigured target.
@@ -982,10 +978,9 @@ target_cmd() {
     printf '%s' "${!var}"
     return
   fi
-  case "$target" in
-    claude)  printf '%s' "$DEFAULT_CLAUDE_CMD" ;;
-    codex)   printf '%s' "$DEFAULT_CODEX_CMD" ;;
-    copilot) default_copilot_cmd ;;
+  case "$(harness_model "$target")" in
+    claude) printf '%s' "$DEFAULT_CLAUDE_CMD" ;;
+    codex)  printf '%s' "$DEFAULT_CODEX_CMD" ;;
   esac
 }
 

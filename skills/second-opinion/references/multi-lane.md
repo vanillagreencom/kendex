@@ -10,13 +10,13 @@ The roster `SECOND_OPINION_MODELS` (default `claude codex`, space- or comma-sepa
 |---|---|
 | Name shape | Not `^[A-Za-z][A-Za-z0-9_-]*$` |
 | One configuration | Its `SECOND_OPINION_<NAME>_*` namespace was already considered (`my-model` and `my_model` are one configuration) |
-| Cross-model | Its declared identity (`SECOND_OPINION_<NAME>_MODEL`, default the name, model ids normalized) equals the session's (the detected harness's model where there is one, else `SECOND_OPINION_CURRENT_MODEL`; a declaration contradicting a detected harness is refused). A session with no identity, or one whose `SECOND_OPINION_CURRENT_MODEL` the roster does not spell, refuses every target; `none` declares no session model. A *detected* identity the roster does not name excludes nothing |
+| Cross-model | Its declared identity (`SECOND_OPINION_<NAME>_MODEL`, default the name, model ids normalized; a target named `pi`, `opencode`, `cursor` or `copilot` has no default and is skipped until it is declared) equals the session's (the detected harness's model where there is one, else `SECOND_OPINION_CURRENT_MODEL`; a declaration contradicting a detected harness is refused). A session with no identity, or one whose `SECOND_OPINION_CURRENT_MODEL` the roster does not spell, refuses every target; `none` declares no session model. A *detected* identity the roster does not name excludes nothing |
 | Distinct model | Its identity is already covered by a taken lane |
 | Available | Its configured command's first word does not resolve |
 
 Every skip is one line on stderr naming the target and the cause. Review mode stops after `SECOND_OPINION_COUNT` lanes (default 1); every other mode after one. Fewer lanes than requested is stated on stderr and stamped into the artifact — `qa_metadata.requested_count`, `qa_metadata.selected_count`, and `coverage: "degraded"`. Two or more lanes make the run multi-lane; one runs as a single-lane review; none is a refusal — exit 1, a JSON error on stderr listing every candidate with its reason, no artifact, no CLI invoked. `--target` and `SECOND_OPINION_TARGET` replace the walk with the one named target, which passes the same checks: forcing the session's own model is refused.
 
-Adding a lane is a settings entry, not new code: add its name to `SECOND_OPINION_MODELS`, define `SECOND_OPINION_<NAME>_CMD` (name uppercased, hyphens as underscores), and — when the CLI fronts a model other than its own name — `SECOND_OPINION_<NAME>_MODEL`.
+Adding a lane is a settings entry, not new code: add its name to `SECOND_OPINION_MODELS`, define `SECOND_OPINION_<NAME>_CMD` (name uppercased, hyphens as underscores), and — when the CLI fronts a model other than its own name, or is named for a harness that fronts a selectable model — `SECOND_OPINION_<NAME>_MODEL`.
 
 ## Scope
 

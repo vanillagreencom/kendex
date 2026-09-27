@@ -8,7 +8,7 @@
 # session runs. Full semantics: second-opinion SKILL.md.
 
 # Priority-ordered roster, space/comma separated. Per entry:
-# SECOND_OPINION_<NAME>_CMD (claude, codex and copilot have defaults) and
+# SECOND_OPINION_<NAME>_CMD (claude and codex have defaults) and
 # SECOND_OPINION_<NAME>_MODEL (identity, when the CLI fronts another model).
 SECOND_OPINION_MODELS = "claude codex"
 
@@ -27,8 +27,10 @@ SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --e
 # Roster command for the codex identity.
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 
-# The Copilot model id the copilot entry runs; its built-in command passes
-# it as --model and its identity is read from it. Unset, copilot is skipped.
+# A copilot entry has no built-in command: Copilot CLI documents no read-only
+# headless mode, so name a command you have checked cannot write. Its model
+# is the identity; unset, copilot is skipped.
+# SECOND_OPINION_COPILOT_CMD = "..."
 # SECOND_OPINION_COPILOT_MODEL = "gpt-5.5"
 
 # Example extra roster entry: add "pi-deepseek" to SECOND_OPINION_MODELS,

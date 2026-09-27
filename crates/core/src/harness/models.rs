@@ -68,9 +68,10 @@ pub fn model_shape(harness: HarnessId) -> ModelShape {
     }
 }
 
-/// The effort levels a harness's agent file accepts under its own key,
-/// lowest first; `None` where the file has no effort key at all and an
-/// effort setting renders nothing.
+/// The effort levels kendex writes under a harness's own agent-file key,
+/// lowest first; `None` where kendex writes no effort key, whether or not
+/// the harness reads one, and an effort setting renders nothing. Copilot's
+/// agent file has a `reasoningEffort` key that kendex leaves unwritten (D008).
 pub fn effort_levels(harness: HarnessId) -> Option<&'static [&'static str]> {
     match harness {
         HarnessId::Claude => Some(&["low", "medium", "high", "xhigh", "max"]),
