@@ -110,21 +110,22 @@ done
 # exclusion, a lifted or postponed retirement, an alias moved to another
 # account under a key naming it, and a retirement date that arrives each ask
 # the provider again inside the TTL. The provider log counts the calls; the
-# cached answer would leave it unchanged.
+# cached answer would leave it unchanged. A row's sixth field is the alias
+# the written record lists the account under, where the policy renames it.
 provider_calls() { grep -c 'accounts' "$TMP_ROOT/provider-log"; }
-claude_hosted() { # the hosted claude row as STATUS:WEEKLY, or absent
-  jq -r '[.[] | select(.alias == "claude")] | if length == 0 then "absent" else "\(.[0].status):\(.[0].weekly_pct)" end' "$TMP_ROOT/out"
+claude_hosted() { # [ALIAS] — the hosted row listed under ALIAS (default claude) as STATUS:WEEKLY, or absent
+  jq -r --arg alias "${1:-claude}" '[.[] | select(.alias == $alias)] | if length == 0 then "absent" else "\(.[0].status):\(.[0].weekly_pct)" end' "$TMP_ROOT/out"
 }
 state="$TMP_ROOT/lifted"
 : > "$TMP_ROOT/provider-log"
 for row in 'ORCH_LANE_EXCLUDE=claude|ORCH_LANE_EXCLUDE=|absent|ok:20|a lifted exclusion' \
   'ORCH_LANE_RETIRE=claude=2000-01-01|ORCH_LANE_RETIRE=|retired:null|ok:20|a lifted retirement' \
   'ORCH_LANE_RETIRE=claude=2000-01-01|ORCH_LANE_RETIRE=claude=2099-01-01|retired:null|ok:20|a postponed retirement' \
-  'ORCH_LANE_EXCLUDE=work ORCH_LANE_ALIASES=claude=work|ORCH_LANE_EXCLUDE=work ORCH_LANE_ALIASES=eclaude=work|absent|ok:20|an alias moved under an exclusion' \
-  'ORCH_LANE_RETIRE=work=2000-01-01 ORCH_LANE_ALIASES=claude=work|ORCH_LANE_RETIRE=work=2000-01-01 ORCH_LANE_ALIASES=eclaude=work|absent|ok:20|an alias moved under a retirement'; do
-  IFS='|' read -r written read_under before after name <<<"$row"
+  'ORCH_LANE_EXCLUDE=work ORCH_LANE_ALIASES=claude=work|ORCH_LANE_EXCLUDE=work ORCH_LANE_ALIASES=eclaude=work|absent|ok:20|an alias moved under an exclusion|work' \
+  'ORCH_LANE_RETIRE=work=2000-01-01 ORCH_LANE_ALIASES=claude=work|ORCH_LANE_RETIRE=work=2000-01-01 ORCH_LANE_ALIASES=eclaude=work|retired:null|ok:20|an alias moved under a retirement|work'; do
+  IFS='|' read -r written read_under before after name written_alias <<<"$row"
   cache_run "$state" "$written" host-accounts --json > "$TMP_ROOT/out"
-  assert_eq "$(claude_hosted)" "$before" "$name: the record is written under the policy"
+  assert_eq "$(claude_hosted "${written_alias:-claude}")" "$before" "$name: the record is written under the policy"
   calls="$(provider_calls)"
   cache_run "$state" "$read_under" host-accounts --json > "$TMP_ROOT/out"
   assert_eq "$(claude_hosted)" "$after" "$name is visible on the next read"
@@ -224,9 +225,13 @@ assert_eq "$(jq -r '.usage.rows' "$TMP_ROOT/writer"/usage/host-accounts-*.json |
 # The startup scan is skipped only while the `.pruned` marker holds this
 # policy and the cache directory is unchanged since it was written; a policy
 # change, a day change, a write under any policy and the scan's own deletion
-# each send the next process through the scan. The cache-read log counts the
-# files the scan judged: `check` reads no record of its own. The records are
-# seeded under the first policy, so the first scan deletes nothing. A scan
+# each send the next process through the scan. A scan that deletes makes
+# the directory newer than the marker it wrote first, so one more scan
+# follows before the next skip; every deleting row is followed by that pair,
+# so the row after it is sent through the scan by its own cause alone. The
+# cache-read log counts the files the
+# scan judged: `check` reads no record of its own. The records are seeded
+# under the first policy, so the first scan deletes nothing. A scan
 # that failed leaves no valid marker, so the deletion failure below is
 # refused on every run, not the first.
 scan_ran() { [[ "$(grep -c '' "$TMP_ROOT/cache-reads" || true)" -gt 0 ]] && printf scanned || printf skipped; }
@@ -237,7 +242,9 @@ for row in '|ORCH_LANE_EXCLUDE=sclaude||scanned|the first run under a policy sca
   '|ORCH_LANE_EXCLUDE=sclaude||skipped|an unchanged directory under the same policy is not scanned again' \
   'write|ORCH_LANE_EXCLUDE=sclaude||scanned|a write under another policy sends the next run through the scan' \
   '|ORCH_LANE_EXCLUDE=sclaude||skipped|the scan after that write marks the directory again' \
-  '|ORCH_LANE_EXCLUDE=sclaude,zclaude||scanned|a policy change scans' \
+  '|ORCH_LANE_EXCLUDE=sclaude,zclaude||scanned|a policy change scans and deletes the provider record' \
+  '|ORCH_LANE_EXCLUDE=sclaude,zclaude||scanned|that deletion sends the next run through the scan once more' \
+  '|ORCH_LANE_EXCLUDE=sclaude,zclaude||skipped|the scan after a policy change marks the directory again' \
   '|ORCH_LANE_EXCLUDE=sclaude,zclaude|2099-01-01|scanned|a day change scans' \
   '|ORCH_LANE_EXCLUDE=claude||scanned|a tightened policy scans and deletes' \
   '|ORCH_LANE_EXCLUDE=claude||scanned|a deletion sends the next run through the scan once more' \
