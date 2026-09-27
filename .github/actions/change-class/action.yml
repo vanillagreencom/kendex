@@ -9,7 +9,8 @@ description: >-
 # repository's classifier against its own checkout, so a fix to the classifier
 # reaches every consumer with no consumer pull request. So does a change to
 # which diffs run the lanes: a workflow gates its lanes on the `lanes` output,
-# and each lane it declares on that lane's `lane_verdicts` line as well, and
+# and its declared lanes' verdicts as
+# skills/harness-ci/references/wiring.md § Per-lane verdicts sets out, and
 # names no class. This repository references it by path, and passes
 # `classifier:` a separate default-branch checkout, so the wrapper under test
 # is the pull request's while the classification that decides which lanes may
@@ -78,10 +79,11 @@ outputs:
     description: >-
       true where the diff runs the workflow's lanes, false where it runs
       none: a render or trivial class, or docs_only=true at any class. What
-      a lane condition and an aggregate's waiver read, beside each lane's own
-      lane_verdicts line where the workflow declares its lanes. A failed
-      step publishes none, and a lane condition that runs the lanes when the
-      classifying job did not succeed reads that as every lane running.
+      a lane condition and an aggregate's waiver read, with lane_verdicts as
+      skills/harness-ci/references/wiring.md § Per-lane verdicts sets out.
+      A failed step publishes none, and a lane condition that runs the lanes
+      when the classifying job did not succeed reads that as every lane
+      running.
     value: ${{ steps.classify.outputs.lanes }}
   lanes_cause:
     description: >-
@@ -94,8 +96,7 @@ outputs:
       wherever lanes is false; otherwise true where a changed path matches
       one of the lane's globs, true for every lane where a changed path no
       lane claims is outside the docs set or where no changed path was read,
-      and false everywhere else. Empty where no declaration was read, which
-      a lane condition reads as its `lanes` term alone deciding. A workflow republishes the lines as step outputs of its
+      and false everywhere else. Empty where no declaration was read. A workflow republishes the lines as step outputs of its
       own, since a composite action publishes only the outputs it declares.
     value: ${{ steps.classify.outputs.lane_verdicts }}
   changed_skills:

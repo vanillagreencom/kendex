@@ -6,14 +6,12 @@
 # repository beside `Review gate`, so the job carrying it keeps that name and
 # every lane the repository runs reports into it: a lane in another workflow
 # is a lane no required context holds. The classifier judges the diff on
-# pull_request and merge_group alike, and every lane reads the action's
-# `lanes` and its own verdict on both, so each event runs the lanes its own
-# diff calls for. Which diffs run which lane is the change-class action's
-# answer, from the paths each lane declares it reads in the default branch's
-# .github/ci-lanes.conf, not this file's: the `changes` job forwards the
-# answers and names no class, so a change to that rule reaches this workflow
-# with no edit to it. Until the default branch carries a declaration the
-# action publishes no verdict, and `lanes` alone decides.
+# pull_request and merge_group alike, and every lane reads the same answers
+# on both, so each event runs the lanes its own diff calls for. Which diffs
+# run which lane is the change-class action's answer, not this file's: the
+# `changes` job forwards it and names no class, so a change to that rule
+# reaches this workflow with no edit to it. How a lane and CI combine its
+# answers is .agents/skills/harness-ci/references/wiring.md § Per-lane verdicts.
 name: CI
 
 "on":
@@ -38,9 +36,7 @@ jobs:
       # log line says why.
       lanes: ${{ steps.classify.outputs.lanes }}
       # One output per lane .github/ci-lanes.conf declares, its verdict as
-      # the action answered it: what the lane's condition and CI's `--lane`
-      # read beside `lanes`. Empty where no declaration was read, which
-      # leaves `lanes` deciding. The classify step's `lane:` log lines say
+      # the action answered it. The classify step's `lane:` log lines say
       # why.
       lane_test: ${{ steps.lanes.outputs.lane_test }}
     env:
@@ -131,21 +127,18 @@ jobs:
 
   # THE REPOSITORY'S LANES. Replace this job with the repository's own, one
   # job per lane, each declared in .github/ci-lanes.conf, published as a
-  # `lane_<name>` output above, and given this `needs:` and this `if:` with
-  # its own output, and name each one in CI's `needs:`, in a `--skippable`
-  # and in a `--lane` of its aggregate step. A lane that reads a file under
-  # docs/ or changelog.d/, or a root .md or .markdown file, is the exception:
-  # `lanes` and every verdict are false on a docs-only diff of any size, so
-  # that lane keeps `needs: changes`, takes `if: ${{ !cancelled() }}` with no
-  # `lanes` or verdict term, and stays out of every `--skippable` and
-  # `--lane`. Copied as it stands, this lane fails, and CI with it.
+  # `lane_<name>` output above, given this `needs:` and this `if:` with its
+  # own output, named in CI's `needs:` and aggregate step as they name
+  # `test`. A lane that reads a file under docs/ or changelog.d/, or a root
+  # .md or .markdown file, is the exception
+  # .agents/skills/harness-ci/references/wiring.md § Through the composite action
+  # states. Copied as it stands, this lane fails, and CI with it.
   test:
     name: Test
     needs: changes
     # The status function runs the lane when the classifier died, and the
     # result term keeps the empty outputs of a dead classifier from reading
-    # as a skip. Either answer of false stands the lane down, and a lane with
-    # no verdict is decided by `lanes` alone.
+    # as a skip.
     if: ${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.lanes != 'false' && needs.changes.outputs.lane_test != 'false')) }}
     runs-on: ubuntu-latest
     steps:
@@ -157,8 +150,7 @@ jobs:
   # THE REQUIRED CONTEXT. always(): a failed or skipped need would otherwise
   # skip this job, and a skipped required context satisfies the ruleset.
   # aggregate-needs accepts a skipped lane only where the classifier
-  # succeeded and `lanes`, or the lane's own verdict, which it reads out of
-  # RESULTS, stood it down.
+  # succeeded and a verdict stood it down.
   ci:
     name: CI
     needs: [changes, test]

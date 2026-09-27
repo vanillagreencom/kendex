@@ -50,8 +50,7 @@
 #   lane_verdicts      one `lane_<name>=true|false` line per lane the
 #                      declaration names, in the order it first names them;
 #                      empty where LANES_FROM is empty or the declaration is
-#                      absent or malformed, which leaves lanes to decide
-#                      every lane.
+#                      absent or malformed.
 #
 # lanes is made from the two verdicts above, never from the paths. A workflow
 # forwards it rather than spelling a class, so a change to which diffs run the
@@ -297,7 +296,7 @@ if [ -n "$declaration" ]; then
 fi
 case "$lane_state" in
   absent | malformed)
-    printf '::warning title=lane declaration %s::%s %s; no lane verdict is published, so lanes alone decides\n' \
+    printf '::warning title=lane declaration %s::%s %s; no lane verdict is published\n' \
       "$lane_state" "$declaration" "${declaration_note:-}" ;;
 esac
 
