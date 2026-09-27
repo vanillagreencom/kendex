@@ -93,12 +93,27 @@ pub(super) fn upsert_in(
             Some(handlers) => handlers.push(handler),
             None => {
                 let mut group = Map::new();
-                if let Some(matcher) = matcher {
+                if let Some(matcher) = matcher.filter(|matcher| !matcher.is_empty()) {
                     group.insert("matcher".into(), Value::String(matcher.to_owned()));
                 }
                 group.insert("hooks".into(), Value::Array(vec![handler]));
                 groups.push(Value::Object(group));
             }
+        }
+    }
+    // Copilot CLI reads Claude's settings.json and refuses the whole file
+    // over an empty-string matcher. The absent key is match-all to every
+    // reader, so the group holding this handler never spells it as `""`.
+    for group in groups.iter_mut() {
+        let holds_ours = group
+            .get("hooks")
+            .and_then(Value::as_array)
+            .is_some_and(|handlers| handlers.iter().any(ours));
+        if holds_ours
+            && group.get("matcher").and_then(Value::as_str) == Some("")
+            && let Some(group) = group.as_object_mut()
+        {
+            group.remove("matcher");
         }
     }
     groups.retain(|g| {

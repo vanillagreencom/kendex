@@ -72,6 +72,41 @@ fn hook_upsert_is_idempotent_and_preserves_unrelated_keys() {
 }
 
 #[test]
+fn an_empty_matcher_is_registered_as_the_absent_key() {
+    let ours = json!({"type": "command", "command": "bash halt.sh"});
+    let theirs = json!({"type": "command", "command": "other"});
+    for (matcher, start, expected) in [
+        (Some(""), json!({}), json!([{"hooks": [ours]}])),
+        (None, json!({}), json!([{"hooks": [ours]}])),
+        (
+            Some(""),
+            json!({"PreToolUse": [{"matcher": "", "hooks": [ours]}]}),
+            json!([{"hooks": [ours]}]),
+        ),
+        (
+            None,
+            json!({"PreToolUse": [{"matcher": "", "hooks": [theirs, ours]}]}),
+            json!([{"hooks": [theirs, ours]}]),
+        ),
+        (
+            None,
+            json!({"PreToolUse": [{"matcher": "", "hooks": [theirs]}]}),
+            json!([{"hooks": [theirs, ours]}]),
+        ),
+    ] {
+        let mut events = start.clone();
+        let events = events.as_object_mut().unwrap();
+        nested::upsert_in(events, "PreToolUse", matcher, "bash halt.sh", None).unwrap();
+        assert_eq!(events["PreToolUse"], expected, "{matcher:?} over {start}");
+    }
+    let untouched = json!({"Stop": [{"matcher": "", "hooks": [theirs]}]});
+    let mut events = untouched.clone();
+    let events = events.as_object_mut().unwrap();
+    nested::upsert_in(events, "PreToolUse", Some(""), "bash halt.sh", None).unwrap();
+    assert_eq!(events["Stop"], untouched["Stop"]);
+}
+
+#[test]
 fn mcp_and_plugin_edits_round_trip() {
     let edit = ConfigEdit::UpsertMcpServer {
         name: "gh".into(),

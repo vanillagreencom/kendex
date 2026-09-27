@@ -54,7 +54,6 @@
         ]
       },
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
@@ -66,7 +65,6 @@
     ],
     "turn_end": [
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
@@ -83,7 +81,6 @@
     ],
     "tool_result": [
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
