@@ -2,8 +2,9 @@
 # A merge, a full sync's install and a write-through on the issue cache
 # serialize on the cache's own lock and install through unique temp files, so
 # the cache is one JSON array holding both results whatever their
-# interleaving; and a cache that no longer parses is refused by the merge,
-# never replaced with the delta.
+# interleaving; a cache that no longer parses is refused by the merge, never
+# replaced with the delta; and a write-through whose rewrite fails leaves the
+# cache byte for byte as it was, with no temp file beside it.
 #
 # The sync lock only ever held syncs apart. A write-through from another
 # session ran during a sync, and both wrote the same `issues.json.tmp`: each
@@ -256,3 +257,19 @@ assert "the corrupt cache is left byte for byte as it was" \
   cmp -s "$ROOT/corrupt-before.json" "$CACHE/issues.json"
 assert_eq "a refused merge leaves synced_at where it was" \
   "$(jq -r '.synced_at' "$CACHE/meta.json")" "$OLD_SYNC"
+
+# --- a failing write-through leaves the cache as it was -----------------------
+# The write-through's jq reads the corrupt cache and fails before it prints
+# a document. Its exit status is the write-through's, and the install leaves
+# the cache alone: an empty rewrite installed over the corrupt file would
+# turn the corruption the merge refusal names into a cache every reader
+# reports as no results.
+wt_rc=0
+cache_upsert_issue "$(issue 22222222-2222-2222-2222-222222222222 PROJ-2 "written through")" \
+  2>/dev/null || wt_rc=$?
+
+assert_ne "a write-through over a corrupt cache fails" "$wt_rc" 0
+assert "a failing write-through leaves the cache byte for byte as it was" \
+  cmp -s "$ROOT/corrupt-before.json" "$CACHE/issues.json"
+assert_eq "a failing write-through leaves no temp file beside the cache" \
+  "$(no_temp_beside_cache)" "0"

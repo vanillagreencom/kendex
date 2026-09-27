@@ -19,3 +19,17 @@ control_expect "the write-through survives a concurrent full sync"
 control_replace scripts/commands/sync.sh 1 \
     '        if ! cache_write "issues.json" jq '"'"'[.[]' \
     '        if ! cache_install_output "$CACHE_DIR/issues.json" jq '"'"'[.[]'
+# Mask the write-through command's failure: jq's empty output over a corrupt
+# cache is then installed as the cache, and the write-through reports success.
+control_expect "a failing write-through leaves the cache byte for byte as it was"
+control_replace scripts/lib/cache.sh 1 \
+    '    if ! "$@" > "$tmp"; then' \
+    '    "$@" > "$tmp" || true; if false; then'
+# Write the command's output straight into the target instead of a temp file
+# renamed into place. The shell truncates the target as the command starts,
+# so the write-through's jq reads an empty cache and the merge's delta is
+# gone from what it writes back.
+control_expect "the merge delta survives a concurrent write-through"
+control_replace scripts/lib/cache.sh 1 \
+    '    if ! "$@" > "$tmp"; then' \
+    '    rc=0; "$@" > "$target" || rc=$?; rm -f -- "${tmp:?}"; return "$rc"; if false; then'
