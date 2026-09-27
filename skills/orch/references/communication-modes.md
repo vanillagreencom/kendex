@@ -97,10 +97,10 @@ A session that starts with no item to work, no handoff file, no owner note and n
 ```
 
 ```text
-What do you want to work on? Reply with issue ids or describe it.
+What do you want to work on? Reply with issue ids or describe it, or answer tracker to take work from the tracker. With no answer by the deadline I wait for your reply.
 ```
 
-`idle`, which stands at the deadline, launches nothing: the overseer keeps its watch running until the owner writes. `tracker` has it take work as [oversee.md § 2](../workflows/oversee.md#2-select-work) selects it. A reply naming issue ids or describing the work closes the ask through `resolve --text`; one written after the deadline arrives as an owner note.
+`idle`, which stands at the deadline, launches nothing: the overseer keeps its watch running until the owner writes, and that empty queue is not [oversee.md § 5](../workflows/oversee.md#5-stop)'s Stop. `tracker` has it take work as [oversee.md § 2](../workflows/oversee.md#2-select-work) selects it. A reply naming issue ids or describing the work closes the ask through `resolve --text`; one written after the deadline arrives as an owner note.
 
 ## Status report
 

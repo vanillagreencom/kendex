@@ -502,8 +502,9 @@ fi
 # verb of it; typed anywhere else they are refused rather than dropped, as
 # --options on a notice is, so no caller is told a field landed that never
 # did. --to is the one that reaches two verbs, and a value outside the two
-# audiences is a field nothing reads. --after on `events` takes a key of its
-# own: a relay reaching for a cursor there keys by envelope id instead.
+# audiences is a field nothing reads. --after is drain's cursor alone; on
+# `events` it takes a key of its own, since a relay reaching for a cursor
+# there keys by envelope id instead.
 for given in $OPTS_GIVEN; do
   case "$given" in
     --to)
@@ -516,7 +517,12 @@ for given in $OPTS_GIVEN; do
     --ref | --attach) [ "$VERB:$ITEM" = notice:overseer ] || refuse option-unknown "$given" ;;
     --recommend | --wait) [ "$VERB:$ITEM" = ask:overseer ] || refuse option-unknown "$given" ;;
     --due) [ "$VERB" = pending ] || refuse option-unknown --due ;;
-    --after) [ "$VERB" != events ] || refuse events-no-cursor --after ;;
+    --after)
+      case "$VERB" in
+        drain) ;;
+        events) refuse events-no-cursor --after ;;
+        *) refuse option-unknown --after ;;
+      esac ;;
     --text | --default) [ "$VERB" = resolve ] || refuse option-unknown "$given" ;;
     --delivery-id) case "$VERB" in send | resolve) ;; *) refuse option-unknown --delivery-id ;; esac ;;
   esac
@@ -1383,7 +1389,6 @@ case "$VERB" in
     ;;
 
   inbox)
-    [ -z "$AFTER" ] || refuse option-unknown --after
     case "${ACK:+k}$PEEK" in
       0 | k0 | 1) ;;
       *) refuse option-conflict '--peek,--ack' ;;

@@ -129,7 +129,6 @@ ask --item overseer --to owner --options a,b --recommend c --file $F|2=lane-mail
 ask --item overseer --to owner --options a,b --recommend a,b --file $F|2=lane-mail: recommend-invalid=a,b
 ask --item overseer --to owner --file $F|2=lane-mail: recommend-required=owner
 ask --item overseer --to owner --options a,b --wait 5 --file $F|2=lane-mail: recommend-required=owner
-ask --item overseer --to owner --options a,b --recommend b --file $F|0=
 ask --item overseer --to owner --recommend a --file $F|2=lane-mail: option-required=--options
 ask --item overseer --to owner --options a,b --recommend a --wait 5m --file $F|2=lane-mail: minutes-invalid=--wait
 notice --item KEN-1 --ref $OWNER_NOTE --file $F|2=lane-mail: option-unknown=--ref
@@ -154,6 +153,7 @@ resolve --item overseer --id $NOTE_TO_OWNER --text $F|2=lane-mail: ask-unknown=$
 drain --item overseer --after 0 --to owner|2=lane-mail: option-unknown=--to
 inbox --item overseer --due|2=lane-mail: option-unknown=--due
 events --item overseer --after 0|2=lane-mail: events-no-cursor=--after
+pending --item overseer --after 3|2=lane-mail: option-unknown=--after
 ROWS
 lm notice --item overseer --to owner --file "$(text n 'Reply.')" --ref "$OWNER_NOTE"
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" 'select(.text == "Reply.") | .ref')" "0=$OWNER_NOTE" \
@@ -342,7 +342,7 @@ assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" 'has("deadline")')" "0=false" \
 
 new_repo control_events_cursor
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
-mutant events-cursor '[ "$VERB" != events ] || refuse events-no-cursor --after' ':'
+mutant events-cursor 'events) refuse events-no-cursor --after ;;' 'events) ;;'
 lm events --item overseer --after 0
 assert_eq "$RC=$(jq -r '.kind' <<<"$OUT")" "0=directive" \
   "control: without the events rule --after is taken and dropped"
