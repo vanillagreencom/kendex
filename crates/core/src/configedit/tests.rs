@@ -93,6 +93,11 @@ fn an_empty_matcher_is_registered_as_the_absent_key() {
             json!({"PreToolUse": [{"matcher": "", "hooks": [theirs]}]}),
             json!([{"hooks": [theirs, ours]}]),
         ),
+        (
+            Some("Bash"),
+            json!({"PreToolUse": [{"matcher": "", "hooks": [ours]}]}),
+            json!([{"matcher": "", "hooks": [ours]}, {"matcher": "Bash", "hooks": [ours]}]),
+        ),
     ] {
         let mut events = start.clone();
         let events = events.as_object_mut().unwrap();

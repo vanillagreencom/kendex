@@ -103,12 +103,13 @@ pub(super) fn upsert_in(
     }
     // Copilot CLI reads Claude's settings.json and refuses the whole file
     // over an empty-string matcher. The absent key is match-all to every
-    // reader, so the group holding this handler never spells it as `""`.
+    // reader, so the group this registration holds never spells it as `""`.
     for group in groups.iter_mut() {
-        let holds_ours = group
-            .get("hooks")
-            .and_then(Value::as_array)
-            .is_some_and(|handlers| handlers.iter().any(ours));
+        let holds_ours = names(group, one(matcher))
+            && group
+                .get("hooks")
+                .and_then(Value::as_array)
+                .is_some_and(|handlers| handlers.iter().any(ours));
         if holds_ours
             && group.get("matcher").and_then(Value::as_str) == Some("")
             && let Some(group) = group.as_object_mut()
