@@ -38,8 +38,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN" "$TMP_ROOT/work/tmp"
+# A harness stub draws the hint a running turn shows, so a relaunched session
+# reads as working and no status line.
 for harness in claude codex; do
-  printf '#!/bin/sh\nexec sleep 100000\n' > "$BIN/$harness"
+  printf '#!/bin/sh\necho "esc to interrupt"\nexec sleep 100000\n' > "$BIN/$harness"
 done
 cat > "$BIN/kendex" <<'STUB'
 #!/bin/sh
@@ -66,6 +68,9 @@ jq -n '{rate_limit: {primary_window: {used_percent: 20, reset_at: 1785000000, li
 
 env PATH="$BIN:$PATH" tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 220 -y 50 'exec sleep 100000'
 tm set-option -g default-shell /bin/sh
+# A relaunch types its line into a fresh pane: a non-login shell under this
+# fixture's PATH, so the stubs above are the harness it runs.
+tm set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 SERVER_PID="$(tm display-message -p '#{pid}')"
 
@@ -188,13 +193,23 @@ assert_eq "$RC|$(judged)|$(grep -c "^oversee-succeed: record-unread pane=$CALLER
   "0|context-below-mark headroom=90|1" \
   "--check-marks on an unreadable state: record-unread, and the pane and environment judge"
 
+# A print on an unreadable state says nothing on stderr: the watch start keeps
+# both streams as the line it records.
+run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS"
+assert_eq "$RC|$ERR" "0|" "--print-launch-line on an unreadable state keeps stderr clear"
+QUIETCTL="$(mutant_scripts quietctl oversee-succeed)" || exit 1
+mutate_file "$QUIETCTL/oversee-succeed" '(( record_rc > 1 )) && [[ "$MODE" != print ]]' '(( record_rc > 1 ))'
+SUCCEED_BIN="$QUIETCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS"
+assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "0|oversee-succeed: record-unread pane=$CALLER_PANE" \
+  "control: a print that gives the notice puts it where the watch records the line"
+
 # The control for the pending rule: a reader that takes the pending successor
 # as the current session judges the running overseer as the successor's codex
 # session on the successor's claude account, which no codex inventory lists.
 PENDCTL="$(mutant_scripts pendctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$PENDCTL/lib/overseer-launch.sh" \
-  'then [.harness, .account, .home, .model, .effort, .cwd]' \
-  'then (.pending // .) | [.harness, .account, .home, .model, .effort, .cwd]'
+  'then ol_identity | map(' \
+  'then (.pending // .) | ol_identity | map('
 new_caller "$FABLE"
 state "$(record "$CALLER_PANE" "$H/.claude" fable "$PENDING")"
 SUCCEED_BIN="$PENDCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
@@ -232,6 +247,62 @@ for pending in '{}' "$PENDING"; do
     "--print-launch-line on a stored-token pane takes its record's identity ($( [[ "$pending" == '{}' ]] && echo 'no pending successor' || echo 'a pending successor standing'))" \
     "$TMP_ROOT/err"
 done
+
+# The control for the pair rule: a caller entry that keeps its own flags beside
+# the record's pair hands the successor two models.
+PAIRCTL="$(mutant_scripts pairctl oversee-succeed)" || exit 1
+mutate_file "$PAIRCTL/oversee-succeed" '[[ "$chosen" == caller && -z "$model" ]]' '[[ "$chosen" == caller ]]'
+state "$(record "$CALLER_PANE" "$H/.eclaude" fable)"
+SUCCEED_BIN="$PAIRCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS" --model opus --effort low
+assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer --model fable --effort high $BYPASS --model opus --effort low '$BRIEF'" \
+  "control: a caller entry that keeps its flags beside the record's pair names two models" "$TMP_ROOT/err"
+
+# --- a dead-pane relaunch -------------------------------------------------
+# The relaunched session is identified by the record of the line it replays:
+# the pending successor's where that is the line, the dead session's own
+# otherwise. Its first watch start then prints a line on a pane whose screen
+# names nothing, as a stored-token session's does.
+DEAD_LINE="claude -n overseer 'relaunched from the record'"
+printf '%s\n' "$DEAD_LINE" > "$TMP_ROOT/line-file"
+# dead_relaunch EXTRA_JSON [SUCCEED_BIN] — a dead pane the record names with
+# EXTRA_JSON merged over its record, relaunched; sets SUCC_PANE to the pane the
+# record then names.
+dead_relaunch() {
+  local dead
+  new_caller "$FABLE"
+  dead="$(tm new-window -d -t fleet:5 -P -F '#{pane_id}' 'exec sleep 100000')"
+  state "$(record "$dead" "$H/.eclaude" fable "$1")"
+  SUCCEED_BIN="${2:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --dead-pane "$dead" --line-file "$TMP_ROOT/line-file" --wait-secs 20
+  SUCC_PANE="$(jq -r '.overseer.pane' "$FLEET_STATE")"
+}
+# print_on_successor — the successor pane's own --print-launch-line.
+print_on_successor() {
+  CALLER_PANE="$SUCC_PANE" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS"
+}
+OWN="$(jq -cn --arg line "$DEAD_LINE" '{launch_line: $line}')"
+PENDING_OWN="$(jq -cn --arg line "$DEAD_LINE" --arg a "$H/.claude" '{launch_line: "the dead session line",
+  pending: {launch_line: $line, harness: "claude", account: $a, home: $a, model: "claude-opus-5", effort: "low", cwd: null}}')"
+for row in \
+  "$OWN|$H/.eclaude|fable|high|the dead session's own line" \
+  "$PENDING_OWN|$H/.claude|claude-opus-5|low|a pending successor's line" \
+  ; do
+  IFS='|' read -r row_extra row_account row_model row_effort row_what <<<"$row"
+  dead_relaunch "$row_extra"
+  assert_eq "$RC|$(jq -r '.overseer | [.harness, .account, .model, .effort, (.pending // "none")] | join(" ")' "$FLEET_STATE")" \
+    "0|claude $row_account $row_model $row_effort none" \
+    "--dead-pane over $row_what records the identity that line was built with" "$TMP_ROOT/err"
+  print_on_successor
+  assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$row_account' claude -n overseer --model $row_model --effort $row_effort $BYPASS '$BRIEF'" \
+    "and the relaunched session's own print over $row_what reads its record" "$TMP_ROOT/err"
+done
+# The control: a relaunch that records no identity leaves its session's print
+# to a screen that names nothing.
+DEADCTL="$(mutant_scripts deadctl oversee-succeed)" || exit 1
+mutate_file "$DEADCTL/oversee-succeed" '! ol_record_line_identity "$cmd"; then' '! ol_identity "" "" "" "" "" ""; then'
+dead_relaunch "$OWN" "$DEADCTL/oversee-succeed"
+print_on_successor
+assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: no-status-line pane=$SUCC_PANE" \
+  "control: a relaunch that records no identity leaves the next print refused"
 
 # --- the succession -------------------------------------------------------
 # A live succession judges the account and model its record names: .eclaude at

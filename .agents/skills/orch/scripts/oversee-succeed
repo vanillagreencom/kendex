@@ -40,12 +40,13 @@
 #   Every mode but `--dead-pane` reads the caller's LAUNCH RECORD first: the
 #   fleet state's `overseer` object (schemas/workflow-state.md § Oversee
 #   state), where it names the caller pane on this tmux server. The harness,
-#   account, model, effort and directory it records are this session's own,
-#   and each one it names is taken ahead of the pane's status line and the
-#   account variables, which answer only for a session nothing has recorded
-#   and for a fact its record leaves unknown. A record naming a model gives the
-#   caller's successor that model and effort in place of the pair the flags
-#   after -- spell. The status line still gives the context reading. The
+#   account, model and directory it names are taken ahead of the pane's status
+#   line and the account variables, which answer only for a session nothing has
+#   recorded and for a fact its record leaves unknown; `--check-marks` reads
+#   the harness, account and model. A record naming a model gives the caller's
+#   successor that model and effort as one pair, in place of the pair the
+#   flags after -- spell; with no model, the flags keep theirs. The status line
+#   still gives the context reading. The
 #   record's `pending` member, the successor a succession wrote before its
 #   launch, is never read as the caller's own.
 #
@@ -903,20 +904,6 @@ fi
 # variable would otherwise be judged on that one.
 CALLER_CFG=""
 [[ "$MODE" == dead ]] || CALLER_CFG="${OL_CUR_ACCOUNT:-$(lane_context_caller_cfg "$CALLER_HARNESS")}"
-# The model and effort words this session's successor carries, where its
-# record names the model it was launched on: the record's pair replaces the
-# pair the caller's own flags spell, and every other word stays. Only the modes
-# that build a line from those flags read them: `check` takes none and `dead`
-# is handed its line whole.
-if [[ -n "$OL_CUR_MODEL" && "$MODE" != dead && "$MODE" != check ]]; then
-  launch_choice_strip "$CALLER_HARNESS" ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"} \
-    || die launch-choice-failed "harness=$CALLER_HARNESS"
-  record_words="$(launch_choice_write "$CALLER_HARNESS" "$OL_CUR_MODEL" "$OL_CUR_EFFORT")" \
-    || die launch-choice-failed "harness=$CALLER_HARNESS"
-  HARNESS_FLAGS=()
-  eval "HARNESS_FLAGS=($record_words)"
-  HARNESS_FLAGS+=(${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"})
-fi
 CALLER_STATE=unreadable HEADROOM_FIELD=unreadable
 CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS=""
 RATE_STATE=unreadable WALL_PROJECTED="" QUALIFYING_STATE=unreadable QUALIFYING_COUNT="" QUALIFYING_HEADROOM=""
@@ -1034,7 +1021,12 @@ walk_entries() {
   for entry in ${ENTRIES[@]+"${ENTRIES[@]}"}; do
     rc=0
     if [[ "$entry" == caller ]]; then
+      # The model and effort are the pair the caller's launch record names,
+      # where it names a model: the successor is then built as a same-harness
+      # entry is, its own pair written and the caller's stripped. With none,
+      # the caller's own flags carry whatever pair they spell.
       harness="$CALLER_HARNESS" model="" effort=""
+      [[ -z "$OL_CUR_MODEL" ]] || model="$OL_CUR_MODEL" effort="$OL_CUR_EFFORT"
       FALLBACK_WALKED="${CALLER_HARNESS:-none}"
       # This entry names no model in the LAUNCH — it passes the overseer's own
       # flags after -- instead — but the successor still runs a model, and it is
@@ -1317,8 +1309,8 @@ if [[ "$MODE" == dead ]]; then
 else
   # The model and effort words come from lib/lane-launch.sh's table, the same row
   # open-terminal reads a launch's flags against, so a successor is never given a
-  # spelling that launcher would refuse. A caller-entry successor passes no model,
-  # and the writer then names neither word.
+  # spelling that launcher would refuse. A caller-entry successor passes no model
+  # unless its launch record names one, and the writer then names neither word.
   choice_words="$(launch_choice_write "$harness" "$model" "$effort")" || die launch-choice-failed "harness=$harness"
   # The successor's flag words as argv, from which the command is written in
   # one place below and which the fleet watch restarted from the successor
@@ -1326,13 +1318,14 @@ else
   # printf %q words, which eval reads back as exactly the words written.
   SUCC_FLAGS=()
   [[ -z "$choice_words" ]] || eval "SUCC_FLAGS=($choice_words)"
-  # A caller entry keeps every word. A same-harness named entry strips model
-  # and effort but keeps the caller's exact permission spelling. A cross-harness
+  # A caller entry keeps every word. A same-harness named entry, and a caller
+  # entry carrying its record's pair, strips model and effort but keeps the
+  # caller's exact permission spelling. A cross-harness
   # entry accepts one full-bypass spelling whose meaning the shared row can
   # prove and no other permission word, writes the target spelling, and strips
   # all caller choices. On every entry the question-tool words are the lead
   # below's, never the caller's.
-  if [[ "$chosen" == caller ]]; then
+  if [[ "$chosen" == caller && -z "$model" ]]; then
     LAUNCH_CHOICE_KEPT=(${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"})
   elif [[ "$harness" == "$CALLER_HARNESS" ]]; then
     launch_choice_strip "$CALLER_HARNESS" ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"} \
@@ -1427,8 +1420,16 @@ fi
 # too: its successor runs a command this run built, and a later death that read
 # the walled session's line would relaunch onto the account this recovery just
 # left.
+# The launch identity the record writes below carries: the one the command was
+# built with, and in `dead`, which built none, the one the record holds for
+# the line it replays (lib/overseer-launch.sh § ol_record_line_identity), so a
+# session relaunched from its record is still identified by it.
+if [[ "$MODE" == dead ]] && ! ol_record_line_identity "$cmd"; then
+  message record-unwritten field=overseer step=identity >&2
+  [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+fi
 if [[ "$MODE" == succeed || "$MODE" == walled ]]; then
-  if ! ol_record_pending "$cmd"; then
+  if ! ol_record_pending "$cmd" "$OL_IDENTITY"; then
     message line-unrecorded "field=overseer.pending" >&2
     [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
   fi
@@ -1469,12 +1470,11 @@ ol_session_open "$CALLER_PATH" overseer "$cmd" --after "$CALLER_PANE" || abandon
 SUCC_PANE="$OL_SESSION" SUCC_WINDOW="$OL_WINDOW"
 
 # The session record, written before the successor's first turn: the runtime,
-# the server, the session, the launch identity the command above was built
-# with (none in `dead`, whose line this run did not build), its own launch
+# the server, the session, the launch identity chosen above, its own launch
 # line and one generation past the record it replaces, over the caller's record read
 # above, so the hooks and the watch can tell this session from the one it
 # succeeds. A state the read above could not open is not written to.
-if [[ -n "$OL_PRIOR" ]] && ! ol_record_write "$OL_RUNTIME" "$SUCC_PANE" "$SUCC_WINDOW" "$OL_SERVER" "$cmd"; then
+if [[ -n "$OL_PRIOR" ]] && ! ol_record_write "$OL_RUNTIME" "$SUCC_PANE" "$SUCC_WINDOW" "$OL_SERVER" "$OL_IDENTITY" "$cmd"; then
   message record-unwritten field=overseer step=write >&2
   [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
 fi

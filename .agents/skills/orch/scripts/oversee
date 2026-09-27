@@ -274,9 +274,9 @@ if [[ "$COMMAND" == register ]]; then
     codex) harness=codex; home="${CODEX_HOME:-$ACCOUNT}" ;;
     both) ;;
   esac
-  ol_identity "$harness" "$ACCOUNT" "$home" "" "" "$cwd"
+  ol_identity "$harness" "$ACCOUNT" "$home" "" "" "$cwd" || die record-unwritten field=overseer step=identity
   state_ready
-  ol_record_write tmux "$TMUX_PANE" "$window" "$server" "" \
+  ol_record_write tmux "$TMUX_PANE" "$window" "$server" "$OL_IDENTITY" "" \
     || die record-unwritten field=overseer
   message registered "session=$TMUX_PANE" "window=$window" "server=$server" \
     "generation=$OL_GENERATION" "account=${ACCOUNT:-none}"
@@ -385,7 +385,7 @@ ol_session_open "$CWD" overseer "$OL_CMD" --session "$SESSION_NAME" || abandon l
 SESSION="$OL_SESSION"
 message overseer-launch "form=$OL_FORM" "lane=$lane_dir" "trust=$OL_TRUST_ROUTE" \
   "session=$SESSION" "window=$OL_WINDOW" "server=$SERVER_SOCKET"
-ol_record_write "$OL_RUNTIME" "$SESSION" "$OL_WINDOW" "$OL_SERVER" "$OL_CMD" \
+ol_record_write "$OL_RUNTIME" "$SESSION" "$OL_WINDOW" "$OL_SERVER" "$OL_IDENTITY" "$OL_CMD" \
   || abandon record-unwritten field=overseer step=write
 
 if ! ol_session_verify "$SESSION" "$OL_LANE_VAR" "$lane_dir" "$OL_FORM" "$WAIT_SECS"; then

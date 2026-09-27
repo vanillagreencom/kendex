@@ -664,7 +664,7 @@ RECORD_MUTANT="$TMP_ROOT/record-mutant"
 mkdir -p "$RECORD_MUTANT/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$RECORD_MUTANT/orch/scripts"
 ln -s "$REPO_ROOT/skills/github" "$RECORD_MUTANT/github"
-FROM='        | if (.server // "") == $server and (.pane // "") == $pane then . else {} end)'
+FROM='        | if ol_names($server; $pane) then . else {} end)'
 assert_eq "$(grep -cxF -- "$FROM" "$REPO_ROOT/skills/orch/scripts/lib/watch-overseer-record.sh")" "1" \
   "control: the merge rule is one line of the record library"
 FROM="$FROM" awk '$0 == ENVIRON["FROM"] { print "        | {})"; next } { print }' \

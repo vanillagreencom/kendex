@@ -108,11 +108,15 @@ lane_context_shape() {
   esac
 }
 
-# The config directory a session of shape $1 runs its credential out of,
-# decided here and in no other place: `lanes context` asks it about the pane it
-# is reading, and the lane's own turn-end hook asks it about itself, so one
-# session is never joined to one account by the report and to another by the
-# hook that hands it off.
+# The config directory a session of shape $1 runs its credential out of: a
+# lane's, and an overseer's where its launch record names none. `lanes context`
+# asks it about the pane it is reading, and the lane's own turn-end hook asks
+# it about itself, so one lane is never joined to one account by the report and
+# to another by the hook that hands it off. A recorded overseer's account is
+# its launch record's (lib/overseer-launch.sh § ol_record_current), which
+# `oversee-succeed` judges it on; `lanes context` still reads this function
+# alone, so its row for that overseer can name another account where the
+# session's environment disagrees with its record.
 #
 # Which variable names the account is decided by the SHAPE, never by which
 # variable happens to be set: every launcher here prefixes one without clearing

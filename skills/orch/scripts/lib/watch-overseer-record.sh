@@ -4,7 +4,11 @@
 # fleet state. Sourced by oversee-watch, and like the rest of its lib/ it
 # reads that script's globals (HANDOFF, OVERSEER_FLAGS, WORKFLOW_STATE,
 # WORKFLOW_STATE_ARGS, SUCCEED) and calls its `overseer_record_refuse` and
-# `lane_context_caller_key`.
+# `lane_context_caller_key`. Whether the record names this pane is
+# lib/overseer-launch.sh's `ol_names`, the test its launchers write and read
+# the record by.
+# shellcheck source=overseer-launch.sh
+source "$SCRIPT_DIR/lib/overseer-launch.sh"
 
 # The tail every oversee-succeed call this watch makes carries: the handoff
 # path the successor's brief must name, and the overseer's own flags after the
@@ -66,9 +70,9 @@ overseer_command_record() {
   # succession that died before its launch leaves nothing a later death would
   # replay.
   detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
-    update oversee --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" '
+    update oversee --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" "$OL_JQ_DEFS"'
       .overseer = ((((.overseer // {})
-        | if (.server // "") == $server and (.pane // "") == $pane then . else {} end)
+        | if ol_names($server; $pane) then . else {} end)
         + {server: $server, pane: $pane, window: $window, launch_line: $line}) | del(.pending))' 2>&1)" \
     || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=write"
 }
