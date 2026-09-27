@@ -102,7 +102,7 @@ pub use components::{Choice, Key, Status, Value};
 pub use keys::{choose, consent, typed};
 pub use live::Spinner;
 pub use modes::{Channel, Span, Style, channel, style};
-pub use prompt::{ask, cancelled, confirm, spinner};
+pub use prompt::{cancelled, confirm, spinner};
 pub use refusal::{Lines, fail_refusal, outro_fail, outro_refusal};
 
 use std::io::{IsTerminal, Write};

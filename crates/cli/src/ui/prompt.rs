@@ -26,6 +26,10 @@ fn widget() -> bool {
 /// run needing an answer with no terminal on stdin refuses before its
 /// first write rather than reaching this.
 ///
+/// This and the keyed read in `keys` are the only places the CLI reads
+/// from a person, and each draws whatever block is still open before it
+/// reads.
+///
 /// The framed prompt is cancelled with `Esc` or `Ctrl-C`. `Ctrl-D` is not
 /// one of its answers — a terminal in raw mode delivers it as a byte, not
 /// as end of input — and the plain prompt keeps taking it as a no.
@@ -51,38 +55,6 @@ pub fn confirm(question: &str) -> std::io::Result<bool> {
         }
     };
     Ok(answered(&answer))
-}
-
-/// Ask for a line of typed input, for a question whose answer is not a
-/// yes or a no.
-///
-/// This, [`confirm`] and the keyed read in `keys` are the only places the
-/// CLI reads from a person, and each draws whatever block is still open
-/// before it reads. A
-/// question asked over an undrawn block is a question about lines the
-/// reader has not been shown yet, and no call site can reach a read
-/// without coming through one of these.
-pub fn ask(label: &str) -> std::io::Result<String> {
-    super::flush();
-    let label = &escaped(label);
-    match widget() {
-        // The widget [`confirm`] uses, so the question and the answer land
-        // inside the frame the run opened rather than at column 0 beside
-        // it. Empty is an answer here — both callers read it as "accept
-        // what is already selected" — so the input is not required, and
-        // the label's trailing space is the plain rendering's cursor gap,
-        // not part of the question.
-        true => cliclack::input(label.trim_end())
-            .required(false)
-            .interact::<String>(),
-        false => {
-            let _ = write!(std::io::stderr(), "{label}");
-            let _ = std::io::stderr().flush();
-            let mut typed = String::new();
-            std::io::stdin().read_line(&mut typed)?;
-            Ok(typed)
-        }
-    }
 }
 
 /// Whether an error is a run its user cancelled.

@@ -18,7 +18,9 @@
 //! first write, naming `--yes`; the repository-effect disclosure asks
 //! nothing, leaves the effects unmade and names `--allow-repo-effects`, and
 //! the linked work tree's setup is skipped; the commit offer, which comes
-//! after the writes, prints one line naming its flags and asks nothing.
+//! after the writes, prints one line naming its flags and asks nothing;
+//! `add` asks neither its tool nor its delivery question and keeps the
+//! scope's own.
 //!
 //! Keys are read raw where the question is drawn on a terminal. Where
 //! stderr is redirected, as in `2>&1 | tee log`, the answer is a typed line:

@@ -17,6 +17,7 @@ mod installer_message;
 mod pty;
 
 mod add_kinds;
+mod add_picker_terminal;
 mod bookmark_cli;
 mod bundles_cli;
 mod catalog_check;
