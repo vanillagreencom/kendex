@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Diagnostic protocol: command refusals start error=KEY FIELD=VALUE; settings
 # refusals start doc-limits-error=KEY value=VALUE; notices start
-# notice=KEY FIELD=VALUE. English detail follows on the next line.
+# notice=KEY FIELD=VALUE. English detail follows on the next line. Each
+# notice=document-over-limit is followed, after its remedy, by one
+# notice=document-rule rule=docs-writing/SKILL.md#ANCHOR for its class.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/settings.sh
@@ -11,21 +13,23 @@ source "$SCRIPT_DIR/../../commit-guards/scripts/lib/generated-paths.sh"
 TAB="$(printf '\t')"
 NL='
 '
-# One row per shipped class: its pattern=Nk entry, a tab, and the heading in
-# docs-writing SKILL.md § Per file type whose rule decides which remedy a
-# document of that class admits. The row order is the match order.
-SHIPPED_CLASS_ROWS='docs/architecture/overview.md=12k	`docs/architecture/overview.md`
-docs/architecture/*.md=16k	`docs/architecture/<topic>.md`
-AGENTS.md=8k	`AGENTS.md`
-CLAUDE.md=24k	`CLAUDE.md`
-*/AGENTS.md=6k	`AGENTS.md`
-*/CLAUDE.md=24k	`CLAUDE.md`
-*/SKILL.md=24k	`SKILL.md`, `workflows/*.md`, `agents/*.md`
-*/workflows/*.md=40k	`SKILL.md`, `workflows/*.md`, `agents/*.md`
-README.md=16k	`README.md`
-*/README.md=12k	`README.md`
-docs/*.html=64k	Documentation HTML
-*.md=64k	Per file type'
+# One row per shipped class: its pattern=Nk entry, a tab, and the anchor in
+# docs-writing SKILL.md of the rule that decides which remedy a document of
+# that class admits. The anchors are kept by hand in step with that file's
+# § Per file type; the *.md catch-all names the section as a whole. The row
+# order is the match order.
+SHIPPED_CLASS_ROWS='docs/architecture/overview.md=12k	docsarchitectureoverviewmd
+docs/architecture/*.md=16k	docsarchitecturetopicmd
+AGENTS.md=8k	agentsmd
+CLAUDE.md=24k	claudemd
+*/AGENTS.md=6k	agentsmd
+*/CLAUDE.md=24k	claudemd
+*/SKILL.md=24k	skillmd-workflowsmd-agentsmd
+*/workflows/*.md=40k	skillmd-workflowsmd-agentsmd
+README.md=16k	readmemd
+*/README.md=12k	readmemd
+docs/*.html=64k	documentation-html
+*.md=64k	per-file-type'
 STAGED=0
 usage() {
   cat <<'EOF'
@@ -68,18 +72,18 @@ notice() {
   printf 'notice=%s %s=%q\n' "$key" "$field" "$value"
   printf '%s\n' "$text"
 }
-# A maintainer adding a class row writes its rule heading in the same row; a
-# row without one refuses before any document is read.
+# A maintainer adding a class row writes its rule anchor in the same row; a
+# row with an empty rule refuses before any document is read.
 SHIPPED_CLASSES=""
 while IFS="$TAB" read -r entry rule; do
-  [ -n "$rule" ] || config_error class-rule-missing value "$entry" "shipped class '$entry' names no docs-writing rule; add its § Per file type heading to SHIPPED_CLASS_ROWS"
+  [ -n "$rule" ] || config_error class-rule-missing value "$entry" "shipped class '$entry' names no docs-writing rule; add its anchor to SHIPPED_CLASS_ROWS"
   SHIPPED_CLASSES="${SHIPPED_CLASSES:+$SHIPPED_CLASSES;}$entry"
 done <<EOF
 $SHIPPED_CLASS_ROWS
 EOF
-class_rule() { # PATTERN: the shipped row's heading, else the whole § Per file type
+class_rule() { # PATTERN: the shipped row's anchor, else the whole § Per file type
   local entry rule
-  CR="Per file type"
+  CR=per-file-type
   while IFS="$TAB" read -r entry rule; do
     if [ "${entry%=*}" = "$1" ]; then
       CR="$rule"
@@ -377,7 +381,7 @@ while IFS="$TAB" read -r oid f limit class; do
     notice document-over-limit path "$f" "doc-limits FAIL: $f: $n bytes > $limit bytes (class $class)"
     printf '  remedy: split the document at a natural seam, move detail to a linked reference, or delete content the code or another document already states; a document that must stay whole gets a row in %s with its reason\n' "$EXCLUDES_FILE"
     class_rule "$class"
-    printf '  rule: docs-writing SKILL.md § %s decides which of these the document admits\n' "$CR"
+    notice document-rule rule "docs-writing/SKILL.md#$CR" "  the docs-writing rule at that anchor decides which of these remedies the document admits"
     violations=$((violations + 1))
   fi
   checked=$((checked + 1))

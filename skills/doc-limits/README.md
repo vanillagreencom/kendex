@@ -8,7 +8,7 @@ A byte-size check for repository documents. It limits the Markdown that agents r
 kendex add vanillagreencom/kendex --skill doc-limits
 ```
 
-Requires Git, Bash, jq, the commit-guards skill and standard POSIX tools. Bash 3.2 is supported. The commit-guards pre-commit and pre-push hooks run the installed check.
+Requires Git, Bash, jq, the commit-guards skill and standard POSIX tools. Bash 3.2 is supported. kendex also installs docs-writing, whose per-file-type rules each over-limit finding names. The commit-guards pre-commit and pre-push hooks run the installed check.
 
 ## Features
 

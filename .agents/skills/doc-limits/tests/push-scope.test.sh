@@ -152,7 +152,7 @@ printf '%s\n' "doc-limits-push-scope"
 REBASED=""
 scenario REBASED rebased
 assert_eq "a branch rebased into a document-ceiling breach is refused at push, naming the lane and the document" \
-  "rc=1 pre-push: step=doc-limits;notice=document-over-limit path=big.md;notice=documents-over-limit count=1;pre-push: step=base:<oid>;pre-push: result=1" \
+  "rc=1 pre-push: step=doc-limits;notice=document-over-limit path=big.md;notice=document-rule rule=docs-writing/SKILL.md#per-file-type;notice=documents-over-limit count=1;pre-push: step=base:<oid>;pre-push: result=1" \
   "$(push_topic "$REBASED")"
 
 # The must-fail control: the same rebased state pushed by a copy of the chain

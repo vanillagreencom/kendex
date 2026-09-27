@@ -1,7 +1,7 @@
 ---
 name: code-quality
 description: "Load for any coding or development task in any repository: writing, changing, fixing, refactoring, or testing code or scripts in any language."
-summary: "Code-authoring standards for dev agents: correctness over convenience, no fail-open branches, module structure, prove-your-guards, test architecture, comment rules, over-engineering limits."
+summary: "Code-authoring standards for dev agents: correctness over convenience, no fail-open branches, module structure, over-engineering limits, prove-your-guards, test architecture, comment rules."
 license: MIT
 user-invocable: true
 dependencies:
@@ -65,7 +65,7 @@ One judge per question: never re-implement a decision (classify, validate, parse
 
 ## Prove Your Guards
 
-A new or modified production gate or guard ships with one must-fail control per independent rule it enforces: plant one defect that reaches that rule, and the control passes when the guard turns red once. Rows that exercise the same rule share its control; independent rules in one guard each take their own, and a defect planted for one rule never stands in for another. A mutant control edits a copy of the code under test, never the tracked file. It keeps the matched text and removes the behavior; one that deletes the code under test only proves the assertion runs. Reject assertions loose enough to match a skip note, fixtures that never reach the guarded bound, and harness code that keeps alive what the implementation should.
+A new or modified production gate or guard ships with one must-fail control per independent rule it enforces: plant one defect that reaches that rule, and the control passes when the guard turns red once. Rows that exercise the same rule share its control; independent rules in one guard each take their own, and a defect planted for one rule never stands in for another. A script's mutant control edits a copy of the script, never the tracked file. A control keeps the matched text and removes the behavior; one that deletes the code under test only proves the assertion runs. Reject assertions loose enough to match a skip note, fixtures that never reach the guarded bound, and harness code that keeps alive what the implementation should.
 
 - **A scripted text substitution asserts its match, or it is not an edit.** Assert the pattern's occurrence count and that the file changed, or use an edit tool that errors on no match. Neither assertion holds on a symlink, which `sed -i` replaces with a new file while its target stands: resolve the path first, or refuse a symlink.
 - **A floor alone is not a control.** An inventory or coverage check derives the members it visits from the artifact under test (the flag's own regex, the function's own body), never from a second list in a test file. Floor it, with a message naming the extractor as broken rather than the subject as sparse. Under-inclusion needs the floor plus a required member; over-inclusion needs a forbidden member. State which direction stays open. A behavior or contract test keeps its expected values independent of the implementation: never derive an expected API set, parser result or accepted input from the code that produces it.
@@ -84,12 +84,12 @@ A new or modified production gate or guard ships with one must-fail control per 
 - A row pins what only its own guard emits: an expectation a neighbouring gate or a helper on both sides also produces is not a pin, and neither is a value read as a truthiness bit.
 - A dependency is tested in its own suite; a consumer suite asserts only its own use of it.
 - A change selects its checks, locally and in CI, from each suite's direct and indirect inputs: its sources, the dependencies it consumes, fixtures, generated-code inputs, configuration and build settings. Select through the suite's existing entry point and the dependency metadata the build already holds; a suite both run goes through the same entry point in both. Missing or unreadable selection evidence runs every check in the requested area. Selection needs no custom selector, dependency table, cache, runner or workflow.
-- Shaped input (positions, settings keys, tamper classes) is one table: one loop, one assertion per row, the rows visible in the file. Rows of one rule share that rule's control.
+- Shaped input (positions, settings keys, tamper classes) is one table: one loop, one assertion per row, the rows visible in the file.
 - A test reads time through an injectable clock; a real wait names its reason beside it.
 - A collection-driven check states its coverage floor and proves its discovery completed. It rejects an empty result when the floor requires members, and a failed or incomplete discovery never reports a valid empty set. An empty application input the contract permits passes, and a test covers it.
 - A shared fixture is a neutral world (a seeded repository, a fake SDK); a fixture that carries a planted defect is private to its case.
 - A test that spawns a real process passes the child's environment explicitly, never the developer's live environment.
-- Tests live beside the code where the runtime neither loads nor snapshots them, otherwise in a separate test tree; one file per surface, named for it. Every suite in a tree sources that tree's one assertion library.
+- Tests live beside the code where the runtime neither loads nor snapshots them, otherwise in a separate test tree; one file per surface, named for it. Every suite in a tree sources that tree's one assertion library, and a test helper lives in that library, never in a suite.
 - A test file past about 64 KB holds more than one surface; split it at a surface seam.
 
 ## Language Discipline

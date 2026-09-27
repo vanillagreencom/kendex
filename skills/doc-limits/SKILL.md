@@ -5,7 +5,7 @@ summary: "Hard byte ceilings for tracked Markdown and documentation HTML, with p
 license: MIT
 user-invocable: true
 dependencies:
-  required: [commit-guards]
+  required: [commit-guards, docs-writing]
 metadata:
   author: vanillagreen
   source: kendex

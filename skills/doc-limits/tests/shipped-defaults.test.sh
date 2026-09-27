@@ -31,6 +31,26 @@ expect_first_line() { # EXPECTED LABEL
     FAIL=$((FAIL + 1)); printf '  FAIL: %s: first line <%s>\n' "$2" "$first"
   fi
 }
+expect_line() { # EXPECTED LABEL: one whole output line equals EXPECTED
+  case "
+$OUT
+" in
+    *"
+$1
+"*) PASS=$((PASS + 1)); printf '  ok: %s\n' "$2" ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL: %s: no line <%s>\n%s\n' "$2" "$1" "$OUT" ;;
+  esac
+}
+must_fail_line() { # FORMER-LINE LABEL
+  local assertion_rc=0
+  (PASS=0; FAIL=0; expect_line "$1" "$2"; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || assertion_rc=$?
+  if [ "$assertion_rc" -ne 0 ]; then
+    PASS=$((PASS + 1)); printf '  ok: %s\n' "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL: %s: line assertion stayed green\n' "$2"
+    cat "$TMP/control.log"
+  fi
+}
 must_fail_first_line() { # FORMER-LINE LABEL
   local assertion_rc=0
   (PASS=0; FAIL=0; expect_first_line "$1" "$2"; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || assertion_rc=$?
@@ -67,9 +87,10 @@ private_command() { # NAME: copy the command and set MUTANT
   MUTANT="$root/skills/doc-limits/scripts/doc-limits"
 }
 
-# Representative paths exercise each shipped document class at both edges.
+# Representative paths exercise each shipped document class at both edges,
+# and the one-byte-over run names the docs-writing rule anchor for the class.
 CLASS_ASSERTIONS=0
-while IFS=' ' read -r path limit; do
+while IFS=' ' read -r path limit anchor; do
   bytes "$path" "$limit"
   git -C "$R" add -- "$path"
   run --staged
@@ -84,27 +105,55 @@ while IFS=' ' read -r path limit; do
     *"notice=documents-over-limit count=1"*) PASS=$((PASS + 1)); printf '  ok: %s\n' "$path failure count" ;;
     *) FAIL=$((FAIL + 1)); printf '  FAIL: %s\n' "$path failure count" ;;
   esac
+  expect_line "notice=document-rule rule=docs-writing/SKILL.md#$anchor" "$path rule anchor"
   git -C "$R" rm -qf -- "$path"
   CLASS_ASSERTIONS=$((CLASS_ASSERTIONS + 1))
 done <<'CLASSES'
-AGENTS.md 8192
-CLAUDE.md 24576
-pkg/AGENTS.md 6144
-pkg/CLAUDE.md 24576
-docs/architecture/overview.md 12288
-docs/architecture/topic.md 16384
-skills/demo/SKILL.md 24576
-skills/demo/workflows/task.md 40960
-README.md 16384
-pkg/README.md 12288
-skills/demo/references/contract.md 65536
-docs/references/example.html 65536
-CHANGELOG.md 65536
+AGENTS.md 8192 agentsmd
+CLAUDE.md 24576 claudemd
+pkg/AGENTS.md 6144 agentsmd
+pkg/CLAUDE.md 24576 claudemd
+docs/architecture/overview.md 12288 docsarchitectureoverviewmd
+docs/architecture/topic.md 16384 docsarchitecturetopicmd
+skills/demo/SKILL.md 24576 skillmd-workflowsmd-agentsmd
+skills/demo/workflows/task.md 40960 skillmd-workflowsmd-agentsmd
+README.md 16384 readmemd
+pkg/README.md 12288 readmemd
+skills/demo/references/contract.md 65536 per-file-type
+docs/references/example.html 65536 documentation-html
+CHANGELOG.md 65536 per-file-type
 CLASSES
 if [ "$CLASS_ASSERTIONS" -eq 0 ]; then
   printf 'FAIL: CLASSES executed no assertions\n' >&2
   exit 1
 fi
+
+# A project class the shipped rows do not declare names § Per file type whole.
+bytes extra/note.md 1025
+git -C "$R" add extra/note.md
+DOC_LIMITS_CLASSES='extra/*.md=1k'
+export DOC_LIMITS_CLASSES
+run --staged
+expect 1 'project class over its limit fails'
+expect_line 'notice=document-rule rule=docs-writing/SKILL.md#per-file-type' 'project class rule anchor'
+unset DOC_LIMITS_CLASSES
+git -C "$R" rm -qf extra/note.md
+
+bytes README.md 16385
+git -C "$R" add README.md
+private_command class-rule-lookup
+[ ! -L "$MUTANT" ]
+[ "$(grep -Fxc '      CR="$rule"' "$MUTANT")" -eq 1 ]
+sed 's/^      CR="\$rule"$/      :/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --staged
+must_fail_line 'notice=document-rule rule=docs-writing/SKILL.md#readmemd' 'class-rule lookup control: a lookup that ignores the row fails the README.md rule anchor'
+SR="$SOURCE_COMMAND"
+git -C "$R" rm -qf README.md
 
 bytes docs/references/example.html 65537
 git -C "$R" add docs/references/example.html
@@ -277,7 +326,7 @@ SR="$SOURCE_COMMAND"
 ROW_TAB="$(printf '\t')"
 private_command class-rule
 [ ! -L "$MUTANT" ]
-[ "$(grep -Fxc "*/README.md=12k$ROW_TAB\`README.md\`" "$MUTANT")" -eq 1 ]
+[ "$(grep -Fxc "*/README.md=12k${ROW_TAB}readmemd" "$MUTANT")" -eq 1 ]
 sed "s|^\*/README\.md=12k$ROW_TAB.*\$|*/README.md=12k|" "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 cp "$MUTANT.changed" "$MUTANT"
