@@ -109,7 +109,11 @@ The long pass's events, checked and reported in this order:
                              request its record names, in that repository,
                              runs the close below at once: nothing wakes a
                              parked sandbox. Another pull request on the
-                             branch's name is reported and closes nothing
+                             branch's name is reported and closes nothing,
+                             under a parked-merge-unmatched note on stderr
+                             naming the recorded key and the keys seen; the
+                             repository is matched in lower case, GitHub's
+                             names being case-insensitive
   EVENT triage <item>        an item created at or after --since that is absent
                              from the first repository's persisted baseline
   EVENT lane-ready <item>    a lane open-terminal handed to a background job
