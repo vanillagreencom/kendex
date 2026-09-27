@@ -120,10 +120,8 @@ unmark_lanes() {
   rm -rf -- "${common:?}/lane-mail"
 }
 
-# The context mark every row is judged at unless it names another: half of the
-# 1M window the claude fixture's model runs, which puts the mark at 500000
-# tokens. The adapter rows below judge the package default of 90 on windows of
-# every size; these rows judge everything else the marks rest on.
+# Most cases request 50 percent; the independent token cap still applies.
+# Adapter rows use the package default across their different windows.
 CONTEXT_PCT_ENV=ORCH_HANDOFF_CONTEXT_PCT=50
 
 # The world a case runs in unless it names another: a home with no lane in it,
@@ -636,16 +634,9 @@ write_transcript "$SPACED" 600000
 stop_at "$SPACED" false
 expect 2 "lane-mail-check: context=600000" "a transcript path holding a space is read, never truncated at it"
 
-# Each harness adapter, judged at the package default of 90 percent of the
-# window its own records name: Claude Code's by its model's tier, Codex's from
-# the rollout's own window, Pi's from the window its Stop payload carries. Each
-# row installs the hook where kendex installs it for that harness, which is what
-# picks the adapter, and pins the reading the turn end recorded for every other
-# reader. A 1M window at 500000 tokens is room under the fraction, where the
-# absolute mark this replaced fired. A reading whose window its adapter cannot
-# name is reported and passed, never judged against a guess. Every figure holds
-# the response's 7 output tokens, so each row at its mark crosses on the output
-# alone.
+# Each real install selects its adapter and records the reading. The table
+# covers both independent limits, unknown capacity and equality. Output tokens
+# make the percentage rows cross their mark; omitting them leaves room.
 #
 #   HOOK DIR|SPELLING|TOKENS|PAYLOAD WINDOW|FIRST LINE|RECORDED
 ADAPTER_ROWS='.claude/hooks|claude|399999||GAP|claude 399999 1000000
@@ -1550,20 +1541,49 @@ case " $* " in
   *"#{pid}"*) printf '%s\n' "$FIXTURE_TMUX_SERVER" ;;
   *"#{window_id}"*) printf '%s\n' '@7' ;;
   *"#{pane_current_path}"*) printf '%s\n' "$FIXTURE_TMUX_PATH" ;;
-  *"#{pane_current_command}"*) printf '%s\n' claude ;;
+  *"#{pane_current_command}"*) printf '%s\n' "${FIXTURE_TMUX_COMMAND:-claude}" ;;
   *) exit 1 ;;
 esac
 REALTMUX
   chmod +x "$REAL_TMUX_BIN/tmux"
-  # shellcheck disable=SC2046
-  stop_at "$TRANSCRIPT" false $(overseer_env) "PATH=$REAL_TMUX_BIN:$PATH" \
-    "FIXTURE_TMUX_SERVER=$OVERSEER_SERVER" "FIXTURE_TMUX_PATH=$LANE" \
-    "ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=1"
-  expect 2 "lane-mail-check: context=600000" \
-    "a real hook returns an available context mark before a slow capacity sweep reaches its ceiling"
-  assert_eq "$(jq -r '"\(.tokens) \(.window) \(.pane_key)"' "$LANE/tmp/lane-mail/overseer/context.json" 2>/dev/null)" \
-    "600000 1000000 $OVERSEER_SERVER $OVERSEER_PANE" \
-    "the reading judged is the one this hook took, recorded for this pane's harness and model"
+  # The real judge handles a node pane before slow capacity or a stored identity.
+  mkdir -p "$LANE/.codex/skills"
+  ln -s "$LANE/.claude/skills/orch" "$LANE/.codex/skills/orch"
+  install_hook "$VARIANT_PATH" "$LANE/.codex/hooks/lane-mail-check.sh"
+  usage_line codex 400000 > "$TRANSCRIPT"
+  REAL_SUCCEED="$LANE/.claude/skills/orch/scripts/oversee-succeed"
+  EARLY_RESULT='if [[ "$MODE" == check && "$CONTEXT_STATE" == due ]]; then'
+  assert_eq "$(grep -cF -- "$EARLY_RESULT" "$REAL_SUCCEED")" 1 'the context-order control finds its result once'
+  HOOK="$REAL_SUCCEED" variant context-after-identity \
+    -e 's/if \[\[ "$MODE" == check \&\& "$CONTEXT_STATE" == due \]\]; then/if [[ "$MODE" == check \&\& "$CONTEXT_STATE" == due \&\& 0 == 1 ]]; then/'
+  REAL_MV="$(command -v mv)"
+  cat > "$REAL_TMUX_BIN/mv" <<'FAILWRITE'
+#!/usr/bin/env bash
+case "$FIXTURE_WRITE:${!#}" in
+  failed:*/context.json) printf '%s\n' 'fixture context write failed' >&2; exit 1 ;;
+esac
+exec "$FIXTURE_REAL_MV" "$@"
+FAILWRITE
+  chmod +x "$REAL_TMUX_BIN/mv"
+  while IFS='|' read -r writer judge expected; do
+    rm -f -- "${REAL_SUCCEED:?}" "${LANE:?}/tmp/lane-mail/overseer/context.json"
+    cp "$judge" "$REAL_SUCCEED"
+    chmod +x "$REAL_SUCCEED"
+    # shellcheck disable=SC2046
+    stop_at "$TRANSCRIPT" false $(overseer_env) "PATH=$REAL_TMUX_BIN:$PATH" \
+      "FIXTURE_TMUX_SERVER=$OVERSEER_SERVER" "FIXTURE_TMUX_PATH=$LANE" \
+      FIXTURE_TMUX_COMMAND=node "FIXTURE_REAL_MV=$REAL_MV" "FIXTURE_WRITE=$writer" ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=1
+    record=none
+    [[ ! -f "$LANE/tmp/lane-mail/overseer/context.json" ]] || \
+      record="$(jq -r '"\(.tokens) \(.window) \(.pane_key)"' "$LANE/tmp/lane-mail/overseer/context.json")"
+    assert_eq "$RC|$(first_line)|$(grep -c '^fixture context write failed$' "$ERR_FILE")|$(grep -c '^oversee-succeed: harness-unnamed ' "$ERR_FILE")|$record" \
+      "$expected" "actual marks: writer=$writer judge=${judge##*/} preserves the live due reading"
+  done <<ROWS
+kept|$REPO_ROOT/skills/orch/scripts/oversee-succeed|2|lane-mail-check: context=400000|0|0|400000 258400 $OVERSEER_SERVER $OVERSEER_PANE
+failed|$REPO_ROOT/skills/orch/scripts/oversee-succeed|2|lane-mail-check: context=400000|1|0|none
+failed|$VARIANT_PATH|0|lane-mail-check: marks=unjudged|1|1|none
+ROWS
+  write_transcript "$TRANSCRIPT" 600000
 
   variant short-judge -e 's@^ACCOUNT_CEILING=20$@ACCOUNT_CEILING=1@'
   new_overseer overseer_ceiling

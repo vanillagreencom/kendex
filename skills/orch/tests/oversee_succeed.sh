@@ -138,14 +138,9 @@ source "$SRC_DIR/lib/lane-launch.sh"
 # by the row that pins the pick's bound. See § the pick reading.
 # shellcheck source=../scripts/lib/lane-context.sh
 source "$SRC_DIR/lib/lane-context.sh"
-# The reading the overseer's own turn-end hook takes for each screen below,
-# `<harness> <tokens> <window> <model>`, empty for a screen whose session has
-# taken none. The screens stay on the pane only as what it draws. The hook
-# records the reading, which the script reads for the harness and model alone,
-# and hands the figure in as --context, which every judging run below is given
-# unless the row sets NO_CONTEXT. Every row judges at CONTEXT_PCT, 50 unless the
-# row names another, so the 1M reading at 520000 is past the mark and at 100000
-# under it.
+# Fixture readings are <harness> <tokens> <window> <model>, empty before a turn.
+# The record supplies identity; the wrapper passes --context unless NO_CONTEXT.
+# CONTEXT_PCT defaults to 50. Production never reads these drawn screens.
 screen_reading() { # SCREEN
   case "$1" in
     "$MARK") echo 'claude 520000 1000000 claude-fable-5-1' ;;
@@ -966,7 +961,7 @@ new_caller "$MARK"
 BEFORE_LINE="$(recorded_line)"
 run_succeed checkcontext '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)|$(recorded claude)" \
-  "0|oversee-succeed: mark-reached kind=context value=520000 mark=50 succession=on headroom=80 window=1000000|0|yes|none" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=50 succession=on headroom=unreadable window=1000000|0|yes|none" \
   "--check-marks at the context mark: the mark is reported, nothing is launched"
 assert_eq "$(recorded_line)" "$BEFORE_LINE" \
   "and the fleet state keeps the launch line it had: a judgement records none"
@@ -1234,43 +1229,8 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
 new_caller "$MARK"
 SUCCESSION=off run_succeed checkoff '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
-  "0|oversee-succeed: mark-reached kind=context value=520000 mark=50 succession=off headroom=80 window=1000000|0|yes" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=50 succession=off headroom=unreadable window=1000000|0|yes" \
   "--check-marks with succession off still judges, and says the setting is off"
-
-# The context mark is ORCH_HANDOFF_CONTEXT_PCT, the one the lane turn-end hook
-# judges. A reading past one share of its window and under a raised one reaches
-# the mark only where the setting is read, so a mark hard-coded here reddens
-# this.
-new_caller "$MARK"
-CONTEXT_PCT=60 run_succeed checkraised '' --check-marks
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: mark-reached kind=context value=520000 mark=60 succession=on headroom=80 window=1000000|0" \
-  "a raised percentage keeps the absolute cap"
-new_caller "$MARK"
-CONTEXT_PCT=40 run_succeed checklowered '' --check-marks
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: mark-reached kind=context value=520000 mark=40 succession=on headroom=80 window=1000000|0" \
-  "and one the setting lowers is reported against the value that was set"
-
-# The mark is read through `orch-env`, which owns the ladder AND the fallback:
-# a value it cannot read as a number falls back to the default, 90, which is
-# what the turn-end hook then judges at. Reading the variable here instead
-# would keep the value orch-env dropped, and the two would judge one overseer at
-# two marks. A leading zero is the value orch-env passes through and bash
-# arithmetic reads as octal, so that one is refused rather than reinterpreted,
-# and so is a share past the whole window.
-new_caller "$MARK"
-CONTEXT_PCT=percent run_succeed contextfallback '' --check-marks
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: mark-reached kind=context value=520000 mark=90 succession=on headroom=80 window=1000000|0" \
-  "a context mark orch-env cannot read falls back to the default both readers use"
-for CONTEXT_GUARD in 050 101; do
-  new_caller "$MARK"
-  CONTEXT_PCT="$CONTEXT_GUARD" run_succeed contextguard '' --check-marks
-  assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-    "1|oversee-succeed: invalid-context-mark ORCH_HANDOFF_CONTEXT_PCT=$CONTEXT_GUARD|0" \
-    "a context mark of $CONTEXT_GUARD, outside whole percents 1 to 100: refused, nothing judged"
-done
 
 # A reading that could not be taken is not a mark that did not fire, and only
 # `check` tells them apart: the watch holds a standing mark across such a pass,
@@ -1287,7 +1247,7 @@ new_caller "$MARK"
 LANE_DIRS="$H/.openclaude" CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.openclaude" \
   run_succeed checkunmeasuredpast '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: mark-reached kind=context value=520000 mark=50 succession=on headroom=none window=1000000|0" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=50 succession=on headroom=unreadable window=1000000|0" \
   "and a context mark that fired outranks it: a mark the caller must act on is reported"
 
 # A reading whose window its adapter could not name: the context mark could not
@@ -1303,50 +1263,57 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "0|oversee-succeed: context-below-mark tokens=82000 window=200000 mark=50 headroom=80|0" \
   "a 200k window this reader DID measure is judged, a below-mark answer under the share"
 
-# The share the package ships, on the smallest window a harness here runs: a
-# codex overseer at 90 percent of 258400 tokens has reached its mark, a figure
-# the absolute 500000 this replaced never reached before the harness compacted.
+# Exact equality with the default percentage still leaves room.
 new_caller "$CODEX_AT_MARK" 'Context 10% left'
 CONTEXT_PCT=90 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codexatmark '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "0|oversee-succeed: context-below-mark tokens=232560 window=258400 mark=90 headroom=80|0" \
   "a codex overseer at exactly 90 percent of its 258400 window has room"
 
-# Readings arrive through the real --context argument used by the hook.
-while IFS='|' read -r reading mark key; do
-  new_caller "$UNDER_MARK"
+# The real hook's --context input: independent limits, settings resolution,
+# and a node pane with no recorded identity. Only due checks skip identity.
+while IFS='|' read -r pane reading mark expected; do
+  if [[ "$pane" == node ]]; then
+    new_caller "$NO_CONTEXT" "$NO_CONTEXT" "cat '$TMP_ROOT/caller.screen'; exec '$BIN/node' 100000"
+  else
+    new_caller "$UNDER_MARK"
+  fi
+  [[ "$pane" != foreign ]] || record_caller "$UNDER_MARK" '%999'
   CONTEXT_PCT="$mark" run_succeed independentcontext '' --check-marks --context "$reading"
-  assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" "0|oversee-succeed: $key|0" \
-    "the real context caller judges $reading at requested percent $mark"
+  assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" "${expected//PANE/$CALLER_PANE}|0" \
+    "the $pane caller judges $reading at requested percent $mark"
 done <<'ROWS'
-399999:1000000|90|context-below-mark tokens=399999 window=1000000 mark=90 headroom=80
-400000:1000000|90|mark-reached kind=context value=400000 mark=90 succession=on headroom=80 window=1000000
-400000:|90|mark-reached kind=context value=400000 mark=90 succession=on headroom=80 window=
-399999:|90|mark-unmeasured kind=context reason=window-unnamed succession=on
-180000:200000|100|context-below-mark tokens=180000 window=200000 mark=90 headroom=80
-180001:200000|100|mark-reached kind=context value=180001 mark=90 succession=on headroom=80 window=200000
-160000:200000|80|context-below-mark tokens=160000 window=200000 mark=80 headroom=80
-160001:200000|80|mark-reached kind=context value=160001 mark=80 succession=on headroom=80 window=200000
+record|520000:1000000|60|0|oversee-succeed: mark-reached kind=context value=520000 mark=60 succession=on headroom=unreadable window=1000000
+record|520000:1000000|40|0|oversee-succeed: mark-reached kind=context value=520000 mark=40 succession=on headroom=unreadable window=1000000
+record|520000:1000000|percent|0|oversee-succeed: mark-reached kind=context value=520000 mark=90 succession=on headroom=unreadable window=1000000
+record|520000:1000000|050|1|oversee-succeed: invalid-context-mark ORCH_HANDOFF_CONTEXT_PCT=050
+record|520000:1000000|101|1|oversee-succeed: invalid-context-mark ORCH_HANDOFF_CONTEXT_PCT=101
+record|399999:1000000|90|0|oversee-succeed: context-below-mark tokens=399999 window=1000000 mark=90 headroom=80
+record|400000:1000000|90|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=1000000
+record|400000:|90|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=
+record|399999:|90|0|oversee-succeed: mark-unmeasured kind=context reason=window-unnamed succession=on
+record|180000:200000|100|0|oversee-succeed: context-below-mark tokens=180000 window=200000 mark=90 headroom=80
+record|180001:200000|100|0|oversee-succeed: mark-reached kind=context value=180001 mark=90 succession=on headroom=unreadable window=200000
+record|160000:200000|80|0|oversee-succeed: context-below-mark tokens=160000 window=200000 mark=80 headroom=80
+record|160001:200000|80|0|oversee-succeed: mark-reached kind=context value=160001 mark=80 succession=on headroom=unreadable window=200000
+node|400000:1000000|90|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=1000000
+node|400000:|90|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=
+node|232561:258400|90|0|oversee-succeed: mark-reached kind=context value=232561 mark=90 succession=on headroom=unreadable window=258400
+node|232560:258400|90|1|oversee-succeed: harness-unnamed pane=PANE
+node|399999:|90|1|oversee-succeed: harness-unnamed pane=PANE
+foreign|100000:1000000|50|1|oversee-succeed: harness-unnamed pane=PANE
 ROWS
 
-# No stored reading is ever judged. A run handed no --context, which is every
-# watch pass, judges the account triggers alone, so a session restarted by hand
-# in this pane, or reset in place, is never judged on the at-mark figure the
-# record in the overseer mailbox still holds for the pane.
-new_caller "$MARK"
-NO_CONTEXT=1 run_succeed stored '' --check-marks
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: account-below-mark headroom=80|0" \
-  "a record at the mark for this very pane is not judged without a reading handed in"
-
-# A succession handed no reading judges no context mark, so an overseer past it
-# whose account marks are all below is told its context went unread, never
-# that no mark is reached: the route is the command its refusal names.
-new_caller "$MARK"
-NO_CONTEXT=1 run_succeed unread 'claude:1:high'
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
-  "0|oversee-succeed: context-unmeasured reason=context-unread headroom=80|0|none" \
-  "a succession handed no reading at the context mark alone launches nothing and says its context went unread"
+# A stored due reading never supplies context to either judging mode.
+while IFS='|' read -r check expected; do
+  new_caller "$MARK"
+  NO_CONTEXT=1 run_succeed stored '' ${check:+"$check"}
+  assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
+    "0|oversee-succeed: $expected|0|none" "a stored due reading launches nothing in ${check:-succession}"
+done <<'ROWS'
+--check-marks|account-below-mark headroom=80
+|context-unmeasured reason=context-unread headroom=80
+ROWS
 
 # The reading is TOKENS:WINDOW as the hook writes it, and only a judging run
 # takes one.
@@ -1360,15 +1327,6 @@ for row in "badcontext|--check-marks --context 12|1|oversee-succeed: invalid-con
   assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "$row_rc|$row_first" "$row_name: $row_first"
 done
 
-# The record answers for the harness of a pane whose command names none only
-# where it names this very pane: one another pane left names nothing here.
-new_caller "$MARK"
-record_caller "$MARK" '%999'
-run_succeed otherpane '' --check-marks
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "1|oversee-succeed: harness-unnamed pane=$CALLER_PANE|0" \
-  "a record another pane left names no harness for this one"
-
 # --check-marks' one control: the judgement runs on past its own answer. It is
 # the launch path's own steps that follow, so a check that does not stop opens
 # a successor window and spends an account every pass the watch makes. The
@@ -1378,8 +1336,12 @@ awk -v line='if [[ "$MODE" == check ]]; then' \
   '$0 == line { print "if false; then"; hits++; next } { print }
    END { if (hits != 1) exit 1 }' "$SUCCEED" > "$CHECKCTL/oversee-succeed" \
   || { echo "fixture: checkctl found no single site to mutate" >&2; exit 1; }
-new_caller "$MARK"
+new_caller "$UNDER_MARK"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 SUCCEED_BIN="$CHECKCTL/oversee-succeed" run_succeed checkctl '' --check-marks
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(overseers)|$(caller_open)" \
   "0|1|no" "control: a judgement that does not stop opens a successor and closes the caller"
 

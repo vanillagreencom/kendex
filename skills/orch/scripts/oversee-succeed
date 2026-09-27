@@ -283,9 +283,9 @@
 #                    the window its model has, empty where no adapter named
 #                    one. Taken by the two modes that judge a mark and refused
 #                    beside the others
-#   --check-marks    Judge the triggers of step 2 against this overseer's own
-#                    pane and account, print the one keyed line that says what
-#                    they found, and stop there: no window is opened and
+#   --check-marks    Judge supplied context before pane or harness discovery.
+#                    A due reading returns its keyed result; otherwise judge
+#                    this overseer's account triggers. No window is opened and
 #                    nothing is launched. Lanes are picked only to judge
 #                    whether a qualifying mark has a successor that settles
 #                    it, and that judgement can refuse at exit 1 as the walk
@@ -458,8 +458,6 @@ case "${1:-}" in
   -h|--help) usage; exit 0 ;;
 esac
 
-[[ -n "${TMUX:-}" ]] || die tmux-missing var=TMUX
-
 # Every dependency writes its stderr here, one call at a time, so a refusal's
 # keyed line comes first and die relays the detail after it. Exported so the
 # settings load keeps it.
@@ -589,24 +587,6 @@ lane_account_id() { # DIR
 # Defaults are set after the settings load, which assigns any name.
 HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
 WAIT_SECS=60
-# The earlier-only context percentage, normalized for the shared rule:
-# ORCH_HANDOFF_CONTEXT_PCT, the one setting the lane's turn-end hook judges a
-# lane on (../references/oversee-events.md § Judgement rules), read through the
-# one script that resolves a setting for a workflow step. `orch-env` owns the
-# ladder AND the fallback, and reading the variable here instead would keep a
-# value it falls back on: the hook would judge at the default while this script
-# refused to run, so the watch would wake an overseer the succession then told
-# to keep running. Its range is lib/lane-context.sh's judge's to hold. Read only
-# where a mark is judged; the other modes launch on a death or a wall and judge
-# nothing.
-CONTEXT_PCT=""
-read_context_pct() {
-  CONTEXT_PCT="$("$SCRIPT_DIR/orch-env" ORCH_HANDOFF_CONTEXT_PCT 90 2>"$DEP_ERR")" \
-    || die settings-rejected "setting=ORCH_HANDOFF_CONTEXT_PCT"
-  local requested_pct="$CONTEXT_PCT"
-  CONTEXT_PCT="$(lane_context_handoff_pct "$requested_pct")" \
-    || die invalid-context-mark "ORCH_HANDOFF_CONTEXT_PCT=$requested_pct"
-}
 # Account headroom, in percent of the binding bucket, at or below which the
 # overseer succeeds itself. One number does two jobs: it is this mark, and it
 # is the floor no successor account may sit at or below. The default answers
@@ -703,9 +683,7 @@ JUDGES=0
 (( JUDGES || ! CONTEXT_GIVEN )) || die mode-conflict "mode=$MODE" "context=$CONTEXT_ARG"
 [[ "$MODE" != dead || -z "$HARNESS_ARG" ]] || die mode-conflict "mode=$MODE" "harness=$HARNESS_ARG"
 case "$HARNESS_ARG" in '' | claude | codex) ;; *) die invalid-harness "value=$HARNESS_ARG" ;; esac
-# The context reading, the one this session's turn-end hook just took and
-# nothing stored: `unjudged` where none was handed in, `unmeasured` where it
-# names no window, and judged below where it names one.
+# Only a supplied reading is judged; a stored record can name identity alone.
 tokens="" window="" CONTEXT_STATE=unjudged
 if (( CONTEXT_GIVEN )); then
   matches "$CONTEXT_ARG" '^(0|[1-9][0-9]*):([1-9][0-9]*)?$' || die invalid-context "value=$CONTEXT_ARG"
@@ -717,11 +695,6 @@ if (( JUDGES )); then
   WALL_MINUTES=$((10#$WALL_MINUTES))
   SUCCESSOR_ACCOUNTS=$((10#$SUCCESSOR_ACCOUNTS))
 fi
-# A pane of its own replaces the caller's, so only the modes reading the
-# caller's need $TMUX_PANE at all.
-[[ "$MODE" == dead || "$MODE" == walled || -n "${TMUX_PANE:-}" ]] \
-  || die tmux-missing var=TMUX_PANE
-
 # Printing a line launches nothing, so the setting that governs launching does
 # not gate it: an operator who turned succession off still wants the record
 # written, since it is what the owner's later relaunch by hand reads. Judging a
@@ -741,6 +714,34 @@ if [[ "$MODE" != print ]]; then
     exit 0
   fi
 fi
+
+# Resolve the hook's setting through orch-env before judging the live reading.
+# A due check needs no pane identity or successful record write.
+if (( JUDGES )); then
+  requested_pct="$("$SCRIPT_DIR/orch-env" ORCH_HANDOFF_CONTEXT_PCT 90 2>"$DEP_ERR")" \
+    || die settings-rejected "setting=ORCH_HANDOFF_CONTEXT_PCT"
+  CONTEXT_PCT="$(lane_context_handoff_pct "$requested_pct")" \
+    || die invalid-context-mark "ORCH_HANDOFF_CONTEXT_PCT=$requested_pct"
+fi
+if (( JUDGES )) && [[ "$CONTEXT_STATE" == unmeasured ]]; then
+  due_rc=0
+  due="$(lane_context_handoff_due "$tokens" "$window" "$CONTEXT_PCT")" || due_rc=$?
+  case "$due_rc" in
+    0) CONTEXT_STATE="$due" ;;
+    1) CONTEXT_STATE=unmeasured ;;
+    *) die invalid-context-mark "ORCH_HANDOFF_CONTEXT_PCT=$CONTEXT_PCT" ;;
+  esac
+fi
+if [[ "$MODE" == check && "$CONTEXT_STATE" == due ]]; then
+  message mark-reached kind=context "value=$tokens" "mark=$CONTEXT_PCT" \
+    "succession=$SUCCESSION" headroom=unreadable "window=$window"
+  exit 0
+fi
+[[ -n "${TMUX:-}" ]] || die tmux-missing var=TMUX
+# A pane of its own replaces the caller's, so only the modes reading the
+# caller's need $TMUX_PANE at all.
+[[ "$MODE" == dead || "$MODE" == walled || -n "${TMUX_PANE:-}" ]] \
+  || die tmux-missing var=TMUX_PANE
 
 # Whether a successor keeps the harness question tool: ORCH_QUESTION_TOOL,
 # decided by lib/lane-launch.sh for every overseer launcher. Off by default,
@@ -765,16 +766,10 @@ CALLER_WINDOW="$(tmux display-message -p -t "$CALLER_PANE" '#{window_id}' 2>"$DE
   || die pane-unreadable "pane=$CALLER_PANE"
 CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}' 2>"$DEP_ERR")" \
   || die pane-unreadable "pane=$CALLER_PANE"
-# The harness is the one --harness names, else the pane's foreground command.
-# The model its account buckets
-# are judged on, and the harness of a foreground command naming neither, an
-# agent-confine launcher, are the ones the reading this pane's turn-end hook
-# last recorded in the overseer mailbox names: a successor in another pane
-# never reads one its predecessor left, and one in this pane at worst takes its
-# predecessor's model until its first turn end. No context figure is taken from
-# that record. With no harness named either way the run refuses. A dead pane
-# runs no command and records nothing, so the recorded line answers for all of
-# it instead.
+# --harness precedes the pane command. A record for this pane supplies its
+# model and, for ambiguous commands, its harness. No stored count is judged.
+# A reused pane can retain its predecessor's model until its first turn end.
+# Dead mode instead reads the recorded launch line.
 CALLER_HARNESS="" CALLER_MODEL=""
 if [[ "$MODE" != dead ]]; then
   CALLER_CMD="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_command}' 2>"$DEP_ERR")" \
@@ -897,25 +892,9 @@ if (( JUDGES )); then
   elif (( WALL_MINUTES > 0 )) && [[ "$RATE_STATE" == measured ]] \
        && matches "$WALL_PROJECTED" '^[0-9]+$' && (( WALL_PROJECTED <= WALL_MINUTES )); then
     MARK_KIND=rate
+  elif [[ "$CONTEXT_STATE" == due ]]; then
+    MARK_KIND=context
   fi
-fi
-
-# The context mark, which the account mark does not wait on: an overseer with
-# room in its window and none in its account still has to move. The one judge is
-# lib/lane-context.sh's, which answers `due`, `room`, or exit 1 for a window
-# nobody named.
-(( ! JUDGES )) || read_context_pct
-if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
-  if [[ "$CONTEXT_STATE" == unmeasured ]]; then
-    due_rc=0
-    due="$(lane_context_handoff_due "$tokens" "$window" "$CONTEXT_PCT")" || due_rc=$?
-    case "$due_rc" in
-      0) CONTEXT_STATE="$due" ;;
-      1) CONTEXT_STATE=unmeasured ;;
-      *) die invalid-context-mark "ORCH_HANDOFF_CONTEXT_PCT=$CONTEXT_PCT" ;;
-    esac
-  fi
-  [[ "$CONTEXT_STATE" != due ]] || MARK_KIND=context
 fi
 
 # The preference names where a LATER successor goes; `print` records what THIS
@@ -1166,13 +1145,8 @@ if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
     exit 0
 fi
 
-# A mark is reached, and `check` ends here: its caller acts on the answer, so
-# this run opens no window and spends no account, and the lanes a qualifying
-# judgement picked served that judgement alone. The account
-# mark leads for the reason the walk below gives — an account at its trigger is
-# what the successor must not be opened on — and only its line names the
-# account, because at the context mark this overseer's account either has room
-# or was never measured.
+# A reached account mark ends `check`; a due context already returned above.
+# Actual succession keeps account priority when choosing a successor.
 if [[ "$MODE" == check ]]; then
   if [[ "$MARK_KIND" == headroom ]]; then
     message mark-reached kind=headroom "value=$CALLER_HEADROOM" "mark=$HEADROOM_TRIGGER" \
@@ -1180,12 +1154,9 @@ if [[ "$MODE" == check ]]; then
   elif [[ "$MARK_KIND" == rate ]]; then
     message mark-reached kind=rate "value=$WALL_PROJECTED" "mark=$WALL_MINUTES" \
       "succession=$SUCCESSION" "account=${CALLER_ACCOUNT:-unknown}"
-  elif [[ "$MARK_KIND" == qualifying ]]; then
+  else
     message mark-reached kind=qualifying "value=$QUALIFYING_TOTAL" "mark=$SUCCESSOR_ACCOUNTS" \
       "succession=$SUCCESSION" "headroom=$HEADROOM_FIELD"
-  else
-    message mark-reached kind=context "value=$tokens" "mark=$CONTEXT_PCT" \
-      "succession=$SUCCESSION" "headroom=$HEADROOM_FIELD" "window=$window"
   fi
   exit 0
 fi
