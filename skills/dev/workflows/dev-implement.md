@@ -60,7 +60,7 @@ gh issue view [N] --repo [OWNER/REPO] --json number,title,body,comments,labels,u
 
 Ad-hoc: no tracker reads.
 
-**If bundled with completed siblings**, read their comments too, all of them in one `linear.sh cache comments bulk-list [COMPLETED_SIBLING_ID_1] [COMPLETED_SIBLING_ID_2]` call, for handoff notes. A refusal carrying `missing` after the sync succeeded is the cache-initialization defect above; one carrying `path` is a corrupt cache file, which `linear.sh sync --full` repairs.
+**If bundled with completed siblings**, read their comments too, all of them in one `linear.sh cache comments bulk-list [COMPLETED_SIBLING_ID_1] [COMPLETED_SIBLING_ID_2]` call, for handoff notes. A refusal carrying `missing` names siblings the cache does not hold, because they are archived, deleted, mistyped or unsynced: stop and report those identifiers. One carrying `path` is a corrupt cache file, which `linear.sh sync --full` repairs.
 
 ### 2.2 Research Context
 
