@@ -288,19 +288,11 @@ struct Run {
     subject: &'static str,
 }
 
-/// The offer's keys at a terminal, in both renderings: a key takes its
-/// choice, `e` reads the message as a typed line where a backspace takes
-/// back a character, Enter leaves the files as diffs, and Escape cancels.
-/// A cancel keeps the write and the closing ledger, commits nothing, and
-/// exits 130; a leave exits as the verb does. The Enter typed after the
-/// consent's `y` does not answer the offer drawn after it. With stderr on
-/// a pipe the answers are typed lines, and one that picks nothing draws
-/// the choices again.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_offer_is_answered_by_its_keys() {
+/// The runs `the_offer_is_answered_by_its_keys` drives, one per way of
+/// answering.
+fn keyed_runs() -> [Run; 9] {
     let terminal = || pty::Stderr::Terminal;
-    let rows = [
+    [
         Run {
             what: "commit",
             args: &["apply", "--yes"],
@@ -347,6 +339,24 @@ fn the_offer_is_answered_by_its_keys() {
             subject: "files",
         },
         Run {
+            what: "cancel at the typed message",
+            args: &["apply", "--yes"],
+            rendering: "plain",
+            stderr: terminal,
+            steps: &[("[c]", "c"), ("[e]", "e\x1b")],
+            code: 130,
+            subject: "files",
+        },
+        Run {
+            what: "cancel at the typed message, stderr on a pipe",
+            args: &["apply"],
+            rendering: "plain",
+            stderr: || pty::Stderr::Pipe,
+            steps: &[("[y]", "y\n"), ("[c]", "c\n"), ("[e]", "e\n\x1b\n")],
+            code: 130,
+            subject: "files",
+        },
+        Run {
             what: "y and Enter at the consent, then the offer",
             args: &["apply"],
             rendering: "plain",
@@ -369,8 +379,22 @@ fn the_offer_is_answered_by_its_keys() {
             code: 0,
             subject: "chore: kendex apply",
         },
-    ];
-    for run in rows {
+    ]
+}
+
+/// The offer's keys at a terminal, in both renderings: a key takes its
+/// choice, `e` reads the message as a typed line where a backspace takes
+/// back a character, Enter leaves the files as diffs, and Escape cancels,
+/// at the offer and at the typed message alike, read raw or as a line.
+/// A cancel keeps the write and the closing ledger, commits nothing, and
+/// exits 130; a leave exits as the verb does. The Enter typed after the
+/// consent's `y` does not answer the offer drawn after it. With stderr on
+/// a pipe the answers are typed lines, and one that picks nothing draws
+/// the choices again.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_offer_is_answered_by_its_keys() {
+    for run in keyed_runs() {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = committed_without_packages(&home);
