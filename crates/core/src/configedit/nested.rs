@@ -7,7 +7,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{ensure_object, names, one};
+use super::{ensure_object, names, one, written};
 
 pub(super) fn upsert_hook(
     root: &mut Map<String, Value>,
@@ -93,7 +93,7 @@ pub(super) fn upsert_in(
             Some(handlers) => handlers.push(handler),
             None => {
                 let mut group = Map::new();
-                if let Some(matcher) = matcher.filter(|matcher| !matcher.is_empty()) {
+                if let Some(matcher) = written(matcher) {
                     group.insert("matcher".into(), Value::String(matcher.to_owned()));
                 }
                 group.insert("hooks".into(), Value::Array(vec![handler]));
@@ -101,9 +101,8 @@ pub(super) fn upsert_in(
             }
         }
     }
-    // Copilot CLI reads Claude's settings.json and refuses the whole file
-    // over an empty-string matcher. The absent key is match-all to every
-    // reader, so the group this registration holds never spells it as `""`.
+    // A group this registration holds that spells its matcher `""` is
+    // rewritten to the key `written` puts there, the absent one.
     for group in groups.iter_mut() {
         let holds_ours = names(group, one(matcher))
             && group
@@ -111,7 +110,10 @@ pub(super) fn upsert_in(
                 .and_then(Value::as_array)
                 .is_some_and(|handlers| handlers.iter().any(ours));
         if holds_ours
-            && group.get("matcher").and_then(Value::as_str) == Some("")
+            && group
+                .get("matcher")
+                .and_then(Value::as_str)
+                .is_some_and(|spelled| written(Some(spelled)).is_none())
             && let Some(group) = group.as_object_mut()
         {
             group.remove("matcher");

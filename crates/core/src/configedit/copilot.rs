@@ -5,7 +5,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{ensure_object, names, one};
+use super::{ensure_object, names, one, written};
 
 /// The schema version Copilot's hook loader expects a file to declare.
 const COPILOT_HOOK_VERSION: u64 = 1;
@@ -26,9 +26,8 @@ pub(super) fn upsert_copilot_hook(
         .as_array_mut()
         .ok_or("hook event is not an array")?;
     let mut entry = json!({"type": "command", "bash": command});
-    // Copilot's match-all is the absent key: it skips an entry whose
-    // matcher is the empty string, and its regex loader rejects `*`.
-    if let Some(matcher) = matcher.filter(|matcher| !matcher.is_empty()) {
+    // Its regex loader rejects `*`, so match-all is the absent key alone.
+    if let Some(matcher) = written(matcher) {
         entry["matcher"] = json!(matcher);
     }
     if let Some(timeout) = timeout {

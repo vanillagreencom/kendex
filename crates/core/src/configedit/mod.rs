@@ -463,9 +463,16 @@ fn gemini_add_context_file(root: &mut Map<String, Value>, name: &str) -> Result<
 /// spellings of the same thing passing each other by is how a hook came
 /// to be registered again beside itself on every refresh, for ever.
 pub(crate) fn spelled(matcher: Option<&str>) -> &str {
-    matcher
-        .filter(|matcher| !matcher.is_empty())
-        .unwrap_or(crate::scan::hooks::ANY_MATCHER)
+    written(matcher).unwrap_or(crate::scan::hooks::ANY_MATCHER)
+}
+
+/// The matcher key a writer puts in a registry, `None` for no key.
+///
+/// The absent key is match-all to every reader kendex writes for, and an
+/// empty one is not safe to write: Copilot skips an entry that carries
+/// one, and Copilot CLI refuses a whole `.claude/settings.json` over it.
+pub(super) fn written(matcher: Option<&str>) -> Option<&str> {
+    matcher.filter(|matcher| !matcher.is_empty())
 }
 
 /// Whether a matcher names this group or entry.
