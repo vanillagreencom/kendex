@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Tests for the launch record oversee-succeed reads for its caller: the
 # harness, account, model, effort and directory the fleet state's `overseer`
-# object records for the session a pane is, read ahead of that pane's status
-# line and account variables, with the record's `pending` successor never read
-# as the caller's own. Run over a real tmux server on a private socket, as
+# object records for the session a pane is, read ahead of --harness, that
+# pane's command, its context reading in the overseer mailbox and its account
+# variables, with the record's `pending` successor never read as the caller's
+# own. Run over a real tmux server on a private socket, as
 # oversee_succeed.sh is; claude, codex and kendex are stubs on PATH, and `lanes
 # pick` answers from the lanes-fixture usage bodies. The judgement and print
 # rows open nothing; the dead-pane relaunch rows and the pending-successor rows
@@ -26,9 +27,16 @@ SRC_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
 # shellcheck source=../scripts/lib/lane-launch.sh
 source "$TEST_DIR/../scripts/lib/lane-launch.sh"
 BYPASS="$(launch_choice_permission_write claude)" || { echo "fixture: no claude permission word in the launch table" >&2; exit 1; }
-# The question-tool words every successor line leads with, ORCH_QUESTION_TOOL
-# being off by default, quoted as the line spells them.
-QOFF="$(printf '%q' "$(launch_choice_question_off claude)")"
+# The words every claude successor line leads with, read from the launch table
+# the builder writes them from: its compaction setting for a model whose window
+# the table names, then the question-tool words, ORCH_QUESTION_TOOL being off by
+# default, quoted as the line spells them.
+launch_choice_lead_settings --question-off --model fable claude
+LEAD="$(printf '%q ' "${LAUNCH_CHOICE_KEPT[@]}")"
+LEAD="${LEAD% }"
+# The context reading a turn-end hook records in the overseer mailbox.
+# shellcheck source=../scripts/lib/lane-context.sh
+source "$TEST_DIR/../scripts/lib/lane-context.sh"
 
 TMP_ROOT="$(mktemp -d)"
 SOCK="oversee-succeed-record-$$"
@@ -45,7 +53,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN" "$TMP_ROOT/work/tmp"
 # A harness stub draws the hint a running turn shows, so a relaunched session
-# reads as working and no status line.
+# reads as working.
 for harness in claude codex; do
   printf '#!/bin/sh\necho "esc to interrupt"\nexec sleep 100000\n' > "$BIN/$harness"
 done
@@ -57,6 +65,9 @@ case "$1:$2:$3" in
 esac
 STUB
 chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex"
+# A caller whose foreground process names claude: a copy of sleep, since a
+# script or a shell named for the harness can reset the name tmux reads.
+cp "$(command -v sleep)" "$BIN/hclaude"
 
 new_home fleet
 make_lane "$H" claude
@@ -83,30 +94,26 @@ tm set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 SERVER_PID="$(tm display-message -p '#{pid}')"
 
-# A Fable status line well under the context mark, and the line a
-# stored-token session draws: no account parenthetical, which the status-line
-# reader does not parse, so such a session has only its record to answer.
-FABLE='  kendex (ken-1921) Fable 5.1 (1M context) 10% (fixture@example.com)     /rc'
-OPUS='  kendex (ken-1921) Opus 5 (1M context) 10% (fixture@example.com)     /rc'
-TOKEN_LINE='  kendex (ken-1921) Fable 5.1 20%'
 BRIEF='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
 
-# new_caller SCREEN — a caller pane at index 1 showing SCREEN; sets
-# CALLER_PANE. Its foreground process names no harness, so a pane whose screen
-# does not parse is refused unless something else names its harness.
+# new_caller [claude] — a caller pane at index 1, with no context reading yet;
+# sets CALLER_PANE. With `claude` its foreground process names claude; without,
+# it names no harness, as a Codex pane reading node or a stored-token session
+# started through a wrapper does, and only --harness, a context reading or a
+# record names it.
+MAILBOX_DIR="$TMP_ROOT/work/tmp/lane-mail/overseer"
 new_caller() {
-  local f="$TMP_ROOT/caller.screen" last
-  printf '%s\n' "$1" > "$f"
+  local cmd="exec sleep 100000"
+  [[ "${1:-}" != claude ]] || cmd="exec '$BIN/hclaude' 100000"
   tm kill-window -a -t fleet:0
-  CALLER_PANE="$(tm new-window -d -t fleet:1 -P -F '#{pane_id}' "cat '$f'; exec sleep 100000")"
-  last="$(sed -n '$p' "$f")"
-  last="${last#"${last%%[![:space:]]*}"}"
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    [[ "$(tm capture-pane -p -t "$CALLER_PANE")" != *"$last"* ]] || return 0
-    sleep 0.2
-  done
-  echo "fixture: caller pane never drew its screen" >&2
-  exit 1
+  rm -f -- "${MAILBOX_DIR:?}/$LANE_CONTEXT_RECORD"
+  CALLER_PANE="$(tm new-window -d -t fleet:1 -P -F '#{pane_id}' "$cmd")"
+}
+# reading MODEL — the context reading the caller's own turn-end hook records in
+# the overseer mailbox for this pane, naming MODEL, well under the context mark.
+reading() {
+  mkdir -p "$MAILBOX_DIR"
+  lane_context_record "$MAILBOX_DIR" claude 100000 1000000 "$1" "" "$SERVER_PID $CALLER_PANE"
 }
 
 FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
@@ -155,7 +162,7 @@ judged() {
   key="${first#oversee-succeed: }"
   key="${key%% *}"
   case "$key" in
-    context-below-mark) fields="$(grep -o 'headroom=[^ ]*' <<<"$first")" ;;
+    account-below-mark) fields="$(grep -o 'headroom=[^ ]*' <<<"$first")" ;;
     mark-reached) fields="$(grep -o 'kind=[^ ]*' <<<"$first") $(grep -o 'value=[^ ]*' <<<"$first")" ;;
     *) fields="${first#oversee-succeed: "$key" }" ;;
   esac
@@ -165,21 +172,21 @@ judged() {
 echo "=== oversee-succeed: the caller's launch record ==="
 
 # --- the judgement --------------------------------------------------------
-# Each row names every source that disagrees: the pane's status line, the
-# account variable, the overseer mailbox, the current record and the pending
-# successor. The overseer mailbox is read for identity by nothing, and the
-# row that fills it pins that no reader starts to.
+# Each row names every source that disagrees: the context reading in the
+# overseer mailbox, the account variable, a note in that mailbox, the current
+# record and the pending successor.
 MAILBOX="$TMP_ROOT/work/tmp/lane-mail/overseer/to-lane.jsonl"
 for row in \
-  "none|$FABLE|CLAUDE_CONFIG_DIR=$H/.claude|-|context-below-mark headroom=90|no record: the pane's model and the environment's account decide" \
-  "this:$H/.eclaude:fable|$FABLE|CLAUDE_CONFIG_DIR=$H/.claude|-|mark-reached kind=headroom value=5|the record's account decides over the environment's" \
-  "this:$H/.claude:claude-opus-5|$FABLE|CLAUDE_CONFIG_DIR=$H/.claude|-|mark-reached kind=headroom value=1|the record's model decides over the status line's" \
-  "this:$H/.claude:fable:pending|$OPUS|CLAUDE_CONFIG_DIR=$H/.eclaude|mail|context-below-mark headroom=90|a pending successor, the pane, the environment and the mailbox all disagree: the current record decides" \
-  "other:$H/.eclaude:claude-opus-5|$FABLE|CLAUDE_CONFIG_DIR=$H/.claude|-|context-below-mark headroom=90|a record naming another session is not this one's: the bootstrap readings decide" \
-  "otherserver:$H/.eclaude:claude-opus-5|$FABLE|CLAUDE_CONFIG_DIR=$H/.claude|-|context-below-mark headroom=90|a record naming this pane id on another tmux server is not this one's" \
+  "none|Fable 5.1|CLAUDE_CONFIG_DIR=$H/.claude|-|account-below-mark headroom=90|no record: the reading's model and the environment's account decide" \
+  "this:$H/.eclaude:fable|Fable 5.1|CLAUDE_CONFIG_DIR=$H/.claude|-|mark-reached kind=headroom value=5|the record's account decides over the environment's" \
+  "this:$H/.claude:claude-opus-5|Fable 5.1|CLAUDE_CONFIG_DIR=$H/.claude|-|mark-reached kind=headroom value=1|the record's model decides over the reading's" \
+  "this:$H/.claude:fable:pending|Opus 5|CLAUDE_CONFIG_DIR=$H/.eclaude|mail|account-below-mark headroom=90|a pending successor, the reading, the environment and a mailbox note all disagree: the current record decides" \
+  "other:$H/.eclaude:claude-opus-5|Fable 5.1|CLAUDE_CONFIG_DIR=$H/.claude|-|account-below-mark headroom=90|a record naming another session is not this one's: the bootstrap readings decide" \
+  "otherserver:$H/.eclaude:claude-opus-5|Fable 5.1|CLAUDE_CONFIG_DIR=$H/.claude|-|account-below-mark headroom=90|a record naming this pane id on another tmux server is not this one's" \
   ; do
-  IFS='|' read -r row_record row_screen row_lane row_mail row_want row_what <<<"$row"
-  new_caller "$row_screen"
+  IFS='|' read -r row_record row_reading row_lane row_mail row_want row_what <<<"$row"
+  new_caller claude
+  reading "$row_reading"
   rm -f -- "$MAILBOX"
   if [[ "$row_mail" == mail ]]; then
     mkdir -p "$(dirname "$MAILBOX")"
@@ -197,18 +204,19 @@ for row in \
 done
 
 # A state that cannot be read is said, and the bootstrap readings judge.
-new_caller "$FABLE"
+new_caller claude
+reading "Fable 5.1"
 printf '{"issue_id": "oversee", "overseer": \n' > "$FLEET_STATE"
 run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
 assert_eq "$RC|$(judged)|$(grep -c "^oversee-succeed: record-unread pane=$CALLER_PANE\$" <<<"$ERR")" \
-  "0|context-below-mark headroom=90|1" \
+  "0|account-below-mark headroom=90|1" \
   "--check-marks on an unreadable state: record-unread, and the pane and environment judge"
 
 # A print on an unreadable state gives the same notice on stderr and the line
 # alone on stdout, which is all the watch start records.
 run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS"
 assert_eq "$RC|$OUT|$(sed -n 1p <<<"$ERR")" \
-  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $QOFF $BYPASS '$BRIEF'|oversee-succeed: record-unread pane=$CALLER_PANE" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $LEAD $BYPASS '$BRIEF'|oversee-succeed: record-unread pane=$CALLER_PANE" \
   "--print-launch-line on an unreadable state: the notice on stderr, the line alone on stdout"
 
 # The control for the pending rule: a reader that takes the pending successor
@@ -218,7 +226,8 @@ PENDCTL="$(mutant_scripts pendctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$PENDCTL/lib/overseer-launch.sh" \
   'then ol_identity | map(' \
   'then (.pending // .) | ol_identity | map('
-new_caller "$FABLE"
+new_caller claude
+reading "Fable 5.1"
 state "$(record "$CALLER_PANE" "$H/.claude" fable "$PENDING")"
 SUCCEED_BIN="$PENDCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
 assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
@@ -228,41 +237,59 @@ assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none 
 # another tmux server's record, whose pane ids restart at %0, as this one's.
 SERVERCTL="$(mutant_scripts serverctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$SERVERCTL/lib/overseer-launch.sh" 'type == "object" and (.server // "") == $server' 'type == "object"'
-new_caller "$FABLE"
+new_caller claude
+reading "Fable 5.1"
 state "$(record "$CALLER_PANE" "$H/.eclaude" claude-opus-5 '{"server": "1"}')"
 SUCCEED_BIN="$SERVERCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
 assert_eq "$RC|$(judged)" "0|mark-reached kind=headroom value=5" \
   "control: a test on the pane id alone judges the caller on another server's record" "$TMP_ROOT/err"
 
+# The record names the harness ahead of --harness, which is the watch's
+# bootstrap input for a pane that cannot say.
+harness_row() { # [SUCCEED_BIN]
+  new_caller
+  state "$(record "$CALLER_PANE" "$H/.eclaude" fable)"
+  SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks --harness codex
+}
+harness_row
+assert_eq "$RC|$(judged)" "0|mark-reached kind=headroom value=5" \
+  "--check-marks: the record's harness decides over --harness" "$TMP_ROOT/err"
+HARNESSCTL="$(mutant_scripts harnessctl oversee-succeed)" || exit 1
+mutate_file "$HARNESSCTL/oversee-succeed" '  if [[ -n "$OL_CUR_HARNESS" ]]; then' '  if false; then'
+harness_row "$HARNESSCTL/oversee-succeed"
+assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
+  "control: a caller that takes --harness over its record judges the record's account as a codex lane" "$TMP_ROOT/err"
+
 # The control for the model rule: a caller that ignores the record's model is
-# judged on the status line's.
+# judged on the reading's.
 MODELCTL="$(mutant_scripts modelctl oversee-succeed)" || exit 1
 mutate_file "$MODELCTL/oversee-succeed" \
-  '[[ -z "$OL_CUR_MODEL" ]] || CALLER_MODEL=' \
-  '[[ -n "$OL_CUR_MODEL" ]] || CALLER_MODEL='
-new_caller "$FABLE"
+  '"${OL_CUR_MODEL:-$reading_model}"' \
+  '"$reading_model"'
+new_caller claude
+reading "Fable 5.1"
 state "$(record "$CALLER_PANE" "$H/.claude" claude-opus-5)"
 SUCCEED_BIN="$MODELCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
-assert_eq "$RC|$(judged)" "0|context-below-mark headroom=90" \
-  "control: a caller that ignores the record's model is judged on the status line's" "$TMP_ROOT/err"
+assert_eq "$RC|$(judged)" "0|account-below-mark headroom=90" \
+  "control: a caller that ignores the record's model is judged on the reading's" "$TMP_ROOT/err"
 
 # --- the line a watch records at its start --------------------------------
-# A stored-token session: its status line names no account, the reader parses
-# none of it, and a pane nothing recorded is refused as before.
-new_caller "$TOKEN_LINE"
+# A pane that names no harness, with no reading yet: nothing recorded, it is
+# refused as before.
+new_caller
 state none
 run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS"
-assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: no-status-line pane=$CALLER_PANE" \
-  "--print-launch-line with no record and no readable status line keeps its refusal"
+assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: harness-unnamed pane=$CALLER_PANE" \
+  "--print-launch-line with no record and a pane naming no harness keeps its refusal"
 # The same pane with a record: the harness, account, model and effort are the
 # record's, the permission word the caller's own flags, and the pending
 # successor changes none of it.
-RECORD_LINE="env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer --model fable --effort high $QOFF $BYPASS '$BRIEF'"
+RECORD_LINE="env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer --model fable --effort high $LEAD $BYPASS '$BRIEF'"
 for pending in '{}' "$PENDING"; do
   state "$(record "$CALLER_PANE" "$H/.eclaude" fable "$pending")"
   run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS" --model opus --effort low
   assert_eq "$RC|$OUT" "0|$RECORD_LINE" \
-    "--print-launch-line on a stored-token pane takes its record's identity ($( [[ "$pending" == '{}' ]] && echo 'no pending successor' || echo 'a pending successor standing'))" \
+    "--print-launch-line on a pane naming no harness takes its record's identity ($( [[ "$pending" == '{}' ]] && echo 'no pending successor' || echo 'a pending successor standing'))" \
     "$TMP_ROOT/err"
 done
 
@@ -272,14 +299,14 @@ PAIRCTL="$(mutant_scripts pairctl oversee-succeed)" || exit 1
 mutate_file "$PAIRCTL/oversee-succeed" '[[ "$chosen" == caller && -z "$model" ]]' '[[ "$chosen" == caller ]]'
 state "$(record "$CALLER_PANE" "$H/.eclaude" fable)"
 SUCCEED_BIN="$PAIRCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS" --model opus --effort low
-assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer --model fable --effort high $QOFF $BYPASS --model opus --effort low '$BRIEF'" \
+assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer --model fable --effort high $LEAD $BYPASS --model opus --effort low '$BRIEF'" \
   "control: a caller entry that keeps its flags beside the record's pair names two models" "$TMP_ROOT/err"
 
 # --- a dead-pane relaunch -------------------------------------------------
 # The relaunched session is identified by the record of the line it replays:
 # the pending successor's where that is the line, the dead session's own
-# otherwise. Its first watch start then prints a line on a pane whose screen
-# names nothing, as a stored-token session's does.
+# otherwise. Its first watch start then prints a line on a pane whose command
+# names no harness and which has no reading yet.
 DEAD_LINE="claude -n overseer 'relaunched from the record'"
 printf '%s\n' "$DEAD_LINE" > "$TMP_ROOT/line-file"
 # dead_relaunch EXTRA_JSON [SUCCEED_BIN] — a dead pane the record names with
@@ -288,7 +315,8 @@ printf '%s\n' "$DEAD_LINE" > "$TMP_ROOT/line-file"
 # SUCC_CWD to the successor pane's.
 dead_relaunch() {
   local dead
-  new_caller "$FABLE"
+  new_caller claude
+reading "Fable 5.1"
   dead="$(tm new-window -d -t fleet:5 -P -F '#{pane_id}' 'exec sleep 100000')"
   DEAD_PANE_CWD="$(tm display-message -p -t "$dead" '#{pane_current_path}')"
   state "$(record "$dead" "$H/.eclaude" fable "$1")"
@@ -313,7 +341,7 @@ for row in \
     "0|claude $row_account $row_model $row_effort none" \
     "--dead-pane over $row_what records the identity that line was built with" "$TMP_ROOT/err"
   print_on_successor
-  assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$row_account' claude -n overseer --model $row_model --effort $row_effort $QOFF $BYPASS '$BRIEF'" \
+  assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$row_account' claude -n overseer --model $row_model --effort $row_effort $LEAD $BYPASS '$BRIEF'" \
     "and the relaunched session's own print over $row_what reads its record" "$TMP_ROOT/err"
 done
 # The control: a relaunch that records no identity leaves its session's print
@@ -322,7 +350,7 @@ DEADCTL="$(mutant_scripts deadctl oversee-succeed)" || exit 1
 mutate_file "$DEADCTL/oversee-succeed" '! ol_record_line_identity "$cmd"; then' '! ol_identity "" "" "" "" "" ""; then'
 dead_relaunch "$OWN" "$DEADCTL/oversee-succeed"
 print_on_successor
-assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: no-status-line pane=$SUCC_PANE" \
+assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: harness-unnamed pane=$SUCC_PANE" \
   "control: a relaunch that records no identity leaves the next print refused"
 # A relaunch of a pending successor opens in the directory that successor was
 # built for, the one its record then names, not the dead pane's own.
@@ -359,14 +387,15 @@ pending_run() {
 [[ "\$1 \$2 \$3" != "set oversee overseer.pending" ]] || jq -c .overseer "$FLEET_STATE" > "$TMP_ROOT/pending.snap"
 STUB
   chmod +x "$dir/workflow-state"
-  new_caller "$FABLE"
+  new_caller claude
+reading "Fable 5.1"
   CALLER_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
   state "$(record "$CALLER_PANE" "$H/.eclaude" fable "$(jq -cn --arg cwd "$RECORDED_CWD" '{cwd: $cwd}')")"
   SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:1:low run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$BYPASS"
   SNAP="$(cat -- "$TMP_ROOT/pending.snap" 2>/dev/null || echo none)"
   SUCC_CWD="$(tm display-message -p -t "$(jq -r '.overseer.pane' "$FLEET_STATE")" '#{pane_current_path}')"
 }
-SUCC_LINE="env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable-next --effort low $QOFF $BYPASS '$BRIEF'"
+SUCC_LINE="env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable-next --effort low $LEAD $BYPASS '$BRIEF'"
 pending_run "$(mutant_scripts pendingrun)"
 assert_eq "$RC|$(jq -r '.pending | [.launch_line, .harness, .account, .model, .effort, .cwd] | join("|")' <<<"$SNAP")" \
   "0|$SUCC_LINE|claude|$H/.claude|fable-next|low|$RECORDED_CWD" \
@@ -394,7 +423,8 @@ assert_eq "$RC|$SUCC_CWD" "0|$CALLER_CWD" \
 # the trigger fires the headroom mark, and on the record's Opus the caller
 # entry finds no claude account with room, where the pane and the environment
 # alone would have kept this session running on .claude.
-new_caller "$FABLE"
+new_caller claude
+reading "Fable 5.1"
 state "$(record "$CALLER_PANE" "$H/.eclaude" claude-opus-5)"
 run_succeed "CLAUDE_CONFIG_DIR=$H/.claude"
 assert_eq "$RC|$(sed -n 1p <<<"$ERR" | grep -o '^oversee-succeed: no-lane-qualifies .* mark=headroom')|$(tm list-windows -t fleet -F '#{window_name}' | grep -c '^overseer$' || true)" \

@@ -42,14 +42,14 @@
 #   Every mode but `--dead-pane` reads the caller's LAUNCH RECORD first: the
 #   fleet state's `overseer` object (schemas/workflow-state.md § Oversee
 #   state), where it names the caller pane on this tmux server. The harness,
-#   account, model and directory it names are taken ahead of the pane's status
-#   line and the account variables, which answer only for a session nothing has
-#   recorded and for a fact its record leaves unknown; `--check-marks` reads
-#   the harness, account and model. A record naming a model gives the caller's
-#   successor that model and effort as one pair, in place of the pair the
-#   flags after -- spell; with no model, the flags keep theirs. The status line
-#   still gives the context reading. The
-#   record's `pending` member, the successor a succession wrote before its
+#   account, model and directory it names are taken ahead of --harness, the
+#   pane command, the pane's context reading and the account variables, which
+#   answer only for a session nothing has recorded and for a fact its record
+#   leaves unknown; `--check-marks` reads the harness, account and model. A
+#   record naming a model gives the caller's successor that model and effort
+#   as one pair, in place of the pair the flags after -- spell; with no model,
+#   the flags keep theirs. The context mark still rests on --context alone.
+#   The record's `pending` member, the successor a succession wrote before its
 #   launch, is never read as the caller's own.
 #
 #   Its CALLER confirms the wall before calling this. `oversee-watch` does so
@@ -326,7 +326,7 @@
 #                    launched with — the caller's own harness, its own lane,
 #                    the flags after --, and the brief naming --handoff, each
 #                    as its launch record answers where one names this pane,
-#                    so a session whose status line reads nothing is still
+#                    so a session whose pane names no harness is still
 #                    printed — and launch nothing. ORCH_OVERSEER_PREFERENCE is not walked and
 #                    no account's headroom is read: the line records what this
 #                    session runs, and the preference chooses where a LATER
