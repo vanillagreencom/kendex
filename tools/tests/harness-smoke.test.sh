@@ -417,7 +417,9 @@ rm -f -- "$STAND/hooks/zz-unlisted.sh" "$STAND/agents"
 # instruction listing names the four root sources less STANDIN_OMIT, and
 # sub/AGENTS.md from sub/ or, with STANDIN_NESTED_ROOT=1, from the root too,
 # or prints no JSON with STANDIN_INSTR=junk; its agent listing prints
-# STANDIN_AGENTS; the duplicate count and the subagent answer print
+# the agents its task tool offers, STANDIN_TASK_AGENTS, where the turn sees the
+# task tool alone, and otherwise the agent files it could read, STANDIN_AGENTS;
+# the duplicate count and the subagent answer print
 # STANDIN_DUP and STANDIN_SUB. It answers the fixture rows as a working Copilot
 # would. Its session of tool calls stands in for Copilot running the
 # repository's hooks: every hook in the checkout gets a script under
@@ -435,8 +437,12 @@ mkdir -p "$PKG_BIN"
 cp "$ROWS_BIN/kendex" "$PKG_BIN/kendex"
 cat >"$PKG_BIN/copilot" <<'STANDIN'
 #!/usr/bin/env bash
-prompt="" prev=""
-for a; do [ "$prev" != -p ] || prompt=$a; prev=$a; done
+prompt="" tools="" prev=""
+for a; do
+  [ "$prev" != -p ] || prompt=$a
+  [ "$prev" != --available-tools ] || tools=$a
+  prev=$a
+done
 case "$1 ${2:-}" in
   "skill list")
     if [ -z "${COPILOT_HOME:-}" ] || [ -n "${COPILOT_SKILLS_DIRS:-}" ]; then
@@ -461,7 +467,8 @@ case "$prompt" in
   "Reply exactly as your agent instructions say.")
     printf 'SessionStart %s/.github/hooks/smoke-session.sh\n' "$PWD" >>smoke-fired
     printf 'SMOKE-AGENT-LOADED\n' ;;
-  "List the names of the custom agents"*) printf '%s\n' "$STANDIN_AGENTS" ;;
+  "List the names of the custom agents"*)
+    if [ "$tools" = task ]; then printf '%s\n' "$STANDIN_TASK_AGENTS"; else printf '%s\n' "$STANDIN_AGENTS"; fi ;;
   "How many times"*) printf '%s\n' "$STANDIN_DUP" ;;
   "Use your task tool"*) printf '%s\n' "$STANDIN_SUB" ;;
   "Run each of these shell commands"*)
@@ -513,7 +520,7 @@ package_run() { # SMOKE ENV=VAL... — the run's output in $TMP/pkg-out, its sta
   mkdir -p "$TMP/pkg-dir"
   PKG_RC=0
   (cd "$ROWS_REPO" && env PATH="$PKG_BIN:$PATH" STANDIN_SKILLS="$PKG_SKILLS_ALL" STANDIN_AGENTS="$PKG_AGENTS_ALL" \
-    STANDIN_HOOK_NAMES="$PKG_HOOKS" STANDIN_NESTED_ROOT=0 STANDIN_DUP=1 STANDIN_SUB=SMOKE-RULES-REACHED-VIA-AGENT \
+    STANDIN_TASK_AGENTS="$PKG_AGENTS_ALL" STANDIN_HOOK_NAMES="$PKG_HOOKS" STANDIN_NESTED_ROOT=0 STANDIN_DUP=1 STANDIN_SUB=SMOKE-RULES-REACHED-VIA-AGENT \
     STANDIN_REFUSE=1 STANDIN_HOOKS=1 STANDIN_FEED=all STANDIN_SHAPE=good STANDIN_HOOK_CWD= STANDIN_DROP_ENV=0 \
     STANDIN_SKIP_HOOK= STANDIN_FIXTURE= STANDIN_OMIT= STANDIN_INSTR= "$@" \
     "$BASH" "$smoke" --only copilot --dir "$TMP/pkg-dir" >"$TMP/pkg-out" 2>&1) || PKG_RC=$?
@@ -581,6 +588,8 @@ a nested AGENTS.md listed from the root too passes|instruction:nested|pass|from 
 a refused command that went through fails its hook|hook:block-unsafe-rm|fail|the call still ran"
 package_run "$SMOKE" STANDIN_SUB=SMOKE-RULES-REACHED
 package_case "the parent's own answer, with no subagent suffix, fails" instruction:subagent fail "did not relay an answer the subagent built"
+package_run "$SMOKE" STANDIN_TASK_AGENTS=
+package_case "agents on disk that the task tool does not offer fail" agent:reviewer-doc fail "does not list it"
 package_run "$SMOKE" STANDIN_INSTR=junk
 package_case "an instruction listing with no JSON is unanswerable" instruction:AGENTS.md unanswerable "printed no JSON"
 package_case "and so is the nested row it would compare against" instruction:nested unanswerable "printed no JSON"
@@ -620,7 +629,8 @@ else
   cp "$TMP/pkg-bin-copilot" "$PKG_BIN/copilot"
 fi
 
-# Controls on the stand-in copy: a marker read that never looks, a trigger
+# Controls on the stand-in copy: a listing turn with file tools, a marker read
+# that never looks, a trigger
 # check that takes any record, and a nested reading that ignores the root
 # listing, each pass what their rows do not.
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
@@ -628,6 +638,9 @@ ln -s -- "$REPO/agents" "$STAND/agents"
 cp "$REPO"/hooks/*.sh "$STAND/hooks/"
 PKG_SKILLS_ALL="$(for f in "$REPO"/skills/*/SKILL.md; do f=${f%/SKILL.md}; printf '%s\n' "${f##*/}"; done)"
 PKG_AGENTS_ALL="$(for f in "$REPO"/agents/*.md; do f=${f##*/}; printf '%s\n' "${f%.md}"; done)"
+plant "$STAND_SMOKE" 's/ --available-tools task --allow-all-tools -s$/ --allow-all-tools -s/'
+package_run "$STAND_SMOKE" STANDIN_TASK_AGENTS=
+package_case "control: a listing turn that can read files passes agents the task tool does not offer" agent:reviewer-doc pass "lists it"
 plant "$STAND_SMOKE" 's/^  elif \[ -e "\$marker" \]; then$/  elif false; then/'
 package_run "$STAND_SMOKE" STANDIN_REFUSE=0
 package_case "control: a marker read that never looks passes a command that went through" hook:block-unsafe-rm pass "was never written"

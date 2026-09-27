@@ -358,6 +358,7 @@ err_word() {
     ns:*) printf '→ skipping %s: same configuration namespace (SECOND_OPINION_%s_CMD) as an earlier entry' "$a" "$b" ;;
     selected:*) printf '→ skipping %s: model %s already selected' "$a" "$b" ;;
     nocli:*) printf '→ skipping %s: CLI not found — install it or configure SECOND_OPINION_%s_CMD' "$a" "$b" ;;
+    nocmd:*) printf '→ skipping %s: no command — %s has no built-in command; set SECOND_OPINION_%s_CMD to the command it runs, one you have checked cannot write' "$a" "$a" "$b" ;;
     target-undeclared:*) printf '→ skipping %s: model undeclared — %s fronts a selectable model; set SECOND_OPINION_%s_MODEL to the model id it runs' "$a" "$a" "$b" ;;
     roster-empty) printf '→ skipping roster: SECOND_OPINION_MODELS is set but empty — no targets to consider' ;;
     shortfall:*) printf '→ requested %s opinions, selected %s — the roster has no further eligible model (coverage degraded)' "$a" "$b" ;;

@@ -63,6 +63,7 @@ control: copilot declared on an OpenAI model is taken from a Claude session|curr
 copilot declared on the session's own model is excluded as that model|current:codex models:copilot+claude cmd:copilot=extra model:copilot=gpt-5.5|review|0|<out>|same:copilot:codex single:claude:review:codex written|calls=claude:1,codex:0,extra:0 art=external-claude/$OWN files=out
 a Copilot spelling of the name is the same harness and is skipped the same way|models:Copilot+codex cmd:copilot=extra|review|0|<out>|target-undeclared:Copilot:COPILOT single:codex:review:none written|calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out
 a pi target with a command and no declared model is skipped: pi fronts a selectable model too|models:pi+codex cmd:pi=extra|review|0|<out>|target-undeclared:pi:PI single:codex:review:none written|calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out
+a declared copilot with no command refuses naming the command, with no availability verdict|models:copilot model:copilot=gpt-5.5|review|1|-|nocmd:copilot:COPILOT refused:none:1|$NONE
 mixed causes: both skip reasons stand with no availability verdict on top|current:claude models:claude+codex cmd:codex=missing|review|1|-|same:claude:claude nocli:codex:CODEX refused:claude:2|$NONE
 "
 
@@ -82,6 +83,6 @@ SH
 chmod +x "$ROW/bin/copilot"
 got="$(run review)"
 assert_eq "$([[ -e "$ROW/copilot-ran" ]] && printf ran || printf 'never ran')" 'never ran' "a copilot executable on PATH is never run without SECOND_OPINION_COPILOT_CMD"
-assert_eq "$(grep -c -F -- "$(err_word nocli:copilot:COPILOT)" "$ROW/stderr")" 1 "the copilot target is skipped for its missing command"
+assert_eq "$(grep -c -F -- "$(err_word nocmd:copilot:COPILOT)" "$ROW/stderr")" 1 "the copilot target is skipped naming its missing command, not a missing CLI"
 assert_eq "${got%% *}" rc=0 "the next roster entry answers instead"
 finish

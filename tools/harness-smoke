@@ -1305,7 +1305,8 @@ antigravity_rows() {
 # never writes, and each is short-circuited so nothing it names runs when no
 # hook refuses it. A hook with a trigger passes only where a payload it read
 # carries its trigger, the installed hook refuses that recorded payload when
-# the row replays it, and the marker was never written.
+# the row replays it, and, for every trigger but `cd /`, which leaves nothing
+# to read, the marker was never written.
 PKG_PROOF='tools/harness-smoke --only copilot on a host where copilot is on PATH and logged in'
 PKG_RULES='SMOKE-RULES is SMOKE-RULES-REACHED.'
 # shellcheck disable=SC2016 # the model is handed $HARNESS_SMOKE_UNSET as text a hook refuses
@@ -1475,6 +1476,16 @@ EOF
   setup 'the helper and the recorder' chmod +x "$PKG/smoke-helper" "$PKG_RECORDER/cat"
 }
 
+# Every row judged on text the model relays asks through here. The turn sees
+# the task tool alone (`--available-tools`), so the model cannot read the
+# project's files or run a shell: the agent names it lists are its task tool's,
+# the rule it counts is the one in its context, and the subagent's answer is
+# the subagent's. The duplicate count needs no tool, and the task tool is the
+# one it is left, the only built-in Copilot's documentation names.
+pkg_ask() { # LOG PROMPT
+  run "$1" env COPILOT_HOME="$PKG_HOME" COPILOT_ALLOW_ALL=true copilot -p "$2" \
+    --available-tools task --allow-all-tools -s
+}
 # One listing, one row per name: a skill under Project skills, an agent on a
 # line of its own in the model's answer.
 pkg_listed() { # ROW PATTERN COMMAND-TEXT — OUT and STATUS hold the listing
@@ -1526,8 +1537,8 @@ pkg_instruction_rows() {
 pkg_duplicate_row() {
   local answer listed="the instruction listing did not show both AGENTS.md and CLAUDE.md, and"
   [ "$PKG_BOTH_LISTED" -eq 0 ] || listed="AGENTS.md and CLAUDE.md, which imports it, are both listed, and"
-  run copilot-packages-duplicate env COPILOT_HOME="$PKG_HOME" COPILOT_ALLOW_ALL=true copilot -p \
-    "How many times does the exact line '$PKG_RULES' appear across all the instructions you were given? Reply with the number alone." --allow-all-tools -s
+  pkg_ask copilot-packages-duplicate \
+    "How many times does the exact line '$PKG_RULES' appear across all the instructions you were given? Reply with the number alone."
   answer=$(last_line) || answer=""
   case "$STATUS:$answer" in
     0:1) pkg_set instruction:duplicate pass "$listed the model counts the AGENTS.md line once" ;;
@@ -1541,8 +1552,8 @@ pkg_duplicate_row() {
 # rules, cannot give the passing line itself.
 pkg_subagent_row() {
   local label='copilot -p (task tool running smoke-rules, model-relayed)'
-  run copilot-packages-subagent env COPILOT_HOME="$PKG_HOME" COPILOT_ALLOW_ALL=true copilot -p \
-    'Use your task tool to run the smoke-rules custom agent. Reply with exactly the text it returned and nothing else.' --allow-all-tools -s
+  pkg_ask copilot-packages-subagent \
+    'Use your task tool to run the smoke-rules custom agent. Reply with exactly the text it returned and nothing else.'
   if grep -qx 'SMOKE-RULES-REACHED-VIA-AGENT' <<<"$OUT"; then
     pkg_set instruction:subagent pass "$label said SMOKE-RULES-REACHED-VIA-AGENT"
   elif grep -qx 'NO-RULES-VIA-AGENT' <<<"$OUT"; then
@@ -1741,8 +1752,8 @@ copilot_packages() { # MODE [HOME] — absent: copilot is not on PATH; live: HOM
   for name in $(pkg_list skill); do
     pkg_listed "skill:$name" "^  $name - " 'copilot skill list'
   done
-  run copilot-packages-agents env COPILOT_HOME="$PKG_HOME" COPILOT_ALLOW_ALL=true copilot -p \
-    'List the names of the custom agents your task tool can run, one per line, and nothing else.' --allow-all-tools -s
+  pkg_ask copilot-packages-agents \
+    'List the names of the custom agents your task tool can run, one per line, and nothing else.'
   for name in $(pkg_list agent); do
     pkg_listed "agent:$name" "^[-*[:space:]]*${name}[[:space:]]*\$" 'copilot -p (model-relayed agent listing)'
   done

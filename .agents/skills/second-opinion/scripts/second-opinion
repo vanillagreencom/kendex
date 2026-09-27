@@ -984,13 +984,12 @@ target_cmd() {
   esac
 }
 
-# A target is available when it has a configured command whose executable (the
-# command's first word) resolves — the first word is what actually gets exec'd,
-# and an env override may point it away from the target's own name.
+# A target with a command is available when its executable (the command's
+# first word) resolves — the first word is what actually gets exec'd, and an
+# env override may point it away from the target's own name.
 target_available() {
   local cmd
   cmd="$(target_cmd "$1")"
-  [[ -n "$cmd" ]] || return 1
   # shellcheck disable=SC2086
   set -- $cmd
   command -v "$1" >/dev/null 2>&1
@@ -1084,6 +1083,11 @@ consider_target() {
   for existing in ${SELECTED_MODELS[@]+"${SELECTED_MODELS[@]}"}; do
     [[ "$existing" == "$model" ]] && { skip_target "$t" "model $model already selected"; return 1; }
   done
+  if [[ -z "$(target_cmd "$t")" ]]; then
+    # Configuration, not availability: an installed CLI changes nothing here.
+    skip_target "$t" "no command — $t has no built-in command; set $(target_cmd_var "$t") to the command it runs, one you have checked cannot write"
+    return 1
+  fi
   if ! target_available "$t"; then
     SKIPPED_UNAVAILABLE=true
     skip_target "$t" "CLI not found — install it or configure $(target_cmd_var "$t")"
