@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -22,7 +23,7 @@ UNIT = "slack-listen.service"
 UNIT_TEMPLATE = Path(__file__).resolve().parents[2] / "systemd" / UNIT
 LAUNCHER = Path(__file__).resolve().parents[1] / "slack"
 CHANNEL_NAME = re.compile(r"[^a-z0-9_-]+")
-TOLERATED_INVITE = {"already_in_channel", "cant_invite_self", "cant_invite"}
+TOLERATED_INVITE = {"already_in_channel", "cant_invite_self"}
 
 
 def default_channel_name(root: Path, owner: str) -> str:
@@ -60,9 +61,15 @@ def setup(root: Path, name: Optional[str], take: Optional[str]) -> int:
         api.post("conversations.invite", channel=channel, users=",".join(ids.values()))
     except Refusal as err:
         error = err.value.rsplit("error=", 1)[-1]
-        if err.key != "slack-api-failed" or error not in TOLERATED_INVITE:
+        if err.key != "slack-api-failed":
             raise
-    write_binding(root, Binding(channel, channel_name, list(settings.owners), ids))
+        if error not in TOLERATED_INVITE:
+            raise Refusal(
+                "slack-invite-refused",
+                f"{channel} error={error} owners={','.join(ids)}"
+                f" fix=invite the owners to #{channel_name} in Slack, then run setup again",
+            ) from err
+    write_binding(root, Binding(channel, channel_name, f"{time.time():.6f}", list(settings.owners), ids))
     notice("bound", f"{channel} root={root} name={channel_name} owners={len(ids)}")
     restart_unit()
     return 0
@@ -73,7 +80,9 @@ def restart_unit() -> None:
     `install` wrote, where one stands and systemctl can reach it."""
     if not (unit_dir() / UNIT).is_file() or shutil.which("systemctl") is None:
         return
-    subprocess.run(["systemctl", "--user", "try-restart", UNIT], check=False)
+    proc = subprocess.run(["systemctl", "--user", "try-restart", UNIT], check=False)
+    if proc.returncode != 0:
+        raise Refusal("systemctl-failed", f"systemctl --user try-restart {UNIT} exit={proc.returncode}")
     notice("restarted", UNIT)
 
 
@@ -179,7 +188,12 @@ def status(roots: List[Path], now: float) -> int:
             state = "failing"
         else:
             state = "stale"
-        fix = "" if state == "ok" else " fix=restart the relay and read its last lines"
+        if state == "ok":
+            fix = ""
+        elif state == "failing":
+            fix = f" fix={record.get('last_error') or 'read the relay log'}"
+        else:
+            fix = " fix=restart the relay and read its last lines"
         unknown = record.get("unknown") or []
         total += float(record.get("budget_per_minute", 0))
         print(

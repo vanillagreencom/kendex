@@ -145,6 +145,31 @@ sk_relay_stop() { kill "$SK_BG_PIDS" 2>/dev/null; wait "$SK_BG_PIDS" 2>/dev/null
 sk_poll() { local root="$1"; shift; sk_run "$@" -- listen --root "$root" --once; } # ROOT [VAR=VALUE]...
 sk_polls() { local n="$2"; while [ "$n" -gt 0 ]; do sk_poll "$1"; n=$((n - 1)); done; } # ROOT N — N polls
 sk_channel() { jq -r .channel "$1/tmp/slack/binding.json"; }   # ROOT — the bound channel
+# sk_rebind_at ROOT TS — the binding's moment moved to TS, so a first start
+# reads the channel from there.
+sk_rebind_at() {
+  jq --arg t "$2" '.bound_at = $t' "$1/tmp/slack/binding.json" > "$SK_TMP/rebind.json" && cp "$SK_TMP/rebind.json" "$1/tmp/slack/binding.json"
+}
+# sk_age_envelope ROOT ID SECONDS — the envelope's `at` in the mailbox moved
+# SECONDS into the past, the fixture's own file edited in place.
+sk_age_envelope() {
+  python3 - "$(sk_box "$1")" "$2" "$3" <<'PY'
+import datetime, json, pathlib, sys
+box, env_id, seconds = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+for name in ("to-overseer.jsonl", "to-lane.jsonl"):
+    path = box / name
+    if not path.is_file():
+        continue
+    lines = []
+    for raw in path.read_text().splitlines():
+        line = json.loads(raw)
+        if line.get("id") == env_id:
+            at = datetime.datetime.strptime(line["at"], "%Y-%m-%dT%H:%M:%SZ") - datetime.timedelta(seconds=seconds)
+            line["at"] = at.strftime("%Y-%m-%dT%H:%M:%SZ")
+        lines.append(json.dumps(line))
+    path.write_text("".join(l + "\n" for l in lines))
+PY
+}
 
 # sk_mutant NAME FILE PATTERN REPLACEMENT — SK_BIN becomes a copy of scripts/
 # with exactly one occurrence of PATTERN (a Python regex) replaced.

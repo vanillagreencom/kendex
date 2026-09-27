@@ -4,6 +4,14 @@ Every call is counted with its time so `--status` can print the calls used
 in the last minute. A 429 is honoured by `Retry-After` up to RETRIES times;
 an `ok: false` answer names Slack's error; an auth error is its own key
 because its remedy is a new token and nothing else.
+
+A network failure is one of two keys, by where urllib raised it. urllib wraps
+every error of the request phase, the connect, the TLS handshake and the
+write of the body, in `URLError`: Slack never read the request, so the call
+is `slack-unreachable` and a caller repeats it. An error raised bare comes
+from the response phase, after the request was written: Slack may have acted
+on it, so the call is `slack-response-lost` and a caller records it as
+unknown rather than repeating it.
 """
 
 from __future__ import annotations
@@ -59,8 +67,10 @@ class Slack:
                 if err.code == 429:
                     raise Refusal("slack-rate-limited", method) from err
                 raise Refusal("slack-api-failed", f"{method} http={err.code}") from err
-            except (urllib.error.URLError, OSError) as err:
-                raise Refusal("slack-unreachable", f"{method} ({err})") from err
+            except urllib.error.URLError as err:
+                raise Refusal("slack-unreachable", f"{method} ({err.reason})") from err
+            except OSError as err:
+                raise Refusal("slack-response-lost", f"{method} ({err})") from err
         try:
             answer = json.loads(body)
         except ValueError as err:
@@ -109,8 +119,10 @@ class Slack:
                 resp.read()
         except urllib.error.HTTPError as err:
             raise Refusal("slack-api-failed", f"upload http={err.code}") from err
-        except (urllib.error.URLError, OSError) as err:
-            raise Refusal("slack-unreachable", f"upload ({err})") from err
+        except urllib.error.URLError as err:
+            raise Refusal("slack-unreachable", f"upload ({err.reason})") from err
+        except OSError as err:
+            raise Refusal("slack-response-lost", f"upload ({err})") from err
         done = self.post(
             "files.completeUploadExternal",
             files=[{"id": ticket["file_id"], "title": filename}],

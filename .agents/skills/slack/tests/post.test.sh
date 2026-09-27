@@ -56,10 +56,15 @@ assert_eq "$RC=$ERR1" "2=slack: root-unbound=$BARE" "an unbound root with no --c
 sk_run -- post --root "$BARE" --text 'no binding needed' --channel C777
 assert_eq "$RC=$(last C777)" "0=top | UBOT | no binding needed" "--channel needs no binding"
 
-# --- control: the text check ----------------------------------------------------
+# --- controls, one per check ------------------------------------------------------
 sk_mutant secret verbs.py 'secret_check\(body\.encode\(\), "text"\)' 'secret_check(b"", "text")'
 sk_run -- post --root "$ROOT" --text 'key xoxb-0123456789-abcdefghij'
 assert_eq "$RC" "0" "control: the text check gone, the token posts"
+sk_bin_reset
+
+sk_mutant file-bytes verbs.py 'secret_check\(data, f"file=\{file\}"\)' 'secret_check(b"", f"file={file}")'
+sk_run -- post --root "$ROOT" --text 'clean' --file "$SK_TMP/leak.md"
+assert_eq "$RC=$(sk_state '[.uploads[] | select(. | contains("ghp_"))] | length')" "0=1" "control: the file check gone, the token uploads"
 sk_bin_reset
 
 sk_summary

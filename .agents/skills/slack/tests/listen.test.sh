@@ -8,17 +8,28 @@
 # file alone answered once and not routed, catch-up over pages, the crash
 # between the mailbox append and the journal mark, the second relay refused
 # by the lock, a reply under a thread past SLACK_THREAD_DAYS left unrouted,
-# a secret value refused, a 429 honoured, and owners re-resolved from the
-# setting. The controls at the end plant four mutants, one per rule: the
-# delivery id dropped, the ask thread no longer resolved, the lock no longer
-# exclusive, the thread-age horizon removed.
+# a secret value refused, a 429 honoured, a post Slack refuses failing the
+# poll and made again, a post whose response was lost journaled unknown, a
+# refused history read failing the poll, a first start reading Slack from
+# the binding moment and posting nothing from the mailbox's past but open
+# asks, an envelope past the horizon never posted across the daily
+# compaction, a journal reset re-posting open asks alone, and owners
+# re-resolved from the setting. The controls at the end plant one mutant per
+# rule: the delivery id dropped, the ask thread no longer resolved, the lock
+# no longer exclusive, the thread-age horizon removed, the owner gate open,
+# the no-text gate open, the notice text and the report bytes unchecked, the
+# post failure swallowed, the envelope horizon removed, the start horizon
+# removed, and the history seed at zero.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
 sk_fake_start --page 2
 echo "=== slack listen ==="
 
-directives() { jq -r 'select(.kind == "directive") | [.delivery_id, .text] | join(" ")' "$(sk_box "$1")/to-lane.jsonl"; }
+directives() { # ROOT — every directive's key and text; none before the first delivery
+  [ -f "$(sk_box "$1")/to-lane.jsonl" ] || return 0
+  jq -r 'select(.kind == "directive") | [.delivery_id, .text] | join(" ")' "$(sk_box "$1")/to-lane.jsonl"
+}
 answers() { jq -r 'select(.kind == "answer") | [.re, .by, .delivery_id, .text] | join(" ")' "$(sk_box "$1")/to-lane.jsonl"; }
 posts() { sk_state ".messages.${1}[] | select(.user == \"UBOT\") | [(.thread_ts // \"top\"), .text] | join(\" | \")"; }
 
@@ -159,6 +170,7 @@ sk_relay_stop
 GAMMA="$(sk_new_root gamma)"
 sk_bind "$GAMMA"
 OLD_TS="$(python3 -c 'import time; print("%.6f" % (time.time() - 8 * 86400))')"
+sk_rebind_at "$GAMMA" "$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400))')"
 OLD="$(sk_inject C002 U001 'an old topic' '' "\"ts\": \"$OLD_TS\"")"
 YOUNG="$(sk_inject C002 U001 'a young topic')"
 sk_poll "$GAMMA"
@@ -195,6 +207,99 @@ X1="$(sk_inject C002 U002 'still me?')"
 sk_poll "$GAMMA" SLACK_OWNERS="$OWNER"
 assert_has "$(posts C002)" "$X1 | Only the channel's owners steer this session" "a removed owner loses routing at that poll"
 
+# --- a post Slack refuses fails the poll and is made again on the next -----------------------
+asks() { sk_state "[.messages.${1}[] | select(.text | contains(\"$2\"))] | length"; } # CHANNEL TEXT — posts carrying it
+sk_lm "$GAMMA" ask --item overseer --to owner --file "$(sk_text q5 'Refused once?')" --options a,b --recommend a >"$SK_TMP/ask5.out"
+ASK5="$(sed 's/^id=//' "$SK_TMP/ask5.out")"
+sk_ctl /_test/fault '{"method": "chat.postMessage", "error": "not_in_channel", "times": 1}' >/dev/null
+sk_poll "$GAMMA"
+assert_eq "$RC=$ERR1" "1=slack: slack-api-failed=chat.postMessage error=not_in_channel id=$ASK5" \
+  "a post Slack refuses fails the poll, naming the error and the envelope"
+assert_eq "$(jq -r '.last_poll_ok' "$GAMMA/tmp/slack/status.json")" "false" "the status record reads the poll as failed"
+sk_run -- listen --status --root "$GAMMA"
+assert_has "$(printf '%s' "$OUT" | sed -n '1p')" " state=failing " "the doctor row reads failing"
+assert_has "$(printf '%s' "$OUT" | sed -n '1p')" " fix=slack-api-failed=chat.postMessage error=not_in_channel id=$ASK5" \
+  "the row's fix names the Slack error and the envelope"
+assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$ASK5\") | .state" "$(sk_journal "$GAMMA")" | wc -l | tr -d ' ')" "0" \
+  "nothing is journaled for the refused post"
+sk_poll "$GAMMA"
+assert_eq "$RC=$(asks C002 'Refused once?')" "0=1" "the next poll posts the ask and exits 0"
+
+# --- a post the network refused is made again; a lost response is journaled unknown ----------
+sk_lm "$GAMMA" ask --item overseer --to owner --file "$(sk_text q6 'Refused connection?')" --options a,b --recommend a >"$SK_TMP/ask6.out"
+ASK6="$(sed 's/^id=//' "$SK_TMP/ask6.out")"
+sk_ctl /_test/fault '{"method": "chat.postMessage", "refuse": true, "times": 1}' >/dev/null
+sk_poll "$GAMMA"
+assert_eq "$RC=${ERR1%% *}" "1=slack:" "a refused connection fails the poll"
+assert_eq "${ERR1#slack: }" "$(printf '%s' "${ERR1#slack: }" | sed -n '/^slack-unreachable=chat.postMessage .* id='"$ASK6"'$/p')" \
+  "the refusal is slack-unreachable, naming the envelope"
+assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$ASK6\") | .state" "$(sk_journal "$GAMMA")" | wc -l | tr -d ' ')" "0" \
+  "a request Slack never received is not journaled"
+sk_poll "$GAMMA"
+assert_eq "$RC=$(asks C002 'Refused connection?')" "0=1" "the next poll posts the ask"
+sk_lm "$GAMMA" ask --item overseer --to owner --file "$(sk_text q7 'Lost response?')" --options a,b --recommend a >"$SK_TMP/ask7.out"
+ASK7="$(sed 's/^id=//' "$SK_TMP/ask7.out")"
+sk_ctl /_test/fault '{"method": "chat.postMessage", "drop": true, "times": 1}' >/dev/null
+sk_poll "$GAMMA"
+assert_eq "$RC=${ERR1%%=*}" "0=slack: slack-response-lost" "a dropped response is reported and the poll goes on"
+assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$ASK7\") | .state" "$(sk_journal "$GAMMA")")" "unknown" "the lost response is journaled unknown"
+sk_poll "$GAMMA"
+assert_eq "$(asks C002 'Lost response?')" "0" "an unknown post is never repeated"
+sk_run -- listen --status --root "$GAMMA"
+assert_has "$(printf '%s' "$OUT" | sed -n '1p')" " oldest_unknown=$ASK7 " "the doctor row names the oldest unknown post"
+
+# --- a refused history read fails the poll ---------------------------------------------------------
+sk_ctl /_test/fault '{"method": "conversations.history", "error": "channel_not_found", "times": 1}' >/dev/null
+sk_poll "$GAMMA"
+assert_eq "$RC=$ERR1=$(jq -r '.last_poll_ok' "$GAMMA/tmp/slack/status.json")" \
+  "1=slack: slack-api-failed=conversations.history error=channel_not_found=false" "a refused history read fails the poll and its record"
+sk_poll "$GAMMA"
+assert_eq "$RC=$(jq -r '.last_poll_ok' "$GAMMA/tmp/slack/status.json")" "0=true" "the next poll succeeds"
+
+# --- a first start: Slack from the binding moment, the mailbox from its newest envelope -----------
+for n in 1 2 3; do sk_inject C777 U001 "history $n" >/dev/null; done
+DELTA="$(sk_new_root delta)"
+sk_lm "$DELTA" notice --item overseer --to owner --file "$(sk_text n5 'Old notice.')" >/dev/null
+mkdir -p "$DELTA/tmp/progress-reports"
+printf '# Old report\n' > "$DELTA/tmp/progress-reports/old.md"
+sk_lm "$DELTA" notice --item overseer --to owner --attach "$DELTA/tmp/progress-reports/old.md" --file "$(sk_text n6 'Old report.')" >/dev/null
+sk_lm "$DELTA" ask --item overseer --to owner --file "$(sk_text q8 'Still open?')" --options a,b --recommend a >/dev/null
+sk_run -- setup --root "$DELTA" --take C777
+assert_eq "$RC" 0 "a channel with history is adopted"
+sk_poll "$DELTA"
+assert_eq "$RC=$(directives "$DELTA" | wc -l | tr -d ' ')" "0=0" "the channel's earlier messages are not delivered"
+assert_eq "$(asks C777 'Old notice.')=$(asks C777 'Old report.')=$(asks C777 'Still open?')" "0=0=1" \
+  "the mailbox's past notices and report are not posted; its open ask is"
+assert_eq "$(jq -r 'select(.t == "start") | .at' "$(sk_journal "$DELTA")" | wc -l | tr -d ' ')" "1" "the start is journaled"
+H4="$(sk_inject C777 U001 'history 4')"
+sk_lm "$DELTA" notice --item overseer --to owner --file "$(sk_text n7 'New notice.')" >/dev/null
+sk_poll "$DELTA"
+assert_eq "$(directives "$DELTA")" "C777:$H4 history 4" "the next message is routed"
+assert_eq "$(asks C777 'New notice.')" "1" "a notice written after the start is posted"
+
+# --- an envelope past the horizon is never posted, across the daily compaction -----------------------
+# On gamma, whose mailbox was empty at its first start, so no start horizon
+# hides the age horizon under test.
+sk_lm "$GAMMA" notice --item overseer --to owner --file "$(sk_text n10 'Aging notice.')" >/dev/null
+sk_poll "$GAMMA"
+assert_eq "$RC=$(asks C002 'Aging notice.')" "0=1" "a young notice posts once"
+NOTE_ID="$(jq -r 'select(.text == "Aging notice.") | .id' "$(sk_box "$GAMMA")/to-overseer.jsonl")"
+NOTE_TS="$(jq -r "select(.t == \"out\" and .id == \"$NOTE_ID\") | .thread" "$(sk_journal "$GAMMA")")"
+sk_age_envelope "$GAMMA" "$NOTE_ID" $((8 * 86400))
+sed "s/\"thread\": \"$NOTE_TS\"/\"thread\": \"$OLD_TS\"/" "$(sk_journal "$GAMMA")" > "$SK_TMP/aged.jsonl" && cp "$SK_TMP/aged.jsonl" "$(sk_journal "$GAMMA")"
+jq '.compacted_day = "2000-01-01"' "$GAMMA/tmp/slack/status.json" > "$SK_TMP/day.json" && cp "$SK_TMP/day.json" "$GAMMA/tmp/slack/status.json"
+sk_poll "$GAMMA"
+assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$NOTE_ID\") | .id" "$(sk_journal "$GAMMA")" | wc -l | tr -d ' ')" "0=0" \
+  "the first poll of a new day compacts the aged post out of the journal"
+assert_eq "$(asks C002 'Aging notice.')" "1" "the envelope past the horizon is not posted again"
+
+# --- a journal reset re-posts open asks alone ----------------------------------------------------------
+mv "$(sk_journal "$DELTA")" "$SK_TMP/delta-journal.aside"
+sk_poll "$DELTA"
+assert_eq "$RC=$(asks C777 'New notice.')=$(asks C777 'Old notice.')" "0=1=0" "after the journal is moved aside no notice is posted again"
+assert_eq "$(asks C777 'Still open?')" "2" "the open ask is posted once more, so its thread is bound again"
+assert_eq "$(directives "$DELTA" | wc -l | tr -d ' ')" "1" "the re-read channel lands nothing twice"
+
 # --- controls, one mutant per rule ------------------------------------------------------------
 sk_mutant delivery mailbox.py '"--delivery-id", delivery_id, "--file"' '"--delivery-id", delivery_id + "." + str(os.getpid()), "--file"'
 DELTA="$(sk_new_root delta)"
@@ -226,12 +331,66 @@ sk_bin_reset
 sk_mutant horizon relay.py 'tenth and float\(thread\.ts\) >= horizon' 'tenth'
 ZETA="$(sk_new_root zeta)"
 sk_bind "$ZETA"
+sk_rebind_at "$ZETA" "$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400))')"
 ZETA_CH="$(sk_channel "$ZETA")"
 OLD2="$(sk_inject "$ZETA_CH" U001 'old' '' "\"ts\": \"$OLD_TS\"")"
 sk_poll "$ZETA"
 sk_inject "$ZETA_CH" U001 'late reply' "$OLD2" >/dev/null
 for n in 2 3 4 5 6 7 8 9 10; do sk_poll "$ZETA"; done
 assert_eq "$(directives "$ZETA" | wc -l | tr -d ' ')" "2" "control: the horizon removed, the reply under the old thread is routed"
+sk_bin_reset
+
+sk_mutant owner relay.py 'if user not in self\.binding\.owner_ids\.values\(\):' 'if user not in self.binding.owner_ids.values() and False:'
+N2="$(sk_inject "$ZETA_CH" U999 'not an owner')"
+sk_poll "$ZETA"
+assert_has "$(directives "$ZETA")" "$N2 not an owner" "control: the owner gate open, a non-owner's message is routed"
+sk_bin_reset
+
+sk_mutant notext relay.py 'if not text:' 'if not text and False:'
+F2="$(sk_inject "$ZETA_CH" U001 '' '' '"files": [{"id": "F778"}]')"
+sk_poll "$ZETA"
+assert_lacks "$(posts "$ZETA_CH")" "$F2 | Only text is routed" "control: the no-text gate open, a file alone gets no reply"
+sk_bin_reset
+
+sk_mutant notice-text relay.py 'secret_check\(text\.encode\(\), f"id=\{env_id\}"\)\n        except Refusal' 'secret_check(b"", f"id={env_id}")\n        except Refusal'
+sk_lm "$ZETA" notice --item overseer --to owner --file "$(sk_text s2 'leak xoxb-0123456789-abcdefghij')" >/dev/null
+sk_poll "$ZETA"
+assert_eq "$(asks "$ZETA_CH" 'xoxb-0123456789')" "1" "control: the notice text unchecked, a token posts"
+sk_bin_reset
+
+sk_mutant report-bytes relay.py 'secret_check\(data, f"id=\{env_id\} file=\{attach\}"\)' 'secret_check(b"", f"id={env_id} file={attach}")'
+mkdir -p "$ZETA/tmp/progress-reports"
+printf 'ghp_%s\n' "abcdefghijklmnopqrstuvwxyz0123456789" > "$ZETA/tmp/progress-reports/leak.md"
+sk_lm "$ZETA" notice --item overseer --to owner --attach "$ZETA/tmp/progress-reports/leak.md" --file "$(sk_text n8 'Leaky report.')" >/dev/null
+sk_poll "$ZETA"
+assert_eq "$(sk_state '[.uploads[] | select(. | contains("ghp_"))] | length')" "1" "control: the report bytes unchecked, a token uploads"
+sk_bin_reset
+
+sk_mutant swallow relay.py 'if self\.post_failed is not None:\n            raise self\.post_failed' 'if self.post_failed is not None:\n            self.post_failed = None'
+sk_lm "$ZETA" ask --item overseer --to owner --file "$(sk_text q9 'Swallowed?')" --options a,b --recommend a >/dev/null
+sk_ctl /_test/fault '{"method": "chat.postMessage", "error": "not_in_channel", "times": 1}' >/dev/null
+sk_poll "$ZETA"
+assert_eq "$RC=$(jq -r '.last_poll_ok' "$ZETA/tmp/slack/status.json")" "0=true" "control: the post failure swallowed, a refused post reads as a clean poll"
+sk_bin_reset
+
+sk_mutant envelope-horizon relay.py 'if at < horizon:' 'if at < horizon and False:'
+sk_poll "$GAMMA"
+assert_eq "$(asks C002 'Aging notice.')" "2" "control: the envelope horizon removed, the compacted notice posts again"
+sk_bin_reset
+
+sk_mutant start relay.py 'elif start is not None and at <= start:' 'elif start is not None and at <= start and False:'
+ETA="$(sk_new_root eta)"
+sk_lm "$ETA" notice --item overseer --to owner --file "$(sk_text n9 'Before the start.')" >/dev/null
+sk_bind "$ETA"
+sk_poll "$ETA"
+assert_eq "$(asks "$(sk_channel "$ETA")" 'Before the start.')" "1" "control: the start horizon removed, a notice from before the start posts"
+sk_bin_reset
+
+sk_mutant seed relay.py 'self\.journal\.append\(t="seen", ts=self\.binding\.bound_at\)' 'self.journal.append(t="seen", ts="0")'
+THETA="$(sk_new_root theta)"
+sk_run -- setup --root "$THETA" --take C777
+sk_poll "$THETA"
+assert_eq "$(directives "$THETA" | wc -l | tr -d ' ')" "4" "control: the history seed at zero, the channel's earlier messages are delivered"
 sk_bin_reset
 
 sk_summary

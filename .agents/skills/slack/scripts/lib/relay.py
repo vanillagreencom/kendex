@@ -5,6 +5,12 @@ channel's history since the journal's position, follow every parent whose
 replies moved, read every open ask's thread, every tenth poll read the other
 bound threads younger than SLACK_THREAD_DAYS, then read the mailbox's events
 and post every owner-bound envelope not yet carried.
+
+A start with no journal seeds both positions before it reads anything: Slack
+from the binding moment, so a channel's earlier history is never delivered,
+and the mailbox from its newest envelope, so notices and answers already
+there are never re-posted. Open asks are posted whatever their age inside
+SLACK_THREAD_DAYS, since they still want an answer.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ from store import (
     RelayLock,
     State,
     compact,
+    journal_exists,
     read_binding,
     read_journal,
     read_status,
@@ -35,10 +42,20 @@ from store import (
 
 ROUTED_SUBTYPES = {None, "file_share"}
 OTHER_THREADS_EVERY = 10
+AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 NOT_OWNER = "Only the channel's owners steer this session; this message is not routed."
 NO_TEXT = "Only text is routed; a file alone is not."
 RECORDED = "Recorded as your answer."
 ALREADY = "This question was already answered; delivered as a directive instead."
+
+
+def at_epoch(at: str) -> float:
+    """An envelope's `at`, the UTC second lane-mail stamps, as epoch seconds."""
+    try:
+        stamp = datetime.datetime.strptime(at, AT_FORMAT)
+    except ValueError as err:
+        raise Refusal("lane-mail-failed", f"envelope at={at}") from err
+    return stamp.replace(tzinfo=datetime.timezone.utc).timestamp()
 
 
 def resolve_owner_ids(api: Slack, owners: List[str]) -> Dict[str, str]:
@@ -66,11 +83,13 @@ class RootRelay:
         self.clock = clock
         self.mail = LaneMail(path)
         self.binding = read_binding(path)
+        self.fresh = not journal_exists(path)
         self.state: State = read_journal(path)
         self.journal = Journal(path, self.state)
         self.lock = RelayLock(path)
         self.skipped: set = set()
         self.last_ok: Optional[float] = None
+        self.post_failed: Optional[Refusal] = None
         # The status record carries the poll count and the compaction day
         # across restarts; the journal holds deliveries and positions alone.
         record = read_status(path) or {}
@@ -86,17 +105,36 @@ class RootRelay:
         owners list is re-resolved before anything more is delivered."""
         if self.binding.owners != self.settings.owners:
             ids = resolve_owner_ids(self.api, self.settings.owners)
-            self.binding = Binding(self.channel, self.binding.channel_name, list(self.settings.owners), ids)
+            self.binding = Binding(
+                self.channel, self.binding.channel_name, self.binding.bound_at, list(self.settings.owners), ids
+            )
             write_binding(self.path, self.binding)
+
+    def seed(self) -> None:
+        """The positions a start with no journal begins from, journaled so a
+        restart keeps them: Slack's history past the binding moment, and the
+        mailbox past its newest envelope."""
+        self.journal.append(t="seen", ts=self.binding.bound_at)
+        newest = ""
+        for envelope in self.mail.events():
+            if newest == "" or at_epoch(str(envelope["at"])) > at_epoch(newest):
+                newest = str(envelope["at"])
+        self.journal.append(t="start", at=newest)
+        self.fresh = False
 
     # -- inbound: Slack to the mailbox --------------------------------------
 
     def poll(self, bot_user: str) -> None:
         self.owners_current()
         self.polls += 1
+        self.post_failed = None
+        if self.fresh:
+            self.seed()
         self.read_history(bot_user)
         self.read_threads(bot_user)
         self.post_events()
+        if self.post_failed is not None:
+            raise self.post_failed
         self.last_ok = self.clock()
 
     def read_history(self, bot_user: str) -> None:
@@ -140,6 +178,9 @@ class RootRelay:
 
     def handle(self, message: Dict, bot_user: str) -> None:
         ts = str(message["ts"])
+        # The journal skips a stamp it already carried; lane-mail's locked
+        # check judges any stamp the journal lost, the crash between the
+        # append and the mark, and answers it with the envelope that landed.
         if ts in self.state.delivered or ts in self.state.ignored:
             return
         if message.get("bot_id") or message.get("user") == bot_user:
@@ -177,9 +218,15 @@ class RootRelay:
     def post_events(self) -> None:
         events = self.mail.events()
         answered = {e.get("re") for e in events if e.get("kind") == "answer"}
+        horizon = self.clock() - self.settings.thread_days * 86400
+        start = at_epoch(self.state.start_at) if self.state.start_at else None
         for envelope in events:
             env_id = str(envelope["id"])
             if env_id in self.state.carried or env_id in self.skipped:
+                continue
+            at = at_epoch(str(envelope["at"]))
+            if at < horizon:
+                self.skipped.add(env_id)
                 continue
             box = envelope.get("box")
             kind = envelope.get("kind")
@@ -188,6 +235,8 @@ class RootRelay:
                     self.skipped.add(env_id)
                 else:
                     self.post_ask(envelope)
+            elif start is not None and at <= start:
+                self.skipped.add(env_id)
             elif box == "to-overseer" and envelope.get("to") == "owner" and kind == "notice":
                 self.post_notice(envelope)
             elif box == "to-lane" and kind == "answer":
@@ -195,10 +244,21 @@ class RootRelay:
             else:
                 self.skipped.add(env_id)
 
+    def post_refused(self, err: Refusal, env_id: str, kind: str) -> None:
+        """Slack's refusal of one post, by key: a lost response is journaled
+        unknown and never repeated; a dead token stops the relay; anything
+        else fails this poll and leaves the envelope for the next."""
+        if err.key == "slack-response-lost":
+            self.journal.append(t="out", channel=self.channel, id=env_id, kind=kind, state="unknown")
+            print_refusal(err)
+            return
+        if err.key == "slack-auth-failed":
+            raise err
+        if self.post_failed is None:
+            self.post_failed = Refusal(err.key, f"{err.value} id={env_id}")
+
     def _post(self, envelope: Dict, kind: str, text: str, thread_ts: Optional[str]) -> Optional[str]:
-        """One chat.postMessage; a lost response is journaled unknown and
-        never retried, an answered refusal leaves the envelope for the next
-        poll."""
+        """One chat.postMessage, or None when it did not land."""
         env_id = str(envelope["id"])
         try:
             secret_check(text.encode(), f"id={env_id}")
@@ -209,9 +269,7 @@ class RootRelay:
         try:
             answer = self.api.post("chat.postMessage", channel=self.channel, text=text, thread_ts=thread_ts)
         except Refusal as err:
-            if err.key == "slack-unreachable":
-                self.journal.append(t="out", channel=self.channel, id=env_id, kind=kind, state="unknown")
-            print_refusal(err)
+            self.post_refused(err, env_id, kind)
             return None
         return str(answer["ts"])
 
@@ -259,9 +317,7 @@ class RootRelay:
         try:
             file_id = self.api.upload(Path(attach).name, data, self.channel, text, thread_ts)
         except Refusal as err:
-            if err.key == "slack-unreachable":
-                self.journal.append(t="out", channel=self.channel, id=env_id, kind="notice", state="unknown")
-            print_refusal(err)
+            self.post_refused(err, env_id, "notice")
             return
         self.journal.append(t="out", channel=self.channel, id=env_id, kind="notice", state="file", file=file_id)
 
@@ -301,7 +357,7 @@ class RootRelay:
             self.journal = Journal(self.path, self.state)
         self.compacted_day = today
 
-    def record_status(self, ok: bool) -> None:
+    def record_status(self, ok: bool, error: str = "") -> None:
         delivered = max(self.state.delivered, key=float, default="")
         write_status(
             self.path,
@@ -313,6 +369,7 @@ class RootRelay:
                 "polls": self.polls,
                 "last_poll": self.clock(),
                 "last_poll_ok": ok,
+                "last_error": error,
                 "last_delivered_ts": delivered,
                 "seen_ts": self.state.seen_ts,
                 "unknown": sorted(self.state.unknown),
@@ -356,7 +413,7 @@ class Relay:
                 if err.key == "slack-auth-failed":
                     raise
                 print_refusal(err)
-                root.record_status(False)
+                root.record_status(False, f"{err.key}={err.value}")
                 clean = False
         return clean
 

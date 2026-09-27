@@ -11,9 +11,10 @@
 # SLACK_BOT_TOKEN = ""
 
 # The email addresses of the people whose messages steer, comma-separated.
-# Anyone else in a channel can read but not steer. A change here re-resolves
-# the ids before the next delivery. Empty uses KENDEX_USER_EMAIL; with that
-# unset too, setup and the relay refuse and name the key.
+# Anyone else in a channel can read but not steer. A change here is
+# re-resolved at the relay's next start; a removed address loses routing
+# then. Empty uses KENDEX_USER_EMAIL; with that unset too, setup and the
+# relay refuse and name the key.
 SLACK_OWNERS = ""
 
 # How often the relay reads each channel, in seconds. Lower is faster and

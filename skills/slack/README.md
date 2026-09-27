@@ -25,7 +25,8 @@ Requires Python 3.8 or newer and the orch skill, which the install adds as a dep
 - `slack setup` resolves each owner's email address to a Slack user, creates the private channel or finds it by name, invites the owners and writes the binding under `tmp/slack/` in the checkout.
 - `slack listen --root A --root B` is one process for one person. Every `SLACK_POLL_SECONDS` it reads each channel's new messages, the thread of every open question, and every tenth poll the other threads younger than `SLACK_THREAD_DAYS`.
 - An owner's message reaches the overseer through the checkout's `lane-mail`, keyed by the Slack message id, so a message the relay carried once is never carried twice.
-- The mailbox's new envelopes for the owner are posted to the channel: a question with its options, recommendation and deadline, a notice in the thread of the message it answers, a report as an uploaded file.
+- The mailbox's new envelopes for the owner are posted to the channel: a question with its options, recommendation and deadline, a notice in the thread of the message it answers, a report as an uploaded file. An envelope older than `SLACK_THREAD_DAYS` is never posted.
+- The relay's first run reads Slack from the moment of the binding and the mailbox from its newest envelope, so neither side's past is replayed. Open questions are posted whatever their age inside `SLACK_THREAD_DAYS`.
 - `slack compact` drops journal lines older than `SLACK_THREAD_DAYS` once they are resolved. The relay runs it once a day.
 - `slack install` writes the systemd user unit that runs the relay over the roots you name.
 
@@ -101,7 +102,7 @@ What an owner's message in the channel does:
 | From anyone not in `SLACK_OWNERS` | Not routed; the relay replies once, then ignores that message |
 | An edit, a deletion or a thread broadcast | Ignored |
 
-A question answered in the overseer's chat shows in its Slack thread as "Answered in the chat"; one nobody answered by its deadline shows as "No answer by the deadline", with the option that stood. Removing an address from `SLACK_OWNERS` takes effect at the relay's next poll.
+A question answered in the overseer's chat shows in its Slack thread as "Answered in the chat"; one nobody answered by its deadline shows as "No answer by the deadline", with the option that stood. A changed `SLACK_OWNERS` takes effect when the relay restarts; `slack setup` restarts the unit `install` wrote.
 
 ## Credential boundary
 

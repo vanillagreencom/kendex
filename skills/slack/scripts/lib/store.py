@@ -22,7 +22,7 @@ BINDING = "binding.json"
 JOURNAL = "journal.jsonl"
 STATUS = "status.json"
 LOCK = "listen.lock"
-LINE_KINDS = {"seen", "in", "out", "resolved", "bound", "thread"}
+LINE_KINDS = {"seen", "start", "in", "out", "resolved", "bound", "thread"}
 
 
 def root_dir(root: Path) -> Path:
@@ -31,8 +31,13 @@ def root_dir(root: Path) -> Path:
 
 @dataclass
 class Binding:
+    """The channel one checkout is bound to. `bound_at` is the moment of the
+    binding as a Slack stamp, the history position a start with no journal
+    begins from."""
+
     channel: str
     channel_name: str
+    bound_at: str
     owners: List[str]
     owner_ids: Dict[str, str]
 
@@ -40,6 +45,7 @@ class Binding:
         return {
             "channel": self.channel,
             "channel_name": self.channel_name,
+            "bound_at": self.bound_at,
             "owners": self.owners,
             "owner_ids": self.owner_ids,
         }
@@ -51,9 +57,11 @@ def read_binding(root: Path) -> Binding:
         raise Refusal("root-unbound", str(root))
     try:
         raw = json.loads(path.read_text())
+        float(raw["bound_at"])
         return Binding(
             channel=str(raw["channel"]),
             channel_name=str(raw["channel_name"]),
+            bound_at=str(raw["bound_at"]),
             owners=[str(o) for o in raw["owners"]],
             owner_ids={str(k): str(v) for k, v in raw["owner_ids"].items()},
         )
@@ -85,6 +93,7 @@ class State:
     """The journal replayed: what was carried, what is bound, where to read."""
 
     seen_ts: str = "0"
+    start_at: str = ""
     carried: Set[str] = field(default_factory=set)
     delivered: Dict[str, str] = field(default_factory=dict)
     threads: Dict[str, Thread] = field(default_factory=dict)
@@ -98,6 +107,8 @@ class State:
         kind = line.get("t")
         if kind == "seen":
             self.seen_ts = str(line["ts"])
+        elif kind == "start":
+            self.start_at = str(line["at"])
         elif kind == "in":
             ts = str(line["ts"])
             if line["kind"] == "ignored":
@@ -143,6 +154,10 @@ class State:
                 thread.seen = str(line["seen"])
         else:
             raise KeyError(kind)
+
+
+def journal_exists(root: Path) -> bool:
+    return (root_dir(root) / JOURNAL).is_file()
 
 
 def read_journal(root: Path) -> State:

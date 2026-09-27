@@ -37,8 +37,12 @@ EXPLAIN = {
     "binding-invalid": "The binding file is not the shape `slack setup` writes; run setup again.",
     "journal-invalid": (
         "A journal line is not one the relay writes. The journal is a"
-        " transport ledger and nothing edits it by hand; move it aside and"
-        " restart, and every open ask is re-read from the mailbox."
+        " transport ledger and nothing edits it by hand. Move it aside and"
+        " restart: the relay then reads Slack again from the binding moment,"
+        " which lane-mail answers with the envelopes that already landed,"
+        " posts nothing from the mailbox's past but its open asks, which"
+        " appear once more, and routes replies under earlier threads as"
+        " directives."
     ),
     "slack-auth-failed": (
         "Slack refused the token. fix= names the remedy: set a live"
@@ -50,8 +54,21 @@ EXPLAIN = {
         " Slack's error. Nothing was journaled as delivered."
     ),
     "slack-unreachable": (
-        "Slack did not answer over the network. The relay retries on its next"
-        " poll; a post is refused and its file stays on disk."
+        "The request never reached Slack: the connection, the TLS handshake"
+        " or the write failed. Nothing is journaled; the relay makes the"
+        " same call on its next poll, and a post is refused with its file"
+        " left on disk."
+    ),
+    "slack-response-lost": (
+        "The request reached Slack and the answer was lost: a timeout or a"
+        " dropped connection after the write. Slack may have acted on it, so"
+        " the relay journals the envelope as unknown, shown by --status, and"
+        " never repeats it; a post is refused and its file stays on disk."
+    ),
+    "slack-invite-refused": (
+        "Slack refused to invite the owners to the channel; the value names"
+        " Slack's error and the owner ids. No binding is written. fix= names"
+        " the remedy."
     ),
     "slack-rate-limited": (
         "Slack answered 429 on every retry the relay allows. Lower the call"

@@ -36,8 +36,11 @@ listen    the relay: every SLACK_POLL_SECONDS, per root, one history read since
           then the mailbox's events; owner text lands as a directive or, in
           a question's thread, as its answer, each with --delivery-id
           channel:ts; asks, notices and rulings land in Slack, a report as
-          its file. One relay per checkout, held by an OS lock; --once polls
-          each root once and exits 0 when every poll succeeded, 1 otherwise
+          its file. A post Slack refuses fails the poll and is made again
+          on the next one; a post whose response was lost is journaled
+          unknown and never repeated. One relay per checkout, held by an OS
+          lock; --once polls each root once and exits 0 when every poll
+          succeeded, 1 otherwise
   --status  one `slack-relay=ROOT state=ok|failing|stale|never` line per
           root from the relay's status record, then the summed call budget
 post      one message to the bound channel, or --channel for another; --mention
@@ -61,8 +64,8 @@ compacted, installed, enabled, restarted, listening, slack-relay,
 slack-relay-budget on stdout; refusals on stderr with exit 2: usage,
 setting-missing, setting-invalid, orch-missing, root-unbound, root-unreadable,
 binding-invalid, journal-invalid, slack-auth-failed, slack-api-failed,
-slack-unreachable, slack-rate-limited, slack-owner-unknown,
-slack-channel-unjoined, relay-running, secret-value, secret-pattern-invalid,
+slack-unreachable, slack-response-lost, slack-rate-limited,
+slack-owner-unknown, slack-channel-unjoined, slack-invite-refused, relay-running, secret-value, secret-pattern-invalid,
 file-unreadable, lane-mail-failed, unit-unwritable, systemctl-missing,
 systemctl-failed.
 """

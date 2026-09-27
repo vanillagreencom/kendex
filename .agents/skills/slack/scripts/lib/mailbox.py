@@ -1,9 +1,11 @@
 """The mailbox, read and written through the root's own lane-mail alone.
 
-The relay keys every delivery it makes with `--delivery-id channel:ts`, and
-the mailbox's locked check-and-append is the one owner of idempotency: a
-repeat of a key that landed is answered with the envelope it landed as, and
-the relay records that id exactly as it records a first landing.
+The relay keys every delivery it makes with `--delivery-id channel:ts`. Its
+journal skips a stamp it already carried; for any stamp the journal lost,
+the crash between the append and the mark, the mailbox's locked
+check-and-append is the judge: a repeat of a key that landed is answered
+with the envelope it landed as, and the relay records that id exactly as it
+records a first landing.
 """
 
 from __future__ import annotations

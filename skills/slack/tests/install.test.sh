@@ -44,6 +44,11 @@ assert_eq "$(cat "$LOG")" "--user try-restart slack-listen.service" "setup resta
 : > "$LOG"
 sk_run XDG_CONFIG_HOME="$SK_TMP/cfg-none" PATH="$BIN:$PATH" -- setup --root "$ROOT"
 assert_eq "$RC=$(cat "$LOG")" "0=" "with no unit installed, setup runs no systemctl"
+sk_run XDG_CONFIG_HOME="$CFG" PATH="$BIN:$PATH" FAKE_SYSTEMCTL_EXIT=1 -- setup --root "$ROOT"
+assert_eq "$RC=$ERR1" "2=slack: systemctl-failed=systemctl --user try-restart slack-listen.service exit=1" \
+  "a restart systemctl refuses is refused with its exit status"
+assert_eq "$(printf '%s' "$OUT" | sed -n '1p' | cut -d= -f1)=$(printf '%s' "$OUT" | grep -c 'restarted=')" "slack: bound=0" \
+  "the binding stands and no restart is claimed"
 
 # --- refusals, one row per rule ------------------------------------------------------------
 NOSYS="$(sk_path_without systemctl)"

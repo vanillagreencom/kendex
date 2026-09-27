@@ -19,6 +19,7 @@ assert_eq "$OUT" "slack: bound=C001 root=$ROOT name=alpha-brad owners=2" "setup 
 BINDING="$ROOT/tmp/slack/binding.json"
 assert_eq "$(jq -r '[.channel, .channel_name, (.owners | join(",")), .owner_ids["brad@example.test"], .owner_ids["ann@example.test"]] | join(" ")' "$BINDING")" \
   "C001 alpha-brad $OWNERS U001 U002" "the binding holds the channel, the owners list and the ids it resolved"
+assert_eq "$(jq -r '.bound_at | tonumber > 1700000000' "$BINDING")" "true" "the binding records its moment as a Slack stamp"
 assert_eq "$(sk_state '.channels.C001 | [.name, .is_private, (.members | join(","))] | join(" ")')" \
   "alpha-brad true UBOT,U001,U002" "the channel is private and every owner is invited"
 
@@ -61,11 +62,25 @@ assert_eq "$RC=$ERR1" "2=slack: slack-auth-failed=invalid_auth fix=set a live SL
   "a token Slack refuses is slack-auth-failed with its remedy"
 sk_run -- setup --root "$SK_TMP/nowhere"
 assert_eq "$RC=$ERR1" "2=slack: root-unreadable=$SK_TMP/nowhere" "a root that is no directory is refused"
+KAPPA="$(sk_new_root kappa)"
+sk_ctl /_test/fault '{"method": "conversations.invite", "error": "cant_invite", "times": 1}' >/dev/null
+sk_run -- setup --root "$KAPPA"
+assert_eq "$RC=$(printf '%s' "$ERR1" | sed 's/refused=C[0-9]*/refused=CID/')" \
+  "2=slack: slack-invite-refused=CID error=cant_invite owners=$OWNERS fix=invite the owners to #kappa-brad in Slack, then run setup again" \
+  "an invite Slack refuses is refused with the channel, the owners and the remedy"
+assert_eq "$([ -e "$KAPPA/tmp/slack/binding.json" ] && echo present || echo absent)" "absent" "no binding is written after a refused invite"
 
-# --- control: the owner-unknown mapping ---------------------------------------
+# --- controls, one mutant per rule ---------------------------------------------
 sk_mutant owner relay.py 'error=users_not_found' 'error=never_this'
 sk_run SLACK_OWNERS="nobody@example.test" -- setup --root "$ROOT"
 assert_eq "${ERR1%%=*}" "slack: slack-api-failed" "control: the mapping removed, the unknown owner is a bare API failure"
+sk_bin_reset
+
+sk_mutant invite verbs.py 'TOLERATED_INVITE = \{"already_in_channel", "cant_invite_self"\}' 'TOLERATED_INVITE = {"already_in_channel", "cant_invite_self", "cant_invite"}'
+sk_ctl /_test/fault '{"method": "conversations.invite", "error": "cant_invite", "times": 1}' >/dev/null
+sk_run -- setup --root "$KAPPA"
+assert_eq "$RC=$([ -e "$KAPPA/tmp/slack/binding.json" ] && echo present || echo absent)" "0=present" \
+  "control: the refusal tolerated, setup binds a channel the owners are not in"
 sk_bin_reset
 
 sk_summary

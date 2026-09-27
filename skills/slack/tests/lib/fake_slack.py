@@ -6,13 +6,17 @@ in-memory workspace, and a control surface under /_test/ the suites drive.
 
 Control: POST /_test/message injects a message and answers its ts; GET
 /_test/state dumps messages, calls, uploads and posts; POST /_test/fault
-makes the next `times` calls of `method` answer `error` or HTTP `status`.
+makes the next `times` calls of `method` answer `error`, HTTP `status`, or
+with `drop` close the connection after reading the request and before any
+response, or with `refuse` redirect to a port nothing listens on, which the
+client meets as a refused connection before its request is written.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import socket
 import sys
 import threading
 import time
@@ -35,6 +39,7 @@ class Workspace:
         self.faults: list = []
         self.counter = 0
         self.lock = threading.Lock()
+        self.dead_port = dead_port()
 
     def next_ts(self) -> str:
         """Slack stamps are the current time; each one here is later than the
@@ -124,6 +129,11 @@ class Handler(BaseHTTPRequestHandler):
             for fault in list(self.ws.faults):
                 if fault["method"] == method and fault["times"] > 0:
                     fault["times"] -= 1
+                    if fault.get("drop"):
+                        self.close_connection = True
+                        return None
+                    if fault.get("refuse"):
+                        return self.send_json({}, 302, {"Location": f"http://127.0.0.1:{self.ws.dead_port}/{method}"})
                     if fault.get("status"):
                         return self.send_json({"ok": False}, fault["status"], {"Retry-After": str(fault.get("retry_after", 0))})
                     return self.send_json({"ok": False, "error": fault["error"]})
@@ -249,6 +259,15 @@ class Handler(BaseHTTPRequestHandler):
             message["thread_ts"] = params["thread_ts"]
         self.ws.add_message(params["channel_id"], message)
         self.send_json({"ok": True, "files": [{"id": f["id"]} for f in files]})
+
+
+def dead_port() -> int:
+    """A port the kernel just handed out and nothing listens on."""
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    return port
 
 
 def main() -> int:
