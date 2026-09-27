@@ -319,10 +319,15 @@ fn make(
         let person = answered.is_none() && std::io::stdin().is_terminal();
         // Asked before the commit is offered, of the commit it would make:
         // a package not set up here, one whose check says its files are
-        // stale, and a commit that would split a package's changed files
-        // each hold it.
-        let stale = match commit_offer::stale(env, scope, &scan, commit_offer::Carried::Everything)
-        {
+        // stale, and one whose check fails over the commit itself each hold
+        // it.
+        let stale = match commit_offer::stale(
+            env,
+            scope,
+            &scan,
+            &generated,
+            commit_offer::Carried::Everything,
+        ) {
             Ok(stale) => stale,
             Err(error) => {
                 block::not_vouched(root, &error.to_string());
@@ -418,7 +423,7 @@ fn hold(
     // setup clears: the files are left for the person to commit together.
     if stale
         .iter()
-        .any(|one| matches!(one.why, commit_offer::Staleness::Split(_)))
+        .any(|one| matches!(one.why, commit_offer::Staleness::Split { .. }))
     {
         block::split_way_on();
         return Ok(Hold::Ended(match held.answered {

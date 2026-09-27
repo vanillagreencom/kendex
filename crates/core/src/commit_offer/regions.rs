@@ -215,22 +215,10 @@ pub(super) fn commit(
     all: &[String],
     message: &str,
 ) -> Result<(), super::CommitFailure> {
-    let regions: Vec<(&str, &OwnedRegion)> = all
-        .iter()
-        .filter_map(|path| {
-            generated
-                .region(root, path)
-                .map(|region| (path.as_str(), region))
-        })
-        .collect();
-    if regions.is_empty() {
+    let carrying = Carrying::read(root, generated, all, Step::Commit)?;
+    if carrying.regions.is_empty() {
         unreachable!("the regional commit route needs an owned region");
     }
-    let whole: Vec<String> = all
-        .iter()
-        .filter(|path| generated.region(root, path).is_none())
-        .cloned()
-        .collect();
     let index = index_path(root).map_err(super::CommitFailure::from)?;
     let parent = index.parent().unwrap_or(root);
     let temp = tempfile::Builder::new()
@@ -244,25 +232,10 @@ pub(super) fn commit(
             .map_err(|error| super::CommitFailure::from(failed(Step::Commit, error.to_string())))?;
     }
     let alternate = temp.path().join("candidate-index");
-    let source: Vec<(&str, &OwnedRegion, String)> = regions
-        .iter()
-        .map(|(path, region)| {
-            canonical_working(root, path, Step::Commit).map(|text| (*path, *region, text))
-        })
-        .collect::<Result<_, _>>()
-        .map_err(super::CommitFailure::from)?;
 
     let prepare = (|| -> Result<(), Failed> {
-        stage(root, &index, &whole)?;
-        for (path, region, source) in &source {
-            write_region_to_index(root, &index, path, region, source)?;
-        }
-        initialize_candidate(root, &alternate)?;
-        stage(root, &alternate, &whole)?;
-        for (path, region, source) in &source {
-            write_region_to_index(root, &alternate, path, region, source)?;
-        }
-        Ok(())
+        carrying.write(root, &index)?;
+        carrying.candidate(root, &alternate)
     })();
     if let Err(failed) = prepare {
         let still_staged = restore_index(&index, &backup, had_index)
@@ -287,6 +260,58 @@ pub(super) fn commit(
                 .map(|_| all.len()),
             failed,
         }),
+    }
+}
+
+/// What a commit of some changed paths writes into an index: the paths
+/// kendex owns whole, staged from the working tree, and each owned region's
+/// body, spliced into the copy the index already holds so the bytes around
+/// it stay as they were.
+pub(super) struct Carrying<'a> {
+    whole: Vec<String>,
+    /// Each region's path, the region, and its working copy in git's
+    /// canonical form, read once so every index it is written into gets
+    /// the same bytes.
+    regions: Vec<(&'a str, &'a OwnedRegion, String)>,
+}
+
+impl<'a> Carrying<'a> {
+    pub(super) fn read(
+        root: &Path,
+        generated: &'a crate::engine::GeneratedPaths,
+        all: &'a [String],
+        step: Step,
+    ) -> Result<Self, Failed> {
+        let mut whole = Vec::new();
+        let mut regions = Vec::new();
+        for path in all {
+            match generated.region(root, path) {
+                Some(region) => {
+                    let source = canonical_working(root, path, step)?;
+                    regions.push((path.as_str(), region, source));
+                }
+                None => whole.push(path.clone()),
+            }
+        }
+        Ok(Self { whole, regions })
+    }
+
+    /// Write the carried paths into the index at `index`, over what it
+    /// already holds.
+    fn write(&self, root: &Path, index: &Path) -> Result<(), Failed> {
+        stage(root, index, &self.whole)?;
+        for (path, region, source) in &self.regions {
+            write_region_to_index(root, index, path, region, source)?;
+        }
+        Ok(())
+    }
+
+    /// Write, at `index`, the index the commit hands its hooks: the last
+    /// commit with the carried paths over it. `git commit --only` builds
+    /// the same one for a commit with no owned region.
+    pub(super) fn candidate(&self, root: &Path, index: &Path) -> Result<(), Failed> {
+        initialize_candidate(root, index)?;
+        self.write(root, index)
     }
 }
 
@@ -395,7 +420,7 @@ fn committed(root: &Path, path: &str) -> Result<bool, Failed> {
         .is_some_and(|kind| kind == "blob"))
 }
 
-fn index_path(root: &Path) -> Result<PathBuf, Failed> {
+pub(super) fn index_path(root: &Path) -> Result<PathBuf, Failed> {
     let bytes = git::read_required(root, &["rev-parse", "--git-path", "index"])?;
     let text = String::from_utf8(bytes).map_err(|_| {
         failed(

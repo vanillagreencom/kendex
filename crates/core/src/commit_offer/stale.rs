@@ -21,12 +21,14 @@
 
 use std::path::Path;
 
+use crate::engine::GeneratedPaths;
 use crate::engine::generated_paths::INVENTORY;
 use crate::env::Env;
 use crate::model::Scope;
-use crate::repo_effects::{Ask, DeclaredEffects, Disclosure, SetupState};
+use crate::repo_effects::{Ask, DeclaredEffects, Disclosure, SetupState, SetupStatus};
 
 use super::Scan;
+use super::candidate::Candidate;
 
 /// One package whose checkout files kendex cannot vouch for, and why.
 #[derive(Debug, Clone, PartialEq)]
@@ -52,16 +54,21 @@ pub enum Staleness {
     /// The package's check could not answer, or could not be run. Its
     /// words, or why it could not be run.
     Unchecked(Vec<String>),
-    /// The commit carries some of the package's changed paths and leaves
-    /// these out: files under its tree or its declared writes the commit
-    /// does not carry, the changed manifest, which no commit kendex makes
-    /// carries, or the changed inventory the commit does not carry. A
-    /// package renders from the whole manifest and from the inventory, and
-    /// the repository's check renders from what the commit holds, so it
-    /// compares the carried files against inputs left behind. No setup
-    /// clears this; the way on is to leave the files and commit them
-    /// together.
-    Split(Vec<String>),
+    /// The package's check passes over the working tree and fails over the
+    /// commit: run with `--staged` against the index the commit would hand
+    /// the repository's pre-commit chain, the last commit with the carried
+    /// paths over it. The commit carries the package's files without a
+    /// changed input they were rendered from. No setup clears this; the
+    /// way on is to leave the files and commit them together.
+    Split {
+        /// The changed inputs the commit leaves out: the package's paths
+        /// under its tree or its declared writes, the manifest, which no
+        /// commit kendex makes carries, and the inventory. Empty where the
+        /// input left out is a change kendex does not own.
+        left: Vec<String>,
+        /// What the check said over the commit, escaped.
+        said: Vec<String>,
+    },
 }
 
 /// Which of the scan's changed paths a commit carries.
@@ -86,23 +93,22 @@ impl Carried<'_> {
 /// Every installed package whose checkout files the commit carrying
 /// `carried` would hold out of date. Empty where that commit can be
 /// offered. The one owner of the rule for both surfaces: each asks it of
-/// the commit it offers.
+/// the commit it offers, with the `generated` set that commit is made
+/// from.
 ///
 /// A package is asked only where the commit carries one of its changed
 /// paths: under its own tree, which is what a refresh of its doctrine
-/// changes, or under one of the paths it declares it writes. First, the
-/// commit never splits a package's pending paths ([`Staleness::Split`]):
-/// one that carries some of them and leaves others behind is held however
-/// the package stands, because the repository's check renders from the
-/// commit's inputs. The changed manifest and an uncarried changed
-/// inventory count among the paths left behind for every package. Then a package declaring no installer holds nothing,
-/// since no setup could clear the hold. One not set up here holds the
-/// commit without any of its code running. One set up here is asked
-/// through its declared check, the same licensed run the package page
-/// makes, over the working tree; declaring no check, it gives kendex
-/// nothing to predict with and holds nothing. The split rule is what
-/// makes that working-tree check stand for the commit: with every changed
-/// input carried, the tree the check reads is the one the commit holds.
+/// changes, or under one of the paths it declares it writes. A package
+/// declaring no installer holds nothing, since no setup could clear the
+/// hold. One not set up here holds the commit without any of its code
+/// running. One set up here is asked through its declared check, the same
+/// licensed run the package page makes, over the working tree; declaring
+/// no check, it gives kendex nothing to predict with and holds nothing.
+/// Where that check passes, it is asked again over the commit itself
+/// ([`Staleness::Split`]), built once per call in an index of its own,
+/// and it is that answer which holds or offers the commit. A changed
+/// input the commit leaves out holds it only where the check over the
+/// commit reads it.
 ///
 /// A declaration that will not read is passed over: it names neither the
 /// files nor the check, and `repo_effects::lapsed` is the reading that
@@ -111,19 +117,10 @@ pub fn stale(
     env: &Env,
     scope: &Scope,
     scan: &Scan,
+    generated: &GeneratedPaths,
     carried: Carried,
 ) -> crate::error::Result<Vec<Stale>> {
-    let behind: Vec<&str> = scan
-        .manifest
-        .iter()
-        .map(String::as_str)
-        .chain(
-            scan.owned
-                .iter()
-                .map(|owned| owned.path.as_str())
-                .filter(|path| *path == INVENTORY && !carried.carries(path)),
-        )
-        .collect();
+    let mut candidate: Option<Candidate> = None;
     let mut held = Vec::new();
     for installed in crate::engine::installed_declarations(env, scope)? {
         let crate::engine::InstalledDeclaration::Declared(declared) = installed else {
@@ -132,44 +129,103 @@ pub fn stale(
         if crate::repo_effects::touches_git(&declared.effects) {
             continue;
         }
-        let (taken, mut left): (Vec<&str>, Vec<&str>) = scan
+        let (taken, left): (Vec<&str>, Vec<&str>) = scan
             .owned
             .iter()
             .map(|owned| owned.path.as_str())
             .filter(|path| belongs(&scan.root, &declared, path))
             .partition(|path| carried.carries(path));
-        if taken.is_empty() {
-            continue;
-        }
-        left.extend(&behind);
-        if !left.is_empty() {
-            let left = left.into_iter().map(str::to_owned).collect();
-            held.push((declared, Staleness::Split(left)));
-            continue;
-        }
-        if declared.effects.installer.is_none() {
+        if taken.is_empty() || declared.effects.installer.is_none() {
             continue;
         }
         let why = match crate::repo_effects::armed_here(scope, &declared)? {
             false => Staleness::NotSetUp,
             true => {
                 let status = crate::repo_effects::status(scope, &declared, Ask::Surface);
-                match status.state {
-                    SetupState::Active | SetupState::Unavailable => continue,
-                    SetupState::NeedsRepair => Staleness::OutOfDate(status.said),
-                    SetupState::CouldNotCheck => Staleness::Unchecked(status.said),
-                    // The record was there a moment ago; read again, it
-                    // is not, and either way nothing ran here.
-                    SetupState::NotActive => Staleness::NotSetUp,
-                    SetupState::NotDeclared | SetupState::NotARepository => {
-                        unreachable!("a declared package in a project read as {:?}", status.state)
+                let holds = match status.state {
+                    SetupState::Active => {
+                        let candidate = match &mut candidate {
+                            Some(built) => built,
+                            None => candidate.insert(Candidate::build(
+                                &scan.root,
+                                generated,
+                                &carried_paths(scan, carried),
+                            )?),
+                        };
+                        standing(candidate.status(scope, &declared), |said| {
+                            Staleness::Split {
+                                left: left_out(scan, carried, left),
+                                said,
+                            }
+                        })
                     }
+                    SetupState::NeedsRepair
+                    | SetupState::CouldNotCheck
+                    | SetupState::NotActive
+                    | SetupState::Unavailable
+                    | SetupState::NotDeclared
+                    | SetupState::NotARepository => standing(status, Staleness::OutOfDate),
+                };
+                match holds {
+                    Some(why) => why,
+                    None => continue,
                 }
             }
         };
         held.push((declared, why));
     }
+    if let Some(candidate) = candidate {
+        candidate.close()?;
+    }
     disclosed(env, scope, held)
+}
+
+/// What one reading of a set-up package's check holds the commit with,
+/// `None` where it holds nothing. `failed` names a check that exits 1: out
+/// of date over the working tree, split over the commit.
+fn standing(
+    status: SetupStatus,
+    failed: impl FnOnce(Vec<String>) -> Staleness,
+) -> Option<Staleness> {
+    match status.state {
+        SetupState::Active | SetupState::Unavailable => None,
+        SetupState::NeedsRepair => Some(failed(status.said)),
+        SetupState::CouldNotCheck => Some(Staleness::Unchecked(status.said)),
+        // The record was there a moment ago; read again, it is not, and
+        // either way nothing ran here.
+        SetupState::NotActive => Some(Staleness::NotSetUp),
+        SetupState::NotDeclared | SetupState::NotARepository => {
+            unreachable!("a declared package in a project read as {:?}", status.state)
+        }
+    }
+}
+
+/// The scan's changed paths the commit carries.
+fn carried_paths(scan: &Scan, carried: Carried) -> Vec<String> {
+    scan.owned
+        .iter()
+        .map(|owned| owned.path.clone())
+        .filter(|path| carried.carries(path))
+        .collect()
+}
+
+/// A split package's changed inputs the commit leaves out: its own paths
+/// the commit does not carry, the manifest wherever it changed or was
+/// deleted, and the inventory where it changed and is not carried. The
+/// package renders from the whole manifest and from the inventory, so each
+/// is named where it is left behind; which of them the check read, only
+/// its own words say.
+fn left_out(scan: &Scan, carried: Carried, left: Vec<&str>) -> Vec<String> {
+    let inventory = scan
+        .owned
+        .iter()
+        .map(|owned| owned.path.as_str())
+        .filter(|path| *path == INVENTORY && !carried.carries(path));
+    left.into_iter()
+        .chain(scan.manifest.as_deref())
+        .chain(inventory)
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Each held package with the block its setup is shown under.

@@ -77,7 +77,9 @@ fn resolve_script<'a>(
     // Only the package's own arguments. kendex injects nothing: a declared
     // script that needed a flag kendex invented would be a script only
     // kendex could run, and the point of the declaration is that a person
-    // can run it too.
+    // can run it too. The one word added anywhere is `--staged`, in
+    // `run_check_staged`, and it is not kendex's: it is how the
+    // repository's own pre-commit chain asks a check about a commit.
     // The declaration is text, so its arguments are text; paths that reach
     // the child as bytes are the ones kendex resolves, not these.
     let argv = args.into_iter().map(Into::into).collect();
@@ -85,14 +87,19 @@ fn resolve_script<'a>(
 }
 
 /// Run a resolved script from the repository root and relay what it said.
+/// With an `index`, git in the script reads that index file rather than the
+/// repository's own.
 fn launch_script(
     repo: &std::path::Path,
     program: &std::path::Path,
     argv: Vec<std::ffi::OsString>,
+    index: Option<&std::path::Path>,
 ) -> crate::error::Result<crate::guard::GuardReport> {
-    let output = crate::process::Hardened::package_script(program, argv, repo)
-        .run()
-        .map_err(|error| err(error.to_string()))?;
+    let mut script = crate::process::Hardened::package_script(program, argv, repo);
+    if let Some(index) = index {
+        script = script.env("GIT_INDEX_FILE", &index.to_string_lossy());
+    }
+    let output = script.run().map_err(|error| err(error.to_string()))?;
     Ok(crate::guard::relay(&output))
 }
 
@@ -108,7 +115,22 @@ pub fn run_script(
     spec: &str,
 ) -> crate::error::Result<crate::guard::GuardReport> {
     let (repo, program, argv) = resolve_script(scope, root, spec)?;
-    launch_script(repo, &program, argv)
+    launch_script(repo, &program, argv, None)
+}
+
+/// Run a declared check over the commit an index file holds: its own words
+/// and `--staged`, with git pointed at `index`. commit-guards' pre-commit
+/// lane runs `bot-instructions check --staged` the same way, over the index
+/// the commit hands its hooks.
+pub(crate) fn run_check_staged(
+    scope: &crate::model::Scope,
+    root: &std::path::Path,
+    spec: &str,
+    index: &std::path::Path,
+) -> crate::error::Result<crate::guard::GuardReport> {
+    let (repo, program, mut argv) = resolve_script(scope, root, spec)?;
+    argv.push("--staged".into());
+    launch_script(repo, &program, argv, Some(index))
 }
 
 /// Run another verb through the program named by a declared script.
@@ -119,7 +141,7 @@ pub(crate) fn run_script_program(
     argv: Vec<std::ffi::OsString>,
 ) -> crate::error::Result<crate::guard::GuardReport> {
     let (repo, program, _) = resolve_script(scope, root, declared)?;
-    launch_script(repo, &program, argv)
+    launch_script(repo, &program, argv, None)
 }
 
 /// Whether kendex recorded arming this package's declared effect here.
@@ -198,7 +220,7 @@ pub fn arm(
         });
     };
     let (repo, program, argv) = resolve_script(scope, &declared.root, installer)?;
-    let report = launch_script(repo, &program, argv)?;
+    let report = launch_script(repo, &program, argv, None)?;
     if report.code != 0 {
         return Err(ArmError::Failed {
             name: declared.name.clone(),

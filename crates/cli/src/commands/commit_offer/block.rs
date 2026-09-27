@@ -126,12 +126,23 @@ pub fn stale(scan: &Scan, stale: &[Stale]) {
                     quoted(line);
                 }
             }
-            Staleness::Split(left) => {
-                detail(&format!(
-                    "the commit would carry some of {name}'s changed files and leave these out:"
-                ));
-                for path in left {
-                    quoted(path);
+            Staleness::Split { left, said } => {
+                match left.is_empty() {
+                    false => {
+                        detail(&format!(
+                            "the commit would carry some of {name}'s changed files and leave these out:"
+                        ));
+                        for path in left {
+                            quoted(path);
+                        }
+                    }
+                    true => detail(&format!(
+                        "the commit would carry some of {name}'s changed files and leave out a change they were rendered from"
+                    )),
+                }
+                detail(&format!("{name}'s check over the commit says:"));
+                for line in said {
+                    quoted(line);
                 }
             }
         }

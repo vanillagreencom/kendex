@@ -766,6 +766,7 @@ fn a_package_whose_files_the_offer_would_carry_stale_holds_the_commit() {
             &fixture.env,
             &fixture.scope,
             &offer_scan(&fixture, &generated),
+            &generated,
             Carried::Everything,
         )
         .expect("the packages are asked");
@@ -820,8 +821,14 @@ fn an_unarmed_doctrine_change_never_offers_the_commit_the_staged_check_refuses()
     rendered.add_to(&mut generated);
 
     let scan = offer_scan(&fixture, &generated);
-    let stale = commit_offer::stale(&fixture.env, &fixture.scope, &scan, Carried::Everything)
-        .expect("the packages are asked");
+    let stale = commit_offer::stale(
+        &fixture.env,
+        &fixture.scope,
+        &scan,
+        &generated,
+        Carried::Everything,
+    )
+    .expect("the packages are asked");
     assert_eq!(
         stale.iter().map(|held| &held.why).collect::<Vec<_>>(),
         [&Staleness::NotSetUp],
@@ -837,8 +844,14 @@ fn an_unarmed_doctrine_change_never_offers_the_commit_the_staged_check_refuses()
     bot_instructions::add_to_generated(&fixture.env, &fixture.scope, &mut generated)
         .expect("the setup's files join the offer");
     let scan = offer_scan(&fixture, &generated);
-    let stale = commit_offer::stale(&fixture.env, &fixture.scope, &scan, Carried::Everything)
-        .expect("the packages are asked again");
+    let stale = commit_offer::stale(
+        &fixture.env,
+        &fixture.scope,
+        &scan,
+        &generated,
+        Carried::Everything,
+    )
+    .expect("the packages are asked again");
     assert!(stale.is_empty(), "still held after the setup: {stale:?}");
     assert!(
         staged_check_passes(&fixture.root, &scan.owned),
@@ -891,21 +904,87 @@ fn a_linked_work_tree_names_the_main_checkout_in_its_skip_line() {
     );
 }
 
-/// A commit never splits a package's changed paths. One row per way a
-/// package's input can be left behind while its re-rendered files are
-/// carried: a pending doctrine change outside the commit, the manifest
-/// changed or deleted anywhere, which no commit kendex makes carries, and
-/// a changed inventory outside the commit. A commit carrying every changed
-/// path kendex owns, the inventory included, is whole.
+/// One way an input of the package's render can change while its
+/// re-rendered files are carried.
+enum Edit {
+    Nothing,
+    GainCodex,
+    UnreadKey,
+    DeleteManifest,
+    DropSkillTree,
+}
+
+/// What the check over the commit holds it with.
+enum OverCommit {
+    Nothing,
+    Split(&'static [&'static str]),
+    OutOfDate,
+}
+
+/// An armed fixture, committed, whose doctrine then changed and whose
+/// package re-rendered after `edit`: the offer's scan and the set it was
+/// read from. A deleted manifest is deleted after the render, which reads
+/// it.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+fn edited_offer(what: &str, edit: &Edit) -> (Fixture, GeneratedPaths, commit_offer::Scan) {
+    let fixture = enabled_fixture();
+    if let Edit::GainCodex = edit {
+        let tracked = fixture.root.join(".codex/skills/local/SKILL.md");
+        fs::create_dir_all(tracked.parent().unwrap()).unwrap();
+        fs::write(&tracked, "x\n").unwrap();
+        git(&fixture.root, &["add", "-A"]);
+    }
+    commit_fixture(&fixture.root);
+    let mut generated = GeneratedPaths::default();
+    generated.whole.insert(change_doctrine(&fixture.root));
+    let replace = |path: &str, from: &str, to: &str| {
+        let path = fixture.root.join(path);
+        let text = fs::read_to_string(&path).unwrap();
+        assert_eq!(text.matches(from).count(), 1, "{what}: {from:?}");
+        fs::write(&path, text.replacen(from, to, 1)).unwrap();
+    };
+    match edit {
+        Edit::Nothing | Edit::DeleteManifest => {}
+        Edit::GainCodex => replace(
+            "kendex.toml",
+            "harnesses = [\"claude\"]\n",
+            "harnesses = [\"claude\", \"codex\"]\n",
+        ),
+        Edit::UnreadKey => replace(
+            "kendex.toml",
+            "[skills.dev]\nsource = \"local\"\n",
+            "[skills.dev]\nsource = \"elsewhere\"\n",
+        ),
+        Edit::DropSkillTree => replace(
+            ".kendex-generated.json",
+            "\".agents/skills/dev/SKILL.md\",",
+            "",
+        ),
+    }
+    bot_instructions::render(&fixture.env, &fixture.scope)
+        .expect("the armed package renders")
+        .add_to(&mut generated);
+    if let Edit::DeleteManifest = edit {
+        fs::remove_file(fixture.root.join("kendex.toml")).unwrap();
+    }
+    let scan = offer_scan(&fixture, &generated);
+    (fixture, generated, scan)
+}
+
+/// A set-up package whose check passes over the working tree is asked
+/// again over the commit, its check run with `--staged` against the index
+/// that commit would hand the pre-commit chain, and that answer holds or
+/// offers it. One row per way an input can be left behind while the
+/// package's re-rendered files are carried: a pending doctrine change
+/// outside the commit, `[install] harnesses` gaining a harness whose render
+/// root holds a tracked tree, a manifest key the render does not read, the
+/// manifest deleted, and the inventory dropping a skill tree. The manifest
+/// is never carried; the inventory is carried in one row and left out in
+/// another. Every row leaves the repository's own index as it found it and
+/// no candidate index behind.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_commit_that_splits_a_packages_changed_paths_is_held() {
-    enum Edit {
-        Nothing,
-        Harnesses,
-        DeleteManifest,
-        Inventory,
-    }
+fn a_commit_is_held_only_where_the_check_over_it_fails() {
     let doctrine = format!("{CODEX_PACKAGE}/SKILL.md");
     let inventory = ".kendex-generated.json";
     let rows = [
@@ -913,63 +992,47 @@ fn a_commit_that_splits_a_packages_changed_paths_is_held() {
             "the doctrine left out of the commit",
             Edit::Nothing,
             Some(doctrine.as_str()),
-            Some(vec![doctrine.clone()]),
+            OverCommit::Split(&[".agents/skills/bot-instructions/SKILL.md"]),
         ),
         (
             "every pending change, the doctrine included",
             Edit::Nothing,
             None,
-            None,
+            OverCommit::Nothing,
         ),
         (
-            "the manifest changed outside the package's table",
-            Edit::Harnesses,
+            "harnesses gains codex over a tracked .codex/skills tree",
+            Edit::GainCodex,
             None,
-            Some(vec!["kendex.toml".to_owned()]),
+            OverCommit::Split(&["kendex.toml"]),
+        ),
+        (
+            "a manifest key the render does not read",
+            Edit::UnreadKey,
+            None,
+            OverCommit::Nothing,
         ),
         (
             "the manifest deleted",
             Edit::DeleteManifest,
             None,
-            Some(vec!["kendex.toml".to_owned()]),
+            OverCommit::OutOfDate,
         ),
         (
-            "the changed inventory left out of the commit",
-            Edit::Inventory,
+            "the inventory drops a skill tree, left out of the commit",
+            Edit::DropSkillTree,
             Some(inventory),
-            Some(vec![inventory.to_owned()]),
+            OverCommit::Split(&[".kendex-generated.json"]),
         ),
-        ("the changed inventory carried", Edit::Inventory, None, None),
+        (
+            "the inventory drops a skill tree, carried",
+            Edit::DropSkillTree,
+            None,
+            OverCommit::Nothing,
+        ),
     ];
-    for (what, edit, leave, split) in rows {
-        let fixture = enabled_fixture();
-        commit_fixture(&fixture.root);
-        let mut generated = GeneratedPaths::default();
-        generated.whole.insert(change_doctrine(&fixture.root));
-        bot_instructions::render(&fixture.env, &fixture.scope)
-            .expect("the armed package renders")
-            .add_to(&mut generated);
-        let replace = |path: &str, from: &str, to: &str| {
-            let path = fixture.root.join(path);
-            let text = fs::read_to_string(&path).unwrap();
-            assert_eq!(text.matches(from).count(), 1, "{what}: {from:?}");
-            fs::write(&path, text.replacen(from, to, 1)).unwrap();
-        };
-        match edit {
-            Edit::Nothing => {}
-            Edit::Harnesses => replace(
-                "kendex.toml",
-                "harnesses = [\"claude\"]\n",
-                "harnesses = [\"claude\", \"codex\"]\n",
-            ),
-            Edit::DeleteManifest => fs::remove_file(fixture.root.join("kendex.toml")).unwrap(),
-            Edit::Inventory => replace(
-                inventory,
-                "\".claude/agents/a.md\",",
-                "\".claude/agents/a.md\",\".claude/agents/b.md\",",
-            ),
-        }
-        let scan = offer_scan(&fixture, &generated);
+    for (what, edit, leave, holds) in rows {
+        let (fixture, generated, scan) = edited_offer(what, &edit);
         let carried_paths: BTreeSet<String> = scan
             .owned
             .iter()
@@ -990,14 +1053,37 @@ fn a_commit_that_splits_a_packages_changed_paths_is_held() {
             }
             None => Carried::Everything,
         };
+        let git_dir = fixture.root.join(".git");
+        let index_before = fs::read(git_dir.join("index")).unwrap();
 
-        let stale = commit_offer::stale(&fixture.env, &fixture.scope, &scan, carried)
+        let stale = commit_offer::stale(&fixture.env, &fixture.scope, &scan, &generated, carried)
             .expect("the packages are asked");
 
+        assert!(
+            fs::read(git_dir.join("index")).unwrap() == index_before,
+            "{what}: the repository's index changed"
+        );
+        let behind: Vec<String> = fs::read_dir(&git_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("kendex-candidate-"))
+            .collect();
+        assert!(behind.is_empty(), "{what}: left behind {behind:?}");
         let got: Vec<&Staleness> = stale.iter().map(|held| &held.why).collect();
-        match split {
-            Some(left) => assert_eq!(got, [&Staleness::Split(left)], "{what}"),
-            None => assert!(got.is_empty(), "{what}: {got:?}"),
+        let findings = |said: &[String]| {
+            said.iter()
+                .any(|line| line.starts_with("bot-instructions: findings="))
+        };
+        match (holds, got.as_slice()) {
+            (OverCommit::Nothing, []) => {}
+            (OverCommit::Split(want), [Staleness::Split { left, said }]) => {
+                assert_eq!(left, want, "{what}");
+                assert!(findings(said), "{what}: the check's words: {said:?}");
+            }
+            (OverCommit::OutOfDate, [Staleness::OutOfDate(said)]) => {
+                assert!(findings(said), "{what}: {said:?}");
+            }
+            (_, got) => panic!("{what}: {got:?}"),
         }
     }
 }

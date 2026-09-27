@@ -96,7 +96,7 @@ export function staleLine(stale: StalePackage): string {
     case "unchecked":
       return `${stale.name} could not say whether its files in this repository are up to date.`;
     case "split":
-      return `This commit would carry some of ${stale.name}'s changed files and leave out the ones below. They belong in one commit: leave them as diffs and commit them together.`;
+      return `${stale.name}'s check fails over this commit, which carries some of its changed files without a change they were rendered from. The changes it leaves out, then the check's words, are below. They belong in one commit: leave them as diffs and commit them together.`;
   }
 }
 export const STALE_NOTE =

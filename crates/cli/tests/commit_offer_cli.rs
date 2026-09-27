@@ -551,39 +551,70 @@ fn held_project(tmp: &tempfile::TempDir) -> PathBuf {
     project
 }
 
-/// A commit that would carry a package's re-rendered file while the
-/// manifest, which kendex never commits, has changed is held with the
-/// manifest named, whatever the package's own check says: no setup clears
-/// it, so the files are left for the person to commit together.
+/// A manifest edit, which kendex never commits, holds the commit only
+/// where the package's check over that commit reads it: run with
+/// `--staged` against the index the commit hands its hooks, where the
+/// manifest is the last commit's. One row whose check compares the staged
+/// manifest with the working one, held with the manifest and the check's
+/// words named and no setup offered; one whose check does not read it,
+/// committed.
 #[test]
-fn a_commit_that_leaves_the_changed_manifest_behind_is_held() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let project = region_project(
-        &tmp,
-        "# App\n\n## Code Review Rules\n\nold generated rules\n",
-        "# App\n\n## Code Review Rules\n\nold generated rules\n",
-    );
-    let manifest = project.join("kendex.toml");
-    let text = fs::read_to_string(&manifest).unwrap();
-    fs::write(
-        &manifest,
-        format!("{text}\n[bot-instructions]\nschema = 1\n"),
-    )
-    .unwrap();
-
-    let (output, text) = apply(&home, &project, &["--commit"]);
-
-    assert_eq!(output.status.code(), Some(1), "{text}");
-    for line in [
-        "the commit would carry some of bot-instructions's changed files and leave these out:",
-        "    kendex.toml",
-        "they are left as diffs; commit them together yourself",
+fn a_manifest_edit_holds_the_commit_only_where_the_check_over_it_reads_it() {
+    let reads = "if [ \"$1\" = check ]; then\n  if [ \"$2\" = --staged ] && [ \"$(git show :kendex.toml)\" != \"$(cat kendex.toml)\" ]; then\n    echo 'bot-instructions: findings=1' >&2\n    echo 'drift: kendex.toml' >&2\n    exit 1\n  fi\n  exit 0\nfi\n";
+    for (what, check, code, said) in [
+        (
+            "the check reads the manifest",
+            Some(reads),
+            Some(1),
+            &[
+                "the commit would carry some of bot-instructions's changed files and leave these out:",
+                "    kendex.toml",
+                "bot-instructions's check over the commit says:",
+                "    drift: kendex.toml",
+                "they are left as diffs; commit them together yourself",
+            ][..],
+        ),
+        ("the check does not read it", None, Some(0), &[][..]),
     ] {
-        assert!(text.contains(line), "missing {line:?}:\n{text}");
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = region_project(
+            &tmp,
+            "# App\n\n## Code Review Rules\n\nold generated rules\n",
+            "# App\n\n## Code Review Rules\n\nold generated rules\n",
+        );
+        if let Some(check) = check {
+            let script = project.join(".agents/skills/bot-instructions/scripts/bot-instructions");
+            let text = fs::read_to_string(&script).unwrap();
+            let passes = "if [ \"$1\" = check ]; then\n  exit 0\nfi\n";
+            assert_eq!(
+                text.matches(passes).count(),
+                1,
+                "{what}: the fixture's check"
+            );
+            executable(&script, &text.replacen(passes, check, 1));
+        }
+        let manifest = project.join("kendex.toml");
+        let text = fs::read_to_string(&manifest).unwrap();
+        fs::write(
+            &manifest,
+            format!("{text}\n[bot-instructions]\nschema = 1\n"),
+        )
+        .unwrap();
+
+        let (output, text) = apply(&home, &project, &["--commit"]);
+
+        assert_eq!(output.status.code(), code, "{what}: {text}");
+        for line in said {
+            assert!(text.contains(line), "{what}: missing {line:?}:\n{text}");
+        }
+        assert!(!text.contains("set it up here first"), "{what}: {text}");
+        assert_eq!(
+            head_subject(&project) == "bot package",
+            check.is_some(),
+            "{what}: {text}"
+        );
     }
-    assert!(!text.contains("set it up here first"), "{text}");
-    assert_eq!(head_subject(&project), "bot package");
 }
 
 /// A pre-commit chain that refuses prints every lane it ran, and git hands

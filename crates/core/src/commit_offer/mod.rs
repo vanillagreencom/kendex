@@ -36,6 +36,7 @@ use crate::env::Env;
 use crate::model::Scope;
 use crate::process::{DEFAULT_TIMEOUT, INTERACTIVE_TIMEOUT};
 
+mod candidate;
 mod changes;
 mod gh;
 pub(crate) mod git;

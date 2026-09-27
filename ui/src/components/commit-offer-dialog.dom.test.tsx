@@ -161,11 +161,15 @@ describe("an offer a package holds", () => {
     {
       name: "held, the commit would split its changes",
       stage: { at: "offer" } as Stage,
-      held: held("split", ["kendex.toml"]),
+      held: held("split", [
+        "kendex.toml",
+        "drift: .github/copilot-instructions.md",
+      ]),
       title: "1 file kendex wrote in site is not committed",
       words: [
-        "This commit would carry some of bot-instructions's changed files and leave out the ones below. They belong in one commit: leave them as diffs and commit them together.",
+        "bot-instructions's check fails over this commit, which carries some of its changed files without a change they were rendered from. The changes it leaves out, then the check's words, are below. They belong in one commit: leave them as diffs and commit them together.",
         "kendex.toml",
+        "drift: .github/copilot-instructions.md",
       ],
       actions: ["Leave as diffs"],
       disabled: false,

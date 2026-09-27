@@ -5104,8 +5104,10 @@ export type StaleWhy =
 /**  The package's check could not answer. */
 "unchecked" | 
 /**
- *  The commit would carry some of the package's changed files and
- *  leave out the ones `said` names. No setup clears it.
+ *  The package's check fails over the commit, which carries some of
+ *  its changed files and leaves out a change they were rendered from:
+ *  `said` names the changed inputs left out, then the check's words.
+ *  No setup clears it.
  */
 "split";
 
