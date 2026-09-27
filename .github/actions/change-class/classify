@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# classify — the shipped classifier's verdict for a diff, and the changed-path
-# families a workflow selects its jobs with.
+# classify — the shipped classifier's verdict for a diff, whether the diff
+# runs a workflow's lanes, and the changed-path families a workflow selects
+# its jobs with.
 #
 # Nothing here decides a class or a docs verdict. `change-class` prints one
 # and writes it to the step's output file itself, and `harness-only --mode
@@ -38,6 +39,17 @@
 #                      printed them. A family is a grouping of this list, so a
 #                      caller whose lanes answer to a tree no family names
 #                      groups it here rather than reading the diff again.
+#   lanes              true|false: whether the diff runs a workflow's lanes.
+#                      false on `render`, on `trivial`, and on docs_only=true
+#                      whatever the class; true on every other diff.
+#   lanes_cause        why: render, trivial or docs-only where lanes=false,
+#                      and the class where lanes=true.
+#
+# lanes is the one decision this script makes, and it is made from the two
+# verdicts above, never from the paths. A workflow forwards it rather than
+# spelling a class, so a change to which diffs run the lanes reaches every
+# consumer with no workflow edit. It is written last: a refusal anywhere
+# above leaves no lanes output, and the failed step runs every lane.
 #
 # A segment is what the path holds, not what the caller hopes: `skills/AGENTS.md`
 # puts `AGENTS.md` in changed_skills. Over-inclusion is the safe direction —
@@ -150,3 +162,17 @@ fi
   cat -- "${work:?}/paths"
   printf '%s\n' "$delimiter"
 } >>"$GITHUB_OUTPUT"
+
+# Whether the lanes run. A `render` diff was proved by re-rendering it, a
+# `trivial` one is inside its allowlist and line ceiling, and a docs-only one
+# changes no path outside the documentation set at any size. Every other diff
+# runs the lanes.
+if [ "$class" = render ] || [ "$class" = trivial ]; then
+  lanes=false lanes_cause="$class"
+elif [ "$docs" = docs_only=true ]; then
+  lanes=false lanes_cause=docs-only
+else
+  lanes=true lanes_cause="$class"
+fi
+printf 'lanes=%s\nlanes_cause=%s\n' "$lanes" "$lanes_cause" >>"$GITHUB_OUTPUT"
+printf 'lanes: lanes=%s cause=%s\n' "$lanes" "$lanes_cause" >&2

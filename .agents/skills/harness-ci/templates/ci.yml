@@ -5,11 +5,12 @@
 # `CI` is the one required context the organization ruleset asks of every
 # repository beside `Review gate`, so the job carrying it keeps that name and
 # every lane the repository runs reports into it: a lane in another workflow
-# is a lane no required context holds. The classifier reads the change class
-# on pull_request and merge_group alike, and every lane reads the same
-# `lanes` output on both, so a merge group runs the class job set its pull
-# request ran: a `render` or `trivial` diff runs no lane, and every other
-# class runs them all.
+# is a lane no required context holds. The classifier judges the diff on
+# pull_request and merge_group alike, and every lane reads the same `lanes`
+# output on both, so a merge group runs the lanes its pull request ran. Which
+# diffs run the lanes is the change-class action's answer, not this file's:
+# the `changes` job forwards it and names no class, so a change to that rule
+# reaches this workflow with no edit to it.
 name: CI
 
 "on":
@@ -29,10 +30,10 @@ jobs:
     # with the install rather than with the diff.
     timeout-minutes: 20
     outputs:
-      change_class: ${{ steps.classify.outputs.change_class }}
-      # Whether the lanes run: every class but the two whose diff needs no
-      # lane. The one place that set is spelled, and the waiver CI reads.
-      lanes: ${{ steps.classify.outputs.change_class != 'render' && steps.classify.outputs.change_class != 'trivial' }}
+      # Whether the lanes run, as the action answered it: the one output
+      # every lane and CI's waiver read. The classify step's `lanes:` log
+      # line says why.
+      lanes: ${{ steps.classify.outputs.lanes }}
     env:
       EVENT: ${{ github.event_name }}
       BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}

@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
 # `.github/actions/change-class/classify` is the one reader of a change class
-# every workflow gates on, and it must decide nothing itself: the class is
-# what the shipped `change-class` printed, docs_only is what the shipped
-# `harness-only --mode docs` printed, and the path families are a grouping of
-# the path list that same call wrote. The rows drive it through its
-# CLASSIFIER input against a stub scripts root, so each output can be traced
-# to the stub line that produced it.
+# every workflow gates on, and the one decision it makes is `lanes`, from the
+# two verdicts it reads: the class is what the shipped `change-class` printed,
+# docs_only is what the shipped `harness-only --mode docs` printed, and the
+# path families are a grouping of the path list that same call wrote. The
+# rows drive it through its CLASSIFIER input against a stub scripts root, so
+# each output can be traced to the stub line that produced it.
 #
 # Three surfaces:
-#   1. the outputs: one diff per class, asserting every output line the step
-#      writes, and the arguments each wrapped script was called with.
-#   2. the must-fail inverse: a copy of classify that prints a class of its
-#      own instead of reading the wrapped script's fails the class rows.
+#   1. the outputs: one diff per class, a docs-only diff at `standard` size
+#      and a `trivial` one off the docs set, asserting every output line the
+#      step writes, and the arguments each wrapped script was called with.
+#   2. the must-fail inverses: a copy of classify that prints a class of its
+#      own instead of reading the wrapped script's fails the render row, and
+#      one copy per lanes rule with that rule planted wrong fails the row the
+#      rule decides.
 #   3. the refusals: one row per cause the header documents, each asserting
 #      exit 2 and the `change-class-action: wiring-error: cause=` key, the
-#      wrapped classifier's own wiring error and the delimiter guard included.
+#      wrapped classifier's own wiring error and the delimiter guard included,
+#      and a refused step writing no lanes output.
 set -euo pipefail
 
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -109,25 +113,41 @@ refusal() { # the first refusal line's cause, or nothing
 
 # --- 1. The outputs, one diff per class --------------------------------------
 
-# CLASS|DOCS|PATHS (blank-separated)|EXPECTED OUTPUTS
+# ROW|CLASS|DOCS|PATHS (blank-separated)|EXPECTED OUTPUTS
+# The trivial-allowlisted row is a `trivial` class on a path outside the docs
+# set, which change-class answers under a HARNESS_CI_TRIVIAL_PATHS allowlist.
 class_rows() {
   cat <<'ROWS'
-render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|change_class=render docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=.agents/skills/orch/SKILL.md,.claude/skills/orch/SKILL.md
-trivial|true|docs/guide.md|change_class=trivial docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md
-micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|change_class=micro docs_only=false changed_skills=orch changed_crates= changed_workflows= changed_paths=skills/orch/SKILL.md,.agents/skills/orch/SKILL.md
-small|false|crates/cli/src/main.rs crates/core/src/lib.rs|change_class=small docs_only=false changed_skills= changed_crates=cli core changed_workflows= changed_paths=crates/cli/src/main.rs,crates/core/src/lib.rs
-standard|false|.github/workflows/ci.yml skills/github/SKILL.md crates/app/src/lib.rs|change_class=standard docs_only=false changed_skills=github changed_crates=app changed_workflows=ci.yml changed_paths=.github/workflows/ci.yml,skills/github/SKILL.md,crates/app/src/lib.rs
+render|render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|change_class=render docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=.agents/skills/orch/SKILL.md,.claude/skills/orch/SKILL.md lanes=false lanes_cause=render
+trivial|trivial|true|docs/guide.md|change_class=trivial docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md lanes=false lanes_cause=trivial
+trivial-allowlisted|trivial|false|runtime/notes.txt|change_class=trivial docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=runtime/notes.txt lanes=false lanes_cause=trivial
+micro|micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|change_class=micro docs_only=false changed_skills=orch changed_crates= changed_workflows= changed_paths=skills/orch/SKILL.md,.agents/skills/orch/SKILL.md lanes=true lanes_cause=micro
+small|small|false|crates/cli/src/main.rs crates/core/src/lib.rs|change_class=small docs_only=false changed_skills= changed_crates=cli core changed_workflows= changed_paths=crates/cli/src/main.rs,crates/core/src/lib.rs lanes=true lanes_cause=small
+standard|standard|false|.github/workflows/ci.yml skills/github/SKILL.md crates/app/src/lib.rs|change_class=standard docs_only=false changed_skills=github changed_crates=app changed_workflows=ci.yml changed_paths=.github/workflows/ci.yml,skills/github/SKILL.md,crates/app/src/lib.rs lanes=true lanes_cause=standard
+docs-only-standard|standard|true|docs/guide.md changelog.d/fixed/x.md README.md|change_class=standard docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md,changelog.d/fixed/x.md,README.md lanes=false lanes_cause=docs-only
 ROWS
 }
 
+# Whether ROW's outputs from SCRIPT are the ones the table expects.
+row_holds() { # SCRIPT ROW — prints yes or no
+  local line name class docs paths expected
+  line="$(class_rows | grep -m1 "^$2|")" ||
+    { echo "no class row named $2" >&2; exit 1; }
+  IFS='|' read -r name class docs paths expected <<<"$line"
+  [ "$(run "$1" STUB_CLASS="$class" STUB_DOCS="$docs" STUB_PATHS="$paths")" = 0 ] &&
+    [ "$(outputs)" = "$expected" ] && echo yes || echo no
+}
+
 rows=0
-while IFS='|' read -r class docs paths expected; do
+while IFS='|' read -r name class docs paths expected; do
   rows=$((rows + 1))
   status="$(run "$CLASSIFY" STUB_CLASS="$class" STUB_DOCS="$docs" STUB_PATHS="$paths")"
-  check "$class: classify exits 0" "0" "$status"
-  check "$class: every output line" "$expected" "$(outputs)"
+  check "$name: classify exits 0" "0" "$status"
+  check "$name: every output line" "$expected" "$(outputs)"
 done < <(class_rows)
-[ "$rows" -eq 5 ] || { echo "the class table read $rows rows" >&2; exit 1; }
+[ "$rows" -eq 7 ] || { echo "the class table read $rows rows" >&2; exit 1; }
+check "the step says why the lanes answered as they did" \
+  "lanes: lanes=false cause=docs-only" "$(grep '^lanes: ' "$TMP/err")"
 
 # The wrapped scripts see the step's inputs as flags, and the path list comes
 # from the docs-mode call alone: a harness-mode read here would be a second
@@ -159,15 +179,33 @@ NEEDLE="$needle" awk '
   { print }
 ' "$CLASSIFY" >"$mutant"
 ! cmp -s "$CLASSIFY" "$mutant" || { echo "the mutant changed nothing" >&2; exit 1; }
-first_row="$(class_rows)"
-IFS='|' read -r class docs paths expected <<<"${first_row%%$'\n'*}"
-status="$(run "$mutant" STUB_CLASS="$class" STUB_DOCS="$docs" STUB_PATHS="$paths")"
-check "must-fail: the mutant still runs to completion" "0" "$status"
-if [ "$(outputs)" = "$expected" ]; then
-  bad "must-fail: a classify that decides its own class passes the render row"
-else
-  ok "must-fail: a classify that decides its own class fails the render row"
-fi
+check "must-fail: a classify that decides its own class fails the render row" \
+  no "$(row_holds "$mutant" render)"
+
+# One copy per lanes rule, the rule planted wrong and every other line kept.
+# Each copy must fail the row its rule decides and still run to completion.
+# NEEDLE@REPLACEMENT@ROW THE RULE DECIDES, split on `@` because a rule spells
+# the shell's `||`.
+mutants=0
+while IFS='@' read -r needle replacement row; do
+  mutants=$((mutants + 1))
+  [ "$(grep -cF -- "$needle" "$CLASSIFY")" -eq 1 ] ||
+    { echo "the lanes rule '$needle' is no longer one line in $CLASSIFY" >&2; exit 1; }
+  NEEDLE="$needle" REPLACEMENT="$replacement" awk '
+    { i = index($0, ENVIRON["NEEDLE"]) }
+    i > 0 { $0 = substr($0, 1, i - 1) ENVIRON["REPLACEMENT"] substr($0, i + length(ENVIRON["NEEDLE"])) }
+    { print }
+  ' "$CLASSIFY" >"$mutant"
+  ! cmp -s "$CLASSIFY" "$mutant" || { echo "the mutant for '$needle' changed nothing" >&2; exit 1; }
+  check "must-fail: '$needle' planted as '$replacement' fails the $row row" \
+    no "$(row_holds "$mutant" "$row")"
+done <<'ROWS'
+[ "$class" = render ] || @@render
+ || [ "$class" = trivial ]; then@; then@trivial-allowlisted
+elif [ "$docs" = docs_only=true ]; then@elif false; then@docs-only-standard
+  lanes=true lanes_cause="$class"@  lanes=false lanes_cause="$class"@standard
+ROWS
+[ "$mutants" -eq 4 ] || { echo "the lanes mutant table read $mutants rows" >&2; exit 1; }
 
 # --- 3. The refusals --------------------------------------------------------
 
@@ -221,6 +259,8 @@ check "refusal mktemp-failed: key" "mktemp-failed" "$(refusal)"
 run "$CLASSIFY" STUB_PATHS=__change_class_changed_paths_end__ >/dev/null
 check "a refused delimiter writes no changed_paths output" "" \
   "$(grep '^changed_paths' "$OUT" || true)"
+check "a refused step writes no lanes output" "" \
+  "$(grep '^lanes' "$OUT" || true)"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

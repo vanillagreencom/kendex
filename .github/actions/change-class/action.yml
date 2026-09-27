@@ -1,15 +1,18 @@
 name: Change class
 description: >-
-  The shipped change classifier's verdict for a diff, and the changed-path
-  families a workflow selects its jobs with.
+  The shipped change classifier's verdict for a diff, whether the diff runs a
+  workflow's lanes, and the changed-path families a workflow selects its jobs
+  with.
 
 # The one place a workflow reads a change class from. A consumer references it
 # as `vanillagreencom/kendex/.github/actions/change-class@main` and gets this
 # repository's classifier against its own checkout, so a fix to the classifier
-# reaches every consumer with no consumer pull request. This repository
-# references it by path, and passes `classifier:` a separate default-branch
-# checkout, so the wrapper under test is the pull request's while the
-# classification that decides which lanes may skip is the default branch's.
+# reaches every consumer with no consumer pull request. So does a change to
+# which diffs run the lanes: a workflow gates its lanes on the `lanes` output
+# and names no class. This repository references it by path, and passes
+# `classifier:` a separate default-branch checkout, so the wrapper under test
+# is the pull request's while the classification that decides which lanes may
+# skip is the default branch's.
 # A change to the classifier script itself is proved by the harness-ci suite,
 # not by this repository's live classifying job.
 #
@@ -62,6 +65,19 @@ outputs:
       fails the action with exit 2 instead, and the failed step, not this
       output, is the answer.
     value: ${{ steps.classify.outputs.docs_only }}
+  lanes:
+    description: >-
+      true where the diff runs the workflow's lanes, false where it runs
+      none: a render or trivial class, or docs_only=true at any class. The
+      one output a lane condition and an aggregate's waiver read. A failed
+      step publishes none, and a lane condition that runs the lanes when the
+      classifying job did not succeed reads that as every lane running.
+    value: ${{ steps.classify.outputs.lanes }}
+  lanes_cause:
+    description: >-
+      Why lanes answered as it did: render, trivial or docs-only where lanes
+      is false, and the class where it is true.
+    value: ${{ steps.classify.outputs.lanes_cause }}
   changed_skills:
     description: Blank-separated first path segments under skills/ the diff touched.
     value: ${{ steps.classify.outputs.changed_skills }}
