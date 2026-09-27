@@ -85,8 +85,12 @@ run_case empty-object "exit=2 aggregate-needs: invalid-results=json" \
 
 # The lane verdicts are the classifier job's own outputs, as toJSON(needs)
 # carries them. A lane stands a job down only where its verdict is false.
+# EXTRA_OUTPUTS defaults by count, not as `${5:-{\}}`: Bash 3.2 keeps the
+# backslash in that default and hands jq `{\}`.
 lanes_needs() { # TEST_VERDICT BUILD_VERDICT TEST_RESULT BUILD_RESULT [EXTRA_OUTPUTS]
-  jq -cn --arg t "$1" --arg b "$2" --arg tr "$3" --arg br "$4" --argjson extra "${5:-{\}}" '
+  local extra='{}'
+  [ "$#" -lt 5 ] || extra="$5"
+  jq -cn --arg t "$1" --arg b "$2" --arg tr "$3" --arg br "$4" --argjson extra "$extra" '
     {changes: {result: "success", outputs: ({lane_test: $t, lane_build: $b} + $extra)},
      test: {result: $tr}, build: {result: $br}}'
 }
