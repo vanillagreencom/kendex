@@ -409,7 +409,12 @@ describe("the reading an action is scoped against", () => {
 // action opened has no action set, and reads every pending change.
 describe("the packages holding the picked commit", () => {
   const held = (name: string): StalePackage =>
-    ({ name, why: "notSetUp", said: [] }) as unknown as StalePackage;
+    ({
+      name,
+      why: "notSetUp",
+      said: [],
+      setUpClears: true,
+    }) as unknown as StalePackage;
   it.each([
     {
       name: "the action's work",
@@ -453,7 +458,11 @@ describe("the packages holding the picked commit", () => {
   // A commit that would split a package's changed files is cleared only by
   // committing them together, so no setup is offered or run for it.
   it("offers no setup for a split", async () => {
-    const split = { ...held("bot-instructions"), why: "split" } as StalePackage;
+    const split: StalePackage = {
+      ...held("bot-instructions"),
+      why: "split",
+      setUpClears: false,
+    };
     expect(canSetUp([held("bot-instructions")])).toBe(true);
     expect(canSetUp([held("bot-instructions"), split])).toBe(false);
     useCommitOfferStore.setState({
@@ -831,6 +840,7 @@ describe("setting up a package that holds the commit", () => {
     name: "bot-instructions",
     why,
     said,
+    setUpClears: true,
     disclosure: {
       declared,
       name: "bot-instructions",

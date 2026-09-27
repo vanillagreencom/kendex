@@ -73,10 +73,15 @@ beforeEach(() => {
 // actions disabled. Setup failed: the words, leaving only. Still held: the
 // fresh reading's words, leaving only.
 describe("an offer a package holds", () => {
-  const held = (why: StalePackage["why"], said: string[]): StalePackage => ({
+  const held = (
+    why: StalePackage["why"],
+    said: string[],
+    setUpClears = true,
+  ): StalePackage => ({
     name: "bot-instructions",
     why,
     said,
+    setUpClears,
     disclosure: {
       declared: {
         name: "bot-instructions",
@@ -162,10 +167,11 @@ describe("an offer a package holds", () => {
     {
       name: "held, the commit would split its changes",
       stage: { at: "offer" } as Stage,
-      held: held("split", [
-        "kendex.toml",
-        "drift: .github/copilot-instructions.md",
-      ]),
+      held: held(
+        "split",
+        ["kendex.toml", "drift: .github/copilot-instructions.md"],
+        false,
+      ),
       title: "1 file kendex wrote in site is not committed",
       words: [
         "bot-instructions's check fails over this commit, which carries some of its changed files without a change they were rendered from. The changes it leaves out, then the check's words, are below. They belong in one commit: leave them as diffs and commit them together.",
@@ -207,6 +213,7 @@ describe("an offer held for every pending change only", () => {
       name: "bot-instructions",
       why: "notSetUp",
       said: [],
+      setUpClears: true,
       disclosure: {
         declared: {
           name: "bot-instructions",

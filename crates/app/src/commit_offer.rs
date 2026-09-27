@@ -182,6 +182,10 @@ pub struct StalePackage {
     pub why: StaleWhy,
     /// What the package's check said, escaped. Empty where it did not run.
     pub said: Vec<String>,
+    /// Whether running the package's setup can clear this hold, which is
+    /// what the window offers the setup and its disclosure on. A split
+    /// cannot: only committing the files together clears it.
+    pub set_up_clears: bool,
     /// What the setup changes, the block the dialog shows before its yes.
     /// Its `declared` is handed back to `repo_effects_apply` untouched;
     /// every word drawn is the disclosure's own display text.
@@ -206,18 +210,21 @@ pub enum StaleWhy {
 
 impl From<Stale> for StalePackage {
     fn from(stale: Stale) -> StalePackage {
-        let (why, said) = match stale.why {
-            Staleness::NotSetUp => (StaleWhy::NotSetUp, Vec::new()),
-            Staleness::OutOfDate(said) => (StaleWhy::OutOfDate, said),
-            Staleness::Unchecked(said) => (StaleWhy::Unchecked, said),
-            Staleness::Split { left, said } => {
-                (StaleWhy::Split, left.into_iter().chain(said).collect())
-            }
+        let (why, said, set_up_clears) = match stale.why {
+            Staleness::NotSetUp => (StaleWhy::NotSetUp, Vec::new(), true),
+            Staleness::OutOfDate(said) => (StaleWhy::OutOfDate, said, true),
+            Staleness::Unchecked(said) => (StaleWhy::Unchecked, said, true),
+            Staleness::Split { left, said } => (
+                StaleWhy::Split,
+                left.into_iter().chain(said).collect(),
+                false,
+            ),
         };
         StalePackage {
             name: stale.disclosure.name.clone(),
             why,
             said,
+            set_up_clears,
             disclosure: stale.disclosure,
         }
     }
@@ -1810,13 +1817,15 @@ mod tests {
         let held = held_by_scope(&env, &scope, &scan, &generated, Some(&pending))
             .expect("the packages are asked");
 
-        let named = |held: &[StalePackage]| -> Vec<(String, StaleWhy)> {
-            held.iter().map(|one| (one.name.clone(), one.why)).collect()
+        let named = |held: &[StalePackage]| -> Vec<(String, StaleWhy, bool)> {
+            held.iter()
+                .map(|one| (one.name.clone(), one.why, one.set_up_clears))
+                .collect()
         };
         assert_eq!(named(&held.action), Vec::new(), "the action's own commit");
         assert_eq!(
             named(&held.all),
-            vec![("bot-instructions".to_owned(), StaleWhy::NotSetUp)],
+            vec![("bot-instructions".to_owned(), StaleWhy::NotSetUp, true)],
             "every pending change"
         );
         let whole =
@@ -1869,8 +1878,10 @@ mod tests {
         let held = held_by_scope(&env, &scope, &scan, &generated, Some(&pending))
             .expect("the packages are asked");
 
-        let named = |held: &[StalePackage]| -> Vec<(StaleWhy, Vec<String>)> {
-            held.iter().map(|one| (one.why, one.said.clone())).collect()
+        let named = |held: &[StalePackage]| -> Vec<(StaleWhy, Vec<String>, bool)> {
+            held.iter()
+                .map(|one| (one.why, one.said.clone(), one.set_up_clears))
+                .collect()
         };
         assert_eq!(
             named(&held.action),
@@ -1880,7 +1891,8 @@ mod tests {
                     ".agents/skills/bot-instructions/SKILL.md".to_owned(),
                     "bot-instructions: findings=1".to_owned(),
                     "drift: .github/copilot-instructions.md".to_owned(),
-                ]
+                ],
+                false,
             )],
             "the action's own commit"
         );

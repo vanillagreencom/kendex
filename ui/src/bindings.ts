@@ -5100,6 +5100,12 @@ export type StalePackage = {
 	/**  What the package's check said, escaped. Empty where it did not run. */
 	said: string[],
 	/**
+	 *  Whether running the package's setup can clear this hold, which is
+	 *  what the window offers the setup and its disclosure on. A split
+	 *  cannot: only committing the files together clears it.
+	 */
+	setUpClears: boolean,
+	/**
 	 *  What the setup changes, the block the dialog shows before its yes.
 	 *  Its `declared` is handed back to `repo_effects_apply` untouched;
 	 *  every word drawn is the disclosure's own display text.

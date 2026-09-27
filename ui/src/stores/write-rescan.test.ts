@@ -370,8 +370,24 @@ describe("the setup of a package holding the commit", () => {
     newBranch: "kendex/renders",
     repo: null,
     tracked: false,
-    stale: [{ name: "guards", why: "notSetUp", said: [], disclosure }],
-    staleAction: [{ name: "guards", why: "notSetUp", said: [], disclosure }],
+    stale: [
+      {
+        name: "guards",
+        why: "notSetUp",
+        said: [],
+        setUpClears: true,
+        disclosure,
+      },
+    ],
+    staleAction: [
+      {
+        name: "guards",
+        why: "notSetUp",
+        said: [],
+        setUpClears: true,
+        disclosure,
+      },
+    ],
   };
 
   it.each([

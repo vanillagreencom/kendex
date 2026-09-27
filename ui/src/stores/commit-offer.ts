@@ -241,11 +241,10 @@ export function heldBy(state: {
   return selectionOf(state).kind === "all" ? offer.stale : offer.staleAction;
 }
 
-/** Whether a setup can clear the hold on the picked commit: not where the
- *  commit would split a package's changed files, which only committing
- *  them together clears. */
+/** Whether a setup can clear the hold on the picked commit: every held
+ *  package says its setup clears its hold. */
 export function canSetUp(held: StalePackage[]): boolean {
-  return held.every((one) => one.why !== "split");
+  return held.every((one) => one.setUpClears);
 }
 
 /** Whether the primary action may run: a commit labelled as one action's

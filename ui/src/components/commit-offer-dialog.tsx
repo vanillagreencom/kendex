@@ -396,8 +396,8 @@ function HeldBy({ held }: { held: StalePackage }) {
  *  date holds the offer: which, why, the disclosure its setup's yes is
  *  given against, the same block the repository-effects dialog draws, and
  *  the two choices, setting it up here or leaving the files as diffs. A
- *  split package gets no disclosure and no setup choice: no setup clears
- *  it, so leaving the files is the only way on. */
+ *  package whose setup does not clear its hold gets no disclosure and no
+ *  setup choice, so leaving the files is the only way on. */
 function HeldState({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
   const setUp = useCommitOfferStore((s) => s.setUp);
   const leave = useCommitOfferStore((s) => s.leave);
@@ -415,9 +415,9 @@ function HeldState({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
           {stale.map((held) => (
             <div key={held.name} className="space-y-1.5">
               <HeldBy held={held} />
-              {held.why === "split" ? null : (
+              {held.setUpClears ? (
                 <DisclosureBody disclosure={held.disclosure} />
-              )}
+              ) : null}
             </div>
           ))}
         </Section>

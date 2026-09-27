@@ -312,10 +312,22 @@ describe("the questions a write leaves behind", () => {
         {
           ...offer,
           stale: [
-            { name: "guards", why: "notSetUp", said: [], disclosure: guards },
+            {
+              name: "guards",
+              why: "notSetUp",
+              said: [],
+              setUpClears: true,
+              disclosure: guards,
+            },
           ],
           staleAction: [
-            { name: "guards", why: "notSetUp", said: [], disclosure: guards },
+            {
+              name: "guards",
+              why: "notSetUp",
+              said: [],
+              setUpClears: true,
+              disclosure: guards,
+            },
           ],
         },
       ],
