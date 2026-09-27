@@ -43,3 +43,23 @@ lane_adapter_codex_reading() { # UNREAD
       elif .reading == $unread then $unread
       else "\(.reading)\t\(.model // "")" end'
 }
+
+# lane_adapter_codex_transcript_owned PATH SESSION HOME — whether PATH is the
+# rollout Codex writes for the session SESSION under the launch home HOME, the
+# directory CODEX_HOME carries: `HOME/sessions/<year>/<month>/<day>/rollout-
+# <time>-SESSION.jsonl`, the id being the one its `session_meta` line names.
+# 0 where it is; 1 with `session-mismatch` in LANE_ADAPTER_OWNED_REASON where
+# the file is not named for SESSION, and `home-mismatch` where it sits outside
+# HOME's sessions tree. A private launch home holds its own sessions tree, so
+# HOME is the home and never the account it was built under.
+lane_adapter_codex_transcript_owned() { # PATH SESSION HOME
+  LANE_ADAPTER_OWNED_REASON=""
+  case "$1" in
+    */rollout-*-"$2".jsonl) ;;
+    *) LANE_ADAPTER_OWNED_REASON=session-mismatch; return 1 ;;
+  esac
+  case "$1" in
+    "${3%/}"/sessions/*/rollout-*-"$2".jsonl) ;;
+    *) LANE_ADAPTER_OWNED_REASON=home-mismatch; return 1 ;;
+  esac
+}

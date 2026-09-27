@@ -65,3 +65,24 @@ lane_adapter_claude_reading() { # UNREAD
   fi
   printf '%s\t%s\t%s\n' "$tokens" "$window" "$model"
 }
+
+# lane_adapter_claude_transcript_owned PATH SESSION HOME — whether PATH is the
+# transcript Claude Code writes for the session SESSION under the config
+# directory HOME: `HOME/projects/<project slug>/SESSION.jsonl`, the one file
+# the harness appends that session to and the path its Stop payload names as
+# `transcript_path`. 0 where it is; 1 with `session-mismatch` in
+# LANE_ADAPTER_OWNED_REASON where the file is not named for SESSION, and
+# `home-mismatch` where it sits outside HOME's projects tree. A subagent's
+# transcript lives under `<session>/subagents/` and is named for the agent, so
+# it never passes as the lead's.
+lane_adapter_claude_transcript_owned() { # PATH SESSION HOME
+  LANE_ADAPTER_OWNED_REASON=""
+  case "$1" in
+    */"$2".jsonl) ;;
+    *) LANE_ADAPTER_OWNED_REASON=session-mismatch; return 1 ;;
+  esac
+  case "$1" in
+    "${3%/}"/projects/*/"$2".jsonl) ;;
+    *) LANE_ADAPTER_OWNED_REASON=home-mismatch; return 1 ;;
+  esac
+}

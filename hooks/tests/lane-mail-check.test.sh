@@ -1345,10 +1345,15 @@ new_overseer() { # NAME [PANE] [SERVER]
   record_overseer "${2:-$OVERSEER_PANE}" "${3:-$OVERSEER_SERVER}"
 }
 
-record_overseer() { # PANE SERVER
-  local record
-  record="$(jq -nc --arg s "$2" --arg p "$1" \
-    '{server: $s, pane: $p, window: "@7", launch_line: "claude -n overseer"}')"
+# The launch home the sibling KEN-1921 record names for the overseer session,
+# which the transcript ownership gate holds the payload's transcript to.
+# OVERSEER_HOME_DIR by default, a claude config dir whose projects tree the
+# owned transcript below sits under; a row naming a codex home passes its own.
+OVERSEER_HOME_DIR="$TMP_ROOT/overseer-home"
+record_overseer() { # PANE SERVER [HOME]
+  local record home="${3:-$OVERSEER_HOME_DIR}"
+  record="$(jq -nc --arg s "$2" --arg p "$1" --arg h "$home" \
+    '{server: $s, pane: $p, window: "@7", home: $h, launch_line: "claude -n overseer"}')"
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" \
     set oversee overseer "$record" >/dev/null)
 }
@@ -1379,6 +1384,12 @@ stop_unnamed() { # [ENV=VAL...]
     '{stop_hook_active:false,transcript_path:$p}')" "$@"
 }
 
+# The overseer's own native transcript: the claude file the payload's session
+# s1 owns under OVERSEER_HOME_DIR, the shape lib/adapters/claude.sh names, so
+# the ownership gate reads it as this session's own. The overseer rows write
+# and read it through TRANSCRIPT, as the lane rows above did their own flat one.
+TRANSCRIPT="$OVERSEER_HOME_DIR/projects/repo/s1.jsonl"
+mkdir -p "$(dirname "$TRANSCRIPT")"
 # The reading the overseer transcript below leaves, as the judge takes it.
 OVERSEER_CONTEXT=600000:1000000
 write_transcript "$TRANSCRIPT" "${OVERSEER_CONTEXT%%:*}"
@@ -1470,6 +1481,61 @@ assert_eq "$(judge_argv | tail -n 1)" "--check-marks" \
   "control: a hook that withholds the reading hands its judge no context"
 install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
+# --- the reading is bound to the current session's own transcript ----------
+# The overseer reads context only off the native file the payload's session
+# owns under the launch home the fleet record names. A file that is not this
+# session's leaves the context unmeasured, reported once, while the account
+# triggers still decide; a session restarted in the pane reads its own new
+# file by binding to the id the payload carries, never a predecessor's.
+owned_payload() { # SESSION TRANSCRIPT [ENV=VAL...]
+  local session="$1" path="$2"
+  shift 2
+  run_payload "$(jq -nc --arg s "$session" --arg p "$path" \
+    '{session_id:$s,stop_hook_active:false,transcript_path:$p}')" "$@"
+}
+new_overseer overseer_binding
+# The restarted session's own file, owned under the recorded home; the
+# predecessor's s1 file still sits beside it at 600000 tokens.
+S2_TRANSCRIPT="$OVERSEER_HOME_DIR/projects/repo/s2.jsonl"
+write_transcript "$S2_TRANSCRIPT" 700000
+judge_says "$HEADROOM_MARK_LINE"
+# shellcheck disable=SC2046
+owned_payload s2 "$S2_TRANSCRIPT" $(overseer_env)
+assert_eq "argv=$(judge_argv | tail -n 1) unowned=$(grep -c '^lane-mail-check: transcript-unowned' "$ERR_FILE")" \
+  "argv=--check-marks --context 700000:1000000 unowned=0" \
+  "a session restarted in the pane reads its own new transcript, bound by its id" "$ERR_FILE"
+# The same restarted session pointed at the predecessor's s1 file reads
+# nobody's context: the id does not name that file, so it is unmeasured and
+# only the account triggers decide.
+# shellcheck disable=SC2046
+owned_payload s2 "$TRANSCRIPT" $(overseer_env)
+assert_eq "RC=$RC first=$(first_line) argv=$(judge_argv | tail -n 1) headroom=$(grep -c '^lane-mail-check: headroom=4' "$ERR_FILE")" \
+  "RC=2 first=lane-mail-check: transcript-unowned=$TRANSCRIPT argv=--check-marks headroom=1" \
+  "a predecessor's transcript is not this session's, so its context is unmeasured and the account mark decides" "$ERR_FILE"
+# A record from before the launch-identity change names no launch home, so no
+# binding can be verified at all: context unmeasured, account triggers decide.
+new_overseer overseer_no_home
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee overseer \
+  "$(jq -nc --arg s "$OVERSEER_SERVER" --arg p "$OVERSEER_PANE" \
+    '{server:$s,pane:$p,window:"@7",launch_line:"claude -n overseer"}')" >/dev/null)
+judge_says "$HEADROOM_MARK_LINE"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+assert_eq "RC=$RC first=$(first_line) argv=$(judge_argv | tail -n 1) reason=$(grep -c 'home-unnamed' "$ERR_FILE")" \
+  "RC=2 first=lane-mail-check: transcript-unowned=$TRANSCRIPT argv=--check-marks reason=1" \
+  "a record naming no launch home cannot bind the transcript, so context is unmeasured and the account mark decides" "$ERR_FILE"
+# Control: with the ownership gate gone the predecessor's foreign file is read
+# and its reading handed to the judge, the very thing the gate prevents.
+new_overseer overseer_binding_control
+variant read-any-transcript -e 's/! overseer_transcript_owned/false/'
+install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+judge_says "$HEADROOM_MARK_LINE"
+# shellcheck disable=SC2046
+owned_payload s2 "$TRANSCRIPT" $(overseer_env)
+assert_eq "argv=$(judge_argv | tail -n 1)" "argv=--check-marks --context 600000:1000000" \
+  "control: without the ownership gate a session reads a transcript it does not own"
+install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
+
 for mark_row in \
   "rate|$RATE_MARK_LINE|30|ORCH_OVERSEER_WALL_MINUTES" \
   "qualifying|$QUALIFYING_MARK_LINE|1|ORCH_OVERSEER_SUCCESSOR_ACCOUNTS"; do
@@ -1550,7 +1616,15 @@ REALTMUX
   mkdir -p "$LANE/.codex/skills"
   ln -s "$LANE/.claude/skills/orch" "$LANE/.codex/skills/orch"
   install_hook "$VARIANT_PATH" "$LANE/.codex/hooks/lane-mail-check.sh"
-  usage_line codex 400000 > "$TRANSCRIPT"
+  # This block runs the codex hook, so the ownership gate holds the payload's
+  # transcript to a codex rollout under the recorded codex launch home. The
+  # session s1 owns this file under CODEX_OVERSEER_HOME by the shape
+  # lib/adapters/codex.sh names, and the record carries that home.
+  CODEX_OVERSEER_HOME="$TMP_ROOT/codex-overseer-home"
+  CODEX_TRANSCRIPT="$CODEX_OVERSEER_HOME/sessions/2026/09/27/rollout-2026-09-27T00-00-00-s1.jsonl"
+  mkdir -p "$(dirname "$CODEX_TRANSCRIPT")"
+  record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER" "$CODEX_OVERSEER_HOME"
+  usage_line codex 400000 > "$CODEX_TRANSCRIPT"
   REAL_SUCCEED="$LANE/.claude/skills/orch/scripts/oversee-succeed"
   EARLY_RESULT='if [[ "$MODE" == check && "$CONTEXT_STATE" == due ]]; then'
   assert_eq "$(grep -cF -- "$EARLY_RESULT" "$REAL_SUCCEED")" 1 'the context-order control finds its result once'
@@ -1570,7 +1644,7 @@ FAILWRITE
     cp "$judge" "$REAL_SUCCEED"
     chmod +x "$REAL_SUCCEED"
     # shellcheck disable=SC2046
-    stop_at "$TRANSCRIPT" false $(overseer_env) "PATH=$REAL_TMUX_BIN:$PATH" \
+    stop_at "$CODEX_TRANSCRIPT" false $(overseer_env) "PATH=$REAL_TMUX_BIN:$PATH" \
       "FIXTURE_TMUX_SERVER=$OVERSEER_SERVER" "FIXTURE_TMUX_PATH=$LANE" \
       FIXTURE_TMUX_COMMAND=node "FIXTURE_REAL_MV=$REAL_MV" "FIXTURE_WRITE=$writer" ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=1
     record=none

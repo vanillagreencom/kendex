@@ -226,6 +226,49 @@ assert_eq "$(bash -c 'source "$1"; lane_context_record_judged "$(cat "$2")" 90' 
   "[null,null,null]" "a reading with no window is recorded unmeasured and judged neither due nor room"
 assert_eq "$(ls -A "$BOX")" "context.json" "the record lands by a rename, leaving no staged file beside it"
 
+echo "=== the ownership gate binds a reading to its own session's file ==="
+# lane_context_transcript_owned holds a transcript to the session id and launch
+# home the current-session record names, so a reader takes a reading only off
+# the file that session wrote: a newer unrelated transcript, a predecessor's in
+# the same pane, or one under an account the fleet never picked is refused.
+owned() { # HARNESS PATH SESSION HOME
+  bash -c 'source "$1"
+    if lane_context_transcript_owned "$2" "$3" "$4" "$5"; then echo "0 owned"
+    else echo "$? $LANE_CONTEXT_OWNED_REASON"; fi' _ "$LIB" "$1" "$2" "$3" "$4"
+}
+OWN="$TMP_ROOT/own"
+CHOME="$OWN/claude-home"; mkdir -p "$CHOME/projects/repo"
+XHOME="$OWN/other-home"; mkdir -p "$XHOME/projects/repo"
+KHOME="$OWN/codex-home"; mkdir -p "$KHOME/sessions/2026/09/27"
+YHOME="$OWN/other-codex-home"; mkdir -p "$YHOME/sessions/2026/09/27"
+CLAUDE_OWNED="$CHOME/projects/repo/s1.jsonl"
+CLAUDE_S2="$CHOME/projects/repo/s2.jsonl"
+CLAUDE_FOREIGN="$XHOME/projects/repo/s1.jsonl"
+CLAUDE_SUBAGENT="$CHOME/projects/repo/s1/subagents/agent-x.jsonl"
+CODEX_OWNED="$KHOME/sessions/2026/09/27/rollout-2026-09-27T00-00-00-s1.jsonl"
+CODEX_S2="$KHOME/sessions/2026/09/27/rollout-2026-09-27T00-00-00-s2.jsonl"
+mkdir -p "$(dirname "$CLAUDE_SUBAGENT")"
+: > "$CLAUDE_OWNED"; : > "$CLAUDE_S2"; : > "$CLAUDE_FOREIGN"; : > "$CLAUDE_SUBAGENT"
+: > "$CODEX_OWNED"; : > "$CODEX_S2"
+# `harness|path|session|home|want`
+while IFS='|' read -r harness path session home want; do
+  assert_eq "$(owned "$harness" "$path" "$session" "$home")" "$want" \
+    "$harness $(basename -- "${path:-none}") for $session under $(basename -- "${home:-none}"): $want"
+done <<ROWS
+claude|$CLAUDE_OWNED|s1|$CHOME|0 owned
+claude|$CLAUDE_S2|s1|$CHOME|1 session-mismatch
+claude|$CLAUDE_SUBAGENT|s1|$CHOME|1 session-mismatch
+claude|$CLAUDE_FOREIGN|s1|$CHOME|1 home-mismatch
+claude|$CHOME/projects/repo/s3.jsonl|s3|$CHOME|1 transcript-missing
+claude||s1|$CHOME|1 binding-missing
+claude|$CLAUDE_OWNED||$CHOME|1 binding-missing
+claude|$CLAUDE_OWNED|s1||1 home-unnamed
+codex|$CODEX_OWNED|s1|$KHOME|0 owned
+codex|$CODEX_S2|s1|$KHOME|1 session-mismatch
+codex|$CODEX_OWNED|s1|$YHOME|1 home-mismatch
+opencode|$CLAUDE_OWNED|s1|$CHOME|3 harness-unlisted
+ROWS
+
 if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
   echo "=== must-fail controls ==="
   # control NAME FILE OLD NEW PATTERN — a copy of the library whose FILE has OLD
@@ -265,6 +308,14 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     '5 of no window at 90: rc=1'
   control project-ignored adapters/pi.sh '[ "$LANE_ADAPTER_PI_ENABLED" = true ] && return 0' ':' \
     'user {"compaction":{"enabled":false}} and project {"compaction":{"enabled":true}}: rc=0'
+  control owned-claude-session adapters/claude.sh '*) LANE_ADAPTER_OWNED_REASON=session-mismatch; return 1 ;;' '*) ;;' \
+    'claude s2.jsonl for s1 under claude-home: 1 session-mismatch'
+  control owned-claude-home adapters/claude.sh '*) LANE_ADAPTER_OWNED_REASON=home-mismatch; return 1 ;;' '*) ;;' \
+    'claude s1.jsonl for s1 under claude-home: 1 home-mismatch'
+  control owned-codex-session adapters/codex.sh '*) LANE_ADAPTER_OWNED_REASON=session-mismatch; return 1 ;;' '*) ;;' \
+    'codex rollout-2026-09-27T00-00-00-s2.jsonl for s1 under codex-home: 1 session-mismatch'
+  control owned-file-exists lane-context.sh 'if [ ! -f "$2" ] || [ ! -r "$2" ]; then' 'if false; then' \
+    'claude s3.jsonl for s3 under claude-home: 1 transcript-missing'
 fi
 
 echo
