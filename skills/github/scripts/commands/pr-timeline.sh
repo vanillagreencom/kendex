@@ -60,10 +60,14 @@ authoritative run of each workflow, as lib/ci-run-correlation.sh scopes a
 GitHub's own rollup does.
 
 Errors: {"error": "..."} on stderr and exit 1. A connection longer than one
-page (more than 100 commits, reviews, marked timeline events or check runs, or
-50 check suites on one commit) refuses as `truncated: <connection>` rather
-than printing a stamp read from part of the history. Each head's status
-history is read through every page of the REST commit statuses endpoint.
+page (more than 100 commits, reviews or marked timeline events) refuses as
+`truncated: <connection>` rather than printing a stamp read from part of the
+history. Each commit's check suites and each suite's check runs are read
+through every page with the GraphQL cursor, up to 20 pages of 50 suites per
+commit and 10 pages of 100 runs per suite; a connection still open at that
+cap refuses the same way, as `truncated: check-suites` or
+`truncated: check-runs`. Each head's status history is read through every
+page of the REST commit statuses endpoint.
 
 Examples:
   pr-timeline.sh 42
@@ -71,6 +75,28 @@ Examples:
 EOF
 }
 
+# The pages past the first of one commit's check suites and of one suite's
+# check runs, each read at the cursor the page before ended on. The three
+# queries share the suite node's selection, so a page carries what the first
+# page carried.
+SUITE_PAGE_FRAGMENTS='fragment suitePage on CheckSuiteConnection {
+  pageInfo { hasNextPage endCursor }
+  nodes { id workflowRun { event url workflow { name } } checkRuns(first: 100, filterBy: { checkType: LATEST }) { ...runPage } }
+}
+fragment runPage on CheckRunConnection {
+  pageInfo { hasNextPage endCursor }
+  nodes { name status conclusion startedAt completedAt detailsUrl }
+}'
+SUITES_PAGE_QUERY='query suitesPage($owner: String!, $name: String!, $oid: GitObjectID!, $cursor: String!) {
+  repository(owner: $owner, name: $name) {
+    object(oid: $oid) { ... on Commit { checkSuites(first: 50, after: $cursor) { ...suitePage } } }
+  }
+}
+'"$SUITE_PAGE_FRAGMENTS"
+RUNS_PAGE_QUERY='query runsPage($id: ID!, $cursor: String!) {
+  node(id: $id) { ... on CheckSuite { checkRuns(first: 100, after: $cursor, filterBy: { checkType: LATEST }) { ...runPage } } }
+}
+'"$SUITE_PAGE_FRAGMENTS"
 QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -93,19 +119,62 @@ QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
   }
 }
 fragment gate on Commit { status { context(name: $gate) { state createdAt } } }
-fragment suites on Commit {
-  checkSuites(first: 50) {
-    pageInfo { hasNextPage }
-    nodes {
-      workflowRun { event url workflow { name } }
-      checkRuns(first: 100, filterBy: { checkType: LATEST }) {
-        pageInfo { hasNextPage } nodes { name status conclusion startedAt completedAt detailsUrl } }
-    }
-  }
-}'
+fragment suites on Commit { checkSuites(first: 50) { ...suitePage } }
+'"$SUITE_PAGE_FRAGMENTS"
+
+# The page caps the help states: 20 pages of 50 suites per commit, 10 pages
+# of 100 runs per suite. A merge-queue commit carries one suite per workflow
+# run, so a repository with many workflows passes 50 on one commit.
+SUITE_PAGES=20
+RUN_PAGES=10
+HEAD_PATH='.repository.pullRequest.headCommit.nodes[0].commit'
+MERGE_PATH='.repository.pullRequest.mergeCommit'
+
+# The response on stdin, printed with the connection at jq path CONN read to
+# its end: each further page is QUERY under GH_ARGS plus the cursor the last
+# page ended on, its connection at PAGE_CONN in the page. The walk stops at
+# CAP pages, the first page counted, and leaves hasNextPage true for FILTER
+# to refuse.
+#   page_to_end CONN PAGE_CONN QUERY CAP [GH_ARGS...]
+page_to_end() {
+    local conn="$1" page_conn="$2" query="$3" cap="$4" data cursor page pages=1
+    shift 4
+    data=$(cat)
+    while jq -e "$conn | . != null and .pageInfo.hasNextPage == true" >/dev/null <<<"$data"; do
+        [ "$pages" -lt "$cap" ] || break
+        cursor=$(jq -r "$conn.pageInfo.endCursor // empty" <<<"$data") || return 1
+        [ -n "$cursor" ] || { github_error 'pr-timeline: a page past the first names no cursor'; return 1; }
+        page=$(gh_graphql "$query" "$@" -f cursor="$cursor") || return 1
+        # Both values reach jq on stdin: a page of check runs can exceed
+        # ARG_MAX as an argument.
+        data=$(printf '%s\n%s\n' "$data" "$page" | jq -sc "(.[1] | $page_conn) as \$next | .[0]
+            | $conn |= (.nodes += \$next.nodes | .pageInfo = \$next.pageInfo)") || return 1
+        pages=$((pages + 1))
+    done
+    printf '%s\n' "$data"
+}
+
+# The response on stdin, printed with the check suites of the commit at jq
+# path PATH and each suite's check runs read to their end.
+#   page_commit_checks PATH OWNER NAME
+page_commit_checks() {
+    local path="$1" owner="$2" name="$3" data oid i id
+    data=$(cat)
+    oid=$(jq -r "$path.oid // empty" <<<"$data") || return 1
+    data=$(page_to_end "$path.checkSuites" '.repository.object.checkSuites' "$SUITES_PAGE_QUERY" "$SUITE_PAGES" \
+        -f owner="$owner" -f name="$name" -f oid="$oid" <<<"$data") || return 1
+    for i in $(jq -r "[$path.checkSuites.nodes[]?] | to_entries[] | select(.value.checkRuns.pageInfo.hasNextPage == true) | .key" <<<"$data"); do
+        id=$(jq -r "$path.checkSuites.nodes[$i].id" <<<"$data") || return 1
+        data=$(page_to_end "$path.checkSuites.nodes[$i].checkRuns" '.node.checkRuns' "$RUNS_PAGE_QUERY" "$RUN_PAGES" \
+            -f id="$id" <<<"$data") || return 1
+    done
+    printf '%s\n' "$data"
+}
 
 # The response is read in one place: a truncated connection first, since a
-# stamp taken from part of a history is a wrong answer, then the stamps.
+# stamp taken from part of a history is a wrong answer, then the stamps. A
+# check-suites or check-runs connection is still open here only past the
+# page cap, since page_commit_checks read it to its end before that.
 # Timestamps are GitHub's fixed `YYYY-MM-DDThh:mm:ssZ`, so min and max over
 # the strings order them.
 FILTER='
@@ -191,6 +260,8 @@ pr_timeline() {
     data=$(gh_graphql "$QUERY" -f owner="$owner" -f name="$name" -F number="$pr_num" -f gate="$gate") || exit 1
     jq -e '.repository.pullRequest != null' >/dev/null <<<"$data" \
         || { github_error "No PR found: $pr_num"; exit 1; }
+    data=$(page_commit_checks "$HEAD_PATH" "$owner" "$name" <<<"$data") || exit 1
+    data=$(page_commit_checks "$MERGE_PATH" "$owner" "$name" <<<"$data") || exit 1
     result=$(jq -c --arg repo "$owner/$name" "$FILTER" <<<"$data") || { github_error 'pr-timeline: unreadable response'; exit 1; }
     if jq -e 'has("truncated")' >/dev/null <<<"$result"; then
         jq -c '{error: ("truncated: " + .truncated)}' <<<"$result" >&2
