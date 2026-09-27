@@ -1188,7 +1188,7 @@ text_line() { # SPELLING TEXT
   case "$1" in
     claude)
       jq -nc --arg t "$2" \
-        '{type:"assistant",message:{role:"assistant",content:[{type:"text",text:$t}],
+        '{type:"assistant",message:{role:"assistant",model:"claude-opus-5-5",content:[{type:"text",text:$t}],
           usage:{input_tokens:1,cache_read_input_tokens:0,cache_creation_input_tokens:0}}}'
       ;;
     pi)
@@ -1390,6 +1390,7 @@ stop_unnamed() { # [ENV=VAL...]
 
 # The reading the overseer transcript below leaves, as the judge takes it.
 OVERSEER_CONTEXT=600000:1000000
+write_transcript "$TRANSCRIPT" "${OVERSEER_CONTEXT%%:*}"
 # The two commands an overseer's refusal names, counted in the stderr it wrote:
 # the succession is handed the reading this turn end took, as the judge was.
 overseer_route() { grep -cF -- "/oversee-succeed --context $OVERSEER_CONTEXT -- [THE PERMISSION" "$ERR_FILE"; }
