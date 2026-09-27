@@ -83,10 +83,12 @@ case "$1" in
   # LANE_HOST_STUB_FILE answers, as it always has. A path that is not there
   # exits 1, which is what the remote `cat` does.
   # A path that is not there exits 2, the protocol's one reading of "the lane
-  # has not written this yet"; anything else keeps its own status.
+  # has not written this yet"; anything else keeps its own status. A relative
+  # path resolves under the disk's `home`, as the SSH session's does.
   cat)
     src="${LANE_HOST_STUB_FILE:-}"
     [ -z "${LANE_HOST_STUB_DIR:-}" ] || src="$LANE_HOST_STUB_DIR$4"
+    [[ -z "${LANE_HOST_STUB_DIR:-}" || "$4" == /* ]] || src="$LANE_HOST_STUB_DIR/home/$4"
     mailbox_guard "$src"
     [ -e "$src" ] || exit 2
     cat -- "$src" ;;

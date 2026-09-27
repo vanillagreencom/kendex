@@ -322,7 +322,8 @@ if [ ! -x "$marker" ]; then
   exit 1
 fi
 exec "$marker" "$2" "$3"''', row["clone"], path, args.item)
-    print(f"ssh-target={row['target']}\tpath={path}\tremote-prefix={prefix}")
+    pi_root = f"\tpi-root={remote_account}" if args.harness == "pi" else ""
+    print(f"ssh-target={row['target']}\tpath={path}\tremote-prefix={prefix}{pi_root}")
 
 
 def archive_tmp(row, item, worktree_path):
@@ -422,8 +423,9 @@ packages once on the host at that root:
 PI_CODING_AGENT_DIR=<row account> kendex update-pi --scope global.
 The control machine requires Python 3.8 or later.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
-fields. Existing ownership exits 75; --reuse and --relaunch pass --reuse to the
-worktree command when the target exists; a missing target uses plain create.
+fields, and pi-root, the row's account directory, for a Pi lane. Existing
+ownership exits 75; --reuse and --relaunch pass --reuse to the worktree
+command when the target exists; a missing target uses plain create.
 Every create passes --hosted, so the item's worktree sits at the clone's one
 hosted lane path (worktree path --hosted), and path= names it.
 stop --item ID --harness claude|codex|pi resolves the owned worktree through

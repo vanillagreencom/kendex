@@ -7,7 +7,8 @@
 #
 # Pi has no launch word for compaction. Its switch is `compaction.enabled` in
 # its settings file, so open-terminal reads that value before a Pi launch
-# instead (lane_adapter_pi_compaction_on) and refuses one Pi would compact.
+# instead (lane_adapter_pi_compaction_on, or lane_adapter_pi_compaction_judge
+# on a hosted lane's files) and refuses one Pi would compact.
 #
 # Sourced by lib/lane-context.sh, never run.
 
@@ -52,15 +53,22 @@ lane_adapter_pi_agent_dir() {
 LANE_ADAPTER_PI_FILE=""
 LANE_ADAPTER_PI_CAUSE=""
 lane_adapter_pi_compaction_on() { # DIR
+  lane_adapter_pi_compaction_judge "$(lane_adapter_pi_agent_dir)/settings.json" "$1/.pi/settings.json"
+}
+
+# The same answer over the user settings file USER and the project file
+# PROJECT, wherever they were read from: open-terminal judges a hosted lane on
+# copies of its host's files.
+lane_adapter_pi_compaction_judge() { # USER PROJECT
   local user
-  lane_adapter_pi_enabled "$(lane_adapter_pi_agent_dir)/settings.json" || return 2
+  lane_adapter_pi_enabled "$1" || return 2
   user="$LANE_ADAPTER_PI_ENABLED"
-  lane_adapter_pi_enabled "$1/.pi/settings.json" || return 2
+  lane_adapter_pi_enabled "$2" || return 2
   # The file whose value decides: the project one where it turns compaction
   # back on, the user one otherwise.
-  LANE_ADAPTER_PI_FILE="$1/.pi/settings.json"
+  LANE_ADAPTER_PI_FILE="$2"
   [ "$LANE_ADAPTER_PI_ENABLED" = true ] && return 0
-  LANE_ADAPTER_PI_FILE="$(lane_adapter_pi_agent_dir)/settings.json"
+  LANE_ADAPTER_PI_FILE="$1"
   [ "$user" = false ] && return 1
   return 0
 }

@@ -803,6 +803,61 @@ rm -f -- "${BUSY_SLOT:?}"
 assert_eq "failed=$(grep -c '^open-terminal: host-create-failed item=CC-96 exit=69$' <<<"$ERR" || true)" "failed=1" \
   "control: without the busy branch a create refused at the cap is host-create-failed"
 
+echo "=== a hosted Pi fleet lane is judged on its host's own Pi settings ==="
+# Read through the provider once create stands and before the window opens:
+# the settings under the Pi root create names, else under Pi's default root in
+# the host home, and the lane tree's project file. This machine's Pi settings,
+# absent here and so compaction on, are not the lane's; its carrier sends the
+# window. `label|pi-root|user settings|project settings|env|answer`, `-` for
+# none; the answer is `launched` or the refusal line.
+PI_LOCAL="$TMP_ROOT/pi-local"
+mkdir -p "$PI_LOCAL/packages/@vanillagreen/pi-hooks/extensions"
+printf 'export const f = { context_window: 1 };\n' > "$PI_LOCAL/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
+OFF='{"compaction":{"enabled":false}}' ON='{"compaction":{"enabled":true}}'
+PI_ITEM=140
+# hosted_pi ROOT USER PROJECT [ENV]... — one hosted Pi fleet launch of the next
+# item over those host files, answering its outcome in PI_OUTCOME.
+hosted_pi() {
+  local root="$1" user="$2" project="$3" line
+  shift 3
+  PI_ITEM=$((PI_ITEM + 1))
+  rm -rf -- "${HOSTED_DISK:?}/pi" "${HOSTED_DISK:?}/home" "${HOSTED_DISK:?}/srv/lane/.pi"
+  local user_file="$HOSTED_DISK/home/.pi/agent/settings.json"
+  [[ "$root" == - ]] || user_file="$HOSTED_DISK$root/settings.json"
+  if [[ "$user" != - ]]; then mkdir -p "${user_file%/*}"; printf '%s\n' "$user" > "$user_file"; fi
+  if [[ "$project" != - ]]; then mkdir -p "$HOSTED_DISK/srv/lane/.pi"; printf '%s\n' "$project" > "$HOSTED_DISK/srv/lane/.pi/settings.json"; fi
+  line=$'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc'
+  [[ "$root" == - ]] || line+=$'\tpi-root='"$root"
+  HAND_OFF_HARNESS=pi HAND_OFF_CMD="true --model sonnet:high" hand_off "CC-$PI_ITEM" \
+    PI_CODING_AGENT_DIR="$PI_LOCAL" LANE_HOST_STUB_CREATE_LINE="$line" "$@"
+  line="$(grep -E '^open-terminal: (compaction-on|pi-settings-unreadable|unsupported-for-oversee) ' <<<"$ERR" || true)"
+  PI_OUTCOME="rc=$RC ${line:-launched} windows=$(grep -c '^new-window ' "$TMUX_LOG" || true) marker=$(marker_at "cc-$PI_ITEM")"
+}
+while IFS='|' read -r label root user project env want; do
+  read -r -a pi_env <<<"${env/#-/}"
+  hosted_pi "$root" "$user" "$project" ${pi_env[@]+"${pi_env[@]}"}
+  if [[ "$want" == launched ]]; then want="rc=0 launched windows=1 marker=root"; else want="rc=1 $want windows=0 marker=none"; fi
+  assert_eq "$PI_OUTCOME" "$want" "$label"
+done <<ROWS
+compaction off under the Pi root create names launches|/pi|$OFF|-|-|launched
+compaction off under Pi's default root in the host home launches|-|$OFF|-|-|launched
+compaction on under the named root is refused, naming the host file|/pi|$ON|-|-|open-terminal: compaction-on harness=pi file=/pi/settings.json
+compaction on under the default root names its home-relative path|-|$ON|-|-|open-terminal: compaction-on harness=pi file=.pi/agent/settings.json
+a user file the host does not hold is Pi's default, compaction on|/pi|-|-|-|open-terminal: compaction-on harness=pi file=/pi/settings.json
+a project file turning compaction back on is refused, naming it|/pi|$OFF|$ON|-|open-terminal: compaction-on harness=pi file=/srv/lane/.pi/settings.json
+a settings file jq cannot parse is unreadable|/pi|not json|-|-|open-terminal: pi-settings-unreadable file=/pi/settings.json
+a settings read the host fails is unreadable|/pi|$OFF|-|LANE_HOST_STUB_CAT_STATUS=1 LANE_HOST_STUB_CAT_PATH=/pi/settings.json|open-terminal: pi-settings-unreadable file=/pi/settings.json
+ROWS
+# Each refusal replaced by a pass, in a copy of the launcher.
+busy_mutant pi-on '    0) ot_message compaction-on "harness=pi" "file=${remote[i]}" >&2; return 1 ;;' '    0) ;;'
+hosted_pi /pi "$ON" - -- SCRIPT="$BUSY_MUTANT_OT"
+assert_eq "$PI_OUTCOME" "rc=0 launched windows=1 marker=root" \
+  "control: without its refusal a hosted Pi lane its host would compact launches"
+busy_mutant pi-unread '      *) ot_message pi-settings-unreadable "file=${remote[i]}" >&2; cat -- "$dir/err" >&2; return 1 ;;' '      *) ;;'
+hosted_pi /pi "$OFF" - LANE_HOST_STUB_CAT_STATUS=1 LANE_HOST_STUB_CAT_PATH=/srv/lane/.pi/settings.json -- SCRIPT="$BUSY_MUTANT_OT"
+assert_eq "$PI_OUTCOME" "rc=0 launched windows=1 marker=root" \
+  "control: without its refusal a project file the host failed to read counts as none"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

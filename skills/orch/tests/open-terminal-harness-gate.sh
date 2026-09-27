@@ -33,7 +33,7 @@ printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
 # The worktree CLI a launch the gate passes reaches next: an empty path, which
 # open-terminal refuses by name before any window opens.
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/worktree-stub"
-# A lane host that answers nothing: the Pi gate refuses before it is asked.
+# A lane host that answers nothing: the gate is judged before it is asked.
 printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/provider"
 chmod +x "$BIN/term" "$BIN/gh" "$BIN/worktree-stub" "$BIN/provider"
 
@@ -64,7 +64,7 @@ pi_carrier() { # sends|old|none
 
 # The launch-choice refusals that run ahead of the gate are read too, so a row
 # refused before the gate cannot read as one the gate passed.
-GATE_KEYS='unsupported-for-oversee|compaction-on|launch-window-unknown|launch-compaction-missing|pi-compaction-unverified|pi-settings-unreadable|launch-question-tool-missing|launch-model-missing|launch-effort-missing'
+GATE_KEYS='unsupported-for-oversee|compaction-on|launch-window-unknown|launch-compaction-missing|pi-settings-unreadable|launch-question-tool-missing|launch-model-missing|launch-effort-missing'
 # launch NAME ARGS... — the gate's line open-terminal wrote, or `passed` where it
 # wrote none, for a GUI launch of CC-1 under ARGS; OT names another copy.
 launch() { # NAME ARGS...
@@ -127,7 +127,7 @@ a project turning compaction back on is refused, naming the project file|sends|{
 a carrier that sends no window is refused|old|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
 no carrier installed is refused|none|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
 a settings file jq cannot read is named|sends|not json|-|${FLEET[*]} --harness pi|open-terminal: pi-settings-unreadable @FILE@
-a hosted Pi fleet lane, whose host keeps its own settings, is refused|sends|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi --host $BIN/provider|open-terminal: pi-compaction-unverified host=$BIN/provider
+a hosted Pi fleet lane is not judged on this machine's settings, which are its host's to hold|sends|{"compaction":{"enabled":true}}|-|${FLEET[*]} --harness pi --host $BIN/provider|passed
 no fleet passes whatever its settings|none|-|-|--harness pi|passed
 ROWS
 rm -f -- "$PI_AGENT/settings.json" "$REPO/.pi/settings.json"
@@ -165,12 +165,14 @@ pi_carrier old
 control window-read-ctrl 'ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; exit 1;' ': ;'
 assert_eq "$(OT="$CTRL_OT" launch window-read-ctrl "${FLEET[@]}" --harness pi)" passed \
   "control: without its refusal a Pi fleet lane whose carrier sends no window passes"
-control hosted-pi-ctrl 'ot_message pi-compaction-unverified "host=$LANE_HOST" >&2; exit 1;' ': ;'
-assert_eq "$(OT="$CTRL_OT" launch hosted-pi-ctrl "${FLEET[@]}" --harness pi --host "$BIN/provider")" "open-terminal: unsupported-for-oversee harness=pi reason=no-window-read" \
-  "control: without its refusal a hosted Pi fleet lane is judged on this machine's files"
 rm -f -- "$PI_AGENT/settings.json"
 pi_carrier sends
-control compaction-ctrl '0) ot_message compaction-on "harness=pi"' '0) : ot_message compaction-on "harness=pi"'
+printf '{"compaction":{"enabled":true}}\n' > "$PI_AGENT/settings.json"
+control hosted-pi-ctrl '      if [[ "$LANE_HOST" == local ]]; then' '      if true; then'
+assert_eq "$(OT="$CTRL_OT" launch hosted-pi-ctrl "${FLEET[@]}" --harness pi --host "$BIN/provider")" "open-terminal: compaction-on harness=pi $PI_FILE" \
+  "control: judged on this machine's files, a hosted Pi fleet lane is refused on settings that are not its own"
+rm -f -- "$PI_AGENT/settings.json"
+control compaction-ctrl '0) ot_message compaction-on "harness=pi" "file=$LANE_ADAPTER_PI_FILE"' '0) : ot_message compaction-on "harness=pi" "file=$LANE_ADAPTER_PI_FILE"'
 assert_eq "$(OT="$CTRL_OT" launch compaction-ctrl "${FLEET[@]}" --harness pi)" passed \
   "control: without its refusal a Pi fleet lane Pi would compact passes the gate"
 

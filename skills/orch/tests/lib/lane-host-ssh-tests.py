@@ -196,6 +196,10 @@ exec git "$@"
         result = self.create("--reuse", harness="pi")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b"PI_CODING_AGENT_DIR", result.stdout)
+        # The root open-terminal reads the lane's Pi settings under.
+        fields = dict(word.split("=", 1) for word in result.stdout.decode().strip().split("\t"))
+        self.assertEqual(fields["pi-root"], self.row["account"])
+        self.assertNotIn("pi-root", dict(word.split("=", 1) for word in first.stdout.decode().strip().split("\t")))
         # The tree carries the render its base branch commits and the host
         # carries the Pi packages, so no create, fresh or reused, runs either.
         verbs = {line.split()[1] for line in (self.root / "calls").read_text().splitlines()
