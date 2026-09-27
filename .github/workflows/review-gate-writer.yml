@@ -629,7 +629,7 @@ jobs:
           # <run>-<attempt>-<commit>. The last field is the kendex commit this
           # build came from, so the installer is fetched from the same commit
           # the release tag below pins. Same installer, no second one.
-          KENDEX_VERSION: main-build-261-1-d1637e9ee73474603707339935ebaed33d175269
+          KENDEX_VERSION: main-build-299-1-cdc4f0ccc7ae152d1ed8a5f7c6e8df4deafcab40
           KENDEX_INSTALLER_REPO: vanillagreencom/kendex
         run: |
           set -euo pipefail
