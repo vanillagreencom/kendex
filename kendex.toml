@@ -70,6 +70,9 @@ hooks = [
   "lane-mail-check",
   "lane-mail-deliver",
   "lane-mail-halt",
+  "session-start-row",
+  "session-end-row",
+  "stop-failure-row",
 ]
 
 [bundles.orchestration]
@@ -84,7 +87,14 @@ skills = [
   "reviewer",
   "linear",
 ]
-hooks = ["lane-mail-check", "lane-mail-deliver", "lane-mail-halt"]
+hooks = [
+  "lane-mail-check",
+  "lane-mail-deliver",
+  "lane-mail-halt",
+  "session-start-row",
+  "session-end-row",
+  "stop-failure-row",
+]
 
 [bundles.code-review]
 description = "The review agents and the skills that run a review"

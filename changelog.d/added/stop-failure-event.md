@@ -1,0 +1,1 @@
+- A hook can run on Claude Code's `StopFailure` event, which fires when a turn ends on an API error such as a usage limit.

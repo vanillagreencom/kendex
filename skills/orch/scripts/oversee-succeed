@@ -813,18 +813,19 @@ CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}' 
 # since a broken state file would otherwise stop every judgement of a live
 # overseer.
 #
-# Where no record answers, --harness precedes the pane command, and a context
-# reading for this pane supplies its model and, for ambiguous commands, its
-# harness. No stored count is judged; which reading stands is the
-# context.json row of schemas/workflow-state.md.
+# Where no record answers, the session's own SessionStart row
+# (lib/session-rows.sh) does: the harness its hook install names, the account
+# its environment carries, its model and its directory, as the harness itself
+# stated them. Where neither answers, --harness precedes the pane command, the
+# named fallback, and a context reading for this pane supplies its model and,
+# for ambiguous commands, its harness. No stored count is judged; which
+# reading stands is the context.json row of schemas/workflow-state.md.
 #
 # A dead pane is judged by nothing and its line is handed in whole, so it
 # reads no current-session identity, only the identity the record holds for
 # the line it replays (lib/overseer-launch.sh § ol_record_line_identity).
 CALLER_HARNESS="" CALLER_MODEL=""
 if [[ "$MODE" != dead ]]; then
-  CALLER_CMD="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_command}' 2>"$DEP_ERR")" \
-    || die pane-unreadable "pane=$CALLER_PANE"
   CALLER_SERVER="$(tmux display-message -p -t "$CALLER_PANE" '#{pid}' 2>"$DEP_ERR")" \
     || die pane-unreadable "pane=$CALLER_PANE"
   record_rc=0
@@ -833,7 +834,12 @@ if [[ "$MODE" != dead ]]; then
     message record-unread "pane=$CALLER_PANE" >&2
     [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
   fi
-  [[ -z "$OL_CUR_CWD" ]] || CALLER_PATH="$OL_CUR_CWD"
+  # A rows file that cannot be read is no row: the fallbacks below answer.
+  session_rows_start "$(session_rows_overseer_file "$PROJECT_ROOT" "$CALLER_SERVER" "$CALLER_PANE")" || true
+  case "$SR_HARNESS" in claude | codex) ;; *) SR_HARNESS="" SR_ACCOUNT="" SR_MODEL="" SR_CWD="" ;; esac
+  if [[ -n "$OL_CUR_CWD" ]]; then CALLER_PATH="$OL_CUR_CWD"
+  elif [[ -n "$SR_CWD" ]]; then CALLER_PATH="$SR_CWD"
+  fi
   reading_harness="" reading_model=""
   OVERSEER_BOX="$(lane_context_overseer_box "$PROJECT_ROOT")"
   if [[ -f "$OVERSEER_BOX/$LANE_CONTEXT_RECORD" ]] \
@@ -843,10 +849,14 @@ if [[ "$MODE" != dead ]]; then
   fi
   if [[ -n "$OL_CUR_HARNESS" ]]; then
     CALLER_HARNESS="$OL_CUR_HARNESS"
+  elif [[ -n "$SR_HARNESS" ]]; then
+    CALLER_HARNESS="$SR_HARNESS"
   elif [[ -n "$HARNESS_ARG" ]]; then
     CALLER_HARNESS="$HARNESS_ARG"
-  elif ! CALLER_HARNESS="$(lane_context_shape "${CALLER_CMD#-}")"; then
-    die harness-unnamed "pane=$CALLER_PANE"
+  else
+    CALLER_CMD="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_command}' 2>"$DEP_ERR")" \
+      || die pane-unreadable "pane=$CALLER_PANE"
+    CALLER_HARNESS="$(lane_context_shape "${CALLER_CMD#-}")" || die harness-unnamed "pane=$CALLER_PANE"
   fi
   if [[ "$CALLER_HARNESS" == both ]]; then
     case "$reading_harness" in
@@ -857,7 +867,7 @@ if [[ "$MODE" != dead ]]; then
   # The model passes through the rule a reading takes (lib/lane-context.sh §
   # lane_context_mark_model), so a codex session is judged on its account's
   # binding bucket whichever of the record and the reading named its model.
-  CALLER_MODEL="$(lane_context_mark_model "$CALLER_HARNESS" "${OL_CUR_MODEL:-$reading_model}")"
+  CALLER_MODEL="$(lane_context_mark_model "$CALLER_HARNESS" "${OL_CUR_MODEL:-${SR_MODEL:-$reading_model}}")"
 fi
 
 # The account mark, judged on the account THIS session is spending and on the
@@ -918,7 +928,7 @@ fi
 # opened on, and the line `print` records for a dead-pane relaunch opens its
 # successor there.
 CALLER_CFG=""
-[[ "$MODE" == dead ]] || CALLER_CFG="${OL_CUR_ACCOUNT:-$(lane_context_caller_cfg "$CALLER_HARNESS")}"
+[[ "$MODE" == dead ]] || CALLER_CFG="${OL_CUR_ACCOUNT:-${SR_ACCOUNT:-$(lane_context_caller_cfg "$CALLER_HARNESS")}}"
 CALLER_STATE=unreadable HEADROOM_FIELD=unreadable
 CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS=""
 RATE_STATE=unreadable WALL_PROJECTED="" QUALIFYING_STATE=unreadable QUALIFYING_COUNT="" QUALIFYING_HEADROOM=""

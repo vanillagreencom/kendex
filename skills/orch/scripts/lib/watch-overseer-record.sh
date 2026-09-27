@@ -29,9 +29,10 @@ overseer_launch_args() {
 
 # The record, written once at the watch's start. A step that fails is a
 # NOTICE through `overseer_record_notice` and never a refusal, because the
-# record is not what the watch judges the pane on: the pane's death and its
-# wall are read off the pane itself, so an overseer whose record could not be
-# written is still watched. What a failed record costs is the line a dead-pane
+# record is not all the watch judges the pane on: where no rows file is
+# recorded for this pane, its death and its wall are read off the pane itself,
+# the named fallback, so an overseer whose record could not be written is
+# still watched. What a failed record costs is the line a dead-pane
 # relaunch replays: the record is left as it stood, so a line already there
 # stays where the record names this pane, the last line a launch, a
 # succession or a watch start recorded for it, and check_overseer replays
@@ -42,7 +43,7 @@ overseer_launch_args() {
 # state; `unread` where the record, or the pane key that names it, was not
 # read. Always returns 0.
 overseer_command_record() {
-  local pane="${TMUX_PANE:-}" key server window line detail errf rc=0 held=unread
+  local pane="${TMUX_PANE:-}" key server window line detail errf rows rc=0 held=unread
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
   # The key is the orch library's, the same function the lane turn-end hook
   # and `oversee register` read a session's own key with: the hook compares its own
@@ -98,7 +99,10 @@ overseer_command_record() {
     overseer_record_notice "" "$held" overseer-line-missing "pane=$pane" "path=$SUCCEED"
     return 0
   fi
-  # The four fields this watch observes replace the prior's; the launcher's
+  # The pane's own event rows file, the one path its hooks write to and every
+  # reader of this record reads (lib/session-rows.sh).
+  rows="$(session_rows_overseer_file "$PWD" "$server" "$pane")"
+  # The five fields this watch observes replace the prior's; the launcher's
   # own, runtime, generation and the launch identity (harness, account, home,
   # model, effort and cwd), stay only where the prior names THIS pane on THIS
   # server: another pane's record is another session's, and a start there has
@@ -109,10 +113,12 @@ overseer_command_record() {
   # succession that died before its launch leaves nothing a later death would
   # replay.
   detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
-    update oversee --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" "$OL_JQ_DEFS"'
+    update oversee --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" \
+      --arg rows "$rows" "$OL_JQ_DEFS"'
       .overseer = ((((.overseer // {})
         | if ol_names($server; $pane) then . else {} end)
-        + {server: $server, pane: $pane, window: $window, launch_line: $line}) | del(.pending))' 2>&1)" \
+        + {server: $server, pane: $pane, window: $window, launch_line: $line, session_rows: $rows})
+        | del(.pending))' 2>&1)" \
     || overseer_record_notice "$detail" "$held" overseer-unrecorded "pane=$pane" "step=write"
   return 0
 }

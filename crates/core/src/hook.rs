@@ -169,6 +169,10 @@ pub const EVENTS: &[HookEvent] = &[
         fires: "The agent finishes its turn",
     },
     HookEvent {
+        name: "StopFailure",
+        fires: "A turn ends on an API error, such as a usage limit",
+    },
+    HookEvent {
         name: "SubagentStop",
         fires: "A subagent finishes",
     },

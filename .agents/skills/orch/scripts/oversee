@@ -72,12 +72,17 @@
 #        and lane, at exit 0.
 #   register writes the session record for the session this command runs in,
 #            a tmux pane a person opened by hand: runtime tmux, the tmux
-#            server, $TMUX_PANE, its window, the account, --account or else
-#            the one this session's own account variable names through
-#            lib/lane-context.sh, the harness the pane's foreground process
-#            names, the home (a private CODEX_HOME where the session carries
-#            one, the account otherwise) and the pane's directory. Model and
-#            effort are recorded as unknown. The generation is one past the record's,
+#            server, $TMUX_PANE, its window, the file its event rows land in,
+#            and the launch identity its SessionStart row states
+#            (lib/session-rows.sh): the harness, the account (--account
+#            ahead of it), the model and the directory. With no such row it
+#            reads them as the named fallback, notice `identity-fallback` on
+#            stderr: the account --account or this session's own account
+#            variable names through lib/lane-context.sh, the harness the
+#            pane's foreground process names and the pane's directory, the
+#            model unknown. The home is a private CODEX_HOME where the session
+#            carries one, the account otherwise; effort is recorded as
+#            unknown. The generation is one past the record's,
 #            or the record's own where it already names this pane, so
 #            registering twice launches nothing and counts nothing twice.
 #            Prints `registered` naming the session and generation.
@@ -148,6 +153,7 @@ message() { # KEY FIELD=VALUE...
     interrupted) text='A signal stopped the launch; the session was closed and the record put back.' ;;
     pane-unreadable) text='This session'\''s own pane could not be read; tmux says why below.' ;;
     registered) text='The session record names this session.' ;;
+    identity-fallback) text='No SessionStart row of this session stands, so its harness, account and directory are read off its pane and environment, the named fallback, and its model is recorded as unknown.' ;;
   esac
   printf 'oversee: %s' "$key"
   printf ' %s' "$@"
@@ -259,24 +265,39 @@ if [[ "$COMMAND" == register ]]; then
   server="${key%% *}"
   window="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>"$DEP_ERR")" \
     || die pane-unreadable "pane=$TMUX_PANE" field=window_id
-  cwd="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_path}' 2>"$DEP_ERR")" \
-    || die pane-unreadable "pane=$TMUX_PANE" field=pane_current_path
-  cmd="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_command}' 2>"$DEP_ERR")" \
-    || die pane-unreadable "pane=$TMUX_PANE" field=pane_current_command
-  shape="$(lane_context_shape "${cmd#-}")"
-  [[ -n "$ACCOUNT" ]] || ACCOUNT="$(lane_context_caller_cfg "$shape")"
-  # The launch identity a hand-opened session can state: the harness its
-  # foreground process names, the account, the home its own variable carries
-  # where that is a private codex home and the account otherwise, and its
-  # directory. Nothing here launched it, so no model or effort is known; any
-  # model is the pane's context.json (schemas/workflow-state.md).
+  # The launch identity a hand-opened session can state, from what its own
+  # harness said at its start where its SessionStart row stands
+  # (lib/session-rows.sh): the harness its hook install names, the account its
+  # environment carries, its model and its directory. Nothing here launched
+  # it, so no effort is known. Where no row stands, a harness with no such
+  # hook or a session started before its install, the pane's foreground
+  # process and directory are read instead, the named fallback, said as
+  # `identity-fallback`, and no model is known.
+  model="" start_rc=0
+  session_rows_start "$(session_rows_overseer_file "$PWD" "$server" "$TMUX_PANE")" || start_rc=$?
+  if (( start_rc == 0 )) && [[ -n "$SR_HARNESS" && -n "$SR_CWD" ]]; then
+    cwd="$SR_CWD" model="$SR_MODEL" shape="$SR_HARNESS"
+    [[ -n "$ACCOUNT" ]] || ACCOUNT="$SR_ACCOUNT"
+  else
+    cause=no-start-row
+    [[ "$start_rc" -ne 2 ]] || cause=unreadable
+    message identity-fallback "session=$TMUX_PANE" "cause=$cause" >&2
+    cwd="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_path}' 2>"$DEP_ERR")" \
+      || die pane-unreadable "pane=$TMUX_PANE" field=pane_current_path
+    cmd="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_command}' 2>"$DEP_ERR")" \
+      || die pane-unreadable "pane=$TMUX_PANE" field=pane_current_command
+    shape="$(lane_context_shape "${cmd#-}")"
+    [[ -n "$ACCOUNT" ]] || ACCOUNT="$(lane_context_caller_cfg "$shape")"
+  fi
+  # The home its own variable carries where that is a private codex home, and
+  # the account otherwise.
   harness="" home="$ACCOUNT"
   case "$shape" in
     claude) harness=claude ;;
     codex) harness=codex; home="${CODEX_HOME:-$ACCOUNT}" ;;
-    both) ;;
+    *) ;;
   esac
-  ol_identity "$harness" "$ACCOUNT" "$home" "" "" "$cwd" || die record-unwritten field=overseer step=identity
+  ol_identity "$harness" "$ACCOUNT" "$home" "$model" "" "$cwd" || die record-unwritten field=overseer step=identity
   state_ready
   ol_record_write tmux "$TMUX_PANE" "$window" "$server" "$OL_IDENTITY" "" \
     || die record-unwritten field=overseer

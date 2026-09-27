@@ -47,6 +47,14 @@ cat > "$BIN/claude" <<STUB
 #!/bin/sh
 { printf 'lane=%s\n' "\${CLAUDE_CONFIG_DIR:-}"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.claude"
 if [ -f "$TMP_ROOT/idle" ]; then echo 'FIXTURE overseer startup waiting'; else echo 'esc to interrupt'; fi
+# With the row flag, the SessionStart row its hook would write, in the rows
+# file for this pane under the directory it started in (lib/session-rows.sh).
+if [ -f "$TMP_ROOT/row" ]; then
+  box="\$PWD/tmp/lane-mail/overseer"
+  mkdir -p "\$box"
+  printf '{"at":%s,"event":"SessionStart","harness":"claude","source":"startup"}\n' "\$(date +%s)" \
+    >> "\$box/session-\$(tmux display-message -p '#{pid}')-\${TMUX_PANE#%}.jsonl"
+fi
 exec sleep 100000
 STUB
 cat > "$BIN/kendex" <<'STUB'
@@ -222,9 +230,9 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
 HAND="$(tm new-window -d -t fleet:4 -n hand -P -F '#{pane_id}' "exec '$BIN/hclaude' 100000")"
 PRIOR_LINE="$(recorded launch_line)"
 run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(recorded runtime)|$(recorded account)|$(recorded launch_line)" \
-  "0|oversee: registered session=$HAND window=$(tm display-message -p -t "$HAND" '#{window_id}') server=$SERVER_PID generation=4 account=$H/.eclaude|tmux|$H/.eclaude|none" \
-  "register writes the record for the caller's pane, one generation past the record, and drops the launch line the record held"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(keyed registered "$OUT" | sed -n 1p)|$(recorded runtime)|$(recorded account)|$(recorded launch_line)" \
+  "0|oversee: identity-fallback session=$HAND cause=no-start-row|oversee: registered session=$HAND window=$(tm display-message -p -t "$HAND" '#{window_id}') server=$SERVER_PID generation=4 account=$H/.eclaude|tmux|$H/.eclaude|none" \
+  "register with no SessionStart row reads the pane as the named fallback, says so, writes the record one generation past it, and drops the launch line the record held"
 # The line's control: a writer that keeps the prior's fields whole leaves the
 # launched session's line on the hand-opened one, and a death of the latter
 # would replay the former's command. The line the real register just dropped
@@ -245,6 +253,27 @@ mutate_file "$REGCTL/oversee" '    claude) harness=claude ;;' '    claude) ;;'
 OVERSEE_BIN="$REGCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
 assert_eq "$RC|$(recorded harness)" "0|none" \
   "control: a register that reads no harness records none"
+# register from the session's own SessionStart row (lib/session-rows.sh), in
+# the shape Claude Code 2.1.283's hook emits it: the harness, account and
+# model the row states, not the environment's, and the rows file recorded.
+HAND_ROWS="$WORK_REAL/tmp/lane-mail/overseer/session-$SERVER_PID-${HAND#%}.jsonl"
+mkdir -p "${HAND_ROWS%/*}"
+hand_start_row() {
+  jq -cn --arg account "$H/.claude" --arg cwd "$WORK_REAL" '{at: 1, event: "SessionStart",
+    harness: "claude", session_id: "5f0c", transcript_path: "/t/5f0c.jsonl", cwd: $cwd,
+    source: "startup", model: "claude-fable-5-1", account: $account}' > "$HAND_ROWS"
+}
+hand_start_row
+run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
+assert_eq "$RC|$(sed -n 1p <<<"$OUT" | cut -d' ' -f1-2)|$(identity)$(recorded session_rows)" \
+  "0|oversee: registered|claude|$H/.claude|$H/.claude|claude-fable-5-1|none|$WORK_REAL|$HAND_ROWS" \
+  "register takes the identity its SessionStart row states and records the rows file"
+ROWCTL="$(mutant_scripts rowctl oversee)" || exit 1
+mutate_file "$ROWCTL/oversee" '  if (( start_rc == 0 )) && [[ -n "$SR_HARNESS" && -n "$SR_CWD" ]]; then' '  if false; then'
+OVERSEE_BIN="$ROWCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
+assert_eq "$RC|$(recorded model)" "0|none" \
+  "control: a register that reads no row records the pane's identity, with no model"
+: > "$HAND_ROWS"
 run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" -- register --account "$H/.claude"
 assert_eq "$RC|$(recorded generation)|$(recorded account)" \
   "0|4|$H/.claude" \
@@ -315,6 +344,26 @@ mutate_file "$CODEXCTL/oversee" 'codex) harness=codex; home="${CODEX_HOME:-$ACCO
 register_codex "$CODEXCTL/oversee"
 assert_eq "$RC|$(recorded home)" "0|$H/.codex" \
   "control: a register that takes the account for the home loses the private CODEX_HOME"
+
+# The successor-up wait: a session whose screen never shows a running turn is
+# up once its harness writes its SessionStart row, the pane read being the
+# fallback for a harness that writes none.
+tm kill-window -t "$(recorded window)"
+touch "$TMP_ROOT/idle" "$TMP_ROOT/row"
+run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(keyed overseer-launched "$OUT" | sed -n 1p | cut -d' ' -f1-2)|$(overseers)" \
+  "0|oversee: overseer-launched|1" \
+  "a session whose SessionStart row stands is up, whatever its screen shows"
+tm kill-window -t "$(recorded window)"
+ROWWAITCTL="$(mutant_scripts rowwaitctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$ROWWAITCTL/lib/overseer-launch.sh" \
+  '    if [[ -n "$OL_ROWS" ]] && session_rows_start "$OL_ROWS" "$OL_STARTED"; then' \
+  '    if false; then'
+OVERSEE_BIN="$ROWWAITCTL/oversee" run_oversee -- launch --wait-secs 3
+rm -f "$TMP_ROOT/idle" "$TMP_ROOT/row"
+assert_eq "$RC|$(keyed overseer-not-working "$OUT" | sed -n 1p | cut -d' ' -f1-2)|$(overseers)" \
+  "1|oversee: overseer-not-working|0" \
+  "control: a wait that reads no row takes that session for one that never came up"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

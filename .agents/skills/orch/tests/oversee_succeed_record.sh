@@ -203,6 +203,46 @@ for row in \
   assert_eq "$RC|$(judged)" "0|$row_want" "--check-marks: $row_what" "$TMP_ROOT/err"
 done
 
+# start_row HARNESS ACCOUNT MODEL — the caller's own SessionStart row
+# (lib/session-rows.sh), as its hook writes one in the shape Claude Code
+# 2.1.283 emits, in the rows file for its pane on this server.
+start_row() {
+  mkdir -p "$MAILBOX_DIR"
+  jq -cn --arg h "$1" --arg a "$2" --arg m "$3" '{at: 1, event: "SessionStart", harness: $h,
+    session_id: "5f0c", transcript_path: "/t/5f0c.jsonl", cwd: "/work", source: "startup",
+    model: $m, account: $a}' > "$MAILBOX_DIR/session-$SERVER_PID-${CALLER_PANE#%}.jsonl"
+}
+# With no record, the row answers ahead of the environment, the reading and
+# --harness; a record still answers ahead of the row.
+for row in \
+  "claude|$H/.eclaude|claude-fable-5-1|Fable 5.1|none||mark-reached kind=headroom value=5|the row's account decides over the environment's" \
+  "claude|$H/.claude|claude-opus-5|Fable 5.1|none||mark-reached kind=headroom value=1|the row's model decides over the reading's" \
+  "claude|$H/.claude|claude-fable-5-1|-|codex||account-below-mark headroom=90|the row's harness decides over --harness on a pane naming none" \
+  "claude|$H/.claude|claude-opus-5|Fable 5.1|none|record|account-below-mark headroom=90|a record naming the session decides over its row" \
+  ; do
+  IFS='|' read -r r_harness r_account r_model r_reading r_flag r_record r_want r_what <<<"$row"
+  flags=(--check-marks)
+  [[ "$r_flag" == none ]] || flags+=(--harness "$r_flag")
+  if [[ "$r_reading" == - ]]; then new_caller; else new_caller claude; reading "$r_reading"; fi
+  if [[ "$r_record" == record ]]; then state "$(record "$CALLER_PANE" "$H/.claude" fable)"; else state none; fi
+  start_row "$r_harness" "$r_account" "$r_model"
+  run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" "${flags[@]}"
+  assert_eq "$RC|$(judged)" "0|$r_want" "--check-marks: $r_what" "$TMP_ROOT/err"
+done
+# The row rule's control: a caller that reads no row is judged on the
+# environment's account, as the first row above says it is not.
+ROWCTL="$(mutant_scripts rowctl oversee-succeed)" || exit 1
+mutate_file "$ROWCTL/oversee-succeed" \
+  '  session_rows_start "$(session_rows_overseer_file "$PROJECT_ROOT" "$CALLER_SERVER" "$CALLER_PANE")" || true' \
+  '  :'
+new_caller claude
+reading "Fable 5.1"
+state none
+start_row claude "$H/.eclaude" claude-fable-5-1
+SUCCEED_BIN="$ROWCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
+assert_eq "$RC|$(judged)" "0|account-below-mark headroom=90" \
+  "control: a caller that reads no row is judged on the environment's account" "$TMP_ROOT/err"
+
 # A state that cannot be read is said, and the bootstrap readings judge.
 new_caller claude
 reading "Fable 5.1"
@@ -264,8 +304,8 @@ assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none 
 # judged on the reading's.
 MODELCTL="$(mutant_scripts modelctl oversee-succeed)" || exit 1
 mutate_file "$MODELCTL/oversee-succeed" \
-  '"${OL_CUR_MODEL:-$reading_model}"' \
-  '"$reading_model"'
+  '"${OL_CUR_MODEL:-${SR_MODEL:-$reading_model}}"' \
+  '"${SR_MODEL:-$reading_model}"'
 new_caller claude
 reading "Fable 5.1"
 state "$(record "$CALLER_PANE" "$H/.claude" claude-opus-5)"
@@ -413,7 +453,7 @@ assert_eq "$RC|$(jq -r '.pending.launch_line // "none"' <<<"$SNAP")" "0|none" \
 # The directory rule's control: a caller that ignores its recorded directory
 # opens the successor in the pane's own.
 CWDCTL="$(mutant_scripts cwdctl oversee-succeed)" || exit 1
-mutate_file "$CWDCTL/oversee-succeed" '[[ -z "$OL_CUR_CWD" ]] || CALLER_PATH="$OL_CUR_CWD"' ':'
+mutate_file "$CWDCTL/oversee-succeed" '  if [[ -n "$OL_CUR_CWD" ]]; then CALLER_PATH="$OL_CUR_CWD"' '  if false; then :'
 pending_run "$CWDCTL"
 assert_eq "$RC|$SUCC_CWD" "0|$CALLER_CWD" \
   "control: a caller that ignores its recorded directory opens the successor in the pane's"

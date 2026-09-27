@@ -1,0 +1,161 @@
+# shellcheck shell=bash
+# What an overseer session's harness says about that session, one row per hook
+# event, so a reader judges whether the session is up, walled or gone from what
+# the harness emitted and never from what its pane shows.
+#
+# The rows are JSON, one per line, in one file per session under the overseer
+# mailbox directory at the main checkout (lib/lane-context.sh §
+# lane_context_overseer_box), the transport lane mail already carries to every
+# reader of that directory. The file is keyed by the `<tmux server pid> <pane
+# id>` the session runs in, the pair the fleet state keys the overseer on, so a
+# hook can name its own file before any record names the session, and the
+# oversee state's `overseer.session_rows` names it for every reader. Appends
+# take the mailbox's own lock and line rules (lib/mailbox-append.sh), so a
+# killed writer leaves a fragment no reader parses and no row glued to another.
+#
+# The writer is the lane-mail-check hook, run with the argument `row` by the
+# session-start-row, session-end-row and stop-failure-row hooks, and in its own
+# turn-end run for the overseer: SessionStart on every harness that fires it,
+# SessionEnd and StopFailure on Claude Code alone, and Stop only over a
+# standing StopFailure row, the one fact a turn end changes here. The readers
+# are oversee-watch's overseer judgement, `oversee register`, oversee-succeed's
+# caller identity and lib/overseer-launch.sh's successor wait.
+#
+# The rows answer for Claude Code alone: Codex fires SessionStart but no
+# session end and no usage-limit event, and Pi a session start alone, so a
+# session whose last row names another harness reads `unsupported` and its
+# reader takes the pane, the named fallback, reported as fallback.
+#
+# The writer requires lib/file-lock.sh, lib/mailbox-append.sh and
+# lib/lane-context.sh sourced by its caller; the readers need jq and tail
+# alone. Sourced, never run. Bash 3.2-safe, like its callers.
+
+# Seconds an append waits for the file's lock before it gives up.
+SESSION_ROWS_WAIT=5
+# The rows a reader looks back over for a session's start: a session appends a
+# start, an end, and a failure and its clearing Stop per wall, so this is many
+# sessions' worth.
+SESSION_ROWS_SPAN=64
+
+# session_rows_path BOX SERVER PANE — the rows file of the session in PANE on
+# the tmux server whose pid is SERVER, inside the mailbox directory BOX. The
+# pane id's `%` is dropped, so the name holds no character a shell or a glob
+# reads.
+session_rows_path() { # BOX SERVER PANE
+  printf '%s/session-%s-%s.jsonl\n' "$1" "$2" "${3#%}"
+}
+
+# session_rows_overseer_file DIR SERVER PANE — the same file for a session of
+# the checkout DIR is in: the path every writer and every reader asks here, so
+# a hook and a record writer cannot name one session's file two ways.
+session_rows_overseer_file() { # DIR SERVER PANE
+  session_rows_path "$(lane_context_overseer_box "$1")" "$2" "$3"
+}
+
+# session_rows_last FILE [EVENT] — the last row of FILE into SESSION_ROW, or
+# the last whose event is EVENT, looked for over the last SESSION_ROWS_SPAN
+# lines; empty where the file is missing or holds none. A line that is not
+# JSON is a fragment a killed writer left, which the next append closes, and
+# is passed over as the mailbox reader passes one. Exit 2 where the file is
+# there and could not be read.
+SESSION_ROW=""
+session_rows_last() { # FILE [EVENT]
+  local lines
+  SESSION_ROW=""
+  [ -e "$1" ] || return 0
+  lines="$(tail -n "$SESSION_ROWS_SPAN" -- "$1")" || return 2
+  SESSION_ROW="$(jq -cR --arg event "${2:-}" 'fromjson? | objects
+    | select($event == "" or .event == $event)' <<<"$lines" | tail -n 1)" || return 2
+}
+
+# session_rows_verdict FILE — what the last row says of the session, into
+# SESSION_ROWS_VERDICT, with that row in SESSION_ROW:
+#   none         no row, so nothing the harness said can be read
+#   unsupported  the row names a harness that emits no session end and no
+#                usage-limit event, so its silence settles nothing
+#   ended        SessionEnd for any reason but `clear` and `resume`, the two a
+#                SessionStart follows in the same harness
+#   walled       StopFailure with `rate_limit`, the harness's own word for a
+#                usage limit; its `message` carries the harness's text with the
+#                reset in it
+#   live         any other row
+# Exit 2 where the file could not be read; the verdict is then `none` and says
+# nothing.
+SESSION_ROWS_VERDICT=none
+session_rows_verdict() { # FILE
+  SESSION_ROWS_VERDICT=none
+  session_rows_last "$1" || return 2
+  [ -n "$SESSION_ROW" ] || return 0
+  SESSION_ROWS_VERDICT="$(jq -r '
+    if .harness != "claude" then "unsupported"
+    elif .event == "SessionEnd" then
+      (if .reason == "clear" or .reason == "resume" then "live" else "ended" end)
+    elif .event == "StopFailure" and .error == "rate_limit" then "walled"
+    else "live" end' <<<"$SESSION_ROW")" || { SESSION_ROWS_VERDICT=none; return 2; }
+}
+
+# session_rows_start FILE [SINCE] — the last SessionStart row of FILE, at or
+# after the epoch SINCE where given, split into SR_HARNESS, SR_ACCOUNT,
+# SR_MODEL, SR_CWD, SR_SESSION and SR_TRANSCRIPT, each empty where the row
+# carries none. `session_id` and `transcript_path` are the payload's own, kept
+# as the harness emitted them and never copied into a record. Exit 1 where no
+# such row stands, 2 where the file could not be read.
+SR_HARNESS="" SR_ACCOUNT="" SR_MODEL="" SR_CWD="" SR_SESSION="" SR_TRANSCRIPT=""
+session_rows_start() { # FILE [SINCE]
+  local fields sep=$'\x1f'
+  SR_HARNESS="" SR_ACCOUNT="" SR_MODEL="" SR_CWD="" SR_SESSION="" SR_TRANSCRIPT=""
+  session_rows_last "$1" SessionStart || return 2
+  [ -n "$SESSION_ROW" ] || return 1
+  fields="$(jq -r --argjson since "${2:-0}" --arg sep "$sep" '
+    select((.at // 0) >= $since)
+    | [.harness, .account, .model, .cwd, .session_id, .transcript_path]
+    | map(. // "" | tostring) | join($sep)' <<<"$SESSION_ROW")" || return 2
+  [ -n "$fields" ] || return 1
+  IFS="$sep" read -r SR_HARNESS SR_ACCOUNT SR_MODEL SR_CWD SR_SESSION SR_TRANSCRIPT <<<"$fields"
+}
+
+# session_rows_write DIR HARNESS [EVENT] — the hook payload on stdin appended as one row
+# to the file of the session this process runs in, the pane
+# lane_context_caller_key names, in the overseer mailbox directory of the
+# checkout DIR is in. HARNESS is the one the hook's install names, and the row
+# carries the account that harness runs on as lane_context_caller_cfg reads it
+# from this process's own environment, which is the harness's: a hook is its
+# child, so no wrapper's value stands in for the one the session holds. EVENT
+# names the event a payload that spells no hook_event_name is taken for: the
+# turn-end run knows it ran at a Stop whatever its payload carries.
+#
+# Nothing is written, with exit 0, where that directory is not there, since no
+# fleet made it and no reader will look, for a subagent's payload, and for a
+# Stop payload unless the
+# file's last row is a StopFailure: a turn that ended is what lifts a wall,
+# and nothing else a turn end says is read. Exit 3 where the session sits on
+# no pane this can key, 1 where the payload names no event or jq could not
+# build the row, and mailbox_append_locked's own 2 and 3 for the write and the
+# lock. The cause is on stderr.
+session_rows_write() { # DIR HARNESS [EVENT]
+  local key box file payload event account row
+  key="$(lane_context_caller_key)" || return 3
+  box="$(lane_context_overseer_box "$1")"
+  [ -d "$box" ] || return 0
+  file="$(session_rows_path "$box" "${key%% *}" "${key#* }")"
+  payload="$(cat)" || return 1
+  # A subagent's payload carries its agent_id: its failure is its own turn's,
+  # never the session's.
+  event="$(jq -r --arg event "${3:-}" \
+    'if (.agent_id // "") != "" then "subagent" else ((.hook_event_name | strings) // $event) end' \
+    <<<"$payload")" || return 1
+  [ "$event" != subagent ] || return 0
+  [ -n "$event" ] || { printf 'the payload names no hook_event_name\n' >&2; return 1; }
+  if [ "$event" = Stop ]; then
+    session_rows_last "$file" || return 2
+    [ "$(jq -r '.event // ""' <<<"${SESSION_ROW:-null}")" = StopFailure ] || return 0
+  fi
+  account="$(lane_context_caller_cfg "$2")"
+  row="$(jq -c --arg event "$event" --arg harness "$2" --arg account "$account" --argjson at "$(date +%s)" '
+    {at: $at, event: $event, harness: $harness}
+    + ({session_id, transcript_path, cwd, source, model, reason, error, error_details}
+       | with_entries(select(.value | type == "string" and . != "")))
+    + (if (.last_assistant_message | type) == "string" then {message: .last_assistant_message} else {} end)
+    + (if $account == "" then {} else {account: $account} end)' <<<"$payload")" || return 1
+  printf '%s\n' "$row" | mailbox_append_locked "$file" "$SESSION_ROWS_WAIT"
+}

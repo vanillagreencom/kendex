@@ -47,6 +47,12 @@
 # sourced by the caller. Sourcing it defines names and runs nothing. Sourced,
 # never run.
 
+# The file a session's own event rows land in, which the record names: its
+# path is lib/session-rows.sh's, named by expansion as lib/lane-context.sh
+# names its siblings.
+# shellcheck source=session-rows.sh
+source "${BASH_SOURCE[0]%/*}/session-rows.sh"
+
 # The runtime the caller launches into, resolved once per process.
 OL_RUNTIME=""
 ol_runtime() {
@@ -395,25 +401,34 @@ ol_record_get() {
 # the prior names this very session on this server, which is a registration
 # repeated and never a second session. On tmux the session is the pane, and
 # the object keeps `pane` as the spelling the turn-end hook and the watch
-# already read it under. `pending` is dropped: the successor it named is the
-# session written here, or a launch that never opened. The prior's
-# `launch_line` goes with it where LINE is empty: `oversee register` writes
-# a session a person opened by hand, whose line nothing here knows, and a
-# line kept from the prior would be replayed for this session's death as if
-# it were its own, the prior's account and permission words included. Every
-# other field the prior carried stays. The generation written is in
-# OL_GENERATION. Returns 1 with the writer's words in DEP_ERR.
-OL_GENERATION=""
+# already read it under, and `session_rows` names the file that pane's own
+# event rows land in (lib/session-rows.sh), under the overseer mailbox of the
+# checkout the session starts in, IDENTITY's `cwd`, or this launcher's own
+# where that is unknown; OL_ROWS holds it for ol_session_verify. `pending` is
+# dropped: the successor it named is the session written here, or a launch
+# that never opened. The prior's `launch_line` goes with it where LINE is
+# empty: `oversee register` writes a session a person opened by hand, whose
+# line nothing here knows, and a line kept from the prior would be replayed
+# for this session's death as if it were its own, the prior's account and
+# permission words included. Every other field the prior carried stays. The
+# generation written is in OL_GENERATION. Returns 1 with the writer's words in
+# DEP_ERR.
+OL_GENERATION="" OL_ROWS=""
 ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
-  local prior="${OL_PRIOR:-null}" record
+  local prior="${OL_PRIOR:-null}" record cwd
+  OL_ROWS=""
+  if [[ "$1" == tmux ]]; then
+    cwd="$(jq -r '.cwd // empty' <<<"$5" 2>"$DEP_ERR")" || return 1
+    OL_ROWS="$(session_rows_overseer_file "${cwd:-$PWD}" "$4" "$2")"
+  fi
   record="$(jq -cn --argjson prior "$prior" --argjson identity "$5" --arg runtime "$1" \
-    --arg session "$2" --arg window "$3" --arg server "$4" --arg line "${6:-}" "$OL_JQ_DEFS"'
+    --arg session "$2" --arg window "$3" --arg server "$4" --arg line "${6:-}" --arg rows "$OL_ROWS" "$OL_JQ_DEFS"'
       ($prior // {}) as $p
       | (($p.generation // 0) | if type == "number" then . else 0 end) as $g
       | (if ($p | ol_names($server; $session)) and $g > 0 then $g else $g + 1 end) as $next
       | ($p | del(.pending, .launch_line)) + {runtime: $runtime, server: $server, window: $window, generation: $next}
       + $identity
-      + (if $runtime == "tmux" then {pane: $session} else {session: $session} end)
+      + (if $runtime == "tmux" then {pane: $session, session_rows: $rows} else {session: $session} end)
       + (if $line == "" then {} else {launch_line: $line} end)' 2>"$DEP_ERR")" \
     || return 1
   OL_GENERATION="$(jq -r '.generation' <<<"$record" 2>"$DEP_ERR")" || return 1
@@ -551,8 +566,14 @@ ol_account_verdict() { # SESSION LANE_VAR LANE_DIR FORM BOUND final|early
 }
 
 # ol_session_verify SESSION LANE_VAR LANE_DIR FORM WAIT_SECS — the early
-# account read, the wait for the session's first working turn through the
-# runtime's `inspect --launch`, and the deciding read, all inside WAIT_SECS.
+# account read, the wait for the session to come up, and the deciding read,
+# all inside WAIT_SECS. The session is up once its harness writes a
+# SessionStart row, stamped at or after this wait began, to OL_ROWS, the file
+# ol_record_write named for it (lib/session-rows.sh): the harness itself
+# saying it runs, which is past any exec a wrapper makes. Until one stands,
+# each probe asks the runtime's `inspect --launch` for a turn in flight, the
+# named fallback, which is also what sees a dialog nobody is there to answer:
+# a harness stopped at one writes no row.
 # 0 once the session is working on the picked account. 1 with OL_REASON:
 #   wrong-lane      the session runs another account (OL_OBSERVED)
 #   result-unknown  an account verdict this library does not know (OL_RESULT)
@@ -583,6 +604,9 @@ ol_session_verify() { # SESSION LANE_VAR LANE_DIR FORM WAIT_SECS
   # or an option list the brief itself prints reads as asking, and the wait
   # would burn the budget on a session that had in fact launched.
   while :; do
+    if [[ -n "$OL_ROWS" ]] && session_rows_start "$OL_ROWS" "$OL_STARTED"; then
+      break
+    fi
     out="$("$SCRIPT_DIR/overseer-host" inspect --launch --session "$session" 2>"$DEP_ERR")" \
       || { OL_REASON=inspect-failed; OL_STEP=inspect; return 1; }
     keyed="${out%%$'\n'*}"

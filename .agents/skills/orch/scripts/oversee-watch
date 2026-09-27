@@ -2303,18 +2303,36 @@ overseer_mark_check() { # ROWS IDENTITY PANE
   OVERSEER_MARK_ROWS="$(lane_row_set overseer-mark "$rows" "$identity" "$kind|$passes")"
 }
 
-# The overseer's own pane as one reading: OV_WINDOW, OV_IDENTITY (`<server>
-# <pane>`, the key its rows are kept under), OV_SCREEN and OV_STATE, the shared
-# judge's word for it. The long pass reads it before its checks and the mail
-# pass before it takes any mail, so both read one pane the one way. A pane that
-# cannot be read is noted once and returns 1: its state settles nothing.
+# The overseer's own session as one reading: OV_WINDOW, OV_IDENTITY (`<server>
+# <pane>`, the key its rows are kept under), OV_STATE, the word the shared
+# judge would give it, and OV_SOURCE, what settled that word. The long pass
+# reads it before its checks and the mail pass before it takes any mail, so
+# both read one session the one way. A pane that cannot be read is noted once
+# and returns 1: its state settles nothing.
+#
+# The harness's own rows settle it first (lib/session-rows.sh): a SessionEnd
+# is `exited` and a usage-limit StopFailure is `walled` whatever the pane
+# shows, OV_SOURCE `rows`. A session its rows call live is still `exited` when
+# the pane's process is a bare shell with nothing under it, which a harness
+# killed before its SessionEnd hook ran leaves, OV_SOURCE `process`: a process
+# fact, read as lib/lane-state.sh's own rung reads it, never the screen.
+#
+# THE NAMED FALLBACK: where the rows cannot judge, because the record names no
+# rows file for this pane, the file holds no row yet, its last row names a
+# harness that emits neither event (Codex, Pi) or it cannot be read, the pane
+# is captured and judged by lib/lane-state.sh's rungs as it was before the
+# rows existed, OV_SOURCE `pane`, and the pass says so once under
+# overseer-fallback with the cause. OV_SCREEN holds that capture, empty on
+# every other source.
 OV_WINDOW=""
 OV_IDENTITY=""
 OV_SCREEN=""
 OV_STATE=""
+OV_SOURCE=""
 overseer_pane_read() { # PANE
-  local pane="$1" pane_identity server actual_pane obs pid cmd
+  local pane="$1" pane_identity server actual_pane obs pid cmd rows cause
   local errf="$WORK_DIR/overseer.err"
+  OV_SCREEN=""
   OV_WINDOW="$(tmux display-message -p -t "$pane" '#{window_id}' 2>"$errf")" \
     || { overseer_note overseer-unreadable "pane=$pane" "field=window_id"; return 1; }
   if ! pane_identity="$(tmux display-message -p -t "$pane" '#{pid} #{pane_id}' 2>"$errf")"; then
@@ -2334,10 +2352,40 @@ overseer_pane_read() { # PANE
   fi
   [[ "$obs" =~ ^[0-9]+[[:blank:]]+[^[:space:]] ]] \
     || { overseer_note overseer-unreadable "pane=$pane" "value=${obs:-<empty>}"; return 1; }
-  OV_SCREEN="$(tmux capture-pane -pJ -t "$pane" 2>"$errf")" \
-    || { overseer_note overseer-unreadable "pane=$pane" "field=capture"; return 1; }
   pid="${obs%%[[:blank:]]*}"
   cmd="${obs#*[[:blank:]]}"
+  # The rows file the record names for THIS pane on THIS server, and none for
+  # a record naming another session: that one's rows are not this pane's.
+  cause=unrecorded
+  if ! rows="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee \
+    "if (.overseer.server // \"\") == \"$server\" and (.overseer.pane // \"\") == \"$pane\"
+     then .overseer.session_rows // \"\" else \"\" end" 2>"$errf")"; then
+    cause=state-unreadable rows=""
+  fi
+  if [[ -n "$rows" ]]; then
+    cause=unreadable
+    if session_rows_verdict "$rows"; then cause="$SESSION_ROWS_VERDICT"; fi
+  fi
+  case "$cause" in
+    ended) OV_STATE=exited; OV_SOURCE=rows; return 0 ;;
+    walled) OV_STATE=walled; OV_SOURCE=rows; return 0 ;;
+    live)
+      OV_STATE=working; OV_SOURCE=rows
+      if is_bare_shell "$cmd"; then
+        pane_has_child "$pid" || true
+        case "$LANE_PROBE_RC" in
+          0) ;;
+          1) OV_STATE=exited; OV_SOURCE=process ;;
+          *) note_probe_unusable "$pane" ;;
+        esac
+      fi
+      return 0 ;;
+    none | unsupported | unrecorded | unreadable | state-unreadable) ;;
+  esac
+  overseer_note overseer-fallback "pane=$pane" "cause=$cause"
+  OV_SOURCE=pane
+  OV_SCREEN="$(tmux capture-pane -pJ -t "$pane" 2>"$errf")" \
+    || { overseer_note overseer-unreadable "pane=$pane" "field=capture"; return 1; }
   # The sixth argument is empty for the reason check_lanes gives: this watch's
   # vantage point is the pane, and a screen the pane rungs cannot settle is
   # `unjudged`, never `exited`.
@@ -2351,17 +2399,19 @@ overseer_pane_read() { # PANE
 # `exited` is the harness gone; `walled` is the account spent under a harness
 # still running, which takes no turn, so it answers no lane, reads no mail and
 # cannot hand itself over — the same unattended fleet a death leaves, reached
-# by the other road. The screen's wall is one reading, and over THIS pane it is
+# by the other road. A wall the rows record is the harness's own word about its
+# own session and stands alone. A wall read off the screen, the fallback, is
 # not enough on its own: overseer_wall_confirmed says why, and asks the
-# account judgement that settles it. A wall the account refutes, or one no
-# judgement could be made on, is `live`, as is every other reading: nothing
-# here holds an overseer that may be working.
+# account judgement that settles it. A screen wall the account refutes, or
+# one no judgement could be made on, is `live`, as is every other reading:
+# nothing here holds an overseer that may be working.
 OV_VERDICT=live
 overseer_judge() { # PANE
   OV_VERDICT=live
   case "$OV_STATE" in
     exited) OV_VERDICT=exited ;;
-    walled) if overseer_wall_confirmed "$1"; then OV_VERDICT=walled; fi ;;
+    walled)
+      if [[ "$OV_SOURCE" == rows ]] || overseer_wall_confirmed "$1"; then OV_VERDICT=walled; fi ;;
     *) ;;
   esac
 }
@@ -2492,14 +2542,16 @@ check_overseer() {
     else
       lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" reported)"
     fi
-    echo "EVENT $row $pane window=$window passes=$DEAD_PASSES succession=$succession$record_field"
-    # The wall's own window under the line, as every lane usage-limit event
-    # carries one: the overseer's handling reads the banner with the screen on
-    # both sides of it, and the reader of THIS event has the same question
-    # about the same text. Asked of the same judge over the same slice the
-    # `walled` rung read, so the two cannot disagree; a disagreement stops the
-    # pass under the reasons check_lanes gives them.
-    if [[ "$ov_case" == walled ]]; then
+    echo "EVENT $row $pane window=$window passes=$DEAD_PASSES succession=$succession source=$OV_SOURCE$record_field"
+    # The wall's own words under the line, as every lane usage-limit event
+    # carries them. A rows wall carries the harness's own message, the limit
+    # and its reset. A screen wall carries the banner with the screen on both
+    # sides of it, asked of the same judge over the same slice the `walled`
+    # rung read, so the two cannot disagree; a disagreement stops the pass
+    # under the reasons check_lanes gives them.
+    if [[ "$ov_case" == walled && "$OV_SOURCE" == rows ]]; then
+      jq -r '.message // empty' <<<"$SESSION_ROW" || die limit-banner-missing "" "pane=$pane"
+    elif [[ "$ov_case" == walled ]]; then
       below="$(pane_below_last_turn "$screen")"
       banner_rc=0
       banner="$(lane_limit_banner "$below")" || banner_rc=$?
@@ -3105,7 +3157,8 @@ overseer_down() {
     [[ -n "$LONG_PID" ]]
     return
   fi
-  if [[ "$OV_STATE" == walled ]]; then
+  # A rows wall asks no account judgement, so only a screen wall is memoised.
+  if [[ "$OV_STATE" == walled && "$OV_SOURCE" == pane ]]; then
     banner="$(lane_limit_banner "$(pane_below_last_turn "$OV_SCREEN")")" || banner=""
     if [[ -n "$OV_WALL_AT" && "$banner" == "$OV_WALL_BANNER" && $((PASS_NOW - OV_WALL_AT)) -lt "$INTERVAL" ]]; then
       [[ "$OV_WALL_VERDICT" == walled ]]
@@ -3114,7 +3167,7 @@ overseer_down() {
     overseer_marks_reset
   fi
   overseer_judge "$pane"
-  if [[ "$OV_STATE" == walled ]]; then
+  if [[ "$OV_STATE" == walled && "$OV_SOURCE" == pane ]]; then
     OV_WALL_BANNER="$banner"
     OV_WALL_AT="$PASS_NOW"
     OV_WALL_VERDICT="$OV_VERDICT"

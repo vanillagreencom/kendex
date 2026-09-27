@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# Tests for the overseer judgement oversee-watch takes from the session's own
+# event rows (scripts/lib/session-rows.sh) rather than from its pane: a
+# SessionEnd row is a death and a usage-limit StopFailure row a wall whatever
+# the pane shows, and where no row can judge the pane is read as the named
+# fallback and the pass says so. The pane-read judgement itself is
+# oversee_watch_overseer.sh's subject.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+
+# shellcheck source=lib/oversee-watch-harness.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
+# mutant_scripts and mutate_file, the two halves of the control below.
+# shellcheck source=lib/growth-state.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
+# The pane, the oversee-succeed stub, overseer_case and run.
+# shellcheck source=lib/overseer-watch-case.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/overseer-watch-case.sh"
+
+echo "=== oversee-watch: the overseer judged from its session rows ==="
+
+# Row shapes as Claude Code 2.1.283 emits them, read from that binary's hook
+# input builders: every event carries session_id, transcript_path and cwd;
+# SessionStart adds source and model, SessionEnd reason (clear, resume,
+# logout, prompt_input_exit, other), StopFailure error (rate_limit among
+# them), error_details and last_assistant_message, which the writer keeps as
+# `message`. The writer adds at, event, harness and account.
+ROWS_FILE() { printf '%s/tmp/lane-mail/overseer/session-7000-9.jsonl' "$CASE_REPO_ROOT"; }
+row() { # EVENT HARNESS [KEY=VALUE]...
+  local event="$1" harness="$2" args=()
+  shift 2
+  for kv in "$@"; do args+=(--arg "${kv%%=*}" "${kv#*=}"); done
+  jq -cn --arg event "$event" --arg harness "$harness" ${args[@]+"${args[@]}"} \
+    '{at: 1788364000, event: $event, harness: $harness, session_id: "5f0c", transcript_path: "/home/me/.claude/projects/x/5f0c.jsonl", cwd: "/home/me/kendex"} + ($ARGS.named | del(.event, .harness))'
+}
+START="$(row SessionStart claude source=startup model=claude-fable-5-1 account=/home/me/.claude)"
+END_EXIT="$(row SessionEnd claude reason=prompt_input_exit)"
+END_CLEAR="$(row SessionEnd claude reason=clear)"
+WALL_MESSAGE="You've hit your limit · resets 9:50am (America/Los_Angeles)"
+FAILURE="$(row StopFailure claude error=rate_limit "message=$WALL_MESSAGE")"
+OVERLOADED="$(row StopFailure claude error=overloaded message=overloaded)"
+STOP="$(row Stop claude)"
+CODEX_START="$(row SessionStart codex source=startup)"
+
+# rows_case NAME PANE_STATE ROW... — overseer_case's sandbox with the fleet
+# state naming the rows file for this pane and ROW... written to it, one per
+# line; no ROW leaves the file absent. The pane reads PANE_STATE, `blank` being
+# a live harness process over a screen showing nothing at all.
+rows_case() { # NAME PANE_STATE ROW...
+  local name="$1" pane_state="$2" row
+  shift 2
+  if [[ "$pane_state" == blank ]]; then
+    overseer_case "$name" idle
+    : > "$STUB_DIR/pane-$PANE.txt"
+  else
+    overseer_case "$name" "$pane_state"
+  fi
+  touch "$STUB_DIR/repeat-child"
+  state_with "$LINE"
+  jq --arg rows "$(ROWS_FILE)" '.overseer.session_rows = $rows' "$STUB_DIR/oversee-state.json" \
+    > "$STUB_DIR/state.tmp" && mv -- "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
+  mkdir -p "$CASE_REPO_ROOT/tmp/lane-mail/overseer"
+  for row in "$@"; do printf '%s\n' "$row" >> "$(ROWS_FILE)"; done
+}
+captured() { [[ -s "$STUB_DIR/pane-$PANE.calls" ]] && echo yes || echo no; }
+
+# One table: the rows a file holds and the pane beside it, and what two passes
+# make of them. `captured` says whether the watch read the pane's screen at
+# all: never wherever the rows judged.
+while IFS='|' read -r name pane rows expected_event expected_launch expected_captured expected_note; do
+  set -f
+  # shellcheck disable=SC2086  # the row names split into the row list.
+  set -- $rows
+  set +f
+  row_args=()
+  for r in "$@"; do
+    case "$r" in
+      start) row_args+=("$START") ;;
+      end) row_args+=("$END_EXIT") ;;
+      clear) row_args+=("$END_CLEAR") ;;
+      wall) row_args+=("$FAILURE") ;;
+      overloaded) row_args+=("$OVERLOADED") ;;
+      stop) row_args+=("$STOP") ;;
+      codex) row_args+=("$CODEX_START") ;;
+      -) ;;
+      *) echo "unknown row $r" >&2; exit 1 ;;
+    esac
+  done
+  rows_case "$name" "$pane" ${row_args[@]+"${row_args[@]}"}
+  run TMUX_PANE="$PANE" -- --max-loops 2
+  event="$(grep '^EVENT overseer-' <<<"$OUT" | head -n 1 || true)"
+  note=none
+  if grep -q '^oversee-watch: overseer-fallback ' "$ERR"; then
+    note="$(grep '^oversee-watch: overseer-fallback ' "$ERR" | head -n 1 | sed 's/^oversee-watch: //')"
+  fi
+  assert_eq "event=${event:-none} launched=$(head -n 1 "$STUB_DIR/succeed.launched" 2>/dev/null | cut -d' ' -f1 || true) captured=$(captured) note=$note" \
+    "event=$expected_event launched=$expected_launch captured=$expected_captured note=$expected_note" \
+    "$name" "$ERR"
+done <<ROWS
+dead_rows|blank|start end|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=rows|--dead-pane|no|none
+wall_rows|blank|start wall|EVENT overseer-walled $PANE window=$WINDOW passes=2 succession=on source=rows|--walled-pane|no|none
+clear_is_live|blank|start clear|none||no|none
+lifted_wall|blank|start wall stop|none||no|none
+other_failure|blank|start overloaded|none||no|none
+killed_process|exited|start|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=process|--dead-pane|no|none
+no_rows_fallback|exited|-|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|yes|overseer-fallback pane=$PANE cause=none
+codex_fallback|exited|codex|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|yes|overseer-fallback pane=$PANE cause=unsupported
+ROWS
+
+# A rows wall carries the harness's own words, the limit and its reset, under
+# its line, and asks no account judgement: the stub's default judgement reads
+# room, which would refute a screen wall.
+rows_case wall_payload blank "$START" "$FAILURE"
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "$(sed -n 2p <<<"$OUT")" "$WALL_MESSAGE" "the rows wall's message follows its event line" "$ERR"
+assert_eq "$(succeed_calls --check-marks)" "0" "and no account judgement was asked to confirm it" "$ERR"
+
+# The record names another pane's rows: they are not this pane's, and the
+# pane is the fallback, said as `unrecorded`.
+rows_case other_session blank "$START" "$END_EXIT"
+jq '.overseer.pane = "%3"' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/state.tmp" \
+  && mv -- "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_contains "$(cat -- "$ERR")" "oversee-watch: overseer-fallback pane=$PANE cause=unrecorded" \
+  "another session's rows file is no reading of this pane" "$ERR"
+
+# --- control ----------------------------------------------------------------
+# The rows verdict ignored: the SessionEnd row then settles nothing, the blank
+# pane reads live, and the death goes unreported.
+MUTANT_SCRIPTS="$(mutant_scripts mutant/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mutant/github"
+mutate_file "$MUTANT_SCRIPTS/oversee-watch" '    ended) OV_STATE=exited; OV_SOURCE=rows; return 0 ;;' '    ended) ;;'
+rows_case dead_rows_mutant blank "$START" "$END_EXIT"
+WATCH_BIN="$MUTANT_SCRIPTS/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true)" "events=0" \
+  "control: without the rows verdict a SessionEnd row over a blank pane is no death" "$ERR"
+
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]

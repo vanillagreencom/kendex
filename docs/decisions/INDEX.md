@@ -11,6 +11,7 @@
 | 2026-09-26 | D007 | — | The install record is recorded on main after each merge, through one rolling pull request | Two branches re-recording one package conflict at every merge ahead of them | The rolling pull request stalls at the review gate, or a queue-protected branch admits a workflow commit | Active | [Full](D007-lock-record-on-main.md) |
 | 2026-09-27 | D008 | — | A Copilot agent names no model for a tier and carries the repository's rules | An agent file's model outranks the model the launch chose | Copilot ranks --model above the agent file, or effort is measured | Active | [Full](D008-copilot-agent-model.md) |
 | 2026-09-27 | D009 | — | One polling relay per person carries the overseer mailbox to Slack | Polling reads only its own channel; the mailbox lock judges every repeat the journal missed | Slack's allowance no longer holds every relay, a consumer polling cannot serve, or the catalog admits a dependency manager | Active | [Full](D009-slack-relay.md) |
+| 2026-09-27 | D010 | — | Overseer hook rows go to one file per session beside its mailbox | A row in the mail file reaches every mail reader as mail | KEN-1961 needs one reader for mail and rows, or a non-tmux overseer runtime | Active | [Full](D010-overseer-session-rows.md) |
 
 ---
 

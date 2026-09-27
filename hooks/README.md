@@ -18,7 +18,10 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 - `reviewer-read-only`: Keeps a reviewer agent read-only: no edits, no commits, no pushes, no Git commands that discard work, only its review report.
 - `reviewer-stop-check`: Stops a reviewer agent from finishing while the worktree it reviewed still holds files it left behind.
 - `session-drift-check`: Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. Says nothing when everything matches.
+- `session-end-row`: Writes down that a session ended, so a fleet's overseer that exits is seen to have exited without anyone reading its screen.
+- `session-start-row`: Writes down that a session started, and on which account and model, so the fleet's overseer is judged from what its harness said rather than from its screen.
 - `skill-load-check`: Holds back edits and Linear commands until the agent making them has loaded the skill the repository ties to them, so the standard is applied rather than remembered.
+- `stop-failure-row`: Writes down that a turn stopped on an error such as a usage limit, so a fleet's overseer that hits its limit is seen to be stuck without anyone reading its screen.
 - `task-completed-check`: Runs clippy before a task is marked complete whenever Rust files changed, and refuses the completion with the first errors it found.
 
 ## Harnesses
@@ -44,5 +47,8 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 | `reviewer-read-only` | enforced | a write is `apply_patch` with no `tool_input.file_path`, so the review artifact cannot be told from any other write | enforced | its tool-call payload is unmeasured | its preToolUse payload names no calling agent | its payload carries no agent field | advisory | advisory |
 | `reviewer-stop-check` | enforced | it has no SubagentStop event | it has no SubagentStop event | it has no SubagentStop event | its subagentStop names the agent type `task`, the tool rather than the agent, and carries no `stop_hook_active` | it has no SubagentStop event | advisory | advisory |
 | `session-drift-check` | enforced | enforced | the pi-hooks carrier runs its own drift report at session start | enforced | enforced | it has no SessionStart event | advisory | advisory |
+| `session-end-row` | enforced | it has no SessionEnd event | it has no SessionEnd event | the lane-mail-check hook it runs is not installed there, having no Stop event | the lane-mail-check hook it runs is not installed there, its agentStop also firing at each subagent's end | it has no SessionEnd event | advisory | advisory |
+| `session-start-row` | enforced | enforced | enforced | the lane-mail-check hook it runs is not installed there, having no Stop event | the lane-mail-check hook it runs is not installed there, its agentStop also firing at each subagent's end | it has no SessionStart event | advisory | advisory |
 | `skill-load-check` | enforced | a file write is `apply_patch`, whose payload carries no `tool_input.file_path`, and a skill load is a shell read of SKILL.md with no skill record | enforced | its tool-call payload and its record of a skill load are unmeasured | its preToolUse payload carries no transcript path and names the file as `toolArgs.path` | the file arrives as `toolCall.args.TargetFile` and a skill load is a `view_file` read with no skill record | advisory | advisory |
+| `stop-failure-row` | enforced | it has no StopFailure event | it has no StopFailure event | it has no StopFailure event | it has no StopFailure event | it has no StopFailure event | advisory | advisory |
 | `task-completed-check` | enforced | it has no TaskCompleted event | the pi-hooks carrier runs its own end-of-turn clippy check, and a second run is left out | it has no TaskCompleted event | it has no TaskCompleted event | it has no TaskCompleted event | advisory | advisory |
