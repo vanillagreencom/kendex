@@ -84,9 +84,12 @@ The cached Linear issue payload carries `blocks`, `blocked_by`, `blocked_by_open
 
 Comments carry what no listing does: an issue's scope changes, its supersession notes, and its partial-completion reports. `sync` writes them per issue (`.cache/linear/comments/[ISSUE_ID].json`) and this is the workflow's only read of them. Read them for the § 1.4 input set here, and for every in-scope row of the § 1.5 comparison set as soon as that fetch returns, closed rows included: a supersession note, or the reason a row was canceled, is what makes a closed row worth comparing against. Dispositions stay active-only (§ 1.1). An issue with no comments reads as an empty list, and a disposition written before its issue's comments were read rests on unsupported evidence, whatever the body says.
 
+On Linear each set is one `bulk-list` call, run one after the other: never one `comments list` per issue and never parallel readers, which pay a script start per issue and saturate a small host across a whole backlog. The result is one object keyed by identifier. A refusal carrying `missing` names identifiers the cache does not hold, and halts as an unmatched § 1.4 target does; one carrying `path` is a corrupt cache file, which `linear.sh sync` repairs, and never reads as an issue with no comments.
+
 ```bash
-.agents/skills/linear/scripts/linear.sh cache comments list [ISSUE_ID]   # one call per issue, TRACKER=linear
-gh issue view [N] --repo [REPOSITORY] --json body,comments               # TRACKER=github
+.agents/skills/linear/scripts/linear.sh cache comments bulk-list [ISSUE_ID_1] [ISSUE_ID_2]   # TRACKER=linear
+.agents/skills/linear/scripts/linear.sh cache comments bulk-list --stdin < [ID_FILE]         # TRACKER=linear, a large set, one identifier per line
+gh issue view [N] --repo [REPOSITORY] --json body,comments                                    # TRACKER=github
 ```
 
 ### 1.5 Fetch Comparison Set

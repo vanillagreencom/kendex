@@ -248,6 +248,14 @@ cache_unlock() {
 # A file that is present but unparseable is a corrupt cache: it fails loudly,
 # because returning the same empty default would report a broken cache as "no
 # results" and every caller downstream would treat that as a real answer.
+# The refusal for a cache file that is present but cannot be read as JSON.
+# `path` names the file so a caller can tell this from a lookup that matched
+# nothing, which carries no `path`.
+cache_unreadable_error() {
+    jq -cn --arg path "$1" \
+        '{error: ("Cache file is not readable as JSON: " + $path + " — the cache is corrupt, not empty. Re-run: linear.sh sync"), path: $path}' >&2
+}
+
 cache_jq_file() {
     local path="$1" absent_default="$2"
     shift 2
@@ -257,8 +265,7 @@ cache_jq_file() {
     fi
     local out
     if ! out=$(jq "$@" "$path"); then
-        jq -cn --arg path "$path" \
-            '{error: ("Cache file is not readable as JSON: " + $path + " — the cache is corrupt, not empty. Re-run: linear.sh sync")}' >&2
+        cache_unreadable_error "$path"
         return 1
     fi
     printf '%s\n' "$out"

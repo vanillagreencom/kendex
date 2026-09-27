@@ -39,6 +39,12 @@ Projects:
 
 Comments:
   comments list <issue-ID>
+  comments bulk-list <ID1> <ID2> ... [--stdin] [--format=safe|raw]
+              One process for many issues: prints one object keyed by
+              identifier, each value that issue's comment list ([] when it has
+              none). An identifier the cache holds no issue for refuses the
+              whole read with a `missing` list; an unreadable comment file
+              refuses with its `path`. --stdin reads one identifier per line.
 
 Labels:
   labels list [--team X]
@@ -902,6 +908,107 @@ cache_list_comments() {
     esac
 }
 
+# Comments for several issues in one process, keyed by identifier in request
+# order. A whole-backlog audit otherwise pays one script start and one jq per
+# issue; this reads issues.json once and every named comment file in one jq.
+#
+# `comments list` answers an identifier the cache holds no issue for with [],
+# the same as an issue with no comments. Here an unknown identifier refuses
+# the whole read, naming every one in `missing`, and a present comment file
+# that is not a JSON array refuses naming its `path`. An issue with no comment
+# file has no comments: sync removes the file of every issue it holds no
+# comments for.
+cache_bulk_list_comments() {
+    local identifiers=() line
+    FORMAT="${DEFAULT_FORMAT}"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --stdin)
+            while IFS= read -r line; do [[ -n "$line" ]] && identifiers+=("$line"); done
+            shift
+            ;;
+        --format)
+            linear_require_option_value "$@" || return 1
+            FORMAT="$2"
+            shift 2
+            ;;
+        --format=*)
+            FORMAT="${1#--format=}"
+            shift
+            ;;
+        -*)
+            cache_unknown_flag "comments bulk-list" "comment" "$1"
+            return 1
+            ;;
+        *)
+            # A quoted multi-line list, `bulk-list "$ids"`, arrives as one
+            # argument. The jq read below splits it into identifiers while the
+            # comment-file lookup keeps it whole, so every issue in it would
+            # read as having no comments; --stdin is the list's spelling.
+            if [[ "$1" == *$'\n'* ]]; then
+                jq -cn --arg id "$1" '{error: ("Issue identifier contains a line break: " + ($id | @json))}' >&2
+                return 1
+            fi
+            [[ -n "$1" ]] && identifiers+=("$1")
+            shift
+            ;;
+        esac
+    done
+
+    if [[ ${#identifiers[@]} -eq 0 ]]; then
+        echo '{"error": "No issue identifiers provided"}' >&2
+        return 1
+    fi
+
+    local id_json
+    id_json=$(printf '%s\n' "${identifiers[@]}" | jq -cRn '[inputs]') || return 1
+
+    # An absent issues.json holds no issue, so every identifier is missing.
+    local missing
+    if ! missing=$(cache_jq_file "$CACHE_DIR/issues.json" "$id_json" -c --argjson ids "$id_json" \
+        '(map({key: .identifier, value: true}) | from_entries) as $have
+         | [$ids[] | select($have[.] | not)]'); then
+        return 1
+    fi
+    if [[ "$missing" != "[]" ]]; then
+        jq -cn --argjson missing "$missing" \
+            '{error: ("Issues not found in cache: " + ($missing | join(", "))), missing: $missing}' >&2
+        return 1
+    fi
+
+    # Every identifier now names a cached issue, so none can carry a path
+    # outside the comments directory.
+    local dir="$CACHE_DIR/comments/" paths=() id
+    for id in "${identifiers[@]}"; do
+        [[ -e "$dir$id.json" ]] && paths+=("$dir$id.json")
+    done
+
+    # With no path, jq would read stdin instead of nothing.
+    local result
+    if ! result=$(jq -n --arg dir "$dir" --argjson ids "$id_json" '
+        (reduce inputs as $c ({};
+            if ($c | type) == "array" then .[input_filename | ltrimstr($dir) | rtrimstr(".json")] = $c
+            else error("not an array") end)) as $read
+        | reduce $ids[] as $i ({}; .[$i] = ($read[$i] // []))
+    ' ${paths[@]+"${paths[@]}"} </dev/null); then
+        local path bad="$dir"
+        for path in ${paths[@]+"${paths[@]}"}; do
+            if ! jq -e 'type == "array"' "$path" >/dev/null 2>&1; then
+                bad="$path"
+                break
+            fi
+        done
+        cache_unreadable_error "$bad"
+        return 1
+    fi
+
+    case "$FORMAT" in
+    raw) echo "$result" ;;
+    safe | *) jq "$COMMENT_SAFE_JQ"'map_values(map(comment_safe))' <<<"$result" ;;
+    esac
+}
+
 # =============================================================================
 # LABELS
 # =============================================================================
@@ -1203,6 +1310,7 @@ main() {
         shift || true
         case "$action" in
         list) cache_list_comments "$@" ;;
+        bulk-list) cache_bulk_list_comments "$@" ;;
         --help | -h) show_help ;;
         *)
             echo "{\"error\": \"Unknown comments action: $action\"}" >&2

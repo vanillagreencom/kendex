@@ -408,16 +408,22 @@ format_initiative_single() {
     }'
 }
 
+# One comment's safe shape. `comments list` and `cache comments bulk-list`
+# both emit it, so the two cannot drift apart.
+readonly COMMENT_SAFE_JQ='
+def comment_safe: {
+    id: .id,
+    body: (.body // ""),
+    user: (.user.name // ""),
+    created_at: (.createdAt // ""),
+    updated_at: (.updatedAt // "")
+};
+'
+
 # Format comments list to safe structure
 format_comments_list() {
     local raw="$1"
-    echo "$raw" | jq '[.issue.comments.nodes[] | {
-        id: .id,
-        body: (.body // ""),
-        user: (.user.name // ""),
-        created_at: (.createdAt // ""),
-        updated_at: (.updatedAt // "")
-    }]'
+    echo "$raw" | jq "$COMMENT_SAFE_JQ"'[.issue.comments.nodes[] | comment_safe]'
 }
 
 # Format milestones list to safe structure
