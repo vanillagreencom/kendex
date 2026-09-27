@@ -31,15 +31,15 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 | `start` | `at`, `ids` | Written by a start with no journal: the mailbox's newest envelope `at` then, or empty with none, and the ids of the envelopes stamped in that second. A notice or answer before it, or in that second and named, is never posted; an open ask is |
 | `in` | `channel`, `ts`, `kind`, `id`, `thread` | A Slack message delivered to the mailbox: `kind` is `directive` or `answer`, `id` the envelope it landed as, `thread` the parent stamp it belongs to |
 | `in` | `channel`, `ts`, `kind` = `ignored`, `reason` | A message answered once and not routed: `reason` is `not-owner` or `no-text` |
-| `out` | `channel`, `id`, `kind`, `state`, `thread` | A mailbox envelope posted: `kind` is `ask`, `notice` or `answer`; `state` is `open` for an ask awaiting its answer, `resolved` otherwise; `thread` the stamp the post is under, the ask's own for an ask |
-| `out` | `channel`, `id`, `kind` = `notice`, `state` = `file`, `file` | A report uploaded; its thread is bound by a later `bound` line |
-| `out` | `channel`, `id`, `kind`, `state` = `unknown` | A post whose response was lost; shown by `--status`, never repeated. A post Slack refused or never received has no line: the next poll makes it again |
-| `out` | `channel`, `id`, `kind`, `state` = `refused`, `reason` | A post refused before sending; `reason` is the refusal key, `secret-value` or `file-unreadable` |
+| `out` | `channel`, `id`, `kind`, `state`, `at`, `thread` | A mailbox envelope posted: `kind` is `ask`, `notice` or `answer`; `state` is `open` for an ask awaiting its answer, `resolved` otherwise; `thread` the stamp the post is under, the ask's own for an ask |
+| `out` | `channel`, `id`, `kind` = `notice`, `state` = `file`, `at`, `file` | A report uploaded; its thread is bound by a later `bound` line |
+| `out` | `channel`, `id`, `kind`, `state` = `unknown`, `at` | A post whose response was lost; shown by `--status`, never repeated. A post Slack refused or never received has no line: the next poll makes it again |
+| `out` | `channel`, `id`, `kind`, `state` = `refused`, `at`, `reason` | A post refused before sending; `reason` is the refusal key, `secret-value` or `file-unreadable` |
 | `resolved` | `id` | The ask with this envelope id is closed; its thread is read every tenth poll while its parent is younger than `SLACK_THREAD_DAYS` |
 | `bound` | `file`, `id`, `ts` | The share message Slack made for an uploaded file; its thread now carries the notice's envelope |
 | `thread` | `ts`, `seen` | The thread under `ts` is read past the reply stamp `seen` |
 
-Stamps (`ts`, `thread`, `seen`) are Slack message stamps, seconds with six decimals; `at` is the UTC second `lane-mail` writes. Every inbound delivery hands `lane-mail` the key `channel:ts`. An envelope whose `at` is older than `SLACK_THREAD_DAYS` is never posted, so `compact` may drop the `out` lines of that age.
+Stamps (`ts`, `thread`, `seen`) are Slack message stamps, seconds with six decimals; `at` is the UTC second `lane-mail` writes. Every inbound delivery hands `lane-mail` the key `channel:ts`. Every `out` line carries its envelope's `at`. An envelope whose `at` is older than `SLACK_THREAD_DAYS` is never posted, and `compact` judges an `out` line by that same `at`, never by its `thread`, so a line it drops is one whose envelope can never post again.
 
 ## The status record
 

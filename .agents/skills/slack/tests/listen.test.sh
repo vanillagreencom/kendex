@@ -13,13 +13,16 @@
 # refused history read failing the poll, a first start reading Slack from
 # the binding moment and posting nothing from the mailbox's past but open
 # asks, an envelope past the horizon never posted across the daily
-# compaction, a journal reset re-posting open asks alone, and owners
-# re-resolved from the setting. The controls at the end plant one mutant per
-# rule: the delivery id dropped, the ask thread no longer resolved, the lock
-# no longer exclusive, the thread-age horizon removed, the owner gate open,
-# the no-text gate open, the notice text and the report bytes unchecked, the
-# post failure swallowed, the envelope horizon removed, the start horizon
-# removed, and the history seed at zero.
+# compaction, a journal reset re-posting open asks alone, owners re-resolved
+# from the setting, a report whose file matches the pattern or is gone
+# refused, and a notice under an owner message past the horizon posted once
+# across compaction. The controls at the end plant one mutant per rule: the
+# delivery id dropped, the ask thread no longer resolved, the lock no longer
+# exclusive, the thread-age horizon removed, the owner gate open, the no-text
+# gate open, the outbound text and the report bytes unchecked, the post
+# failure swallowed, the envelope horizon removed, the start horizon removed,
+# the history seed at zero, a posted line aged by its thread, and a refused
+# connection read as a lost response.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -190,6 +193,24 @@ SECRET_ID="$(jq -r 'select(.kind == "notice") | .id' "$(sk_box "$GAMMA")/to-over
 assert_eq "$RC=$ERR1" "0=slack: secret-value=id=$SECRET_ID" "a notice matching the secret-value pattern is refused by id"
 assert_eq "$(sk_state '[.messages.C002[] | select(.text | contains("xoxb"))] | length')" "0" "nothing matching the pattern is posted"
 assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$SECRET_ID\") | .state" "$(sk_journal "$GAMMA")")" "refused" "the refusal is journaled"
+refused_line() { jq -r "select(.t == \"out\" and .id == \"$2\") | [.state, .reason] | join(\" \")" "$(sk_journal "$1")"; } # ROOT ID
+notice_id() { jq -r "select(.text == \"$2\") | .id" "$(sk_box "$1")/to-overseer.jsonl"; } # ROOT TEXT
+mkdir -p "$GAMMA/tmp/progress-reports"
+LEAK="$GAMMA/tmp/progress-reports/leak.md"
+printf 'ghp_%s\n' "abcdefghijklmnopqrstuvwxyz0123456789" > "$LEAK"
+sk_lm "$GAMMA" notice --item overseer --to owner --attach "$LEAK" --file "$(sk_text s3 'Clean report.')" >/dev/null
+sk_poll "$GAMMA"
+LEAK_ID="$(notice_id "$GAMMA" 'Clean report.')"
+assert_eq "$RC=$ERR1" "0=slack: secret-value=id=$LEAK_ID file=$LEAK" "a report whose file matches the pattern is refused by id and file"
+assert_eq "$(refused_line "$GAMMA" "$LEAK_ID")" "refused secret-value" "the file's refusal is journaled"
+assert_eq "$(sk_state '[.uploads[] | select(contains("ghp_"))] | length')" "0" "nothing matching the pattern is uploaded"
+GONE="$GAMMA/tmp/progress-reports/gone.md"
+printf '# Gone\n' > "$GONE"
+sk_lm "$GAMMA" notice --item overseer --to owner --attach "$GONE" --file "$(sk_text s4 'Missing report.')" >/dev/null
+rm -f -- "${GONE:?}"
+sk_poll "$GAMMA"
+assert_eq "$RC=$ERR1" "0=slack: file-unreadable=$GONE" "a report whose file is gone is refused"
+assert_eq "$(refused_line "$GAMMA" "$(notice_id "$GAMMA" 'Missing report.')")" "refused file-unreadable" "the unreadable file is journaled refused"
 
 # --- a 429 is honoured by Retry-After -------------------------------------------------------
 sk_ctl /_test/calls-reset >/dev/null
@@ -277,16 +298,28 @@ sk_poll "$DELTA"
 assert_eq "$(directives "$DELTA")" "C777:$H4 history 4" "the next message is routed"
 assert_eq "$(asks C777 'New notice.')" "1" "a notice written after the start is posted"
 
+# --- a notice under an owner message past the horizon posts once across compaction --------------------
+# The notice's line is under the old message's thread and ages by the
+# notice's own `at`, so compaction keeps it while the notice can still post.
+OLD_NOTE="$(jq -r 'select(.kind == "directive" and .text == "an old topic") | .id' "$(sk_box "$GAMMA")/to-lane.jsonl")"
+sk_lm "$GAMMA" notice --item overseer --to owner --ref "$OLD_NOTE" --file "$(sk_text n11 'Late ruling.')" >/dev/null
+sk_poll "$GAMMA"
+sk_run -- compact --root "$GAMMA"
+sk_poll "$GAMMA"
+assert_eq "$RC=$(asks C002 'Late ruling.')" "0=1" "a notice under an owner message past the horizon posts once across compaction"
+assert_has "$(posts C002)" "$OLD | Late ruling." "it lands in that message's thread"
+
 # --- an envelope past the horizon is never posted, across the daily compaction -----------------------
 # On gamma, whose mailbox was empty at its first start, so no start horizon
 # hides the age horizon under test.
 sk_lm "$GAMMA" notice --item overseer --to owner --file "$(sk_text n10 'Aging notice.')" >/dev/null
 sk_poll "$GAMMA"
 assert_eq "$RC=$(asks C002 'Aging notice.')" "0=1" "a young notice posts once"
-NOTE_ID="$(jq -r 'select(.text == "Aging notice.") | .id' "$(sk_box "$GAMMA")/to-overseer.jsonl")"
-NOTE_TS="$(jq -r "select(.t == \"out\" and .id == \"$NOTE_ID\") | .thread" "$(sk_journal "$GAMMA")")"
+NOTE_ID="$(notice_id "$GAMMA" 'Aging notice.')"
 sk_age_envelope "$GAMMA" "$NOTE_ID" $((8 * 86400))
-sed "s/\"thread\": \"$NOTE_TS\"/\"thread\": \"$OLD_TS\"/" "$(sk_journal "$GAMMA")" > "$SK_TMP/aged.jsonl" && cp "$SK_TMP/aged.jsonl" "$(sk_journal "$GAMMA")"
+NOTE_AT="$(jq -r "select(.id == \"$NOTE_ID\") | .at" "$(sk_box "$GAMMA")/to-overseer.jsonl")"
+jq -c --arg id "$NOTE_ID" --arg at "$NOTE_AT" 'if .t == "out" and .id == $id then .at = $at else . end' "$(sk_journal "$GAMMA")" > "$SK_TMP/aged.jsonl" \
+  && cp "$SK_TMP/aged.jsonl" "$(sk_journal "$GAMMA")"
 jq '.compacted_day = "2000-01-01"' "$GAMMA/tmp/slack/status.json" > "$SK_TMP/day.json" && cp "$SK_TMP/day.json" "$GAMMA/tmp/slack/status.json"
 sk_poll "$GAMMA"
 assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$NOTE_ID\") | .id" "$(sk_journal "$GAMMA")" | wc -l | tr -d ' ')" "0=0" \
@@ -352,13 +385,13 @@ sk_poll "$ZETA"
 assert_lacks "$(posts "$ZETA_CH")" "$F2 | Only text is routed" "control: the no-text gate open, a file alone gets no reply"
 sk_bin_reset
 
-sk_mutant notice-text relay.py 'lambda: secret_check\(text\.encode\(\), f"id=\{env_id\}"\)' 'lambda: secret_check(b"", f"id={env_id}")'
+sk_mutant text-check relay.py 'secret_check\(text\.encode\(\), f"id=\{env_id\}"\)' 'secret_check(b"", f"id={env_id}")'
 sk_lm "$ZETA" notice --item overseer --to owner --file "$(sk_text s2 'leak xoxb-0123456789-abcdefghij')" >/dev/null
 sk_poll "$ZETA"
-assert_eq "$(asks "$ZETA_CH" 'xoxb-0123456789')" "1" "control: the notice text unchecked, a token posts"
+assert_eq "$(asks "$ZETA_CH" 'xoxb-0123456789')" "1" "control: the outbound text unchecked, a token posts"
 sk_bin_reset
 
-sk_mutant report-bytes relay.py 'checked_file\(str\(attach\), f"id=\{env_id\} file=\{attach\}"\)' 'checked_file(str(attach), f"id={env_id} file={attach}") if False else Path(attach).read_bytes()'
+sk_mutant report-bytes relay.py 'checked_file\(attach, f"id=\{env_id\} file=\{attach\}"\)' 'checked_file(attach, f"id={env_id} file={attach}") if False else Path(attach).read_bytes()'
 mkdir -p "$ZETA/tmp/progress-reports"
 printf 'ghp_%s\n' "abcdefghijklmnopqrstuvwxyz0123456789" > "$ZETA/tmp/progress-reports/leak.md"
 sk_lm "$ZETA" notice --item overseer --to owner --attach "$ZETA/tmp/progress-reports/leak.md" --file "$(sk_text n8 'Leaky report.')" >/dev/null
@@ -392,6 +425,24 @@ sk_run -- setup --root "$THETA" --take C777
 sk_poll "$THETA"
 assert_eq "$(directives "$THETA" | wc -l | tr -d ' ')" "$(sk_state '[.messages.C777[] | select(.user == "U001")] | length')" \
   "control: the history seed at zero, every earlier owner message in the channel is delivered"
+sk_bin_reset
+
+sk_mutant out-age store.py 'parse_at\(str\(line\["at"\]\)\) < cutoff_ts' '_ts_float(str(line["thread"])) < cutoff_ts'
+ZETA_OLD="$(jq -r 'select(.kind == "directive" and .text == "old") | .id' "$(sk_box "$ZETA")/to-lane.jsonl")"
+sk_lm "$ZETA" notice --item overseer --to owner --ref "$ZETA_OLD" --file "$(sk_text n12 'Late ruling.')" >/dev/null
+sk_poll "$ZETA"
+sk_run -- compact --root "$ZETA"
+sk_poll "$ZETA"
+assert_eq "$(asks "$ZETA_CH" 'Late ruling.')" "2" "control: a posted line aged by its thread, the notice under an old message posts again"
+sk_bin_reset
+
+sk_mutant network api.py 'raise Refusal\("slack-unreachable", ' 'raise Refusal("slack-response-lost", '
+sk_lm "$ZETA" ask --item overseer --to owner --file "$(sk_text q10 'Never sent?')" --options a,b --recommend a >"$SK_TMP/ask10.out"
+ASK10="$(sed 's/^id=//' "$SK_TMP/ask10.out")"
+sk_ctl /_test/fault '{"method": "chat.postMessage", "refuse": true, "times": 1}' >/dev/null
+sk_poll "$ZETA"
+assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$ASK10\") | .state" "$(sk_journal "$ZETA")")" "unknown" \
+  "control: a refused connection read as a lost response, the unsent ask is journaled unknown"
 sk_bin_reset
 
 sk_summary

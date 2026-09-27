@@ -14,18 +14,19 @@ ROOT="$(sk_new_root alpha)"
 sk_bind "$ROOT"
 OLD_TS="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400))')"
 OLD_REPLY="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400 + 60))')"
+OLD_AT="$(python3 -c 'import time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 9 * 86400)))')"
 # An old ask answered long ago, an old ignored non-owner line, an old bound
 # notice, an old history position, and an open ask: only the open ask stays.
 JOURNAL="$(sk_journal "$ROOT")"
 mkdir -p "$(dirname "$JOURNAL")"
 cat > "$JOURNAL" <<EOF
-{"channel": "C001", "id": "ASK-OLD", "kind": "ask", "state": "open", "t": "out", "thread": "$OLD_TS"}
+{"at": "$OLD_AT", "channel": "C001", "id": "ASK-OLD", "kind": "ask", "state": "open", "t": "out", "thread": "$OLD_TS"}
 {"channel": "C001", "id": "ANS-OLD", "kind": "answer", "t": "in", "thread": "$OLD_TS", "ts": "$OLD_REPLY"}
 {"id": "ASK-OLD", "t": "resolved"}
 {"seen": "$OLD_REPLY", "t": "thread", "ts": "$OLD_TS"}
 {"channel": "C001", "kind": "ignored", "reason": "not-owner", "t": "in", "ts": "$OLD_REPLY"}
-{"channel": "C001", "id": "NOTE-OLD", "kind": "notice", "state": "resolved", "t": "out", "thread": "$OLD_TS"}
-{"channel": "C001", "id": "ASK-OPEN", "kind": "ask", "state": "open", "t": "out", "thread": "$OLD_REPLY"}
+{"at": "$OLD_AT", "channel": "C001", "id": "NOTE-OLD", "kind": "notice", "state": "resolved", "t": "out", "thread": "$OLD_TS"}
+{"at": "$OLD_AT", "channel": "C001", "id": "ASK-OPEN", "kind": "ask", "state": "open", "t": "out", "thread": "$OLD_REPLY"}
 {"t": "seen", "ts": "$OLD_REPLY"}
 EOF
 YOUNG="$(sk_inject C001 U001 'young')"

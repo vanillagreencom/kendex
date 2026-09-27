@@ -34,6 +34,7 @@ from store import (
     State,
     compact,
     journal_exists,
+    parse_at,
     read_binding,
     read_journal,
     read_status,
@@ -43,7 +44,6 @@ from store import (
 
 ROUTED_SUBTYPES = {None, "file_share"}
 OTHER_THREADS_EVERY = 10
-AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 NOT_OWNER = "Only the channel's owners steer this session; this message is not routed."
 NO_TEXT = "Only text is routed; a file alone is not."
 RECORDED = "Recorded as your answer."
@@ -51,12 +51,11 @@ ALREADY = "This question was already answered; delivered as a directive instead.
 
 
 def at_epoch(at: str) -> float:
-    """An envelope's `at`, the UTC second lane-mail stamps, as epoch seconds."""
+    """An envelope's `at` as epoch seconds; lane-mail wrote it."""
     try:
-        stamp = datetime.datetime.strptime(at, AT_FORMAT)
+        return parse_at(at)
     except ValueError as err:
         raise Refusal("lane-mail-failed", f"envelope at={at}") from err
-    return stamp.replace(tzinfo=datetime.timezone.utc).timestamp()
 
 
 def resolve_owner_ids(api: Slack, owners: List[str]) -> Dict[str, str]:
@@ -166,7 +165,7 @@ class RootRelay:
                 self.journal.append(t="bound", file=file_id, id=self.state.pending_files[file_id], ts=message["ts"])
 
     def read_threads(self, bot_user: str) -> None:
-        horizon = self.clock() - self.settings.thread_days * 86400
+        horizon = self.settings.horizon(self.clock())
         tenth = self.polls % OTHER_THREADS_EVERY == 0
         for thread in list(self.state.threads.values()):
             if thread.open or (tenth and float(thread.ts) >= horizon):
@@ -225,13 +224,15 @@ class RootRelay:
     def post_events(self) -> None:
         events = self.mail.events()
         answered = {e.get("re") for e in events if e.get("kind") == "answer"}
-        horizon = self.clock() - self.settings.thread_days * 86400
+        horizon = self.settings.horizon(self.clock())
         start = at_epoch(self.state.start_at) if self.state.start_at else None
         for envelope in events:
             env_id = str(envelope["id"])
             if env_id in self.state.carried or env_id in self.skipped:
                 continue
             at = at_epoch(str(envelope["at"]))
+            # `store.compact` drops an `out` line by this same age, so an
+            # envelope whose line it may drop must never post again.
             if at < horizon:
                 self.skipped.add(env_id)
                 continue
@@ -251,49 +252,47 @@ class RootRelay:
             else:
                 self.skipped.add(env_id)
 
-    def post_refused(self, err: Refusal, env_id: str, kind: str) -> None:
+    def _out(self, envelope: Dict, kind: str, state: str, **fields: object) -> None:
+        """One `out` line. Each carries the envelope's `at`, the age
+        `store.compact` judges the line by."""
+        self.journal.append(
+            t="out", channel=self.channel, id=str(envelope["id"]), kind=kind, state=state, at=str(envelope["at"]), **fields
+        )
+
+    def post_refused(self, err: Refusal, envelope: Dict, kind: str) -> None:
         """Slack's refusal of one post, by key: a lost response is journaled
         unknown and never repeated; a dead token stops the relay; anything
         else fails this poll and leaves the envelope for the next."""
         if err.key == "slack-response-lost":
-            self.journal.append(t="out", channel=self.channel, id=env_id, kind=kind, state="unknown")
+            self._out(envelope, kind, "unknown")
             print_refusal(err)
             return
         if err.key == "slack-auth-failed":
             raise err
         if self.post_failed is None:
-            self.post_failed = Refusal(err.key, f"{err.value} id={env_id}")
+            self.post_failed = Refusal(err.key, f"{err.value} id={envelope['id']}")
 
-    def _deliver(
-        self, envelope: Dict, kind: str, prepare: Callable[[], None], send: Callable[[], str]
-    ) -> Optional[str]:
-        """The one outbound rule. `prepare` reads and checks what is sent: its
-        refusal, a secret value or an unreadable file, is journaled refused
-        and printed. `send` makes the Slack call and returns the id it landed
-        as: Slack's refusal goes to `post_refused`. Either way None means the
-        envelope did not land."""
+    def _send(self, envelope: Dict, kind: str, text: str, thread_ts: Optional[str], attach: str = "") -> Optional[str]:
+        """The one outbound rule: the text and any attached file pass the
+        secret-value check, a refusal there journaled refused and printed;
+        then the file is uploaded with the text as its comment, or the text
+        posted, Slack's refusal to `post_refused`. Returns the message ts or
+        the upload's file id; None when nothing landed."""
         env_id = str(envelope["id"])
         try:
-            prepare()
+            secret_check(text.encode(), f"id={env_id}")
+            data = checked_file(attach, f"id={env_id} file={attach}") if attach else None
         except Refusal as err:
-            self.journal.append(t="out", channel=self.channel, id=env_id, kind=kind, state="refused", reason=err.key)
+            self._out(envelope, kind, "refused", reason=err.key)
             print_refusal(err)
             return None
         try:
-            return send()
+            if data is not None:
+                return self.api.upload(Path(attach).name, data, self.channel, text, thread_ts)
+            return str(self.api.post("chat.postMessage", channel=self.channel, text=text, thread_ts=thread_ts)["ts"])
         except Refusal as err:
-            self.post_refused(err, env_id, kind)
+            self.post_refused(err, envelope, kind)
             return None
-
-    def _post(self, envelope: Dict, kind: str, text: str, thread_ts: Optional[str]) -> Optional[str]:
-        """One chat.postMessage, or None when it did not land."""
-        env_id = str(envelope["id"])
-        return self._deliver(
-            envelope,
-            kind,
-            lambda: secret_check(text.encode(), f"id={env_id}"),
-            lambda: str(self.api.post("chat.postMessage", channel=self.channel, text=text, thread_ts=thread_ts)["ts"]),
-        )
 
     def post_ask(self, envelope: Dict) -> None:
         options = ", ".join(envelope.get("options") or [])
@@ -307,68 +306,52 @@ class RootRelay:
             tail.append(f"It stands at {envelope['deadline']} unless you reply in this thread.")
         if tail:
             lines.append(" ".join(tail))
-        ts = self._post(envelope, "ask", "\n".join(lines), None)
+        ts = self._send(envelope, "ask", "\n".join(lines), None)
         if ts is not None:
-            self.journal.append(t="out", channel=self.channel, id=str(envelope["id"]), kind="ask", state="open", thread=ts)
+            self._out(envelope, "ask", "open", thread=ts)
 
     def post_notice(self, envelope: Dict) -> None:
-        env_id = str(envelope["id"])
         ref = envelope.get("ref")
         thread_ts = self.state.by_envelope.get(str(ref)) if ref else None
-        text = envelope.get("text", "")
-        attach = envelope.get("attach")
-        if not attach:
-            ts = self._post(envelope, "notice", text, thread_ts)
-            if ts is not None:
-                self.journal.append(
-                    t="out", channel=self.channel, id=env_id, kind="notice", state="resolved", thread=thread_ts or ts
-                )
+        attach = str(envelope.get("attach") or "")
+        landed = self._send(envelope, "notice", envelope.get("text", ""), thread_ts, attach)
+        if landed is None:
             return
-        payload: Dict[str, bytes] = {}
-
-        def prepare() -> None:
-            secret_check(text.encode(), f"id={env_id}")
-            payload["data"] = checked_file(str(attach), f"id={env_id} file={attach}")
-
-        def send() -> str:
-            return self.api.upload(Path(attach).name, payload["data"], self.channel, text, thread_ts)
-
-        file_id = self._deliver(envelope, "notice", prepare, send)
-        if file_id is not None:
-            self.journal.append(t="out", channel=self.channel, id=env_id, kind="notice", state="file", file=file_id)
+        if attach:
+            self._out(envelope, "notice", "file", file=landed)
+        else:
+            self._out(envelope, "notice", "resolved", thread=thread_ts or landed)
 
     def post_answer(self, envelope: Dict) -> None:
-        env_id = str(envelope["id"])
         ask_id = str(envelope.get("re", ""))
         thread_ts = self.state.by_envelope.get(ask_id)
         if thread_ts is None:
-            self.skipped.add(env_id)
+            self.skipped.add(str(envelope["id"]))
             return
         if envelope.get("by") == "default":
             text = f"No answer by the deadline: {envelope.get('text', '')} stands."
         else:
             text = f"Answered in the chat: {envelope.get('text', '')}"
-        ts = self._post(envelope, "answer", text, thread_ts)
-        if ts is not None:
-            self.journal.append(t="out", channel=self.channel, id=env_id, kind="answer", state="resolved", thread=thread_ts)
+        if self._send(envelope, "answer", text, thread_ts) is not None:
+            self._out(envelope, "answer", "resolved", thread=thread_ts)
             self.journal.append(t="resolved", id=ask_id)
 
     # -- the record --status reads --------------------------------------------
 
     def budget_per_minute(self) -> float:
         per_poll = 1 + sum(1 for t in self.state.threads.values() if t.open)
-        horizon = self.clock() - self.settings.thread_days * 86400
+        horizon = self.settings.horizon(self.clock())
         others = sum(1 for t in self.state.threads.values() if not t.open and float(t.ts) >= horizon)
         polls_per_minute = 60.0 / self.settings.poll_seconds
         return per_poll * polls_per_minute + others * polls_per_minute / OTHER_THREADS_EVERY
 
-    def compact_daily(self, today: str, cutoff: float) -> None:
+    def compact_daily(self, today: str) -> None:
         """Once a day, on the first poll of a new UTC day; the first start
         only records the day, so `slack compact` is what compacts sooner."""
         if self.compacted_day == today:
             return
         if self.compacted_day:
-            compact(self.path, cutoff)
+            compact(self.path, self.settings.horizon(self.clock()))
             self.state = read_journal(self.path)
             self.journal = Journal(self.path, self.state)
         self.compacted_day = today
@@ -419,10 +402,9 @@ class Relay:
         """One poll of every root; False when any root's poll was refused."""
         clean = True
         today = datetime.datetime.fromtimestamp(self.clock(), datetime.timezone.utc).date().isoformat()
-        cutoff = self.clock() - self.settings.thread_days * 86400
         for root in self.roots:
             try:
-                root.compact_daily(today, cutoff)
+                root.compact_daily(today)
                 root.poll(self.bot_user)
                 root.record_status(True)
             except Refusal as err:

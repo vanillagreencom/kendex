@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import datetime
 import os
 import re
 import shutil
@@ -140,7 +139,7 @@ def post(
 
 def compact_roots(roots: List[Path]) -> int:
     settings = load(need_token=False, need_owners=False)
-    cutoff = datetime.datetime.now(datetime.timezone.utc).timestamp() - settings.thread_days * 86400
+    cutoff = settings.horizon(time.time())
     for root in roots:
         dropped = compact(root, cutoff)
         notice("compacted", f"{root} dropped={dropped}")

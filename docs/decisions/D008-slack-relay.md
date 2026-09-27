@@ -12,7 +12,7 @@
 
 ## Summary
 
-The `slack` package is one Python standard-library script that polls Slack's Web API and relays one checkout's overseer mailbox to one private channel. It reads and writes the mailbox only through `lane-mail`, one process serves every bound checkout of one person, and the mailbox's locked check-and-append is the one judge of a repeated delivery.
+The `slack` package is one Python standard-library script that polls Slack's Web API and relays one checkout's overseer mailbox to one private channel. It reads and writes the mailbox only through `lane-mail`, one process serves every bound checkout of one person, and the mailbox's locked check-and-append judges every repeated delivery the relay's journal did not record.
 
 ## Context
 
@@ -30,7 +30,7 @@ An overseer asks its owner questions, reports and takes directives through its m
 - One token instead of two, no WebSocket, no SDK and no package manager in a catalog that ships standard-library scripts.
 - Socket Mode spreads one app's events across every open connection, so several listeners on one app would each hear a fraction and a workstation listener would steal the host's events. A poll reads only its own channel.
 - Each poll is its own reconciliation: catch-up after an outage is the same call with more pages.
-- The mailbox already holds a locked check-and-append keyed by delivery id, so idempotency has one owner and the crash between an append and the relay's mark loses nothing and repeats nothing.
+- The mailbox already holds a locked check-and-append keyed by delivery id, so the crash between an append and the relay's mark loses nothing and repeats nothing.
 - One process per person is one resident per person on a host where every resident counts, and no process crosses a home.
 
 ## Alternatives Considered
@@ -41,7 +41,7 @@ An overseer asks its owner questions, reports and takes directives through its m
 | Socket Mode | Two tokens, a WebSocket to reconnect and reconcile, and events split across every listener of the app |
 | Slack as the record of pending questions | A message the relay cannot find is a question lost; the mailbox is on disk and under a lock |
 | The journal alone as the judge of a repeated inbound delivery | The crash between `lane-mail`'s append and the journal's mark leaves a stamp the journal never saw; only the mailbox's own lock can answer it |
-| Every `out` line kept forever, so the journal alone records what was posted | The mailbox lists every envelope forever, so the journal would grow with it; the age horizon lets compaction drop what can never post again |
+| Every `out` line kept forever, so the journal alone records what was posted | The mailbox lists every envelope forever, so the journal would grow with it; each `out` line carries its envelope's `at`, and compaction drops a line only once that `at` is past the horizon the relay never posts past |
 | One relay per checkout | One resident per checkout, and the token and owners repeated per repository |
 
 ## Impact

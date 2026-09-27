@@ -8,6 +8,7 @@ shapes are schemas/journal.md. Nothing here holds a message body.
 
 from __future__ import annotations
 
+import datetime
 import errno
 import fcntl
 import json
@@ -24,6 +25,14 @@ JOURNAL = "journal.jsonl"
 STATUS = "status.json"
 LOCK = "listen.lock"
 LINE_KINDS = {"seen", "start", "in", "out", "resolved", "bound", "thread"}
+AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def parse_at(at: str) -> float:
+    """An envelope's `at`, the UTC second lane-mail stamps, as epoch
+    seconds; ValueError when it is not one."""
+    stamp = datetime.datetime.strptime(at, AT_FORMAT)
+    return stamp.replace(tzinfo=datetime.timezone.utc).timestamp()
 
 
 def root_dir(root: Path) -> Path:
@@ -126,6 +135,7 @@ class State:
         elif kind == "out":
             env_id = str(line["id"])
             state = line["state"]
+            parse_at(str(line["at"]))  # the age `compact` judges the line by
             if state == "unknown":
                 self.unknown[env_id] = str(line["kind"])
                 self.carried.add(env_id)
@@ -198,7 +208,8 @@ class Journal:
 def compact(root: Path, cutoff_ts: float) -> int:
     """Drop resolved and ignored lines older than the cutoff and every
     history position but the last; keep every open thread. Returns the
-    lines dropped."""
+    lines dropped. An `out` line is judged by its envelope's `at`, the age
+    `post_events` never posts past, so its envelope can never post again."""
     path = root_dir(root) / JOURNAL
     state = read_journal(root)
     if not path.is_file():
@@ -211,17 +222,14 @@ def compact(root: Path, cutoff_ts: float) -> int:
     dropped = 0
     for index, (raw, line) in enumerate(zip(raws, lines)):
         kind = line.get("t")
-        old = False
-        ts = line.get("ts") or line.get("thread")
-        if ts is not None and _ts_float(str(ts)) < cutoff_ts:
-            old = True
+        old = "ts" in line and _ts_float(str(line["ts"])) < cutoff_ts
         drop = False
         if kind == "seen":
             drop = index != last_seen
         elif kind == "in" and old:
             thread = state.threads.get(str(line.get("thread", "")))
             drop = line["kind"] == "ignored" or thread is None or not thread.open
-        elif kind == "out" and old and line["state"] in ("open", "resolved"):
+        elif kind == "out" and line["state"] in ("open", "resolved") and parse_at(str(line["at"])) < cutoff_ts:
             thread = state.threads.get(str(line["thread"]))
             drop = thread is None or not thread.open
         elif kind == "resolved":

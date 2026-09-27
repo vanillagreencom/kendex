@@ -5,12 +5,13 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import textwrap
 import time
 from pathlib import Path
 from typing import List
 
 import verbs
-from refusals import Refusal, print_refusal
+from refusals import EXPLAIN, Refusal, print_refusal
 from relay import Relay
 from settings import load
 
@@ -40,10 +41,10 @@ listen    the relay: every SLACK_POLL_SECONDS, per root, one history read since
           a question's thread, as its answer, each with --delivery-id
           channel:ts; asks, notices and rulings land in Slack, a report as
           its file. A post Slack refuses fails the poll and is made again
-          on the next one; a post whose response was lost is journaled
-          unknown and never repeated. One relay per checkout, held by an OS
-          lock; --once polls each root once and exits 0 when every poll
-          succeeded, 1 otherwise
+          on the next one; an envelope post whose response was lost is
+          journaled unknown and never repeated. One relay per checkout, held
+          by an OS lock; --once polls each root once and exits 0 when every
+          poll succeeded, 1 otherwise
   --status  one `slack-relay=ROOT state=ok|failing|stale|never` line per
           root from the relay's status record, then the summed call budget
 post      one message to the bound channel, or --channel for another; --mention
@@ -62,18 +63,14 @@ file and settings files: SLACK_BOT_TOKEN, SLACK_OWNERS (default
 KENDEX_USER_EMAIL), SLACK_POLL_SECONDS (15), SLACK_THREAD_DAYS (7).
 SLACK_API_URL names another API endpoint (default https://slack.com/api).
 
-Keyed lines, `slack: <key>=<value>` first: bound, posted, uploaded, updated,
-compacted, installed, enabled, active, restarted, listening, slack-relay,
-slack-relay-budget on stdout; refusals on stderr with exit 2: python3 and
-settings-unreadable from the launcher before Python starts, then usage,
-setting-missing, setting-invalid, orch-missing, root-unbound, root-unreadable,
-binding-invalid, journal-invalid, channel-changed, slack-auth-failed,
-slack-api-failed, slack-unreachable, slack-response-lost, slack-rate-limited,
-slack-owner-unknown, slack-channel-unjoined, slack-invite-refused,
-relay-running, lock-failed, secret-value, secret-pattern-invalid,
-file-unreadable, lane-mail-failed, unit-unwritable, systemctl-missing,
-systemctl-failed, unit-inactive.
-"""
+""" + textwrap.fill(
+    "Keyed lines, `slack: <key>=<value>` first: bound, posted, uploaded, updated,"
+    " compacted, installed, enabled, active, restarted, listening, slack-relay,"
+    " slack-relay-budget on stdout; refusals on stderr with exit 2: python3 and"
+    " settings-unreadable from the launcher before Python starts, then "
+    + ", ".join(EXPLAIN) + ".",
+    width=78, break_on_hyphens=False,
+) + "\n"
 
 
 class Parser(argparse.ArgumentParser):

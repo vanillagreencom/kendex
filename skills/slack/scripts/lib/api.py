@@ -8,10 +8,11 @@ because its remedy is a new token and nothing else.
 A network failure is one of two keys, by where urllib raised it. urllib wraps
 every error of the request phase, the connect, the TLS handshake and the
 write of the body, in `URLError`: Slack never read the request, so the call
-is `slack-unreachable` and a caller repeats it. An error raised bare comes
+is `slack-unreachable` and is safe to make again. An error raised bare comes
 from the response phase, after the request was written: Slack may have acted
-on it, so the call is `slack-response-lost` and a caller records it as
-unknown rather than repeating it.
+on it, so the call is `slack-response-lost`. The relay journals an envelope
+post lost this way as unknown and never repeats it; a read is made again on
+the next poll.
 """
 
 from __future__ import annotations
@@ -52,13 +53,25 @@ class Slack:
             self.calls.popleft()
         return len(self.calls)
 
+    def _open(self, req: urllib.request.Request, label: str) -> bytes:
+        """One counted exchange and its body. `HTTPError` is the caller's to
+        judge; a network failure takes its key by the rule above."""
+        self.calls.append(self.clock())
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+                return resp.read()
+        except urllib.error.HTTPError:
+            raise
+        except urllib.error.URLError as err:
+            raise Refusal("slack-unreachable", f"{label} ({err.reason})") from err
+        except OSError as err:
+            raise Refusal("slack-response-lost", f"{label} ({err})") from err
+
     def _request(self, req: urllib.request.Request, method: str) -> Dict:
         for attempt in range(RETRIES + 1):
-            self.calls.append(self.clock())
             try:
-                with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
-                    body = resp.read()
-                    break
+                body = self._open(req, method)
+                break
             except urllib.error.HTTPError as err:
                 if err.code == 429 and attempt < RETRIES:
                     retry_after = err.headers.get("Retry-After", "1")
@@ -67,10 +80,6 @@ class Slack:
                 if err.code == 429:
                     raise Refusal("slack-rate-limited", method) from err
                 raise Refusal("slack-api-failed", f"{method} http={err.code}") from err
-            except urllib.error.URLError as err:
-                raise Refusal("slack-unreachable", f"{method} ({err.reason})") from err
-            except OSError as err:
-                raise Refusal("slack-response-lost", f"{method} ({err})") from err
         try:
             answer = json.loads(body)
         except ValueError as err:
@@ -114,15 +123,9 @@ class Slack:
         req = urllib.request.Request(ticket["upload_url"], data=data, method="POST")
         req.add_header("Content-Type", "application/octet-stream")
         try:
-            self.calls.append(self.clock())
-            with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
-                resp.read()
+            self._open(req, "upload")
         except urllib.error.HTTPError as err:
             raise Refusal("slack-api-failed", f"upload http={err.code}") from err
-        except urllib.error.URLError as err:
-            raise Refusal("slack-unreachable", f"upload ({err.reason})") from err
-        except OSError as err:
-            raise Refusal("slack-response-lost", f"upload ({err})") from err
         done = self.post(
             "files.completeUploadExternal",
             files=[{"id": ticket["file_id"], "title": filename}],

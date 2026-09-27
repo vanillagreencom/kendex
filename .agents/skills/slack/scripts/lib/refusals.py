@@ -47,11 +47,14 @@ EXPLAIN = {
     "journal-invalid": (
         "A journal line is not one the relay writes. The journal is a"
         " transport ledger and nothing edits it by hand. Move it aside and"
-        " restart: the relay then reads Slack again from the binding moment,"
-        " which lane-mail answers with the envelopes that already landed,"
-        " posts nothing from the mailbox's past but its open asks, which"
-        " appear once more, and routes replies under earlier threads as"
-        " directives."
+        " restart: the relay then reads Slack again from the binding moment."
+        " lane-mail answers each earlier owner message with the envelope"
+        " that already landed. Nothing from the mailbox's past is posted but"
+        " its open asks, which post again as new threads: answer the"
+        " re-posted one, because replies under the relay's earlier posts are"
+        " no longer read. Replies under an owner's own earlier message are"
+        " read as directives. Every non-owner or file-only message since the"
+        " binding is answered once more."
     ),
     "slack-auth-failed": (
         "Slack refused the token. fix= names the remedy: set a live"
@@ -65,19 +68,20 @@ EXPLAIN = {
     "slack-unreachable": (
         "The request never reached Slack: the connection, the TLS handshake"
         " or the write failed. Nothing is journaled; the relay makes the"
-        " same call on its next poll, and a post is refused with its file"
-        " left on disk."
+        " same call on its next poll, and `slack post` is refused with its"
+        " file left on disk."
     ),
     "slack-response-lost": (
         "The request reached Slack and the answer was lost: a timeout or a"
-        " dropped connection after the write. Slack may have acted on it, so"
-        " the relay journals the envelope as unknown, shown by --status, and"
-        " never repeats it; a post is refused and its file stays on disk."
+        " dropped connection after the write. Slack may have acted on it."
+        " The relay journals an envelope post lost this way as unknown,"
+        " shown by --status, and never repeats it; a read is made again on"
+        " the next poll. `slack post` is refused and its file stays on disk."
     ),
     "slack-invite-refused": (
         "Slack refused to invite the owners to the channel; the value names"
-        " Slack's error and the owner ids. No binding is written. fix= names"
-        " the remedy."
+        " Slack's error and the owners' email addresses. No binding is"
+        " written. fix= names the remedy."
     ),
     "slack-rate-limited": (
         "Slack answered 429 on every retry the relay allows. Lower the call"

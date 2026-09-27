@@ -98,8 +98,8 @@ What an owner's message in the channel does:
 | In a question's thread, later reply | The overseer receives it as a directive; the relay says the question was already answered |
 | In the thread of a notice or report younger than `SLACK_THREAD_DAYS` | The overseer receives it as a directive, within ten polls |
 | In a thread older than `SLACK_THREAD_DAYS` | Not routed. Write top-level |
-| A file with no text | Not routed; the relay replies once |
-| From anyone not in `SLACK_OWNERS` | Not routed; the relay replies once, then ignores that message |
+| A file with no text | Not routed; the relay replies once, and once more after its journal is moved aside |
+| From anyone not in `SLACK_OWNERS` | Not routed; the relay replies once, then ignores that message until its journal is moved aside, which answers it once more |
 | An edit, a deletion or a thread broadcast | Ignored |
 
 A question answered in the overseer's chat shows in its Slack thread as "Answered in the chat"; one nobody answered by its deadline shows as "No answer by the deadline", with the option that stood. A changed `SLACK_OWNERS` takes effect when the relay restarts; `slack setup` restarts the unit `install` wrote.

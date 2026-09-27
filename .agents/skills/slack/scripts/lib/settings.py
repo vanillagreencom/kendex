@@ -27,6 +27,10 @@ class Settings:
     thread_days: int
     api_url: str
 
+    def horizon(self, now: float) -> float:
+        """SLACK_THREAD_DAYS before `now`: the one age every judge of age reads."""
+        return now - self.thread_days * 86400
+
 
 def _positive_int(name: str, default: int) -> int:
     raw = os.environ.get(name, "").strip()
