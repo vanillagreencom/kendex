@@ -382,9 +382,15 @@
 # than per account, since one answer covers every account it names. The
 # absent-verb answer is cached too, so a provider that will never implement the
 # verb stops paying a fork per invocation; a FAILED verb is never cached. The
-# cache drops records containing excluded or retired usage, including prior
-# samples. New provider records omit excluded rows and keep only a retired
-# account's identity. Cleanup reads the cache, never credential directories.
+# rows are cached AFTER the account policy: an excluded account's row is
+# omitted, and a retired account's row is reduced to its account, harness and
+# a `status=retired` marker with no usage figure. The record carries a stamp
+# of the policy that shaped it, ORCH_LANE_EXCLUDE, ORCH_LANE_RETIRE and the
+# UTC day, and is a miss under any other, so a lifted or tightened setting and
+# a retirement date that arrives all reach the provider on the next read. A
+# lane's own record is a miss while its directory is excluded or retired. At
+# startup, with either setting in force, every record the policy refuses is
+# deleted. Nothing in that judgment reads a credential directory.
 # `--no-cache` refreshes it, and `host-accounts` passes that flag from
 # `open-terminal`, whose read decides whether the host holds an account for a
 # launch gate rather than reporting a figure. `pick` reads the answer through
@@ -726,6 +732,7 @@ lane_matches() {
 
 lane_excluded() {
 	local name
+	[[ -n "${ORCH_LANE_EXCLUDE:-}" ]] || return 1
 	while IFS= read -r name; do
 		lane_matches "$name" "$1" && return 0
 	done < <(setting_items "${ORCH_LANE_EXCLUDE:-}")
@@ -736,6 +743,7 @@ lane_excluded() {
 # validated at startup (validate_lane_settings).
 lane_retire_date() {
 	local pair
+	[[ -n "${ORCH_LANE_RETIRE:-}" ]] || return 0
 	while IFS= read -r pair; do
 		lane_matches "$(trim "${pair%%=*}")" "$1" || continue
 		trim "${pair#*=}"
@@ -1326,34 +1334,51 @@ take_cached_usage() { # CACHED
 
 usage_cache_file() {
 	local sum
-	if [[ "$1" != host-accounts ]]; then
-		lane_excluded "$2" && return 1
-		lane_retired "$2" >/dev/null && return 1
-	fi
 	sum="$(printf '%s' "$2" | cksum)" || return 1
 	printf '%s/%s-%s.json' "$USAGE_CACHE_DIR" "$1" "${sum// /-}"
 }
 
-# Both current and prior hosted samples can contain an account removed since
-# the provider answered. Judge them with the provider row parser, without
-# inspecting any credential directory. A rejected record is a cache miss.
-usage_cache_permitted() { # FILE
-	local identity harness dir rows filtered
-	[[ -n "${ORCH_LANE_EXCLUDE:-}${ORCH_LANE_RETIRE:-}" ]] || return 0
-	identity="$(jq -er '[.harness, .config_dir] | select(all(.[]; type == "string")) | @tsv' "$1")" || return 1
-	IFS=$'\t' read -r harness dir <<<"$identity" || return 1
-	if [[ "$harness" != host-accounts ]]; then
-		lane_excluded "$dir" && return 1
-		lane_retired "$dir" >/dev/null && return 1
-		return 0
-	fi
-	rows="$(jq -r '[.usage.rows, .prior.usage.rows] | map(select(type == "string" and . != "")) | join("\n")' "$1")" || return 1
-	filtered="$(host_account_rows "$rows" all cache)" || return 1
-	[[ "$filtered" == "$rows" ]]
+# Whether the lane at DIR is one the policy lets this script hold a record
+# for: neither excluded nor retired, the judgment discovery makes of it.
+lane_admissible() {
+	! lane_excluded "$1" && ! lane_retired "$1" >/dev/null
 }
 
-# Scan the cache itself: discovery no longer names an excluded or removed
-# directory, and a provider that is no longer selected still has a record.
+# Records usage_cache_permitted has admitted this process, one path per line.
+# A record is judged once: the process runs under one policy and writes every
+# record under it, so what it admitted stays admissible for its lifetime.
+USAGE_CACHE_ADMITTED=$'\n'
+
+# Whether the record at FILE may be read or kept, the one judgment the reader,
+# the writer's prior sample and the startup scan share. A lane record is
+# judged by the directory it names, a provider record by the policy stamp it
+# was written under, since its rows are what that policy left; a record
+# nothing can parse is refused. With no policy in force only a provider
+# record can be stale, so a caller naming a lane HARNESS is answered without a
+# read. Nothing here reads a credential directory.
+usage_cache_permitted() { # FILE [HARNESS]
+	local verdict
+	[[ "$USAGE_CACHE_ADMITTED" != *$'\n'"$1"$'\n'* ]] || return 0
+	if [[ -z "${ORCH_LANE_EXCLUDE:-}${ORCH_LANE_RETIRE:-}" && -n "${2:-}" && "$2" != host-accounts ]]; then
+		return 0
+	fi
+	verdict="$(jq -r "${USAGE_POLICY_ARGS[@]}" "$USAGE_POLICY_JQ"'
+		if .harness == "host-accounts" then (if .policy == usage_policy then "ok" else "stale" end)
+		elif (.harness | type) == "string" and (.config_dir | type) == "string" then "lane\t" + .config_dir
+		else "malformed" end' "$1" 2>/dev/null)" || return 1
+	case "$verdict" in
+		ok) ;;
+		lane$'\t'*) lane_admissible "${verdict#*$'\t'}" || return 1 ;;
+		*) return 1 ;;
+	esac
+	USAGE_CACHE_ADMITTED+="$1"$'\n'
+}
+
+# Delete every record the policy refuses, scanning the cache itself: discovery
+# no longer names an excluded or retired directory, and a provider no longer
+# selected still has a record. With neither setting in force no record holds
+# a removed account's usage, and a provider record written under a policy is
+# refused on read and replaced by the next write, so the scan is spared.
 prune_usage_cache() {
 	local file
 	[[ -n "${ORCH_LANE_EXCLUDE:-}${ORCH_LANE_RETIRE:-}" ]] || return 0
@@ -1380,7 +1405,7 @@ read_usage_cache() { # HARNESS DIR NOW MAX_AGE_S
 	local file
 	file="$(usage_cache_file "$1" "$2")" || return 1
 	[[ -f "$file" ]] || return 1
-	usage_cache_permitted "$file" || return 1
+	usage_cache_permitted "$file" "$1" || return 1
 	jq -ce --arg h "$1" --arg d "$2" --argjson now "$3" --argjson max "${4:-null}" '
 		(.usage_fetched_at // .fetched_at) as $at
 		| select(.harness == $h and .config_dir == $d
@@ -1412,7 +1437,7 @@ write_usage_cache() {
 	local file tmp prior=null
 	file="$(usage_cache_file "$1" "$2")" || return 1
 	USAGE_PRIOR_AT=""; USAGE_PRIOR_RAW=""
-	if [[ -f "$file" ]] && usage_cache_permitted "$file"; then
+	if [[ -f "$file" ]] && usage_cache_permitted "$file" "$1"; then
 		prior="$(jq -ce --arg h "$1" --arg d "$2" '
 			(.usage_fetched_at // .fetched_at) as $at
 			| select(.harness == $h and .config_dir == $d
@@ -1425,8 +1450,9 @@ write_usage_cache() {
 	fi
 	mkdir -p -- "$USAGE_CACHE_DIR" 2>/dev/null || return 1
 	tmp="$(mktemp -- "$USAGE_CACHE_DIR/.usage.XXXXXX" 2>/dev/null)" || return 1
-	if jq -nc --arg h "$1" --arg d "$2" --argjson now "$3" --argjson u "$4" --argjson p "$prior" \
-		'{harness: $h, config_dir: $d, fetched_at: $now, usage: $u, prior: $p}' >"$tmp" \
+	if jq -nc "${USAGE_POLICY_ARGS[@]}" --arg h "$1" --arg d "$2" --argjson now "$3" --argjson u "$4" --argjson p "$prior" \
+		"$USAGE_POLICY_JQ"'{harness: $h, config_dir: $d, fetched_at: $now, usage: $u, prior: $p}
+		+ (if $h == "host-accounts" then {policy: usage_policy} else {} end)' >"$tmp" \
 		&& mv -f -- "$tmp" "$file"; then
 		return 0
 	fi
@@ -1967,8 +1993,13 @@ host_account_records() { # HOST HARNESS [READINGS] — one lane record per accou
 	host_account_rows "$rows" "${2:-all}" "${3:-}"
 }
 
-# CACHE keeps provider rows for eligible accounts and only the identity of a
-# retired account. This preserves retirement reporting without storing usage.
+# CACHE is the form written to the usage cache: the provider's row for an
+# account the policy admits, nothing for an excluded one, and for a retired one
+# its account, harness and a `status=retired` marker with no usage figure. The
+# marker keeps the row a reading, so a listing that wants readings still
+# reports the account retired rather than unlisted; it is never read under a
+# policy that does not retire the account, since the record it sits in is
+# stamped with the policy that wrote it and is a miss under any other.
 host_account_rows() { # ROWS HARNESS [READINGS|CACHE]
 	local rows="$1" want="$2" mode="${3:-}" line field key value bad retire said
 	local account harness status s_pct w_pct m_pct m_label s_reset w_reset m_reset
@@ -2059,8 +2090,11 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE]
 	done <<<"$rows"
 }
 
-# The provider's raw `accounts` answer, cached and time-bounded. Its status is
-# the one host_account_records passes on: 0 answered, 2 verb absent, 1 failed.
+# The provider's `accounts` answer after row validation and the account policy,
+# cached and time-bounded: a malformed row is dropped with one
+# host-account-invalid notice on the cold read and none on a cached one. Its
+# status is the one host_account_records passes on: 0 answered, 2 verb absent,
+# 1 failed.
 host_accounts_answer() { # HOST — the provider's rows on stdout, its status back
 	local host="$1" rc=0 rows err cached now_s record="" record_rc=0 busy_wait
 	local -a bound=()
@@ -2676,6 +2710,14 @@ USAGE_CACHE_DIR="$(dirname -- "$(lane_claims_dir "$PROJECT_ROOT")")/usage"
 # clock that cannot be read refuses the run, since an empty date would read as
 # "no retirement has come" and hand a retired lane back out.
 TODAY="$(date -u +%Y-%m-%d)" && [[ "$TODAY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die time-failed
+# The policy a provider record is stamped with and judged under: both settings
+# and the UTC day a retirement date is measured against. A provider record
+# holds the rows that policy left, so any other policy makes it a miss: a
+# lifted exclusion restores an account the record omits, a tightened one
+# removes a row it holds, and a retirement date that arrives reduces a row it
+# kept whole. Passed to every jq that writes or judges a record.
+USAGE_POLICY_ARGS=(--arg policy_exclude "${ORCH_LANE_EXCLUDE:-}" --arg policy_retire "${ORCH_LANE_RETIRE:-}" --arg policy_today "$TODAY")
+USAGE_POLICY_JQ='def usage_policy: {exclude: $policy_exclude, retire: $policy_retire, today: $policy_today};'
 
 # A lane key is a directory name or an alias. A `/` or `~` makes it a path,
 # which names no lane, so an exclusion written that way would protect nothing.

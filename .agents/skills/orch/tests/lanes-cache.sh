@@ -47,6 +47,16 @@ fi
 exec "$REAL_RM" "$@"
 STUB
 chmod +x "$TMP_ROOT/bin/rm"
+# The UTC day is the one clock the retirement policy reads; FAKE_TODAY moves it
+# for one run so a case can have a retirement date arrive.
+REAL_DATE="$(command -v date)"
+cat > "$TMP_ROOT/bin/date" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "$FAKE_TODAY" && "$*" == "-u +%Y-%m-%d" ]]; then printf '%s\n' "$FAKE_TODAY"; exit 0; fi
+exec "$REAL_DATE" "$@"
+STUB
+chmod +x "$TMP_ROOT/bin/date"
 
 # Run the shipped command in an empty environment and a settings-free repo.
 cache_run() { # STATE POLICY COMMAND...
@@ -55,6 +65,7 @@ cache_run() { # STATE POLICY COMMAND...
   (cd "$TMP_ROOT/repo" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$H" \
     REAL_JQ="$REAL_JQ" CREDENTIAL_LOG="$TMP_ROOT/credentials" \
     REAL_RM="$REAL_RM" CACHE_RM_FAIL="${CACHE_RM_FAIL:-0}" \
+    REAL_DATE="$REAL_DATE" FAKE_TODAY="${FAKE_TODAY:-}" \
     LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" \
     ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FIXTURE_DIR="$FIXTURE_DIR" \
     OVERSEE_WATCH_STATE_DIR="$state" ORCH_LANE_HOST="$PROVIDER" \
@@ -87,6 +98,35 @@ for row in 'exclude|ORCH_LANE_EXCLUDE=claude|0' 'retire|ORCH_LANE_RETIRE=claude=
     0 "$name never reads the removed account's credentials"
 done
 
+# A provider record is stamped with the policy that shaped it, so a lifted
+# exclusion, a lifted or postponed retirement and a retirement date that
+# arrives each ask the provider again inside the TTL. The provider log counts
+# the calls; the cached answer would leave it unchanged.
+provider_calls() { grep -c 'accounts' "$TMP_ROOT/provider-log"; }
+claude_hosted() { # the hosted claude row as STATUS:WEEKLY, or absent
+  jq -r '[.[] | select(.alias == "claude")] | if length == 0 then "absent" else "\(.[0].status):\(.[0].weekly_pct)" end' "$TMP_ROOT/out"
+}
+state="$TMP_ROOT/lifted"
+: > "$TMP_ROOT/provider-log"
+for row in 'ORCH_LANE_EXCLUDE=claude|ORCH_LANE_EXCLUDE=|absent|ok:20|a lifted exclusion' \
+  'ORCH_LANE_RETIRE=claude=2000-01-01|ORCH_LANE_RETIRE=|retired:null|ok:20|a lifted retirement' \
+  'ORCH_LANE_RETIRE=claude=2000-01-01|ORCH_LANE_RETIRE=claude=2099-01-01|retired:null|ok:20|a postponed retirement'; do
+  IFS='|' read -r written read_under before after name <<<"$row"
+  cache_run "$state" "$written" host-accounts --json > "$TMP_ROOT/out"
+  assert_eq "$(claude_hosted)" "$before" "$name: the record is written under the policy"
+  calls="$(provider_calls)"
+  cache_run "$state" "$read_under" host-accounts --json > "$TMP_ROOT/out"
+  assert_eq "$(claude_hosted)" "$after" "$name is visible on the next read"
+  assert_eq "$(provider_calls)" "$((calls + 1))" "$name asks the provider again"
+done
+cache_run "$state" ORCH_LANE_EXCLUDE= pick --harness claude --json > "$TMP_ROOT/out"
+assert_eq "$(jq -r '.config_dir' "$TMP_ROOT/out")" "$H/.claude" 'a lifted exclusion makes the account pickable again'
+cache_run "$state" ORCH_LANE_RETIRE=claude=2099-01-01 host-accounts --json > "$TMP_ROOT/out"
+calls="$(provider_calls)"
+FAKE_TODAY=2099-01-01 cache_run "$state" ORCH_LANE_RETIRE=claude=2099-01-01 host-accounts --json > "$TMP_ROOT/out"
+assert_eq "$(claude_hosted)" 'retired:null' 'a retirement date that arrives is visible on the next read'
+assert_eq "$(provider_calls)" "$((calls + 1))" 'a retirement date that arrives asks the provider again'
+
 # Reach the cache reader directly in a disposable script, before discovery or
 # startup pruning can mask a missing read guard. The production reader remains
 # unchanged; only the `check` verb's first step is replaced in this copy, which
@@ -112,28 +152,43 @@ for row in "claude|$H/.claude" "host-accounts|$PROVIDER"; do
 done
 LANES="$ORIGINAL_LANES"
 
-# Each policy has its own control. The parser and the matcher still run, but
-# the matcher's verdict is flipped to "no match", so the very same cached body
-# is served.
-policy_control() { # NAME MATCH REPLACEMENT POLICY
-  local name="$1" match="$2" replacement="$3" policy="$4" control_dir row harness account rc
+# Each rule has its own control. A lane record is refused by the policy
+# matchers: each control keeps the parser and the matcher running and flips
+# the matcher's verdict to "no match", so the very same cached body is served.
+# A provider record is refused by its policy stamp: that control keeps the
+# compare and makes it always agree.
+policy_control() { # NAME MATCH REPLACEMENT POLICY HARNESS ACCOUNT
+  local name="$1" match="$2" replacement="$3" policy="$4" harness="$5" account="$6" control_dir rc
   control_dir="$(mutant_scripts "control-$name" lanes)"
   mutate_file "$control_dir/lanes" "$match" "$replacement"
   mutate_file "$control_dir/lanes" "$READER_DISPATCH" "$READER_BODY"
   LANES="$control_dir/lanes"
-  for row in "claude|$H/.claude" "host-accounts|$PROVIDER"; do
-    IFS='|' read -r harness account <<<"$row"
-    rc=0
-    cache_run "$state" "$policy" check --harness "$harness" "$account" > "$TMP_ROOT/out" || rc=$?
-    assert_eq "$rc:$(jq -r 'has("usage")' "$TMP_ROOT/out")" '0:true' \
-      "control: disabling $name makes the $harness refusal assertion fail"
-  done
+  rc=0
+  cache_run "$state" "$policy" check --harness "$harness" "$account" > "$TMP_ROOT/out" || rc=$?
+  assert_eq "$rc:$(jq -r 'has("usage")' "$TMP_ROOT/out")" '0:true' \
+    "control: disabling $name makes the $harness refusal assertion fail"
   LANES="$ORIGINAL_LANES"
 }
 policy_control exclude 'lane_matches "$name" "$1" && return 0' \
-  'lane_matches "$name" "$1" && return 1' ORCH_LANE_EXCLUDE=claude
+  'lane_matches "$name" "$1" && return 1' ORCH_LANE_EXCLUDE=claude claude "$H/.claude"
 policy_control retire '[[ -n "$date" && ! "$TODAY" < "$date" ]] || return 1' \
-  '[[ -n "$date" && ! "$TODAY" < "$date" ]]; return 1' ORCH_LANE_RETIRE=claude=2000-01-01
+  '[[ -n "$date" && ! "$TODAY" < "$date" ]]; return 1' ORCH_LANE_RETIRE=claude=2000-01-01 claude "$H/.claude"
+STAMP_MATCH='.policy == usage_policy'
+STAMP_REPLACEMENT='.policy == .policy'
+for policy in ORCH_LANE_EXCLUDE=claude ORCH_LANE_RETIRE=claude=2000-01-01; do
+  policy_control stamp "$STAMP_MATCH" "$STAMP_REPLACEMENT" "$policy" host-accounts "$PROVIDER"
+done
+# The same stamp control against the lifted-exclusion listing: without the
+# stamp the record written under the exclusion is served as the answer.
+control_dir="$(mutant_scripts control-stamp lanes)"
+mutate_file "$control_dir/lanes" "$STAMP_MATCH" "$STAMP_REPLACEMENT"
+LANES="$control_dir/lanes"
+cache_run "$TMP_ROOT/lifted-control" ORCH_LANE_EXCLUDE=claude host-accounts --json > "$TMP_ROOT/out"
+calls="$(provider_calls)"
+cache_run "$TMP_ROOT/lifted-control" ORCH_LANE_EXCLUDE= host-accounts --json > "$TMP_ROOT/out"
+assert_eq "$(claude_hosted):$(provider_calls)" "absent:$calls" \
+  'control: disabling the stamp makes the lifted-exclusion assertions fail'
+LANES="$ORIGINAL_LANES"
 
 # The cleanup assertion must fail if startup still judges every file but
 # leaves rejected records on disk. A local read cannot replace the host record.
