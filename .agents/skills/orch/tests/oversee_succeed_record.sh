@@ -5,8 +5,10 @@
 # line and account variables, with the record's `pending` successor never read
 # as the caller's own. Run over a real tmux server on a private socket, as
 # oversee_succeed.sh is; claude, codex and kendex are stubs on PATH, and `lanes
-# pick` answers from the lanes-fixture usage bodies. Every row reads a
-# judgement or a printed line, so nothing here opens a successor.
+# pick` answers from the lanes-fixture usage bodies. The judgement and print
+# rows open nothing; the dead-pane relaunch rows and the pending-successor rows
+# each open a successor pane on the private tmux server, which the EXIT trap's
+# kill-server closes.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/lanes-fixture.sh
