@@ -620,9 +620,10 @@ PARKED_KEYS=()
 # launch, relaunch and close, and a hosted lane's root rides in its record, so
 # no change to the fleet waits for a restart. The state's records come first,
 # then the command line's own entries for items and windows no record names,
-# so a record wins where both name one item, and no run is refused over a lane
-# that was passed by hand and then gained a record, of either route type. A
-# local record's mail_root is carried as a --root entry, so a lane whose
+# so a record, parked ones included, wins where both name one item, and no
+# run is refused over a lane that was passed by hand and then gained a record,
+# of either route type. A local record's mail_root is carried as a --root
+# entry, so a lane whose
 # worktree sits outside this checkout is read where its mailbox is. A state
 # that cannot be read, or a set this run would refuse, ends the read rather
 # than carry a fleet nobody watches. The rows are split on the unit separator,
@@ -656,7 +657,7 @@ fleet_merge() { # [quiet]
     if [[ "$where" == hosted ]]; then HOSTED+=("$item=$root")
     elif [[ -n "$root" ]]; then ROOTS+=("$item=$root"); fi
   done <<<"$rows"
-  for line in ${GIVEN_ITEMS[@]+"${GIVEN_ITEMS[@]}"}; do item_listed "$line" || ITEMS+=("$line"); done
+  for line in ${GIVEN_ITEMS[@]+"${GIVEN_ITEMS[@]}"}; do item_listed "$line" || item_parked "$line" || ITEMS+=("$line"); done
   for line in ${GIVEN_LANES[@]+"${GIVEN_LANES[@]}"}; do window_listed "$line" || LANES+=("$line"); done
   for line in ${GIVEN_HOSTED[@]+"${GIVEN_HOSTED[@]}"}; do route_listed "${line%%=*}" || HOSTED+=("$line"); done
   for line in ${GIVEN_ROOTS[@]+"${GIVEN_ROOTS[@]}"}; do route_listed "${line%%=*}" || ROOTS+=("$line"); done
@@ -1216,14 +1217,15 @@ MAIL_STATE_FILE="$(pw_state_file "${REPOS[0]}").mail"
 # in, and to no other pull request on the branch's name, which is reported as
 # any item's is and closes nothing. The merged row is committed before the
 # close, which cannot be undone, so a run that stops after the close never
-# closes the lane twice; a close that fails puts the row back and commits it
-# at once, before the next item's reads can end the pass, so the next pass
-# reports the merge again and retries, and this pass fails as a whole at its
-# end while its remaining checks still run. A refused close, exit 3, keeps
+# closes the lane twice; a close that fails drops the parked key alone from
+# the row, the pass's other merges staying delivered, and commits it at once,
+# before the next item's reads can end the pass, so the next pass reports
+# that merge again and retries, and this pass fails as a whole at its end
+# while its remaining checks still run. A refused close, exit 3, keeps
 # its row: the user settles that checkout, and nothing retries it.
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
-  local errf="$WORK_DIR/merged.err" item branch repo list hit hits prior keys fresh key line state="${PW_SEEN[0]}"
+  local errf="$WORK_DIR/merged.err" item branch repo list hit hits prior keys fresh key line retry state="${PW_SEEN[0]}"
   for item in "${MERGED_ITEMS[@]}"; do
     branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
     hits=""
@@ -1262,7 +1264,8 @@ check_merged() {
     fi
     lane_row_commit "$state"
     if ! close_hosted_lane "$item"; then
-      if [[ -n "$prior" ]]; then state="$(lane_row_set merged "$state" "$item" "$prior")"
+      retry=" $keys "; retry="${retry/ $PARKED_KEY / }"; retry="${retry# }"; retry="${retry% }"
+      if [[ -n "$retry" ]]; then state="$(lane_row_set merged "$state" "$item" "$retry")"
       else state="$(lane_row_clear merged "$state" "$item")"; fi
       lane_row_commit "$state"
       PASS_FAILED=1

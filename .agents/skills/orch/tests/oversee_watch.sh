@@ -1141,8 +1141,9 @@ assert_eq "$(grep '^oversee-watch: fleet-read ' "$err")" "oversee-watch: fleet-r
 # while its pull request waited for the queue. The watch carries it for the
 # merged check alone, never reads its stopped disk, and closes it in the pass
 # that reports the merge of the pull request its record names, in that
-# repository. A failed close puts the row back and commits it at once, so the
-# next pass reports the merge again and retries; a refused close is committed.
+# repository. A failed close drops the parked key alone from the row and
+# commits it at once, so the next pass reports that merge again and retries;
+# a refused close is committed.
 parked_record() { # ITEM HOST MAIL_ROOT PR [REPO]
   lane_record "$1" "" "$2" "$3" parked | jq -c --argjson pr "$4" --arg repo "${5:-owner/repo}" '.parked = {pr: $pr, head: "abc123", repo: $repo, at: "2026-09-20T00:00:00Z"}'
 }
@@ -1185,16 +1186,26 @@ assert_eq "merged=$(grep -c '^EVENT merged 2' <<<"$out" || true) closes=$(grep -
 # The running lane's pane holds a question: the failing close leaves the pass
 # running, so the lane checks after the merged check still report it.
 parked_fleet parked_close_failed
-printf '[{"number": 2, "headRefName": "issue-2", "mergedAt": "2026-09-20T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+printf '[{"number": 2, "headRefName": "issue-2", "mergedAt": "2026-09-20T00:00:00Z"}, {"number": 4, "headRefName": "issue-2", "mergedAt": "2026-09-20T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
 printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-1.txt"
 parked_run LANE_HOST_STUB_CLOSE_STATUS=1 --
 assert_eq "rc=$rc events=$EVENTS failed=$(grep -c '^oversee-watch: lane-close-failed item=issue-2 exit=1$' "$err" || true)" \
-  "rc=2 events=merged 2,lane-asking gh-1 failed=1" \
+  "rc=2 events=merged 2,merged 4,lane-asking gh-1 failed=1" \
   "a parked close that fails is reported on stderr and fails the pass, whose remaining checks still run and report the running lane" "$err"
 out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_CLOSE_STATUS=1 \
   -- --since 2026-09-19T00:00:00Z --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
-assert_eq "merged=$(grep -c '^EVENT merged 2 issue-2' <<<"$out" || true) closes=$(grep -c '^close ' "$STUB_DIR/host.log" || true)" "merged=1 closes=2" \
-  "the next pass reports the merge again and retries the close" "$err"
+assert_eq "merged=$(grep -c '^EVENT merged 2 issue-2' <<<"$out" || true) other=$(grep -c '^EVENT merged 4' <<<"$out" || true) closes=$(grep -c '^close ' "$STUB_DIR/host.log" || true)" "merged=1 other=0 closes=2" \
+  "the next pass reports the parked merge again and retries the close, and the other merge of the failed pass stays delivered" "$err"
+
+# --item naming a lane the state records as parked: the record wins, as a
+# running record does, so the item is carried once, for the merged check alone.
+parked_fleet parked_item_given
+printf '[{"number": 2, "headRefName": "issue-2", "mergedAt": "2026-09-20T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+parked_run LANE_HOST_STUB_CLOSE_STATUS=1 -- --item issue-2
+assert_eq "rc=$rc merged=$(grep -c '^EVENT merged 2 issue-2' <<<"$out" || true) closes=$(grep -c '^close --item issue-2 ' "$STUB_DIR/host.log" || true)" "rc=2 merged=1 closes=1" \
+  "a hand-passed item the state records as parked is read once per pass, so a failing close reports the merge and runs the close once" "$err"
+assert_contains "$(cat "$err")" "oversee-watch: fleet-read items=1 windows=1 hosted=0 parked=1" \
+  "the parked record wins over the --item entry and is carried as parked, not as a running item" "$err"
 
 # The close is owed to the pull request the park judged and to no other on
 # the branch's name: another number, or the same number in another
