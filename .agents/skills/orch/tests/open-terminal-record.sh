@@ -444,6 +444,16 @@ for row in 'LANE_HOST_STUB_START_STATUS=1|host-start-failed item=CC-65 exit=1' '
     "rc=1 refused=1 creates=0 status=parked" \
     "$plant: a start the provider fails or leaves unconfirmed creates nothing and keeps the record parked"
 done
+# A start the provider confirmed is a sandbox up with no harness in it, which
+# is what stopped means: the record reads so before the create, and a create
+# that fails from there leaves it stopped, never parked over a running sandbox.
+"$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-65")) |= (.status = "parked" | .parked = {pr: 65, head: "abc", repo: "o/r", at: "t"})' >/dev/null
+: > "$TMP_ROOT/host.log"
+STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" LANE_HOST_STUB_CREATE_OWNED=CC-65 RUN_TMUX=stub,1,0 \
+  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-65
+assert_eq "rc=$RC started=$(grep -c '^open-terminal: host-started item=CC-65 host=.* status=stopped$' <<<"$OUT" || true) creates=$(grep -c '^create ' "$TMP_ROOT/host.log" || true) status=$(field "$(record CC-65)" status) parked=$("$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "CC-65") | has("parked")] | first')" \
+  "rc=75 started=1 creates=1 status=stopped parked=false" \
+  "a create that fails after a confirmed start leaves the record stopped with parked dropped, the sandbox being up"
 # A stopped record, --keep-sandbox's, is not parked: its sandbox is up and the
 # relaunch asks for no start.
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-65")) |= (.status = "stopped")' >/dev/null

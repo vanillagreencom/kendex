@@ -238,13 +238,15 @@ first_err() { awk 'NR == 1' "$CASE/err"; }
 # before it, KEN-9 is no fleet item, KEN-2 and KEN-3 still run, KEN-2 with an
 # open PR; KEN-4 to KEN-6 wait in the queue and one question is open. KEN-2
 # waits on an ask and on red checks, KEN-3 on a post-PR stop. KEN-7 is still
-# preparing on its host. KEN-3 has validated twice, a full implement round
-# and a range fix round; KEN-2 not yet.
+# preparing on its host. KEN-10 is parked on its host, its sandbox stopped
+# while #14 waits for the queue, so nothing reads its disk. KEN-3 has
+# validated twice, a full implement round and a range fix round; KEN-2 not yet.
 seed_fleet() {
   new_case "$1"
   report -3600
   fleet '+ {launch_queue: ["KEN-4", "KEN-5", "KEN-6"]}' \
-    "$(lane KEN-1 done)" "$(lane KEN-2 running)" "$(lane KEN-3 running)" "$(lane KEN-7 preparing -86400 ssh-a)"
+    "$(lane KEN-1 done)" "$(lane KEN-2 running)" "$(lane KEN-3 running)" "$(lane KEN-7 preparing -86400 ssh-a)" \
+    "$(lane KEN-10 parked -86400 ssh-a | jq -c '.parked = {pr: 14, head: "abc123", repo: "owner/repo", at: "2026-09-20T00:00:00Z"}')"
   echo '{"id":"1790000000-0-a","kind":"ask","to":"owner","text":"Merge the pricing change?","options":["yes","no"],"recommend":"yes","wait":120,"deadline":"2026-09-26T03:00:00Z"}' \
     > "$CASE/pending-overseer.jsonl"
   echo '{"id":"1790000000-1-a","kind":"ask","text":"Which schema?"}' > "$CASE/pending-KEN-2.jsonl"
@@ -258,7 +260,7 @@ seed_fleet() {
     "$(merged_pr 23 ken-1 -30 2323232aaa -)" | jq -s . > "$CASE/merged.json"
   echo '[{"number": 12, "headRefName": "ken-2"}]' > "$CASE/open.json"
   local n
-  for n in 1 2 3 4 5 6 7 8 9; do issue "KEN-$n" "Title $n" "Outcome $n | kept"; done
+  for n in 1 2 3 4 5 6 7 8 9 10; do issue "KEN-$n" "Title $n" "Outcome $n | kept"; done
 }
 
 echo "=== render: the rows from a fleet ==="
@@ -275,6 +277,7 @@ Running:
 | KEN-2 (#12, running) | Title 2 | Outcome 2 \\| kept |
 | KEN-3 (no PR, running) | Title 3 | Outcome 3 \\| kept |
 | KEN-7 (no PR, preparing) | Title 7 | Outcome 7 \\| kept |
+| KEN-10 (#14, parked) | Title 10 | Outcome 10 \\| kept |
 
 Validation:
 - KEN-2: no validation run recorded
@@ -293,7 +296,7 @@ Waiting on you:
 - KEN-2 waits on red checks on #12: test, lint
 - KEN-3 waits on a stopped review gate, review-round-cap: one unresolved review thread"
 assert_eq "$RC|$OUT" "0|$WANT" \
-  "Landed holds only the fleet item merged since the last report, Running each live or preparing lane with its PR, Validation each running lane's minutes in total and per round, Next the queue, Waiting on you the open owner ask with its recommendation and deadline then each running lane's blockers"
+  "Landed holds only the fleet item merged since the last report, Running each live, preparing or parked lane with its PR, the parked one's from its record, Validation each running lane's minutes in total and per round, Next the queue, Waiting on you the open owner ask with its recommendation and deadline then each running lane's blockers"
 
 echo "=== render: Waiting on you reads the overseer mailbox and nothing else ==="
 seed_fleet owner_asks_mail
@@ -598,12 +601,12 @@ seed_unreadable() {
 seed_unreadable mail_unreadable
 MARK="- KEN-8 mailbox unreadable (mail-read=KEN-8): lane-mail: host-unreachable=KEN-8 state=unknown"
 run -- render --state "$CASE/state.json" --repo owner/repo
-ROW7='| KEN-7 (no PR, preparing) | Title 7 | Outcome 7 \| kept |'
+ROW10='| KEN-10 (#14, parked) | Title 10 | Outcome 10 \| kept |'
 ROW8='| KEN-8 (no PR, running) | Title 8 | Outcome 8 \| kept |'
 VAL3='- KEN-3: 60 min over 2 rounds: implement full 55, fix range 5'
 VAL8='- KEN-8: validation unread, its host unreachable'
-WANT8="$(row7="$ROW7" row8="$ROW8" val3="$VAL3" val8="$VAL8" awk '{ print }
-  $0 == ENVIRON["row7"] { print ENVIRON["row8"] } $0 == ENVIRON["val3"] { print ENVIRON["val8"] }' <<<"$WANT")"
+WANT8="$(row10="$ROW10" row8="$ROW8" val3="$VAL3" val8="$VAL8" awk '{ print }
+  $0 == ENVIRON["row10"] { print ENVIRON["row8"] } $0 == ENVIRON["val3"] { print ENVIRON["val8"] }' <<<"$WANT")"
 assert_eq "$RC|$OUT" "0|$WANT8
 $MARK" "render lists KEN-8 under Running, marks its validation unread and its mailbox under Waiting on you, and every other lane as before"
 echo "One lane is unreadable." > "$CASE/summary.txt"

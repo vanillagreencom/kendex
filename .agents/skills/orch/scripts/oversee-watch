@@ -506,10 +506,14 @@ check_root_entries() { # KIND ENTRY...
   done
 }
 
-# Whether the item is a parked record's, for the merged check's close.
+# Whether the item is a parked record's, for the merged check's close, with
+# PARKED_KEY the `<repo>#<number>` of the pull request its park judged.
+PARKED_KEY=""
 item_parked() { # ITEM
-  local entry
-  for entry in ${PARKED_ITEMS[@]+"${PARKED_ITEMS[@]}"}; do [[ "$entry" != "$1" ]] || return 0; done
+  local i
+  for i in ${PARKED_ITEMS[@]+"${!PARKED_ITEMS[@]}"}; do
+    [[ "${PARKED_ITEMS[$i]}" != "$1" ]] || { PARKED_KEY="${PARKED_KEYS[$i]}"; return 0; }
+  done
   return 1
 }
 # HOSTED_ROOT is the item's lane root on its own host, empty for a lane on this
@@ -595,13 +599,17 @@ PREPARE_ROWS_FILTER='
   | [.item, $outcome, (.prepare.since | fromdateiso8601 | tostring), .prepare.log, (.prepare.reason // "")] | join("\u001f")'
 PREPARE_ROWS=""
 
-# The parked records, one item per line: a lane lane-close --park stopped with
-# its disk kept, whose pull request the merged check still watches. Nothing
-# else reads it: its pane is gone and its mailbox is on a stopped disk.
+# The parked records, one per line as item and `<repo>#<number>`: a lane
+# lane-close --park stopped with its disk kept, and the pull request its park
+# judged, whose merge alone the merged check closes it on. Nothing else reads
+# it: its pane is gone and its mailbox is on a stopped disk.
 PARKED_ROWS_FILTER='
   (.lanes // [])[] | select(type == "object" and .status == "parked")
-  | if ((.item? | type) == "string" and (.item | length) > 0) then .item else error("lane-field field=item value=\(.item | tojson)") end'
+  | if ((.item? | type) != "string" or (.item | length) == 0) then error("lane-field field=item value=\(.item | tojson)")
+    elif ((.parked.pr? | type) != "number" or (.parked.repo? | type) != "string") then error("lane-field field=parked value=\(.parked | tojson)")
+    else "\(.item)\u001f\(.parked.repo)#\(.parked.pr)" end'
 PARKED_ITEMS=()
+PARKED_KEYS=()
 
 # The one reader of the state, asked by the repeat wrapper before every pass
 # and by the pass itself before every loop: the live set changes on every
@@ -624,9 +632,11 @@ fleet_merge() { # [quiet]
   PREPARE_ROWS="$(jq -r "$PREPARE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$PREPARE_ROWS" "option=--state" "path=$STATE_FILE"
   parked="$(jq -r "$PARKED_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$parked" "option=--state" "path=$STATE_FILE"
   PARKED_ITEMS=()
-  while IFS= read -r item; do
+  PARKED_KEYS=()
+  while IFS=$'\x1f' read -r item kept; do
     [[ -n "$item" ]] || continue
     PARKED_ITEMS+=("$item")
+    PARKED_KEYS+=("$kept")
   done <<<"$parked"
   # The count is the first line; a fleet of no running lane has no second.
   dropped="${rows%%$'\n'*}"
@@ -1197,17 +1207,19 @@ MAIL_STATE_FILE="$(pw_state_file "${REPOS[0]}").mail"
 # while a further PR on the branch, in any repo, is. The rows are committed
 # once, after the lines are out.
 # A parked item's merge closes its sandbox here, in the pass that reports it:
-# the lane has no pane to exit and nothing wakes a parked sandbox. The merged
-# row is committed before the close, which cannot be undone, so a run that
-# stops after the close never closes the lane twice; a close that fails puts
-# the row back, so the next pass reports the merge again and retries, and the
-# pass exits 2 as a failed close under lane-exited does. A refused close, exit
-# 3, keeps its row: the user settles that checkout, and nothing retries it.
-MERGED_CLOSE_FAILED=0
+# the lane has no pane to exit and nothing wakes a parked sandbox. The close
+# is owed to the pull request its park judged, in the repository it read it
+# in, and to no other pull request on the branch's name, which is reported as
+# any item's is and closes nothing. The merged row is committed before the
+# close, which cannot be undone, so a run that stops after the close never
+# closes the lane twice; a close that fails puts the row back and commits it
+# at once, before the next item's reads can end the pass, so the next pass
+# reports the merge again and retries, and this pass fails as a whole at its
+# end while its remaining checks still run. A refused close, exit 3, keeps
+# its row: the user settles that checkout, and nothing retries it.
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
-  local errf="$WORK_DIR/merged.err" item branch repo list hit hits prior keys key line state="${PW_SEEN[0]}"
-  MERGED_CLOSE_FAILED=0
+  local errf="$WORK_DIR/merged.err" item branch repo list hit hits prior keys fresh key line state="${PW_SEEN[0]}"
   for item in "${MERGED_ITEMS[@]}"; do
     branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
     hits=""
@@ -1226,28 +1238,29 @@ check_merged() {
       continue
     fi
     prior="$(lane_row_get merged "$state" "$item")"
-    keys=""
+    keys="" fresh=""
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
       key="${line##* }#${line%% *}"
       keys="${keys:+$keys }$key"
       grep -qxF -- "$key" <<<"${prior// /$'\n'}" && continue
+      fresh="${fresh:+$fresh }$key"
       echo "EVENT merged $line"
       PASS_EVENT=1
     done <<<"$hits"
     state="$(lane_row_set merged "$state" "$item" "$keys")"
-    [[ "$keys" != "$prior" ]] && item_parked "$item" || continue
+    item_parked "$item" && [[ " $fresh " == *" $PARKED_KEY "* ]] || continue
     lane_row_commit "$state"
     if ! close_hosted_lane "$item"; then
       if [[ -n "$prior" ]]; then state="$(lane_row_set merged "$state" "$item" "$prior")"
       else state="$(lane_row_clear merged "$state" "$item")"; fi
-      MERGED_CLOSE_FAILED=1
+      lane_row_commit "$state"
+      PASS_FAILED=1
     fi
     [[ -z "$CLOSE_TERMED" ]] || { lane_row_commit "$state"; exit 143; }
   done
   state="$(lane_row_prune merged "$state" "${MERGED_ITEMS[@]}")"
   lane_row_commit "$state"
-  [[ "$MERGED_CLOSE_FAILED" -eq 0 ]] || exit 2
 }
 
 check_triage() {

@@ -119,6 +119,8 @@ class LaneHostTests(unittest.TestCase):
                 self.assertEqual(result.returncode, code)
                 self.assertEqual(b"host-create-failed" in result.stderr, notice)
         self.assertEqual(self.run_host("close", "--item", "TEST-1", **env, LANE_HOST_STUB_STATUS="3").returncode, 3)
+        checked = self.run_host("stop-sandbox", "--check", "--item", "TEST-1", **env)
+        self.assertEqual((checked.returncode, checked.stdout), (0, b"sandbox-stoppable item=TEST-1\n"))
         parked = self.run_host("stop-sandbox", "--item", "TEST-1", **env)
         self.assertEqual((parked.returncode, parked.stdout), (0, b"sandbox-stopped item=TEST-1\n"))
         started = self.run_host("start", "--item", "TEST-1", **env)

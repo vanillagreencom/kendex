@@ -82,8 +82,10 @@ message() { # REASON FIELD=VALUE...
         '  pr-read-failed    gh pr view could not read the pull request; its own words are on the lines above this one.' \
         '  pr-branch-mismatch  the pull request'"'"'s head branch is not the item'"'"'s branch, so --pr names another lane'"'"'s pull request.' \
         '  pr-not-open       the pull request is merged or closed: a merged lane takes the full close, never a park.' \
-        '  not-armed         auto-merge is not armed on the pull request, so nothing will merge it while the lane is away.' \
-        '  merge-state       GitHub reports the state named: only CLEAN, every required check green on the head and nothing else blocking, admits a park. A push after the arm, a running check or a red one all read otherwise.' \
+        '  provider-unsupported  the lane host answered stop-sandbox --check with the status or cause named, so the sandbox could not be brought back once stopped: exit=2 is the absent-verb status of a provider without the stop-sandbox and start pair, lane-host-ssh among them; cause=answer-unparsed a check that succeeded without its sandbox-stoppable item=ID line.' \
+        '  queue-read-failed the merge queue could not be asked whether it holds the pull request; gh api graphql'"'"'s own words are on the lines above this one.' \
+        '  not-armed         the pull request is neither in the merge queue nor auto-merge armed, so nothing will merge it while the lane is away.' \
+        '  merge-state       the pull request is armed and not queued, and GitHub reports the state named: only CLEAN, every required check green on the head and nothing else blocking, admits a park there. A push after the arm, a running check or a red one all read otherwise. A queued pull request is admitted on the queue'"'"'s own judgement and this state is not read for it.' \
         '  reducer-missing   the review-gate reducer pr-watch.sh is not installed beside this skill, and the gate and thread reading is its alone.' \
         '  attention         the reducer prints attention for this pull request, kinds= naming what: an open thread, a stale gate, a standing objection. The lane is still needed.' \
         '  reducer-failed    the reducer could not evaluate the pull request; its own words are on the lines above this one.' ;;
@@ -150,13 +152,25 @@ close goes on.
 queue wait doing nothing while its pull request N waits for the merge queue,
 and the sandbox bills for it. The park is admitted by one reading, made before
 anything is signalled and refused as park-refused with the condition it stopped
-on: the pull request is open, is the item's own branch, has auto-merge armed,
-reads mergeStateStatus CLEAN, which is GitHub reporting every required check
-green on the current head and nothing else blocking, and gets no attention
-line from the review-gate reducer pr-watch.sh, whose silence is its healthy
-state: gate met, no unresolved thread, armed or queued. A lane still inside a
-CI or gate wait after a push reads BLOCKED or gets an attention line, and is
-never parked. Admitted, the park ends the harness by signal as a close does,
+on: the record's lane host answers stop-sandbox --check --item ID with its
+sandbox-stoppable line, so the sandbox it stops can be started again, which a
+provider without the stop-sandbox and start pair, lane-host-ssh among them,
+refuses with the absent-verb status 2; the pull request is open and is the
+item's own branch; the merge queue holds it, read through gh api graphql as
+isInMergeQueue or a mergeQueueEntry, or, outside the queue, auto-merge is
+armed on it and it reads mergeStateStatus CLEAN, which is GitHub reporting
+every required check green on the current head and nothing else blocking; and
+it gets no attention line from the review-gate reducer pr-watch.sh, whose
+silence is its healthy state: gate met, no unresolved thread, armed or queued.
+A queued pull request is admitted on the queue's own judgement, since GitHub
+admits nothing to the queue before every required check is green on its head,
+and its arm has converted to the queue entry by then, so autoMergeRequest is
+null for the whole wait; the merge state is read for the armed, unqueued case
+alone. A lane still inside a CI or gate wait after a push is neither queued
+nor CLEAN, or gets an attention line, and is never parked. The reducer is the
+one OVERSEE_WATCH_PR_WATCH names, as it is for oversee-watch, and the
+review-gate skill beside this one otherwise. Admitted, the park ends the
+harness by signal as a close does,
 whatever the lane is doing, waits for its pane to read exited, closes the
 window, then stops the sandbox through lane-host stop-sandbox and requires its
 sandbox-stopped item=ID line. The record then reads parked and carries
@@ -442,19 +456,37 @@ tracker_terminal() {
 }
 
 # The park guard: the one reading that admits a merge-wait park, made before
-# anything is signalled. It delegates to the two judges that already own the
-# questions: GitHub's own merge state, which reports every required check green
-# on the current head as CLEAN and anything still running or red otherwise, and
-# the review-gate reducer, whose silence for a pull request is its healthy
-# state: gate met, no unresolved thread, armed or queued. Nothing here counts a
-# check or a thread itself. Each refusal names the condition it stopped on and
-# changes nothing. PARK_HEAD and PARK_REPO carry what the record will hold.
-PR_WATCH="$SCRIPT_DIR/../../review-gate/scripts/pr-watch.sh"
+# anything is signalled. It delegates to the three judges that already own the
+# questions: the provider, asked without effect whether it can stop a sandbox
+# it will later be asked to start, which a provider without the pair refuses
+# with the protocol's absent-verb status; GitHub's merge queue and auto-merge,
+# which say whether anything will merge the pull request while the lane is
+# away, the queue's own membership standing for every required check green
+# since nothing enters it otherwise, and mergeStateStatus CLEAN saying the
+# same for an armed pull request outside the queue; and the review-gate
+# reducer, whose silence for a pull request is its healthy state: gate met, no
+# unresolved thread, armed or queued. Nothing here counts a check or a thread
+# itself. Each refusal names the condition it stopped on and changes nothing.
+# PARK_HEAD and PARK_REPO carry what the record will hold.
+PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SCRIPT_DIR/../../review-gate/scripts/pr-watch.sh}"
+PARK_QUEUE_QUERY='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { isInMergeQueue mergeQueueEntry { position } } } }'
+# The queue answer as a word: a payload without the boolean is unparsed.
+PARK_QUEUE_JQ='.data.repository.pullRequest | if (.isInMergeQueue | type) != "boolean" then error("queue-field field=isInMergeQueue") elif .isInMergeQueue or .mergeQueueEntry != null then "yes" else "no" end'
+PARK_CHECK_LINE_RE='^sandbox-stoppable item=[^ ]+$'
 PARK_HEAD=""
 PARK_REPO=""
 park_judge() {
-  local err view fields pr_state pr_head pr_branch armed merge_state out rc=0 kinds
+  local err view fields pr_state pr_head pr_branch armed merge_state queue queued out rc=0 kinds
   [[ -n "$host" ]] || { message park-refused "item=$ITEM" "reason=local" >&2; exit 1; }
+  [[ -x "$LANE_HOST" ]] || { message record-invalid "item=$ITEM" "field=lane-host" >&2; exit 1; }
+  err="$(mktemp)" || { message park-refused "item=$ITEM" "reason=provider-unsupported" "cause=stderr-unsaved" >&2; exit 1; }
+  out="$(ORCH_LANE_HOST="$host" "$LANE_HOST" stop-sandbox --check --item "$ITEM" 2>"$err")" || rc=$?
+  [[ "$rc" -eq 0 ]] || cat -- "$err" >&2
+  rm -f -- "${err:?}"
+  [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { message lane-host-busy "item=$ITEM" "pr=$PARK_PR" step=stop-sandbox-check >&2; exit "$rc"; }
+  [[ "$rc" -eq 0 ]] || { message park-refused "item=$ITEM" "reason=provider-unsupported" "host=$host" "exit=$rc" >&2; exit 1; }
+  [[ "$out" =~ $PARK_CHECK_LINE_RE && "$out" == *"item=$ITEM" ]] \
+    || { message park-refused "item=$ITEM" "reason=provider-unsupported" "host=$host" "cause=answer-unparsed" >&2; exit 1; }
   PARK_REPO="$repo"
   if [[ -z "$PARK_REPO" ]]; then
     tracker_read PARK_REPO env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner \
@@ -464,15 +496,26 @@ park_judge() {
       --json state,headRefOid,headRefName,autoMergeRequest,mergeStateStatus \
     || { message park-refused "item=$ITEM" "reason=pr-read-failed" "pr=$PARK_PR" "repo=$PARK_REPO" >&2; exit 1; }
   # One tab-separated line, the arm read as a word: a null autoMergeRequest is
-  # a pull request nothing will merge.
+  # a pull request nothing will merge unless the queue holds it.
   fields="$(jq -r '[.state, .headRefOid, .headRefName, (if .autoMergeRequest == null then "no" else "yes" end), .mergeStateStatus] | @tsv' <<<"$view" 2>/dev/null)" \
     || { message park-refused "item=$ITEM" "reason=pr-read-failed" "pr=$PARK_PR" "cause=payload-unparsed" >&2; exit 1; }
   IFS=$'\t' read -r pr_state pr_head pr_branch armed merge_state <<<"$fields"
   [[ "$(printf '%s' "$pr_branch" | tr '[:upper:]' '[:lower:]')" == "$(printf '%s' "$ITEM" | tr '[:upper:]' '[:lower:]')" ]] \
     || { message park-refused "item=$ITEM" "reason=pr-branch-mismatch" "pr=$PARK_PR" "branch=$pr_branch" >&2; exit 1; }
   [[ "$pr_state" == OPEN ]] || { message park-refused "item=$ITEM" "reason=pr-not-open" "pr=$PARK_PR" "state=$pr_state" >&2; exit 1; }
-  [[ "$armed" == yes ]] || { message park-refused "item=$ITEM" "reason=not-armed" "pr=$PARK_PR" "head=$pr_head" >&2; exit 1; }
-  [[ "$merge_state" == CLEAN ]] || { message park-refused "item=$ITEM" "reason=merge-state" "pr=$PARK_PR" "state=$merge_state" >&2; exit 1; }
+  # Queue membership is GraphQL's alone: gh pr view exposes no field for it,
+  # and on a queue base the arm converts to the entry once the checks are
+  # green, so the entry is the wait's whole evidence.
+  tracker_read queue env -u GH_REPO -u GITHUB_REPOSITORY gh api graphql -f query="$PARK_QUEUE_QUERY" \
+      -F owner="${PARK_REPO%%/*}" -F repo="${PARK_REPO#*/}" -F number="$PARK_PR" \
+    || { message park-refused "item=$ITEM" "reason=queue-read-failed" "pr=$PARK_PR" "repo=$PARK_REPO" >&2; exit 1; }
+  if ! queued="$(jq -r "$PARK_QUEUE_JQ" <<<"$queue" 2>/dev/null)"; then
+    message park-refused "item=$ITEM" "reason=queue-read-failed" "pr=$PARK_PR" "cause=payload-unparsed" >&2; exit 1
+  fi
+  if [[ "$queued" == no ]]; then
+    [[ "$armed" == yes ]] || { message park-refused "item=$ITEM" "reason=not-armed" "pr=$PARK_PR" "head=$pr_head" >&2; exit 1; }
+    [[ "$merge_state" == CLEAN ]] || { message park-refused "item=$ITEM" "reason=merge-state" "pr=$PARK_PR" "state=$merge_state" >&2; exit 1; }
+  fi
   [[ -x "$PR_WATCH" ]] || { message park-refused "item=$ITEM" "reason=reducer-missing" "path=$PR_WATCH" >&2; exit 1; }
   err="$(mktemp)" || { message park-refused "item=$ITEM" "reason=reducer-failed" "cause=stderr-unsaved" >&2; exit 1; }
   out="$(GH_REPO="$PARK_REPO" "$PR_WATCH" "$PARK_PR" 2>"$err")" || rc=$?
@@ -498,7 +541,6 @@ park_judge() {
 PARK_LINE_RE='^sandbox-stopped item=[^ ]+$'
 park_sandbox() {
   local out err rc=0 at fields=("item=$ITEM" "pr=$PARK_PR")
-  [[ -x "$LANE_HOST" ]] || { message record-invalid "item=$ITEM" "field=lane-host" >&2; exit 1; }
   err="$(mktemp)" || { message park-failed "${fields[@]}" "cause=stderr-unsaved" >&2; exit 1; }
   out="$(ORCH_LANE_HOST="$host" "$LANE_HOST" stop-sandbox --item "$ITEM" 2>"$err")" || rc=$?
   cat -- "$err" >&2

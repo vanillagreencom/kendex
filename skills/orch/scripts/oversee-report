@@ -118,8 +118,11 @@ Rows:
                   the last report, in any --repo: one merged search per repo,
                   matched against every item. The issue cell carries the
                   PR number and the merge commit.
-  Running         each lanes[] record reading running or preparing. The issue
-                  cell carries its open PR, or `no PR`, and that status.
+  Running         each lanes[] record reading running, preparing or parked.
+                  The issue cell carries its open PR, or `no PR`, and that
+                  status; a parked record's PR is the one its `parked` names,
+                  the pull request its park judged. A parked lane's disk is
+                  stopped, so no row below reads it.
   Validation      one line per lanes[] record reading running: the minutes
                   its validation runs took, in total and per dev round, from
                   the validate_rounds its own workflow state holds
@@ -613,12 +616,14 @@ render() {
     [[ -z "$list" ]] || open+="$list"$'\n'
   done
   running_lanes
-  list="$(jq -r '.lanes[] | select(.status == "running" or .status == "preparing") | [.item, .status] | @tsv' <<<"$STATE_JSON")" \
+  list="$(jq -r '.lanes[] | select(.status == "running" or .status == "preparing" or .status == "parked")
+    | [.item, .status, (.parked.pr // "" | tostring)] | @tsv' <<<"$STATE_JSON")" \
     || refuse state "$STATE"
   rows=""
-  while IFS=$'\t' read -r item status; do
+  while IFS=$'\t' read -r item status parked_pr; do
     [[ -n "$item" ]] || continue
-    pr="$(awk -F'\t' -v b="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')" '$1 == b { print "#" $2; exit }' <<<"$open")"
+    if [[ -n "$parked_pr" ]]; then pr="#$parked_pr"
+    else pr="$(awk -F'\t' -v b="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')" '$1 == b { print "#" $2; exit }' <<<"$open")"; fi
     rows+="$item"$'\t'"$item (${pr:-no PR}, $status)"$'\n'
   done <<<"$list"
   table Running "$rows"

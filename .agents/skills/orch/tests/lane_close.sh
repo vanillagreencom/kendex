@@ -113,7 +113,16 @@ if [[ "$1" == stop ]]; then
   exit 0
 fi
 # stop-sandbox is the park's provider call: LANE_CLOSE_STOP_SANDBOX_STATUS
-# fails it and LANE_CLOSE_STOP_SANDBOX_OUT replaces the protocol's line.
+# fails it and LANE_CLOSE_STOP_SANDBOX_OUT replaces the protocol's line. Its
+# --check form is the judge's capability read: LANE_CLOSE_STOP_SANDBOX_CHECK_STATUS
+# is a provider without the pair (2 is lane-host-ssh's absent-verb status) and
+# LANE_CLOSE_STOP_SANDBOX_CHECK_OUT replaces its line.
+if [[ "$1 ${2:-}" == "stop-sandbox --check" ]]; then
+  [[ "${LANE_CLOSE_STOP_SANDBOX_CHECK_STATUS:-0}" -eq 0 ]] \
+    || { printf 'lane-host-ssh: verb-invalid verb=stop-sandbox\n' >&2; exit "$LANE_CLOSE_STOP_SANDBOX_CHECK_STATUS"; }
+  printf '%s\n' "${LANE_CLOSE_STOP_SANDBOX_CHECK_OUT-sandbox-stoppable item=$4}"
+  exit 0
+fi
 if [[ "$1" == stop-sandbox ]]; then
   [[ "${LANE_CLOSE_STOP_SANDBOX_STATUS:-0}" -eq 0 ]] \
     || { printf 'lane-host-fixture: stop-sandbox-failed item=%s\n' "$3" >&2; exit "$LANE_CLOSE_STOP_SANDBOX_STATUS"; }
@@ -265,7 +274,9 @@ EOF
 chmod +x "$BIN/tmux"
 
 # `pr view` answers the park judge from LANE_CLOSE_PR_VIEW, a pull request on
-# the item's branch, open, armed and CLEAN unless a row says otherwise;
+# the item's branch, open, armed and CLEAN unless a row says otherwise, and
+# `api graphql` its queue membership from LANE_CLOSE_PR_QUEUE, out of the
+# queue unless a row says otherwise, failing under LANE_CLOSE_PR_QUEUE_STATUS;
 # `repo view` answers the repository a record without one resolves.
 cat >"$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -282,6 +293,10 @@ case "$1 $2" in
     fi
     printf '%s\n' "$LANE_CLOSE_PR_VIEW" ;;
   "repo view") printf 'owner/resolved\n' ;;
+  "api graphql")
+    [[ "${LANE_CLOSE_PR_QUEUE_STATUS:-0}" -eq 0 ]] || { printf 'gh: graphql: Something went wrong\n' >&2; exit "$LANE_CLOSE_PR_QUEUE_STATUS"; }
+    queue='{"data":{"repository":{"pullRequest":{"isInMergeQueue":false,"mergeQueueEntry":null}}}}'
+    printf '%s\n' "${LANE_CLOSE_PR_QUEUE-$queue}" ;;
   *) printf '%s\n' "${LANE_CLOSE_GITHUB_STATE:-CLOSED}" ;;
 esac
 EOF
@@ -1053,11 +1068,24 @@ park_count() { grep -c -- '^stop-sandbox --item KEN-1 host=' "$HOST_CALLS" || tr
 prwatch_count() { awk 'END { print NR + 0 }' "$LANE_CLOSE_PRWATCH_CALLS"; }
 write_state running codex /host linear owner/repo; write_panes python; working_screen
 run_close "$SCRIPT" --park --pr 7
-# The order the judge and the stop run in is the call logs' order: no host
-# call precedes the reducer's answer.
-assert_eq "rc=$RC parked=$(grep -c '^lane-close: parked item=KEN-1 pr=7 head=abc123 status=parked$' <<<"$OUT" || true) view=$(grep -c '^pr view 7 --repo owner/repo --json ' "$GH_CALLS" || true) reducer=$(grep -c '^7 repo=owner/repo$' "$LANE_CLOSE_PRWATCH_CALLS" || true) stop=$(stop_count KEN-1 codex) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) park=$(park_count) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE") parked_rec=$(jq -c '.lanes[0].parked | [.pr, .head, .repo, (.at | type)]' "$STATE") order=$(awk '{ print $1 }' "$HOST_CALLS" | paste -sd, -)" \
-  'rc=0 parked=1 view=1 reducer=1 stop=1 kill=1 park=1 close=0 status=parked parked_rec=[7,"abc123","owner/repo","string"] order=stop,stop-sandbox' \
-  'a working hosted lane on an open, armed, CLEAN, silent pull request is parked: the harness stopped, the window closed, the sandbox stopped, the record parked with its pull request and head'
+# The order the judge and the stop run in is the call logs' order: the
+# provider's side-effect-free check is the first host call, the queue read
+# follows the view, and no stop precedes the reducer's answer.
+check_count() { grep -c -- '^stop-sandbox --check --item KEN-1 host=' "$HOST_CALLS" || true; }
+assert_eq "rc=$RC parked=$(grep -c '^lane-close: parked item=KEN-1 pr=7 head=abc123 status=parked$' <<<"$OUT" || true) view=$(grep -c '^pr view 7 --repo owner/repo --json ' "$GH_CALLS" || true) queue=$(grep -c '^api graphql -f query=.* -F owner=owner -F repo=repo -F number=7$' "$GH_CALLS" || true) reducer=$(grep -c '^7 repo=owner/repo$' "$LANE_CLOSE_PRWATCH_CALLS" || true) stop=$(stop_count KEN-1 codex) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) park=$(park_count) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE") parked_rec=$(jq -c '.lanes[0].parked | [.pr, .head, .repo, (.at | type)]' "$STATE") order=$(awk '{ print $1 ($2 == "--check" ? "-check" : "") }' "$HOST_CALLS" | paste -sd, -)" \
+  'rc=0 parked=1 view=1 queue=1 reducer=1 stop=1 kill=1 park=1 close=0 status=parked parked_rec=[7,"abc123","owner/repo","string"] order=stop-sandbox-check,stop,stop-sandbox' \
+  'a working hosted lane on an open, armed, CLEAN, silent pull request is parked: the provider checked, the harness stopped, the window closed, the sandbox stopped, the record parked with its pull request and head'
+
+# On a merge-queue base the arm converts to the queue entry once the checks
+# are green, so a queued pull request reads autoMergeRequest null for the whole
+# wait, and GitHub's merge state is not read for it: the queue's own admission
+# is the checks' evidence.
+QUEUED='{"data":{"repository":{"pullRequest":{"isInMergeQueue":true,"mergeQueueEntry":{"position":2}}}}}'
+QUEUED_VIEW='{"state":"OPEN","headRefOid":"abc123","headRefName":"ken-1","autoMergeRequest":null,"mergeStateStatus":"BLOCKED"}'
+write_state running codex /host linear owner/repo; write_panes python; working_screen
+LANE_CLOSE_PR_QUEUE="$QUEUED" LANE_CLOSE_PR_VIEW="$QUEUED_VIEW" run_close "$SCRIPT" --park --pr 7
+assert_eq "rc=$RC parked=$(grep -c '^lane-close: parked item=KEN-1 pr=7 head=abc123 status=parked$' <<<"$OUT" || true) park=$(park_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 parked=1 park=1 status=parked' 'a queued pull request with no auto-merge request and a BLOCKED merge state is parked on the queue entry alone'
 
 # A record naming no repository takes gh repo view's answer, and a mismatch
 # with --repo is the identity refusal every option meets.
@@ -1089,6 +1117,10 @@ for row in \
   "pr-not-open|LANE_CLOSE_PR_VIEW=$MERGED|reason=pr-not-open pr=7 state=MERGED" \
   "pr-branch-mismatch|LANE_CLOSE_PR_VIEW=$OTHER|reason=pr-branch-mismatch pr=7 branch=ken-2" \
   "pr-read-failed|LANE_CLOSE_PR_VIEW_STATUS=1|reason=pr-read-failed pr=7 repo=owner/repo" \
+  "queue-read-failed|LANE_CLOSE_PR_QUEUE_STATUS=1|reason=queue-read-failed pr=7 repo=owner/repo" \
+  "queue-unparsed|LANE_CLOSE_PR_QUEUE={\"data\":null}|reason=queue-read-failed pr=7 cause=payload-unparsed" \
+  "provider-unsupported|LANE_CLOSE_STOP_SANDBOX_CHECK_STATUS=2|reason=provider-unsupported host=/host exit=2" \
+  "check-unparsed|LANE_CLOSE_STOP_SANDBOX_CHECK_OUT=|reason=provider-unsupported host=/host cause=answer-unparsed" \
   "attention|LANE_CLOSE_PRWATCH_RC=1;LANE_CLOSE_PRWATCH_OUT=$TMP_ROOT/prwatch-out|reason=attention pr=7 kinds=threads-open,gate-stale" \
   "reducer-failed|LANE_CLOSE_PRWATCH_RC=2|reason=reducer-failed pr=7 exit=2"; do
   IFS='|' read -r name envs expect <<<"$row"
@@ -1101,6 +1133,26 @@ for row in \
 done
 # The reducer's stderr is relayed under its refusal.
 assert_eq "$(grep -c '^pr-watch: read failure$' <<<"$ERR" || true)" '1' "the reducer's own words stand above reducer-failed"
+# A provider without the pair, lane-host-ssh's absent-verb status, is known
+# before GitHub is asked: its own line stands above the refusal and no gh call
+# is made.
+write_state running codex /host linear owner/repo; write_panes python; working_screen
+LANE_CLOSE_STOP_SANDBOX_CHECK_STATUS=2 run_close "$SCRIPT" --park --pr 7
+assert_eq "rc=$RC relay=$(grep -c '^lane-host-ssh: verb-invalid verb=stop-sandbox$' <<<"$ERR" || true) gh=$(awk 'END { print NR + 0 }' "$GH_CALLS") check=$(check_count) host=$(host_call_count)" \
+  'rc=1 relay=1 gh=0 check=1 host=1' 'a provider that cannot stop a sandbox refuses the park before any GitHub read, its own words above the refusal'
+# The reducer is the one OVERSEE_WATCH_PR_WATCH names, as it is for the watch.
+mkdir -p "$TMP_ROOT/other-reducer"
+cp -- "$PR_WATCH_STUB" "$TMP_ROOT/other-reducer/pr-watch.sh"
+write_state running codex /host linear owner/repo; write_panes python; working_screen
+LANE_CLOSE_PRWATCH_RC=1 LANE_CLOSE_PRWATCH_OUT="$TMP_ROOT/prwatch-out" OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/other-reducer/pr-watch.sh" run_close "$SCRIPT" --park --pr 7
+assert_eq "rc=$RC refused=$(grep -c '^lane-close: park-refused item=KEN-1 reason=attention pr=7 ' <<<"$ERR" || true)" 'rc=1 refused=1' \
+  'the reducer OVERSEE_WATCH_PR_WATCH names is the one the judge asks'
+mv -- "$PR_WATCH_STUB" "$PR_WATCH_STUB.away"
+write_state running codex /host linear owner/repo; write_panes python; working_screen
+OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/other-reducer/pr-watch.sh" run_close "$SCRIPT" --park --pr 7
+mv -- "$PR_WATCH_STUB.away" "$PR_WATCH_STUB"
+assert_eq "rc=$RC parked=$(grep -c '^lane-close: parked item=KEN-1 ' <<<"$OUT" || true) missing=$(grep -c 'reason=reducer-missing' <<<"$ERR" || true)" 'rc=0 parked=1 missing=0' \
+  'with the sibling reducer absent, the one OVERSEE_WATCH_PR_WATCH names still parks the lane'
 # A local record has no sandbox, and a reducer that is not installed is a
 # refusal too: the gate and thread reading is its alone.
 write_state running codex '' linear owner/repo; write_panes python; working_screen
@@ -1113,11 +1165,11 @@ run_close "$SCRIPT" --park --pr 7
 mv -- "$PR_WATCH_STUB.away" "$PR_WATCH_STUB"
 assert_eq "rc=$RC refused=$(grep -c "^lane-close: park-refused item=KEN-1 reason=reducer-missing path=" <<<"$ERR" || true) stop=$(stop_count KEN-1 codex) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 refused=1 stop=0 status=running' 'a fleet without the review-gate reducer parks nothing'
-# The judge runs before the stop, so a refused park is one gh view and one
-# reducer call and no provider call at all.
+# The judge runs before the stop, so a refused park is the provider's check,
+# one gh view, one queue read, no reducer call and no stop at all.
 write_state running codex /host linear owner/repo; write_panes python; working_screen
 LANE_CLOSE_PR_VIEW="$BLOCKED" run_close "$SCRIPT" --park --pr 7
-assert_eq "host=$(host_call_count) reducer=$(prwatch_count)" 'host=0 reducer=0' 'a pull request GitHub reports blocked never reaches the reducer or the provider'
+assert_eq "check=$(check_count) host=$(host_call_count) reducer=$(prwatch_count) park=$(park_count)" 'check=1 host=1 reducer=0 park=0' 'an armed, unqueued pull request GitHub reports blocked never reaches the reducer or a stop'
 
 echo '=== a park whose sandbox stop fails records stopped, which is what stands ==='
 # The harness is gone and the window closed by then, the sandbox still up:

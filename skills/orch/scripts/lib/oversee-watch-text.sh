@@ -105,8 +105,11 @@ The long pass's events, checked and reported in this order:
   EVENT merged <PR> <branch> <repo>
                              an --item PR merged at or after --since, in any
                              --repo. A parked record's item is an --item for
-                             this check alone, and its merge runs the close
-                             below at once: nothing wakes a parked sandbox
+                             this check alone, and the merge of the pull
+                             request its record names, in that repository,
+                             runs the close below at once: nothing wakes a
+                             parked sandbox. Another pull request on the
+                             branch's name is reported and closes nothing
   EVENT triage <item>        an item created at or after --since that is absent
                              from the first repository's persisted baseline
   EVENT lane-ready <item>    a lane open-terminal handed to a background job
@@ -141,8 +144,10 @@ The long pass's events, checked and reported in this order:
                              close archived nothing. A lane exiting while its
                              worktree stands is not closed. A parked close
                              that fails is lane-close-failed on stderr with
-                             its merged row uncommitted, so the next pass
-                             reports the merge again and retries the close;
+                             its merged row put back and committed at once,
+                             so the next pass reports the merge again and
+                             retries the close, while this pass runs on to
+                             its remaining checks and exits 2 at its end;
                              lane-close-refused commits it and is never retried
   EVENT lane-close-refused <item>
                              the same close exited 3: its clone or worktree
@@ -447,8 +452,9 @@ Options:
                       its sandbox stopped by `lane-close --park` with its disk
                       kept, is one --item for the merged check alone: its
                       pane is gone and its mailbox and state are on a stopped
-                      disk, so no other check reads it, and its `merged` runs
-                      the hosted close in the same pass.
+                      disk, so no other check reads it, and the merge of the
+                      pull request its `parked` names, in that repository,
+                      runs the hosted close in the same pass.
                       The set is noted on stderr as fleet-read whenever a
                       read changes what the reader last carried, with the
                       count of records whose status is not running, so a
@@ -624,7 +630,7 @@ ow_message() { # REASON FIELD=VALUE...
     state-invalid) text='The oversee state file is not workflow-state JSON with a lanes array of records naming their item. The watch stops rather than carry a partial fleet.' ;;
     window-absent) text='tmux does not list the window. Passes carry it until one reports it gone; later passes skip it until tmux lists it again.' ;;
     sleep-failed) text='The repeat delay could not be slept. Repeat mode stops rather than run passes back to back.' ;;
-    fleet-read) text='The fleet this watch carries, as the last state read gave it; printed again when a re-read changes it. parked counts the parked records carried for the merged check alone, and dropped the records whose status is neither running nor parked, which the watch does not carry.' ;;
+    fleet-read) text='The fleet this watch carries, as the last state read gave it; printed again when a re-read changes it. dropped counts every record whose status is not running, which the watch does not carry as a lane, and parked the records among those it carries for the merged check alone.' ;;
     max-loops-invalid) text='The loop limit must be a positive integer.' ;;
     prepare-secs-invalid) text='ORCH_WATCH_PREPARE_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     tail-lines-invalid) text='ORCH_WATCH_TAIL_LINES takes a positive whole number of lines, with no leading zero.' ;;

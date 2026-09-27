@@ -2355,7 +2355,17 @@ for raw in "${ITEMS[@]}"; do
       failed=$((failed + 1))
       continue
     fi
-    ot_message host-started "item=$item" "host=$LANE_HOST"
+    # The record now says what stands: the sandbox is up and no harness runs
+    # in it, which is what stopped means, so a create that fails from here
+    # leaves a record a plain relaunch recovers, never a parked one over a
+    # running sandbox. lane_record_write rewrites it running on success.
+    if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update oversee --arg item "$wt_id" \
+        '(.lanes[] | select(.item == $item)) |= (del(.parked) | .status = "stopped")' >/dev/null; then
+      ot_message parked-record-failed "item=$item" >&2
+      failed=$((failed + 1))
+      continue
+    fi
+    ot_message host-started "item=$item" "host=$LANE_HOST" status=stopped
   fi
   host_args=(create --item "$wt_id" --repo "$repo" --harness "$HARNESS" --account "${LANE_ENV#*=}")
   [[ "$RELAUNCH" != true ]] || host_args+=(--relaunch)
