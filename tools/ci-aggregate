@@ -2,11 +2,14 @@
 # ci-aggregate — hold a required context open over the lanes a change class
 # stood down.
 #
-# `skills/harness-ci/scripts/aggregate-needs` takes one waiver and the set of
-# jobs that waiver authorizes to skip. A class selects each lane separately,
-# so each aggregate of `.github/workflows/skill-tests.yml` has its own such
-# set: exactly the lanes `tools/ci-job-set` selected `false`. This script
-# builds that set from the selections and runs the helper, which keeps each
+# `skills/harness-ci/scripts/aggregate-needs` authorizes a skip through one
+# waiver and the set of jobs it covers, or through `--lane`, which reads each
+# job's verdict from the classifier job's `lane_<name>` outputs. This
+# repository's selections come from `tools/ci-job-set` under names of its own,
+# not `lane_<name>` outputs, so each aggregate of
+# `.github/workflows/skill-tests.yml` takes the waiver route with its own set:
+# exactly the lanes `tools/ci-job-set` selected `false`. This script builds
+# that set from the selections and runs the helper, which keeps each
 # aggregate from spelling the same derivation.
 #
 # Usage:

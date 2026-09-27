@@ -263,11 +263,12 @@ tmux   tmux/*
 - **A line is a lane name and one or more globs.** A name is lowercase letters, digits, `_` and `-`, starting with a letter or digit. A lane named on several lines reads every glob they give it. A glob is a shell pattern, as the classifier's own path lists are, so `*` also matches `/`: `src/*` claims every path under `src/`.
 - **Pass the default branch's checkout as `lanes-from`.** The action reads the declaration there, never out of `repo`, because the pull request's author could edit its own copy to stand a lane down; it refuses a `lanes-from` naming the same checkout as `repo` with exit 2. A pull request that changes the declaration is therefore judged by the one already merged.
 - **The verdict** is `false` wherever `lanes` is `false`. Otherwise it is `true` where a changed path matches one of the lane's globs, and `false` where none does, with two exceptions that turn every lane on: a changed path no lane claims and the docs set does not hold, and a diff whose changed paths could not be read. A docs-set path no lane claims turns nothing on. The classify step prints one `lane:` line per lane naming the path and glob, or the cause, behind its verdict.
-- **An absent or malformed declaration publishes no verdict**, and the step still succeeds: failing it would redden every pull request, the one repairing the default branch's declaration included. The step prints a `lane-declaration:` line with the state and a `::warning` annotation. A malformed line is a name outside the set above or a lane with no glob; a file naming no lane, or one the step cannot read, is malformed too.
+- **An absent or malformed declaration publishes no verdict**, and the step still succeeds: failing it would redden every pull request, the one repairing the default branch's declaration included. The lanes and the aggregate below then fall back to `lanes` alone, as a workflow with no declaration reads it, which is also what an adopting repository gets until its declaration reaches the default branch. The step prints a `lane-declaration:` line with the state and a `::warning` annotation. A malformed line is a name outside the set above or a lane with no glob; a file naming no lane, or one the step cannot read, is malformed too.
 - **Republish the verdicts as step outputs.** A composite action publishes only the outputs it declares, so `lane_verdicts` arrives as one `lane_<name>=true|false` line per lane. A step after the action appends it to its own `$GITHUB_OUTPUT`, and the job publishes each line under its own name:
 
   ```yaml
       outputs:
+        lanes: ${{ steps.classify.outputs.lanes }}
         lane_check: ${{ steps.lanes.outputs.lane_check }}
       steps:
         # ...the classify step above, with `lanes-from: classifier`
@@ -277,15 +278,15 @@ tmux   tmux/*
           run: printf '%s\n' "$LANE_VERDICTS" >>"$GITHUB_OUTPUT"
   ```
 
-- **Each lane reads its own verdict, and runs unless it is `false`.** A lane with no verdict, because no declaration was read or the job output misspells its name, runs:
+- **Each lane reads `lanes` and its own verdict, and runs unless either is `false`.** A lane with no verdict, because no declaration was read or the job output misspells its name, is decided by `lanes` alone:
 
   ```yaml
     check:
       needs: changes
-      if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.lane_check != 'false') }}
+      if: ${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.lanes != 'false' && needs.changes.outputs.lane_check != 'false')) }}
   ```
 
-- **The aggregate authorizes each lane's skip by that lane's verdict alone.** Pass `--lane JOB=LANE` per gated job in place of `--waiver` and `--skippable`; `aggregate-needs` reads the verdict, the classifier job's `lane_<LANE>` output, out of the `--results` it was handed, and accepts the job's skip only where it is `false`. Two jobs that read one lane, a Linux and a macOS leg of one suite, each pass `--lane JOB=LANE` naming that lane.
+- **The aggregate authorizes each lane's skip by `lanes` or by that lane's own verdict.** Keep `--waiver` on `lanes == 'false'` and each gated job's `--skippable`, and add `--lane JOB=LANE` per gated job; `aggregate-needs` reads the verdict, the classifier job's `lane_<LANE>` output, out of the `--results` it was handed, and accepts the job's skip where the waiver or that verdict stood it down. A job takes one `--lane`, and a second is refused; two jobs that read one lane, a Linux and a macOS leg of one suite, each pass `--lane JOB=LANE` naming that lane.
 
 ### What each class needs, and what it costs to leave out
 
@@ -315,12 +316,12 @@ The order of this change and the ruleset change, and the check that confirms bot
 
 [`../templates/ci.yml`](../templates/ci.yml) is the workflow a repository copies to `.github/workflows/ci.yml`. The organization ruleset requires two contexts on every repository, `Review gate` and `CI`, so the template fixes the names every repository reports: the job carrying `CI`, and the classifying job `Classify the diff`. Keep both names and change the rest to fit.
 
-- **Every lane goes in this workflow.** A job can wait only on jobs in its own workflow, so a lane left in another workflow is a lane no required context holds. Replace the placeholder `test` job with the repository's lanes, one job each: declare each in `.github/ci-lanes.conf`, publish its `lane_<name>` output from the `changes` job, and give it the same `needs:` and an `if:` reading its own output. Name each lane in CI's `needs:` and each gated lane in a `--lane` of CI's aggregate step. A lane that reads a file in the docs set is the exception: it drops the verdict term, runs on every diff and stays out of `--lane`, per [§ Through the composite action](#through-the-composite-action). Copied as it stands, the placeholder fails, and `CI` fails with it.
-- **Each event runs the lanes its own diff calls for.** The template runs on `pull_request` and `merge_group`, the classifier judges each event's own diff, and every gated lane reads its own verdict on both, as [§ Per-lane verdicts](#per-lane-verdicts) sets out. The declaration is read from the `classifier` checkout, the default branch. No line of the template reads the change class. A merge queue can batch several pull requests into one merge group, so the group classifies their combined diff, and a docs-only pull request batched with a code change runs every lane the group calls for.
+- **Every lane goes in this workflow.** A job can wait only on jobs in its own workflow, so a lane left in another workflow is a lane no required context holds. Replace the placeholder `test` job with the repository's lanes, one job each: declare each in `.github/ci-lanes.conf`, publish its `lane_<name>` output from the `changes` job, and give it the same `needs:` and an `if:` reading `lanes` and its own output. Name each lane in CI's `needs:` and each gated lane in a `--skippable` and a `--lane` of CI's aggregate step. A lane that reads a file in the docs set is the exception: it drops the `lanes` and verdict terms, runs on every diff and stays out of `--skippable` and `--lane`, per [§ Through the composite action](#through-the-composite-action). Copied as it stands, the placeholder fails, and `CI` fails with it.
+- **Each event runs the lanes its own diff calls for.** The template runs on `pull_request` and `merge_group`, the classifier judges each event's own diff, and every gated lane reads `lanes` and its own verdict on both, as [§ Per-lane verdicts](#per-lane-verdicts) sets out. The declaration is read from the `classifier` checkout, the default branch. No line of the template reads the change class. A merge queue can batch several pull requests into one merge group, so the group classifies their combined diff, and a docs-only pull request batched with a code change runs every lane the group calls for.
 - **The render prerequisites are Shape 4's.** The template pins a kendex main build and reads its installer at the same sha. Move both together, to a build whose `kendex verify --json` prints a version 1 document. Neither network step fails the job, and neither does the step ahead of them that reads `harness-only` out of the default branch, which the adoption pull request and its merge group do not have yet. Without any of the three the `render` class is out of reach, and every other class is judged as usual.
-- **CI is Shape 3's aggregate.** It runs under `always()`, and `aggregate-needs` accepts a skipped lane only where the classifier succeeded and that lane's own verdict stood it down.
+- **CI is Shape 3's aggregate.** It runs under `always()`, and `aggregate-needs` accepts a skipped lane only where the classifier succeeded and `lanes` or that lane's own verdict stood it down.
 
-`tests/ci-template.test.sh` runs the template's `lanes` step, evaluates its job outputs and conditions per event and action answer, and hands its aggregate arguments to the real `aggregate-needs`.
+`tests/ci-template.test.sh` runs the template's `lanes` step, evaluates its job outputs and conditions per event and action answer, and hands its waiver and aggregate arguments to the real `aggregate-needs`.
 
 ## Verifying an adoption
 

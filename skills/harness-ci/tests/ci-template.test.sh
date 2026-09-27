@@ -13,16 +13,17 @@
 #   1. the names: one job named CI, the classifier named `Classify the diff`,
 #      both gated events under `on:`, and CI needing every other job.
 #   2. the job set: per event and action answer, which lanes run. A lane
-#      runs where its verdict is true or absent and stands down where it is
-#      false, both events read the verdicts the same way, a dead classifier
+#      stands down where `lanes` or its own verdict is false, an absent
+#      verdict leaves `lanes` deciding, both events read the answers the
+#      same way, a dead classifier
 #      runs every lane, the declaration is read from the default branch's
 #      checkout and never the judged one, and no line of the template reads
 #      the change class.
-#   3. the aggregate: the `--lane` arguments the template passes, fed to
-#      aggregate-needs with the needs the template's own outputs make,
-#      accept a skipped lane only where the classifier succeeded and the
-#      lane's verdict was false, and CI runs on both events whatever its
-#      needs did.
+#   3. the aggregate: the waiver and the `--skippable` and `--lane`
+#      arguments the template passes, fed to aggregate-needs with the needs
+#      the template's own outputs make, accept a skipped lane only where the
+#      classifier succeeded and `lanes` or the lane's verdict was false, and
+#      CI runs on both events whatever its needs did.
 #   4. the copy: every expression closes on its line and every script path
 #      it names is one this package ships.
 #   5. the steps the classifier can live without: the render-reach, kendex
@@ -30,8 +31,9 @@
 #      not, so a repository whose default branch does not yet carry this
 #      package still classifies, with the `render` class out of reach.
 # Must-fail arms plant a lane condition without its status function, one
-# running only on a true verdict, a lane output forwarding the action's
-# `lanes` in place of the lane's own verdict, one reading the class, a
+# running only on a true verdict, one without its `lanes` term, CI without
+# the waiver, a lane output forwarding the action's `lanes` in place of the
+# lane's own verdict, one reading the class, a
 # declaration read from the judged checkout, CI without always(), a
 # template without merge_group, a render-reach step that fails the job, and
 # an evaluator that refuses every expression.
@@ -152,8 +154,9 @@ assert_eq "CI needs every other job" \
 # The standard rows at lanes=false are a docs-only diff past the trivial
 # ceiling, the answer a template reading the class would get wrong; the
 # lanes=true row with a false verdict is a diff that reaches no path the
-# lane reads, the answer a template reading `lanes` would get wrong. An
-# empty verdict list is a declaration the action did not read. Each
+# lane reads, the answer a template reading `lanes` alone would get wrong.
+# An empty verdict list is a declaration the action did not read, where
+# `lanes` alone decides. Each
 # pull_request row has a merge_group twin with the same answer, so both
 # events read the verdicts the same way.
 job_rows=0
@@ -167,7 +170,8 @@ merge_group|false|lane_test=false|standard|none
 merge_group|true|lane_test=false|standard|none
 merge_group|true|lane_test=true|micro|test
 merge_group|true||standard|test
-merge_group|false||standard|test
+merge_group|false||standard|none
+pull_request|false||standard|none
 pull_request|false|lane_test=false|standard|none
 pull_request|true|lane_test=false|standard|none
 pull_request|true|lane_test=true|standard|test
@@ -215,40 +219,63 @@ assert_eq "no line of the template reads the change class" "" "$(class_reads "$T
 # --- 3. The aggregate -------------------------------------------------------
 
 # The aggregate step's arguments after its RESULTS, one per line, read out
-# of the step as the shell would split them.
-aggregate_args="$(awk '/aggregate-needs$/ { on = 1; next } on && !/^          / { exit } on { print }' "$TEMPLATE" |
-  tr ' ' '\n' | grep -v '^$' | grep -vxF -- '--results' | grep -vxF -- '"$RESULTS"')"
-[ -n "$aggregate_args" ] || { echo "no aggregate-needs arguments read out of $TEMPLATE" >&2; exit 1; }
+# of the step as the shell would split them, "$WAIVER" still unexpanded.
+aggregate_args() { # TEMPLATE
+  awk '/aggregate-needs$/ { on = 1; next } on && !/^          / { exit } on { print }' "$1" |
+    tr ' ' '\n' | grep -v '^$' | grep -vxF -- '--results' | grep -vxF -- '"$RESULTS"' || true
+}
+ARGS="$(aggregate_args "$TEMPLATE")"
+[ -n "$ARGS" ] || { echo "no aggregate-needs arguments read out of $TEMPLATE" >&2; exit 1; }
 assert_eq "every lane is one its own verdict may stand down" "$LANES" \
-  "$(printf '%s\n' "$aggregate_args" | sed -n 's/^\([a-z0-9_-]*\)=\1$/\1/p' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+  "$(printf '%s\n' "$ARGS" | sed -n 's/^\([a-z0-9_-]*\)=\1$/\1/p' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+assert_eq "every lane is one the waiver may stand down" "$LANES" \
+  "$(printf '%s\n' "$ARGS" | awk 'prev == "--skippable" { print } { prev = $0 }' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
 
-# CLASSIFIER RESULT|LANE VERDICTS|LANE RESULT|EXIT
-# A classifier that did not succeed publishes no outputs. A lanes=false
-# action answers every verdict false; the rows vary only the verdicts.
-aggregate_rows=0
-while IFS='|' read -r classifier verdicts lane_result expected; do
-  aggregate_rows=$((aggregate_rows + 1))
-  outputs='{}'
-  [ "$classifier" != success ] ||
-    outputs="$(job_outputs "$TEMPLATE" true "$verdicts" standard)" ||
-      { echo "the changes job's outputs did not evaluate" >&2; exit 1; }
-  results="$(jq -cn --arg c "$classifier" --argjson o "$outputs" --arg r "$lane_result" --arg lanes "$LANES" \
+# The exit status of TEMPLATE's aggregate step for a classifier at RESULT
+# whose action answered LANES and VERDICTS, every lane at LANE_RESULT: the
+# needs the template's own outputs make, its WAIVER evaluated on them, and
+# its arguments handed to the real aggregate-needs.
+aggregate_exit() { # TEMPLATE RESULT LANES VERDICTS LANE_RESULT
+  local wf="$1" outputs='{}' waiver_expr waiver results status=0 arg
+  if [ "$2" = success ]; then
+    outputs="$(job_outputs "$1" "$3" "$4" standard)" ||
+      { printf 'job-outputs-refused'; return 0; }
+  fi
+  waiver_expr="$(sed -n 's/^          WAIVER: \${{ \(.*\) }}$/\1/p' "$1")"
+  waiver=""
+  [ -z "$waiver_expr" ] ||
+    waiver="$(gh_eval value "$(jq -cn --argjson o "$outputs" '{needs: {changes: {outputs: $o}}}')" "$waiver_expr")"
+  results="$(jq -cn --arg c "$2" --argjson o "$outputs" --arg r "$5" --arg lanes "$LANES" \
     '{changes: {result: $c, outputs: $o}} + ($lanes | split(" ") | map({key: ., value: {result: $r}}) | from_entries)')"
-  # shellcheck disable=SC2046 # the arguments are the step's own words
-  set -- $(printf '%s\n' "$aggregate_args")
-  status=0
+  set --
+  while IFS= read -r arg; do
+    [ "$arg" != '"$WAIVER"' ] || arg="$waiver"
+    set -- "$@" "$arg"
+  done <<<"$(aggregate_args "$wf")"
   "$AGGREGATE_NEEDS" --results "$results" "$@" >/dev/null 2>&1 || status=$?
-  assert_eq "CI with its classifier at $classifier answering verdicts=$verdicts and its lanes $lane_result exits $expected" \
-    "$expected" "$status"
+  printf '%s' "$status"
+}
+
+# CLASSIFIER RESULT|ACTION'S LANES|LANE VERDICTS|LANE RESULT|EXIT
+# A classifier that did not succeed publishes no outputs. The lanes=false
+# row with no verdict is a docs-only diff before the default branch carries
+# a declaration, which the waiver alone stands down.
+aggregate_rows=0
+while IFS='|' read -r classifier lanes verdicts lane_result expected; do
+  aggregate_rows=$((aggregate_rows + 1))
+  assert_eq "CI with its classifier at $classifier answering lanes=$lanes verdicts=$verdicts and its lanes $lane_result exits $expected" \
+    "$expected" "$(aggregate_exit "$TEMPLATE" "$classifier" "$lanes" "$verdicts" "$lane_result")"
 done <<'ROWS'
-success|lane_test=false|skipped|0
-success|lane_test=true|skipped|1
-success|lane_test=true|success|0
-success||skipped|1
-success||success|0
-success|lane_test=false|failure|1
-failure||skipped|1
-failure||success|1
+success|true|lane_test=false|skipped|0
+success|true|lane_test=true|skipped|1
+success|true|lane_test=true|success|0
+success|true||skipped|1
+success|true||success|0
+success|false||skipped|0
+success|false|lane_test=false|skipped|0
+success|true|lane_test=false|failure|1
+failure|||skipped|1
+failure|||success|1
 ROWS
 require_rows aggregate "$aggregate_rows"
 
@@ -317,6 +344,16 @@ assert_eq "must-fail: a lane without its status function stands down under a dea
 plant "$TEMPLATE" "needs.changes.outputs.lane_test != 'false'" "needs.changes.outputs.lane_test == 'true'" "$SANDBOX/true-only.yml"
 assert_eq "must-fail: a lane running only on a true verdict stands down with no declaration read" "none" \
   "$(running "$SANDBOX/true-only.yml" pull_request success true "" standard)"
+
+# A lane that drops its `lanes` term runs on a docs-only diff wherever the
+# default branch carries no declaration, and CI without the waiver refuses
+# the skip that diff earns.
+plant "$TEMPLATE" "needs.changes.outputs.lanes != 'false' && " "" "$SANDBOX/no-lanes-term.yml"
+assert_eq "must-fail: a lane without its lanes term runs on a docs-only diff with no declaration read" "test" \
+  "$(running "$SANDBOX/no-lanes-term.yml" pull_request success false "" standard)"
+plant "$TEMPLATE" "--skippable test --lane test=test" "--lane test=test" "$SANDBOX/no-waiver.yml"
+assert_eq "must-fail: CI without the waiver refuses a docs-only skip with no declaration read" "1" \
+  "$(aggregate_exit "$SANDBOX/no-waiver.yml" success false "" skipped)"
 
 # A lane output forwarding the action's one `lanes` runs the lane on a diff
 # that reaches no path it reads.

@@ -30,10 +30,12 @@
 #   5. the lane verdicts: one lane reached, two lanes reached, a lane named
 #      on two lines, an unclaimed path outside the docs set and one inside
 #      it, a docs path a lane claims, lanes=false, no changed path, and an
-#      absent and three malformed declarations, each row asserting the
-#      verdict lines and the declaration's state; the judged tree carries a
-#      declaration of its own that no row may read. One mutant copy per
-#      rule must fail the row the rule decides.
+#      absent and five malformed declarations, one with a valid lane ahead
+#      of the bad line and one whose name starts with `-`, each row
+#      asserting the verdict lines and the declaration's state; the judged
+#      tree carries a declaration of its own that no row may read, and
+#      every run starts in a directory holding files the globs would expand
+#      to. One mutant copy per rule must fail the row the rule decides.
 set -euo pipefail
 
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -100,6 +102,17 @@ OUT="$TMP/github-output"
 LOG="$TMP/stub-log"
 mkdir -p "$TMP/subject"
 
+# Every run starts in a directory the suite owns, holding a file each of
+# `good`'s globs would expand to: a declaration or a glob list split with
+# pathname expansion on would read `src/decoy.rs` where the declaration
+# says `src/*`, and src/main.rs would reach no lane.
+CWD="$TMP/cwd"
+mkdir -p "$CWD/src" "$CWD/tmux" "$CWD/tests" "$CWD/docs"
+: >"$CWD/src/decoy.rs"
+: >"$CWD/tmux/decoy.conf"
+: >"$CWD/tests/decoy.rs"
+: >"$CWD/docs/decoy.md"
+
 # The lane declarations, one checkout root each. `good` names `check` on two
 # lines and carries a comment that would claim src/* for tmux if it were read
 # as globs. The judged tree carries one of its own, which reaches every path:
@@ -122,6 +135,12 @@ declare_lanes no-globs 'check
 '
 declare_lanes no-lanes '# nothing declared
 '
+declare_lanes bad-after-good 'check src/*
+Bad x
+'
+declare_lanes bad-leading 'check src/*
+-check tests/*
+'
 mkdir -p "$TMP/decl/absent" "$TMP/subject/.github"
 printf 'evil *\n' >"$TMP/subject/.github/ci-lanes.conf"
 
@@ -133,10 +152,10 @@ run() { # SCRIPT [NAME=VALUE]...
   shift
   : >"$OUT"
   : >"$LOG"
-  env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMP" \
+  (cd "$CWD" && env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMP" \
     CLASSIFIER="$STUBS" EVENT=pull_request BASE=b0 HEAD=h1 REPO="$TMP/subject" \
     GITHUB_OUTPUT="$OUT" STUB_LOG="$LOG" STUB_CLASS=standard STUB_DOCS=false \
-    "$@" bash "$script" >"$TMP/stdout" 2>"$TMP/err" || status=$?
+    "$@" bash "$script" >"$TMP/stdout" 2>"$TMP/err") || status=$?
   printf '%s' "$status"
 }
 
@@ -376,7 +395,9 @@ fi
 
 # ROW|DECLARATION|CLASS|DOCS|PATHS|PATHS OUTSIDE THE DOCS SET|EXPECTED
 # EXPECTED is the lane_verdicts value, its lines joined with commas, and the
-# declaration's state and cause off the step's `lane-declaration:` line.
+# declaration's state and cause off the step's `lane-declaration:` line. The
+# bad-after-good row is a docs-only diff, where every lane read before the
+# malformed line would publish false if it were kept.
 lane_rows() {
   cat <<'ROWS'
 one-lane|good|standard|false|src/main.rs|src/main.rs|lane_verdicts=lane_check=true,lane_tmux=false,lane_docs-build=false state=read
@@ -392,6 +413,8 @@ absent|absent|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=absent
 bad-name|bad-name|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=malformed cause=bad-name line=2 name=Check
 no-globs|no-globs|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=malformed cause=no-globs line=1 lane=check
 no-lanes|no-lanes|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=malformed cause=no-lanes
+bad-after-good|bad-after-good|standard|true|docs/guide.md||lane_verdicts= state=malformed cause=bad-name line=2 name=Bad
+bad-leading|bad-leading|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=malformed cause=bad-name line=2 name=-check
 ROWS
 }
 
@@ -426,7 +449,7 @@ while IFS='|' read -r name decl class docs paths outside expected; do
   rows=$((rows + 1))
   check "lane row $name" "$expected" "$(lane_answer "$CLASSIFY" "$name")"
 done < <(lane_rows)
-[ "$rows" -eq 13 ] || { echo "the lane table read $rows rows" >&2; exit 1; }
+[ "$rows" -eq 15 ] || { echo "the lane table read $rows rows" >&2; exit 1; }
 
 # GitHub reads a `::warning` line off the step's stdout; a declaration the
 # step could not use says so there, and one it read says nothing.
@@ -468,10 +491,14 @@ declaration="$lanes_root/.github/ci-lanes.conf"@declaration="$judged_root/.githu
     if [ "$claimed" = false ] && [ -z "$every" ] && outside_docs "$path"; then@    if false; then@unclaimed
  && outside_docs "$path"; then@ && true; then@unclaimed-docs
     every="cause=no-changed-paths"@    every=""@no-paths
+    lane_state="malformed" lane_count=0@    lane_state="malformed"@bad-after-good
+      [!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!@      *[!@bad-leading
+    set -f@    :@one-lane
+  set -f; for glob in@  for glob in@one-lane
     lane=false lane_cause="cause=lanes-false lanes_cause=$lanes_cause"@    lane=true lane_cause="cause=lanes-false lanes_cause=$lanes_cause"@docs-only
     lane=false lane_cause="cause=unreached"@    lane=true lane_cause="cause=unreached"@one-lane
 ROWS
-[ "$mutants" -eq 11 ] || { echo "the lane mutant table read $mutants rows" >&2; exit 1; }
+[ "$mutants" -eq 15 ] || { echo "the lane mutant table read $mutants rows" >&2; exit 1; }
 
 # The refusal of a lanes-from naming the judged tree, planted away.
 needle='[ "$lanes_root" != "$judged_root" ] ||'

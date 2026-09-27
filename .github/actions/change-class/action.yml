@@ -8,8 +8,9 @@ description: >-
 # as `vanillagreencom/kendex/.github/actions/change-class@main` and gets this
 # repository's classifier against its own checkout, so a fix to the classifier
 # reaches every consumer with no consumer pull request. So does a change to
-# which diffs run the lanes: a workflow gates its lanes on the `lanes` output
-# and names no class. This repository references it by path, and passes
+# which diffs run the lanes: a workflow gates its lanes on the `lanes` output,
+# and each lane it declares on that lane's `lane_verdicts` line as well, and
+# names no class. This repository references it by path, and passes
 # `classifier:` a separate default-branch checkout, so the wrapper under test
 # is the pull request's while the classification that decides which lanes may
 # skip is the default branch's.
@@ -76,8 +77,9 @@ outputs:
   lanes:
     description: >-
       true where the diff runs the workflow's lanes, false where it runs
-      none: a render or trivial class, or docs_only=true at any class. The
-      one output a lane condition and an aggregate's waiver read. A failed
+      none: a render or trivial class, or docs_only=true at any class. What
+      a lane condition and an aggregate's waiver read, beside each lane's own
+      lane_verdicts line where the workflow declares its lanes. A failed
       step publishes none, and a lane condition that runs the lanes when the
       classifying job did not succeed reads that as every lane running.
     value: ${{ steps.classify.outputs.lanes }}
@@ -91,9 +93,9 @@ outputs:
       One lane_<name>=true|false line per lane the declaration names: false
       wherever lanes is false; otherwise true where a changed path matches
       one of the lane's globs, true for every lane where a changed path no
-      lane claims is outside the docs set, and false everywhere else. Empty
-      where no declaration was read, which a lane condition reads as the
-      lane running. A workflow republishes the lines as step outputs of its
+      lane claims is outside the docs set or where no changed path was read,
+      and false everywhere else. Empty where no declaration was read, which
+      a lane condition reads as its `lanes` term alone deciding. A workflow republishes the lines as step outputs of its
       own, since a composite action publishes only the outputs it declares.
     value: ${{ steps.classify.outputs.lane_verdicts }}
   changed_skills:

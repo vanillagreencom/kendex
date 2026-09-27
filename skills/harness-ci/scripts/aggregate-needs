@@ -13,13 +13,16 @@
 #   --lane JOB=LANE  the lane's own verdict, the classifier job's output
 #                    `lane_<LANE>` read out of RESULTS, is false. A verdict
 #                    that is absent, as it is where no lane declaration was
-#                    read, authorizes nothing.
+#                    read, authorizes nothing. A JOB takes one --lane.
 # At least one --skippable or --lane is required, and --waiver is required
 # with --skippable.
 #
 # Exit 0 on acceptance, 1 when a dependency result is not accepted, and 2 on
 # invalid arguments or JSON. Every diagnostic starts with `aggregate-needs:`.
-# A dependency rejection reports the classifier name and waiver value.
+# A rejection prints `rejected classifier=<job>`, with ` waiver=<value>` where
+# --waiver was given, then one `unaccepted job=<job> result=<result>` line per
+# job it did not accept, the classifier included, carrying ` lane=<lane>
+# verdict=<value|absent>` for a --lane job.
 set -euo pipefail
 
 results=""
@@ -79,6 +82,11 @@ $2"
         *=*) ;;
         *) die "invalid-arguments=invalid-lane value=$2" "--lane takes JOB=LANE" ;;
       esac
+      while IFS= read -r seen; do
+        [ "${seen%%=*}" != "${2%%=*}" ] ||
+          die "invalid-arguments=duplicate-lane job=${2%%=*}" \
+            "job '${2%%=*}' takes one --lane"
+      done <<<"$lanes"
       lanes="${lanes:+$lanes
 }$2"
       shift 2
@@ -111,29 +119,41 @@ if ! printf '%s\n' "$results" | jq -e '
   die "invalid-results=json" "--results must be a non-empty needs object"
 fi
 
-if printf '%s\n' "$results" | jq -e \
+# One line per job not accepted: the classifier unless it succeeded, then
+# every other job neither successful nor a skip a verdict authorized.
+unaccepted="$(printf '%s\n' "$results" | jq -r \
   --arg classifier "$classifier" \
   --arg waiver "$waiver" \
   --arg skippable "$skippable" \
   --arg lanes "$lanes" '
     .[$classifier] as $verdicts |
     ($lanes | split("\n") | map(select(. != "") | split("=") | {key: .[0], value: .[1]}) | from_entries) as $lane_of |
-    .[$classifier].result == "success" and
-    all(to_entries[];
+    (if .[$classifier].result == "success" then empty
+     else "job=\($classifier) result=\(.[$classifier].result // "absent")" end),
+    (to_entries[] | select(.key != $classifier) |
       . as $entry |
-      $entry.value.result == "success" or
-      ($entry.value.result == "skipped" and (
-        ($waiver == "true" and
-         ($skippable | split("\n") | index($entry.key)) != null) or
-        ($lane_of[$entry.key] != null and
-         $verdicts.outputs["lane_\($lane_of[$entry.key])"] == "false")
-      ))
-    )
-  ' >/dev/null; then
+      select((
+        $entry.value.result == "success" or
+        ($entry.value.result == "skipped" and (
+          ($waiver == "true" and
+           ($skippable | split("\n") | index($entry.key)) != null) or
+          ($lane_of[$entry.key] != null and
+           $verdicts.outputs["lane_\($lane_of[$entry.key])"] == "false")
+        ))
+      ) | not) |
+      "job=\($entry.key) result=\($entry.value.result)" +
+      (if $lane_of[$entry.key] == null then ""
+       else " lane=\($lane_of[$entry.key]) verdict=\($verdicts.outputs["lane_\($lane_of[$entry.key])"] // "absent")" end))
+  ')" || die "invalid-results=unreadable" "the needs object could not be judged"
+
+if [ -z "$unaccepted" ]; then
   echo "aggregate-needs: accepted"
   exit 0
 fi
 
-printf 'aggregate-needs: rejected classifier=%s waiver=%s\n' \
-  "$classifier" "$waiver" >&2
+printf 'aggregate-needs: rejected classifier=%s%s\n' \
+  "$classifier" "${waiver:+ waiver=$waiver}" >&2
+while IFS= read -r line; do
+  printf 'aggregate-needs: unaccepted %s\n' "$line" >&2
+done <<<"$unaccepted"
 exit 1
