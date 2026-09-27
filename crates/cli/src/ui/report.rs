@@ -59,17 +59,20 @@ impl Style {
         }
     }
 
-    /// Detail under a report row carrying a status glyph, retaining the
-    /// script's prefix.
-    pub fn report_marked(
+    /// Another program's line under a report row, spaces and all: a diff
+    /// line, a parser's diagram. The one door such text takes, so no verb
+    /// hands it over as prose to be re-spaced. A status puts its glyph in
+    /// front rich; without one the line is muted, and an empty line is
+    /// the indent alone.
+    pub fn report_verbatim(
         &self,
-        status: Status,
-        spans: &[Span<'_>],
+        status: Option<Status>,
+        text: &str,
         prefix: &'static str,
     ) -> Vec<String> {
         match self.look {
-            Look::Plain => vec![format!("{prefix}{}", Escaped::from(spans).joined())],
-            Look::Rich { .. } => self.detail(Some(status), spans),
+            Look::Plain => vec![format!("{prefix}{}", escaped(text))],
+            Look::Rich { .. } => self.detail(status, &[Span::Verbatim(text)]),
         }
     }
 
@@ -325,13 +328,19 @@ mod tests {
             ["  <36>•</> SKILL.md +1 -1"]
         );
         assert_eq!(
-            plain().report_marked(Status::Done, &[Span::Verbatim("+  a  b")], ""),
+            plain().report_verbatim(Some(Status::Done), "+  a  b", ""),
             ["+  a  b"]
         );
         assert_eq!(
-            tagged(&rich(80).report_marked(Status::Done, &[Span::Verbatim("+  a  b")], "")),
+            tagged(&rich(80).report_verbatim(Some(Status::Done), "+  a  b", "")),
             ["    <32>✓</> +  a  b"]
         );
+        assert_eq!(
+            tagged(&rich(80).report_verbatim(None, "  |     ^", "")),
+            ["    <90>  |     ^</>"]
+        );
+        assert_eq!(rich(80).report_verbatim(None, "", ""), ["    "]);
+        assert_eq!(plain().report_verbatim(None, "", ""), [""]);
         assert_eq!(
             plain().report_totals("changes", 2, Status::Done, "+1 -1"),
             (vec!["+1 -1".to_owned()], vec![])
@@ -350,25 +359,37 @@ mod tests {
                 "reviewer".to_owned(),
                 "7 bytes".to_owned(),
             ],
+            vec!["hook".to_owned(), "界".repeat(9), "1 bytes".to_owned()],
         ];
         let headers = ["kind", "name", "size"];
+        // Plain pads by characters: the nine-character name sets its
+        // column at nine, not at its twenty-seven bytes or eighteen cells.
         assert_eq!(
             plain().report_table("packages", &headers, &rows, PlainColumns::Padded),
-            ["skill  tidy      42 bytes", "agent  reviewer  7 bytes"]
+            [
+                "skill  tidy       42 bytes",
+                "agent  reviewer   7 bytes",
+                "hook   界界界界界界界界界  1 bytes"
+            ]
         );
         assert_eq!(
             plain().report_table("packages", &headers, &rows, PlainColumns::Joined),
-            ["skill  tidy  42 bytes", "agent  reviewer  7 bytes"]
+            [
+                "skill  tidy  42 bytes",
+                "agent  reviewer  7 bytes",
+                "hook  界界界界界界界界界  1 bytes"
+            ]
         );
         assert_eq!(
             tagged(&rich(80).report_table("packages", &headers, &rows, PlainColumns::Joined)),
             [
                 "",
-                "<1;36>packages</>  <90>2</>",
-                "  <1;90>kind</>   <1;90>name</>      <1;90>size</>",
-                "  <90>─────────────────────────</>",
-                "  skill  tidy      42 bytes",
-                "  agent  reviewer  7 bytes",
+                "<1;36>packages</>  <90>3</>",
+                "  <1;90>kind</>   <1;90>name</>                <1;90>size</>",
+                "  <90>───────────────────────────────────</>",
+                "  skill  tidy                42 bytes",
+                "  agent  reviewer            7 bytes",
+                "  hook   界界界界界界界界界  1 bytes",
             ]
         );
     }

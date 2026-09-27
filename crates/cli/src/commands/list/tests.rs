@@ -53,6 +53,19 @@ fn inspection_list_wraps_long_names_without_losing_content() {
         "{drawn:?}"
     );
     assert_eq!(drawn.join("").matches('界').count(), 90);
+    // Only the widest column narrows: every short cell stays whole on one
+    // line, and each line of the row carries a piece of the name.
+    for cell in ["skill", "claude", "global", "switched off"] {
+        assert_eq!(
+            drawn.iter().filter(|line| line.contains(cell)).count(),
+            1,
+            "{cell}: {drawn:?}"
+        );
+    }
+    assert!(
+        drawn.iter().skip(4).all(|line| line.contains('界')),
+        "{drawn:?}"
+    );
     assert!(
         listing(&plain(), &rows)
             .iter()

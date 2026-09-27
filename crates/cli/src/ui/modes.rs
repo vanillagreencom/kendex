@@ -181,14 +181,18 @@ pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String>
             Span::Prose(text) => (*text, false),
             Span::Command(text) => (*text, true),
             Span::Verbatim(text) => {
-                for c in text.chars() {
-                    let used = cells(&line);
-                    if used > 0 && used + cells(c.encode_utf8(&mut [0; 4])) > room {
-                        lines.push(std::mem::take(&mut line));
-                        room = rest.max(1);
+                // The space a prose span left pending is the prose's own;
+                // the verbatim text's spaces are its content.
+                if spaced && !line.is_empty() {
+                    match cells(&line) + 1 > room {
+                        true => {
+                            lines.push(std::mem::take(&mut line));
+                            room = rest.max(1);
+                        }
+                        false => line.push(' '),
                     }
-                    line.push(c);
                 }
+                push_cells(&mut line, &mut lines, &mut room, rest, text);
                 spaced = false;
                 continue;
             }
@@ -215,14 +219,7 @@ pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String>
                 line.push_str(piece);
                 continue;
             }
-            for c in piece.chars() {
-                let used = cells(&line);
-                if used > 0 && used + cells(c.encode_utf8(&mut [0; 4])) > room {
-                    lines.push(std::mem::take(&mut line));
-                    room = rest.max(1);
-                }
-                line.push(c);
-            }
+            push_cells(&mut line, &mut lines, &mut room, rest, piece);
         }
         spaced |= !whole && text.ends_with(' ');
     }
@@ -230,6 +227,26 @@ pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String>
         lines.push(line);
     }
     lines
+}
+
+/// `text` onto `line` a character at a time, ending the line where the
+/// next character would pass its room: the one rule for breaking text by
+/// cells, for a word wider than its room and for verbatim text alike.
+fn push_cells(
+    line: &mut String,
+    lines: &mut Vec<String>,
+    room: &mut usize,
+    rest: usize,
+    text: &str,
+) {
+    for c in text.chars() {
+        let used = cells(line);
+        if used > 0 && used + cells(c.encode_utf8(&mut [0; 4])) > *room {
+            lines.push(std::mem::take(line));
+            *room = rest.max(1);
+        }
+        line.push(c);
+    }
 }
 
 /// Terminal cells, escape sequences not counted.
@@ -356,6 +373,10 @@ mod tests {
         assert_eq!(
             wrap(&[Span::Verbatim("  - nested  item")], 6, 6),
             ["  - ne", "sted  ", "item"]
+        );
+        assert_eq!(
+            wrap(&[Span::Prose("error: "), Span::Verbatim("  |  ^")], 80, 80),
+            ["error:   |  ^"]
         );
         assert_eq!(prose(""), Vec::<String>::new());
         for line in wrap(&[Span::Prose("a b cc ddd eeee fffff gggggg ✓✓✓✓✓")], 5, 4)

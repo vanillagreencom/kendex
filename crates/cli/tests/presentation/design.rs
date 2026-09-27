@@ -33,55 +33,115 @@ fn check(at: &Fixture, ui: &str, extra: &[(&str, &str)]) -> (String, String) {
     inspection(at, &["check", "--scope", "project"], ui, extra)
 }
 
-#[allow(clippy::expect_used)]
 fn inspection(at: &Fixture, args: &[&str], ui: &str, extra: &[(&str, &str)]) -> (String, String) {
-    let mut run = Command::new(env!("CARGO_BIN_EXE_kendex"));
-    run.args(args)
-        .current_dir(&at.project)
-        .env_clear()
-        .envs(test_util::fixture_env(&at.home))
-        .env("KENDEX_BACKGROUND_REFRESH", "off")
-        .env("KENDEX_UI", ui)
-        .env("LANG", "C.UTF-8")
-        .env("PATH", std::env::var("PATH").unwrap_or_default());
-    for (name, value) in extra {
-        run.env(name, value);
-    }
-    let output = run.output().expect("kendex binary runs");
+    let output = ran(at, args, ui, extra);
     (
         String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
     )
 }
 
-#[test]
-fn inspection_verbs_respect_no_color_and_terminal_width() {
-    let at = fixture();
-    let verbs: &[&[&str]] = &[
-        &["list", "--scope", "project"],
-        &["show", "skill", "commit-guards"],
-        &["show", "skill", "commit-guards", "--files"],
-        &["updates", "--scope", "project"],
-        &["verify", "--scope", "project"],
-        &["diff", "skill", "commit-guards", "--from", "installed"],
-    ];
-    for args in verbs {
-        let piped = inspection(&at, args, "auto", &[]);
+/// The binary over the fixture. Git shorthands resolve under the fixture
+/// home, where a fixture with a git-backed source keeps its upstream.
+#[allow(clippy::expect_used)]
+fn ran(at: &Fixture, args: &[&str], ui: &str, extra: &[(&str, &str)]) -> Output {
+    let mut run = Command::new(env!("CARGO_BIN_EXE_kendex"));
+    run.args(args)
+        .current_dir(&at.project)
+        .env_clear()
+        .envs(test_util::fixture_env(&at.home))
+        .env("KENDEX_BACKGROUND_REFRESH", "off")
+        .env(
+            "KENDEX_GIT_BASE",
+            format!("file://{}/git", at.home.display()),
+        )
+        .env("KENDEX_UI", ui)
+        .env("LANG", "C.UTF-8")
+        .env("PATH", std::env::var("PATH").unwrap_or_default());
+    for (name, value) in extra {
+        run.env(name, value);
+    }
+    run.output().expect("kendex binary runs")
+}
+
+/// A project on a git-backed catalog that has moved since the install:
+/// `show` has a repository to link, `updates` a newer version to name, and
+/// `diff` a hunk between the upstream commit it returns and the installed
+/// copy.
+#[allow(clippy::unwrap_used)]
+fn moved_upstream() -> (Fixture, String) {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let upstream = home.join("git/owner/catalog");
+    let skill = |body: &str| {
+        fs::create_dir_all(upstream.join("skills/gh")).unwrap();
+        fs::write(
+            upstream.join("skills/gh/SKILL.md"),
+            format!("---\nname: gh\ndescription: github flows\n---\n{body}"),
+        )
+        .unwrap();
+    };
+    skill("Upstream v1.\n");
+    test_util::git(&upstream, &["init", "--quiet", "-b", "main"]);
+    test_util::git(&upstream, &["add", "."]);
+    test_util::git(&upstream, &["commit", "--quiet", "-m", "one"]);
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 6\n\n[sources.cat]\nrepo = \"owner/catalog\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"cat\"\n",
+    )
+    .unwrap();
+    let at = Fixture {
+        home,
+        project,
+        _tmp: tmp,
+    };
+    let installed = ran(
+        &at,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+        "plain",
+        &[],
+    );
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    skill("Upstream v2.\n  - nested  item\n");
+    test_util::git(&upstream, &["commit", "--quiet", "-am", "two"]);
+    let second = test_util::git(&upstream, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    (at, second)
+}
+
+/// Every converted verb, rich against plain: `NO_COLOR` and `TERM=dumb`
+/// print what a pipe gets, the rich run stays within 80 cells, and each
+/// verb's report reaches past its header to the row `marker` names, so
+/// the comparison is over a report and not over the header alone.
+fn sweep(at: &Fixture, verbs: &[(&[&str], &str)]) {
+    for (args, marker) in verbs {
+        let piped = inspection(at, args, "auto", &[]);
         assert!(!piped.1.is_empty(), "empty report: {args:?}");
         assert_eq!(
-            inspection(&at, args, "pretty", &[("NO_COLOR", "1")]),
+            inspection(at, args, "pretty", &[("NO_COLOR", "1")]),
             piped,
             "{args:?}"
         );
         assert_eq!(
-            inspection(&at, args, "pretty", &[("TERM", "dumb")]),
+            inspection(at, args, "pretty", &[("TERM", "dumb")]),
             piped,
             "{args:?}"
         );
-        let rich = inspection(&at, args, "pretty", &[("COLUMNS", "80")]);
+        let rich = inspection(at, args, "pretty", &[("COLUMNS", "80")]);
         assert!(
             rich.1.contains('\u{1b}') && rich != piped,
             "no rich report: {args:?} {rich:?}"
+        );
+        assert!(
+            rich.1.lines().skip(1).any(|line| line.contains(marker)),
+            "the report drew no row past the header: {args:?} {rich:?}"
         );
         for line in rich.1.lines() {
             assert!(
@@ -91,6 +151,35 @@ fn inspection_verbs_respect_no_color_and_terminal_width() {
         }
         assert!(rich.0.is_empty(), "human report reached stdout: {args:?}");
     }
+}
+
+#[test]
+fn inspection_verbs_respect_no_color_and_terminal_width() {
+    let at = fixture();
+    sweep(
+        &at,
+        &[
+            (&["list", "--scope", "project"], "commit-guards"),
+            (&["show", "skill", "commit-guards", "--files"], "SKILL.md"),
+            (&["verify", "--scope", "project"], "skill commit-guards"),
+        ],
+    );
+}
+
+/// The reports the blocked fixture never reaches: a repository link, a
+/// change row with its detail, and a hunk with an indented line.
+#[test]
+#[cfg(unix)]
+fn inspection_reports_with_rows_respect_no_color_and_terminal_width() {
+    let (at, second) = moved_upstream();
+    sweep(
+        &at,
+        &[
+            (&["show", "skill", "gh"], "\x1b]8;;"),
+            (&["updates", "--refresh", "--scope", "project"], "skill gh"),
+            (&["diff", "skill", "gh", "--from", &second], "nested  item"),
+        ],
+    );
 }
 
 #[test]

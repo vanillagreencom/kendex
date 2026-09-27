@@ -206,6 +206,36 @@ pub const SUDO_STUB: &str = "#!/bin/sh\necho 'installer test tried to escalate' 
 /// 0755. Answering an absent flag with the mode the script happens to want
 /// would make every assertion about that mode pass without it.
 ///
+/// One git command in a fixture repository, with the caller's git
+/// environment dropped: run from a commit hook, `GIT_DIR` and friends point
+/// at the repository being committed to, and every command here would act
+/// on that one instead of the fixture. A command that fails fails the test
+/// with git's own words; its stdout is the answer.
+#[allow(
+    dead_code,
+    clippy::expect_used,
+    reason = "every test binary includes this whole module and uses the part it needs"
+)]
+pub fn git(dir: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+        .args(args)
+        .current_dir(dir)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_PREFIX")
+        .output()
+        .expect("git runs");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
 /// The destination is unlinked rather than written through, because that
 /// is what `install` does and `cp` does not: over a read-only file in a
 /// writable directory the real tool replaces and `cp` fails. Writing

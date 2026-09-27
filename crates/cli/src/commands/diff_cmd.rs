@@ -92,23 +92,15 @@ fn screen(style: &Style, diff: &PackageDiff) -> Vec<String> {
             file.path, file.additions, file.deletions
         );
         lines.extend(style.report_group(Status::Notice, &[Span::Prose(&label)], ""));
-        // Another program's lines, spaces and all: an indented line is the
-        // content, not prose to re-space.
         for hunk in &file.hunks {
-            lines.extend(style.report_detail(&[Span::Verbatim(&hunk.header)], ""));
+            lines.extend(style.report_verbatim(None, &hunk.header, ""));
             for line in &hunk.lines {
-                let marker = match line.kind {
-                    LineKind::Context => ' ',
-                    LineKind::Add => '+',
-                    LineKind::Remove => '-',
+                let (marker, status) = match line.kind {
+                    LineKind::Context => (' ', None),
+                    LineKind::Add => ('+', Some(Status::Done)),
+                    LineKind::Remove => ('-', Some(Status::Decision)),
                 };
-                let text = format!("{marker}{}", line.text);
-                let spans = [Span::Verbatim(&text)];
-                lines.extend(match line.kind {
-                    LineKind::Context => style.report_detail(&spans, ""),
-                    LineKind::Add => style.report_marked(Status::Done, &spans, ""),
-                    LineKind::Remove => style.report_marked(Status::Decision, &spans, ""),
-                });
+                lines.extend(style.report_verbatim(status, &format!("{marker}{}", line.text), ""));
             }
         }
     }

@@ -1,6 +1,7 @@
 use super::screen;
 use crate::ui::testing::{plain, rich, tagged};
 use crate::width::visible_width;
+use kendex_core::engine::ItemWarning;
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::package::updates::{UpdateRow, UpdatesReport, VersionRef};
 
@@ -59,7 +60,13 @@ fn inspection_updates_snapshots() {
                 ..row()
             },
         ],
-        warnings: vec![],
+        warnings: vec![ItemWarning {
+            kind: ItemKind::Skill,
+            name: "tidy".into(),
+            harness: None,
+            message: "its source is unreadable".into(),
+            remediation: None,
+        }],
         unreadable: vec![],
         last_fetched: None,
     };
@@ -69,6 +76,7 @@ fn inspection_updates_snapshots() {
             "global  skill tidy  v1 -> v2",
             "global  skill held  v1 -> v2  [held, ignored]",
             "global  skill edited  v1 -> v2  [edited on disk — keep it as your own copy, or discard the edits]",
+            "warning: skill tidy: its source is unreadable",
         ]
     );
     assert_eq!(
@@ -80,14 +88,25 @@ fn inspection_updates_snapshots() {
             "    <33>!</> ignored",
             "  <1>skill edited</>  <90>v1</> <34>→</> v2  <90>[global]</>",
             "    <31>✗</> edited on disk — keep it as your own copy, or discard the edits",
+            "  <33>!</> skill tidy: its source is unreadable",
         ]
     );
-    let clean = UpdatesReport {
+    // A warning with nothing to update is the whole report: no summary
+    // follows it.
+    let warned = UpdatesReport {
         rows: vec![UpdateRow {
             update_available: false,
             ..row()
         }],
         ..report
+    };
+    assert_eq!(
+        screen(&plain(), &warned),
+        ["warning: skill tidy: its source is unreadable"]
+    );
+    let clean = UpdatesReport {
+        warnings: vec![],
+        ..warned
     };
     assert_eq!(
         screen(&plain(), &clean),
