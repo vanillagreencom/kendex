@@ -9,6 +9,7 @@
 # tries. What is shared is here:
 #
 #   ol_preference_entries  the ORCH_OVERSEER_PREFERENCE parse
+#   ol_lanes               `lanes` on this machine's copy of each account
 #   ol_pick_record         one `lanes pick --json` record, for a caller's
 #                          own counts
 #   ol_pick_lane           one `lanes pick` for one entry, with the counts a
@@ -80,22 +81,28 @@ ol_preference_entries() { # VALUE
   done
 }
 
+# ol_lanes ARGS... — `lanes` as every overseer read of an account asks it,
+# under ORCH_LANE_HOST=local: an overseer opens through overseer-host on this
+# machine, under this machine's copy of the account, so a provider's reading
+# of that account is not the one its session spends. The successor walk and
+# the caller's own headroom mark both read through here, so the two never
+# judge one account on two copies.
+ol_lanes() { # ARGS...
+  ORCH_LANE_HOST=local "$SCRIPT_DIR/lanes" "$@"
+}
+
 # ol_pick_record HARNESS MODEL TRIGGER [EXCLUDE_DIR] — the one `lanes pick
 # --json` over HARNESS at TRIGGER, its record into OL_PICK_RECORD on every
 # exit, since exit 3 prints its counts too, and `lanes pick`'s own status
 # returned. The pick ol_pick_lane makes and every count a caller holds a
 # launch to ask this one question, so no two of them judge an account two
 # ways.
-#
-# Under ORCH_LANE_HOST=local: an overseer opens through overseer-host on this
-# machine, under this machine's copy of the account, so a provider's reading
-# of that account is not the one its session spends.
 OL_PICK_RECORD=""
 ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
   local floor=() exclude=() rc=0 LC_ALL=C
   [[ -n "$(lane_context_mark_model "$1" "$2")" ]] || floor=(--binding-floor)
   [[ -z "${4:-}" ]] || exclude=(--exclude-lane "$4")
-  OL_PICK_RECORD="$(ORCH_LANE_HOST=local "$SCRIPT_DIR/lanes" pick --harness "$1" --min-headroom-pct "$3" \
+  OL_PICK_RECORD="$(ol_lanes pick --harness "$1" --min-headroom-pct "$3" \
     ${floor[@]+"${floor[@]}"} ${exclude[@]+"${exclude[@]}"} ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?
   return "$rc"
 }

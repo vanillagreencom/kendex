@@ -993,7 +993,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "a provider row with more room leaves the caller's headroom at this machine's reading"
 # Control: a caller read that inherits the fleet's provider takes the host row.
 HOSTCALLER="$(mutant_scripts hostcaller oversee-succeed)" || exit 1
-mutate_file "$HOSTCALLER/oversee-succeed" 'caller_record="$(ORCH_LANE_HOST=local "$SCRIPT_DIR/lanes"' 'caller_record="$("$SCRIPT_DIR/lanes"'
+mutate_file "$HOSTCALLER/oversee-succeed" 'caller_record="$(ol_lanes pick' 'caller_record="$("$SCRIPT_DIR/lanes" pick'
 new_caller "$UNDER_MARK"
 RUN_DIR="$HOSTED_WORK" LANE_HOST_ACCOUNTS="$TMP_ROOT/accounts-room.tsv" SUCCEED_BIN="$HOSTCALLER/oversee-succeed" \
   run_succeed hostedcallerctl '' --check-marks

@@ -849,9 +849,7 @@ CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS=""
 RATE_STATE=unreadable WALL_PROJECTED="" QUALIFYING_STATE=unreadable QUALIFYING_COUNT="" QUALIFYING_HEADROOM=""
 if (( JUDGES )); then
   caller_rc=0
-  # Under ORCH_LANE_HOST=local, as ol_pick_record reads it: this session runs
-  # on this machine's copy of its account, so that copy's reading is its own.
-  caller_record="$(ORCH_LANE_HOST=local "$SCRIPT_DIR/lanes" pick --lane "$CALLER_CFG" --harness "$CALLER_HARNESS" \
+  caller_record="$(ol_lanes pick --lane "$CALLER_CFG" --harness "$CALLER_HARNESS" \
     --min-headroom-pct "$HEADROOM_TRIGGER" ${CALLER_MODEL:+--model "$CALLER_MODEL"} \
     --json 2>"$DEP_ERR")" || caller_rc=$?
   case "$caller_rc" in

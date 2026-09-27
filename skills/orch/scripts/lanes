@@ -117,10 +117,12 @@
 #         or failed verb leaves the local reading alone, as it does for `list`.
 #         `pick --lane` judges its one account by this same rule, and a dir
 #         the provider reports with a reading is judged even where discovery
-#         does not reach it. A caller whose session runs on this machine's
-#         copy runs pick under ORCH_LANE_HOST=local, as the overseer's own
-#         picks do. So a folder whose local login a provider-side retire
-#         removed reads `no_credentials` there and cannot seat an overseer.
+#         does not reach it. The overseer's own picks (oversee launch, the
+#         succession walk and capacity count, oversee-succeed's headroom
+#         mark) run under ORCH_LANE_HOST=local, since its session runs on
+#         this machine's copy. So a folder whose local login a provider-side
+#         retire removed reads `no_credentials` there and cannot seat an
+#         overseer.
 #
 #         With --lane <config-dir> it judges that ONE account instead of
 #         choosing among the fleet, measuring only that directory. A launcher

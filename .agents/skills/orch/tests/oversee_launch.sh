@@ -185,7 +185,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "a provider row with room for an account this machine reads walled opens no overseer on it"
 # Control: a walk that inherits the fleet's provider launches on the host row.
 HOSTCTL="$(mutant_scripts hostctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$HOSTCTL/lib/overseer-launch.sh" 'OL_PICK_RECORD="$(ORCH_LANE_HOST=local "$SCRIPT_DIR/lanes" pick' 'OL_PICK_RECORD="$("$SCRIPT_DIR/lanes" pick'
+mutate_file "$HOSTCTL/lib/overseer-launch.sh" 'OL_PICK_RECORD="$(ol_lanes pick' 'OL_PICK_RECORD="$("$SCRIPT_DIR/lanes" pick'
 RUN_DIR="$HOSTED_WORK" OVERSEE_BIN="$HOSTCTL/oversee" run_oversee "${HOSTED_ENV[@]}" -- launch --wait-secs 20
 assert_eq "$RC|$(overseers)" "0|1" \
   "control: a walk reading the provider's row opens the overseer on the account this machine reads walled"
