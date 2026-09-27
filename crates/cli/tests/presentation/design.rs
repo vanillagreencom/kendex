@@ -262,3 +262,29 @@ fn writing_reports_honor_plain_overrides_and_wrap_at_80_columns() {
         );
     }
 }
+
+/// The scanner supplies a bare path for unmanaged content. Spaces in
+/// that path are part of what the reader copies, not prose break points.
+#[test]
+#[allow(clippy::expect_used)]
+fn unmanaged_paths_with_spaces_stay_on_one_output_line() {
+    let tmp = tempfile::tempdir().expect("fixture");
+    let home = rooted(&tmp);
+    let project = home.join("dev/project with spaces in its directory name");
+    blocked_project_at(&home, &project);
+    skill(
+        &project.join(".claude"),
+        "hand-placed",
+        "Unmanaged content.",
+    );
+    let path = kendex_core::paths::slashed(&project.join(".claude/skills/hand-placed"));
+    for mode in ["plain", "pretty"] {
+        let output = kendex(&home, &project, mode, &["apply", "--plan"]);
+        let text = said(&output);
+        assert!(output.status.success(), "{text}");
+        assert!(
+            text.lines().any(|line| line.contains(&path)),
+            "{mode}: unmanaged path split: {text}"
+        );
+    }
+}

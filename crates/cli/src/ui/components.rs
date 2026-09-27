@@ -449,7 +449,7 @@ impl Style {
 }
 
 /// Spans with each run escaped, and whether it is a command kept.
-struct Escaped(Vec<(bool, String)>);
+pub(super) struct Escaped(Vec<(bool, String)>);
 
 impl From<&[Span<'_>]> for Escaped {
     fn from(spans: &[Span<'_>]) -> Escaped {
@@ -477,7 +477,7 @@ impl Escaped {
     }
 
     /// The plain spelling: every run joined with nothing between.
-    fn joined(&self) -> String {
+    pub(super) fn joined(&self) -> String {
         self.0.iter().map(|(_, text)| text.as_str()).collect()
     }
 }

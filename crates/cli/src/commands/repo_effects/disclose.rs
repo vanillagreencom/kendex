@@ -46,7 +46,7 @@ pub fn disclose(
 
 /// One package's block, for a surface that already holds the disclosure.
 pub fn print_disclosure(disclosure: &Disclosure) {
-    ui::stderr(&disclosure_lines(&ui::style(), disclosure));
+    ui::report::print(Status::Notice, |style| disclosure_lines(style, disclosure));
 }
 
 fn disclosure_lines(style: &Style, disclosure: &Disclosure) -> Vec<String> {
@@ -59,7 +59,7 @@ fn disclosure_lines(style: &Style, disclosure: &Disclosure) -> Vec<String> {
     );
     if !disclosure.writes.is_empty() {
         lines.push(String::new());
-        lines.extend(style.report_row(Status::Notice, "writes", "  "));
+        lines.extend(style.report_row(Status::Notice, &[Span::Prose("writes")], "  "));
         for written in &disclosure.writes {
             let mark = match written.shared {
                 true => "  (shared)",
@@ -87,7 +87,7 @@ fn disclosure_lines(style: &Style, disclosure: &Disclosure) -> Vec<String> {
     }
     if !disclosure.companions.is_empty() {
         lines.push(String::new());
-        lines.extend(style.report_row(Status::Notice, "companion packages", "  "));
+        lines.extend(style.report_row(Status::Notice, &[Span::Prose("companion packages")], "  "));
         for companion in &disclosure.companions {
             let state = match companion.installed {
                 true => "installed",
@@ -108,7 +108,13 @@ fn disclosure_lines(style: &Style, disclosure: &Disclosure) -> Vec<String> {
         .undo
         .as_deref()
         .unwrap_or("the package declares no way to undo it");
-    lines.extend(style.report_detail(&[Span::Prose("to undo: "), Span::Prose(undo)], "  "));
+    // Core composes the quoted invocation when an uninstaller exists;
+    // a package's removal note, or the absent-undo notice, is prose.
+    let undo = match disclosure.declared.effects.uninstaller {
+        Some(_) => Span::Command(undo),
+        None => Span::Prose(undo),
+    };
+    lines.extend(style.report_detail(&[Span::Prose("to undo: "), undo], "  "));
     lines
 }
 

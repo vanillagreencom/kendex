@@ -86,14 +86,29 @@ fn a_verb_with_no_frame_stays_plain_on_a_terminal() {
 /// A framed verb is framed from its first line to its last. Every line it
 /// says belongs to the frame, whichever way the run ended.
 #[test]
+#[allow(clippy::expect_used)]
 fn a_framed_verb_frames_every_line_it_says() {
     for args in FRAMED {
-        let Ran { output, .. } = ran("pretty", args);
+        let tmp = tempfile::tempdir().expect("fixture");
+        let home = rooted(&tmp);
+        let project = blocked_project(&home);
+        skill(
+            &project.join(".claude"),
+            "hand-placed",
+            "Unmanaged content.",
+        );
+        let output = kendex(&home, &project, "pretty", args);
         let printed = said(&output);
         assert!(
             printed.starts_with('┌'),
             "{args:?} said something before opening its frame: {printed}"
         );
+        if args[0] == "verify" {
+            assert!(
+                printed.contains("hand-placed"),
+                "fixture missed the unmanaged path: {printed}"
+            );
+        }
         let escaped = escaped_the_frame(&printed);
         assert!(
             escaped.is_empty(),

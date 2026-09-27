@@ -359,13 +359,25 @@ fn a_remove_that_fails_at_a_later_scope_still_closes_the_scopes_it_wrote() {
     let removed = kendex(
         &home,
         &project,
-        &[("KENDEX_TRASH_KEEP_DAYS", "7")],
+        &[
+            ("KENDEX_TRASH_KEEP_DAYS", "7"),
+            ("KENDEX_UI", "pretty"),
+            ("LANG", "C.UTF-8"),
+        ],
         &["remove", "deploy", "--scope", "all"],
     );
     assert!(!removed.status.success(), "{}", said(&removed));
     let text = said(&removed);
     assert!(text.contains("removed 3 changes"), "{text}");
     assert!(text.contains("trash: removed 1 older entry"), "{text}");
+    let trash_line = text
+        .lines()
+        .find(|line| line.contains("trash: removed 1 older entry"))
+        .unwrap();
+    assert!(
+        crate::presentation::escaped_the_frame(trash_line).is_empty(),
+        "shared trash report escaped the frame: {text}"
+    );
     assert!(!text.contains("Nothing removed"), "{text}");
     assert!(
         !project.join(".claude/skills/deploy").exists(),

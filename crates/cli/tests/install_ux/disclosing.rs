@@ -237,3 +237,34 @@ fn doc_limits_discloses_its_reader_dependency_without_arming_hooks() {
     );
     assert!(!world.at(".git/hooks/kendex-guards").exists());
 }
+
+/// The shipped uninstaller has an argument that must remain on the same
+/// output line as its executable when the disclosure wraps.
+#[test]
+#[allow(clippy::expect_used)]
+fn a_rich_disclosure_keeps_the_uninstaller_and_its_arguments_together() {
+    for mode in ["plain", "pretty"] {
+        let world = World::new(&["claude"]);
+        world.declare_catalog();
+        offer(&world, "commit-guards");
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_kendex"))
+            .args(["add", "cat", "--skill", "commit-guards", "-y", "--leave"])
+            .current_dir(&world.project)
+            .env_clear()
+            .envs(crate::test_util::fixture_env(&world.home))
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("KENDEX_BACKGROUND_REFRESH", "off")
+            .env("KENDEX_UI", mode)
+            .env("COLUMNS", "80")
+            .output()
+            .expect("kendex runs");
+        let text = spoke(&output);
+        assert!(output.status.success(), "{text}");
+        assert!(
+            text.lines().any(|line| line.contains(
+                "'.agents/skills/commit-guards/scripts/install-git-hooks' '--uninstall'"
+            )),
+            "{mode}: the uninstall command split: {text}"
+        );
+    }
+}

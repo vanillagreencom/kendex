@@ -116,13 +116,17 @@ pub fn say_lapsed(env: &Env, scope: &Scope, names: &[String]) -> usize {
                 "whether its effect is in force could not be checked".to_owned()
             }
         };
-        ui::stderr(&ui::style().report_row(
-            Status::Failed,
-            &format!("setup {}: {row}", package.name),
-            "✗ ",
-        ));
+        ui::report::print(Status::Failed, |style| {
+            style.report_row(
+                Status::Failed,
+                &[Span::Prose(&format!("setup {}: {row}", package.name))],
+                "✗ ",
+            )
+        });
         for line in &package.said {
-            ui::stderr(&ui::style().report_detail(&[Span::Prose(line)], "  ! "));
+            ui::report::print(Status::Failed, |style| {
+                style.report_detail(&[Span::Prose(line)], "  ! ")
+            });
         }
         named += 1;
     }

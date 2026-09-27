@@ -2,30 +2,28 @@
 //! uses the same components as the rest of the report; the plain prefix
 //! is data, never parsed to choose a component.
 
+use super::components::Escaped;
 use super::modes::Look;
 use super::{Span, Status, Style, escaped};
 
 impl Style {
     /// A report row with its existing plain prefix.
-    pub fn report_row(&self, status: Status, text: &str, prefix: &'static str) -> Vec<String> {
+    pub fn report_row(
+        &self,
+        status: Status,
+        spans: &[Span<'_>],
+        prefix: &'static str,
+    ) -> Vec<String> {
         match self.look {
-            Look::Plain => vec![format!("{prefix}{}", escaped(text))],
-            Look::Rich { .. } => self.row(status, &[Span::Prose(text)], None),
+            Look::Plain => vec![format!("{prefix}{}", Escaped::from(spans).joined())],
+            Look::Rich { .. } => self.row(status, spans, None),
         }
     }
 
     /// Detail under a report row, retaining the script's indentation.
     pub fn report_detail(&self, spans: &[Span<'_>], prefix: &'static str) -> Vec<String> {
         match self.look {
-            Look::Plain => vec![format!(
-                "{prefix}{}",
-                spans
-                    .iter()
-                    .map(|span| match span {
-                        Span::Prose(text) | Span::Command(text) => escaped(text),
-                    })
-                    .collect::<String>()
-            )],
+            Look::Plain => vec![format!("{prefix}{}", Escaped::from(spans).joined())],
             Look::Rich { .. } => self.detail(None, spans),
         }
     }
@@ -39,19 +37,49 @@ impl Style {
     }
 }
 
+/// Shared reports belong to a legacy frame while one is open. Their
+/// plain grammar supplies that frame's blocks; converted verbs draw the
+/// components directly. Selection and wording stay with the caller.
+pub fn print(status: Status, draw: impl FnOnce(&Style) -> Vec<String>) {
+    match super::mode() {
+        super::Mode::Plain => super::stderr(&draw(&super::style())),
+        super::Mode::Pretty => {
+            let style = Style {
+                look: Look::Plain,
+                ..super::style()
+            };
+            let tone = match status {
+                Status::Done | Status::Notice => super::blocks::Tone::Step,
+                Status::Decision | Status::High => super::blocks::Tone::Warn,
+                Status::Failed | Status::Critical => super::blocks::Tone::Error,
+                Status::Low => super::blocks::Tone::Info,
+            };
+            for line in draw(&style) {
+                super::drawn(tone, &line);
+            }
+        }
+    }
+}
+
 /// A warning about the run, retaining the plain warning key.
 pub fn warning(text: &str) {
-    super::stderr(&super::style().report_row(Status::Decision, text, "warning: "));
+    print(Status::Decision, |style| {
+        style.report_row(Status::Decision, &[Span::Prose(text)], "warning: ")
+    });
 }
 
 /// A failure reported before the run closes.
 pub fn failure(text: &str) {
-    super::stderr(&super::style().report_row(Status::Failed, text, "failed: "));
+    print(Status::Failed, |style| {
+        style.report_row(Status::Failed, &[Span::Prose(text)], "failed: ")
+    });
 }
 
 /// A run's explanatory row, with no plain prefix.
 pub fn notice(text: &str) {
-    super::stderr(&super::style().report_row(Status::Notice, text, ""));
+    print(Status::Notice, |style| {
+        style.report_row(Status::Notice, &[Span::Prose(text)], "")
+    });
 }
 
 #[cfg(test)]
@@ -64,7 +92,7 @@ mod tests {
         let text = "a package with a warning that needs several lines on a narrow screen\nnext";
         for style in [plain(), rich(20)] {
             for lines in [
-                style.report_row(Status::Failed, text, "failed: "),
+                style.report_row(Status::Failed, &[Span::Prose(text)], "failed: "),
                 style.report_detail(&[Span::Prose(text)], "  "),
                 style.report_callout(text, "why\nnow"),
             ] {
@@ -73,7 +101,7 @@ mod tests {
             }
         }
         assert_eq!(
-            tagged(&rich(20).report_row(Status::Failed, text, "failed: ")),
+            tagged(&rich(20).report_row(Status::Failed, &[Span::Prose(text)], "failed: ")),
             [
                 "  <31>✗</> a package with a",
                 "    warning that",

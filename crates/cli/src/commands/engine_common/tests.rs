@@ -67,4 +67,18 @@ fn clean_changed_blocked_and_warning_reports_keep_their_content() {
         assert_eq!(report_lines(&plain(), report, blocked), want_plain);
         assert_eq!(tagged(&report_lines(&rich(80), report, blocked)), want_rich);
     }
+
+    // desired_custom_hooks supplies prose remediation, not a command.
+    let remedy = "set agents = \"all\" to make it run for everything, or keep it as instructions";
+    changed.warnings[0].remediation = Some(remedy.into());
+    assert!(
+        report_lines(&plain(), &changed, false)
+            .iter()
+            .any(|line| line == &format!("  fix: {remedy}"))
+    );
+    assert!(
+        report_lines(&rich(80), &changed, false)
+            .iter()
+            .all(|line| console::measure_text_width(line) <= 80)
+    );
 }

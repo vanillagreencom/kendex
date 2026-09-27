@@ -12,7 +12,7 @@ use super::engine_common::{
 use super::ledger::{Folded, Wrote, say_ledger};
 use super::{CliResult, resolve_scopes_at, scope_label};
 use crate::scope::ScopeFilter;
-use crate::ui;
+use crate::ui::{self, Span};
 
 /// Regenerate every declared installation, and re-derive what those
 /// declarations pull in — a dependency that appeared upstream, one that went
@@ -54,7 +54,10 @@ fn print_set_changes(
 ) {
     ui::stderr(&ui::style().report_row(
         ui::Status::Decision,
-        &format!("{}: this changes what is installed", scope_label(scope)),
+        &[Span::Prose(&format!(
+            "{}: this changes what is installed",
+            scope_label(scope)
+        ))],
         "",
     ));
     for change in &report.set_changes {
@@ -69,13 +72,13 @@ fn say_set_change(change: &kendex_core::engine::SetChange) {
     };
     ui::stderr(&ui::style().report_row(
         ui::Status::Decision,
-        &format!(
+        &[Span::Prose(&format!(
             "{verb} {} {} for {} — {}",
             change.kind.name(),
             change.name,
             change.harness.display_name(),
             change.reason
-        ),
+        ))],
         "  - ",
     ));
 }
@@ -89,7 +92,9 @@ fn print_changes_needing_consent(
     for name in pending {
         ui::stderr(&ui::style().report_row(
             ui::Status::Decision,
-            &format!("install pi-extension {name} for Pi — listed, not installed here yet"),
+            &[Span::Prose(&format!(
+                "install pi-extension {name} for Pi — listed, not installed here yet"
+            ))],
             "  - ",
         ));
     }
@@ -386,17 +391,17 @@ fn write_scope(
     if added > 0 {
         ui::stderr(&ui::style().report_row(
             ui::Status::Decision,
-            &format!(
+            &[Span::Prose(&format!(
                 "{}: settling added to what this run writes",
                 scope_label(scope)
-            ),
+            ))],
             "",
         ));
         for change in added_changes {
             say_set_change(change);
         }
         for line in &added_ops {
-            ui::stderr(&ui::style().report_row(ui::Status::Notice, line, "  - "));
+            ui::stderr(&ui::style().report_row(ui::Status::Notice, &[Span::Prose(line)], "  - "));
         }
     }
     let applied = confirm_and_apply(env, &after, yes);

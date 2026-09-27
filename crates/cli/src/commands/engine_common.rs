@@ -78,7 +78,9 @@ pub fn print_report(
     listing: Listing,
 ) -> Vec<super::offers::Blocked> {
     let blocked = super::attention::print_attention(env, report, listing).blocked;
-    ui::stderr(&report_lines(&ui::style(), report, !blocked.is_empty()));
+    ui::report::print(Status::Notice, |style| {
+        report_lines(style, report, !blocked.is_empty())
+    });
     blocked
 }
 
@@ -91,11 +93,11 @@ fn report_lines(style: &ui::Style, report: &EngineReport, blocked: bool) -> Vec<
         };
         lines.extend(style.report_row(
             Status::Decision,
-            &format!("{target}: {}", warning.message),
+            &[Span::Prose(&format!("{target}: {}", warning.message))],
             "warning: ",
         ));
         if let Some(fix) = &warning.remediation {
-            lines.extend(style.report_detail(&[Span::Prose("fix: "), Span::Command(fix)], "  "));
+            lines.extend(style.report_detail(&[Span::Prose("fix: "), Span::Prose(fix)], "  "));
         }
     }
     if report.plan.is_empty() {
@@ -103,10 +105,10 @@ fn report_lines(style: &ui::Style, report: &EngineReport, blocked: bool) -> Vec<
         // you can do" — the run has plenty to do, once the reader picks.
         lines.extend(style.report_row(
             Status::Notice,
-            match blocked {
+            &[Span::Prose(match blocked {
                 true => "nothing to do until you settle the conflicts above",
                 false => "nothing to do",
-            },
+            })],
             "",
         ));
         return lines;
@@ -116,11 +118,11 @@ fn report_lines(style: &ui::Style, report: &EngineReport, blocked: bool) -> Vec<
     // asked to approve a count was never shown what it covers.
     lines.extend(style.report_row(
         Status::Notice,
-        &format!("plan: {} change{}", ops, plural(ops)),
+        &[Span::Prose(&format!("plan: {} change{}", ops, plural(ops)))],
         "",
     ));
     for op in &report.plan.ops {
-        lines.extend(style.report_row(Status::Notice, &op.line(), "  - "));
+        lines.extend(style.report_row(Status::Notice, &[Span::Prose(&op.line())], "  - "));
     }
     lines
 }
@@ -155,26 +157,32 @@ pub fn print_unmanaged(drift: &[DriftRow]) {
         if rows.len() == 1 { "" } else { "s" }
     ));
     for row in rows.iter().take(UNMANAGED_SHOWN) {
-        ui::stderr(&ui::style().report_row(
-            Status::Notice,
-            &format!(
-                "{} {} [{}] {}",
-                row.kind.name(),
-                row.name,
-                row.harness.display_name(),
-                row.detail
-            ),
-            "  - ",
-        ));
+        ui::report::print(Status::Notice, |style| {
+            style.report_row(
+                Status::Notice,
+                &[
+                    Span::Prose(&format!(
+                        "{} {} [{}] ",
+                        row.kind.name(),
+                        row.name,
+                        row.harness.display_name(),
+                    )),
+                    Span::Command(&row.detail),
+                ],
+                "  - ",
+            )
+        });
     }
     if rows.len() > UNMANAGED_SHOWN {
-        ui::stderr(&ui::style().report_detail(
-            &[Span::Prose(&format!(
-                "… and {} more",
-                rows.len() - UNMANAGED_SHOWN
-            ))],
-            "  ",
-        ));
+        ui::report::print(Status::Notice, |style| {
+            style.report_detail(
+                &[Span::Prose(&format!(
+                    "… and {} more",
+                    rows.len() - UNMANAGED_SHOWN
+                ))],
+                "  ",
+            )
+        });
     }
 }
 
@@ -191,7 +199,9 @@ pub fn confirm_and_execute(env: &Env, report: &EngineReport, yes: bool) -> CliRe
         return Ok(());
     }
     let applied = confirm_and_apply(env, report, yes)?;
-    ui::stderr(&ui::style().summary(Status::Done, &format!("wrote {applied} change(s)")));
+    ui::report::print(Status::Done, |style| {
+        style.summary(Status::Done, &format!("wrote {applied} change(s)"))
+    });
     Ok(())
 }
 
