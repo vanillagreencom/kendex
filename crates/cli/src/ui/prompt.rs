@@ -87,11 +87,12 @@ pub fn ask(label: &str) -> std::io::Result<String> {
 
 /// Whether an error is a run its user cancelled.
 ///
-/// It belongs here because this is where one is made: a plain prompt lets
-/// SIGINT kill the process and the shell reports 130 itself, while the
-/// framed one reads keys in raw mode, where Ctrl-C arrives as a byte and
-/// comes back as an interrupted read. Nothing else in the CLI produces
-/// one, so nothing else decides what one means.
+/// Two readers make one, and this is the one place that says what it
+/// means. A plain prompt here lets SIGINT kill the process and the shell
+/// reports 130 itself, while the framed widget reads keys in raw mode,
+/// where Ctrl-C arrives as a byte and comes back as an interrupted read.
+/// The keyed read in `keys` returns the same interrupted error for Escape,
+/// Ctrl-C and the end of input.
 pub fn cancelled(error: &(dyn std::error::Error + 'static)) -> bool {
     error
         .downcast_ref::<std::io::Error>()

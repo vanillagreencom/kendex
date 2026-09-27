@@ -22,7 +22,7 @@ use crate::ui::{self, Span, Status, Style};
 /// MEANS: that is the package's contract, and kendex is not a party to it.
 ///
 /// On the human channel, with the question it belongs to. This is not
-/// output a caller composes with — it is the context for `[y/N]`, and the
+/// output a caller composes with — it is the context for the consent, and the
 /// prompt writes to stderr. Sent to stdout, `kendex add ... > log` asks
 /// the question with the reasons for it in the file, which is a consent
 /// prompt with nothing to consent to.

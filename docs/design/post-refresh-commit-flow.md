@@ -53,7 +53,7 @@ On the CLI, `engine_common::apply_report` calls the commit offer after applying 
 Two verbs need naming because they sit at the edges of that rule.
 
 - `kendex drift-hook` offers like the rest. It is a person-run installer that prints, asks two confirmations and takes `--yes`, and it applies a plan that renders hook scripts into the checkout. The thing that runs inside another tool's session is the installed script, which invokes `kendex check --quiet`. That check writes the scope's install record when it proves a copy no record accounted for against its source (`docs/architecture/sources.md` § Invariants item 9), a write that goes through `apply::execute` and not `apply_report`, so it reaches no offer; the record stays uncommitted for the next apply's offer, which lists the lock among its owned files.
-- `kendex update-pi` writes into a project's `.pi` directory and calls the offer itself. `kendex refresh` requests consent before calling `update_pi::settle_scope`. It then derives the final plan, prints its diagnostics, and requests confirmation when that plan has writes. `--yes` answers both confirmations. Applying the final plan reaches the offer through `apply_report`. A typed refusal after settlement calls the same offer owner for any owned files left uncommitted. Terminal cancellation skips that offer.
+- `kendex update-pi` writes into a project's `.pi` directory and calls the offer itself. `kendex refresh` requests consent before calling `update_pi::settle_scope`. It then derives the final plan, prints its diagnostics, and requests confirmation when that plan has writes. `--yes` answers both confirmations. Applying the final plan reaches the offer through `apply_report`. A declined consent after settlement calls the same offer owner for any owned files left uncommitted. Terminal cancellation skips that offer.
 
 A verb that writes nothing into a project checkout never reaches the offer, and the empty path set answers for it in any case: `kendex update` replaces the app from the release feed, and `kendex init` scaffolds a catalog item in the working directory.
 
@@ -220,7 +220,7 @@ A step that times out is reported as that step's failure, naming the step and th
 
 ## CLI
 
-The block is drawn from the CLI's components ([`crates/cli/OUTPUT.md`](../../crates/cli/OUTPUT.md)). The transcripts below are the plain rendering; a terminal adds colour, a status glyph on each line under the head, and wrapping. The head line is a callout and carries the scope label, as `print_set_changes` and the ledger do. Detail is indented two spaces, and another program's words four. Ten paths are listed, then the overflow line the CLI already uses for a list it cut: `  … and {n} more`, from `engine_common.rs`, whose `UNMANAGED_SHOWN` is the same ten.
+The block is drawn from the CLI's components; [`crates/cli/OUTPUT.md`](../../crates/cli/OUTPUT.md) § Questions lists every key. The transcripts below are the plain rendering; the rich rendering adds colour, a status glyph on each said line under the head, and wrapping. The head line is a callout and carries the scope label, as `print_set_changes` and the ledger do. Detail is indented two spaces, and another program's words four. Ten paths are listed, then the overflow line the CLI already uses for a list it cut: `  … and {n} more`, from `engine_common.rs`, whose `UNMANAGED_SHOWN` is the same ten.
 
 ```
 ! /home/method/dev/site: 12 files kendex wrote are not committed
@@ -243,7 +243,7 @@ The block is drawn from the CLI's components ([`crates/cli/OUTPUT.md`](../../cra
   › commit them
 ```
 
-The choices are keyed buttons in the order above, skipping the ones the preconditions removed: `c` commits, `p` pushes, `r` opens a pull request, and Enter takes `leave`, which is always last and always the default. The answer is one key, read by `ui::choose`, and the choice it picked is drawn under the buttons. A key the offer does not show picks nothing, so a stray key cannot commit. Escape and Ctrl-C cancel the offer (see **Flags and exit codes**).
+The choices are keyed buttons in the order above, skipping the ones the preconditions removed: `c` commits, `p` pushes, `r` opens a pull request, and Enter takes `leave`, which is always last and always the default. The answer is one key, read by `ui::choose`, and the choice it picked is drawn under the buttons. Escape and Ctrl-C cancel the offer (see **Flags and exit codes**).
 
 
 A precondition that removed a choice prints its reason as a detail line under the paths, before the choices:
@@ -261,7 +261,7 @@ A precondition that removed a choice prints its reason as a detail line under th
 
 The last two are `gh`'s own first line for the repository it was bound to, whatever it turns out to be; the lines above show the shape, not a fixed list.
 
-The reader is asked for the message next. Enter uses what is offered; `e` reads a different one as a typed line through `ui::typed`, where an empty line keeps the offered one:
+The reader is asked for the message next. Enter uses what is offered; `e` reads a different one as a typed line through `ui::typed`, where an empty line keeps the offered one.:
 
 ```
   message: chore: kendex refresh
@@ -482,7 +482,7 @@ A flag answers the offer without asking. A precondition that removed the choice 
 | No offer at all — a detached `HEAD`, an operation in progress, a read that failed — whatever flag was passed | the verb's own code |
 | Escape or Ctrl-C at the offer | 130 |
 
-Terminal cancellation before Pi settlement drops the current scope from refresh's reached list because it wrote nothing there. Cancellation at the final confirmation after settlement retains the installed package and its record. The scope stays on the reached list for its snapshot and closing ledger, but refresh stops before later scopes and skips the commit offer. A typed refusal after settlement also retains those writes, but reaches the commit offer and prints failure details before the closing ledger. Terminal cancellation at the commit offer retains the scope's writes, snapshot, and closing ledger. It skips offers in that project and later projects the run reaches. Terminal cancellation exits 130 after the reached scopes close; a typed refusal exits 1. The refresh cases are covered by `crates/cli/tests/refresh_fresh_clone.rs`.
+Terminal cancellation before Pi settlement drops the current scope from refresh's reached list because it wrote nothing there. Cancellation at the final confirmation after settlement retains the installed package and its record. The scope stays on the reached list for its snapshot and closing ledger, but refresh stops before later scopes and skips the commit offer. A declined consent after settlement also retains those writes, but reaches the commit offer and prints failure details before the closing ledger. Terminal cancellation at the commit offer retains the scope's writes, snapshot, and closing ledger. It skips offers in that project and later projects the run reaches. Terminal cancellation exits 130 after the reached scopes close; a declined consent (Enter at `[y] yes · [Enter] no`) exits 1. The refresh cases are covered by `crates/cli/tests/refresh_fresh_clone.rs`.
 
 A refused commit, push or pull request is its own failure line and is not counted into `refresh failed: <n> problem(s), listed above`. The verb closes its scope as it would have — the snapshot recorded, the ledger line printed with its refusal part — and the run exits 1 once the verb has finished, printing nothing further: the block already carried the words and the way on.
 
@@ -705,7 +705,7 @@ Every state, its detection, and where its words are.
 | A step timed out | The bound in the timeouts table | The CLI's **Timed out** block | The app's **Timed out** state |
 | Nothing left to commit at commit time | The re-read path set is empty | `nothing to commit; the files changed since the offer`, and on the `pr` route the branch is abandoned and `this checkout is back on main and kendex/renders is gone` follows | Toast `Nothing to commit`, dialog closes, the branch abandoned on the `pr` route |
 | A flag named a removed choice | The flag's choice is not on offer | The head line, then that choice's reason, nothing committed | not reachable |
-| Cancelled | Ctrl-C, or the dialog dismissed | exit 130 | The dialog closes, nothing runs |
+| Cancelled | Escape or Ctrl-C, or the dialog dismissed | exit 130 | The dialog closes, nothing runs |
 
 ## What KEN-1297 changed
 

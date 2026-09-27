@@ -249,12 +249,17 @@ pub fn pick_stale(stale: &[Stale]) -> std::io::Result<Held> {
     for held in stale {
         super::super::repo_effects::print_disclosure(&held.disclosure);
     }
-    let set_up = set_up_label(stale);
-    ui::choose(&[
+    ui::choose(&stale_choices(&set_up_label(stale)))
+}
+
+/// The held offer's two choices: `s` sets the packages up, Enter leaves
+/// the files as diffs.
+pub fn stale_choices(set_up: &str) -> [(ui::Choice<'_>, Held); 2] {
+    [
         (
             ui::Choice {
                 key: Key::Char('s'),
-                label: &set_up,
+                label: set_up,
             },
             Held::SetUp,
         ),
@@ -265,7 +270,7 @@ pub fn pick_stale(stale: &[Stale]) -> std::io::Result<Held> {
             },
             Held::Leave,
         ),
-    ])
+    ]
 }
 
 fn set_up_label(stale: &[Stale]) -> String {
@@ -507,12 +512,28 @@ pub fn message(offered: &str) -> std::io::Result<String> {
         Status::Notice,
         &format!("message: {offered}"),
     ));
-    Ok(match ui::choose(&MESSAGE)? {
-        Message::Use => offered.to_owned(),
-        Message::Type => match ui::typed()? {
-            typed if typed.is_empty() => offered.to_owned(),
-            typed => typed,
-        },
+    match ui::choose(&MESSAGE)? {
+        Message::Use => Ok(offered.to_owned()),
+        Message::Type => typed_or(offered),
+    }
+}
+
+/// The message to commit again with, where the person chose a different
+/// one: read as typed straight away, since the choice already said so, and
+/// an empty line keeps the one the commit was refused with.
+pub fn different_message(refused: &str) -> std::io::Result<String> {
+    ui::stderr(&said_as(
+        &ui::style(),
+        Status::Notice,
+        &format!("type the new message; an empty line keeps: {refused}"),
+    ));
+    typed_or(refused)
+}
+
+fn typed_or(kept: &str) -> std::io::Result<String> {
+    Ok(match ui::typed()? {
+        typed if typed.is_empty() => kept.to_owned(),
+        typed => typed,
     })
 }
 

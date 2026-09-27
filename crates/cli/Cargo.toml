@@ -24,6 +24,16 @@ serde_json.workspace = true
 cliclack.workspace = true
 console.workspace = true
 
+# Dropping the keys typed before a question is drawn (`ui::keys`): a
+# terminal input flush, which neither std nor `console` offers. Both already
+# in the workspace, rustix under core and windows-sys for core's Windows
+# credential file.
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["termios"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_System_Console"] }
+
 [dev-dependencies]
 tempfile.workspace = true
 # Fixtures write manifests, and the serializer is what decides how a host

@@ -1,9 +1,9 @@
 //! The commit offer's questions at a terminal: the held offer's setup, the
 //! setup a linked work tree is offered where its main checkout has it, and
 //! the refused commit's choice to show everything the commit check printed.
-//! Each drives the binary through a pseudoterminal with its answers typed
-//! ahead: the offer's keys, and a typed line for the questions still asked
-//! as one. `commit_offer_cli.rs` holds the runs with no terminal.
+//! Each drives the binary through a pseudoterminal, typing each answer once
+//! its question is drawn. `commit_offer_cli.rs` holds the runs with no
+//! terminal.
 #![cfg(unix)]
 
 use crate::pty;
@@ -60,8 +60,14 @@ fn command(home: &Path, cwd: &Path, args: &[&str]) -> Command {
     command
 }
 
-fn at_a_terminal(home: &Path, cwd: &Path, args: &[&str], answers: &str) -> (Output, String) {
-    let output = pty::sent_to_a_terminal(command(home, cwd, args), answers.as_bytes());
+/// A run at a terminal, each answer typed once its marker is drawn.
+fn at_a_terminal(
+    home: &Path,
+    cwd: &Path,
+    args: &[&str],
+    steps: &[(&str, &str)],
+) -> (Output, String) {
+    let output = pty::conversation(command(home, cwd, args), steps, pty::Stderr::Terminal);
     let text = String::from_utf8_lossy(&output.stderr).into_owned();
     (output, text)
 }
@@ -132,7 +138,13 @@ fn installed_then_changed(home: &Path, check: &str) -> PathBuf {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_held_offer_sets_the_package_up_once_and_offers_the_commit_with_its_files() {
-    for (check, answers, committed) in [("", "sc\nn\n", true), ("  exit 1", "s", false)] {
+    // Set up, commit with the offered message, and say no to the
+    // repository changes the apply asks about after the offer.
+    let set_up_and_commit: &[(&str, &str)] =
+        &[("[s]", "s"), ("[c]", "c"), ("[e]", "\n"), ("[y]", "\n")];
+    let set_up: &[(&str, &str)] = &[("[s]", "s"), ("[y]", "\n")];
+    for (check, answers, committed) in [("", set_up_and_commit, true), ("  exit 1", set_up, false)]
+    {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = installed_then_changed(&home, check);
@@ -219,7 +231,12 @@ fn a_linked_work_tree_is_offered_the_setup_its_main_checkout_has() {
         ],
     );
 
-    let (output, text) = at_a_terminal(&home, &linked, &["apply", "--yes"], "y\nc\nn\n");
+    let (output, text) = at_a_terminal(
+        &home,
+        &linked,
+        &["apply", "--yes"],
+        &[("[y]", "y"), ("[c]", "c"), ("[e]", "\n"), ("[y]", "\n")],
+    );
 
     assert_eq!(output.status.code(), Some(0), "{text}");
     let skipped = format!(
@@ -258,51 +275,156 @@ fn committed_without_packages(home: &Path) -> PathBuf {
     project
 }
 
+/// One run at a terminal: the verb's arguments, the rendering, where
+/// stderr goes, each answer with the marker it waits for, the exit code
+/// and the commit the project ends on.
+struct Run {
+    what: &'static str,
+    args: &'static [&'static str],
+    rendering: &'static str,
+    stderr: fn() -> pty::Stderr,
+    steps: &'static [(&'static str, &'static str)],
+    code: i32,
+    subject: &'static str,
+}
+
 /// The offer's keys at a terminal, in both renderings: a key takes its
 /// choice, `e` reads the message as a typed line where a backspace takes
 /// back a character, Enter leaves the files as diffs, and Escape cancels.
 /// A cancel keeps the write and the closing ledger, commits nothing, and
-/// exits 130; a leave exits as the verb does.
+/// exits 130; a leave exits as the verb does. The Enter typed after the
+/// consent's `y` does not answer the offer drawn after it. With stderr on
+/// a pipe the answers are typed lines, and one that picks nothing draws
+/// the choices again.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_offer_is_answered_by_its_keys() {
-    let rows: [(&str, &str, &str, Option<i32>, &str); 5] = [
-        ("commit", "plain", "c\n", Some(0), "chore: kendex apply"),
-        ("commit", "pretty", "c\n", Some(0), "chore: kendex apply"),
-        (
-            "a typed message",
-            "plain",
-            "cefix: rendersX\x7f\n",
-            Some(0),
-            "fix: renders",
-        ),
-        ("leave", "pretty", "\n", Some(0), "files"),
-        ("cancel", "plain", "\x1b", Some(130), "files"),
+    let terminal = || pty::Stderr::Terminal;
+    let rows = [
+        Run {
+            what: "commit",
+            args: &["apply", "--yes"],
+            rendering: "plain",
+            stderr: terminal,
+            steps: &[("[c]", "c"), ("[e]", "\n")],
+            code: 0,
+            subject: "chore: kendex apply",
+        },
+        Run {
+            what: "commit",
+            args: &["apply", "--yes"],
+            rendering: "pretty",
+            stderr: terminal,
+            steps: &[("[c]", "c"), ("[e]", "\n")],
+            code: 0,
+            subject: "chore: kendex apply",
+        },
+        Run {
+            what: "a typed message",
+            args: &["apply", "--yes"],
+            rendering: "plain",
+            stderr: terminal,
+            steps: &[("[c]", "c"), ("[e]", "efix: rendersX\x7f\n")],
+            code: 0,
+            subject: "fix: renders",
+        },
+        Run {
+            what: "leave",
+            args: &["apply", "--yes"],
+            rendering: "pretty",
+            stderr: terminal,
+            steps: &[("[c]", "\n")],
+            code: 0,
+            subject: "files",
+        },
+        Run {
+            what: "cancel",
+            args: &["apply", "--yes"],
+            rendering: "plain",
+            stderr: terminal,
+            steps: &[("[c]", "\x1b")],
+            code: 130,
+            subject: "files",
+        },
+        Run {
+            what: "y and Enter at the consent, then the offer",
+            args: &["apply"],
+            rendering: "plain",
+            stderr: terminal,
+            steps: &[("[y]", "y\n"), ("[c]", "c"), ("[e]", "\n")],
+            code: 0,
+            subject: "chore: kendex apply",
+        },
+        Run {
+            what: "typed lines, stderr on a pipe",
+            args: &["apply"],
+            rendering: "plain",
+            stderr: || pty::Stderr::Pipe,
+            steps: &[
+                ("[y]", "yes\n"),
+                ("[c]", "1\n"),
+                ("[c]", "c\n"),
+                ("[e]", "\n"),
+            ],
+            code: 0,
+            subject: "chore: kendex apply",
+        },
     ];
-    for (what, rendering, keys, code, subject) in rows {
+    for run in rows {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = committed_without_packages(&home);
-        let mut run = command(&home, &project, &["apply", "--yes"]);
-        run.env("KENDEX_UI", rendering);
-        let output = pty::sent_to_a_terminal(run, keys.as_bytes());
+        let mut command = command(&home, &project, run.args);
+        command.env("KENDEX_UI", run.rendering);
+        let output = pty::conversation(command, run.steps, (run.stderr)());
         let text = String::from_utf8_lossy(&output.stderr).into_owned();
+        let what = format!("{} {}", run.what, run.rendering);
 
-        assert_eq!(output.status.code(), code, "{what} {rendering}:\n{text}");
-        assert_eq!(
-            head_subject(&project),
-            subject,
-            "{what} {rendering}:\n{text}"
-        );
+        assert_eq!(output.status.code(), Some(run.code), "{what}:\n{text}");
+        assert_eq!(head_subject(&project), run.subject, "{what}:\n{text}");
         assert!(
             text.contains("[c]") && text.contains("[Enter]"),
-            "{what} {rendering}: the keys were not drawn:\n{text}"
+            "{what}: the keys were not drawn:\n{text}"
         );
         assert!(
             text.contains("applied 3 changes"),
-            "{what} {rendering}: no closing ledger:\n{text}"
+            "{what}: no closing ledger:\n{text}"
         );
     }
+}
+
+/// Choosing a different message after a refused commit reads it straight
+/// away, every character of it, and commits again with it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_different_message_after_a_refusal_is_read_whole() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = committed_without_packages(&home);
+    let hook = project.join(".git/hooks/commit-msg");
+    write(
+        &hook,
+        "#!/bin/sh\nif grep -q '^chore: kendex apply' \"$1\"; then\n  echo 'commit-msg: say what the commit does' >&2\n  exit 1\nfi\n",
+    );
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let (output, text) = at_a_terminal(
+        &home,
+        &project,
+        &["apply", "--yes"],
+        &[
+            ("[c]", "c"),
+            ("[e]", "\n"),
+            ("[m]", "mfeat: keep entries\n"),
+        ],
+    );
+
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("commit-msg: say what the commit does"),
+        "{text}"
+    );
+    assert_eq!(head_subject(&project), "feat: keep entries", "{text}");
 }
 
 /// A refused commit at a terminal leads with the findings block and keeps
@@ -321,7 +443,12 @@ fn a_refused_commit_shows_everything_the_check_printed_on_asking() {
     );
     fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let (output, text) = at_a_terminal(&home, &project, &["apply", "--yes"], "c\n?\n");
+    let (output, text) = at_a_terminal(
+        &home,
+        &project,
+        &["apply", "--yes"],
+        &[("[c]", "c"), ("[e]", "\n"), ("[?]", "?"), ("[a]", "\n")],
+    );
 
     assert_eq!(output.status.code(), Some(1), "{text}");
     let at = |line: &str| {

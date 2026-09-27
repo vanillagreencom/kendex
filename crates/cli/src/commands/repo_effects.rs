@@ -8,8 +8,8 @@
 //! the package's files does not undo. Undoing it is the package's declared
 //! uninstaller, which `undo` runs when the package leaves.
 //!
-//! Separate on purpose. `apply? [y/N]` is a question about files landing in
-//! tool folders, and it never asked about any of that. Declining the effect
+//! Separate on purpose. The write consent is a question about files landing
+//! in tool folders, and it never asked about any of that. Declining the effect
 //! still installs the package: the person keeps the scripts and arms them
 //! later.
 //!
@@ -206,13 +206,13 @@ pub fn confirm(pending: &[Disclosure], allowed: bool) -> Result<bool, Box<dyn st
         1 => format!("make {}'s repository changes?", pending[0].name),
         n => format!("make the repository changes of {n} packages?"),
     };
-    // The shared prompt, not a write of our own: it draws whatever block
-    // is still open before it reads, so the question cannot reach the
+    // The shared consent, not a write of our own: it draws whatever block
+    // is still open before it asks, so the question cannot reach the
     // reader ahead of the disclosure it is about.
     // Handed on as it came back, never as its text: a cancel is an
     // io::Error whose kind main reads to exit 130, and a String would
     // leave it looking like any other failure.
-    Ok(crate::ui::confirm(&question)?)
+    Ok(crate::ui::consent(&question)?)
 }
 
 /// Run one package's installer, here and now, and relay what it said.
@@ -262,7 +262,7 @@ pub fn set_up_beside_main(
     let [disclosure] = shown.as_slice() else {
         return Ok(false);
     };
-    if !crate::ui::confirm(&format!(
+    if !crate::ui::consent(&format!(
         "set {} up in this work tree too?",
         disclosure.name
     ))? {

@@ -90,7 +90,7 @@ fn straight(
                 match again(asking, more.then_some(&refused.failed))? {
                     Retry::Leave => return Ok(Outcome::CommitRefused),
                     Retry::Same => {}
-                    Retry::Different => message = block::message(&message)?,
+                    Retry::Different => message = block::different_message(&message)?,
                 }
             }
         }
@@ -343,7 +343,7 @@ fn abandoned(
         Retry::Leave => Ok(Outcome::CommitRefused),
         Retry::Same => pull_request(offer, generated, Some(message), asking),
         Retry::Different => {
-            let message = block::message(&message)?;
+            let message = block::different_message(&message)?;
             pull_request(offer, generated, Some(message), asking)
         }
     }

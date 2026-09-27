@@ -249,7 +249,7 @@ pub struct EngineReport {
     pub safety: Vec<ItemSafety>,
     /// Packages in this plan that change the repository outside the folders
     /// kendex manages. The plan's own lines describe none of this, and the
-    /// `apply? [y/N]` that covers those lines does not cover it: the files
+    /// write consent that covers those lines does not cover it: the files
     /// land with the rest, and the effect stays pending until it is
     /// authorized on its own.
     pub repo_effects: Vec<crate::repo_effects::DeclaredEffects>,

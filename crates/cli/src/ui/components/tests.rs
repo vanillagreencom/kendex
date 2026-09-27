@@ -444,6 +444,35 @@ fn choices_wrap_between_buttons() {
     );
 }
 
+/// Two buttons whose joined line fills the room after the two-cell indent
+/// exactly stay on one line; one cell more and they wrap. At width 40 the
+/// room is 38, and `[a]` with a 13-cell label joined to `[Enter]` with an
+/// `r`-cell label takes `28 + r` cells.
+#[test]
+fn choices_wrap_at_exactly_the_room() {
+    let (thirteen, ten, eleven) = ("a".repeat(13), "b".repeat(10), "b".repeat(11));
+    let rows: [(&str, &str, usize); 2] = [
+        ("fills the room", &ten, 1),
+        ("one cell past it", &eleven, 2),
+    ];
+    for (what, right, lines) in rows {
+        let drawn = rich(40).choices(&[
+            Choice {
+                key: Key::Char('a'),
+                label: &thirteen,
+            },
+            Choice {
+                key: Key::Enter,
+                label: right,
+            },
+        ]);
+        assert_eq!(drawn.len(), lines, "{what}: {drawn:?}");
+        for line in &drawn {
+            assert!(cells(line) <= 40, "{what}: {} cells: {line:?}", cells(line));
+        }
+    }
+}
+
 #[track_caller]
 fn pinned(style: &Style, want: &[(&str, &[&str])]) {
     let drawn = drawn(style);

@@ -2,18 +2,25 @@
 //! by pressing one of the keys it shows.
 //!
 //! Enter takes the choice drawn as the default, and every question has
-//! exactly one. Escape and Ctrl-C cancel: the read comes back as an
-//! interrupted error, which [`super::cancelled`] recognises and the run
-//! exits 130 on, having written nothing the question asked about. A key
-//! the question does not show is ignored and the read waits for another,
-//! so a stray key picks nothing.
+//! exactly one. Escape, Ctrl-C and the end of input cancel: the read comes
+//! back as an interrupted error, which [`super::cancelled`] recognises and
+//! the run exits 130 on, having written nothing the question asked about. A
+//! key the question does not show is ignored and the read waits for another,
+//! so a stray key picks nothing. Keys typed before a question is drawn are
+//! discarded, so the Enter after an earlier answer's key cannot answer the
+//! next question unseen.
 //!
-//! Only a run with a terminal on stdin is asked: a run with nobody to ask
-//! refuses before its first write, naming the flag that answers instead,
-//! and never reaches a read. Keys are read raw where the question is drawn
-//! on a terminal. Where stderr is redirected, as in `2>&1 | tee log`, the
-//! person cannot see a raw prompt redraw, so the answer is a typed line
-//! whose first character is the key and whose empty line is Enter.
+//! A question needs a terminal on stdin, and [`choose`] refuses to wait on
+//! a pipe. Each caller settles a run with nobody to ask before it reaches a
+//! question: the write consent refuses before its first write, naming
+//! `--yes`, and the commit offer, which comes after the writes, prints one
+//! line naming its flags and asks nothing.
+//!
+//! Keys are read raw where the question is drawn on a terminal. Where
+//! stderr is redirected, as in `2>&1 | tee log`, the answer is a typed line:
+//! its first character is the key, an empty line is Enter, and a line
+//! starting with Escape cancels. Ctrl-C there is the terminal's own signal,
+//! which ends the run.
 
 use std::io::{self, IsTerminal, Write};
 
@@ -26,60 +33,108 @@ use super::modes::{Style, cells, style};
 /// Draw `options` as keyed buttons under what the caller drew above, and
 /// read the one the person presses.
 pub fn choose<T: Copy>(options: &[(Choice<'_>, T)]) -> io::Result<T> {
-    let mut keys = Keys::for_this_run()?;
-    asked(&style(), options, || keys.next(), super::stderr)
+    let mut keys = Keys::ready()?;
+    let reading = keys.reading;
+    asked(&style(), reading, options, || keys.next(), super::stderr)
 }
 
+/// The consent a write needs: the question as a callout, `[y] yes` and
+/// `[Enter] no`. Enter, the answer a stray key is likeliest to be, never
+/// writes.
+pub fn consent(question: &str) -> io::Result<bool> {
+    let mut keys = Keys::ready()?;
+    let reading = keys.reading;
+    consented(&style(), reading, question, || keys.next(), super::stderr)
+}
+
+fn consented(
+    style: &Style,
+    reading: Reading,
+    question: &str,
+    read: impl FnMut() -> io::Result<Pressed>,
+    mut draw: impl FnMut(&[String]),
+) -> io::Result<bool> {
+    draw(&style.callout(question, None, &[]));
+    asked(style, reading, &CONSENT, read, draw)
+}
+
+const CONSENT: [(Choice<'static>, bool); 2] = [
+    (
+        Choice {
+            key: Key::Char('y'),
+            label: "yes",
+        },
+        true,
+    ),
+    (
+        Choice {
+            key: Key::Enter,
+            label: "no",
+        },
+        false,
+    ),
+];
+
 /// Read a line the person types, for a question whose answer is text rather
-/// than one of a few choices. Escape and Ctrl-C cancel as [`choose`] does;
+/// than one of a few choices. It cancels on the keys [`choose`] cancels on;
 /// the line comes back trimmed, empty where nothing was typed.
+///
+/// Queued keys are kept: a text question follows the key that led to it,
+/// and what was typed after that key is the text.
 pub fn typed() -> io::Result<String> {
     let style = style();
     let prompt = style.picked("").concat();
-    match Keys::for_this_run()? {
-        Keys::Raw(term) => {
-            super::flush();
+    let keys = Keys::open()?;
+    super::flush();
+    match keys.reading {
+        Reading::Keys => {
+            let term = &keys.term;
             term.write_str(&prompt)?;
             let mut text = Typed::default();
             loop {
-                match term.read_key_raw() {
-                    Ok(Pressed::Enter) => break,
-                    Ok(Pressed::Char(c)) if !c.is_control() => term.write_str(&text.push(c))?,
-                    Ok(Pressed::Backspace) => {
+                let pressed = term.read_key_raw();
+                if cancels(&pressed) {
+                    let _ = term.write_line("");
+                    return Err(io::Error::from(io::ErrorKind::Interrupted));
+                }
+                match pressed? {
+                    Pressed::Enter => break,
+                    Pressed::Char(c) if !c.is_control() => term.write_str(&text.push(c))?,
+                    Pressed::Backspace => {
                         if let Some(wide) = text.pop() {
                             term.clear_chars(wide)?;
                         }
                     }
-                    Ok(Pressed::Escape | Pressed::CtrlC) => return Err(cancel(&term)),
-                    Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
-                        return Err(cancel(&term));
-                    }
-                    Err(error) => return Err(error),
-                    Ok(_) => {}
+                    _ => {}
                 }
             }
             term.write_line("")?;
             Ok(text.text.trim().to_owned())
         }
-        Keys::Typed => {
-            super::flush();
+        Reading::Lines => {
             let mut err = io::stderr().lock();
             let _ = write!(err, "{prompt}");
             let _ = err.flush();
             drop(err);
-            match typed_line()? {
-                Some(line) => Ok(line.trim().to_owned()),
-                None => Err(io::Error::from(io::ErrorKind::Interrupted)),
+            let line = typed_line()?;
+            if cancels(&line_key(line.as_deref())) {
+                return Err(io::Error::from(io::ErrorKind::Interrupted));
             }
+            Ok(line_text(line.as_deref().unwrap_or_default()))
         }
     }
 }
 
-/// The line under a raw read ends where the cancel left it, so the lines
-/// the run prints next start at column 0.
-fn cancel(term: &console::Term) -> io::Error {
-    let _ = term.write_line("");
-    io::Error::from(io::ErrorKind::Interrupted)
+/// Whether a key read ends the question as a cancel. The one set of cancel
+/// keys, for a choice and for a line alike. The end of input cancels: no
+/// key can follow it, and taking the default there would answer a question
+/// nobody saw through to the end.
+fn cancels(pressed: &io::Result<Pressed>) -> bool {
+    match pressed {
+        Ok(Pressed::Escape | Pressed::CtrlC) => true,
+        Err(error) => error.kind() == io::ErrorKind::UnexpectedEof,
+        Ok(_) => false,
+    }
 }
 
 /// What a raw line read holds, and the cells each character was echoed in,
@@ -107,44 +162,86 @@ impl Typed {
     }
 }
 
-/// Where this run's keys come from.
-enum Keys {
+/// How this run's answers are read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reading {
     /// One key at a time, unechoed, off the terminal the question is on.
-    Raw(console::Term),
+    Keys,
     /// A typed line per answer, off stdin, for a question drawn on a
     /// redirected stderr.
-    Typed,
+    Lines,
+}
+
+/// Where answers come from: stdin must be a terminal, and a question drawn
+/// on one is answered by keys. Waiting on a pipe is the one thing a
+/// question must never do, so a run without one is refused here whatever
+/// its caller settled before.
+fn reading(stdin_is_terminal: bool, stderr_is_terminal: bool) -> io::Result<Reading> {
+    match (stdin_is_terminal, stderr_is_terminal) {
+        (false, _) => Err(io::Error::other(
+            "no terminal to ask at: a question was reached by a run with nobody to answer it",
+        )),
+        (true, true) => Ok(Reading::Keys),
+        (true, false) => Ok(Reading::Lines),
+    }
+}
+
+/// This run's answers, off the terminal a question is drawn on.
+struct Keys {
+    reading: Reading,
+    term: console::Term,
 }
 
 impl Keys {
-    /// Refuses where stdin is no terminal: every caller refuses a run with
-    /// nobody to ask before its first write, so a read reached without one
-    /// is a caller that skipped that refusal, and waiting on a pipe is the
-    /// one thing a question must never do.
-    fn for_this_run() -> io::Result<Keys> {
-        if !io::stdin().is_terminal() {
-            return Err(io::Error::other(
-                "no terminal to ask at: a question was reached by a run with nobody to answer it",
-            ));
-        }
+    fn open() -> io::Result<Keys> {
         let term = console::Term::stderr();
-        Ok(match term.is_term() {
-            true => Keys::Raw(term),
-            false => Keys::Typed,
+        Ok(Keys {
+            reading: reading(io::stdin().is_terminal(), term.is_term())?,
+            term,
         })
     }
 
+    /// Opened for a new question: what was typed before it is dropped.
+    fn ready() -> io::Result<Keys> {
+        let keys = Keys::open()?;
+        discard_typed_ahead()?;
+        Ok(keys)
+    }
+
     fn next(&mut self) -> io::Result<Pressed> {
-        match self {
-            Keys::Raw(term) => term.read_key_raw(),
-            Keys::Typed => match typed_line()? {
-                None => Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
-                Some(line) => Ok(match line.trim().chars().next() {
-                    None => Pressed::Enter,
-                    Some(c) => Pressed::Char(c),
-                }),
-            },
+        match self.reading {
+            Reading::Keys => self.term.read_key_raw(),
+            Reading::Lines => line_key(typed_line()?.as_deref()),
         }
+    }
+}
+
+/// Drop what stdin's terminal holds unread.
+#[cfg(unix)]
+fn discard_typed_ahead() -> io::Result<()> {
+    rustix::termios::tcflush(io::stdin(), rustix::termios::QueueSelector::IFlush)
+        .map_err(io::Error::from)
+}
+
+/// Drop what the console input buffer holds unread.
+#[cfg(windows)]
+#[allow(
+    unsafe_code,
+    reason = "Win32 has no safe binding for the console input flush"
+)]
+fn discard_typed_ahead() -> io::Result<()> {
+    use windows_sys::Win32::System::Console::{
+        FlushConsoleInputBuffer, GetStdHandle, STD_INPUT_HANDLE,
+    };
+    // SAFETY: GetStdHandle takes a constant and returns the process's
+    // standard input handle or a sentinel; FlushConsoleInputBuffer takes that
+    // handle by value, writes through no pointer, and reports an invalid or
+    // non-console handle as a zero return, which is turned into the error.
+    // No memory is shared with either call.
+    let flushed = unsafe { FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE)) };
+    match flushed {
+        0 => Err(io::Error::last_os_error()),
+        _ => Ok(()),
     }
 }
 
@@ -155,6 +252,30 @@ fn typed_line() -> io::Result<Option<String>> {
         0 => Ok(None),
         _ => Ok(Some(line)),
     }
+}
+
+/// The key a typed line answers with: its first character past leading
+/// blanks, Enter for an empty line, Escape for a line that starts with one,
+/// and the end of input where there was no line.
+fn line_key(line: Option<&str>) -> io::Result<Pressed> {
+    let Some(line) = line else {
+        return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
+    };
+    Ok(match line.trim().chars().next() {
+        None => Pressed::Enter,
+        Some('\u{1b}') => Pressed::Escape,
+        Some(c) => Pressed::Char(c),
+    })
+}
+
+/// The text a typed line answers with: trimmed, its control characters
+/// dropped as the raw read drops them.
+fn line_text(line: &str) -> String {
+    line.chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .trim()
+        .to_owned()
 }
 
 /// What one key does to a question.
@@ -170,8 +291,11 @@ enum Answer {
 /// The question: draw its buttons, read keys until one picks or cancels,
 /// and draw the choice picked. `read` hands back each key and `draw` prints
 /// what was drawn, so a test drives the same question with its own keys.
-pub(super) fn asked<T: Copy>(
+/// A typed line that picks nothing draws the buttons again, so the person
+/// sees their answer was not taken.
+fn asked<T: Copy>(
     style: &Style,
+    reading: Reading,
     options: &[(Choice<'_>, T)],
     mut read: impl FnMut() -> io::Result<Pressed>,
     mut draw: impl FnMut(&[String]),
@@ -180,33 +304,37 @@ pub(super) fn asked<T: Copy>(
     one_default_and_distinct_keys(&shown)?;
     draw(&style.choices(&shown));
     loop {
-        match answer(&shown, read()) {
+        match answer(&shown, read())? {
             Answer::Picked(at) => {
                 draw(&style.picked(shown[at].label));
                 return Ok(options[at].1);
             }
             Answer::Cancel => return Err(io::Error::from(io::ErrorKind::Interrupted)),
-            Answer::Ignored => {}
+            Answer::Ignored => match reading {
+                Reading::Keys => {}
+                Reading::Lines => draw(&style.choices(&shown)),
+            },
         }
     }
 }
 
 /// The key read against the choices shown. Letters match either case, so
-/// Caps Lock does not turn every key into one the question ignores. The
-/// end of input cancels: no key can follow it, and taking the default
-/// there would answer a question nobody saw through to the end.
-fn answer(shown: &[Choice<'_>], pressed: io::Result<Pressed>) -> Answer {
-    let wanted = match pressed {
-        Ok(Pressed::Escape | Pressed::CtrlC) => return Answer::Cancel,
-        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Answer::Cancel,
-        Ok(Pressed::Enter) => Key::Enter,
-        Ok(Pressed::Char(c)) => Key::Char(c),
-        Ok(_) | Err(_) => return Answer::Ignored,
+/// Caps Lock does not turn every key into one the question ignores. A read
+/// that failed is the terminal's own error, handed on: read again, a hung
+/// up terminal fails again at once and forever.
+fn answer(shown: &[Choice<'_>], pressed: io::Result<Pressed>) -> io::Result<Answer> {
+    if cancels(&pressed) {
+        return Ok(Answer::Cancel);
+    }
+    let wanted = match pressed? {
+        Pressed::Enter => Key::Enter,
+        Pressed::Char(c) => Key::Char(c),
+        _ => return Ok(Answer::Ignored),
     };
-    shown
+    Ok(shown
         .iter()
         .position(|choice| same(choice.key, wanted))
-        .map_or(Answer::Ignored, Answer::Picked)
+        .map_or(Answer::Ignored, Answer::Picked))
 }
 
 fn same(key: Key, pressed: Key) -> bool {
@@ -243,9 +371,39 @@ fn one_default_and_distinct_keys(shown: &[Choice<'_>]) -> io::Result<()> {
     }
 }
 
+/// Questions driven by scripted keys, for the tests of the verbs that ask
+/// them.
+#[cfg(test)]
+pub(crate) mod testing {
+    use super::*;
+
+    fn scripted(keys: &[Pressed]) -> impl FnMut() -> io::Result<Pressed> + '_ {
+        let mut keys = keys.iter().cloned();
+        move || {
+            keys.next()
+                .ok_or_else(|| io::Error::from(io::ErrorKind::UnexpectedEof))
+        }
+    }
+
+    /// A question drawn in `style` and answered by `keys`, in order, read
+    /// raw: what it drew, and the answer. Keys run out as the end of input.
+    pub fn asked<T: Copy>(
+        style: &Style,
+        options: &[(Choice<'_>, T)],
+        keys: &[Pressed],
+    ) -> (Vec<String>, io::Result<T>) {
+        let mut drawn = Vec::new();
+        let answer = super::asked(style, Reading::Keys, options, scripted(keys), |lines| {
+            drawn.extend_from_slice(lines)
+        });
+        (drawn, answer)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::testing::{plain, rich, tagged};
 
     const CHOICES: [(Choice<'static>, char); 3] = [
         (
@@ -281,33 +439,68 @@ mod tests {
 
     /// Each key against the choices shown: a shown key picks its choice in
     /// either case, Enter takes the default, Escape, Ctrl-C and the end of
-    /// input cancel, and anything else is ignored.
+    /// input cancel, anything else is ignored, and a read that failed
+    /// otherwise is handed on as the error it is.
     #[test]
     fn a_key_picks_the_choice_it_shows() {
-        let rows: [(&str, io::Result<Pressed>, Answer); 11] = [
-            ("its key", Ok(Pressed::Char('c')), Answer::Picked(0)),
+        let rows: [(&str, io::Result<Pressed>, Option<Answer>); 11] = [
+            ("its key", Ok(Pressed::Char('c')), Some(Answer::Picked(0))),
             (
                 "its key in capitals",
                 Ok(Pressed::Char('C')),
-                Answer::Picked(0),
+                Some(Answer::Picked(0)),
             ),
-            ("a symbol key", Ok(Pressed::Char('?')), Answer::Picked(1)),
-            ("Enter", Ok(Pressed::Enter), Answer::Picked(2)),
-            ("Escape", Ok(Pressed::Escape), Answer::Cancel),
-            ("Ctrl-C", Ok(Pressed::CtrlC), Answer::Cancel),
-            ("the end of input", eof(), Answer::Cancel),
-            ("a key not shown", Ok(Pressed::Char('x')), Answer::Ignored),
-            ("a digit", Ok(Pressed::Char('1')), Answer::Ignored),
-            ("an arrow", Ok(Pressed::ArrowDown), Answer::Ignored),
+            (
+                "a symbol key",
+                Ok(Pressed::Char('?')),
+                Some(Answer::Picked(1)),
+            ),
+            ("Enter", Ok(Pressed::Enter), Some(Answer::Picked(2))),
+            ("Escape", Ok(Pressed::Escape), Some(Answer::Cancel)),
+            ("Ctrl-C", Ok(Pressed::CtrlC), Some(Answer::Cancel)),
+            ("the end of input", eof(), Some(Answer::Cancel)),
+            (
+                "a key not shown",
+                Ok(Pressed::Char('x')),
+                Some(Answer::Ignored),
+            ),
+            ("a digit", Ok(Pressed::Char('1')), Some(Answer::Ignored)),
+            ("an arrow", Ok(Pressed::ArrowDown), Some(Answer::Ignored)),
             (
                 "a read that failed otherwise",
-                Err(io::Error::from(io::ErrorKind::WouldBlock)),
-                Answer::Ignored,
+                Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+                None,
             ),
         ];
         for (what, pressed, want) in rows {
-            assert_eq!(answer(&shown(), pressed), want, "{what}");
+            let got = answer(&shown(), pressed);
+            match want {
+                Some(want) => assert_eq!(got.ok(), Some(want), "{what}"),
+                None => assert!(
+                    got.is_err_and(|error| error.kind() == io::ErrorKind::BrokenPipe),
+                    "{what}"
+                ),
+            }
         }
+    }
+
+    /// A read that fails is not read again: the question ends on the
+    /// terminal's error after one read.
+    #[test]
+    fn a_failed_read_ends_the_question() {
+        let mut reads = 0;
+        let failed = asked(
+            &plain(),
+            Reading::Keys,
+            &CHOICES,
+            || {
+                reads += 1;
+                Err(io::Error::from(io::ErrorKind::BrokenPipe))
+            },
+            |_| {},
+        );
+        assert!(failed.is_err_and(|error| error.kind() == io::ErrorKind::BrokenPipe));
+        assert_eq!(reads, 1);
     }
 
     /// A question with no default, two, or two choices on one key is
@@ -351,7 +544,8 @@ mod tests {
             );
         }
         let refused = asked(
-            &crate::ui::testing::plain(),
+            &plain(),
+            Reading::Keys,
             &[(choice(Key::Char('a')), ())],
             || panic!("a refused question read a key"),
             |lines| panic!("a refused question drew {lines:?}"),
@@ -359,48 +553,158 @@ mod tests {
         assert!(refused.is_err());
     }
 
-    /// Ignored keys draw nothing and read on; the answer is the first key
-    /// that picks, and the choice it picked is drawn under the buttons.
+    /// Ignored keys read on; the answer is the first key that picks, and the
+    /// choice it picked is drawn under the buttons. Read raw, a key that
+    /// picks nothing draws nothing; read as typed lines, it draws the
+    /// buttons again.
     #[test]
     fn an_ignored_key_reads_on_to_the_one_that_picks() {
-        let mut keys = vec![
-            Ok(Pressed::Char('x')),
-            Ok(Pressed::Char('1')),
-            Ok(Pressed::Char('c')),
-        ]
-        .into_iter();
-        let mut drawn = Vec::new();
-        let picked = asked(
-            &crate::ui::testing::plain(),
-            &CHOICES,
-            || keys.next().unwrap_or_else(eof),
-            |lines| drawn.extend_from_slice(lines),
-        );
-        assert_eq!(picked.ok(), Some('c'));
-        assert_eq!(
-            drawn,
-            [
-                "  [c] commit them · [?] show everything · [Enter] leave them as diffs",
-                "  › commit them",
+        let buttons = "  [c] commit them · [?] show everything · [Enter] leave them as diffs";
+        for (reading, want) in [
+            (Reading::Keys, vec![buttons, "  › commit them"]),
+            (
+                Reading::Lines,
+                vec![buttons, buttons, buttons, "  › commit them"],
+            ),
+        ] {
+            let mut keys = vec![
+                Ok(Pressed::Char('x')),
+                Ok(Pressed::Char('1')),
+                Ok(Pressed::Char('c')),
             ]
-        );
-        assert!(keys.next().is_none(), "read past the key that picked");
+            .into_iter();
+            let mut drawn = Vec::new();
+            let picked = asked(
+                &plain(),
+                reading,
+                &CHOICES,
+                || keys.next().unwrap_or_else(eof),
+                |lines| drawn.extend_from_slice(lines),
+            );
+            assert_eq!(picked.ok(), Some('c'), "{reading:?}");
+            assert_eq!(drawn, want, "{reading:?}");
+            assert!(keys.next().is_none(), "read past the key that picked");
+        }
     }
 
     /// A cancel is the interrupted error the run exits 130 on, and draws no
-    /// choice as picked.
+    /// choice as picked, in either rendering.
     #[test]
     fn escape_cancels_with_nothing_picked() {
-        let mut drawn = Vec::new();
-        let cancelled = asked(
-            &crate::ui::testing::plain(),
-            &CHOICES,
-            || Ok(Pressed::Escape),
-            |lines| drawn.extend_from_slice(lines),
-        );
-        let error = cancelled.expect_err("Escape picked a choice");
-        assert!(crate::ui::cancelled(&error), "{error:?}");
-        assert_eq!(drawn.len(), 1, "{drawn:?}");
+        for (style, buttons) in [
+            (
+                rich(100),
+                "  <34>[c]</> <90>commit them</><90> · </><34>[?]</> <90>show everything</><90> · </><1;34>[Enter]</> <1>leave them as diffs</>",
+            ),
+            (
+                plain(),
+                "  [c] commit them · [?] show everything · [Enter] leave them as diffs",
+            ),
+        ] {
+            let mut drawn = Vec::new();
+            let cancelled = asked(
+                &style,
+                Reading::Keys,
+                &CHOICES,
+                || Ok(Pressed::Escape),
+                |lines| drawn.extend_from_slice(lines),
+            );
+            let error = cancelled.expect_err("Escape picked a choice");
+            assert!(crate::ui::cancelled(&error), "{error:?}");
+            assert_eq!(tagged(&drawn), [buttons]);
+        }
+    }
+
+    /// The write consent as production draws it, in both renderings: `y`
+    /// writes, Enter is the default no. One row per answer.
+    #[test]
+    fn the_consent_draws_accept_and_decline() {
+        let rich_asked = [
+            "",
+            "<33>!</> <1>write 3 changes?</>",
+            "  <34>[y]</> <90>yes</><90> · </><1;34>[Enter]</> <1>no</>",
+        ];
+        let plain_asked = ["! write 3 changes?", "  [y] yes · [Enter] no"];
+        type Row = (&'static str, Pressed, bool, &'static str, &'static str);
+        let rows: [Row; 2] = [
+            (
+                "accept",
+                Pressed::Char('y'),
+                true,
+                "  <34>›</> <1>yes</>",
+                "  › yes",
+            ),
+            (
+                "decline",
+                Pressed::Enter,
+                false,
+                "  <34>›</> <1>no</>",
+                "  › no",
+            ),
+        ];
+        for (what, key, want, rich_tail, plain_tail) in rows {
+            for (style, head, tail) in [
+                (rich(100), &rich_asked[..], rich_tail),
+                (plain(), &plain_asked[..], plain_tail),
+            ] {
+                let mut drawn = Vec::new();
+                let mut keys = [Ok(key.clone())].into_iter();
+                let answer = consented(
+                    &style,
+                    Reading::Keys,
+                    "write 3 changes?",
+                    || keys.next().unwrap_or_else(eof),
+                    |lines| drawn.extend_from_slice(lines),
+                );
+                let wanted: Vec<&str> = head.iter().copied().chain([tail]).collect();
+                assert_eq!(tagged(&drawn), wanted, "{what}");
+                assert_eq!(answer.ok(), Some(want), "{what}");
+            }
+        }
+    }
+
+    /// Where the answers come from: keys on a terminal, typed lines where
+    /// stderr is redirected, and a refusal with no terminal on stdin.
+    #[test]
+    fn a_question_reads_keys_lines_or_nothing() {
+        let rows = [
+            (true, true, Some(Reading::Keys)),
+            (true, false, Some(Reading::Lines)),
+            (false, true, None),
+            (false, false, None),
+        ];
+        for (stdin, stderr, want) in rows {
+            assert_eq!(
+                reading(stdin, stderr).ok(),
+                want,
+                "stdin {stdin}, stderr {stderr}"
+            );
+        }
+    }
+
+    /// A typed line as a key and as text: its first character past blanks,
+    /// Enter for an empty line, Escape for a line that starts with one, the
+    /// end of input where there was none; as text, trimmed, control
+    /// characters dropped.
+    #[test]
+    fn a_typed_line_answers_as_its_first_key() {
+        let rows: [(Option<&str>, Option<Pressed>); 6] = [
+            (Some("y\n"), Some(Pressed::Char('y'))),
+            (Some("  yes\n"), Some(Pressed::Char('y'))),
+            (Some("\n"), Some(Pressed::Enter)),
+            (Some("   \n"), Some(Pressed::Enter)),
+            (Some("\u{1b}\n"), Some(Pressed::Escape)),
+            (None, None),
+        ];
+        for (line, want) in rows {
+            let got = line_key(line);
+            match want {
+                Some(want) => assert_eq!(got.ok(), Some(want), "{line:?}"),
+                None => assert!(cancels(&got), "{line:?}"),
+            }
+        }
+        assert_eq!(line_text("  fix: renders\n"), "fix: renders");
+        assert_eq!(line_text("fix\u{7}: bell\n"), "fix: bell");
     }
 
     /// A backspace clears the cells its character was echoed in, an

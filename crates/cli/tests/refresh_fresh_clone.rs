@@ -540,11 +540,14 @@ fn a_crlf_checkout_keeps_its_own_uncommitted_render_as_kendexs() {
 fn an_unchanged_risky_plan_can_be_refused_after_its_safety_report() {
     use kendex_core::drift::snapshot::{SnapshotFile, load};
     use kendex_core::{env::Env, model::Scope};
-    for (answer, status, installed, mode) in [
-        ("y\n", 1, false, "plain"),
-        ("yy", 0, true, "plain"),
-        ("y\x1b", 130, false, "pretty"),
-    ] {
+    // The settle's consent, then the final one.
+    type Steps = &'static [(&'static str, &'static str)];
+    let rows: [(Steps, i32, bool, &str); 3] = [
+        (&[("[y]", "y"), ("[y]", "\n")], 1, false, "plain"),
+        (&[("[y]", "y"), ("[y]", "y")], 0, true, "plain"),
+        (&[("[y]", "y"), ("[y]", "\x1b")], 130, false, "pretty"),
+    ];
+    for (answers, status, installed, mode) in rows {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = declared_consumer(&home, NO_DEPENDENCIES);
@@ -564,7 +567,7 @@ fn an_unchanged_risky_plan_can_be_refused_after_its_safety_report() {
             .envs(test_util::fixture_env(&home))
             .env("KENDEX_UI", mode)
             .env("PATH", std::env::var("PATH").unwrap_or_default());
-        let output = pty::sent_to_a_terminal(command, answer.as_bytes());
+        let output = pty::conversation(command, answers, pty::Stderr::Terminal);
         let printed = said(&output);
         assert_eq!(output.status.code(), Some(status), "{printed}");
         let committed = project.join(".git/refs/heads/main").is_file();

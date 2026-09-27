@@ -1,7 +1,7 @@
 //! The terminal's rows, pinned to the design's words. The states are
 //! driven end to end through the binary in `tests/commit_offer_cli.rs`;
 //! what that child cannot reach — the interactive block's lines, its
-//! numbered choices and how an answer is read — is composed here.
+//! keyed choices and how an answer is read — is composed here.
 
 use std::path::{Path, PathBuf};
 
@@ -81,11 +81,11 @@ fn the_head_line_carries_the_scope_and_the_count() {
     );
 }
 
-/// The four choices in the design's order, renumbered as the preconditions
-/// remove them, `leave` always last; an open pull request rewords `push`
-/// and takes `pr` away. One row per precondition.
+/// The four choices in the design's order, skipping the ones the
+/// preconditions remove, `leave` always last; an open pull request rewords
+/// `push` and takes `pr` away. One row per precondition.
 #[test]
-fn the_choices_are_numbered_in_order_skipping_the_removed_ones() {
+fn the_choices_keep_their_order_skipping_the_removed_ones() {
     type Shape = fn(&mut Offer);
     let rows: [(&str, Shape, &[&str]); 5] = [
         (
@@ -269,91 +269,86 @@ fn a_removed_choice_prints_its_reason() {
     }
 }
 
-/// Each choice is taken by its key, Enter takes `leave`, a key the offer
-/// does not show picks nothing, and Escape cancels. With `pr` gone its key
-/// is one of those that pick nothing.
+/// Each question's table: every choice is taken by its own key, and Enter
+/// takes the default, which never writes, pushes or opens anything except
+/// on the message question, whose default is the offered message. With
+/// `pr` gone its key picks nothing. One row per key.
 #[test]
 fn each_choice_is_taken_by_its_key() {
     use console::Key as Pressed;
-    let everything = block::choices(&offer());
-    let without = block::without_pull_request(&offer());
-    type Row<'a> = (
-        &'a str,
-        &'a [(Choice, String)],
-        Vec<Pressed>,
-        Option<Choice>,
-    );
-    let rows: [Row; 7] = [
-        (
-            "c",
-            &everything,
-            vec![Pressed::Char('c')],
-            Some(Choice::Commit),
-        ),
-        (
-            "p",
-            &everything,
-            vec![Pressed::Char('p')],
-            Some(Choice::Push),
-        ),
-        ("r", &everything, vec![Pressed::Char('r')], Some(Choice::Pr)),
-        (
-            "Enter",
-            &everything,
-            vec![Pressed::Enter],
-            Some(Choice::Leave),
-        ),
-        (
-            "a number, then Enter",
-            &everything,
-            vec![Pressed::Char('1'), Pressed::Enter],
-            Some(Choice::Leave),
-        ),
-        (
-            "r with no pull request on offer, then c",
-            &without,
-            vec![Pressed::Char('r'), Pressed::Char('c')],
-            Some(Choice::Commit),
-        ),
-        ("Escape", &everything, vec![Pressed::Escape], None),
-    ];
-    for (what, choices, keys, want) in rows {
-        let (_, answer) = asked(&plain(), &block::keyed(choices), &keys);
-        match want {
-            Some(want) => assert_eq!(answer.ok(), Some(want), "{what}"),
-            None => assert!(
-                answer.is_err_and(|error| crate::ui::cancelled(&error)),
-                "{what}"
-            ),
+    use std::fmt::Debug;
+
+    #[track_caller]
+    fn taken<T: Copy + PartialEq + Debug>(
+        options: &[(crate::ui::Choice<'_>, T)],
+        rows: &[(Vec<Pressed>, T)],
+    ) {
+        for (keys, want) in rows {
+            let (_, answer) = asked(&plain(), options, keys);
+            assert_eq!(answer.ok(), Some(*want), "{keys:?}");
         }
     }
-    for (keys, want) in [
-        (
-            vec![Pressed::Char('a')],
-            Some(block::AfterRefusal::Retry(block::Retry::Same)),
-        ),
-        (
-            vec![Pressed::Char('m')],
-            Some(block::AfterRefusal::Retry(block::Retry::Different)),
-        ),
-        (vec![Pressed::Char('?')], Some(block::AfterRefusal::Show)),
-        (
-            vec![Pressed::Enter],
-            Some(block::AfterRefusal::Retry(block::Retry::Leave)),
-        ),
-    ] {
-        let (_, answer) = asked(&plain(), &block::after_refusal_choices(true), &keys);
-        assert_eq!(answer.ok(), want, "{keys:?}");
-    }
-    let (_, hidden) = asked(
-        &plain(),
-        &block::after_refusal_choices(false),
-        &[Pressed::Char('?'), Pressed::Enter],
+
+    let everything = block::choices(&offer());
+    taken(
+        &block::keyed(&everything),
+        &[
+            (vec![Pressed::Char('c')], Choice::Commit),
+            (vec![Pressed::Char('p')], Choice::Push),
+            (vec![Pressed::Char('r')], Choice::Pr),
+            (vec![Pressed::Enter], Choice::Leave),
+        ],
     );
-    assert_eq!(
-        hidden.ok(),
-        Some(block::AfterRefusal::Retry(block::Retry::Leave)),
-        "the show key picked a choice the question did not draw"
+    let without = block::without_pull_request(&offer());
+    taken(
+        &block::keyed(&without),
+        &[(vec![Pressed::Char('r'), Pressed::Char('c')], Choice::Commit)],
+    );
+    taken(
+        &block::after_refusal_choices(true),
+        &[
+            (
+                vec![Pressed::Char('a')],
+                block::AfterRefusal::Retry(block::Retry::Same),
+            ),
+            (
+                vec![Pressed::Char('m')],
+                block::AfterRefusal::Retry(block::Retry::Different),
+            ),
+            (vec![Pressed::Char('?')], block::AfterRefusal::Show),
+            (
+                vec![Pressed::Enter],
+                block::AfterRefusal::Retry(block::Retry::Leave),
+            ),
+        ],
+    );
+    taken(
+        &block::after_refusal_choices(false),
+        &[(
+            vec![Pressed::Char('?'), Pressed::Enter],
+            block::AfterRefusal::Retry(block::Retry::Leave),
+        )],
+    );
+    taken(
+        &block::AFTER_PUSH_REFUSAL,
+        &[
+            (vec![Pressed::Char('r')], block::Recover::PullRequest),
+            (vec![Pressed::Enter], block::Recover::Leave),
+        ],
+    );
+    taken(
+        &block::MESSAGE,
+        &[
+            (vec![Pressed::Char('e')], block::Message::Type),
+            (vec![Pressed::Enter], block::Message::Use),
+        ],
+    );
+    taken(
+        &block::stale_choices("set up bot-instructions here"),
+        &[
+            (vec![Pressed::Char('s')], block::Held::SetUp),
+            (vec![Pressed::Enter], block::Held::Leave),
+        ],
     );
 }
 
@@ -367,10 +362,10 @@ fn small() -> Offer {
 }
 
 /// The offer and its question in both renderings, and what each answer
-/// draws: a key takes its choice, Enter leaves the files as diffs, and
-/// Escape cancels with no choice drawn.
+/// draws: a key takes its choice and Enter leaves the files as diffs. A
+/// cancel draws the buttons and nothing under them, which `ui::keys` pins.
 #[test]
-fn the_offer_draws_accept_decline_and_cancel() {
+fn the_offer_draws_accept_and_decline() {
     use console::Key as Pressed;
     let rich_offer = [
         "",
@@ -397,26 +392,25 @@ fn the_offer_draws_accept_decline_and_cancel() {
     type Row = (
         &'static str,
         Pressed,
-        Option<Choice>,
+        Choice,
         &'static [&'static str],
         &'static [&'static str],
     );
-    let rows: [Row; 3] = [
+    let rows: [Row; 2] = [
         (
             "accept",
             Pressed::Char('c'),
-            Some(Choice::Commit),
+            Choice::Commit,
             &["  <34>›</> <1>commit them</>"],
             &["  › commit them"],
         ),
         (
             "decline",
             Pressed::Enter,
-            Some(Choice::Leave),
+            Choice::Leave,
             &["  <34>›</> <1>leave them as diffs</>"],
             &["  › leave them as diffs"],
         ),
-        ("cancel", Pressed::Escape, None, &[], &[]),
     ];
     let offered = small();
     for (what, key, want, rich_tail, plain_tail) in rows {
@@ -433,13 +427,7 @@ fn the_offer_draws_accept_decline_and_cancel() {
             drawn.extend(lines);
             let wanted: Vec<&str> = head.iter().chain(tail.iter()).copied().collect();
             assert_eq!(tagged(&drawn), wanted, "{what}");
-            match want {
-                Some(want) => assert_eq!(answer.ok(), Some(want), "{what}"),
-                None => assert!(
-                    answer.is_err_and(|error| crate::ui::cancelled(&error)),
-                    "{what}"
-                ),
-            }
+            assert_eq!(answer.ok(), Some(want), "{what}");
         }
     }
 }
