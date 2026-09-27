@@ -981,24 +981,26 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
 
 # The caller's headroom is read off this machine's copy of its account, the
 # copy its session spends, even on a fleet whose lane provider reports that
-# account with more room.
+# account with more room. The run's own repository carries the caller's
+# context reading, since oversee-succeed reads it under its project root.
 HOSTED_WORK="$TMP_ROOT/hosted-work"
-mkdir -p "$HOSTED_WORK"
+mkdir -p "$HOSTED_WORK/tmp/lane-mail/overseer"
 git -C "$HOSTED_WORK" init -q -b main
+hosted_caller() { new_caller "$UNDER_MARK" && cp -- "$OVERSEER_RECORD" "$HOSTED_WORK/tmp/lane-mail/overseer/context.json"; }
 printf 'account=%s\tharness=claude\tsession-5h-pct=5\tweekly-pct=5\tmodel-pct=5\tmodel-label=Opus\n' "$H/.claude" > "$TMP_ROOT/accounts-room.tsv"
-new_caller "$UNDER_MARK"
+hosted_caller
 RUN_DIR="$HOSTED_WORK" LANE_HOST_ACCOUNTS="$TMP_ROOT/accounts-room.tsv" run_succeed hostedcaller '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=80" \
   "a provider row with more room leaves the caller's headroom at this machine's reading"
 # Control: a caller read that inherits the fleet's provider takes the host row.
 HOSTCALLER="$(mutant_scripts hostcaller oversee-succeed)" || exit 1
 mutate_file "$HOSTCALLER/oversee-succeed" 'caller_record="$(ol_lanes pick' 'caller_record="$("$SCRIPT_DIR/lanes" pick'
-new_caller "$UNDER_MARK"
+hosted_caller
 RUN_DIR="$HOSTED_WORK" LANE_HOST_ACCOUNTS="$TMP_ROOT/accounts-room.tsv" SUCCEED_BIN="$HOSTCALLER/oversee-succeed" \
   run_succeed hostedcallerctl '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=95" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=95" \
   "control: a caller read under the fleet's provider takes the host row's headroom"
 
 # The projected wall is measured from the displaced cache sample. A fast burn
