@@ -536,7 +536,9 @@ read_wall() {
   # no model, is read over the whole account: that binding bucket is the widest
   # reading, so it lifts no wall the model's own would keep.
   [[ -z "$model" ]] || model_args=(--model "$model")
-  "$LANES" pick --lane "$account" --harness "$harness" ${model_args[@]+"${model_args[@]}"} >/dev/null || rc=$?
+  # Under the record's own host, empty for a local lane, so a hosted lane's
+  # account is read through the copy it runs on, as open-terminal judged it.
+  ORCH_LANE_HOST="$host" "$LANES" pick --lane "$account" --harness "$harness" ${model_args[@]+"${model_args[@]}"} >/dev/null || rc=$?
   case "$rc" in
     0) WALL_ACCOUNT=room ;;
     3) WALL_ACCOUNT=walled ;;

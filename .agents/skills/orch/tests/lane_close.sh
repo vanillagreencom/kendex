@@ -148,11 +148,13 @@ pending_ask() { # AGE_SECONDS
 }
 
 # lanes answers `pick --lane` for the account the record names with the exit
-# LANE_CLOSE_LANES_STATUS gives it: 0 room, 3 walled, 5 unmeasured.
+# LANE_CLOSE_LANES_STATUS gives it: 0 room, 3 walled, 5 unmeasured. The
+# ORCH_LANE_HOST each call ran under goes to its own log, `unset` for none.
 export LANE_CLOSE_LANES_CALLS="$TMP_ROOT/lanes-calls"
 cat >"$SCRIPTS/lanes" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$LANE_CLOSE_LANES_CALLS"
+printf '%s\n' "${ORCH_LANE_HOST-unset}" >>"$LANE_CLOSE_LANES_CALLS.host"
 case "${LANE_CLOSE_LANES_STATUS:-0}" in
   0) printf 'CLAUDE_CONFIG_DIR=%s\n' "$3" ;;
   3) printf 'lanes: pick-lane-walled %s wall=100\n' "$3" >&2 ;;
@@ -587,6 +589,23 @@ model|21:00| --model model|a lifted banner over an account reading room for the 
 model|Oct 7, 2020, 11:32am (UTC)| --model model|a dated banner whose reset is behind, over an account reading room, closes the finished lane
 -|21:00||a record naming no model reads the whole account
 ROWS
+# The account is read under the record's own host, empty for a local lane, so
+# a hosted lane's wall is the copy it runs on, whatever the caller's setting.
+while IFS='|' read -r host want name; do
+  write_state running claude "$host"; write_panes python; walled_screen 21:00
+  : >"$LANE_CLOSE_LANES_CALLS"; : >"$LANE_CLOSE_LANES_CALLS.host"
+  ORCH_LANE_HOST=/other run_close "$SCRIPT" </dev/null
+  assert_eq "reads=$(grep -c . "$LANE_CLOSE_LANES_CALLS" || true) host=$(cat "$LANE_CLOSE_LANES_CALLS.host")" "reads=1 host=$want" "$name"
+done <<'ROWS'
+/host|/host|a hosted lane's account is read under the record's host
+||a local lane's account is read under no host
+ROWS
+# Control: a read that inherits the caller's setting reads another host's copy.
+MUTANT="$(mutant lane-close-wall-host '  ORCH_LANE_HOST="$host" "$LANES" pick --lane' '  "$LANES" pick --lane')"
+write_state running claude /host; write_panes python; walled_screen 21:00; : >"$LANE_CLOSE_LANES_CALLS.host"
+ORCH_LANE_HOST=/other run_close "$MUTANT" </dev/null
+assert_eq "host=$(cat "$LANE_CLOSE_LANES_CALLS.host")" "host=/other" \
+  "control: without the record's host the wall is read under the caller's setting"
 # Each reading the wall stands on refuses, naming it.
 while IFS='|' read -r lanes_status reset want name; do
   write_state running claude /host; write_panes python; walled_screen "$reset"
