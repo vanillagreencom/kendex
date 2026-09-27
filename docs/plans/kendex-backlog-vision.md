@@ -306,7 +306,7 @@ State and priority are as read on 2026-09-27 before the corrections. A dispositi
 | KEN-1702 | Backlog P4 | cancel (below bar) | one slip fixed in the same PR and already caught by the macOS shard | tools: one scan names a `--` standing after a utility's mode or script operand, over the roster bash32-parse covers, so a BSD-argv slip reds in the guard instead of on the macOS shard |
 | KEN-1897 | Backlog P0 | keep, P3, agent:generalist | declared sourced fragments in preflight; related to KEN-1668; Reached by line still missing | Declare sourced shell fragments instead of inferring them from one fixed path |
 | KEN-1898 | Backlog P0 | keep, P3, agent:generalist | parsed shell syntax in pre-commit-check; related to KEN-1482; Reached by line still missing | Read the commit and its bypass flags from parsed shell syntax, not a word scan |
-| KEN-1919 | Triage P0 | keep, updated, P3 | preflight judges an unquoted .md argument a citation; title, Reached by and Expected delta added | Restrict source document citations to documentation text |
+| KEN-1919 | Triage P0 | keep, updated, P3, agent:generalist, bug | preflight judges an unquoted .md argument a citation; title, Reached by and Expected delta added; agent label and bug label set | Restrict source document citations to documentation text |
 
 ### Tests program (4)
 
