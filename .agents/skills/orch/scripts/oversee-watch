@@ -719,7 +719,7 @@ overseer_record_notice() { # DETAIL HELD REASON FIELD=VALUE...
   case "$held" in
     none) held_text='No line is held for this pane.' ;;
     unread) held_text='Whether a line is held was not read.' ;;
-    *) held_text='A line is held for this pane, at overseer.launch_line.' ;;
+    *) held_text='A line is held for this pane, at overseer.pending.launch_line if set, else overseer.launch_line.' ;;
   esac
   if printf '%s: the start could not record this session; the pane is still watched. %s %s\n' "$*" "$OW_REPLAY_RULE" "$held_text" > "$notice"
   then

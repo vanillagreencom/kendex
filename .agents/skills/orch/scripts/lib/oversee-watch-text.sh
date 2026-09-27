@@ -619,13 +619,16 @@ USAGE
 # stderr messages start `oversee-watch: REASON field=value ...`. Backslash,
 # tab, carriage return and newline in field values are escaped. Tool error
 # details and the English explanation follow the stable header.
-# What a death replays after a start whose record failed, written once: the
-# rule itself is oversee-watch's check_overseer, its `ol_names` guard on the
-# fleet state's record, and this is that rule's wording, composed into the two
-# start notices below and into the fleet-log row overseer_record_notice
-# writes, so a change to the rule is one edit here. Bounded in length by that
-# row: the fleet log takes ORCH_FLEET_LOG_ROW_BYTES per row, and the row
-# carries the notice's keyed fields ahead of this.
+# What a death replays after a start whose record failed: the rule itself is
+# `overseer_record_read` in lib/watch-overseer-record.sh, its `ol_names` test
+# on the fleet state's record, which check_overseer and the watch start both
+# read through. This constant is the one copy of its wording the two start
+# notices below and the fleet-log row overseer_record_notice writes compose;
+# the `-- OVERSEER_FLAGS` help above, the overseer row of
+# ../../schemas/workflow-state.md and ../../workflows/oversee.md § 4. Watch And Advance
+# restate it in prose. Bounded in length by that row: the fleet log takes
+# ORCH_FLEET_LOG_ROW_BYTES per row, and the row carries the notice's keyed
+# fields ahead of this.
 OW_REPLAY_RULE='A death replays the held line only where the record names this pane by server and pane id: the last line a launch, a succession or a watch start recorded for it, which a session restarted by hand may not have started with. A record naming another pane, or no line, means a death with no successor.'
 
 ow_message() { # REASON FIELD=VALUE...
@@ -666,7 +669,7 @@ ow_message() { # REASON FIELD=VALUE...
     limit-banner-missing) text='The pane was classified walled but its screen yields no limit banner to report. The classifier and the payload disagree, so the pass stops rather than send an event with nothing its handling can read. The field names the lane, or the overseer pane where the overseer is the one classified.' ;;
     tmux-missing) text='Run in the tmux session that owns these lanes, set ORCH_TMUX_SESSION, or omit the lanes.' ;;
     session-missing) text='ORCH_TMUX_SESSION names a session the server in the server field does not hold. Correct the setting or start that session.' ;;
-    tmux-failed) text='The tmux call the operation field names failed on the server field'\''s socket for another reason than an absent session; tmux says why below.' ;;
+    tmux-failed) text='The tmux call the operation field names failed on the server field'"'"'s socket for another reason than an absent session; tmux says why below.' ;;
     since-invalid) text='Use a UTC timestamp in YYYY-MM-DDTHH:MM:SSZ form.' ;;
     helper-missing) text='The required helper is not executable. Check the named setting.' ;;
     item-invalid) text='The work item is not a supported issue identifier.' ;;

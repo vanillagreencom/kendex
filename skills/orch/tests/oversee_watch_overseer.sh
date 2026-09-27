@@ -738,7 +738,7 @@ assert_eq "$(fleet_log_kind)|$(fleet_log_text | cut -d: -f1)" "close|overseer-li
   "and in the fleet log, keyed as the stderr line is" "$ERR"
 assert_eq "$(recorded launch_line)" "$BYPASS_LINE" \
   "the line the fleet state already held is left where it was" "$ERR"
-assert_contains "$(fleet_log_text)" "A line is held for this pane, at overseer.launch_line." \
+assert_contains "$(fleet_log_text)" "A line is held for this pane, at overseer.pending.launch_line if set, else overseer.launch_line." \
   "and the fleet log row says a line is held, and where" "$ERR"
 
 # The line held is what a death then replays: a start whose pane already
@@ -781,7 +781,21 @@ for row in "7000|%4|another pane" "7001|$PANE|this pane id on another server"; d
     "a death over a record naming $row_what is reported with that record and never relaunched from its line" "$ERR"
   assert_contains "$(fleet_log_text)" "The fleet state record names another session, tmux server $row_server pane $row_pane, whose launch line is not replayed as this pane's, so no successor is launched; start one by hand." \
     "and the notice names the record that stood in the way" "$ERR"
+  assert_contains "$(jq -r '.fleet_log[] | select(.item == "overseer") | .text' "$STUB_DIR/oversee-state.json")" "No line is held for this pane." \
+    "and the start's fleet log row, ahead of the death's, says no line is held for this pane" "$ERR"
 done
+# The first watch of a fleet, or one whose state file was removed, started on
+# a pane that already reads exited: no record at all, so the death names none
+# and no successor is launched.
+overseer_case record_failure_dead_none exited
+printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
+jq -n '{issue_id: "oversee", triaged: [], lanes: []}' > "$STUB_DIR/state.json"
+run TMUX_PANE="$PANE" -- --max-loops 2 --repeat 0 --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC event=$(grep '^EVENT overseer-dead' <<<"$OUT" || true) launched=$(succeed_calls --dead-pane)" \
+  "rc=0 event=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on record=none launched=0" \
+  "a death over a fleet state with no overseer record is reported as such and never relaunched" "$ERR"
+assert_contains "$(fleet_log_text)" "The fleet state holds no overseer record, so no successor is launched; start one by hand." \
+  "and the notice says the state holds no record" "$ERR"
 # Two controls on the shared reader, one per half. A reader that takes the
 # held line whatever record stands relaunches the other session's full-bypass
 # line into this window on both rows; one that compares the pane id alone
@@ -894,6 +908,8 @@ assert_eq "$(grep -c "^tmux reported no server pid for pane $PANE\$" "$ERR")" "1
   "and the notice carries a reason of its own, since the library keeps tmux's" "$ERR"
 assert_eq "$(recorded launch_line)" "$BYPASS_LINE" \
   "and the older line is left where it was" "$ERR"
+assert_contains "$(fleet_log_text)" "Whether a line is held was not read." \
+  "and the fleet log row says the held line was not read" "$ERR"
 
 overseer_case record_identity_malformed idle
 state_with "$BYPASS_LINE"
