@@ -63,9 +63,9 @@ refresh.parent.mkdir(parents=True, exist_ok=True)
 refresh.write_bytes(template.read_bytes())
 writer = root / Path(sys.argv[2]).read_text()
 for copied, shipped in ((writer, templates / "review-gate-writer.yml"), (refresh, template)):
-    relative = copied.relative_to(root).as_posix()
-    entries = [e for e in entries if path_of(e) != relative]
+    relative, owner = copied.relative_to(root).as_posix(), shipped.relative_to(root).as_posix()
+    entries = [e for e in entries if not isinstance(e, dict) or e["template"] != owner]
     if copied.is_file() and not copied.is_symlink() and copied.read_bytes() == shipped.read_bytes():
-        entries.append({"path": relative, "template": shipped.relative_to(root).as_posix(), "templateHash": digest(shipped)})
+        entries.append({"path": relative, "template": owner, "templateHash": digest(shipped)})
 inventory.write_text("[\n" + ",\n".join("  " + json.dumps(e, ensure_ascii=False, separators=(",", ":")) for e in sorted(entries, key=path_of)) + "\n]\n")
 PY

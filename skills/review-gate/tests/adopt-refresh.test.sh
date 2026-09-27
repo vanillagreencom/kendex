@@ -9,7 +9,7 @@ trap 'rm -rf -- "${TMP:?}"' EXIT
 ADOPT='.agents/skills/review-gate/scripts/adopt-refresh.sh'
 REFRESH='.github/workflows/kendex-refresh.yml'
 TEMPLATE='.agents/skills/review-gate/templates/kendex-refresh.yml'
-printf '[".agents/skills/other/SKILL.md"]\n' >"$PRISTINE/.kendex-generated.json"
+printf '[".agents/skills/other/SKILL.md",{"path":".github/workflows/other.yml","template":".agents/skills/other/templates/other.yml","templateHash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}]\n' >"$PRISTINE/.kendex-generated.json"
 
 # Every successful adoption must preserve unrelated entries and produce the
 # exact workflow metadata that kendex verify reads, with no duplicate paths.
@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 import sys
 root = Path(sys.argv[1])
-expected = [".agents/skills/other/SKILL.md"]
+expected = [".agents/skills/other/SKILL.md", {"path":".github/workflows/other.yml","template":".agents/skills/other/templates/other.yml","templateHash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}]
 for name in ("kendex-refresh.yml", "review-gate-writer.yml"):
     path = ".github/workflows/" + (sys.argv[2] if name == "review-gate-writer.yml" else name)
     template = ".agents/skills/review-gate/templates/" + name
@@ -146,11 +146,14 @@ if [ "$RC" -eq 0 ] && [ -e "$DIR/$REFRESH" ]; then
   ok 'control: removed self-exclusion adopts the consumer workflow in kendex'
 else bad 'self-exclusion control did not reach adoption' "$OUT"; fi
 
-# The documented renamed writer must stay recorded through later templates.
+# Template ownership survives adoption, a writer rename, and a later update.
 sandbox
 printf '{"full_name":"acme/widgets","default_branch":"main"}\n' >"$FIXTURES/repository.json"
-(cd "$DIR" && git mv .github/workflows/review-gate-writer.yml .github/workflows/gate.yml)
+run_refresh_command "$DIR" "$DIR/$ADOPT"
+[ "$RC" -eq 0 ] && adoption_metadata || exit 1
+cp "$DIR/.kendex-generated.json" "$TMP/renamed-before"
 commit "$DIR"
+(cd "$DIR" && git mv .github/workflows/review-gate-writer.yml .github/workflows/gate.yml)
 run_refresh_command "$DIR" "$DIR/$ADOPT"
 if [ "$RC" -eq 0 ] && adoption_metadata gate.yml; then
   ok 'renamed writer adoption records the validator-selected path'
@@ -162,20 +165,17 @@ run_refresh_command "$DIR" "$DIR/$ADOPT"
 if [ "$RC" -eq 0 ] && adoption_metadata gate.yml; then
   ok 'renamed writer update retains exact inventory metadata'
 else bad 'renamed writer template update' "$OUT"; fi
-# Preserve the output contract text but return the old fixed path instead.
-python3 - "$DIR/.agents/skills/review-gate/scripts/validate-workflow.sh" <<'PATH_CONTROL'
+python3 - "$DIR/$ADOPT" <<'PATH_CONTROL'
 from pathlib import Path
 import sys
-p=Path(sys.argv[1]); s=p.read_text(); needle='printf \'%s\' "$adopted" >"$ADOPTED_PATH_FILE"'
+p=Path(sys.argv[1]); s=p.read_text(); needle='not isinstance(e, dict) or e["template"] != owner'
 assert s.count(needle)==1
-p.write_text(s.replace(needle,'printf \'%s\' ".github/workflows/review-gate-writer.yml" >"$ADOPTED_PATH_FILE" # '+needle))
+p.write_text(s.replace(needle,'path_of(e) != relative')+"\n# "+needle+"\n")
 PATH_CONTROL
-printf '[".agents/skills/other/SKILL.md"]\n' >"$DIR/.kendex-generated.json"
+cp "$TMP/renamed-before" "$DIR/.kendex-generated.json"
 run_refresh_command "$DIR" "$DIR/$ADOPT"
-if [ "$RC" -eq 0 ] && cmp -s "$DIR/.github/workflows/gate.yml" "$DIR/.agents/skills/review-gate/templates/review-gate-writer.yml" &&
-    jq -e 'all(.[] | objects; .path != ".github/workflows/gate.yml")' "$DIR/.kendex-generated.json" >/dev/null; then
-  ok 'control: returning a fixed writer path loses renamed inventory metadata'
-else bad 'selected writer path control' "$OUT"; fi
-
+if [ "$RC" -eq 0 ] && jq -e 'any(.[] | objects; .path == ".github/workflows/review-gate-writer.yml") and any(.[] | objects; .path == ".github/workflows/gate.yml")' "$DIR/.kendex-generated.json" >/dev/null; then
+  ok 'control: path ownership retains the stale record after a writer rename'
+else bad 'template ownership control' "$OUT"; fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
