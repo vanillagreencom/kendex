@@ -10,6 +10,7 @@
 # Usage:
 #   harness-only [--mode harness|docs] --event EVENT [--base REF] [--head REF]
 #                [--repo DIR] [--output FILE] [--paths-output FILE]
+#                [--outside-output FILE]
 #
 #   --mode    harness (default) | docs.
 #   --event   pull_request | merge_group | push. Any other event answers false.
@@ -20,6 +21,13 @@
 #   --output  append the verdict line to this file. Default $GITHUB_OUTPUT.
 #   --paths-output  overwrite this file with the changed paths used by the
 #             classifier, one path per line. Default: do not write a file.
+#   --outside-output  docs mode: overwrite this file with every changed path
+#             outside the docs set, one path per line, empty on a true
+#             verdict, on a false one reached before any path was read,
+#             and in harness mode, which reads no docs set.
+#             The change-class action reads it to tell an unclaimed path
+#             the docs set holds from one it does not. Default: do not
+#             write a file.
 #
 # stdout carries the selected verdict line and nothing else:
 # harness_only=true|false or docs_only=true|false.
@@ -55,7 +63,9 @@ head="HEAD"
 repo="."
 output="${GITHUB_OUTPUT:-}"
 paths_output=""
+outside_output=""
 changed=""
+outside=""
 base_rev=""
 head_rev=""
 classification="harness"
@@ -66,6 +76,7 @@ usage() {
   cat <<'USAGE'
 Usage: harness-only [--mode harness|docs] --event EVENT [--base REF] [--head REF]
                     [--repo DIR] [--output FILE] [--paths-output FILE]
+                    [--outside-output FILE]
 
   --mode    harness (default): accept generated harness files.
             docs: accept docs/, changelog.d/, and root .md or .markdown files.
@@ -77,6 +88,8 @@ Usage: harness-only [--mode harness|docs] --event EVENT [--base REF] [--head REF
   --output  append the verdict line to this file. Default $GITHUB_OUTPUT.
   --paths-output  overwrite this file with the changed paths used by the
             classifier, one path per line.
+  --outside-output  docs mode: overwrite this file with the changed paths
+            outside the docs set, one path per line.
 
 Prints harness_only=true|false, or docs_only=true|false in docs mode.
 Exit 2 on a wiring error.
@@ -128,6 +141,7 @@ while [ "$#" -gt 0 ]; do
     --repo) need_value "$1" "$#" "${2:-}"; repo="$2"; shift 2 ;;
     --output) need_value "$1" "$#" "${2:-}"; output="$2"; shift 2 ;;
     --paths-output) need_value "$1" "$#" "${2:-}"; paths_output="$2"; shift 2 ;;
+    --outside-output) need_value "$1" "$#" "${2:-}"; outside_output="$2"; shift 2 ;;
     --mode)
       need_value "$1" "$#" "${2:-}"
       case "$2" in
@@ -162,17 +176,21 @@ done
 # proves only that the file opens — /dev/full and a full filesystem both accept
 # it and fail the real write — so a verdict printed first would already be on
 # stdout when the append died, and exit 2 is documented to carry no verdict.
-verdict() { # true|false [FIELDS REASON]
-  if [ -n "$paths_output" ]; then
-    if ! { if [ -n "$changed" ]; then
-      printf '%s\n' "$changed" >"$paths_output"
-    else
-      : >"$paths_output"
-    fi; } 2>/dev/null; then
-      die "cause=paths-output-write-failed" \
-        "could not write the changed paths to '$paths_output'"
-    fi
+write_paths() { # FILE LIST CAUSE — overwrite FILE with LIST, one per line
+  if ! { if [ -n "$2" ]; then
+    printf '%s\n' "$2" >"$1"
+  else
+    : >"$1"
+  fi; } 2>/dev/null; then
+    die "cause=$3" "could not write the changed paths to '$1'"
   fi
+}
+
+verdict() { # true|false [FIELDS REASON]
+  [ -z "$paths_output" ] ||
+    write_paths "$paths_output" "$changed" paths-output-write-failed
+  [ -z "$outside_output" ] ||
+    write_paths "$outside_output" "$outside" outside-output-write-failed
   if [ -n "$output" ]; then
     if ! { printf '%s=%s\n' "$verdict_key" "$1" >>"$output"; } 2>/dev/null; then
       die "cause=output-write-failed" \
@@ -244,20 +262,26 @@ fi
     "cause=empty-diff base=$(stable_value "$base") head=$(stable_value "$head")" \
     "the diff between '$base' and '$head' is empty"
 
+# Every changed path is read, not only up to the first outside the set, so
+# --outside-output lists them all; the verdict names the first.
 if [ "$classification" = docs ]; then
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     case "$path" in
-      docs/* | changelog.d/*) ;;
-      */*) verdict false \
-        "cause=path-outside-docs-only path=$(stable_value "$path")" \
-        "changed path '$path' is outside the docs-only set" ;;
-      *.md | *.markdown) ;;
-      *) verdict false \
-        "cause=path-outside-docs-only path=$(stable_value "$path")" \
-        "changed path '$path' is outside the docs-only set" ;;
+      docs/* | changelog.d/*) continue ;;
+      */*) ;;
+      *.md | *.markdown) continue ;;
     esac
+    outside="${outside:+$outside
+}$path"
   done <<<"$changed"
+  [ -z "$outside" ] || {
+    first="${outside%%
+*}"
+    verdict false \
+      "cause=path-outside-docs-only path=$(stable_value "$first")" \
+      "changed path '$first' is outside the docs-only set"
+  }
   verdict true
 fi
 

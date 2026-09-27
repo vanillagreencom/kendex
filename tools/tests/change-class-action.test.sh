@@ -3,11 +3,13 @@
 # every workflow gates on, and the one decision it makes is `lanes`, from the
 # two verdicts it reads: the class is what the shipped `change-class` printed,
 # docs_only is what the shipped `harness-only --mode docs` printed, and the
-# path families are a grouping of the path list that same call wrote. The
-# rows drive it through its CLASSIFIER input against a stub scripts root, so
-# each output can be traced to the stub line that produced it.
+# path families are a grouping of the path list that same call wrote. Beside
+# it, lane_verdicts narrows lanes per lane, by the globs the LANES_FROM
+# checkout's declaration gives it. The rows drive it through its CLASSIFIER
+# input against a stub scripts root, so each output can be traced to the stub
+# line that produced it.
 #
-# Four surfaces:
+# Five surfaces:
 #   1. the outputs: one diff per class, a docs-only diff at `standard` size
 #      and a `trivial` one off the docs set, asserting every output line the
 #      step writes, and the arguments each wrapped script was called with.
@@ -25,6 +27,13 @@
 #      with a copy carrying a misspelled `lanes` value as its control. A
 #      workflow reads the action, never the script, so a dropped mapping
 #      there publishes an empty `lanes` with every row above green.
+#   5. the lane verdicts: one lane reached, two lanes reached, a lane named
+#      on two lines, an unclaimed path outside the docs set and one inside
+#      it, a docs path a lane claims, lanes=false, no changed path, and an
+#      absent and three malformed declarations, each row asserting the
+#      verdict lines and the declaration's state; the judged tree carries a
+#      declaration of its own that no row may read. One mutant copy per
+#      rule must fail the row the rule decides.
 set -euo pipefail
 
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -65,15 +74,21 @@ set -euo pipefail
 printf 'harness-only %s\n' "$*" >>"$STUB_LOG"
 [ "${STUB_PATHS_EXIT:-0}" -eq 0 ] || exit "$STUB_PATHS_EXIT"
 paths_output=""
+outside_output=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --paths-output) paths_output="$2"; shift 2 ;;
+    --outside-output) outside_output="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
 : >"$paths_output"
 for path in ${STUB_PATHS:-}; do printf '%s\n' "$path" >>"$paths_output"; done
 [ -z "${STUB_PATHS_UNREADABLE:-}" ] || chmod 000 "$paths_output"
+if [ -n "$outside_output" ] && [ -z "${STUB_NO_OUTSIDE:-}" ]; then
+  : >"$outside_output"
+  for path in ${STUB_OUTSIDE:-}; do printf '%s\n' "$path" >>"$outside_output"; done
+fi
 line="${STUB_DOCS_LINE:-docs_only=$STUB_DOCS}"
 [ -z "${GITHUB_OUTPUT:-}" ] || printf '%s\n' "$line" >>"$GITHUB_OUTPUT"
 printf '%s\n' "$line"
@@ -83,6 +98,32 @@ chmod +x "$STUBS/skills/harness-ci/scripts/change-class" \
 
 OUT="$TMP/github-output"
 LOG="$TMP/stub-log"
+mkdir -p "$TMP/subject"
+
+# The lane declarations, one checkout root each. `good` names `check` on two
+# lines and carries a comment that would claim src/* for tmux if it were read
+# as globs. The judged tree carries one of its own, which reaches every path:
+# a row that reads it publishes `lane_evil`.
+declare_lanes() { # NAME CONTENT
+  mkdir -p "$TMP/decl/$1/.github"
+  printf '%s' "$2" >"$TMP/decl/$1/.github/ci-lanes.conf"
+}
+declare_lanes good '# Lanes and the paths each reads.
+check src/* Cargo.toml
+tmux tmux/*   # not src/*
+check tests/*
+
+docs-build docs/*
+'
+declare_lanes bad-name '# a lane
+Check src/*
+'
+declare_lanes no-globs 'check
+'
+declare_lanes no-lanes '# nothing declared
+'
+mkdir -p "$TMP/decl/absent" "$TMP/subject/.github"
+printf 'evil *\n' >"$TMP/subject/.github/ci-lanes.conf"
 
 # Run a classify script with an explicit environment: the defaults below,
 # then each NAME=VALUE argument, the later of two settings winning. Prints
@@ -95,7 +136,7 @@ run() { # SCRIPT [NAME=VALUE]...
   env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMP" \
     CLASSIFIER="$STUBS" EVENT=pull_request BASE=b0 HEAD=h1 REPO="$TMP/subject" \
     GITHUB_OUTPUT="$OUT" STUB_LOG="$LOG" STUB_CLASS=standard STUB_DOCS=false \
-    "$@" bash "$script" >/dev/null 2>"$TMP/err" || status=$?
+    "$@" bash "$script" >"$TMP/stdout" 2>"$TMP/err" || status=$?
   printf '%s' "$status"
 }
 
@@ -125,13 +166,13 @@ refusal() { # the first refusal line's cause, or nothing
 # set, which change-class answers under a HARNESS_CI_TRIVIAL_PATHS allowlist.
 class_rows() {
   cat <<'ROWS'
-render|render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|change_class=render docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=.agents/skills/orch/SKILL.md,.claude/skills/orch/SKILL.md lanes=false lanes_cause=render
-trivial|trivial|true|docs/guide.md|change_class=trivial docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md lanes=false lanes_cause=trivial
-trivial-allowlisted|trivial|false|runtime/notes.txt|change_class=trivial docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=runtime/notes.txt lanes=false lanes_cause=trivial
-micro|micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|change_class=micro docs_only=false changed_skills=orch changed_crates= changed_workflows= changed_paths=skills/orch/SKILL.md,.agents/skills/orch/SKILL.md lanes=true lanes_cause=micro
-small|small|false|crates/cli/src/main.rs crates/core/src/lib.rs|change_class=small docs_only=false changed_skills= changed_crates=cli core changed_workflows= changed_paths=crates/cli/src/main.rs,crates/core/src/lib.rs lanes=true lanes_cause=small
-standard|standard|false|.github/workflows/ci.yml skills/github/SKILL.md crates/app/src/lib.rs|change_class=standard docs_only=false changed_skills=github changed_crates=app changed_workflows=ci.yml changed_paths=.github/workflows/ci.yml,skills/github/SKILL.md,crates/app/src/lib.rs lanes=true lanes_cause=standard
-docs-only-standard|standard|true|docs/guide.md changelog.d/fixed/x.md README.md|change_class=standard docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md,changelog.d/fixed/x.md,README.md lanes=false lanes_cause=docs-only
+render|render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|change_class=render docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=.agents/skills/orch/SKILL.md,.claude/skills/orch/SKILL.md lanes=false lanes_cause=render lane_verdicts=
+trivial|trivial|true|docs/guide.md|change_class=trivial docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md lanes=false lanes_cause=trivial lane_verdicts=
+trivial-allowlisted|trivial|false|runtime/notes.txt|change_class=trivial docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=runtime/notes.txt lanes=false lanes_cause=trivial lane_verdicts=
+micro|micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|change_class=micro docs_only=false changed_skills=orch changed_crates= changed_workflows= changed_paths=skills/orch/SKILL.md,.agents/skills/orch/SKILL.md lanes=true lanes_cause=micro lane_verdicts=
+small|small|false|crates/cli/src/main.rs crates/core/src/lib.rs|change_class=small docs_only=false changed_skills= changed_crates=cli core changed_workflows= changed_paths=crates/cli/src/main.rs,crates/core/src/lib.rs lanes=true lanes_cause=small lane_verdicts=
+standard|standard|false|.github/workflows/ci.yml skills/github/SKILL.md crates/app/src/lib.rs|change_class=standard docs_only=false changed_skills=github changed_crates=app changed_workflows=ci.yml changed_paths=.github/workflows/ci.yml,skills/github/SKILL.md,crates/app/src/lib.rs lanes=true lanes_cause=standard lane_verdicts=
+docs-only-standard|standard|true|docs/guide.md changelog.d/fixed/x.md README.md|change_class=standard docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md,changelog.d/fixed/x.md,README.md lanes=false lanes_cause=docs-only lane_verdicts=
 ROWS
 }
 
@@ -171,6 +212,11 @@ check "each wrapped script is called once, with the step's inputs" \
   "change-class --event pull_request --head h1 --repo $TMP/subject --base b0
 harness-only --mode docs --event pull_request --head h1 --repo $TMP/subject --base b0 --paths-output PATHS" \
   "$(sed 's/--paths-output [^ ]*$/--paths-output PATHS/' "$LOG")"
+run "$CLASSIFY" STUB_CLASS=micro STUB_PATHS=skills/orch/SKILL.md \
+  LANES_FROM="$TMP/decl/good" >/dev/null
+check "a declared lane asks harness-only for the paths outside the docs set" \
+  "harness-only --mode docs --event pull_request --head h1 --repo $TMP/subject --base b0 --paths-output PATHS --outside-output OUTSIDE" \
+  "$(sed -n 's/--paths-output [^ ]* --outside-output [^ ]*$/--paths-output PATHS --outside-output OUTSIDE/; s/^harness-only /harness-only /p' "$LOG")"
 run "$CLASSIFY" STUB_CLASS=standard BASE= >/dev/null
 check "an empty base is not passed as a flag" \
   "change-class --event pull_request --head h1 --repo $TMP/subject" \
@@ -253,8 +299,12 @@ docs-verdict-unreadable docs-line=harness_only=true|STUB_DOCS_LINE=harness_only=
 class-without-paths class=micro|STUB_CLASS=micro STUB_PATHS=
 family-read-failed prefix=skills|STUB_PATHS=skills/orch/SKILL.md STUB_PATHS_UNREADABLE=1
 delimiter-collides path=__change_class_changed_paths_end__|STUB_PATHS=__change_class_changed_paths_end__
+lanes-from-unreadable root=$TMP/nowhere|LANES_FROM=$TMP/nowhere
+lanes-from-judged-tree root=$TMP/subject|LANES_FROM=$TMP/subject
+repo-unreadable repo=$TMP/nowhere|LANES_FROM=$TMP/decl/good REPO=$TMP/nowhere
+outside-list-unreadable status=2|LANES_FROM=$TMP/decl/good STUB_PATHS=Makefile STUB_NO_OUTSIDE=1
 ROWS
-[ "$refusal_rows" -eq 12 ] ||
+[ "$refusal_rows" -eq 16 ] ||
   { echo "the refusal table read $refusal_rows rows" >&2; exit 1; }
 
 # mktemp's failure is planted as a mktemp first on PATH that exits 1. A
@@ -275,6 +325,9 @@ check "a refused delimiter writes no changed_paths output" "" \
   "$(grep '^changed_paths' "$OUT" || true)"
 check "a refused step writes no lanes output" "" \
   "$(grep '^lanes' "$OUT" || true)"
+run "$CLASSIFY" LANES_FROM="$TMP/decl/good" STUB_PATHS=Makefile STUB_NO_OUTSIDE=1 >/dev/null
+check "a refused lane read writes no lanes or lane_verdicts output" "" \
+  "$(grep '^lane' "$OUT" || true)"
 
 # --- 4. action.yml forwards every output classify writes -------------------
 
@@ -318,6 +371,121 @@ if [ "$forwarded" != "$(declared "$TMP/action.yml")" ]; then
 else
   bad "must-fail: an action.yml whose lanes value is misspelled fails the forwarding row"
 fi
+
+# --- 5. The lane verdicts ---------------------------------------------------
+
+# ROW|DECLARATION|CLASS|DOCS|PATHS|PATHS OUTSIDE THE DOCS SET|EXPECTED
+# EXPECTED is the lane_verdicts value, its lines joined with commas, and the
+# declaration's state and cause off the step's `lane-declaration:` line.
+lane_rows() {
+  cat <<'ROWS'
+one-lane|good|standard|false|src/main.rs|src/main.rs|lane_verdicts=lane_check=true,lane_tmux=false,lane_docs-build=false state=read
+two-lanes|good|small|false|src/main.rs tmux/tmux.conf|src/main.rs tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=false state=read
+second-line|good|micro|false|tests/cli.rs|tests/cli.rs|lane_verdicts=lane_check=true,lane_tmux=false,lane_docs-build=false state=read
+unclaimed|good|standard|false|tmux/tmux.conf Makefile|tmux/tmux.conf Makefile|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true state=read
+unclaimed-docs|good|standard|false|tmux/tmux.conf README.md|tmux/tmux.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false state=read
+claimed-docs|good|standard|false|src/lib.rs docs/guide.md|src/lib.rs|lane_verdicts=lane_check=true,lane_tmux=false,lane_docs-build=true state=read
+docs-only|good|standard|true|docs/guide.md||lane_verdicts=lane_check=false,lane_tmux=false,lane_docs-build=false state=read
+render|good|render|false|.agents/skills/orch/SKILL.md|.agents/skills/orch/SKILL.md|lane_verdicts=lane_check=false,lane_tmux=false,lane_docs-build=false state=read
+no-paths|good|standard|false|||lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true state=read
+absent|absent|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=absent
+bad-name|bad-name|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=malformed cause=bad-name line=2 name=Check
+no-globs|no-globs|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=malformed cause=no-globs line=1 lane=check
+no-lanes|no-lanes|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=malformed cause=no-lanes
+ROWS
+}
+
+# What one lane row's run of SCRIPT answered, or `crashed` where it did not
+# run to completion.
+lane_answer() { # SCRIPT ROW
+  local line name decl class docs paths outside expected
+  line="$(lane_rows | grep -m1 "^$2|")" ||
+    { echo "no lane row named $2" >&2; exit 1; }
+  IFS='|' read -r name decl class docs paths outside expected <<<"$line"
+  if [ "$(run "$1" LANES_FROM="$TMP/decl/$decl" STUB_CLASS="$class" \
+    STUB_DOCS="$docs" STUB_PATHS="$paths" STUB_OUTSIDE="$outside")" != 0 ]; then
+    echo crashed
+    return 0
+  fi
+  printf '%s %s\n' "$(outputs | tr ' ' '\n' | grep '^lane_verdicts=')" \
+    "$(sed -n 's/^lane-declaration: state=\([^ ]*\) path=[^ ]*/state=\1/p' "$TMP/err")"
+}
+
+lane_row_holds() { # SCRIPT ROW — prints yes, no or crashed
+  local answer expected
+  answer="$(lane_answer "$1" "$2")"
+  expected="$(lane_rows | grep -m1 "^$2|" | cut -d'|' -f7)"
+  if [ "$answer" = crashed ]; then echo crashed
+  elif [ "$answer" = "$expected" ]; then echo yes
+  else echo no
+  fi
+}
+
+rows=0
+while IFS='|' read -r name decl class docs paths outside expected; do
+  rows=$((rows + 1))
+  check "lane row $name" "$expected" "$(lane_answer "$CLASSIFY" "$name")"
+done < <(lane_rows)
+[ "$rows" -eq 13 ] || { echo "the lane table read $rows rows" >&2; exit 1; }
+
+# GitHub reads a `::warning` line off the step's stdout; a declaration the
+# step could not use says so there, and one it read says nothing.
+for decl in absent bad-name good; do
+  run "$CLASSIFY" LANES_FROM="$TMP/decl/$decl" STUB_PATHS=src/main.rs \
+    STUB_OUTSIDE=src/main.rs >/dev/null
+  case "$decl" in
+    absent) want='::warning title=lane declaration absent::' ;;
+    bad-name) want='::warning title=lane declaration malformed::' ;;
+    good) want='' ;;
+  esac
+  check "the $decl declaration's warning" "$want" \
+    "$(sed -n 's/^\(::warning title=[^:]*::\).*/\1/p' "$TMP/stdout")"
+done
+
+# One copy per lane rule, the rule planted wrong and every other line kept.
+# Each must run to completion and fail the row its rule decides.
+# NEEDLE@REPLACEMENT@ROW, split on `@` because a rule spells the shell's `&&`.
+mutants=0
+while IFS='@' read -r needle replacement row; do
+  mutants=$((mutants + 1))
+  [ "$(grep -cF -- "$needle" "$CLASSIFY")" -eq 1 ] ||
+    { echo "the lane rule '$needle' is no longer one line in $CLASSIFY" >&2; exit 1; }
+  NEEDLE="$needle" REPLACEMENT="$replacement" awk '
+    { i = index($0, ENVIRON["NEEDLE"]) }
+    i > 0 { $0 = substr($0, 1, i - 1) ENVIRON["REPLACEMENT"] substr($0, i + length(ENVIRON["NEEDLE"])) }
+    { print }
+  ' "$CLASSIFY" >"$mutant"
+  ! cmp -s "$CLASSIFY" "$mutant" || { echo "the mutant for '$needle' changed nothing" >&2; exit 1; }
+  check "must-fail: '$needle' planted as '$replacement' fails the $row row" \
+    no "$(lane_row_holds "$mutant" "$row")"
+done <<'ROWS'
+declaration="$lanes_root/.github/ci-lanes.conf"@declaration="$judged_root/.github/ci-lanes.conf"@one-lane
+    line="${line%%#*}"@    line="$line"@one-lane
+      [!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!abcdefghijklmnopqrstuvwxyz0123456789_-]*)@      never-a-lane-name)@bad-name
+{ declaration_note="cause=no-globs line=$number lane=$name"; return 1; }@:@no-globs
+[ "$lane_count" -gt 0 ] || { declaration_note="cause=no-lanes"; return 1; }@:@no-lanes
+          lane_hits[$index]="cause=claimed path=$path glob=$LANE_GLOB_HIT"@          lane_hits[$index]=""@two-lanes
+    if [ "$claimed" = false ] && [ -z "$every" ] && outside_docs "$path"; then@    if false; then@unclaimed
+ && outside_docs "$path"; then@ && true; then@unclaimed-docs
+    every="cause=no-changed-paths"@    every=""@no-paths
+    lane=false lane_cause="cause=lanes-false lanes_cause=$lanes_cause"@    lane=true lane_cause="cause=lanes-false lanes_cause=$lanes_cause"@docs-only
+    lane=false lane_cause="cause=unreached"@    lane=true lane_cause="cause=unreached"@one-lane
+ROWS
+[ "$mutants" -eq 11 ] || { echo "the lane mutant table read $mutants rows" >&2; exit 1; }
+
+# The refusal of a lanes-from naming the judged tree, planted away.
+needle='[ "$lanes_root" != "$judged_root" ] ||'
+[ "$(grep -cF -- "$needle" "$CLASSIFY")" -eq 1 ] ||
+  { echo "the judged-tree refusal is no longer one line in $CLASSIFY" >&2; exit 1; }
+NEEDLE="$needle" awk '
+  { i = index($0, ENVIRON["NEEDLE"]) }
+  i > 0 { $0 = substr($0, 1, i - 1) "true ||" substr($0, i + length(ENVIRON["NEEDLE"])) }
+  { print }
+' "$CLASSIFY" >"$mutant"
+! cmp -s "$CLASSIFY" "$mutant" || { echo "the judged-tree mutant changed nothing" >&2; exit 1; }
+status="$(run "$mutant" LANES_FROM="$TMP/subject" STUB_PATHS=src/main.rs STUB_OUTSIDE=src/main.rs)"
+check "must-fail: a classify reading lanes from the judged tree is not refused" \
+  "0 lane_verdicts=lane_evil=true" "$status $(outputs | tr ' ' '\n' | grep '^lane_verdicts=')"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -2,12 +2,20 @@
 # aggregate-needs — accept successful jobs and classifier-authorized skips.
 #
 # Usage:
-#   aggregate-needs --results JSON --classifier JOB --waiver true|false
-#                   --skippable JOB [--skippable JOB...]
+#   aggregate-needs --results JSON --classifier JOB
+#                   [--waiver true|false --skippable JOB [--skippable JOB...]]
+#                   [--lane JOB=LANE...]
 #
 # RESULTS is the GitHub Actions `toJSON(needs)` object. The classifier job must
-# have succeeded. Every other job must have succeeded, unless its name appears
-# in --skippable and the classifier's waiver is true.
+# have succeeded. Every other job must have succeeded, unless one of two
+# authorizations stood it down:
+#   --skippable JOB  the classifier's one waiver, --waiver, is true;
+#   --lane JOB=LANE  the lane's own verdict, the classifier job's output
+#                    `lane_<LANE>` read out of RESULTS, is false. A verdict
+#                    that is absent, as it is where no lane declaration was
+#                    read, authorizes nothing.
+# At least one --skippable or --lane is required, and --waiver is required
+# with --skippable.
 #
 # Exit 0 on acceptance, 1 when a dependency result is not accepted, and 2 on
 # invalid arguments or JSON. Every diagnostic starts with `aggregate-needs:`.
@@ -18,13 +26,17 @@ results=""
 classifier=""
 waiver=""
 skippable=""
+lanes=""
 
 usage() {
   cat <<'USAGE'
-Usage: aggregate-needs --results JSON --classifier JOB --waiver true|false
-                       --skippable JOB [--skippable JOB...]
+Usage: aggregate-needs --results JSON --classifier JOB
+                       [--waiver true|false --skippable JOB [--skippable JOB...]]
+                       [--lane JOB=LANE...]
 
-Accepts successful jobs and classifier-authorized skips from toJSON(needs).
+Accepts successful jobs and classifier-authorized skips from toJSON(needs):
+a --skippable job where --waiver is true, a --lane job where the classifier
+job's output lane_<LANE> is false.
 Exit 1 for an unaccepted result and 2 for invalid arguments or JSON.
 USAGE
 }
@@ -59,6 +71,18 @@ $2"
       fi
       shift 2
       ;;
+    --lane)
+      need_value "$1" "$#" "${2:-}"
+      case "$2" in
+        *=*=* | =* | *=) die "invalid-arguments=invalid-lane value=$2" \
+          "--lane takes JOB=LANE" ;;
+        *=*) ;;
+        *) die "invalid-arguments=invalid-lane value=$2" "--lane takes JOB=LANE" ;;
+      esac
+      lanes="${lanes:+$lanes
+}$2"
+      shift 2
+      ;;
     -h | --help) usage; exit 0 ;;
     *) die "invalid-arguments=unknown option=$1" "unknown argument '$1'" ;;
   esac
@@ -70,12 +94,14 @@ done
   "--classifier is required"
 case "$waiver" in
   true | false) ;;
-  "") die "invalid-arguments=missing option=--waiver" "--waiver is required" ;;
+  "") [ -z "$skippable" ] || die "invalid-arguments=missing option=--waiver" \
+    "--waiver is required with --skippable" ;;
   *) die "invalid-arguments=invalid-waiver value=$waiver" \
     "--waiver must be true or false" ;;
 esac
-[ -n "$skippable" ] || die "invalid-arguments=missing option=--skippable" \
-  "at least one --skippable job is required"
+[ -n "$skippable" ] || [ -n "$lanes" ] ||
+  die "invalid-arguments=missing option=--skippable" \
+    "at least one --skippable or --lane job is required"
 
 if ! printf '%s\n' "$results" | jq -e '
   type == "object" and
@@ -88,14 +114,20 @@ fi
 if printf '%s\n' "$results" | jq -e \
   --arg classifier "$classifier" \
   --arg waiver "$waiver" \
-  --arg skippable "$skippable" '
+  --arg skippable "$skippable" \
+  --arg lanes "$lanes" '
+    .[$classifier] as $verdicts |
+    ($lanes | split("\n") | map(select(. != "") | split("=") | {key: .[0], value: .[1]}) | from_entries) as $lane_of |
     .[$classifier].result == "success" and
     all(to_entries[];
       . as $entry |
       $entry.value.result == "success" or
-      ($waiver == "true" and
-       $entry.value.result == "skipped" and
-       ($skippable | split("\n") | index($entry.key)) != null)
+      ($entry.value.result == "skipped" and (
+        ($waiver == "true" and
+         ($skippable | split("\n") | index($entry.key)) != null) or
+        ($lane_of[$entry.key] != null and
+         $verdicts.outputs["lane_\($lane_of[$entry.key])"] == "false")
+      ))
     )
   ' >/dev/null; then
   echo "aggregate-needs: accepted"

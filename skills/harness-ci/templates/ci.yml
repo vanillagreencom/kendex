@@ -6,11 +6,12 @@
 # repository beside `Review gate`, so the job carrying it keeps that name and
 # every lane the repository runs reports into it: a lane in another workflow
 # is a lane no required context holds. The classifier judges the diff on
-# pull_request and merge_group alike, and every lane reads the same `lanes`
-# output on both, so each event runs the lanes its own diff calls for. Which
-# diffs run the lanes is the change-class action's answer, not this file's:
-# the `changes` job forwards it and names no class, so a change to that rule
-# reaches this workflow with no edit to it.
+# pull_request and merge_group alike, and every lane reads its own verdict on
+# both, so each event runs the lanes its own diff calls for. Which diffs run
+# which lane is the change-class action's answer, from the paths each lane
+# declares it reads in the default branch's .github/ci-lanes.conf, not this
+# file's: the `changes` job forwards the verdicts and names no class, so a
+# change to that rule reaches this workflow with no edit to it.
 name: CI
 
 "on":
@@ -30,10 +31,11 @@ jobs:
     # with the install rather than with the diff.
     timeout-minutes: 20
     outputs:
-      # Whether the lanes run, as the action answered it: the one output
-      # every lane and CI's waiver read. The classify step's `lanes:` log
-      # line says why.
-      lanes: ${{ steps.classify.outputs.lanes }}
+      # One output per lane .github/ci-lanes.conf declares, its verdict as
+      # the action answered it: what the lane's condition and CI's `--lane`
+      # read. Empty where no declaration was read, which runs the lane. The
+      # classify step's `lane:` log lines say why.
+      lane_test: ${{ steps.lanes.outputs.lane_test }}
     env:
       EVENT: ${{ github.event_name }}
       BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
@@ -106,25 +108,37 @@ jobs:
           # ORCH_SIZE_TEST_PATHS: <globs>
         with:
           repo: subject
+          # The lane declaration is the default branch's: the pull request's
+          # own copy could stand its lanes down.
+          lanes-from: classifier
           event: ${{ env.EVENT }}
           base: ${{ env.BASE }}
           head: ${{ env.HEAD }}
+      # A composite action publishes only the outputs it declares, so the
+      # verdicts arrive as one `lane_<name>=true|false` line per lane and are
+      # published here as step outputs, one per lane.
+      - id: lanes
+        env:
+          LANE_VERDICTS: ${{ steps.classify.outputs.lane_verdicts }}
+        run: printf '%s\n' "$LANE_VERDICTS" >>"$GITHUB_OUTPUT"
 
   # THE REPOSITORY'S LANES. Replace this job with the repository's own, one
-  # job per lane, each with this `needs:` and this `if:`, and name each one in
-  # CI's `needs:` and in a `--skippable` of its aggregate step. A lane that
-  # reads a file under docs/ or changelog.d/, or a root .md or .markdown file,
-  # is the exception: `lanes` is false on a docs-only diff of any size, so
-  # that lane keeps `needs: changes`, takes `if: ${{ !cancelled() }}` with no
-  # `lanes` term, and stays out of every `--skippable`. Copied as it stands,
-  # this lane fails, and CI with it.
+  # job per lane, each declared in .github/ci-lanes.conf, published as a
+  # `lane_<name>` output above, and given this `needs:` and this `if:` with
+  # its own output, and name each one in CI's `needs:` and in a `--lane` of
+  # its aggregate step. A lane that reads a file under docs/ or changelog.d/,
+  # or a root .md or .markdown file, is the exception: every verdict is false
+  # on a docs-only diff of any size, so that lane keeps `needs: changes`,
+  # takes `if: ${{ !cancelled() }}` with no verdict term, and stays out of
+  # every `--lane`. Copied as it stands, this lane fails, and CI with it.
   test:
     name: Test
     needs: changes
     # The status function runs the lane when the classifier died, and the
     # result term keeps the empty outputs of a dead classifier from reading
-    # as a skip.
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.lanes == 'true') }}
+    # as a skip. Only a verdict of false stands the lane down, so a lane
+    # with no verdict runs.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.lane_test != 'false') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -135,7 +149,8 @@ jobs:
   # THE REQUIRED CONTEXT. always(): a failed or skipped need would otherwise
   # skip this job, and a skipped required context satisfies the ruleset.
   # aggregate-needs accepts a skipped lane only where the classifier
-  # succeeded and its `lanes` output stood the lanes down.
+  # succeeded and the lane's own verdict, which it reads out of RESULTS,
+  # stood it down.
   ci:
     name: CI
     needs: [changes, test]
@@ -149,8 +164,7 @@ jobs:
       - name: the classifier ran and every lane that skipped was told to
         env:
           RESULTS: ${{ toJSON(needs) }}
-          WAIVER: ${{ needs.changes.outputs.lanes == 'false' }}
         run: >-
           .agents/skills/harness-ci/scripts/aggregate-needs
-          --results "$RESULTS" --classifier changes --waiver "$WAIVER"
-          --skippable test
+          --results "$RESULTS" --classifier changes
+          --lane test=test

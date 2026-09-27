@@ -86,6 +86,7 @@ missing-head-value|missing-value|--head|<none>
 missing-repo-value|missing-value|--repo|<none>
 missing-output-value|missing-value|--output|<none>
 missing-paths-output-value|missing-value|--paths-output|<none>
+missing-outside-output-value|missing-value|--outside-output|<none>
 missing-mode-value|missing-value|--mode|<none>
 empty-head|empty-value|--head|<empty>
 flag-value-event|flag-value|--event|--head
@@ -94,6 +95,7 @@ flag-value-head|flag-value|--head|--output
 flag-value-repo|flag-value|--repo|--head
 flag-value-output|flag-value|--output|--head
 flag-value-paths-output|flag-value|--paths-output|--head
+flag-value-outside-output|flag-value|--outside-output|--head
 flag-value-mode|flag-value|--mode|--head
 unknown-mode|unknown-mode|--mode|source
 CASES
@@ -112,6 +114,8 @@ wiring output-parent-absent "wiring-error: cause=output-write-failed" \
   --repo "$repo" --event push --base "$base" --output "$unwritable"
 wiring paths-output-parent-absent "wiring-error: cause=paths-output-write-failed" \
   --repo "$repo" --event push --base "$base" --paths-output "$unwritable"
+wiring outside-output-parent-absent "wiring-error: cause=outside-output-write-failed" \
+  --mode docs --repo "$repo" --event push --base "$base" --outside-output "$unwritable"
 
 fallback_write_status=0
 fallback_write_stderr="$(bounded "$HARNESS_ONLY" \

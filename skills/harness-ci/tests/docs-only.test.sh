@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Docs-only accepts the explicit documentation set and rejects every other
-# path. Pull-request and merge-group events use the shared endpoint rules.
+# path, and --outside-output lists every path it rejected. Pull-request and
+# merge-group events use the shared endpoint rules.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
@@ -59,6 +60,21 @@ assert_eq "docs mode writes the GitHub output" \
   "docs_only=true stdout=docs_only=true" \
   "$(cat "$output_file") stdout=$out"
 
+# --outside-output lists every changed path outside the set, not only the
+# first the verdict names, and is written empty where every path is inside.
+outside_file="$SANDBOX/outside"
+git -C "$repo" checkout -q -B case "$base"
+git -C "$repo" clean -qfd
+commit_paths "$repo" "outside" README.md crates/core/src/lib.rs docs/guide.md skills/orch/SKILL.md
+"$HARNESS_ONLY" --mode docs --repo "$repo" --event push --base "$base" --head HEAD \
+  --outside-output "$outside_file" >/dev/null 2>&1
+assert_eq "docs mode lists every changed path outside the set" \
+  "crates/core/src/lib.rs skills/orch/SKILL.md" "$(tr '\n' ' ' <"$outside_file" | sed 's/ $//')"
+"$HARNESS_ONLY" --mode docs --repo "$repo" --event merge_group --base "$base" \
+  --head "$head" --outside-output "$outside_file" >/dev/null 2>&1
+assert_eq "docs mode writes an empty outside list where every path is inside" \
+  "0" "$(wc -c <"$outside_file" | tr -d ' ')"
+
 # One changed production pattern is the must-fail control. Removing the slash
 # rejection admits skills/*.md through the root-Markdown branch, and this suite
 # must turn red on that mutant.
@@ -67,8 +83,8 @@ if [ -z "${DOCS_ONLY_CONTROL:-}" ]; then
   mutant="$SANDBOX/harness-only-mutant"
   if ! awk '
     BEGIN { changed = 0 }
-    /^      \*\/\*\) verdict false \\$/ {
-      print "      never/*) verdict false \\"
+    /^      \*\/\*\) ;;$/ {
+      print "      never/*) ;;"
       changed += 1
       next
     }

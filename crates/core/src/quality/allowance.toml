@@ -27,7 +27,7 @@ name = "harness-ci"
 
 [[package.file]]
 path = "references/wiring.md"
-hash = "27768f67e171bb766547414b1e9ed8557ef331dab71fda7efd1b5c242d4831fa"
+hash = "312e6b55949e3c25a6b3532127ec69e0cf458220883879e56bc4b72cbacb493a"
 
 [[package.file.finding]]
 rule = "rce"

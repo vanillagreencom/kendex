@@ -1,8 +1,8 @@
 name: Change class
 description: >-
   The shipped change classifier's verdict for a diff, whether the diff runs a
-  workflow's lanes, and the changed-path families a workflow selects its jobs
-  with.
+  workflow's lanes, which declared lanes it runs, and the changed-path
+  families a workflow selects its jobs with.
 
 # The one place a workflow reads a change class from. A consumer references it
 # as `vanillagreencom/kendex/.github/actions/change-class@main` and gets this
@@ -20,9 +20,9 @@ description: >-
 # title, not the class itself: the author of the diff under judgement writes
 # every one of those, so an input that asserted a verdict would fail open on
 # exactly the diffs that most want to pass. The inputs below are the event and
-# its two endpoints, which GitHub writes, and two directories: where the
-# classifier is read from and which tree it judges. A directory is a place to
-# look, never a verdict.
+# its two endpoints, which GitHub writes, and three directories: where the
+# classifier is read from, where the lane declaration is read from, and which
+# tree it judges. A directory is a place to look, never a verdict.
 
 inputs:
   classifier:
@@ -50,6 +50,14 @@ inputs:
     description: The checkout to judge. Needs its full history, so the classifier can reach both endpoints.
     required: false
     default: '.'
+  lanes-from:
+    description: >-
+      The default branch's checkout, whose .github/ci-lanes.conf declares the
+      workflow's lanes and the paths each reads. Refused where it is the
+      checkout `repo` names, whose author could stand a lane down. Empty
+      declares no lane and leaves lane_verdicts empty.
+    required: false
+    default: ''
 
 outputs:
   change_class:
@@ -78,6 +86,16 @@ outputs:
       Why lanes answered as it did: render, trivial or docs-only where lanes
       is false, and the class where it is true.
     value: ${{ steps.classify.outputs.lanes_cause }}
+  lane_verdicts:
+    description: >-
+      One lane_<name>=true|false line per lane the declaration names: false
+      wherever lanes is false; otherwise true where a changed path matches
+      one of the lane's globs, true for every lane where a changed path no
+      lane claims is outside the docs set, and false everywhere else. Empty
+      where no declaration was read, which a lane condition reads as the
+      lane running. A workflow republishes the lines as step outputs of its
+      own, since a composite action publishes only the outputs it declares.
+    value: ${{ steps.classify.outputs.lane_verdicts }}
   changed_skills:
     description: Blank-separated first path segments under skills/ the diff touched.
     value: ${{ steps.classify.outputs.changed_skills }}
@@ -106,5 +124,6 @@ runs:
         BASE: ${{ inputs.base }}
         HEAD: ${{ inputs.head }}
         REPO: ${{ inputs.repo }}
+        LANES_FROM: ${{ inputs.lanes-from }}
       run: |
         "$GITHUB_ACTION_PATH/classify"

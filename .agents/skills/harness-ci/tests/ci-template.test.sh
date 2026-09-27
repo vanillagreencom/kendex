@@ -1,35 +1,40 @@
 #!/usr/bin/env bash
 # templates/ci.yml is the workflow every repository copies for its one
 # required `CI` context, so what it runs is evaluated rather than trusted:
-# the job conditions are read out of the file and evaluated per event and
-# per `lanes` answer from the change-class action, and the aggregate step's
-# waiver is handed to the real aggregate-needs. Which diffs answer
-# lanes=false is the action's, proved by tools/tests/change-class-action.test.sh
-# in the kendex repository; this suite proves the template forwards that
-# answer and spells no class of its own.
+# the step that republishes the action's lane verdicts is run, the job
+# outputs and conditions are read out of the file and evaluated per event
+# and per action answer, and the aggregate step's arguments are handed to
+# the real aggregate-needs. Which lane a diff reaches is the action's,
+# proved by tools/tests/change-class-action.test.sh in the kendex
+# repository; this suite proves the template forwards each lane's own
+# verdict and spells no class of its own.
 #
 # Surfaces:
 #   1. the names: one job named CI, the classifier named `Classify the diff`,
 #      both gated events under `on:`, and CI needing every other job.
-#   2. the job set: per event and action answer, which lanes run. lanes=false
-#      runs none, lanes=true runs them all, both events read `lanes` the
-#      same way, a dead classifier runs every lane, and no line of the
-#      template reads the change class.
-#   3. the aggregate: the waiver the template computes, fed to
-#      aggregate-needs, accepts a skipped lane only where the classifier
-#      succeeded and answered lanes=false, and CI runs on both events
-#      whatever its needs did.
+#   2. the job set: per event and action answer, which lanes run. A lane
+#      runs where its verdict is true or absent and stands down where it is
+#      false, both events read the verdicts the same way, a dead classifier
+#      runs every lane, the declaration is read from the default branch's
+#      checkout and never the judged one, and no line of the template reads
+#      the change class.
+#   3. the aggregate: the `--lane` arguments the template passes, fed to
+#      aggregate-needs with the needs the template's own outputs make,
+#      accept a skipped lane only where the classifier succeeded and the
+#      lane's verdict was false, and CI runs on both events whatever its
+#      needs did.
 #   4. the copy: every expression closes on its line and every script path
 #      it names is one this package ships.
 #   5. the steps the classifier can live without: the render-reach, kendex
 #      install and mirror steps continue on error and the classify step does
 #      not, so a repository whose default branch does not yet carry this
 #      package still classifies, with the `render` class out of reach.
-# Must-fail arms plant a lane condition without its status function, a
-# `lanes` output that spells a class rule in place of forwarding the
-# action's, CI without always(), a template without merge_group, a
-# render-reach step that fails the job, and an evaluator that refuses every
-# expression.
+# Must-fail arms plant a lane condition without its status function, one
+# running only on a true verdict, a lane output forwarding the action's
+# `lanes` in place of the lane's own verdict, one reading the class, a
+# declaration read from the judged checkout, CI without always(), a
+# template without merge_group, a render-reach step that fails the job, and
+# an evaluator that refuses every expression.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
@@ -40,22 +45,66 @@ TEMPLATE="${CI_TEMPLATE_UNDER_TEST:-$TEST_DIR/../templates/ci.yml}"
 AGGREGATE_NEEDS="$TEST_DIR/../scripts/aggregate-needs"
 [ -f "$TEMPLATE" ] || { echo "missing $TEMPLATE" >&2; exit 1; }
 
-# The value an expression in the changes job's `outputs:` evaluates to, for
-# a classify step that answered LANES on a CLASS diff. The class rides along
-# so a template that reads it, as a planted one does, is evaluated on it.
-output_value() { # TEMPLATE OUTPUT LANES CLASS
-  local expr
-  expr="$(awk -v out="$2" '
+# A key's value in the changes job's step with id ID, `${{ }}` stripped.
+step_key() { # TEMPLATE ID KEY
+  awk -v id="$2" -v key="$3" '
+    /^  changes:/ { in_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
+    in_job && /^      - / { in_step = ($0 == "      - id: " id) }
+    in_job && in_step && index($0, key ": ") > 0 && $0 ~ ("^ +" key ": ") {
+      sub("^ +" key ": ", ""); sub(/^\$\{\{ /, ""); sub(/ \}\}$/, ""); print; exit
+    }
+  ' "$1"
+}
+
+# The classify step's outputs, as the context every changes-job expression
+# reads: the action answered LANES, VERDICTS (comma-joined lane_<name>=
+# lines, empty where no declaration was read) and CLASS. The template's
+# `lanes` step is run on them, and what it wrote to its output file is its
+# step outputs. The class rides along so a template that reads it, as a
+# planted one does, is evaluated on it.
+changes_context() { # TEMPLATE LANES VERDICTS CLASS
+  local classify env_expr run_line value out
+  classify="$(jq -cn --arg l "$2" --arg v "$(printf '%s' "$3" | tr ',' '\n')" --arg c "$4" \
+    '{lanes: $l, lane_verdicts: $v, change_class: $c}')"
+  env_expr="$(step_key "$1" lanes LANE_VERDICTS)"
+  run_line="$(step_key "$1" lanes run)"
+  [ -n "$env_expr" ] && [ -n "$run_line" ] ||
+    { echo "no lanes step read out of $1, so the step reader is broken" >&2; exit 1; }
+  value="$(gh_eval value "$(jq -cn --argjson o "$classify" '{steps: {classify: {outputs: $o}}}')" "$env_expr")"
+  value="$(jq -er 'if type == "string" then . else "" end' <<<"$value")" ||
+    { echo "the LANE_VERDICTS expression did not evaluate: $value" >&2; exit 1; }
+  out="$SANDBOX/lanes-step-output"
+  : >"$out"
+  env -i PATH="$PATH" LANE_VERDICTS="$value" GITHUB_OUTPUT="$out" bash -ec "$run_line" ||
+    { echo "the lanes step failed" >&2; exit 1; }
+  jq -cRn --argjson o "$classify" '
+    [inputs | select(length > 0) | capture("^(?<key>[^=]+)=(?<value>.*)$")] | from_entries |
+    {steps: {classify: {outputs: $o}, lanes: {outputs: .}}}' <"$out"
+}
+
+# The changes job's outputs, as a JSON object, for a classify step that
+# answered LANES, VERDICTS and CLASS. Returns 1 where any piece could not be
+# evaluated, a refusing evaluator included.
+job_outputs() { # TEMPLATE LANES VERDICTS CLASS
+  local ctx name expr value outputs='{}'
+  ctx="$(changes_context "$@")" || return 1
+  while IFS="$(printf '\t')" read -r name expr; do
+    value="$(gh_eval value "$ctx" "$expr")"
+    outputs="$(jq -cn --argjson o "$outputs" --arg n "$name" --argjson v "$value" \
+      '$o + {($n): (if $v == null then "" else ($v | tostring) end)}' 2>/dev/null)" || return 1
+  done < <(awk '
     /^  changes:/ { in_job = 1; next }
     in_job && /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
     in_job && /^    outputs:/ { in_outputs = 1; next }
     in_outputs && !/^      / { in_outputs = 0 }
-    in_outputs && index($0, "      " out ": ${{ ") == 1 {
-      sub(/^[^{]*\$\{\{ /, ""); sub(/ \}\}$/, ""); print
+    in_outputs && /^      [A-Za-z0-9_-]+: \$\{\{ .* \}\}$/ {
+      name = $1; sub(/:$/, "", name)
+      expr = $0; sub(/^[^{]*\$\{\{ /, "", expr); sub(/ \}\}$/, "", expr)
+      print name "\t" expr
     }
-  ' "$1")"
-  [ -n "$expr" ] || { printf 'no-output=%s' "$2"; return 0; }
-  gh_eval value "$(jq -cn --arg l "$3" --arg c "$4" '{steps: {classify: {outputs: {lanes: $l, change_class: $c}}}}')" "$expr" | tr -d '"'
+  ' "$1")
+  printf '%s' "$outputs"
 }
 
 # The lanes: every job reading the changes job but CI.
@@ -66,11 +115,12 @@ lane_jobs() { # TEMPLATE
 }
 
 # The lanes that run on EVENT for a classifier at RESULT whose action
-# answered LANES on a CLASS diff.
-running() { # TEMPLATE EVENT RESULT LANES CLASS — sorted and spaced, or `none`
+# answered LANES and VERDICTS on a CLASS diff.
+running() { # TEMPLATE EVENT RESULT LANES VERDICTS CLASS — sorted and spaced, or `none`
   local wf="$1" outputs='{}' job ran
   if [ "$3" = success ]; then
-    outputs="$(jq -cn --arg l "$(output_value "$wf" lanes "$4" "$5")" '{lanes: $l}')"
+    outputs="$(job_outputs "$wf" "$4" "$5" "$6")" ||
+      { printf 'job-outputs-refused'; return 0; }
   fi
   lane_jobs "$wf" >"$SANDBOX/lanes"
   ran="$(job_needs "$wf" | while IFS="$(printf '\t')" read -r job needs; do
@@ -98,29 +148,62 @@ assert_eq "CI needs every other job" \
 
 # --- 2. The job set ---------------------------------------------------------
 
-# EVENT|ACTION'S LANES|CLASS|LANES THAT RUN
+# EVENT|ACTION'S LANES|LANE VERDICTS|CLASS|LANES THAT RUN
 # The standard rows at lanes=false are a docs-only diff past the trivial
-# ceiling, the answer a template reading the class would get wrong. Each
+# ceiling, the answer a template reading the class would get wrong; the
+# lanes=true row with a false verdict is a diff that reaches no path the
+# lane reads, the answer a template reading `lanes` would get wrong. An
+# empty verdict list is a declaration the action did not read. Each
 # pull_request row has a merge_group twin with the same answer, so both
-# events read `lanes` the same way.
+# events read the verdicts the same way.
 job_rows=0
-while IFS='|' read -r event lanes class expected; do
+while IFS='|' read -r event lanes verdicts class expected; do
   job_rows=$((job_rows + 1))
-  assert_eq "lanes on $event for a $class diff the action answered lanes=$lanes" "$expected" \
-    "$(running "$TEMPLATE" "$event" success "$lanes" "$class")"
-done <<ROWS
-merge_group|false|render|none
-merge_group|false|trivial|none
-merge_group|false|standard|none
-merge_group|true|standard|$LANES
-merge_group|true|micro|$LANES
-pull_request|false|standard|none
-pull_request|true|standard|$LANES
+  assert_eq "lanes on $event for a $class diff the action answered lanes=$lanes verdicts=$verdicts" "$expected" \
+    "$(running "$TEMPLATE" "$event" success "$lanes" "$verdicts" "$class")"
+done <<'ROWS'
+merge_group|false|lane_test=false|render|none
+merge_group|false|lane_test=false|standard|none
+merge_group|true|lane_test=false|standard|none
+merge_group|true|lane_test=true|micro|test
+merge_group|true||standard|test
+merge_group|false||standard|test
+pull_request|false|lane_test=false|standard|none
+pull_request|true|lane_test=false|standard|none
+pull_request|true|lane_test=true|standard|test
+pull_request|true||standard|test
 ROWS
 require_rows job "$job_rows"
+assert_eq "the job rows name every lane the template runs" "test" "$LANES"
 for event in pull_request merge_group; do
-  assert_eq "a dead classifier runs every lane on $event" "$LANES" "$(running "$TEMPLATE" "$event" failure "" "")"
+  assert_eq "a dead classifier runs every lane on $event" "$LANES" "$(running "$TEMPLATE" "$event" failure "" "" "")"
 done
+
+# The declaration is the default branch's: lanes-from names the checkout
+# whose ref is the default branch, and never the tree the action judges.
+declaration_source() { # TEMPLATE — the checkout lanes-from names, and what it holds
+  local from default_path judged
+  from="$(step_key "$1" classify lanes-from)"
+  judged="$(step_key "$1" classify repo)"
+  default_path="$(awk '
+    /^  changes:/ { in_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
+    in_job && /^      - / { ref = 0 }
+    in_job && $0 == "          ref: ${{ github.event.repository.default_branch }}" { ref = 1 }
+    in_job && ref && /^          path: / { sub(/^          path: /, ""); print; exit }
+  ' "$1")"
+  if [ -z "$from" ] || [ -z "$default_path" ]; then
+    printf 'unread from=%s default=%s' "$from" "$default_path"
+  elif [ "$from" = "$judged" ]; then
+    printf 'judged'
+  elif [ "$from" = "$default_path" ]; then
+    printf 'default-branch'
+  else
+    printf 'other=%s' "$from"
+  fi
+}
+assert_eq "the lane declaration is read from the default branch's checkout" "default-branch" \
+  "$(declaration_source "$TEMPLATE")"
 
 # The lanes rule is the action's. A template line reading the class would be
 # a second spelling of it, in every repository's copy.
@@ -131,39 +214,39 @@ assert_eq "no line of the template reads the change class" "" "$(class_reads "$T
 
 # --- 3. The aggregate -------------------------------------------------------
 
-# The waiver CI computes from the classifier's `lanes` output, read out of
-# its aggregate step.
-waiver_expr="$(sed -n 's/^          WAIVER: \${{ \(.*\) }}$/\1/p' "$TEMPLATE")"
-[ -n "$waiver_expr" ] || { echo "no WAIVER read out of $TEMPLATE" >&2; exit 1; }
-skippable="$(awk '/aggregate-needs$/ { on = 1 } on { print } on && !/^          / { exit }' "$TEMPLATE" |
-  grep -oE -- '--skippable [a-z0-9-]+' | sed 's/--skippable //' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
-assert_eq "every lane is one the waiver may stand down" "$LANES" "$skippable"
+# The aggregate step's arguments after its RESULTS, one per line, read out
+# of the step as the shell would split them.
+aggregate_args="$(awk '/aggregate-needs$/ { on = 1; next } on && !/^          / { exit } on { print }' "$TEMPLATE" |
+  tr ' ' '\n' | grep -v '^$' | grep -vxF -- '--results' | grep -vxF -- '"$RESULTS"')"
+[ -n "$aggregate_args" ] || { echo "no aggregate-needs arguments read out of $TEMPLATE" >&2; exit 1; }
+assert_eq "every lane is one its own verdict may stand down" "$LANES" \
+  "$(printf '%s\n' "$aggregate_args" | sed -n 's/^\([a-z0-9_-]*\)=\1$/\1/p' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
 
-# CLASSIFIER RESULT|ACTION'S LANES|LANE RESULT|EXIT
-# A classifier that did not succeed publishes no outputs, so its lanes value
-# is empty.
+# CLASSIFIER RESULT|LANE VERDICTS|LANE RESULT|EXIT
+# A classifier that did not succeed publishes no outputs. A lanes=false
+# action answers every verdict false; the rows vary only the verdicts.
 aggregate_rows=0
-while IFS='|' read -r classifier lanes lane_result expected; do
+while IFS='|' read -r classifier verdicts lane_result expected; do
   aggregate_rows=$((aggregate_rows + 1))
   outputs='{}'
   [ "$classifier" != success ] ||
-    outputs="$(jq -cn --arg l "$(output_value "$TEMPLATE" lanes "$lanes" standard)" '{lanes: $l}')"
-  waiver="$(gh_eval value \
-    "$(jq -cn --argjson o "$outputs" '{needs: {changes: {outputs: $o}}}')" \
-    "$waiver_expr")"
-  results="$(jq -cn --arg c "$classifier" --arg r "$lane_result" --arg lanes "$LANES" \
-    '{changes: {result: $c}} + ($lanes | split(" ") | map({key: ., value: {result: $r}}) | from_entries)')"
-  set -- $(printf '%s\n' $LANES | sed 's/^/--skippable /')
+    outputs="$(job_outputs "$TEMPLATE" true "$verdicts" standard)" ||
+      { echo "the changes job's outputs did not evaluate" >&2; exit 1; }
+  results="$(jq -cn --arg c "$classifier" --argjson o "$outputs" --arg r "$lane_result" --arg lanes "$LANES" \
+    '{changes: {result: $c, outputs: $o}} + ($lanes | split(" ") | map({key: ., value: {result: $r}}) | from_entries)')"
+  # shellcheck disable=SC2046 # the arguments are the step's own words
+  set -- $(printf '%s\n' "$aggregate_args")
   status=0
-  "$AGGREGATE_NEEDS" --results "$results" --classifier changes --waiver "$waiver" "$@" \
-    >/dev/null 2>&1 || status=$?
-  assert_eq "CI with its classifier at $classifier answering lanes=$lanes and its lanes $lane_result exits $expected" \
+  "$AGGREGATE_NEEDS" --results "$results" "$@" >/dev/null 2>&1 || status=$?
+  assert_eq "CI with its classifier at $classifier answering verdicts=$verdicts and its lanes $lane_result exits $expected" \
     "$expected" "$status"
-done <<ROWS
-success|false|skipped|0
-success|true|skipped|1
-success|true|success|0
-success|false|failure|1
+done <<'ROWS'
+success|lane_test=false|skipped|0
+success|lane_test=true|skipped|1
+success|lane_test=true|success|0
+success||skipped|1
+success||success|0
+success|lane_test=false|failure|1
 failure||skipped|1
 failure||success|1
 ROWS
@@ -227,18 +310,32 @@ require_rows step "$step_rows"
 # stands down on exactly the run nothing classified.
 plant "$TEMPLATE" "if: \${{ !cancelled() && (needs.changes.result" "if: \${{ (needs.changes.result" "$SANDBOX/no-status.yml"
 assert_eq "must-fail: a lane without its status function stands down under a dead classifier" "none" \
-  "$(running "$SANDBOX/no-status.yml" merge_group failure "" "")"
+  "$(running "$SANDBOX/no-status.yml" merge_group failure "" "" "")"
 
-# A `lanes` output that spells the class rule itself, as the template once
-# did, runs every lane on a docs-only diff the action stood down, and reads
-# the class.
-plant "$TEMPLATE" "lanes: \${{ steps.classify.outputs.lanes }}" \
-  "lanes: \${{ steps.classify.outputs.change_class != 'render' && steps.classify.outputs.change_class != 'trivial' }}" \
+# A lane that runs only on a true verdict stands down where no declaration
+# was read, and CI then refuses the skip it cannot authorize.
+plant "$TEMPLATE" "needs.changes.outputs.lane_test != 'false'" "needs.changes.outputs.lane_test == 'true'" "$SANDBOX/true-only.yml"
+assert_eq "must-fail: a lane running only on a true verdict stands down with no declaration read" "none" \
+  "$(running "$SANDBOX/true-only.yml" pull_request success true "" standard)"
+
+# A lane output forwarding the action's one `lanes` runs the lane on a diff
+# that reaches no path it reads.
+plant "$TEMPLATE" "lane_test: \${{ steps.lanes.outputs.lane_test }}" \
+  "lane_test: \${{ steps.classify.outputs.lanes }}" "$SANDBOX/global-lanes.yml"
+assert_eq "must-fail: a lane output forwarding lanes runs the lane its own verdict stood down" "test" \
+  "$(running "$SANDBOX/global-lanes.yml" merge_group success true lane_test=false standard)"
+
+# A lane output that spells a class rule reads the class.
+plant "$TEMPLATE" "lane_test: \${{ steps.lanes.outputs.lane_test }}" \
+  "lane_test: \${{ steps.classify.outputs.change_class != 'render' && steps.classify.outputs.change_class != 'trivial' }}" \
   "$SANDBOX/class-rule.yml"
-assert_eq "must-fail: a lanes output spelling the class rule runs the lanes on a docs-only standard diff" "$LANES" \
-  "$(running "$SANDBOX/class-rule.yml" merge_group success false standard)"
-assert_eq "must-fail: a lanes output spelling the class rule reads the class" "1" \
+assert_eq "must-fail: a lane output spelling the class rule reads the class" "1" \
   "$(class_reads "$SANDBOX/class-rule.yml" | wc -l | tr -d ' ')"
+
+# A declaration read from the judged checkout is one the pull request writes.
+plant "$TEMPLATE" "lanes-from: classifier" "lanes-from: subject" "$SANDBOX/judged-lanes.yml"
+assert_eq "must-fail: a declaration read from the judged checkout is named" "judged" \
+  "$(declaration_source "$SANDBOX/judged-lanes.yml")"
 
 # Without always(), a failed need skips CI, and a skipped required context
 # satisfies the ruleset.
@@ -265,11 +362,13 @@ assert_eq "must-fail: a render-reach step that fails the job is named" "no" \
 printf 'import sys\nsys.stderr.write("gh-eval: cause=planted-refusal\\n")\nsys.exit(2)\n' >"$SANDBOX/refusing-eval.py"
 real_eval="$GH_EVAL"
 GH_EVAL="$SANDBOX/refusing-eval.py"
-refused_lanes="$(running "$TEMPLATE" merge_group failure "" "" 2>/dev/null)"
+refused_lanes="$(running "$TEMPLATE" merge_group failure "" "" "" 2>/dev/null)"
 refused_ci="$(ci_runs "$TEMPLATE" merge_group failure 2>/dev/null)"
+refused_outputs="$(running "$TEMPLATE" merge_group success true lane_test=false standard 2>/dev/null)"
 GH_EVAL="$real_eval"
 assert_eq "must-fail: a refusing evaluator is no stand-down" "gh-eval-refused:2 cause=planted-refusal" "$refused_lanes"
 assert_eq "must-fail: a refusing evaluator is no CI that stays down" "gh-eval-refused:2 cause=planted-refusal" "$refused_ci"
+assert_eq "must-fail: a refusing evaluator is no verdict a lane reads" "job-outputs-refused" "$refused_outputs"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
