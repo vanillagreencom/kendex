@@ -1,4 +1,4 @@
-Report a problem to the repository that maintains a package
+Report a package problem to kendex or your current repository
 
 Usage: kendex report [OPTIONS] --title <TITLE>
 

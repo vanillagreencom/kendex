@@ -173,18 +173,19 @@ fn report_routes_from_the_manifest_when_the_lock_is_unreadable() {
 #[allow(clippy::unwrap_used)]
 fn report_files_through_a_stubbed_gh() {
     let tmp = sandbox_with_catalog();
-    let home = tmp.path();
+    let home = &rooted(&tmp);
     let proj = home.join("proj");
-
+    let recovery = home.join("recovery");
+    fs::create_dir_all(&recovery).unwrap();
     let bin = home.join("bin");
     fs::create_dir_all(&bin).unwrap();
+    let args_file = home.join("gh-args.txt");
     let gh = bin.join("gh");
     fs::write(
         &gh,
-        format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" > {}/gh-args.txt\necho https://github.com/x/1\n",
-            home.display()
-        ),
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$GH_ARGS_FILE\"\n\
+         if [ \"$GH_FAIL\" = yes ]; then echo 'authentication required' >&2; exit 1; fi\n\
+         echo https://github.com/x/1\n",
     )
     .unwrap();
     fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
@@ -197,14 +198,17 @@ fn report_files_through_a_stubbed_gh() {
     // Triage compares a report with the installed record, so the marker
     // carries what the lock recorded. An installation the lock never dated
     // says so and still files.
-    for (recorded, stamped, rendering) in [
+    for (recorded, stamped, rendering, failure) in [
         (
             r#","sourceCommit":"abc1234def5678","renderedHash":"9f8e7d6c5b4a""#,
             "source=vanillagreencom/kendex@abc1234 rendered=9f8e7d6",
             "plain",
+            "no",
         ),
-        ("", "source=unlocked rendered=unlocked", "plain"),
-        ("", "source=unlocked rendered=unlocked", "pretty"),
+        ("", "source=unlocked rendered=unlocked", "plain", "no"),
+        ("", "source=unlocked rendered=unlocked", "pretty", "no"),
+        ("", "source=unlocked rendered=unlocked", "plain", "yes"),
+        ("", "source=unlocked rendered=unlocked", "pretty", "yes"),
     ] {
         fs::write(
             proj.join(".kendex-lock.json"),
@@ -222,21 +226,43 @@ fn report_files_through_a_stubbed_gh() {
             &[
                 "report", "--hook", "guard", "--title", "Broken", "--body", "Details",
             ],
-            &[("PATH", path.clone()), ("KENDEX_UI", rendering.into())],
+            &[
+                ("PATH", path.clone()),
+                ("KENDEX_UI", rendering.into()),
+                ("GH_ARGS_FILE", args_file.display().to_string()),
+                ("GH_FAIL", failure.into()),
+                ("TMPDIR", recovery.display().to_string()),
+            ],
         );
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        let expected_body = format!(
+            "Details\n\n<!-- kendex-report:v1 asset=guard kind=hook ownership=kendex {stamped} -->"
         );
-        assert!(
-            String::from_utf8_lossy(&output.stdout).contains("Issue filed: https://github.com/x/1")
-        );
-        let args = fs::read_to_string(home.join("gh-args.txt")).unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.success(), failure == "no", "{stderr}");
+        if failure == "yes" {
+            assert!(output.stdout.is_empty());
+            let saved: Vec<_> = fs::read_dir(&recovery)
+                .unwrap()
+                .map(|p| p.unwrap().path())
+                .collect();
+            assert_eq!(saved.len(), 1);
+            assert_eq!(fs::read_to_string(&saved[0]).unwrap(), expected_body);
+            assert!(stderr.contains("report body saved to "), "{stderr}");
+            assert!(stderr.contains(&saved[0].display().to_string()), "{stderr}");
+            assert!(stderr.contains("gh auth status"), "{stderr}");
+            assert!(stderr.contains("authentication required"), "{stderr}");
+            fs::remove_file(&saved[0]).unwrap();
+        } else {
+            assert!(
+                String::from_utf8_lossy(&output.stdout)
+                    .contains("Issue filed: https://github.com/x/1")
+            );
+        }
+        let args = fs::read_to_string(&args_file).unwrap();
         assert_eq!(
             args,
             format!(
-                "issue\ncreate\n--repo\nvanillagreencom/kendex\n--label\nharness\n--title\nBroken\n--body\nDetails\n\n<!-- kendex-report:v1 asset=guard kind=hook ownership=kendex {stamped} -->\n"
+                "issue\ncreate\n--repo\nvanillagreencom/kendex\n--label\nharness\n--title\nBroken\n--body\n{expected_body}\n"
             )
         );
     }

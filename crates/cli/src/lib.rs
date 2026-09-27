@@ -177,7 +177,7 @@ enum Command {
     /// List changed files that kendex manages
     #[command(name = "generated-paths", hide = true)]
     GeneratedPaths,
-    /// Report a problem to the repository that maintains a package
+    /// Report a package problem to kendex or your current repository
     #[command(hide = true)]
     Report(ReportFlags),
     /// Add, switch on or off, and check marketplaces for updates
