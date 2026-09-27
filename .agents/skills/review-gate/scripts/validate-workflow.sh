@@ -34,7 +34,7 @@ fi
 
 print_usage() {
   cat <<'USAGE'
-Usage: validate-workflow.sh [--adopt | --help]
+Usage: validate-workflow.sh [--adopt] [--adopted-path-file FILE] | --help
 
 Checks that THIS repository's adopted review-gate writer workflow is still
 the shipped template.
@@ -77,6 +77,10 @@ rather than in any file, so nothing here can read it: the note says the
 variable has to be set and cannot say whether it is. A run that is otherwise
 clean exits 0 with that prerequisite unverified.
 
+--adopted-path-file writes the selected repository-relative writer path to FILE
+only after all checks pass. The path has no added newline. Adoption consumes
+this file so workflow discovery has one owner.
+
 Output: one verdict line per check: STATUS check=KEY value=VALUE.
 STATUS is ok, FAIL or note. VALUE uses Bash printf %q escaping.
 Indented explanation follows each verdict; consumers do not parse it.
@@ -95,9 +99,14 @@ if [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
   exit 0
 fi
 ADOPT=0
-if [ "$#" -eq 1 ] && [ "$1" = "--adopt" ]; then
+if [ "$#" -ge 1 ] && [ "$1" = "--adopt" ]; then
   ADOPT=1
   shift
+fi
+ADOPTED_PATH_FILE=""
+if [ "$#" -eq 2 ] && [ "$1" = --adopted-path-file ]; then
+  ADOPTED_PATH_FILE="$2"
+  shift 2
 fi
 if [ "$#" -gt 0 ]; then
   rg_message error unknown-arguments "$#" "validate-workflow.sh: unknown argument list ($# argument(s), first: '${1}') — no positional arguments (run --help)" >&2
@@ -455,5 +464,8 @@ fi
 printf '\n'
 if [ "$FAILED" -gt 0 ]; then
   exit 1
+fi
+if [ -n "$ADOPTED_PATH_FILE" ]; then
+  printf '%s' "$adopted" >"$ADOPTED_PATH_FILE" || die adopted-path-write "$ADOPTED_PATH_FILE" "could not write the selected workflow path"
 fi
 exit 0

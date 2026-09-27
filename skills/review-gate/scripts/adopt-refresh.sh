@@ -15,10 +15,12 @@ if [ "$repository" = vanillagreencom/kendex ]; then
   exit 0
 fi
 "$SCRIPT_DIR/validate-standard.sh" --environment-only
-"$SCRIPT_DIR/validate-workflow.sh" --adopt
+TMP="$(mktemp -d)"
+trap 'rm -rf -- "${TMP:?}"' EXIT
+"$SCRIPT_DIR/validate-workflow.sh" --adopt --adopted-path-file "$TMP/writer-path"
 # Python supplies the same SHA-256 on every supported host. Template paths
 # remain repository-relative so verification resolves them against its plan.
-python3 - "$SCRIPT_DIR/../templates" <<'PY'
+python3 - "$SCRIPT_DIR/../templates" "$TMP/writer-path" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -53,9 +55,8 @@ if refresh.exists() and refresh.read_bytes() != template.read_bytes():
         raise SystemExit("refresh-error=workflow-edited value=" + str(refresh))
 refresh.parent.mkdir(parents=True, exist_ok=True)
 refresh.write_bytes(template.read_bytes())
-for name in ("review-gate-writer.yml", "kendex-refresh.yml"):
-    copied = root / ".github/workflows" / name
-    shipped = templates / name
+writer = root / Path(sys.argv[2]).read_text()
+for copied, shipped in ((writer, templates / "review-gate-writer.yml"), (refresh, template)):
     relative = copied.relative_to(root).as_posix()
     entries = [e for e in entries if path_of(e) != relative]
     if copied.is_file() and not copied.is_symlink() and copied.read_bytes() == shipped.read_bytes():

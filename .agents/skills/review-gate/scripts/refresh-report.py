@@ -9,11 +9,12 @@ carry the stable fingerprint consumed by later scheduled runs.
 import hashlib
 import json
 import os
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import re
 import shlex
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 from urllib.parse import urlencode
 
 UPSTREAM = "vanillagreencom/kendex"
@@ -34,7 +35,8 @@ def main():
     read("git", "fetch", "--no-tags", "origin", head)
     inventory = json.loads(read("git", "show", head + ":.kendex-generated.json"))
     records = {e if isinstance(e, str) else e["path"]: e for e in inventory}
-    lock = json.loads(read("git", "show", head + ":.kendex-lock.json"))
+    lock_text = read("git", "show", head + ":.kendex-lock.json")
+    lock = json.loads(lock_text)
     names = {e["name"] for e in lock["entries"].values()}
     run = f"https://github.com/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
     summary = os.environ["GITHUB_STEP_SUMMARY"]
@@ -69,11 +71,16 @@ def main():
         if len(matches) == 1:
             # kendex report owns package provenance and its surface label.
             # The pinned CLI's say() channel is stderr, including --dry-run.
-            route = subprocess.run(
-                ["kendex", "report", "--asset", matches.pop(), "--scope", "project",
-                 "--title", "Automatic rendered-file review", "--body", "Triage report", "--dry-run"],
-                env=consumer_env, text=True, capture_output=True, check=True,
-            ).stderr
+            # A lock is a project marker. Give the routing owner only this
+            # reviewed record, so later removals and source changes cannot
+            # replace its provenance with the current checkout's state.
+            with TemporaryDirectory(prefix="kendex-report-") as project:
+                (Path(project) / ".kendex-lock.json").write_text(lock_text)
+                route = subprocess.run(
+                    ["kendex", "report", "--asset", matches.pop(), "--scope", "project",
+                     "--title", "Automatic rendered-file review", "--body", "Triage report", "--dry-run"],
+                    cwd=project, env=consumer_env, text=True, capture_output=True, check=True,
+                ).stderr
             command = next((s.removeprefix("would run: ") for s in route.splitlines()
                             if s.startswith("would run: ")), "")
             args = shlex.split(command)

@@ -31,13 +31,16 @@ if name=="git":
  if sys.argv[1]=="fetch": sys.exit(0)
  if sys.argv[-1].endswith(".kendex-generated.json"):
   print(json.dumps([".agents/skills/review-gate/scripts/test.sh"]))
- else: print(json.dumps({"entries":{"skill:review-gate:codex":{"name":"review-gate"}}}))
+ else: print(Path(os.environ["HISTORICAL_LOCK"]).read_text())
 elif name=="kendex":
  assert os.environ["GH_TOKEN"]=="consumer"
  assert sys.argv[1:5]==["report","--asset","review-gate","--scope"]
  if os.environ.get("REAL_KENDEX"):
   os.execv(os.environ["REAL_KENDEX"], ["kendex",*sys.argv[1:]])
- print("would run: gh issue create --repo vanillagreencom/kendex --label ci-infra --title test",file=sys.stderr)
+ lock=json.loads(Path(".kendex-lock.json").read_text())
+ owned=any(e.get("sourceRepo")=="vanillagreencom/kendex" for e in lock["entries"].values())
+ route="--repo vanillagreencom/kendex --label ci-infra" if owned else "--repo acme/repo"
+ print("would run: gh issue create "+route+" --title test",file=sys.stderr)
 else:
  assert name=="gh" and os.environ["GH_TOKEN"]=="upstream"
  assert sys.argv[1]=="api" and sys.argv[2].startswith("repos/vanillagreencom/kendex/issues")
@@ -59,12 +62,13 @@ for name in ('git','kendex','gh'): (root/'bin'/name).symlink_to(mock)
 world=root/'world.json'; summary=root/'summary'
 env={'PATH':str(root/'bin')+':/usr/bin:/bin','HOME':str(root),'GH_TOKEN':'consumer',
      'GH_REPO':'acme/repo','KENDEX_ISSUES_TOKEN':'upstream','GITHUB_RUN_ID':'42',
-     'GITHUB_STEP_SUMMARY':str(summary),'WORLD':str(world),
+     'GITHUB_STEP_SUMMARY':str(summary),'WORLD':str(world),'HISTORICAL_LOCK':str(root/'historical-lock.json'),
      'REAL_KENDEX':real_cli,'KENDEX_REAL_HOME':'1','KENDEX_BACKGROUND_REFRESH':'off'}
 (root/'kendex.toml').write_text('schema = 6\n')
 (root/'.kendex-lock.json').write_text(json.dumps({'version':11,'entries':{'skill:review-gate:codex':{
  'name':'review-gate','kind':'skill','harness':'codex','source':'kendex',
  'sourceRepo':'vanillagreencom/kendex','sourceHash':'x','enabled':True}}}))
+(root/'historical-lock.json').write_bytes((root/'.kendex-lock.json').read_bytes())
 findings=[{'path':'.agents/skills/review-gate/scripts/test.sh','body':'The shipped command fails.\n$(touch should-not-exist)',
            'url':'https://github.com/acme/repo/pull/1#discussion_r10'}]
 def reset(**extra):
@@ -93,6 +97,24 @@ for overrides, extra in [({'KENDEX_ISSUES_TOKEN':''},{}), ({},{'deny':True})]:
 # Permission recovery runs the same candidates even after earlier policy replies.
 reset(); run(overrides={'KENDEX_ISSUES_TOKEN':''}); assert len(run()['issues'])==1
 reset(); assert run(rows=[dict(findings[0],path='src/private.py')])['writes']==[]
+# A late merged-PR report must keep the recorded package route after removal
+# or replacement through the consumer's supported package commands.
+for drift in ('removed', 'replaced'):
+ current=json.loads((root/'historical-lock.json').read_text())
+ if drift=='removed': current['entries']={}
+ else: current['entries']['skill:review-gate:codex']['sourceRepo']='another/catalog'
+ (root/'.kendex-lock.json').write_text(json.dumps(current))
+ reset(); assert len(run()['issues'])==1, drift
+ assert len(run()['issues'])==1, drift
+# The current checkout is now foreign-owned. Removing historical isolation
+# must turn the report into fallback, even though its inventory is still valid.
+source=(skill/'scripts/refresh-report.py').read_text()
+needle='cwd=project, env=consumer_env'
+assert source.count(needle)==1
+mutant=root/'current-checkout.py'
+mutant.write_text(source.replace(needle,'cwd=None if True else project, env=consumer_env'))
+reset(); assert run(mutant)['writes']==[]
+assert 'Package routing unresolved' in summary.read_text()
 # Controls preserve matching text while removing each independent rule.
 source=(skill/'scripts/refresh-report.py').read_text()
 for needle,replacement,rows,expect in [
