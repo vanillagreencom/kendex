@@ -8,7 +8,8 @@
 # library it sources with that rule removed: the one resolution, the delivery
 # id, the attachment's confinement, the audience and deadline filters, the
 # cursor rule, the reply's owner-ask read, the owner-note class a reply names,
-# the ask's deadline field and the box `events` stamps.
+# the ask's deadline field, the box `events` stamps, the owner ask's required
+# recommendation and the cursor `events` refuses.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -77,9 +78,6 @@ assert_eq "$(field "$BOX/to-overseer.jsonl" '[.to, .recommend, (.wait | tostring
   "owner cut 30 overseer" "the ask carries its audience, recommendation and wait as fields"
 assert_eq "$(field "$BOX/to-overseer.jsonl" '(.deadline | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - (.at | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime)')" \
   "1800" "the deadline is the stamp plus the wait, in seconds"
-owner_ask 'Which first?' a,b
-assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" 'select(.text == "Which first?") | [has("recommend"), has("wait"), has("deadline")] | map(tostring) | join(",")')" \
-  "0=false,false,false" "an ask with no recommendation carries no deadline"
 
 # The wait no ask names is the setting, read from the checkout's own file.
 new_repo wait_setting
@@ -100,7 +98,7 @@ lm notice --item overseer --to owner --file "$(text n 'A note.')"
 NOTE_TO_OWNER="$(field "$BOX/to-overseer.jsonl" '.id')"
 lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
 OWNER_NOTE="$(field "$BOX/to-lane.jsonl" '.id')"
-owner_ask 'Which?' a,b
+owner_ask 'Which?' a,b a
 ASK_TO_OWNER="$ASK"
 lm resolve --item overseer --id "$ASK_TO_OWNER" --text "$(text a 'a')"
 RESOLUTION="$(field "$BOX/to-lane.jsonl" 'select(.kind == "answer") | .id')"
@@ -129,8 +127,10 @@ ask --item overseer --to peer --file $F|2=lane-mail: to-invalid=peer
 ask --item overseer --to nobody --file $F|2=lane-mail: to-invalid=nobody
 ask --item overseer --to owner --options a,b --recommend c --file $F|2=lane-mail: recommend-invalid=c
 ask --item overseer --to owner --options a,b --recommend a,b --file $F|2=lane-mail: recommend-invalid=a,b
+ask --item overseer --to owner --file $F|2=lane-mail: recommend-required=owner
+ask --item overseer --to owner --options a,b --wait 5 --file $F|2=lane-mail: recommend-required=owner
+ask --item overseer --to owner --options a,b --recommend b --file $F|0=
 ask --item overseer --to owner --recommend a --file $F|2=lane-mail: option-required=--options
-ask --item overseer --to owner --options a,b --wait 5 --file $F|2=lane-mail: option-required=--recommend
 ask --item overseer --to owner --options a,b --recommend a --wait 5m --file $F|2=lane-mail: minutes-invalid=--wait
 notice --item KEN-1 --ref $OWNER_NOTE --file $F|2=lane-mail: option-unknown=--ref
 notice --item overseer --to owner --ref no/such --file $F|2=lane-mail: ref-invalid=no/such
@@ -153,6 +153,7 @@ resolve --item overseer --id $PEER_ASK --text $F|2=lane-mail: ask-unknown=$PEER_
 resolve --item overseer --id $NOTE_TO_OWNER --text $F|2=lane-mail: ask-unknown=$NOTE_TO_OWNER
 drain --item overseer --after 0 --to owner|2=lane-mail: option-unknown=--to
 inbox --item overseer --due|2=lane-mail: option-unknown=--due
+events --item overseer --after 0|2=lane-mail: events-no-cursor=--after
 ROWS
 lm notice --item overseer --to owner --file "$(text n 'Reply.')" --ref "$OWNER_NOTE"
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" 'select(.text == "Reply.") | .ref')" "0=$OWNER_NOTE" \
@@ -190,20 +191,18 @@ owner_ask 'Due now?' a,b a 0
 DUE="$ASK"
 owner_ask 'Due later?' a,b b 120
 LATER="$ASK"
-owner_ask 'Open ended?'
-OPEN="$ASK"
 lm send --item overseer --directive --file "$(text d 'Unread directive.')"
 lm pending --item overseer
-assert_eq "$(jq -r '.kind' <<<"$OUT" | sort | uniq -c | awk '{ print $2 "=" $1 }' | paste -sd, -)" "ask=3,directive=1" \
+assert_eq "$(jq -r '.kind' <<<"$OUT" | sort | uniq -c | awk '{ print $2 "=" $1 }' | paste -sd, -)" "ask=2,directive=1" \
   "pending without --to lists every ask and the unread directive"
 lm pending --item overseer --to owner
-assert_eq "$RC=$(jq -r '.id' <<<"$OUT" | paste -sd, -)" "0=$DUE,$LATER,$OPEN" \
+assert_eq "$RC=$(jq -r '.id' <<<"$OUT" | paste -sd, -)" "0=$DUE,$LATER" \
   "pending --to owner lists the owner asks and no directive"
 lm pending --item overseer --to peer
 assert_eq "$RC=$OUT" "0=" "pending --to peer lists none of them"
 lm pending --item overseer --to owner --due
 assert_eq "$RC=$(jq -r '.id' <<<"$OUT" | paste -sd, -)" "0=$DUE" \
-  "--due keeps the ask whose deadline has passed alone: not the later one, not the one with none"
+  "--due keeps the ask whose deadline has passed alone, not the later one"
 # A cursor read that missed, the lock standing beside no cursor, refuses the
 # listing that would print directives against it and nothing else: the asks
 # --to and --due keep read no cursor, so the watch's deadline step and the
@@ -213,7 +212,7 @@ lm pending --item overseer
 assert_eq "$RC=$ERR" "2=lane-mail: mail-read-failed=overseer cursor=missed" \
   "a bare pending over a cursor read that missed is refused"
 lm pending --item overseer --to owner
-assert_eq "$RC=$(jq -r '.id' <<<"$OUT" | paste -sd, -)" "0=$DUE,$LATER,$OPEN" \
+assert_eq "$RC=$(jq -r '.id' <<<"$OUT" | paste -sd, -)" "0=$DUE,$LATER" \
   "pending --to owner over the same missed read lists the owner asks, reading no cursor"
 lm pending --item overseer --to owner --due
 assert_eq "$RC=$(jq -r '.id' <<<"$OUT" | paste -sd, -)" "0=$DUE" "and --due lists the due one"
@@ -250,14 +249,6 @@ lm resolve --item overseer --id "$ASK" --text "$(text a 'cut it')" --delivery-id
 assert_eq "$RC=$ERR" "2=lane-mail: resolved-already=$ASK id=$ANSWER" "another delivery is refused as resolved already"
 lm resolve --item overseer --id "$ASK" --default
 assert_eq "$RC=$ERR" "2=lane-mail: resolved-already=$ASK id=$ANSWER" "the deadline's default cannot override the owner's answer"
-
-new_repo resolve_no_recommend
-owner_ask 'What do you want to work on?'
-lm resolve --item overseer --id "$ASK" --default
-assert_eq "$RC=$ERR=$([[ -e "$BOX/to-lane.jsonl" ]] && echo written || echo nothing)" \
-  "2=lane-mail: recommend-missing=$ASK=nothing" "an ask with no recommendation has no default"
-lm resolve --item overseer --id "$ASK" --text "$(text a 'KEN-7')"
-assert_eq "$RC=${OUT%% answer=*}" "0=lane-mail: resolved id=$ASK by=text" "it is answered by text"
 
 # --- the delivery id under the lock -------------------------------------------
 new_repo delivery
@@ -312,7 +303,7 @@ assert_eq "$RC=$(wc -l < "$BOX/to-lane.jsonl" | tr -d ' ')" "0=2" \
   "control: without the delivery guard the retry lands a second time"
 
 new_repo control_ref
-LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b
+LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b a
 mutant ref-lane-only 'lm_owner_ask_find "$REF" ||' 'false ||'
 lm notice --item overseer --to owner --file "$(text n 'Ruled.')" --ref "$ASK"
 assert_eq "$RC=$ERR" "2=lane-mail: ref-unknown=$ASK" "control: without the to-overseer read a reply naming an owner ask is refused"
@@ -342,6 +333,19 @@ LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 
 mutant boxless ' + {box: "to-lane"}' ''
 lm events --item overseer
 assert_eq "$RC=$(jq -r '.box // "none"' <<<"$OUT")" "0=none" "control: without the box field a to-lane envelope names no file"
+
+new_repo control_recommend
+mutant recommend-optional 'if [ "$VERB:$ITEM" = ask:overseer ]; then' 'if [ -n "$RECOMMEND" ]; then'
+lm ask --item overseer --to owner --options a,b --file "$(text q 'Which?')"
+assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" 'has("deadline")')" "0=false" \
+  "control: with the rule judged only where a recommendation is given an owner ask lands with no deadline"
+
+new_repo control_events_cursor
+LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
+mutant events-cursor '[ "$VERB" != events ] || refuse events-no-cursor --after' ':'
+lm events --item overseer --after 0
+assert_eq "$RC=$(jq -r '.kind' <<<"$OUT")" "0=directive" \
+  "control: without the events rule --after is taken and dropped"
 
 new_repo control_attach
 mkdir -p "$LANE/elsewhere"

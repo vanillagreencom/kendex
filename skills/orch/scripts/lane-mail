@@ -113,18 +113,20 @@ Overseer side:
               print every envelope of both files, to-overseer.jsonl then
               to-lane.jsonl, each with `box` naming the file it came from,
               answered asks and their answers included. Moves no cursor and
-              marks nothing: a relay keeps its own record of what it carried
+              marks nothing: a relay keeps its own record of what it carried,
+              keyed by envelope id, so --after is refused `events-no-cursor`
 
 Owner channel, the overseer's own mailbox from any of its checkouts:
-  ask --item overseer --to owner --file PATH [--options a,b]
-              [--recommend a] [--wait MINUTES]
+  ask --item overseer --to owner --file PATH --options a,b
+              --recommend a [--wait MINUTES]
               a question for the owner, appended to to-overseer.jsonl with
               `to` as a field. --recommend names the option that stands
               where nobody answers, one of --options, and gives the ask its
               deadline: --wait minutes from now, ORCH_ASK_WAIT_MINUTES
               (default 120) when --wait is not given. An ask with no
-              --recommend has no deadline and waits for its answer, and one
-              with no --options waits for free text
+              --recommend is refused `recommend-required`, since nothing
+              but the owner would ever close it. The owner may still answer
+              outside the options, through resolve --text
   notice --item overseer --to owner --file PATH [--ref MSGID] [--attach PATH]
               a note for the owner. --ref names the envelope it answers,
               an owner note in to-lane.jsonl, one the owner wrote and not a
@@ -148,7 +150,8 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               nothing is appended, so a relay that crashed between resolving
               and its own mark repeats the call and lands nothing twice.
               An id naming no owner ask is `ask-unknown`; --default on an ask
-              with no recommendation is `recommend-missing`
+              line carrying no recommendation, which `ask` never writes, is
+              `recommend-missing`
   send --item ITEM ... --delivery-id KEY
               a send whose envelope carries KEY, the sender's own name for
               this delivery. Under the mailbox lock a KEY the file already
@@ -277,8 +280,9 @@ cap, passed through; 124 `wait` reached --timeout with no answer. Refusal
 keys, first line `lane-mail: <key>=<value>`: verb-invalid, option-unknown,
 option-conflict, missing-value, option-required, item-invalid, after-invalid,
 seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown,
-recommend-invalid, recommend-missing, attach-outside, ask-unknown,
-resolve-required, resolved-already, delivery-repeated, overseer-only,
+recommend-invalid, recommend-missing, recommend-required, attach-outside,
+ask-unknown, resolve-required, resolved-already, delivery-repeated,
+overseer-only, events-no-cursor,
 command-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, lane-host-busy,
@@ -366,6 +370,8 @@ lm_message() { # KEY VALUE
     ref-unknown) text='No owner note in to-lane.jsonl and no owner ask in to-overseer.jsonl carries that id, so nothing here can be answered by it; a line a peer overseer sent and a resolution there are neither. Read the note or the ask again and pass the id it carries.' ;;
     recommend-invalid) text='--recommend names one of the choices --options lists, and an ask with no choices has nothing to recommend.' ;;
     recommend-missing) text='The ask carries no recommendation, so no default can stand for it: answer it with --text.' ;;
+    recommend-required) text='An owner ask names its choices with --options and the one that stands at its deadline with --recommend, so it never waits on the owner forever. The owner can still answer outside the choices, through resolve --text.' ;;
+    events-no-cursor) text='events takes no cursor: every read prints every envelope of both files, and a relay keys what it carried by each envelope id, never by a line count. Drop --after.' ;;
     attach-outside) text='An attachment is a regular file, not itself a symlink, whose directory resolves physically to the progress-report directory, and it is recorded at that physical path. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
     ask-unknown) text='No unanswered-or-answered owner ask in the overseer mailbox carries that id. resolve closes asks sent with --to owner and nothing else.' ;;
     resolve-required) text='An ask in the overseer mailbox is closed by `lane-mail resolve` alone, exactly once, so nothing is sent into it with --re. Run resolve --item overseer --id MSGID --text PATH; a reply owed to an owner note is `notice --item overseer --to owner --ref MSGID`.' ;;
@@ -496,7 +502,8 @@ fi
 # verb of it; typed anywhere else they are refused rather than dropped, as
 # --options on a notice is, so no caller is told a field landed that never
 # did. --to is the one that reaches two verbs, and a value outside the two
-# audiences is a field nothing reads.
+# audiences is a field nothing reads. --after on `events` takes a key of its
+# own: a relay reaching for a cursor there keys by envelope id instead.
 for given in $OPTS_GIVEN; do
   case "$given" in
     --to)
@@ -509,6 +516,7 @@ for given in $OPTS_GIVEN; do
     --ref | --attach) [ "$VERB:$ITEM" = notice:overseer ] || refuse option-unknown "$given" ;;
     --recommend | --wait) [ "$VERB:$ITEM" = ask:overseer ] || refuse option-unknown "$given" ;;
     --due) [ "$VERB" = pending ] || refuse option-unknown --due ;;
+    --after) [ "$VERB" != events ] || refuse events-no-cursor --after ;;
     --text | --default) [ "$VERB" = resolve ] || refuse option-unknown "$given" ;;
     --delivery-id) case "$VERB" in send | resolve) ;; *) refuse option-unknown --delivery-id ;; esac ;;
   esac
@@ -1048,10 +1056,10 @@ lm_resolved() { # ASK_ID BY ANSWER_ID
 }
 
 # An owner ask's deadline: --wait as given, else ORCH_ASK_WAIT_MINUTES from
-# the kendex settings ladder, else 120. Read only where an ask carries a
-# recommendation, since a deadline stands for the default it hands over, and
-# the ladder is loaded here alone: every other verb runs on the hooks' path
-# and reads no project file.
+# the kendex settings ladder, else 120. Read only for an owner ask, whose
+# deadline stands for the recommendation it hands over, and the ladder is
+# loaded here alone: every other verb runs on the hooks' path and reads no
+# project file.
 lm_wait_minutes() {
   if [ "$WAIT_GIVEN" -eq 1 ]; then
     case "$WAIT" in
@@ -1173,7 +1181,11 @@ case "$VERB" in
     # The overseer's own ask or notice names its audience, the field the
     # relay, the report and pending all read; one with none reaches nobody.
     [ "$ITEM" != overseer ] || [ -n "$TO" ] || refuse option-required --to
-    if [ -n "$RECOMMEND" ]; then
+    # An owner ask with no recommendation has no deadline, so nothing but
+    # the owner would ever close it; `ask:overseer` is always an owner ask,
+    # the audience check above having refused every other.
+    if [ "$VERB:$ITEM" = ask:overseer ]; then
+      [ -n "$RECOMMEND" ] || refuse recommend-required "$TO"
       [ -n "$OPTIONS" ] || refuse option-required --options
       # The envelope records --options split on commas, so a value holding a
       # comma spans two choices and is none of them; without one, a match
@@ -1186,9 +1198,6 @@ case "$VERB" in
         *) refuse recommend-invalid "$RECOMMEND" ;;
       esac
       lm_wait_minutes
-    elif [ "$WAIT_GIVEN" -eq 1 ]; then
-      # A deadline stands for a default; with none there is nothing to stand.
-      refuse option-required --recommend
     fi
     if [ -n "$REF" ]; then
       case "$REF" in

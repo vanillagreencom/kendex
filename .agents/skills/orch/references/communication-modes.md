@@ -90,11 +90,17 @@ The overseer records the ruling per § Recording and sends `lane-mail notice --i
 
 ## Opening question
 
-A session that starts with no item to work, no handoff file, no owner note and no pending owner ask (`lane-mail pending --item overseer --to owner`) asks this, as an owner ask with no options and no recommendation, so it waits for the answer:
+A session that starts with no item to work, no handoff file, no owner note and no pending owner ask (`lane-mail pending --item overseer --to owner`) asks this as an owner ask:
+
+```bash
+.agents/skills/orch/scripts/lane-mail ask --item overseer --to owner --options idle,tracker --recommend idle --file [PATH]
+```
 
 ```text
 What do you want to work on? Reply with issue ids or describe it.
 ```
+
+`idle`, which stands at the deadline, launches nothing: the overseer keeps its watch running until the owner writes. `tracker` has it take work as [oversee.md § 2](../workflows/oversee.md#2-select-work) selects it. A reply naming issue ids or describing the work closes the ask through `resolve --text`; one written after the deadline arrives as an owner note.
 
 ## Status report
 

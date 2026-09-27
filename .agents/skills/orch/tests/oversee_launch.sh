@@ -215,5 +215,14 @@ assert_eq "$RC|$(recorded generation)|$(elsewhere_state)|$(tm display-message -p
   "launch --cwd from outside the fleet directory records into that directory's state and starts there"
 tm kill-window -t "$(recorded window)"
 
+# ORCH_QUESTION_TOOL=overseer keeps the overseer's question tool: the launch
+# line carries no question-off word. With the default-off rows above, a
+# launcher that stops reading the setting fails one side.
+run_oversee ORCH_QUESTION_TOOL=overseer -- launch --wait-secs 20
+assert_eq "$RC|$(recorded_argv)" \
+  "0|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$BRIEF;" \
+  "ORCH_QUESTION_TOOL=overseer launches the overseer with its question tool"
+tm kill-window -t "$(recorded window)"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
