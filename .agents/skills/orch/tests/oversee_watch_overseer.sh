@@ -782,8 +782,8 @@ done
 REG_MUTANT="$(mutant_scripts mutant-reg/orch lib/watch-overseer-record.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mutant-reg/github"
 mutate_file "$REG_MUTANT/lib/watch-overseer-record.sh" \
-  '    overseer_record_notice "$line" overseer-line-missing "pane=$pane" "path=$SUCCEED"' \
-  '    overseer_record_notice "$line" overseer-line-missing pane="$pane" "path=$SUCCEED"; exit 2'
+  '    overseer_record_notice "$detail" overseer-line-missing "pane=$pane" "path=$SUCCEED"' \
+  '    overseer_record_notice "$detail" overseer-line-missing pane="$pane" "path=$SUCCEED"; exit 2'
 overseer_case record_failure_walled_mutant walled
 state_with "$LINE"
 touch "$STUB_DIR/succeed.print-fail"
