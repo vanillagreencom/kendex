@@ -45,6 +45,8 @@ bot-instructions changes how this repository works, beyond the files above:
 
 After a setup that leaves the package still named, the block is printed again with the package's fresh words and ends on `it is still not ready after its setup ran; nothing was committed`, exit 1. A split prints `the commit would carry some of bot-instructions's changed files and leave these out:` over the changed inputs left out, or, with none of kendex's left out, `… and leave out a change they were rendered from`, then `bot-instructions's check over the commit says:` over its words. It ends on `they are left as diffs; commit them together yourself`, with no setup offered and no question asked; a flag's run exits 1. With no terminal, or a flag naming a commit, the block ends on `set it up here first: at a terminal, where kendex offers it, or with Set up on its package page in the app`. A flag's run exits 1, `not committed`.
 
+Where the packages cannot be asked at all, such as a commit whose candidate index cannot be built, the CLI prints `the files kendex wrote could not be checked` over the reason and offers nothing; a flag's run exits 1, `not committed`, and a run without one exits as the verb would.
+
 ## App
 
 The held state is drawn in place of the offer state.

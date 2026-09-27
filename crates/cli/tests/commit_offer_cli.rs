@@ -530,6 +530,52 @@ fn a_package_whose_check_fails_holds_the_commit() {
     }
 }
 
+/// A set-up package that cannot be asked about the commit, because the
+/// commit cannot be built for its check, refuses a flag's request and
+/// leaves a run without one at its one line. The git directory the
+/// candidate index is written under is made unwritable.
+#[test]
+fn a_commit_the_packages_cannot_be_asked_about_refuses_a_flag() {
+    // Root writes through a mode bit, so the candidate is built and the
+    // state this case is about is never reached on such a runner.
+    if rustix::process::geteuid().is_root() {
+        eprintln!("skipped: root writes through the unwritable git directory this case needs");
+        return;
+    }
+    for (flags, code, refused) in [
+        (&["--commit"][..], Some(1), true),
+        (&[][..], Some(0), false),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = region_project(
+            &tmp,
+            "# App\n\n## Code Review Rules\n\nold generated rules\n",
+            "# App\n\n## Code Review Rules\n\nold generated rules\n",
+        );
+        let git_dir = project.join(".git");
+        fs::set_permissions(&git_dir, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let (output, text) = apply(&home, &project, flags);
+        // Writable again before any assertion can fail: a directory left
+        // 0555 is one the temp dir cannot clean up.
+        fs::set_permissions(&git_dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(output.status.code(), code, "{flags:?}: {text}");
+        assert!(
+            text.contains("the files kendex wrote could not be checked"),
+            "{flags:?}: {text}"
+        );
+        assert!(text.contains(".git/kendex-candidate-"), "{flags:?}: {text}");
+        assert_eq!(
+            text.contains(" · not committed"),
+            refused,
+            "{flags:?}: {text}"
+        );
+        assert_eq!(head_subject(&project), "bot package", "{flags:?}");
+    }
+}
+
 /// A [`region_project`] whose package's check says its files are out of
 /// date.
 #[allow(clippy::unwrap_used)]

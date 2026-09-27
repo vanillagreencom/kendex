@@ -331,7 +331,10 @@ fn make(
             Ok(stale) => stale,
             Err(error) => {
                 block::not_vouched(root, &error.to_string());
-                return Ok(Some(Outcome::Nothing));
+                return Ok(Some(match answered {
+                    None => Outcome::Nothing,
+                    Some(_) => Outcome::CommitRefused,
+                }));
             }
         };
         if !stale.is_empty() {
