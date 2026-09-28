@@ -725,6 +725,45 @@ lane_state() {
 }
 
 # ---------------------------------------------------------------------------
+# Whether a lane's handoff record stands, as `workflow-state handoff-standing`
+# answers it. That verb owns the test and publishes its verdict as the word on
+# its first stdout line, exiting 0 for every verdict, so the word is read here
+# and its status only says whether the run reached the verb: every orch script
+# sources the project's `.env.local` before its dispatch, and a settings file
+# that stops it exits with a status of its own and no verdict.
+#
+# lane_handoff_standing DIR ERR_FILE COMMAND... runs COMMAND, the verb's whole
+# argv, from DIR with its stderr in ERR_FILE, and sets LANE_HANDOFF_STATE:
+#   stands      a record no relaunch has resumed, its JSON in
+#               LANE_HANDOFF_RECORD
+#   none        no record stands, a state file that is not there included
+#   unreadable  anything else: the verb's own `unreadable`, a run that never
+#               reached the verb, a word it does not print, and a `stands`
+#               with no record under it, which the verb never prints whole
+# ERR_FILE holds the run's own words for the last. The watch that reports a
+# record and the relaunch that retires a session both ask here; the lane-mail
+# hook keeps a reader of its own, since it installs apart from these scripts.
+# ---------------------------------------------------------------------------
+LANE_HANDOFF_VERDICT='workflow-state: handoff-standing'
+LANE_HANDOFF_STATE=""
+LANE_HANDOFF_RECORD=""
+lane_handoff_standing() { # DIR ERR_FILE COMMAND...
+  local dir="$1" err="$2" answer rc=0
+  shift 2
+  LANE_HANDOFF_STATE=unreadable
+  LANE_HANDOFF_RECORD=""
+  answer="$(cd -- "$dir" && "$@" 2>"$err")" || rc=$?
+  [[ "$rc" -eq 0 ]] || return 0
+  case "$answer" in
+    "$LANE_HANDOFF_VERDICT=none") LANE_HANDOFF_STATE=none ;;
+    "$LANE_HANDOFF_VERDICT=stands"$'\n'?*)
+      LANE_HANDOFF_STATE=stands
+      LANE_HANDOFF_RECORD="${answer#*$'\n'}" ;;
+  esac
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # A lane's work item: which tracker its key names, and which merged pull
 # requests are its own. The watch, lane-close and oversee-report each ask one
 # of these here, so each gets the same answer for the same key and pull

@@ -822,9 +822,10 @@ assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" "a resumed
 # `none` is the one verdict that means no record stands. Every other verdict,
 # and every run that wrote no verdict at all, is a state this pass could not
 # read; reading one as `none` would clear the row and drop the event for a lane
-# that has already handed off and exited. Three answers reach it: an install
+# that has already handed off and exited. Four answers reach it: an install
 # older than the verb, a script its settings loader killed before the verb ran
-# — which is why a status is no answer here — and the verb's own `unreadable`.
+# — which is why a status is no answer here — the verb's own `unreadable`, and
+# a `stands` with no record under it, which the verb never prints whole.
 # Each is driven through the seam the harness hands `handoff-standing` to,
 # leaving every other workflow-state call whole.
 old_state_reader() { # PATH STATUS STDOUT STDERR — an orch install answering STATUS
@@ -834,16 +835,18 @@ old_state_reader() { # PATH STATUS STDOUT STDERR — an orch install answering S
 }
 for row in "1||workflow-state: unknown-command arg1=handoff-standing|an install older than the verb" \
            "2||.env.local: line 1: syntax error near unexpected token|a script its settings loader killed before the verb" \
-           "0|workflow-state: handoff-standing=unreadable|jq: error: Invalid numeric literal|the verb's own unreadable verdict"; do
+           "0|workflow-state: handoff-standing=unreadable|jq: error: Invalid numeric literal|the verb's own unreadable verdict" \
+           "0|workflow-state: handoff-standing=stands|workflow-state: output cut short|a stands verdict with no record under it"; do
   status=${row%%|*}; rest=${row#*|}
   answer=${rest%%|*}; rest=${rest#*|}
   cause=${rest%%|*}; label=${rest#*|}
-  new_case "handoff_unread_$status"
+  unread_row=$((${unread_row:-0} + 1))
+  new_case "handoff_unread_$unread_row"
   # A standing record committed first, so the row this case must not lose
   # exists before the failing read: with no prior row, "not cleared" would
   # hold against a pass that cleared everything.
   handoff_record KEN-1
-  err="$TMP_ROOT/e2b-unread-$status-seed"
+  err="$TMP_ROOT/e2b-unread-$unread_row-seed"
   out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
   assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" \
     "$label: the record is reported while the verb still answers" "$err"
@@ -852,7 +855,7 @@ for row in "1||workflow-state: unknown-command arg1=handoff-standing|an install 
 
   READER="$STUB_DIR/old-workflow-state"
   old_state_reader "$READER" "$status" "$answer" "$cause"
-  err="$TMP_ROOT/e2b-unread-$status"
+  err="$TMP_ROOT/e2b-unread-$unread_row"
   out="$(run_watch REAL_WORKFLOW_STATE="$READER" -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
   assert_eq "rc=$rc stderr=$(grep -c "oversee-watch: handoff-read-failed item=KEN-1" "$err") cause=$(grep -cxF -- "$cause" "$err")" \
     "rc=2 stderr=1 cause=1" \

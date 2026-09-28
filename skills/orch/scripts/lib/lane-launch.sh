@@ -218,7 +218,7 @@ LAUNCH_CHOICE_FLAGS=(
   'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false|-c features.default_mode_request_user_input=false|-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0'
   'opencode|-m --model|-|-|-|-|-|-|-|-'
   'pi|--model|--thinking|:|-|-|-|-|--exclude-tools question|-'
-  'copilot|--model|--reasoning-effort|-|-|--allow-all --yolo --allow-all-tools|--allow-all --yolo|--autopilot --max-autopilot-continues 3 --context long_context --no-auto-update|--no-ask-user|-'
+  'copilot|--model|--reasoning-effort|-|-|--allow-all --yolo --allow-all-tools|--allow-all --yolo|--autopilot --max-autopilot-continues 3;--context long_context;--no-auto-update|--no-ask-user|-'
 )
 # The row for harness $1, empty where the table names no such harness.
 launch_choice_row() { # HARNESS
@@ -530,8 +530,9 @@ launch_choice_permission_write() { # HARNESS
 # harness's launch settings first, then the compaction words
 # launch_choice_compaction gives the model the command launches on, with
 # `--question-off` its question-tool words after them, then WORD... in order
-# with every row's settings, compaction and question-tool runs taken out
-# wherever each stands whole. The model is `--model MODEL` where the caller
+# with every row's launch settings, each `;`-separated setting a run of its
+# own, and its compaction and question-tool runs taken out wherever each run
+# stands whole. The model is `--model MODEL` where the caller
 # writes it outside WORD..., and otherwise the one WORD... names; a WORD...
 # naming it, in either form launch_choice_value reads, is written as
 # launch_choice_model_id gives it and judged so, and one still naming the
@@ -581,13 +582,15 @@ launch_choice_lead_settings() { # [--question-off] [--model MODEL] HARNESS WORD.
   esac
   for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do
     IFS='|' read -r name _ _ _ _ _ _ settings question compaction <<<"$row"
-    for run in "$settings" "$compaction" "$question"; do
-      [[ "$run" != - ]] || continue
+    # Each launch setting is its own run, so a caller's copy of any one of
+    # them is taken out whether or not it typed the rest.
+    while IFS= read -r run; do
+      [[ -n "$run" && "$run" != - ]] || continue
       run="${run// /$nl}"
       while [[ "$words" == *"$nl$run$nl"* ]]; do words="${words/"$nl$run$nl"/$nl}"; done
-    done
+    done <<<"${settings//;/$nl}$nl$compaction$nl$question"
     [[ "$name" == "$harness" ]] || continue
-    [[ "$settings" == - ]] || lead="${settings// /$nl}"
+    if [[ "$settings" != - ]]; then lead="${settings//;/ }"; lead="${lead// /$nl}"; fi
     [[ -z "$own_compaction" ]] || lead="$lead$nl${own_compaction// /$nl}"
     [[ "$question_off" != true || "$question" == - ]] || lead="$lead$nl${question// /$nl}"
   done
@@ -1243,10 +1246,10 @@ lane_launch_compaction_env() { # CMD HARNESS VERIFIED
 # which turns tmux's automatic rename off, so the title keeps the name it was
 # given and never carries the launch line.
 #
-# A copilot command carries lane_copilot_env's words besides, ahead of the
-# account, and a copilot launch that names no account passes an empty LANE_VAR
-# and LANE_DIR: its line is those words alone, the account being whatever the
-# pane's own COPILOT_HOME names.
+# A copilot command carries lane_copilot_env's words besides, and a copilot
+# launch that names no account passes an empty LANE_VAR and LANE_DIR: its line
+# is those words alone, the account being whatever the pane's own COPILOT_HOME
+# names.
 lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
   local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" extra="" verified=true account=""
   case "$harness" in
@@ -1258,35 +1261,30 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
   [[ -z "$var" ]] || account="$var=$(lane_single_quote "$dir")"
   case "$form" in
     launcher:*) printf '%s%s %s\n' "${extra:+env $extra }" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
-    *)
-      # env takes its options ahead of its assignments, and copilot's words
-      # open on -u.
-      if [[ "$harness" == copilot ]]; then printf 'env %s%s %s\n' "$extra" "${account:+ $account}" "$cmd"
-      else printf 'env %s %s%s\n' "$account" "${extra:+$extra }" "$cmd"; fi ;;
+    *) printf 'env %s%s%s\n' "${account:+$account }" "${extra:+$extra }" "$cmd" ;;
   esac
 }
 
 # The environment every copilot command carries, fresh or resumed, a lane's or
-# an overseer's, as the words `env` takes ahead of the command:
-#   -u GH_TOKEN -u GITHUB_TOKEN  Copilot reads either as its sign-in ahead of
-#                  a stored login (`copilot help environment`, 1.0.88), and on a
-#                  fleet host they hold the GitHub App's token, never the
-#                  account's. COPILOT_GITHUB_TOKEN, the account token a host
-#                  exports, outranks both and passes through untouched, so no
-#                  token value is ever written into a command.
-#   COPILOT_ALLOW_ALL=true  the one spelling that also trusts the working
-#                  directory, loading its hooks and skills with no folder-trust
-#                  dialog nobody at a lane's pane would answer; any other truthy
-#                  spelling approves tools alone (same help). --allow-all does
-#                  not trust the folder.
+# an overseer's, as the assignments `env` takes ahead of the command:
+#   COPILOT_ALLOW_ALL=true  exactly `true` also trusts the working directory
+#                  without prompting, loading its hooks and skills, where any
+#                  other truthy spelling approves tools alone (`copilot help
+#                  environment`, 1.0.88), so no folder-trust dialog waits at a
+#                  lane's pane with nobody to answer it.
 #   COPILOT_SKILLS_DIRS  the shared skills under HOME, ~/.agents/skills, where
 #                  kendex installs a global skill for Copilot: any COPILOT_HOME
 #                  hides them, and this names them back (measured by
 #                  tools/harness-smoke, skill-dirs:COPILOT_HOME).
+# The GitHub tokens stay: a lane's own gh calls sign in with GH_TOKEN. Copilot
+# reads COPILOT_GITHUB_TOKEN, the account token a host exports, ahead of
+# GH_TOKEN and GITHUB_TOKEN (same help), and logs "Unsupported token type,
+# ignoring" for a token it does not accept (measured on 1.0.88), so no token
+# value is written into a command.
 # Returns 1 where HOME is empty, with nothing to name the skills by.
 lane_copilot_env() {
   [[ -n "${HOME:-}" ]] || return 1
-  printf -- '-u GH_TOKEN -u GITHUB_TOKEN COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS=%s\n' "$(lane_single_quote "$HOME/.agents/skills")"
+  printf 'COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS=%s\n' "$(lane_single_quote "$HOME/.agents/skills")"
 }
 
 # The lane variable's value in the DEEPEST process under pane pid $1 that

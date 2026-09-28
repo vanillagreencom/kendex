@@ -1,6 +1,6 @@
 # Copilot CLI runtime reference
 
-How orch launches, resumes, wakes, closes and succeeds a GitHub Copilot CLI (`copilot`) session. Everything here is Copilot-specific. A fact marked measured was read off Copilot CLI 1.0.88; every other fact is the CLI's own `--help`, `copilot help config` or `copilot help environment` text for that version.
+How orch launches, resumes, wakes, closes and succeeds a GitHub Copilot CLI (`copilot`) session. Everything here is Copilot-specific. A fact marked measured was read off Copilot CLI 1.0.88, by hand or by the `tools/harness-smoke` row it names. A fact that cites `copilot --help`, `copilot help config` or `copilot help environment` is that text for the same version. Everything else is what orch's own scripts do.
 
 ## Session record
 
@@ -13,24 +13,28 @@ A session keeps its state under `${COPILOT_HOME:-~/.copilot}/session-state/<sess
 
 ## Launch environment
 
-Every command `open-terminal` and the overseer launchers build for Copilot carries these, on a fresh start, a relaunch, a wake and a successor alike. `lib/lane-launch.sh` holds each: the `LAUNCH_CHOICE_FLAGS` copilot row and `lane_copilot_env`.
+Every Copilot command `open-terminal` and the overseer launchers build or wrap carries orch's own words, on a fresh start, a relaunch, a wake and a successor alike, a `--cmd` template included. `lib/lane-launch.sh` holds them: the `LAUNCH_CHOICE_FLAGS` copilot row and `lane_copilot_env`.
 
-| Words | Why |
-|-------|-----|
-| `--model`, `--reasoning-effort` | The caller's `--launch-flags`. A launch under `--lane` that names neither refuses as `launch-model-missing` and `launch-effort-missing` (`open-terminal --help`). |
-| `--allow-all` | The permission posture. A resumed session ignores `defaultPermissionMode` from settings, so the flag rides on every resume. |
-| `--no-ask-user` | Takes the `ask_user` tool away, on every lane and on an overseer while `ORCH_QUESTION_TOOL` is `off`, its default. A lane asks through `lane-mail` ([skill-rules.md § Coordination](skill-rules.md#coordination)). |
+| Words orch adds | Why |
+|-----------------|-----|
 | `--autopilot --max-autopilot-continues 3` | Continues a turn that stopped short, at most three times, with nobody at the pane. |
 | `--context long_context` | The long context tier, named on the command and not left to `contextTier` in the account's settings. |
 | `--no-auto-update` | The CLI runs the version the host installed and downloads none. |
-| `env -u GH_TOKEN -u GITHUB_TOKEN` | Copilot takes either variable as its sign-in ahead of a stored login. On a fleet host they hold the GitHub App's token. `COPILOT_GITHUB_TOKEN`, the account token a host exports, outranks both and passes through. No token value enters a command. |
-| `COPILOT_ALLOW_ALL=true` | Exactly `true` also trusts the working directory, so no folder-trust dialog opens and the worktree's hooks and skills load. `--allow-all` alone does not trust the folder. |
-| `COPILOT_SKILLS_DIRS=~/.agents/skills` | Any `COPILOT_HOME` hides the shared skills under `~/.agents/skills`; this names them back (`tools/harness-smoke`, row `skill-dirs:COPILOT_HOME`). |
+| `--no-ask-user` | Takes the `ask_user` tool away, on every lane and on an overseer while `ORCH_QUESTION_TOOL` is `off`, its default. A lane asks through `lane-mail` ([skill-rules.md § Coordination](skill-rules.md#coordination)). |
+| `COPILOT_ALLOW_ALL=true` | `copilot help environment`: exactly `true` also trusts the working directory without prompting and loads its hooks and skills; another truthy spelling approves tools alone. So no folder-trust dialog opens. |
+| `COPILOT_SKILLS_DIRS=~/.agents/skills` | Any `COPILOT_HOME` hides the shared skills under `~/.agents/skills`, and this names them back: measured by `tools/harness-smoke`, row `skill-dirs:COPILOT_HOME`. |
 | `COPILOT_HOME=<account>` | The account, where a lane is named. A launch naming none opens on the `COPILOT_HOME` the pane inherits. |
 
-`continueOnAutoMode` has no flag. Its default is `false`, which keeps the model on a rate limit instead of moving to Auto. It stays `false` only while the account's `settings.json` does not set it `true`.
+The first three rows are launch settings. A caller's copy of any one of them, typed whole, is dropped, so none appears twice. A `--cmd` template gets the environment words and no flag words: its command is the caller's own ([lane-directive.md](lane-directive.md)).
 
-A `--cmd` launch carries none of these by itself: its command is the caller's own ([lane-directive.md](lane-directive.md)).
+| Words the caller passes in `--launch-flags` | Why |
+|---------------------------------------------|-----|
+| `--model`, `--reasoning-effort` | A launch under `--lane` that names neither refuses as `launch-model-missing` and `launch-effort-missing` (`open-terminal --help`). |
+| `--allow-all` | The permission posture. A resumed session ignores `defaultPermissionMode` from settings (`copilot help config`), so a resume carries `--allow-all` only where the relaunch's `--launch-flags` carry it. A launch without it prints `permission-prompt` and still launches. |
+
+GitHub tokens pass through. A lane's own `gh` calls sign in with `GH_TOKEN`. Copilot reads `COPILOT_GITHUB_TOKEN`, the account token a host exports, ahead of `GH_TOKEN` and `GITHUB_TOKEN` (`copilot help environment`), and it logs `Unsupported token type, ignoring` for a token it does not accept (measured). No token value enters a command.
+
+`continueOnAutoMode` has no flag. Its default is `false`, which keeps the model on a rate limit instead of moving to Auto. It stays `false` only while the account's `settings.json` does not set it `true`.
 
 ## Recovery
 
@@ -42,14 +46,14 @@ A lane relaunched with `open-terminal --relaunch` ([lane-directive.md § Recover
 | Session ended before its first event | Passes that record over. `--resume=<id>` on it exits 1 with `No session, task, or name matched`, under `-p` and at a pane, and opens no picker (measured). An older record in the same worktree resumes in its place; with none, the start brief runs. |
 | No record | Renders the start brief. |
 | Harness switch | Reads only the relaunch harness's own store, so a lane that ran on another harness starts afresh. |
-| Retired session | A standing handoff record (`workflow-state handoff-standing` answers `stands`) means the lane ended that session. The relaunch looks for no session, reports `session-retired`, and renders the start brief, whose [start.md](../workflows/start.md) § 0 continues from the record. This holds for every harness. A verdict that cannot be read refuses as `handoff-unreadable`. |
+| Retired session | A standing handoff record means the lane ended that session. `workflow-state handoff-standing` answers `stands`, asked from the lane's worktree, where the lane wrote the record. A local relaunch of any harness then looks for no session, reports `session-retired`, and renders the start brief, whose [start.md](../workflows/start.md) § 0 continues from the record. A verdict that cannot be read refuses as `handoff-unreadable`. |
 | Hosted lane | None. `lane-host` has no Copilot provider, so no Copilot lane runs on another machine. |
 
 ## Wake and lane mail
 
 `open-terminal --wake --harness copilot` resumes the lane's session in print mode, `copilot --resume=<id> -p <inbox line>`, as a second process. Copilot publishes no idle signal. So while a Copilot process runs in the lane's worktree the wake refuses the lane, as `working` where the process has a shell under it and `unjudged` otherwise ([lane-reach.md § Wake refusals](lane-reach.md#wake-refusals)). A lane with no resumable session refuses as `session-missing`.
 
-The lane's own wake is its `lane-mail watch --once` monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)). Mail the monitor and the hooks do not deliver takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver): stop, close with `--keep-sandbox`, relaunch.
+The overseer sends a Copilot lane no wake ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)): the wake is for an operator reaching a lane whose Copilot process is gone. The lane's own wake is its `lane-mail watch --once` monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)). Mail the monitor and the hooks do not deliver takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver): stop, close with `--keep-sandbox`, relaunch.
 
 ## Lane close
 

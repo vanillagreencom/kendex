@@ -2150,24 +2150,34 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
 )
 
 # Whether a relaunch finds the item's session retired: its handoff record
-# stands, by the one judge `workflow-state handoff-standing` owns, which the
-# watch that reports the record and the turn-end hook that asks for it read
-# too. A lane that wrote its record handed its work to the record and ended its
-# session, and only a fresh start carries the record on, since start.md § 0
-# reads it and a resumed session never runs that step. So such a relaunch
-# looks for no session and renders the start brief, whatever the harness.
+# stands, by the one judge `workflow-state handoff-standing` owns, read through
+# lib/lane-state.sh. A lane that wrote its record handed its work to the record
+# and ended its session, and only a fresh start carries the record on, since
+# start.md § 0 reads it and a resumed session never runs that step. So such a
+# relaunch looks for no session and renders the start brief, whatever the
+# harness.
+#
+# Asked from the lane's worktree with no --state-dir, which is where the lane
+# wrote the record and where the fresh start's § 0 reads it: the state
+# directory setting joined to the worktree's own common root. The fleet's
+# --state-dir can name another directory, a local lane in another repository's
+# worktree among them.
+#
 # Sets RELAUNCH_RETIRED; a verdict it cannot read refuses as
-# handoff-unreadable, never read as no record, which would resume the session
-# the lane retired. Read where the watch reads the item's state: the fleet's
-# --state-dir, or this checkout's own state directory.
+# handoff-unreadable, naming the state file the item maps to, never read as no
+# record, which would resume the session the lane retired. The verb's own words
+# reach stderr.
 RELAUNCH_RETIRED=false
-relaunch_retired() { # ITEM STATE_ID
-  local answer rc=0 verdict='workflow-state: handoff-standing'
+relaunch_retired() { # ITEM STATE_ID WORKTREE
+  local path
   RELAUNCH_RETIRED=false
-  answer="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} handoff-standing "$2")" || rc=$?
-  if [[ "$rc" -eq 0 && "$answer" == "$verdict=none" ]]; then return 0; fi
-  if [[ "$rc" -eq 0 && "$answer" == "$verdict=stands"$'\n'* ]]; then RELAUNCH_RETIRED=true; return 0; fi
-  ot_message handoff-unreadable "item=$1" "state=$2" "exit=$rc" >&2
+  lane_handoff_standing "$3" /dev/stderr "$WORKFLOW_STATE" handoff-standing "$2"
+  case "$LANE_HANDOFF_STATE" in
+    none) return 0 ;;
+    stands) RELAUNCH_RETIRED=true; return 0 ;;
+  esac
+  path="$(cd -- "$3" && "$WORKFLOW_STATE" path "$2" 2>/dev/null)" || path=""
+  ot_message handoff-unreadable "item=$1" "state=${path:-$2}" >&2
   return 1
 }
 
@@ -2186,7 +2196,7 @@ launch_finish() {
   if [[ "$WAKE" == true ]]; then wake_args=("$wt"); fi
   RELAUNCH_RETIRED=false
   if [[ "$RELAUNCH" == true && "$HOST_RELAUNCH" == false && -z "$CMD_TEMPLATE" ]]; then
-    relaunch_retired "$item" "$wt_id" || return 1
+    relaunch_retired "$item" "$wt_id" "$wt" || return 1
     [[ "$RELAUNCH_RETIRED" == false ]] || ot_message session-retired "item=$item" "harness=$HARNESS"
   fi
   # A Pi wake goes to the live session through pi-bridge and reads no store.
@@ -2283,9 +2293,10 @@ launch_finish() {
     # check reads as skip, whatever prefix the line below carries.
     [[ -z "$LANE_ENV" ]] || LANE_FORM="$launch_form"
     cmd="$(lane_launch_line "$cmd" "$HARNESS" "$launch_var" "$launch_home" "$launch_form")" || return 1
-  elif [[ "$HARNESS" == copilot && -z "$CMD_TEMPLATE" ]]; then
-    # No account named: the command still carries Copilot's launch
-    # environment, and opens on whatever COPILOT_HOME the pane inherits.
+  elif [[ "$HARNESS" == copilot ]]; then
+    # No account named: the command, a --cmd template's included, still
+    # carries Copilot's launch environment, as one under --lane does, and
+    # opens on whatever COPILOT_HOME the pane inherits.
     cmd="$(lane_launch_line "$cmd" "$HARNESS" "" "" unchecked)" || return 1
   fi
   if [[ "$WAKE" == true ]]; then

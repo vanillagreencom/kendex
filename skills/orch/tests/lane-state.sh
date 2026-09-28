@@ -913,5 +913,38 @@ mutant_state="$(
 assert_eq "$mutant_state" "idle" \
   "control: a judge that reads the pane for a rowless Pi lane calls it idle"
 
+echo "=== lane_handoff_standing reads the handoff-standing verdict ==="
+# handoff_verb — the verb's run, in place of workflow-state: prints
+# HS_OUT and exits HS_RC.
+handoff_verb() { [[ -z "$HS_OUT" ]] || printf '%s\n' "$HS_OUT"; return "$HS_RC"; }
+# handoff_answer [LIB] — the state and record lane_handoff_standing answers,
+# from LIB where given.
+handoff_answer() {
+  (
+    [[ -z "${1:-}" ]] || source "$1"
+    lane_handoff_standing "$TMP_ROOT" "$TMP_ROOT/handoff.err" handoff_verb
+    printf '%s|%s' "$LANE_HANDOFF_STATE" "$LANE_HANDOFF_RECORD"
+  )
+}
+HS_V='workflow-state: handoff-standing'
+while IFS='|' read -r hs_rc hs_out want_state want_record label; do
+  HS_RC="$hs_rc" HS_OUT="$(printf '%b' "$hs_out")"
+  assert_eq "$(handoff_answer)" "$want_state|$want_record" "handoff verdict: $label"
+done <<EOF
+0|$HS_V=none|none||none is no record
+0|$HS_V=stands\\n{"merged":[]}|stands|{"merged":[]}|stands carries the record under it
+0|$HS_V=stands|unreadable||stands with no record under it is a truncated answer
+0|$HS_V=unreadable|unreadable||the verb's own unreadable
+1|$HS_V=none|unreadable||a run that exited non-zero never reached the verb
+0|workflow-state: unknown-command|unreadable||a word the verb does not print
+EOF
+HANDOFF_MUTANT="$TMP_ROOT/mutant-handoff.sh"
+cp "$SCRIPTS_DIR/lib/lane-state.sh" "$HANDOFF_MUTANT"
+mutate_file "$HANDOFF_MUTANT" 'stands"$'"'"'\n'"'"'?*)' 'stands"*)'
+HS_RC=0 HS_OUT="$HS_V=stands"
+hs_mutant="$(handoff_answer "$HANDOFF_MUTANT")"
+assert_eq "${hs_mutant%%|*}" "stands" \
+  "control: without the record requirement a bare stands reads as a record that stands"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

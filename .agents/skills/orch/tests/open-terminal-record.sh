@@ -350,6 +350,30 @@ assert_eq "rc=$RC records=$(records CC-1) $(record CC-1)" \
   "rc=0 records=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null" \
   "a relaunch keeps one record: the resumed session id and the new account land, launched_at stands, and a done lane runs again"
 
+echo "=== a relaunch reads the handoff record where the lane wrote it ==="
+# The lane writes its record from its own worktree, whose common root is that
+# worktree here, while --state-dir names the fleet's directory, which holds
+# none. The relaunch asks where the lane wrote it and starts afresh.
+# retired_under SCRIPT — rc, the retirement line and the session id recorded.
+retired_under() {
+  mkdir -p "$TMP_ROOT/wt/CC-1/tmp"
+  printf '%s\n' '{"handoff":{"merged":[],"remaining":["open the PR"],"written_at":"2000-01-01T06:00:00Z"}}' \
+    > "$TMP_ROOT/wt/CC-1/tmp/workflow-state-CC-1.json"
+  run_ot SCRIPT="$1" --relaunch --ghostty --harness claude --lane "$LANE_DIR" --launch-flags "--model opus --effort high" CC-1
+  rm -f -- "${TMP_ROOT:?}/wt/CC-1/tmp/workflow-state-CC-1.json"
+  printf 'rc=%s retired=%s session=%s' "$RC" "$(grep -c '^open-terminal: session-retired item=CC-1 harness=claude$' <<<"$OUT" || true)" \
+    "$(field "$(record CC-1)" session_id)"
+}
+assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=null" \
+  "a record only the lane's worktree state holds retires its session though --state-dir names another directory"
+RETIRED_MUTANT="$TMP_ROOT/retired-mutant/scripts"
+mkdir -p "$RETIRED_MUTANT"
+cp -R "$REPO/scripts/." "$RETIRED_MUTANT/"
+mutate_file "$RETIRED_MUTANT/open-terminal" 'lane_handoff_standing "$3" /dev/stderr "$WORKFLOW_STATE" handoff-standing "$2"' \
+  'lane_handoff_standing "$3" /dev/stderr "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} handoff-standing "$2"'
+assert_eq "$(retired_under "$RETIRED_MUTANT/open-terminal")" "rc=0 retired=0 session=$CLAUDE222" \
+  "control: asked under the fleet's --state-dir the relaunch misses the record and resumes the retired session"
+
 echo "=== a wake rewrites the session it resumed and nothing else ==="
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.session_id = null | .status = "done")' >/dev/null
 run_ot --wake --harness claude CC-1

@@ -33,8 +33,8 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 FLEET_HOME="$TMP_ROOT/fleet-home"
 mkdir -p "$FLEET_HOME"
 # HOME is the fleet home too, since every copilot command names the shared
-# skills under it.
-LAUNCH_ENV=(LANES_HOME="$FLEET_HOME" HOME="$FLEET_HOME" COPILOT_HOME=)
+# skills under it, and GH_TOKEN a fixture a launched command must keep.
+LAUNCH_ENV=(LANES_HOME="$FLEET_HOME" HOME="$FLEET_HOME" COPILOT_HOME= GH_TOKEN=gh-fixture)
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
@@ -48,9 +48,12 @@ exit 0
 EOF
 printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
 # The harness a wake runs detached, in place of a terminal: its argv lands in
-# the capture the same way.
+# the capture the same way, and the environment it was handed beside it,
+# written first, so a row that waits for the capture finds it whole.
 cat > "$BIN/copilot" <<'EOF'
 #!/usr/bin/env bash
+printf 'COPILOT_ALLOW_ALL=%s COPILOT_SKILLS_DIRS=%s GH_TOKEN=%s\n' "${COPILOT_ALLOW_ALL-unset}" \
+  "${COPILOT_SKILLS_DIRS-unset}" "${GH_TOKEN-unset}" > "$OT_CAPTURE.env"
 printf '%s\n' "copilot $*" > "$OT_CAPTURE"
 exit 0
 EOF
@@ -124,8 +127,10 @@ FLAGS='--model claude-opus-5 --reasoning-effort high --allow-all'
 # quotes each flag: the launch settings, then the question-off word, then the
 # caller's flags.
 LEAD="'--autopilot' '--max-autopilot-continues' '3' '--context' 'long_context' '--no-auto-update' '--no-ask-user' '--model' 'claude-opus-5' '--reasoning-effort' 'high' '--allow-all'"
-# The environment every copilot command carries ahead of the account.
-COP_ENV="env -u GH_TOKEN -u GITHUB_TOKEN COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills'"
+# The environment every copilot command carries, after the account where one
+# is named.
+COP_WORDS="COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills'"
+COP_ENV="env $COP_WORDS"
 
 echo "=== a copilot lane starts with its brief as the value of -i ==="
 launch linear --harness copilot --launch-flags "$FLAGS" cc-737
@@ -135,6 +140,22 @@ assert_not_contains "$CMD" '$' "the linear:copilot command contains no \$"
 launch github --tracker github --repo acme/widgets --harness copilot --launch-flags "$FLAGS" 42
 assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github acme/widgets#42'" \
   "github:copilot emits the same kickoff carrying repo#item"
+
+# A caller's own copy of one launch setting is dropped, whether or not it
+# typed the others.
+launch dedup --harness copilot --launch-flags "$FLAGS --context long_context" cc-737
+assert_eq "$(grep -o "'--context'" <<<"$CMD" | wc -l | tr -d '[:space:]')" "1" \
+  "a caller's --context long_context is dropped for the row's own copy, never carried twice"
+# A --cmd template is the caller's own command, and it runs under the launch
+# environment all the same, with a named account or without one.
+CMD_T="copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-{item}"
+launch cmd-bare --harness copilot --cmd "$CMD_T" CC-750
+assert_contains "$CMD" "&& $COP_ENV copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-CC-750" \
+  "a --cmd launch naming no account carries the launch environment"
+mkdir -p "$TMP_ROOT/.1copilot"
+launch cmd-lane --harness copilot --lane "$TMP_ROOT/.1copilot" --cmd "$CMD_T" CC-751
+assert_contains "$CMD" "&& env COPILOT_HOME='$TMP_ROOT/.1copilot' $COP_WORDS copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-CC-751" \
+  "a --cmd launch under --lane carries the named account and the launch environment"
 
 echo "=== a copilot relaunch resumes the session whose record names the lane's worktree ==="
 # session ID DIR STAMP [HOME [EVENTS]] — a session record as Copilot CLI
@@ -177,8 +198,8 @@ session 44444444-dddd-4ddd-8ddd-444444444444 "$TMP_ROOT/wt/CC-741" 200001010300 
 launch relaunch-lane --relaunch --harness copilot --lane "$TMP_ROOT/.1copilot" --launch-flags "$FLAGS" CC-741
 assert_contains "$CMD" "--resume=44444444-dddd-4ddd-8ddd-444444444444 -i" \
   "a relaunch under --lane resumes from that account's own session store"
-assert_contains "$CMD" "&& $COP_ENV COPILOT_HOME='$TMP_ROOT/.1copilot' copilot $LEAD --resume=" \
-  "the resume runs under the launch environment and the named account, env's options ahead of its assignments"
+assert_contains "$CMD" "&& env COPILOT_HOME='$TMP_ROOT/.1copilot' $COP_WORDS copilot $LEAD --resume=" \
+  "the resume runs under the named account and the launch environment"
 session 55555555-eeee-4eee-8eee-555555555555 "$TMP_ROOT/wt/CC-742" 200001010400 "$TMP_ROOT/.envcopilot"
 ROW_ENV=(COPILOT_HOME="$TMP_ROOT/.envcopilot")
 launch relaunch-env --relaunch --harness copilot --launch-flags "$FLAGS" CC-742
@@ -200,7 +221,7 @@ assert_contains "$CMD" "--resume=22222222-bbbb-4bbb-8bbb-222222222222 -i" \
   "a record a relaunched lane already resumed from retires nothing: the session it started resumes"
 handoff CC-738 '{"handoff":'
 launch retired-unreadable --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
-assert_eq "${CMD:-none} $(grep -c '^open-terminal: handoff-unreadable item=CC-738 state=CC-738 ' <<<"$ERR" || true)" "none 1" \
+assert_eq "${CMD:-none} $(grep -c "^open-terminal: handoff-unreadable item=CC-738 state=$TMP_ROOT/state/workflow-state-CC-738.json\$" <<<"$ERR" || true)" "none 1" \
   "a state file the judge cannot read refuses the relaunch rather than resuming a session it may have retired"
 rm -f -- "${TMP_ROOT:?}/state/workflow-state-CC-738.json"
 # The lane ran on copilot and is relaunched on claude: nothing in claude's
@@ -214,6 +235,8 @@ echo "=== a copilot wake resumes the lane's session in print mode, and only an i
 launch wake --wake --harness copilot --launch-flags "$FLAGS" CC-738
 assert_eq "$CMD" "copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --no-ask-user --model claude-opus-5 --reasoning-effort high --allow-all --resume=22222222-bbbb-4bbb-8bbb-222222222222 -p Run .agents/skills/orch/scripts/lane-mail inbox --item CC-738 and act on every directive it prints." \
   "the wake resumes the newest session that ran, by its id, its inbox line the value of -p"
+assert_eq "$(cat "$TMP_ROOT/wake.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS=$FLEET_HOME/.agents/skills GH_TOKEN=gh-fixture" \
+  "the woken copilot runs under the launch environment and keeps the host's GitHub token"
 launch wake-none --wake --harness copilot --launch-flags "$FLAGS" CC-743
 assert_eq "${CMD:-none} $(grep -c '^open-terminal: session-missing item=CC-743 harness=copilot' <<<"$ERR" || true)" "none 1" \
   "a worktree whose only record holds no events has no session to wake, and nothing starts"
@@ -296,10 +319,24 @@ OT="$TMP_ROOT/env-ctrl/scripts/open-terminal" launch env-ctrl --harness copilot 
 assert_eq "$(grep -c 'COPILOT_ALLOW_ALL=true' <<<"$CMD" || true)" "0" \
   "control: without the builder's copilot words the command carries no launch environment"
 stage "$TMP_ROOT/route-ctrl"
-mutate_file "$TMP_ROOT/route-ctrl/scripts/open-terminal" '  elif [[ "$HARNESS" == copilot && -z "$CMD_TEMPLATE" ]]; then' '  elif false; then'
+mutate_file "$TMP_ROOT/route-ctrl/scripts/open-terminal" '  elif [[ "$HARNESS" == copilot ]]; then' '  elif false; then'
 OT="$TMP_ROOT/route-ctrl/scripts/open-terminal" launch route-ctrl --harness copilot --launch-flags "$FLAGS" cc-737
 assert_contains "$CMD" "&& copilot $LEAD -i" \
   "control: without the no-account route a launch naming no account runs copilot bare"
+# The route that hands a wake to the builder cut for the wake alone: the woken
+# copilot runs bare, which the stub's own environment shows.
+stage "$TMP_ROOT/wake-env-ctrl"
+mutate_file "$TMP_ROOT/wake-env-ctrl/scripts/open-terminal" '  elif [[ "$HARNESS" == copilot ]]; then' '  elif [[ "$HARNESS" == copilot && "$WAKE" != true ]]; then'
+OT="$TMP_ROOT/wake-env-ctrl/scripts/open-terminal" launch wake-env-ctrl --wake --harness copilot --launch-flags "$FLAGS" CC-738
+assert_contains "$(cat "$TMP_ROOT/wake-env-ctrl.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL=unset" \
+  "control: without the wake's route to the builder the woken copilot has no launch environment"
+# Each launch setting its own run cut: the row's settings are one run, and a
+# caller's copy of one of them is carried beside the row's.
+stage "$TMP_ROOT/dedup-ctrl"
+mutate_file "$TMP_ROOT/dedup-ctrl/scripts/lib/lane-launch.sh" '<<<"${settings//;/$nl}$nl$compaction$nl$question"' '<<<"$settings$nl$compaction$nl$question"'
+OT="$TMP_ROOT/dedup-ctrl/scripts/open-terminal" launch dedup-ctrl --harness copilot --launch-flags "$FLAGS --context long_context" cc-737
+assert_eq "$(grep -o "'--context'" <<<"$CMD" | wc -l | tr -d '[:space:]')" "2" \
+  "control: with the settings one run a caller's --context is carried twice"
 # The named lane's store cut from the lookup: the --lane relaunch scans the
 # default home, which holds no record of its worktree, and starts afresh.
 stage "$TMP_ROOT/lane-store-ctrl"
