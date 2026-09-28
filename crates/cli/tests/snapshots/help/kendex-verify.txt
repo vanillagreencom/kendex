@@ -18,7 +18,11 @@ Options:
           record names, not at the source's revision now; that commit must be on
           the source's history and, with --base, no older than the base
           revision's record names. A package with a revision of its own, or
-          whose installations disagree on a commit, resolves as usual
+          whose installations disagree on a commit, resolves as usual. An
+          adopted workflow copy is compared with its template at that recorded
+          commit; without this flag, with its template at the revision the
+          manifest declares now, which is what fails a copy a refresh left
+          behind
 
       --json
           Also print one JSON document on stdout: every row with its state and

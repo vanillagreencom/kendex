@@ -71,7 +71,7 @@ pub(crate) fn write(path: &Path, text: &str) {
     fs::write(path, text).unwrap();
 }
 
-fn repository(dir: &Path) {
+pub(crate) fn repository(dir: &Path) {
     git(dir, &["init", "-q", "-b", "main"]);
     git(dir, &["config", "user.email", "t@t"]);
     git(dir, &["config", "user.name", "t"]);

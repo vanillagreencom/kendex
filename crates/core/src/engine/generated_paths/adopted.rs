@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{CoreError, Result};
 
-use super::super::desired::{Artifact, DesiredState};
+use super::super::desired::{Artifact, Desired, DesiredState};
 use super::{GeneratedPaths, INVENTORY};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -135,6 +135,26 @@ fn hash(bytes: &[u8]) -> String {
     format!("sha256:{}", crate::hash::hex(&Sha256::digest(bytes)))
 }
 
+/// A copy that is not its template's bytes, named by both hashes and the
+/// revision the template was read at, with the step that copies it again:
+/// refresh moves the template and its recorded hash, never the copy.
+fn differs(record: &Record, item: &Desired, actual: &[u8]) -> String {
+    let at = item
+        .source_commit
+        .as_deref()
+        .map(|commit| format!(" at {commit}"))
+        .unwrap_or_default();
+    format!(
+        "differs from template {}{at}: copy {}, template {}; \
+         the adoption step that {} {} ships copies the template again",
+        record.template,
+        hash(actual),
+        record.template_hash,
+        item.kind.name(),
+        item.name,
+    )
+}
+
 pub(super) fn collect(
     root: &Path,
     state: &DesiredState,
@@ -173,11 +193,11 @@ pub(super) fn collect(
                 files
                     .iter()
                     .find(|(name, _)| name == relative)
-                    .map(|(_, bytes)| bytes)
+                    .map(|(_, bytes)| (item, bytes))
             });
         match candidates.next() {
-            Some(bytes) => {
-                if candidates.any(|other| other != bytes) {
+            Some((item, bytes)) => {
+                if candidates.any(|(_, other)| other != bytes) {
                     problems.push(format!(
                         "template {} has conflicting declared package bytes",
                         record.template
@@ -189,7 +209,7 @@ pub(super) fn collect(
                         let actual =
                             std::fs::read(&path).map_err(|error| CoreError::io(&path, error))?;
                         if actual != *bytes {
-                            problems.push(format!("differs from template {}", record.template));
+                            problems.push(differs(&record, item, &actual));
                         }
                     }
                     Ok(_) => problems.push("not a regular workflow file".to_owned()),
@@ -213,3 +233,6 @@ pub(super) fn collect(
     }
     Ok(Some(adopted))
 }
+
+#[cfg(test)]
+mod tests;

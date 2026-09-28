@@ -23,7 +23,7 @@ use crate::ui::{self, Span, Status, Style};
 /// compared against.
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct Output {
-    /// Render each package that follows its source at the commit the install record names, not at the source's revision now; that commit must be on the source's history and, with --base, no older than the base revision's record names. A package with a revision of its own, or whose installations disagree on a commit, resolves as usual
+    /// Render each package that follows its source at the commit the install record names, not at the source's revision now; that commit must be on the source's history and, with --base, no older than the base revision's record names. A package with a revision of its own, or whose installations disagree on a commit, resolves as usual. An adopted workflow copy is compared with its template at that recorded commit; without this flag, with its template at the revision the manifest declares now, which is what fails a copy a refresh left behind
     #[arg(long)]
     pub at_record: bool,
     /// Also print one JSON document on stdout: every row with its state and the positions it occupies
@@ -120,6 +120,12 @@ struct Tally {
 }
 
 impl Tally {
+    /// The failed rows the count leaves out: shims, lapsed armings and
+    /// bookkeeping files.
+    fn beside_failed(&self) -> usize {
+        self.shims_failed + self.setup_failed + self.bookkeeping_failed
+    }
+
     fn clean(&self) -> bool {
         !(self.failed > 0
             || self.shims_failed > 0
@@ -133,16 +139,18 @@ impl Tally {
 /// Drift check over lock entries; non-zero exit on any failing row — this
 /// is the signal consuming repos compose in shell pipelines.
 ///
-/// Six things are named beside the rows without changing the count, which
-/// is a count of lock entries and nothing else: content nothing manages,
-/// what a scope declares that its record does not hold, the instruction
-/// shims the scope owes, a repository effect kendex recorded arming that
-/// the package no longer stands behind, and the two files a project
-/// commits about itself — the record and the inventory, each held to what
-/// this pass would write — each printed as a row of its own where it
-/// fails, and a failing one closes the run non-zero like a failing lock
-/// row. The arming check fails closed: a recorded arming whose check could
-/// not be taken is a row nothing measured, never a clean one.
+/// Seven things are named beside the rows without changing the count,
+/// which is a count of lock entries and nothing else: content nothing
+/// manages, what a scope declares that its record does not hold, the
+/// instruction shims the scope owes, a repository effect kendex recorded
+/// arming that the package no longer stands behind, the two files a
+/// project commits about itself — the record and the inventory, each held
+/// to what this pass would write — and each adopted workflow copy, held to
+/// its template's bytes. Each of the last five is printed as a row of its
+/// own where it fails, counted after the lock entries on the closing line,
+/// and a failing one closes the run non-zero like a failing lock row. The
+/// arming check fails closed: a recorded arming whose check could not be
+/// taken is a row nothing measured, never a clean one.
 ///
 /// A recorded entry nothing in the scope declares fails its row, and a
 /// declared installation the record does not hold is a gap, for every
@@ -193,7 +201,12 @@ pub fn run(
     let clean = tally.clean();
     ui::stderr(&style.summary(
         if clean { Status::Done } else { Status::Failed },
-        &head(tally.checked, tally.failed, !tally.gaps.is_empty()),
+        &head(
+            tally.checked,
+            tally.failed,
+            !tally.gaps.is_empty(),
+            tally.beside_failed(),
+        ),
     ));
     if output.json {
         super::answer(&serde_json::to_string_pretty(&Document::new(
@@ -527,19 +540,27 @@ impl<'a> Placer<'a> {
     }
 }
 
-/// The line that closes the run: the count, or why there was none.
+/// The line that closes the run: the count, or why there was none, and
+/// the failed rows beside the count.
 ///
 /// A scope whose declarations were named above is not a machine with
 /// nothing installed on it, and saying so would close the run on the one
-/// reading the reader came for.
-fn head(checked: usize, failed: usize, named: bool) -> String {
-    match (checked, named) {
+/// reading the reader came for. A count that closes on `0 failed` while a
+/// row beside it failed reads as a pass to the one reading only the last
+/// line, so those rows are counted here too.
+fn head(checked: usize, failed: usize, named: bool, beside: usize) -> String {
+    let count = match (checked, named) {
         (0, true) => "nothing checked".to_owned(),
         (0, false) => "nothing installed".to_owned(),
         _ => format!(
             "{checked} checked, {} OK, {failed} failed",
             checked - failed
         ),
+    };
+    match beside {
+        0 => count,
+        1 => format!("{count}; 1 other row failed"),
+        _ => format!("{count}; {beside} other rows failed"),
     }
 }
 
