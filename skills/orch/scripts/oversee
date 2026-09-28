@@ -28,8 +28,9 @@
 #        like the settings, is --cwd's repository's: the launch moves there
 #        before either is read, so the record it writes is the one the
 #        launched overseer's hooks, watch and succession read. A record
-#        naming a tmux session this server still lists is a live overseer,
-#        and a second one is never opened beside it: `overseer-live` names
+#        naming a tmux session the adapter's `inspect` still finds on this
+#        server is a live overseer, and a second one is never opened beside
+#        it: `overseer-live` names
 #        it and its generation. Two overseers never act at once; a live one
 #        is replaced through `oversee-succeed`, never launched over.
 #     4. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:model:effort`
@@ -360,18 +361,18 @@ if (( probe )); then
 fi
 
 state_ready
-# A live overseer: the record names a tmux session, and this server lists
-# that pane under that server pid. A record naming a pane the server no
-# longer lists is a stopped fleet's, and the launch takes the next
-# generation over it.
+# A live overseer: the record names a tmux session, and the runtime's
+# `inspect` of it answers a live state under that server pid. A record naming
+# a session the runtime no longer lists is a stopped fleet's, and the launch
+# takes the next generation over it.
 if ! live="$(jq -r 'if type == "object" and (.runtime // "tmux") == "tmux" and (.pane // "") != ""
     then ((.server // "") + " " + .pane + " " + ((.generation // 0) | tostring)) else "" end' <<<"$OL_PRIOR" 2>"$DEP_ERR")"; then
   die state-unwritable field=overseer
 fi
 if [[ -n "$live" ]]; then
   read -r live_server live_pane live_generation <<<"$live"
-  panes="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>"$DEP_ERR")" || die launch-failed step=list-panes
-  if grep -qxF -- "$live_server $live_pane" <<<"$panes"; then
+  ol_session_inspect "$live_pane" || die launch-failed step=inspect
+  if [[ "$OL_INSPECT_STATE" != gone && "$OL_INSPECT_SERVER" == "$live_server" ]]; then
     die overseer-live "session=$live_pane" "server=$SERVER_SOCKET" "generation=$live_generation"
   fi
 fi

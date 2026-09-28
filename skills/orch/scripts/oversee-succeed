@@ -262,7 +262,8 @@
 #        the runner could not start is the notice `watch-restart-failed
 #        step=helper` on stderr, and the successor's own watch start taking
 #        over the watch of the closed pane is the recovery. The helper waits
-#        for the caller window to close and starts the watch again through the
+#        until the adapter's `inspect` no longer lists the caller's session,
+#        its window closed, and starts the watch again through the
 #        same runner, as the job watch-restart-<stamp>, with its
 #        recorded command in its recorded directory under this run's
 #        environment, except that TMUX_PANE names the successor pane, the
@@ -566,28 +567,29 @@ watch_job_launch() { # NAME STATE OUT ERR COMMAND...
     -- sh -c 'out=$1 err=$2; shift 2; exec "$@" >>"$out" 2>>"$err"' sh "$out" "$err" "$@"
 }
 
-# The internal `--watch-restart STATE CALLER_WINDOW PANE LANE_VAR LANE_HOME
+# The internal `--watch-restart STATE CALLER_SESSION PANE LANE_VAR LANE_HOME
 # HARNESS [FLAG...]` run, step 6's helper, which the succession starts before its
 # close through the orch job runner (header step 6). Every
 # line it prints goes to oversee-watch.err, where the handover pointed its
 # stdout and stderr, so the next watch start on the state other than a
 # succession's prints it. Each outcome is one keyed line, and none is a refusal
 # of anything: the succession has already committed.
-watch_restart() { # STATE CALLER_WINDOW PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
-  local state="$1" window="$2" pane="$3" var="$4" home="$5" harness="$6" windows deadline runner
+watch_restart() { # STATE CALLER_SESSION PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
+  local state="$1" caller="$2" pane="$3" var="$4" home="$5" harness="$6" deadline runner
   local -a flags=()
   shift 6
   [[ $# -eq 0 ]] || flags=(-- "$@")
   deadline=$((SECONDS + WATCH_STOP_SECS))
+  # The caller is closed once the runtime's `inspect` no longer lists it.
   while :; do
-    if ! windows="$(tmux list-windows -a -F '#{window_id}' 2>"$DEP_ERR")"; then
-      message watch-restart-failed step=close "window=$window"
+    if ! ol_session_inspect "$caller"; then
+      message watch-restart-failed step=close "session=$caller"
       cat -- "$DEP_ERR"
       return 0
     fi
-    grep -qxF -- "$window" <<<"$windows" || break
+    [[ "$OL_INSPECT_STATE" != gone ]] || break
     if (( SECONDS >= deadline )); then
-      message watch-restart-failed step=close "window=$window"
+      message watch-restart-failed step=close "session=$caller"
       return 0
     fi
     sleep 0.1
@@ -820,11 +822,25 @@ if [[ "$MODE" != dead && "$MODE" != check ]]; then
   [[ "$question_policy" != off ]] || QUESTION_OFF=(--question-off)
 fi
 
+# The runtime, held to tmux by the library both launchers share: this script
+# reads the successor's account off its pane, so a provider path is refused
+# here, before this run reads the caller's session through it or prints or
+# records anything, never opened through and recorded as tmux.
+if ! ol_runtime_supported; then
+  [[ "$OL_REASON" != runtime-unsupported ]] || die runtime-unsupported "host=$OL_RUNTIME"
+  die launch-failed step=host-resolve
+fi
+
 CALLER_PANE="${DEAD_PANE:-${WALLED_PANE:-${TMUX_PANE:-}}}"
-# One field per call: some tmux builds print a control-character separator as
-# escaped text, so no separator passes through tmux's output.
-CALLER_WINDOW="$(tmux display-message -p -t "$CALLER_PANE" '#{window_id}' 2>"$DEP_ERR")" \
-  || die pane-unreadable "pane=$CALLER_PANE"
+# The caller's window and server are the runtime's `inspect` of its session
+# (lib/overseer-launch.sh § ol_session_inspect), the read the launch and the
+# watch take of an overseer too; a session the runtime no longer lists has
+# no slot for a successor to take.
+ol_session_inspect "$CALLER_PANE" || die pane-unreadable "pane=$CALLER_PANE"
+[[ "$OL_INSPECT_STATE" != gone ]] || die pane-unreadable "pane=$CALLER_PANE" state=gone
+CALLER_WINDOW="$OL_INSPECT_WINDOW" CALLER_SERVER="$OL_INSPECT_SERVER"
+# The directory is the named fallback for a session its record names none
+# for, which inspect does not carry.
 CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}' 2>"$DEP_ERR")" \
   || die pane-unreadable "pane=$CALLER_PANE"
 # The caller's own launch record, where the fleet state's `overseer` object
@@ -854,8 +870,6 @@ CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}' 
 # the line it replays (lib/overseer-launch.sh § ol_record_line_identity).
 CALLER_HARNESS="" CALLER_MODEL="" CALLER_ACCOUNT_HARNESS="" CALLER_ACCOUNT_MODEL=""
 if [[ "$MODE" != dead ]]; then
-  CALLER_SERVER="$(tmux display-message -p -t "$CALLER_PANE" '#{pid}' 2>"$DEP_ERR")" \
-    || die pane-unreadable "pane=$CALLER_PANE"
   record_rc=0
   ol_caller_known "$CALLER_SERVER" "$CALLER_PANE" "$PROJECT_ROOT" || record_rc=$?
   if (( record_rc > 1 )); then
@@ -1541,15 +1555,6 @@ if [[ "$MODE" == print ]]; then
   exit 0
 fi
 
-# The runtime, held to tmux by the library both launchers share: this script
-# reads the successor's account off its pane, so a provider path is refused
-# here, before this run prints or records anything, never opened through and
-# recorded as tmux.
-if ! ol_runtime_supported; then
-  [[ "$OL_REASON" != runtime-unsupported ]] || die runtime-unsupported "host=$OL_RUNTIME"
-  die launch-failed step=host-resolve
-fi
-
 # The line this run built, for a `walled` caller's own output: that caller is
 # `oversee-watch`, which reports the recovery it just performed and has no
 # other way to say which command it sent. Printed before the window opens, for
@@ -1678,7 +1683,7 @@ if [[ "$MODE" == succeed ]]; then
   else
     old_watch="$WATCH_PID"
     if watch_job_launch watch-handover "$watch_state" "$WATCH_ERR_FILE" "$WATCH_ERR_FILE" \
-        "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" --watch-restart "$watch_state" "$CALLER_WINDOW" "$SUCC_PANE" "$lane_var" "$launch_home" "$harness" ${SUCC_FLAGS[@]+"${SUCC_FLAGS[@]}"}; then
+        "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" --watch-restart "$watch_state" "$CALLER_PANE" "$SUCC_PANE" "$lane_var" "$launch_home" "$harness" ${SUCC_FLAGS[@]+"${SUCC_FLAGS[@]}"}; then
       message watch-handover "pid=$old_watch" "pane=$SUCC_PANE" "log=$WATCH_ERR_FILE" "$JOB_UNIT_LINE"
     else
       message watch-restart-failed step=helper "pid=$old_watch" "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR" >&2

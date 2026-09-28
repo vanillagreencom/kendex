@@ -7,7 +7,7 @@
 # What differs between them is policy and stays with the caller: which marks
 # fire, how a predecessor's flags carry over, which entries the account walk
 # tries. `oversee-watch` sources it too, through lib/watch-overseer-record.sh,
-# for OL_JQ_DEFS and ol_preference. What is shared is here:
+# for OL_JQ_DEFS, ol_preference and ol_session_inspect. What is shared is here:
 #
 #   ol_preference          the ORCH_OVERSEER_PREFERENCE value, its default
 #                          ladder where the setting is unset
@@ -33,6 +33,8 @@
 #                          current session's launch identity read back
 #   ol_session_verify      the account read, the first working turn and the
 #                          confirming read, inside one deadline
+#   ol_session_inspect     the runtime's `inspect`, the one read of a session
+#                          its liveness, its window and its state come from
 #   ol_session_stop        the runtime's `stop`
 #   ol_session_abandon     the close-out every refusal after `create` takes:
 #                          the session stopped, the prior record put back
@@ -407,6 +409,31 @@ ol_session_from_out() {
   done
 }
 
+# ol_session_inspect SESSION [--launch] — the runtime's `inspect`, the one
+# read every reader of an overseer session takes of it: the keyed line's
+# state, server, window and cause into OL_INSPECT_STATE, OL_INSPECT_SERVER,
+# OL_INSPECT_WINDOW and OL_INSPECT_CAUSE, each empty where the line names
+# none, the line itself into OL_INSPECT_LINE and the snapshot under it into
+# OL_DETAIL. Returns 1 with
+# OL_REASON=inspect-failed; the provider's own line is in DEP_ERR.
+OL_INSPECT_STATE="" OL_INSPECT_SERVER="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_LINE=""
+ol_session_inspect() { # SESSION [--launch]
+  local out word
+  OL_INSPECT_STATE="" OL_INSPECT_SERVER="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_DETAIL=""
+  out="$("$SCRIPT_DIR/overseer-host" inspect --session "$1" ${2:+"$2"} 2>"$DEP_ERR")" \
+    || { OL_REASON=inspect-failed; return 1; }
+  OL_INSPECT_LINE="${out%%$'\n'*}"
+  for word in $OL_INSPECT_LINE; do
+    case "$word" in
+      state=*) OL_INSPECT_STATE="${word#state=}" ;;
+      server=*) OL_INSPECT_SERVER="${word#server=}" ;;
+      window=*) OL_INSPECT_WINDOW="${word#window=}" ;;
+      cause=*) OL_INSPECT_CAUSE="${word#cause=}" ;;
+    esac
+  done
+  [[ "$out" != *$'\n'* ]] || OL_DETAIL="${out#*$'\n'}"
+}
+
 # ol_session_stop SESSION [SUCCESSOR] — the runtime's `stop`. Returns the
 # provider's status; its words are in DEP_ERR.
 ol_session_stop() { # SESSION [SUCCESSOR]
@@ -724,7 +751,7 @@ ol_account_verdict() { # SESSION LANE_VAR LANE_DIR FORM BOUND final|early
 # observed or skipped, for the notice a caller prints.
 OL_DETAIL="" OL_WAITED="" OL_STEP=""
 ol_session_verify() { # SESSION LANE_VAR LANE_DIR FORM WAIT_SECS
-  local session="$1" lane_var="$2" lane_dir="$3" form="$4" out keyed state
+  local session="$1" lane_var="$2" lane_dir="$3" form="$4"
   OL_WAIT_SECS="$5"
   OL_DETAIL="" OL_WAITED="" OL_STEP="" OL_UNOBSERVED=""
   OL_STARTED="$(date +%s)"
@@ -738,19 +765,8 @@ ol_session_verify() { # SESSION LANE_VAR LANE_DIR FORM WAIT_SECS
   # or an option list the brief itself prints reads as asking, and the wait
   # would burn the budget on a session that had in fact launched.
   while :; do
-    out="$("$SCRIPT_DIR/overseer-host" inspect --launch --session "$session" 2>"$DEP_ERR")" \
-      || { OL_REASON=inspect-failed; OL_STEP=inspect; return 1; }
-    keyed="${out%%$'\n'*}"
-    OL_DETAIL="${out#*$'\n'}"
-    [[ "$OL_DETAIL" != "$out" ]] || OL_DETAIL=""
-    state=""
-    case " $keyed " in
-      *" state=working "*) state=working ;;
-      *" state=asking "*) state=asking ;;
-      *" state=idle "*) state=idle ;;
-      *" state=gone "*) state=gone ;;
-    esac
-    case "$state" in
+    ol_session_inspect "$session" --launch || { OL_STEP=inspect; return 1; }
+    case "$OL_INSPECT_STATE" in
       working) break ;;
       asking)
         OL_REASON=dialog; OL_WAITED="$(ol_waited)"
@@ -758,7 +774,7 @@ ol_session_verify() { # SESSION LANE_VAR LANE_DIR FORM WAIT_SECS
         return 1 ;;
       idle) ;;
       *)
-        printf '%s\n' "$keyed" > "$DEP_ERR"
+        printf '%s\n' "$OL_INSPECT_LINE" > "$DEP_ERR"
         OL_REASON=inspect-failed; OL_STEP="state"
         return 1 ;;
     esac

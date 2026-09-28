@@ -2470,41 +2470,37 @@ overseer_mark_check() { # ROWS IDENTITY PANE
 #
 # THE NAMED FALLBACK: where the rows cannot judge, because the record names no
 # rows file for this pane, the file holds no row yet, its last row names a
-# harness that emits neither event (Codex, Pi) or it cannot be read, the pane
-# is captured and judged by lib/lane-state.sh's rungs as it was before the
-# rows existed, OV_SOURCE `pane`, and the pass says so once under
-# overseer-fallback with the cause. OV_SCREEN holds that capture, empty on
-# every other source.
+# harness that emits neither event (Codex, Pi) or it cannot be read, the
+# state `inspect` gives the pane, lib/lane-state.sh's rungs over its capture,
+# stands as it did before the rows existed, OV_SOURCE `pane`, and the pass
+# says so once under overseer-fallback with the cause. OV_SCREEN holds that
+# capture, empty on every other source.
 OV_WINDOW=""
 OV_IDENTITY=""
 OV_SCREEN=""
 OV_STATE=""
 OV_SOURCE=""
 overseer_pane_read() { # PANE
-  local pane="$1" pane_identity server actual_pane obs pid cmd rows cause exit_status
+  local pane="$1" server rows cause exit_status bare=0
   local errf="$WORK_DIR/overseer.err"
   OV_SCREEN=""
-  OV_WINDOW="$(tmux display-message -p -t "$pane" '#{window_id}' 2>"$errf")" \
-    || { overseer_note overseer-unreadable "pane=$pane" "field=window_id"; return 1; }
-  if ! pane_identity="$(tmux display-message -p -t "$pane" '#{pid} #{pane_id}' 2>"$errf")"; then
-    overseer_note overseer-unreadable "pane=$pane" "field=identity"
+  # The session is read through the runtime's `inspect` alone
+  # (lib/overseer-launch.sh § ol_session_inspect), the one read its launchers
+  # take of it: its window, its server and the process fact every rung below
+  # rests on, `exited` being a bare shell with nothing under it.
+  if ! DEP_ERR="$errf" ol_session_inspect "$pane"; then
+    overseer_note overseer-unreadable "pane=$pane" "field=inspect"
     return 1
   fi
-  [[ "$pane_identity" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)$ ]] \
-    || { overseer_note overseer-unreadable "pane=$pane" "field=identity" "value=${pane_identity:-<empty>}"; return 1; }
-  server="${BASH_REMATCH[1]}"
-  actual_pane="${BASH_REMATCH[2]}"
-  [[ "$actual_pane" == "$pane" ]] \
-    || { overseer_note overseer-unreadable "pane=$pane" "field=identity" "value=$pane_identity"; return 1; }
+  [[ "$OL_INSPECT_STATE" != gone ]] \
+    || { overseer_note overseer-unreadable "pane=$pane" "field=session" "state=gone"; return 1; }
+  [[ "$OL_INSPECT_SERVER" =~ ^[0-9]+$ && "$OL_INSPECT_WINDOW" =~ ^@[0-9]+$ ]] \
+    || { overseer_note overseer-unreadable "pane=$pane" "field=identity" "value=${OL_INSPECT_LINE:-<empty>}"; return 1; }
+  OV_WINDOW="$OL_INSPECT_WINDOW"
+  server="$OL_INSPECT_SERVER"
   OV_IDENTITY="$server $pane"
-  if ! obs="$(tmux display-message -p -t "$pane" '#{pane_pid} #{pane_current_command}' 2>"$errf")"; then
-    overseer_note overseer-unreadable "pane=$pane" "field=pane_pid"
-    return 1
-  fi
-  [[ "$obs" =~ ^[0-9]+[[:blank:]]+[^[:space:]] ]] \
-    || { overseer_note overseer-unreadable "pane=$pane" "value=${obs:-<empty>}"; return 1; }
-  pid="${obs%%[[:blank:]]*}"
-  cmd="${obs#*[[:blank:]]}"
+  [[ "$OL_INSPECT_STATE" != exited ]] || bare=1
+  [[ "$OL_INSPECT_CAUSE" != process-probe ]] || note_probe_unusable "$pane"
   # The rows file and the exit status the record holds for THIS pane on THIS
   # server, and neither for a record naming another session: that one's are
   # not this pane's. An exit status is `overseer-run`'s, written once the
@@ -2520,14 +2516,7 @@ overseer_pane_read() { # PANE
     cause=state-unreadable rows=""
   fi
   if [[ "$rows" == *$'\t'* ]]; then exit_status="${rows%%$'\t'*}" rows="${rows#*$'\t'}"; fi
-  if [[ -n "$exit_status" ]] && is_bare_shell "$cmd"; then
-    pane_has_child "$pid" || true
-    case "$LANE_PROBE_RC" in
-      1) OV_STATE=exited; OV_SOURCE=record; return 0 ;;
-      0) ;;
-      *) note_probe_unusable "$pane" ;;
-    esac
-  fi
+  if [[ -n "$exit_status" ]] && (( bare )); then OV_STATE=exited; OV_SOURCE=record; return 0; fi
   if [[ -n "$rows" ]]; then
     cause=unreadable
     if session_rows_verdict "$rows"; then cause="$SESSION_ROWS_VERDICT"; fi
@@ -2535,43 +2524,26 @@ overseer_pane_read() { # PANE
   # A SessionEnd settles the session only over the bare shell its harness's
   # exit leaves, the fact the recorded-exit rung reads: over a live harness it
   # says nothing about the session running now.
-  if [[ "$cause" == ended ]]; then
-    cause=live
-    if is_bare_shell "$cmd"; then
-      pane_has_child "$pid" || true
-      case "$LANE_PROBE_RC" in
-        1) cause=ended ;;
-        0) ;;
-        *) note_probe_unusable "$pane" ;;
-      esac
-    fi
-  fi
+  [[ "$cause" != ended ]] || (( bare )) || cause=live
   case "$cause" in
     ended) OV_STATE=exited; OV_SOURCE=rows; return 0 ;;
     walled) OV_STATE=walled; OV_SOURCE=rows; return 0 ;;
     live)
       OV_STATE=working; OV_SOURCE=rows
-      if is_bare_shell "$cmd"; then
-        pane_has_child "$pid" || true
-        case "$LANE_PROBE_RC" in
-          0) ;;
-          1) OV_STATE=exited; OV_SOURCE=process ;;
-          *) note_probe_unusable "$pane" ;;
-        esac
-      fi
+      (( ! bare )) || { OV_STATE=exited; OV_SOURCE=process; }
       return 0 ;;
     none | unsupported | unrecorded | unreadable | state-unreadable) ;;
   esac
   overseer_note overseer-fallback "pane=$pane" "cause=$cause"
   OV_SOURCE=pane
-  OV_SCREEN="$(tmux capture-pane -pJ -t "$pane" 2>"$errf")" \
-    || { overseer_note overseer-unreadable "pane=$pane" "field=capture"; return 1; }
-  # The sixth argument is empty for the reason check_lanes gives: this watch's
-  # vantage point is the pane, and a screen the pane rungs cannot settle is
-  # `unjudged`, never `exited`.
-  lane_state OV_STATE listed "$cmd" "$pid" "$OV_SCREEN" \
+  # The state `inspect` judged off the screen is lib/lane-state.sh's word for
+  # the pane; its sixth argument is empty for the reason check_lanes gives:
+  # this watch's vantage point is the pane, and a screen the pane rungs cannot
+  # settle is `unjudged`, never `exited`.
+  [[ "$OL_INSPECT_CAUSE" != limit-scan ]] \
     || { overseer_note overseer-unreadable "pane=$pane" "scan=usage-limit"; return 1; }
-  [[ "$LANE_PROBE_RC" -le 1 ]] || note_probe_unusable "$pane"
+  OV_STATE="$OL_INSPECT_STATE"
+  OV_SCREEN="$OL_DETAIL"
 }
 
 # The overseer's verdict from the reading overseer_pane_read left, as

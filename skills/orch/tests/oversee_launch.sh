@@ -147,7 +147,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
 # The must-fail control: a launcher that skips the liveness check opens a
 # second overseer beside the first.
 LIVECTL="$(mutant_scripts livectl oversee)" || exit 1
-mutate_file "$LIVECTL/oversee" '  if grep -qxF -- "$live_server $live_pane" <<<"$panes"; then' '  if false; then'
+mutate_file "$LIVECTL/oversee" '  if [[ "$OL_INSPECT_STATE" != gone && "$OL_INSPECT_SERVER" == "$live_server" ]]; then' '  if false; then'
 OVERSEE_BIN="$LIVECTL/oversee" run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(overseers)|$(recorded generation)" \
   "0|2|2" \

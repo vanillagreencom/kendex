@@ -133,7 +133,8 @@ EOF
 # cmd-<lane>.txt is the pane's foreground command (#{pane_current_command}) and
 # panepid-<lane>.txt its #{pane_pid} (default 9000), returned together as the
 # lane's one liveness read; panes.txt is `list-panes -a` (`<server pid> <pane
-# id>` lines, the lane-claim liveness key). pane-<lane>.<N>.txt and
+# id>` lines, the lane-claim liveness key), and `list-panes -a -F
+# '#{pane_id}'` answers its pane ids beside every pane a cmd-<pane>.txt names. pane-<lane>.<N>.txt and
 # cmd-<lane>.<N>.txt override the plain file on the Nth read of that lane, so a
 # case can change a screen between passes; obs-<lane>.txt replaces the whole
 # liveness reply, for a case that needs a malformed one. pane-key-<lane>.txt
@@ -184,7 +185,20 @@ case "${1:-}" in
     [[ -f "$STUB_DIR/windows-$s.txt" ]] || { echo "can't find session: $s" >&2; exit 1; }
     cat "$STUB_DIR/windows-$s.txt"; exit 0 ;;
   list-panes)
-    [[ -f "$STUB_DIR/panes.txt" ]] && cat "$STUB_DIR/panes.txt"
+    fmt=""
+    while [[ $# -gt 0 ]]; do [[ "$1" == "-F" ]] && fmt="${2:-}"; shift; done
+    if [[ "$fmt" != '#{pane_id}' ]]; then
+      [[ -f "$STUB_DIR/panes.txt" ]] && cat "$STUB_DIR/panes.txt"
+      exit 0
+    fi
+    # The overseer-host provider's own listing, pane ids alone: every pane
+    # panes.txt names and every pane a cmd-<pane>.txt gives a foreground
+    # command, so a pane the watch reads is one the provider finds.
+    { [[ ! -f "$STUB_DIR/panes.txt" ]] || awk '{ print $2 }' "$STUB_DIR/panes.txt"
+      for f in "$STUB_DIR"/cmd-%*.txt; do
+        [[ -e "$f" ]] || continue
+        f="${f##*/cmd-}"; printf '%s\n' "${f%%.*}"
+      done; } | sort -u
     exit 0 ;;
   capture-pane)
     lane=""; join=0

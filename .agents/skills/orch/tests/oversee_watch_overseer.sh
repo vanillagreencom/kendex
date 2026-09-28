@@ -795,7 +795,7 @@ touch "$STUB_DIR/window-id-fail-$PANE"
 run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "rc=$RC launched=$(succeed_calls --dead-pane)" "rc=0 launched=0" \
   "an unreadable overseer pane launches nothing" "$ERR"
-assert_eq "$(grep -c "oversee-watch: overseer-unreadable pane=$PANE field=window_id" "$ERR")" "1" \
+assert_eq "$(grep -c "oversee-watch: overseer-unreadable pane=$PANE field=inspect" "$ERR")" "1" \
   "and the reason is named once" "$ERR"
 
 # --- the settings this check reads ----------------------------------------

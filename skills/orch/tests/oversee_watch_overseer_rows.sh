@@ -62,7 +62,6 @@ rows_case() { # NAME PANE_STATE ROW...
   mkdir -p "$CASE_REPO_ROOT/tmp/lane-mail/overseer"
   for row in "$@"; do printf '%s\n' "$row" >> "$(ROWS_FILE)"; done
 }
-captured() { [[ -s "$STUB_DIR/pane-$PANE.calls" ]] && echo yes || echo no; }
 # A rows wall stands unless the account judgement measures room: the stub's
 # default below-mark line is room, so a case that means the wall to stand
 # gives it a mark reached above zero, which is no room and no zero wall.
@@ -71,9 +70,10 @@ ZERO_MARK="oversee-succeed: mark-reached kind=headroom value=0 mark=10 successio
 no_room() { printf '%s\n' "$FIVE_MARK" > "$STUB_DIR/succeed.check"; }
 
 # One table: the rows a file holds and the pane beside it, and what two passes
-# make of them. `captured` says whether the watch read the pane's screen at
-# all: never wherever the rows judged.
-while IFS='|' read -r name pane rows expected_event expected_launch expected_captured expected_note; do
+# make of them. The adapter's `inspect` snapshots the screen on every read;
+# the note says whether the watch judged by it, the fallback, and every row
+# whose rows judge says none.
+while IFS='|' read -r name pane rows expected_event expected_launch expected_note; do
   set -f
   # shellcheck disable=SC2086  # the row names split into the row list.
   set -- $rows
@@ -100,19 +100,19 @@ while IFS='|' read -r name pane rows expected_event expected_launch expected_cap
   if grep -q '^oversee-watch: overseer-fallback ' "$ERR"; then
     note="$(grep '^oversee-watch: overseer-fallback ' "$ERR" | head -n 1 | sed 's/^oversee-watch: //')"
   fi
-  assert_eq "event=${event:-none} launched=$(head -n 1 "$STUB_DIR/succeed.launched" 2>/dev/null | cut -d' ' -f1 || true) captured=$(captured) note=$note" \
-    "event=$expected_event launched=$expected_launch captured=$expected_captured note=$expected_note" \
+  assert_eq "event=${event:-none} launched=$(head -n 1 "$STUB_DIR/succeed.launched" 2>/dev/null | cut -d' ' -f1 || true) note=$note" \
+    "event=$expected_event launched=$expected_launch note=$expected_note" \
     "$name" "$ERR"
 done <<ROWS
-dead_rows|exited|start end|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=rows|--dead-pane|no|none
-end_over_live|blank|start end|none||no|none
-wall_rows|blank|start wall|EVENT overseer-walled $PANE window=$WINDOW passes=1 succession=on source=rows|--walled-pane|no|none
-clear_is_live|blank|start clear|none||no|none
-lifted_wall|blank|start wall stop|none||no|none
-other_failure|blank|start overloaded|none||no|none
-killed_process|exited|start|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=process|--dead-pane|no|none
-no_rows_fallback|exited|-|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|yes|overseer-fallback pane=$PANE cause=none
-codex_fallback|exited|codex|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|yes|overseer-fallback pane=$PANE cause=unsupported
+dead_rows|exited|start end|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=rows|--dead-pane|none
+end_over_live|blank|start end|none||none
+wall_rows|blank|start wall|EVENT overseer-walled $PANE window=$WINDOW passes=1 succession=on source=rows|--walled-pane|none
+clear_is_live|blank|start clear|none||none
+lifted_wall|blank|start wall stop|none||none
+other_failure|blank|start overloaded|none||none
+killed_process|exited|start|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=process|--dead-pane|none
+no_rows_fallback|exited|-|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|overseer-fallback pane=$PANE cause=none
+codex_fallback|exited|codex|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|overseer-fallback pane=$PANE cause=unsupported
 ROWS
 
 # A rows wall carries the harness's own words, the limit and its reset, under
@@ -221,7 +221,7 @@ assert_eq "$(grep '^EVENT overseer-dead' <<<"$OUT" || echo none)" \
 # pane succeeds the working overseer.
 END_CTL="$(mutant_scripts end-ctl/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/end-ctl/github"
-mutate_file "$END_CTL/oversee-watch" '    cause=live' '    :'
+mutate_file "$END_CTL/oversee-watch" '|| (( bare )) || cause=live' '|| (( bare )) || :'
 rows_case end_over_live_mutant blank "$START" "$END_EXIT"
 WATCH_BIN="$END_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "launched=$(succeed_calls --dead-pane)" "launched=1" \
@@ -230,15 +230,15 @@ assert_eq "launched=$(succeed_calls --dead-pane)" "launched=1" \
 # The recorded exit ignored: the bare shell reads dead from its process.
 EXIT_CTL="$(mutant_scripts exit-ctl/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/exit-ctl/github"
-mutate_file "$EXIT_CTL/oversee-watch" '      1) OV_STATE=exited; OV_SOURCE=record; return 0 ;;' '      1) ;;'
+mutate_file "$EXIT_CTL/oversee-watch" '&& (( bare )); then OV_STATE=exited; OV_SOURCE=record; return 0; fi' '&& (( bare )); then :; fi'
 WATCH_BIN="$EXIT_CTL/oversee-watch" exit_case record_exit_mutant exited 137
 assert_eq "$EXIT_CASE" "event=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=process launched=1" \
   "control: without the recorded exit the death is the process rung's, not the record's" "$ERR"
 # The status taken whatever the pane runs: a harness started again reads dead.
 RESUME_CTL="$(mutant_scripts resume-ctl/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/resume-ctl/github"
-mutate_file "$RESUME_CTL/oversee-watch" '  if [[ -n "$exit_status" ]] && is_bare_shell "$cmd"; then' \
-  '  if [[ -n "$exit_status" ]] && { OV_STATE=exited; OV_SOURCE=record; return 0; }; then'
+mutate_file "$RESUME_CTL/oversee-watch" '[[ -n "$exit_status" ]] && (( bare )); then' \
+  '[[ -n "$exit_status" ]]; then'
 WATCH_BIN="$RESUME_CTL/oversee-watch" exit_case record_resumed_mutant blank 137
 assert_eq "$EXIT_CASE" "event=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=record launched=1" \
   "control: a status taken over a live harness succeeds the session started again in the pane" "$ERR"
