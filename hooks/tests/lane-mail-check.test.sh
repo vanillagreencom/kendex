@@ -22,7 +22,8 @@ LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
 # at /private/var — a path this suite composed would name the link where the
 # hook names the target.
 TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
-trap 'chmod -R u+rwx -- "${TMP_ROOT:?}" 2>/dev/null || :; rm -rf -- "${TMP_ROOT:?}"' EXIT
+# FAKE_WATCH is the stand-in watch process the overseer mailbox rows start.
+trap '[ -z "${FAKE_WATCH:-}" ] || kill "$FAKE_WATCH" 2>/dev/null || :; chmod -R u+rwx -- "${TMP_ROOT:?}" 2>/dev/null || :; rm -rf -- "${TMP_ROOT:?}"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
 # Whether this world can hold two names differing only in case. On a
 # case-insensitive filesystem, every macOS default one, the second name is the
@@ -2630,10 +2631,10 @@ expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
 # --- the checkout's overseer mailbox --------------------------------------
 # `lane-mail peer send --repo` writes the overseer mailbox of another
 # repository's main checkout, which only a fleet's watch read. A lead session
-# working in a checkout that runs no fleet — no lane record names it and the
-# fleet state registers no overseer — reads that mailbox through the same
-# hooks a lane reads its own with, so a note from a peer repository reaches
-# it at its next turn end or tool call. A lane record or a registered overseer
+# working in a checkout where no fleet watch runs — no lane record names it
+# and no live watch record holds the fleet state — reads that mailbox through
+# the same hooks a lane reads its own with, so a note from a peer repository
+# reaches it at its next turn end or tool call. A lane record or a live watch
 # wins, so a fleet's delivery is unchanged.
 PEER_SENDER="$TMP_ROOT/peer-sender"
 mkdir -p "$PEER_SENDER"
@@ -2659,7 +2660,7 @@ overseer_unread() { # TEXT
 new_plain_session peer_plain
 peer_send 'Your pin bump broke our build.'
 stop
-expect 2 "lane-mail-check: unread=1" "a peer note reaches a lead session with no lane record and no registered overseer at its turn end"
+expect 2 "lane-mail-check: unread=1" "a peer note reaches a lead session with no lane record and no live watch at its turn end"
 assert_eq "$(grep -c 'Your pin bump broke our build.' "$ERR_FILE")" "1" "the refusal carries the note"
 stop
 expect 0 - "a second turn end passes: the reader advanced the overseer mailbox cursor past what it handed over"
@@ -2676,20 +2677,69 @@ run_payload '{"session_id":"s1","stop_hook_active":false,"agent_id":"dev-1"}'
 expect 0 - "a subagent's turn end is handed nothing from the overseer mailbox"
 assert_eq "$(overseer_unread 'Reply when the fix lands.')" "1" "and leaves the note unread for the lead's own turn end"
 
-# A registered overseer's watch reads this mailbox, so a plain session in its
-# checkout leaves every line for it.
-new_plain_session peer_registered
-(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
-record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
+# A live watch reads this mailbox, so a plain session in its checkout leaves
+# every line for it. The watch is a process whose command line names
+# oversee-watch, recorded where a repeat watch records itself: beside the
+# fleet state `workflow-state path oversee` prints.
+FAKE_WATCH=""
+start_watch() {
+  local state
+  state="$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path oversee)"
+  mkdir -p "${state%/*}"
+  bash -c 'exec -a oversee-watch sleep 600' &
+  FAKE_WATCH=$!
+  printf 'pid=%s\nstate=%s\npane=none\norigin=hand\n' "$FAKE_WATCH" "$state" > "${state%/*}/oversee-watch.pid"
+}
+stop_watch() {
+  kill "$FAKE_WATCH" 2>/dev/null || :
+  wait "$FAKE_WATCH" 2>/dev/null || :
+}
+# A workflow-state that fails every verb, and one that answers the fleet
+# state's path alone, planted over the install's own.
+broken_state() {
+  plant_install workflow-state
+  printf '#!/bin/sh\necho "workflow-state: lock-failed lock-file=x" >&2\nexit 3\n' \
+    > "$LANE/.claude/skills/orch/scripts/workflow-state"
+  chmod +x "$LANE/.claude/skills/orch/scripts/workflow-state"
+}
+path_only_state() {
+  plant_install workflow-state
+  printf '#!/bin/sh\necho "%s/tmp/workflow-state-oversee.json"\n' "$LANE" \
+    > "$LANE/.claude/skills/orch/scripts/workflow-state"
+  chmod +x "$LANE/.claude/skills/orch/scripts/workflow-state"
+}
+# Every orch library but the watch record's, linked one by one, since the
+# reader sources its own from the install's directory.
+hole_watch_library() {
+  local name
+  rm -f -- "${LANE:?}/.claude/skills/orch/scripts/lib"
+  mkdir -p "$LANE/.claude/skills/orch/scripts/lib"
+  for name in "$REPO_ROOT/skills/orch/scripts/lib"/*; do
+    [ "${name##*/}" != watch-pid.sh ] || continue
+    ln -s -f -n "$name" "$LANE/.claude/skills/orch/scripts/lib/${name##*/}"
+  done
+}
+
+new_plain_session peer_watched
+start_watch
 peer_send 'For the fleet.'
 stop
-expect 0 - "a checkout whose fleet state registers an overseer hands a plain session nothing at its turn end"
+expect 0 - "a checkout whose fleet state a live watch holds hands a plain session nothing at its turn end"
 tool deliver
 assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" "nor after its tool call"
-assert_eq "$(overseer_unread 'For the fleet.')" "1" "and the note stays unread for the overseer's watch"
-(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" update oversee 'del(.overseer)' >/dev/null)
+assert_eq "$(overseer_unread 'For the fleet.')" "1" "and the note stays unread for the watch"
+stop_watch
 stop
-expect 2 "lane-mail-check: unread=1" "a fleet state that registers no overseer, standing or not, hands the session the note"
+expect 2 "lane-mail-check: unread=1" "a watch record whose pid has exited holds nothing, and the session is handed the note"
+
+# A `.overseer` record outlives the watch that wrote it, and outside tmux a
+# watch writes none: the record is no judge of who reads the mailbox.
+new_plain_session peer_stale_record
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
+record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
+peer_send 'Left by an exited fleet.'
+stop
+expect 2 "lane-mail-check: unread=1" "a stale overseer record with no live watch hands a plain session the note"
 
 # A lane reads its own mailbox and never the overseer's beside it.
 new_lane peer_lane ken-71
@@ -2702,19 +2752,60 @@ assert_eq "own=$(grep -cF 'Rebase onto main.' "$ERR_FILE") peer=$(grep -cF 'Not 
   "the refusal carries the lane's directive and not the peer's note"
 assert_eq "$(overseer_unread 'Not for the lane.')" "1" "which stays unread in the overseer mailbox"
 
-# Whether an overseer is registered is the fleet state's answer. One the
-# install cannot give leaves the mailbox neither read nor passed as read.
+# A plain session whose install has no orch skill, with a peer note standing:
+# the note has no reader, so a fresh turn end is refused on the reader's
+# absence, and the continued one ends.
+new_plain_session peer_noreader
+peer_send 'No reader here.'
+rm -f -- "${LANE:?}/.claude/skills/orch" "${LANE:?}/.agents/skills/orch/scripts"
+stop
+expect 2 "lane-mail-check: reader=$LANE/.agents/skills/orch/scripts/lane-mail" \
+  "a plain session with a peer note and no reader beside the hook is refused at a fresh turn end"
+stop_active
+expect 0 - "and its continued turn ends"
+
+# Whether a live watch holds the fleet state is the install's answer: the
+# state's path from its workflow-state, and liveness from its watch record
+# library. One it cannot give leaves the mailbox neither read nor passed as
+# read.
 new_plain_session peer_state_broken
 peer_send 'Unjudged.'
-plant_install workflow-state
-BROKEN_STATE="$LANE/.claude/skills/orch/scripts/workflow-state"
-printf '#!/bin/sh\necho "workflow-state: lock-failed lock-file=x" >&2\nexit 3\n' > "$BROKEN_STATE"
-chmod +x "$BROKEN_STATE"
+broken_state
 stop
-expect 2 "lane-mail-check: fleet-state=$BROKEN_STATE" \
-  "a fleet state read that fails for any cause but a missing state refuses, never reads or passes the mailbox"
+expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/workflow-state" \
+  "a fleet state path the install's workflow-state does not print refuses, never reads or passes the mailbox"
 assert_eq "$(grep -c '^workflow-state: lock-failed' "$ERR_FILE")" "1" "the script's own keyed line is replayed under the hook's"
 assert_eq "$(overseer_unread 'Unjudged.')" "1" "and the note stays unread"
+# The same broken read would refuse any arm that reached it: the halt arm and
+# a subagent's turn end never do.
+tool halt
+expect 0 - "the halt arm never judges the overseer mailbox"
+run_payload '{"session_id":"s1","stop_hook_active":false,"agent_id":"dev-1"}'
+expect 0 - "nor does a subagent's turn end"
+
+new_plain_session peer_no_mailbox
+broken_state
+stop
+expect 0 - "a plain session with no overseer mailbox never judges the fleet state"
+
+new_plain_session peer_state_absent
+peer_send 'No state script.'
+plant_install workflow-state
+stop
+expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/workflow-state" \
+  "an install with the reader and no workflow-state refuses on the missing script"
+assert_eq "$(overseer_unread 'No state script.')" "1" "and the note stays unread"
+
+# The library holed while the state's path still prints, since the real
+# workflow-state sources the library too.
+new_plain_session peer_library_absent
+peer_send 'No library.'
+path_only_state
+hole_watch_library
+stop
+expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
+  "an install with the reader and no watch record library refuses on the missing library"
+assert_eq "$(overseer_unread 'No library.')" "1" "and the note stays unread"
 
 mutant no-overseer-arm -e 's@^    MAILBOX_ITEM=overseer$@    return 0@'
 new_plain_session control_peer_plain
@@ -2723,14 +2814,72 @@ peer_send 'Never read.'
 stop
 expect 0 - "control: without the overseer mailbox arm a peer note never reaches a plain session"
 
-mutant peer-ignores-record -e 's@^    ! overseer_registered || return 0$@    :@'
-new_plain_session control_peer_registered
+mutant peer-halt-reads -e '/^    \[ "\$ARM" != halt \] || return 0$/d'
+new_plain_session control_peer_halt
+install_arms "$MUTANT_PATH"
+peer_send 'Halt arm.'
+broken_state
+tool halt
+expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/workflow-state" \
+  "control: without the halt exclusion the halt arm judges the overseer mailbox"
+
+mutant peer-subagent-reads -e '/^    \[ "\$CALLER" = lead \] || return 0$/d'
+new_plain_session control_peer_subagent
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
-record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
+peer_send 'Subagent.'
+broken_state
+run_payload '{"session_id":"s1","stop_hook_active":false,"agent_id":"dev-1"}'
+expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/workflow-state" \
+  "control: without the lead-only rule a subagent's turn end judges the overseer mailbox"
+
+mutant peer-no-file-test -e '/^    \[ -e "\$MAIL_ROOT\/overseer\/to-lane.jsonl" \] || \[ -L "\$MAIL_ROOT\/overseer\/to-lane.jsonl" \] || return 0$/d'
+new_plain_session control_peer_nofile
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+broken_state
+stop
+expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/workflow-state" \
+  "control: without the file test a plain session with no overseer mailbox judges the fleet state"
+
+mutant peer-reader-passes -e 's@^    resolve_reader || refuse "\$FAIL_KEY" "\$FAIL_VALUE" "\$FAIL_CAUSE"$@    resolve_reader || return 0@'
+new_plain_session control_peer_noreader
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+peer_send 'No reader.'
+rm -f -- "${LANE:?}/.claude/skills/orch" "${LANE:?}/.agents/skills/orch/scripts"
+stop
+expect 0 - "control: without the reader refusal a peer note with no reader passes the turn in silence"
+
+mutant peer-path-passes -e 's@^    refuse fleet-state "\$SCRIPTS/workflow-state" @    return 0 # @'
+new_plain_session control_peer_state
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+peer_send 'Path unread.'
+broken_state
+stop
+expect 0 - "control: without the path refusal a failed state read passes the turn with the note unread"
+
+mutant peer-library-passes -e 's@^    \*) refuse fleet-state "\$SCRIPTS/lib/watch-pid.sh" .*$@    *) return 1 ;;@'
+new_plain_session control_peer_library
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+peer_send 'Library unread.'
+path_only_state
+hole_watch_library
+stop
+expect 2 "lane-mail-check: unread=1" "control: without the library refusal a library that answers nothing reads as no live watch"
+
+mutant peer-ignores-watch -e 's@^    0) return 0 ;;$@    0) return 1 ;;@'
+new_plain_session control_peer_watched
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+start_watch
 peer_send 'Taken from the watch.'
 stop
-expect 2 "lane-mail-check: unread=1" "control: without the registered-overseer rule a plain session takes the watch's mail"
+stop_watch
+expect 2 "lane-mail-check: unread=1" "control: without the live-watch rule a plain session takes the watch's mail"
+
+mutant peer-idle-stands-down -e 's@^    1) return 1 ;;$@    1) return 0 ;;@'
+new_plain_session control_peer_idle
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+peer_send 'Nobody watching.'
+stop
+expect 0 - "control: without the no-watch rule a checkout with no live watch leaves the note unread"
 
 mutant lane-reads-overseer -e 's@^    MAILBOX_ITEM="\$ITEM"$@    MAILBOX_ITEM=overseer@'
 new_lane control_peer_lane ken-72
