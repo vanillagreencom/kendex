@@ -6,6 +6,8 @@ Deep halves of the Pi (`pi-agents-tmux`) runtime note in [../SKILL.md](../SKILL.
 
 Pane agents (`pane: true` in agent frontmatter) live in a persistent tmux pane keyed by agent name; the extension reuses the existing pane on every redelegation. Do not pass `forceSpawn: true` unless you need a fresh pane — it errors if a live pane already exists; drop the flag or `/agents:stop <name>` first. The `taskId` is returned in two places: the structured `taskId` field on the tool result and an inline `Task ID: <id>` line in the assistant-visible content text — read whichever the harness exposes; no follow-up `get_subagent_result` call is needed to learn the id. Store the `taskId` and agent name in workflow state (`child_sessions[agent].agent_id` or `review_agent_ids[...]`).
 
+Where no tmux server is reachable, as in a hosted lane's sandbox, the extension runs a pane agent headless instead: the tool result opens with `pane-fallback reason=no-tmux`, carries the same `Task ID:` line and holds the agent's return, and `stop_subagent` retires it with nothing to kill.
+
 ## Bg agents (Pi)
 
 Bg agents (no `pane: true`) are background one-shot processes. A run without `sessionKey` starts a fresh session file that later calls do not resume; [agent-transcripts.md](agent-transcripts.md) says where round recovery finds it. When the same `reviewer-*` (or other bg agent) must retain conversation context across delegations, pass `sessionKey: "<workflow-scoped-stable-id>"` (e.g. `review-issue-PROJ-123`); the same `agent + sessionKey` resumes the prior pi session, and omitting it keeps the call stateless. Bg agents complete by the final assistant message captured by `subagent`; do not instruct them to call `complete_subagent`.

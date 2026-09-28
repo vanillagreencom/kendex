@@ -1,7 +1,7 @@
 import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig, AgentScope } from "./agents.js";
 import { COMPLETION_SUMMARY_UNAVAILABLE, getFinalOutput, normalizeSummaryText } from "./format.js";
-import { runPersistentPaneAgent } from "./pane.js";
+import { probeTmux, runPersistentPaneAgent } from "./pane.js";
 import {
 	cloneMessagesForDetails,
 	detailsWithTruncation,
@@ -45,6 +45,8 @@ interface DispatchFlowContext {
 	forceSpawn?: boolean;
 	makeDetails: (mode: "single" | "parallel" | "chain") => (results: SingleResult[]) => SubagentDetails;
 	onUpdate?: OnUpdateCallback;
+	/** Refuse a pane agent where no tmux server answers, instead of running it headless. */
+	paneOnly?: boolean;
 	parentModel?: string;
 	parentSessionId: string;
 	parentThinkingLevel?: string;
@@ -54,6 +56,38 @@ interface DispatchFlowContext {
 	runtimeRoot: string;
 	signal?: AbortSignal;
 	updateDashboard: (item: SubagentDashboardItem) => void;
+}
+
+/** Where one dispatch runs its `pane: true` agents, decided once before any launch. */
+type PaneLane = { kind: "pane" } | { kind: "headless"; cause: string };
+
+async function resolvePaneLane(flow: DispatchFlowContext, requested: readonly string[]): Promise<PaneLane> {
+	if (flow.paneOnly) return { kind: "pane" };
+	if (!requested.some((name) => flow.agents.find((agent) => agent.name === name)?.pane)) return { kind: "pane" };
+	const reach = await probeTmux();
+	return reach.kind === "reachable" ? { kind: "pane" } : { kind: "headless", cause: reach.cause };
+}
+
+function runsInPane(agent: AgentConfig | undefined, lane: PaneLane): boolean {
+	return agent?.pane === true && lane.kind === "pane";
+}
+
+/**
+ * Heads the tool result with one `pane-fallback reason=no-tmux` line when a
+ * pane agent ran headless, and names each such task the way a queued pane
+ * task is named, so a caller stores the same `Task ID:` in both modes.
+ */
+function withPaneFallbackNotice(result: ToolTextResult, lane: PaneLane, agents: AgentConfig[]): ToolTextResult {
+	if (lane.kind === "pane") return result;
+	const fellBack = result.details.results.filter((item) => agents.find((agent) => agent.name === item.agent)?.pane);
+	if (fellBack.length === 0) return result;
+	const notice = [
+		"pane-fallback reason=no-tmux",
+		`${lane.cause} Pane agents ran headless as background one-shot processes: ${[...new Set(fellBack.map((item) => item.agent))].join(", ")}.`,
+		...fellBack.flatMap((item) => (item.taskId ? [`Task ID: ${item.taskId}`] : [])),
+	].join("\n");
+	const [first, ...rest] = result.content;
+	return { ...result, content: [{ type: "text", text: first ? `${notice}\n\n${first.text}` : notice }, ...rest] };
 }
 
 export interface AgentInventory {
@@ -197,6 +231,14 @@ export function formatPreparedParallelSection(prepared: PreparedSingleResult): s
 export async function runChainDispatch(
 	flow: DispatchFlowContext & { chain: DispatchTask[] },
 ): Promise<ToolTextResult> {
+	const lane = await resolvePaneLane(flow, flow.chain.map((step) => step.agent));
+	return withPaneFallbackNotice(await chainDispatch(flow, lane), lane, flow.agents);
+}
+
+async function chainDispatch(
+	flow: DispatchFlowContext & { chain: DispatchTask[] },
+	lane: PaneLane,
+): Promise<ToolTextResult> {
 	const chainSteps = assignEphemeralSessionKeys(flow.chain);
 	const results: SingleResult[] = [];
 	let previousOutput = "";
@@ -229,7 +271,7 @@ export async function runChainDispatch(
 			: undefined;
 
 		const stepAgent = flow.agents.find((agent) => agent.name === step.agent);
-		const result = stepAgent?.pane
+		const result = runsInPane(stepAgent, lane)
 			? await runPersistentPaneAgent(
 					flow.cwd,
 					flow.runtimeRoot,
@@ -263,7 +305,7 @@ export async function runChainDispatch(
 					step.sessionKey,
 				);
 		results.push(result);
-		if (!stepAgent?.pane) {
+		if (!runsInPane(stepAgent, lane)) {
 			flow.updateDashboard({
 				agent: result.agent,
 				kind: "oneshot",
@@ -344,6 +386,14 @@ export async function runChainDispatch(
 export async function runParallelDispatch(
 	flow: DispatchFlowContext & { tasks: DispatchTask[] },
 ): Promise<ToolTextResult> {
+	const lane = await resolvePaneLane(flow, flow.tasks.map((task) => task.agent));
+	return withPaneFallbackNotice(await parallelDispatch(flow, lane), lane, flow.agents);
+}
+
+async function parallelDispatch(
+	flow: DispatchFlowContext & { tasks: DispatchTask[] },
+	lane: PaneLane,
+): Promise<ToolTextResult> {
 	const parallelTasks = assignEphemeralSessionKeys(flow.tasks);
 
 	const allResults: SingleResult[] = new Array(flow.tasks.length);
@@ -354,7 +404,7 @@ export async function runParallelDispatch(
 			task: parallelTasks[i].task,
 			// Lane is known from frontmatter before the worker starts, so in-flight
 			// rows carry the right badge instead of defaulting to bg.
-			kind: flow.agents.find((agent) => agent.name === parallelTasks[i].agent)?.pane ? "pane" : "oneshot",
+			kind: runsInPane(flow.agents.find((agent) => agent.name === parallelTasks[i].agent), lane) ? "pane" : "oneshot",
 			exitCode: -1,
 			messages: [],
 			stderr: "",
@@ -407,7 +457,7 @@ export async function runParallelDispatch(
 		};
 		const taskAgent = flow.agents.find((agent) => agent.name === t.agent);
 		try {
-			const result = taskAgent?.pane
+			const result = runsInPane(taskAgent, lane)
 				? await runPersistentPaneAgent(
 						flow.cwd,
 						flow.runtimeRoot,
@@ -447,7 +497,7 @@ export async function runParallelDispatch(
 						t.sessionKey,
 					);
 			allResults[index] = result;
-			if (!taskAgent?.pane) await updateOneshotDashboard(result, true);
+			if (!runsInPane(taskAgent, lane)) await updateOneshotDashboard(result, true);
 			emitParallelUpdate();
 			return result;
 		} catch (error) {
@@ -460,7 +510,7 @@ export async function runParallelDispatch(
 				errorMessage,
 			};
 			allResults[index] = failed;
-			if (!taskAgent?.pane) {
+			if (!runsInPane(taskAgent, lane)) {
 				try {
 					await updateOneshotDashboard(failed, false);
 				} catch {
@@ -498,8 +548,16 @@ export async function runParallelDispatch(
 export async function runSingleDispatch(
 	flow: DispatchFlowContext & { agent: string; task: string; cwdOverride?: string; sessionKey?: string },
 ): Promise<ToolTextResult> {
+	const lane = await resolvePaneLane(flow, [flow.agent]);
+	return withPaneFallbackNotice(await singleDispatch(flow, lane), lane, flow.agents);
+}
+
+async function singleDispatch(
+	flow: DispatchFlowContext & { agent: string; task: string; cwdOverride?: string; sessionKey?: string },
+	lane: PaneLane,
+): Promise<ToolTextResult> {
 	const agent = flow.agents.find((candidate) => candidate.name === flow.agent);
-	const result = agent?.pane
+	const result = runsInPane(agent, lane)
 		? await runPersistentPaneAgent(
 				flow.cwd,
 				flow.runtimeRoot,
@@ -532,7 +590,7 @@ export async function runSingleDispatch(
 				flow.makeDetails("single"),
 				flow.sessionKey,
 			);
-	if (!agent?.pane) {
+	if (!runsInPane(agent, lane)) {
 		flow.updateDashboard({
 			agent: result.agent,
 			kind: "oneshot",

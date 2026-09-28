@@ -49,6 +49,13 @@ export const SubagentParams = Type.Object({
 				"For pane-mode agents only. Restore an archived pane session before launching. Use 'latest'/'latest-archived' or an archived session filename/path from sessions/archived. Cannot be combined with forceSpawn.",
 		}),
 	),
+	paneOnly: Type.Optional(
+		Type.Boolean({
+			description:
+				"For pane-mode agents only. When true and no tmux server is reachable, the call errors. Omit/false runs a pane agent headless as a bg one-shot process there, with the same model, thinking and tools, and heads the result with `pane-fallback reason=no-tmux`.",
+			default: false,
+		}),
+	),
 });
 
 export const GetSubagentResultParams = Type.Object({

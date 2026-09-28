@@ -57,10 +57,10 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 		taskNeedsSummaryBackfill,
 		removeDashboardAgent,
 		resolvePiBridgeBin,
+		retireSubagent,
 		runtimeSessionId,
 		sessionRuntimeDir,
 		steerDiagnostics,
-		stopPersistentPane,
 		updateDashboard,
 		updateDashboardFromTaskRecord,
 		persistRuntimeSnapshot,
@@ -356,11 +356,18 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 		renderShell: "self",
 		name: "stop_subagent",
 		label: "Stop Agent",
-		description: "Stop a persistent pane agent, kill its tmux pane, remove it from the live pane registry/dashboard, and mark any non-terminal active task as blocked. The pane session file is preserved; a later subagent call or /agents start resumes it unless forceSpawn or /agents new is used.",
+		description: "Stop a persistent pane agent, kill its tmux pane, remove it from the live pane registry/dashboard, and mark any non-terminal active task as blocked. The pane session file is preserved; a later subagent call or /agents start resumes it unless forceSpawn or /agents new is used. An agent whose latest task ran headless holds no pane, and stopping it succeeds with nothing to kill.",
 		parameters: StopSubagentParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const runtimeRoot = sessionRuntimeDir(runtimeSessionId(ctx));
-			const stopped = await stopPersistentPane(runtimeRoot, params.agent);
+			const retired = await retireSubagent(runtimeRoot, params.agent);
+			if (retired.kind === "headless") {
+				return {
+					content: [{ type: "text", text: `no_pane=${params.agent}\nNothing to stop: task ${retired.record.taskId} ran headless as a one-shot process and holds no pane.` }],
+					details: { agent: params.agent, taskId: retired.record.taskId },
+				};
+			}
+			const stopped = retired.entry;
 			removeDashboardAgent(stopped.agent);
 			await persistRuntimeSnapshot(ctx, runtimeRoot);
 			return {

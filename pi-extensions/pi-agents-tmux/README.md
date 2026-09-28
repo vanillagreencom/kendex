@@ -12,7 +12,7 @@ A Pi extension for assigning work to other agents. You can follow each agent in 
 source = "kendex"
 ```
 
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation. Persistent agent panes require tmux.
+Restart Pi after installation. Use `kendex update-pi --check` to preview the installation. Persistent agent panes require tmux; where no tmux server answers, a pane agent runs in the background instead.
 
 ## Features
 

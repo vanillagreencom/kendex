@@ -45,6 +45,7 @@ import {
 	createTaskId,
 	emitSubagentEvent,
 	isTerminalTaskStatus,
+	latestTaskRecord,
 	normalizedTaskForDedup,
 	paneSessionBelongsToRuntime,
 	readPaneRegistry,
@@ -61,6 +62,7 @@ import {
 	PANE_LAUNCHER_VERSION,
 	type PaneRegistry,
 	type PaneRegistryEntry,
+	type PaneTaskRecord,
 	type QueuedPaneTask,
 	SESSION_BRIDGE_PACKAGE_ID,
 	type SingleResult,
@@ -99,10 +101,19 @@ export async function tmux(args: string[]): Promise<{ code: number; stdout: stri
 	return execCapture("tmux", args);
 }
 
-async function ensureTmux(): Promise<void> {
-	if (!process.env.TMUX) throw new Error("Persistent pane agents require tmux ($TMUX is unset).");
+/** Whether a tmux server answers this process; `absent` carries the refusal a pane launch reports. */
+export type TmuxReach = { kind: "reachable" } | { kind: "absent"; cause: string };
+
+export async function probeTmux(): Promise<TmuxReach> {
+	if (!process.env.TMUX) return { kind: "absent", cause: "Persistent pane agents require tmux ($TMUX is unset)." };
 	const result = await tmux(["display-message", "-p", "#S"]);
-	if (result.code !== 0) throw new Error(`tmux is unavailable: ${result.stderr || result.stdout}`.trim());
+	if (result.code !== 0) return { kind: "absent", cause: `tmux is unavailable: ${result.stderr || result.stdout}`.trim() };
+	return { kind: "reachable" };
+}
+
+async function ensureTmux(): Promise<void> {
+	const reach = await probeTmux();
+	if (reach.kind === "absent") throw new Error(reach.cause);
 }
 
 export async function paneExists(paneId: string): Promise<boolean> {
@@ -1023,6 +1034,17 @@ export async function stopPersistentPane(runtimeRoot: string, agentName: string)
 		}
 	});
 	return stopped;
+}
+
+/** What `stop_subagent` retires: a live pane, or nothing when the agent's latest task ran headless and holds no pane. */
+export type SubagentRetirement = { kind: "pane"; entry: PaneRegistryEntry } | { kind: "headless"; record: PaneTaskRecord };
+
+export async function retireSubagent(runtimeRoot: string, agentName: string): Promise<SubagentRetirement> {
+	if (!(await readPaneRegistry(runtimeRoot))[agentName]) {
+		const latest = latestTaskRecord(await readTaskRegistry(runtimeRoot), agentName);
+		if (latest?.kind === "oneshot") return { kind: "headless", record: latest };
+	}
+	return { kind: "pane", entry: await stopPersistentPane(runtimeRoot, agentName) };
 }
 
 export async function resetPersistentPaneSession(runtimeRoot: string, agentName: string): Promise<string | undefined> {
