@@ -818,12 +818,12 @@ table \
   "--lane auto moves off the account whose window for that model is walled|cmd=true --model=fable --effort=high|--harness claude --lane auto CC-65|rc=0 cmd_lane=eclaude walled=none"
 
 # The named lane is judged on the projection `lanes pick` drops a lane on: its
-# fable window at 60 with room, but the one lane already live on it charged 50
-# an hour, which projects 110. The second row is the inverse, the same lane
+# 5-hour window at 60 with room, but the one lane already live on it charged
+# 50 an hour, which projects 110. The second row is the inverse, the same lane
 # with nothing live on it.
-claude_usage 10 20 60 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
+claude_usage 60 20 10 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 table \
-  "a named lane with room whose live lanes project past the threshold is refused|cmd=true --model=fable --effort=high;prep=claude_claim;ORCH_LANE_BURN_PCT_PER_HOUR=50|--harness claude --lane $H/.claude CC-1641|rc=1 launched=0 creates=nolog walled=lane=$H/.claude,model=fable,pct=60,bucket=model,projected-headroom=-10" \
+  "a named lane with room whose live lanes project past the threshold is refused|cmd=true --model=fable --effort=high;prep=claude_claim;ORCH_LANE_BURN_PCT_PER_HOUR=50|--harness claude --lane $H/.claude CC-1641|rc=1 launched=0 creates=nolog walled=lane=$H/.claude,model=fable,pct=60,bucket=session,projected-headroom=-10" \
   "the same lane with nothing live on it launches|cmd=true --model=fable --effort=high;ORCH_LANE_BURN_PCT_PER_HOUR=50|--harness claude --lane $H/.claude CC-1642|rc=0 launched=1 walled=none"
 claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 

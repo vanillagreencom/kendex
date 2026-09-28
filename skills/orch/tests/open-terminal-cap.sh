@@ -34,7 +34,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 # lanes: a named lane's judge answers walled once the row's wall file exists,
-# and `--lane auto` picks whatever the row's pick file names.
+# and `--lane auto` picks whatever the row's pick file names, recording the
+# ORCH_STATE_DIR it ran under, `unset` for none, beside that file.
 cat > "$BIN/lanes" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in
@@ -43,6 +44,7 @@ case "${1:-}" in
     if [[ " $* " == *" --lane "* ]]; then
       [[ ! -e "$STUB_WALL" ]] || { echo '{"wall":97,"binding_bucket":"five_hour","projected_headroom_pct":3}'; exit 3; }
     else
+      printf '%s\n' "${ORCH_STATE_DIR-unset}" > "$STUB_PICK.state"
       cat -- "$STUB_PICK"
     fi ;;
 esac
@@ -592,6 +594,35 @@ printf 'CLAUDE_CONFIG_DIR=%s\n' "$LANE_B" > "$ROW/pick"
 await_exit "$WAITER"
 assert_eq "rc=$(rc one) account=$(account_of CC-1)" "rc=0 account=$LANE_B" \
   "an auto lane waiting on a full account alone launches on the account the next pick has room on"
+
+echo "=== a fleet's auto pick reads that fleet's state for its overseer seat ==="
+# `lanes pick` omits the account the fleet state records for its overseer, so
+# a fleet launch hands it the state it records into, whichever checkout it
+# runs from; a launch naming no fleet hands none and the pick reads the
+# checkout's own.
+row seat-state
+printf 'CLAUDE_CONFIG_DIR=%s\n' "$LANE_A" > "$ROW/pick"
+launch one 10 0 --lane auto CC-1
+assert_eq "rc=$(rc one) state=$(cat "$ROW/pick.state")" "rc=0 state=$STATE" \
+  "a fleet's auto pick runs under that fleet's state directory"
+row seat-state-none
+printf 'CLAUDE_CONFIG_DIR=%s\n' "$LANE_A" > "$ROW/pick"
+STATE="" launch one 10 0 --lane auto CC-1
+assert_eq "rc=$(rc one) state=$(cat "$ROW/pick.state")" "rc=0 state=unset" \
+  "an auto pick naming no fleet hands no state directory"
+# Control: a pick that is not handed the state reads no fleet's.
+STATELESS="$REPO/scripts/open-terminal.stateless"
+cp -p -- "$OT" "$STATELESS"
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+perl -i -pe 'BEGIN { $o = shift } s/\Q$o\E//g' '[[ "$FLEET" != true ]] || state_env=("ORCH_STATE_DIR=$STATE_DIR")' "$STATELESS"
+assert_eq "$(grep -cF 'state_env=("ORCH_STATE_DIR=$STATE_DIR")' "$STATELESS" || true)" "0" \
+  "control removed the state hand-off from the copy"
+row seat-state-control
+printf 'CLAUDE_CONFIG_DIR=%s\n' "$LANE_A" > "$ROW/pick"
+OT="$STATELESS" launch one 10 0 --lane auto CC-1
+assert_eq "rc=$(rc one) state=$(cat "$ROW/pick.state")" "rc=0 state=unset" \
+  "control: without the hand-off the fleet's auto pick reads no fleet state"
+rm -f -- "${REPO:?}/scripts/open-terminal.stateless"
 
 echo "=== the account cap counts a lane by its record where it has no claim ==="
 # A lane whose claim write failed, and a GUI lane, which writes none, each

@@ -841,6 +841,22 @@ expect 0 - "a mark the setting lowers leaves the same account with room"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .eclaude)
 expect 0 - "an account one point above the mark ends its turn, which the mark this default replaced would refuse"
+# The mark reads the account's wall, never the projection a launch is judged
+# on: the lane's own claim is among the ones charged, so a projection would
+# send every lane on a busy account to hand off with room left. sclaude reads
+# 80 percent headroom on its 5-hour window, the one the whole default burn is
+# charged against; its four live claims at 30 an hour each project -40.
+make_lane "$H" sclaude 3600
+claude_usage 20 10 5 Opus > "$FIXTURE_DIR/.sclaude.json"
+HANDOFF_CLAIMS="$TMP_ROOT/handoff-claims"
+mkdir -p "$HANDOFF_CLAIMS/claims"
+for pane in 1 2 3 4; do
+  printf '%s\t%%%s\t%s\tken-%s\t2026-09-28T00:00:00Z\t\n' "$$" "$pane" "$H/.sclaude" "$pane" \
+    > "$HANDOFF_CLAIMS/claims/$pane.claim"
+done
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(account_env .sclaude) "OVERSEE_WATCH_STATE_DIR=$HANDOFF_CLAIMS" ORCH_LANE_BURN_PCT_PER_HOUR=30
+expect 0 - "a lane on an account with room ends its turn though the lanes on it project past the mark"
 record_handoff KEN-54
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .nclaude)

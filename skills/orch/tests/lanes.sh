@@ -2073,12 +2073,12 @@ table \
   "the same folder's host row read unreachable is dropped, not free, and the refusal's table names it through the host|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-unreachable.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.tclaude=host considered.oclaude=local" \
   "a folder with neither a local file nor a host row is never picked|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-none.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.oclaude=local" \
   "a local copy proven dead is judged on the provider's reading, which has room|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-dead-ok.tsv|$PICK|rc=0 config_dir=$H/.dclaude measured_through=host" \
-  "the provider's reading replaces the local one rather than joining it, so a walled host row is the account's only candidate|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-dead-walled.tsv|$PICK|rc=3 key=no-candidate,harness=claude,max-pct=95,model=none,walled=1,unmeasured=2 considered.dclaude=host" \
+  "the provider's reading replaces the local one rather than joining it, so a walled host row is the account's only candidate|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-dead-walled.tsv|$PICK|rc=3 key=no-candidate,harness=claude,max-pct=95,model=none,walled=1,unmeasured=2,seats=0 considered.dclaude=host" \
   "--exclude-lane drops the host row it names too|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK --exclude-lane $H/.tclaude|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=2 considered.tclaude=none" \
   "a host row with no reading of its own leaves this machine's reading of the account in place|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token-bare.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.tclaude=local"
 # Control: a pick that never asks for the host rows reads the token-only folder
 # as this machine's no_credentials, and nothing is picked.
-lanes_mutant mutant-pick-local-only lanes '"\$seats" "\$hosted")"' '"$seats")"'
+lanes_mutant mutant-pick-local-only lanes '"\$SEATS" "\$hosted")"' '"$SEATS")"'
 LANES_PATCHED="$LANES"
 LANES="$TMP_ROOT/mutant-pick-local-only/scripts/lanes"
 table \
@@ -2333,7 +2333,7 @@ make_lane "$H" claude 3600
 claude_usage 94 10 5 Opus > "$FIXTURE_DIR/.claude.json"
 table \
   "an account at 94 percent used is picked||pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
-  "the setting is the default of --max-pct, and lowering it refuses that account|ORCH_LANE_MAX_PCT=94|pick --harness claude|rc=3 key=no-candidate,harness=claude,max-pct=94,model=none,walled=1,unmeasured=0" \
+  "the setting is the default of --max-pct, and lowering it refuses that account|ORCH_LANE_MAX_PCT=94|pick --harness claude|rc=3 key=no-candidate,harness=claude,max-pct=94,model=none,walled=1,unmeasured=0,seats=0" \
   "the flag still outranks the setting|ORCH_LANE_MAX_PCT=94|pick --harness claude --max-pct 95|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "a setting outside 0-100 is refused before any lane is measured|ORCH_LANE_MAX_PCT=94%|pick --harness claude|rc=1 key=invalid-lane-max-pct,value=94%"
 
@@ -2344,14 +2344,14 @@ MUTANT_DIR="$(mutant_scripts mutant-default lanes)" || exit 1
 mutate_file "$MUTANT_DIR/lanes" 'ORCH_LANE_MAX_PCT:-95' 'ORCH_LANE_MAX_PCT:-90'
 LANES_REAL="$LANES"; LANES="$MUTANT_DIR/lanes"
 table \
-  "control: with the default back at 90 the account at 94 percent is refused||pick --harness claude|rc=3 key=no-candidate,harness=claude,max-pct=90,model=none,walled=1,unmeasured=0"
+  "control: with the default back at 90 the account at 94 percent is refused||pick --harness claude|rc=3 key=no-candidate,harness=claude,max-pct=90,model=none,walled=1,unmeasured=0,seats=0"
 LANES="$LANES_REAL"
 
 new_home default-bound-spent
 make_lane "$H" claude 3600
 claude_usage 95 10 5 Opus > "$FIXTURE_DIR/.claude.json"
 table \
-  "an account at 95 percent used is refused, five percent headroom being the wall||pick --harness claude|rc=3 key=no-candidate,harness=claude,max-pct=95,model=none,walled=1,unmeasured=0" \
+  "an account at 95 percent used is refused, five percent headroom being the wall||pick --harness claude|rc=3 key=no-candidate,harness=claude,max-pct=95,model=none,walled=1,unmeasured=0,seats=0" \
   "the setting raises the same bound, and that account is picked|ORCH_LANE_MAX_PCT=96|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
 
 echo "=== argument handling ==="

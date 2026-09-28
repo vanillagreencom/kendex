@@ -215,10 +215,12 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # window where one is named.
 # ORCH_LANE_MAX_PCT = "95"
 
-# How much of an account's allowance one running lane is expected to use in
-# an hour, where no rate has been measured for the account yet. A new lane is
-# not offered an account whose running lanes would use up its allowance within
-# the hour. 0 turns the charge off.
+# How much of an account's 5-hour allowance one running lane is expected to
+# use in an hour, where no rate has been measured for the account yet; a
+# weekly allowance is charged its share by length. A lane is not launched on
+# an account whose running lanes would carry its usage to ORCH_LANE_MAX_PCT
+# within the hour, whether the account is picked or named. 0 turns the charge
+# off.
 # ORCH_LANE_BURN_PCT_PER_HOUR = "5"
 
 # The allowance left on an account at which a running lane is marked for

@@ -191,13 +191,21 @@ def with_lane_binding($model; $binding_floor):
 # the live claims where both exist, and $burn_default, ORCH_LANE_BURN_PCT_PER_HOUR,
 # where they do not: a rate taken with nothing claimed says nothing about what
 # one lane costs, and an unmeasured rate says nothing at all.
+#
+# The default is points of the 5-hour session window. A weekly window, the
+# plan-wide one or a model-scoped one, holds the same hour of work as the
+# share 5 of its 168 hours is, so it is charged the default times 5/168:
+# charged whole, an account weekly-bound at 86 percent with two lanes would
+# project past 95 and be dropped with days of room left.
 # projected_headroom_pct is the judged headroom less the claims times that
 # burn, null where the wall is null, since nothing measured the account, or the
 # claims are null, since the claim store could not be read: an unknown count is
 # never charged as zero lanes.
 def with_lane_projection($burn_default):
   (if .usage_rate_state == "measured" and (.claims // 0) > 0
-   then .usage_rate_pct_per_min * 60 / .claims else $burn_default end) as $burn
+   then .usage_rate_pct_per_min * 60 / .claims
+   elif .binding_bucket == "session" then $burn_default
+   else $burn_default * 5 / 168 end) as $burn
   | . + {burn_pct_per_lane_hour: (if .wall == null then null else $burn end),
          projected_headroom_pct:
            (if .wall == null or .claims == null then null
