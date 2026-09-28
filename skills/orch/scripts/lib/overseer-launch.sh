@@ -12,6 +12,7 @@
 #   ol_preference          the ORCH_OVERSEER_PREFERENCE value, its default
 #                          ladder where the setting is unset
 #   ol_preference_entries  the ORCH_OVERSEER_PREFERENCE parse
+#   ol_account             the account a session spends, as `lanes` judges it
 #   ol_entry_model         one entry's harness, model and effort
 #   ol_lanes               `lanes` on this machine's copy of each account
 #   ol_pick_record         one `lanes pick --json` record, for a caller's
@@ -110,6 +111,32 @@ ol_preference_entries() { # VALUE
   done
 }
 
+# ol_account HARNESS MODEL — the account a session of HARNESS on MODEL spends,
+# as `lanes` measures it: OL_ACCOUNT_HARNESS the harness `lanes pick` judges it
+# under, OL_ACCOUNT_MODEL the model it judges it on. lib/lane-launch.sh §
+# lane_pick_harness answers first: claude and codex spend their own accounts,
+# and a pi session on a `github-copilot/` model spends the Copilot pool `lanes
+# pick --harness pi` reads. Where it answers none for pi, a model on the
+# pi-claude provider runs the claude model after `pi-claude/` under
+# CLAUDE_CONFIG_DIR (pi-extensions/pi-claude-bridge), so it spends a claude
+# account on that model; a model on any other provider spends no account
+# `lanes` measures, `none`; and one naming no provider, or no model at all,
+# spends an account nothing here can name, `unknown`, pi resolving a bare
+# model to a provider itself. A pi model's `:<thinking>` suffix is pi's level,
+# never the model. The model is empty for `none` and `unknown`.
+OL_ACCOUNT_HARNESS="" OL_ACCOUNT_MODEL=""
+ol_account() { # HARNESS MODEL
+  local model="${2:-}"
+  [[ "${1:-}" != pi ]] || model="${model%%:*}"
+  OL_ACCOUNT_HARNESS="$(lane_pick_harness "${1:-}" "$model")" OL_ACCOUNT_MODEL="$model"
+  [[ "${1:-}" == pi && -z "$OL_ACCOUNT_HARNESS" ]] || return 0
+  case "$model" in
+    pi-claude/?*) OL_ACCOUNT_HARNESS=claude OL_ACCOUNT_MODEL="${model#pi-claude/}" ;;
+    ?*/?*) OL_ACCOUNT_HARNESS=none OL_ACCOUNT_MODEL="" ;;
+    *) OL_ACCOUNT_HARNESS=unknown OL_ACCOUNT_MODEL="" ;;
+  esac
+}
+
 # ol_entry_model ENTRY — one entry ol_preference_entries admitted, split into
 # OL_ENTRY_HARNESS, OL_ENTRY_MODEL and OL_ENTRY_EFFORT: a rank as `kendex
 # tier-model` names it, a name as written once the tier ladder is shown to
@@ -117,8 +144,8 @@ ol_preference_entries() { # VALUE
 # codex; a claude name where it carries one, since the claude ladder names
 # model families (`opus`) that a full id (`claude-opus-5-5`) spells inside it.
 # A pi name on the pi-claude provider runs a claude model and is held to the
-# claude ladder the same way (lib/lane-context.sh § lane_context_account); a
-# pi name on any other provider is taken as written, the ladder naming none.
+# claude ladder the same way (ol_account); a pi name on any other provider is
+# taken as written, the ladder naming none.
 # Returns 1 for a rank the ladder cannot answer and for a name it does not
 # know, which the walk refuses rather than skips: either is a setting to fix,
 # and a misspelled name would otherwise reach the pick, which then drops
@@ -129,9 +156,9 @@ ol_entry_model() { # ENTRY
   IFS=: read -r OL_ENTRY_HARNESS OL_ENTRY_MODEL OL_ENTRY_EFFORT <<<"$1"
   harness="$OL_ENTRY_HARNESS" name="$OL_ENTRY_MODEL"
   if [[ "$harness" == pi ]]; then
-    lane_context_account pi "$name"
-    [[ "$LANE_CTX_ACCOUNT_HARNESS" == claude ]] || return 0
-    harness=claude name="$LANE_CTX_ACCOUNT_MODEL"
+    ol_account pi "$name"
+    [[ "$OL_ACCOUNT_HARNESS" == claude ]] || return 0
+    harness=claude name="$OL_ACCOUNT_MODEL"
   elif [[ "$name" =~ ^[0-9]+$ ]]; then
     OL_ENTRY_MODEL="$(kendex tier-model "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" 2>"$DEP_ERR")" && [[ -n "$OL_ENTRY_MODEL" ]]
     return
@@ -162,7 +189,7 @@ ol_lanes() { # ARGS...
 # returned. The pick ol_pick_lane makes and every count a caller holds a
 # launch to ask this one question, so no two of them judge an account two
 # ways. HARNESS and MODEL are the launch's, and `lanes` is asked about the
-# account they spend (lib/lane-context.sh § lane_context_account); a launch
+# account they spend (ol_account); a launch
 # spending none `lanes` measures, or one nothing can name, returns 4 with no
 # record and asks nothing.
 # It passes --for-overseer: the pick seats an overseer, so the accounts
@@ -171,9 +198,9 @@ OL_PICK_RECORD=""
 ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
   local floor=() exclude=() rc=0 harness model LC_ALL=C
   OL_PICK_RECORD=""
-  lane_context_account "$1" "$2"
-  harness="$LANE_CTX_ACCOUNT_HARNESS" model="$LANE_CTX_ACCOUNT_MODEL"
-  case "$harness" in claude | codex) ;; *) return 4 ;; esac
+  ol_account "$1" "$2"
+  harness="$OL_ACCOUNT_HARNESS" model="$OL_ACCOUNT_MODEL"
+  case "$harness" in claude | codex | pi) ;; *) return 4 ;; esac
   [[ -n "$(lane_context_mark_model "$harness" "$model")" ]] || floor=(--binding-floor)
   [[ -z "${4:-}" ]] || exclude=(--exclude-lane "$4")
   OL_PICK_RECORD="$(ol_lanes pick --harness "$harness" --min-headroom-pct "$3" --for-overseer \
@@ -196,8 +223,9 @@ ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
 # OL_WALKED_WALLED and OL_WALKED_UNMEASURED for the refusal a caller prints
 # when the walk ends empty; a record carrying neither leaves them alone.
 #
-# A launch spending no account `lanes` measures, a pi model off the pi-claude
-# provider, returns 0 with OL_PICKED_DIR empty: no account can be picked or
+# A launch spending no account `lanes` measures (ol_account's `none`), a pi
+# model on a provider neither pi-claude nor the Copilot pool, returns 0 with
+# OL_PICKED_DIR empty: no account can be picked or
 # refused for it, so it launches with no lane variable, and its first working
 # turn, which ol_session_verify waits for, is the one reading of its room. A pi
 # model naming no provider names no account to pick either, and returns 4.
@@ -207,8 +235,8 @@ OL_WALKED_UNMEASURED=0
 ol_pick_lane() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
   local record rc=0 walled unmeasured LC_ALL=C
   OL_PICKED_DIR=""
-  lane_context_account "$1" "$2"
-  [[ "$LANE_CTX_ACCOUNT_HARNESS" != none ]] || return 0
+  ol_account "$1" "$2"
+  [[ "$OL_ACCOUNT_HARNESS" != none ]] || return 0
   ol_pick_record "$@" || rc=$?
   record="$OL_PICK_RECORD"
   if (( rc == 3 )); then
@@ -237,9 +265,11 @@ ol_pick_lane() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
 # shell-inert characters, and HANDOFF is held to the same alphabet by every
 # caller. One plain sentence on claude and codex, the contract each of them
 # already reads as its opening prompt; pi opens on its skill command, as
-# open-terminal's pi lane brief does. Pi's account variable is claude's, which
-# the pi-claude bridge reads, and an empty LANE_DIR, a pi model on a provider
-# no lane measures (ol_pick_lane), launches the command bare.
+# open-terminal's pi lane brief does. The account variable is
+# lib/lane-launch.sh § lane_env_prefix's for the harness and the model FLAG...
+# names: pi's is claude's, which the pi-claude bridge reads, and
+# PI_CODING_AGENT_DIR on the Copilot pool. An empty LANE_DIR, a pi model on a
+# provider no lane measures (ol_pick_lane), launches the command bare.
 #
 # A codex session reads folder trust for LAUNCH_DIR before it reads its own
 # arguments, and the pane it opens in has nobody at it, so the entry is made
@@ -261,11 +291,13 @@ ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
   shift 4
   brief="Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $handoff"
   case "$harness" in
-    claude) OL_LANE_VAR=CLAUDE_CONFIG_DIR cmd="claude -n overseer" ;;
-    copilot) OL_LANE_VAR=COPILOT_HOME cmd="copilot" brief_flag=" -i" ;;
-    pi) OL_LANE_VAR=CLAUDE_CONFIG_DIR cmd="pi" brief="/skill:orch oversee after reading the overseer handoff at $handoff" ;;
-    *) OL_LANE_VAR=CODEX_HOME cmd="codex" ;;
+    claude) cmd="claude -n overseer" ;;
+    copilot) cmd="copilot" brief_flag=" -i" ;;
+    pi) cmd="pi" brief="/skill:orch oversee after reading the overseer handoff at $handoff" ;;
+    *) cmd="codex" ;;
   esac
+  OL_LANE_VAR="$(lane_env_prefix "$harness" - "$(launch_choice_launch_model "$harness" "$*")")"
+  OL_LANE_VAR="${OL_LANE_VAR%%=*}"
   for flag in "$@"; do
     cmd+=" $(printf %q "$flag")"
   done

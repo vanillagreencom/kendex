@@ -190,7 +190,7 @@ for row in \
   "other:$H/.eclaude:claude-opus-5|Fable 5.1|CLAUDE_CONFIG_DIR=$H/.claude|-|account-below-mark headroom=90|a record naming another session is not this one's: the bootstrap readings decide" \
   "otherserver:$H/.eclaude:claude-opus-5|Fable 5.1|CLAUDE_CONFIG_DIR=$H/.claude|-|account-below-mark headroom=90|a record naming this pane id on another tmux server is not this one's" \
   "pi:$H/.claude:pi-claude/claude-opus-5|Fable 5.1|CLAUDE_CONFIG_DIR=$H/.eclaude|-|mark-reached kind=headroom value=1|a pi record on the pi-claude provider: its claude account, judged on the claude model the provider runs" \
-  "pi::github-copilot/gpt-5|Fable 5.1|CLAUDE_CONFIG_DIR=$H/.claude|-|mark-unmeasured kind=headroom reason=headroom-none succession=on|a pi record on another provider spends no account lanes measures, and no environment account stands in" \
+  "pi::openai/gpt-5|Fable 5.1|CLAUDE_CONFIG_DIR=$H/.claude|-|mark-unmeasured kind=headroom reason=headroom-none succession=on|a pi record on another provider spends no account lanes measures, and no environment account stands in" \
   ; do
   IFS='|' read -r row_record row_reading row_lane row_mail row_want row_what <<<"$row"
   new_caller claude
@@ -311,14 +311,30 @@ assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none 
 
 # The control for the pi account rule: a pi model read as naming no account
 # leaves a pi-claude overseer's own claude account unjudged.
-PICTL="$(mutant_scripts pictl lib/lane-context.sh)" || exit 1
-mutate_file "$PICTL/lib/lane-context.sh" '    pi-claude/?*)' '    pi-claude/?*-unread)'
+PICTL="$(mutant_scripts pictl lib/overseer-launch.sh)" || exit 1
+mutate_file "$PICTL/lib/overseer-launch.sh" '    pi-claude/?*)' '    pi-claude/?*-unread)'
 new_caller claude
 reading "Fable 5.1"
 state "$(record "$CALLER_PANE" "$H/.claude" pi-claude/claude-opus-5 '{"harness": "pi"}')"
 SUCCEED_BIN="$PICTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.eclaude" --check-marks
 assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
   "control: a pi-claude model read as naming no account leaves the overseer's account unjudged" "$TMP_ROOT/err"
+
+# A pi record on a github-copilot model is judged on the Copilot pool the
+# owner states for its Pi root, spent to 2 percent here.
+pool_row() { # [SUCCEED_BIN]
+  new_caller claude
+  state "$(record "$CALLER_PANE" "" github-copilot/gpt-5 '{"harness": "pi"}')"
+  SUCCEED_BIN="${1:-}" run_succeed "ORCH_LANE_COPILOT_POOL=$PI_AGENT=98/100" --check-marks
+}
+pool_row
+assert_eq "$RC|$(judged)" "0|mark-reached kind=headroom value=2" \
+  "--check-marks on a pi record on a github-copilot model judges the stated Copilot pool" "$TMP_ROOT/err"
+POOLCTL="$(mutant_scripts poolctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$POOLCTL/lib/overseer-launch.sh" '  [[ "${1:-}" == pi && -z "$OL_ACCOUNT_HARNESS" ]] || return 0' '  [[ "${1:-}" == pi ]] || return 0'
+pool_row "$POOLCTL/oversee-succeed"
+assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
+  "control: an account reader that ignores the Copilot pool leaves the pi overseer's account unjudged" "$TMP_ROOT/err"
 
 # The control for the model rule: a caller that ignores the record's model is
 # judged on the reading's.
@@ -368,16 +384,22 @@ assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer -
 # so the line carries no lane variable. The pane opens in the work directory,
 # where no pi project settings stand.
 PI_BRIEF="'/skill:orch oversee after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'"
-pi_print_row() { # [SUCCEED_BIN]
+pi_print_row() { # [SUCCEED_BIN] [MODEL]
   tm kill-window -a -t fleet:0
   CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' 'exec sleep 100000')"
   state none
   SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line --harness pi \
-    -- --model github-copilot/gpt-5 --thinking high
+    -- --model "${2:-openai/gpt-5}" --thinking high
 }
 pi_print_row
-assert_eq "$RC|$OUT" "0|pi --exclude-tools question --model github-copilot/gpt-5 --thinking high $PI_BRIEF" \
+assert_eq "$RC|$OUT" "0|pi --exclude-tools question --model openai/gpt-5 --thinking high $PI_BRIEF" \
   "--print-launch-line --harness pi prints the pi line, bare on a provider no lane measures" "$TMP_ROOT/err"
+# A github-copilot model spends the Copilot pool, whose account is the Pi root
+# the line opens under PI_CODING_AGENT_DIR (lib/lane-launch.sh §
+# lane_env_prefix), here the home's own.
+pi_print_row "" github-copilot/gpt-5
+assert_eq "$RC|$OUT" "0|env PI_CODING_AGENT_DIR='$PI_AGENT' pi --exclude-tools question --model github-copilot/gpt-5 --thinking high $PI_BRIEF" \
+  "--print-launch-line on a pi overseer on the Copilot pool opens on its Pi root" "$TMP_ROOT/err"
 PIHARNESSCTL="$(mutant_scripts piharnessctl oversee-succeed)" || exit 1
 mutate_file "$PIHARNESSCTL/oversee-succeed" '| codex | pi) ;;' '| codex) ;;'
 pi_print_row "$PIHARNESSCTL/oversee-succeed"

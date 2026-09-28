@@ -1175,7 +1175,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 for pref_row in \
   "codex:1:high|0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
-  "pi:github-copilot/gpt-5:high,codex:1:high|0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
+  "pi:openai/gpt-5:high,codex:1:high|0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
   "bogus|1|oversee-succeed: invalid-preference entry=bogus"; do
   IFS='|' read -r pref_value pref_rc pref_want <<<"$pref_row"
   new_caller "$UNDER_MARK"

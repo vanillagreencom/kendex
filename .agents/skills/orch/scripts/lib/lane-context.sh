@@ -137,11 +137,15 @@ lane_context_shape() {
 # that can answer with that variable go through the rule: the codex shape, and
 # the shape naming no harness, which is what a pane running `lanes` itself
 # offers. A claude answer passes through it unchanged, carrying no such shape.
+# `pi` is no shape a pane offers: it is the Copilot pool's account harness a
+# pi overseer names (lib/overseer-launch.sh § ol_account), whose account is the
+# Pi root it runs on, PI_CODING_AGENT_DIR or the home's `.pi/agent`.
 lane_context_caller_cfg() { # SHAPE
   local home="${LANES_HOME:-$HOME}"
   case "${1:-}" in
     claude) printf '%s\n' "${CLAUDE_CONFIG_DIR:-$home/.claude}" ;;
     codex) lane_launch_home_account "${CODEX_HOME:-$home/.codex}" ;;
+    pi) lane_adapter_pi_agent_dir ;;
     *)
       [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ -n "${CODEX_HOME:-}" ] ||
         lane_launch_home_account "${CLAUDE_CONFIG_DIR:-${CODEX_HOME:-}}"
@@ -155,7 +159,8 @@ lane_context_caller_cfg() { # SHAPE
 # MODEL's own buckets; a codex session's is judged on the account's binding
 # bucket, the reading the fleet has always taken of one, and this answers empty.
 # A pi session's is MODEL as pi spells it, `provider/id`, which
-# lane_context_account below turns into the account and model `lanes` judges.
+# lib/overseer-launch.sh § ol_account turns into the account and model `lanes`
+# judges.
 #
 # It exists so a caller CHOOSING an account for a session it is about to
 # launch holds that account to the reading the session will take of itself. A
@@ -166,32 +171,6 @@ lane_context_mark_model() { # HARNESS MODEL
   case "${1:-}" in
     claude | pi) printf '%s\n' "${2:-}" ;;
     *) printf '\n' ;;
-  esac
-}
-
-# lane_context_account HARNESS MODEL — the account a session of HARNESS on
-# MODEL spends, as `lanes` measures it: LANE_CTX_ACCOUNT_HARNESS the harness
-# whose accounts it reads, LANE_CTX_ACCOUNT_MODEL the model it judges them on.
-# Claude and codex are their own. A pi session on the pi-claude provider runs
-# the claude model after `pi-claude/` under CLAUDE_CONFIG_DIR
-# (pi-extensions/pi-claude-bridge), so it spends a claude account on that
-# model, the `:<thinking>` suffix pi reads as its level dropped. A pi session
-# on any other provider spends no account `lanes` measures, `none`, and one
-# whose MODEL names no provider, or no model at all, spends an account nothing
-# here can name, `unknown`: pi resolves a bare model to a provider itself. The
-# model is empty for both.
-LANE_CTX_ACCOUNT_HARNESS="" LANE_CTX_ACCOUNT_MODEL=""
-lane_context_account() { # HARNESS MODEL
-  LANE_CTX_ACCOUNT_HARNESS="${1:-}" LANE_CTX_ACCOUNT_MODEL="${2:-}"
-  [[ "$LANE_CTX_ACCOUNT_HARNESS" == pi ]] || return 0
-  case "$LANE_CTX_ACCOUNT_MODEL" in
-    pi-claude/?*)
-      LANE_CTX_ACCOUNT_HARNESS=claude
-      LANE_CTX_ACCOUNT_MODEL="${LANE_CTX_ACCOUNT_MODEL#pi-claude/}"
-      LANE_CTX_ACCOUNT_MODEL="${LANE_CTX_ACCOUNT_MODEL%%:*}"
-      ;;
-    ?*/?*) LANE_CTX_ACCOUNT_HARNESS=none LANE_CTX_ACCOUNT_MODEL="" ;;
-    *) LANE_CTX_ACCOUNT_HARNESS=unknown LANE_CTX_ACCOUNT_MODEL="" ;;
   esac
 }
 

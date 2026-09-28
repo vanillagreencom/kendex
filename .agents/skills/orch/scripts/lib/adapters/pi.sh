@@ -19,7 +19,7 @@
 # `--model` spells it, `provider/id`, where the message names its provider;
 # `$1` where that usage carries none of Pi's field names, and nothing where no
 # message carries usage. The provider is what names the account a pi session
-# spends (lib/lane-context.sh § lane_context_account).
+# spends (lib/overseer-launch.sh § ol_account).
 # The context is the message's input plus the cache it was read from and
 # written to, and its output, which the next request sends back: the sum Pi's
 # own `totalTokens` is (`Usage`, @earendil-works/pi-ai). `$2` is the window the payload

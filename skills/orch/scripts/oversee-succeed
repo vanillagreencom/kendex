@@ -133,10 +133,13 @@
 #        entries: harness claude, codex or pi, model a model name or a rank on
 #        the kendex tier ladder (1 is the top tier; `kendex tier-model` names
 #        its model), or on pi its `provider/id`, effort a lowercase word. A pi
-#        session spends a claude account on the pi-claude provider, and one
-#        on any other provider no lane measures, so that entry takes no pick
-#        and launches with no lane variable, and a qualifying mark never
-#        chooses it. A pi caller's own model is its record's, else the
+#        session spends a claude account on the pi-claude provider and the
+#        Copilot pool on a github-copilot model, which `lanes pick --harness
+#        pi` judges from ORCH_LANE_COPILOT_POOL and whose lane variable is
+#        PI_CODING_AGENT_DIR (lib/lane-launch.sh § lane_pick_harness). On any
+#        other provider it spends one no lane measures, so that entry takes
+#        no pick and launches with no lane variable, and a qualifying mark
+#        never chooses it. A pi caller's own model is its record's, else the
 #        --model word after --, else its reading's; one naming no provider
 #        spends an account nothing names, and its caller entry refuses
 #        `pi-account-unknown`. No permission posture crosses to or from pi,
@@ -894,7 +897,7 @@ if [[ "$MODE" != dead ]]; then
   # provider either, which the caller entry refuses as unknown.
   caller_model="${OL_KNOWN_MODEL:-$reading_model}"
   if [[ "$CALLER_HARNESS" == pi && -z "$OL_KNOWN_MODEL" ]]; then
-    if ! flag_model="$(launch_choice_value "$(launch_choice_model_spellings pi)" "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}")"; then
+    if ! flag_model="$(launch_choice_launch_model pi "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}")"; then
       die launch-choice-failed harness=pi step=model-read
     fi
     if [[ "$flag_model" == ?*/?* || ( -n "$flag_model" && "$caller_model" != ?*/?* ) ]]; then
@@ -903,11 +906,12 @@ if [[ "$MODE" != dead ]]; then
   fi
   CALLER_MODEL="$(lane_context_mark_model "$CALLER_HARNESS" "$caller_model")"
   # The harness and model `lanes` measures this session's account as
-  # (lib/lane-context.sh § lane_context_account): a pi session on the pi-claude
-  # provider spends a claude account, on another provider `none`, and on a
-  # model naming no provider one that is `unknown`.
-  lane_context_account "$CALLER_HARNESS" "$CALLER_MODEL"
-  CALLER_ACCOUNT_HARNESS="$LANE_CTX_ACCOUNT_HARNESS" CALLER_ACCOUNT_MODEL="$LANE_CTX_ACCOUNT_MODEL"
+  # (lib/overseer-launch.sh § ol_account): a pi session on the pi-claude
+  # provider spends a claude account, on a github-copilot model the Copilot
+  # pool, on another provider `none`, and on a model naming no provider one
+  # that is `unknown`.
+  ol_account "$CALLER_HARNESS" "$CALLER_MODEL"
+  CALLER_ACCOUNT_HARNESS="$OL_ACCOUNT_HARNESS" CALLER_ACCOUNT_MODEL="$OL_ACCOUNT_MODEL"
 fi
 
 # The account mark, judged on the account THIS session is spending and on the
@@ -975,7 +979,7 @@ fi
 CALLER_CFG="$OL_KNOWN_ACCOUNT"
 [[ "$CALLER_HARNESS" != copilot || -n "$CALLER_CFG" ]] || die copilot-account-unknown "pane=$CALLER_PANE"
 case "$CALLER_ACCOUNT_HARNESS" in
-  claude | codex) [[ -n "$CALLER_CFG" ]] || CALLER_CFG="$(lane_context_caller_cfg "$CALLER_ACCOUNT_HARNESS")" ;;
+  claude | codex | pi) [[ -n "$CALLER_CFG" ]] || CALLER_CFG="$(lane_context_caller_cfg "$CALLER_ACCOUNT_HARNESS")" ;;
 esac
 CALLER_STATE=unreadable HEADROOM_FIELD=unreadable
 CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS=""
@@ -983,7 +987,7 @@ RATE_STATE=unreadable WALL_PROJECTED="" QUALIFYING_STATE=unreadable QUALIFYING_C
 if (( JUDGES )); then
   # An account `lanes` does not measure is one nothing measured, its exit 4.
   caller_rc=4 caller_record=""
-  if [[ "$CALLER_ACCOUNT_HARNESS" == claude || "$CALLER_ACCOUNT_HARNESS" == codex ]]; then
+  if [[ "$CALLER_ACCOUNT_HARNESS" == claude || "$CALLER_ACCOUNT_HARNESS" == codex || "$CALLER_ACCOUNT_HARNESS" == pi ]]; then
     caller_rc=0
     caller_record="$(ol_lanes pick --lane "$CALLER_CFG" --harness "$CALLER_ACCOUNT_HARNESS" \
       --min-headroom-pct "$HEADROOM_TRIGGER" ${CALLER_ACCOUNT_MODEL:+--model "$CALLER_ACCOUNT_MODEL"} \
