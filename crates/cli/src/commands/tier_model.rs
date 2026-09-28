@@ -1,9 +1,10 @@
 //! The model a rank on the tier ladder names on one harness.
 //!
-//! The orch skill's `oversee-succeed` reads its overseer preference as
-//! `harness:rank:effort` and asks this verb for the model, so the tier table
-//! in `kendex_core::harness::models` stays the one owner of which model a
-//! rank means.
+//! The orch skill's `oversee launch` and `oversee-succeed` read an overseer
+//! preference entry's middle field as a model name or a tier ladder rank. They
+//! ask this verb for the model a rank names, and walk its ranks to check a
+//! name, so the tier table in `kendex_core::harness::models` stays the one
+//! owner of which model a rank means.
 
 use clap::Args;
 
