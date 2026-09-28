@@ -222,7 +222,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    A `[MICRO_ENTRY]` run continues only where the mode resolved above is `exempt` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`: the class is measured over both endpoints, and a retarget changes it without moving the head, so the fresh answer is what carries the exemption and the head says it is the same run. Any other answer arms nothing and escapes by micro.md condition 9. Read workflow state `pr.size_check` for `[STATE_KEY]`, and use it only when its `head_sha` equals `[PREPARED_HEAD]`, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.
 
-   **Merge route.** One route, on every change class: take the `--auto` arm below, and reach the direct attempt only where that arm answers `arm: no-merge-gate`. That answer does not mean the base has no queue: a base that still queues the PR answers the direct attempt with exit `75`, which takes the queue-wait block. An item whose workflow state carries `pr_approval.forced` takes the same arm. A PR [submit-pr.md](submit-pr.md) § 2 step 5 armed at creation, whose watch workflow state still records, is read below before the `--auto` arm.
+   **Merge route.** One route, on every change class: take the `--auto` arm below, and reach the direct attempt only where that arm answers `arm: no-merge-gate`. That answer does not mean the base has no queue: a base that still queues the PR answers the direct attempt with exit `75`, which takes the queue-wait block. An item whose workflow state carries `pr_approval.forced` takes the same arm. A PR [submit-pr.md](submit-pr.md) § 2 step 5 armed at creation takes it too: the arm binds the prepared head and answers exit `75`, and the lane waits in the queue-wait block.
 
    The lane arms its own head under the token the `github.sh` router selects, which in a lane sandbox is the lanes app's installation token, and waits in `queue-wait` to a terminal verdict. No overseer merges for it and no setting routes it past the queue (`pr-merge --help` § Retired settings).
 
@@ -237,24 +237,6 @@ Use the output as `MAIN_REPO_ROOT`.
    Exit `75` means GitHub queued or armed the PR: take the queue-wait block below the `--auto` arm.
 
    Exit `1` BLOCKED → run `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]` and return to § 3.2 with its cause and detail.
-
-   **A recorded queue wait.** Read the watch [submit-pr.md](submit-pr.md) § 2 step 5 started after its arm at creation. This is the one reader rule for that record, which that step cites before it replaces a finished wait:
-
-   ```bash
-   .agents/skills/orch/scripts/workflow-state get [STATE_KEY] '.queue_guard.run_dir // ""'
-   ```
-
-   An empty answer takes the `--auto` arm below. Otherwise the answer is the wait's run directory. While its `wait.exit` is missing, take no arm and start no waiter: follow [Waiter launch](../references/waiter-launch.md) § Completion on that directory, then route its recorded exit and result through the table below, as for a wait this step started. A wait already finished when this step reads it ended on a state § 3 has re-read since, so read the live arm first:
-
-   ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json autoMergeRequest,isInMergeQueue
-   ```
-
-   Neither armed nor queued: take the `--auto` arm below. Armed or queued: route the recorded exit and result through the table below. Either way clear the record once its completion file is read:
-
-   ```bash
-   .agents/skills/orch/scripts/workflow-state update [STATE_KEY] '.queue_guard = null'
-   ```
 
    **The `--auto` arm** takes only that same head:
 
@@ -411,7 +393,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    For `merge-pr all` or an explicit user request, also sweep the project. Check each local branch with `env -u GH_REPO -u GITHUB_REPOSITORY gh pr list --head [BRANCH] --base [BASE_BRANCH] --state all --json number,state,headRefOid,isCrossRepository`, and auto-delete only a branch with no worktree whose tip equals the `headRefOid` of one of its **merged**, non-cross-repository PRs — the predicate `worktree cleanup` applies. Neither state nor a merge into another base is the test: a closed PR merged nothing, a PR merged into a release or other side branch left its commit out of `[BASE_BRANCH]` with this ref possibly the last ordinary one holding it, and a merged PR whose head differs from the tip left the extra commits reachable from this ref alone. Leave every other branch alone, and ask before removing a stale worktree or a branch with no PR. Compare `ls [TREES_DIR]/` against `worktree list --porcelain` for orphan directories, asking before removing any.
 
-5. **Answer the threads the wait's guard did not catch.** GitHub's merge queue never re-checks thread resolution once a PR is admitted. `queue-wait`'s late-findings guard does, but on its own probe clock (`QUEUE_WAIT_PROBE_INTERVAL`, 120 seconds by default), so a finding landing inside that gap, or after the merge itself, rides the merge in. Read the merged PR's unresolved threads once and answer each. Resolve the merge commit first — the queue merged a head this lane never saw:
+5. **Answer the threads the wait's guard did not catch.** GitHub's merge queue never re-checks thread resolution once a PR is admitted. `queue-wait`'s late-findings guard does, but on its own probe clock (`QUEUE_WAIT_PROBE_INTERVAL`, 120 seconds by default), so a finding landing inside that gap, or after the merge itself, rides the merge in. A PR [submit-pr.md](submit-pr.md) § 2 step 5 armed at creation has a wider gap, accepted: GitHub can enqueue it while the lane is still in submit-pr § 3-§ 6, and a thread posted between that enqueue and the guard step 1's queue wait starts rides the merge in the same way. Read the merged PR's unresolved threads once and answer each. Resolve the merge commit first — the queue merged a head this lane never saw:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json mergeCommit --jq .mergeCommit.oid

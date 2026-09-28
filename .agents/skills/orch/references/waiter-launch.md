@@ -1,6 +1,6 @@
 # Waiter launch
 
-Load from `submit-pr.md` or `merge-pr.md` before running `approval-wait`, `ci-wait` or `queue-wait`, and from `watch-delivery.md` before launching the repeat watch. Start each long waiter through the orch job runner, `.agents/skills/orch/scripts/lib/job-unit.sh` ([job-units.md](job-units.md)). Keep the lane active until its completion file arrives. The one exception is the queue wait `submit-pr.md` § 2 step 5 starts after its arm at creation: the lane goes on past it, and `merge-pr.md` § 5 step 1 waits on its completion file. Never start the waiter as a harness background command.
+Load from `submit-pr.md` or `merge-pr.md` before running `approval-wait`, `ci-wait` or `queue-wait`, and from `watch-delivery.md` before launching the repeat watch. Start each long waiter through the orch job runner, `.agents/skills/orch/scripts/lib/job-unit.sh` ([job-units.md](job-units.md)). Keep the lane active until its completion file arrives. Never start the waiter as a harness background command.
 
 ## Launch
 

@@ -369,8 +369,7 @@ stage() {
 STAGE_SEQ=0
 
 # run_wait ENV ARGS... — runs queue-wait through the .agents symlink, exactly
-# how production invokes it, from QW_REPO when a control names its mutant
-# checkout, with the staged sequence directory and the
+# how production invokes it, with the staged sequence directory and the
 # suite's default knobs; ENV is a comma-separated list of `env` arguments
 # that may override those knobs. Sets OUT, RC and ERR (the stderr file).
 # GH_REPO comes off first: it decides which repository the wait reads, so the
@@ -381,7 +380,7 @@ run_wait() {
   [[ -z "$env_list" ]] || IFS=',' read -ra env_args <<<"$env_list"
   ERR="$SEQ_DIR/stderr"
   set +e
-  OUT=$(cd "${QW_REPO:-$TMP_ROOT/repo}" && PATH="$TMP_ROOT/bin:$PATH" \
+  OUT=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
     env -u GH_REPO STUB_SEQ_DIR="$SEQ_DIR" \
         QUEUE_WAIT_CONFIRM_POLLS=2 \
         QUEUE_WAIT_ARM_GRACE=120 \
@@ -527,49 +526,6 @@ table "$QW" \
   'armed but never enqueued disables auto-merge only|open_armed,threads:last=late,dequeue:1=am_ok|||rc=1 verdict=dequeued cause=late_findings mutations=disable' \
   "the final probe at the deadline catches a late thread|open_queued,threads:1=none,threads:last=late,$DQ|1 1 1 --json --no-check-probe||verdict=dequeued polls=1 mutations=disable,dequeue" \
   "an overlong pagination walk stops at the bound, a failed read and not a count|open_queued,threads:pages=40,$DQ|1 1 1 --json --no-check-probe||verdict=queued mutations=none thread_reads=40"
-
-echo "=== the watch on a PR armed as it opened: --arm-watch ==="
-# The wait orch submit-pr § 2 step 5 starts after its arm at creation. The
-# review gate and the base's thread-resolution rule hold that PR from the
-# queue while its threads are open, so the guard reads threads only once the
-# PR is queued; and the arm outlives any budget, so the wait has no deadline.
-# Each control is a checkout whose copy of the script loses one of the two.
-AW_MERGES='state:1=open,state:2=open,state:3=open,state:last=merged,queue:last=armed'
-# Open for longer than the default budget at the polls a lane nap allows.
-AW_LONG="$(i=0; while [ "$i" -lt 14 ]; do i=$((i + 1)); printf 'state:%s=open,' "$i"; done)state:last=merged,queue:last=armed"
-table "$QW" \
-  "an armed PR outside the queue keeps its arming over an unresolved thread|$AW_MERGES,threads:last=late,dequeue:1=am_ok|1 1 --arm-watch --json --no-check-probe||rc=0 verdict=merged thread_reads=0 mutations=none" \
-  "a queued PR with an unresolved thread is still disarmed and dequeued|open_queued,threads:last=late,$DQ|1 1 --arm-watch --json --no-check-probe||rc=1 verdict=dequeued cause=late_findings mutations=disable,dequeue" \
-  "the wait runs past the default budget to a verdict|$AW_LONG|1000 --arm-watch --json --no-check-probe||rc=0 verdict=merged polls=15" \
-  "a max_wait beside it is a usage error|open_armed|1 1 20 --arm-watch --json||rc=2 stderr_line=queue-wait:+arm-watch-budget+value=20"
-
-# mutant_checkout NAME FROM TO — a checkout at $TMP_ROOT/NAME whose copy of the
-# script has the one line FROM replaced by TO, asserting the edit took.
-mutant_checkout() {
-  local dest="$TMP_ROOT/$1" from="$2" to="$3" script
-  mkdir -p "$dest/.agents/skills"
-  cp -R "$REPO_ROOT/skills/orch" "$dest/.agents/skills/orch"
-  ln -s "$REPO_ROOT/skills/github" "$dest/.agents/skills/github"
-  git -C "$dest" init -q
-  script="$dest/.agents/skills/orch/scripts/queue-wait"
-  [[ "$(grep -cxF -- "$from" "$script")" == 1 ]] || {
-    echo "FIXTURE: the $1 line was not unique in $script" >&2
-    exit 2
-  }
-  F="$from" T="$to" awk 'BEGIN { f = ENVIRON["F"]; t = ENVIRON["T"] } $0 == f { $0 = t } { print }' "$script" >"$script.edit"
-  cat -- "$script.edit" >"$script"
-  rm -f -- "${script:?}.edit"
-  ! grep -qxF -- "$from" "$script" || {
-    echo "FIXTURE: the $1 edit matched nothing in $script" >&2
-    exit 2
-  }
-}
-mutant_checkout aw-guard '    [[ "$in_queue_now" == true ]]' '    [[ "$armed_now" == true ]]'
-mutant_checkout aw-deadline '  MAX_WAIT=$((1 << 62))' '  :'
-QW_REPO="$TMP_ROOT/aw-guard" table "$QW" \
-  "must-fail: with the guard reading every armed PR, that PR is disarmed|$AW_MERGES,threads:last=late,dequeue:1=am_ok|1 1 --arm-watch --json --no-check-probe||rc=1 verdict=dequeued mutations=disable"
-QW_REPO="$TMP_ROOT/aw-deadline" table "$QW" \
-  "must-fail: with the default budget kept, that wait ends at it still armed|$AW_LONG|1000 --arm-watch --json --no-check-probe||rc=1 verdict=queued status=timeout"
 
 echo "=== the progress signal on a budget-exhausted queued verdict ==="
 # When the entry exposes its head commit, movement in the entry tuple or the
