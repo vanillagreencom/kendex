@@ -284,10 +284,9 @@ start's `lane-mail inbox --item overseer` moves too, acknowledged only once
 its notes are printed, whatever state directory, --since or checkout this
 watch runs with. A session start's read between the peek and the
 acknowledgement reports a note twice. The lane-mail hooks move it too, for
-a lead session in the checkout while no repeat watch holds the fleet state
-and the state's .overseer record does not name that session's tmux pane:
-with single passes, the overseer outside tmux and any other lead session
-there. A line they take is not reported here.
+a lead session in the checkout while no repeat watch holds the fleet state:
+with single passes, every lead session there, the overseer included. A line
+they take is not reported here.
 Before every mail pass the overseer's own pane is read once; while it reads
 exited, or walled with a wall its own account confirms, no mailbox is read,
 so a successor finds what was sent in the meantime. A wall

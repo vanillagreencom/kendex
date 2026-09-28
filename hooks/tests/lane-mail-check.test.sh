@@ -2631,12 +2631,11 @@ expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
 # --- the checkout's overseer mailbox --------------------------------------
 # `lane-mail peer send --repo` writes the overseer mailbox of another
 # repository's main checkout, which only a fleet's watch read. A lead session
-# working in a checkout where no fleet watch runs — no lane record names it,
-# no live watch record holds the fleet state and the fleet state does not
-# record it as the overseer — reads that mailbox through the same hooks a lane
-# reads its own with, so a note from a peer repository reaches it at its next
-# turn end or tool call. A lane record, a live watch or the recorded overseer
-# keeps it off.
+# working in a checkout where no fleet watch runs — no lane record names it
+# and no live watch record holds the fleet state — reads that mailbox through
+# the same hooks a lane reads its own with, so a note from a peer repository
+# reaches it at its next turn end or tool call. A lane record or a live watch
+# wins.
 PEER_SENDER="$TMP_ROOT/peer-sender"
 mkdir -p "$PEER_SENDER"
 git -C "$PEER_SENDER" init -q
@@ -2744,25 +2743,20 @@ peer_send 'Left by an exited fleet.'
 stop $(overseer_env %3)
 expect 2 "lane-mail-check: unread=1" "an overseer record naming another pane, with no live watch, hands a plain session the note"
 
-# The overseer a single-pass watch serves writes no watch record, and inside
-# tmux its `.overseer` record names its own pane: its watch reads the mailbox,
-# so its own hooks leave every line there.
-single_pass_overseer() { # NAME [JUDGE]
+# A single-pass watch writes no watch record, and its overseer's `.overseer`
+# record, naming this session's own pane, outlives the fleet: the record keeps
+# nothing from the session in that pane, which is handed the note.
+recorded_overseer() { # NAME [JUDGE]
   new_overseer "$1"
   install_arms "${2:-$HOOK}"
   judge_says "$BELOW_MARK_LINE"
-  peer_send 'For the single-pass watch.'
+  peer_send 'For the recorded pane.'
 }
-single_pass_overseer peer_single_pass
+recorded_overseer peer_recorded_pane
 # shellcheck disable=SC2046
 stop $(overseer_env)
-expect 0 - "the recorded overseer of a single-pass watch is handed nothing at its turn end"
-# shellcheck disable=SC2046
-CALL_ENV=($(overseer_env))
-tool deliver
-CALL_ENV=()
-assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" "nor after its tool call"
-assert_eq "$(overseer_unread 'For the single-pass watch.')" "1" "and the note stays unread for the next pass"
+expect 2 "lane-mail-check: unread=1" "a session in the pane the overseer record names, with no live watch, is handed the note"
+assert_eq "$(grep -c 'For the recorded pane.' "$ERR_FILE")" "1" "the refusal carries the note"
 
 # A lane reads its own mailbox and never the overseer's beside it.
 new_lane peer_lane ken-71
@@ -2904,11 +2898,11 @@ peer_send 'Nobody watching.'
 stop
 expect 0 - "control: without the no-watch rule a checkout with no live watch leaves the note unread"
 
-mutant peer-ignores-overseer -e 's@^  watch_live || overseer_identified$@  watch_live@'
-single_pass_overseer control_peer_single_pass "$MUTANT_PATH"
+mutant peer-withholds-on-record -e 's@^    ! watch_live || return 0$@    ! { watch_live || overseer_identified; } || return 0@'
+recorded_overseer control_peer_recorded_pane "$MUTANT_PATH"
 # shellcheck disable=SC2046
 stop $(overseer_env)
-expect 2 "lane-mail-check: unread=1" "control: without the recorded-overseer rule a single-pass overseer takes its watch's mail"
+expect 0 - "control: withholding on the overseer record leaves the note unread in a pane no watch serves"
 
 mutant lane-reads-overseer -e 's@^    MAILBOX_ITEM="\$ITEM"$@    MAILBOX_ITEM=overseer@'
 new_lane control_peer_lane ken-72
