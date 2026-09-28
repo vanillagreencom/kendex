@@ -1184,6 +1184,39 @@ expect 0 "$GAP" "a tool_result record after the ask opens no turn"
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
   "with no prompt in the window, an ask stamped before its first record does not count"
+{ jq -nc --argjson t "$(after_sent KEN-64 -1)" "$STAMP"'
+    {type:"assistant",timestamp:($t | stamp),message:{role:"assistant",content:[{type:"tool_use",name:"Bash",input:{}}]}}'
+  text_line claude 'Which base?'; } > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+expect 0 "$GAP" "with no prompt in the window, an ask stamped after its first record counts"
+
+# A typed input opens a turn even where the run before it never finished: a
+# relaunch prompt after a run that died inside a tool call, and a prompt
+# after an interrupt, leave the dead run's notice or ask in the turn before.
+tool_call_line() { # SPELLING
+  case "$1" in
+    claude) jq -nc "$STAMP"'{type:"assistant",timestamp:(0 | stamp),message:{role:"assistant",stop_reason:"tool_use",
+      content:[{type:"tool_use",id:"t1",name:"Bash",input:{}}]}}' ;;
+    pi) jq -nc "$STAMP"'{type:"message",id:"e2",parentId:"e1",timestamp:(0 | stamp),
+      message:{role:"assistant",stopReason:"toolUse",content:[{type:"toolCall",id:"t1",name:"bash",arguments:{}}]}}' ;;
+    *) printf 'tool_call_line: no such spelling: %s\n' "$1" >&2; return 1 ;;
+  esac
+}
+printf 'Blocked on review.\n' > "$TMP_ROOT/notice.txt"
+new_handoff_lane question_relaunch KEN-47
+(cd "$LANE" && "$LANE_MAIL" notice --item KEN-47 --file "$TMP_ROOT/notice.txt")
+{ prompt_line claude "$OPENED"; tool_call_line claude; tool_call_line claude
+  prompt_line claude "$(after_sent KEN-47 1)"; text_line claude 'Which base?'; } > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
+  "a relaunch prompt after a run that died in a tool call opens the turn"
+{ prompt_line claude "$OPENED"; tool_call_line claude
+  jq -nc --argjson t "$(after_sent KEN-47 1)" "$STAMP"'{type:"user",timestamp:($t | stamp),
+    message:{role:"user",content:[{type:"text",text:"[Request interrupted by user for tool use]"}]}}'
+  prompt_line claude "$(after_sent KEN-47 2)"; text_line claude 'Which base?'; } > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
+  "a prompt after an interrupt opens the turn"
 
 # Only an ask or a notice is sent: a directive the overseer wrote this turn,
 # read and acknowledged, is no ask of the lane's.
@@ -1275,6 +1308,10 @@ expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
   text_line pi 'Which base?'; } > "$TRANSCRIPT"
 stop_pi_at "$TRANSCRIPT" false
 expect 0 "$GAP" "pi: a toolResult record after the ask opens no turn"
+{ prompt_line pi "$OPENED"; tool_call_line pi; prompt_line pi "$(after_sent KEN-51 1)"; text_line pi 'Which base?'; } > "$TRANSCRIPT"
+stop_pi_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
+  "pi: a relaunch prompt after a run that died in a tool call opens the turn"
 new_pi_lane question_pi_none KEN-61
 { prompt_line pi "$OPENED"; text_line pi 'Pushed the fix; CI is running.'; } > "$TRANSCRIPT"
 stop_pi_at "$TRANSCRIPT" false
@@ -2948,7 +2985,7 @@ expect 0 "$GAP" "control: without the phrasing rows a lane handing its next step
 
 # Pi's wakes dropped from the turn openers: an ask sent before a wake then
 # carries the question of the turn it opened.
-mutant question-no-wake -e 's@^      or (\.type == "custom_message" and \.customType != "kendex-hook");$@      or false;@'
+mutant question-no-wake -e 's@def woken: \.type == "custom_message" and@def woken: false and@'
 new_pi_lane control_question_wake KEN-53
 install_hook "$MUTANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-53 --file "$TMP_ROOT/ask.txt" >/dev/null)
@@ -2970,7 +3007,7 @@ expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
 
 # The carrier's continuation counted as a wake: a continued Pi turn then
 # loses the ask it sent, and the overseer is told it sent nothing.
-mutant question-carrier-opens -e 's@ and \.customType != "kendex-hook")@)@'
+mutant question-carrier-opens -e 's@ and \.customType != "kendex-hook";@;@'
 new_pi_lane control_question_carrier KEN-49
 install_hook "$MUTANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-49 --file "$TMP_ROOT/ask.txt" >/dev/null)
@@ -2993,6 +3030,30 @@ install_hook "$MUTANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 stop_pi_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
   "control: without the run rule a steer inside the run refuses a turn that sent its ask"
+
+# A typed input held to a finished run like a wake: a relaunch prompt after
+# a run that died in a tool call then opens nothing, and the dead run's
+# notice passes the resumed lane's question.
+mutant question-typed-waits -e 's@elif (\$r | typed) or (\.ended and (\$r | woken))@elif .ended and (($r | typed) or ($r | woken))@'
+new_handoff_lane control_question_relaunch KEN-46
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+(cd "$LANE" && "$LANE_MAIL" notice --item KEN-46 --file "$TMP_ROOT/notice.txt")
+{ prompt_line claude "$OPENED"; tool_call_line claude; prompt_line claude "$(after_sent KEN-46 1)"; text_line claude 'Which base?'; } > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+expect 0 "$GAP" "control: with a typed input waiting on a finished run, a dead run's notice passes the relaunched question"
+
+# The window's first stamp dropped as the fallback: a lane whose turn began
+# before the window and sent its ask is then refused.
+mutant question-no-first -e 's@| \.opened // \.first // empty@| .opened // empty@'
+new_handoff_lane control_question_first KEN-45
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+(cd "$LANE" && "$LANE_MAIL" ask --item KEN-45 --file "$TMP_ROOT/ask.txt" >/dev/null)
+{ jq -nc --argjson t "$(after_sent KEN-45 -1)" "$STAMP"'
+    {type:"assistant",timestamp:($t | stamp),message:{role:"assistant",content:[{type:"tool_use",name:"Bash",input:{}}]}}'
+  text_line claude 'Which base?'; } > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
+  "control: without the window's first stamp a lane that asked before the window is refused"
 
 # The continued-turn arm dropped: the refusal repeats, which is the loop.
 mutant question-refused-twice -e 's@^  if \[ "\$CONTINUED" = true \]; then$@  if false; then@'
