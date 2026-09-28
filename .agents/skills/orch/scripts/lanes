@@ -351,7 +351,8 @@
 #                      grant is walled, whatever overage the account permits.
 #                      No provider or endpoint is asked: the reading is what
 #                      the setting says, and an account it names none for is
-#                      unmeasured. A malformed entry refuses that pick.
+#                      unmeasured. A malformed entry, or a second one for an
+#                      account already stated, refuses that pick.
 #   ORCH_LANES_CLAUDE_CLIENT_ID  The OAuth client id the renewal posts with.
 #                      Required for it: with this unset every Claude account
 #                      whose access token has expired reads `error` with the
@@ -584,7 +585,7 @@ message() {
       ;;
     invalid-copilot-pool)
       printf 'lanes: invalid-copilot-pool entry=%s\n' "$1"
-      printf '%s\n' "ORCH_LANE_COPILOT_POOL entries must be <absolute account dir>=<credits used>/<credits granted>, the grant above 0; a pool reading nobody can parse is not judged as room"
+      printf '%s\n' "ORCH_LANE_COPILOT_POOL entries must be <absolute account dir>=<credits used>/<credits granted>, the grant above 0 and one entry per account; a pool reading nobody can parse, or two for one account, is not judged as room"
       ;;
     invalid-retire)
       printf 'lanes: invalid-retire entry=%s\n' "$1"
@@ -1103,7 +1104,8 @@ emit_refusal() { # ALIAS HARNESS DIR PLAN RECORD
 # `pick`, because a fleet launch must still see the lanes that DO work.
 # ORCH_LANE_COPILOT_POOL, one `DIR<tab>PCT<tab>USED<tab>LIMIT` line per
 # entry: the account DIR a Pi launch on a `github-copilot/` model opens on, and
-# the credits of its Copilot pool the owner states used and granted. PCT is the
+# the credits of its Copilot pool the owner states used and granted, one entry
+# per account. PCT is the
 # share used, rounded UP, so a pool with one credit short of its grant left is
 # never read as having more, and a pool at or past its grant is 100: spent,
 # whatever overage the account permits, since no paid overage is authorised.
@@ -1113,7 +1115,7 @@ emit_refusal() { # ALIAS HARNESS DIR PLAN RECORD
 # refusing on that status; lane_dirs, which only lists the accounts, leaves the
 # refusal to them.
 copilot_pool_entries() {
-	local item dir value used limit
+	local item dir value used limit canon seen=$'\n'
 	while IFS= read -r item; do
 		dir="$(trim "${item%=*}")"
 		value="$(trim "${item##*=}")"
@@ -1124,6 +1126,12 @@ copilot_pool_entries() {
 		used=$((10#${BASH_REMATCH[1]}))
 		limit=$((10#${BASH_REMATCH[2]}))
 		(( limit > 0 )) || { message invalid-copilot-pool "$item" >&2; return 1; }
+		# One reading per account, compared through the one lane-path
+		# normaliser: a second one, agreeing or not, is refused rather than
+		# losing to the first, which could be the reading with room.
+		canon="$(lane_claims_canon "$dir")"
+		case "$seen" in *$'\n'"$canon"$'\n'*) message invalid-copilot-pool "$item" >&2; return 1 ;; esac
+		seen+="$canon"$'\n'
 		if (( used >= limit )); then
 			printf '%s\t100\t%s\t%s\n' "$dir" "$used" "$limit"
 		else

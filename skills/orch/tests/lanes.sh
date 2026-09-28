@@ -332,6 +332,9 @@ table \
   "a grant of 0 is refused|$POOL=0/0|pick --harness pi $COPILOT|rc=1 key=invalid-copilot-pool,entry=$H/.pi1=0/0" \
   "a percentage in place of the credits is refused|$POOL=10%|pick --harness pi $COPILOT|rc=1 key=invalid-copilot-pool,entry=$H/.pi1=10%" \
   "a fractional credit count is refused, never read as its tail|$POOL=12.5/300|pick --harness pi $COPILOT|rc=1 key=invalid-copilot-pool,entry=$H/.pi1=12.5/300" \
+  "a second reading for one account is refused, never losing to the first|$POOL=1/10,$H/.pi1=10/10|pick --harness pi $COPILOT|rc=1 key=invalid-copilot-pool,entry=$H/.pi1=10/10" \
+  "a second reading spelling the account another way is the same account|$POOL=1/10,$H/.pi1/=10/10|pick --harness pi $COPILOT|rc=1 key=invalid-copilot-pool,entry=$H/.pi1/=10/10" \
+  "the named form refuses a second reading too|$POOL=1/10,$H/.pi1=10/10|pick --lane $H/.pi1 --harness pi $COPILOT|rc=1 key=invalid-copilot-pool,entry=$H/.pi1=10/10" \
   "the named form refuses an entry nothing can read|$POOL=12.5/300|pick --lane $H/.pi1 --harness pi $COPILOT|rc=1 key=invalid-copilot-pool,entry=$H/.pi1=12.5/300"
 # Controls, one per rule, each turning the row it names: the share rounded
 # down reads one credit short as room; the clamp gone reads a pool past its
@@ -340,7 +343,8 @@ table \
 # pool measuring nothing; the absolute-path test gone picks a relative dir; the
 # grant test gone reads 0/0 as a spent pool; the chooser's and the named form's
 # refusal on an unreadable entry gone read it as no entry; the credits anchors
-# gone read 12.5/300 as 5/300; and a Pi pick admitted on any model picks one
+# gone read 12.5/300 as 5/300; the duplicate check gone lets the first of two
+# readings for one account win; and a Pi pick admitted on any model picks one
 # outside the pool.
 pool_control() { # NAME FILE PATTERN REPLACEMENT|- ROW
   if [[ "$4" == - ]]; then lanes_mutant "$1" "$2" "$3"; else lanes_mutant "$1" "$2" "$3" "$4"; fi
@@ -366,6 +370,8 @@ pool_control mutant-pool-lane-status lanes '[[:space:]]entries="\$(copilot_pool_
   "control: the named form ignoring the refusal reads an unreadable entry as no reading|$POOL=12.5/300|pick --lane $H/.pi1 --harness pi $COPILOT|rc=5"
 pool_control mutant-pool-anchors lanes '=~ \^(\[0-9]{1,12})' '=~ ([0-9]{1,12})' \
   "control: with the credits anchors gone 12.5/300 is read as its tail|$POOL=12.5/300|pick --harness pi $COPILOT|rc=0"
+pool_control mutant-pool-duplicate lanes 'case "\$seen" in' - \
+  "control: with no duplicate check the first of two readings for one account wins|$POOL=1/10,$H/.pi1=10/10|pick --harness pi $COPILOT --json|rc=0 monthly_pct=10 qualifying_count=2"
 pool_control mutant-pool-any-model lib/lane-launch.sh '\[\[ "\$2" != github-copilot.* || printf' 'printf' \
   "control: a Pi pick admitted on any model is judged on the pool it does not spend|$POOL=1/10|pick --harness pi --model sonnet|rc=0"
 
