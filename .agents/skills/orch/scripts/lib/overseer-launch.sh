@@ -614,10 +614,10 @@ ol_session_from_out() {
   done
 }
 
-# ol_session_inspect SESSION [--launch] — the runtime's `inspect`, the read of
-# the recorded overseer session's state; a session's own `<server pid> <pane
-# id>` key, and every read of a fact the record does not hold, are still tmux
-# reads. The keyed line's state, server, window, cause and probe go into
+# ol_session_inspect SESSION [--launch] — the runtime's `inspect`, which the
+# launch's live-overseer check, the succession's read of its caller and its
+# wait for the caller to close, and the watch's per-pass overseer read take.
+# The keyed line's state, server, window, cause and probe go into
 # OL_INSPECT_STATE, OL_INSPECT_SERVER, OL_INSPECT_WINDOW, OL_INSPECT_CAUSE and
 # OL_INSPECT_PROBE, each empty where the line names none, and window and
 # server the word `none` for a session the runtime no longer lists; the line
