@@ -812,6 +812,15 @@ jobs:
           fi
           exit "$fail"
 
+      # A review-gate template reaches every consumer when it merges, and its
+      # install step runs the installer at KENDEX_INSTALLER_SHA before a
+      # credentialed step, so a pull request may not move that commit off the
+      # one its release tag names. This checkout holds no tags; the tool reads
+      # them from origin.
+      - name: review-gate installer pin names its tag's commit
+        if: matrix.shard == 'guards-tools'
+        run: tools/installer-pin --check
+
       - name: tools, hook and moved commit-guards suites
         if: matrix.shard == 'guards-tools'
         run: |

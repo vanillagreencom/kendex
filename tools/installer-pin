@@ -6,9 +6,10 @@
 #        tools/installer-pin --check
 #
 # <tag>: write `KENDEX_VERSION: <tag>` and `KENDEX_INSTALLER_SHA: <commit>`,
-#   the commit the local tag names, into every pin site, then check them.
+#   the commit the tag names, into every pin site, then check them.
 # --check: every pin site names one version, and its KENDEX_INSTALLER_SHA is
-#   the commit the local tag of that version names.
+#   the commit the tag of that version names. CI runs it on every change to
+#   a site, since a site reaches consumers when it merges.
 # -h, --help: print this help.
 #
 # Both templates fetch install.sh at KENDEX_INSTALLER_SHA and run it before a
@@ -18,13 +19,17 @@
 #
 # The pin sites are the two templates, their renders under .agents/skills/,
 # and this repository's adopted writer workflow. Each holds exactly one line
-# of each variable. Tags resolve in this checkout only; nothing is fetched.
+# of each variable. A tag resolves in this checkout first, else on origin
+# through `git ls-remote`, which is how a shallow CI checkout with no tags
+# reads it; nothing is fetched.
 #
-# Every line this script writes opens `installer-pin: <key>=<value>`:
+# A run writes one keyed line, `installer-pin: <key>=<value>`, and a refusal
+# follows it with English explanation lines; only the keyed line is stable.
 #   option=<arg>      unknown or missing argument (exit 2)
-#   tag=<tag>         no local tag of that name resolves to a commit (exit 1)
-#   site=<path>       a pin site is missing, a symlink, or does not hold
-#                     exactly one line of each variable (exit 1)
+#   tag=<tag>         no tag of that name, in this checkout or on origin (exit 1)
+#   remote=origin     the tags on origin could not be listed (exit 1)
+#   site=<path>       a pin site is missing, a symlink, could not be read, or
+#                     does not hold exactly one line of each variable (exit 1)
 #   mismatch=<path>   the site names another version than the first site, or
 #                     a SHA that is not its version's commit (exit 1)
 #   pinned=<tag>      every site names <tag> and its commit
@@ -45,9 +50,22 @@ say() { # KEY VALUE [LINE...] — the keyed line, then each explanation line
   for line in "$@"; do printf '%s\n' "$line"; done
 }
 
-commit_of() { # TAG — the commit the local tag names
-  git -C "$root" rev-parse --verify --quiet "refs/tags/$1^{commit}" ||
-    { say tag "$1" "no local tag of that name resolves to a commit; fetch the tags first" >&2; exit 1; }
+commit_of() { # TAG — the commit the tag names, in this checkout or on origin
+  local listing sha
+  if sha="$(git -C "$root" rev-parse --verify --quiet "refs/tags/$1^{commit}")"; then
+    printf '%s\n' "$sha"
+    return 0
+  fi
+  listing="$(git -C "$root" ls-remote --tags origin "refs/tags/$1" "refs/tags/$1^{}")" ||
+    { say remote origin "the tags on origin could not be listed, so tag $1 could not be resolved" >&2; exit 1; }
+  # An annotated tag lists its own object and, peeled, the commit it names.
+  sha="$(TAG_REF="refs/tags/$1" awk '
+    $2 == ENVIRON["TAG_REF"] "^{}" { peeled = $1 }
+    $2 == ENVIRON["TAG_REF"] { plain = $1 }
+    END { print (peeled != "" ? peeled : plain) }
+  ' <<<"$listing")"
+  [ -n "$sha" ] || { say tag "$1" "no tag of that name, in this checkout or on origin" >&2; exit 1; }
+  printf '%s\n' "$sha"
 }
 
 value() { # SITE VARIABLE — the variable's value on its one line in SITE
@@ -97,7 +115,7 @@ pin() { # TAG
 }
 
 case "${1:-}" in
-  -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}" ;;
+  -h|--help) sed -n '2,35p' "${BASH_SOURCE[0]}" ;;
   --check) [ "$#" -eq 1 ] || { say option "$2" "$usage" >&2; exit 2; }; check ;;
   ''|-*) say option "${1:-}" "$usage" >&2; exit 2 ;;
   *) [ "$#" -eq 1 ] || { say option "$2" "$usage" >&2; exit 2; }; pin "$1" ;;

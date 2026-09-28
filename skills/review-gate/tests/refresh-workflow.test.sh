@@ -57,10 +57,10 @@ def check(w):
  assert users[0]['env']['KENDEX_ISSUES_TOKEN']=='${{ steps.issues-token.outputs.token }}'
  assert '$RUNNER_TEMP/refresh-skills/.agents/skills/review-gate/scripts/refresh-reviews.sh' in users[0]['run']
  assert steps.index(upstream)>next(i for i,s in enumerate(steps) if 'refresh-consumer.sh' in s.get('run',''))
- # The consumer runs the kendex build whose manifest reader accepts the
- # current catalog; an older pin fails every refresh on that reader.
+ # The consumer runs a kendex release, never a main build; the release route
+ # picks which one and holds the installer commit to its tag.
  install=next(s for s in steps if s.get('name')=='Install pinned kendex')
- assert install['env']['KENDEX_VERSION']=='v1.1.0'
+ assert re.fullmatch(r'v\d+\.\d+\.\d+',install['env']['KENDEX_VERSION'])
  assert install['env']['KENDEX_INSTALLER_REPO']=='vanillagreencom/kendex'
  assert install['env']['GH_TOKEN']=='""'
  assert 'raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KENDEX_INSTALLER_SHA/install.sh" | sh -s -- --version "$KENDEX_VERSION"' in install['run']

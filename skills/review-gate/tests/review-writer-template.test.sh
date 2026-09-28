@@ -108,7 +108,7 @@ for i in "${!WORKFLOWS[@]}"; do
   ' "${WORKFLOWS[$i]}")"
   install_shape="$(printf '%s\n' "$install_block" | sed -n \
     -e '/GH_TOKEN: ""/p' \
-    -e '/KENDEX_VERSION: v1.1.0/p' \
+    -e 's/^\([[:space:]]*KENDEX_VERSION: \)v[0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}$/\1<tag>/p' \
     -e 's/^\([[:space:]]*KENDEX_INSTALLER_SHA: \)[0-9a-f]\{40\}$/\1<sha>/p' \
     -e '/KENDEX_INSTALLER_REPO: vanillagreencom\/kendex/p' \
     -e '/review-policy --check-config/p' \
@@ -118,20 +118,8 @@ for i in "${!WORKFLOWS[@]}"; do
   policy_path='.agents/skills/review-gate/scripts/review-policy'
   [ "${WORKFLOW_LABELS[$i]}" != "self-adoption copy" ] || policy_path='skills/review-gate/scripts/review-policy'
   assert_eq "$install_shape" \
-    "GH_TOKEN: \"\"|KENDEX_VERSION: v1.1.0|KENDEX_INSTALLER_SHA: <sha>|KENDEX_INSTALLER_REPO: vanillagreencom/kendex|policy=\"\$($policy_path --check-config)\"|if [ \"\$policy\" = \"review-policy=active\" ]; then|curl -fsSL \"https://raw.githubusercontent.com/\$KENDEX_INSTALLER_REPO/\$KENDEX_INSTALLER_SHA/install.sh\" | sh -s -- --version \"\$KENDEX_VERSION\"" \
+    "GH_TOKEN: \"\"|KENDEX_VERSION: <tag>|KENDEX_INSTALLER_SHA: <sha>|KENDEX_INSTALLER_REPO: vanillagreencom/kendex|policy=\"\$($policy_path --check-config)\"|if [ \"\$policy\" = \"review-policy=active\" ]; then|curl -fsSL \"https://raw.githubusercontent.com/\$KENDEX_INSTALLER_REPO/\$KENDEX_INSTALLER_SHA/install.sh\" | sh -s -- --version \"\$KENDEX_VERSION\"" \
     "[${WORKFLOW_LABELS[$i]}] active class policy installs the pinned installer and the pinned kendex without the writer token"
-  # The fetch URL with the step's own env values put in: a tag can be moved,
-  # so the installer path names a 40-hex commit and no ${KENDEX_VERSION.
-  install_url="$(sed -n 's/.*curl -fsSL "\([^"]*\)".*/\1/p' <<<"$install_block")"
-  install_sha="$(sed -n 's/^[[:space:]]*KENDEX_INSTALLER_SHA: //p' <<<"$install_block")"
-  install_repo="$(sed -n 's/^[[:space:]]*KENDEX_INSTALLER_REPO: //p' <<<"$install_block")"
-  install_url="${install_url//\$KENDEX_INSTALLER_REPO/$install_repo}"
-  install_url="${install_url//\$KENDEX_INSTALLER_SHA/$install_sha}"
-  if [[ "$install_url" =~ ^https://raw\.githubusercontent\.com/vanillagreencom/kendex/[0-9a-f]{40}/install\.sh$ ]]; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "[${WORKFLOW_LABELS[$i]}] the installer is fetched at a 40-hex commit, never at the tag"
-  else
-    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        got: %s\n' "[${WORKFLOW_LABELS[$i]}] the installer must be fetched at a 40-hex commit, never at the tag" "$install_url"
-  fi
   if grep -Fq 'kendex.ai/install.sh' <<<"$install_block"; then
     FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "[${WORKFLOW_LABELS[$i]}] install step must not fetch the mutable installer, which runs before the credentialed step"
   else
