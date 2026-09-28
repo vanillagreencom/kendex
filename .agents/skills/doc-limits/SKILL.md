@@ -33,6 +33,6 @@ Run the document byte-ceiling check before review and in CI. The commit-guards p
 .agents/skills/doc-limits/scripts/doc-limits --against "$(git merge-base HEAD origin/main)"
 ```
 
-`--against` takes the tree the change is measured from: the pull request merge commit's first parent, `HEAD^1`, in CI, and `$(git merge-base HEAD <base>)` in a local run or a head-only checkout. Never pass a base branch tip that moved after the branch point: its later edits count as the change's growth. A merge group run passes no `--against`. The growth margin rule is [references/policy.md § Growth margin](references/policy.md#growth-margin).
+`--against` takes the tree the change is measured from; which tree a pull request run, a local run and a merge group pass is [references/policy.md § Growth margin](references/policy.md#growth-margin).
 
 Split an over-limit document at a natural seam, move detail to a linked reference, or delete content the code or another document already states. A document that must stay whole gets a row in the configured excludes file with its reason. The docs-writing rule for the document's class, under [§ Per file type](../docs-writing/SKILL.md#per-file-type), decides which of these the document admits; each finding names that rule. Class selection and the exclusion format are [references/policy.md](references/policy.md). Flags, settings and exit codes are in `doc-limits --help`.

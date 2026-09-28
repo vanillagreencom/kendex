@@ -414,7 +414,12 @@ expect 2 'temporary-directory-parent-missing'
 expect_first_line "error=temp-create-failed path=$(printf '%q' "$TMPDIR")" 'temporary-directory diagnostic'
 unset TMPDIR
 
-# Git is the real producer of policy lookup, document enumeration, and blob sizes.
+# The --against rows read REF's sizes from a commit of the index as it stands.
+git -C "$R" -c core.hooksPath=/dev/null commit -q --allow-empty -m fixture
+
+# Git is the real producer of policy lookup, document enumeration, and blob
+# sizes. The index batch is `cat-file --batch-check`; the REF batch passes a
+# format, `cat-file --batch-check=FORMAT`, and takes its own faults.
 REAL_GIT="$(command -v git)"
 export REAL_GIT
 mkdir -p "$TMP/bin"
@@ -437,6 +442,12 @@ case "${GIT_FAULT:-none}" in
   batch-empty-success)
     if [ "${1:-}" = cat-file ] && [ "${2:-}" = --batch-check ]; then cat >/dev/null; exit 0; fi
     ;;
+  against-batch-failure)
+    case "${1:-}:${2:-}" in cat-file:--batch-check=*) "$REAL_GIT" "$@"; exit 9 ;; esac
+    ;;
+  against-batch-empty-success)
+    case "${1:-}:${2:-}" in cat-file:--batch-check=*) cat >/dev/null; exit 0 ;; esac
+    ;;
 esac
 exec "$REAL_GIT" "$@"
 GIT
@@ -444,19 +455,26 @@ chmod +x "$TMP/bin/git"
 export PATH="$TMP/bin:$PATH"
 
 COLLECTION_ASSERTIONS=0
-while IFS='|' read -r name fault expected first_line; do
+while IFS='|' read -r name fault mode expected first_line; do
   export GIT_FAULT="$fault"
-  run --staged
+  case "$mode" in
+    staged) run --staged ;;
+    against) run --staged --against HEAD ;;
+    *) printf 'harness: unknown mode %s\n' "$mode" >&2; exit 2 ;;
+  esac
   expect "$expected" "$name"
   expect_first_line "$first_line" "$name diagnostic"
   COLLECTION_ASSERTIONS=$((COLLECTION_ASSERTIONS + 1))
 done <<'COLLECTION_CASES'
-git-policy-lookup-failure|policy-lookup|2|doc-limits-error=settings-index-query value=9
-git-enumeration-failure|enumeration|2|error=documents-enumeration-failed exit=9
-git-batch-empty-failure|batch-empty-failure|2|error=blob-sizes-read-failed exit=9
-git-batch-failure|batch-complete-failure|2|error=blob-sizes-read-failed exit=9
-empty-successful-batch-response|batch-empty-success|2|error=blob-size-response-incomplete path=AGENTS.md
-collection-restored|none|1|notice=document-over-limit path=AGENTS.md
+git-policy-lookup-failure|policy-lookup|staged|2|doc-limits-error=settings-index-query value=9
+git-enumeration-failure|enumeration|staged|2|error=documents-enumeration-failed exit=9
+git-batch-empty-failure|batch-empty-failure|staged|2|error=blob-sizes-read-failed exit=9
+git-batch-failure|batch-complete-failure|staged|2|error=blob-sizes-read-failed exit=9
+empty-successful-batch-response|batch-empty-success|staged|2|error=blob-size-response-incomplete path=AGENTS.md
+git-against-batch-failure|against-batch-failure|against|2|error=against-sizes-read-failed exit=9
+empty-successful-against-batch-response|against-batch-empty-success|against|2|error=against-size-response-incomplete path=AGENTS.md
+collection-restored|none|staged|1|notice=document-over-limit path=AGENTS.md
+against-collection-restored|none|against|1|notice=document-over-limit path=AGENTS.md
 COLLECTION_CASES
 if [ "$COLLECTION_ASSERTIONS" -eq 0 ]; then
   printf 'FAIL: COLLECTION_CASES executed no assertions\n' >&2
@@ -501,6 +519,19 @@ SR="$MUTANT"
 export GIT_FAULT=batch-complete-failure
 run --staged
 must_fail 2 1 'collection table control: bypassing batch status fails git-batch-failure'
+
+private_command against-batch-guard
+[ ! -L "$MUTANT" ]
+[ "$(grep -Fxc '    || collection_error against-sizes-read-failed exit "$?" "could not read document sizes in $AGAINST_REF"' "$MUTANT")" -eq 1 ]
+sed 's/^    || collection_error against-sizes-read-failed exit "\$?" "could not read document sizes in \$AGAINST_REF"$/    || :/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+export GIT_FAULT=against-batch-failure
+run --staged --against HEAD
+must_fail 2 1 'collection table control: bypassing REF batch status fails git-against-batch-failure'
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
