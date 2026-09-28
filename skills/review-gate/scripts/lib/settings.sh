@@ -387,8 +387,8 @@ rg_pr_deadline_seconds() {
 }
 
 # Whether this repository runs the gate's writer workflow, judged here because
-# three readers must agree: validate-workflow.sh on a repository with no
-# writer, validate.sh's settings group, and pr-watch.sh on a missing gate row.
+# two readers must agree: validate-workflow.sh on a repository with no writer,
+# and validate.sh's settings group.
 # Prints one word, or the keyed refusal and status 2:
 #   required  REVIEW_GATE_WRITER=required, the default
 #   enforced  optional, but REVIEW_GATE_MODE=enforce still needs a gate status

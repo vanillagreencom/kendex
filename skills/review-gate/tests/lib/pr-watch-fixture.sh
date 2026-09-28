@@ -257,7 +257,7 @@ run_watch() {
   : > "$RUN/predicate-calls"
   set +e
   OUT=$(cd "$TMP_ROOT/cwd" && PATH="$TMP_ROOT/bin:$PATH" \
-    env -u REVIEW_GATE_WRITER GH_REPO=acme/widgets STUB_DISPATCH_LOG="$RUN/dispatch.log" \
+    env GH_REPO=acme/widgets STUB_DISPATCH_LOG="$RUN/dispatch.log" \
         STUB_PR_CALLS_DIR="$RUN/prcalls" STUB_PREDICATE_CALLS="$RUN/predicate-calls" \
         ${env_args[@]+"${env_args[@]}"} "$WATCH_BIN" "$@" 2>&1)
   RC=$?

@@ -95,9 +95,7 @@ Attention kinds:
                      disagree, in either mismatch direction — the writer
                      has not converged (event missed, cron slipped). With
                      --heal, one writer dispatch per invocation self-heals
-                     it. A repository with REVIEW_GATE_WRITER=optional and
-                     REVIEW_GATE_MODE=off runs no writer, so an approved
-                     verdict with no gate row is healthy there
+                     it
   disarmed           gate open (success) on an un-queued PR with auto-merge
                      NOT armed — mergeable, but nothing will merge it (the
                      known eviction-disarm failure mode). The line also
@@ -231,10 +229,6 @@ case "$GATE_MODE" in
     exit 2
     ;;
 esac
-# A repository that runs no writer (REVIEW_GATE_WRITER=optional with the
-# mode off) never gets a gate row, so a missing row is its healthy state and
-# no dispatch can converge it. lib/settings.sh judges that for every reader.
-WRITER_STATE="$(rg_writer_state)" || exit 2
 case "$THREADS_TERM" in
   enforce|off) ;;
   *)
@@ -805,7 +799,7 @@ for number in $pr_numbers; do
 
   case "$verdict" in
     approved)
-      if [ "$gate_state" != "success" ] && ! { [ "$gate_state" = absent ] && [ "$WRITER_STATE" = none ]; }; then
+      if [ "$gate_state" != "success" ]; then
         attention=1
         stale_gate "$number" "$head" "predicate says approved but the newest '$GATE_CONTEXT' row is $gate_state — the writer has not converged"
       fi

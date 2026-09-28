@@ -58,10 +58,12 @@ Four groups run, in this order:
               every REVIEW_GATE_* assignment is one the engine reads, spelt
               the ONE way it reads them (a bare key, then its own `=`), and
               legal. Unknown keys, per-invocation seams and repository
-              variables are each named as what they are; the value rules come
-              from `review-predicate.sh --check-config`, never a copy of them.
-              REVIEW_GATE_WRITER is judged whether or not a writer
-              exists (`settings-writer`), and neither it nor
+              variables are each named as what they are. The value rules
+              come from two engine judges, never a copy of them:
+              `review-predicate.sh --check-config` for every key the
+              predicate reads (`settings-values`), and lib/settings.sh
+              rg_writer_state for REVIEW_GATE_WRITER, judged whether or not
+              a writer exists (`settings-writer`). Neither it nor
               REVIEW_GATE_MODE may sit in .kendex/settings.toml.
               The class policy is the default, or
               REVIEW_GATE_CLASS_POLICY_DECISION names the tracked decision

@@ -44,7 +44,7 @@ Recommended split: cheap fast checks (lint, typecheck, unit) run on every push u
 
 Each check emits an `ok` or `FAIL` record with `check=CODE value=VALUE`. Indented lines give the explanation and repair. Exit 0 means clean, 1 means findings, and 2 means the check could not run. It answers repo-own questions only — the engine is installed and runnable here, the committed `REVIEW_GATE_*` values are legal, the carry-forward exclusions still match tracked paths, and the adopted workflow still meets this template's contract. It re-runs no engine test suite: the selftest and the wrapper suites are the ENGINE's proofs and run in the kendex repo on every change to it.
 
-Value rules come from the engine, not from a copy of it: the settings half calls `review-predicate.sh --check-config`, which resolves and validates every key and exits without reading any evidence or needing a PR.
+Value rules come from the engine, not from a copy of it: the settings half calls the engine's own value judges, which `validate.sh --help` names, and none of them reads evidence or needs a PR.
 
 ## Repo-side wiring
 

@@ -43,7 +43,7 @@ The predicate's verdict and detail lines and the watcher's tab-separated attenti
 ## Where each proof runs
 
 - Engine proofs run here. The selftest and the suites under `tests/` prove that this package behaves. A consumer re-running them would be re-testing vendored content that already passed on the commit that shipped it.
-- Repo-own checks run in the consumer. `validate.sh` asks only questions whose answer depends on the calling repository: its files, its committed settings, its tracked paths, its adopted workflow. It re-runs no engine behaviour and judges no value or pattern itself; its settings half calls `review-predicate.sh --check-config` and relays the answer.
+- Repo-own checks run in the consumer. `validate.sh` asks only questions whose answer depends on the calling repository: its files, its committed settings, its tracked paths, its adopted workflow. It re-runs no engine behaviour and judges no value or pattern itself; its settings half calls the engine's value judges, which `validate.sh --help` names, and relays their answers.
 
 One judge per rule, and the judge is whoever owns the mechanism. The exclusion matcher lives in `review-predicate.sh`, so exclusion-pattern spelling is refused there and nowhere else; a second grammar in the validator could only drift from the matcher. The grammar the engine judges by is closed, path characters plus `*`: `case` offers three more metacharacters, and each respells something the structural rules reject, so refusing the spelling outright leaves nothing to analyse. The check runs in the configuration phase, ahead of every evaluation.
 

@@ -85,9 +85,6 @@ table \
   "cheap mode fires the threads-driven gate-stale and heals|--no-evaluate --heal|STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=1;STUB_VERDICT_LINE=unused;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=threads-open,gate-stale,heal-dispatched dispatches=1" \
   "REVIEW_GATE_THREADS=off: threads report, a green gate over them is designed|--heal|REVIEW_GATE_THREADS=off;STUB_QUEUED=no;STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=2;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=threads-open dispatches=0" \
   "REVIEW_GATE_MODE=off: the same|--heal|REVIEW_GATE_MODE=off;STUB_QUEUED=no;STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=2;STUB_VERDICT_LINE=$V_OFF;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=threads-open dispatches=0" \
-  "no writer with the gate off: an approved head with no gate row is silence|--heal|REVIEW_GATE_WRITER=optional;REVIEW_GATE_MODE=off;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_OFF|rc=0 kinds=none dispatches=0" \
-  "a required writer with the gate off: the same missing row is gate-stale and heals|--heal|REVIEW_GATE_MODE=off;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_OFF|rc=1 kinds=gate-stale,heal-dispatched dispatches=1" \
-  "no writer with the gate off: a pending row still heals|--heal|REVIEW_GATE_WRITER=optional;REVIEW_GATE_MODE=off;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_OFF;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=gate-stale,heal-dispatched dispatches=1" \
   "REVIEW_GATE_THREADS=off: open threads do not eat the disarmed finding||REVIEW_GATE_THREADS=off;STUB_OPEN_PRS=$P7U;STUB_UNRESOLVED=2;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=threads-open,disarmed"
 
 echo "=== the disarmed line carries the submit-size record ==="
