@@ -109,9 +109,10 @@
 # declaration's word that the lane does the same work on every event. A
 # marked lane whose classified verdict is true and which the record covers
 # turns false with the cause proof-reused; where every lane the diff would
-# run is covered, lanes itself answers false with lanes_cause=proof-reused.
-# An unmarked lane keeps its verdict whatever the record says, its `lane:`
-# line naming the proof it held back. With no declaration read, only
+# run turns false, lanes itself answers false with lanes_cause=proof-reused.
+# An unmarked lane keeps its verdict whatever the record says, and one whose
+# verdict is true and which the record covers has its `lane:` line name the
+# proof it held back. With no declaration read, only
 # `covers=all` stands the lanes down, on COVERS_ALL_LANES's word for every
 # lane: a record of named lanes cannot be mapped onto lanes this run does
 # not name. A lane the proving run skipped, or did not have, keeps its
@@ -131,10 +132,11 @@
 #          lanes is true; or where no declaration was read and a proof
 #          covered every lane.
 #   lanes  with one line per declared lane, where a declaration was read:
-#          true for each lane the declaration marks event-uniform whose
-#          final verdict is true or which the proof covered, false for the
-#          rest; or the proving run's own lane lines, carried forward, where
-#          no declaration was read here.
+#          true for the lanes whose final verdict is true and the ones the
+#          proof covered, marked or not, false for the rest; or the proving
+#          run's own lane lines, carried forward, where no declaration was
+#          read here. The record says what passed; the run reading it
+#          judges the mark.
 #   none   otherwise: a workflow that selects its jobs itself leaves
 #          COVERS_ALL_LANES unset, and its records say none.
 #
@@ -475,42 +477,40 @@ record_covers_lane() { # NAME — 0 where the proving run covered lane NAME
 }
 
 # Apply the proof. A covered lane marked event-uniform whose classified
-# verdict is true turns false; where every lane the diff would run is
-# covered, lanes turns false with it. `proven` is one value per lane, for
-# the record below: `true` where the record covers the lane and the lane is
-# marked, `unmarked` where the record covers it and the lane is not, and
-# `false` where the record does not cover it.
+# verdict is true turns false, and a covered one left unmarked is held;
+# where every lane the diff would run turns false, lanes turns false with
+# it. This is the one place the mark is judged. `proven` is one `true` or
+# `false` per lane, whether the record covers it, for the record below.
 proven=()
 applied=""
 index=0
 while [ "$index" -lt "$lane_count" ]; do
   proven[$index]=false
-  if record_covers_lane "${lane_names[$index]}"; then
-    if [ "${lane_uniform[$index]}" = true ]; then proven[$index]=true; else proven[$index]=unmarked; fi
-  fi
+  ! record_covers_lane "${lane_names[$index]}" || proven[$index]=true
   index=$((index + 1))
 done
 if [ "$proof_reuse" = true ] && [ "$lanes" = true ]; then
   if [ "$lane_state" = read ]; then
-    uncovered=0 stood=0
+    uncovered=0 held=0 stood=0
     index=0
     while [ "$index" -lt "$lane_count" ]; do
       if [ "${lane_values[$index]}" = true ]; then
-        if [ "${proven[$index]}" = true ]; then
+        if [ "${proven[$index]}" = true ] && [ "${lane_uniform[$index]}" = true ]; then
           lane_values[$index]=false lane_causes[$index]="cause=proof-reused run=$proof_run"
           stood=$((stood + 1))
+        elif [ "${proven[$index]}" = true ]; then
+          lane_causes[$index]="${lane_causes[$index]} proof-held=not-event-uniform run=$proof_run"
+          held=$((held + 1))
         else
-          [ "${proven[$index]}" != unmarked ] ||
-            lane_causes[$index]="${lane_causes[$index]} proof-held=not-event-uniform run=$proof_run"
           uncovered=$((uncovered + 1))
         fi
       fi
       index=$((index + 1))
     done
-    if [ "$uncovered" -eq 0 ] && [ "$stood" -gt 0 ]; then
+    if [ "$uncovered" -eq 0 ] && [ "$held" -eq 0 ] && [ "$stood" -gt 0 ]; then
       lanes=false lanes_cause=proof-reused applied="every lane the diff runs"
-    elif [ "$stood" -gt 0 ]; then
-      applied="$stood of the lanes the diff runs, $uncovered uncovered"
+    elif [ "$stood" -gt 0 ] || [ "$held" -gt 0 ]; then
+      applied="$stood of the lanes the diff runs, $held held as not event-uniform, $uncovered uncovered"
     else
       applied="none: the proving run covered no lane the diff runs"
     fi
@@ -593,7 +593,7 @@ if [ -n "$record_dir" ]; then
         index=0
         while [ "$index" -lt "$lane_count" ]; do
           covered=false
-          [ "${lane_values[$index]}" != true ] && [ "${proven[$index]}" != true ] || covered="${lane_uniform[$index]}"
+          [ "${lane_values[$index]}" != true ] && [ "${proven[$index]}" != true ] || covered=true
           printf 'lane_%s=%s\n' "${lane_names[$index]}" "$covered"
           index=$((index + 1))
         done ;;

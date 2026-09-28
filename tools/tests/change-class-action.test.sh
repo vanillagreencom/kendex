@@ -733,6 +733,9 @@ check "the step says what the proof answered" "proof: reuse=true reason=exact-pr
 check "a proof held back from an unmarked lane names the run on the lane's line" \
   "lane: name=docs-build verdict=true cause=claimed path=docs/guide.md glob=docs/* proof-held=not-event-uniform run=42" \
   "$(proof_answer "$CLASSIFY" lanes-decl-gated >/dev/null; grep '^lane: name=docs-build ' "$TMP/err")"
+check "a proof held back from an unmarked lane is counted apart from an uncovered one" \
+  "proof: applied=1 of the lanes the diff runs, 1 held as not event-uniform, 0 uncovered" \
+  "$(grep '^proof: applied=' "$TMP/err")"
 
 # The record this run leaves, on the two events a later run reads.
 # ROW|EVENT|DECL|CLASS|DOCS|PATHS|OUTSIDE|REUSE|RECORD|ENV|EXPECTED (the
@@ -740,7 +743,8 @@ check "a proof held back from an unmarked lane names the run on the lane's line"
 # NAME=VALUE words. The pr-all row is the template's case, a workflow that
 # runs every lane on lanes=true; pr-selecting is kendex's own, a workflow
 # selecting its jobs itself, which sets no covers-all-lanes. pr-decl-gated
-# runs `docs-build`, which `good` leaves unmarked, and records it uncovered.
+# runs `docs-build`, which `good` leaves unmarked, and records it covered:
+# the record says what passed, and the run reading it judges the mark.
 RUNNER="$TMP/runner"
 mkdir -p "$RUNNER"
 RECORD_DIR="${RUNNER:?}/change-class-record"
@@ -755,8 +759,8 @@ mg-reused-all|merge_group|-|standard|false|src/main.rs|src/main.rs|true|covers=a
 pr-carried|pull_request|-|standard|true|docs/guide.md||true|covers=lanes,lane_check=true||tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=true,covers=lanes,lane_check=true,changed_path=docs/guide.md
 pr-decl|pull_request|good|standard|false|src/main.rs tmux/tmux.conf|src/main.rs tmux/tmux.conf|true|covers=lanes,lane_check=true,lane_tmux=false||tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=true,lane_docs-build=false,changed_path=src/main.rs,changed_path=tmux/tmux.conf
 pr-decl-no-proof|pull_request|good|standard|false|src/main.rs|src/main.rs|false||$COVERS_ALL|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=false,lane_docs-build=false,changed_path=src/main.rs
-pr-decl-gated|pull_request|good|standard|false|src/main.rs docs/guide.md|src/main.rs|false||$COVERS_ALL|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=false,lane_docs-build=false,changed_path=src/main.rs,changed_path=docs/guide.md
-mg-decl-all|merge_group|good|standard|false|src/main.rs|src/main.rs|true|covers=all||tree=t1,workflow=.github/workflows/ci.yml,event=merge_group,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=true,lane_docs-build=false,changed_path=src/main.rs
+pr-decl-gated|pull_request|good|standard|false|src/main.rs docs/guide.md|src/main.rs|false||$COVERS_ALL|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=false,lane_docs-build=true,changed_path=src/main.rs,changed_path=docs/guide.md
+mg-decl-all|merge_group|good|standard|false|src/main.rs|src/main.rs|true|covers=all||tree=t1,workflow=.github/workflows/ci.yml,event=merge_group,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=true,lane_docs-build=true,changed_path=src/main.rs
 push|push|-|standard|false|src/main.rs|src/main.rs|false||$COVERS_ALL|absent
 ROWS
 }
@@ -906,22 +910,23 @@ while IFS='@' read -r needle replacement target; do
 done <<'ROWS'
   [ "$record_covers" = all ] && return 0@  false && return 0@proof:all-decl
   grep -qxF -- "lane_$1=true" <<<"$record_lanes"@  grep -qF -- "lane_$1=" <<<"$record_lanes"@proof:lanes-decl-partial
-    if [ "$uncovered" -eq 0 ] && [ "$stood" -gt 0 ]; then@    if [ "$stood" -gt 0 ]; then@proof:lanes-decl-partial
+    if [ "$uncovered" -eq 0 ] && [ "$held" -eq 0 ] && [ "$stood" -gt 0 ]; then@    if [ "$held" -eq 0 ] && [ "$stood" -gt 0 ]; then@proof:lanes-decl-partial
+ && [ "$held" -eq 0 ] && [ "$stood" -gt 0 ]; then@ && [ "$stood" -gt 0 ]; then@proof:lanes-decl-gated
   elif [ "$record_covers" = all ]; then@  elif true; then@proof:lanes-no-decl
 if [ "$proof_reuse" = true ] && [ "$lanes" = true ]; then@if [ "$proof_reuse" = true ]; then@proof:render-no-decl
     *) record_covers=none ;;@    *) record_covers=all ;;@proof:no-covers-no-decl
 if [ "$lanes" = true ] && [ "$lane_state" != read ] && [ "${COVERS_ALL_LANES:-}" = true ]; then@if false; then@record:pr-all
  && [ "${COVERS_ALL_LANES:-}" = true ]; then@; then@record:pr-selecting
 [ "${lane_values[$index]}" != true ] && [ "${proven[$index]}" != true ] ||@[ "${lane_values[$index]}" != true ] ||@record:pr-decl
- || covered="${lane_uniform[$index]}"@ || covered=true@record:pr-decl-gated
+ || covered=true@ || covered="${lane_uniform[$index]}"@record:pr-decl-gated
 elif [ "$lane_state" = read ]; then@elif false; then@record:mg-decl-all
       *:event-uniform) uniform=true ;;@      *:event-uniform) uniform=false ;;@proof:lanes-decl-covered
     [ "$uniform" = false ] || lane_uniform[$index]=true@    lane_uniform[$index]="$uniform"@proof:lanes-decl-covered
-    if [ "${lane_uniform[$index]}" = true ]; then proven[$index]=true;@    if true; then proven[$index]=true;@proof:lanes-decl-gated
+ && [ "${lane_uniform[$index]}" = true ]; then@; then@proof:lanes-decl-gated
 elif [ "$record_covers" = lanes ]; then@elif false; then@record:pr-carried
   pull_request | merge_group)@  pull_request | merge_group | push)@record:push
 ROWS
-[ "$mutants" -eq 16 ] || { echo "the proof mutant table read $mutants rows" >&2; exit 1; }
+[ "$mutants" -eq 17 ] || { echo "the proof mutant table read $mutants rows" >&2; exit 1; }
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -3,7 +3,7 @@
 # into one line per lane of `.github/workflows/skill-tests.yml` and a list of
 # shell shards. This suite holds that selection; what the workflow runs off
 # those lines, and `tools/ci-aggregate`, are tools/tests/ci-aggregate.test.sh's.
-# The helpers and rows both suites read are tools/tests/lib/ci-job-set-world.sh's.
+# The helpers, rows and runner lists it reads are tools/tests/lib/ci-job-set-world.sh's.
 #
 # The selection: one row per class and path shape over this tree,
 #   asserting the whole lane line and the shards its case is about, and

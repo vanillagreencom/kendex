@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # The world both tools/ci-job-set suites start from: tools/ci-job-set run
-# over this checkout or a fixture one, and the lane lines it answers that
-# more than one suite reads. tools/tests/ci-class-job-set.test.sh asserts
-# those lines against the script; tools/tests/ci-aggregate.test.sh evaluates
+# over this checkout or a fixture one, and the lane lines, records and
+# runner lists either suite reads, some by one suite alone.
+# tools/tests/ci-class-job-set.test.sh asserts those lines against the
+# script; tools/tests/ci-aggregate.test.sh evaluates
 # .github/workflows/skill-tests.yml against them. Sourced after the suite's
 # `set -euo pipefail` and git-variable preamble; what a suite reads from here:
 #   ROOT, JOB_SET, TMP       this checkout, the script, the suite's scratch
