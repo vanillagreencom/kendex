@@ -163,7 +163,8 @@ ol_lanes() { # ARGS...
 # launch to ask this one question, so no two of them judge an account two
 # ways. HARNESS and MODEL are the launch's, and `lanes` is asked about the
 # account they spend (lib/lane-context.sh § lane_context_account); a launch
-# spending none `lanes` measures returns 4 with no record and asks nothing.
+# spending none `lanes` measures, or one nothing can name, returns 4 with no
+# record and asks nothing.
 # It passes --for-overseer: the pick seats an overseer, so the accounts
 # fleets record for their overseers, which a lane pick omits, stay candidates.
 OL_PICK_RECORD=""
@@ -172,7 +173,7 @@ ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
   OL_PICK_RECORD=""
   lane_context_account "$1" "$2"
   harness="$LANE_CTX_ACCOUNT_HARNESS" model="$LANE_CTX_ACCOUNT_MODEL"
-  [[ -n "$harness" ]] || return 4
+  case "$harness" in claude | codex) ;; *) return 4 ;; esac
   [[ -n "$(lane_context_mark_model "$harness" "$model")" ]] || floor=(--binding-floor)
   [[ -z "${4:-}" ]] || exclude=(--exclude-lane "$4")
   OL_PICK_RECORD="$(ol_lanes pick --harness "$harness" --min-headroom-pct "$3" --for-overseer \
@@ -198,7 +199,8 @@ ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
 # A launch spending no account `lanes` measures, a pi model off the pi-claude
 # provider, returns 0 with OL_PICKED_DIR empty: no account can be picked or
 # refused for it, so it launches with no lane variable, and its first working
-# turn, which ol_session_verify waits for, is the one reading of its room.
+# turn, which ol_session_verify waits for, is the one reading of its room. A pi
+# model naming no provider names no account to pick either, and returns 4.
 OL_PICKED_DIR=""
 OL_WALKED_WALLED=0
 OL_WALKED_UNMEASURED=0
@@ -206,7 +208,7 @@ ol_pick_lane() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
   local record rc=0 walled unmeasured LC_ALL=C
   OL_PICKED_DIR=""
   lane_context_account "$1" "$2"
-  [[ -n "$LANE_CTX_ACCOUNT_HARNESS" ]] || return 0
+  [[ "$LANE_CTX_ACCOUNT_HARNESS" != none ]] || return 0
   ol_pick_record "$@" || rc=$?
   record="$OL_PICK_RECORD"
   if (( rc == 3 )); then

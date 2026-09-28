@@ -61,9 +61,10 @@ codex_count() { # TOKENS WINDOW
   jq -nc --argjson t "$1" --argjson w "$2" \
     '{type:"event_msg",payload:{type:"token_count",info:{last_token_usage:{input_tokens:($t - 7),output_tokens:7,total_tokens:$t},model_context_window:$w}}}'
 }
-pi_line() { # MODEL TOKENS
-  jq -nc --arg m "$1" --argjson t "$2" \
-    '{type:"message",message:{role:"assistant",model:$m,usage:{input:1,output:7,cacheRead:($t - 8),cacheWrite:0,totalTokens:$t}}}'
+pi_line() { # MODEL TOKENS [PROVIDER]
+  jq -nc --arg m "$1" --argjson t "$2" --arg p "${3:-}" \
+    '{type:"message",message:({role:"assistant",model:$m,usage:{input:1,output:7,cacheRead:($t - 8),cacheWrite:0,totalTokens:$t}}
+      + (if $p == "" then {} else {provider:$p} end))}'
 }
 
 # The transcripts, each named for what it holds.
@@ -83,6 +84,7 @@ jq -nc '{type:"user",message:{content:"hi"}}' > "$T/none"
 codex_context gpt-6-astra > "$T/codex-none"
 { pi_line m 600000; pi_line m 1000; } > "$T/pi-last"
 claude_line claude-opus-5-5 1000 > "$T/pi-claude-spelled"
+pi_line claude-opus-5-5 1000 pi-claude > "$T/pi-provider"
 
 echo "=== each adapter reads the last reading its harness recorded ==="
 # `file|harness|payload window|answer`
@@ -101,6 +103,7 @@ codex-unread|codex||rc=0 unread
 codex-none|codex||rc=0
 pi-last|pi|200000|rc=0 1000|200000|m
 pi-last|pi||rc=0 1000||m
+pi-provider|pi|200000|rc=0 1000|200000|pi-claude/claude-opus-5-5
 pi-claude-spelled|pi|200000|rc=0 unread
 claude-last|opencode||rc=3
 ROWS
@@ -290,6 +293,8 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'pi reads pi-last as: rc=0 1000|200000|m'
   control claude-output adapters/claude.sh ' + (.output_tokens // 0))' ')' \
     'claude reads claude-last as'
+  control pi-provider adapters/pi.sh '"\(.provider)/\(.model)"' '.model' \
+    'pi reads pi-provider as: rc=0 1000|200000|pi-claude/claude-opus-5-5'
   control pi-output adapters/pi.sh '(.input // 0) + (.output // 0)' '(.input // 0)' \
     'pi reads pi-last as: rc=0 1000|200000|m'
   control codex-window adapters/codex.sh '\(point($i.model_context_window))' '' \

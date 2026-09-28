@@ -175,8 +175,11 @@ lane_context_mark_model() { # HARNESS MODEL
 # Claude and codex are their own. A pi session on the pi-claude provider runs
 # the claude model after `pi-claude/` under CLAUDE_CONFIG_DIR
 # (pi-extensions/pi-claude-bridge), so it spends a claude account on that
-# model, the `:<thinking>` suffix pi reads as its level dropped; on any other
-# provider it spends no account `lanes` measures, and both are empty.
+# model, the `:<thinking>` suffix pi reads as its level dropped. A pi session
+# on any other provider spends no account `lanes` measures, `none`, and one
+# whose MODEL names no provider, or no model at all, spends an account nothing
+# here can name, `unknown`: pi resolves a bare model to a provider itself. The
+# model is empty for both.
 LANE_CTX_ACCOUNT_HARNESS="" LANE_CTX_ACCOUNT_MODEL=""
 lane_context_account() { # HARNESS MODEL
   LANE_CTX_ACCOUNT_HARNESS="${1:-}" LANE_CTX_ACCOUNT_MODEL="${2:-}"
@@ -187,7 +190,8 @@ lane_context_account() { # HARNESS MODEL
       LANE_CTX_ACCOUNT_MODEL="${LANE_CTX_ACCOUNT_MODEL#pi-claude/}"
       LANE_CTX_ACCOUNT_MODEL="${LANE_CTX_ACCOUNT_MODEL%%:*}"
       ;;
-    *) LANE_CTX_ACCOUNT_HARNESS="" LANE_CTX_ACCOUNT_MODEL="" ;;
+    ?*/?*) LANE_CTX_ACCOUNT_HARNESS=none LANE_CTX_ACCOUNT_MODEL="" ;;
+    *) LANE_CTX_ACCOUNT_HARNESS=unknown LANE_CTX_ACCOUNT_MODEL="" ;;
   esac
 }
 

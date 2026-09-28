@@ -383,6 +383,43 @@ mutate_file "$PIHARNESSCTL/oversee-succeed" '| codex | pi) ;;' '| codex) ;;'
 pi_print_row "$PIHARNESSCTL/oversee-succeed"
 assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: invalid-harness value=pi" \
   "control: a --harness check naming no pi refuses the pi overseer's line"
+# A pi-claude overseer nothing recorded: its --model word after -- names the
+# provider, so its line opens on the claude account its environment names. A
+# bare model names no provider and no account, and is refused rather than
+# printed with no lane.
+pi_claude_row() { # MODEL [SUCCEED_BIN]
+  tm kill-window -a -t fleet:0
+  CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' 'exec sleep 100000')"
+  state none
+  SUCCEED_BIN="${2:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.eclaude" --print-launch-line --harness pi \
+    -- --model "$1" --thinking high
+}
+pi_claude_row pi-claude/claude-opus-5
+assert_eq "$RC|$OUT" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.eclaude' pi --exclude-tools question --model pi-claude/claude-opus-5 --thinking high $PI_BRIEF" \
+  "--print-launch-line on a record-less pi-claude overseer opens on its claude account" "$TMP_ROOT/err"
+pi_claude_row claude-opus-5
+assert_eq "$RC|$(sed -n 1p <<<"$ERR")|$OUT" "1|oversee-succeed: pi-account-unknown model=claude-opus-5|" \
+  "--print-launch-line refuses a pi overseer whose model names no provider"
+PIFLAGCTL="$(mutant_scripts piflagctl oversee-succeed)" || exit 1
+mutate_file "$PIFLAGCTL/oversee-succeed" '    [[ -z "$flag_model" ]] || caller_model="$flag_model"' '    true'
+pi_claude_row pi-claude/claude-opus-5 "$PIFLAGCTL/oversee-succeed"
+assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: pi-account-unknown model=none" \
+  "control: a caller that reads no --model word leaves a record-less pi overseer's account unknown"
+# The same overseer judged at its turn end: its reading names the provider.
+new_caller
+mkdir -p "$MAILBOX_DIR"
+lane_context_record "$MAILBOX_DIR" pi 100000 1000000 pi-claude/claude-opus-5 "" "$SERVER_PID $CALLER_PANE"
+state none
+run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
+assert_eq "$RC|$(judged)" "0|mark-reached kind=headroom value=1" \
+  "--check-marks on a record-less pi-claude overseer judges its claude account on the reading's model" "$TMP_ROOT/err"
+PIREADCTL="$(mutant_scripts pireadctl oversee-succeed)" || exit 1
+mutate_file "$PIREADCTL/oversee-succeed" 'caller_model="${OL_KNOWN_MODEL:-$reading_model}"' 'caller_model="${OL_KNOWN_MODEL:-}"'
+SUCCEED_BIN="$PIREADCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
+assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
+  "control: a caller that ignores the pi reading's model leaves the account unjudged" "$TMP_ROOT/err"
+
 # The settings a pi successor would compact under refuse its line, as they
 # refuse a pi lane's launch.
 jq -n '{compaction: {enabled: true}}' > "$PI_AGENT/settings.json"

@@ -314,6 +314,24 @@ assert_eq "$RC|$(recorded model)|$(recorded_argv)" \
   "an unset preference launches the first overseer on the default ladder's Fable rung"
 tm kill-window -t "$(recorded window)"
 
+# A pi entry ahead of a claude entry with room: the launch table names no
+# permission word to open pi unattended, so the first launch skips it before
+# its pick and opens on the claude entry.
+pi_first_row() { # [OVERSEE_BIN]
+  OVERSEE_BIN="${1:-}" LAUNCH_PREF='pi:openai/gpt-5:high,claude:1:high' run_oversee -- launch --wait-secs 20
+}
+pi_first_row
+assert_eq "$RC|$(keyed entry-permission-unwritable "$OUT" | sed -n 1p)|$(recorded harness)|$(recorded model)" \
+  "0|oversee: entry-permission-unwritable entry=pi:openai/gpt-5:high harness=pi|claude|fable" \
+  "a first launch skips a pi entry and opens on the claude entry after it"
+tm kill-window -t "$(recorded window)"
+# Its control: a walk that chooses the pi entry refuses the whole launch.
+PIFIRSTCTL="$(mutant_scripts pifirstctl oversee)" || exit 1
+mutate_file "$PIFIRSTCTL/oversee" '  if ! launch_choice_permission_write "$harness" >/dev/null; then' '  if false; then'
+pi_first_row "$PIFIRSTCTL/oversee"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT" | awk '{print $2, $3}')|$(overseers)" "1|launch-choice-failed harness=pi|0" \
+  "control: a first launch that chooses the pi entry refuses and opens nothing"
+
 # The writer's control: a record write that leaves the launch identity out,
 # over a fleet with no prior record, records a session nothing says the
 # harness or model of.

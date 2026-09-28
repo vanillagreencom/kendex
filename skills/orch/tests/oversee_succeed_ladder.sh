@@ -352,11 +352,12 @@ assert_eq "$RC|$(launched claude)|$(launched codex)" \
 # windows are spent. Its wall recovery walks a pi entry on Opus, which spends a
 # claude account: the pick leaves the walled account out and lands on .eclaude.
 FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
-new_pi_caller() {
+new_pi_caller() { # [norecord]
   tm kill-window -a -t fleet:0
-  rm -f -- "${TMP_ROOT:?}"/argv.*
+  rm -f -- "${TMP_ROOT:?}"/argv.* "${FLEET_STATE:?}"
   CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' 'exec sleep 100000')"
   CALLER_WINDOW="$(tm display-message -p -t "$CALLER_PANE" '#{window_id}')"
+  [[ "${1:-}" != norecord ]] || return 0
   jq -n --arg server "$SERVER_PID" --arg pane "$CALLER_PANE" --arg account "$H/.claude" --arg cwd "$TMP_ROOT/work" \
     '{issue_id: "oversee", overseer: {runtime: "tmux", generation: 1, server: $server, pane: $pane,
       harness: "pi", account: $account, home: $account, model: "pi-claude/claude-fable-5-1",
@@ -384,7 +385,28 @@ run_succeed pinomodel 'pi:fable:high' --walled-pane "$CALLER_PANE" --harness pi
 assert_eq "$RC|$(keyed invalid-preference | awk '{print $2, $3}')|$(caller_open)|$(launched pi)" \
   "1|invalid-preference entry=pi:fable:high|yes|none" \
   "a pi entry with no provider/id model refuses invalid-preference"
+
+# A pi-claude overseer nothing recorded, at its context mark with Fable room
+# on its own account: its --model word names the provider, so its successor
+# keeps that claude account.
+seat claude 10 10 99
+pi_context_row() { # [SUCCEED_BIN]
+  new_pi_caller norecord
+  SUCCEED_BIN="${1:-}" run_succeed "pictx${1:+ctl}" '' --harness pi --context 950000:1000000
+}
+pi_context_row
+assert_eq "$RC|$(caller_open)|$(launched pi)" "0|no|$H/.claude pi-claude/claude-fable-5-1" \
+  "a record-less pi-claude overseer at its context mark succeeds on its own claude account"
+# Its control: a caller that reads no --model word cannot name the account
+# and refuses, launching nothing.
+PICTXCTL="$(mutant_scripts pictxctl oversee-succeed)" || exit 1
+mutate_file "$PICTXCTL/oversee-succeed" '    [[ -z "$flag_model" ]] || caller_model="$flag_model"' '    true'
+pi_context_row "$PICTXCTL/oversee-succeed"
+assert_eq "$RC|$(keyed pi-account-unknown | awk '{print $2}')|$(caller_open)|$(launched pi)" \
+  "1|pi-account-unknown|yes|none" \
+  "control: a caller that reads no --model word refuses the record-less pi overseer's succession"
 rm -f -- "${FLEET_STATE:?}"
+seat claude 10 99 99
 CALLER_FLAGS=("$BYPASS")
 
 # A claude overseer under full bypass: the pi row names no permission word, so

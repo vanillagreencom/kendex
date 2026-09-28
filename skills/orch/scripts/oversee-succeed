@@ -136,8 +136,11 @@
 #        session spends a claude account on the pi-claude provider, and one
 #        on any other provider no lane measures, so that entry takes no pick
 #        and launches with no lane variable, and a qualifying mark never
-#        chooses it. No permission posture crosses to or from pi, whose row
-#        names no permission word. Unset, the setting is the ladder
+#        chooses it. A pi caller's own model is its record's, else the
+#        --model word after --, else its reading's; one naming no provider
+#        spends an account nothing names, and its caller entry refuses
+#        `pi-account-unknown`. No permission posture crosses to or from pi,
+#        whose row names no permission word. Unset, the setting is the ladder
 #        lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE names; set to empty,
 #        it names no entry. Every launch on a measured account but one goes
 #        through `lanes pick
@@ -161,7 +164,7 @@
 #        claude successor would run on a model the claude adapter names no
 #        window for refuses `model-window-unknown` the same way, as does a pi
 #        successor, `pi-handoff-unmarked`, whose settings leave compaction on
-#        or whose pi-hooks carrier sends no window. An entry with no
+#        or cannot be read, or whose pi-hooks carrier sends no window. An entry with no
 #        qualifying lane IS skipped.
 #        A named entry's LAUNCH carries the model and effort words its own row
 #        writes. A same-harness entry keeps the caller's permission words
@@ -452,11 +455,12 @@ message() { # KEY FIELD=VALUE...
     account-below-mark) text='No account mark is reached. This run was handed no --context reading, so the context mark was not judged; the overseer turn-end hook judges it on the reading it takes. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
     mark-reached) text='This overseer is at or past one of its own marks and has to hand this session over. Run oversee-succeed with the permission, model and effort flags this session runs under; where succession is off, write the overseer handoff file and ask for a fresh overseer session by hand.' ;;
     mark-unmeasured) text='One trigger could not be measured this time, and no other trigger fired. Nothing is launched and nothing is settled: a reading that failed is never a mark that lifted, so a caller holding a standing mark keeps it. The reason field names the figure that was missing.' ;;
-    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex or pi and model a model name or a tier ladder rank, or on pi a provider/id.' ;;
+    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex or pi and model a model name or a tier ladder rank, or on pi a lowercase provider/id.' ;;
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
-    walled-lane-unknown) text='The account this walled overseer is spending could not be named, so the one account its successor must not open on is unknown and nothing was launched. A session carrying neither of the two account variables, under a harness whose default this reader cannot resolve, and a pi session on a model no lane measures, are the shapes that reach this.' ;;
+    walled-lane-unknown) text='The account this walled overseer is spending could not be named, so the one account its successor must not open on is unknown and nothing was launched. A session carrying neither of the two account variables, under a harness whose default this reader cannot resolve, and a pi session on a model no lane measures or naming no provider, are the shapes that reach this.' ;;
     model-failed) text='kendex tier-model named no model for this entry: its rank is past the tier ladder, or its model name is none the ladder names for its harness.' ;;
     model-window-unknown) text='The claude adapter names no context window for the model this entry resolves to, and a successor runs with its compaction off, so it would reach its wall with no handoff mark. Nothing was launched. Name a model, or a rank whose model, the window table in lib/adapters/claude.sh names.' ;;
+    pi-account-unknown) text='This pi overseer names its model with no provider, in its launch record, the --model word after -- and its context reading alike, so the account its successor would spend is unknown and nothing was launched. Pass --model as provider/id after --, pi-claude/<id> for a claude account.' ;;
     pi-handoff-unmarked) text='A pi successor would compact or reach its wall with no handoff mark, so nothing was launched. The reason field names which: compaction-on is a pi settings file, the one the file field names, leaving compaction.enabled on; settings-unreadable is that file present and unreadable, its reader words below; no-window-read is no installed pi-hooks carrier sending the context window.' ;;
     launch-choice-failed) text='The launch flag table cannot state a required model or an equivalent cross-harness permission posture. Nothing was launched.' ;;
     no-lane-qualifies) text='No lane walked is above the headroom trigger; nothing was launched and this overseer keeps running. The walk is every ORCH_OVERSEER_PREFERENCE entry, counted in entries, and then the fleet-wide sweep of the harness the fallback field names, which is none where the walk never reached that entry, so a preference aimed at a spent harness is not what this says. walled and unmeasured are the accounts those sweeps refused and the accounts nothing could measure, counted once per sweep. The mark field names the trigger. At mark=headroom the account and resets fields name the account that ran out and when the bucket this session spends frees up. At mark=wall the caller pane read walled and no mark was judged, so no account is named here; the caller that read that wall names it.' ;;
@@ -880,12 +884,22 @@ if [[ "$MODE" != dead ]]; then
   # The model passes through the rule a reading takes (lib/lane-context.sh §
   # lane_context_mark_model), so a codex session is judged on its account's
   # binding bucket whichever of the record and the reading named its model.
-  CALLER_MODEL="$(lane_context_mark_model "$CALLER_HARNESS" "${OL_KNOWN_MODEL:-$reading_model}")"
+  # A pi session's account follows the provider its model names, and a pi
+  # overseer passes its `--model` word after --, so where no record names its
+  # model that word, the one a relaunch of it runs, answers ahead of the
+  # reading.
+  caller_model="${OL_KNOWN_MODEL:-$reading_model}"
+  if [[ "$CALLER_HARNESS" == pi && -z "$OL_KNOWN_MODEL" ]]; then
+    if ! flag_model="$(launch_choice_value "$(launch_choice_model_spellings pi)" "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}")"; then
+      die launch-choice-failed harness=pi step=model-read
+    fi
+    [[ -z "$flag_model" ]] || caller_model="$flag_model"
+  fi
+  CALLER_MODEL="$(lane_context_mark_model "$CALLER_HARNESS" "$caller_model")"
   # The harness and model `lanes` measures this session's account as
   # (lib/lane-context.sh § lane_context_account): a pi session on the pi-claude
-  # provider spends a claude account, and on any other provider none, as does
-  # a pi session whose model is known only from its reading, which names no
-  # provider.
+  # provider spends a claude account, on another provider `none`, and on a
+  # model naming no provider one that is `unknown`.
   lane_context_account "$CALLER_HARNESS" "$CALLER_MODEL"
   CALLER_ACCOUNT_HARNESS="$LANE_CTX_ACCOUNT_HARNESS" CALLER_ACCOUNT_MODEL="$LANE_CTX_ACCOUNT_MODEL"
 fi
@@ -954,14 +968,16 @@ fi
 # account. The line is refused where neither names one.
 CALLER_CFG="$OL_KNOWN_ACCOUNT"
 [[ "$CALLER_HARNESS" != copilot || -n "$CALLER_CFG" ]] || die copilot-account-unknown "pane=$CALLER_PANE"
-[[ -n "$CALLER_CFG" || -z "$CALLER_ACCOUNT_HARNESS" ]] || CALLER_CFG="$(lane_context_caller_cfg "$CALLER_ACCOUNT_HARNESS")"
+case "$CALLER_ACCOUNT_HARNESS" in
+  claude | codex) [[ -n "$CALLER_CFG" ]] || CALLER_CFG="$(lane_context_caller_cfg "$CALLER_ACCOUNT_HARNESS")" ;;
+esac
 CALLER_STATE=unreadable HEADROOM_FIELD=unreadable
 CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS=""
 RATE_STATE=unreadable WALL_PROJECTED="" QUALIFYING_STATE=unreadable QUALIFYING_COUNT="" QUALIFYING_HEADROOM=""
 if (( JUDGES )); then
   # An account `lanes` does not measure is one nothing measured, its exit 4.
   caller_rc=4 caller_record=""
-  if [[ -n "$CALLER_ACCOUNT_HARNESS" ]]; then
+  if [[ "$CALLER_ACCOUNT_HARNESS" == claude || "$CALLER_ACCOUNT_HARNESS" == codex ]]; then
     caller_rc=0
     caller_record="$(ol_lanes pick --lane "$CALLER_CFG" --harness "$CALLER_ACCOUNT_HARNESS" \
       --min-headroom-pct "$HEADROOM_TRIGGER" ${CALLER_ACCOUNT_MODEL:+--model "$CALLER_ACCOUNT_MODEL"} \
@@ -1083,6 +1099,10 @@ walk_entries() {
       # entry is, its own pair written and the caller's stripped. With none,
       # the caller's own flags carry whatever pair they spell.
       harness="$CALLER_HARNESS" model="" effort=""
+      # A pi caller whose model names no provider spends an account nothing
+      # here can name, so its successor could be neither picked nor held off
+      # a spent account: refused rather than launched bare.
+      [[ "$CALLER_ACCOUNT_HARNESS" != unknown ]] || die pi-account-unknown "model=${CALLER_MODEL:-none}"
       [[ -z "$OL_CUR_MODEL" ]] || model="$OL_CUR_MODEL" effort="$OL_CUR_EFFORT"
       FALLBACK_WALKED="${CALLER_HARNESS:-none}"
       # This entry names no model in the LAUNCH — it passes the overseer's own

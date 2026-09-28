@@ -15,8 +15,11 @@
 # Sourced by lib/lane-context.sh, never run.
 
 # One reading from a Pi session file on stdin: `<tokens>\t<window>\t<model>`
-# for the last assistant message carrying a usage object, `$1` where that usage
-# carries none of Pi's field names, and nothing where no message carries usage.
+# for the last assistant message carrying a usage object, the model as pi's
+# `--model` spells it, `provider/id`, where the message names its provider;
+# `$1` where that usage carries none of Pi's field names, and nothing where no
+# message carries usage. The provider is what names the account a pi session
+# spends (lib/lane-context.sh § lane_context_account).
 # The context is the message's input plus the cache it was read from and
 # written to, and its output, which the next request sends back: the sum Pi's
 # own `totalTokens` is (`Usage`, @earendil-works/pi-ai). `$2` is the window the payload
@@ -32,7 +35,9 @@ lane_adapter_pi_reading() { # UNREAD WINDOW [DIR]
   esac
   jq -Rnr --arg unread "$1" --arg window "$window" '
     [inputs | fromjson? | .message? | objects
-     | select((.usage | type) == "object") | .model as $model | .usage
+     | select((.usage | type) == "object")
+     | (if (.provider // "") != "" and (.model // "") != "" then "\(.provider)/\(.model)" else .model end) as $model
+     | .usage
      | if has("input") or has("output") or has("cacheRead") or has("cacheWrite")
        then "\((.input // 0) + (.output // 0) + (.cacheRead // 0) + (.cacheWrite // 0))\t\($window)\t\($model // "")"
        else $unread end]

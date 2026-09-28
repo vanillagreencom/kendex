@@ -41,10 +41,12 @@
 #        walls that model and held to the reading the session will take of
 #        itself (lib/overseer-launch.sh § ol_pick_lane). A rank the tier
 #        ladder cannot answer refuses `model-failed`; an entry with no
-#        qualifying lane is skipped; a preference set to empty refuses
-#        `preference-empty`, because a first launch has no caller whose own
-#        harness and lane could stand in; a walk that ends empty refuses
-#        `no-lane-qualifies` at exit 3 with the counts each sweep found.
+#        qualifying lane is skipped, and so is one whose harness row names no
+#        full-bypass word to launch it under, pi's, before its pick, with
+#        `entry-permission-unwritable` on stderr; a preference set to empty
+#        refuses `preference-empty`, because a first launch has no caller
+#        whose own harness and lane could stand in; a walk that ends empty
+#        refuses `no-lane-qualifies` at exit 3 with the counts each sweep found.
 #     5. Build the command: the entry's model and effort words, the harness's
 #        full-bypass permission words, its launch settings, its question-tool
 #        words where ORCH_QUESTION_TOOL is off, its default, and the brief
@@ -134,13 +136,14 @@ message() { # KEY FIELD=VALUE...
     tmux-failed) text='The tmux call the operation field names failed on the server the server field names, for another reason than an absent session: no server may be running at that socket. Nothing was opened; tmux says why below.' ;;
     state-unwritable) text='The oversee workflow state could not be created or read, so no session record can be kept. Nothing was launched.' ;;
     overseer-live) text='The fleet state names an overseer session this tmux server still lists, so a second one is not opened beside it. Two overseers never act at once: replace a live one through oversee-succeed, or stop it and clear the record.' ;;
-    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex or pi and model a model name or a tier ladder rank, or on pi a provider/id.' ;;
+    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex or pi and model a model name or a tier ladder rank, or on pi a lowercase provider/id. A first launch skips pi entries.' ;;
     preference-empty) text='A first launch has no caller whose own harness and lane could stand in, so ORCH_OVERSEER_PREFERENCE must name at least one entry.' ;;
     invalid-headroom-trigger) text='ORCH_OVERSEER_HEADROOM_PCT takes a whole number of percent from 0 to 100.' ;;
     invalid-question-tool) text='ORCH_QUESTION_TOOL takes off or overseer.' ;;
     model-failed) text='kendex tier-model named no model for this entry: its rank is past the tier ladder, or its model name is none the ladder names for its harness. Either is a setting to fix, not an entry to pass over.' ;;
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     no-lane-qualifies) text='No lane of any harness the preference names is above the headroom trigger; nothing was launched. entries counts the preference entries walked; walled and unmeasured are the accounts the sweeps refused and the accounts nothing could measure.' ;;
+    entry-permission-unwritable) text='The launch flag table names no full-bypass permission word for this entry'\''s harness, so a first launch there would stop at its first approval prompt with nobody at the pane. The entry is skipped and the walk goes on; oversee-succeed takes such an entry for a caller of the same harness.' ;;
     launch-choice-failed) text='The launch flag table cannot state this harness'\''s model, effort or permission words. Nothing was launched.' ;;
     launch-trust-missing) text='The folder-trust entry for the launch directory could not be made in the config this session would read, so nothing was launched; the reason field is lib/lane-launch.sh'\''s.' ;;
     launch-failed) text='The session could not be opened or read; the step field names the call that failed.' ;;
@@ -389,6 +392,13 @@ chosen="" harness="" model="" effort="" lane_dir=""
 for entry in "${OL_ENTRIES[@]}"; do
   ol_entry_model "$entry" || die model-failed "entry=$entry"
   harness="$OL_ENTRY_HARNESS" model="$OL_ENTRY_MODEL" effort="$OL_ENTRY_EFFORT"
+  # A first launch runs under the full-bypass word the harness row writes;
+  # a row naming none, pi's, has no unattended launch to open, so the entry
+  # is skipped rather than chosen and refused after the walk.
+  if ! launch_choice_permission_write "$harness" >/dev/null; then
+    message entry-permission-unwritable "entry=$entry" "harness=$harness" >&2
+    continue
+  fi
   rc=0
   ol_pick_lane "$harness" "$model" "$HEADROOM_TRIGGER" || rc=$?
   case "$rc" in
