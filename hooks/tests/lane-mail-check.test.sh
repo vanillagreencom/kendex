@@ -1287,6 +1287,8 @@ stop_pi_at() { # TRANSCRIPT ACTIVE
   run_payload "$(jq -nc --arg p "$1" --argjson a "$2" \
     '{session_id:"s1",stop_hook_active:$a,transcript_path:$p,context_window:200000}')"
 }
+# A Pi turn end reports its account unmeasured: text_line's record names no provider (KEN-1988).
+PI_GAP='lane-mail-check: account=unmeasured'
 new_pi_question_lane question_pi KEN-63
 { prompt_line pi "$OPENED"; text_line pi 'Say if you want me to continue FLT-400'; } > "$TRANSCRIPT"
 stop_pi_at "$TRANSCRIPT" false
@@ -1299,7 +1301,7 @@ new_pi_question_lane question_pi_ask KEN-62
 { prompt_line pi "$OPENED"; text_line pi 'Which base?'; } > "$TRANSCRIPT"
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-62 --file "$TMP_ROOT/ask.txt" >/dev/null)
 stop_pi_at "$TRANSCRIPT" false
-expect 0 "$GAP" "a Pi turn in which the lane sent its ask ends"
+expect 0 "$PI_GAP" "a Pi turn in which the lane sent its ask ends"
 # The two rows above in Pi's spelling: an earlier turn's ask carries no
 # question of a later prompt's turn, and a toolResult record opens no turn.
 new_pi_question_lane question_pi_turns KEN-51
@@ -1313,7 +1315,7 @@ expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
     message:{role:"toolResult",toolCallId:"t1",toolName:"bash",content:[{type:"text",text:"ok"}],isError:false}}'
   text_line pi 'Which base?'; } > "$TRANSCRIPT"
 stop_pi_at "$TRANSCRIPT" false
-expect 0 "$GAP" "pi: a toolResult record after the ask opens no turn"
+expect 0 "$PI_GAP" "pi: a toolResult record after the ask opens no turn"
 { prompt_line pi "$OPENED"; tool_call_line pi; prompt_line pi "$(after_sent KEN-51 1)"; text_line pi 'Which base?'; } > "$TRANSCRIPT"
 stop_pi_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
@@ -1321,7 +1323,7 @@ expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
 new_pi_question_lane question_pi_none KEN-61
 { prompt_line pi "$OPENED"; text_line pi 'Pushed the fix; CI is running.'; } > "$TRANSCRIPT"
 stop_pi_at "$TRANSCRIPT" false
-expect 0 "$GAP" "a Pi turn ending on no question passes"
+expect 0 "$PI_GAP" "a Pi turn ending on no question passes"
 assert_eq "$(notices KEN-61)" none "and writes nothing to the mailbox"
 
 # A wake opens a turn: Pi writes every extension's wake, a background task's,
@@ -1358,7 +1360,7 @@ new_pi_question_lane question_pi_carrier KEN-50
 { prompt_line pi "$OPENED"; text_line pi 'Which base?'; pi_custom_line "$(after_sent KEN-50 1)" kendex-hook
   text_line pi 'Which base?'; } > "$TRANSCRIPT"
 stop_pi_at "$TRANSCRIPT" true
-expect 0 "$GAP" "a continued Pi turn opened by the carrier's own refusal still carries the ask"
+expect 0 "$PI_GAP" "a continued Pi turn opened by the carrier's own refusal still carries the ask"
 assert_eq "$(notices KEN-50)" "" "and sends the overseer no notice"
 { prompt_line pi "$OPENED"
   jq -nc "$STAMP"'{type:"message",id:"e2",parentId:"e1",timestamp:(0 | stamp),
@@ -1367,7 +1369,7 @@ assert_eq "$(notices KEN-50)" "" "and sends the overseer no notice"
     message:{role:"toolResult",toolCallId:"t1",toolName:"bash",content:[{type:"text",text:"ok"}],isError:false}}'
   pi_custom_line "$(after_sent KEN-50 1)" kendex-clippy; text_line pi 'Which base?'; } > "$TRANSCRIPT"
 stop_pi_at "$TRANSCRIPT" false
-expect 0 "$GAP" "a steer after a tool's result lands inside the run and opens no turn"
+expect 0 "$PI_GAP" "a steer after a tool's result lands inside the run and opens no turn"
 
 # What Claude Code injects inside a turn carries `isMeta: true`, a skill's
 # body and a stop hook's feedback among it, and opens no turn: an ask sent
@@ -2997,7 +2999,7 @@ install_hook "$MUTANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-53 --file "$TMP_ROOT/ask.txt" >/dev/null)
 { prompt_line pi "$OPENED"; pi_wake_line "$(after_sent KEN-53 1)"; text_line pi 'Which base?'; } > "$TRANSCRIPT"
 stop_pi_at "$TRANSCRIPT" false
-expect 0 "$GAP" "control: without Pi's wakes as openers an ask before a wake lets its turn's question through"
+expect 0 "$PI_GAP" "control: without Pi's wakes as openers an ask before a wake lets its turn's question through"
 
 # The meta filter dropped: a skill body injected after the ask then opens a
 # turn, and the ask no longer carries the question.
