@@ -33,5 +33,9 @@ Options:
           writes keys in under the project scope says whether the rest of it is
           as that revision held it
 
+      --strict
+          Also fail on warnings: a path an installed agent declares as tracked
+          output that the project ignores
+
   -h, --help
           Print help
