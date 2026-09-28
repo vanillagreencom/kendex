@@ -16,18 +16,26 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 HEARTBEAT='EVENT heartbeat loops=1 interval=0s since=none'
 
 # record ITEM STATUS HARNESS [EXTRA_JSON] — one lanes[] record with no window,
-# so the pass reads no pane for it; EXTRA_JSON is merged over it.
+# so the pass reads no pane for it; EXTRA_JSON is merged over it. EXTRA_JSON
+# defaults by count, not as `${4:-{\}}`: Bash 3.2 keeps the backslash in that
+# default and hands jq `{\}`.
 record() {
-  jq -nc --arg item "$1" --arg status "$2" --arg harness "$3" --argjson extra "${4:-{\}}" \
+  local extra='{}'
+  [[ $# -lt 4 ]] || extra="$4"
+  jq -nc --arg item "$1" --arg status "$2" --arg harness "$3" --argjson extra "$extra" \
     '{item: $item, window: null, host: null, mail_root: ("/w/" + $item), account: null,
       harness: $harness, surface: "tmux", model: null, session_id: null,
       launched_at: "2026-09-20T00:00:00Z", status: $status} + $extra'
 }
-# fleet QUEUE_JSON RECORD... — the fleet state file --state names.
+# fleet QUEUE_JSON RECORD... — the fleet state file --state names. A RECORD
+# whose `record` call failed arrives empty, which jq -s would skip, so the
+# lane count is checked against the arguments.
 fleet() {
-  local queue="$1"
+  local queue="$1" lanes
   shift
-  jq -n --argjson queue "$queue" --argjson lanes "$(printf '%s\n' "$@" | jq -sc .)" \
+  lanes="$(printf '%s\n' "$@" | jq -sc .)" || { echo "fleet: records are not JSON" >&2; exit 1; }
+  [[ "$(jq length <<<"$lanes")" -eq $# ]] || { echo "fleet: lanes=$(jq length <<<"$lanes") args=$#" >&2; exit 1; }
+  jq -n --argjson queue "$queue" --argjson lanes "$lanes" \
     '{issue_id: "oversee", triaged: [], launch_queue: $queue, lanes: $lanes}' > "$STUB_DIR/state.json"
 }
 # account ALIAS HARNESS VERDICT RESETS — one `lanes list --json` record, its
