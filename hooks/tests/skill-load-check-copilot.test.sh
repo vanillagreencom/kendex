@@ -11,9 +11,14 @@
 # recorded under its own sessionId, a subagent apart from its parent; only a
 # `skill` call whose toolResult.resultType is `success` records; the refusal
 # is also Copilot's permissionDecision deny on stdout, its reason the stderr
-# text; loads finishing at once all land; a stale record is pruned; a Copilot
-# call reaching another harness's copy passes there; and the fail-closed
-# edges of the record: an id or a record it cannot read, one it cannot write.
+# text; one skill's load clears no call that needs another; loads finishing
+# at once all land; a stale record is pruned; each shell and edit tool
+# Copilot's hooks reference lists for Bash, Write and Edit is judged from its
+# own toolArgs, an apply_patch call by every file its patch names; a Copilot
+# call reaching another harness's copy passes there under
+# `harness=copilot`; a call needing a skill is refused where no carrier is
+# installed; and the fail-closed edges of the record: an id or a record it
+# cannot read, one it cannot write.
 #
 # HOOK_UNDER_TEST overrides the judge the rows install and CARRIER_UNDER_TEST
 # the skill-load-record hook beside it, so a must-fail control reruns these
@@ -136,6 +141,27 @@ assert_eq "rc=$rc first=$(first_line) out=$(cat "$OUT_FILE")" "rc=0 first=- out=
 run_at "$JUDGE" "$(edit_of lead)"
 assert_eq "rc=$rc first=$(first_line) out=$(cat "$OUT_FILE")" "rc=0 first=- out=" \
   "the same agent's edit passes once its load is recorded"
+# The record is read for the skill the call needs, not for any load at all.
+run_at "$JUDGE" "$(pre lead bash "$("${JQ[@]}" --arg c "$LINEAR_CALL" '{command:$c}')")"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=skill-load-check: unloaded=linear" \
+  "its linear.sh call is still refused: code-quality is not linear"
+run_at "$JUDGE" "$(edit_of lead "$REPO/README.md")"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=skill-load-check: unloaded=docs-writing" \
+  "and so is its edit of a markdown file"
+run_at "$JUDGE" "$(pre lead apply_patch "$(jq -c -n --arg p "*** Begin Patch
+*** Update File: $REPO/src/lib.rs
+@@
+-a
++b
+*** Add File: $REPO/NOTES.md
++x
+*** End Patch" '$p')")"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=skill-load-check: unloaded=docs-writing" \
+  "a patch is judged by each file it names: the source file is cleared, the markdown file is not"
+load lead linear
+run_at "$JUDGE" "$(pre lead bash "$("${JQ[@]}" --arg c "$LINEAR_CALL" '{command:$c}')")"
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" \
+  "once it loads linear, its linear.sh call passes"
 
 echo "a subagent is judged by its own sessionId"
 run_at "$JUDGE" "$(edit_of child)"
@@ -148,15 +174,17 @@ assert_eq "rc=$rc" "rc=0" "and passes once the child loads it"
 echo "only a finished, successful skill load records"
 # label|tool|args|result: each a finished call that is not a successful load
 # of code-quality, on a fresh agent whose edit must stay refused.
+# Each record run is also silent: a row that fails to record by erroring out
+# is not a row that judged the call no load.
 N=0
 while IFS='|' read -r label tool args result; do
   [ -n "$label" ] || continue
   N=$((N + 1))
   run_at "$REPO/.github/hooks/skill-load-record.sh" "$(post "not-$N" "$tool" "$args" "$result")"
-  record_rc=$rc
+  record="record=$rc first=$(first_line)"
   run_at "$JUDGE" "$(edit_of "not-$N")"
-  assert_eq "record=$record_rc rc=$rc first=$(first_line)" \
-    "record=0 rc=2 first=skill-load-check: unloaded=code-quality" "$label"
+  assert_eq "$record rc=$rc first=$(first_line)" \
+    "record=0 first=- rc=2 first=skill-load-check: unloaded=code-quality" "$label"
 done <<'ROWS'
 a load whose resultType is failure records nothing|skill|{"skill":"code-quality"}|{"resultType":"failure","textResultForLlm":"Skill \"code-quality\" loaded successfully."}
 a load whose resultType is denied records nothing|skill|{"skill":"code-quality"}|{"resultType":"denied","textResultForLlm":"x"}
@@ -193,14 +221,14 @@ load lead code-quality
 assert_eq "ended=$([ -e "$RECORDS/ended" ] && echo kept || echo pruned) lead=$([ -e "$RECORDS/lead" ] && echo kept || echo pruned)" \
   "ended=pruned lead=kept" "a stale record goes; the one just written is renewed and stays"
 
-echo "a Copilot call reaching another harness's copy passes there"
+echo "a Copilot call reaching another harness's copy passes there under its own key"
 cp "$HOOK" "$REPO/.claude/hooks/skill-load-check.sh"
 run_at "$REPO/.claude/hooks/skill-load-check.sh" "$(edit_of cross)"
-assert_eq "rc=$rc first=$(first_line) out=$(cat "$OUT_FILE")" "rc=0 first=- out=" \
-  "the camelCase payload passes a Claude copy silently"
+assert_eq "rc=$rc first=$(first_line) out=$(cat "$OUT_FILE")" "rc=0 first=skill-load-check: harness=copilot out=" \
+  "the camelCase payload passes a Claude copy, named as a Copilot call left to the Copilot copy"
 run_at "$REPO/.claude/hooks/skill-load-check.sh" "$("${JQ[@]}" --arg p "$REPO/src/lib.rs" \
   '{hook_event_name:"PreToolUse", session_id:"cross", timestamp:"2026-09-28T00:00:00Z", cwd:"/w", tool_name:"Edit", tool_input:{path:$p}}')"
-assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" \
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=skill-load-check: harness=copilot" \
   "and so does the snake_case one Copilot sends a .claude/settings.json hook"
 # A global Copilot install sits under COPILOT_HOME, spelled however the
 # operator likes, and is known by its registry document beside the script.
@@ -208,7 +236,7 @@ mkdir -p "$TMP_ROOT/anyhome/hooks"
 cp "$HOOK" "$TMP_ROOT/anyhome/hooks/skill-load-check.sh"
 cp "$CARRIER" "$TMP_ROOT/anyhome/hooks/skill-load-record.sh"
 run_at "$TMP_ROOT/anyhome/hooks/skill-load-check.sh" "$(edit_of global)"
-assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" \
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=skill-load-check: harness=copilot" \
   "a copy with no registry document beside it is no Copilot install"
 : >"$TMP_ROOT/anyhome/hooks/skill-load-check.json"
 run_at "$TMP_ROOT/anyhome/hooks/skill-load-check.sh" "$(edit_of global)"
@@ -216,13 +244,16 @@ assert_eq "rc=$rc first=$(first_line) decision=$(jq -r '.permissionDecision' <"$
   "rc=2 first=skill-load-check: unloaded=code-quality decision=deny" \
   "the same copy with its registry document beside it judges the call"
 
-echo "a judge or a carrier missing is reported, never a trap"
+echo "a judge with no carrier refuses what needs a skill; a carrier with no judge is reported"
 mkdir -p "$TMP_ROOT/lone/.github/hooks"
 cp "$HOOK" "$TMP_ROOT/lone/.github/hooks/skill-load-check.sh"
 run_at "$TMP_ROOT/lone/.github/hooks/skill-load-check.sh" "$(edit_of lone)"
-assert_eq "rc=$rc first=$(first_line)" \
-  "rc=0 first=skill-load-check: carrier=$TMP_ROOT/lone/.github/hooks/skill-load-record.sh" \
-  "a judge with no carrier beside it names the carrier and passes"
+assert_eq "rc=$rc first=$(first_line) decision=$(jq -r '.permissionDecision' <"$OUT_FILE")" \
+  "rc=2 first=skill-load-check: carrier=$TMP_ROOT/lone/.github/hooks/skill-load-record.sh decision=deny" \
+  "a judge with no carrier beside it refuses a call that needs a skill, naming the carrier"
+run_at "$TMP_ROOT/lone/.github/hooks/skill-load-check.sh" "$(edit_of lone "$TMP_ROOT/outside/notes.rs")"
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" \
+  "and passes one that needs none, an edit outside every work tree"
 mkdir -p "$TMP_ROOT/orphan/.github/hooks"
 cp "$CARRIER" "$TMP_ROOT/orphan/.github/hooks/skill-load-record.sh"
 run_at "$TMP_ROOT/orphan/.github/hooks/skill-load-record.sh" \
@@ -230,6 +261,32 @@ run_at "$TMP_ROOT/orphan/.github/hooks/skill-load-record.sh" \
 assert_eq "rc=$rc first=$(first_line) context=$(jq -r '.additionalContext | split("\n")[0]' <"$OUT_FILE")" \
   "rc=0 first=skill-load-record: judge=$TMP_ROOT/orphan/.github/hooks/skill-load-check.sh context=skill-load-record: judge=$TMP_ROOT/orphan/.github/hooks/skill-load-check.sh" \
   "a carrier with no judge beside it names the judge, to the model too, and passes"
+
+echo "each tool the matcher names is judged from its own toolArgs"
+# label|tool|toolArgs JSON|expected: each on an agent that loaded nothing.
+patch_of() { # HEADER-LINES -> the patch text, the file lines given
+  printf '*** Begin Patch\n%s\n@@\n+x\n*** End Patch\n' "$1"
+}
+N=0
+while IFS='|' read -r label tool args want; do
+  [ -n "$label" ] || continue
+  N=$((N + 1))
+  args=${args//@REPO@/$REPO}
+  run_at "$JUDGE" "$(pre "tool-$N" "$tool" "$args")"
+  assert_eq "rc=$rc first=$(first_line)" "$want" "$label"
+done <<ROWS
+a powershell call naming linear.sh is judged as a command|powershell|$("${JQ[@]}" --arg c "$LINEAR_CALL" '{command:$c}')|rc=2 first=skill-load-check: unloaded=linear
+a str_replace_editor call is judged by its path|str_replace_editor|{"command":"str_replace","path":"@REPO@/src/lib.rs","old_str":"a","new_str":"b"}|rc=2 first=skill-load-check: unloaded=code-quality
+an apply_patch whose toolArgs are the patch itself is judged by its Update File line|apply_patch|$(patch_of "*** Update File: @REPO@/src/lib.rs" | jq -R -s -c .)|rc=2 first=skill-load-check: unloaded=code-quality
+an apply_patch carrying the patch as input is judged by its Add File line|apply_patch|$(patch_of "*** Add File: @REPO@/docs/new.md" | jq -R -s -c '{input:.}')|rc=2 first=skill-load-check: unloaded=docs-writing
+an apply_patch carrying the patch as one JSON string is judged by its Delete File line|apply_patch|$(patch_of "*** Delete File: @REPO@/src/old.rs" | jq -R -s -c '{patch:.} | tojson')|rc=2 first=skill-load-check: unloaded=code-quality
+a patch moving scratch into the tree is judged by its Move to line|apply_patch|$(patch_of "*** Update File: @REPO@/tmp/a.rs
+*** Move to: @REPO@/src/a.rs" | jq -R -s -c .)|rc=2 first=skill-load-check: unloaded=code-quality
+a patch touching only the tree's tmp/ needs no skill|apply_patch|$(patch_of "*** Add File: @REPO@/tmp/scratch.rs" | jq -R -s -c .)|rc=0 first=-
+a patch naming no file is refused, its target unknown|apply_patch|$(patch_of "no header" | jq -R -s -c .)|rc=2 first=skill-load-check: payload=no-file-path
+an apply_patch whose toolArgs hold no patch is refused the same|apply_patch|{"input":7}|rc=2 first=skill-load-check: payload=no-file-path
+ROWS
+[ "$N" -eq 9 ] || { echo "tool rows asserted: $N" >&2; exit 2; }
 
 echo "an identity or a record it cannot read refuses"
 # label|session JSON value

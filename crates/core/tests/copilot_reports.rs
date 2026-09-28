@@ -125,7 +125,10 @@ fn hooks_switched_off_in_claudes_settings_are_reported_inert() {
         );
         // The report names the switch but keeps the requested registration.
         let registry = f.project.join(".github/hooks/audit.json");
-        assert_eq!(json(&registry)["hooks"]["preToolUse"][0]["matcher"], "bash");
+        assert_eq!(
+            json(&registry)["hooks"]["preToolUse"][0]["matcher"],
+            "bash|powershell"
+        );
     }
 }
 

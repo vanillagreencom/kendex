@@ -203,7 +203,7 @@ fn a_hook_registers_in_a_hook_file_of_its_own() {
     );
     // The same `Bash` the source declares, said in Copilot's tool names —
     // a case-sensitive regex of Claude's spelling would match nothing.
-    assert_eq!(entry["matcher"], "bash");
+    assert_eq!(entry["matcher"], "bash|powershell");
     // Copilot reads this one in seconds, which is what the source declares.
     assert_eq!(entry["timeoutSec"], 10);
     assert!(is_clean(&f));
@@ -262,7 +262,7 @@ fn a_registered_hook_is_read_back_from_copilots_own_directory() {
         .filter(|item| item.harness == kendex_core::model::HarnessId::Copilot)
         .map(|item| (item.name.as_str(), item.enabled))
         .collect();
-    assert_eq!(hooks, [("preToolUse:bash:audit", Some(true))]);
+    assert_eq!(hooks, [("preToolUse:bash|powershell:audit", Some(true))]);
 }
 
 #[test]
@@ -339,7 +339,10 @@ fn a_refresh_leaves_an_entry_registered_under_their_own_matcher() {
     let registry = f.project.join(".github/hooks/audit.json");
     let mut value = json(&registry);
     let command = value["hooks"]["preToolUse"][0]["bash"].clone();
-    assert_eq!(value["hooks"]["preToolUse"][0]["matcher"], "bash");
+    assert_eq!(
+        value["hooks"]["preToolUse"][0]["matcher"],
+        "bash|powershell"
+    );
     value["hooks"]["preToolUse"]
         .as_array_mut()
         .unwrap()
@@ -360,7 +363,7 @@ fn a_refresh_leaves_an_entry_registered_under_their_own_matcher() {
         .collect();
     assert_eq!(
         matchers,
-        vec!["bash", "edit"],
+        vec!["bash|powershell", "edit"],
         "both stand, each where its own owner put it: {value}"
     );
 }

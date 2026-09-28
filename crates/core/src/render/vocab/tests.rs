@@ -278,7 +278,7 @@ fn a_hook_matcher_is_restated_alternative_by_alternative() {
     );
     assert_eq!(
         hook_matcher("Bash", HarnessId::Copilot),
-        ("bash".to_owned(), true)
+        ("bash|powershell".to_owned(), true)
     );
     assert_eq!(
         hook_matcher("Bash|Write", HarnessId::Antigravity),
@@ -294,14 +294,25 @@ fn a_hook_matcher_is_restated_alternative_by_alternative() {
     );
     // Copilot tests a hook matcher against its runtime tool names, not its
     // agent allowlist names: a write runs as `create`, a skill load as
-    // `skill`, and two names landing on one tool are said once.
+    // `skill`, one authored name stands for every runtime tool its hooks
+    // reference row lists, and a tool two names land on is said once.
     assert_eq!(
         hook_matcher("Edit|MultiEdit|NotebookEdit|Write|Bash", HarnessId::Copilot),
-        ("edit|NotebookEdit|create|bash".to_owned(), true)
+        (
+            "edit|str_replace_editor|apply_patch|NotebookEdit|create|bash|powershell".to_owned(),
+            true
+        )
     );
     assert_eq!(
         hook_matcher("Read|Skill|Agent|WebFetch", HarnessId::Copilot),
         ("view|skill|task|web_fetch".to_owned(), true)
+    );
+    assert_eq!(
+        hook_matcher(
+            "Grep|WebSearch|TodoWrite|AskUserQuestion",
+            HarnessId::Copilot
+        ),
+        ("grep|rg|web_search|update_todo|ask_user".to_owned(), true)
     );
     // A name neither tool documents narrows nothing and is left alone.
     assert_eq!(

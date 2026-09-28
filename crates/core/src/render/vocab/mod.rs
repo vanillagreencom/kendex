@@ -97,22 +97,27 @@ pub fn copilot_tool_name(tool: &str) -> String {
 /// § Tool names for hook matching and the Claude tool-name table beside the
 /// PascalCase matchers). They are not the custom-agent allowlist names
 /// [`copilot_tool`] holds: a file write runs as `create` and a read as
-/// `view`, so `write` or `read` in a hook matcher never fires. `skill` is the
-/// tool a skill load runs as, which the reference does not list: it is what
-/// Copilot CLI 1.0.88 names in `toolName` for a load. A name with no runtime
-/// tool is left alone.
-fn copilot_hook_tool(tool: &str) -> Option<&'static str> {
+/// `view`, so `write` or `read` in a hook matcher never fires. One Claude
+/// name can stand for several runtime tools, as `Edit` does for `edit`,
+/// `str_replace_editor` and `apply_patch`, each of which the matcher has to
+/// name, since Copilot anchors it as `^(?:PATTERN)$`. `skill` is the tool a
+/// skill load runs as, which the reference does not list: it is what Copilot
+/// CLI 1.0.88 names in `toolName` for a load. A name with no runtime tool is
+/// left alone.
+fn copilot_hook_tools(tool: &str) -> Option<&'static [&'static str]> {
     Some(match normalize(tool).as_str() {
-        "bash" | "shell" => "bash",
-        "write" => "create",
-        "edit" | "multiedit" => "edit",
-        "read" => "view",
-        "grep" => "grep",
-        "glob" | "find" => "glob",
-        "task" | "agent" | "subagent" | "spawnagent" => "task",
-        "webfetch" => "web_fetch",
-        "question" | "askuserquestion" => "ask_user",
-        "skill" => "skill",
+        "bash" | "shell" => &["bash", "powershell"],
+        "write" => &["create"],
+        "edit" | "multiedit" => &["edit", "str_replace_editor", "apply_patch"],
+        "read" => &["view"],
+        "grep" => &["grep", "rg"],
+        "glob" | "find" => &["glob"],
+        "task" | "agent" | "subagent" | "spawnagent" => &["task"],
+        "webfetch" => &["web_fetch"],
+        "websearch" => &["web_search"],
+        "question" | "askuserquestion" => &["ask_user"],
+        "todowrite" => &["update_todo"],
+        "skill" => &["skill"],
         _ => return None,
     })
 }
@@ -155,19 +160,20 @@ pub fn antigravity_tool_name(tool: &str) -> Option<&'static str> {
 /// reported, because a matcher that never matches is a protection that
 /// never runs.
 pub fn hook_matcher(matcher: &str, harness: HarnessId) -> (String, bool) {
-    let name = match harness {
-        HarnessId::Gemini => gemini_tool_name,
-        HarnessId::Copilot => |tool: &str| {
-            copilot_hook_tool(tool)
-                .map(str::to_owned)
-                .unwrap_or_else(|| tool.trim().to_owned())
+    let name: fn(&str) -> Vec<String> = match harness {
+        HarnessId::Gemini => |tool: &str| vec![gemini_tool_name(tool)],
+        HarnessId::Copilot => |tool: &str| match copilot_hook_tools(tool) {
+            Some(tools) => tools.iter().map(|t| (*t).to_owned()).collect(),
+            None => vec![tool.trim().to_owned()],
         },
         // A matcher is a regex, and an alternative it cannot say leaves
         // the pattern narrower, never wider, so here the name stands.
         HarnessId::Antigravity => |tool: &str| {
-            antigravity_tool(tool)
-                .map(str::to_owned)
-                .unwrap_or_else(|| tool.trim().to_owned())
+            vec![
+                antigravity_tool(tool)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| tool.trim().to_owned()),
+            ]
         },
         // Claude's own names are what a matcher is authored in; codex and
         // cursor read the same spelling, and the rest register no matcher.
@@ -183,16 +189,18 @@ pub fn hook_matcher(matcher: &str, harness: HarnessId) -> (String, bool) {
         let restated = match (alphanumeric, plain) {
             (true, true) => name(token),
             // Pure syntax — `.*` names no tool and needs no translation.
-            (false, _) => token.to_owned(),
+            (false, _) => vec![token.to_owned()],
             (true, false) => {
                 said = false;
-                token.to_owned()
+                vec![token.to_owned()]
             }
         };
         // Two authored names can land on one tool, as `Edit` and
-        // `MultiEdit` do on Copilot's `edit`; the alternative is said once.
-        if !pattern.contains(&restated) {
-            pattern.push(restated);
+        // `MultiEdit` do on Copilot's `edit`; each alternative is said once.
+        for alternative in restated {
+            if !pattern.contains(&alternative) {
+                pattern.push(alternative);
+            }
         }
     }
     (pattern.join("|"), said)
