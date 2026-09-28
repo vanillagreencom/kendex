@@ -3095,7 +3095,8 @@ check_report() {
 # the harness; otherwise `lanes pick` for the record's harness and model
 # decides, the launcher's own judge: room is `queue`, a wall is `dated` until
 # the earliest reset lib/lane-model.sh's lane_binding gives that model among
-# the harness's accounts on that host, and anything else is `unjudged`. One
+# the harness's readings a launch on that host runs under, and anything else
+# is `unjudged`. One
 # listing is read per host and one pick asked per host, harness and model.
 # Without --state there is no queue to compare.
 OWED_PR_LIMIT=1000
@@ -3188,7 +3189,9 @@ owed_read() {
 
 # One host's `lanes list --json`, read once a heartbeat under that host as
 # ORCH_LANE_HOST and kept in OWED_ACCOUNTS as `<host> TAB <listing>` lines,
-# `-` for a listing that failed, which is named on stderr once.
+# `-` for a listing that failed, which is named on stderr once. A listing
+# `lanes` still answered can carry its own keyed notices, a provider it could
+# not ask among them; those qualify the verdicts judged on it and pass through.
 owed_accounts() { # HOST
   local host="$1" errf="$WORK_DIR/owed-list.err" rc=0 asked answer
   OWED_LISTING=""
@@ -3197,6 +3200,7 @@ owed_accounts() { # HOST
   done <<<"$OWED_ACCOUNTS"
   bounded_account_read "" "$errf" env ORCH_LANE_HOST="$host" "$LANES_CLI" list --json || rc=$?
   if [[ "$rc" -eq 0 ]] && jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1; then
+    [[ ! -s "$errf" ]] || cat -- "$errf" >&2
     OWED_LISTING="$(jq -c . <<<"$BOUNDED_OUT")" || die owed-roster-invalid "" "host=$host"
   else
     ow_message owed-accounts-unread "host=$host" "exit=$rc" >&2
@@ -3209,11 +3213,14 @@ owed_accounts() { # HOST
 # The wall verdict of one host, harness and model, as OWED_VERDICT. `lanes
 # pick` judges it under that host exactly as a launch there is judged. Exit 0
 # is room; exit 3 with walled accounts is a wall, dated by lane_binding over
-# that host's listing of the harness; exit 3 with none walled is every account
-# unmeasured, and any other exit a judgement that failed, named on stderr:
-# both are `unjudged`.
+# that host's listing of the harness. The listing carries a hosted account
+# twice, this machine's reading and the provider's, and a launch on a provider
+# runs under the provider's, so only rows `measured_through` `host` date a
+# provider's wall and only `local` rows the local host's; with none, `until=-`.
+# Exit 3 with none walled is every account unmeasured, and any other exit a
+# judgement that failed, named on stderr: both are `unjudged`.
 owed_wall() { # HOST HARNESS MODEL
-  local host="$1" harness="$2" model="$3" errf="$WORK_DIR/owed-pick.err" rc=0 walled until
+  local host="$1" harness="$2" model="$3" errf="$WORK_DIR/owed-pick.err" rc=0 walled until through
   local args=(pick --harness "$harness" --json)
   OWED_VERDICT="verdict=unjudged harness=$harness"
   owed_accounts "$host"
@@ -3233,8 +3240,11 @@ owed_wall() { # HOST HARNESS MODEL
         cat -- "$errf" >&2
       elif [[ "$walled" -gt 0 ]]; then
         [[ "$model" != - ]] || model=""
-        until="$(jq -r --arg h "$harness" --arg m "$model" "$LANE_MODEL_JQ"'
-          [.[] | select(.harness == $h) | lane_binding($m) | .resets_at? // empty | strings] | min // "-"' \
+        through=host
+        [[ "$host" != local ]] || through=local
+        until="$(jq -r --arg h "$harness" --arg m "$model" --arg t "$through" "$LANE_MODEL_JQ"'
+          [.[] | select(.harness == $h and .measured_through == $t) | lane_binding($m) | .resets_at? // empty | strings]
+          | min // "-"' \
           <<<"$OWED_LISTING" 2>"$errf")" || die owed-roster-invalid "$(cat "$errf")" "host=$host"
         OWED_VERDICT="verdict=dated harness=$harness until=$until"
       fi ;;

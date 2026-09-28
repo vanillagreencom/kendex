@@ -113,6 +113,28 @@ world() {
   pick provider-x-codex - 0 '{"config_dir":"/home/u/.codex"}'
 }
 
+# hosted NAME — the shared world with KEN-12's host walled for codex, its
+# listing carrying the provider's reading of a codex account beside this
+# machine's, as `lanes list` does, resetting later than every local one.
+hosted() {
+  world "$1"
+  pick provider-x-codex - 3 '{"walled":1,"unmeasured":0}'
+  jq -c --argjson h "$(account codex codex walled 2026-10-06T00:00:00Z)" \
+    '. + [$h | .measured_through = "host"]' "$STUB_DIR/lanes.json" > "$STUB_DIR/lanes.hosted.json"
+  mv -- "$STUB_DIR/lanes.hosted.json" "$STUB_DIR/lanes.json"
+}
+# noisy NAME — the shared world whose listings each write a keyed notice.
+noisy() {
+  world "$1"
+  : > "$STUB_DIR/lanes.notice"
+}
+# notices — the stub notices the pass forwarded, counted per host an owed
+# listing was read under.
+notices() {
+  printf 'local=%s provider-x=%s' "$(grep -c '^lanes: stub-notice host=local$' "$ERR" || true)" \
+    "$(grep -c '^lanes: stub-notice host=provider-x$' "$ERR" || true)"
+}
+
 # Rows: item | its owed line in the shared world, `-` for none.
 WORLD_ROWS='KEN-1|-
 KEN-2|owed KEN-2 state=in-progress priority=2 lane=stopped verdict=queue
@@ -154,6 +176,32 @@ watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "$(owed KEN-3)|$(owed KEN-9)|$(owed KEN-12)|$(owed KEN-5)|$(owed KEN-6) notes=$(grep -c '^oversee-watch: owed-accounts-unread host=' "$ERR" || true)" \
   "owed KEN-3 state=in-progress priority=1 lane=stopped verdict=unjudged harness=codex|owed KEN-9 state=in-progress priority=- lane=stopped verdict=unjudged harness=pi|owed KEN-12 state=in-progress priority=2 lane=stopped verdict=unjudged harness=codex|owed KEN-5 state=in-review priority=2 lane=done verdict=merged pr=15|owed KEN-6 state=in-review priority=3 lane=none verdict=queue notes=2" \
   "an unread listing leaves every harness on its host unjudged" "$ERR"
+
+# A notice a host's listing writes while it still answers passes through with
+# the verdicts judged on it.
+noisy owed_notice
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC $(notices) $(owed KEN-12)" \
+  "rc=0 local=1 provider-x=1 owed KEN-12 state=in-progress priority=2 lane=stopped verdict=queue" \
+  "each owed listing's notices reach stderr" "$ERR"
+
+# Rows: case | whether the listing keeps the provider's codex reading | KEN-12's
+# owed line. A walled hosted lane dates to the provider's readings, never the
+# local copy's earlier reset, and with none it is undated.
+while IFS='|' read -r name keep want; do
+  hosted "owed_hosted_$name"
+  if [[ "$keep" == no ]]; then
+    jq -c 'map(select(.measured_through != "host"))' "$STUB_DIR/lanes.json" > "$STUB_DIR/lanes.local.json"
+    mv -- "$STUB_DIR/lanes.local.json" "$STUB_DIR/lanes.json"
+  fi
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "rc=$RC $(owed KEN-12)|$(owed KEN-3)" \
+    "rc=0 $want|owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z" \
+    "a walled hosted lane with $name provider reading" "$ERR"
+done <<'ROWS'
+a|yes|owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=2026-10-06T00:00:00Z
+no|no|owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=-
+ROWS
 
 # Rows: case | pick's exit and reply for codex. Every account unmeasured and a
 # pick that fails are both unjudged; the failure is named.
@@ -226,25 +274,29 @@ bad_id|[{"id":"KEN 2","state":"In Progress","priority":2}]
 ROWS
 
 echo "=== must-fail controls ==="
-# Rows, on `@` since the replaced text carries `|`: name @ text the mutant
-# replaces @ its replacement @ item @ the line the mutant prints for it. Each
-# removes one rule of owed_read and leaves the rest standing.
+# Rows, on `@` since the replaced text carries `|`: the world it runs in @
+# name @ text the mutant replaces @ its replacement @ item, or `notices` @ the
+# line the mutant prints for it. Each removes one rule of owed_read and leaves
+# the rest standing.
 MUTANT_N=0
-while IFS='@' read -r name old new item want; do
+while IFS='@' read -r setup name old new item want; do
   MUTANT_N=$((MUTANT_N + 1))
   MUTANT_DIR="$TMP_ROOT/owed-mutant-$MUTANT_N"
   MUTANT_WATCH="$(mutant_scripts "owed-mutant-$MUTANT_N/orch" oversee-watch)/oversee-watch" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
   mutate_file "$MUTANT_WATCH" "$old" "$new"
-  world "owed_mutant_$name"
+  "$setup" "owed_mutant_$name"
   WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
-  assert_eq "$(owed "$item")" "$want" "control: $name" "$ERR"
+  if [[ "$item" == notices ]]; then got="$(notices)"; else got="$(owed "$item")"; fi
+  assert_eq "$got" "$want" "control: $name" "$ERR"
 done <<'ROWS'
-without the held exclusion an item with a running lane is owed@($rec | held)@false@KEN-1@owed KEN-1 state=in-progress priority=1 lane=running verdict=queue
-without the merged verdict a cycle record is judged for a wall@if [[ "$pr" != - ]]; then@if false; then@KEN-5@owed KEN-5 state=in-review priority=2 lane=done verdict=queue
-without the roster membership test a harness with no account is asked of pick@any(.[]; .harness == $h)@true@KEN-9@owed KEN-9 state=in-progress priority=- lane=stopped verdict=unjudged harness=pi
-without the record's model the pick judges the binding bucket@[[ "$model" == - ]] || args+=(--model "$model")@:@KEN-11@owed KEN-11 state=in-progress priority=1 lane=stopped verdict=queue
-without the record's host the pick judges the default host's accounts@env ORCH_LANE_HOST="$host" "$LANES_CLI" "${args@"$LANES_CLI" "${args@KEN-12@owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z
+world@without the held exclusion an item with a running lane is owed@($rec | held)@false@KEN-1@owed KEN-1 state=in-progress priority=1 lane=running verdict=queue
+world@without the merged verdict a cycle record is judged for a wall@if [[ "$pr" != - ]]; then@if false; then@KEN-5@owed KEN-5 state=in-review priority=2 lane=done verdict=queue
+world@without the roster membership test a harness with no account is asked of pick@any(.[]; .harness == $h)@true@KEN-9@owed KEN-9 state=in-progress priority=- lane=stopped verdict=unjudged harness=pi
+world@without the record's model the pick judges the binding bucket@[[ "$model" == - ]] || args+=(--model "$model")@:@KEN-11@owed KEN-11 state=in-progress priority=1 lane=stopped verdict=queue
+world@without the record's host the pick judges the default host's accounts@env ORCH_LANE_HOST="$host" "$LANES_CLI" "${args@"$LANES_CLI" "${args@KEN-12@owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=-
+hosted@without the reading filter a hosted wall dates to the local copy's reset@select(.harness == $h and .measured_through == $t)@select(.harness == $h)@KEN-12@owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z
+noisy@without forwarding a listing's notices are dropped@jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1; then@jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1 && : >"$errf"; then@notices@local=0 provider-x=0
 ROWS
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

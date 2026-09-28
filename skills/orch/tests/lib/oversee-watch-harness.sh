@@ -466,7 +466,10 @@ EOF
 # call of the case and lanes.json otherwise, `[]` with neither, so no case
 # reads the accounts of the machine running it. lanes.rc is the exit status,
 # lanes.sleep the seconds to wait before answering, every call's argv lands in
-# lanes.args and the usage age it was handed in lanes.max-age.
+# lanes.args and the usage age it was handed in lanes.max-age. With
+# lanes.notice present, a listing that answers also writes one keyed notice
+# naming the call's ORCH_LANE_HOST to stderr, as `lanes` does for a provider
+# it could not ask.
 # `lanes pick --harness H [--model M]` is answered apart and counts no list
 # call: pick-<HOST>-<H>-<M>.rc and .json where the call's ORCH_LANE_HOST has
 # them, else pick-<H>-<M> (M `-` with no --model), default exit 0 and `{}`,
@@ -502,6 +505,7 @@ n=0; [[ -f "$STUB_DIR/lanes.calls" ]] && n="$(cat "$STUB_DIR/lanes.calls")"
 n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/lanes.calls"
 rc=0; [[ -f "$STUB_DIR/lanes.rc" ]] && rc="$(cat "$STUB_DIR/lanes.rc")"
 [[ "$rc" -eq 0 ]] || { printf 'lanes: stub-refused rc=%s\n' "$rc" >&2; exit "$rc"; }
+[[ ! -f "$STUB_DIR/lanes.notice" ]] || printf 'lanes: stub-notice host=%s\n' "${ORCH_LANE_HOST:-unset}" >&2
 if [[ -f "$STUB_DIR/lanes.$n.json" ]]; then cat "$STUB_DIR/lanes.$n.json"
 elif [[ -f "$STUB_DIR/lanes.json" ]]; then cat "$STUB_DIR/lanes.json"
 else printf '[]\n'; fi
