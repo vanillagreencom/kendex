@@ -113,20 +113,21 @@ claude-last|opencode||rc=3
 ROWS
 
 echo "=== the claude window table names a model only where its window is established ==="
-# `model|window`: the aliases a launch passes and the ids a transcript names.
-# claude-sonnet-4-6 runs 200K or, as its [1m] variant, 1M under one id, and
-# claude-sonnet-5-5 is a model no row has evidence for; both stay unnamed.
-while IFS='|' read -r model want; do
-  assert_eq "$(bash -c 'set -euo pipefail; source "$1"; lane_adapter_claude_window "$2"' _ "$LIB" "$model")" "$want" \
-    "claude window of $model: ${want:-none}"
+# `model|window|id`: a model, its window, and the id a launch writes for it.
+# claude-sonnet-4-6 runs 200K or, as its [1m] variant, 1M under one id,
+# claude-sonnet-5-5 is a model no row has evidence for, and a bare sonnet or
+# haiku is whatever a pin makes it; all stay unnamed.
+while IFS='|' read -r model want id; do
+  assert_eq "$(bash -c 'set -euo pipefail; source "$1"; lane_adapter_claude_window "$2"; lane_adapter_claude_model_id "$2"' _ "$LIB" "$model" | tr '\n' '|')" \
+    "${want:+$want|}${id:-$model}|" "claude window of $model: ${want:-none}, written as ${id:-$model}"
 done <<'ROWS'
 fable|1000000
 opus[1m]|1000000
 claude-opus-5-5|1000000
-sonnet|1000000
-Sonnet|1000000
+sonnet||claude-sonnet-5
+Sonnet||claude-sonnet-5
 claude-sonnet-5|1000000
-haiku|200000
+haiku||claude-haiku-4-5
 claude-haiku-4-5|200000
 claude-haiku-4-5-20251001|200000
 claude-sonnet-4-6|
@@ -330,8 +331,10 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'codex reads codex-last as'
   control codex-evidence adapters/codex.sh 'then $window else "" end;' 'then $window else $window end;' \
     'codex configuration  gives point unresolved'
+  control claude-model-id adapters/claude.sh '    sonnet) printf' '    sonnetx) printf' \
+    'claude window of sonnet: none, written as claude-sonnet-5'
   control claude-window-substring adapters/claude.sh '      ${pair%=*}) printf' '      *${pair%=*}*) printf' \
-    'claude window of claude-sonnet-4-6: none'
+    'claude window of claude-sonnet-5-5: none'
   control claude-evidence adapters/claude.sh '[ "${DISABLE_AUTO_COMPACT:-}" = 1 ]' '[ "${DISABLE_AUTO_COMPACT:-}" = 0 ]' \
     'claude configuration 0 gives point unresolved'
   control strict-mark lane-context.sh '-gt $(($2 * pct))' '-ge $(($2 * pct))' \

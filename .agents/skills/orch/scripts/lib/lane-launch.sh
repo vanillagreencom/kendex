@@ -455,6 +455,13 @@ launch_choice_effort() { # HARNESS TEXT [TEXT]
 # neither word. Status 1 where a MODEL is named and the table holds no row for
 # that harness, which is not an answer but the absence of one. A harness whose
 # row has no effort spelling takes the model alone; so does an empty EFFORT.
+# The model a launch of HARNESS writes for MODEL: a claude alias the adapter
+# maps is written as its id, so no ANTHROPIC_DEFAULT_*_MODEL pin moves the
+# model its window was judged on; every other model as named.
+launch_choice_model_id() { # HARNESS MODEL
+  if [[ "$1" == claude ]]; then lane_adapter_claude_model_id "${2:-}"; else printf '%s\n' "${2:-}"; fi
+}
+
 launch_choice_write() { # HARNESS MODEL EFFORT
   local row model_spellings effort_spellings attach word out
   # No model to pass is an answer: the caller names neither word, and an effort
@@ -466,7 +473,7 @@ launch_choice_write() { # HARNESS MODEL EFFORT
   [[ -n "$row" ]] || return 1
   IFS='|' read -r _ model_spellings effort_spellings _ attach _ _ _ <<<"$row"
   read -r word _ <<<"$model_spellings"
-  out="$word $(printf %q "$2")"
+  out="$word $(printf %q "$(launch_choice_model_id "$1" "$2")")"
   if [[ "$effort_spellings" != - && -n "$3" ]]; then
     read -r word _ <<<"$effort_spellings"
     if [[ "$word" == *= ]]; then
@@ -504,7 +511,8 @@ launch_choice_permission_write() { # HARNESS
 # `--question-off` its question-tool words after them, then WORD... in order
 # with every row's settings, compaction and question-tool runs taken out
 # wherever each stands whole. The model is `--model MODEL` where the caller
-# writes it outside WORD..., and otherwise the one WORD... names.
+# writes it outside WORD..., and otherwise the one WORD... names; a WORD...
+# naming it is written as launch_choice_model_id gives it, and judged so.
 # LAUNCH_CHOICE_COMPACTION says what became of the compaction words: `on`,
 # `none` for a row that has none, `no-model` where no model is named and
 # `no-window` where its window is unnamed, the last two leaving compaction on. A caller's flags handed
@@ -514,7 +522,7 @@ launch_choice_permission_write() { # HARNESS
 # Runs are matched newline-bounded, since a caller's flag word can hold a space.
 LAUNCH_CHOICE_COMPACTION=""
 launch_choice_lead_settings() { # [--question-off] [--model MODEL] HARNESS WORD...
-  local question_off=false model="" model_given=false compaction_rc=0 own_compaction
+  local question_off=false model="" model_given=false compaction_rc=0 own_compaction model_id spelling
   if [[ "${1:-}" == --question-off ]]; then
     question_off=true
     shift
@@ -526,13 +534,19 @@ launch_choice_lead_settings() { # [--question-off] [--model MODEL] HARNESS WORD.
   local harness="$1" nl=$'\n' lead="" row name settings question compaction run words line
   shift
   [[ "$model_given" == true ]] || model="$(launch_choice_value "$(launch_choice_model_spellings "$harness")" "$*")"
-  own_compaction="$(launch_choice_compaction "$harness" "$model")" || compaction_rc=$?
+  model_id="$(launch_choice_model_id "$harness" "$model")"
+  own_compaction="$(launch_choice_compaction "$harness" "$model_id")" || compaction_rc=$?
   case "$compaction_rc:$own_compaction" in
     0:) LAUNCH_CHOICE_COMPACTION=none ;;
     0:*) LAUNCH_CHOICE_COMPACTION=on ;;
     *) LAUNCH_CHOICE_COMPACTION=no-window; [[ -n "$model" ]] || LAUNCH_CHOICE_COMPACTION=no-model ;;
   esac
   words="$nl$(printf '%s\n' "$@")$nl"
+  if [[ "$model_id" != "$model" ]]; then
+    for spelling in $(launch_choice_model_spellings "$harness"); do
+      words="${words//"$nl$spelling$nl$model$nl"/$nl$spelling$nl$model_id$nl}"
+    done
+  fi
   for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do
     IFS='|' read -r name _ _ _ _ _ _ settings question compaction <<<"$row"
     for run in "$settings" "$compaction" "$question"; do
@@ -600,51 +614,9 @@ launch_choice_compaction() { # HARNESS MODEL
   words="$(launch_choice_compaction_off "$1")"
   [[ -n "$words" ]] || return 0
   case "$1" in
-    claude)
-      [[ -n "$(lane_adapter_claude_window "${2:-}")" ]] || return 1
-      ! launch_choice_claude_alias_moved "${2:-}" || return 1 ;;
+    claude) [[ -n "$(lane_adapter_claude_window "${2:-}")" ]] || return 1 ;;
   esac
   printf '%s\n' "$words"
-}
-
-# The Claude Code variables that move the model an alias names: a provider
-# switch, under which `sonnet` resolves to Sonnet 4.5 or 4.6, and the alias's
-# own ANTHROPIC_DEFAULT_*_MODEL pin.
-LAUNCH_CHOICE_CLAUDE_PROVIDER_KEYS='CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY CLAUDE_CODE_USE_ANTHROPIC_AWS CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD CLAUDE_CODE_USE_GATEWAY CLAUDE_CODE_USE_MANTLE'
-
-# launch_choice_claude_alias_moved MODEL — 0 where MODEL is the `sonnet` or
-# `haiku` alias and the session could resolve it off the model the claude
-# adapter's row names: one of its keys above is set in this process, in the
-# tmux global environment a new pane inherits, or in the `env` of the Claude
-# settings.json under CLAUDE_CONFIG_DIR. A source that cannot be read counts
-# as set. 1 for any other model, and where no source sets a key. No running
-# tmux server is no source: a pane then starts from this process's environment.
-launch_choice_claude_alias_moved() { # MODEL
-  local keys key settings found tmux_env line
-  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
-    sonnet) keys="$LAUNCH_CHOICE_CLAUDE_PROVIDER_KEYS ANTHROPIC_DEFAULT_SONNET_MODEL" ;;
-    haiku) keys="$LAUNCH_CHOICE_CLAUDE_PROVIDER_KEYS ANTHROPIC_DEFAULT_HAIKU_MODEL" ;;
-    *) return 1 ;;
-  esac
-  for key in $keys; do
-    [[ -z "${!key:-}" ]] || return 0
-  done
-  settings="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/settings.json"
-  if [[ -e "$settings" ]]; then
-    found="$(jq -r --arg keys "$keys" '($keys | split(" ")) as $k
-      | [(.env // {}) | to_entries[] | select(.key as $n | any($k[]; . == $n))
-         | select(.value != null and .value != "")] | length' -- "$settings" 2>/dev/null)" || return 0
-    [[ "$found" == 0 ]] || return 0
-  fi
-  if command -v tmux >/dev/null 2>&1 && tmux list-sessions >/dev/null 2>&1; then
-    tmux_env="$(tmux show-environment -g 2>/dev/null)" || return 0
-    while IFS= read -r line; do
-      for key in $keys; do
-        case "$line" in "$key="?*) return 0 ;; esac
-      done
-    done <<<"$tmux_env"
-  fi
-  return 1
 }
 
 # The compaction policy settings for harness $1, empty where the row

@@ -102,6 +102,7 @@ echo "=== every command open-terminal builds takes the question tool away ==="
 for row in \
   "claude|-|CC-1|claude -n CC-1 '--disallowedTools=AskUserQuestion,EnterPlanMode' '/orch start CC-1'|claude denies AskUserQuestion and EnterPlanMode; naming no model, it keeps its compaction" \
   "claude|--model opus|CC-6|claude -n CC-6 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'opus' '/orch start CC-6'|a claude model the adapter names a window for turns its compaction off" \
+  "claude|--model sonnet|CC-8|claude -n CC-8 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-5' '/orch start CC-8'|a claude alias is written as its model id, whose window turns its compaction off" \
   "claude|--model claude-sonnet-4-6|CC-7|claude -n CC-7 '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-4-6' '/orch start CC-7'|a claude model with no window keeps its compaction, and there is no mark to hand off at" \
   "codex|-|CC-2|codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-2'|codex disables the request_user_input feature after its update and compaction settings" \
   "pi|-|CC-3|pi '--exclude-tools' 'question' '/skill:orch start CC-3'|pi excludes the pi-questions tool" \
@@ -138,6 +139,15 @@ for row in \
   refusal="$(awk '$2 == "launch-question-tool-missing" { print; exit }' <<<"$ERR")"
   assert_eq "rc=$RC created=$CREATED refusal=${refusal:--}" "rc=$want_rc created=$want_created refusal=$want_err" "gate: $what"
 done
+
+echo "=== must-fail control ==="
+# The model words handed on as named: the sonnet launch renders the bare alias.
+REWRITE='  if [[ "$model_id" != "$model" ]]; then'
+assert_eq "$(grep -c -F -e "$REWRITE" "$REPO/scripts/lib/lane-launch.sh")" 1 "control finds its one site"
+perl -i -pe 'BEGIN { $o = shift } s/\Q$o\E/  if false; then/' "$REWRITE" "$REPO/scripts/lib/lane-launch.sh"
+launch CC-9 --harness claude --launch-flags '--model sonnet'
+assert_eq "$CMD" "claude -n CC-9 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'sonnet' '/orch start CC-9'" \
+  "control: without the rewrite a claude alias reaches the command as named"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

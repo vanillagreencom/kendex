@@ -549,7 +549,11 @@ pi_local_gate() {
 if [[ "$FLEET" == true && "$WAKE" != true ]]; then
   case "$LAUNCH_HARNESS" in
     claude | codex)
-      if ! LAUNCH_COMPACTION_OFF="$(launch_choice_compaction "$LAUNCH_HARNESS" "$LAUNCH_MODEL")"; then
+      # A --cmd template runs its model as written; any other launch is
+      # written with the model id launch_choice_lead_settings gives it.
+      gate_model="$LAUNCH_MODEL"
+      [[ -n "$CMD_TEMPLATE" ]] || gate_model="$(launch_choice_model_id "$LAUNCH_HARNESS" "$LAUNCH_MODEL")"
+      if ! LAUNCH_COMPACTION_OFF="$(launch_choice_compaction "$LAUNCH_HARNESS" "$gate_model")"; then
         ot_message launch-window-unknown "harness=$LAUNCH_HARNESS" "model=${LAUNCH_MODEL:-none}" >&2
         exit 1
       fi

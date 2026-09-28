@@ -610,6 +610,14 @@ roundtrip() { # HARNESS MODEL EFFORT — the model and effort read back, `;`-joi
 assert_eq "$(roundtrip claude fable high)|$(roundtrip codex gpt-6-astra high)|$(roundtrip opencode grok-5 high)|$(roundtrip pi sonnet high)|$(roundtrip copilot claude-fable-5.1 high)" \
   "fable;high|gpt-6-astra;high|grok-5;|sonnet;high|claude-fable-5.1;high" \
   "every row's written words read back as the model and effort they were written from"
+# A claude successor on the sonnet or haiku rank is written with the model id,
+# which no ANTHROPIC_DEFAULT_*_MODEL pin moves; another harness keeps its word.
+assert_eq "$(roundtrip claude sonnet high)|$(roundtrip claude haiku high)|$(roundtrip pi sonnet high)" \
+  "claude-sonnet-5;high|claude-haiku-4-5;high|sonnet;high" "a claude alias is written as its model id"
+IDCTL="$(mutant_scripts idctl lib/lane-launch.sh)" || exit 1
+mutate_file "$IDCTL/lib/lane-launch.sh" '$(printf %q "$(launch_choice_model_id "$1" "$2")")' '$(printf %q "$2")'
+assert_eq "$(source "$IDCTL/lib/lane-launch.sh"; roundtrip claude sonnet high)" "sonnet;high" \
+  "control: a writer that names the model as given writes the bare alias"
 
 # Control: the reader answers from the row's own spellings. The same launches
 # with a character in front of every word read back neither choice, so the row
