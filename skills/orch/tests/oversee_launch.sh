@@ -340,10 +340,10 @@ assert_eq "$RC|$(keyed entry-permission-unwritable "$OUT" | sed -n 1p)|$(recorde
   "a first launch skips a pi entry and opens on the claude entry after it"
 tm kill-window -t "$(recorded window)"
 # Its control: a walk that chooses the pi entry refuses the whole launch.
-PIFIRSTCTL="$(mutant_scripts pifirstctl oversee)" || exit 1
-mutate_file "$PIFIRSTCTL/oversee" '  if ! launch_choice_permission_write "$harness" >/dev/null; then' '  if false; then'
+PIFIRSTCTL="$(mutant_scripts pifirstctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$PIFIRSTCTL/lib/overseer-launch.sh" '    launch_choice_permission_write "$OL_HARNESS" >/dev/null && return 0' '    return 0'
 pi_first_row "$PIFIRSTCTL/oversee"
-assert_eq "$RC|$(sed -n 1p <<<"$OUT" | awk '{print $2, $3}')|$(overseers)" "1|launch-choice-failed harness=pi|0" \
+assert_eq "$RC|$(sed -n 1p <<<"$OUT" | awk '{print $2, $3}')|$(overseers)" "1|launch-choice-failed entry=pi:openai/gpt-5:high|0" \
   "control: a first launch that chooses the pi entry refuses and opens nothing"
 
 # The writer's control: a record write that leaves the launch identity out,

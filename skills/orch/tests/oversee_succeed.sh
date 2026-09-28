@@ -1219,10 +1219,10 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "a pi caller's judgement skips a codex entry no permission posture crosses from pi to"
 # Their control: a judgement that leaves the transfer test to the succession
 # fires the mark on each entry that succession would skip.
-CROSSCTL="$(mutant_scripts crossctl oversee-succeed)" || exit 1
-mutate_file "$CROSSCTL/oversee-succeed" \
-  '      if [[ "$harness" != "$CALLER_HARNESS" ]] && ! entry_transferable "$harness"; then' \
-  '      if [[ "$MODE" != check && "$harness" != "$CALLER_HARNESS" ]] && ! entry_transferable "$harness"; then'
+CROSSCTL="$(mutant_scripts crossctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$CROSSCTL/lib/overseer-launch.sh" \
+  '  [[ "$OL_HARNESS" != "$OL_WALK_SOURCE_HARNESS" ]] || return 0' \
+  '  [[ "$OL_HARNESS" != "$OL_WALK_SOURCE_HARNESS" ]] && (( ! OL_WALK_SOURCE_ROWS )) || return 0'
 claude_usage 60 20 99 "Fable 5.1" > "$FIXTURE_DIR/.claude.json"
 new_caller "$UNDER_MARK"
 caller_record claude claude-sonnet-5

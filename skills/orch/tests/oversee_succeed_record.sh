@@ -408,7 +408,7 @@ assert_eq "$BARE_RC|$BARE_MODEL|$BARE_JUDGED|$RC|$(jq -r '.overseer.model' "$FLE
 # Its control: a successor that runs, and records, its caller's bare flag
 # leaves the next generation's succession refusing an account it cannot name.
 BARECTL="$(mutant_scripts barectl oversee-succeed)" || exit 1
-mutate_file "$BARECTL/oversee-succeed" '      if [[ "$CALLER_HARNESS" == pi && "$CALLER_MODEL" == ?*/?* ]]; then' '      if false; then'
+mutate_file "$BARECTL/oversee-succeed" '  if [[ "$CALLER_HARNESS" == pi && "$CALLER_MODEL" == ?*/?* ]]; then' '  if false; then'
 bare_row "$BARECTL/oversee-succeed"
 assert_eq "$BARE_MODEL|$RC|$(grep -m1 -o '^oversee-succeed: pi-account-unknown [^ ]*' <<<"$ERR")" \
   "claude-fable-5-1|1|oversee-succeed: pi-account-unknown model=claude-fable-5-1" \

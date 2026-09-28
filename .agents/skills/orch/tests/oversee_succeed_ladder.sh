@@ -431,8 +431,8 @@ assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched pi)|$(launche
   "a claude caller skips a pi entry no permission posture crosses to"
 # Its control: a walk that asks the source row alone chooses the pi entry and
 # then refuses, launching nothing.
-PISKIPCTL="$(mutant_scripts piskipctl oversee-succeed)" || exit 1
-mutate_file "$PISKIPCTL/oversee-succeed" '  launch_choice_permission_write "$1" >/dev/null || return 1' ''
+PISKIPCTL="$(mutant_scripts piskipctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$PISKIPCTL/lib/overseer-launch.sh" '  if launch_choice_permission_write "$OL_HARNESS" >/dev/null; then' '  if true; then'
 pi_skip_row "$PISKIPCTL/oversee-succeed"
 assert_eq "$RC|$(first_key)|$(launched pi)|$(launched claude)" "1|launch-choice-failed|none|none" \
   "control: a walk that asks the source row alone chooses the pi entry and refuses"
