@@ -1,14 +1,17 @@
 //! `kendex verify`: a path an installed agent declares as tracked output
 //! that the project's repository ignores fails the run, on a row naming
 //! the agent, the path and the rule; the same declaration in a project
-//! that leaves the path tracked fails nothing; and a declared path git
-//! cannot judge fails the run with the scope named as not checked.
+//! that leaves the path tracked fails nothing; a declared path git cannot
+//! judge fails the run with the scope named as not checked; and an agent
+//! no harness in the project takes, Antigravity keeping agents global
+//! only, writes nowhere and is held to nothing.
 //!
 //! The must-fail controls are `tracked_output_rows` skipping every
 //! standing, which leaves the ignored row clean; dropping its stderr
 //! line, which leaves the ignored row's detail only in the document; and
 //! its error branch dropping the `outputs_failed` count, which leaves the
-//! unjudged row clean.
+//! unjudged row clean; and the engine recording an agent it placed
+//! nowhere, which gives the unplaced row a tracked-output row.
 #![cfg(unix)]
 
 use std::path::PathBuf;
@@ -18,11 +21,11 @@ use kendex_core::attest::{Document, Row, State};
 use super::verify_records::{commit, kendex, repository, said, write};
 use crate::test_util::{rooted, source_path};
 
-/// A project with a planner declaring `declared` installed from a path
-/// catalog, its repository ignoring what `ignore` names. Installed and
-/// committed.
+/// A project on `harness` with a planner declaring `declared` installed
+/// from a path catalog, its repository ignoring what `ignore` names.
+/// Installed and committed.
 #[allow(clippy::unwrap_used)]
-fn installed(declared: &str, ignore: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+fn installed(harness: &str, declared: &str, ignore: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let catalog = home.join("catalog");
@@ -37,7 +40,7 @@ fn installed(declared: &str, ignore: &str) -> (tempfile::TempDir, PathBuf, PathB
     write(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[agents.planner]\nsource = \"cat\"\n",
+            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"{harness}\"]\nmethod = \"copy\"\n[agents.planner]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     );
@@ -59,23 +62,38 @@ enum Expected {
     /// No row, a failed run, and stderr saying the scope's tracked
     /// outputs were not checked.
     Unjudged,
+    /// No row and no tracked-output line: the agent is installed nowhere.
+    /// The run fails on its gap, which is not this surface's to judge.
+    Unplaced,
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_ignored_tracked_output_fails_verify_and_a_tracked_one_does_not() {
-    for (declared, ignore, expected) in [
+    for (harness, declared, ignore, expected) in [
         (
+            "claude",
             "docs/plans/<slug>.md",
             "docs/plans/\n",
             Expected::Ignored(
                 "tracked output docs/plans/<slug>.md is ignored (.gitignore:1:docs/plans/)",
             ),
         ),
-        ("docs/plans/<slug>.md", "target/\n", Expected::Tracked),
-        ("../outside.md", "target/\n", Expected::Unjudged),
+        (
+            "claude",
+            "docs/plans/<slug>.md",
+            "target/\n",
+            Expected::Tracked,
+        ),
+        ("claude", "../outside.md", "target/\n", Expected::Unjudged),
+        (
+            "antigravity",
+            "docs/plans/<slug>.md",
+            "docs/plans/\n",
+            Expected::Unplaced,
+        ),
     ] {
-        let (_tmp, home, project) = installed(declared, ignore);
+        let (_tmp, home, project) = installed(harness, declared, ignore);
         let output = kendex(&home, &project, &["verify", "--scope", "project", "--json"]);
         let document: Document = serde_json::from_slice(&output.stdout)
             .unwrap_or_else(|error| panic!("no document: {error}\n{}", said(&output)));
@@ -109,6 +127,10 @@ fn an_ignored_tracked_output_fails_verify_and_a_tracked_one_does_not() {
                 assert!(!document.clean, "{declared}");
                 assert_eq!(rows, Vec::<&Row>::new(), "{declared}");
                 assert!(stderr.contains("tracked outputs not checked"), "{stderr}");
+            }
+            Expected::Unplaced => {
+                assert_eq!(rows, Vec::<&Row>::new(), "{harness}");
+                assert!(!stderr.contains("tracked output"), "{stderr}");
             }
         }
     }

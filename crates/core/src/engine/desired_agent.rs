@@ -127,13 +127,9 @@ pub(super) fn desired_agent(
             remediation: None,
         });
     }
-    if enabled && !parsed.tracked_outputs.is_empty() {
-        state
-            .tracked_outputs
-            .insert(ctx.name.to_owned(), parsed.tracked_outputs.clone());
-    }
     let skills =
         super::agent_skills::assigned_skills(ctx, parsed.role, updated_manifest, manifest_changed)?;
+    let mut placed = false;
     for harness in ctx.harnesses.clone() {
         let Some(native) = native_dir(ctx.env, ctx.scope, harness, ItemKind::Agent) else {
             continue;
@@ -180,6 +176,15 @@ pub(super) fn desired_agent(
             reasons: ctx.reasons_for(harness),
             artifact,
         });
+        placed = true;
+    }
+    // Only an agent this pass places somewhere can write the outputs it
+    // declares: one no harness takes has nothing to hold against the
+    // project's ignore rules.
+    if enabled && placed && !parsed.tracked_outputs.is_empty() {
+        state
+            .tracked_outputs
+            .insert(ctx.name.to_owned(), parsed.tracked_outputs);
     }
     Ok(())
 }

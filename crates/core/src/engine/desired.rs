@@ -316,8 +316,9 @@ pub struct DesiredState {
     /// invariant 4's conflict where the record is another catalog's
     /// (`plan_pass::plan_rebound`).
     pub withheld: BTreeMap<(ItemKind, String, HarnessId), Withholding>,
-    /// The paths each enabled agent this pass read declares as tracked
-    /// output, by agent name; `EngineReport::tracked_outputs`.
+    /// The paths each enabled agent this pass places on at least one
+    /// harness declares as tracked output, by agent name;
+    /// `EngineReport::tracked_outputs`.
     pub tracked_outputs: BTreeMap<String, Vec<String>>,
 }
 
