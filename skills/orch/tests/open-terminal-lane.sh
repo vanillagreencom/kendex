@@ -13,7 +13,7 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # Every lane this suite measures lives under LANES_HOME; an inherited lane
 # setting would point discovery at the operator's real accounts.
-unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANES_USAGE_TTL CODEX_HOME
+unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANE_COPILOT_POOL ORCH_LANES_USAGE_TTL CODEX_HOME
 # The renewal's own settings, for the same reason: with one of these exported a
 # developer runs a different suite from CI, where the expired-lane rows below
 # stay expired, and a row could reach a live helper or the real token endpoint.
