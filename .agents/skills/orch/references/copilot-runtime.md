@@ -13,7 +13,7 @@ A session keeps its state under `${COPILOT_HOME:-~/.copilot}/session-state/<sess
 
 ## Launch environment
 
-Every Copilot command `open-terminal` and the overseer launchers build or wrap carries orch's own words, on a fresh start, a relaunch, a wake and a successor alike, a `--cmd` template included. `lib/lane-launch.sh` holds them: the `LAUNCH_CHOICE_FLAGS` copilot row and `lane_copilot_env`.
+Every Copilot command `open-terminal` and the overseer launchers build carries every row below, on a fresh start, a relaunch, a wake and a successor alike. A `--cmd` template `open-terminal` wraps carries the environment rows alone. `lib/lane-launch.sh` holds them: the `LAUNCH_CHOICE_FLAGS` copilot row and `lane_copilot_env`.
 
 | Words orch adds | Why |
 |-----------------|-----|
