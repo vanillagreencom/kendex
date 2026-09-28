@@ -41,7 +41,7 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 | `block-unsafe-rm` | enforced | enforced | enforced | enforced | enforced | not named | advisory | advisory |
 | `block-worktree-refresh` | enforced | enforced | enforced | enforced | enforced | not named | advisory | advisory |
 | `command-safety` | enforced | enforced | enforced | enforced | enforced | not named | advisory | advisory |
-| `doc-drift-check` | enforced | enforced | enforced | it has no Stop event | whether its agentStop also fires at a subagent's end, and which transcript that stop names, is a pending live-lane proof | its Stop payload carries no `stop_hook_active` and names the session `conversationId` | advisory | advisory |
+| `doc-drift-check` | enforced | enforced | enforced | it has no Stop event | its agentStop also fires at each custom subagent's end, naming the subagent's own session id and the lead's transcript, and this hook does not tell that stop from the lead's | its Stop payload carries no `stop_hook_active` and names the session `conversationId` | advisory | advisory |
 | `lane-mail-check` | enforced | enforced | enforced | it has no Stop event | enforced | its Stop payload carries no `stop_hook_active` | advisory | advisory |
 | `lane-mail-deliver` | enforced | enforced | enforced | the lane-mail-check hook it runs is not installed there, having no Stop event | enforced | any PostToolUse output replaces the tool result the model reads | advisory | advisory |
 | `lane-mail-halt` | enforced | enforced | enforced | the lane-mail-check hook it runs is not installed there, having no Stop event | enforced | the lane-mail-check hook it runs is not installed there, and its command arrives as `toolCall.args.CommandLine` | advisory | advisory |

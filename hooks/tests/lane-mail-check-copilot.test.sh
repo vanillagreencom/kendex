@@ -286,12 +286,16 @@ assert_eq "RC=$RC carried=$(stdout_field '.additionalContext' | grep -cF 'After 
   "RC=0 carried=1 unread=0" "and the resumed lead's finished call is handed the lines"
 
 # The records a crashed or ended session left: matched by no other session,
-# and removed at a start once untouched for 30 days, the fresh ones kept.
-touch -t 200001010000 "$COP_LEADS/s2"
+# and removed at a start once untouched for 30 days. The window is staged on
+# both sides, s1 aged 29 days and kept, s2 aged 31 and removed, so a window
+# under 29 days or over 30 fails the row; perl ages them because
+# `touch -d` spells a relative date on GNU alone.
+perl -e '$t = time - $ARGV[0] * 86400; utime($t, $t, $ARGV[1]) or die "utime: $!\n"' 29 "$COP_LEADS/s1"
+perl -e '$t = time - $ARGV[0] * 86400; utime($t, $t, $ARGV[1]) or die "utime: $!\n"' 31 "$COP_LEADS/s2"
 touch -t 200001010000 "$COP_LEADS/crashed"
 COP_SESSION=s3 copilot_context start
 assert_eq "RC=$RC stderr=$(first_line) recorded=$(cop_recorded)" "RC=0 stderr=- recorded=s1,s3" \
-  "a session start prunes the records untouched for 30 days and keeps the fresh ones"
+  "a session start prunes the records untouched for 30 days and keeps the younger ones"
 COP_SESSION=crashed copilot_stop "$COP_TRANSCRIPT"
 assert_eq "RC=$RC recorded=$(cop_recorded)" "RC=0 recorded=s1,s3" \
   "a stop whose session is not the one its transcript is named for records nothing"
