@@ -44,6 +44,8 @@ def setup(root: Path, name: Optional[str], take: Optional[str]) -> int:
     ids = resolve_owner_ids(api, settings.owners)
     if take:
         info = api.get("conversations.info", channel=take)["channel"]
+        if not info.get("is_private"):
+            raise Refusal("slack-channel-public", f"{take} fix=take a private channel, or run setup without --take")
         if not info.get("is_member"):
             raise Refusal("slack-channel-unjoined", f"{take} fix=invite the app to the channel, then run setup again")
         channel, channel_name = str(info["id"]), str(info.get("name", take))

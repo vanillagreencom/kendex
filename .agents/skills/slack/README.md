@@ -107,7 +107,7 @@ A question answered in the overseer's chat shows in its Slack thread as "Answere
 ## Credential boundary
 
 - The bot token lives in the private env file or the process environment, never in a settings file, the binding, the journal or a post.
-- The relay reads and writes one channel per checkout, the one `setup` bound. `post --channel` reaches another channel only from the command line.
+- The relay reads and writes one channel per checkout, the one `setup` bound. `setup --take` binds a private channel only, and a relay given two checkouts bound to one channel refuses to start. `post --channel` reaches another channel only from the command line.
 - Every text and every file leaving the host passes the secret-value pattern the orch skill ships. A match is refused and never sent, and the report stays on disk.
 - The journal and the binding hold identifiers only: channel ids, message stamps, user ids, envelope ids and file ids. No message body is copied.
 - Anyone in the channel reads what the overseer posts. Only the owners steer.

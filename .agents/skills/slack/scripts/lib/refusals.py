@@ -38,6 +38,11 @@ EXPLAIN = {
         " stop the relay, move the journal aside, then run setup again; the"
         " new channel then starts from the binding moment."
     ),
+    "channel-shared": (
+        "Two roots given to one relay are bound to the same channel, and"
+        " each would deliver every owner message into its own mailbox."
+        " fix= names the remedy: bind one of them to a channel of its own."
+    ),
     "root-unbound": (
         "The root has no Slack binding. Run `slack setup` in that checkout"
         " first; the binding names the channel the relay reads."
@@ -91,6 +96,10 @@ EXPLAIN = {
         "Slack has no account under the named email address. fix= names the"
         " remedy: set SLACK_OWNERS to the addresses the workspace knows, or"
         " have the person join the workspace under this one."
+    ),
+    "slack-channel-public": (
+        "The channel --take names is not private. Everything the relay posts"
+        " is for the owners alone, so it binds a private channel only."
     ),
     "slack-channel-unjoined": (
         "The bot is not a member of the named private channel and cannot"

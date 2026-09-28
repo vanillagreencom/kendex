@@ -31,9 +31,10 @@ runs in.
 
 setup     resolve every SLACK_OWNERS address to a Slack user, create the
           private channel or find it by name (--name; default
-          <checkout>-<owner's local part>), or adopt an existing one by id
-          (--take), invite the owners, write the binding tmp/slack/binding.json,
-          and restart the relay unit `install` wrote when one stands
+          <checkout>-<owner's local part>), or adopt an existing private one
+          by id (--take), invite the owners, write the binding
+          tmp/slack/binding.json, and restart the relay unit `install` wrote
+          when one stands
 listen    the relay: every SLACK_POLL_SECONDS, per root, one history read since
           the journal's position, the thread of every open question, every
           tenth poll the other bound threads younger than SLACK_THREAD_DAYS,
@@ -43,8 +44,9 @@ listen    the relay: every SLACK_POLL_SECONDS, per root, one history read since
           its file. A post Slack refuses fails the poll and is made again
           on the next one; an envelope post whose response was lost is
           journaled unknown and never repeated. One relay per checkout, held
-          by an OS lock; --once polls each root once and exits 0 when every
-          poll succeeded, 1 otherwise
+          by an OS lock; two roots bound to one channel are refused; --once
+          polls each root once and exits 0 when every poll succeeded, 1
+          otherwise
   --status  one `slack-relay=ROOT state=ok|failing|stale|never` line per
           root from the relay's status record, then the summed call budget
 post      one message to the bound channel, or --channel for another; --mention

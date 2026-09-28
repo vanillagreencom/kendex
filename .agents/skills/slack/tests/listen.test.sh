@@ -8,7 +8,8 @@
 # a report uploaded and its thread bound from the share, a non-owner and a
 # file alone answered once and not routed, catch-up over pages, the crash
 # between the mailbox append and the journal mark, the second relay refused
-# by the lock, a reply under a thread past SLACK_THREAD_DAYS left unrouted,
+# by the lock, two roots bound to one channel refused at start, a reply
+# under a thread past SLACK_THREAD_DAYS left unrouted,
 # a secret value refused, a 429 honoured, a post Slack refuses failing the
 # poll and made again, a post whose response was lost journaled unknown, a
 # refused history read failing the poll, a first start reading Slack from
@@ -19,11 +20,12 @@
 # refused, and a notice under an owner message past the horizon posted once
 # across compaction. The controls at the end plant one mutant per rule: the
 # delivery id dropped, the ask thread no longer resolved, the lock no longer
-# exclusive, the thread-age horizon removed, the owner gate open, the no-text
-# gate open, the outbound text and the report bytes unchecked, the post
-# failure swallowed, the envelope horizon removed, the start horizon removed,
-# the history seed at zero, a posted line aged by its thread, and a refused
-# connection read as a lost response.
+# exclusive, two roots on one channel accepted, the thread-age horizon
+# removed, the owner gate open, the no-text gate open, the outbound text
+# and the report bytes unchecked, the post failure swallowed, the envelope
+# horizon removed, the start horizon removed, the history seed at zero, a
+# posted line aged by its thread, and a refused connection read as a lost
+# response.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -340,6 +342,20 @@ assert_eq "$RC=$(asks C777 'New notice.')=$(asks C777 'Old notice.')" "0=1=0" "a
 assert_eq "$(asks C777 'Still open?')" "2" "the open ask is posted once more, so its thread is bound again"
 assert_eq "$(directives "$DELTA" | wc -l | tr -d ' ')" "1" "the re-read channel lands nothing twice"
 
+# --- two roots bound to one channel are refused at start ---------------------------------------
+# Two checkouts with one directory name get one default channel name, so
+# the second setup finds and binds the first one's channel.
+PAIR_A="$(sk_new_root pair-a/omega)"
+PAIR_B="$(sk_new_root pair-b/omega)"
+sk_bind "$PAIR_A"
+sk_bind "$PAIR_B"
+PAIR_CH="$(sk_channel "$PAIR_A")"
+sk_run -- listen --root "$PAIR_A" --root "$PAIR_B" --once
+assert_eq "$RC=$ERR1" "2=slack: channel-shared=$PAIR_CH roots=$PAIR_A,$PAIR_B fix=run \`slack setup --name NAME\` in one of them" \
+  "two roots on one channel are refused, naming both and the channel"
+assert_eq "$([ -e "$(sk_journal "$PAIR_A")" ] || [ -e "$(sk_journal "$PAIR_B")" ] && echo polled || echo untouched)" "untouched" \
+  "the refusal comes before any poll"
+
 # --- controls, one mutant per rule ------------------------------------------------------------
 sk_mutant delivery mailbox.py '"--delivery-id", delivery_id, "--file"' '"--delivery-id", delivery_id + "." + str(os.getpid()), "--file"'
 DELTA="$(sk_new_root delta)"
@@ -366,6 +382,11 @@ sk_relay_start "$EPS"
 sk_poll "$EPS"
 assert_eq "$RC" "0" "control: the lock no longer exclusive, a second relay runs"
 sk_relay_stop
+sk_bin_reset
+
+sk_mutant shared relay.py 'if other != root\.path:' 'if other != root.path and False:'
+sk_run -- listen --root "$PAIR_A" --root "$PAIR_B" --once
+assert_eq "$RC" "0" "control: the one-channel rule gone, both roots poll one channel"
 sk_bin_reset
 
 sk_mutant horizon relay.py 'tenth and float\(thread\.ts\) >= horizon' 'tenth'

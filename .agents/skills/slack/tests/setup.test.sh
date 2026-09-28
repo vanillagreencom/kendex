@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # `slack setup`: the owners resolved by email, the channel created or found
 # by name or adopted by id, the invite, the binding it writes, and the
-# refusals a partial configuration, an unknown owner, a channel the bot is
-# not in, a dead token, a refused invite and a rebind over a standing journal
-# get. The controls at the end plant one mutant per rule: the owner lookup no
-# longer mapping users_not_found, the invite refusal tolerated, and the
-# rebind rule gone.
+# refusals a partial configuration, an unknown owner, a public channel, a
+# channel the bot is not in, a dead token, a refused invite and a rebind over
+# a standing journal get. The controls at the end plant one mutant per rule:
+# the owner lookup no longer mapping users_not_found, the public channel
+# taken, the invite refusal tolerated, and the rebind rule gone.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -41,6 +41,10 @@ sk_ctl /_test/channel '{"id": "C901", "name": "not-ours", "members": ["U001"]}' 
 sk_run -- setup --root "$BETA" --take C901
 assert_eq "$RC=$ERR1" "2=slack: slack-channel-unjoined=C901 fix=invite the app to the channel, then run setup again" \
   "a channel the bot is not in is refused with the remedy"
+sk_ctl /_test/channel '{"id": "C902", "name": "everyone", "is_private": false}' >/dev/null
+sk_run -- setup --root "$BETA" --take C902
+assert_eq "$RC=$ERR1=$(sk_channel "$BETA")" "2=slack: slack-channel-public=C902 fix=take a private channel, or run setup without --take=C900" \
+  "a public channel is refused with the remedy and the binding stands"
 sk_run -- setup --root "$BETA" --name x --take C900
 assert_eq "$RC=${ERR1%%=*}" "2=slack: usage" "--name with --take is a usage refusal"
 
@@ -85,6 +89,11 @@ assert_eq "$([ -e "$KAPPA/tmp/slack/binding.json" ] && echo present || echo abse
 sk_mutant owner relay.py 'err\.error == "users_not_found"' 'err.error == "never_this"'
 sk_run SLACK_OWNERS="nobody@example.test" -- setup --root "$ROOT"
 assert_eq "${ERR1%%=*}" "slack: slack-api-failed" "control: the mapping removed, the unknown owner is a bare API failure"
+sk_bin_reset
+
+sk_mutant public verbs.py 'if not info\.get\("is_private"\):' 'if not info.get("is_private") and False:'
+sk_run -- setup --root "$BETA" --take C902
+assert_eq "$RC=$(sk_channel "$BETA")" "0=C902" "control: the privacy rule gone, a public channel is bound"
 sk_bin_reset
 
 sk_mutant invite verbs.py 'TOLERATED_INVITE = \{"already_in_channel", "cant_invite_self"\}' 'TOLERATED_INVITE = {"already_in_channel", "cant_invite_self", "cant_invite"}'

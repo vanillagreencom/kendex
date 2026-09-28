@@ -394,6 +394,15 @@ class Relay:
         self.clock = clock
         self.sleep = sleep
         self.roots = [RootRelay(root, settings, api, clock) for root in roots]
+        # Two roots on one channel would each deliver every owner message
+        # into their own mailbox and both post there.
+        first: Dict[str, Path] = {}
+        for root in self.roots:
+            other = first.setdefault(root.channel, root.path)
+            if other != root.path:
+                raise Refusal(
+                    "channel-shared", f"{root.channel} roots={other},{root.path} fix=run `slack setup --name NAME` in one of them"
+                )
         for root in self.roots:
             root.lock.acquire()
         self.bot_user = str(api.get("auth.test")["user_id"])
