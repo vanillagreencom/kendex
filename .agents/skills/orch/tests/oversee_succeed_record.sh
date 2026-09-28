@@ -312,7 +312,7 @@ assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none 
 # The control for the pi account rule: a pi model read as naming no account
 # leaves a pi-claude overseer's own claude account unjudged.
 PICTL="$(mutant_scripts pictl lib/overseer-launch.sh)" || exit 1
-mutate_file "$PICTL/lib/overseer-launch.sh" '    pi-claude/?*)' '    pi-claude/?*-unread)'
+mutate_file "$PICTL/lib/overseer-launch.sh" '    claude) OL_ACCOUNT_MODEL="${model#pi-claude/}" ;;' '    claude) OL_ACCOUNT_HARNESS=none OL_ACCOUNT_MODEL="" ;;'
 new_caller claude
 reading "Fable 5.1"
 state "$(record "$CALLER_PANE" "$H/.claude" pi-claude/claude-opus-5 '{"harness": "pi"}')"
@@ -331,7 +331,7 @@ pool_row
 assert_eq "$RC|$(judged)" "0|mark-reached kind=headroom value=2" \
   "--check-marks on a pi record on a github-copilot model judges the stated Copilot pool" "$TMP_ROOT/err"
 POOLCTL="$(mutant_scripts poolctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$POOLCTL/lib/overseer-launch.sh" '  [[ "${1:-}" == pi && -z "$OL_ACCOUNT_HARNESS" ]] || return 0' '  [[ "${1:-}" == pi ]] || return 0'
+mutate_file "$POOLCTL/lib/overseer-launch.sh" '    unmeasured)' '    pi | unmeasured)'
 pool_row "$POOLCTL/oversee-succeed"
 assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
   "control: an account reader that ignores the Copilot pool leaves the pi overseer's account unjudged" "$TMP_ROOT/err"

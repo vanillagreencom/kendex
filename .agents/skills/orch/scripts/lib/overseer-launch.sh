@@ -115,14 +115,14 @@ ol_preference_entries() { # VALUE
 # ol_account HARNESS MODEL — the account a session of HARNESS on MODEL spends,
 # as `lanes` measures it: OL_ACCOUNT_HARNESS the harness `lanes pick` judges it
 # under, OL_ACCOUNT_MODEL the model it judges it on. lib/lane-launch.sh §
-# lane_pick_harness answers first: claude and codex spend their own accounts,
-# and a pi session on a `github-copilot/` model spends the Copilot pool `lanes
-# pick --harness pi` reads. Where it answers anything else for pi, a model on the
-# pi-claude provider runs the claude model after `pi-claude/` under
-# CLAUDE_CONFIG_DIR (pi-extensions/pi-claude-bridge), so it spends a claude
-# account on that model; a model on any other provider spends no account
-# `lanes` measures, `none`; and one naming no provider, or no model at all,
-# spends an account nothing here can name, `unknown`, pi resolving a bare
+# lane_pick_harness alone maps a provider to its account: claude and codex
+# spend their own accounts, a pi session on a `github-copilot/` model spends
+# the Copilot pool `lanes pick --harness pi` reads, and one on a `pi-claude/`
+# model spends a claude account. This function only normalizes that answer
+# for a pi session: a claude account is judged on the claude model after
+# `pi-claude/` (pi-extensions/pi-claude-bridge), and `unmeasured` splits into
+# `none`, a model naming a provider `lanes` measures no account of, and
+# `unknown`, one naming no provider or no model at all, pi resolving a bare
 # model to a provider itself. A pi model's `:<thinking>` suffix is pi's level,
 # never the model. The model is empty for `none` and `unknown`.
 OL_ACCOUNT_HARNESS="" OL_ACCOUNT_MODEL=""
@@ -130,12 +130,13 @@ ol_account() { # HARNESS MODEL
   local model="${2:-}"
   [[ "${1:-}" != pi ]] || model="${model%%:*}"
   OL_ACCOUNT_HARNESS="$(lane_pick_harness "${1:-}" "$model")" OL_ACCOUNT_MODEL="$model"
-  [[ "${1:-}" != pi || "$OL_ACCOUNT_HARNESS" == pi ]] || OL_ACCOUNT_HARNESS=""
-  [[ "${1:-}" == pi && -z "$OL_ACCOUNT_HARNESS" ]] || return 0
-  case "$model" in
-    pi-claude/?*) OL_ACCOUNT_HARNESS=claude OL_ACCOUNT_MODEL="${model#pi-claude/}" ;;
-    ?*/?*) OL_ACCOUNT_HARNESS=none OL_ACCOUNT_MODEL="" ;;
-    *) OL_ACCOUNT_HARNESS=unknown OL_ACCOUNT_MODEL="" ;;
+  [[ "${1:-}" == pi ]] || return 0
+  case "$OL_ACCOUNT_HARNESS" in
+    claude) OL_ACCOUNT_MODEL="${model#pi-claude/}" ;;
+    unmeasured)
+      OL_ACCOUNT_MODEL="" OL_ACCOUNT_HARNESS=unknown
+      [[ "$model" != ?*/?* ]] || OL_ACCOUNT_HARNESS=none
+      ;;
   esac
 }
 
