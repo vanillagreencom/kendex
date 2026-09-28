@@ -15,6 +15,9 @@ Options:
   -q, --quiet
           Print a short report, or nothing when all checks pass
 
+      --report-only
+          Leave the project's install record as it is, and report what it lacks
+
       --catalog <CATALOG>
           Check this marketplace directory instead of this computer
 

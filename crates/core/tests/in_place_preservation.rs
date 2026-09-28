@@ -56,6 +56,7 @@ fn check_text(world: &World) -> String {
     drift::report::render_plain(&drift::report::check(
         &world.env,
         std::slice::from_ref(&world.scope),
+        kendex_core::drift::copies::CheckMode::Settle,
     ))
 }
 
@@ -101,7 +102,11 @@ fn trash_is_empty(env: &Env) -> bool {
 #[allow(clippy::unwrap_used)]
 fn assert_unreadable_parent_is_unknown(world: &World, parent: &Path) {
     fs::set_permissions(parent, fs::Permissions::from_mode(0o000)).unwrap();
-    let checked = drift::report::check(&world.env, std::slice::from_ref(&world.scope));
+    let checked = drift::report::check(
+        &world.env,
+        std::slice::from_ref(&world.scope),
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     let text = drift::report::render_plain(&checked);
     fs::set_permissions(parent, fs::Permissions::from_mode(0o755)).unwrap();
 

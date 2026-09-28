@@ -12,9 +12,11 @@
 //! deadline for every scope the check covers; a pass that outruns it is
 //! finished by the detached background refresh, which writes the same
 //! file for the next session to read. A proven copy is recorded only
-//! where the committed record may be written (`lock::branch`, D007);
-//! off that branch it is reported as unrecorded and the record is left
-//! as the branch holds it.
+//! where the committed record may be written: never at a project scope
+//! in the session hook's report-only check ([`CheckMode::ReportOnly`]),
+//! and in a check run by hand only on the branch `lock::branch` names
+//! (D007). Elsewhere it is reported as unrecorded and the record is left
+//! as the checkout holds it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -26,8 +28,8 @@ use crate::engine::{Measured, Occupied, UnmanagedCopies};
 use crate::env::Env;
 use crate::error::Result;
 use crate::fs::{atomic_write, read_if_exists};
-use crate::lock::Lock;
 use crate::lock::branch::{OffBranch, Recording};
+use crate::lock::{Lock, LockEntry};
 use crate::manifest::Manifest;
 use crate::model::Scope;
 
@@ -63,14 +65,44 @@ pub struct Memoed {
     pub measured: Measured,
 }
 
+/// Whether a check may write a project's committed install record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckMode {
+    /// D001's settle, where `lock::branch` says the committed record is
+    /// written (D007): the check a person runs.
+    Settle,
+    /// No write to a project's committed record on any branch: the
+    /// session hook's check, since a hook run at agent spawn writes no
+    /// tracked file. The global record is not committed and is settled
+    /// as in [`CheckMode::Settle`].
+    ReportOnly,
+}
+
+/// Why a check left proven copies out of the committed record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Withheld {
+    /// The checkout is off the branch the record is written on.
+    OffBranch(OffBranch),
+    /// The check ran in [`CheckMode::ReportOnly`].
+    ReportOnly,
+}
+
+/// Every entry a check proved on disk and left out of the committed
+/// record, occupied or not, and why.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unrecorded {
+    pub why: Withheld,
+    pub entries: BTreeMap<String, LockEntry>,
+}
+
 /// One occupied installation as the check reports it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Verdict {
     /// The render byte for byte, and now recorded as installed.
     Recorded,
-    /// The render byte for byte, and not recorded: the checkout is off
-    /// the branch the committed record is written on.
-    Unrecorded(OffBranch),
+    /// The render byte for byte, and not recorded: the entry is one of
+    /// [`Settled::Judged`]'s `unrecorded`, which says why.
+    Unrecorded,
     /// Not the render, by the count; `take_over_settles` says whether the
     /// scope-wide take-over is its fix or the plan is what to see next.
     Differs {
@@ -91,9 +123,12 @@ pub enum Settled {
     /// the record write for the proven copies failed, when it did, a
     /// failure to read which branch the checkout is on included; those
     /// copies then read as left, since nothing was recorded.
+    /// `unrecorded` is every proven entry the check left out of the
+    /// record on purpose.
     Judged {
         verdicts: BTreeMap<String, Verdict>,
         record_failed: Option<String>,
+        unrecorded: Option<Unrecorded>,
     },
     /// The plan did not finish inside the budget the session hook allows,
     /// one deadline over every scope the check covers; the plan is still
@@ -319,28 +354,34 @@ enum Binding {
     Nothing,
     /// The record write, bound to every proven file's hash.
     Record(crate::apply::Plan),
-    /// Proven copies this checkout leaves out of the committed record.
-    Withheld(OffBranch),
+    /// Proven copies this check leaves out of the committed record.
+    Withheld(Withheld),
 }
 
 /// What the record write came to.
 enum Claim {
     Recorded,
-    Withheld(OffBranch),
+    Withheld(Withheld),
     Nothing,
 }
 
-/// The binding for a non-empty proven set. The branch is asked first, so a
-/// checkout that may not write the record pays for no hashing.
+/// The binding for a non-empty proven set. Whether the record may be
+/// written is asked first, so a check that may not write it pays for no
+/// hashing.
 fn bind(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
     copies: &UnmanagedCopies,
+    mode: CheckMode,
 ) -> Result<Binding> {
+    let project = matches!(scope.canonical(), Scope::Project { .. });
+    if mode == CheckMode::ReportOnly && project {
+        return Ok(Binding::Withheld(Withheld::ReportOnly));
+    }
     Ok(match crate::lock::branch::recording(scope)? {
-        Recording::Elsewhere(off) => Binding::Withheld(off),
+        Recording::Elsewhere(off) => Binding::Withheld(Withheld::OffBranch(off)),
         Recording::Here => match crate::engine::claim_plan(env, scope, manifest, lock, copies)? {
             Some(plan) => Binding::Record(plan),
             None => Binding::Nothing,
@@ -359,13 +400,14 @@ fn bind(
 /// from, for the line that names it. The record write is bound to each
 /// proven file's hash, so a copy that moved since the plan refuses the
 /// record rather than misfiling the change — and moves the key, so the
-/// next check plans again. Off the branch the committed record is written
-/// on (`lock::branch`), nothing is bound and the proven copies are
-/// reported as unrecorded. The write revalidates its own preconditions
-/// on the main thread, a warm re-hash of the proven set the apply's
+/// next check plans again. Where `mode` withholds the committed record,
+/// or the checkout is off the branch it is written on (`lock::branch`),
+/// nothing is bound and the proven copies are reported as unrecorded.
+/// The write revalidates its own preconditions on the main thread, a warm re-hash of the proven set the apply's
 /// journal owes every write (invariant 7): the one read past the gate,
 /// made only after the binding fit the deadline, and gone once the
 /// record holds the copies.
+#[allow(clippy::too_many_arguments)]
 pub fn settle(
     env: &Env,
     scope: &Scope,
@@ -374,6 +416,7 @@ pub fn settle(
     occupied: &BTreeMap<String, Occupied>,
     deadline: Instant,
     budget: Duration,
+    mode: CheckMode,
 ) -> Settled {
     let stages = {
         let (env, scope, manifest, lock, occupied) = (
@@ -404,7 +447,7 @@ pub fn settle(
             });
             let binding = match copies.proven.entries.is_empty() {
                 true => Ok(Binding::Nothing),
-                false => bind(&env, &scope, &manifest, &lock, &copies),
+                false => bind(&env, &scope, &manifest, &lock, &copies, mode),
             };
             let _ = sender.send(Stage::Bound(binding));
         })
@@ -462,7 +505,7 @@ fn resolve(
     };
     let claim = bound.and_then(|binding| match binding {
         Binding::Nothing => Ok(Claim::Nothing),
-        Binding::Withheld(off) => Ok(Claim::Withheld(off)),
+        Binding::Withheld(why) => Ok(Claim::Withheld(why)),
         Binding::Record(plan) => crate::apply::execute(env, &plan).map(|_| Claim::Recorded),
     });
     let (claim, record_failed) = match claim {
@@ -505,6 +548,13 @@ fn resolve(
         }
         Err(error) => (Claim::Nothing, Some(error.to_string())),
     };
+    let unrecorded = match &claim {
+        Claim::Withheld(why) => Some(Unrecorded {
+            why: why.clone(),
+            entries: copies.proven.entries.clone(),
+        }),
+        Claim::Recorded | Claim::Nothing => None,
+    };
     let verdicts = copies
         .measured
         .into_iter()
@@ -512,7 +562,7 @@ fn resolve(
             let verdict = match measured {
                 Measured::Proven => match &claim {
                     Claim::Recorded => Verdict::Recorded,
-                    Claim::Withheld(off) => Verdict::Unrecorded(off.clone()),
+                    Claim::Withheld(_) => Verdict::Unrecorded,
                     Claim::Nothing => Verdict::Left,
                 },
                 Measured::Differs {
@@ -533,6 +583,7 @@ fn resolve(
     Settled::Judged {
         verdicts,
         record_failed,
+        unrecorded,
     }
 }
 
@@ -617,6 +668,7 @@ mod tests {
             &occupied,
             Instant::now() - Duration::from_secs(1),
             Duration::from_secs(8),
+            CheckMode::Settle,
         );
         assert!(matches!(settled, Settled::Overrun { .. }), "{settled:?}");
         std::thread::sleep(Duration::from_millis(200));
@@ -634,6 +686,7 @@ mod tests {
             &occupied,
             Instant::now() + Duration::from_secs(60),
             Duration::from_secs(60),
+            CheckMode::Settle,
         );
         assert!(
             !matches!(settled, Settled::Overrun { .. }),
@@ -719,11 +772,13 @@ mod tests {
         let Settled::Judged {
             verdicts,
             record_failed,
+            unrecorded,
         } = settled
         else {
             panic!("the verdicts in hand are the answer: {settled:?}");
         };
         assert_eq!(verdicts["agent:scout:claude"], Verdict::Left);
+        assert_eq!(unrecorded, None, "nothing was withheld, only cut short");
         assert!(matches!(
             verdicts["skill:deploy:claude"],
             Verdict::Differs { files: 1, .. }

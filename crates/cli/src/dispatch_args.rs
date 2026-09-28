@@ -9,22 +9,53 @@ use std::process::ExitCode;
 use crate::commands;
 use crate::commands::remove::Removal;
 
-pub(crate) fn check(
-    env: &Env,
+/// `kendex check`'s flags.
+#[derive(clap::Args)]
+pub(crate) struct CheckArgs {
+    #[arg(short = 'g', long)]
     global: bool,
+    /// project | global | all (default all)
+    #[arg(long)]
     scope: Option<String>,
+    /// Machine-readable report
+    #[arg(long)]
     json: bool,
+    /// Print a short report, or nothing when all checks pass
+    #[arg(short = 'q', long)]
     quiet: bool,
-    catalog: Option<std::path::PathBuf>,
+    /// Leave the project's install record as it is, and report what it
+    /// lacks
+    #[arg(long, conflicts_with = "catalog")]
+    report_only: bool,
+    /// Check this marketplace directory instead of this computer
+    #[arg(long)]
+    pub(crate) catalog: Option<std::path::PathBuf>,
+    /// With --catalog, also fail on advisories
+    #[arg(long)]
     strict: bool,
-) -> Result<ExitCode, Box<dyn std::error::Error>> {
+}
+
+pub(crate) fn check(env: &Env, args: CheckArgs) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let CheckArgs {
+        global,
+        scope,
+        json,
+        quiet,
+        report_only,
+        catalog,
+        strict,
+    } = args;
     match catalog {
         Some(catalog) => {
             commands::check_catalog::run(&catalog, strict, json).map(|()| ExitCode::SUCCESS)
         }
         None => {
             let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::All)?;
-            commands::check::run(env, filter, json, quiet)
+            let mode = match report_only {
+                true => kendex_core::drift::copies::CheckMode::ReportOnly,
+                false => kendex_core::drift::copies::CheckMode::Settle,
+            };
+            commands::check::run(env, filter, json, quiet, mode)
         }
     }
 }

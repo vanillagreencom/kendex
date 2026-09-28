@@ -57,6 +57,7 @@ fn the_pass_gives_up_at_the_instant_it_is_handed() {
         &occupied,
         Instant::now() - Duration::from_secs(1),
         Duration::from_secs(8),
+        copies::CheckMode::Settle,
     );
     assert!(
         matches!(settled, copies::Settled::Overrun { budget } if budget == Duration::from_secs(8)),
@@ -75,6 +76,7 @@ fn the_pass_gives_up_at_the_instant_it_is_handed() {
         &occupied,
         Instant::now() + Duration::from_secs(60),
         Duration::from_secs(60),
+        copies::CheckMode::Settle,
     );
     assert!(
         matches!(settled, copies::Settled::Judged { .. }),
@@ -101,8 +103,12 @@ fn nothing_is_read_past_the_deadline_the_memo_included() {
     let memo = fs::read_to_string(copies::memo_path(&w.env, &w.scope)).unwrap();
     assert!(memo.contains("\"measured\": \"proven\""), "{memo}");
 
-    let checked =
-        drift::report::check_within(&w.env, std::slice::from_ref(&w.scope), Duration::ZERO);
+    let checked = drift::report::check_within(
+        &w.env,
+        std::slice::from_ref(&w.scope),
+        Duration::ZERO,
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     let text = drift::report::render_plain(&checked);
     assert_eq!(
         checked.status,
@@ -160,7 +166,12 @@ fn one_check_over_two_scopes_reports_the_pass_owed_once() {
     );
     let scopes = [w.scope.clone(), kendex_core::model::Scope::Global];
 
-    let checked = drift::report::check_within(&w.env, &scopes, Duration::ZERO);
+    let checked = drift::report::check_within(
+        &w.env,
+        &scopes,
+        Duration::ZERO,
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     let text = drift::report::render_plain(&checked);
     assert_eq!(
         text.matches("inside the 0 s the session hook allows")
@@ -170,7 +181,12 @@ fn one_check_over_two_scopes_reports_the_pass_owed_once() {
     );
     assert!(checked.deep_pass_owed, "{text}");
 
-    let checked = drift::report::check_within(&w.env, &scopes, Duration::from_secs(60));
+    let checked = drift::report::check_within(
+        &w.env,
+        &scopes,
+        Duration::from_secs(60),
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     let text = drift::report::render_plain(&checked);
     assert_eq!(
         text.matches("unmanaged copy of skill 'deploy' for Claude Code")

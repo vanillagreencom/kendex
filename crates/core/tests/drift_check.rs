@@ -324,7 +324,11 @@ fn an_unreadable_history_is_a_warning_never_current() {
 
     // And the snapshot carries it into the session check as could-not-check.
     drift::snapshot::record(&w.env, &w.scope).unwrap();
-    let checked = drift::report::check(&w.env, std::slice::from_ref(&w.scope));
+    let checked = drift::report::check(
+        &w.env,
+        std::slice::from_ref(&w.scope),
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(
         checked.status,
         drift::report::CheckStatus::Unknown,
@@ -349,7 +353,11 @@ fn the_snapshot_carries_stale_and_holding_silences_it() {
     remote::sync_sources(&w.env, &loaded).unwrap();
 
     drift::snapshot::record(&w.env, &w.scope).unwrap();
-    let checked = drift::report::check(&w.env, std::slice::from_ref(&w.scope));
+    let checked = drift::report::check(
+        &w.env,
+        std::slice::from_ref(&w.scope),
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(checked.status, drift::report::CheckStatus::Drift);
     let text = drift::report::render_plain(&checked);
     assert!(text.contains("'gh' has a newer version"), "{text}");
@@ -362,7 +370,11 @@ fn the_snapshot_carries_stale_and_holding_silences_it() {
         &format!("[skills.gh]\nsource = \"cat\"\nrev = \"{first}\"\n"),
     );
     drift::snapshot::record(&w.env, &w.scope).unwrap();
-    let checked = drift::report::check(&w.env, std::slice::from_ref(&w.scope));
+    let checked = drift::report::check(
+        &w.env,
+        std::slice::from_ref(&w.scope),
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(
         checked.status,
         drift::report::CheckStatus::Clean,
@@ -441,6 +453,7 @@ fn an_unrecorded_copy_is_measured_against_the_commit_its_source_resolved() {
     let text = drift::report::render_plain(&drift::report::check(
         &w.env,
         std::slice::from_ref(&w.scope),
+        kendex_core::drift::copies::CheckMode::Settle,
     ));
     assert!(
         text.contains(&format!(
@@ -459,6 +472,7 @@ fn an_unrecorded_copy_is_measured_against_the_commit_its_source_resolved() {
     let text = drift::report::render_plain(&drift::report::check(
         &w.env,
         std::slice::from_ref(&w.scope),
+        kendex_core::drift::copies::CheckMode::Settle,
     ));
     assert_eq!(
         text, "",
@@ -511,6 +525,7 @@ fn a_record_that_already_holds_an_entry_keeps_it_when_the_source_re_resolves() {
     let text = drift::report::render_plain(&drift::report::check(
         &w.env,
         std::slice::from_ref(&w.scope),
+        kendex_core::drift::copies::CheckMode::Settle,
     ));
     assert!(
         !text.contains("'other'") && !text.contains("'gh'"),
@@ -572,6 +587,7 @@ fn a_pinned_declaration_is_measured_at_the_commit_its_pin_resolved() {
     let text = drift::report::render_plain(&drift::report::check(
         &w.env,
         std::slice::from_ref(&w.scope),
+        kendex_core::drift::copies::CheckMode::Settle,
     ));
     assert!(
         text.contains(&format!(

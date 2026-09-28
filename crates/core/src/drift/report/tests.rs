@@ -100,7 +100,11 @@ fn a_clean_scope_is_silent_and_exit_zero() {
     write_manifest(&env, &scope, &manifest_with_remote());
     snapshot_with(&env, &scope, vec![package("gh")]);
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(report.status, CheckStatus::Clean);
     assert_eq!(report.status.exit_code(), 0);
     assert_eq!(render_plain(&report), "");
@@ -123,7 +127,11 @@ fn an_old_drift_hook_names_reinstall_and_backup_commands() {
     std::fs::create_dir_all(script.parent().unwrap()).unwrap();
     std::fs::write(&script, "old hook\n").unwrap();
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     let stale = report
         .sections
         .iter()
@@ -184,7 +192,11 @@ fn held_only_and_ignored_only_drift_stays_silent() {
     snapshot_with(&env, &scope, vec![held, ignored, held_edited]);
     record_refs(&env, "owner/repo", Some("new-refs"));
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(report.status, CheckStatus::Clean, "{report:?}");
     assert_eq!(render_plain(&report), "");
 }
@@ -244,7 +256,11 @@ fn each_classification_lands_in_its_section_with_its_remedy() {
         ],
     );
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(report.status, CheckStatus::Drift);
     assert_eq!(report.status.exit_code(), 1);
     let refresh = Remedy::Refresh { global: false };
@@ -297,7 +313,11 @@ fn edited_outranks_stale_for_one_package() {
         }],
     );
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     let titles: Vec<&str> = report
         .sections
         .iter()
@@ -326,7 +346,11 @@ fn a_mirror_that_moved_since_evaluation_reads_as_unevaluated() {
     );
     record_refs(&env, "owner/repo", Some("new-refs"));
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     // The honest "maybe": never a guessed verdict, and never a failure to
     // check — the check ran and this is its answer.
     assert_eq!(report.status, CheckStatus::Drift);
@@ -346,7 +370,11 @@ fn an_unreadable_snapshot_is_could_not_check_not_unevaluated() {
     // A directory where the file goes: exists, and no read succeeds.
     std::fs::create_dir_all(crate::drift::snapshot::snapshot_path(&env, &scope)).unwrap();
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(report.status, CheckStatus::Unknown);
     assert_eq!(report.status.exit_code(), 2);
     let text = render_plain(&report);
@@ -363,7 +391,11 @@ fn could_not_check_outranks_unevaluated() {
     write_manifest(&env, &scope, &manifest_with_remote());
     std::fs::write(crate::lock::lock_path(&env, &scope), "{definitely not json").unwrap();
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(report.status, CheckStatus::Unknown);
     assert_eq!(report.status.exit_code(), 2);
     let text = render_plain(&report);
@@ -378,7 +410,11 @@ fn a_scope_with_remotes_and_no_snapshot_is_unevaluated() {
     let scope = project_scope(tmp.path());
     write_manifest(&env, &scope, &manifest_with_remote());
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(report.status, CheckStatus::Drift);
     assert_eq!(report.status.exit_code(), 1);
     assert_eq!(
@@ -403,7 +439,11 @@ fn snapshot_age_is_rendered() {
         crate::clock::unix_now() - 3 * 3600,
     );
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(report.snapshot_age_secs.map(|age| age / 3600), Some(3));
     let text = render_plain(&report);
     assert!(text.contains("(package evaluation: 3h ago)"));
@@ -424,7 +464,11 @@ fn missing_skill_reference_stays_a_failure() {
     write_manifest(&env, &scope, &manifest);
     snapshot_with(&env, &scope, vec![]);
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(report.status, CheckStatus::Drift);
     let text = render_plain(&report);
     assert!(
@@ -443,7 +487,11 @@ fn corrupt_manifest_and_lock_are_could_not_check() {
     std::fs::write(&manifest_path, "not = [valid").unwrap();
     std::fs::write(crate::lock::lock_path(&env, &scope), "{definitely not json").unwrap();
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(report.status, CheckStatus::Unknown);
     let text = render_plain(&report);
     assert!(text.contains("could not check:"), "{text}");
@@ -658,7 +706,11 @@ fn record_selection_tracks_each_manifest_owner() {
         write_manifest(&env, &scope, &manifest);
         write_record(&env, &scope, entries);
 
-        let report = check(&env, std::slice::from_ref(&scope));
+        let report = check(
+            &env,
+            std::slice::from_ref(&scope),
+            crate::drift::copies::CheckMode::Settle,
+        );
         let (kind, name) = case.target();
         assert!(
             !cleanup_names(&report)
@@ -670,7 +722,11 @@ fn record_selection_tracks_each_manifest_owner() {
 
         case.remove_owner(&mut manifest);
         write_manifest(&env, &scope, &manifest);
-        let report = check(&env, std::slice::from_ref(&scope));
+        let report = check(
+            &env,
+            std::slice::from_ref(&scope),
+            crate::drift::copies::CheckMode::Settle,
+        );
         assert!(
             cleanup_names(&report)
                 .iter()
@@ -701,7 +757,11 @@ fn dependency_selection_keeps_the_owners_source_identity() {
     write_manifest(&env, &scope, &manifest);
     write_record(&env, &scope, entries);
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert!(
         cleanup_names(&report)
             .iter()
@@ -719,7 +779,11 @@ fn a_custom_hook_moved_into_agent_files_leaves_its_registry_record_for_cleanup()
     write_manifest(&env, &scope, &manifest);
     write_record(&env, &scope, entries);
 
-    let registered = check(&env, std::slice::from_ref(&scope));
+    let registered = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert!(
         !cleanup_names(&registered)
             .iter()
@@ -729,7 +793,11 @@ fn a_custom_hook_moved_into_agent_files_leaves_its_registry_record_for_cleanup()
 
     manifest.custom_hooks[0].agents = crate::manifest::HookAgents::One("reviewer".into());
     write_manifest(&env, &scope, &manifest);
-    let in_agent_file = check(&env, std::slice::from_ref(&scope));
+    let in_agent_file = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert!(
         cleanup_names(&in_agent_file)
             .iter()
@@ -754,7 +822,11 @@ fn suppression_excludes_derived_records_but_not_direct_declarations() {
         write_manifest(&env, &scope, &manifest);
         write_record(&env, &scope, entries);
 
-        let report = check(&env, std::slice::from_ref(&scope));
+        let report = check(
+            &env,
+            std::slice::from_ref(&scope),
+            crate::drift::copies::CheckMode::Settle,
+        );
         assert!(
             cleanup_names(&report)
                 .iter()
@@ -767,7 +839,11 @@ fn suppression_excludes_derived_records_but_not_direct_declarations() {
             .declared_mut(kind)
             .insert(name.into(), crate::manifest::ItemDecl::from_source("cat"));
         write_manifest(&env, &scope, &manifest);
-        let report = check(&env, std::slice::from_ref(&scope));
+        let report = check(
+            &env,
+            std::slice::from_ref(&scope),
+            crate::drift::copies::CheckMode::Settle,
+        );
         assert!(
             !cleanup_names(&report)
                 .iter()
@@ -793,7 +869,11 @@ fn unreadable_manifest_does_not_guess_that_recorded_packages_need_cleanup() {
         )],
     );
 
-    let absent = check(&env, std::slice::from_ref(&scope));
+    let absent = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert!(
         cleanup_names(&absent)
             .iter()
@@ -802,7 +882,11 @@ fn unreadable_manifest_does_not_guess_that_recorded_packages_need_cleanup() {
     );
 
     std::fs::write(crate::manifest::manifest_path(&env, &scope), "not = [valid").unwrap();
-    let unreadable = check(&env, std::slice::from_ref(&scope));
+    let unreadable = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     let text = render_plain(&unreadable);
     assert!(text.contains("manifest:"), "{text}");
     assert!(!text.contains("record cleanup needed"), "{text}");
@@ -859,7 +943,11 @@ fn a_second_copy_under_extensions_is_reported_and_the_managed_copy_alone_is_not(
             .map(|section| section.lines.clone())
     };
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(shadowed(&report), None, "{report:?}");
 
     // The copy's manifest is foreign text: a control character in its
@@ -868,7 +956,11 @@ fn a_second_copy_under_extensions_is_reported_and_the_managed_copy_alone_is_not(
     let shadow = root.join(".pi").join("extensions").join("pi-widgets");
     std::fs::create_dir_all(&shadow).unwrap();
     std::fs::write(shadow.join("package.json"), package("1.0.0\\u0007")).unwrap();
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(report.status, CheckStatus::Drift);
     let lines = shadowed(&report).unwrap_or_default();
     assert_eq!(lines.len(), 1, "{report:?}");
@@ -993,7 +1085,11 @@ fn a_copy_of_a_package_declared_at_both_scopes_is_named_once() {
     )
     .unwrap();
 
-    let report = check(&env, &[scope.clone(), Scope::Global]);
+    let report = check(
+        &env,
+        &[scope.clone(), Scope::Global],
+        crate::drift::copies::CheckMode::Settle,
+    );
 
     let lines: Vec<&Line> = report
         .sections

@@ -106,6 +106,7 @@ impl World {
         drift::report::render_plain(&drift::report::check(
             &self.env,
             std::slice::from_ref(&self.scope),
+            kendex_core::drift::copies::CheckMode::Settle,
         ))
     }
 }

@@ -22,7 +22,11 @@ fn section_budget_counts_its_overflow_line_inside_itself() {
         .collect();
     snapshot_with(&env, &scope, packages);
 
-    let text = render_plain(&check(&env, std::slice::from_ref(&scope)));
+    let text = render_plain(&check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    ));
     let section_lines: Vec<&str> = text
         .lines()
         .skip_while(|line| *line != "stale:")
@@ -61,7 +65,11 @@ fn report_budget_counts_its_truncation_line_and_never_cuts_a_line() {
     }
     snapshot_with(&env, &scope, packages);
 
-    let text = render_plain(&check(&env, std::slice::from_ref(&scope)));
+    let text = render_plain(&check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    ));
     let lines: Vec<&str> = text.lines().collect();
     assert!(lines.len() <= REPORT_LINES, "{} lines", lines.len());
     assert!(text.len() <= REPORT_BYTES, "{} bytes", text.len());
@@ -448,7 +456,11 @@ fn a_manifest_this_build_cannot_read_reads_as_could_not_check() {
     // No schema key: the v1 shape.
     std::fs::write(&manifest_path, "[agents.orch]\nsource = \"kendex\"\n").unwrap();
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(report.status, CheckStatus::Unknown);
     let said = render_plain(&report);
     assert!(said.contains("no schema"), "{said}");

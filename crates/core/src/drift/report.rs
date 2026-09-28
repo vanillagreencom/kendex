@@ -7,9 +7,10 @@
 //! render or something older needs the render, so for that state alone
 //! the check plans the scope — once per state and inside the session
 //! hook's budget, the verdicts memoized by `drift::copies` — claims a
-//! copy the render matches into the record without a word (off the
-//! branch the committed record is written on, it reports the copy as
-//! unrecorded instead, with no fix), and reports a
+//! copy the render matches into the record without a word (where the
+//! check may not write the committed record, the session hook's
+//! report-only check or a checkout off the branch it is written on, it
+//! reports the copy's missing row instead, with no fix), and reports a
 //! copy it does not as stale with the count and, where the pass answered
 //! for the whole scope, the take-over as the fix (`scope::blocked_lines`).
 //!
@@ -481,8 +482,8 @@ struct Sections {
     missing: Vec<Line>,
     record_cleanup: Vec<Line>,
     blocked: Vec<Line>,
-    /// A copy that is its source's render, left out of the committed
-    /// record by a checkout off the branch that record is written on.
+    /// A render the committed record has no row for, left out of it by a
+    /// check that may not write it.
     unrecorded: Vec<Line>,
     /// A Pi package this project declares that the global manifest
     /// declares too.
@@ -560,7 +561,7 @@ impl Sections {
             ("missing on disk", self.missing),
             ("record cleanup needed", self.record_cleanup),
             ("blocked by files already there", self.blocked),
-            ("not recorded on this branch", self.unrecorded),
+            ("not in the install record", self.unrecorded),
             ("declared at both scopes", self.declared_twice),
             ("loaded twice by pi", self.shadowed),
             ("broken references", self.references),
@@ -679,16 +680,22 @@ fn unknown(text: impl Into<Sentence>) -> Line {
 /// trees, no module files, no hashing, no per-package subprocesses —
 /// until a declaration sits on files no record accounts for, which is
 /// the one state it plans the scope to judge, inside the session hook's
-/// budget.
-pub fn check(env: &Env, scopes: &[Scope]) -> CheckReport {
-    check_within(env, scopes, crate::drift::hook::DEEP_PASS_BUDGET)
+/// budget. `mode` says whether that plan may write a project's committed
+/// install record.
+pub fn check(env: &Env, scopes: &[Scope], mode: crate::drift::copies::CheckMode) -> CheckReport {
+    check_within(env, scopes, crate::drift::hook::DEEP_PASS_BUDGET, mode)
 }
 
 /// [`check`] with the deep read's budget stated: what a caller that has to
 /// see the budget run out asks for. One deadline is set from it before
 /// the first scope, so the budget bounds the check as a whole and not
 /// each of the scopes it covers.
-pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) -> CheckReport {
+pub fn check_within(
+    env: &Env,
+    scopes: &[Scope],
+    budget: std::time::Duration,
+    mode: crate::drift::copies::CheckMode,
+) -> CheckReport {
     let now = crate::clock::unix_now();
     let deadline = std::time::Instant::now() + budget;
     let mut sections = Sections::new();
@@ -740,6 +747,7 @@ pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) ->
             now,
             deadline,
             budget,
+            mode,
             pi_roots: crate::settings::load(env)
                 .map(|settings| crate::pi_ext::session_roots(env, &settings, &scope)),
             global_manifest: global_manifest.as_ref(),

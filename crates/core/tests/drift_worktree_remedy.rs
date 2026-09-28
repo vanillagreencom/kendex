@@ -159,7 +159,11 @@ fn the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_ho
     record_a_missing_agent(&env, &scope(&main));
 
     declare(&env, &scope(&main));
-    let checked = report::check(&env, &[scope(&linked)]);
+    let checked = report::check(
+        &env,
+        &[scope(&linked)],
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(
         checked.project_target,
         Some(report::ProjectTarget::MainCheckout(
@@ -175,7 +179,11 @@ fn the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_ho
     );
 
     declare(&env, &scope(&linked));
-    let checked = report::check(&env, &[scope(&linked)]);
+    let checked = report::check(
+        &env,
+        &[scope(&linked)],
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(
         checked.project_target,
         Some(report::ProjectTarget::Worktree(
@@ -184,13 +192,21 @@ fn the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_ho
         "a worktree that declares its own packages is the project a write names"
     );
 
-    let checked = report::check(&env, &[scope(&main)]);
+    let checked = report::check(
+        &env,
+        &[scope(&main)],
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(
         checked.project_target, None,
         "the main checkout is reached by a command typed in it and names nothing"
     );
 
-    let checked = report::check(&env, &[Scope::Global]);
+    let checked = report::check(
+        &env,
+        &[Scope::Global],
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(
         checked.project_target, None,
         "the personal scope is not a project and has no path to name"
@@ -210,7 +226,11 @@ fn a_rendered_fix_inside_a_worktree_that_declares_is_the_bare_command() {
     declare(&env, &scope);
     record_a_missing_agent(&env, &scope);
 
-    let mut checked = report::check(&env, std::slice::from_ref(&scope));
+    let mut checked = report::check(
+        &env,
+        std::slice::from_ref(&scope),
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     // One drift line with the remedy the reached-by case reports: the
     // report's own sections depend on installed state, and what is under
     // test is the rendering of the target the check resolved.
@@ -249,7 +269,11 @@ fn record_cleanup_alone_keeps_the_plan_command_bare_in_the_worktree_that_declare
     declare(&env, &scope);
     record_a_missing_agent(&env, &scope);
 
-    let checked = report::check(&env, std::slice::from_ref(&scope));
+    let checked = report::check(
+        &env,
+        std::slice::from_ref(&scope),
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(
         checked
             .sections
@@ -280,7 +304,11 @@ fn a_worktree_whose_manifest_will_not_load_names_itself() {
     declare_unreadably(&env, &scope(&linked));
     record_a_missing_agent(&env, &scope(&linked));
 
-    let checked = report::check(&env, &[scope(&linked)]);
+    let checked = report::check(
+        &env,
+        &[scope(&linked)],
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(
         checked.project_target,
         Some(report::ProjectTarget::Worktree(
@@ -307,7 +335,11 @@ fn a_project_below_the_git_top_level_maps_onto_the_same_place_in_the_main_checko
 
     let below = scope(&linked.join("app"));
     record_a_missing_agent(&env, &below);
-    let checked = report::check(&env, &[below]);
+    let checked = report::check(
+        &env,
+        &[below],
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(
         checked.project_target,
         Some(report::ProjectTarget::MainCheckout(
@@ -318,7 +350,11 @@ fn a_project_below_the_git_top_level_maps_onto_the_same_place_in_the_main_checko
 
     let orphan = scope(&linked.join("lib"));
     record_a_missing_agent(&env, &orphan);
-    let checked = report::check(&env, &[orphan]);
+    let checked = report::check(
+        &env,
+        &[orphan],
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(
         checked.project_target, None,
         "a place the main checkout holds no project at names nothing"
@@ -339,7 +375,11 @@ fn a_clean_report_resolves_no_destination() {
     let scope = scope(&linked);
     declare(&env, &scope);
 
-    let checked = report::check(&env, std::slice::from_ref(&scope));
+    let checked = report::check(
+        &env,
+        std::slice::from_ref(&scope),
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     assert!(checked.is_clean(), "{:?}", checked.sections);
     assert_eq!(
         checked.project_target, None,
@@ -361,7 +401,11 @@ fn a_project_below_the_worktree_root_that_declares_is_its_own() {
     declare(&env, &app);
     record_a_missing_agent(&env, &app);
 
-    let mut checked = report::check(&env, std::slice::from_ref(&app));
+    let mut checked = report::check(
+        &env,
+        std::slice::from_ref(&app),
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(
         checked.project_target,
         Some(report::ProjectTarget::Worktree(

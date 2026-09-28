@@ -27,7 +27,11 @@ fn missing_remote_comparison_data_names_each_package() {
         );
         record_refs(&env, "owner/repo", current);
 
-        let report = check(&env, std::slice::from_ref(&scope));
+        let report = check(
+            &env,
+            std::slice::from_ref(&scope),
+            crate::drift::copies::CheckMode::Settle,
+        );
         assert_eq!(report.status.exit_code(), 1, "{evaluated:?}, {current:?}");
         let line = &report.sections[0].lines[0];
         assert!(
@@ -49,7 +53,11 @@ fn a_local_package_keeps_its_snapshot_verdict_without_remote_evidence() {
     local.update_available = true;
     snapshot_with(&env, &scope, vec![local]);
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(report.sections[0].title, "stale");
     assert!(report.sections[0].lines[0].text.contains("skill 'local'"));
 }
@@ -66,7 +74,11 @@ fn an_old_fetch_failure_becomes_a_line_dated_from_first_failure() {
     stamps::record_failure(&env, &key, "could not resolve host", first).unwrap();
     stamps::record_failure(&env, &key, "still down", first + 60).unwrap();
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(report.status, CheckStatus::Unknown);
     let text = render_plain(&report);
     assert!(
@@ -81,7 +93,12 @@ fn an_old_fetch_failure_becomes_a_line_dated_from_first_failure() {
     stamps::record_success(&env, &key, None, crate::clock::unix_now()).unwrap();
     stamps::record_failure(&env, &key, "blip", crate::clock::unix_now()).unwrap();
     assert_eq!(
-        check(&env, std::slice::from_ref(&scope)).status,
+        check(
+            &env,
+            std::slice::from_ref(&scope),
+            crate::drift::copies::CheckMode::Settle
+        )
+        .status,
         CheckStatus::Clean
     );
 }
@@ -105,7 +122,11 @@ fn unreadable_evidence_is_could_not_check() {
     )
     .unwrap();
 
-    let report = check(&env, std::slice::from_ref(&scope));
+    let report = check(
+        &env,
+        std::slice::from_ref(&scope),
+        crate::drift::copies::CheckMode::Settle,
+    );
     assert_eq!(report.status, CheckStatus::Unknown);
     assert!(render_plain(&report).contains("history could not be read"));
 }

@@ -210,6 +210,8 @@ pub(super) struct ScopeCheck<'a> {
     /// names it.
     pub(super) deadline: std::time::Instant,
     pub(super) budget: std::time::Duration,
+    /// Whether the check may write a project's committed install record.
+    pub(super) mode: crate::drift::copies::CheckMode,
     /// Where the scope's Pi packages install and the root Pi loads beside
     /// it in this session, resolved once for every Pi line; the settings
     /// read that failed when it did not resolve.
@@ -622,9 +624,11 @@ impl ScopeCheck<'_> {
     /// carrying committed renders and no record, the copy an earlier
     /// build left unrecorded — is recorded without a word: either exit
     /// would land the same bytes, and a line about it would teach the
-    /// reader to skim. Off the branch the committed record is written on
-    /// (D007) it is not recorded, and a line says so with no fix, since
-    /// the record on that branch gains it after the merge. A copy that
+    /// reader to skim. Where the check may not write the committed record
+    /// (D007: the session hook's report-only check, or a checkout off the
+    /// branch it is written on) it is not recorded, and a line names the
+    /// missing row with no fix, since that branch records it after the
+    /// merge. A copy that
     /// differs is stale, with the count, in the section an agent reads
     /// first: the state this is most often is
     /// a render some commits behind its source. Its fix is the take-over
@@ -656,7 +660,7 @@ impl ScopeCheck<'_> {
         if occupied.is_empty() {
             return;
         }
-        let (verdicts, record_failed) = match crate::drift::copies::settle(
+        let (verdicts, record_failed, unrecorded) = match crate::drift::copies::settle(
             self.env,
             self.scope,
             manifest,
@@ -664,11 +668,13 @@ impl ScopeCheck<'_> {
             &occupied,
             self.deadline,
             self.budget,
+            self.mode,
         ) {
             crate::drift::copies::Settled::Judged {
                 verdicts,
                 record_failed,
-            } => (verdicts, record_failed),
+                unrecorded,
+            } => (verdicts, record_failed, unrecorded),
             // The plan is the judgement; without it every blocked line
             // stands as the stat found it, and the reason the judgement
             // is missing is a line of its own.
@@ -708,10 +714,12 @@ impl ScopeCheck<'_> {
         }
         for (key, install) in &occupied {
             match verdicts.get(key) {
-                Some(crate::drift::copies::Verdict::Recorded) => {}
-                Some(crate::drift::copies::Verdict::Unrecorded(off)) => {
-                    self.unrecorded_line(install, off, sections);
-                }
+                // Its line is the unrecorded entry's, below, beside the
+                // entries a stat cannot see.
+                Some(
+                    crate::drift::copies::Verdict::Recorded
+                    | crate::drift::copies::Verdict::Unrecorded,
+                ) => {}
                 Some(crate::drift::copies::Verdict::Differs {
                     files,
                     rendered_from,
@@ -731,6 +739,9 @@ impl ScopeCheck<'_> {
                     self.blocked_line(install, sections);
                 }
             }
+        }
+        if let Some(unrecorded) = unrecorded {
+            self.unrecorded_lines(&unrecorded, sections);
         }
     }
 
@@ -775,32 +786,59 @@ impl ScopeCheck<'_> {
         ));
     }
 
-    /// The line for a copy that is the render, left out of the record
-    /// because this checkout does not write it. No remedy: the fix is the
-    /// merge, after which the record on the default branch gains it.
-    fn unrecorded_line(
+    /// One line per entry the check proved on disk and left out of the
+    /// committed record, occupied or not: where its render sits, the
+    /// record's hash for it (none) beside the render's, and why the record
+    /// stays as it is. No remedy: the record is written on the default
+    /// branch after the merge, or by a check run there by hand.
+    fn unrecorded_lines(
         &self,
-        install: &crate::engine::Occupied,
-        off: &crate::lock::branch::OffBranch,
+        unrecorded: &crate::drift::copies::Unrecorded,
         sections: &mut Sections,
     ) {
-        let checkout = match &off.head {
-            Some(branch) => format!("branch '{}'", shown(branch)),
-            None => "a detached HEAD".to_owned(),
+        let why = match &unrecorded.why {
+            crate::drift::copies::Withheld::OffBranch(off) => {
+                let checkout = match &off.head {
+                    Some(branch) => format!("branch '{}'", shown(branch)),
+                    None => "a detached HEAD".to_owned(),
+                };
+                format!(
+                    "{checkout} leaves the record as '{}' holds it, and '{}' records it after the merge",
+                    shown(&off.records_on),
+                    shown(&off.records_on)
+                )
+            }
+            crate::drift::copies::Withheld::ReportOnly => {
+                "the session check leaves the record as this checkout holds it".to_owned()
+            }
         };
-        sections.unrecorded.push(drift(
-            format!(
-                "{}{} '{}' for {} matches its source but is not recorded: {} leaves the install record as '{}' holds it, and '{}' records it after the merge",
-                self.prefix,
-                install.kind.name(),
-                shown(&install.name),
-                install.harness.display_name(),
-                checkout,
-                shown(&off.records_on),
-                shown(&off.records_on)
-            ),
-            None,
-        ));
+        let root = match self.scope {
+            Scope::Project { root } => Some(root.as_path()),
+            Scope::Global => None,
+        };
+        for entry in unrecorded.entries.values() {
+            let paths = crate::engine::installed_paths(self.env, self.scope, entry)
+                .iter()
+                .map(|path| {
+                    let below = root.and_then(|root| path.strip_prefix(root).ok());
+                    shown(&crate::paths::slashed(below.unwrap_or(path)))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            sections.unrecorded.push(drift(
+                format!(
+                    "{}{} '{}' for {} has no row in the install record: {}, recorded hash none, rendered hash {}; {}",
+                    self.prefix,
+                    entry.kind.name(),
+                    shown(&entry.name),
+                    entry.harness.display_name(),
+                    paths,
+                    shown(entry.rendered_hash.as_deref().unwrap_or("none")),
+                    why
+                ),
+                None,
+            ));
+        }
     }
 
     /// The plan is the judgement; without it every blocked line stands as

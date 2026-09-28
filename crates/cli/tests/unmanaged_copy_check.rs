@@ -1,9 +1,10 @@
-//! The session hook's view of a declaration sitting on files no record
-//! accounts for: `kendex check --quiet` prints the stale line with the
-//! take-over as its fix, the fix settles it, and a copy the render matches
-//! is recorded with nothing printed and a clean exit, except in a checkout
-//! off the default branch, where it is reported as not recorded and the
-//! tree is left as git had it.
+//! `kendex check --quiet`'s view of a declaration sitting on files no
+//! record accounts for: it prints the stale line with the take-over as its
+//! fix, the fix settles it, and a copy the render matches is recorded with
+//! nothing printed and a clean exit. The session hook's check,
+//! `--report-only`, and a check in a checkout off the default branch
+//! record nothing: they report the missing row and leave the tree as git
+//! had it.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -225,12 +226,21 @@ const MANIFEST: &str = "schema = 6\n[install]\nharnesses = [\"claude\"]\nmethod 
 /// default branch.
 type Arrange = fn(&Path) -> PathBuf;
 
+/// A lane that adds a package: its checkout, and the hash its render
+/// records to.
+struct Lane {
+    home: PathBuf,
+    checkout: PathBuf,
+    rendered: String,
+}
+
 /// A repository whose default branch records `deploy`, and the checkout
 /// `arrange` hands back, whose own commit adds `ship` to the manifest with
 /// its render and leaves `.kendex-lock.json` as the default branch holds
-/// it: the tree a lane commits under D007.
+/// it: the tree a lane commits under D007. The hash is what the apply
+/// recorded for `ship` before the record was put back.
 #[allow(clippy::unwrap_used)]
-fn a_lane_adding_a_package(arrange: Arrange) -> (tempfile::TempDir, PathBuf, PathBuf) {
+fn a_lane_adding_a_package(arrange: Arrange) -> (tempfile::TempDir, Lane) {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let root = home.join("project");
@@ -259,6 +269,13 @@ fn a_lane_adding_a_package(arrange: Arrange) -> (tempfile::TempDir, PathBuf, Pat
     .unwrap();
     let applied = kendex(&home, &checkout, &["apply", "--yes", "--leave"]);
     assert!(applied.status.success(), "{}", said(&applied));
+    let recorded = lock::load(&checkout.join(".kendex-lock.json")).unwrap();
+    let rendered = recorded
+        .entries
+        .values()
+        .find(|entry| entry.name == "ship")
+        .and_then(|entry| entry.rendered_hash.clone())
+        .unwrap();
     git(&checkout, &["checkout", "--", ".kendex-lock.json"]);
     commit(&checkout, "ship");
     assert_eq!(
@@ -266,71 +283,181 @@ fn a_lane_adding_a_package(arrange: Arrange) -> (tempfile::TempDir, PathBuf, Pat
         "",
         "the fixture starts clean"
     );
-    (tmp, home, checkout)
+    (
+        tmp,
+        Lane {
+            home,
+            checkout,
+            rendered,
+        },
+    )
 }
 
-/// The session start D007 is about: `kendex check --quiet`, as the
-/// session hook runs it, in a lane that adds a package. Off the default
-/// branch, on a branch, in a linked worktree and on a detached HEAD
-/// alike, it reports the proven render as not recorded and leaves the
-/// tree as git had it. The default-branch row is the control: the same
-/// state there is settled into the record, so `.kendex-lock.json` is
-/// modified and the report is clean.
+/// How a row runs the check.
+#[derive(Clone, Copy)]
+enum Run {
+    /// The session-drift-check hook itself, fed a fresh start's payload,
+    /// with this build's kendex first on PATH.
+    Hook,
+    /// `kendex check --quiet`, as a person runs it.
+    ByHand,
+}
+
+/// The hook's stdout, or the check's, and the check's exit status; the
+/// hook always exits 0, so its status is not the check's.
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+fn run(lane: &Lane, how: Run) -> (String, Option<i32>, String) {
+    let output = match how {
+        Run::ByHand => kendex(&lane.home, &lane.checkout, &["check", "--quiet"]),
+        Run::Hook => {
+            let hook =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../hooks/session-drift-check.sh");
+            let bin = Path::new(env!("CARGO_BIN_EXE_kendex")).parent().unwrap();
+            let path = std::env::join_paths(std::iter::once(bin.to_path_buf()).chain(
+                std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+            ))
+            .unwrap();
+            let mut child = Command::new("bash")
+                .arg(hook)
+                .current_dir(&lane.checkout)
+                .env_clear()
+                .envs(test_util::fixture_env(&lane.home))
+                .env("KENDEX_BACKGROUND_REFRESH", "off")
+                .env("CLAUDE_PROJECT_DIR", &lane.checkout)
+                .env("PATH", path)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("the hook runs");
+            use std::io::Write;
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(br#"{"source":"startup"}"#)
+                .unwrap();
+            child.wait_with_output().unwrap()
+        }
+    };
+    (
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        output.status.code(),
+        said(&output),
+    )
+}
+
+/// A session start never writes a tracked file: the session-drift-check
+/// hook runs `kendex check --report-only`, which reports the proven
+/// render's missing row, with its path and both hashes, and leaves the
+/// tree as git had it on a branch, in a linked worktree, on a detached
+/// HEAD and on the default branch alike. A check run by hand keeps D007's
+/// branch rule: off the default branch it records nothing and says why;
+/// on it, the control, it settles the render into the record, so
+/// `.kendex-lock.json` is modified and the report is clean.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_session_start_off_the_default_branch_writes_nothing_git_sees() {
-    let rows: [(&str, Arrange, Option<&str>); 4] = [
+fn a_session_start_writes_nothing_git_sees() {
+    let branch: Arrange = |root| {
+        git(root, &["switch", "--quiet", "-c", "lane"]);
+        root.to_path_buf()
+    };
+    let worktree: Arrange = |root| {
+        let linked = root.with_file_name("lane");
+        let at = linked.to_str().unwrap();
+        git(root, &["worktree", "add", "--quiet", "-b", "lane", at]);
+        kendex_core::paths::canonical(&linked).unwrap()
+    };
+    let detached: Arrange = |root| {
+        git(root, &["switch", "--quiet", "--detach"]);
+        root.to_path_buf()
+    };
+    let default: Arrange = |root| root.to_path_buf();
+    let session = "the session check leaves the record as this checkout holds it";
+    // The tree the run leaves, and the reason its line gives; `None` where
+    // the run records and prints nothing.
+    let rows: [(&str, Arrange, Run, &str, Option<&str>); 7] = [
+        ("hook, branch", branch, Run::Hook, "", Some(session)),
         (
-            "a branch in the checkout",
-            |root| {
-                git(root, &["switch", "--quiet", "-c", "lane"]);
-                root.to_path_buf()
-            },
-            Some("branch 'lane'"),
+            "hook, linked worktree",
+            worktree,
+            Run::Hook,
+            "",
+            Some(session),
         ),
         (
-            "a linked worktree on a branch",
-            |root| {
-                let linked = root.with_file_name("lane");
-                let at = linked.to_str().unwrap();
-                git(root, &["worktree", "add", "--quiet", "-b", "lane", at]);
-                kendex_core::paths::canonical(&linked).unwrap()
-            },
-            Some("branch 'lane'"),
+            "hook, detached HEAD",
+            detached,
+            Run::Hook,
+            "",
+            Some(session),
         ),
         (
-            "a detached HEAD",
-            |root| {
-                git(root, &["switch", "--quiet", "--detach"]);
-                root.to_path_buf()
-            },
-            Some("a detached HEAD"),
+            "hook, default branch",
+            default,
+            Run::Hook,
+            "",
+            Some(session),
         ),
-        ("the default branch", |root| root.to_path_buf(), None),
+        (
+            "by hand, branch",
+            branch,
+            Run::ByHand,
+            "",
+            Some(
+                "branch 'lane' leaves the record as 'main' holds it, and 'main' records it after the merge",
+            ),
+        ),
+        (
+            "by hand, detached HEAD",
+            detached,
+            Run::ByHand,
+            "",
+            Some("a detached HEAD leaves the record as 'main' holds it"),
+        ),
+        (
+            "by hand, default branch",
+            default,
+            Run::ByHand,
+            " M .kendex-lock.json\n",
+            None,
+        ),
     ];
-    for (shape, arrange, off) in rows {
-        let (_tmp, home, checkout) = a_lane_adding_a_package(arrange);
-        let checked = kendex(&home, &checkout, &["check", "--quiet"]);
-        let status = git(&checkout, &["status", "--porcelain"]);
-        let text = String::from_utf8_lossy(&checked.stdout);
-        let (tree, code) = match off {
-            Some(_) => ("", 1),
-            None => (" M .kendex-lock.json\n", 0),
-        };
-        assert_eq!(status, tree, "{shape}: {}", said(&checked));
+    for (shape, arrange, how, tree, why) in rows {
+        let (_tmp, lane) = a_lane_adding_a_package(arrange);
+        let (stdout, code, all) = run(&lane, how);
         assert_eq!(
-            checked.status.code(),
-            Some(code),
-            "{shape}: {}",
-            said(&checked)
+            git(&lane.checkout, &["status", "--porcelain"]),
+            tree,
+            "{shape}: {all}"
         );
-        if let Some(checkout_word) = off {
-            assert!(
-                text.contains(&format!(
-                    "skill 'ship' for Claude Code matches its source but is not recorded: {checkout_word} leaves the install record as 'main' holds it"
-                )),
-                "{shape}: {text}"
-            );
+        match (how, why) {
+            (Run::Hook, Some(why)) => {
+                assert!(
+                    stdout.starts_with("session-drift-check: drift=found\n"),
+                    "{shape}: {all}"
+                );
+                assert_unrecorded(&lane, &stdout, why, shape);
+            }
+            (Run::ByHand, Some(why)) => {
+                assert_eq!(code, Some(1), "{shape}: {all}");
+                assert_unrecorded(&lane, &stdout, why, shape);
+            }
+            (Run::ByHand, None) => {
+                assert_eq!(code, Some(0), "{shape}: {all}");
+                assert_eq!(stdout, "", "{shape}: {all}");
+            }
+            (Run::Hook, None) => unreachable!("{shape}: the hook records nothing"),
         }
     }
+}
+
+/// The missing row's line: the render's path, no recorded hash, the hash
+/// the apply recorded for it, and why the record stays as it is.
+fn assert_unrecorded(lane: &Lane, stdout: &str, why: &str, shape: &str) {
+    let line = format!(
+        "skill 'ship' for Claude Code has no row in the install record: .claude/skills/ship, recorded hash none, rendered hash {}; {why}",
+        lane.rendered
+    );
+    assert!(stdout.contains(&line), "{shape}: {stdout}");
 }

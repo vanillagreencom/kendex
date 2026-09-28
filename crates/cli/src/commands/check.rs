@@ -22,12 +22,15 @@ use commit_hooks::fold_commit_hooks;
 /// is still owed, so the next session reads fresh verdicts. An explicit
 /// check draws every line from the design system's components. `--quiet`
 /// prints the bounded session report and nothing when clean. `--json`
-/// prints the machine shape.
+/// prints the machine shape. `mode` is whether that deep read may write a
+/// project's committed install record: `--report-only`, which the session
+/// hook passes, never does.
 pub fn run(
     env: &Env,
     filter: ScopeFilter,
     json: bool,
     quiet: bool,
+    mode: kendex_core::drift::copies::CheckMode,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let scopes = resolve_scopes(env, filter)?;
     let channel = ui::channel(json);
@@ -38,7 +41,7 @@ pub fn run(
             }
             (Channel::Human(_), true) | (Channel::Json, _) => None,
         };
-        let mut checked = report::check(env, &scopes);
+        let mut checked = report::check(env, &scopes, mode);
         fold_commit_hooks(env, &mut checked, &scopes);
         checked
     };
@@ -49,7 +52,8 @@ pub fn run(
     // deadline cut short is finished there. `KENDEX_BACKGROUND_REFRESH=off`
     // suppresses this spawn alone (tests, CI), and with it that finish;
     // the check's other write, the install record for a copy it proved
-    // against its source, is the report's own.
+    // against its source, is the report's own, and `--report-only`
+    // withholds it at a project scope.
     if report::wants_background_refresh(env, &scopes, &checked)
         && std::env::var("KENDEX_BACKGROUND_REFRESH").as_deref() != Ok("off")
     {

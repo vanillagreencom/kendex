@@ -79,6 +79,7 @@ fn the_job_finishes_the_plan_over_unrecorded_copies() {
     let text = drift::report::render_plain(&drift::report::check(
         &w.env,
         std::slice::from_ref(&w.scope),
+        kendex_core::drift::copies::CheckMode::Settle,
     ));
     assert!(
         text.contains("unmanaged copy of skill 'deploy' for Claude Code: 1 file differs from"),

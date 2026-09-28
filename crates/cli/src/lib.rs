@@ -6,7 +6,7 @@ mod width;
 
 mod commands;
 mod dispatch_args;
-use dispatch_args::{check, remove};
+use dispatch_args::{CheckArgs, check, remove};
 mod flags;
 mod help;
 mod scope;
@@ -143,25 +143,7 @@ enum Command {
         harness: Option<String>,
     },
     /// Check for package changes or problems on this computer
-    Check {
-        #[arg(short = 'g', long)]
-        global: bool,
-        /// project | global | all (default all)
-        #[arg(long)]
-        scope: Option<String>,
-        /// Machine-readable report
-        #[arg(long)]
-        json: bool,
-        /// Print a short report, or nothing when all checks pass
-        #[arg(short = 'q', long)]
-        quiet: bool,
-        /// Check this marketplace directory instead of this computer
-        #[arg(long)]
-        catalog: Option<std::path::PathBuf>,
-        /// With --catalog, also fail on advisories
-        #[arg(long)]
-        strict: bool,
-    },
+    Check(CheckArgs),
     /// Set up package checks at the start of each coding session
     #[command(name = "drift-hook")]
     DriftHook {
@@ -275,7 +257,8 @@ pub fn main() -> ExitCode {
     // report on stdout". A failure before the check could run — settings
     // unreadable, scope unresolvable — must exit 2 (could not check), or
     // the session hook reads the empty report as a clean machine.
-    let machine_check = matches!(&cli.command, Some(Command::Check { catalog: None, .. }));
+    let machine_check =
+        matches!(&cli.command, Some(Command::Check(args)) if args.catalog.is_none());
     let support = matches!(
         &cli.command,
         Some(Command::Init { .. } | Command::Login | Command::Logout | Command::Report(_))
@@ -549,14 +532,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::All)?;
             commands::list::run(&env, filter, harness)?;
         }
-        Command::Check {
-            global,
-            scope,
-            json,
-            quiet,
-            catalog,
-            strict,
-        } => return check(&env, global, scope, json, quiet, catalog, strict),
+        Command::Check(args) => return check(&env, args),
         Command::DriftHook {
             global, scope, yes, ..
         } => {

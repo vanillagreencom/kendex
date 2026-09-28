@@ -33,7 +33,11 @@ fn the_same_state_is_judged_once_and_read_after() {
     assert!(written.contains("\"files\": 1"), "{written}");
     fs::write(&memo, written.replace("\"files\": 1", "\"files\": 7")).unwrap();
 
-    let checked = drift::report::check(&w.env, std::slice::from_ref(&w.scope));
+    let checked = drift::report::check(
+        &w.env,
+        std::slice::from_ref(&w.scope),
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     let text = drift::report::render_plain(&checked);
     assert!(
         text.contains(": 7 files differ from"),
@@ -73,8 +77,12 @@ fn a_pass_past_the_budget_is_given_up_and_finished_in_the_background() {
         w.home.join("app/.claude/skills/deploy/SKILL.md"),
         "the tool that came before",
     );
-    let checked =
-        drift::report::check_within(&w.env, std::slice::from_ref(&w.scope), Duration::ZERO);
+    let checked = drift::report::check_within(
+        &w.env,
+        std::slice::from_ref(&w.scope),
+        Duration::ZERO,
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     let text = drift::report::render_plain(&checked);
     assert_eq!(
         checked.status,
@@ -132,7 +140,11 @@ fn a_record_that_will_not_write_is_could_not_check() {
     fs::set_permissions(&project, fs::Permissions::from_mode(0o500)).unwrap();
     let restore = || fs::set_permissions(&project, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let checked = drift::report::check(&w.env, std::slice::from_ref(&w.scope));
+    let checked = drift::report::check(
+        &w.env,
+        std::slice::from_ref(&w.scope),
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     let text = drift::report::render_plain(&checked);
     restore();
     assert_eq!(
@@ -413,7 +425,7 @@ fn a_proven_registration_whose_target_moved_is_refused_by_the_binding() {
 /// The `world` catalog plus an MCP server, declared for the person's own
 /// scope where OpenCode picks its config file by what exists.
 #[allow(clippy::unwrap_used)]
-fn global_world() -> super::World {
+pub(super) fn global_world() -> super::World {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let catalog = home.join("catalog");

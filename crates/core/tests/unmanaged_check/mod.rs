@@ -106,6 +106,7 @@ fn report(w: &World) -> String {
     drift::report::render_plain(&drift::report::check(
         &w.env,
         std::slice::from_ref(&w.scope),
+        kendex_core::drift::copies::CheckMode::Settle,
     ))
 }
 
@@ -435,7 +436,11 @@ fn a_position_that_will_not_read_is_could_not_check() {
     fs::set_permissions(&position, fs::Permissions::from_mode(0o000)).unwrap();
     let restore = || fs::set_permissions(&position, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let checked = drift::report::check(&w.env, std::slice::from_ref(&w.scope));
+    let checked = drift::report::check(
+        &w.env,
+        std::slice::from_ref(&w.scope),
+        kendex_core::drift::copies::CheckMode::Settle,
+    );
     let text = drift::report::render_plain(&checked);
     restore();
     assert_eq!(
@@ -549,3 +554,4 @@ mod budget;
 mod kinds;
 mod memo;
 mod remedies;
+mod report_only;
