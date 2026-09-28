@@ -32,10 +32,11 @@
 #      its arms swapped, one ignoring the event, a shard key reading no
 #      selection, a cancel held to no event, a job dropped from CI's needs, CI without always(),
 #      a lane dropped from one aggregate alone and an event-held job held to
-#      another condition. The doc-limits step passes --against HEAD^1 on a
-#      pull request alone, from a checkout deep enough to hold HEAD^1; arms
-#      plant a shallow checkout, a swapped event, a filled empty branch and
-#      an unconditional flag.
+#      another condition. The doc-limits and todo-ban steps run on a pull
+#      request alone and the bot-instructions check beside them on both
+#      events; doc-limits passes --against HEAD^1 from a checkout deep
+#      enough to hold HEAD^1. Arms take each scan's event condition off,
+#      and plant a shallow checkout and a dropped flag.
 #   3. the aggregate: a lane the class authorized may skip; one it did not
 #      is rejected, and so is a dead classifier, a job named twice and a
 #      helper that is not there.
@@ -371,12 +372,78 @@ for scan in skills/doc-limits/scripts/doc-limits skills/commit-guards/scripts/to
   check "$scan runs in the verify job alone" "$VERIFY_JOBS" "$(job_of_run "$WORKFLOW" "$scan")"
 done
 
-# On a pull request doc-limits measures growth from HEAD^1, the merge
-# commit's first parent, which only a checkout of depth 2 or more holds; a
-# merge group judges the ceiling alone. The step's AGAINST expression is
-# evaluated per event and its run line expanded under that value, so a row
-# reads the arguments the step really passes.
+# The scans run on a pull request alone: a byte ceiling is a context budget
+# and a work marker is hygiene, which the pull request that spends them
+# answers for, and neither ejects a merge group. The bot-instructions check
+# beside them stays on both events. Each step's own `if:` is read and
+# evaluated per event; a step with none runs wherever its job runs.
 DOC_LIMITS=skills/doc-limits/scripts/doc-limits
+TODO_BAN=skills/commit-guards/scripts/todo-ban
+BOT_CHECK=candidate/skills/bot-instructions/scripts/bot-instructions
+step_field() { # WORKFLOW COMMAND FIELD — the if (`${{ }}` stripped, or none) or the run arguments (args) of the step whose run line names COMMAND
+  COMMAND="$2" FIELD="$3" awk '
+    function flush() {
+      if (hit) printf "%s", (ENVIRON["FIELD"] == "if" ? (cond == "" ? "none" : cond) : args)
+      hit = 0; cond = ""; args = ""
+    }
+    /^  [A-Za-z0-9_-]+:/ || /^      - / { flush() }
+    /^        if: / {
+      cond = $0; sub(/^        if: */, "", cond)
+      if (substr(cond, 1, 3) == "${{") { cond = substr(cond, 4); sub(/}}[ ]*$/, "", cond) }
+    }
+    /^ +run: / && index($0, ENVIRON["COMMAND"]) > 0 {
+      hit = 1; args = $0; sub(/^ +run: /, "", args); args = substr(args, length(ENVIRON["COMMAND"]) + 2)
+    }
+    END { flush() }
+  ' "$1"
+}
+step_runs() { # WORKFLOW COMMAND EVENT — yes, no, or the evaluator's refusal
+  local expr out
+  expr="$(step_field "$1" "$2" if)"
+  [ -n "$expr" ] || { printf 'no-step'; return 0; }
+  [ "$expr" != none ] || { printf 'yes'; return 0; }
+  out="$(gh_eval value "$(jq -cn --arg e "$3" '{github: {event_name: $e}}')" "$expr")"
+  case "$out" in
+    true) printf 'yes' ;;
+    false) printf 'no' ;;
+    *) printf '%s' "$out" ;;
+  esac
+}
+# EVENT|COMMAND|RUNS
+step_rows=0
+while IFS='|' read -r event command runs; do
+  step_rows=$((step_rows + 1))
+  check "$command runs on $event: $runs" "$runs" "$(step_runs "$WORKFLOW" "$command" "$event")"
+done <<ROWS
+pull_request|$DOC_LIMITS|yes
+merge_group|$DOC_LIMITS|no
+pull_request|$TODO_BAN|yes
+merge_group|$TODO_BAN|no
+pull_request|$BOT_CHECK|yes
+merge_group|$BOT_CHECK|yes
+ROWS
+[ "$step_rows" -ge 6 ] || { echo "the step table read $step_rows rows" >&2; exit 1; }
+
+# Each scan's step with the event condition taken off, the shape that ejected
+# merge groups over a budget, runs on a merge group again.
+while IFS='|' read -r step command; do
+  STEP="$step" awk '
+    /^      - / { in_step = ($0 == "      - name: " ENVIRON["STEP"]) }
+    in_step && $0 == "        if: always() && github.event_name == '\''pull_request'\''" { $0 = "        if: always()"; n++ }
+    { print }
+    END { if (n != 1) exit 2 }
+  ' "$WORKFLOW" >"$TMP/wf-group-scan.yml" ||
+    { echo "the event condition of '$step' could not be taken off in a copy" >&2; exit 1; }
+  check "must-fail: $command without its event condition runs on a merge group" "yes" \
+    "$(step_runs "$TMP/wf-group-scan.yml" "$command" merge_group)"
+done <<ROWS
+doc-limits (document byte ceilings)|$DOC_LIMITS
+todo-ban (index-wide work-marker scan)|$TODO_BAN
+ROWS
+
+# doc-limits measures growth from HEAD^1, the merge commit's first parent,
+# which only a checkout of depth 2 or more holds. The run line is expanded as
+# the runner's shell expands it.
 checkout_depth() { # WORKFLOW JOB — fetch-depth of the job's actions/checkout step, or none
   local depth
   depth="$(awk -v job="$2" '
@@ -386,55 +453,19 @@ checkout_depth() { # WORKFLOW JOB — fetch-depth of the job's actions/checkout 
   ' "$1")"
   printf '%s' "${depth:-none}"
 }
-doc_limits_step() { # WORKFLOW FIELD — the doc-limits step's AGAINST expression (env) or its run arguments (args)
-  COMMAND="$DOC_LIMITS" FIELD="$2" awk '
-    function flush() { if (hit) printf "%s", (ENVIRON["FIELD"] == "env" ? env : args); hit = 0; env = ""; args = "" }
-    /^  [A-Za-z0-9_-]+:/ || /^      - / { flush() }
-    /^          AGAINST: / { env = $0; sub(/^ *AGAINST: [$][{][{] */, "", env); sub(/ *[}][}]$/, "", env) }
-    /^ +run: / && index($0, ENVIRON["COMMAND"]) > 0 {
-      hit = 1; args = $0; sub(/^ +run: /, "", args); args = substr(args, length(ENVIRON["COMMAND"]) + 2)
-    }
-    END { flush() }
-  ' "$1"
-}
-doc_limits_argv() { # WORKFLOW EVENT — the step's arguments on that event, each as <arg>
-  local expr against args
-  expr="$(doc_limits_step "$1" env)"
-  args="$(doc_limits_step "$1" args)"
-  [ -n "$expr" ] || { printf 'no-against-expression'; return 0; }
-  against="$(gh_eval value "$(jq -cn --arg e "$2" '{github: {event_name: $e}}')" "$expr")"
-  case "$against" in gh-eval-refused:*) printf '%s' "$against"; return 0 ;; esac
-  against="$(jq -r . <<<"$against")"
-  # The child shell expands the run line, as the runner's shell does.
-  AGAINST="$against" ARGS="$args" bash -c 'eval "set -- $ARGS"; [ "$#" -eq 0 ] || printf "<%s>" "$@"'
+doc_limits_argv() { # WORKFLOW — the step's arguments, each as <arg>
+  ARGS="$(step_field "$1" "$DOC_LIMITS" args)" bash -c 'eval "set -- $ARGS"; [ "$#" -eq 0 ] || printf "<%s>" "$@"'
 }
 DOC_LIMITS_JOB="$(job_of_run "$WORKFLOW" "$DOC_LIMITS")"
 check "the doc-limits job checks out two commits, the merge commit and HEAD^1" "2" \
   "$(checkout_depth "$WORKFLOW" "$DOC_LIMITS_JOB")"
-# EVENT|ARGUMENTS
-argv_rows=0
-while IFS='|' read -r event argv; do
-  argv_rows=$((argv_rows + 1))
-  check "doc-limits on $event runs with: ${argv:-no arguments}" "$argv" "$(doc_limits_argv "$WORKFLOW" "$event")"
-done <<ROWS
-pull_request|<--against><HEAD^1>
-merge_group|
-ROWS
-[ "$argv_rows" -ge 2 ] || { echo "the doc-limits argument table read $argv_rows rows" >&2; exit 1; }
+check "doc-limits runs with --against HEAD^1" "<--against><HEAD^1>" "$(doc_limits_argv "$WORKFLOW")"
 
 plant "$WORKFLOW" "          fetch-depth: 2" "" "$TMP/wf-shallow.yml" "$DOC_LIMITS_JOB"
 check "must-fail: a doc-limits checkout without fetch-depth 2 is named" "none" \
   "$(checkout_depth "$TMP/wf-shallow.yml" "$DOC_LIMITS_JOB")"
-plant "$WORKFLOW" "github.event_name == 'pull_request' && 'HEAD^1'" "github.event_name == 'merge_group' && 'HEAD^1'" \
-  "$TMP/wf-against-swapped.yml" "$DOC_LIMITS_JOB"
-check "must-fail: an AGAINST held to merge_group passes no flag on a pull request" "" \
-  "$(doc_limits_argv "$TMP/wf-against-swapped.yml" pull_request)"
-plant "$WORKFLOW" "&& 'HEAD^1' || ''" "&& 'HEAD^1' || 'HEAD^1'" "$TMP/wf-against-filled.yml" "$DOC_LIMITS_JOB"
-check "must-fail: an AGAINST whose empty branch is filled passes the flag on a merge group" "<--against><HEAD^1>" \
-  "$(doc_limits_argv "$TMP/wf-against-filled.yml" merge_group)"
-plant "$WORKFLOW" '${AGAINST:+--against "$AGAINST"}' '--against "$AGAINST"' "$TMP/wf-against-always.yml" "$DOC_LIMITS_JOB"
-check "must-fail: a flag passed without its AGAINST condition reaches a merge group" "<--against><>" \
-  "$(doc_limits_argv "$TMP/wf-against-always.yml" merge_group)"
+plant "$WORKFLOW" "$DOC_LIMITS --against HEAD^1" "$DOC_LIMITS" "$TMP/wf-no-against.yml" "$DOC_LIMITS_JOB"
+check "must-fail: a doc-limits step without --against passes no flag" "" "$(doc_limits_argv "$TMP/wf-no-against.yml")"
 
 # --- 2a. The one context ---------------------------------------------------
 # `CI` is the context the organization ruleset requires beside `Review gate`.

@@ -313,22 +313,25 @@ jobs:
       # be `trivial` can still push a document past its ceiling. always(): a
       # red check above must not suppress either scan.
       #
-      # On a pull request doc-limits also fails a document the pull request
-      # grows into the margin under its ceiling (DOC_LIMITS_MARGIN_PCT), so
-      # two pull requests passing against the same base put one document over
-      # its ceiling in a merge group only when each grows it by more than the
-      # margin. The merge group keeps the ceiling alone: a group that fits
-      # merges.
+      # Both scans run on a pull request alone. A byte ceiling is a context
+      # budget and a work marker is hygiene: the pull request that spends them
+      # answers for them, and a merge group is ejected only for a defect. The
+      # bot-instructions check above runs on both events, because a stale
+      # render reviews every later pull request under rules nobody chose.
+      #
+      # doc-limits also fails a document the pull request grows into the
+      # margin under its ceiling (DOC_LIMITS_MARGIN_PCT), measured from HEAD^1,
+      # so two pull requests passing against the same base put one document
+      # over its ceiling on main only when each grows it by more than the
+      # margin.
       - name: doc-limits (document byte ceilings)
-        if: always()
+        if: always() && github.event_name == 'pull_request'
         working-directory: candidate
-        env:
-          AGAINST: ${{ github.event_name == 'pull_request' && 'HEAD^1' || '' }}
-        run: skills/doc-limits/scripts/doc-limits ${AGAINST:+--against "$AGAINST"}
+        run: skills/doc-limits/scripts/doc-limits --against HEAD^1
       # The commit lane runs todo-ban --staged and judges what a commit adds;
       # this scan takes the rest, in every blob git reads as text.
       - name: todo-ban (index-wide work-marker scan)
-        if: always()
+        if: always() && github.event_name == 'pull_request'
         working-directory: candidate
         run: skills/commit-guards/scripts/todo-ban
 
