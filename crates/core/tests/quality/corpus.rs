@@ -139,9 +139,9 @@ fn the_guard_hooks_scan_clean() {
 /// exactly those bytes and a verbose reading still lists. The launch
 /// table's comment naming the switch is a mention.
 ///
-/// The other twenty-one are in the open-terminal, oversee-succeed and
-/// overseer-watch tests, which hand the launch lines they check to their
-/// stubs and assertions: a string a test assigns or prints, and an
+/// The other twenty-one are in the open-terminal and oversee-succeed tests
+/// and the overseer-watch test library, which hand the launch lines they
+/// check to their stubs and assertions: a string a test assigns or prints, and an
 /// argument of a function the tests define, on the line that names the
 /// function or a line continuing it. Each is a mention, and the
 /// skill scores clean. A reading that counted them again would be reading
@@ -154,7 +154,7 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
     let lane_launch = "skills/orch/scripts/lib/lane-launch.sh";
     let open_terminal = "skills/orch/tests/open-terminal-claude-handoff.sh";
     let oversee_succeed = "skills/orch/tests/oversee_succeed.sh";
-    let overseer_watch = "skills/orch/tests/oversee_watch_overseer.sh";
+    let overseer_watch = "skills/orch/tests/lib/overseer-watch-case.sh";
     assert_eq!(found(&result), vec![], "{:#?}", result.findings);
     assert_eq!(result.safety.score, 100);
     assert_eq!(
