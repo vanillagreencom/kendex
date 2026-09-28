@@ -22,11 +22,12 @@
 # The fleet is the oversee state file of the fleet the launch was judged in
 # (`open-terminal --state-dir`), empty for a launch naming no fleet, and it is
 # what lets one store serve several fleets: open-terminal's fleet cap counts
-# only its own fleet's claims, while an account's claims count whatever fleet
-# wrote them. A claim with an empty fleet, written by a launch naming no fleet
-# or before claims carried one, counts toward its account and toward no fleet's
-# cap, and it is the lane of a fleet's running or preparing record whose window
-# and account it names, as that fleet's own claims are.
+# only its own fleet's claims, while `lanes pick` charges an account with
+# whatever fleet's claims name it. A claim with an empty fleet, written by a
+# launch naming no fleet or before claims carried one, counts toward its
+# account and toward no fleet's cap, and it is the lane of a fleet's running
+# or preparing record whose window and account it names, as that fleet's own
+# claims are.
 #
 # A reservation is the same record under `.reserve`, with the launcher's pid as
 # its server and `-` as its pane: the place in the count a judged launch holds
@@ -79,8 +80,8 @@ lane_claims_canon() {
 }
 
 # Prune dead claims, print the live ones as `<config dir>\t<window>\t<server
-# pid>\t<pane id>` lines. Where $2 is `count`, the form open-terminal's caps
-# count, each line ends in `\t<fleet>` and the live reservations are among
+# pid>\t<pane id>` lines. Where $2 is `count`, the form open-terminal's fleet
+# cap counts, each line ends in `\t<fleet>` and the live reservations are among
 # them, read in full before the claims are listed: a launch writes its claim or
 # its record before it drops its reservation, so a reservation gone by the
 # time it is read is a claim the later listing finds, or a record for a caller
@@ -192,7 +193,7 @@ lane_claims_read() {
   return "$rc"
 }
 
-# The ownership condition shared by fleet reports and cap_count. `owned` maps
+# The ownership condition of fleet reports. `owned` maps
 # each held record's bare window plus canonical account. A claim of this fleet
 # or of no named fleet is that record's own only when both fields match.
 LANE_CLAIM_OWNERSHIP_AWK='function lane_claim_owned(fleet, expected, window, account, owned) {
@@ -277,7 +278,7 @@ lane_claim_reserve() {
 
 # The one answer to which oversee lane records are lanes in flight, as jq
 # definitions a caller prefixes to its own program: oversee-watch carries the
-# running records, and open-terminal counts the held ones against both caps,
+# running records, and open-terminal counts the held ones against its fleet cap,
 # those plus the preparing records of hosted lanes handed to a background job,
 # whose window and host are taken before the lane runs. The watch and the cap
 # cannot describe two different fleets. Hand-appended entries that are not

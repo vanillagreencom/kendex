@@ -16,9 +16,9 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 export ORCH_LANE_HOST=local
-# Every row launches into one fleet state; the caps have their own suite,
-# open-terminal-cap.sh, and are out of this one's way.
-export ORCH_OVERSEER_LANES=1000 ORCH_LANE_ACCOUNT_CLAIMS=0
+# Every row launches into one fleet state; the fleet cap has its own suite,
+# open-terminal-cap.sh, and is out of this one's way.
+export ORCH_OVERSEER_LANES=1000
 # shellcheck source=lib/shared-skill-libs.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 # shellcheck source=lib/process-table.sh

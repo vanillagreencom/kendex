@@ -31,8 +31,7 @@ file_lock_message() {
 }
 
 # Every mutex this shell holds, one per line: a caller may hold more than one
-# lock at a time, as open-terminal holds a fleet's launch lock and its claim
-# store's together, and a signal must release them all.
+# lock at a time, and a signal must release them all.
 ORCH_LOCK_MUTEX_DIR=""
 
 orch_release_lock() { # release every mutex this shell took; a no-op under flock

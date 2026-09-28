@@ -249,12 +249,6 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # go past it is refused.
 ORCH_OVERSEER_LANES = "3"
 
-# Most lanes one account runs at once. A launch that would go past it is
-# refused, and 0 turns the cap off. Each lane spends about 1.5 points of an
-# account's five-hour window per 10 minutes, so the default of 3 lanes uses
-# up an account's window in about 3.7 hours.
-ORCH_LANE_ACCOUNT_CLAIMS = "3"
-
 # Whether a finished overseer starts its own replacement. "on" starts one.
 # "off" leaves a live overseer to write its handover note and ask you to
 # start the next session, and a dead one to be reported for replacement by

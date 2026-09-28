@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
-# open-terminal's fleet caps: a fresh launch under --state-dir is refused as
+# open-terminal's fleet cap: a fresh launch under --state-dir is refused as
 # cap-reached where the fleet's running and preparing records plus its
-# unrecorded live claims reach ORCH_OVERSEER_LANES, and as account-cap-reached
-# where the fleet's records on its lane plus the live claims there no such
-# record accounts for reach ORCH_LANE_ACCOUNT_CLAIMS, both judged
-# under the fleet's lock and the claim store's, held from the count through the
-# reservation write, which refuses the launch where it fails. A relaunch meets the fleet cap where the item has no running or preparing
-# record, and the account cap where it has none or moves to another account.
-# --over-cap admits one launch and records the caps it passed, and --wait-slot
-# waits for room instead of refusing.
+# unrecorded live claims reach ORCH_OVERSEER_LANES, judged under the fleet's
+# launch lock, held from the count through the reservation write, which
+# refuses the launch where it fails. No cap bounds the lanes on one account.
+# A relaunch meets the fleet cap where the item has no running or preparing
+# record. --over-cap admits one launch and records the cap it passed, and
+# --wait-slot waits for room instead of refusing.
 #
 # The suite runs a copy of open-terminal beside copies of workflow-state and
 # orch-env in a temp git repo, with the worktree CLI, lanes and tmux stubbed.
@@ -56,7 +54,7 @@ EOF
 # names a file, holds it there until that file exists, 10 seconds at most:
 # a launch held for as long as the row needs it rather than for a guessed
 # time. The steps are count (the read of a claim store that exists, under the
-# launch locks), recheck (the second pane listing of one launch, which the
+# launch lock), recheck (the second pane listing of one launch, which the
 # claims reader takes when a claim names the listed server and a pane it did
 # not list), create (the worktree create), window (the new window, ahead of
 # its claim) and paste (the first line typed into the pane, after its claim
@@ -141,18 +139,18 @@ row() {
   CLAIMS="$ROW/watch"
 }
 
-# launch TAG FLEET_CAP ACCOUNT_CAP ARGS... — one launch of the row's fleet, or
-# of no fleet where STATE is empty, on tmux unless MODE names another surface
-# flag; its stdout, stderr and status land in $ROW/TAG.{out,err,rc}.
+# launch TAG FLEET_CAP ARGS... — one launch of the row's fleet, or of no fleet
+# where STATE is empty, on tmux unless MODE names another surface flag; its
+# stdout, stderr and status land in $ROW/TAG.{out,err,rc}.
 launch() {
-  local tag="$1" fleet_cap="$2" account_cap="$3" rc=0 fleet=()
-  shift 3
+  local tag="$1" fleet_cap="$2" rc=0 fleet=()
+  shift 2
   [[ -z "$STATE" ]] || fleet=(--state-dir "$STATE")
   (cd "$REPO" && PATH="$BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$CLAIMS" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 GH_REPO="" STUB_SERVER=$$ STUB_OPEN_MARK="$ROW/opened" STUB_TAG="$tag" \
     STUB_MARK="$ROW/reached" \
     STUB_WALL="$ROW/wall" STUB_PICK="$ROW/pick" TERMINAL=ghostty ORCH_TMUX_SESSION=fleet \
-    ORCH_OVERSEER_LANES="$fleet_cap" ORCH_LANE_ACCOUNT_CLAIMS="$account_cap" \
+    ORCH_OVERSEER_LANES="$fleet_cap" \
     "$OT" ${fleet[@]+"${fleet[@]}"} "${MODE:---tmux}" --harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" "$@" \
     >"$ROW/$tag.out" 2>"$ROW/$tag.err") || rc=$?
   printf '%s\n' "$rc" > "$ROW/$tag.rc"
@@ -186,23 +184,22 @@ await_exit() {
   wait "$1" || true
 }
 
-# race AT FLEET_CAP ACCOUNT_CAP LANE_1 LANE_2 — two launches of CC-1 and CC-2,
-# the second, into the fleet STATE_TWO names where set, started while the
-# first is held in its worktree create until the second returns. At `count` the
-# first is held inside its count first, under the launch locks, until the
-# second prints lock-waiting; at `create` it is not.
+# race AT FLEET_CAP LANE_1 LANE_2 — two launches of CC-1 and CC-2, the second
+# started while the first is held in its worktree create until the second
+# returns. At `count` the first is held inside its count first, under the
+# launch lock, until the second prints lock-waiting; at `create` it is not.
 race() {
   local at="$1" first second
   shift
   if [[ "$at" == count ]]; then
     mkdir -p "$CLAIMS/claims"
-    STUB_HOLD_COUNT="$ROW/counted" STUB_HOLD_CREATE="$ROW/release" launch one "$1" "$2" --lane "$3" CC-1 &
+    STUB_HOLD_COUNT="$ROW/counted" STUB_HOLD_CREATE="$ROW/release" launch one "$1" --lane "$2" CC-1 &
   else
-    STUB_HOLD_CREATE="$ROW/release" launch one "$1" "$2" --lane "$3" CC-1 &
+    STUB_HOLD_CREATE="$ROW/release" launch one "$1" --lane "$2" CC-1 &
   fi
   first=$!
   await_step one "$at"
-  STATE="${STATE_TWO:-$STATE}" launch two "$1" "$2" --lane "$4" CC-2 &
+  launch two "$1" --lane "$3" CC-2 &
   second=$!
   if [[ "$at" == count ]]; then
     await_line two '^open-terminal: lock-waiting'
@@ -214,7 +211,7 @@ race() {
 }
 
 # key TAG — the first line of every open-terminal cap line on TAG's output.
-key() { grep -hE '^open-terminal: (cap-reached|account-cap-reached|over-cap-admitted|slot-waiting|cap-unreadable|cap-lock-failed|cap-option-unanchored|over-cap-items|claim-unrecorded|lane-model-walled|cap-reserve-failed) ' "$ROW/$1.out" "$ROW/$1.err" || true; }
+key() { grep -hE '^open-terminal: (cap-reached|over-cap-admitted|slot-waiting|cap-unreadable|cap-lock-failed|cap-option-unanchored|over-cap-items|claim-unrecorded|lane-model-walled|cap-reserve-failed) ' "$ROW/$1.out" "$ROW/$1.err" || true; }
 # lock_waits TAG — how many lock-waiting lines TAG printed.
 lock_waits() { grep -c '^open-terminal: lock-waiting' "$ROW/$1.out" || true; }
 # reservations — the reservation files the row's claim store holds.
@@ -229,12 +226,6 @@ seed_claim() {
   mkdir -p "$CLAIMS/claims"
   printf '%s\t%%9\t%s\t%s\t2026-01-01T00:00:00Z\t%s\n' "$$" "$2" "$1" "${3-$STATE/workflow-state-oversee.json}" \
     > "$CLAIMS/claims/$1.claim"
-}
-# seed_claim_unfleeted WINDOW LANE — a live claim of five fields, as a launcher
-# wrote them before claims carried a fleet.
-seed_claim_unfleeted() {
-  mkdir -p "$CLAIMS/claims"
-  printf '%s\t%%9\t%s\t%s\t2026-01-01T00:00:00Z\n' "$$" "$2" "$1" > "$CLAIMS/claims/$1.claim"
 }
 # seed_running ITEM [STATUS] [ACCOUNT] — a record, running by default, for a
 # lane this suite never launched, its window bare, or `fleet:ITEM` where it
@@ -251,7 +242,7 @@ status_of() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item ==
 
 echo "=== two concurrent launches against a fleet cap of 1 admit one ==="
 row fleet-race
-race count 1 0 "$LANE_A" "$LANE_B"
+race count 1 "$LANE_A" "$LANE_B"
 assert_eq "one=$(rc one) two=$(rc two) running=$(running) reservations=$(reservations)" \
   "one=0 two=1 running=CC-1 reservations=0" \
   "the launch holding the lock launches, the one counting after it does not, and no reservation outlives the launch"
@@ -262,7 +253,7 @@ assert_eq "$(grep -c "^open-terminal: lock-waiting item=CC-2 lock=$STATE/workflo
 
 echo "=== the launch locks are free while an admitted launch creates its worktree ==="
 row create-race
-race create 1 0 "$LANE_A" "$LANE_B"
+race create 1 "$LANE_A" "$LANE_B"
 assert_eq "one=$(rc one) two=$(rc two) lock-waits=$(lock_waits two) $(key two)" \
   "one=0 two=1 lock-waits=0 open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1" \
   "the second launch counts at once, and the first launch's reservation fills the fleet's only slot"
@@ -270,10 +261,10 @@ assert_eq "one=$(rc one) two=$(rc two) lock-waits=$(lock_waits two) $(key two)" 
 echo "=== a launch naming no lane holds its place in the fleet count ==="
 # Its reservation carries an empty config dir.
 row laneless
-STUB_HOLD_CREATE="$ROW/release" launch one 1 0 CC-1 &
+STUB_HOLD_CREATE="$ROW/release" launch one 1 CC-1 &
 FIRST=$!
 await_step one create
-launch two 1 0 CC-2
+launch two 1 CC-2
 : > "$ROW/release"
 await_exit "$FIRST"
 assert_eq "one=$(rc one) two=$(rc two) $(key two) reservations=$(reservations)" \
@@ -283,10 +274,10 @@ assert_eq "one=$(rc one) two=$(rc two) $(key two) reservations=$(reservations)" 
 echo "=== an --over-cap launch holds no launch lock through its worktree create ==="
 row over-race
 seed_running CC-9
-STUB_HOLD_CREATE="$ROW/release" launch one 1 0 --lane "$LANE_A" --over-cap CC-1 &
+STUB_HOLD_CREATE="$ROW/release" launch one 1 --lane "$LANE_A" --over-cap CC-1 &
 FIRST=$!
 await_step one create
-launch two 1 0 --lane "$LANE_B" CC-2
+launch two 1 --lane "$LANE_B" CC-2
 : > "$ROW/release"
 await_exit "$FIRST"
 assert_eq "one=$(rc one) two=$(rc two) lock-waits=$(lock_waits two) $(key two)" \
@@ -299,10 +290,10 @@ echo "=== a count that reads the claim store before a launch records sees the la
 # of its reads, while the first launch records its lane and drops its
 # reservation.
 row reserve-to-record
-STUB_HOLD_CREATE="$ROW/release" launch one 1 0 CC-1 &
+STUB_HOLD_CREATE="$ROW/release" launch one 1 CC-1 &
 FIRST=$!
 await_step one create
-STUB_HOLD_COUNT="$ROW/counted" launch two 1 0 CC-2 &
+STUB_HOLD_COUNT="$ROW/counted" launch two 1 CC-2 &
 SECOND=$!
 await_step two count
 : > "$ROW/release"
@@ -319,11 +310,11 @@ echo "=== a count that lists the claims before a launch claims sees the lane in 
 # it to list the panes again, where it waits. The first launch is then held
 # after its claim and before its record.
 row reserve-to-claim
-STUB_HOLD_CREATE="$ROW/release" STUB_HOLD_PASTE="$ROW/pasted" launch one 1 0 --lane "$LANE_A" CC-1 &
+STUB_HOLD_CREATE="$ROW/release" STUB_HOLD_PASTE="$ROW/pasted" launch one 1 --lane "$LANE_A" CC-1 &
 FIRST=$!
 await_step one create
 seed_claim CC-8 "$LANE_A"
-STUB_PANES="$$ %0" STUB_HOLD_RECHECK="$ROW/counted" launch two 1 0 --lane "$LANE_B" CC-2 &
+STUB_PANES="$$ %0" STUB_HOLD_RECHECK="$ROW/counted" launch two 1 --lane "$LANE_B" CC-2 &
 SECOND=$!
 await_step two recheck
 : > "$ROW/release"
@@ -343,16 +334,16 @@ wait "$DEAD"
 mkdir -p "$CLAIMS/claims"
 printf '%s\t-\t%s\tCC-8\t2026-01-01T00:00:00Z\t%s\n' "$DEAD" "$LANE_A" "$STATE/workflow-state-oversee.json" \
   > "$CLAIMS/claims/claim.dead.reserve"
-launch one 1 0 --lane "$LANE_A" CC-1
+launch one 1 --lane "$LANE_A" CC-1
 assert_eq "rc=$(rc one) running=$(running) reservations=$(reservations) $(key one)" "rc=0 running=CC-1 reservations=0 " \
   "the count prunes the reservation and admits the launch into the fleet's only slot"
 
 echo "=== a launch between its claim and its record counts once ==="
 row claimed
-STUB_HOLD_PASTE="$ROW/release" launch one 1 0 --lane "$LANE_A" CC-1 &
+STUB_HOLD_PASTE="$ROW/release" launch one 1 --lane "$LANE_A" CC-1 &
 FIRST=$!
 await_step one paste
-launch two 1 0 --lane "$LANE_B" CC-2
+launch two 1 --lane "$LANE_B" CC-2
 : > "$ROW/release"
 await_exit "$FIRST"
 assert_eq "one=$(rc one) two=$(rc two) $(key two)" "one=0 two=1 open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1" \
@@ -361,50 +352,22 @@ assert_eq "one=$(rc one) two=$(rc two) $(key two)" "one=0 two=1 open-terminal: c
 echo "=== an unrecorded live claim counts toward the fleet cap ==="
 row fleet-claim
 seed_claim CC-8 "$LANE_B"
-launch one 1 0 --lane "$LANE_A" CC-1
+launch one 1 --lane "$LANE_A" CC-1
 assert_eq "rc=$(rc one) $(key one)" "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=0 claims=1" \
   "a claim no running record names fills the fleet's only slot"
 
 echo "=== fleets sharing one claim store count only their own claims toward the fleet cap ==="
 # One store, as OVERSEE_WATCH_STATE_DIR set for every shell gives several
 # fleets. The other fleet's lane and a launch that named no fleet are claims on
-# lane A: each counts toward that account and toward no cap of this fleet's.
+# lane A: neither counts toward this fleet's cap.
 row fleets
 seed_claim CC-8 "$LANE_A" "$TMP_ROOT/rows/other-fleet/state/workflow-state-oversee.json"
 seed_claim CC-7 "$LANE_A" ""
-launch one 1 3 --lane "$LANE_B" CC-1
+launch one 1 --lane "$LANE_B" CC-1
 assert_eq "rc=$(rc one) running=$(running) $(key one)" "rc=0 running=CC-1 " \
   "a fleet running no lane launches at a fleet cap of 1 beside another fleet's claim"
 assert_eq "$(awk -F'\t' '$4 == "CC-1" { print $6 }' "$CLAIMS/claims"/*.claim)" "$STATE/workflow-state-oversee.json" \
   "the launch's own claim names its fleet by that fleet's state file"
-launch two 5 2 --lane "$LANE_A" CC-2
-assert_eq "rc=$(rc two) $(key two)" "rc=1 open-terminal: account-cap-reached item=CC-2 lane=$LANE_A cap=2 claims=2 records=0 claims-other=2" \
-  "the account cap still counts the other fleet's claim and the fleetless one"
-
-echo "=== a claim written before claims carried a fleet is its record's lane, not a second one ==="
-# Five running records on lane A, each beside the five-field claim its launch
-# wrote: five lanes, admitted at an account cap of 6 and refused at 5.
-row unfleeted
-for n in 11 12 13 14 15; do
-  seed_running "CC-$n" running "$LANE_A"
-  seed_claim_unfleeted "CC-$n" "$LANE_A"
-done
-launch one 10 5 --lane "$LANE_A" CC-1
-assert_eq "rc=$(rc one) $(key one)" \
-  "rc=1 open-terminal: account-cap-reached item=CC-1 lane=$LANE_A cap=5 claims=5 records=5 claims-other=0" \
-  "five records beside their own five-field claims count five lanes"
-launch two 10 6 --lane "$LANE_A" CC-2
-assert_eq "rc=$(rc two) $(key two)" "rc=0 " "the same five lanes leave room at an account cap of 6"
-row unfleeted-other
-seed_claim_unfleeted CC-8 "$LANE_A"
-seed_running CC-9 running "$LANE_A"
-seed_claim CC-9 "$LANE_A" "$TMP_ROOT/rows/other-fleet/state/workflow-state-oversee.json"
-seed_running CC-7 running "$LANE_B"
-seed_claim_unfleeted CC-7 "$LANE_A"
-launch one 10 4 --lane "$LANE_A" CC-1
-assert_eq "rc=$(rc one) $(key one)" \
-  "rc=1 open-terminal: account-cap-reached item=CC-1 lane=$LANE_A cap=4 claims=4 records=1 claims-other=3" \
-  "a claim naming no held record, a claim of another fleet, and a claim on another account than its record's each count as another lane"
 
 echo "=== a hosted lane handed to a background job holds its slot, and the job holds no launch lock ==="
 # The host accepts CC-1 and keeps preparing it: the launch returns with its
@@ -416,8 +379,8 @@ row hosted
 HOST_STUB="$TEST_DIR/fixtures/lane-host"
 LANE_HOST_STUB_LOG="$ROW/host.log" LANE_HOST_STUB_WAIT_GATE="$ROW/gate" LANE_HOST_STUB_WAIT_STATUS=1 \
   LANE_HOST_STUB_CREATE_LINE=$'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc\tstate=preparing' \
-  launch one 1 0 --lane "$LANE_A" --host "$HOST_STUB" --repo o/r CC-1
-launch two 1 0 --lane "$LANE_B" CC-2 &
+  launch one 1 --lane "$LANE_A" --host "$HOST_STUB" --repo o/r CC-1
+launch two 1 --lane "$LANE_B" CC-2 &
 SECOND=$!
 n=0
 while kill -0 "$SECOND" 2>/dev/null && ! grep -q '^open-terminal: lock-waiting' "$ROW/two.out" 2>/dev/null && (( n < 50 )); do sleep 0.1; n=$((n + 1)); done
@@ -431,142 +394,102 @@ while [[ "$(status_of CC-1)" == preparing ]] && (( n < 200 )); do sleep 0.1; n=$
 assert_eq "$(status_of CC-1)" stopped "the job ends on the host's failed preparation, recording the lane stopped"
 row preparing
 seed_running CC-9 preparing
-launch one 1 0 --lane "$LANE_A" CC-1
+launch one 1 --lane "$LANE_A" CC-1
 assert_eq "rc=$(rc one) $(key one)" "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0" \
   "a preparing record with no claim beside it fills the fleet's only slot"
 
-echo "=== a relaunch is judged on the lane or account it adds ==="
+echo "=== a relaunch is judged on the lane it adds ==="
 # The same account's claim and the item's running record are the lane being
-# replaced, so that relaunch passes at both caps.
+# replaced, so that relaunch passes at the fleet cap.
 row relaunch
-launch one 1 1 --lane "$LANE_A" CC-1
-launch two 1 1 --lane "$LANE_A" --relaunch CC-1
+launch one 1 --lane "$LANE_A" CC-1
+launch two 1 --lane "$LANE_A" --relaunch CC-1
 assert_eq "one=$(rc one) two=$(rc two) cap-lines=$(key two | wc -l | tr -d ' ') running=$(running)" \
   "one=0 two=0 cap-lines=0 running=CC-1" \
-  "a relaunch of a running record on its own account at both caps proceeds"
-row relaunch-account
-launch one 10 1 --lane "$LANE_A" CC-1
-seed_claim CC-8 "$LANE_B"
-launch two 10 1 --lane "$LANE_B" --relaunch CC-1
-assert_eq "rc=$(rc two) $(key two) account=$(account_of CC-1)" \
-  "rc=1 open-terminal: account-cap-reached item=CC-1 lane=$LANE_B cap=1 claims=1 records=0 claims-other=1 account=$LANE_A" \
-  "a relaunch onto another account at its cap is refused and the record keeps its account"
+  "a relaunch of a running record on its own account at the fleet cap proceeds"
 row relaunch-moving
 # The relaunch is held in its create with its reservation on lane B while its
 # record still names lane A: the fleet counts the lane once.
 seed_running CC-1 running "$LANE_A"
-STUB_HOLD_CREATE="$ROW/release" launch one 2 0 --lane "$LANE_B" --relaunch CC-1 &
+STUB_HOLD_CREATE="$ROW/release" launch one 2 --lane "$LANE_B" --relaunch CC-1 &
 FIRST=$!
 await_step one create
-launch two 2 0 --lane "$LANE_A" CC-2
+launch two 2 --lane "$LANE_A" CC-2
 : > "$ROW/release"
 await_exit "$FIRST"
 assert_eq "one=$(rc one) two=$(rc two) running=$(running) $(key two)" "one=0 two=0 running=CC-1,CC-2 " \
   "a fresh launch beside a relaunch moving to another account finds the fleet's second slot free"
 row relaunch-stopped
-launch one 1 0 --lane "$LANE_A" CC-1
+launch one 1 --lane "$LANE_A" CC-1
 "$WS" --state-dir "$STATE" update oversee '.lanes |= map(.status = "stopped")' >/dev/null
 rm -f -- "${CLAIMS:?}/claims"/*.claim
 seed_running CC-9
-launch two 1 0 --lane "$LANE_A" --relaunch CC-1
+launch two 1 --lane "$LANE_A" --relaunch CC-1
 assert_eq "rc=$(rc two) $(key two) running=$(running)" \
   "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 running=CC-9" \
   "a relaunch of a stopped record adds a lane, and at the fleet cap it is refused"
 row relaunch-parked
-launch one 1 0 --lane "$LANE_A" CC-1
+launch one 1 --lane "$LANE_A" CC-1
 "$WS" --state-dir "$STATE" update oversee '.lanes |= map(.status = "parked")' >/dev/null
 rm -f -- "${CLAIMS:?}/claims"/*.claim
 seed_running CC-9
-launch two 1 0 --lane "$LANE_A" --relaunch CC-1
+launch two 1 --lane "$LANE_A" --relaunch CC-1
 assert_eq "rc=$(rc two) $(key two) running=$(running)" \
   "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 running=CC-9" \
   "a parked record holds no working-lane capacity: its relaunch adds a lane, and at the fleet cap it is refused"
 row relaunch-preparing
 seed_running CC-1 preparing
-launch one 1 0 --lane "$LANE_A" --relaunch CC-1
+launch one 1 --lane "$LANE_A" --relaunch CC-1
 assert_eq "rc=$(rc one) cap-lines=$(key one | wc -l | tr -d ' ') running=$(running)" "rc=0 cap-lines=0 running=CC-1" \
   "a relaunch of a preparing record replaces the lane it holds, and at the fleet cap it proceeds"
 
 echo "=== --over-cap admits one launch at the fleet cap and records it ==="
 row over-fleet
 seed_running CC-9
-launch one 1 0 --lane "$LANE_A" --over-cap CC-1
+launch one 1 --lane "$LANE_A" --over-cap CC-1
 assert_eq "rc=$(rc one) over_cap=$(over_cap CC-1) running=$(running)" "rc=0 over_cap=fleet running=CC-9,CC-1" \
   "the exception launches and its record names the fleet cap it passed"
 assert_eq "$(key one)" \
-  "open-terminal: over-cap-admitted item=CC-1 passed=fleet cap=1 running=1 claims=0 lane=$LANE_A account-cap=0 account-claims=0" \
+  "open-terminal: over-cap-admitted item=CC-1 cap=1 running=1 claims=0" \
   "the exception is reported with the count it passed"
-launch two 1 0 --lane "$LANE_A" --relaunch CC-1
+launch two 1 --lane "$LANE_A" --relaunch CC-1
 assert_eq "rc=$(rc two) over_cap=$(over_cap CC-1)" "rc=0 over_cap=fleet" \
   "a relaunch keeps the exception its launch was admitted on"
 
-echo "=== two concurrent launches onto one lane against an account cap of 1 admit one ==="
-row account-race
-race create 10 1 "$LANE_A" "$LANE_A"
-assert_eq "one=$(rc one) two=$(rc two) running=$(running)" "one=0 two=1 running=CC-1" \
-  "the launch admitted first takes the account's only claim"
-assert_eq "$(key two)" "open-terminal: account-cap-reached item=CC-2 lane=$LANE_A cap=1 claims=1 records=0 claims-other=1" \
-  "the refusal names the lane, the cap and the reservation it counted there"
+echo "=== no cap bounds the lanes on one account ==="
+# Four of this fleet's lanes and another fleet's stand on lane A: the next
+# launch onto it is judged on the fleet cap alone.
+row one-account
+for n in 11 12 13 14; do
+  seed_running "CC-$n" running "$LANE_A"
+  seed_claim "CC-$n" "$LANE_A"
+done
+seed_claim CC-8 "$LANE_A" "$TMP_ROOT/rows/other-fleet/state/workflow-state-oversee.json"
+launch one 5 --lane "$LANE_A" CC-1
+launch two 5 --lane "$LANE_A" CC-2
+assert_eq "one=$(rc one) two=$(rc two) running=$(running) $(key two)" \
+  "one=0 two=1 running=CC-11,CC-12,CC-13,CC-14,CC-1 open-terminal: cap-reached item=CC-2 cap=5 running=5 claims=0" \
+  "a launch onto an account carrying five lanes proceeds, and the fleet cap still refuses the next"
 
-echo "=== two fleets sharing one claim store race onto one lane against an account cap of 1 and admit one ==="
-# Each fleet has room; only the account is shared. The second fleet's launch
-# waits on the claim store's lock, not on any fleet lock, and counts the first
-# fleet's reservation once that lock is free.
-row store-race
-STATE_TWO="$ROW/state-b" race count 10 1 "$LANE_A" "$LANE_A"
-assert_eq "one=$(rc one) two=$(rc two) $(key two)" \
-  "one=0 two=1 open-terminal: account-cap-reached item=CC-2 lane=$LANE_A cap=1 claims=1 records=0 claims-other=1" \
-  "the launch holding the claim store's lock takes the account's only claim, and the other fleet's is refused"
-assert_eq "$(grep -c "^open-terminal: lock-waiting item=CC-2 lock=$CLAIMS/claims.launch.lock wait-s=900$" "$ROW/two.out" || true)" "1" \
-  "the other fleet's launch waits on the claim store's lock"
-
-echo "=== a launch onto a second lane proceeds while the first is at its account cap ==="
-row account-other
-launch one 10 1 --lane "$LANE_A" CC-1
-launch two 10 1 --lane "$LANE_B" CC-2
-assert_eq "one=$(rc one) two=$(rc two) running=$(running)" "one=0 two=0 running=CC-1,CC-2" \
-  "the account cap counts the lane the launch would use and no other"
-
-echo "=== ORCH_LANE_ACCOUNT_CLAIMS=0 leaves only the fleet cap ==="
-row account-off
-seed_claim CC-7 "$LANE_A"
-seed_claim CC-8 "$LANE_A"
-launch one 3 0 --lane "$LANE_A" CC-1
-launch two 3 0 --lane "$LANE_A" CC-2
-assert_eq "one=$(rc one) two=$(rc two) running=$(running)" "one=0 two=1 running=CC-1" \
-  "two unrecorded claims on the lane admit a launch with the account cap off, and the fleet cap still refuses the next"
-assert_eq "$(key two)" "open-terminal: cap-reached item=CC-2 cap=3 running=1 claims=2" \
-  "the refusal at a cap of 0 is the fleet's"
-
-echo "=== --over-cap at the account cap records which cap it passed ==="
-row over-account
-seed_claim CC-8 "$LANE_A"
-launch one 10 1 --lane "$LANE_A" --over-cap CC-1
-assert_eq "rc=$(rc one) over_cap=$(over_cap CC-1)" "rc=0 over_cap=account" \
-  "the exception at the account cap records the account cap"
-row over-both
-seed_claim CC-8 "$LANE_A"
-launch one 1 1 --lane "$LANE_A" --over-cap CC-1
-assert_eq "rc=$(rc one) over_cap=$(over_cap CC-1)" "rc=0 over_cap=fleet,account" \
-  "an exception past both caps records both"
+echo "=== --over-cap inside the cap passes nothing ==="
 row within
-launch one 1 1 --lane "$LANE_A" --over-cap CC-1
+launch one 1 --lane "$LANE_A" --over-cap CC-1
 assert_eq "rc=$(rc one) over_cap=$(over_cap CC-1) lines=$(key one | wc -l | tr -d ' ')" "rc=0 over_cap=null lines=0" \
-  "--over-cap inside both caps passes nothing and records nothing"
+  "--over-cap inside the fleet cap passes nothing and records nothing"
 
 echo "=== --wait-slot waits for room and then launches ==="
 row wait
 seed_running CC-9
-launch one 1 0 --lane "$LANE_A" --wait-slot CC-1 &
+launch one 1 --lane "$LANE_A" --wait-slot CC-1 &
 WAITER=$!
 await_line one '^open-terminal: slot-waiting'
 assert_eq "$(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
-  "open-terminal: slot-waiting item=CC-1 over=fleet cap=1 running=1 claims=0 lane=$LANE_A account-cap=0 account-claims=0 opened=no" \
+  "open-terminal: slot-waiting item=CC-1 cap=1 running=1 claims=0 opened=no" \
   "a launch at the fleet cap waits, naming the count, and opens nothing"
 seed_claim CC-8 "$LANE_B"
 await_line one '^open-terminal: slot-waiting' 2
 assert_eq "$(key one | tail -n 1)" \
-  "open-terminal: slot-waiting item=CC-1 over=fleet cap=1 running=1 claims=1 lane=$LANE_A account-cap=0 account-claims=0" \
+  "open-terminal: slot-waiting item=CC-1 cap=1 running=1 claims=1" \
   "a change in the count it waits on is printed again"
 rm -f -- "${CLAIMS:?}/claims/CC-8.claim"
 "$WS" --state-dir "$STATE" update oversee '.lanes |= map(if .item == "CC-9" then .status = "done" else . end)' >/dev/null
@@ -577,7 +500,7 @@ assert_eq "rc=$(rc one) running=$(running) waits=$(key one | wc -l | tr -d ' ')"
 echo "=== a --wait-slot wait ends with the lane judged again ==="
 row wait-walled
 seed_running CC-9
-launch one 1 0 --lane "$LANE_A" --wait-slot CC-1 &
+launch one 1 --lane "$LANE_A" --wait-slot CC-1 &
 WAITER=$!
 await_line one '^open-terminal: slot-waiting'
 : > "$ROW/wall"
@@ -588,14 +511,15 @@ assert_eq "rc=$(rc one) $(key one | tail -n 1) opened=$([[ -e "$ROW/opened.one" 
   "a named lane whose window walled during the wait is refused rather than launched"
 row wait-repick
 printf 'CLAUDE_CONFIG_DIR=%s\n' "$LANE_A" > "$ROW/pick"
-seed_claim CC-8 "$LANE_A"
-launch one 10 1 --lane auto --wait-slot CC-1 &
+seed_running CC-9
+launch one 1 --lane auto --wait-slot CC-1 &
 WAITER=$!
-await_line one '^open-terminal: slot-waiting item=CC-1 over=account '
+await_line one '^open-terminal: slot-waiting item=CC-1 '
 printf 'CLAUDE_CONFIG_DIR=%s\n' "$LANE_B" > "$ROW/pick"
+"$WS" --state-dir "$STATE" update oversee '.lanes |= map(.status = "done")' >/dev/null
 await_exit "$WAITER"
 assert_eq "rc=$(rc one) account=$(account_of CC-1)" "rc=0 account=$LANE_B" \
-  "an auto lane waiting on a full account alone launches on the account the next pick has room on"
+  "an auto lane that waited for the fleet cap launches on the account the pick after the wait names"
 
 echo "=== a fleet's auto pick reads that fleet's state for its overseer seat ==="
 # `lanes pick` omits the account the fleet state records for its overseer, so
@@ -604,12 +528,12 @@ echo "=== a fleet's auto pick reads that fleet's state for its overseer seat ===
 # checkout's own.
 row seat-state
 printf 'CLAUDE_CONFIG_DIR=%s\n' "$LANE_A" > "$ROW/pick"
-launch one 10 0 --lane auto CC-1
+launch one 10 --lane auto CC-1
 assert_eq "rc=$(rc one) state=$(cat "$ROW/pick.state")" "rc=0 state=$STATE" \
   "a fleet's auto pick runs under that fleet's state directory"
 row seat-state-none
 printf 'CLAUDE_CONFIG_DIR=%s\n' "$LANE_A" > "$ROW/pick"
-STATE="" launch one 10 0 --lane auto CC-1
+STATE="" launch one 10 --lane auto CC-1
 assert_eq "rc=$(rc one) state=$(cat "$ROW/pick.state")" "rc=0 state=unset" \
   "an auto pick naming no fleet hands no state directory"
 # Control: a pick that is not handed the state reads no fleet's.
@@ -621,25 +545,16 @@ assert_eq "$(grep -cF 'state_env=("ORCH_STATE_DIR=$STATE_DIR")' "$STATELESS" || 
   "control removed the state hand-off from the copy"
 row seat-state-control
 printf 'CLAUDE_CONFIG_DIR=%s\n' "$LANE_A" > "$ROW/pick"
-OT="$STATELESS" launch one 10 0 --lane auto CC-1
+OT="$STATELESS" launch one 10 --lane auto CC-1
 assert_eq "rc=$(rc one) state=$(cat "$ROW/pick.state")" "rc=0 state=unset" \
   "control: without the hand-off the fleet's auto pick reads no fleet state"
 rm -f -- "${REPO:?}/scripts/open-terminal.stateless"
 
-echo "=== the account cap counts a lane by its record where it has no claim ==="
-# A lane whose claim write failed, and a GUI lane, which writes none, each
-# still hold their account through the record the launch wrote: the next
-# launch onto that account, in a later invocation, counts them.
-row gui-account
-MODE=--ghostty launch one 10 1 --lane "$LANE_A" CC-1
-launch two 10 1 --lane "$LANE_A" CC-2
-assert_eq "one=$(rc one) two=$(rc two) $(key two)" \
-  "one=0 two=1 open-terminal: account-cap-reached item=CC-2 lane=$LANE_A cap=1 claims=1 records=1 claims-other=0" \
-  "a GUI lane recorded on the account fills its cap for the next launch"
+echo "=== a GUI batch holds its place in the fleet count ==="
 # A GUI record names no window, so only the end of its item drops the
 # reservation the next item would otherwise count beside it.
 row gui-batch
-MODE=--ghostty launch one 2 0 CC-1 CC-2
+MODE=--ghostty launch one 2 CC-1 CC-2
 assert_eq "rc=$(rc one) running=$(running) $(key one)" "rc=0 running=CC-1,CC-2 " \
   "a GUI batch at a fleet cap of 2 launches both items"
 if [[ "$(id -u)" -eq 0 ]]; then
@@ -647,24 +562,24 @@ if [[ "$(id -u)" -eq 0 ]]; then
 else
   # The claim store is readable and not writable: a judged launch cannot
   # write its reservation, and one naming no fleet cannot write its claim.
-  # Each arm of the gate that admits a launch reserves: within both caps, and
-  # past the fleet cap on --over-cap.
+  # Each arm of the gate that admits a launch reserves: within the fleet cap,
+  # and past it on --over-cap.
   for arm in within over; do
     row "reserve-lost-$arm"
     over=()
     if [[ "$arm" == over ]]; then seed_running CC-9; over=(--over-cap); fi
     mkdir -p "$CLAIMS/claims"
     chmod 555 "$CLAIMS/claims"
-    launch one 1 5 --lane "$LANE_A" ${over[@]+"${over[@]}"} CC-1
+    launch one 1 --lane "$LANE_A" ${over[@]+"${over[@]}"} CC-1
     chmod 755 "$CLAIMS/claims"
     assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
       "rc=1 open-terminal: cap-reserve-failed item=CC-1 store=$CLAIMS/claims opened=no" \
-      "a claim store that takes no reservation refuses a launch admitted $arm the caps before any window, admitting nothing"
+      "a claim store that takes no reservation refuses a launch admitted $arm the cap before any window, admitting nothing"
   done
   # The store stops taking writes after a launch naming no lane reserved its
   # place, so the item's end cannot remove the reservation.
   row reserve-stuck
-  STUB_HOLD_CREATE="$ROW/release" launch one 10 0 CC-1 &
+  STUB_HOLD_CREATE="$ROW/release" launch one 10 CC-1 &
   FIRST=$!
   await_step one create
   chmod 555 "$CLAIMS/claims"
@@ -679,7 +594,7 @@ else
   printf 'CLAUDE_CONFIG_DIR=%s\n' "$LANE_A" > "$ROW/pick"
   mkdir -p "$CLAIMS/claims"
   chmod 555 "$CLAIMS/claims"
-  STATE="" launch one 10 0 --lane auto CC-1 CC-2
+  STATE="" launch one 10 --lane auto CC-1 CC-2
   chmod 755 "$CLAIMS/claims"
   assert_eq "rc=$(rc one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no) $(key one)" \
     "rc=1 opened=yes open-terminal: claim-unrecorded item=CC-2 launched=1" \
@@ -688,7 +603,7 @@ else
   row claim-named
   mkdir -p "$CLAIMS/claims"
   chmod 555 "$CLAIMS/claims"
-  STATE="" launch one 10 0 --lane "$LANE_A" CC-1 CC-2
+  STATE="" launch one 10 --lane "$LANE_A" CC-1 CC-2
   chmod 755 "$CLAIMS/claims"
   assert_eq "rc=$(rc one) $(grep -c '^open-terminal: summary launched=2 ' "$ROW/one.out" || true)" "rc=0 1" \
     "a named lane's batch naming no fleet runs on past unwritten claims"
@@ -697,7 +612,7 @@ fi
 echo "=== a refusal stops the batch ==="
 row batch
 seed_running CC-9
-launch one 1 0 --lane "$LANE_A" CC-1 CC-2
+launch one 1 --lane "$LANE_A" CC-1 CC-2
 assert_eq "rc=$(rc one) $(key one) running=$(running)" \
   "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 running=CC-9" \
   "the first refused item ends the batch, so the second is neither judged nor launched"
@@ -706,14 +621,14 @@ echo "=== a count or a lock that cannot be had refuses before any window ==="
 row state-unreadable
 "$WS" --state-dir "$STATE" init oversee >/dev/null
 printf '%s\n' '{"lanes":[' > "$STATE/workflow-state-oversee.json"
-launch one 5 0 --lane "$LANE_A" CC-1
+launch one 5 --lane "$LANE_A" CC-1
 assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
   "rc=1 open-terminal: cap-unreadable item=CC-1 source=state opened=no" \
   "a fleet state that does not parse refuses the launch rather than counting nothing"
 row lock-unopenable
 "$WS" --state-dir "$STATE" init oversee >/dev/null
 mkdir -p "$STATE/workflow-state-oversee.json.launch.lock"
-launch one 5 0 --lane "$LANE_A" CC-1
+launch one 5 --lane "$LANE_A" CC-1
 assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
   "rc=1 open-terminal: cap-lock-failed item=CC-1 lock=$STATE/workflow-state-oversee.json.launch.lock opened=no" \
   "a launch lock that cannot be opened refuses the launch rather than counting unlocked"
@@ -731,7 +646,7 @@ for spec in \
     err="$(cd "$REPO" && PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" TMUX=stub,1,0 \
       "$OT" --tmux --harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" $words CC-1 2>&1 >/dev/null)" || rc=$?
   else
-    launch opt 1 0 $words CC-1
+    launch opt 1 $words CC-1
     rc="$(rc opt)"; err="$(cat "$ROW/opt.err")"
   fi
   assert_eq "rc=$rc $(grep -E '^open-terminal: (cap-option-unanchored|over-cap-items) ' <<<"$err" || true)" "rc=$want_rc $want" \
@@ -742,7 +657,7 @@ echo "=== an unreadable claim store refuses rather than counting nothing ==="
 row unreadable
 mkdir -p "$CLAIMS"
 : > "$CLAIMS/claims"
-launch one 5 5 --lane "$LANE_A" CC-1
+launch one 5 --lane "$LANE_A" CC-1
 assert_eq "rc=$(rc one) $(key one) running=$(running)" "rc=1 open-terminal: cap-unreadable item=CC-1 source=claims running=" \
   "a claim store that is not a directory refuses the launch"
 

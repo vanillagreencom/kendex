@@ -2404,42 +2404,32 @@ launch_prepared() { # LOG
   ot_message lane-prepare-failed "item=$item" "reason=$reason" >&2
 }
 
-# The two caps a fleet launch is judged on. ORCH_OVERSEER_LANES bounds the lanes
-# the fleet runs; ORCH_LANE_ACCOUNT_CLAIMS bounds the lanes one account carries,
-# 0 turning that cap off, because a fleet inside its total can still stack
-# every lane on one account and wall it inside one usage window. A launch naming
-# no fleet has no records to count, and a wake rouses a lane the fleet already
-# counts, so neither is judged. A relaunch is judged on what it adds: a lane
-# where the item has no running or preparing record, an account where it lands
-# on another.
+# The cap a fleet launch is judged on: ORCH_OVERSEER_LANES bounds the lanes the
+# fleet runs. No cap bounds the lanes one account carries: `lanes pick` chooses
+# the account by its headroom. A launch naming no fleet has no records to
+# count, and a wake rouses a lane the fleet already counts, so neither is
+# judged. A relaunch is judged where it adds a lane: where the item has no
+# running or preparing record.
 #
-# The count and the reservation write are one step under two locks, taken per
-# item and released once the reservation stands: two launchers that each
-# counted before either wrote would both pass. The reservation is the item's
-# lane in every later count until its claim or record replaces it, so the
-# worktree and host creates, which can run for minutes, hold no lock. The first
-# lock sits beside the fleet state, the one address every launch into the fleet
-# names; the second beside the claim store, which several fleets may share and
-# whose claims the account cap counts across all of them. They are taken in
-# that order and released together. lib/lane-cap.sh holds the count, the locks,
-# the reservation and the gate.
+# The count and the reservation write are one step under the fleet's launch
+# lock, taken per item and released once the reservation stands: two launchers
+# that each counted before either wrote would both pass. The reservation is the
+# item's lane in every later count until its claim or record replaces it, so
+# the worktree and host creates, which can run for minutes, hold no lock. The
+# lock sits beside the fleet state, the one address every launch into the
+# fleet names. lib/lane-cap.sh holds the count, the lock, the reservation and
+# the gate.
 CAP_GATED=false
-# 0 for a launch that is not judged, which turns off the account cap's claim
-# check in the item loop.
-ACCOUNT_CAP=0
 [[ "$FLEET" != true || "$WAKE" == true ]] || CAP_GATED=true
 if [[ "$CAP_GATED" == true ]]; then
   [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; exit 1; }
   FLEET_CAP="$("$SCRIPT_DIR/orch-env" ORCH_OVERSEER_LANES 3)" || exit 1
-  # The measured rate behind the default is kendex.settings.toml.example's.
-  ACCOUNT_CAP="$("$SCRIPT_DIR/orch-env" ORCH_LANE_ACCOUNT_CLAIMS 3)" || exit 1
   FLEET_CAP=$((10#$FLEET_CAP))
-  ACCOUNT_CAP=$((10#$ACCOUNT_CAP))
 fi
 
 # Judges the launch lane again once a --wait-slot wait has let its usage
-# window move: `--lane auto` picks again, which also follows whichever account
-# has room, and a named lane goes back to named_lane_judge. Returns 1 with the
+# window move: `--lane auto` picks again, and a named lane goes back to
+# named_lane_judge. Returns 1 with the
 # refusal printed.
 lane_rejudge() { # ITEM
   local next rc=0
@@ -2526,8 +2516,7 @@ for raw in "${ITEMS[@]}"; do
   attempted=$((attempted + 1))
   # A claim an earlier item failed to write is a lane an auto re-pick, which
   # reads claims, cannot see, so it would not move off that account. That stops
-  # the batch, before this item's re-pick. The account cap counts the lane by
-  # its record and needs no stop.
+  # the batch, before this item's re-pick.
   if [[ "$CLAIM_WRITE_FAILED" == true && "$LANE_AUTO" == true ]]; then
     ot_message claim-unrecorded "item=$item" "launched=$launched" >&2
     failed=$((failed + 1))
@@ -2537,7 +2526,7 @@ for raw in "${ITEMS[@]}"; do
     failed=$((failed + 1))
     break
   fi
-  # Judged once the lane is settled, since the account cap counts that lane,
+  # Judged once the lane is settled, since the reservation names that lane,
   # and before the worktree, so a refused item leaves no tree behind. A
   # refusal stops the batch: the count it refused on stands for every later
   # item.

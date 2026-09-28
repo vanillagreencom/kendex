@@ -29,8 +29,7 @@ eval "$REMEDY"
 assert_eq "$([[ -d "$SCRATCH/held.lock.d" ]] && echo held || echo released)" "released" \
   "the printed remedy removes the held mutex"
 
-# Two mutexes one shell holds at once, as open-terminal holds a fleet's launch
-# lock and its claim store's, both go on the one release.
+# Two mutexes one shell holds at once both go on the one release.
 PATH="$SCRATCH/bin" /bin/bash -c 'source "$1"; orch_take_lock 7 "$2" 1 && orch_take_lock 8 "$3" 1 && [ -d "$2.d" ] && [ -d "$3.d" ] && orch_release_lock' bash \
   "$ROOT/skills/orch/scripts/lib/file-lock.sh" "$SCRATCH/fleet.lock" "$SCRATCH/store.lock"
 assert_eq "$([[ -d "$SCRATCH/fleet.lock.d" || -d "$SCRATCH/store.lock.d" ]] && echo held || echo released)" "released" \
