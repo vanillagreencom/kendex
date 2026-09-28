@@ -567,8 +567,10 @@ while IFS='|' read -r expected git_read; do
   assert_eq "the header names what it reads: $git_read" "$expected" \
     "$(grep -qF -- "$git_read" <<<"$help_text" && echo present || echo absent)"
 done <<'GIT_READS'
-present|one read and no write
+present|three reads and no write
 present|where its object store is
+present|settings files the range's base revision holds
+present|The private env file is never read
 present|never the judged checkout's working tree
 present|cause=render-path-unowned
 present|cause=render-path-partial
@@ -593,7 +595,7 @@ git_read_sites="$(grep -c 'git -C "$repo"' "$CHANGE_CLASS" | tr -d ' ')"
 git_read_word="$(grep -oE '[a-z]+ reads? and no write' <<<"$help_text" |
   tail -1 | cut -d' ' -f1)"
 assert_eq "the header spells the number of git call sites the script holds" \
-  "1 one" "$git_read_sites $git_read_word"
+  "3 three" "$git_read_sites $git_read_word"
 
 # A refresh that adds a rendered file gains an inventory entry, and the shipped
 # harness-only rule refuses a gain: a branch could otherwise name a product
@@ -715,14 +717,17 @@ ln -s "$(cd "$TEST_DIR/../../orch" && pwd)" "$stub_pkg/orch"
 cat >"$stub_pkg/harness-ci/scripts/harness-only" <<'ONLY'
 #!/usr/bin/env bash
 # The dependency double for the causes a fixture cannot drive: it answers
-# false with the cause the row names, over the paths the row names.
+# false with the cause the row names, over the paths the row names, and names
+# the base it was handed as the range's base revision, as harness-only does.
 set -euo pipefail
 mode=harness
 paths_output=""
+base=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --mode) mode="$2"; shift 2 ;;
     --paths-output) paths_output="$2"; shift 2 ;;
+    --base) base="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -737,6 +742,7 @@ while IFS= read -r stub_path; do
 done <<<"$STUB_ONLY_PATHS"
 printf 'fallback: %s\n' "$STUB_ONLY_CAUSE" >&2
 printf 'harness-only: stubbed refusal; running every lane\n' >&2
+[ -z "$base" ] || printf 'base-rev: %s\n' "$base" >&2
 printf 'harness_only=false\n'
 ONLY
 chmod +x "$stub_pkg/harness-ci/scripts/harness-only"
@@ -1102,12 +1108,16 @@ assert_eq "an orch without the measurement contract is refused" \
   "class: class=standard measured=false cause=orch-too-old path=$skewed_root/harness-ci/scripts/../../orch contract=0" \
   "$(printf '%s\n' "$skewed_err" | grep '^class: ')"
 
-# The judged tree's configuration decides nothing. Its render roots do not
-# move the measurement, and the file its KENDEX_ENV_FILE names is never run.
+# The judged tree's configuration decides nothing. A render root its working
+# tree names does not move the measurement, and the private env file the
+# settings name never runs, whether the base revision or the working tree
+# names it. The working tree is the only place a branch can put a setting the
+# diff does not carry: one committed on the branch is a configuration source,
+# refused above, so a classifier reading the judged checkout's own settings
+# file answers micro here.
 hostile="$(new_repo change-class-hostile)"
 cat >"$hostile/kendex.settings.toml" <<'SETTINGS'
 [env]
-ORCH_SIZE_RENDER_ROOTS = "runtime"
 KENDEX_ENV_FILE = "ci/env.sh"
 SETTINGS
 mkdir -p "$hostile/ci"
@@ -1120,12 +1130,50 @@ write_lines "$hostile" runtime/agent.conf 300
 write_lines "$hostile" agent.conf 1
 git -C "$hostile" add -A
 git -C "$hostile" commit -q -m "a tree that would rather be small"
+cat >"$hostile/kendex.settings.toml" <<'SETTINGS'
+[env]
+ORCH_SIZE_RENDER_ROOTS = "runtime"
+KENDEX_ENV_FILE = "ci/env.sh"
+SETTINGS
 set_verifier dirty
 PATH="$stub_bin:$PATH" assert_class \
   "the judged tree cannot choose the roots it is scored against" standard \
   --repo "$hostile" --event pull_request --base "$hostile_base" --head HEAD
 assert_eq "and the file its settings name never ran" "absent" \
   "$([ -e "$marker" ] && echo present || echo absent)"
+
+# The measurement settings the base revision holds reach change-class and
+# branch-size-check alike, so the class and the size report count the same
+# lines. A test glob set only in the base's settings file moves a 30-line
+# script from production to test in both; read from nowhere, it stays
+# production and change-class answers small. The process environment still
+# outranks the file.
+ladder="$(new_repo change-class-ladder)"
+printf '[env]\nORCH_SIZE_TEST_PATHS = "checks/*"\n' >"$ladder/kendex.settings.toml"
+commit_paths "$ladder" baseline seed.txt
+ladder_base="$(git -C "$ladder" rev-parse HEAD)"
+git -C "$ladder" checkout -q -B case "$ladder_base"
+write_lines "$ladder" checks/probe.sh 30
+git -C "$ladder" add -A
+git -C "$ladder" commit -q -m "a check script the base settings call a test"
+while IFS='|' read -r label test_paths expected; do
+  [ -n "$label" ] || continue
+  ladder_err="$(env -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS ${test_paths:+ORCH_SIZE_TEST_PATHS="$test_paths"} \
+    "$CHANGE_CLASS" --repo "$ladder" --event pull_request --base "$ladder_base" \
+    --head HEAD 2>&1 >/dev/null)" || true
+  assert_eq "$label" "$expected" "$(printf '%s\n' "$ladder_err" | grep '^class: ')"
+done <<'LADDER'
+change-class reads the test glob from the base revision's settings||class: class=micro measured=true cause=production-within-micro production=0
+and the process environment outranks that file|none/*|class: class=small measured=true cause=production-within-small subsystem=checks
+LADDER
+ladder_state="$SANDBOX/ladder-state"
+"$TEST_DIR/../../orch/scripts/workflow-state" --state-dir "$ladder_state" \
+  init pr-1 --worktree "$ladder" --branch case >/dev/null
+ladder_json="$(env -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
+  WORKTREE_DEFAULT_BRANCH=main "$TEST_DIR/../../orch/scripts/branch-size-check" \
+  --worktree "$ladder" --issue pr-1 --state-dir "$ladder_state" --json 2>/dev/null)" || true
+assert_eq "branch-size-check counts the same lines from the same file" "0,30" \
+  "$(jq -r '[.production_lines, .test_lines] | map(tostring) | join(",")' <<<"$ladder_json" 2>/dev/null)"
 
 # The render rows the issue names, built from a REAL render rather than a stub
 # exit code. The consumer's manifest carries its own project instructions, so
