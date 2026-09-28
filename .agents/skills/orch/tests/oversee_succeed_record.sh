@@ -694,6 +694,34 @@ mutate_file "$CWDCTL/oversee-succeed" '  [[ -z "$OL_KNOWN_CWD" ]] || CALLER_PATH
 pending_run "$CWDCTL"
 assert_eq "$RC|$SUCC_CWD" "0|$CALLER_CWD" \
   "control: a caller that ignores its recorded directory opens the successor in the pane's"
+# A session record write the state refuses is a notice here: the succession
+# commits, the caller's window closed and the successor in its slot.
+recordfail_run() { # SCRIPTS_DIR
+  local dir="$1"
+  rm -f -- "${dir:?}/workflow-state" "${TMP_ROOT:?}/record-refused"
+  cat > "$dir/workflow-state" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1 \$2 \$3" == "set oversee overseer" && ! -e "$TMP_ROOT/record-refused" ]]; then
+  touch "$TMP_ROOT/record-refused"; echo 'fixture: record write refused' >&2; exit 1
+fi
+exec "$SRC_DIR/workflow-state" "\$@"
+STUB
+  chmod +x "$dir/workflow-state"
+  new_caller claude
+  reading "Fable 5.1"
+  state "$(record "$CALLER_PANE" "$H/.eclaude" fable)"
+  SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:1:low run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$BYPASS"
+  CALLER_LISTED="$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$CALLER_PANE" || true)"
+}
+recordfail_run "$(mutant_scripts recordfail)"
+assert_eq "$RC|$(grep -c '^oversee-succeed: record-unwritten field=overseer step=write$' <<<"$ERR")|$CALLER_LISTED" \
+  "0|1|0" \
+  "a record write the state refuses is a notice, and the succession commits" "$TMP_ROOT/err"
+RECNOTICECTL="$(mutant_scripts recnoticectl oversee-succeed)" || exit 1
+mutate_file "$RECNOTICECTL/oversee-succeed" '      message record-unwritten field=overseer step=write >&2' '      return 1'
+recordfail_run "$RECNOTICECTL"
+assert_eq "$RC|$CALLER_LISTED" "1|1" \
+  "control: a hook that refuses on the failed record write keeps the caller running"
 
 # --- the succession -------------------------------------------------------
 # A live succession judges the account and model its record names: .eclaude at

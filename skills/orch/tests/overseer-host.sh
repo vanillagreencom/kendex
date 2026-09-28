@@ -220,6 +220,29 @@ RUN_PATH="$PROBE_BIN:$PATH" run_tmux inspect --session "$SHELL_PANE"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT" | grep -o ' cause=.*')" \
   "0| cause=process-probe probe=3" \
   "inspect names a child probe that could not run and its exit status"
+# Both scans failing on one pass are both named: the probe as above and a grep
+# that fails on the usage-limit pattern alone.
+# shellcheck source=../scripts/lib/lane-state.sh
+LIMIT_RE="$(source "$SRC_DIR/lib/lane-state.sh" && printf '%s' "$USAGE_LIMIT_RE")"
+cat > "$PROBE_BIN/grep" <<STUB
+#!/usr/bin/env bash
+for arg in "\$@"; do [[ "\$arg" != $(printf '%q' "$LIMIT_RE") ]] || exit 2; done
+exec $(command -v grep) "\$@"
+STUB
+chmod +x "$PROBE_BIN/grep"
+both_causes() { # [PROVIDER_BIN]
+  PROVIDER_BIN="${1:-}" RUN_PATH="$PROBE_BIN:$PATH" run_tmux inspect --session "$SHELL_PANE"
+  BOTH="$RC|$(sed -n 1p <<<"$OUT" | grep -o ' cause=.*')"
+}
+both_causes
+assert_eq "$BOTH" "0| cause=limit-scan,process-probe probe=3" \
+  "inspect names both scans where both fail, the probe with its exit status"
+BOTHCTL="$(mutant_scripts bothctl overseer-host-tmux)" || exit 1
+mutate_file "$BOTHCTL/overseer-host-tmux" '[[ "$LANE_PROBE_RC" -le 1 ]] || cause=' \
+  '[[ "$LANE_PROBE_RC" -le 1 || -n "$cause" ]] || cause='
+both_causes "$BOTHCTL/overseer-host-tmux"
+assert_eq "$BOTH" "0| cause=limit-scan" "control: a provider that names one scan drops the probe beside the limit scan"
+rm -f -- "${PROBE_BIN:?}/grep"
 PROBECTL="$(mutant_scripts probectl overseer-host-tmux)" || exit 1
 mutate_file "$PROBECTL/overseer-host-tmux" 'cause="$cause,process-probe probe=$LANE_PROBE_RC"' 'cause="$cause,process-probe"'
 PROVIDER_BIN="$PROBECTL/overseer-host-tmux" RUN_PATH="$PROBE_BIN:$PATH" run_tmux inspect --session "$SHELL_PANE"

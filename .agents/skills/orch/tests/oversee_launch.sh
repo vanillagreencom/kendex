@@ -573,7 +573,49 @@ pendfail_stub "$HOOKCTL"
 pending_refused "$HOOKCTL/oversee"
 assert_eq "$RC|$(listed "$PRED")" "0|0" \
   "control: a hook that lets a failed pending write pass stops the predecessor anyway"
-tm kill-window -t "$(recorded window)"
+PRED="$(recorded pane)"
+
+# A session record write the state refuses refuses the launch too: the stub
+# refuses the first write of the record and lets the put-back through. With
+# --predecessor the predecessor keeps running and stays recorded.
+recordfail_stub() { # SCRIPTS_DIR
+  rm -f -- "${1:?}/workflow-state" "${TMP_ROOT:?}/record-refused"
+  cat > "$1/workflow-state" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1 \$2 \$3" == "set oversee overseer" && ! -e "$TMP_ROOT/record-refused" ]]; then
+  touch "$TMP_ROOT/record-refused"; echo 'fixture: record write refused' >&2; exit 1
+fi
+exec "$SRC_DIR/workflow-state" "\$@"
+STUB
+  chmod +x "$1/workflow-state"
+}
+RECFAIL="$(mutant_scripts recfail workflow-state)" || exit 1
+recordfail_stub "$RECFAIL"
+PRED_GEN="$(recorded generation)"
+OVERSEE_BIN="$RECFAIL/oversee" run_oversee -- launch --predecessor "$PRED" --wait-secs 20
+assert_eq "$RC|$(keyed record-unwritten "$OUT" | sed -n 1p)|$(overseers)|$(listed "$PRED")|$(recorded pane)|$(recorded generation)" \
+  "1|oversee: record-unwritten field=overseer step=write|1|1|$PRED|$PRED_GEN" \
+  "a record write the state refuses stops the succession, the predecessor running and recorded"
+recordfail_stub "$HOOKCTL"
+OVERSEE_BIN="$HOOKCTL/oversee" run_oversee -- launch --predecessor "$PRED" --wait-secs 20
+assert_eq "$RC|$(listed "$PRED")" "0|0" \
+  "control: a hook that lets a failed record write pass stops the predecessor anyway"
+tm kill-window -t "$(tm list-windows -t fleet -F '#{window_id} #{window_name}' | awk '$2 == "overseer" { print $1; exit }')"
+# A first launch under the same refusal opens no overseer and leaves the
+# prior record in place.
+FIRST_PRIOR="$(jq -cS .overseer "$FLEET_STATE")"
+recordfail_stub "$RECFAIL"
+OVERSEE_BIN="$RECFAIL/oversee" run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(keyed record-unwritten "$OUT" | sed -n 1p)|$(overseers)|$(jq -cS .overseer "$FLEET_STATE")" \
+  "1|oversee: record-unwritten field=overseer step=write|0|$FIRST_PRIOR" \
+  "a first launch whose record write the state refuses opens no overseer and keeps the prior record"
+FIRSTCTL="$(mutant_scripts firstctl oversee)" || exit 1
+mutate_file "$FIRSTCTL/oversee" '    || abandon record-unwritten field=overseer step=write' '    || :'
+recordfail_stub "$FIRSTCTL"
+OVERSEE_BIN="$FIRSTCTL/oversee" run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(overseers)" "0|1" \
+  "control: a first launch that goes on past a refused record write opens an overseer nothing records"
+tm kill-window -t "$(tm list-windows -t fleet -F '#{window_id} #{window_name}' | awk '$2 == "overseer" { print $1; exit }')"
 
 # A record from an earlier tmux server naming a pane id this server reuses is
 # no live overseer: the launch opens the next generation over it, and a

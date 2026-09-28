@@ -281,7 +281,9 @@ watch_stop "$OLD" "$FLEET_STATE" || true
 # The restart waits for the caller's window to close: the helper, run as the
 # handover runs it against a caller that stays open, restarts nothing until
 # that window closes.
-restart_waits() { # [SUCCEED_BIN]
+# restart_helper [SUCCEED_BIN] — the helper started against a caller that
+# stays open, from a fresh caller and watch.
+restart_helper() {
   new_caller
   fresh_output
   start_watch
@@ -289,24 +291,25 @@ restart_waits() { # [SUCCEED_BIN]
   ( cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$NO_MANAGER:$BIN:$PATH" TMUX="$TMUX_ADDR" \
       "${1:-$SUCCEED}" --watch-restart "$FLEET_STATE" "$CALLER_PANE" "$SUCC_PANE" CLAUDE_CONFIG_DIR "$H/.claude" claude \
       >>"$WATCH_ERR" 2>&1 </dev/null & )
-  # A real wait: the helper reads the caller every tenth of a second, so two
-  # seconds of a caller that stands is twenty readings of it.
-  sleep 2
-  EARLY="$(grep -c '^oversee-succeed: watch-restarted ' "$WATCH_ERR" 2>/dev/null || true)"
-  EARLY="${EARLY:-0}"
-  tm kill-window -t "$CALLER_WINDOW"
-  wait_restart
 }
-restart_waits
-assert_eq "$EARLY|${NEW:+restarted}" "0|restarted" \
+restart_helper
+# A real wait: the helper reads the caller every tenth of a second, so two
+# seconds of a caller that stands is twenty readings of it.
+sleep 2
+EARLY="$(grep -c '^oversee-succeed: watch-restarted ' "$WATCH_ERR" 2>/dev/null || true)"
+tm kill-window -t "$CALLER_WINDOW"
+wait_restart
+assert_eq "${EARLY:-0}|${NEW:+restarted}" "0|restarted" \
   "the restart waits for the caller's window to close, and follows it"
 watch_stop "$NEW" "$FLEET_STATE" || true
 # Its control: a helper that stops waiting at once restarts the watch while
-# the caller still stands.
+# the caller still stands, read through the suite's bounded wait.
 EAGER="$(mutant_scripts eager oversee-succeed)" || exit 1
 mutate_file "$EAGER/oversee-succeed" '    [[ "$OL_INSPECT_STATE" != gone ]] || break' '    break'
-restart_waits "$EAGER/oversee-succeed"
-assert_eq "$EARLY" "1" "control: a helper that does not wait restarts the watch beside a caller still open"
+restart_helper "$EAGER/oversee-succeed"
+wait_restart
+assert_eq "${NEW:+restarted}|$(tm list-windows -a -F '#{window_id}' | grep -cxF -- "$CALLER_WINDOW" || true)" "restarted|1" \
+  "control: a helper that does not wait restarts the watch beside a caller still open"
 watch_stop "$NEW" "$FLEET_STATE" || true
 
 # A harness that kills its tool call's whole process group once the close has

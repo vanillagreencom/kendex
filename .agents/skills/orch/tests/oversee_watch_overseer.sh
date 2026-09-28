@@ -848,6 +848,24 @@ run ORCH_OVERSEER_HOST="$LIMIT_BIN/provider" TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "rc=$RC noted=$(grep -c "^oversee-watch: overseer-unreadable pane=$PANE scan=usage-limit\$" "$ERR" || true)" \
   "rc=0 noted=1" \
   "an overseer screen whose usage-limit scan could not run is named unreadable, never judged" "$ERR"
+# Both scans failing on one read: the probe named with its status, and the
+# screen unreadable.
+both_case() { # [WATCH_BIN]
+  overseer_case both_scans exited
+  state_with "$LINE"
+  printf '3\n' > "$STUB_DIR/probe-fail-9009"
+  WATCH_BIN="${1:-}" run ORCH_OVERSEER_HOST="$LIMIT_BIN/provider" TMUX_PANE="$PANE" -- --max-loops 1
+  BOTH_NOTES="$(grep -c "^oversee-watch: child-probe-failed lane=$PANE exit=3\$" "$ERR" || true)"
+  BOTH_NOTES="$BOTH_NOTES|$(grep -c "^oversee-watch: overseer-unreadable pane=$PANE scan=usage-limit\$" "$ERR" || true)"
+}
+both_case
+assert_eq "$BOTH_NOTES" "1|1" "an overseer read where both scans fail notes the probe and the unreadable screen" "$ERR"
+BOTH_MUTANT="$(mutant_scripts both-mutant/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/both-mutant/github"
+mutate_file "$BOTH_MUTANT/oversee-watch" '[[ ",$OL_INSPECT_CAUSE," != *,process-probe,* ]]' \
+  '[[ "$OL_INSPECT_CAUSE" != process-probe ]]'
+both_case "$BOTH_MUTANT/oversee-watch"
+assert_eq "$BOTH_NOTES" "0|1" "control: a cause matched whole drops the probe note beside the limit scan" "$ERR"
 
 # --- the settings this check reads ----------------------------------------
 overseer_case dead_passes_one exited
