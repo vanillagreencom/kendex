@@ -64,7 +64,7 @@ pub(super) fn hook(
                 record_arg0 = crate::names::shown(hook.matcher.as_deref().unwrap_or_default()),
             ),
             Some(
-                "write the matcher as plain tool names separated by `|`, or check it against Copilot's names (`bash`, `read`, `write`)"
+                "write the matcher as plain tool names separated by `|`, or check it against the tool names Copilot's hooks match (`bash`, `view`, `create`, `edit`)"
                     .to_owned(),
             ),
         ));

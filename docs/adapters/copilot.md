@@ -52,6 +52,8 @@ Enforced: Copilot runs the command and honours the exit code. Copilot hands the 
 
 Copilot's other events (`postToolUseFailure`, `userPromptTransformed`, `subagentStart`, `errorOccurred`) have no fleet counterpart and stay unmapped, with a note. Each hook gets a file of its own, `<name>.json` beside `<name>.sh`, in the shape `{"version": 1, "hooks": {"<event>": [{"type": "command", "bash": …, "matcher": …, "timeoutSec": …}]}}`; timeouts are seconds under `timeoutSec`, an empty or absent matcher is written without the `matcher` key because Copilot skips an entry whose matcher is the empty string and reads the absent key as every tool, and a file left holding no hooks keeps its version line (`crates/core/src/configedit/copilot.rs`). At project scope the command finds the project root when it runs ([Hook commands](README.md#hook-commands)). Disabling renames the script to `.disabled` and reverses the entry in the document.
 
+A matcher is restated in the runtime tool names Copilot tests it against, which are not the agent allowlist's: `Bash` is `bash`, `Write` is `create`, `Edit` and `MultiEdit` are `edit`, `Read` is `view`, `Agent` is `task`, `WebFetch` is `web_fetch`, `AskUserQuestion` is `ask_user` and `Skill` is `skill`, two names landing on one tool said once; a name with no runtime tool is left as authored (`hook_matcher`, `crates/core/src/render/vocab/mod.rs`). The [hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference) lists every name but `skill`, which is the `toolName` Copilot CLI 1.0.88 sent for a skill load.
+
 Agent scoping: none; only `agents = "all"` custom hooks are enforced.
 
 ## Effective state

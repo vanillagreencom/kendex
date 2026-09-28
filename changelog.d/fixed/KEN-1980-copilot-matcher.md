@@ -1,0 +1,1 @@
+- A hook matcher installed for Copilot names the tools its hooks are matched against, so a hook on `Write` or `Read` now fires on Copilot's `create` and `view`.

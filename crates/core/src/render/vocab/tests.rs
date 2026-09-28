@@ -292,6 +292,17 @@ fn a_hook_matcher_is_restated_alternative_by_alternative() {
         hook_matcher("Bash|Write", HarnessId::Gemini),
         ("run_shell_command|write_file".to_owned(), true)
     );
+    // Copilot tests a hook matcher against its runtime tool names, not its
+    // agent allowlist names: a write runs as `create`, a skill load as
+    // `skill`, and two names landing on one tool are said once.
+    assert_eq!(
+        hook_matcher("Edit|MultiEdit|NotebookEdit|Write|Bash", HarnessId::Copilot),
+        ("edit|NotebookEdit|create|bash".to_owned(), true)
+    );
+    assert_eq!(
+        hook_matcher("Read|Skill|Agent|WebFetch", HarnessId::Copilot),
+        ("view|skill|task|web_fetch".to_owned(), true)
+    );
     // A name neither tool documents narrows nothing and is left alone.
     assert_eq!(
         hook_matcher("mcp__gh", HarnessId::Copilot),
