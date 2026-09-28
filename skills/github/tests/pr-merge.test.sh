@@ -94,14 +94,32 @@ MUTANT="$TMPDIR/mutant"
 mkdir -p "$MUTANT/skills/github"
 cp -R "$REPO_ROOT/skills/github/scripts" "$MUTANT/skills/github/scripts"
 MUTANT_PR_MERGE="$MUTANT/skills/github/scripts/commands/pr-merge.sh"
-[[ "$(grep -c '^        gate_gap=required_context$' "$MUTANT_PR_MERGE")" == 1 ]] || {
+[[ "$(grep -c '^            gate_gap=required_context$' "$MUTANT_PR_MERGE")" == 1 ]] || {
   echo "FIXTURE: the required-context refusal was not unique in $MUTANT_PR_MERGE" >&2
   exit 2
 }
-sed -i.bak 's/^        gate_gap=required_context$/        : gate_gap=required_context/' "$MUTANT_PR_MERGE"
+sed -i.bak 's/^            gate_gap=required_context$/            : gate_gap=required_context/' "$MUTANT_PR_MERGE"
 rm -f -- "${MUTANT_PR_MERGE:?}.bak"
-grep -q '^        : gate_gap=required_context$' "$MUTANT_PR_MERGE" || {
+grep -q '^            : gate_gap=required_context$' "$MUTANT_PR_MERGE" || {
   echo "FIXTURE: the required-context edit matched nothing in $MUTANT_PR_MERGE" >&2
+  exit 2
+}
+# The second control: a copy whose failed read is no longer told apart, so it
+# falls through to the missing-context answer and its ruleset remedy.
+UNREAD="$TMPDIR/unread"
+mkdir -p "$UNREAD/skills/github"
+cp -R "$REPO_ROOT/skills/github/scripts" "$UNREAD/skills/github/scripts"
+UNREAD_PR_MERGE="$UNREAD/skills/github/scripts/commands/pr-merge.sh"
+unread_from='        if ! rule_lines=$(with_token "$token" required_rule_lines "$pr_num"); then'
+[[ "$(grep -cxF -- "$unread_from" "$UNREAD_PR_MERGE")" == 1 ]] || {
+  echo "FIXTURE: the failed-read arm was not unique in $UNREAD_PR_MERGE" >&2
+  exit 2
+}
+F="$unread_from" awk 'BEGIN { f = ENVIRON["F"] } $0 == f { $0 = "        if false; then" } { print }' "$UNREAD_PR_MERGE" >"$UNREAD_PR_MERGE.edit"
+cat -- "$UNREAD_PR_MERGE.edit" >"$UNREAD_PR_MERGE"
+rm -f -- "${UNREAD_PR_MERGE:?}.edit"
+! grep -qxF -- "$unread_from" "$UNREAD_PR_MERGE" || {
+  echo "FIXTURE: the failed-read edit matched nothing in $UNREAD_PR_MERGE" >&2
   exit 2
 }
 
@@ -111,7 +129,8 @@ grep -q '^        : gate_gap=required_context$' "$MUTANT_PR_MERGE" || {
 run_table "the arm at creation" "\
 the base requires the named context: the arm is made before any check runs|checks:none required:Review+gate post-auto|gated:Review+gate|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>
 a base that requires other checks but not the named one refuses, naming the repository|checks:none required:CI post-auto|gated:Review+gate|1|-|arm: no-merge-gate=required_context repo=owner/repo;{context-remedy:Review+gate}|calls=$CHECK auth=<unset>
-a required set that cannot be read refuses the same way|checks:none required:Review+gate repo:no-protection post-auto|gated:Review+gate|1|-|arm: no-merge-gate=required_context repo=owner/repo;{context-remedy:Review+gate}|calls=$CHECK auth=<unset>
+a required set that cannot be read refuses as unverified, never as a missing rule|checks:none required:Review+gate repo:no-protection post-auto|gated:Review+gate|1|-|arm: no-merge-gate=unverified repo=owner/repo;{unverified-remedy}|calls=$CHECK auth=<unset>
+must-fail: with the failed read not told apart, it is named a missing rule|checks:none required:Review+gate repo:no-protection post-auto|gated-unread:Review+gate|1|-|arm: no-merge-gate=required_context repo=owner/repo;{context-remedy:Review+gate}|calls=$CHECK auth=<unset>
 must-fail: with the refusal cut, the base that lacks the named context arms|checks:none required:CI post-auto|gated-mutant:Review+gate|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>
 the named context gates only the arm, so it needs --auto|-|gated-immediate:Review+gate|1|-|Error: --require-context gates the --auto arm and needs --auto|calls=- auth=-
 "

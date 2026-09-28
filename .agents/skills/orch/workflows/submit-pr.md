@@ -150,9 +150,19 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
 
    `[ISSUE_TITLE]` comes from `linear.sh cache issues get [ISSUE_ID]` or `gh issue view [N] --json title --jq '.title'`.
 
-5. **Arm auto-merge** as soon as the PR exists, on every pass through this section. **Skip if** `orch-env ORCH_MERGE_AUTONOMY auto` prints anything but `auto`: the arm is the merge consent that setting holds back.
+5. **Arm auto-merge** as soon as the PR exists, on every pass through this section. **Skip if** `orch-env ORCH_MERGE_AUTONOMY auto` prints anything but `auto`: the arm is the merge consent that setting holds back. **Skip if** workflow state records a `queue_guard` whose run directory has no `wait.exit` yet: that wait still watches the live arm. A recorded wait whose `wait.exit` is there has ended with a verdict: read it by [merge-pr.md § 5 step 1](merge-pr.md#5-execute-the-merge)'s recorded-wait rule before anything here replaces it, reading that rule's `--auto` arm, and any route's return to step 1's arm, as this step's arm.
 
-   Detach orphaned children first, before any arm: once the PR is armed GitHub can merge it before [merge-pr.md](merge-pr.md) reaches its own detach, and the merge's cascade-Done would close them. Run [merge-pr.md § 4.1](merge-pr.md#41-detach-orphaned-children) for this item, `[ISSUE]` being `[ISSUE_ID]`, with its skip conditions and its per-orphan ask, which a lane sends through its ask gate. **Skip if** workflow state already records `children_detached`, the detach running once per item. An abort there arms nothing: skip the rest of this step, and [merge-pr.md](merge-pr.md) § 4.1 runs the detach again. Record the detach once it completes, or once § 4.1's own conditions skip it:
+   ```bash
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.queue_guard.run_dir // ""'
+   ```
+
+   Read the bot token as [merge-pr.md § 4](merge-pr.md#4-prepare) does. `.configured: false` arms nothing here: whose name a merge lands under is the decision [merge-pr.md](merge-pr.md) § 4 owns, and § 4-§ 5 there make the arm.
+
+   ```bash
+   .agents/skills/github/scripts/github.sh bot-token
+   ```
+
+   Detach orphaned children next, before any arm: once the PR is armed GitHub can merge it before [merge-pr.md](merge-pr.md) reaches its own detach, and the merge's cascade-Done would close them. Run [merge-pr.md § 4.1](merge-pr.md#41-detach-orphaned-children) for this item, `[ISSUE]` being `[ISSUE_ID]`, with its skip conditions and its per-orphan ask, which a lane sends through its ask gate. **Skip if** workflow state already records `children_detached`, the detach running once per item. An abort there arms nothing: skip the rest of this step, and [merge-pr.md](merge-pr.md) § 4.1 runs the detach again. Record the detach once it completes, or once § 4.1's own conditions skip it:
 
    ```bash
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] children_detached true
@@ -172,10 +182,10 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
    env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-merge [PR_NUMBER] --auto --require-context "[GATE_CONTEXT]" --expected-head [HEAD_SHA]
    ```
 
-   Exit `75` armed it. GitHub then holds the merge until the review gate, every required check and thread resolution pass, so the CI wait, the gate wait and § 6.1 are the lane's triage and fix work, not preconditions of the arm, and a turn that ends mid-chain leaves the PR armed. Start the queue wait now, so its late-findings guard covers the PR from the moment GitHub can enqueue it, which may be while this lane is still in § 3-§ 6. **Skip if** workflow state records a `queue_guard` whose run directory has no `wait.exit` yet: that wait still covers the PR. Resolve the gate mode at the pushed endpoints by § 4's two commands, then run the command below through [Waiter launch](../references/waiter-launch.md), appending `--no-guard` under `exempt` as [merge-pr.md](merge-pr.md) § 5 step 1 does. It carries no `--item`, so lane mail cannot end it, and `--no-check-probe`, because a red check before enqueue is § 5's to fix. Its budget is three hours, to outlast the review and CI rounds; a wait that ends sooner is routed by merge-pr.md, which starts the next one.
+   Exit `75` armed it. GitHub then holds the merge until the review gate, every required check and thread resolution pass, so the CI wait, the gate wait and § 6.1 are the lane's triage and fix work, not preconditions of the arm, and a turn that ends mid-chain leaves the PR armed. Start its watch now, so the late-findings guard covers the PR from the moment GitHub can enqueue it, which may be while this lane is still in § 3-§ 6. Run the command below through [Waiter launch](../references/waiter-launch.md). `--arm-watch` guards the PR only once it is queued and runs to a verdict with no deadline, so the watch lives as long as the arm (`queue-wait --help`). It always runs guarded: under `exempt` the waiver applies where [merge-pr.md](merge-pr.md) routes its verdict. It carries no `--item`, so lane mail cannot end it, and `--no-check-probe`, because a red check before enqueue is § 5's to fix.
 
    ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/queue-wait [PR_NUMBER] 180 10800 --json --no-check-probe
+   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/queue-wait [PR_NUMBER] 180 --arm-watch --json --no-check-probe
    ```
 
    This is the one waiter the lane does not poll where it starts: record its run directory and go on past this step. [merge-pr.md](merge-pr.md) § 5 step 1 reads its completion file and routes its verdict.
@@ -184,7 +194,13 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] queue_guard.run_dir [RUN_DIR]
    ```
 
-   Exit `0` merged it: § 6 enters [merge-pr.md](merge-pr.md), whose § 3.2 takes a merged PR straight to its post-merge steps. Exit `1` with first line `arm: no-merge-gate=<gap> repo=<owner/repo>` armed nothing, because that base branch does not require `[GATE_CONTEXT]` and an arm there would merge before review: report the line once and continue. That repository's merge keeps the route [merge-pr.md](merge-pr.md) § 5 sets out, after § 6.1, and the fix that lets it arm here is its ruleset requiring the review gate. Any other exit `1` armed nothing, an open review thread among its causes: continue, and [merge-pr.md](merge-pr.md) § 5 arms the prepared head after § 6.1.
+   Any answer but `75` leaves no arm for a recorded wait to watch, so clear the record first:
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.queue_guard = null'
+   ```
+
+   Exit `0` merged it: § 6 enters [merge-pr.md](merge-pr.md), whose § 3.2 takes a merged PR straight to its post-merge steps. Exit `1` with first line `arm: no-merge-gate=unverified repo=<owner/repo>` armed nothing because the base branch's rules could not be read: a read failure, not a ruleset gap. Report it and continue; [merge-pr.md](merge-pr.md) § 5 arms the prepared head after § 6.1. Exit `1` with any other `arm: no-merge-gate=<gap>` armed nothing because that base branch does not require `[GATE_CONTEXT]`, or has no merge gate at all, and an arm there would merge before review: report the line once and continue. That repository's merge keeps the route [merge-pr.md](merge-pr.md) § 5 sets out, after § 6.1, and the fix that lets it arm here is its ruleset requiring the review gate. Any other exit `1` armed nothing, an open review thread among its causes: continue, and [merge-pr.md](merge-pr.md) § 5 arms the prepared head after § 6.1.
 
 Once the PR exists, this run is a continuing action. Clear any stop a capped run left before entering another post-PR gate:
 
@@ -403,6 +419,12 @@ Re-run the gate-3 command once. If threads remain and the external-round cap is 
 
 `MERGE_READY = true` only when all four gates are met.
 
+**No stop leaves an armed PR.** Once `MERGE_READY` is false, whether by these gates or by a stop that sent the run here, a PR § 2 step 5 armed is disarmed before § 6.2 or § 7 reports the stop: its watch dies with the lane's run, and GitHub would otherwise merge it with no guard and no post-merge steps. Where workflow state records a `queue_guard`, unarm the PR in [merge-pr-restack.md](merge-pr-restack.md) step 1's order, then clear the record; the watch ends on that disarm by itself.
+
+```bash
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.queue_guard = null'
+```
+
 ### 6.2 Standalone Summary
 
 **Skip if** managed → § 7.
@@ -463,7 +485,7 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 .agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY auto
 ```
 
-`auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`. Anything else → ask `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflows. `MERGE_READY = false` never auto-merges from this lane; a PR § 2 step 5 armed stays armed, and GitHub holds it on the review gate, its required checks and thread resolution. On a PR that step armed, [merge-pr.md](merge-pr.md) keeps only the queue wait, the late-thread answers and the post-merge steps: its § 5 step 1 routes the queue wait that step started, and arms nothing while it runs.
+`auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`. Anything else → ask `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflows. `MERGE_READY = false` never auto-merges: § 6.1 disarmed a PR § 2 step 5 armed. On a PR that step armed, [merge-pr.md](merge-pr.md) keeps only the queue wait, the late-thread answers and the post-merge steps: its § 5 step 1 routes the queue wait that step started, and arms nothing while it runs.
 
 ---
 

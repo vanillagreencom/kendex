@@ -24,8 +24,8 @@ BF="$REPO_ROOT/skills/orch/scripts/base-freshness"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # GitHub's branch rules come from a gh stub: STUB_RULES is the rules array
-# the base's read answers through its own --jq, none when unset, so no case
-# reaches the real GitHub.
+# the base's read answers through its own --jq, none when unset, and `fail`
+# makes that read exit 1, so no case reaches the real GitHub.
 mkdir -p "$TMP_ROOT/bin"
 cat >"$TMP_ROOT/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -36,7 +36,10 @@ for a in "$@"; do
   prev="$a"
 done
 case "${1:-}:${2:-}" in
-  api:repos/*/rules/branches/*) jq -r "$jq_filter" <<<"${STUB_RULES:-[]}" ;;
+  api:repos/*/rules/branches/*)
+    [[ "${STUB_RULES:-}" != fail ]] || { echo 'gh: HTTP 502' >&2; exit 1; }
+    jq -r "$jq_filter" <<<"${STUB_RULES:-[]}"
+    ;;
 esac
 STUB
 chmod +x "$TMP_ROOT/bin/gh"
@@ -136,6 +139,17 @@ grep -qF '    contained) fresh=true ;;' "$MUTANT_BF" || {
   exit 2
 }
 OLD_BASE="$(git -C "$WT" rev-parse origin/main~2)"
+# A git whose trial merge cannot run, for the `trial-fails` script column.
+mkdir -p "$TMP_ROOT/gitshim"
+REAL_GIT="$(command -v git)"
+cat >"$TMP_ROOT/gitshim/git" <<SHIM
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  [[ "\$arg" != merge-tree ]] || exit 2
+done
+exec "$REAL_GIT" "\$@"
+SHIM
+chmod +x "$TMP_ROOT/gitshim/git"
 # label|script|rules|file the branch commits|exit|behind|policy|reading|fresh
 while IFS='|' read -r q_label q_script q_rules q_file q_code q_behind q_policy q_reading q_fresh; do
   [[ -n "$q_label" ]] || continue
@@ -145,8 +159,10 @@ while IFS='|' read -r q_label q_script q_rules q_file q_code q_behind q_policy q
   git -C "$WT" commit -q -m "branch: $q_file"
   rm -f -- "$WT/.git/kendex-base-policy"
   [[ "$q_script" == mutant ]] && q_bf="$MUTANT_BF" || q_bf="$BF"
+  q_path="$PATH"
+  [[ "$q_script" != trial-fails ]] || q_path="$TMP_ROOT/gitshim:$PATH"
   set +e
-  out="$(STUB_RULES="$q_rules" env -u WORKTREE_DEFAULT_BRANCH "$q_bf" "$WT" 2>"$TMP_ROOT/err")"
+  out="$(PATH="$q_path" STUB_RULES="$q_rules" env -u WORKTREE_DEFAULT_BRANCH "$q_bf" "$WT" 2>"$TMP_ROOT/err")"
   code=$?
   set -e
   assert_eq "$code:$(printf '%s' "$out" | jq -r '"\(.behind) \(.policy) \(.reading) \(.fresh)"')" \
@@ -157,6 +173,8 @@ must-fail: with the clean merge cut from the fresh verdict, that branch is stale
 a branch that conflicts with a merge-queue base is stale|real|$QUEUE_RULES|log.txt|4|2|queue|conflicts|false
 a strict up-to-date rule keeps a behind branch stale|real|$STRICT_RULES|branch-only.txt|4|2|strict|behind|false
 a base with no queue keeps a behind branch stale|real|[]|branch-only.txt|4|2|no-queue|behind|false
+a rules read that fails keeps a behind branch stale|real|fail|branch-only.txt|4|2|unverified|behind|false
+a trial merge that cannot run keeps a behind branch stale|trial-fails|$QUEUE_RULES|branch-only.txt|4|2|queue|trial-failed|false
 ROWS
 git -C "$WT" checkout -q issue-42
 rm -f -- "$WT/.git/kendex-base-policy"

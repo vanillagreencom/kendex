@@ -244,6 +244,18 @@ done
 exec "$REAL_GIT" "\$@"
 EOF
       ;;
+    # A git whose trial merge cannot run: merge-tree exits 2, git's status
+    # for a merge it could not attempt.
+    merge-tree-fails)
+      cat >"$ROOT/bin/git" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "\$@"; do
+  [[ "\$arg" != merge-tree ]] || exit 2
+done
+exec "$REAL_GIT" "\$@"
+EOF
+      ;;
     index-unreadable-wt|index-unreadable-main)
       if [[ "$1" == index-unreadable-wt ]]; then
         fail_repo="$WT"
@@ -440,6 +452,7 @@ step() {
     observe) git -C "$MAIN" fetch -q origin "+refs/heads/$ISSUE:refs/remotes/origin/$ISSUE" ;;
     race) EXTERNAL="$(external_commit)"; git_shim race ;;
     record-push) git_shim record ;;
+    merge-tree-fails) git_shim merge-tree-fails ;;
     index-unreadable-wt) git_shim index-unreadable-wt ;;
     index-unreadable-main) git_shim index-unreadable-main ;;
     # An outsider published the branch before this checkout ever fetched it:
@@ -611,14 +624,19 @@ step() {
     # required-status-checks rule that demands an up-to-date branch or not.
     # The stub answers the rules read through the caller's own --jq and logs
     # every gh call, so a row sees the policy the push reads and how often.
-    queue | queue-strict)
+    # `rules-fail` is the same GitHub with the rules read failing.
+    queue | queue-strict | rules-fail)
       queue_strict=false
       [[ "$1" != queue-strict ]] || queue_strict=true
+      rules_exit=0
+      [[ "$1" != rules-fail ]] || rules_exit=1
       mkdir -p "$ROOT/bin"
+      : >"$ROOT/gh.calls"
       cat >"$ROOT/bin/gh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "\$*" >>"$ROOT/gh.calls"
+[[ "$rules_exit" == 0 ]] || { echo 'gh: HTTP 502' >&2; exit $rules_exit; }
 jq_filter="" prev=""
 for a in "\$@"; do
   [[ "\$prev" != --jq ]] || jq_filter="\$a"
@@ -633,11 +651,18 @@ EOF
       chmod +x "$ROOT/bin/gh"
       ROW_PATH="$ROOT/bin"
       ;;
+    # A record the checkout already holds, for a branch that is not main.
+    other-record)
+      printf 'other strict\n' >"$(git -C "$WT" rev-parse --absolute-git-dir)/kendex-base-policy"
+      ;;
     # The must-fail controls' worlds for the merge-queue base: a package copy
     # whose push loses the clean-merge skip, one whose push loses the conflict
     # refusal, one whose rules reading takes a strict rule for a queue, and
-    # one whose rules reading never answers from the checkout's own record.
-    unfixed-queue-skip | unfixed-queue-conflict | unfixed-strict | unfixed-cache)
+    # one whose rules reading never answers from the checkout's own record,
+    # one that seeds an unread rules answer as a queue, one that reads a trial
+    # merge that could not run as clean, and one whose record answers for any
+    # branch.
+    unfixed-queue-skip | unfixed-queue-conflict | unfixed-strict | unfixed-cache | unfixed-unverified | unfixed-trial | unfixed-branch-key)
       step standalone
       case "$1" in
         unfixed-queue-skip)
@@ -659,6 +684,21 @@ EOF
           mutant="$ROOT/pkg/worktree/scripts/lib/base-reading.sh"
           mutant_from='"$branch queue" | "$branch strict" | "$branch no-queue")'
           mutant_to='"$branch never")'
+          ;;
+        unfixed-unverified)
+          mutant="$ROOT/pkg/worktree/scripts/lib/base-reading.sh"
+          mutant_from='BASE_POLICY=unverified'
+          mutant_to='BASE_POLICY=queue'
+          ;;
+        unfixed-trial)
+          mutant="$ROOT/pkg/worktree/scripts/lib/base-reading.sh"
+          mutant_from='*) BASE_READING=trial-failed ;;'
+          mutant_to='*) BASE_READING=merges-cleanly ;;'
+          ;;
+        unfixed-branch-key)
+          mutant="$ROOT/pkg/worktree/scripts/lib/base-reading.sh"
+          mutant_from='"$branch queue" | "$branch strict" | "$branch no-queue")'
+          mutant_to='*" queue" | *" strict" | *" no-queue")'
           ;;
       esac
       [[ "$(grep -cF -- "$mutant_from" "$mutant")" == 1 ]] || {
@@ -982,6 +1022,10 @@ a branch on a merge-queue base that conflicts is refused toward the restack, wit
 must-fail: with the conflict refusal cut, that branch goes to the push rebase, which can only abort|pair queue fix2 conflict-main unfixed-queue-conflict|push @wt --set-upstream|1|-|rebase-failed|head=end ahead=1 tree=file.txt:orig,fix2.txt:fix2 remote=origin:- upstream=- push=- auth=- map=-
 a merge-queue base whose rules demand an up-to-date branch keeps the rebase|pair queue-strict advance fix fix2|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=- auth=- map=hop:map2
 must-fail: with the strict rule read as a queue, that branch is pushed unrebased|pair queue-strict advance fix fix2 unfixed-strict|push @wt --set-upstream|0|-|skip-queue|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2 remote=origin:end upstream=origin push=- auth=- map=-
+a rules read that fails keeps the rebase|pair rules-fail advance fix|push @wt --set-upstream|0|map1|map:1|head=rebased ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- auth=- map=hop:map1
+must-fail: with an unread rules answer seeded as a queue, that branch is pushed unrebased|pair rules-fail advance fix unfixed-unverified|push @wt --set-upstream|0|-|skip-queue|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
+a trial merge that cannot run keeps the rebase|pair queue advance fix merge-tree-fails|push @wt --set-upstream|0|map1|map:1|head=rebased ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- auth=- map=hop:map1
+must-fail: with a trial that could not run read as clean, that branch is pushed unrebased|pair queue advance fix merge-tree-fails unfixed-trial|push @wt --set-upstream|0|-|skip-queue|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
 '
 
 echo "=== worktree push ==="
@@ -1011,13 +1055,22 @@ echo
 echo "=== a checkout reads its base's rules once ==="
 
 # The first push reads GitHub's rules for main and keeps the answer in the
-# worktree's git dir; the next push in that checkout answers from there. The
-# control is a package copy whose record read is cut, which asks GitHub again.
+# worktree's git dir; the next push in that checkout answers from there. A read
+# that failed is not kept, so the next push asks again; no single edit reddens
+# that row, because the record is neither written for it nor read back as an
+# answer. A record answers only for the branch it names. The controls are
+# package copies whose record read is cut, which asks GitHub again, and whose
+# record answers for any branch, which asks it never.
+cache_n=0
 for cache_case in 'a second push answers from the checkout, not GitHub|pair queue advance fix|1' \
-  'must-fail: with the record read cut, the second push asks GitHub again|pair queue advance fix unfixed-cache|2'; do
+  'must-fail: with the record read cut, the second push asks GitHub again|pair queue advance fix unfixed-cache|2' \
+  'a failed read is not kept, so the second push asks GitHub again|pair rules-fail advance fix|2' \
+  'a record for another branch does not answer for main|pair queue other-record advance fix|1' \
+  'must-fail: with the record answering for any branch, main never asks GitHub|pair queue other-record advance fix unfixed-branch-key|0'; do
   IFS='|' read -r cache_label cache_world cache_want <<<"$cache_case"
+  cache_n=$((cache_n + 1))
   # shellcheck disable=SC2086
-  build "cache-$cache_want" $cache_world
+  build "cache-$cache_n" $cache_world
   run "push @wt --set-upstream" >/dev/null
   commit_main main-advanced2.txt advanced2
   run "push @wt" >/dev/null

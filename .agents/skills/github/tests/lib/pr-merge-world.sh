@@ -49,6 +49,8 @@
 #          gated-immediate:<context> (--require-context without --auto) |
 #          gated-mutant:<context> (gated, run from $MUTANT_PR_MERGE, the copy
 #          pr-merge.test.sh builds with the required-context refusal cut) |
+#          gated-unread:<context> (gated, run from $UNREAD_PR_MERGE, the copy
+#          whose failed required-set read is not told apart) |
 #          force | admin | admin-credential (the retired flags) | check-classified |
 #          auto-classified | immediate-classified | expected-classified:<sha> |
 #          dry-classified
@@ -309,6 +311,7 @@ argv_for() {
     gated:*) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch --require-context "$(printf '%s' "${1#gated:}" | tr '+' ' ')" ;;
     gated-immediate:*) printf '%s\n' "$PR_MERGE" 123 --keep-branch --require-context "$(printf '%s' "${1#gated-immediate:}" | tr '+' ' ')" ;;
     gated-mutant:*) printf '%s\n' "$MUTANT_PR_MERGE" 123 --auto --keep-branch --require-context "$(printf '%s' "${1#gated-mutant:}" | tr '+' ' ')" ;;
+    gated-unread:*) printf '%s\n' "$UNREAD_PR_MERGE" 123 --auto --keep-branch --require-context "$(printf '%s' "${1#gated-unread:}" | tr '+' ' ')" ;;
     admin-credential) printf '%s\n' "$PR_MERGE" 123 --admin-credential --keep-branch ;;
     router-in:*) printf '%s\n' "$GITHUB" -C "$TMPDIR/settings-${1#router-in:}" pr-merge 123 --auto --keep-branch ;;
     router:*) printf '%s\n' "$GITHUB" -C "$REPO" pr-merge 123 "${1#router:}" --keep-branch ;;
@@ -438,6 +441,7 @@ err_macro() {
     malformed) printf 'review_threads_fetch_failed: GitHub returned malformed review thread data' ;;
     retired:*) printf 'The overseer'"'"'s admin merge and the ORCH_MERGE_BYPASS fast path are retired (kendex decision D003): every merge goes through the merge queue, armed with --auto.;Remove %s from kendex.settings.toml [env], .kendex/settings.toml [env], the private env file (.env.local unless KENDEX_ENV_FILE names another) and the environment, then retry.' "$(printf '%s' "${1#retired:}" | tr '+' ' ')" ;;
     arm-remedy) printf 'Nothing mutated. Enable auto-merge and a required status check or review rule on the base branch.' ;;
+    unverified-remedy) printf "Nothing mutated. The base branch's rules could not be read, so no merge gate is proven\\; retry once they read." ;;
     context-remedy:*) printf "Nothing mutated. The base branch does not require '%s'\\; require it in the repository's ruleset." "$(printf '%s' "${1#context-remedy:}" | tr '+' ' ')" ;;
     waived:*) printf "unresolved_threads_waived: %s review-bot thread(s) open, waived by the review gate's class policy for this change, and the merge route resolves them before it arms" "${1#waived:}" ;;
     # resolved:<thread>:<class>

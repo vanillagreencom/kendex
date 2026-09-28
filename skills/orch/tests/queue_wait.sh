@@ -499,7 +499,7 @@ table "$QW" \
   'an env token whose check is killed at its bound is asked again and polls|state:last=merged,queue:last=in||GH_TOKEN=dtn_placeholder,STUB_GH_VALID_TOKEN=dtn_placeholder,STUB_GH_API_USER_HANGS=1,STUB_GH_DENY_KEYRING=1,KENDEX_GITHUB_AUTH_TIMEOUT=0.1|rc=0 verdict=merged polls=1' \
   'an env token killed at its bound twice is not accepted|open_queued||GH_TOKEN=dtn_placeholder,STUB_GH_VALID_TOKEN=dtn_placeholder,STUB_GH_API_USER_HANGS=2,STUB_GH_DENY_KEYRING=1,KENDEX_GITHUB_AUTH_TIMEOUT=0.1|rc=3 status=error polls=0'
 
-echo "=== the late-findings guard: any unresolved thread while queued ==="
+echo "=== the late-findings guard: any unresolved thread while queued or armed ==="
 # Disarm first (a bare dequeue can be raced back in by the arming), then
 # dequeue with the PR node id. A pre-existing unresolved thread is the same
 # unsafe state; a resolved set never triggers. A failed or anomalous thread
@@ -507,9 +507,7 @@ echo "=== the late-findings guard: any unresolved thread while queued ==="
 # anomalous body plants an unresolved node, so a fail-open reader would
 # dequeue and a read-as-empty reader would stay silent without the warning).
 # A failed mutation half is loud with its own cause and names the half. The
-# deadline runs one last probe. The pagination walk is bounded. An armed PR
-# outside the queue is not guarded: the base's thread-resolution rule holds
-# it from admission, and its open threads are the lane's triage work.
+# deadline runs one last probe. The pagination walk is bounded.
 DQ='dequeue:1=am_ok,dequeue:2=dq_ok'
 table "$QW" \
   "an unresolved thread while queued disarms, then dequeues by node id|open_queued,threads:last=late,$DQ|||rc=1 verdict=dequeued status=complete cause=late_findings unresolved_count=1 mutations=disable,dequeue mutation_ids=PR_node123" \
@@ -526,29 +524,52 @@ table "$QW" \
   "--no-guard reads no threads and mutates nothing|open_queued,threads:last=late,$DQ|1 1 3 --json --no-check-probe --no-guard||verdict=queued thread_reads=0 mutations=none" \
   'a failed dequeue half is loud and names the half|open_queued,threads:last=late,dequeue:1=am_ok,dequeue:2=dq_err|||rc=1 verdict=dequeued status=error cause=late_findings_dequeue_failed error_line=queue-wait:+guard-failed+operation=dequeuePullRequest+pr=1+threads=1+still-armed=possible mutations=disable,dequeue' \
   'an errors array on an HTTP 200 disarm is a failed half; the dequeue is still attempted|open_queued,threads:last=late,dequeue:1=am_errs_on_200,dequeue:2=dq_ok|||rc=1 cause=late_findings_dequeue_failed error_line=queue-wait:+guard-failed+operation=disablePullRequestAutoMerge+pr=1+threads=1+still-armed=possible mutations=disable,dequeue' \
-  'an armed PR outside the queue keeps its arming over an unresolved thread|open_armed,threads:last=late,dequeue:1=am_ok|1 1 3 --json --no-check-probe||rc=1 verdict=queued thread_reads=0 mutations=none' \
+  'armed but never enqueued disables auto-merge only|open_armed,threads:last=late,dequeue:1=am_ok|||rc=1 verdict=dequeued cause=late_findings mutations=disable' \
   "the final probe at the deadline catches a late thread|open_queued,threads:1=none,threads:last=late,$DQ|1 1 1 --json --no-check-probe||verdict=dequeued polls=1 mutations=disable,dequeue" \
   "an overlong pagination walk stops at the bound, a failed read and not a count|open_queued,threads:pages=40,$DQ|1 1 1 --json --no-check-probe||verdict=queued mutations=none thread_reads=40"
 
-# The must-fail control for the queued-only trigger: a checkout whose copy of
-# the script guards every armed PR again, so the armed PR above is disarmed.
-mkdir -p "$TMP_ROOT/mutant/.agents/skills"
-cp -R "$REPO_ROOT/skills/orch" "$TMP_ROOT/mutant/.agents/skills/orch"
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mutant/.agents/skills/github"
-git -C "$TMP_ROOT/mutant" init -q
-MUTANT_QW="$TMP_ROOT/mutant/.agents/skills/orch/scripts/queue-wait"
-[[ "$(grep -cF '    if $GUARD && [[ "$in_queue_now" == true ]]; then' "$MUTANT_QW")" == 1 ]] || {
-  echo "FIXTURE: the queued-only guard trigger was not unique in $MUTANT_QW" >&2
-  exit 2
+echo "=== the watch on a PR armed as it opened: --arm-watch ==="
+# The wait orch submit-pr § 2 step 5 starts after its arm at creation. The
+# review gate and the base's thread-resolution rule hold that PR from the
+# queue while its threads are open, so the guard reads threads only once the
+# PR is queued; and the arm outlives any budget, so the wait has no deadline.
+# Each control is a checkout whose copy of the script loses one of the two.
+AW_MERGES='state:1=open,state:2=open,state:3=open,state:last=merged,queue:last=armed'
+# Open for longer than the default budget at the polls a lane nap allows.
+AW_LONG="$(i=0; while [ "$i" -lt 14 ]; do i=$((i + 1)); printf 'state:%s=open,' "$i"; done)state:last=merged,queue:last=armed"
+table "$QW" \
+  "an armed PR outside the queue keeps its arming over an unresolved thread|$AW_MERGES,threads:last=late,dequeue:1=am_ok|1 1 --arm-watch --json --no-check-probe||rc=0 verdict=merged thread_reads=0 mutations=none" \
+  "a queued PR with an unresolved thread is still disarmed and dequeued|open_queued,threads:last=late,$DQ|1 1 --arm-watch --json --no-check-probe||rc=1 verdict=dequeued cause=late_findings mutations=disable,dequeue" \
+  "the wait runs past the default budget to a verdict|$AW_LONG|1000 --arm-watch --json --no-check-probe||rc=0 verdict=merged polls=15" \
+  "a max_wait beside it is a usage error|open_armed|1 1 20 --arm-watch --json||rc=2 stderr_line=queue-wait:+arm-watch-budget+value=20"
+
+# mutant_checkout NAME FROM TO — a checkout at $TMP_ROOT/NAME whose copy of the
+# script has the one line FROM replaced by TO, asserting the edit took.
+mutant_checkout() {
+  local dest="$TMP_ROOT/$1" from="$2" to="$3" script
+  mkdir -p "$dest/.agents/skills"
+  cp -R "$REPO_ROOT/skills/orch" "$dest/.agents/skills/orch"
+  ln -s "$REPO_ROOT/skills/github" "$dest/.agents/skills/github"
+  git -C "$dest" init -q
+  script="$dest/.agents/skills/orch/scripts/queue-wait"
+  [[ "$(grep -cxF -- "$from" "$script")" == 1 ]] || {
+    echo "FIXTURE: the $1 line was not unique in $script" >&2
+    exit 2
+  }
+  F="$from" T="$to" awk 'BEGIN { f = ENVIRON["F"]; t = ENVIRON["T"] } $0 == f { $0 = t } { print }' "$script" >"$script.edit"
+  cat -- "$script.edit" >"$script"
+  rm -f -- "${script:?}.edit"
+  ! grep -qxF -- "$from" "$script" || {
+    echo "FIXTURE: the $1 edit matched nothing in $script" >&2
+    exit 2
+  }
 }
-sed -i.bak 's/^    if \$GUARD \&\& \[\[ "\$in_queue_now" == true \]\]; then$/    if $GUARD; then/' "$MUTANT_QW"
-rm -f -- "${MUTANT_QW:?}.bak"
-[[ "$(grep -cF '    if $GUARD; then' "$MUTANT_QW")" == 1 ]] || {
-  echo "FIXTURE: the guard-trigger edit matched nothing in $MUTANT_QW" >&2
-  exit 2
-}
-QW_REPO="$TMP_ROOT/mutant" table "$QW" \
-  'must-fail: with the trigger widened to every armed PR, that PR is disarmed|open_armed,threads:last=late,dequeue:1=am_ok|||rc=1 verdict=dequeued cause=late_findings mutations=disable'
+mutant_checkout aw-guard '    [[ "$in_queue_now" == true ]]' '    [[ "$armed_now" == true ]]'
+mutant_checkout aw-deadline '  MAX_WAIT=$((1 << 62))' '  :'
+QW_REPO="$TMP_ROOT/aw-guard" table "$QW" \
+  "must-fail: with the guard reading every armed PR, that PR is disarmed|$AW_MERGES,threads:last=late,dequeue:1=am_ok|1 1 --arm-watch --json --no-check-probe||rc=1 verdict=dequeued mutations=disable"
+QW_REPO="$TMP_ROOT/aw-deadline" table "$QW" \
+  "must-fail: with the default budget kept, that wait ends at it still armed|$AW_LONG|1000 --arm-watch --json --no-check-probe||rc=1 verdict=queued status=timeout"
 
 echo "=== the progress signal on a budget-exhausted queued verdict ==="
 # When the entry exposes its head commit, movement in the entry tuple or the

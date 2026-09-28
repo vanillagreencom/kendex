@@ -49,6 +49,10 @@ queue_message() {
       printf 'queue-wait: unknown-option option=%q\n' "$1"
       printf '%s\n' "queue-wait: unknown option '$1'"
       ;;
+    arm-watch-budget)
+      printf 'queue-wait: arm-watch-budget value=%q\n' "$MAX_WAIT"
+      printf '%s\n' "queue-wait: --arm-watch runs to a verdict and takes no max_wait"
+      ;;
     missing-item)
       printf 'queue-wait: missing-item option=%s\n' "--item"
       printf '%s\n' "queue-wait: --item requires a value: the lane's item"
@@ -91,11 +95,11 @@ queue_message() {
       ;;
     late-findings)
       printf 'queue-wait: late-findings threads=%s pr=%s\n' "$count" "$PR_NUM"
-      printf '%s\n' "queue-wait: late-findings guard: $count unresolved review thread(s) on PR #$PR_NUM while queued — disarming and dequeuing"
+      printf '%s\n' "queue-wait: late-findings guard: $count unresolved review thread(s) on PR #$PR_NUM while queued/armed — disarming and dequeuing"
       ;;
     guard-blind)
       printf 'queue-wait: guard-blind failures=%s pr=%s\n' "$guard_fetch_failures" "$PR_NUM"
-      printf '%s\n' "queue-wait: late-findings guard: thread fetch failed $guard_fetch_failures consecutive probes — no thread evidence while PR #$PR_NUM sits queued; still retrying"
+      printf '%s\n' "queue-wait: late-findings guard: thread fetch failed $guard_fetch_failures consecutive probes — no thread evidence while PR #$PR_NUM sits queued/armed; still retrying"
       ;;
     checks-blind)
       printf 'queue-wait: checks-blind failures=%s commit=%s repo=%s\n' "$checkrun_fetch_failures" "$head_oid" "$REPO"
@@ -146,6 +150,7 @@ print_usage() {
   cat <<'USAGE'
 Usage: queue-wait <PR#> [poll_interval] [max_wait] [--json] [--no-check-probe]
                   [--no-guard] [--item ID]
+       queue-wait <PR#> [poll_interval] --arm-watch [--json] [--no-check-probe]
 
 Wait for a merge-queue / auto-merge outcome on a PR. Every exit path emits
 a final result on stdout: a stable verdict line with English below, or a JSON
@@ -169,6 +174,14 @@ ci-wait owns check state and approval-wait owns the review gate.
   --no-guard     skip the late-findings guard (no dequeue on unresolved
                  review threads while queued)
   --item ID      the lane whose new mail exits 5; no mail check without it
+  --arm-watch    the watch orch submit-pr § 2 step 5 starts on a PR it armed
+                 as the PR opened, where the base branch requires the review
+                 gate (pr-merge --require-context). The review gate and the
+                 base's thread-resolution rule hold that PR from the queue
+                 while its threads are open, so the late-findings guard reads
+                 threads only while the PR is IN the merge queue. It has no
+                 deadline: the arm outlives any budget, so the wait ends on a
+                 verdict alone and takes no max_wait.
 
 Each poll reads both signals the merge-pr routing table consumes:
 `gh pr view <PR> --json state,mergedAt,mergeable` plus the GraphQL
@@ -195,7 +208,7 @@ Verdicts (the semantics behind merge-pr § 5 step 1's routing table):
               queue, and the arming is gone — or, while armed and not
               enqueued, a required check has failed (see the probe below).
   dequeued    the late-findings guard saw an unresolved review thread while
-              the PR was in the merge queue and pulled the arming (cause
+              the PR was queued or armed and pulled the arming (cause
               late_findings). A failed pull instead reports cause
               late_findings_dequeue_failed with the PR still queued.
   closed      the PR was closed without merging.
@@ -266,13 +279,12 @@ own contract; --no-check-probe suppresses that side effect too.
 Late-findings guard (--no-guard to disable): reviewers post findings
 asynchronously, and the merge queue never re-checks thread resolution once
 a PR is queued (kendex#1289) — a finding landing after enqueue merges
-unless something dequeues. The base's thread-resolution rule holds an
-armed PR outside the queue from admission, so the guard reads threads only
-while the PR is IN the merge queue: an armed PR's open threads before then
-are the lane's triage work, which is why a PR armed as it opens can carry
-this wait from the arm on. ANY unresolved review thread observed while the
-PR is queued is late by construction — pre-existing or new, no baseline; a
-thread resolved while queued is fine. Each guard probe reads
+unless something dequeues. approval-wait gates unresolved threads to zero
+before enqueue, so ANY unresolved review thread observed while the PR is
+queued or armed is late by construction — pre-existing or new, no
+baseline; a thread resolved while queued is fine. Under --arm-watch the
+guard reads only while the PR is queued, since that arm came before review.
+Each guard probe reads
 the same reviewThreads surface approval-wait uses, rate-limited by
 QUEUE_WAIT_PROBE_INTERVAL on its own clock, and one final probe runs
 before a still-queued deadline return so the timeout can never skip the
@@ -393,6 +405,7 @@ USAGE
 JSON_OUTPUT=false
 CHECK_PROBE=true
 GUARD=true
+ARM_WATCH=false
 ITEM=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
@@ -402,6 +415,7 @@ while [[ $# -gt 0 ]]; do
     --no-check-probe) CHECK_PROBE=false; shift ;;
     --check-probe) CHECK_PROBE=true; shift ;;
     --no-guard) GUARD=false; shift ;;
+    --arm-watch) ARM_WATCH=true; shift ;;
     --guard) GUARD=true; shift ;;
     --item)
       [[ -n "${2:-}" ]] || { queue_message missing-item >&2; exit 2; }
@@ -428,6 +442,16 @@ fi
 PR_NUM="${POSITIONAL[0]}"
 POLL_INTERVAL="${POSITIONAL[1]:-180}"
 MAX_WAIT="${POSITIONAL[2]:-2400}"
+if $ARM_WATCH; then
+  if [[ "${#POSITIONAL[@]}" -gt 2 ]]; then
+    queue_message arm-watch-budget >&2
+    exit 2
+  fi
+  # No deadline: a budget past any wall clock a lane lives, so every
+  # budget-bounded path (the loop, the sleep clamp, the transient retry) runs
+  # on until a verdict ends the wait.
+  MAX_WAIT=$((1 << 62))
+fi
 START_TIME="$(date +%s)"
 elapsed=0
 
@@ -876,7 +900,7 @@ guard_fire() {
 }
 
 # One rate-limited guard probe. ANY unresolved thread observed while
-# queued fires guard_fire — no baseline, because an unresolved thread in
+# queued/armed fires guard_fire — no baseline, because an unresolved thread in
 # the queue is unsafe whenever it appeared, and enqueue does not prove threads
 # were zero (approval mode emits `approved` on the verdict alone).
 # Failed reads are absorbed rather than treated as a trigger: dequeuing on no
@@ -886,6 +910,17 @@ guard_fire() {
 guard_fetch_failures=0
 GUARD_FETCH_WARN_POLLS=3
 guard_last_at=-1
+
+# Whether this poll's state is one the guard reads threads in: queued or
+# armed, or under --arm-watch queued alone.
+guard_applies() {
+  $GUARD || return 1
+  if $ARM_WATCH; then
+    [[ "$in_queue_now" == true ]]
+  else
+    [[ "$armed_now" == true ]]
+  fi
+}
 
 guard_probe() {
   local count
@@ -1175,9 +1210,8 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   if [[ "$armed_now" == true ]]; then
     # Late-findings guard first: an unseen unresolved thread outranks a CI probe,
     # because the queue merges past it on its own. Same rate limit as the
-    # ci-wait probe, on its own clock. Only a queued PR: outside the queue the
-    # base's thread-resolution rule holds an armed one from admission.
-    if $GUARD && [[ "$in_queue_now" == true ]]; then
+    # ci-wait probe, on its own clock.
+    if guard_applies; then
       update_elapsed
       if [ "$guard_last_at" -lt 0 ] || [ $((elapsed - guard_last_at)) -ge "$PROBE_INTERVAL" ]; then
         guard_last_at="$elapsed"
@@ -1238,7 +1272,7 @@ fi
 # Last-chance guard probe before reporting "still queued": the deadline must
 # not skip a late finding that landed since the final poll. guard_probe exits
 # via guard_fire on a trigger; a failed read falls through to the timeout.
-if $GUARD && [[ "$in_queue_now" == true ]]; then
+if guard_applies; then
   guard_probe
 fi
 emit_result "timeout" "queued"

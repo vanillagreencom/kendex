@@ -193,4 +193,4 @@ Terminate every still-active agent in `child_sessions`, then retire the records:
 .agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY auto
 ```
 
-`auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`. Anything else → ask: `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflows. A `MERGE_READY = false` state never auto-merges from this lane; a PR `submit-pr.md` § 2 step 5 armed at creation stays armed, held by GitHub on the review gate, its required checks and thread resolution.
+`auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`. Anything else → ask: `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflows. A `MERGE_READY = false` state never auto-merges: `submit-pr.md` § 6.1 disarmed a PR its § 2 step 5 armed before it returned the stop.
