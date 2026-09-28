@@ -2,7 +2,8 @@
 # What change-class reads orch's narrow-change list against: the files a
 # package's risk sits in and not the package whole, the render inventory only
 # where its change is more than the names the same diff adds or deletes, and
-# an agent instruction file held to no lower than small.
+# an agent instruction file held to small where it would earn trivial or
+# micro.
 #
 # The list is the real references/narrow-change.conf beside the script under
 # test, so a row follows the shipped list rather than a copy of it. No row
@@ -24,13 +25,15 @@ HASHED_B="sha256:$(printf 'b%.0s' $(seq 64))"
 KEPT_RENDER=.agents/skills/orch/tests/kept.test.sh
 # A file under a render root whose source the diff does not add.
 HIDDEN_RENDER=.agents/tools/hidden.sh
+# A hand-written file under a render root, on disk and unlisted at the base.
+PRIOR_RENDER=.agents/misc/prior.sh
 repo="$(new_repo narrow-change)"
 jq -c --arg kept "$KEPT_RENDER" --arg hash "$HASHED_A" \
   '. + [$kept, {path: "CLAUDE.md.tmpl", template: "claude", templateHash: $hash}]' \
   "$repo/$INVENTORY" >"$SANDBOX/base-inventory"
 mv "$SANDBOX/base-inventory" "$repo/$INVENTORY"
 commit_paths "$repo" baseline seed.txt runtime/kept.ts \
-  "$KEPT_RENDER" skills/orch/tests/kept.test.sh
+  "$KEPT_RENDER" skills/orch/tests/kept.test.sh "$PRIOR_RENDER"
 base="$(git -C "$repo" rev-parse HEAD)"
 
 reset_case() {
@@ -81,6 +84,10 @@ apply_edit() { # EDIT
     listed-no-source)
       write_lines "$HIDDEN_RENDER" 4
       edit_inventory --arg hidden "$HIDDEN_RENDER" '. + [$hidden]' ;;
+    listed-existing)
+      write_lines "$PRIOR_RENDER" 2
+      write_lines misc/prior.sh 2
+      edit_inventory --arg prior "$PRIOR_RENDER" '. + [$prior]' ;;
     listed-off-root)
       write_lines src/hidden.rs 4
       write_lines hidden.rs 4
@@ -126,6 +133,7 @@ an inventory entry for a path that stays is excluded|class=standard measured=tru
 an inventory that also unlists a path still on disk is excluded|class=standard measured=true cause=excluded-path|added-unlisted-stays
 an inventory that unlists a path the diff edits is excluded|class=standard measured=true cause=excluded-path|edited-unlisted
 an inventory that lists a render root file with no source beside it is excluded|class=standard measured=true cause=excluded-path|listed-no-source
+an inventory that claims a file already on disk is excluded|class=standard measured=true cause=excluded-path|listed-existing
 an inventory that lists a paired file outside every render root is excluded|class=standard measured=true cause=excluded-path|listed-off-root
 an inventory that lists a new product file is excluded|class=standard measured=true cause=excluded-path|listed-product
 a prose schema document measures on its size|class=micro measured=true cause=production-within-micro|skills/orch/schemas/state.md=12
@@ -233,6 +241,12 @@ control "an unlisted path the diff edits leaves the path set" "$MICRO" \
   edited-unlisted head-state harness-only \
   '    [ "$3" = "$([ -n "$at_head" ] && echo present || echo absent)" ]' \
   '    :'
+# harness-only that does not hold an added entry's path absent at the base
+# lets a diff claim a hand-written file under a render root as generated.
+control "a claimed file already on disk leaves the path set" "$MICRO" \
+  listed-existing base-state harness-only \
+  '  [ "$2" = "$([ -n "$at_base" ] && echo present || echo absent)" ] &&' \
+  '  : &&'
 # change-class that takes every root harness-only names lets a paired file
 # outside the render roots leave the path set.
 control "a root outside the render roots leaves the path set" "$MICRO" \

@@ -17,8 +17,8 @@
 #   --path PATH      a file the item's **Location** names. A path one of that
 #                    file's `path` lines matches is refused by every narrow
 #                    class, so it answers standard; one its `instruction`
-#                    lines match answers small, as change-class holds that
-#                    file to no lower than small.
+#                    lines match answers small, the class change-class gives
+#                    such a file where it would earn trivial or micro.
 #   --base, --head   the item's branch, classified by harness-ci's
 #                    change-class through lib/change-class.sh. render and
 #                    trivial count as micro. A class the classifier's
