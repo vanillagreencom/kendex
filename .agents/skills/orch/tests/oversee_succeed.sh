@@ -2285,13 +2285,14 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded cla
 # `lanes pick` itself answers "no lane clears the bound" with, so the caller
 # can tell a fleet with no room from a launch that broke; it carries
 # `mark=wall` and names no account, no mark having been judged to name one by.
+# The sweep counts one walled account: the walled pane's own is left out of it.
 new_caller "$MARK"
 claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed wallednoroom '' --walled-pane "$CALLER_PANE"
 walled_world
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=2 unmeasured=0 mark=wall|yes|0|none" \
+  "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=1 unmeasured=0 mark=wall|yes|0|none" \
   "no account above the trigger: the walled recovery refuses at exit 3 under mark=wall"
 
 # The caller entry's successor keeps THIS session's model, effort and
@@ -2308,34 +2309,42 @@ assert_eq "$RC|$(recorded claude)|$(recorded codex)" \
   "--walled-pane's caller entry keeps this session's own model, effort and permission words"
 
 # The one account this recovery may never open on is the one it is recovering
-# from. The caller's own lane is given the MOST room here, so the pick names
-# it: an inventory that has not caught up with the wall on that pane reads
-# exactly like this. The entry is skipped and the run refuses rather than
-# relaunching into the wall.
+# from. The caller's own lane is given the MOST room here, so a pick that
+# judged it would name it; the pick leaves it out, and the successor opens on
+# the next account.
 new_caller "$MARK"
 claude_usage 10 0 0 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 50 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed walledspent '' --walled-pane "$CALLER_PANE"
 walled_world
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(keyed successor-lane-spent "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "3|oversee-succeed: successor-lane-spent lane=$H/.claude entry=caller|oversee-succeed: successor-lane-spent lane=$H/.claude entry=caller|yes|0|none" \
-  "a pick naming the walled account itself is skipped, not opened on"
+assert_eq "$RC|$(caller_open)|$(recorded claude)" \
+  "0|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
+  "the walled account is left out of the pick, although it reads the most room"
 
-# The same account under a spelling the pick does not use. This side is
-# whatever the operator's shell exported and the pick's side is whatever lane
-# discovery produced, so the two are compared through the pairing
-# lane_account_check compares an observed account against a picked one with,
-# and never as strings. A trailing slash is the cheapest way to have one
-# account spelled twice; without that pairing the guard does not fire and the
-# successor opens on the account that just walled.
+# The backstop for an inventory that names it anyway: a `lanes` that answers
+# every pick with the walled account. The entry is skipped and the run refuses
+# rather than relaunching into the wall. The account is spelled with a
+# trailing slash on this side, the cheapest way to have one account spelled
+# twice: the two are compared through the pairing lane_account_check compares
+# an observed account against a picked one with, never as strings, so without
+# that pairing the guard does not fire and the successor opens on the account
+# that just walled.
+cat > "$TMP_ROOT/spent-lanes" <<STUB
+#!/bin/sh
+case " \$* " in
+  *" pick "*) printf '%s\n' '{"config_dir": "$H/.claude"}'; exit 0 ;;
+esac
+exit 3
+STUB
+chmod +x "$TMP_ROOT/spent-lanes"
+SPENTINV="$(mutant_scripts spentinv lanes)" || exit 1
+cp "$TMP_ROOT/spent-lanes" "$SPENTINV/lanes"
 new_caller "$MARK"
-claude_usage 10 0 0 Opus > "$FIXTURE_DIR/.claude.json"
-claude_usage 50 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
-CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.claude/" run_succeed walledspentslash '' --walled-pane "$CALLER_PANE"
-walled_world
+CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.claude/" SUCCEED_BIN="$SPENTINV/oversee-succeed" \
+  run_succeed walledspentslash '' --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
   "3|oversee-succeed: successor-lane-spent lane=$H/.claude/ entry=caller|yes|0|none" \
-  "the walled account spelled another way is still the walled account"
+  "an inventory naming the walled account, spelled another way, is still refused"
 
 # What this mode refuses of the other four. A combination read as one of them
 # would send a line built for another pane, judge a mark against a pane that

@@ -207,6 +207,27 @@ assert_eq "$RC|$(keyed no-lane-qualifies | awk '{print $2, $3}')|$(caller_open)|
   "3|no-lane-qualifies entries=0|yes|none" \
   "control: a walled recovery walking the caller entry alone refuses a fleet with Opus room"
 
+# The walled account's own Opus window has room too, and it carries no lane
+# claim, so a pick that judged it could name it for the Opus entry. The pick
+# leaves the walled account out, so the Opus entry lands on .eclaude rather
+# than being dropped.
+seat claude 10 99 10
+new_caller
+run_succeed walledopus unset --walled-pane "$CALLER_PANE"
+assert_eq "$RC|$(caller_open)|$(launched claude)" \
+  "0|no|$H/.eclaude claude-opus-5-5" \
+  "a walled account with Opus room of its own is left out of the Opus pick"
+# Its control: a walled pick that keeps the walled account names it, the entry
+# is dropped, and the recovery refuses with .eclaude's Opus room unused.
+EXCLUDECTL="$(mutant_scripts excludectl oversee-succeed)" || exit 1
+mutate_file "$EXCLUDECTL/oversee-succeed" '  [[ "$MODE" != walled ]] || exclude="$WALLED_LANE"' ''
+new_caller
+SUCCEED_BIN="$EXCLUDECTL/oversee-succeed" run_succeed excludectl unset --walled-pane "$CALLER_PANE"
+assert_eq "$RC|$(keyed successor-lane-spent | awk '{print $2, $4}')|$(caller_open)|$(launched claude)" \
+  "3|successor-lane-spent entry=claude:claude-opus-5-5:high|yes|none" \
+  "control: a walled pick that keeps the walled account drops the Opus entry"
+seat claude 10 99 99
+
 # The issue's control on the same fleet: a ladder with no model dimension walks
 # Fable alone and then the caller's own harness on the model it already runs,
 # so the walk refuses with a seat that has Opus room standing.

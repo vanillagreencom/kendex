@@ -359,8 +359,9 @@
 #                    harness, account, model and directory where it names the
 #                    pane, as for a live caller, and --harness and the pane
 #                    where it names none, and step 3 picks the lane
-#                    as it does for a live succession, refusing a pick that
-#                    names the account the walled pane is spending. Its
+#                    as it does for a live succession, with the account the
+#                    walled pane is spending left out of every pick and a pick
+#                    that names it anyway refused. Its
 #                    window is where the successor lands. The command built is
 #                    printed bare on stdout before the window opens, so the
 #                    caller's own output records the line it sent, and it is
@@ -1018,10 +1019,14 @@ build_entries() {
 # itself. $2 is the model the successor of this entry will run: the one the
 # entry passes, or for the caller entry the one this pane already runs, since
 # that entry hands the overseer's own flags on. The rate and qualifying marks
-# exclude the caller's own account: the successor must move off it.
+# exclude the caller's own account: the successor must move off it. So does
+# `walled`: an entry of another model is judged on that model's bucket, where
+# the walled account can still read room, and a pick naming it would drop the
+# entry although another account has room.
 pick_lane_dir() { # HARNESS [MODEL]
   local exclude=""
   case "$MARK_KIND" in rate|qualifying) exclude="$CALLER_CFG" ;; esac
+  [[ "$MODE" != walled ]] || exclude="$WALLED_LANE"
   ol_pick_lane "$1" "${2:-}" "$HEADROOM_TRIGGER" "$exclude"
 }
 
@@ -1120,10 +1125,10 @@ walk_entries() {
         3) continue ;;
         *) die lanes-failed "entry=$entry" "exit=$rc" ;;
       esac
-      # WALLED_LANE above says why this account is refused. The ENTRY is
-      # skipped rather than the pick re-run without it, so a fleet whose only
-      # candidate is the spent account refuses instead of reopening on it, and
-      # an inventory stale enough to name it is not trusted to order the rest.
+      # WALLED_LANE above says why this account is refused. The pick already
+      # leaves it out, so this is the backstop for an inventory that names it
+      # anyway: the ENTRY is skipped rather than the pick re-run, since an
+      # inventory stale enough to name it is not trusted to order the rest.
       if [[ "$MODE" == walled && "$(lane_account_id "$OL_PICKED_DIR")" == "$WALLED_LANE_ID" ]]; then
         message successor-lane-spent "lane=$WALLED_LANE" "entry=$entry" >&2
         continue
