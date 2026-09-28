@@ -330,6 +330,28 @@ echo "=== a named copilot lane runs under COPILOT_HOME ==="
 assert_eq "$(cat "$TMP_ROOT/account.out")" "COPILOT_HOME=$TMP_ROOT/.1copilot|launcher:$BIN/1copilot|prefix" \
   "the account variable is COPILOT_HOME, and a launcher named for the account's directory is the whole selector"
 
+echo "=== every local copilot launch runs under its account's environment ==="
+# The account variable, the App token cleared, the shared skills named again
+# and folder trust granted, lane or none; the account's copilot-token read into
+# COPILOT_GITHUB_TOKEN by a shell that opens the file, so the token itself is
+# nowhere in the command.
+ENV_ARM="env -u GH_TOKEN -u GITHUB_TOKEN COPILOT_HOME='$FLEET_HOME/.copilot' COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL=true copilot $LEAD -i"
+launch env-none --harness copilot --launch-flags "$FLAGS" cc-750
+assert_contains "$CMD" "&& $ENV_ARM" "a launch naming no lane runs on the default account under the whole environment"
+mkdir -p "$TMP_ROOT/.2copilot"
+printf 'ghu_secret_value\n' > "$TMP_ROOT/.2copilot/copilot-token"
+launch env-token --harness copilot --lane "$TMP_ROOT/.2copilot" --launch-flags "$FLAGS" cc-751
+assert_contains "$CMD" "bash -c 'COPILOT_GITHUB_TOKEN=\$(< \"\$1\") && export COPILOT_GITHUB_TOKEN && exec \"\${@:2}\"' lane-launch '$TMP_ROOT/.2copilot/copilot-token' env -u GH_TOKEN -u GITHUB_TOKEN COPILOT_HOME='$TMP_ROOT/.2copilot' " \
+  "a lane holding copilot-token reads it into COPILOT_GITHUB_TOKEN ahead of the environment"
+assert_not_contains "$CMD" ghu_secret_value "the token itself never enters the launch command"
+# The rendered line, run: the child sees the token, the account and no App token.
+printf '#!/bin/sh\nprintf "%%s|%%s|%%s|%%s\\n" "$COPILOT_GITHUB_TOKEN" "${GH_TOKEN-unset}" "$COPILOT_HOME" "$COPILOT_ALLOW_ALL"\n' > "$BIN/copilot"
+chmod +x "$BIN/copilot"
+RUN_LINE="${CMD#*&& }"
+assert_eq "$(cd "$TMP_ROOT" && GH_TOKEN=app-token PATH="$BIN:$PATH" bash -c "$RUN_LINE")" "ghu_secret_value|unset|$TMP_ROOT/.2copilot|true" \
+  "the launched copilot reads the account's token and the account, with the App token gone"
+rm -f -- "$BIN/copilot"
+
 echo "=== must-fail controls ==="
 # The start arm renamed: the harness no longer has a command to start.
 stage "$TMP_ROOT/arm-ctrl"
@@ -464,6 +486,23 @@ assert_eq "$(cat "$TMP_ROOT/prefix-ctrl.out")" "CLAUDE_CONFIG_DIR=$TMP_ROOT/.1co
 account_ctrl form-ctrl '^(claude|codex|copilot)$' '^(claude|codex)$'
 assert_eq "$(cat "$TMP_ROOT/form-ctrl.out")" "COPILOT_HOME=$TMP_ROOT/.1copilot|unchecked" \
   "control: without copilot in the form judge its launcher is never found"
+# The environment rules, each cut from a private copy: the App token kept, the
+# token file never read, and a launch naming no lane given no environment.
+stage "$TMP_ROOT/unset-ctrl"
+mutate_file "$TMP_ROOT/unset-ctrl/scripts/lib/lane-launch.sh" 'line="env -u GH_TOKEN -u GITHUB_TOKEN $var=' 'line="env $var='
+OT="$TMP_ROOT/unset-ctrl/scripts/open-terminal" launch unset-ctrl --harness copilot --launch-flags "$FLAGS" cc-752
+assert_contains "$CMD" "copilot $LEAD -i" "the control's launch renders its command"
+assert_not_contains "$CMD" "-u GH_TOKEN" "control: without the clearing the App token reaches the launched copilot"
+stage "$TMP_ROOT/token-ctrl"
+mutate_file "$TMP_ROOT/token-ctrl/scripts/lib/lane-launch.sh" '  if [[ -f "$token" ]]; then' '  if false; then'
+OT="$TMP_ROOT/token-ctrl/scripts/open-terminal" launch token-ctrl --harness copilot --lane "$TMP_ROOT/.2copilot" --launch-flags "$FLAGS" cc-753
+assert_contains "$CMD" "copilot $LEAD -i" "the control's launch renders its command"
+assert_not_contains "$CMD" "COPILOT_GITHUB_TOKEN" "control: without the token read the lane signs in with whatever login its account holds"
+stage "$TMP_ROOT/nolane-ctrl"
+mutate_file "$TMP_ROOT/nolane-ctrl/scripts/open-terminal" '|| "$HARNESS" == codex || "$HARNESS" == copilot ]]; then' '|| "$HARNESS" == codex ]]; then'
+OT="$TMP_ROOT/nolane-ctrl/scripts/open-terminal" launch nolane-ctrl --harness copilot --launch-flags "$FLAGS" cc-754
+assert_contains "$CMD" "copilot $LEAD -i" "the control's launch renders its command"
+assert_not_contains "$CMD" "COPILOT_ALLOW_ALL" "control: without its branch a launch naming no lane carries no account environment"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

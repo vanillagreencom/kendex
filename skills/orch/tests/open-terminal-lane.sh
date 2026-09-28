@@ -1026,6 +1026,26 @@ run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model github-copilot/claude-sonne
 assert_eq "$(observe "rc=1 unanswered=1")" "rc=1 unanswered=1" \
   "control: a Pi relaunch that asks the provider reports its accounts verb as unanswered"
 OPEN_TERMINAL="$PI_OT_SHIPPED"
+# A hosted copilot launch: the account holds its token and a pool with room,
+# the provider is handed --harness copilot, and the remote line runs copilot
+# with its launch settings and no local account environment, the provider's
+# prefix carrying that.
+mkdir -p "$H/.1copilot"
+printf 'ghu_fixture\n' > "$H/.1copilot/copilot-token"
+printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":900}}}' > "$FIXTURE_DIR/.1copilot.json"
+COPILOT_HOSTED="flags=--model claude-opus-5 --reasoning-effort high --allow-all"
+run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copilot" --repo o/r CC-1935
+assert_eq "$(observe "rc=0 launched=1") create=$(host_call | tr ';' '\n' | grep -c '^create,--item,CC-1935,--repo,o/r,--harness,copilot,--account,1copilot$') remote=$(typed "exec bash -lc 'cd /srv/lane && exec copilot $Q--autopilot$Q") local=$(typed COPILOT_ALLOW_ALL)" \
+  "rc=0 launched=1 create=1 remote=1 local=0" \
+  "a hosted copilot launch creates with --harness copilot and runs copilot under the provider's prefix alone"
+COPILOT_OT_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-copilot-host/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-copilot-host/orch"
+mutate_file "$OPEN_TERMINAL" '! "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ) ]]; then' '! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then'
+run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copilot" --repo o/r CC-1935
+assert_eq "$(observe "rc=1 launched=nolog") invalid=$(awk '$2 == "host-invalid" { print $NF }' <<<"$OUT")" "rc=1 launched=nolog invalid=harness=copilot" \
+  "control: without copilot in the host protocol's harnesses a hosted copilot launch is host-invalid"
+OPEN_TERMINAL="$COPILOT_OT_SHIPPED"
 run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=-m gpt-6-astra -c model_reasoning_effort=high" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
 assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec env ORCH_COMPACTION_OVERRIDES=$Q{\"harness\":\"codex\",\"settings\":{\"model_auto_compact_token_limit\":\"9223372036854775807\",\"model_auto_compact_token_limit_scope\":\"body_after_prefix\",\"model_post_turn_compact_threshold_percent\":\"0\"}}$Q codex $Q-c$Q ${Q}check_for_update_on_startup=false$Q $Q-c$Q ${Q}model_auto_compact_token_limit=9223372036854775807$Q $Q-c$Q ${Q}model_auto_compact_token_limit_scope=body_after_prefix$Q $Q-c$Q ${Q}model_post_turn_compact_threshold_percent=0$Q $Q-c$Q ${Q}features.default_mode_request_user_input=false$Q $Q-m$Q ${Q}gpt-6-astra$Q $Q-c$Q ${Q}model_reasoning_effort=high$Q resume --last'") line=$(typed "Resume the orch workflow for CC-49")" \
   "rc=0 creates=nolog launched=1 remote=1 line=0" \

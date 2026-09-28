@@ -21,8 +21,9 @@
 # and reset beside the percentage so a refusal can name what made the decision.
 #
 # The 5-hour session and the plan-wide weekly window wall every model, so both
-# always count, and so does a monthly pool: the Copilot credits a Pi launch on
-# a `github-copilot/` model spends are one pool for every model it names. A
+# always count, and so does a monthly pool: the Copilot credits a Copilot
+# account, or a Pi launch on a `github-copilot/` model, spends are one pool for
+# every model it names. A
 # model-scoped weekly window walls only the model its own label names, so a
 # launch on another model does not draw on it and it is left out — the
 # difference between refusing an account that is free for this launch and
@@ -79,7 +80,8 @@ def lane_norm: ascii_downcase | gsub("[^a-z0-9]"; "");
 def lane_measured: (.status == "ok" or .status == "rate_limited");
 
 def wall_rank:
-  if .bucket == "weekly" then 2
+  if .bucket == "monthly" then 3
+  elif .bucket == "weekly" then 2
   elif .bucket == "model" then 1
   else 0
   end;
@@ -114,8 +116,16 @@ def model_binding($model):
 #
 # A record whose usage could not be read answers null whatever its other fields
 # say: a window nobody read is not an empty one.
+#
+# A record the Copilot usage endpoint marked `unlimited` outright is the one
+# measured account with no bucket at all: it answers unlimited_wall, a wall of
+# zero under no bucket name, room at every threshold, whatever model is named.
+# Only that explicit flag, which `lanes` sets on a measured record alone,
+# reaches the arm.
+def unlimited_wall: {bucket: null, label: null, pct: 0, resets_at: null};
 def binding_bucket:
-  if ((lane_measured | not) or .headroom_pct == null
+  if lane_measured and .unlimited == true then unlimited_wall
+  elif ((lane_measured | not) or .headroom_pct == null
       or .binding_bucket == null) then null
   else {bucket: .binding_bucket,
         label: (if .binding_bucket == "model" then ([.model_buckets[]] | max_by(.pct).label // null) else null end),
@@ -125,6 +135,7 @@ def binding_bucket:
 
 def lane_binding($model):
   if (lane_measured | not) then null
+  elif .unlimited == true then unlimited_wall
   elif $model != "" then model_binding($model)
   else binding_bucket
   end;
@@ -185,10 +196,12 @@ def same_window($binding):
 
 def with_lane_binding($model; $binding_floor):
   lane_binding($model; $binding_floor) as $binding
-  | (if $binding == null then [] elif $binding.bucket == "model" then (._rate_prior.model_buckets // [])
+  | (if $binding == null or $binding.bucket == null then []
+     elif $binding.bucket == "model" then (._rate_prior.model_buckets // [])
      else [{label: null,
             pct: (if $binding.bucket == "session" then ._rate_prior.session_5h_pct
-                  elif $binding.bucket == "weekly" then ._rate_prior.weekly_pct else null end),
+                  elif $binding.bucket == "weekly" then ._rate_prior.weekly_pct
+                  elif $binding.bucket == "monthly" then ._rate_prior.monthly_pct else null end),
             resets_at: ._rate_prior.resets[$binding.bucket]}] end
      | map(select(same_window($binding)))
      | first.pct // null) as $prior

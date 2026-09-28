@@ -13,14 +13,14 @@
 # them.
 #
 # Usage:
-#   lanes list [--harness claude|codex|all] [--local] [--no-cache] [--json]
-#   lanes pick [--harness claude|codex|pi] [--max-pct N | --min-headroom-pct N]
+#   lanes list [--harness claude|codex|copilot|all] [--local] [--no-cache] [--json]
+#   lanes pick [--harness claude|codex|copilot|pi] [--max-pct N | --min-headroom-pct N]
 #              [--model NAME] [--binding-floor] [--exclude-lane DIR]
 #              [--for-overseer] [--no-cache] [--json]
-#   lanes pick --lane <config-dir> [--harness claude|codex|pi]
+#   lanes pick --lane <config-dir> [--harness claude|codex|copilot|pi]
 #              [--max-pct N | --min-headroom-pct N] [--model NAME]
 #              [--binding-floor] [--projected] [--no-cache] [--json]
-#   lanes host-accounts [--harness claude|codex|all] [--no-cache] [--json]
+#   lanes host-accounts [--harness claude|codex|copilot|all] [--no-cache] [--json]
 #   lanes context [--json]
 #   lanes check <config-dir|name>
 #   lanes state <item> [--json]
@@ -110,14 +110,14 @@
 #         fleet state that cannot be read refuses the pick with exit 1.
 #         --for-overseer keeps the seats, for a pick that seats an overseer.
 #         --json prints that lane's whole record, which carries headroom_pct,
-#         binding_bucket (session, weekly or model), the matching
+#         binding_bucket (session, weekly, model or monthly), the matching
 #         binding_resets_at, claims, burn_pct_per_lane_hour,
 #         projected_headroom_pct, and qualifying_count from that same
 #         judgement. With
 #         --model those fields name the most-consumed
 #         bucket among the shared 5-hour window, the all-model weekly window,
-#         the named model's scoped weekly window, and for a Pi launch on the
-#         Copilot pool the monthly pool (see --harness). Exit 3 when no lane
+#         the named model's scoped weekly window, and for a Copilot account
+#         or a Pi launch on the Copilot pool the monthly pool (see --harness). Exit 3 when no lane
 #         qualifies, so a caller can fail closed rather than launch into a
 #         wall; its keyed line on stderr says how many candidates were WALLED
 #         at or above --max-pct and how many measured nothing for the launch,
@@ -257,7 +257,8 @@
 #         read. `open-terminal` asks it for every named --lane.
 #
 # Options:
-#   --harness NAME   claude, codex, or all (default: all for list, claude for pick).
+#   --harness NAME   claude, codex, copilot, or all (default: all for list,
+#                    claude for pick).
 #                    pick also takes pi, judged on the account its --model's
 #                    provider bills (lib/lane-launch.sh lane_pick_harness). A
 #                    `pi-claude/` model runs Claude Code on a Claude seat
@@ -344,22 +345,46 @@
 #
 # The lane INVENTORY is always discovered, never hand-maintained: config is an
 # overlay on top of it, so adding an account needs no edit anywhere. Discovery
-# is `~/.claude` plus every `~/.*claude*` directory, and `~/.codex` plus every
-# `~/.*codex*` directory plus $CODEX_HOME when it is set; a discovered directory
-# with no config marker (claude `.claude.json` or `.credentials.json`, codex
-# `auth.json` or `config.toml`) is skipped. A setting names a lane
-# by its directory name, with or without the leading dot, or by its alias; a
-# name carrying `/` or `~` is a path, names no lane, and is refused.
+# is `~/.claude` plus every `~/.*claude*` directory, `~/.codex` plus every
+# `~/.*codex*` directory plus $CODEX_HOME when it is set, and `~/.copilot` plus
+# every `~/.*copilot*` directory plus $COPILOT_HOME when it is set; a
+# discovered directory with no config marker (claude `.claude.json` or
+# `.credentials.json`, codex `auth.json` or `config.toml`, copilot
+# `settings.json` or `copilot-token`) is skipped. A setting names a lane by its
+# directory name, with or without the leading dot, or by its alias; a name
+# carrying `/` or `~` is a path, names no lane, and is refused.
+#
+# COPILOT: the credential is the GitHub token in `<dir>/copilot-token`, the
+# file the launch line reads into COPILOT_GITHUB_TOKEN (lib/lane-launch.sh §
+# lane_copilot_token_file); a directory without it reads `no_credentials`,
+# since a keyring login is not a token this script can post. The reading is GET
+# api.github.com/copilot_internal/user, an INTERNAL endpoint whose shape can
+# change: `quota_snapshots.premium_interactions` is read for its credit counts,
+# `entitlement`, `remaining`, `overage_permitted`, `overage_count` and
+# `unlimited`, and `quota_reset_date_utc` for the reset. Each is checked for its
+# type, and an answer lacking `remaining` or `entitlement` as numbers, or with
+# an entitlement of zero, measures nothing and reads `no_usage_data`. The pool
+# is a MONTHLY bucket, `monthly_pct` used, computed from remaining over
+# entitlement and never from the endpoint's truncated percent_remaining, with
+# `resets.monthly`; the record carries the counts beside it as `credits`,
+# `{unit: "AIC", used, limit, over, overage_permitted}`, or `{unit: "AIC",
+# unlimited: true}`. A pool at zero remaining is walled at every threshold,
+# `overage_permitted` true included: no paid overage is authorised. Only an
+# explicit boolean `unlimited: true` reads as room with no bucket, and then
+# `unlimited` is true on the record; a zero, a failed read and a missing field
+# never do.
 #   ORCH_LANE_ALIASES  Comma-separated `<config-dir-name>=<alias>` pairs giving
 #                      lanes meaningful names (`eclaude=work,mclaude=overflow`).
 #                      A directory with no mapping keeps its discovered name.
 #   ORCH_LANE_DIRS     Colon-separated config dirs, for a layout discovery does
-#                      not reach. An entry holding auth.json and no
-#                      .credentials.json is a Codex lane; any other entry is a
-#                      Claude lane. A harness's entries replace its discovery;
+#                      not reach. An entry holding copilot-token and no
+#                      .credentials.json is a Copilot lane, one holding
+#                      auth.json and no .credentials.json is a Codex lane, and
+#                      any other entry is a Claude lane. A harness's entries replace its discovery;
 #                      a harness with no entry is still discovered. An excluded
 #                      or retired entry is never probed: a name holding `codex`
-#                      is a Codex entry, any other a Claude one, and it still
+#                      is a Codex entry, one holding `copilot` a Copilot entry,
+#                      any other a Claude one, and it still
 #                      turns that harness's discovery off.
 #   ORCH_LANE_EXCLUDE  Comma-separated lane names (`sclaude,claude`) that are
 #                      never listed, measured or picked: nothing inside an
@@ -652,11 +677,11 @@ message() {
       ;;
     invalid-harness)
       printf 'lanes: invalid-harness option=%s\n' "--harness"
-      printf '%s\n' "--harness must be claude, codex, or all"
+      printf '%s\n' "--harness must be claude, codex, copilot, or all"
       ;;
     invalid-pick-harness)
       printf 'lanes: invalid-pick-harness option=%s\n' "--harness"
-      printf '%s\n' "pick --harness must be claude, codex or pi"
+      printf '%s\n' "pick --harness must be claude, codex, copilot or pi"
       ;;
     pick-provider-unmeasured)
       printf 'lanes: pick-provider-unmeasured harness=%s model=%s\n' "$1" "$2"
@@ -910,7 +935,8 @@ lane_admissible() {
 # harness is configured is decided before exclusion drops an entry, or excluding
 # every entry would turn its discovery back on. An excluded or retired entry is
 # never probed; its name decides, as discovery's glob does. Any other entry is
-# codex when it holds auth.json and no .credentials.json.
+# copilot when it holds copilot-token and no .credentials.json, and codex when
+# it holds auth.json and no .credentials.json.
 configured_lane_dirs() {
 	local rest="$ORCH_LANE_DIRS:" entry kind
 	while [[ -n "$rest" ]]; do
@@ -919,7 +945,12 @@ configured_lane_dirs() {
 		[[ -n "$entry" ]] || continue
 		kind=claude
 		if ! lane_admissible "$entry"; then
-			[[ "$(basename -- "$entry")" != *codex* ]] || kind=codex
+			case "$(basename -- "$entry")" in
+				*codex*) kind=codex ;;
+				*copilot*) kind=copilot ;;
+			esac
+		elif [[ -f "$entry/copilot-token" && ! -f "$entry/.credentials.json" ]]; then
+			kind=copilot
 		elif [[ -f "$entry/auth.json" && ! -f "$entry/.credentials.json" ]]; then
 			kind=codex
 		fi
@@ -927,14 +958,16 @@ configured_lane_dirs() {
 	done
 }
 
-# Dirs of harness $1 (`claude` or `codex`), excluded ones dropped. The
-# ORCH_LANE_DIRS entries of that harness replace its discovery; with none, it
-# is discovered. A set CODEX_HOME joins the codex inventory either way, since
-# the codex CLI reads it wherever it points — as the ACCOUNT it names, because
-# a codex launch that had to make its own folder-trust record sets it to a
-# private home built under one (lib/lane-home.sh). Listed raw, that home is a
-# second lane for an account already in this list, and the headroom of one
-# account is counted and claimed twice.
+# Dirs of harness $1 (`claude`, `codex` or `copilot`), excluded ones dropped.
+# The ORCH_LANE_DIRS entries of that harness replace its discovery; with none,
+# it is discovered. A set CODEX_HOME joins the codex inventory either way,
+# since the codex CLI reads it wherever it points — as the ACCOUNT it names,
+# because a codex launch that had to make its own folder-trust record sets it
+# to a private home built under one (lib/lane-home.sh). Listed raw, that home
+# is a second lane for an account already in this list, and the headroom of
+# one account is counted and claimed twice. A set COPILOT_HOME joins the
+# copilot inventory the same way; a Copilot launch builds no private home, so
+# the value is the account as it stands.
 lane_dirs() {
 	local configured="" home="${LANES_HOME:-$HOME}" d
 	# A Pi account on the Copilot pool is one the owner states a reading for:
@@ -951,7 +984,10 @@ lane_dirs() {
 			printf '%s\n' "$configured"
 		else
 			local markers=(.claude.json .credentials.json)
-			[[ "$1" != codex ]] || markers=(auth.json config.toml)
+			case "$1" in
+				codex) markers=(auth.json config.toml) ;;
+				copilot) markers=(settings.json copilot-token) ;;
+			esac
 			for d in "$home/.$1" "$home"/.*"$1"*; do
 				[[ -d "$d" ]] || continue
 				! lane_admissible "$d" ||
@@ -960,6 +996,7 @@ lane_dirs() {
 			done
 		fi
 		[[ "$1" != codex || -z "${CODEX_HOME:-}" ]] || lane_launch_home_account "$CODEX_HOME"
+		[[ "$1" != copilot || -z "${COPILOT_HOME:-}" ]] || printf '%s\n' "$COPILOT_HOME"
 	} 2>/dev/null | awk '!seen[$0]++' | while IFS= read -r d; do
 		lane_excluded "$d" || printf '%s\n' "$d"
 	done
@@ -1065,6 +1102,12 @@ fetch_usage() {
 		resp=$(curl -s --max-time 10 -D - -w '\n%{http_code}' "$CLAUDE_USAGE_URL" \
 			-H "anthropic-beta: $CLAUDE_OAUTH_BETA" -K - <<-CURLCFG
 			header = "Authorization: Bearer ${token}"
+		CURLCFG
+		) || return 1
+	elif [[ "$harness" == "copilot" ]]; then
+		resp=$(curl -s --max-time 10 -D - -w '\n%{http_code}' "$COPILOT_USAGE_URL" \
+			-H "Accept: application/json" -K - <<-CURLCFG
+			header = "Authorization: token ${token}"
 		CURLCFG
 		) || return 1
 	else
@@ -1181,6 +1224,55 @@ parse_codex_usage() {
 	'
 }
 
+# Copilot: GET api.github.com/copilot_internal/user, whose
+# `quota_snapshots.premium_interactions` is the account's monthly pool of AI
+# credits. The rules are the header's COPILOT paragraph; this is their one
+# reader. The used share is rounded UP, as the stated pool reading's is, so a
+# pool one credit short of its grant is never read as having more; a pool at or
+# past it is 100, and one reporting more remaining than it was granted is 0.
+# The reset is `quota_reset_date_utc`: a calendar date is
+# read as its 00:00:00Z, a timestamp as written, and anything else as no reset.
+parse_copilot_usage() {
+	jq -c '
+		((.quota_snapshots.premium_interactions | objects) // {}) as $q
+		| ($q.unlimited == true) as $unlimited
+		| (($q.remaining | numbers) // null) as $remaining
+		| (($q.entitlement | numbers) // null) as $limit
+		| ($remaining != null and $limit != null and $limit > 0) as $counted
+		| (if $unlimited or ($counted | not) then null
+		   elif $remaining <= 0 then 100
+		   else ((($limit - $remaining) * 100 / $limit) | ceil | if . < 0 then 0 else . end)
+		   end) as $pct
+		| ((.quota_reset_date_utc | strings
+		    | if test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$") then . + "T00:00:00Z"
+		      elif test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T") then . else null end) // null) as $reset
+		| {
+		    monthly_pct: $pct,
+		    unlimited: $unlimited,
+		    credits: (if $unlimited then {unit: "AIC", unlimited: true}
+		              elif $counted then {unit: "AIC",
+		                                  used: (($q.credits_used | numbers) // null),
+		                                  limit: $limit,
+		                                  over: (($q.overage_count | numbers) // null),
+		                                  overage_permitted: ($q.overage_permitted == true)}
+		              else null end),
+		    plan: ((.copilot_plan | strings) // null),
+		    resets: {monthly: (if $pct == null then null else $reset end)}
+		  }
+	'
+}
+
+# The buckets one usage body answers, by the harness that measured it: the one
+# dispatch, so the current sample and the prior it is compared with parse
+# through the same reader.
+parse_usage_body() { # HARNESS
+	case "$1" in
+		claude) parse_claude_usage ;;
+		copilot) parse_copilot_usage ;;
+		*) parse_codex_usage "$SESSION_WINDOW_S" ;;
+	esac
+}
+
 # ── Per-lane measurement ─────────────────────────────────────────────────────
 
 # Report a lane from a refusal the cache holds, which is how a lane inside a
@@ -1273,18 +1365,26 @@ measure_lane() {
 		return
 	fi
 
-	if [[ "$harness" == "claude" ]]; then creds="$dir/.credentials.json"; else creds="$dir/auth.json"; fi
+	case "$harness" in
+		claude) creds="$dir/.credentials.json" ;;
+		copilot) creds="$(lane_copilot_token_file "$dir")" ;;
+		*) creds="$dir/auth.json" ;;
+	esac
 
 	if [[ ! -f "$creds" ]]; then
 		emit_lane "$alias" "$harness" "$dir" "no_credentials" "no credential file at $creds" "" '{}'
 		return
 	fi
-	if ! jq -e . "$creds" >/dev/null 2>&1; then
+	# The Copilot token file is the bare token on its first line, never JSON.
+	if [[ "$harness" != copilot ]] && ! jq -e . "$creds" >/dev/null 2>&1; then
 		emit_lane "$alias" "$harness" "$dir" "error" "credential file is not valid JSON" "" '{}'
 		return
 	fi
 
-	if [[ "$harness" == "claude" ]]; then
+	if [[ "$harness" == copilot ]]; then
+		IFS= read -r token <"$creds" || true
+		token="$(trim "$token")"
+	elif [[ "$harness" == "claude" ]]; then
 		token=$(jq -r 'try (.claudeAiOauth.accessToken // empty) catch empty' "$creds")
 		plan=$(jq -r 'try (.claudeAiOauth.subscriptionType // empty) catch empty' "$creds")
 		expires_ms=$(jq -r 'try (.claudeAiOauth.expiresAt // 0) catch 0' "$creds")
@@ -1354,21 +1454,15 @@ measure_lane() {
 		emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" '{}' "$age" "$refreshed"
 		return
 	fi
-	if [[ "$harness" == "claude" ]]; then
-		buckets="$(parse_claude_usage <<<"$raw")"
-	else
-		buckets="$(parse_codex_usage "$SESSION_WINDOW_S" <<<"$raw")"
-	fi
+	buckets="$(parse_usage_body "$harness" <<<"$raw")"
 	if [[ "$prior_at" =~ ^[0-9]+$ && -n "$prior_raw" ]]; then
 		elapsed=$((10#$current_at - 10#$prior_at))
-		if [[ "$harness" == "claude" ]]; then
-			prior_buckets="$(parse_claude_usage <<<"$prior_raw")"
-		else
-			prior_buckets="$(parse_codex_usage "$SESSION_WINDOW_S" <<<"$prior_raw")"
-		fi
+		prior_buckets="$(parse_usage_body "$harness" <<<"$prior_raw")"
 	fi
 	[[ -n "$buckets" ]] || buckets='{}'
 	[[ -n "$prior_buckets" ]] || prior_buckets='{}'
+	# A Copilot plan is named by the usage body, not by a credential file.
+	[[ "$harness" != copilot ]] || plan="$(jq -r '.plan // empty' <<<"$buckets")"
 	emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" "$buckets" "$age" "$refreshed" local "$prior_buckets" "$elapsed"
 }
 
@@ -1975,7 +2069,13 @@ refresh_claude_token() {
 # which is the one thing it must not read as.
 #
 # The binding bucket names the `resets` key of the largest bucket. On a tie the
-# longer window binds (weekly, then model, then session): its wall lasts longest.
+# longer window binds (monthly, then weekly, then model, then session): its
+# wall lasts longest.
+#
+# A Copilot record also carries `credits` and `unlimited` (the header's COPILOT
+# paragraph). Only `unlimited` true from the parse reads as a measured lane
+# with no bucket, at 100 percent headroom; any other record with no bucket is
+# `no_usage_data`.
 emit_lane() {
 	# refreshable is true only for a lane this run found expired and made live,
 	# by its own renewal or by taking one a peer wrote under the lock: a lane
@@ -1998,10 +2098,11 @@ emit_lane() {
 		--arg through "$through" --argjson b "$buckets" \
 		--argjson pb "$prior" --argjson elapsed "$elapsed" "$LANE_MODEL_JQ"'
 		($b // {} | utc_resets) as $b
+		| ($b.unlimited == true) as $unlimited
 		| [$b.session_5h_pct, $b.weekly_pct, $b.model_pct, $b.monthly_pct] | map(select(. != null)) as $known
-		| (if ($status == "ok" and ($known | length) == 0) then "no_usage_data" else $status end) as $st
+		| (if ($status == "ok" and ($known | length) == 0 and ($unlimited | not)) then "no_usage_data" else $status end) as $st
 		| ({status: $st} | lane_measured) as $measured
-		| ([{k: "weekly", p: $b.weekly_pct}, {k: "model", p: $b.model_pct}, {k: "session", p: $b.session_5h_pct}]
+		| ([{k: "monthly", p: $b.monthly_pct}, {k: "weekly", p: $b.weekly_pct}, {k: "model", p: $b.model_pct}, {k: "session", p: $b.session_5h_pct}]
 		   | map(select(.p != null)) | sort_by(-.p) | first // null) as $bind
 		| {
 		    alias: $alias,
@@ -2017,16 +2118,20 @@ emit_lane() {
 		    model_label: ($b.model_label // null),
 		    model_buckets: ($b.model_buckets // []),
 		    monthly_pct: ($b.monthly_pct // null),
+		    credits: ($b.credits // null),
+		    unlimited: ($measured and $unlimited),
 		    claims: $claims,
-		    headroom_pct: (if ($measured and ($known | length) > 0) then (100 - ($known | max)) else null end),
+		    headroom_pct: (if ($measured and ($known | length) > 0) then (100 - ($known | max))
+		                   elif ($measured and $unlimited) then 100 else null end),
 		    binding_bucket: (if ($measured and $bind != null) then $bind.k else null end),
 		    binding_resets_at: (if ($measured and $bind != null) then ($b.resets[$bind.k] // null) else null end),
 		    usage_age_s: $age,
 		    _rate_prior: ($pb | utc_resets),
 		    _rate_elapsed_s: $elapsed,
-		    resets: ($b.resets // {session: null, weekly: null, model: null}),
+		    resets: (($b.resets // {}) | {session: (.session // null), weekly: (.weekly // null),
+		                                 model: (.model // null), monthly: (.monthly // null)}),
 		    detail: (if $st == "no_usage_data" and $detail == ""
-		             then "authenticated, but the usage response carried no session/weekly window"
+		             then "authenticated, but the usage response carried no session/weekly/monthly window"
 		             elif $detail == "" then null else $detail end)
 		  }
 		| with_lane_binding(""; false)'
@@ -2059,10 +2164,10 @@ collect_lanes() {
 	done <<<"$exclude"
 	[[ "$hosted" == "[]" ]] || held="$(jq -r '.[]._id' <<<"$hosted")" || return 1
 	{
-		# `all` is the two harnesses whose accounts this machine measures; the
+		# `all` is the three harnesses whose accounts this machine measures; the
 		# Copilot pool a Pi launch on a `github-copilot/` model spends is
 		# asked for by name alone.
-		for h in claude codex pi; do
+		for h in claude codex copilot pi; do
 			[[ "$harness_filter" == "$h" || ( "$harness_filter" == "all" && "$h" != pi ) ]] || continue
 			while IFS= read -r d; do
 				[[ -n "$d" ]] || continue
@@ -2244,13 +2349,13 @@ host_account_records() { # HOST HARNESS [READINGS] — one lane record per accou
 # map included, and the day, and is a miss under any other.
 host_account_rows() { # ROWS HARNESS [READINGS|CACHE]
 	local rows="$1" want="$2" mode="${3:-}" line field key value bad retire said
-	local account harness status detail s_pct w_pct m_pct m_label s_reset w_reset m_reset
+	local account harness status detail s_pct w_pct m_pct mo_pct m_label s_reset w_reset m_reset mo_reset
 	local buckets
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
 		account=""; harness=""; status="ok"; detail=""; bad=""; said=""
-		s_pct=null; w_pct=null; m_pct=null
-		m_label=""; s_reset=""; w_reset=""; m_reset=""
+		s_pct=null; w_pct=null; m_pct=null; mo_pct=null
+		m_label=""; s_reset=""; w_reset=""; m_reset=""; mo_reset=""
 		# The row's fields, one per line. `printf '%s\n'`, never `%s`: a last
 		# field with no newline after it is a line `read` returns non-zero on,
 		# and the loop body would never see it — which is where a row puts its
@@ -2268,13 +2373,15 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE]
 				session-resets) s_reset="$value" ;;
 				weekly-resets) w_reset="$value" ;;
 				model-resets) m_reset="$value" ;;
-				session-5h-pct|weekly-pct|model-pct)
+				monthly-resets) mo_reset="$value" ;;
+				session-5h-pct|weekly-pct|model-pct|monthly-pct)
 					if [[ -z "$value" ]]; then continue; fi
 					if [[ "$value" =~ ^[0-9]{1,3}$ ]] && (( 10#$value <= 100 )); then
 						case "$key" in
 							session-5h-pct) s_pct=$((10#$value)) ;;
 							weekly-pct) w_pct=$((10#$value)) ;;
 							model-pct) m_pct=$((10#$value)) ;;
+							monthly-pct) mo_pct=$((10#$value)) ;;
 						esac
 						said="$key"
 					else
@@ -2285,7 +2392,7 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE]
 			esac
 		done < <(printf '%s\n' "$line" | tr '\t' '\n')
 		[[ -n "$account" ]] || bad="${bad:-account}"
-		[[ "$harness" =~ ^(claude|codex)$ ]] || bad="${bad:-harness}"
+		[[ "$harness" =~ ^(claude|codex|copilot)$ ]] || bad="${bad:-harness}"
 		if [[ -n "$bad" ]]; then
 			message host-account-invalid "${account:-<unnamed>}" "$bad" >&2
 			continue
@@ -2318,14 +2425,14 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE]
 			printf '%s\n' "$line"
 			continue
 		fi
-		buckets="$(jq -nc --argjson s "$s_pct" --argjson w "$w_pct" --argjson m "$m_pct" \
-			--arg ml "$m_label" --arg sr "$s_reset" --arg wr "$w_reset" --arg mr "$m_reset" '
+		buckets="$(jq -nc --argjson s "$s_pct" --argjson w "$w_pct" --argjson m "$m_pct" --argjson mo "$mo_pct" \
+			--arg ml "$m_label" --arg sr "$s_reset" --arg wr "$w_reset" --arg mr "$m_reset" --arg mor "$mo_reset" '
 			def nz($v): if $v == "" then null else $v end;
-			{ session_5h_pct: $s, weekly_pct: $w, model_pct: $m,
+			{ session_5h_pct: $s, weekly_pct: $w, model_pct: $m, monthly_pct: $mo,
 			  model_label: nz($ml),
 			  model_buckets: (if $m == null then [] else [{label: nz($ml), pct: $m,
 			                                                    resets_at: nz($mr)}] end),
-			  resets: {session: nz($sr), weekly: nz($wr), model: nz($mr)} }')" || {
+			  resets: {session: nz($sr), weekly: nz($wr), model: nz($mr), monthly: nz($mor)} }')" || {
 			message host-account-invalid "$account" buckets >&2
 			continue
 		}
@@ -2531,9 +2638,9 @@ render_table() {
 		def col($s; $n): ($s | tostring) as $t
 		  | if ($t | length) >= $n then $t else $t + (" " * ($n - ($t | length))) end;
 		def num($v): if $v == null then "-" else ($v | tostring) + "%" end;
-		(["LANE","HARNESS","THROUGH","STATUS","PLAN","5H","WEEK","MODEL","HEADROOM","CLAIMS","AGE","DETAIL"] | @tsv),
+		(["LANE","HARNESS","THROUGH","STATUS","PLAN","5H","WEEK","MODEL","MONTH","HEADROOM","CLAIMS","AGE","DETAIL"] | @tsv),
 		(.[] | [ .alias, .harness, (.measured_through // "local"), .status, (.plan // "-"),
-		         num(.session_5h_pct), num(.weekly_pct), num(.model_pct),
+		         num(.session_5h_pct), num(.weekly_pct), num(.model_pct), num(.monthly_pct),
 		         (if .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end),
 		         (if .claims == null then "?" else .claims end),
 		         (if .usage_age_s == null then "-" else (.usage_age_s | tostring) + "s" end),
@@ -3073,6 +3180,7 @@ CLAUDE_USAGE_URL="${ORCH_LANES_CLAUDE_USAGE_URL:-https://api.anthropic.com/api/o
 CLAUDE_TOKEN_URL="${ORCH_LANES_CLAUDE_TOKEN_URL:-https://platform.claude.com/v1/oauth/token}"
 CLAUDE_OAUTH_BETA="oauth-2025-04-20"
 CODEX_USAGE_URL="${ORCH_LANES_CODEX_USAGE_URL:-https://chatgpt.com/backend-api/wham/usage}"
+COPILOT_USAGE_URL="https://api.github.com/copilot_internal/user"
 
 # ~5h, with tolerance — Codex reports window durations that vary by account.
 SESSION_WINDOW_S=18000
@@ -3189,7 +3297,7 @@ parse_argv "$@"
 case "$SUB" in
 	list)
 		HARNESS="${HARNESS:-all}"
-		[[ "$HARNESS" =~ ^(claude|codex|all)$ ]] || die invalid-harness "$@"
+		[[ "$HARNESS" =~ ^(claude|codex|copilot|all)$ ]] || die invalid-harness "$@"
 		validate_lane_settings
 		load_lane_claims
 		# Every row says which credential measured it, local rows included: a
@@ -3213,7 +3321,7 @@ case "$SUB" in
 		;;
 	host-accounts)
 		HARNESS="${HARNESS:-all}"
-		[[ "$HARNESS" =~ ^(claude|codex|all)$ ]] || die invalid-harness "$@"
+		[[ "$HARNESS" =~ ^(claude|codex|copilot|all)$ ]] || die invalid-harness "$@"
 		validate_lane_settings
 		# `local` names no provider, so there is no host copy to report. Refused
 		# rather than answered as 2: the dispatcher's own refusal of a provider

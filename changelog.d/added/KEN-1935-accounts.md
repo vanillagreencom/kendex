@@ -1,0 +1,1 @@
+- orch: `lanes` measures Copilot CLI accounts' monthly AI credit pool, and a Copilot lane's context is read from the record `copilot-statusline` writes, for its handoff.

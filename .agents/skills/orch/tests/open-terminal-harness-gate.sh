@@ -65,6 +65,10 @@ REPO="$TMP_ROOT/repo"
 stage "$REPO"
 PI_AGENT="$TMP_ROOT/pi-agent"
 mkdir -p "$PI_AGENT"
+# The Copilot account a copilot launch naming no lane runs on, so no row reads
+# the developer's own.
+CP_HOME="$TMP_ROOT/copilot-home"
+mkdir -p "$CP_HOME"
 # The pi-hooks carrier Pi loads, sending the window on its Stop payload or not,
 # and listing the lane mail wake among its extensions or not.
 PI_WAKE_MANIFEST='{"pi":{"extensions":["./extensions/hooks.ts","./extensions/lane-mail-wake.ts"]}}'
@@ -96,7 +100,7 @@ launch() { # NAME ARGS...
   local name="$1" rc=0 line
   shift
   ( cd "$REPO" && PATH="$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="${WT_CLI:-$BIN/worktree-stub}" \
-    OT_TERM_LOG="$TMP_ROOT/$name.term" TERMINAL=term TMUX= PI_CODING_AGENT_DIR="$PI_AGENT" \
+    OT_TERM_LOG="$TMP_ROOT/$name.term" TERMINAL=term TMUX= PI_CODING_AGENT_DIR="$PI_AGENT" COPILOT_HOME="$CP_HOME" \
     "${OT:-$REPO/scripts/open-terminal}" --ghostty "$@" CC-1 ) \
     >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err" || rc=$?
   line="$(grep -E "^open-terminal: ($GATE_KEYS) " "$TMP_ROOT/$name.err" || true)"
@@ -133,11 +137,54 @@ a codex --cmd without them is refused, one word field per word|open-terminal: la
 a codex --cmd carrying them passes|passed|${FLEET[*]} --harness codex --cmd 'codex -m gpt-6-astra -c model_reasoning_effort=high $CODEX_QUESTION $CODEX_WORDS {item}'
 a fleet --cmd naming no harness is refused|open-terminal: unsupported-for-oversee harness=none|${FLEET[*]} --cmd 'claude --model opus {item}'
 opencode in a fleet is refused|open-terminal: unsupported-for-oversee harness=opencode|${FLEET[*]} --harness opencode --launch-flags '--model m'
-copilot in a fleet is refused, no switch turning its compaction off and no adapter reading its window|open-terminal: unsupported-for-oversee harness=copilot|${FLEET[*]} --harness copilot --launch-flags '--model claude-opus-5 --reasoning-effort high'
 copilot with no fleet passes|passed|--harness copilot --launch-flags '--model claude-opus-5 --reasoning-effort high'
 opencode with no fleet passes|passed|--harness opencode --launch-flags '--model m'
 claude on a model with no window, with no fleet, passes|passed|--harness claude --launch-flags '--model claude-sonnet-4-6 --effort high'
 ROWS
+
+echo "=== a copilot fleet launch runs only where its account's status line writes the session record ==="
+# `label|settings.json|args|answer`: `-` is no file. The record the status line
+# writes is what the copilot adapter reads the lane's context from, so an
+# account whose status line is another command, or none, is refused, and a
+# hosted lane, whose account is its host's, always is.
+CP_FILE="file=$CP_HOME/settings.json"
+CP_FLAGS="--launch-flags '--model claude-opus-5 --reasoning-effort high'"
+# cp_settings JSON — the account's settings file, or none for `-`.
+cp_settings() {
+  rm -f -- "${CP_HOME:?}/settings.json"
+  [[ "$1" == - ]] || printf '%s\n' "$1" > "$CP_HOME/settings.json"
+}
+while IFS='|' read -r label settings args want; do
+  cp_settings "$settings"
+  want="${want//@FILE@/$CP_FILE}"
+  eval "set -- $args"
+  assert_eq "$(launch copilot "$@")" "$want" "$label"
+done <<ROWS
+an account running copilot-statusline passes|{"statusLine":{"type":"command","command":"/x/.agents/skills/orch/scripts/copilot-statusline","refreshInterval":30}}|${FLEET[*]} --harness copilot $CP_FLAGS|passed
+an account with no settings file is refused|-|${FLEET[*]} --harness copilot $CP_FLAGS|open-terminal: unsupported-for-oversee harness=copilot reason=no-status-line @FILE@
+an account whose status line is another command is refused|{"statusLine":{"type":"command","command":"/x/other-statusline"}}|${FLEET[*]} --harness copilot $CP_FLAGS|open-terminal: unsupported-for-oversee harness=copilot reason=no-status-line @FILE@
+a settings file jq cannot read is refused|not json|${FLEET[*]} --harness copilot $CP_FLAGS|open-terminal: unsupported-for-oversee harness=copilot reason=no-status-line @FILE@
+a hosted copilot fleet lane is refused|{"statusLine":{"type":"command","command":"copilot-statusline"}}|${FLEET[*]} --harness copilot --host $BIN/provider $CP_FLAGS|open-terminal: unsupported-for-oversee harness=copilot reason=hosted
+no fleet passes with no status line|-|--harness copilot $CP_FLAGS|passed
+ROWS
+# One control per rule: the gate's call, the command match and the hosted arm.
+cp_control() { # NAME FILE OLD NEW SETTINGS ARGS WANT LABEL
+  local ctl="$TMP_ROOT/$1" name="$1" want="$7" label="$8"
+  stage "$ctl"
+  mutate_file "$ctl/scripts/$2" "$3" "$4"
+  cp_settings "$5"
+  eval "set -- $6"
+  assert_eq "$(OT="$ctl/scripts/open-terminal" launch "$name" "$@")" "$want" "$label"
+}
+cp_control cp-call open-terminal 'copilot_fleet_gate || exit 1' ':' - "${FLEET[*]} --harness copilot $CP_FLAGS" passed \
+  "control: without the gate's call an account with no status line launches into the fleet"
+cp_control cp-match lib/adapters/copilot.sh '[ "${command##*/}" = copilot-statusline ]' '[ -n "$command" ]' \
+  '{"statusLine":{"type":"command","command":"/x/other-statusline"}}' "${FLEET[*]} --harness copilot $CP_FLAGS" passed \
+  "control: without the command match another status line passes"
+cp_control cp-hosted open-terminal 'copilot) [[ "$LANE_HOST" == local ]] ||' 'copilot) true ||' \
+  '{"statusLine":{"type":"command","command":"copilot-statusline"}}' "${FLEET[*]} --harness copilot --host $BIN/provider $CP_FLAGS" passed \
+  "control: without the hosted arm a hosted copilot fleet lane is not refused"
+cp_settings -
 
 echo "=== a Pi fleet launch runs only where Pi will not compact and its window reaches the hook ==="
 # `label|carrier|user settings|project settings|args|answer`: `-` is no file.

@@ -284,14 +284,30 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
         prefix = "exec " + shlex.join(["bash", "-c",
             'CLAUDE_CODE_OAUTH_TOKEN=$(< "$1") && export CLAUDE_CODE_OAUTH_TOKEN && exec bash -lc "$2"',
             "lane-host", remote_account + "/setup-token"])
+    elif args.harness == "copilot":
+        # The account environment lib/lane-launch.sh's lane_launch_line gives a
+        # local Copilot launch, rebuilt on the host: the token file read into
+        # COPILOT_GITHUB_TOKEN inside the prefix so no value crosses argv, the
+        # shared skills that any COPILOT_HOME turns off named again, folder
+        # trust granted, and the fleet host's GitHub App token cleared inside
+        # the login shell, since the host's profile exports it again there.
+        put(row, remote_account + "/copilot-token", (account / "copilot-token").read_bytes())
+        prefix = "exec " + shlex.join(["bash", "-c",
+            'COPILOT_GITHUB_TOKEN=$(< "$1") && export COPILOT_GITHUB_TOKEN'
+            ' && export COPILOT_HOME="$2" COPILOT_SKILLS_DIRS="$HOME/.agents/skills" COPILOT_ALLOW_ALL=true'
+            ' && exec bash -lc "unset GH_TOKEN GITHUB_TOKEN && $3"',
+            "lane-host", remote_account + "/copilot-token", remote_account])
     else:
         put(row, remote_account + "/auth.json", (account / "auth.json").read_bytes())
         name = "CODEX_HOME" if args.harness == "codex" else "PI_CODING_AGENT_DIR"
         prefix = "exec env " + shlex.quote(name + "=" + remote_account) + " bash -lc"
     # The caller's folder trust and hook approval land where each harness reads
     # them; Claude's relative path resolves in the SSH session's remote home.
-    approval = account / "lane-host" / {"claude": ".claude.json", "codex": "config.toml", "pi": "trust.json"}[args.harness]
-    if approval.exists():
+    # A copilot lane places no file: its folder trust is the COPILOT_ALLOW_ALL
+    # its prefix sets.
+    approval = {"claude": ".claude.json", "codex": "config.toml", "pi": "trust.json"}.get(args.harness)
+    approval = account / "lane-host" / approval if approval else None
+    if approval is not None and approval.exists():
         data = approval.read_bytes()
         if args.harness == "claude":
             # Every Claude lane and the host user share the one ~/.claude.json.
@@ -400,7 +416,10 @@ create renders nothing and installs no Pi package: the worktree carries the
 render its base branch commits. A clone whose checkout lacks that render exits
 1 with render-missing, and one whose render is not committed at HEAD exits 1
 with render-untracked.
-Claude reads ACCOUNT/setup-token; Codex and Pi read ACCOUNT/auth.json. When present,
+Claude reads ACCOUNT/setup-token; Codex and Pi read ACCOUNT/auth.json. Copilot
+reads ACCOUNT/copilot-token into COPILOT_GITHUB_TOKEN under COPILOT_HOME at the
+row's account, GH_TOKEN and GITHUB_TOKEN cleared, COPILOT_SKILLS_DIRS at the
+host's shared skills and COPILOT_ALLOW_ALL=true for folder trust. When present,
 ACCOUNT/lane-host/.claude.json merges into the remote home's .claude.json (its
 top-level keys set, its project entries merged key by key), and
 ACCOUNT/lane-host/config.toml (Codex) or ACCOUNT/lane-host/trust.json (Pi) in the
@@ -428,7 +447,7 @@ ownership exits 75; --reuse and --relaunch pass --reuse to the worktree
 command when the target exists; a missing target uses plain create.
 Every create passes --hosted, so the item's worktree sits at the clone's one
 hosted lane path (worktree path --hosted), and path= names it.
-stop --item ID --harness claude|codex|pi resolves the owned worktree through
+stop --item ID --harness claude|codex|pi|copilot resolves the owned worktree through
 the installed worktree command, signals only matching harness processes whose
 current directory is that worktree, waits for them to exit, and prints
 stopped item=ID processes=COUNT. A worktree that is no longer a directory exits
@@ -457,7 +476,7 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
     make = sub.add_parser("create")
     for field in ("item", "repo", "account"):
         make.add_argument("--" + field, required=True)
-    make.add_argument("--harness", required=True, choices=("claude", "codex", "pi"))
+    make.add_argument("--harness", required=True, choices=("claude", "codex", "pi", "copilot"))
     make.add_argument("--relaunch", action="store_true")
     make.add_argument("--reuse", action="store_true")
     for verb in ("cat", "put", "append", "touch", "close"):
@@ -469,7 +488,7 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
             action.add_argument("--merged", action="store_true")
     stopping = sub.add_parser("stop")
     stopping.add_argument("--item", required=True)
-    stopping.add_argument("--harness", required=True, choices=("claude", "codex", "pi"))
+    stopping.add_argument("--harness", required=True, choices=("claude", "codex", "pi", "copilot"))
     sub.add_parser("list")
     args = parser.parse_args()
     inventory = os.environ.get("LANE_HOST_SSH_INVENTORY", "")

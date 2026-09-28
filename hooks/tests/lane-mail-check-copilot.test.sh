@@ -106,11 +106,11 @@ copilot_context_unwritable() { # start|prompt
 lane_unread() { # ITEM TEXT
   (cd "$LANE" && "$LANE_MAIL" inbox --item "$1" --root "$LANE" --peek) | grep -cF -- "$2" || :
 }
-# A Copilot lane's passing turn end reports two gaps: the context, which no
-# orch adapter reads out of a Copilot transcript, and the account, which
-# `lanes` keeps no Copilot inventory for.
+# A Copilot lane's passing turn end in the offline world reports two gaps: the
+# context, since no status line wrote a session record for s1 under the
+# account, and the account, which that world's home holds no lane for.
 cop_gap() {
-  printf 'harness-unlisted=%s;account=unlisted' "$LANE/.github/hooks"
+  printf 'session-record=missing;account=unlisted'
 }
 # Every keyed value the run wrote, in order, each under its own English: the
 # leading run keyed_block reads stops at the first explanation.
@@ -437,9 +437,9 @@ assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
   "RC=0 first=lane-mail-check: unread=1 decision=block" \
   "a hook under an account directory not spelled copilot is Copilot's by the registry document beside it"
 
-# The context mark on Copilot: no orch adapter reads a Copilot transcript, so
-# the mark is reported unjudged and never holds a turn end, whatever the
-# transcript carries.
+# The context mark on Copilot is read from the session record its status line
+# writes, never from the transcript: with no record the mark is reported
+# unjudged and never holds a turn end, whatever the transcript carries.
 new_copilot_lane copilot_context ken-204
 mkdir -p "$LANE/tmp/lane-mail/KEN-204"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-204 >/dev/null)
@@ -451,6 +451,64 @@ copilot_stop "$COP_TRANSCRIPT"
 assert_eq "RC=$RC keyed=$(cop_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keyed=$(cop_gap) stdout=" \
   "a Copilot transcript is never read for a figure, so a usage line past the mark does not hold the turn end"
 : > "$COP_TRANSCRIPT"
+
+# The record copilot-statusline writes under the account the session runs on,
+# COPILOT_HOME, for session s1 and its transcript, then judged by the shared
+# judge on the capacity the copilot adapter names: 80 percent of the window.
+COP_ACCOUNT="$TMP_ROOT/cop-account"
+cop_record() { # TOKENS WINDOW [TRANSCRIPT]
+  jq -nc --arg t "${3:-$COP_TRANSCRIPT}" --argjson n "$1" --argjson w "$2" \
+    '{session_id:"s1", transcript_path:$t, model:{id:"claude-opus-5"},
+      context_window:{current_context_tokens:$n, context_window_size:$w}}' |
+    COPILOT_HOME="$COP_ACCOUNT" "$REPO_ROOT/skills/orch/scripts/copilot-statusline" >/dev/null
+}
+cop_recorded() { # the reading the hook recorded in the lane's mailbox
+  jq -c '[.harness, .tokens, .window, .model]' "$LANE/tmp/lane-mail/KEN-204/context.json" 2>/dev/null || echo none
+}
+# COPILOT_HOME names the account, which `lanes` lists and reads no token in:
+# the account is unmeasured until the token row below.
+cop_record 100000 1000000
+copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
+assert_eq "RC=$RC keyed=$(cop_keys) recorded=$(cop_recorded)" \
+  'RC=0 keyed=account=unmeasured recorded=["copilot",100000,800000,"claude-opus-5"]' \
+  "a Copilot lane's fresh record is read, recorded with the compaction point as capacity, and judged room"
+cop_record 400000 1000000
+copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
+assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
+  "RC=0 first=lane-mail-check: context=400000 decision=block" \
+  "a record at the 400000-token cap holds the turn end with the documented block answer"
+cop_record 130000 200000
+copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
+assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: context=130000" \
+  "a 200K window is judged on its own compaction point, past half of 160000"
+cop_record 400000 1000000 "$TMP_ROOT/session-state/s2/events.jsonl"
+copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
+assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=session-record=wrong-transcript;account=unmeasured" \
+  "a record naming another transcript is unmeasured, never read as this session's"
+cop_record 400000 1000000
+jq -c '.written_at = 1' "$COP_ACCOUNT/lane-status/s1.json" > "$TMP_ROOT/stale.json"
+mv -- "$TMP_ROOT/stale.json" "$COP_ACCOUNT/lane-status/s1.json"
+copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
+assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=session-record=stale;account=unmeasured" \
+  "a record the status line stopped refreshing is unmeasured, never read as room"
+
+# The account mark on Copilot: the account the session runs on is measured
+# through `lanes`, and a pool at zero holds the turn end at the headroom mark.
+cop_record 100000 1000000
+printf 'ghu_test\n' > "$COP_ACCOUNT/copilot-token"
+COP_FETCH="$TMP_ROOT/cop-fetch"
+printf '#!/bin/sh\nprintf "200 \\n"\nprintf "%%s\\n" "$COP_POOL"\n' > "$COP_FETCH"
+chmod +x "$COP_FETCH"
+COP_SPENT='{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":0,"overage_permitted":true}}}'
+COP_ROOM='{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":900}}}'
+copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT" "ORCH_LANES_FETCH_CMD=$COP_FETCH" "COP_POOL=$COP_SPENT"
+assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
+  "RC=0 first=lane-mail-check: headroom=0 decision=block" \
+  "a Copilot account whose pool is at zero holds the turn end, overage permitted or not"
+copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT" "ORCH_LANES_FETCH_CMD=$COP_FETCH" "COP_POOL=$COP_ROOM" "ORCH_LANES_USAGE_TTL=0"
+assert_eq "RC=$RC keyed=$(cop_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keyed= stdout=" \
+  "a Copilot account with room and a fresh record end the turn with nothing to report"
+rm -f -- "${COP_ACCOUNT:?}/copilot-token"
 
 # --- the checkout's overseer mailbox --------------------------------------
 # The overseer mailbox has one reader, the session the checkout's fleet record
@@ -820,18 +878,28 @@ copilot_tool halt "$MKDIR_216" object
 expect 2 "lane-mail-check: mailbox-missing=$LANE/tmp/lane-mail" \
   "control: without the toolArgs read the command that restores the mailbox is refused"
 
-# The Copilot guard on the transcript read removed: the adapters refuse the
-# harness, and every Copilot turn end is held on a transcript nothing reads.
-mutant copilot-reads-transcript -e 's@^  if \[ -z "\$HARNESS" \] || \[ "\$HARNESS" = copilot \]; then$@  if [ -z "$HARNESS" ]; then@'
-new_copilot_lane control_cop_transcript ken-217 "$MUTANT_PATH"
+# The session-record read cut: a Copilot turn end falls to the transcript
+# read, which holds no count, and a record at the cap no longer holds it.
+mutant copilot-no-record -e 's@^  if \[ "\$HARNESS" = copilot \]; then$@  if false; then@'
+new_copilot_lane control_cop_record ken-217 "$MUTANT_PATH"
 mkdir -p "$LANE/tmp/lane-mail/KEN-217"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-217 >/dev/null)
-usage_line claude 900000 > "$COP_TRANSCRIPT"
-copilot_stop "$COP_TRANSCRIPT"
-assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
-  "RC=0 first=lane-mail-check: transcript=unread decision=block" \
-  "control: with a Copilot transcript read, the turn end is held on a reading no adapter makes"
-: > "$COP_TRANSCRIPT"
+cop_record 400000 1000000
+copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
+assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=" \
+  "control: without the record read a Copilot lane at the cap ends its turn"
+# The account arm cut: a Copilot account at zero is reported unlisted and the
+# turn ends.
+mutant copilot-no-account -e 's@^    claude | codex | copilot) ;;$@    claude | codex) ;;@'
+new_copilot_lane control_cop_account ken-219 "$MUTANT_PATH"
+mkdir -p "$LANE/tmp/lane-mail/KEN-219"
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-219 >/dev/null)
+cop_record 100000 1000000
+printf 'ghu_test\n' > "$COP_ACCOUNT/copilot-token"
+copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT" "ORCH_LANES_FETCH_CMD=$COP_FETCH" "COP_POOL=$COP_SPENT" "ORCH_LANES_USAGE_TTL=0"
+assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: account=unlisted" \
+  "control: without copilot in the account arm a spent pool is reported unlisted and the turn ends"
+rm -f -- "${COP_ACCOUNT:?}/copilot-token"
 
 # The halt arm judging the marks: an account read then runs before a tool
 # call, outside the deadline the halt decision has to land in.

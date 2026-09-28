@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# copilot-statusline — the `statusLine` command a Copilot CLI lane runs: it
+# persists the session JSON the CLI hands it on stdin as the session's record
+# and prints one footer line for the CLI to display.
+#
+# Usage, in the account's settings.json (<COPILOT_HOME>/settings.json):
+#   "statusLine": {"type": "command",
+#                  "command": "<path>/.agents/skills/orch/scripts/copilot-statusline",
+#                  "refreshInterval": 30}
+#
+# Copilot keeps no live context figure a reader can open: the transcript holds
+# no live count and the footer is a display. This command is the one live
+# producer. The record it writes through lib/copilot-session.sh, at
+# `<COPILOT_HOME>/lane-status/<session_id>.json`, is what the lane's turn-end
+# hook reads its context through (lib/adapters/copilot.sh), and
+# copilot_session_write there states its fields. The account directory is the
+# one lib/lane-context.sh names for a copilot session, COPILOT_HOME or the
+# CLI's default home, so the writer and every reader name one directory.
+#
+# Stdin is the CLI's own object, as Copilot 1.0.88 sends it: session_id,
+# transcript_path, model.id, context_window.used_percentage,
+# context_window.current_context_tokens, context_window.context_window_size,
+# ai_used.total_nano_aiu, cost.total_premium_requests, allow_all_enabled. It is
+# persisted as received; nothing here defaults a missing figure.
+#
+# Output: one footer line on stdout, `<model> <used>% ctx <credits> AIC`, each
+# figure `-` where the CLI sent none. A refusal puts `copilot-statusline:
+# <key>=<value>` on stderr and exits 1, and the CLI keeps the previous line; the
+# keys are copilot_session_write's own, payload=invalid-json, payload=unbound
+# and record=unwritable, plus missing-tools=jq where jq is not on PATH. A
+# refreshInterval under COPILOT_SESSION_MAX_AGE_S (120 seconds) keeps the
+# record fresh for its readers, which read an older record as unmeasured.
+set -euo pipefail
+
+message() { # KEY VALUE
+  printf 'copilot-statusline: %s=%s\n' "$1" "$2"
+  case "$1=$2" in
+    missing-tools=*) echo "jq reads the session JSON and is not on PATH; no record was written" ;;
+    payload=invalid-json) echo "stdin was not a JSON object; no record was written" ;;
+    payload=unbound) echo "the session JSON names no session_id a record can be bound to; no record was written" ;;
+    record=unwritable) echo "the record could not be written under the account directory; the previous record, if any, stands" ;;
+  esac
+}
+
+command -v jq >/dev/null 2>&1 || { message missing-tools jq >&2; exit 1; }
+
+# shellcheck source=lib/lane-context.sh
+. "${BASH_SOURCE[0]%/*}/lib/lane-context.sh"
+
+INPUT="$(cat)"
+NOW="$(date +%s)"
+# Fed through a here-string, never a pipe: the writer's reason is a variable
+# it sets, and a pipeline would set it in a subshell this script never sees.
+if ! copilot_session_write "$(lane_context_caller_cfg copilot)" "$NOW" <<<"$INPUT"; then
+  message "${COPILOT_SESSION_REASON%%=*}" "${COPILOT_SESSION_REASON#*=}" >&2
+  exit 1
+fi
+
+# The footer, from the one reader of the record's fields.
+copilot_session_fields "$(jq -c '{status: .}' <<<"$INPUT")"
+CREDITS='-'
+# total_nano_aiu over 1e9 is AI credits; two decimals is the CLI's own footer.
+[ -z "$CS_NANO_AIU" ] || CREDITS="$(awk -v n="$CS_NANO_AIU" 'BEGIN { printf "%.2f", n / 1000000000 }')"
+printf '%s %s%% ctx %s AIC\n' "${CS_MODEL:--}" "${CS_USED_PCT:--}" "$CREDITS"

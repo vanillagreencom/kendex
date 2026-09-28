@@ -2744,7 +2744,7 @@ expect 2 "lane-mail-check: context=600000" \
 # The whole-file fallback dropped: a session whose recent window is all tool
 # results reads as no context at all and runs to its wall.
 MUTANT_SOURCE="$WINDOW_HOOK" mutant no-window-fallback \
-  -e 's@^  if \[ -z "\$READING" \] && ! READING=\$(lane_context_reading .*); then$@  if false; then@'
+  -e 's@^    if \[ -z "\$READING" \] && ! READING=\$(lane_context_reading .*); then$@    if false; then@'
 new_handoff_lane control_window KEN-78
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 600000

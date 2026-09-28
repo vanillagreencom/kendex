@@ -1554,12 +1554,12 @@ assert_eq "$RC|$OUT" \
 fleet_state
 
 # A Copilot overseer: the printed line is its own row's, the brief on -i and
-# the account its record names under COPILOT_HOME. Every other mode needs a
-# reading of a Copilot account, which lanes does not make, and refuses before
-# any; a record naming no account refuses the line rather than print one on
-# an account nothing named.
-COPILOT_ENV="COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS='$H/.agents/skills'"
-COPILOT_LINE="env COPILOT_HOME='$H/.1copilot' $COPILOT_ENV copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --allow-all -i '$BRIEF'"
+# the account its record names under COPILOT_HOME with the rest of a Copilot
+# launch's environment. Its marks are judged on the account's monthly pool,
+# which lanes measures; a record naming no account refuses the line rather
+# than print one on an account nothing named.
+COPILOT_ENV="env -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS='$H/.agents/skills' COPILOT_ALLOW_ALL=true"
+COPILOT_LINE="$COPILOT_ENV COPILOT_HOME='$H/.1copilot' copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --allow-all -i '$BRIEF'"
 copilot_row() { # NAME [SUCCEED_BIN] ARGS... — the run on a pane whose record names $H/.1copilot
   local name="$1" bin="$2"
   shift 2
@@ -1570,9 +1570,14 @@ copilot_row() { # NAME [SUCCEED_BIN] ARGS... — the run on a pane whose record 
 copilot_row printcopilot '' --print-launch-line --harness copilot -- --allow-all
 assert_eq "$RC|$OUT|$(overseers)" "0|$COPILOT_LINE|0" \
   "a copilot overseer's printed line runs copilot on its recorded account with the brief on -i"
-copilot_row checkcopilot '' --check-marks --harness copilot
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "1|oversee-succeed: copilot-unmeasured pane=$CALLER_PANE mode=check" \
-  "a copilot overseer's marks are refused before any account reading, lanes measuring none"
+# The account its record names holds a token and an 80 percent spent pool.
+mkdir -p "$H/.1copilot"
+printf 'ghu_fixture\n' > "$H/.1copilot/copilot-token"
+printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":200}}}' > "$FIXTURE_DIR/.1copilot.json"
+COPILOT_DIRS="$H/.claude:$H/.eclaude:$H/.codex:$H/.1copilot"
+LANE_DIRS="$COPILOT_DIRS" copilot_row checkcopilot '' --check-marks --harness copilot
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=20" \
+  "a copilot overseer's marks are judged on its account's monthly pool"
 fleet_state
 new_caller "$UNDER_MARK"
 run_succeed printcopilotnone '' --print-launch-line --harness copilot -- --allow-all
@@ -1583,13 +1588,13 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "1|oversee-succeed: copilot-account-unkno
 COPILOTARM="$(mutant_scripts copilotarm lib/overseer-launch.sh)" || exit 1
 mutate_file "$COPILOTARM/lib/overseer-launch.sh" '    copilot) cmd="copilot" brief_flag=" -i" ;;' '    copilot-x) ;;'
 copilot_row printcopilotctl "$COPILOTARM/oversee-succeed" --print-launch-line --harness copilot -- --allow-all
-assert_eq "$RC|$(grep -c -F "env COPILOT_HOME='$H/.1copilot' $COPILOT_ENV codex " <<<"$OUT")" "0|1" \
+assert_eq "$RC|$(grep -c -F "$COPILOT_ENV COPILOT_HOME='$H/.1copilot' codex " <<<"$OUT")" "0|1" \
   "control: without its arm the copilot line is built as codex's"
-COPILOTMODE="$(mutant_scripts copilotmode oversee-succeed)" || exit 1
-mutate_file "$COPILOTMODE/oversee-succeed" '[[ "$CALLER_HARNESS" != copilot || "$MODE" == print ]]' '[[ "$CALLER_HARNESS" != copilot || "$MODE" != print ]]'
-copilot_row checkcopilotctl "$COPILOTMODE/oversee-succeed" --check-marks --harness copilot
-assert_eq "$RC|$(grep -c '^oversee-succeed: copilot-unmeasured ' <<<"$OUT")" "0|0" \
-  "control: without the refusal a copilot overseer's marks are judged on a reading lanes cannot make"
+COPILOTMODE="$(mutant_scripts copilotmode lib/lane-launch.sh)" || exit 1
+mutate_file "$COPILOTMODE/lib/lane-launch.sh" '    claude | codex | copilot) printf' '    claude | codex) printf'
+LANE_DIRS="$COPILOT_DIRS" copilot_row checkcopilotctl "$COPILOTMODE/oversee-succeed" --check-marks --harness copilot
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "0|oversee-succeed: mark-unmeasured kind=headroom reason=headroom-unreadable succession=on" \
+  "control: with lanes judging no copilot pick the copilot overseer's account reads unmeasured"
 COPILOTACCT="$(mutant_scripts copilotacct oversee-succeed)" || exit 1
 mutate_file "$COPILOTACCT/oversee-succeed" '[[ "$CALLER_HARNESS" != copilot || -n "$CALLER_CFG" ]] || die copilot-account-unknown' ': || die copilot-account-unknown'
 fleet_state

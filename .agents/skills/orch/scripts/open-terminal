@@ -539,6 +539,12 @@ fi
 #           pi-hooks carrier that sends the window, both read on this machine
 #           under the Pi root the lane runs on (pi_local_gate), or for a hosted
 #           lane on its host once create has made it (host_pi_gate)
+#   copilot its account's settings.json running copilot-statusline as its
+#           statusLine command, the one producer of the session record the
+#           copilot adapter reads, read on this machine under the account the
+#           lane runs on once the lane is resolved (copilot_fleet_gate); a
+#           hosted lane's account is on its host, which nothing here reads for
+#           it, so a hosted copilot fleet lane is refused
 # Every other harness, and a launch naming none, has no adapter. A wake is not
 # judged: it re-enters a session its own launch was admitted with, and names no
 # model of its own.
@@ -612,6 +618,7 @@ if [[ "$FLEET" == true && "$WAKE" != true ]]; then
         fi
       fi
       ;;
+    copilot) [[ "$LANE_HOST" == local ]] || { ot_message unsupported-for-oversee "harness=copilot" "reason=hosted" >&2; exit 1; } ;;
     *) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; exit 1 ;;
   esac
 fi
@@ -960,9 +967,9 @@ if [[ -n "$LANE" ]]; then
   # above has already established it names.
   #
   # Asked where lane_pick_harness names the account this launch spends:
-  # claude and codex on their own accounts' windows, and Pi on the account its
-  # model's provider bills, a `pi-claude/` model on the Claude seat and a
-  # `github-copilot/` one on the Copilot pool. A Pi launch on any other
+  # claude, codex and copilot on their own accounts' windows, and Pi on the
+  # account its model's provider bills, a `pi-claude/` model on the Claude seat
+  # and a `github-copilot/` one on the Copilot pool. A Pi launch on any other
   # provider is asked too, and `lanes` refuses it as unmeasured. A launch of a
   # harness it names nothing for has no window `lanes` reads and keeps
   # launching as it did.
@@ -996,10 +1003,24 @@ if [[ -n "$LANE" ]]; then
   ot_message lane-selected "lane=$LANE_ENV"
   pi_lane_root_apply || exit 1
 fi
+# The copilot arm of the fleet gate above, run once the account is known: the
+# lane's where one was named or picked, else the one a launch with none runs on
+# (launch_finish). Its statusLine must run copilot-statusline, since that
+# command writes the session record the turn-end hook judges the lane's context
+# on; with no record every turn end reads the context unmeasured.
+copilot_fleet_gate() {
+  local home
+  [[ "$FLEET" == true && "$WAKE" != true && "$LAUNCH_HARNESS" == copilot ]] || return 0
+  home="${LANE_ENV#COPILOT_HOME=}"
+  [[ -n "$LANE_ENV" ]] || home="$(lane_context_caller_cfg copilot)"
+  lane_adapter_copilot_status_line "$home" \
+    || { ot_message unsupported-for-oversee "harness=copilot" "reason=no-status-line" "file=$home/settings.json" >&2; return 1; }
+}
+copilot_fleet_gate || exit 1
 # The hosted pane is driven by keystrokes, the provider's --account is the
-# lane's config dir and the host protocol names three harnesses, so each gap is
+# lane's config dir and the host protocol names four harnesses, so each gap is
 # refused before any host is created.
-if [[ "$LANE_HOST" != local && ( "$TERMINAL_MODE" != tmux || -z "$LANE_ENV" || ! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then
+if [[ "$LANE_HOST" != local && ( "$TERMINAL_MODE" != tmux || -z "$LANE_ENV" || ! "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ) ]]; then
   ot_message host-invalid "host=$LANE_HOST" "mode=$TERMINAL_MODE" "lane=$LANE_ENV" "harness=$HARNESS" >&2
   exit 1
 fi
@@ -2321,7 +2342,7 @@ launch_finish() {
       cmd="env $compaction_env $cmd"
     fi
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && exec $cmd")"
-  elif [[ -n "$LANE_ENV" || "$HARNESS" == codex ]]; then
+  elif [[ -n "$LANE_ENV" || "$HARNESS" == codex || "$HARNESS" == copilot ]]; then
     # Folder trust belongs to the DIRECTORY the harness opens into, not to the
     # account a launch was aimed at, so the preparation runs for every local
     # codex launch and not only for one under --lane. A launch with no lane
@@ -2329,7 +2350,12 @@ launch_finish() {
     # shape workflows/handoff.md § 2 documents passes no --lane at all. A
     # claude launch under --lane is prepared the same way, into that lane's
     # own config; one with no lane keeps the launch verification's dialog
-    # nudge below as its answer.
+    # nudge below as its answer. Every local copilot launch takes this branch
+    # too, lane or none: its launch line carries the account environment
+    # (lib/lane-launch.sh § lane_launch_line), the App token cleared and the
+    # folder trust granted among it, and a launch with no lane runs on the
+    # account the relaunch store reads (lib/lane-relaunch.sh), the one
+    # lane_context_caller_cfg names for copilot.
     #
     # Which variable, and which directory it starts from: the resolved lane
     # where one was picked, otherwise the account the pane would have opened on
@@ -2341,7 +2367,10 @@ launch_finish() {
     if [[ -n "$LANE_ENV" ]]; then
       launch_var="${LANE_ENV%%=*}"; launch_home="${LANE_ENV#*=}"
     else
-      launch_var=CODEX_HOME; launch_home="$(launch_ambient_codex_home)" || return 1
+      case "$HARNESS" in
+        copilot) launch_var=COPILOT_HOME; launch_home="$(lane_context_caller_cfg copilot)" ;;
+        *) launch_var=CODEX_HOME; launch_home="$(launch_ambient_codex_home)" || return 1 ;;
+      esac
     fi
     if lane_trust_prepare "$HARNESS" "$launch_home" "$wt"; then
       launch_home="$LANE_TRUST_HOME"

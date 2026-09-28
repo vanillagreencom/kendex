@@ -29,6 +29,8 @@ source "${BASH_SOURCE[0]%/*}/adapters/claude.sh"
 source "${BASH_SOURCE[0]%/*}/adapters/codex.sh"
 # shellcheck source=adapters/pi.sh
 source "${BASH_SOURCE[0]%/*}/adapters/pi.sh"
+# shellcheck source=adapters/copilot.sh
+source "${BASH_SOURCE[0]%/*}/adapters/copilot.sh"
 
 # The word an adapter prints for a usage object whose field names it does not
 # read, kept apart from a reading and from the empty answer a transcript with
@@ -140,12 +142,18 @@ lane_context_shape() {
 # `pi` is no shape a pane offers: it is the Copilot pool's account harness a
 # pi overseer names (lib/overseer-launch.sh § ol_account), whose account is the
 # Pi root it runs on, PI_CODING_AGENT_DIR or the home's `.pi/agent`.
+#
+# Copilot's variable is COPILOT_HOME, the whole config root, and a Copilot
+# launch builds no private home under it, so the value is the account. The
+# shape naming no harness does not read it: a session that shape describes is
+# claude or codex or neither.
 lane_context_caller_cfg() { # SHAPE
   local home="${LANES_HOME:-$HOME}"
   case "${1:-}" in
     claude) printf '%s\n' "${CLAUDE_CONFIG_DIR:-$home/.claude}" ;;
     codex) lane_launch_home_account "${CODEX_HOME:-$home/.codex}" ;;
     pi) lane_adapter_pi_agent_dir ;;
+    copilot) printf '%s\n' "${COPILOT_HOME:-$home/.copilot}" ;;
     *)
       [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ -n "${CODEX_HOME:-}" ] ||
         lane_launch_home_account "${CLAUDE_CONFIG_DIR:-${CODEX_HOME:-}}"
@@ -175,7 +183,8 @@ lane_context_mark_model() { # HARNESS MODEL
 }
 
 # lane_context_reading HARNESS [WINDOW] — one reading of the transcript on
-# stdin, through HARNESS's adapter: `<tokens>\t<window>\t<model>`, the word
+# stdin, or for copilot of the session record copilot_session_read accepted,
+# through HARNESS's adapter: `<tokens>\t<window>\t<model>`, the word
 # LANE_CONTEXT_UNREAD for a usage object the adapter does not read, or nothing
 # for a transcript holding no usage yet. WINDOW is a window the harness named
 # outside its transcript, which only Pi's turn-end payload does. Exit 3 names a
@@ -187,6 +196,7 @@ lane_context_reading() { # HARNESS [WINDOW] [DIR]
     claude) lane_adapter_claude_reading "$LANE_CONTEXT_UNREAD" ;;
     codex) lane_adapter_codex_reading "$LANE_CONTEXT_UNREAD" ;;
     pi) lane_adapter_pi_reading "$LANE_CONTEXT_UNREAD" "${2:-}" "${3:-$PWD}" ;;
+    copilot) lane_adapter_copilot_reading "$LANE_CONTEXT_UNREAD" ;;
     *) return 3 ;;
   esac
 }
@@ -213,7 +223,7 @@ LANE_CONTEXT_OWNED_REASON=""
 lane_context_transcript_owned() { # HARNESS PATH SESSION HOME
   LANE_CONTEXT_OWNED_REASON=""
   case "${1:-}" in
-    claude | codex) ;;
+    claude | codex | copilot) ;;
     *) LANE_CONTEXT_OWNED_REASON=harness-unlisted; return 3 ;;
   esac
   if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then

@@ -25,7 +25,7 @@ ot_message() { # REASON FIELD=VALUE...
     brief-file-unreadable) text='The --brief-file path is not a readable file. Write the brief to a regular file and pass its path. Nothing was launched.' ;;
     brief-file-empty) text='The --brief-file holds no text but whitespace, so the harness would start with nothing to do and hold its seat idle. Write the brief into the file. Nothing was launched.' ;;
     desktop-harness) text='Use the Codex Desktop thread tools for this harness.' ;;
-    unsupported-for-oversee) text='No harness adapter reads this fleet lane'"'"'s context window, so nothing would judge its handoff mark. Nothing was launched. harness=none is a launch naming no harness; reason=no-window-read is a Pi whose installed pi-hooks sends no context_window on its Stop payload, so install the current pi-hooks. harness=copilot stays refused until two things exist: a reader of a Copilot session'"'"'s context window, and a shared handoff judge for a harness whose compaction stays on, as Copilot 1.0.88'"'"'s does, no switch turning it off. A hosted lane'"'"'s host keeps the item its create made, so launch it again with --relaunch after the fix. Launch the lane on claude, codex or pi.' ;;
+    unsupported-for-oversee) text='No harness adapter reads this fleet lane'"'"'s context window, so nothing would judge its handoff mark. Nothing was launched. harness=none is a launch naming no harness; reason=no-window-read is a Pi whose installed pi-hooks sends no context_window on its Stop payload, so install the current pi-hooks. harness=copilot with reason=no-status-line is an account whose settings.json runs no copilot-statusline as its statusLine command, the one producer of a Copilot session'"'"'s context reading, so set it there as references/copilot-runtime.md shows; reason=hosted is a hosted Copilot lane, whose host account nothing here reads for that setting. A hosted lane'"'"'s host keeps the item its create made, so launch it again with --relaunch after the fix. Launch the lane on claude, codex, pi or a local copilot.' ;;
     launch-window-unknown) text='The claude adapter names no context window for this model, so this fleet lane would run with compaction off and no capacity for the shared rule to judge. Nothing was launched. Launch it on a model the window table in scripts/lib/adapters/claude.sh names.' ;;
     launch-compaction-missing) text='This fleet --cmd command lacks the required compaction policy settings, so the handoff rule cannot rely on the expected capacity. Nothing was launched. Add the words this line names, in that order, inside the command, each quoted so the shell passes it whole: the claude word as --settings='"'"'{"env":{"DISABLE_AUTO_COMPACT":"1"}}'"'"'.' ;;
     compaction-on) text='Pi would compact this fleet lane on its own before its handoff mark. Nothing was launched. Set compaction.enabled to false in the settings file named, and leave no project .pi/settings.json setting it back to true; the shared context rule controls handoff. A hosted lane'"'"'s host keeps the item its create made, so launch it again with --relaunch after the fix.' ;;
@@ -112,7 +112,7 @@ ot_message() { # REASON FIELD=VALUE...
     worktree-links-failed) text='The kept tree has configured symlinks the repair could not restore, so the lane could not reach its own .agents scripts. The item was not launched.' ;;
     resume-lineless) text='The hosted codex resume carries no continuation line, because codex resume refuses a prompt beside --last. The lane is up and idle: paste its continuation line into the pane per oversee-lanes.md section Talking to a lane, Pane paste.' ;;
     host-resolve-failed) text='The lane-host helper could not resolve the host.' ;;
-    host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex or pi. Nothing was created.' ;;
+    host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex, pi or copilot. Nothing was created.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
     host-start-failed) text='The item is recorded parked, its sandbox stopped with its disk kept, and the lane host could not bring that sandbox back: exit= is the start verb'"'"'s status, its own words above this line, and cause=answer-unparsed a start that succeeded without its sandbox-started item=ID line, so nothing confirms the sandbox is up. No create ran and the record still reads parked: fix what the provider names and relaunch the item again.' ;;
     host-started) text='The parked item'"'"'s sandbox is up again on the disk the park kept, and its record now reads stopped with parked dropped, which is that sandbox'"'"'s state from here: up, no harness in it. create --relaunch now resumes the harness on it; a create that fails after this line leaves the stopped record, which a plain relaunch recovers with no start, going straight to create --relaunch.' ;;
@@ -229,9 +229,10 @@ Options:
                     a --cmd launch on a named config dir or alias, with no
                     --harness — has no row there and reaches no such gate, its
                     argv being the caller's own. A NAMED lane is then judged
-                    on the window for that model, claude and codex, and pi on
-                    the account its model's provider bills (--provider beside
-                    a bare --model counts). A pi-claude/ model is judged on
+                    on the window for that model, claude and codex, copilot
+                    on its account's monthly credit pool, and pi on the
+                    account its model's provider bills (--provider beside a
+                    bare --model counts). A pi-claude/ model is judged on
                     the Claude seat as a claude lane is, and `auto` with
                     --harness pi picks it among the Claude seats, runs it
                     under CLAUDE_CONFIG_DIR and refuses it as lane-unavailable
@@ -289,7 +290,7 @@ Options:
   --host <spec>     Launch on a lane host: `local`, or a provider script path.
                     Without it ORCH_LANE_HOST decides, as `lane-host resolve`
                     prints it. A hosted launch needs tmux mode, a resolved --lane
-                    and --harness claude, codex or pi. It creates no local worktree: `lane-host create`
+                    and --harness claude, codex, pi or copilot. It creates no local worktree: `lane-host create`
                     receives the lane's config dir as --account, the window
                     types `ssh` to the returned target, waits for the remote
                     prompt, then types the remote prefix running the harness
@@ -413,7 +414,14 @@ Options:
                     Every copilot command built here carries --autopilot
                     --max-autopilot-continues 3 ahead of these flags, so a
                     turn that stops short is continued with nobody at the
-                    pane, at most three times.
+                    pane, at most three times, and --context long_context
+                    --no-auto-update, the 1M window and no self-update under
+                    a running lane. A local copilot launch, lane or none,
+                    runs under its account's environment: COPILOT_HOME, the
+                    account's copilot-token read into COPILOT_GITHUB_TOKEN
+                    without entering the command line, GH_TOKEN and
+                    GITHUB_TOKEN cleared, COPILOT_SKILLS_DIRS at the shared
+                    skills and COPILOT_ALLOW_ALL=true.
                     EVERY COMMAND BUILT HERE TAKES THE HARNESS QUESTION TOOL
                     AWAY WHERE A ROW BELOW NAMES WORDS, ahead of these flags;
                     a lane asks through lane-mail.
