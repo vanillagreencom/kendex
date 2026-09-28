@@ -127,7 +127,8 @@ fn a_copilot_hook_gets_a_document_of_its_own_beside_its_script() {
         panic!("copilot hooks are script targets");
     };
     assert_eq!(path, PathBuf::from("/p/.github/hooks/audit.sh"));
-    assert_eq!(command, project_command(".github/hooks/audit.sh", None));
+    assert_eq!(crate::hook::command_stem(&command), "audit", "{command}");
+    assert!(!command.contains("/p"), "{command}");
     assert_eq!(registry, PathBuf::from("/p/.github/hooks/audit.json"));
     assert_eq!(format, HookFormat::Copilot);
     assert_eq!(feature, None);
@@ -138,8 +139,139 @@ fn a_copilot_hook_gets_a_document_of_its_own_beside_its_script() {
     else {
         panic!("copilot hooks are script targets");
     };
-    assert_eq!(command, "bash \"/h/.copilot/hooks/audit.sh\"");
+    assert!(
+        command.starts_with("o=$( { e=$(bash \"/h/.copilot/hooks/audit.sh\" "),
+        "{command}"
+    );
+    assert_eq!(crate::hook::command_stem(&command), "audit", "{command}");
     assert_eq!(registry, PathBuf::from("/h/.copilot/hooks/audit.json"));
+}
+
+/// One run [`a_copilot_refusal_reaches_stdout_as_the_denial_reason_and_nothing_else_changes`]
+/// makes: the script, the status and stderr it leaves, and the stdout wanted,
+/// `None` where it is the deny object carrying `stderr`.
+#[cfg(unix)]
+struct CopilotRow {
+    label: &'static str,
+    script: &'static str,
+    status: i32,
+    stderr: &'static str,
+    want: Option<&'static str>,
+}
+
+#[cfg(unix)]
+const COPILOT_REFUSAL: &str =
+    "guard: refused=bare-cd\nSay \"cd\" \\ no\tmore\u{1b}[0m.\n  Run it with a path.";
+
+#[cfg(unix)]
+const COPILOT_ROWS: &[CopilotRow] = &[
+    CopilotRow {
+        label: "a refusal hands its stderr back as the reason",
+        script: "cat >/dev/null\nprintf 'guard: refused=bare-cd\\nSay \"cd\" \\\\ no\\tmore\\033[0m.\\n  Run it with a path.\\n' >&2\nexit 2\n",
+        status: 2,
+        stderr: COPILOT_REFUSAL,
+        want: None,
+    },
+    CopilotRow {
+        label: "an allowed call passes its stdout and status through",
+        script: "cat\nexit 0\n",
+        status: 0,
+        stderr: "",
+        want: Some("{\"toolName\":\"bash\"}\n"),
+    },
+    CopilotRow {
+        label: "a script's own answer is its own",
+        script: "printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"own\"}\\n'\nprintf 'own: refused=x\\n' >&2\nexit 2\n",
+        status: 2,
+        stderr: "own: refused=x",
+        want: Some("{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"own\"}\n"),
+    },
+    CopilotRow {
+        label: "an unexpected failure keeps its status and gains no answer",
+        script: "printf 'boom\\n' >&2\nexit 1\n",
+        status: 1,
+        stderr: "boom",
+        want: Some(""),
+    },
+    CopilotRow {
+        label: "a silent refusal gains no answer",
+        script: "exit 2\n",
+        status: 2,
+        stderr: "",
+        want: Some(""),
+    },
+    CopilotRow {
+        label: "a separator the script prints stays in its stdout",
+        script: "printf 'a\\036b\\n'\nexit 0\n",
+        status: 0,
+        stderr: "",
+        want: Some("a\u{1e}b\n"),
+    },
+];
+
+/// What Copilot reads off a registered command's run: its exit status, its
+/// stdout and its stderr, each script run by the rendered command at both
+/// scopes, with and without a declared environment, under `/bin/sh` and
+/// `bash`. Copilot shows the model a preToolUse denial's
+/// `permissionDecisionReason` and never its stderr, so a refusal's stderr has
+/// to come back as that reason, exactly; every other run's stdout is the
+/// script's own, and the status is always the script's.
+#[cfg(unix)]
+#[test]
+fn a_copilot_refusal_reaches_stdout_as_the_denial_reason_and_nothing_else_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = crate::test_util::rooted(&tmp);
+    let env = Env::fake(root.join("home"), FakeOs::Linux);
+    let project = Scope::Project {
+        root: root.join("proj"),
+    };
+    std::fs::create_dir_all(root.join("proj/sub")).unwrap();
+    std::fs::write(root.join("payload"), "{\"toolName\":\"bash\"}\n").unwrap();
+    let vars = BTreeMap::from([("GUARD_MODE".to_owned(), "strict".to_owned())]);
+    for row in COPILOT_ROWS {
+        for scope in [&project, &Scope::Global] {
+            for declared in [None, Some(&vars)] {
+                let Some(HookTarget::Script { path, command, .. }) =
+                    hook_target(&env, scope, HarnessId::Copilot, "guard", declared)
+                else {
+                    panic!("copilot hooks are script targets");
+                };
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, row.script).unwrap();
+                let line = format!(
+                    "exec <{}; cd {} && {command}",
+                    crate::names::quoted(&crate::paths::slashed(&root.join("payload"))),
+                    crate::names::quoted(&crate::paths::slashed(&root.join("proj/sub")))
+                );
+                for shell in ["/bin/sh", "bash"] {
+                    let out = crate::process::Hardened::program(shell, &["-c", &line])
+                        .run()
+                        .unwrap();
+                    let stdout = String::from_utf8(out.stdout).unwrap();
+                    let stderr = String::from_utf8(out.stderr).unwrap();
+                    let context = format!("{}: {shell} {scope:?} {declared:?}", row.label);
+                    assert_eq!(out.status.code(), Some(row.status), "{context}");
+                    assert_eq!(stderr.trim_end_matches('\n'), row.stderr, "{context}");
+                    match row.want {
+                        Some(want) => assert_eq!(stdout, want, "{context}"),
+                        None => {
+                            let answer: serde_json::Value = serde_json::from_str(&stdout)
+                                .unwrap_or_else(|e| panic!("{context}: {e}: {stdout}"));
+                            assert_eq!(
+                                answer,
+                                serde_json::json!({
+                                    "permissionDecision": "deny",
+                                    "permissionDecisionReason": row.stderr,
+                                }),
+                                "{context}"
+                            );
+                        }
+                    }
+                }
+                std::fs::remove_file(&path).unwrap();
+            }
+        }
+    }
 }
 
 /// Antigravity keys its one registry by hook name, so the script sits in

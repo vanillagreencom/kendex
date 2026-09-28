@@ -145,13 +145,24 @@ pub(super) fn opencode_instruction_prefix(scope: &Scope) -> &'static str {
 /// command's first path-shaped word. A declared environment stands before the
 /// final interpreter word, after that word ([`launch`]).
 fn project_command(rel: &str, vars: Option<&BTreeMap<String, String>>) -> String {
-    format!(
+    let (walk, run) = project_parts(rel, vars);
+    format!("{walk}{run}")
+}
+
+/// [`project_command`] as its two halves: the walk that finds the script,
+/// and the words that run it once found.
+fn project_parts(rel: &str, vars: Option<&BTreeMap<String, String>>) -> (String, String) {
+    let walk = format!(
         "p={}; r=$({{ cd -P . && pwd; }} 2>/dev/null); case $r in /*) ;; *) r=;; esac; \
 while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || {{ r=${{r%/*}}; [ -n \"$r\" ] || r=/; }}; done; \
-[ -n \"$r\" ] || {{ printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }}; {}\"$r/$p\"",
+[ -n \"$r\" ] || {{ printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }}; ",
         crate::names::quoted(rel),
-        launch(vars).unwrap_or_else(|| "bash ".to_owned()),
-    )
+    );
+    let run = format!(
+        "{}\"$r/$p\"",
+        launch(vars).unwrap_or_else(|| "bash ".to_owned())
+    );
+    (walk, run)
 }
 
 /// The words every Claude Code command that runs an installed hook script
@@ -192,10 +203,63 @@ pub(crate) const CLAUDE_OUTSIDE_COPILOT: &str = "[ -z \"${COPILOT_PROJECT_DIR-}\
 /// the command's first path-shaped word, the one [`crate::hook::command_stem`]
 /// names the hook by; an assignment ahead of it could hold a `/` of its own.
 fn direct_command(path: &str, vars: Option<&BTreeMap<String, String>>) -> String {
+    let (bind, run) = direct_parts(path, vars);
+    format!("{bind}{run}")
+}
+
+/// [`direct_command`] as its two halves: the binding of the path, empty where
+/// nothing is declared, and the words that run the script.
+fn direct_parts(path: &str, vars: Option<&BTreeMap<String, String>>) -> (String, String) {
     match launch(vars) {
-        None => format!("bash \"{path}\""),
-        Some(launch) => format!("h=\"{path}\"; {launch}\"$h\""),
+        None => (String::new(), format!("bash \"{path}\"")),
+        Some(launch) => (format!("h=\"{path}\"; "), format!("{launch}\"$h\"")),
     }
+}
+
+/// The words ahead of a Copilot hook's run in [`copilot_answer`]. They hold
+/// no `/` or `.`, so the script stays the command's first path-shaped word.
+const COPILOT_ANSWER_HEAD: &str = "o=$( { e=$(";
+
+/// The words after a Copilot hook's run in [`copilot_answer`], POSIX `sh`
+/// throughout. The script's stderr is captured into `e` and its stdout,
+/// through fd 3, into `o`, followed by an ASCII record separator and, for a
+/// refusal, the reason as a JSON string built by `awk`: backslash and quote
+/// escaped, a line break written `\n`, every other control character
+/// `\u00XX`, every other byte as it is. `o` is split at the last separator,
+/// so a separator the script printed stays the script's.
+const COPILOT_ANSWER_TAIL: &str = concat!(
+    r#" 2>&1 >&3 3>&-); s=$?; [ -z "$e" ] || printf '%s\n' "$e" >&2; printf '\036'; "#,
+    r#"[ "$s" != 2 ] || [ -z "$e" ] || printf '%s\n' "$e" | awk '"#,
+    r#"BEGIN{for(i=1;i<32;i++)m[sprintf("%c",i)]=sprintf("\\u%04x",i);"#,
+    r#"m["\t"]="\\t";m["\r"]="\\r";m["\\"]="\\\\";m["\""]="\\\"";printf "\""}"#,
+    r#"{if(NR>1)printf "\\n";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf "%s",((c in m)?m[c]:c)}}"#,
+    r#"END{printf "\""}'; exit "$s"; } 3>&1 ); s=$?; "#,
+    r#"R=$(printf '\036'); a=; case $o in *"$R"*) a=${o##*"$R"}; o=${o%"$R"*} ;; esac; "#,
+    r#"case $o in *[![:space:]]*) printf '%s' "$o" ;; "#,
+    r#"*) [ -z "$a" ] || printf '{"permissionDecision":"deny","permissionDecisionReason":%s}\n' "$a" ;; esac; "#,
+    r#"exit "$s""#,
+);
+
+/// A Copilot hook's run, with a refusal handed back where Copilot shows it to
+/// the model. Copilot denies a preToolUse call on exit 2 and hands the model
+/// only `hook exited with code 2`: stderr never reaches the tool result. What
+/// does is `permissionDecisionReason` in a `permissionDecision: "deny"`
+/// object on stdout, which Copilot merges with the exit-2 denial
+/// ([hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference)).
+/// So a run that exits 2 with stderr and nothing but whitespace on stdout has
+/// that stderr written back as that object; every other run's stdout passes
+/// as the script wrote it, the script's own answer included. The exit status
+/// is always the script's, so a refusal stays a denial and an unexpected
+/// failure stays Copilot's `hook errored` denial whether or not the answer
+/// could be built, and stderr is replayed for Copilot's log.
+///
+/// Every Copilot registration takes this, whatever its event: each reader of
+/// a registration asks [`hook_target`] for the command without naming one.
+/// Only preToolUse reads the object; Copilot parses no other event's stdout
+/// at exit 2 for those keys.
+// REVISIT(D011): drop the answer once Copilot carries stderr into the tool result.
+fn copilot_answer(run: &str) -> String {
+    format!("{COPILOT_ANSWER_HEAD}{run}{COPILOT_ANSWER_TAIL}")
 }
 
 /// The words that start a hook's script under its declared environment,
@@ -432,13 +496,13 @@ fn copilot_hook(
         Scope::Project { root } => root.join(".github/hooks"),
     };
     let path = dir.join(format!("{name}.sh"));
-    let command = match scope {
-        Scope::Global => direct_command(&crate::paths::slashed(&path), vars),
-        Scope::Project { .. } => project_command(&format!(".github/hooks/{name}.sh"), vars),
+    let (setup, run) = match scope {
+        Scope::Global => direct_parts(&crate::paths::slashed(&path), vars),
+        Scope::Project { .. } => project_parts(&format!(".github/hooks/{name}.sh"), vars),
     };
     HookTarget::Script {
         path,
-        command,
+        command: format!("{setup}{}", copilot_answer(&run)),
         registry: dir.join(format!("{name}.json")),
         format: HookFormat::Copilot,
         feature: None,

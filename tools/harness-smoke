@@ -1432,8 +1432,11 @@ antigravity_rows() {
 # never writes, and each is short-circuited so nothing it names runs when no
 # hook refuses it. A hook with a trigger passes only where a payload it read
 # carries its trigger, the installed hook refuses that recorded payload when
-# the row replays it, and, for every trigger but `cd /`, which leaves nothing
-# to read, the marker was never written.
+# the row replays it, for every trigger but `cd /`, which leaves nothing
+# to read, the marker was never written, and the transcript --share writes
+# shows the model a denial opening with the hook's own keyed line, since
+# Copilot hands the model a hook's refusal only through the registered
+# command's answer and never through its stderr.
 PKG_PROOF='tools/harness-smoke --only copilot on a host where copilot is on PATH and logged in'
 PKG_RULES='SMOKE-RULES is SMOKE-RULES-REACHED.'
 # shellcheck disable=SC2016 # the model is handed $HARNESS_SMOKE_UNSET as text a hook refuses
@@ -1756,7 +1759,7 @@ pkg_session_verdict() {
   fi
 }
 pkg_hook_row() { # HOOK — after the session
-  local hook=$1 row="hook:$1" event trigger rec rc=0 marker="$PKG/smoke-triggers/$1"
+  local hook=$1 row="hook:$1" event trigger rec rc=0 marker="$PKG/smoke-triggers/$1" denial
   event=$(sed -n 's/^# event: //p' "$SELF/hooks/$hook.sh")
   if ! pkg_record "$hook" payload >/dev/null; then
     if [ -n "$PKG_SESSION_RESULT" ]; then
@@ -1778,13 +1781,28 @@ pkg_hook_row() { # HOOK — after the session
   (cd "$PKG" && bash "$PKG/.github/hooks/$hook.sh" <"$rec") >"$LOGS/copilot-replay-$hook.log" 2>&1 || rc=$?
   if [ "$rc" -eq 0 ]; then
     pkg_set "$row" fail "passes the payload Copilot sent for '$trigger' when the row replays it"
-  elif [ "$hook" = block-bare-cd ]; then
-    pkg_set "$row" pass "received '$trigger' at $event and refuses Copilot's payload for it when replayed (exit $rc); a refused bare cd leaves no marker"
-  elif [ -e "$marker" ]; then
+  elif [ "$hook" != block-bare-cd ] && [ -e "$marker" ]; then
     pkg_set "$row" fail "refuses Copilot's payload for its trigger when replayed (exit $rc), and the call still ran: $marker was written"
+  elif ! [ -f "$PKG_TRANSCRIPT" ]; then
+    pkg_set "$row" unanswerable "refuses Copilot's payload for its trigger when replayed (exit $rc), and copilot -p --share wrote no transcript to read the model's tool result from"
+  elif ! denial=$(pkg_denial "$hook"); then
+    pkg_set "$row" fail "refuses Copilot's payload for its trigger when replayed (exit $rc), and the model's tool result does not name the hook; the transcript's denials: $(clip "$(grep -F 'Denied by preToolUse hook' "$PKG_TRANSCRIPT" | paste -s -d ';' -)")"
+  elif [ "$hook" = block-bare-cd ]; then
+    pkg_set "$row" pass "received '$trigger' at $event, refuses Copilot's payload for it when replayed (exit $rc), and the model was shown: $(clip "$denial"); a refused bare cd leaves no marker"
   else
-    pkg_set "$row" pass "received its trigger at $event, refuses Copilot's payload for it when replayed (exit $rc), and the call never ran: $marker was never written"
+    pkg_set "$row" pass "received its trigger at $event, refuses Copilot's payload for it when replayed (exit $rc), the call never ran ($marker was never written), and the model was shown: $(clip "$denial")"
   fi
+}
+# The tool result the model was shown for HOOK's refusal: the first transcript
+# line where Copilot's denial carries the hook's own keyed line, which opens
+# with its name. 1 where none does, as when the result says only that a hook
+# exited with code 2.
+pkg_denial() { # HOOK
+  local line
+  while IFS= read -r line; do
+    case "$line" in *"Denied by preToolUse hook: $1: "*) printf '%s' "$line"; return 0 ;; esac
+  done <"$PKG_TRANSCRIPT"
+  return 1
 }
 pkg_helper_rows() {
   local rec keys hook_cwd tool_cwd hook_env tool_env names q
@@ -1827,11 +1845,16 @@ pkg_helper_rows() {
     pkg_set helper:env fail "HARNESS_SMOKE_ENV, set on the launch, is missing from the hook's or the tool call's environment; harness names a tool call sees: ${names:-none}"
   fi
 }
+# The session's transcript, which --share writes once the turn ends: the
+# tool results as the model was shown them, where a refusal has to name the
+# hook that refused.
+PKG_TRANSCRIPT=""
 pkg_hook_session() {
   local name
-  rm -f -- "$MARKER" "$PKG/smoke-path"
+  PKG_TRANSCRIPT="$LOGS/copilot-packages-hooks.md"
+  rm -f -- "$MARKER" "$PKG/smoke-path" "$PKG_TRANSCRIPT"
   run copilot-packages-hooks env PATH="$PKG_RECORDER:$PATH" HARNESS_SMOKE_ENV=1 COPILOT_HOME="$PKG_HOME" \
-    COPILOT_ALLOW_ALL=true copilot -p "$(pkg_hook_task)" --allow-all-tools -s
+    COPILOT_ALLOW_ALL=true copilot -p "$(pkg_hook_task)" --allow-all-tools -s --share "$PKG_TRANSCRIPT"
   pkg_session_verdict
   for name in $(pkg_list hook); do
     [ "$(pkg_cell "$name")" != enforced ] || pkg_hook_row "$name"

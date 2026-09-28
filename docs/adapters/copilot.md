@@ -36,7 +36,7 @@ Commands are unsupported because Copilot CLI reads no command surface of its own
 
 ## Hooks
 
-Enforced: Copilot runs the command and honours the exit code. Events map to Copilot's camelCase names (`event`, `crates/core/src/harness/copilot/mod.rs`):
+Enforced: Copilot runs the command and honours the exit code. Copilot hands the model only `hook exited with code 2` for a preToolUse denial and never the hook's stderr, so every command kendex registers for Copilot captures the script's output. A run that exits 2 with stderr and nothing on stdout gets that stderr written back as `{"permissionDecision":"deny","permissionDecisionReason":…}`, which Copilot shows the model as `Denied by preToolUse hook: <reason>`. Every other run's stdout passes unchanged, a hook's own answer included, and the exit status is always the script's (`copilot_answer`, `crates/core/src/engine/targets.rs`; [D011](../decisions/D011-copilot-refusal-answer.md)). Events map to Copilot's camelCase names (`event`, `crates/core/src/harness/copilot/mod.rs`):
 
 | Fleet event | Copilot event |
 |---|---|

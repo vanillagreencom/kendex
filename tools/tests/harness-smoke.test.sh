@@ -455,8 +455,8 @@ rm -f -- "$STAND/hooks/zz-unlisted.sh" "$STAND/agents"
 # STANDIN_DUP and STANDIN_SUB. It answers the fixture rows as a working Copilot
 # would. Its session of tool calls stands in for Copilot running the
 # repository's hooks: every hook in the checkout gets a script under
-# .github/hooks that reads its payload with `cat` and refuses the four
-# triggers, each numbered command is handed to each as a Copilot payload
+# .github/hooks that reads its payload with `cat` and refuses its own trigger
+# of the four with a keyed line on stderr, each numbered command is handed to each as a Copilot payload
 # (STANDIN_FEED=helper hands over the first alone, STANDIN_SHAPE=bad names the
 # command `cmd`, STANDIN_HOOK_CWD runs the hooks there, STANDIN_DROP_ENV=1
 # drops HARNESS_SMOKE_ENV, STANDIN_SKIP_HOOK runs one hook never,
@@ -464,16 +464,21 @@ rm -f -- "$STAND/hooks/zz-unlisted.sh" "$STAND/agents"
 # holds it back as a refused call would be, with COPILOT_PROJECT_DIR set where
 # STANDIN_TOOL_PROJECT_DIR=1. STANDIN_FIXTURE=path or nopath
 # writes the fixture hook's line with or without the recorder on its PATH.
+# The --share transcript holds, per refused command, the tool result the
+# model is shown: the refusing hook's keyed line, or with
+# STANDIN_DENIAL=generic the exit code alone; STANDIN_DENIAL=none writes no
+# transcript.
 echo "=== the Copilot package rows ==="
 PKG_BIN="$TMP/pkg-bin"
 mkdir -p "$PKG_BIN"
 cp "$ROWS_BIN/kendex" "$PKG_BIN/kendex"
 cat >"$PKG_BIN/copilot" <<'STANDIN'
 #!/usr/bin/env bash
-prompt="" tools="" prev=""
+prompt="" tools="" share="" prev=""
 for a; do
   [ "$prev" != -p ] || prompt=$a
   [ "$prev" != --available-tools ] || tools=$a
+  [ "$prev" != --share ] || share=$a
   prev=$a
 done
 case "$1 ${2:-}" in
@@ -515,7 +520,14 @@ case "$prompt" in
   "Run each of these shell commands"*)
     mkdir -p .github/hooks
     for h in $STANDIN_HOOK_NAMES; do
-      printf '#!/usr/bin/env bash\nx=$(cat)\ncase "$x" in *pkill*|*"rm -rf"*|*"cp -r"*|*"\\"cd /\\""*) exit 2 ;; esac\n' >".github/hooks/$h.sh"
+      case "$h" in
+        block-argv-kill) trigger='*pkill*' ;;
+        block-unsafe-rm) trigger='*"rm -rf"*' ;;
+        block-repo-copy) trigger='*"cp -r"*' ;;
+        block-bare-cd) trigger='*"\"cd /\""*' ;;
+        *) trigger='"$x"-never' ;;
+      esac
+      printf '#!/usr/bin/env bash\nx=$(cat)\ncase "$x" in %s) printf "%%s: refused=standin\\n" %s >&2; exit 2 ;; esac\n' "$trigger" "$h" >".github/hooks/$h.sh"
     done
     case "$STANDIN_FIXTURE" in
       path) printf 'PreToolUse x\n' >>smoke-fired; printf '%s\n' "$PATH" >>smoke-path ;;
@@ -523,10 +535,11 @@ case "$prompt" in
     esac
     drop=""
     [ "$STANDIN_DROP_ENV" != 1 ] || drop="-u HARNESS_SMOKE_ENV"
-    n=0
+    n=0 denials=""
     while IFS= read -r line; do
       case "$line" in [0-9]*". "*) cmd=${line#*. } ;; *) continue ;; esac
       n=$((n + 1))
+      denied=""
       if [ "$STANDIN_HOOKS" != 0 ] && { [ "$STANDIN_FEED" != helper ] || [ "$n" -eq 1 ]; }; then
         for h in $STANDIN_HOOK_NAMES; do
           [ "$h" != "$STANDIN_SKIP_HOOK" ] || continue
@@ -537,15 +550,23 @@ case "$prompt" in
           fi
           hook="$PWD/.github/hooks/$h.sh"
           # shellcheck disable=SC2086 # drop is empty or `-u NAME`
-          (cd "${STANDIN_HOOK_CWD:-$PWD}" && env $drop bash "$hook" <<<"$payload") || :
+          said=$( (cd "${STANDIN_HOOK_CWD:-$PWD}" && env $drop bash "$hook" <<<"$payload") 2>&1 >/dev/null) && hrc=0 || hrc=$?
+          if [ "$hrc" = 2 ] && [ -z "$denied" ]; then
+            case "$STANDIN_DENIAL" in
+              reason) denied="Denied by preToolUse hook: ${said%%$'\n'*}" ;;
+              generic) denied="Denied by preToolUse hook: hook exited with code 2" ;;
+            esac
+          fi
         done
       fi
+      [ -z "$denied" ] || denials="$denials$denied"$'\n'
       case "$cmd" in *smoke-helper*) ;; *) [ "$STANDIN_REFUSE" != 1 ] || continue ;; esac
       set_dir=""
       [ "$STANDIN_TOOL_PROJECT_DIR" != 1 ] || set_dir="COPILOT_PROJECT_DIR=$PWD"
       # shellcheck disable=SC2086 # drop is empty or `-u NAME`, set_dir empty or one assignment
       env $drop $set_dir bash -c "$cmd" >/dev/null 2>&1 || :
     done <<<"$prompt"
+    [ -z "$share" ] || [ "$STANDIN_DENIAL" = none ] || printf '%s' "$denials" >"$share"
     printf 'ok\n' ;;
 esac
 exit 0
@@ -565,7 +586,7 @@ package_run() { # SMOKE ENV=VAL... — the run's output in $TMP/pkg-out, its sta
   (cd "$ROWS_REPO" && env PATH="$PKG_BIN:$PATH" STANDIN_SKILLS="$PKG_SKILLS_ALL" STANDIN_AGENTS="$PKG_AGENTS_ALL" \
     STANDIN_TASK_AGENTS="$PKG_AGENTS_ALL" STANDIN_HOOK_NAMES="$PKG_HOOKS" STANDIN_NESTED_ROOT=0 STANDIN_DUP=1 STANDIN_SUB=SMOKE-RULES-REACHED-VIA-AGENT \
     STANDIN_REFUSE=1 STANDIN_HOOKS=1 STANDIN_FEED=all STANDIN_SHAPE=good STANDIN_HOOK_CWD= STANDIN_DROP_ENV=0 \
-    STANDIN_SKIP_HOOK= STANDIN_FIXTURE= STANDIN_OMIT= STANDIN_INSTR= STANDIN_SETTINGS= STANDIN_MIXED=1 STANDIN_CROSS=0 STANDIN_TOOL_PROJECT_DIR=0 "$@" \
+    STANDIN_SKIP_HOOK= STANDIN_FIXTURE= STANDIN_OMIT= STANDIN_INSTR= STANDIN_SETTINGS= STANDIN_MIXED=1 STANDIN_CROSS=0 STANDIN_TOOL_PROJECT_DIR=0 STANDIN_DENIAL=reason "$@" \
     "$BASH" "$smoke" --only copilot --dir "$TMP/pkg-dir" >"$TMP/pkg-out" 2>&1) || PKG_RC=$?
 }
 package_row() { # ROW — that copilot row's result and evidence
@@ -610,6 +631,7 @@ a nested AGENTS.md read from sub/ alone differs|instruction:nested|differs|for t
 a hidden personal skill brought back by COPILOT_SKILLS_DIRS differs|skill-dirs:COPILOT_HOME|differs|exports both
 a hook that received its trigger, refuses it on replay and held it back passes|hook:block-argv-kill|pass|was never written
 a bare cd received and refused on replay passes|hook:block-bare-cd|pass|refuses Copilot's payload for it when replayed
+a refusal the model was shown under the hook's name passes|hook:block-argv-kill|pass|the model was shown: Denied by preToolUse hook: block-argv-kill: refused=standin
 a hook with no trigger passes on running|hook:command-safety|pass|reading the payload Copilot sent
 an excluded hook is excluded with the table's reason|hook:reviewer-read-only|excluded|(hooks/README.md)
 the lane-mail row the table enforces is pending, naming the missing session|lane-mail|pending|pending=this script runs no lane session on copilot, and
@@ -636,6 +658,11 @@ an unlisted CLAUDE.md fails|instruction:CLAUDE.md|fail|does not list CLAUDE.md
 a count of two differs, and does not claim both files listed|instruction:duplicate|differs|did not show both AGENTS.md and CLAUDE.md, and the model counts the AGENTS.md line twice
 a nested AGENTS.md listed from the root too passes|instruction:nested|pass|from sub/ and from the project root
 a refused command that went through fails its hook|hook:block-unsafe-rm|fail|the call still ran"
+package_run "$SMOKE" STANDIN_DENIAL=generic
+package_table "a refusal the model was shown only as an exit code fails|hook:block-argv-kill|fail|the model's tool result does not name the hook; the transcript's denials: Denied by preToolUse hook: hook exited with code 2
+and so does a bare cd's|hook:block-bare-cd|fail|the model's tool result does not name the hook"
+package_run "$SMOKE" STANDIN_DENIAL=none
+package_case "a session that wrote no transcript leaves the refusal unanswerable" hook:block-argv-kill unanswerable "wrote no transcript"
 package_run "$SMOKE" STANDIN_SUB=SMOKE-RULES-REACHED
 package_case "the parent's own answer, with no subagent suffix, fails" instruction:subagent fail "did not relay an answer the subagent built"
 package_run "$SMOKE" STANDIN_TASK_AGENTS=
@@ -703,9 +730,12 @@ PKG_AGENTS_ALL="$(for f in "$REPO"/agents/*.md; do f=${f##*/}; printf '%s\n' "${
 plant "$STAND_SMOKE" 's/ --available-tools task --allow-all-tools -s$/ --allow-all-tools -s/'
 package_run "$STAND_SMOKE" STANDIN_TASK_AGENTS=
 package_case "control: a listing turn that can read files passes agents the task tool does not offer" agent:reviewer-doc pass "lists it"
-plant "$STAND_SMOKE" 's/^  elif \[ -e "\$marker" \]; then$/  elif false; then/'
+plant "$STAND_SMOKE" 's/^  elif \[ "\$hook" != block-bare-cd \] \&\& \[ -e "\$marker" \]; then$/  elif false; then/'
 package_run "$STAND_SMOKE" STANDIN_REFUSE=0
 package_case "control: a marker read that never looks passes a command that went through" hook:block-unsafe-rm pass "was never written"
+plant "$STAND_SMOKE" 's/^  elif ! denial=\$(pkg_denial "\$hook"); then$/  elif false; then/'
+package_run "$STAND_SMOKE" STANDIN_DENIAL=generic
+package_case "control: a tool-result read that never looks passes a refusal the model saw only as an exit code" hook:block-bare-cd pass "the model was shown: ;"
 plant "$STAND_SMOKE" 's/^    case "\$command" in \*"\$2"\*) printf/    case "$command" in *) printf/'
 package_run "$STAND_SMOKE" STANDIN_FEED=helper
 package_case "control: a trigger check that takes any record replays the helper payload for a hook the trigger never reached" hook:block-repo-copy fail "passes the payload Copilot sent"
