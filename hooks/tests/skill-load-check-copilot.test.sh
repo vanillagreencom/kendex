@@ -156,8 +156,9 @@ run_at "$JUDGE" "$(pre lead apply_patch "$(jq -c -n --arg p "*** Begin Patch
 *** Add File: $REPO/NOTES.md
 +x
 *** End Patch" '$p')")"
-assert_eq "rc=$rc first=$(first_line)" "rc=2 first=skill-load-check: unloaded=docs-writing" \
-  "a patch is judged by each file it names: the source file is cleared, the markdown file is not"
+assert_eq "rc=$rc first=$(first_line) named=$(sed -n '2,3p' "$ERR_FILE" | paste -sd ' ' -)" \
+  "rc=2 first=skill-load-check: unloaded=docs-writing named=$REPO/src/lib.rs $REPO/NOTES.md" \
+  "a patch is judged by each file it names: the source file is cleared, the markdown file is not, and the refusal names both"
 load lead linear
 run_at "$JUDGE" "$(pre lead bash "$("${JQ[@]}" --arg c "$LINEAR_CALL" '{command:$c}')")"
 assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" \
@@ -282,11 +283,15 @@ an apply_patch carrying the patch as input is judged by its Add File line|apply_
 an apply_patch carrying the patch as one JSON string is judged by its Delete File line|apply_patch|$(patch_of "*** Delete File: @REPO@/src/old.rs" | jq -R -s -c '{patch:.} | tojson')|rc=2 first=skill-load-check: unloaded=code-quality
 a patch moving scratch into the tree is judged by its Move to line|apply_patch|$(patch_of "*** Update File: @REPO@/tmp/a.rs
 *** Move to: @REPO@/src/a.rs" | jq -R -s -c .)|rc=2 first=skill-load-check: unloaded=code-quality
+a patch is judged by every file, not its last|apply_patch|$(patch_of "*** Update File: @REPO@/src/lib.rs
+*** Add File: @REPO@/tmp/s.rs" | jq -R -s -c .)|rc=2 first=skill-load-check: unloaded=code-quality
+a file outside every work tree clears no other file|apply_patch|$(patch_of "*** Add File: $TMP_ROOT/outside/n.rs
+*** Update File: @REPO@/src/lib.rs" | jq -R -s -c .)|rc=2 first=skill-load-check: unloaded=code-quality
 a patch touching only the tree's tmp/ needs no skill|apply_patch|$(patch_of "*** Add File: @REPO@/tmp/scratch.rs" | jq -R -s -c .)|rc=0 first=-
 a patch naming no file is refused, its target unknown|apply_patch|$(patch_of "no header" | jq -R -s -c .)|rc=2 first=skill-load-check: payload=no-file-path
 an apply_patch whose toolArgs hold no patch is refused the same|apply_patch|{"input":7}|rc=2 first=skill-load-check: payload=no-file-path
 ROWS
-[ "$N" -eq 9 ] || { echo "tool rows asserted: $N" >&2; exit 2; }
+[ "$N" -eq 11 ] || { echo "tool rows asserted: $N" >&2; exit 2; }
 
 echo "an identity or a record it cannot read refuses"
 # label|session JSON value
