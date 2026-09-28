@@ -385,7 +385,7 @@ launch_table \
 QUOTE_OT="$(mutant_scripts quote-guard-removed open-terminal)/open-terminal" || exit 1
 git -C "$TMP_ROOT/quote-guard-removed" init -q
 orch_fixture_shared_libs "$TMP_ROOT/quote-guard-removed"
-mutate_file "$QUOTE_OT" 'cmd_has_unbalanced_quote "$cmd" &&' 'false &&'
+mutate_file "$QUOTE_OT" ']] && cmd_has_unbalanced_quote' ']] && false && cmd_has_unbalanced_quote'
 OT_UNDER_TEST="$QUOTE_OT"
 launch_table "control: without the quote guard the apostrophe command creates a tmux worktree and window|custom-tmux|-|-|-|rc=0 creates=1 log~new-window=true stderr~open-terminal:+cmd-unbalanced-quote=false"
 OT_UNDER_TEST="$OT"

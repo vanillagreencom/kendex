@@ -37,6 +37,15 @@ A hosted Pi lane's settings and carrier are its host's, read after `create`, so 
 
 `host-accounts-unanswered` is a notice, not a refusal: nothing said which accounts the host holds, so the launch is judged on this machine's reading as an unhosted one is. A keyed `lanes:` line above the notice names a provider failure, with the provider's own message above that line; no line above it means the read of the answer failed on this machine. Fix what that line names, or read the launch's outcome as a local measurement.
 
+## Brief file
+
+A `--cmd` launch's brief travels as a file. Write it under `tmp/` with the harness's file tool, pass it as `--brief-file [BRIEF_PATH]`, and put `{brief}` in the `--cmd` command where the brief goes. `open-terminal` reads the file once and quotes its text, less trailing newlines, for every launch path: the GUI terminal's shell, the tmux pane's shell, and a hosted lane's remote shell behind the provider's prefix. An apostrophe, a double quote, `$` or a backtick in the brief then reaches the harness as written. A brief typed inline in `--cmd` is the caller's own shell text: two apostrophes in a single-quoted brief balance each other, and the harness receives the words between them split and altered, or the shell runs them. Each refusal below comes before any worktree or window:
+
+- `cmd-unbalanced-quote` (naming `item`): the `--cmd` command leaves a quote open. Move the brief to a file, as above.
+- `brief-unreferenced` (naming `option=--brief-file`): the `--cmd` command carries no `{brief}`, so the file would reach no harness. Put `{brief}` where the brief goes.
+- `brief-file-missing` (naming `option=--cmd`): the command carries `{brief}` with no `--brief-file`. Pass the file.
+- `brief-file-unreadable` (naming `path`): the path is not a readable file. Write the brief and pass that path.
+
 ## Caps
 
 The caps refuse a launch before its worktree; a `--relaunch` meets them only where it adds a lane or changes its account:

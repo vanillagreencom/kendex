@@ -42,6 +42,7 @@ parse_argv() {
   TERMINAL_MODE=""
   HARNESS=""
   CMD_TEMPLATE=""
+  BRIEF_FILE=""
   HOST=""
   LANE=""
   LANE_MAX_PCT=""
@@ -65,6 +66,8 @@ parse_argv() {
       --harness=*) HARNESS="${1#--harness=}"; need_val --harness "$HARNESS"; shift ;;
       --cmd) need_val "$@"; CMD_TEMPLATE="$2"; shift 2 ;;
       --cmd=*) CMD_TEMPLATE="${1#--cmd=}"; need_val --cmd "$CMD_TEMPLATE"; shift ;;
+      --brief-file) need_val "$@"; BRIEF_FILE="$2"; shift 2 ;;
+      --brief-file=*) BRIEF_FILE="${1#--brief-file=}"; need_val --brief-file "$BRIEF_FILE"; shift ;;
       --host) need_val "$@"; HOST="$2"; shift 2 ;;
       --host=*) HOST="${1#--host=}"; need_val --host "$HOST"; shift ;;
       --lane) need_val "$@"; LANE="$2"; shift 2 ;;
@@ -190,6 +193,22 @@ fi
 [[ "$OVER_CAP" != true || ${#ITEMS[@]} -eq 1 ]] || { ot_message over-cap-items "count=${#ITEMS[@]}" >&2; exit 1; }
 [[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { ot_message tracker-invalid "tracker=$TRACKER" >&2; exit 1; }
 [[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { ot_message command-missing "options=--harness,--cmd" >&2; exit 1; }
+# The brief a --cmd template places as {brief}, read once, here, from the file
+# the caller wrote. The caller never quotes it: start_cmd renders it through
+# lane_single_quote, so the GUI shell, the pane shell and a hosted lane's
+# remote shell each read it back as the file's bytes, less trailing newlines,
+# whatever quote, `$` or backtick it holds. The two halves come as a pair: a
+# brief file with no {brief} would be read and reach no harness, and a {brief}
+# with no file would start the harness on an empty brief. cat's own complaint is
+# dropped so the keyed line is the first one; the path it names is the cause.
+BRIEF_TEXT=""
+if [[ -n "$BRIEF_FILE" ]]; then
+  [[ "$CMD_TEMPLATE" == *"{brief}"* ]] || { ot_message brief-unreferenced "option=--brief-file" >&2; exit 1; }
+  BRIEF_TEXT="$(cat -- "$BRIEF_FILE" 2>/dev/null)" || { ot_message brief-file-unreadable "path=$BRIEF_FILE" >&2; exit 1; }
+elif [[ "$CMD_TEMPLATE" == *"{brief}"* ]]; then
+  ot_message brief-file-missing "option=--cmd" >&2
+  exit 1
+fi
 [[ "$HARNESS" != "codex-app" ]] || { ot_message desktop-harness "harness=$HARNESS" >&2; exit 1; }
 # lane-host owns the setting's reading; it runs from this script's checkout,
 # whose project settings this script loaded, or from the caller's directory
@@ -1090,10 +1109,19 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   # same id.
   local item="$1" mail_id="$2" repo="$3" session_id="${4:-}" wake_dir="${5:-}" line="" exec="" print=""
   if [[ -n "$CMD_TEMPLATE" ]]; then
-    local out="${CMD_TEMPLATE//\{issue\}/$item}"
-    out="${out//\{item\}/$item}"
-    out="${out//\{repo\}/$repo}"
-    printf '%s\n' "$out"
+    # {brief} is filled last and the brief is never scanned again, so a brief
+    # naming a placeholder reaches the harness as written. Spliced rather than
+    # substituted: bash 5.2 reads `&` in a ${var//pat/rep} replacement as the
+    # matched text.
+    local text rendered="" quoted
+    if ! text="$(cmd_template_text "$item" "$repo")" || ! quoted="$(lane_single_quote "$BRIEF_TEXT")"; then
+      return 1
+    fi
+    while [[ "$text" == *"{brief}"* ]]; do
+      rendered+="${text%%\{brief\}*}$quoted"
+      text="${text#*\{brief\}}"
+    done
+    printf '%s\n' "$rendered$text"
     return
   fi
   # The codex arms must stay plain prose built from shell-inert characters
@@ -1202,8 +1230,20 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
 # The form picked for the item in flight, read by open_tmux's account check.
 LANE_FORM=unchecked
 
-# GUI launches use Bash, while tmux uses the pane shell. Their common rule is
-# that a backslash cannot escape a quote from inside single quotes.
+# A --cmd template with {issue}, {item} and {repo} filled and {brief} still
+# standing: the caller's own shell text, which cmd_has_unbalanced_quote judges
+# and start_cmd places the brief into.
+cmd_template_text() { # ITEM REPO
+  local out="${CMD_TEMPLATE//\{issue\}/$1}"
+  out="${out//\{item\}/$1}"
+  printf '%s\n' "${out//\{repo\}/$2}"
+}
+
+# Judges the one text a caller writes as shell, a --cmd template before its
+# {brief} is filled; a brief given as --brief-file is quoted by start_cmd and
+# never reaches it. GUI launches use Bash, while tmux uses the pane shell. Their
+# common rule is that a backslash cannot escape a quote from inside single
+# quotes.
 cmd_has_unbalanced_quote() {
   local text="$1" quote="" char escaped=false i
   for ((i = 0; i < ${#text}; i++)); do
@@ -2401,7 +2441,10 @@ for raw in "${ITEMS[@]}"; do
     break
   fi
   cmd="$(start_cmd "$item" "$wt_id" "$repo")"
-  cmd_has_unbalanced_quote "$cmd" && { ot_message cmd-unbalanced-quote "item=$item" >&2; exit 1; }
+  if [[ -n "$CMD_TEMPLATE" ]] && cmd_has_unbalanced_quote "$(cmd_template_text "$item" "$repo")"; then
+    ot_message cmd-unbalanced-quote "item=$item" >&2
+    exit 1
+  fi
   # The worktree create is the ownership claim: exit 75 means another session
   # holds this item, which skips it without touching its siblings. Any other
   # failure is this item's alone — the batch continues so one broken item
