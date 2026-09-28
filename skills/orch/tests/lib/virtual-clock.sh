@@ -3,8 +3,8 @@
 # Virtual clock for the waiter suites: PATH stubs for `date` and `sleep` that
 # put a poll budget under the suite's control instead of the machine's.
 #
-# The waiters read wall time only as `date +%s` and wait only through `sleep`,
-# so owning those two commands makes every budget exact. A sleep advances the
+# The waiters read wall time only as `date +%s` or `date -u +%s` and wait only
+# through `sleep`, so owning those two commands makes every budget exact. A sleep advances the
 # clock and returns; a poll costs nothing unless a stub is told to charge for it
 # by sleeping itself. What the cases then assert is arithmetic over the clock
 # the waiter keeps, and it lands on the same number however slow the machine is.
@@ -51,9 +51,10 @@ virtual_clock_install() {
 
   cat > "$bin_dir/date" <<'EOF'
 #!/usr/bin/env bash
-# `+%s` is the clock a waiter keeps its budget on. Every other form is the real
-# date, so a timestamp a script prints is still a real timestamp.
-if [[ "${1:-}" == "+%s" ]]; then
+# `+%s` is the clock a waiter keeps its budget on, and `-u +%s` the same epoch,
+# which no zone moves. Every other form is the real date, so a timestamp a
+# script prints is still a real timestamp.
+if [[ "$*" == "+%s" || "$*" == "-u +%s" ]]; then
   if [[ -n "${STUB_CLOCK:-}" ]]; then
     [[ -f "$STUB_CLOCK" ]] || { echo "virtual clock: STUB_CLOCK names no file: $STUB_CLOCK" >&2; exit 1; }
     cat "$STUB_CLOCK"
@@ -97,9 +98,9 @@ EOF
   [[ "$seen" == "$probe" ]] \
     || { echo "virtual clock: date +%s answered $seen, not the seeded $probe" >&2; exit 1; }
   PATH="$bin_dir:$PATH" sleep 5
-  seen="$(PATH="$bin_dir:$PATH" date +%s)"
+  seen="$(PATH="$bin_dir:$PATH" date -u +%s)"
   [[ "$seen" == "$((probe + 5))" ]] \
-    || { echo "virtual clock: a 5s sleep left the clock at $seen, not $((probe + 5))" >&2; exit 1; }
+    || { echo "virtual clock: a 5s sleep left date -u +%s at $seen, not $((probe + 5))" >&2; exit 1; }
 
   _virtual_clock_seed
 }

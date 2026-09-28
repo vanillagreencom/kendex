@@ -50,6 +50,23 @@ lm() { # ARGS...
   ERR="$(head -n 1 "$TMP_ROOT/err")"
 }
 
+# lm on the virtual clock: the wait's naps advance lib/virtual-clock.sh's clock
+# instead of passing in real seconds, and SLEPT is how far they moved it, the
+# same number on an idle machine and a loaded runner. Only the wait rows run on
+# it; every other verb stamps real time.
+# shellcheck source=lib/virtual-clock.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/virtual-clock.sh"
+mkdir -p "$TMP_ROOT/clock-bin"
+virtual_clock_install "$TMP_ROOT/clock-bin" "$TMP_ROOT/clock"
+SLEPT=""
+clock_lm() { # ARGS...
+  local before after
+  before="$(cat "$STUB_CLOCK")" || exit 1
+  PATH="$TMP_ROOT/clock-bin:$PATH" lm "$@"
+  after="$(cat "$STUB_CLOCK")" || exit 1
+  SLEPT="$((after - before))"
+}
+
 # The count field of the header drain and inbox --peek open with; the header's
 # first= field has its own row.
 count_line() {
@@ -91,22 +108,19 @@ lm ask --item KEN-1 --file "$(text q 'Merge now?')"
 MINE="${OUT#id=}"
 lm send --item KEN-1 --root "$LANE" --re other-ask --file "$(text a 'Not yours.')"
 assert_eq "$RC" "0" "send answers an ask by id"
-lm wait --item KEN-1 --id "$MINE" --timeout 1 --interval 1
-assert_eq "$RC=$ERR" "124=lane-mail: timeout=$MINE" "wait ignores an answer to another ask and exits 124 at its timeout"
+clock_lm wait --item KEN-1 --id "$MINE" --timeout 1 --interval 1
+assert_eq "$RC=$ERR=$SLEPT" "124=lane-mail: timeout=$MINE=1" "wait ignores an answer to another ask and exits 124 at its timeout"
 lm send --item KEN-1 --root "$LANE" --re "$MINE" --file "$(text a 'Merge it.')"
 lm wait --item KEN-1 --id "$MINE" --timeout 5 --interval 1
 assert_eq "$RC=$OUT" "0=Merge it." "wait returns the answer that names its own ask"
 
 # --timeout is a deadline, not a count of intervals: one shorter than the
-# interval must not wait the whole interval out.
+# interval must not wait the whole interval out, so the naps sum to the timeout.
 new_lane wait_deadline
 lm ask --item KEN-1 --file "$(text q 'Deadline?')"
 DEADLINE_ID="${OUT#id=}"
-BEFORE="$(date -u +%s)"
-lm wait --item KEN-1 --id "$DEADLINE_ID" --timeout 1 --interval 5
-ELAPSED="$(( $(date -u +%s) - BEFORE ))"
-assert_eq "$RC=$([ "$ELAPSED" -le 2 ] && echo prompt || printf 'late:%s' "$ELAPSED")" "124=prompt" \
-  "a timeout shorter than the interval returns at its deadline"
+clock_lm wait --item KEN-1 --id "$DEADLINE_ID" --timeout 1 --interval 5
+assert_eq "$RC=$SLEPT" "124=1" "a timeout shorter than the interval returns at its deadline"
 
 new_lane inbox
 lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
@@ -1163,11 +1177,8 @@ new_lane control_deadline
 LANE_MAIL_BIN="$LANE_MAIL" lm ask --item KEN-1 --file "$(text q 'Deadline?')"
 OVERSHOOT_ID="${OUT#id=}"
 mutant interval-overshoots '[ "$LEFT" -ge "$NAP" ] || NAP="$LEFT"' ':'
-BEFORE="$(date -u +%s)"
-lm wait --item KEN-1 --id "$OVERSHOOT_ID" --timeout 1 --interval 5
-ELAPSED="$(( $(date -u +%s) - BEFORE ))"
-assert_eq "$([ "$ELAPSED" -ge 4 ] && echo late || printf 'prompt:%s' "$ELAPSED")" "late" \
-  "control: without the cap the wait sleeps the whole interval past its deadline"
+clock_lm wait --item KEN-1 --id "$OVERSHOOT_ID" --timeout 1 --interval 5
+assert_eq "$RC=$SLEPT" "124=5" "control: without the cap the wait sleeps the whole interval past its deadline"
 
 mutant unowned-send 'if { [ "$VERB" = send ] || [ "$VERB" = resolve ]; } && [ "$HOST" -eq 0 ]; then' 'if false; then'
 LANE="$PEER_A"
