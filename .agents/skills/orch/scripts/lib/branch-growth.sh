@@ -194,9 +194,10 @@ BRANCH_SIZE_PRODUCTION=""
 BRANCH_SIZE_TEST=""
 BRANCH_SIZE_MIRROR=""
 # Every changed path the test rule names, by itself or past a render root,
-# one per line, from every numstat row, a binary file's included; the split
-# counts a row as test lines exactly when its path is listed. Each rename end
-# is listed on its own, as a reader without rename detection names each apart.
+# one per line, from every numstat row, a binary file's included. A paired
+# render mirror's lines count as mirror lines, listed or not; every other row
+# counts as test lines exactly when its path is listed. Each rename end is
+# listed on its own, as a reader without rename detection names each apart.
 BRANCH_SIZE_TEST_FILES=""
 # The same paths' additions plus deletions, render mirrors left out, for the
 # implement receipt. This shares the report's render classification.
