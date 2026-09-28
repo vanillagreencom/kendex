@@ -106,7 +106,8 @@ PI_UNATTENDED_TEXT="$(bash -c 'source "$1" && launch_choice_unattended pi' _ "$S
 [[ -n "$PI_UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no pi unattended text" >&2; exit 1; }
 
 echo "=== every command open-terminal builds takes the question tool away ==="
-# HARNESS|FLAGS|ITEM|RENDERED COMMAND|WHAT. FLAGS `-` passes no --launch-flags.
+# HARNESS|FLAGS|ITEM|RENDERED COMMAND|WHAT. FLAGS `-` passes no --launch-flags;
+# an ITEM spelled REPO#N launches GitHub item N of REPO.
 # A caller's flags that already carry the words keep one copy, ahead of the rest.
 for row in \
   "claude|-|CC-1|claude -n CC-1 '--disallowedTools=AskUserQuestion,EnterPlanMode' '/orch start CC-1'|claude denies AskUserQuestion and EnterPlanMode; naming no model, it keeps its compaction" \
@@ -116,12 +117,17 @@ for row in \
   "claude|--model claude-sonnet-4-6|CC-7|claude -n CC-7 '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-4-6' '/orch start CC-7'|a claude model with no window keeps its compaction, and there is no mark to hand off at" \
   "codex|-|CC-2|codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-2'|codex disables the request_user_input feature after its update and compaction settings" \
   "pi|-|CC-3|pi '--exclude-tools' 'question' '/skill:orch start CC-3 $PI_UNATTENDED_TEXT'|pi excludes the pi-questions tool, and its brief closes on the unattended words, never on --append-system-prompt" \
+  "pi|-|o/r#30|pi '--exclude-tools' 'question' '/skill:orch start github o/r#30 $PI_UNATTENDED_TEXT'|a github pi brief closes on the unattended words too" \
   "opencode|-|CC-4|opencode --prompt '/orch start CC-4'|an opencode lane keeps its question tool: no flag turns it off, so none is rendered" \
   "pi|--model sonnet:high --exclude-tools question|CC-5|pi '--exclude-tools' 'question' '--model' 'sonnet:high' '/skill:orch start CC-5 $PI_UNATTENDED_TEXT'|a caller's own copy of the words is carried once" \
   ; do
   IFS='|' read -r harness flags item want what <<<"$row"
   flag_args=()
   [[ "$flags" == - ]] || flag_args=(--launch-flags "$flags")
+  if [[ "$item" == *#* ]]; then
+    flag_args+=(--tracker github --repo "${item%#*}")
+    item="${item#*#}"
+  fi
   launch "$item" --harness "$harness" ${flag_args[@]+"${flag_args[@]}"}
   assert_eq "rc=$RC cmd=$CMD" "rc=0 cmd=$want" "render: $what"
 done
