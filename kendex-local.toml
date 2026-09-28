@@ -389,7 +389,7 @@ enabled = true
 
 [skills.slack]
 source = "."
-harnesses = ["claude", "codex", "pi"]
+harnesses = ["claude", "codex", "pi", "copilot"]
 enabled = true
 
 [skills.second-opinion]
