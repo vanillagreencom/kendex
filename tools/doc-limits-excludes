@@ -1,3 +1,4 @@
 # Document size exceptions. Each row is pattern<TAB>reason.
 
 CHANGELOG*.md	append-only release record, read by release rather than as agent instructions
+skills/orch/workflows/oversee.md	KEN-2003 moves whole sections into a reference file; until it lands, two queued PRs that each add to this workflow overflow the ceiling only in the combined merge-group tree
