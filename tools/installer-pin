@@ -72,10 +72,10 @@ value() { # SITE VARIABLE — the variable's value on its one line in SITE
   local count
   { [ -f "$root/$1" ] && [ ! -L "$root/$1" ]; } ||
     { say site "$1" "is missing or a symlink; no pin is read or written through one" >&2; exit 1; }
-  count="$(grep -c -E "^ *$2: " -- "$root/$1")" || [ "$?" -eq 1 ] ||
+  count="$(grep -c -E -e "^ *$2: " -- "$root/$1")" || [ "$?" -eq 1 ] ||
     { say site "$1" "could not be read" >&2; exit 1; }
   [ "$count" = 1 ] || { say site "$1" "holds $count lines of $2, not 1" >&2; exit 1; }
-  sed -n -E "s/^ *$2: (.*)$/\\1/p" -- "$root/$1"
+  sed -n -E -e "s/^ *$2: (.*)$/\\1/p" -- "$root/$1"
 }
 
 check() {
