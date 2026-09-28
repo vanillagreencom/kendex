@@ -188,6 +188,7 @@ micro-one-over|small|dirty|runtime/product.ts:21
 small-at-ceiling|small|dirty|runtime/product.ts:150
 small-one-over|standard|dirty|runtime/product.ts:151
 small-two-subsystems|standard|dirty|runtime/product.ts:30 payload/data.conf:30
+small-test-path-in-another-subsystem|small|dirty|runtime/product.ts:30 payload/tests/data.conf:30
 render-root-is-one-subsystem|small|dirty|runtime/one.ts:30 .agents/runtime/two.ts:30
 excluded-path|standard|dirty|.github/workflows/ci.yml:3
 CASES
@@ -1252,6 +1253,95 @@ refused_err="$(env -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
 assert_eq "a base settings file the reader refuses answers standard, unmeasured" \
   "class: class=standard measured=false cause=base-settings-unreadable base=$refused_base" \
   "$(printf '%s\n' "$refused_err" | grep '^class: ')"
+
+# A test path belongs to no subsystem: the table row
+# small-test-path-in-another-subsystem pins it from the built-in test rule.
+# Each control below plants a copy that loses one side of it, the classifier
+# no longer setting the measurement's test paths aside or the measurement no
+# longer listing them, and the row's diff falls back to several-subsystems.
+subsystem_class() { # CLASSIFIER -> the class: line for the row's diff
+  local err
+  reset_case
+  set_verifier dirty
+  write_lines "$repo" runtime/product.ts 30
+  write_lines "$repo" payload/tests/data.conf 30
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "a script beside its test data in another directory"
+  err="$(PATH="$stub_bin:$PATH" "$1" --repo "$repo" --event pull_request \
+    --base "$base" --head HEAD 2>&1 >/dev/null)" || true
+  printf '%s\n' "$err" | sed -n '/^class: /p'
+}
+skip_line="$(cat <<'LINE'
+  case "$test_files" in *$'\n'"$path"$'\n'*) continue ;; esac
+LINE
+)"
+unskipped_class="$(plant_package "$SANDBOX/unskipped" link)"
+# The line reaches awk through the environment: a -v value has its
+# backslashes read as escapes.
+DROP_LINE="$skip_line" awk '$0 != ENVIRON["DROP_LINE"]' "$CHANGE_CLASS" >"$unskipped_class"
+assert_eq "the classifier control drops the one test-path skip" "1 0" \
+  "$(grep -cxF -- "$skip_line" "$CHANGE_CLASS") $(grep -cxF -- "$skip_line" "$unskipped_class" || true)"
+assert_eq "a classifier that sets no test path aside counts two subsystems" \
+  "class: class=standard measured=true cause=several-subsystems production=30" \
+  "$(subsystem_class "$unskipped_class")"
+unlisted_root="$SANDBOX/unlisted-orch"
+unlisted_class="$(plant_package "$unlisted_root" none)"
+mkdir -p "$unlisted_root/orch/references"
+cp "$ORCH_PACKAGE/references/narrow-change.conf" "$unlisted_root/orch/references/"
+cp -R "$ORCH_PACKAGE/scripts" "$unlisted_root/orch/"
+list_line='          test_files = test_files "\n" path[i]'
+DROP_LINE="$list_line" awk '$0 != ENVIRON["DROP_LINE"]' "$ORCH_PACKAGE/scripts/lib/branch-growth.sh" \
+  >"$unlisted_root/orch/scripts/lib/branch-growth.sh"
+assert_eq "the measurement control drops the one test-path record" "1 0" \
+  "$(grep -cxF -- "$list_line" "$ORCH_PACKAGE/scripts/lib/branch-growth.sh") $(grep -cxF -- "$list_line" "$unlisted_root/orch/scripts/lib/branch-growth.sh" || true)"
+assert_eq "a measurement that lists no test path leaves two subsystems" \
+  "class: class=standard measured=true cause=several-subsystems production=30" \
+  "$(subsystem_class "$unlisted_class")"
+
+# A lane and CI classify one diff alike. CI's classify step may carry
+# ORCH_SIZE_TEST_PATHS in its environment; a lane's run, item-tier or
+# review-policy through orch's lib/change-class.sh, carries none, and the
+# classifier takes the glob from the base endpoint's settings instead. A
+# script beside a fixture only that glob calls a test answers one class both
+# ways: the fixture's lines are test lines, and the fixture, both ends of a
+# move included, sits in no subsystem.
+fixture="$(new_repo change-class-fixture)"
+printf '[env]\nORCH_SIZE_TEST_PATHS = "bin/fixtures/*"\n' >"$fixture/kendex.settings.toml"
+write_lines "$fixture" bin/fixtures/kept.txt 40
+commit_paths "$fixture" baseline seed.txt
+fixture_base="$(git -C "$fixture" rev-parse HEAD)"
+fixture_rows=0
+while IFS='|' read -r label script_lines fixture_edit expected; do
+  fixture_rows=$((fixture_rows + 1))
+  git -C "$fixture" checkout -q -B "case-$fixture_rows" "$fixture_base"
+  write_lines "$fixture" runtime/probe.sh "$script_lines"
+  case "$fixture_edit" in
+    add) write_lines "$fixture" bin/fixtures/probe.txt 40 ;;
+    move)
+      mkdir -p "$fixture/bin/fixtures/moved"
+      git -C "$fixture" mv bin/fixtures/kept.txt bin/fixtures/moved/kept.txt ;;
+    *) echo "unknown fixture edit $fixture_edit" >&2; exit 1 ;;
+  esac
+  git -C "$fixture" add -A
+  git -C "$fixture" commit -q -m "$label"
+  ci_err="$(env -u ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS='bin/fixtures/*' \
+    "$CHANGE_CLASS" --repo "$fixture" --event pull_request --base "$fixture_base" \
+    --head HEAD 2>&1 >/dev/null)" || true
+  assert_eq "$label, in CI" "$expected" "$(printf '%s\n' "$ci_err" | sed -n '/^class: /p')"
+  lane_err="$SANDBOX/lane-$fixture_rows.err"
+  (
+    unset ORCH_SIZE_TEST_PATHS ORCH_SIZE_RENDER_ROOTS
+    # shellcheck source=../../orch/scripts/lib/change-class.sh
+    . "$ORCH_PACKAGE/scripts/lib/change-class.sh"
+    change_class_read "$fixture_base" HEAD "$fixture" "$lane_err"
+  ) || true
+  assert_eq "$label, in a lane" "$expected" "$(sed -n '/^class: /p' "$lane_err")"
+done <<'FIXTURES'
+a script within micro beside a new fixture|10|add|class: class=micro measured=true cause=production-within-micro production=10
+a script within small beside a new fixture|30|add|class: class=small measured=true cause=production-within-small subsystem=runtime
+a script within small beside a fixture moved a level down|30|move|class: class=small measured=true cause=production-within-small subsystem=runtime
+FIXTURES
+require_rows change-class-fixture "$fixture_rows"
 
 # The render rows the issue names, built from a REAL render rather than a stub
 # exit code. The consumer's manifest carries its own project instructions, so

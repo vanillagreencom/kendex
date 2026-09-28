@@ -61,6 +61,8 @@
 #   small    one subsystem, production additions within the small ceiling. A
 #            path's subsystem is its first directory, with a leading render
 #            root removed first so a source and the render mirroring it agree.
+#            A path the measurement counts as a test or fixture, by its
+#            built-in rule or ORCH_SIZE_TEST_PATHS, belongs to no subsystem.
 #            An agent instruction file, an `instruction` line of orch's
 #            narrow-change.conf (AGENTS.md, SKILL.md), that earns trivial or
 #            micro answers small instead, cause=instruction-file: it changes
@@ -137,9 +139,10 @@ NARROW_CONF="$ORCH_DIR/references/narrow-change.conf"
 #
 # The lowest BRANCH_GROWTH_CONTRACT this script can measure with. An orch
 # answering less, or none at all, is refused rather than called: its
-# branch_size_classified would silently drop the base endpoint passed to it
-# and load the judged tree's own settings to resolve its render roots.
-ORCH_CONTRACT_REQUIRED=1
+# branch_size_classified would silently drop the base endpoint passed to it,
+# load the judged tree's own settings to resolve its render roots, or leave
+# unset the test paths the subsystem rule sets aside.
+ORCH_CONTRACT_REQUIRED=2
 # The one version of `kendex verify --json` this script reads. The document
 # is the render proof's whole contract with kendex: a kendex printing another
 # version, or none, answers standard rather than being read by guesswork.
@@ -806,13 +809,17 @@ fi
   answer_narrow micro "cause=production-within-micro production=$production"
 
 # The render roots are the measurement's own list, so a source and the render
-# mirroring it reduce to one subsystem.
+# mirroring it reduce to one subsystem. A path the measurement counted as a
+# test is left out, read off its list rather than judged again here: a script
+# and the fixture it needs are one change wherever the fixture lives.
 set_globs "$BRANCH_GROWTH_RENDER_ROOTS"
 render_roots=("${GLOB_LIST[@]}")
 subsystem=""
 one_subsystem=true
+test_files=$'\n'"$BRANCH_SIZE_TEST_FILES"$'\n'
 while IFS= read -r path; do
   [ -n "$path" ] || continue
+  case "$test_files" in *$'\n'"$path"$'\n'*) continue ;; esac
   for root in ${render_roots[@]+"${render_roots[@]}"}; do
     case "$path" in "$root"/*) path="${path#"$root"/}"; break ;; esac
   done

@@ -118,6 +118,8 @@ jobs:
         env:
           ORCH_SIZE_RENDER_ROOTS: .agents .claude .codex .pi
           # ORCH_SIZE_TEST_PATHS: <globs>
+          # Test globs outside orch's defaults belong in the default branch's
+          # kendex.settings.toml, which a lane's own classifier run reads too.
         with:
           repo: subject
           # The lane declaration is the default branch's: the pull request's
