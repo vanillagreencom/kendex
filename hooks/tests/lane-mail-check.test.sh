@@ -1279,7 +1279,7 @@ expect 0 - "a mailbox with no launch marker is no lane, and its question is not 
 # a turn ending on a line a Pi lane wrote to the person is refused and
 # continued once, a turn in which the lane sent its ask ends, and a turn
 # ending on no question passes untouched.
-new_pi_lane() { # NAME ITEM
+new_pi_question_lane() { # NAME ITEM
   new_handoff_lane "$1" "$2"
   install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 }
@@ -1287,7 +1287,7 @@ stop_pi_at() { # TRANSCRIPT ACTIVE
   run_payload "$(jq -nc --arg p "$1" --argjson a "$2" \
     '{session_id:"s1",stop_hook_active:$a,transcript_path:$p,context_window:200000}')"
 }
-new_pi_lane question_pi KEN-63
+new_pi_question_lane question_pi KEN-63
 { prompt_line pi "$OPENED"; text_line pi 'Say if you want me to continue FLT-400'; } > "$TRANSCRIPT"
 stop_pi_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" "a Pi lane ending on a question to the person is refused"
@@ -1295,14 +1295,14 @@ printf -v INBOX_ROUTE 'inbox --item %q --root %q' KEN-63 "$LANE"
 assert_eq "$(grep -cF -- "$INBOX_ROUTE" "$ERR_FILE")" 1 "and continued with the read of its own mail"
 stop_pi_at "$TRANSCRIPT" true
 expect 0 "lane-mail-check: question-notice=$TRANSCRIPT" "the turn Pi's carrier continued is reported, not refused again"
-new_pi_lane question_pi_ask KEN-62
+new_pi_question_lane question_pi_ask KEN-62
 { prompt_line pi "$OPENED"; text_line pi 'Which base?'; } > "$TRANSCRIPT"
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-62 --file "$TMP_ROOT/ask.txt" >/dev/null)
 stop_pi_at "$TRANSCRIPT" false
 expect 0 "$GAP" "a Pi turn in which the lane sent its ask ends"
 # The two rows above in Pi's spelling: an earlier turn's ask carries no
 # question of a later prompt's turn, and a toolResult record opens no turn.
-new_pi_lane question_pi_turns KEN-51
+new_pi_question_lane question_pi_turns KEN-51
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-51 --file "$TMP_ROOT/ask.txt" >/dev/null)
 { prompt_line pi "$OPENED"; prompt_line pi "$(after_sent KEN-51 1)"; text_line pi 'Which base?'; } > "$TRANSCRIPT"
 stop_pi_at "$TRANSCRIPT" false
@@ -1318,7 +1318,7 @@ expect 0 "$GAP" "pi: a toolResult record after the ask opens no turn"
 stop_pi_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
   "pi: a relaunch prompt after a run that died in a tool call opens the turn"
-new_pi_lane question_pi_none KEN-61
+new_pi_question_lane question_pi_none KEN-61
 { prompt_line pi "$OPENED"; text_line pi 'Pushed the fix; CI is running.'; } > "$TRANSCRIPT"
 stop_pi_at "$TRANSCRIPT" false
 expect 0 "$GAP" "a Pi turn ending on no question passes"
@@ -1332,7 +1332,7 @@ pi_wake_line() { # EPOCH
   jq -nc --argjson t "$1" \
     "$STAMP"'{type:"custom_message",customType:"bg-task",content:"lane-mail: mail=KEN-56 new=1",display:false,id:"e3",parentId:"e2",timestamp:($t | stamp)}'
 }
-new_pi_lane question_pi_wake KEN-56
+new_pi_question_lane question_pi_wake KEN-56
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-56 --file "$TMP_ROOT/ask.txt" >/dev/null)
 { prompt_line pi "$OPENED"; pi_wake_line "$(after_sent KEN-56 1)"; text_line pi 'Which base?'; } > "$TRANSCRIPT"
 stop_pi_at "$TRANSCRIPT" false
@@ -1353,7 +1353,7 @@ pi_custom_line() { # EPOCH CUSTOM-TYPE
   jq -nc --argjson t "$1" --arg k "$2" \
     "$STAMP"'{type:"custom_message",customType:$k,content:"refused",display:false,id:"e5",parentId:"e4",timestamp:($t | stamp)}'
 }
-new_pi_lane question_pi_carrier KEN-50
+new_pi_question_lane question_pi_carrier KEN-50
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-50 --file "$TMP_ROOT/ask.txt" >/dev/null)
 { prompt_line pi "$OPENED"; text_line pi 'Which base?'; pi_custom_line "$(after_sent KEN-50 1)" kendex-hook
   text_line pi 'Which base?'; } > "$TRANSCRIPT"
@@ -2992,7 +2992,7 @@ expect 0 "$GAP" "control: without the phrasing rows a lane handing its next step
 # Pi's wakes dropped from the turn openers: an ask sent before a wake then
 # carries the question of the turn it opened.
 mutant question-no-wake -e 's@def woken: \.type == "custom_message" and@def woken: false and@'
-new_pi_lane control_question_wake KEN-53
+new_pi_question_lane control_question_wake KEN-53
 install_hook "$MUTANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-53 --file "$TMP_ROOT/ask.txt" >/dev/null)
 { prompt_line pi "$OPENED"; pi_wake_line "$(after_sent KEN-53 1)"; text_line pi 'Which base?'; } > "$TRANSCRIPT"
@@ -3014,7 +3014,7 @@ expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
 # The carrier's continuation counted as a wake: a continued Pi turn then
 # loses the ask it sent, and the overseer is told it sent nothing.
 mutant question-carrier-opens -e 's@ and \.customType != "kendex-hook";@;@'
-new_pi_lane control_question_carrier KEN-49
+new_pi_question_lane control_question_carrier KEN-49
 install_hook "$MUTANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-49 --file "$TMP_ROOT/ask.txt" >/dev/null)
 { prompt_line pi "$OPENED"; text_line pi 'Which base?'; pi_custom_line "$(after_sent KEN-49 1)" kendex-hook
@@ -3026,7 +3026,7 @@ expect 0 "lane-mail-check: question-notice=$TRANSCRIPT" \
 # The run rule dropped, every input opening a turn: a steer after a tool's
 # result then moves the turn past the ask.
 mutant question-any-input -e 's@^        then \.ended = (\$r | calls_tool | not)$@        then .ended = true@'
-new_pi_lane control_question_run KEN-48
+new_pi_question_lane control_question_run KEN-48
 install_hook "$MUTANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-48 --file "$TMP_ROOT/ask.txt" >/dev/null)
 { prompt_line pi "$OPENED"
