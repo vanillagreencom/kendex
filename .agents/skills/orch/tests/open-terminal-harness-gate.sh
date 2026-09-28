@@ -35,7 +35,19 @@ printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/worktree-stub"
 # A lane host that answers nothing: the gate is judged before it is asked.
 printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/provider"
-chmod +x "$BIN/term" "$BIN/gh" "$BIN/worktree-stub" "$BIN/provider"
+# The tmux server a new pane would inherit from: running where OT_TMUX_ENV
+# exists, its global environment that file's lines, and unreadable where the
+# file holds `!unreadable`.
+cat > "$BIN/tmux" <<'STUB'
+#!/usr/bin/env bash
+[ -e "$OT_TMUX_ENV" ] || exit 1
+case "$1:${2:-}" in
+  list-sessions:) exit 0 ;;
+  show-environment:-g) [ "$(cat "$OT_TMUX_ENV")" != '!unreadable' ] && cat "$OT_TMUX_ENV" ;;
+  *) exit 1 ;;
+esac
+STUB
+chmod +x "$BIN/term" "$BIN/gh" "$BIN/worktree-stub" "$BIN/provider" "$BIN/tmux"
 
 # stage DIR — a copy of the orch scripts in a git repo of its own, so the
 # project root, and the project .pi/settings.json the Pi rule reads, are the
@@ -68,12 +80,21 @@ GATE_KEYS='unsupported-for-oversee|compaction-on|launch-window-unknown|launch-co
 # launch NAME ARGS... — the gate's line open-terminal wrote, or `passed` where it
 # wrote none, for a GUI launch of CC-1 under ARGS; OT names another copy. Its
 # stdout is kept in $TMP_ROOT/NAME.out.
+# LAUNCH_ENV holds assignments the launch runs under, after every key that
+# moves a claude alias is cleared; the Claude config directory and the tmux
+# server are the fixture's.
+CLAUDE_KEYS='CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY CLAUDE_CODE_USE_ANTHROPIC_AWS CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD CLAUDE_CODE_USE_GATEWAY CLAUDE_CODE_USE_MANTLE ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL'
+CLAUDE_CFG="$TMP_ROOT/claude-config"
+TMUX_ENV_FILE="$TMP_ROOT/tmux-global.env"
+mkdir -p "$CLAUDE_CFG"
 launch() { # NAME ARGS...
   local name="$1" rc=0 line
   shift
-  ( cd "$REPO" && PATH="$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="$BIN/worktree-stub" \
+  # shellcheck disable=SC2086 # CLAUDE_KEYS and LAUNCH_ENV are one word each
+  ( cd "$REPO" && unset $CLAUDE_KEYS && PATH="$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="$BIN/worktree-stub" \
     OT_TERM_LOG="$TMP_ROOT/$name.term" TERMINAL=term TMUX= PI_CODING_AGENT_DIR="$PI_AGENT" \
-    "${OT:-$REPO/scripts/open-terminal}" --ghostty "$@" CC-1 ) \
+    CLAUDE_CONFIG_DIR="$CLAUDE_CFG" OT_TMUX_ENV="$TMUX_ENV_FILE" \
+    env ${LAUNCH_ENV:-} "${OT:-$REPO/scripts/open-terminal}" --ghostty "$@" CC-1 ) \
     >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err" || rc=$?
   line="$(grep -E "^open-terminal: ($GATE_KEYS) " "$TMP_ROOT/$name.err" || true)"
   printf '%s' "${line:-passed}"
@@ -112,6 +133,39 @@ copilot with no fleet passes|passed|--harness copilot --launch-flags '--model cl
 opencode with no fleet passes|passed|--harness opencode --launch-flags '--model m'
 claude on a model with no window, with no fleet, passes|passed|--harness claude --launch-flags '--model claude-sonnet-4-6 --effort high'
 ROWS
+
+echo "=== a claude alias whose model the environment can move has no window ==="
+# `label|env|settings.json|tmux global environment|args|answer`: `-` is none.
+# An alias is judged on every source a lane takes its environment from; the
+# model id it would resolve to launches under the same environment.
+alias_launch() { # NAME ENV SETTINGS TMUX ARGS...
+  local name="$1" env="$2" settings="$3" tmux_env="$4"
+  shift 4
+  rm -f -- "${CLAUDE_CFG:?}/settings.json" "${TMUX_ENV_FILE:?}"
+  [[ "$settings" == - ]] || printf '%s\n' "$settings" > "$CLAUDE_CFG/settings.json"
+  [[ "$tmux_env" == - ]] || printf '%s\n' "$tmux_env" > "$TMUX_ENV_FILE"
+  [[ "$env" != - ]] || env=""
+  LAUNCH_ENV="$env" launch "$name" "$@"
+}
+SONNET="--launch-flags '--model sonnet --effort high'"
+while IFS='|' read -r label env settings tmux_env args want; do
+  eval "set -- $args"
+  assert_eq "$(alias_launch alias "$env" "$settings" "$tmux_env" "$@")" "$want" "$label"
+done <<ROWS
+sonnet with nothing set passes|-|{"env":{"OTHER":"1"}}|OTHER=1|${FLEET[*]} --harness claude $SONNET|passed
+sonnet under ANTHROPIC_DEFAULT_SONNET_MODEL is refused|ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6|-|-|${FLEET[*]} --harness claude $SONNET|open-terminal: launch-window-unknown harness=claude model=sonnet
+sonnet under CLAUDE_CODE_USE_BEDROCK is refused|CLAUDE_CODE_USE_BEDROCK=1|-|-|${FLEET[*]} --harness claude $SONNET|open-terminal: launch-window-unknown harness=claude model=sonnet
+claude-sonnet-5 under the same pin passes|ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6|-|-|${FLEET[*]} --harness claude --launch-flags '--model claude-sonnet-5 --effort high'|passed
+claude-sonnet-5 under the same switch passes|CLAUDE_CODE_USE_BEDROCK=1|-|-|${FLEET[*]} --harness claude --launch-flags '--model claude-sonnet-5 --effort high'|passed
+haiku ignores the sonnet pin|ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6|-|-|${FLEET[*]} --harness claude --launch-flags '--model haiku --effort high'|passed
+haiku under ANTHROPIC_DEFAULT_HAIKU_MODEL is refused|ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-3-5-haiku|-|-|${FLEET[*]} --harness claude --launch-flags '--model haiku --effort high'|open-terminal: launch-window-unknown harness=claude model=haiku
+a pin in the settings env is refused|-|{"env":{"ANTHROPIC_DEFAULT_SONNET_MODEL":"claude-sonnet-4-6"}}|-|${FLEET[*]} --harness claude $SONNET|open-terminal: launch-window-unknown harness=claude model=sonnet
+a settings file jq cannot read is refused|-|not json|-|${FLEET[*]} --harness claude $SONNET|open-terminal: launch-window-unknown harness=claude model=sonnet
+a switch in the tmux global environment is refused|-|-|CLAUDE_CODE_USE_VERTEX=1|${FLEET[*]} --harness claude $SONNET|open-terminal: launch-window-unknown harness=claude model=sonnet
+a tmux marker removing the key passes|-|-|-CLAUDE_CODE_USE_VERTEX|${FLEET[*]} --harness claude $SONNET|passed
+a tmux environment that cannot be read is refused|-|-|!unreadable|${FLEET[*]} --harness claude $SONNET|open-terminal: launch-window-unknown harness=claude model=sonnet
+ROWS
+rm -f -- "${CLAUDE_CFG:?}/settings.json" "${TMUX_ENV_FILE:?}"
 
 echo "=== a Pi fleet launch runs only where Pi will not compact and its window reaches the hook ==="
 # `label|carrier|user settings|project settings|args|answer`: `-` is no file.
@@ -238,6 +292,29 @@ rm -f -- "${PI_AGENT:?}/settings.json" "${POOL_ROOT:?}/settings.json"
 control compaction-ctrl '0) ot_message compaction-on "harness=pi" "file=$LANE_ADAPTER_PI_FILE"' '0) : ot_message compaction-on "harness=pi" "file=$LANE_ADAPTER_PI_FILE"'
 assert_eq "$(OT="$CTRL_OT" launch compaction-ctrl "${FLEET[@]}" --harness pi)" passed \
   "control: without its refusal a Pi fleet lane Pi would compact passes the gate"
+# Each source the alias rule reads, and the rule's own reach, with its answer
+# replaced in a staged lane-launch.sh: the row it holds reads the other way.
+# alias_control NAME OLD NEW ENV SETTINGS TMUX MODEL ANSWER, `-` is none.
+alias_control() { # NAME OLD NEW ENV SETTINGS TMUX MODEL ANSWER
+  stage "$TMP_ROOT/$1"
+  mutate_file "$TMP_ROOT/$1/scripts/lib/lane-launch.sh" "$2" "$3"
+  assert_eq "$(OT="$TMP_ROOT/$1/scripts/open-terminal" alias_launch "$1" "$4" "$5" "$6" \
+    "${FLEET[@]}" --harness claude --launch-flags "--model $7 --effort high")" "$8" \
+    "control: with $1 applied, $7 reads $8"
+}
+alias_control alias-env-ctrl '    [[ -z "${!key:-}" ]] || return 0' '    :' \
+  ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6 - - sonnet passed
+alias_control alias-settings-ctrl '    [[ "$found" == 0 ]] || return 0' '    :' \
+  - '{"env":{"ANTHROPIC_DEFAULT_SONNET_MODEL":"claude-sonnet-4-6"}}' - sonnet passed
+alias_control alias-settings-read-ctrl '"$settings" 2>/dev/null)" || return 0' '"$settings" 2>/dev/null)" || found=0' \
+  - 'not json' - sonnet passed
+alias_control alias-tmux-ctrl '        case "$line" in "$key="?*) return 0 ;; esac' '        :' \
+  - - CLAUDE_CODE_USE_VERTEX=1 sonnet passed
+alias_control alias-tmux-read-ctrl '    tmux_env="$(tmux show-environment -g 2>/dev/null)" || return 0' '    tmux_env=""' \
+  - - '!unreadable' sonnet passed
+alias_control alias-reach-ctrl '    *) return 1 ;;' '    *) keys="$LAUNCH_CHOICE_CLAUDE_PROVIDER_KEYS" ;;' \
+  CLAUDE_CODE_USE_BEDROCK=1 - - claude-sonnet-5 'open-terminal: launch-window-unknown harness=claude model=claude-sonnet-5'
+rm -f -- "${CLAUDE_CFG:?}/settings.json" "${TMUX_ENV_FILE:?}"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

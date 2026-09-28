@@ -14,7 +14,9 @@
 # this fleet has measured for any model of that tier. The sonnet and haiku rows
 # are the windows Claude Code's own model registry and the model docs give:
 # `sonnet` resolves to claude-sonnet-5 on the first-party API, which runs 1M
-# with no 200K variant, and `haiku` to claude-haiku-4-5, a 200K model. Those
+# with no 200K variant, and `haiku` to claude-haiku-4-5, a 200K model; a
+# launch where a provider switch or pin can move either alias is refused by
+# launch_choice_claude_alias_moved in lib/lane-launch.sh. Those
 # rows name exact spellings because an older Sonnet runs 200K unless its `[1m]`
 # variant was chosen, and the transcript names the same model either way. A
 # model no row names has no window, and its sessions are reported unmeasured

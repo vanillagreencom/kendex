@@ -600,9 +600,51 @@ launch_choice_compaction() { # HARNESS MODEL
   words="$(launch_choice_compaction_off "$1")"
   [[ -n "$words" ]] || return 0
   case "$1" in
-    claude) [[ -n "$(lane_adapter_claude_window "${2:-}")" ]] || return 1 ;;
+    claude)
+      [[ -n "$(lane_adapter_claude_window "${2:-}")" ]] || return 1
+      ! launch_choice_claude_alias_moved "${2:-}" || return 1 ;;
   esac
   printf '%s\n' "$words"
+}
+
+# The Claude Code variables that move the model an alias names: a provider
+# switch, under which `sonnet` resolves to Sonnet 4.5 or 4.6, and the alias's
+# own ANTHROPIC_DEFAULT_*_MODEL pin.
+LAUNCH_CHOICE_CLAUDE_PROVIDER_KEYS='CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY CLAUDE_CODE_USE_ANTHROPIC_AWS CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD CLAUDE_CODE_USE_GATEWAY CLAUDE_CODE_USE_MANTLE'
+
+# launch_choice_claude_alias_moved MODEL — 0 where MODEL is the `sonnet` or
+# `haiku` alias and the session could resolve it off the model the claude
+# adapter's row names: one of its keys above is set in this process, in the
+# tmux global environment a new pane inherits, or in the `env` of the Claude
+# settings.json under CLAUDE_CONFIG_DIR. A source that cannot be read counts
+# as set. 1 for any other model, and where no source sets a key. No running
+# tmux server is no source: a pane then starts from this process's environment.
+launch_choice_claude_alias_moved() { # MODEL
+  local keys key settings found tmux_env line
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    sonnet) keys="$LAUNCH_CHOICE_CLAUDE_PROVIDER_KEYS ANTHROPIC_DEFAULT_SONNET_MODEL" ;;
+    haiku) keys="$LAUNCH_CHOICE_CLAUDE_PROVIDER_KEYS ANTHROPIC_DEFAULT_HAIKU_MODEL" ;;
+    *) return 1 ;;
+  esac
+  for key in $keys; do
+    [[ -z "${!key:-}" ]] || return 0
+  done
+  settings="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/settings.json"
+  if [[ -e "$settings" ]]; then
+    found="$(jq -r --arg keys "$keys" '($keys | split(" ")) as $k
+      | [(.env // {}) | to_entries[] | select(.key as $n | any($k[]; . == $n))
+         | select(.value != null and .value != "")] | length' -- "$settings" 2>/dev/null)" || return 0
+    [[ "$found" == 0 ]] || return 0
+  fi
+  if command -v tmux >/dev/null 2>&1 && tmux list-sessions >/dev/null 2>&1; then
+    tmux_env="$(tmux show-environment -g 2>/dev/null)" || return 0
+    while IFS= read -r line; do
+      for key in $keys; do
+        case "$line" in "$key="?*) return 0 ;; esac
+      done
+    done <<<"$tmux_env"
+  fi
+  return 1
 }
 
 # The compaction policy settings for harness $1, empty where the row
