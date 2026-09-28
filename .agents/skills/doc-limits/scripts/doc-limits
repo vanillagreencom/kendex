@@ -43,10 +43,12 @@ The default reads worktree files, falling back to the index for missing files.
 in REF's own tree and whose measured size is within the margin under its
 limit; a document absent from REF counts as grown. Growth compares stored
 blob sizes, so checkout conversion (eol=crlf, autocrlf) adds none, and an
-edit counts as growth once staged. A pull request run passes the branch it
-merges into; two changes
-passing against the same base then put one document over its limit in a
-merge group only when each grows it by more than the margin.
+edit counts as growth once staged. REF is the tree the change is measured
+from: HEAD^1 of a pull request merge commit, or $(git merge-base HEAD BASE)
+for a branch checkout. A base branch tip that moved after the branch point
+charges its own edits to the change. Two changes passing against the same
+base put one document over its limit in a merge group only when each grows
+it by more than the margin.
 No mode writes files or changes the index.
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):

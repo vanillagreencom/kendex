@@ -4,9 +4,9 @@
 #
 # Two pull requests that each grow one document pass their own runs and meet
 # over its limit only in the merge group that carries both. The pull request
-# run passes --against with the branch it merges into and fails the growth
-# while the document can still be split; the merge group run passes no
-# --against, so a group that fits merges.
+# run passes --against with the tree it is measured from, the merge commit's
+# first parent, and fails the growth while the document can still be split;
+# the merge group run passes no --against, so a group that fits merges.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 unset DOC_LIMITS_CLASSES DOC_LIMITS_DEFAULT_CLASSES DOC_LIMITS_EXCLUDES DOC_LIMITS_SETTINGS_FILE DOC_LIMITS_MARGIN_PCT
