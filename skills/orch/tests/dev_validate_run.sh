@@ -767,24 +767,28 @@ grandchild_state() { # PROJ
 
 # A grandchild that runs as grand.sh and records its own pid in grand.pid only
 # once its TERM trap, if it has one, is installed. A signal that reaches it
-# before the trap kills it before that write, so a recorded pid is a grandchild
-# that was ready when the group's SIGTERM came, and no timing on a slow host
-# can turn an unready one into a missed trap.
+# before the trap kills it before that write, so a recorded pid, or a flag the
+# trap wrote before the write came, is a grandchild that was ready when the
+# group's SIGTERM came, and no timing on a slow host can turn an unready one
+# into a missed trap.
 write_grandchild() { # PROJ trap|no-trap
   {
     [[ "$2" == no-trap ]] || printf '%s\n' "trap 'echo got-term > term.flag; exit 0' TERM"
-    printf '%s\n' 'echo $$ > grand.pid.part' 'mv grand.pid.part grand.pid' 'while :; do sleep 1; done'
+    printf '%s\n' 'echo $$ > grand.pid' 'while :; do sleep 1; done'
   } > "$1/grand.sh"
 }
-# Whether the grandchild ran its TERM trap: got-term, no-term, or unready for
-# one that never recorded its pid. The run's verdict lands before its group
-# gets SIGTERM, so the flag is polled for up to five seconds rather than read
-# once.
+# Whether the grandchild ran its TERM trap: got-term, no-term for one that
+# recorded its pid and wrote no flag, or unready for one that did neither. The
+# run's verdict lands before its group gets SIGTERM, so the flag is polled for
+# up to five seconds rather than read once, and read before readiness is
+# judged: a trap that ran before the pid write proves the trap was installed.
 term_state() { # PROJ
   local n=0
-  [[ -s "$1/grand.pid" ]] || { echo unready; return 0; }
   while [[ ! -s "$1/term.flag" ]]; do
-    (( n < 50 )) || { echo no-term; return 0; }
+    if (( n >= 50 )); then
+      if [[ -s "$1/grand.pid" ]]; then echo no-term; else echo unready; fi
+      return 0
+    fi
     sleep 0.1
     n=$((n + 1))
   done
