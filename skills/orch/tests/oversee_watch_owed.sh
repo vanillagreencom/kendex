@@ -73,8 +73,9 @@ owed() {
 # open PR; KEN-7 already queued; KEN-8 done; KEN-9 stopped on a harness no
 # roster account belongs to, with no priority; KEN-10 stopped after a relaunch
 # that kept an earlier merge's cycle; KEN-11 stopped on the Opus model its
-# harness is walled for. The claude roster mixes a walled account with one
-# that has room, which is pick's to weigh.
+# harness is walled for; KEN-12 stopped on another host, whose codex accounts
+# have room while this host's are walled. The claude roster mixes a walled
+# account with one that has room, which is pick's to weigh.
 world() {
   new_case "$1"
   fleet '["KEN-7"]' \
@@ -85,11 +86,13 @@ world() {
     "$(record KEN-5 done claude '{"cycle":{"pr":15}}')" \
     "$(record KEN-9 stopped pi)" \
     "$(record KEN-10 stopped claude '{"cycle":{"pr":21}}')" \
-    "$(record KEN-11 stopped claude '{"model":"claude-opus-5"}')"
+    "$(record KEN-11 stopped claude '{"model":"claude-opus-5"}')" \
+    "$(record KEN-12 stopped codex '{"host":"provider-x"}')"
   printf '%s\n' "$(issue KEN-1 'In Progress' 1)" "$(issue KEN-2 'In Progress' 2)" \
     "$(issue KEN-3 'In Progress' 1)" "$(issue KEN-4 'In Review' 2)" "$(issue KEN-5 'In Review' 2)" \
     "$(issue KEN-6 'In Review' 3)" "$(issue KEN-7 'In Progress' 2)" "$(issue KEN-8 Done 2)" \
     "$(issue KEN-9 'In Progress' 0)" "$(issue KEN-10 'In Progress' 2)" "$(issue KEN-11 'In Progress' 1)" \
+    "$(issue KEN-12 'In Progress' 2)" \
     | jq -sc . > "$STUB_DIR/tracker.out"
   printf '16\tken-6\tthe review item\n' > "$STUB_DIR/open.txt"
   printf '%s\n' "$(account claude claude room 2026-10-01T00:00:00Z)" \
@@ -99,6 +102,7 @@ world() {
   pick claude claude-sonnet-5 0 '{"config_dir":"/home/u/.claude"}'
   pick codex - 3 '{"walled":2,"unmeasured":0}'
   pick claude claude-opus-5 3 '{"walled":2,"unmeasured":0}'
+  pick provider-x-codex - 0 '{"config_dir":"/home/u/.codex"}'
 }
 
 # Rows: item | its owed line in the shared world, `-` for none.
@@ -112,7 +116,8 @@ KEN-7|-
 KEN-8|-
 KEN-9|owed KEN-9 state=in-progress priority=- lane=stopped verdict=queue
 KEN-10|owed KEN-10 state=in-progress priority=2 lane=stopped verdict=merged pr=21
-KEN-11|owed KEN-11 state=in-progress priority=1 lane=stopped verdict=dated harness=claude until=2026-10-04T00:00:00Z'
+KEN-11|owed KEN-11 state=in-progress priority=1 lane=stopped verdict=dated harness=claude until=2026-10-04T00:00:00Z
+KEN-12|owed KEN-12 state=in-progress priority=2 lane=stopped verdict=queue'
 
 echo "=== oversee-watch owed items ==="
 
@@ -124,20 +129,23 @@ assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --state I
 while IFS='|' read -r item want; do
   assert_eq "$(owed "$item")" "$want" "owed $item" "$ERR"
 done <<<"$WORLD_ROWS"
-assert_eq "$(grep '^pick ' "$STUB_DIR/lanes.args" | sort)" \
-  "$(printf '%s\n' 'pick --harness claude --json --model claude-opus-5' 'pick --harness claude --json --model claude-sonnet-5' 'pick --harness codex --json' | sort)" \
-  "the wall is asked of lanes pick once per harness and model, with the record's model" "$ERR"
+assert_eq "$(grep -E '^[^ ]+ (pick|list --json$)' "$STUB_DIR/lanes.hosts" | grep -v '^unset ' | sort)" \
+  "$(printf '%s\n' 'local list --json' 'local pick --harness claude --json --model claude-opus-5' \
+      'local pick --harness claude --json --model claude-sonnet-5' 'local pick --harness codex --json' \
+      'provider-x list --json' 'provider-x pick --harness codex --json' | sort)" \
+  "each host's accounts are listed once and its wall asked of lanes pick once per harness and model, under that host" "$ERR"
 assert_eq "$(grep -n '^owed ' <<<"$OUT" | head -1 | cut -d: -f1)" "$(($(grep -n '^account ' <<<"$OUT" | tail -1 | cut -d: -f1) + 1))" \
   "the owed lines follow the account roster" "$ERR"
 
-# A roster that was not read judges no wall: every item with a harness is
-# unjudged, a merged one is still merged, and one with no record is queued.
+# A host whose accounts could not be listed judges no wall: every item with a
+# harness is unjudged, each host named once, a merged one is still merged,
+# and one with no record is queued.
 world owed_unjudged
 printf '1\n' > "$STUB_DIR/lanes.rc"
 watch_pass -- --state "$STUB_DIR/state.json"
-assert_eq "$(owed KEN-3)|$(owed KEN-9)|$(owed KEN-5)|$(owed KEN-6)" \
-  "owed KEN-3 state=in-progress priority=1 lane=stopped verdict=unjudged harness=codex|owed KEN-9 state=in-progress priority=- lane=stopped verdict=unjudged harness=pi|owed KEN-5 state=in-review priority=2 lane=done verdict=merged pr=15|owed KEN-6 state=in-review priority=3 lane=none verdict=queue" \
-  "an unread roster leaves every harness unjudged" "$ERR"
+assert_eq "$(owed KEN-3)|$(owed KEN-9)|$(owed KEN-12)|$(owed KEN-5)|$(owed KEN-6) notes=$(grep -c '^oversee-watch: owed-accounts-unread host=' "$ERR" || true)" \
+  "owed KEN-3 state=in-progress priority=1 lane=stopped verdict=unjudged harness=codex|owed KEN-9 state=in-progress priority=- lane=stopped verdict=unjudged harness=pi|owed KEN-12 state=in-progress priority=2 lane=stopped verdict=unjudged harness=codex|owed KEN-5 state=in-review priority=2 lane=done verdict=merged pr=15|owed KEN-6 state=in-review priority=3 lane=none verdict=queue notes=2" \
+  "an unread listing leaves every harness on its host unjudged" "$ERR"
 
 # Rows: case | pick's exit and reply for codex. Every account unmeasured and a
 # pick that fails are both unjudged; the failure is named.
@@ -145,7 +153,7 @@ while IFS='|' read -r name rc reply notes; do
   world "owed_pick_$name"
   pick codex - "$rc" "$reply"
   watch_pass -- --state "$STUB_DIR/state.json"
-  assert_eq "rc=$RC $(owed KEN-3) notes=$(grep -c '^oversee-watch: owed-wall-unjudged harness=codex model=- exit=' "$ERR" || true)" \
+  assert_eq "rc=$RC $(owed KEN-3) notes=$(grep -c '^oversee-watch: owed-wall-unjudged host=local harness=codex model=- exit=' "$ERR" || true)" \
     "rc=0 owed KEN-3 state=in-progress priority=1 lane=stopped verdict=unjudged harness=codex notes=$notes" \
     "a pick answering $name leaves the item unjudged" "$ERR"
 done <<'ROWS'
@@ -228,6 +236,7 @@ without the held exclusion an item with a running lane is owed@($rec | held)@fal
 without the merged verdict a cycle record is judged for a wall@if [[ "$pr" != - ]]; then@if false; then@KEN-5@owed KEN-5 state=in-review priority=2 lane=done verdict=queue
 without the roster membership test a harness with no account is asked of pick@any(.[]; .harness == $h)@true@KEN-9@owed KEN-9 state=in-progress priority=- lane=stopped verdict=unjudged harness=pi
 without the record's model the pick judges the binding bucket@[[ "$model" == - ]] || args+=(--model "$model")@:@KEN-11@owed KEN-11 state=in-progress priority=1 lane=stopped verdict=queue
+without the record's host the pick judges the default host's accounts@env ORCH_LANE_HOST="$host" "$LANES_CLI" "${args@"$LANES_CLI" "${args@KEN-12@owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z
 ROWS
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

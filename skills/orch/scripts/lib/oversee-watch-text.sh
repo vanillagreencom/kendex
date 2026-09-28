@@ -269,16 +269,19 @@ The long pass's events, checked and reported in this order:
                              own that exits 2 as owed-list-truncated at 1000.
                              A record running, preparing or parked owes
                              nothing. `merged` is a record carrying its merge's
-                             `cycle`. A record with no harness, or whose
-                             harness the roster holds no account of, is
-                             `queue`; `unjudged` is a roster that was not read;
+                             `cycle`. A record with no harness is `queue`.
+                             Every other verdict reads the accounts of the
+                             record's host, its `host` or `local`, as
+                             ORCH_LANE_HOST: a `lanes list` there that fails
+                             is `unjudged`, named as owed-accounts-unread; one
+                             listing no account of the harness is `queue`;
                              otherwise `lanes pick --harness <h> [--model <m>]`
                              with the record's harness and model decides:
                              room is `queue`, a wall `dated` until the earliest
                              reset of that model's binding bucket among the
-                             harness's accounts, and every account unmeasured
-                             or a failed pick `unjudged`, the failure named as
-                             owed-wall-unjudged
+                             harness's accounts on that host, and every account
+                             unmeasured or a failed pick `unjudged`, the
+                             failure named as owed-wall-unjudged
 
 The mail pass's events, in this order, lane by lane and the overseer's own
 mailbox last:
@@ -742,9 +745,10 @@ ow_message() { # REASON FIELD=VALUE...
     time-failed) text='The current UTC time could not be read.' ;;
     tracker-list-failed) text='The tracker list command failed.' ;;
     tracker-list-invalid) text='The tracker list output could not be parsed.' ;;
-    owed-roster-invalid) text='The account roster this run read could not be put to the owed items, so the heartbeat names none.' ;;
+    owed-roster-invalid) text='The account listing read for the owed items could not be put to them, so the heartbeat names none.' ;;
+    owed-accounts-unread) text='lanes list failed under this host, so the owed items on it read unjudged this heartbeat. Its own words follow.' ;;
     owed-list-truncated) text='The item repository open pull request listing reached its limit, so an owed issue-N pull request past it would be missing. The heartbeat names no owed item from a partial list.' ;;
-    owed-wall-unjudged) text='lanes pick could not judge the wall for this harness and model, so the owed items on them read unjudged this heartbeat. Its own words follow.' ;;
+    owed-wall-unjudged) text='lanes pick could not judge the wall for this host, harness and model, so the owed items on them read unjudged this heartbeat. Its own words follow.' ;;
     handoff-read-failed) text='The handoff record could not be read.' ;;
     lane-close-failed) text='lane-close failed before it completed the close. The next run reports the exit again and retries.' ;;
     parked-merge-unmatched) text='A pull request merged on the parked item'"'"'s branch name, reported above as merged, is not the one its record names, so the parked sandbox stays stopped: recorded= is the record'"'"'s <repo>#<number> in lower case and seen= the merged keys this pass found. The lane closes when the recorded pull request merges in that repository.' ;;

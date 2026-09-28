@@ -468,12 +468,15 @@ EOF
 # lanes.sleep the seconds to wait before answering, every call's argv lands in
 # lanes.args and the usage age it was handed in lanes.max-age.
 # `lanes pick --harness H [--model M]` is answered apart and counts no list
-# call: pick-<H>-<M>.rc and .json (M `-` with no --model), default exit 0 and
-# `{}`, and a harness but claude or codex refused exit 1 as the real one does.
+# call: pick-<HOST>-<H>-<M>.rc and .json where the call's ORCH_LANE_HOST has
+# them, else pick-<H>-<M> (M `-` with no --model), default exit 0 and `{}`,
+# and a harness but claude or codex refused exit 1 as the real one does.
+# Every call's ORCH_LANE_HOST and argv land in lanes.hosts, `unset` for none.
 cat > "$TMP_ROOT/bin/lanes-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 printf '%s\n' "$*" >> "$STUB_DIR/lanes.args"
+printf '%s %s\n' "${ORCH_LANE_HOST:-unset}" "$*" >> "$STUB_DIR/lanes.hosts"
 if [[ "${1:-}" == pick ]]; then
   harness="" model=-
   while [[ $# -gt 0 ]]; do
@@ -487,7 +490,8 @@ if [[ "${1:-}" == pick ]]; then
     claude | codex) ;;
     *) printf 'lanes: invalid-pick-harness option=--harness\n' >&2; exit 1 ;;
   esac
-  base="$STUB_DIR/pick-$harness-$model"
+  base="$STUB_DIR/pick-${ORCH_LANE_HOST:-unset}-$harness-$model"
+  [[ -f "$base.rc" || -f "$base.json" ]] || base="$STUB_DIR/pick-$harness-$model"
   if [[ -f "$base.json" ]]; then cat "$base.json"; else printf '{}\n'; fi
   rc=0; [[ -f "$base.rc" ]] && rc="$(cat "$base.rc")"
   exit "$rc"
@@ -592,7 +596,7 @@ run_watch() {
   done
   (cd "${WATCH_CWD:-$TMP_ROOT/repo}" \
     && PATH="$TMP_ROOT/bin:$PATH" \
-       env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR \
+       env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR -u ORCH_LANE_HOST \
            -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u LINEAR_TEAM -u ORCH_DIRECTIVE_UNREAD_SECS \
            -u ORCH_REPORT_EVERY_MINUTES -u ORCH_REPORT_EVERY_ISSUES -u ORCH_REPORT_UPCOMING \
            -u ORCH_REPORT_COLUMNS -u ORCH_PROGRESS_REPORT_DIR -u OVERSEE_WATCH_REPORT \

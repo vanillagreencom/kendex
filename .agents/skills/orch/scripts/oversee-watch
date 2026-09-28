@@ -2974,14 +2974,10 @@ check_lanes() {
 # printing no accounts.
 ACCOUNT_ROSTER=""
 ACCOUNT_ROSTER_RC=1
-# The same reading's records whole, which the heartbeat's owed items take the
-# reset of a walled launch from; set with ACCOUNT_ROSTER and only then.
-ACCOUNT_LIST=""
 account_roster_read() {
   local errf="$WORK_DIR/accounts.err" rc=0 out
   ACCOUNT_ROSTER=""
   ACCOUNT_ROSTER_RC=1
-  ACCOUNT_LIST=""
   bounded_account_read account-unread "$errf" "$LANES_CLI" list --json || rc=$?
   # `lanes` writes its own keyed notices on a listing it still answered, a
   # provider it could not ask among them; those qualify this roster and pass
@@ -3008,7 +3004,6 @@ account_roster_read() {
     return 1
   }
   ACCOUNT_ROSTER="$out"
-  ACCOUNT_LIST="$BOUNDED_OUT"
   ACCOUNT_ROSTER_RC=0
 }
 
@@ -3093,20 +3088,31 @@ check_report() {
 # oversee-cycle writes at a merge, which a later launch keeps, so the tracker
 # holding the item says either the close-out never moved it or the item went
 # back to work; `queue` where the record names no harness, since its launch
-# picks one, or where the roster holds no account of that harness; `unjudged`
-# where the roster was not read; otherwise `lanes pick` for the record's
-# harness and model decides, the launcher's own judge: room is `queue`, a wall
-# is `dated` until the earliest reset lib/lane-model.sh's lane_binding gives
-# that model among the harness's accounts, and anything else is `unjudged`.
-# One pick is asked per harness and model. Without --state there is no queue
-# to compare.
+# picks one. Every other verdict reads the accounts of the record's own host,
+# its `host` or `local` where it names none, as ORCH_LANE_HOST, since a
+# relaunch stays on that host and open-terminal judges it there: `unjudged`
+# where that host's `lanes list` failed; `queue` where it lists no account of
+# the harness; otherwise `lanes pick` for the record's harness and model
+# decides, the launcher's own judge: room is `queue`, a wall is `dated` until
+# the earliest reset lib/lane-model.sh's lane_binding gives that model among
+# the harness's accounts on that host, and anything else is `unjudged`. One
+# listing is read per host and one pick asked per host, harness and model.
+# Without --state there is no queue to compare.
 OWED_PR_LIMIT=1000
 OWED_LINES=""
+# The heartbeat's own caches: one listing per host, one verdict per host,
+# harness and model, and the answers owed_accounts and owed_wall hand back.
+OWED_ACCOUNTS=""
+OWED_ANSWERS=""
+OWED_LISTING=""
+OWED_VERDICT=""
 owed_read() {
   OWED_LINES=""
   [[ -n "$STATE_FILE" ]] || return 0
-  local errf="$WORK_DIR/owed.err" out items rows roster=null rc=0 n
-  local id state priority lane harness model pr key verdict answers="" asked answer line
+  local errf="$WORK_DIR/owed.err" out items rows rc=0 n
+  local id state priority lane host harness model pr key verdict line asked answer
+  OWED_ACCOUNTS=""
+  OWED_ANSWERS=""
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
     out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --state "In Progress,In Review" --max --format=safe 2>"$errf")" || rc=$?
     [[ "$rc" -eq 0 ]] \
@@ -3131,10 +3137,9 @@ owed_read() {
       | jq -Rnc '[inputs | {id: ., state: "open-pr", priority: "-"}]' 2>"$errf")" \
       || die pr-list-invalid "$(cat "$errf")" "repo=${REPOS[0]}"
   fi
-  [[ "$ACCOUNT_ROSTER_RC" -ne 0 ]] || roster="$ACCOUNT_LIST"
   # One row per owed item on the unit separator, since a model id is the
-  # launcher's to spell: id, state, priority, lane, then the harness and model
-  # a wall is judged for and the merged pull request, `-` where none.
+  # launcher's to spell: id, state, priority, lane, then the host, harness and
+  # model a wall is judged for and the merged pull request, `-` where none.
   rows="$(jq -r --argjson items "$items" "$LANE_RUNNING_JQ"'
     def token($field): if type == "string" and test("^[A-Za-z0-9._-]+$") then .
       else error("lane-field field=\($field) value=\(tojson)") end;
@@ -3150,33 +3155,30 @@ owed_read() {
     | select($rec == null or ((($rec | held) or $rec.status == "parked") | not))
     | [$item.id, $item.state, ($item.priority | tostring),
        (if $rec == null then "none" else ($rec.status | token("status")) end),
+       ($rec.host // null | if . == null or . == "" then "local" elif type == "string" then . else error("lane-field field=host value=\(tojson)") end),
        ($rec.harness // null | if . == null then "-" else token("harness") end),
        ($rec.model // null | if . == null or . == "" then "-" elif type == "string" then . else error("lane-field field=model value=\(tojson)") end),
        (if $rec.cycle == null then "-"
         else ($rec.cycle.pr | if type == "number" then tostring else error("lane-field field=cycle value=\($rec.cycle | tojson)") end) end)]
     | join("\u001f")' <<<"$FLEET_STATE" 2>"$errf")" \
     || die state-invalid "$(cat "$errf")" "option=--state" "path=$STATE_FILE"
-  while IFS=$'\037' read -r id state priority lane harness model pr; do
+  while IFS=$'\037' read -r id state priority lane host harness model pr; do
     [[ -n "$id" ]] || continue
     line="owed $id state=$state priority=$priority lane=$lane"
     if [[ "$pr" != - ]]; then
       verdict="verdict=merged pr=$pr"
     elif [[ "$harness" == - ]]; then
       verdict="verdict=queue"
-    elif [[ "$roster" == null ]]; then
-      verdict="verdict=unjudged harness=$harness"
-    elif ! jq -e --arg h "$harness" 'any(.[]; .harness == $h)' <<<"$roster" >/dev/null 2>"$errf"; then
-      [[ ! -s "$errf" ]] || die owed-roster-invalid "$(cat "$errf")"
-      verdict="verdict=queue"
     else
-      key="$harness"$'\037'"$model"
+      key="$host"$'\037'"$harness"$'\037'"$model"
       verdict=""
       while IFS=$'\t' read -r asked answer; do
         [[ "$asked" != "$key" ]] || { verdict="$answer"; break; }
-      done <<<"$answers"
+      done <<<"$OWED_ANSWERS"
       if [[ -z "$verdict" ]]; then
-        verdict="$(owed_wall "$harness" "$model" "$roster")" || exit $?
-        answers+="$key"$'\t'"$verdict"$'\n'
+        owed_wall "$host" "$harness" "$model"
+        verdict="$OWED_VERDICT"
+        OWED_ANSWERS+="$key"$'\t'"$verdict"$'\n'
       fi
     fi
     OWED_LINES+="$line $verdict"$'\n'
@@ -3184,35 +3186,62 @@ owed_read() {
   OWED_LINES="${OWED_LINES%$'\n'}"
 }
 
-# The wall verdict of one harness and model, printed: `lanes pick` judges it
-# exactly as a launch on them is judged. Exit 0 is room; exit 3 with walled
-# accounts is a wall, dated by lane_binding over the roster's records of that
-# harness; exit 3 with none walled is every account unmeasured, and any other
-# exit a judgement that failed, named on stderr: both are `unjudged`.
-owed_wall() { # HARNESS MODEL ROSTER_JSON
-  local harness="$1" model="$2" errf="$WORK_DIR/owed-pick.err" rc=0 walled until
+# One host's `lanes list --json`, read once a heartbeat under that host as
+# ORCH_LANE_HOST and kept in OWED_ACCOUNTS as `<host> TAB <listing>` lines,
+# `-` for a listing that failed, which is named on stderr once.
+owed_accounts() { # HOST
+  local host="$1" errf="$WORK_DIR/owed-list.err" rc=0 asked answer
+  OWED_LISTING=""
+  while IFS=$'\t' read -r asked answer; do
+    [[ "$asked" != "$host" ]] || { OWED_LISTING="$answer"; return 0; }
+  done <<<"$OWED_ACCOUNTS"
+  bounded_account_read "" "$errf" env ORCH_LANE_HOST="$host" "$LANES_CLI" list --json || rc=$?
+  if [[ "$rc" -eq 0 ]] && jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1; then
+    OWED_LISTING="$(jq -c . <<<"$BOUNDED_OUT")" || die owed-roster-invalid "" "host=$host"
+  else
+    ow_message owed-accounts-unread "host=$host" "exit=$rc" >&2
+    cat -- "$errf" >&2
+    OWED_LISTING=-
+  fi
+  OWED_ACCOUNTS+="$host"$'\t'"$OWED_LISTING"$'\n'
+}
+
+# The wall verdict of one host, harness and model, as OWED_VERDICT. `lanes
+# pick` judges it under that host exactly as a launch there is judged. Exit 0
+# is room; exit 3 with walled accounts is a wall, dated by lane_binding over
+# that host's listing of the harness; exit 3 with none walled is every account
+# unmeasured, and any other exit a judgement that failed, named on stderr:
+# both are `unjudged`.
+owed_wall() { # HOST HARNESS MODEL
+  local host="$1" harness="$2" model="$3" errf="$WORK_DIR/owed-pick.err" rc=0 walled until
   local args=(pick --harness "$harness" --json)
+  OWED_VERDICT="verdict=unjudged harness=$harness"
+  owed_accounts "$host"
+  [[ "$OWED_LISTING" != - ]] || return 0
+  if ! jq -e --arg h "$harness" 'any(.[]; .harness == $h)' <<<"$OWED_LISTING" >/dev/null 2>"$errf"; then
+    [[ ! -s "$errf" ]] || die owed-roster-invalid "$(cat "$errf")" "host=$host"
+    OWED_VERDICT="verdict=queue"
+    return 0
+  fi
   [[ "$model" == - ]] || args+=(--model "$model")
-  bounded_account_read "" "$errf" "$LANES_CLI" "${args[@]}" || rc=$?
+  bounded_account_read "" "$errf" env ORCH_LANE_HOST="$host" "$LANES_CLI" "${args[@]}" || rc=$?
   case "$rc" in
-    0) echo "verdict=queue"; return 0 ;;
+    0) OWED_VERDICT="verdict=queue" ;;
     3)
-      walled="$(jq -r '.walled | if type == "number" then . else error("walled missing") end' <<<"$BOUNDED_OUT" 2>/dev/null)" \
-        || { ow_message owed-wall-unjudged "harness=$harness" "model=$model" "exit=3" >&2; cat -- "$errf" >&2
-             echo "verdict=unjudged harness=$harness"; return 0; }
-      if [[ "$walled" -gt 0 ]]; then
+      if ! walled="$(jq -r '.walled | if type == "number" then . else error("walled missing") end' <<<"$BOUNDED_OUT" 2>/dev/null)"; then
+        ow_message owed-wall-unjudged "host=$host" "harness=$harness" "model=$model" "exit=3" >&2
+        cat -- "$errf" >&2
+      elif [[ "$walled" -gt 0 ]]; then
         [[ "$model" != - ]] || model=""
         until="$(jq -r --arg h "$harness" --arg m "$model" "$LANE_MODEL_JQ"'
           [.[] | select(.harness == $h) | lane_binding($m) | .resets_at? // empty | strings] | min // "-"' \
-          <<<"$3" 2>"$errf")" || die owed-roster-invalid "$(cat "$errf")"
-        echo "verdict=dated harness=$harness until=$until"
-        return 0
+          <<<"$OWED_LISTING" 2>"$errf")" || die owed-roster-invalid "$(cat "$errf")" "host=$host"
+        OWED_VERDICT="verdict=dated harness=$harness until=$until"
       fi ;;
     *)
-      ow_message owed-wall-unjudged "harness=$harness" "model=$model" "exit=$rc" >&2
+      ow_message owed-wall-unjudged "host=$host" "harness=$harness" "model=$model" "exit=$rc" >&2
       cat -- "$errf" >&2 ;;
   esac
-  echo "verdict=unjudged harness=$harness"
 }
 
 # Every --repo's open PRs, each line prefixed with its repo as the reducer's
@@ -3268,7 +3297,7 @@ heartbeat() {
 # next long pass reads, never this process's copy of them.
 LONG_PASSES=0
 LONG_RETURNS=(LONG_EVENT LONG_FAILED OVERSEER_SUCCEEDED OVERSEER_STOP PW_PASSES PW_RC PW_EVENT
-  PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC ACCOUNT_LIST)
+  PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC)
 long_pass() {
   local i state_file
   PASS_EVENT=0
