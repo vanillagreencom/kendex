@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
+import socketserver
 import sys
 import threading
 import time
@@ -261,6 +263,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"ok": True, "files": [{"id": f["id"]} for f in files]})
 
 
+class Server(ThreadingHTTPServer):
+    """Bound with no name lookup: `HTTPServer.server_bind` names the host
+    through `socket.getfqdn`, a reverse lookup that can stall past the
+    harness's start bound on a macOS runner."""
+
+    def server_bind(self) -> None:
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def dead_port() -> int:
     """A port the kernel just handed out and nothing listens on."""
     probe = socket.socket()
@@ -279,9 +291,12 @@ def main() -> int:
     args = parser.parse_args()
     users = dict(item.split("=", 1) for item in args.user)
     Handler.ws = Workspace(args.token, users, args.page)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    with open(args.port_file, "w") as handle:
-        handle.write(str(server.server_address[1]))
+    server = Server(("127.0.0.1", 0), Handler)
+    # Written aside and renamed, so the harness never reads a partial port.
+    tmp = args.port_file + ".tmp"
+    with open(tmp, "w") as handle:
+        handle.write(str(server.server_port))
+    os.replace(tmp, args.port_file)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
