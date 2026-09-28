@@ -30,12 +30,14 @@
 #         RENEWED first and then measured like any other, its record marked
 #         `refreshable`; one that cannot be renewed reports the status its
 #         refusal took, with the cause. Table by default, --json for the
-#         structured record. Each --json record carries `verdict`: `room`,
-#         `walled` or `unmeasured`, its binding bucket judged against
-#         ORCH_LANE_MAX_PCT by the rule `pick` with no --model refuses on, so
-#         a reader of the listing never holds a second copy of that threshold
-#         or its default. The verdict is the reading's, a wall that lifts at
-#         binding_resets_at; `burn_pct_per_lane_hour` and
+#         structured record; the table's last column, DETAIL, is the record's
+#         `detail`, `-` where it carries none, so two lanes under one status
+#         word still show which refusal each met. Each --json record carries
+#         `verdict`: `room`, `walled` or `unmeasured`, its binding bucket
+#         judged against ORCH_LANE_MAX_PCT by the rule `pick` with no --model
+#         refuses on, so a reader of the listing never holds a second copy of
+#         that threshold or its default. The verdict is the reading's, a wall
+#         that lifts at binding_resets_at; `burn_pct_per_lane_hour` and
 #         `projected_headroom_pct` beside it are the projection `pick` also
 #         drops a lane on.
 #         The STATUS words are `ok`; `rate_limited`, an endpoint that answered
@@ -120,7 +122,9 @@
 #         wall; its keyed line on stderr says how many candidates were WALLED
 #         at or above --max-pct and how many measured nothing for the launch,
 #         and `no-candidate-unmeasured` is every candidate unmeasured, which is
-#         a read to fix rather than an allowance to wait out. Two more causes
+#         a read to fix rather than an allowance to wait out. The table under
+#         that line is `list`'s, DETAIL included, so each candidate's refusal
+#         (a 429, a 403, an expired login) reads there. Two more causes
 #         read differently from a reset to wait for. A lane counted WALLED can
 #         be one whose reading has room and whose live lanes project past the
 #         bound: `lanes list --json` shows its `claims` and
@@ -2461,12 +2465,13 @@ render_table() {
 		def col($s; $n): ($s | tostring) as $t
 		  | if ($t | length) >= $n then $t else $t + (" " * ($n - ($t | length))) end;
 		def num($v): if $v == null then "-" else ($v | tostring) + "%" end;
-		(["LANE","HARNESS","THROUGH","STATUS","PLAN","5H","WEEK","MODEL","HEADROOM","CLAIMS","AGE"] | @tsv),
+		(["LANE","HARNESS","THROUGH","STATUS","PLAN","5H","WEEK","MODEL","HEADROOM","CLAIMS","AGE","DETAIL"] | @tsv),
 		(.[] | [ .alias, .harness, (.measured_through // "local"), .status, (.plan // "-"),
 		         num(.session_5h_pct), num(.weekly_pct), num(.model_pct),
 		         (if .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end),
 		         (if .claims == null then "?" else .claims end),
-		         (if .usage_age_s == null then "-" else (.usage_age_s | tostring) + "s" end)
+		         (if .usage_age_s == null then "-" else (.usage_age_s | tostring) + "s" end),
+		         (.detail // "-")
 		       ] | @tsv)
 	' | lane_context_columns
 }

@@ -195,6 +195,15 @@ observe() {
         value="$(awk -v a="${name#considered.}" '$1 == a { print $3 }' "$ERR" 2>/dev/null | paste -sd, - || true)"
         value="${value:-none}"
         ;;
+      # The STATUS and DETAIL the refusal's stderr table gives that lane, as
+      # `status:detail`, or none. DETAIL is the last column and holds spaces,
+      # so it is cut at the header's own offset; underscored, since `expect`
+      # splits on whitespace.
+      tabled.*)
+        value="$(awk -v a="${name#tabled.}" '$1 == "LANE" && $NF == "DETAIL" { c = index($0, "DETAIL") }
+          c && $1 == a { print $4 ":" substr($0, c) }' "$ERR" 2>/dev/null | paste -sd, - || true)"
+        value="${value// /_}"; value="${value:-none}"
+        ;;
       # A notice another keyed line can precede: a state directory that cannot
       # hold a refusal cannot hold the refresh lock either, and that notice is
       # printed first.
@@ -1858,9 +1867,11 @@ printf 'account=%s\tharness=claude\tsession-5h-pct=3\tweekly-pct=8\naccount=%s\t
 # fixture is what the rows below read it from both.
 printf 'account=%s\tharness=codex\tsession-5h-pct=5\tweekly-pct=6\n' \
   "$H/.codex" > "$TMP_ROOT/accounts-mixed.tsv"
-# The refusals a provider names for its copy: a 429 under `unreachable` and a
-# 403 under `refused`, each with the endpoint's own words in `detail`. The
-# status word alone does not tell rate limiting from a permission denial.
+# The refusals a provider names for its copy, each with the endpoint's own
+# words in `detail`. The 403 is `refused`, as the accounts contract has it; the
+# 429 is a provider choosing `unreachable` against that contract, which names
+# `rate_limited` for it. `detail` carries the endpoint's words whatever status
+# the provider chose.
 printf 'account=%s\tharness=claude\tstatus=unreachable\tdetail=http-429-rate_limit_error\naccount=%s\tharness=claude\tstatus=refused\tdetail=http-403-permission_error\n' \
   "$H/.claude" "$H/.eclaude" > "$TMP_ROOT/accounts-refusals.tsv"
 printf 'account=%s\tharness=claude\tstatus=unreachable\tdetail=http-429-rate_limit_error\n' \
@@ -2074,6 +2085,10 @@ printf 'account=%s\tharness=claude\tsession-5h-pct=10\tweekly-pct=20\n' "$H/.tcl
 printf 'account=%s\tharness=claude\tstatus=unreachable\n' "$H/.tclaude" > "$TMP_ROOT/pick-unreachable.tsv"
 printf 'account=%s\tharness=claude\tstatus=unreachable\tdetail=http-429-rate_limit_error\n' "$H/.tclaude" > "$TMP_ROOT/pick-429.tsv"
 printf 'account=%s\tharness=claude\tstatus=refused\tdetail=http-403-permission_error\n' "$H/.tclaude" > "$TMP_ROOT/pick-403.tsv"
+# Both refusals in one sweep, the 403 on an account discovery does not reach,
+# beside dclaude's local expired login, which no host row names.
+printf 'account=%s\tharness=claude\tstatus=unreachable\tdetail=http-429-rate_limit_error\naccount=%s\tharness=claude\tstatus=refused\tdetail=http-403-permission_error\n' \
+  "$H/.tclaude" "$H/.hostonly" > "$TMP_ROOT/pick-refusals.tsv"
 printf 'account=%s\tharness=claude\tsession-5h-pct=10\tweekly-pct=20\n' "$H/.dclaude" > "$TMP_ROOT/pick-dead-ok.tsv"
 printf 'account=%s\tharness=claude\tsession-5h-pct=10\tweekly-pct=99\n' "$H/.dclaude" > "$TMP_ROOT/pick-dead-walled.tsv"
 : > "$TMP_ROOT/pick-none.tsv"
@@ -2091,6 +2106,7 @@ table \
   "a token-only folder the provider measures with room is picked through the host|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK|rc=0 config_dir=$H/.tclaude measured_through=host hasid=false" \
   "the same folder's host row read unreachable is dropped, not free, and the refusal's table names it through the host|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-unreachable.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.tclaude=host considered.oclaude=local" \
   "a host row carrying the provider's 429 detail is dropped the same way, never free|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-429.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.tclaude=host" \
+  "the refusal's table names each candidate's detail, so a 429, a 403 and an expired login read apart|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-refusals.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=4 tabled.tclaude=unreachable:http-429-rate_limit_error tabled.hostonly=refused:http-403-permission_error tabled.dclaude=expired:access_token_expired_and_could_not_be_renewed:_there_is_no_refresh_token_in_$H/.dclaude/.credentials.json_to_renew_with" \
   "a folder with neither a local file nor a host row is never picked|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-none.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.oclaude=local" \
   "a local copy proven dead is judged on the provider's reading, which has room|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-dead-ok.tsv|$PICK|rc=0 config_dir=$H/.dclaude measured_through=host" \
   "the provider's reading replaces the local one rather than joining it, so a walled host row is the account's only candidate|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-dead-walled.tsv|$PICK|rc=3 key=no-candidate,harness=claude,max-pct=95,model=none,walled=1,unmeasured=2,seats=0 considered.dclaude=host" \
@@ -2103,6 +2119,12 @@ LANES_PATCHED="$LANES"
 LANES="$TMP_ROOT/mutant-pick-local-only/scripts/lanes"
 table \
   "control: without the host rows the token-only folder is listed local and never picked|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK|rc=3 considered.tclaude=local"
+LANES="$LANES_PATCHED"
+# Control: a table that drops the column prints no candidate's refusal.
+lanes_mutant mutant-table-detail-dropped lanes '(\.detail ' '("-" '
+LANES="$TMP_ROOT/mutant-table-detail-dropped/scripts/lanes"
+table \
+  "control: without the column the refusal's table names neither the 429 nor the 403|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-refusals.tsv|$PICK|rc=3 tabled.tclaude=unreachable:- tabled.hostonly=refused:-"
 LANES="$LANES_PATCHED"
 
 # `pick --lane` judges its one account by the chooser's rule, so a launcher
