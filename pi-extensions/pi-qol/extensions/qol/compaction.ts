@@ -27,7 +27,7 @@ import {
 	type HandoffWriteResult,
 	type QolBudgetHandoff,
 } from "./compaction-handoff.js";
-import { settingBoolean, settingNumber, settingString } from "./settings.js";
+import { piCompactionEnabled, settingBoolean, settingNumber, settingString } from "./settings.js";
 import { stringifyError } from "./util.js";
 
 export type QolSummaryProfile = "concise" | "balanced" | "exhaustive";
@@ -373,6 +373,22 @@ export function compactionTriggerReason(ctx: ExtensionContext): string | undefin
 	return undefined;
 }
 
+/** Whether a QOL automatic compaction trigger may fire, and what turned it
+ * off. Pi core's `compaction.enabled` is read first, so that one key stops
+ * every automatic compaction in Pi; a manual /compact never passes here. */
+export type AutoCompactionGate = "enabled" | "disabled" | "pi-compaction-disabled";
+
+const AUTO_COMPACTION_SWITCHES = {
+	budgetGuard: { key: "compaction.budgetGuardEnabled", fallback: true },
+	idle: { key: "compaction.idleEnabled", fallback: false },
+} as const;
+
+export function autoCompactionGate(trigger: keyof typeof AUTO_COMPACTION_SWITCHES, cwd: string): AutoCompactionGate {
+	if (!piCompactionEnabled(cwd)) return "pi-compaction-disabled";
+	const { key, fallback } = AUTO_COMPACTION_SWITCHES[trigger];
+	return settingBoolean(key, fallback, cwd) ? "enabled" : "disabled";
+}
+
 export type BudgetGuardTrigger = BudgetTrigger;
 export type TranscriptRiskState = TranscriptRiskResult;
 
@@ -383,7 +399,7 @@ export type TranscriptRiskState = TranscriptRiskResult;
  * repeated triggers while usage stays above the threshold.
  */
 export function budgetGuardTrigger(ctx: ExtensionContext): BudgetGuardTrigger | undefined {
-	if (!settingBoolean("compaction.budgetGuardEnabled", true, ctx.cwd)) return undefined;
+	if (autoCompactionGate("budgetGuard", ctx.cwd) !== "enabled") return undefined;
 	const usage = contextUsage(ctx);
 	if (!usage) return undefined;
 	return computeBudgetTrigger({

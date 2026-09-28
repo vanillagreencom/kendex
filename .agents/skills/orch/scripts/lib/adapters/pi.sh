@@ -8,7 +8,10 @@
 # Pi has no launch word for compaction. Its switch is `compaction.enabled` in
 # its settings file, so open-terminal reads that value before a Pi launch
 # instead (lane_adapter_pi_compaction_on, or lane_adapter_pi_compaction_judge
-# on a hosted lane's files) and refuses one Pi would compact.#
+# on a hosted lane's files) and refuses one Pi would compact. pi-qol's budget
+# guard and idle trigger read the same key and never compact while it is off,
+# so this one key covers every automatic compaction in a kendex Pi install.
+#
 # Sourced by lib/lane-context.sh, never run.
 
 # One reading from a Pi session file on stdin: `<tokens>\t<window>\t<model>`

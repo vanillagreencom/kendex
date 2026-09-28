@@ -69,19 +69,47 @@ export function piSettingsPaths(cwd = process.cwd()): string[] {
 	return projectSettingsTrusted(project) ? [user, project] : [user];
 }
 
-export function readPackageConfig(packageId: string, cwd?: string): Record<string, unknown> {
-	const merged: Record<string, unknown> = {};
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Each settings file `piSettingsPaths` names that exists and parses, later
+ * files overriding earlier ones. A malformed file is skipped, as Pi's own
+ * settings load treats one as empty. */
+function readPiSettingsFiles(cwd?: string): Record<string, any>[] {
+	const files: Record<string, any>[] = [];
 	for (const settingsPath of piSettingsPaths(cwd)) {
 		if (!existsSync(settingsPath)) continue;
 		try {
 			const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
-			const config = parsed?.kendex?.extensionManager?.config?.[packageId];
-			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
+			if (isRecord(parsed)) files.push(parsed);
 		} catch {
-			// Ignore malformed optional manager config.
+			// Ignore a malformed settings file.
 		}
 	}
+	return files;
+}
+
+export function readPackageConfig(packageId: string, cwd?: string): Record<string, unknown> {
+	const merged: Record<string, unknown> = {};
+	for (const settings of readPiSettingsFiles(cwd)) {
+		const config = settings.kendex?.extensionManager?.config?.[packageId];
+		if (isRecord(config)) Object.assign(merged, config);
+	}
 	return merged;
+}
+
+/** Pi core's `compaction.enabled` over the files QOL reads its own config
+ * from, resolved as Pi's `SettingsManager.getCompactionEnabled` resolves it:
+ * the last file that sets the key decides, a key no file sets is Pi's default,
+ * true, and any falsy value turns compaction off. */
+export function piCompactionEnabled(cwd?: string): boolean {
+	let enabled: unknown;
+	for (const settings of readPiSettingsFiles(cwd)) {
+		const compaction = settings.compaction;
+		if (isRecord(compaction) && compaction.enabled !== undefined) enabled = compaction.enabled;
+	}
+	return Boolean(enabled ?? true);
 }
 
 export function readkendexConfig(cwd?: string): kendexConfig {

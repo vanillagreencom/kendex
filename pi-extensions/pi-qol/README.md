@@ -44,6 +44,7 @@ Open `/extensions:settings`; settings appear under the **QOL** tab. Project sett
 - Permission gate: `permissionGate.enabled`, `permissionGate.commands` (comma-separated literal fragments or `/regex/flags`), `permissionGate.previewLines`, `permissionGate.previewChars`.
 - Notifications: `notification.*` (triggers, channels, tmux options, protocol, cooldown, title and body).
 - Compaction and budget guard: `compaction.*` (custom summaries, model, profile, remote endpoint, branch summaries, idle trigger, budget guard thresholds, chunk input cap, handoff artifact, transcript-risk budget).
+  - Pi's own `compaction.enabled` (the top-level `compaction` object in the same settings files, not a QOL key) turns off every automatic compaction: when it is `false`, neither the budget guard nor the idle trigger starts one, and `/qol` reports both as disabled by that key. A manual `/compact` still runs. While it is `true` or absent, both keep the defaults and thresholds above: the budget guard on at `compaction.budgetPercent` 85, the idle trigger off until `compaction.idleEnabled` is set.
 - Thinking: `thinkingLabel.text`, `thinkingTimer.enabled`, `workingIndicator.mode` (`static` if the animated indicator flashes).
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).

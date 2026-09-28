@@ -1,7 +1,9 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { compactionProfile } from "./compaction.js";
+import { autoCompactionGate, compactionProfile, type AutoCompactionGate } from "./compaction.js";
 import {
 	DEFAULT_AUTO_RENAME_MODEL,
+	DEFAULT_BUDGET_GUARD_PERCENT,
+	DEFAULT_BUDGET_GUARD_TOKENS,
 	DEFAULT_COMPACTION_MODEL,
 	DEFAULT_IDLE_COMPACTION_SECONDS,
 	DEFAULT_PERMISSION_GATE_PREVIEW_CHARS,
@@ -14,6 +16,21 @@ import { permissionGateCommands } from "./permission-gate.js";
 import { autoRenameEnabled } from "./session-rename.js";
 import { sessionSearchShortcut } from "./session-search/index.js";
 import { boundedSettingNumber, newlineFallbackKey, settingBoolean, settingNumber, settingString } from "./settings.js";
+
+function autoCompactionStatus(gate: AutoCompactionGate, enabled: () => string): string {
+	switch (gate) {
+		case "enabled":
+			return enabled();
+		case "disabled":
+			return "disabled";
+		case "pi-compaction-disabled":
+			return "disabled by Pi compaction.enabled=false";
+		default: {
+			const unknownGate: never = gate;
+			throw new Error(`pi-qol: unknown auto-compaction gate ${String(unknownGate)}`);
+		}
+	}
+}
 
 export function statusMessage(ctx: ExtensionContext): string {
 	const labels = attachmentLabels(currentEditorText(ctx), ctx.cwd);
@@ -37,7 +54,8 @@ export function statusMessage(ctx: ExtensionContext): string {
 		`Handoff prompt review: ${settingBoolean("handoffReviewPrompt", true, ctx.cwd) ? "enabled" : "disabled"}`,
 		`Session search: ${settingBoolean("sessionSearch.enabled", true, ctx.cwd) ? `enabled (/search${searchShortcut ? `, ${searchShortcut}` : ""})` : "disabled"}`,
 		`Custom compaction: ${settingBoolean("compaction.customEnabled", false, ctx.cwd) ? `enabled (${settingString("compaction.model", DEFAULT_COMPACTION_MODEL, ctx.cwd)}, ${compactionProfile(ctx.cwd)})` : "disabled (Pi default)"}`,
-		`Idle compaction: ${settingBoolean("compaction.idleEnabled", false, ctx.cwd) ? `enabled after ${Math.max(1, Math.floor(settingNumber("compaction.idleTimeoutSeconds", DEFAULT_IDLE_COMPACTION_SECONDS, ctx.cwd)))}s idle` : "disabled"}`,
+		`Budget guard: ${autoCompactionStatus(autoCompactionGate("budgetGuard", ctx.cwd), () => `enabled (budgetPercent=${settingNumber("compaction.budgetPercent", DEFAULT_BUDGET_GUARD_PERCENT, ctx.cwd)}, budgetTokens=${settingNumber("compaction.budgetTokens", DEFAULT_BUDGET_GUARD_TOKENS, ctx.cwd)})`)}`,
+		`Idle compaction: ${autoCompactionStatus(autoCompactionGate("idle", ctx.cwd), () => `enabled after ${Math.max(1, Math.floor(settingNumber("compaction.idleTimeoutSeconds", DEFAULT_IDLE_COMPACTION_SECONDS, ctx.cwd)))}s idle`)}`,
 		`Branch summary override: ${settingBoolean("compaction.branchSummaryEnabled", false, ctx.cwd) ? "enabled" : "disabled"}`,
 		`Notifications: ${settingBoolean("notification.enabled", true, ctx.cwd) ? `enabled (bell=${settingBoolean("notification.bell", true, ctx.cwd)}, muteBell=${settingBoolean("notification.muteBellSound", false, ctx.cwd)}, native=${settingBoolean("notification.native", true, ctx.cwd)}, tmuxClientTty=${settingBoolean("notification.tmuxNativeClientTty", true, ctx.cwd)}, tmuxMessage=${settingBoolean("notification.tmux", false, ctx.cwd)})` : "disabled"}`,
 		`Permission gate: ${settingBoolean("permissionGate.enabled", false, ctx.cwd) ? `enabled (${permissionGateCommands(ctx.cwd).join(", ") || "none configured"}; preview ${boundedSettingNumber("permissionGate.previewLines", DEFAULT_PERMISSION_GATE_PREVIEW_LINES, 4, 40, ctx.cwd)} lines/${boundedSettingNumber("permissionGate.previewChars", DEFAULT_PERMISSION_GATE_PREVIEW_CHARS, 200, 5000, ctx.cwd)} chars)` : "disabled"}`,

@@ -5,6 +5,7 @@ import { getQuestionService, readCavemanBridge, type QuestionOpenedEventLike } f
 import { BudgetGuardDriver } from "./qol/budget-guard-runtime.js";
 import { ansiGreen } from "./qol/ansi.js";
 import {
+	autoCompactionGate,
 	budgetGuardTrigger,
 	compactionTriggerReason,
 	handleQolBranchSummary,
@@ -334,7 +335,7 @@ export default function qol(pi: ExtensionAPI): void {
 
 	const scheduleIdleCompaction = (ctx: ExtensionContext) => {
 		clearIdleCompactionTimer();
-		if (!settingBoolean("compaction.idleEnabled", false, ctx.cwd)) return;
+		if (autoCompactionGate("idle", ctx.cwd) !== "enabled") return;
 		const reason = compactionTriggerReason(ctx);
 		if (!reason) return;
 		const delayMs = Math.max(1, Math.floor(settingNumber("compaction.idleTimeoutSeconds", DEFAULT_IDLE_COMPACTION_SECONDS, ctx.cwd))) * 1000;

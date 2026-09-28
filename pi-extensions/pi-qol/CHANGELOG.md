@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.1.1
+
+- The budget guard and the idle compaction trigger honour Pi's own `compaction.enabled`: while it is `false`, neither starts a compaction, so that one key turns off every automatic compaction in Pi. Before this, the budget guard still compacted at 85 percent of the window with Pi's compaction off. `/qol` now shows a `Budget guard` line, and both it and `Idle compaction` read "disabled by Pi compaction.enabled=false" when that key is the reason. With the key `true` or absent, both behave as before. A manual `/compact` is unaffected.
+
 ### 2.1.0
 
 - The statusline can name the Claude login the session authenticated as, read from the Claude bridge's published `kendex.pi.claude-bridge.billing-identity.v1` surface. The bridge owns the judgement of what counts as a confirmed login, so the row shows an email only where the SDK confirmed one: nothing appears before the session's first turn, and nothing appears when the request used an API key or a third-party backend such as Bedrock or Vertex. The segment appears only while the active model uses the Claude bridge. The new `statusline.showAccount` setting turns the segment off; it defaults to on.

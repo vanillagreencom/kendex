@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { afterEach, beforeEach, expect, jest, mock, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import qolDefault from "../extensions/qol.ts";
 import { QOL_BUDGET_GUARD_SENTINEL } from "../extensions/qol/budget-guard.ts";
+import { statusMessage } from "../extensions/qol/status-message.ts";
 
 interface CompactCall { customInstructions?: string; onComplete?: () => void; onError?: (e: Error) => void }
 
@@ -116,6 +117,7 @@ afterEach(async () => {
 			}
 		}
 	} finally {
+		jest.useRealTimers();
 		if (workdir) rmSync(workdir, { force: true, recursive: true });
 		if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
@@ -151,6 +153,20 @@ async function completeCompaction(h: World): Promise<boolean> {
 	call?.onComplete?.();
 	await h.settlement;
 	return h.settled;
+}
+
+/** The user Pi settings file: Pi core's `compaction` object, absent where
+ * `enabled` is undefined, beside the QOL package config. */
+function writePiSettings(enabled: boolean | undefined, qol: Record<string, unknown> = {}): void {
+	const settings = {
+		...(enabled === undefined ? {} : { compaction: { enabled } }),
+		kendex: { extensionManager: { config: { "@vanillagreen/pi-qol": qol } } },
+	};
+	writeFileSync(join(workdir, "settings.json"), `${JSON.stringify(settings)}\n`, "utf8");
+}
+
+function statusLine(h: World, label: string): string | undefined {
+	return statusMessage(h.ctx as any).split("\n").find((line) => line.startsWith(`${label}: `));
 }
 
 function sessionCompact(h: World, fromExtension = true, ctx = h.ctx): void {
@@ -325,6 +341,49 @@ const rows: Array<{
 		],
 		expected: [0, { calls: 1, settled: false }, true, 0, { calls: 1, settled: false }, true, 1, { calls: 2, settled: false }, true],
 	},
+	...([
+		{ enabled: false, fires: 0, status: "disabled by Pi compaction.enabled=false" },
+		{ enabled: true, fires: 1, status: "enabled" },
+		{ enabled: undefined, fires: 1, status: "enabled" },
+	] as const).flatMap(({ enabled, fires, status }) => [
+		{
+			name: `budget guard at the whole window with Pi compaction.enabled=${enabled}`,
+			setup: (h: World) => {
+				writePiSettings(enabled);
+				h.ctx.getContextUsage = () => ({ contextWindow: 200_000, percent: 100, tokens: 200_000 });
+			},
+			actions: [
+				agentEnd,
+				async (h: World) => {
+					const settlement = h.fake.handlers.agent_settled!({ type: "agent_settled" }, h.ctx);
+					await Promise.resolve();
+					const calls = h.ctx.compact.mock.calls.length;
+					(h.ctx.compact.mock.calls[0]?.[0] as CompactCall | undefined)?.onComplete?.();
+					await settlement;
+					return calls;
+				},
+				(h: World) => statusLine(h, "Budget guard")?.startsWith(`Budget guard: ${status}`),
+			],
+			expected: [0, fires, true],
+		},
+		{
+			name: `idle trigger after its timeout with Pi compaction.enabled=${enabled}`,
+			setup: (h: World) => {
+				writePiSettings(enabled, { "compaction.idleEnabled": true, "compaction.idleTimeoutSeconds": 1 });
+				h.ctx.getContextUsage = () => ({ contextWindow: 1_000_000, percent: 25, tokens: 250_000 });
+				jest.useFakeTimers();
+			},
+			actions: [
+				agentEnd,
+				(h: World) => {
+					jest.advanceTimersByTime(1_000);
+					return h.ctx.compact.mock.calls.length;
+				},
+				(h: World) => statusLine(h, "Idle compaction")?.startsWith(`Idle compaction: ${status}`),
+			],
+			expected: [0, fires, true],
+		},
+	]),
 ];
 
 for (const row of rows) {

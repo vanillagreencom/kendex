@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-qol",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Pi quality-of-life extension: compact statusline/π prompt, reliable multiline input, styled pasted-image chips, session naming/search/context import, scheduled prompts, handoff, permission prompts, notifications, custom compaction, and a collapsed-thinking timer.",
   "license": "MIT",
   "keywords": [
@@ -839,7 +839,7 @@
         {
           "key": "compaction.idleEnabled",
           "label": "Idle compaction trigger",
-          "description": "Trigger Pi compaction after the session sits idle above the configured token threshold. Inspired by oh-my-pi idle compaction.",
+          "description": "Trigger Pi compaction after the session sits idle above the configured token threshold. Never fires while Pi's own compaction.enabled is false. Inspired by oh-my-pi idle compaction.",
           "type": "boolean",
           "default": false,
           "category": "Compaction Idle",
@@ -884,7 +884,7 @@
         {
           "key": "compaction.budgetGuardEnabled",
           "label": "Long-session budget guard",
-          "description": "Start bounded compaction when an active session crosses the configured context budget, while giving Pi's built-in compaction priority. Designed for long autonomous runs so transcript growth cannot silently hit provider or buffer limits. Fires once per threshold crossing, not in a loop.",
+          "description": "Start bounded compaction when an active session crosses the configured context budget, while giving Pi's built-in compaction priority. Designed for long autonomous runs so transcript growth cannot silently hit provider or buffer limits. Fires once per threshold crossing, not in a loop. Never fires while Pi's own compaction.enabled is false.",
           "type": "boolean",
           "default": true,
           "category": "Compaction Budget Guard",
