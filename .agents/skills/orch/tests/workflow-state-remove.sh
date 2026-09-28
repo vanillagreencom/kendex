@@ -134,8 +134,8 @@ rc=0
   bash "$WS" --state-dir "$bd" remove KEN-1) >"$bd.out" 2>"$bd.err" || rc=$?
 BACKSTOP="rc=$rc removed=$(grep -c '^removed path=' "$bd.out" || true) err=$(head -n 1 "$bd.err") old=$([[ -e "$bd/waiter.abc" ]] && echo kept || echo removed)"
 [[ "$BACKSTOP" == "rc=1 removed=6 err=workflow-state: prune-progress-overlap path=$bd state-dir=$bd old=kept" ]] \
-  && pass "with no fleet state a backstop whose archive cannot be built refuses the close-out" \
-  || fail "with no fleet state a backstop whose archive cannot be built refuses the close-out" "$BACKSTOP"
+  && pass "with no fleet state a backstop prune that refuses refuses the close-out" \
+  || fail "with no fleet state a backstop prune that refuses refuses the close-out" "$BACKSTOP"
 
 # A lane's close-out at its merge: the item's state under the main checkout's
 # state directory, and its worktree's tmp/, named by --archive, holding a
@@ -181,6 +181,36 @@ worktree_run shipped "$WS"
 [[ "$WORKTREE" == "rc=0 state=removed back=all" ]] \
   && pass "a removed worktree's tmp records and the item's state stay readable from the archive, bytes and times as written" \
   || fail "a removed worktree's tmp records and the item's state stay readable from the archive, bytes and times as written" "$WORKTREE"
+
+# The --archive path alone decides the archive where the state directory
+# holds nothing for the item, as a rerun of merge-pr step 6 finds once a first
+# close-out took the state, and a path that does not exist adds nothing. Rows:
+# the case, the item, the --archive path under the case's root, and what
+# ARCHIVE_ONLY reads: the status, the kept line's shape and, where it names an
+# archive, whether that lists the item's state and the worktree's tmp/ records.
+ARCHIVE_ONLY_ROWS='tmp-only|KEN-5|tree/tmp|rc=0 kept=archive state=no tmp=yes
+missing-with-files|KEN-1|missing|rc=0 kept=archive state=yes tmp=no
+missing-alone|KEN-5|missing|rc=0 kept=none'
+archive_only_run() { # NAME SCRIPT ITEM PATH
+  local ap="$TMP_ROOT/only-$1" out rc=0 archive listing
+  build "$ap"
+  seed_worktree "$ap.root/tree"
+  out="$(remove "$2" "$ap" "$3" --archive "$ap.root/$4" 2>&1)" || rc=$?
+  archive="$(sed -n 's/^removed kept=//p' <<<"$out")"
+  case "$archive" in
+    none) ARCHIVE_ONLY="rc=$rc kept=none" ;;
+    "$ap.fleet/"*.tgz)
+      listing="$(tar -tzf "$archive" 2>/dev/null || true)"
+      ARCHIVE_ONLY="rc=$rc kept=archive state=$(grep -qxF -- "${ap#/}/workflow-state-KEN-1.json" <<<"$listing" && echo yes || echo no) tmp=$(grep -qxF -- "${ap#/}.root/tree/tmp/dev-return-KEN-1-7.json" <<<"$listing" && echo yes || echo no)" ;;
+    *) ARCHIVE_ONLY="rc=$rc out=$out" ;;
+  esac
+}
+while IFS='|' read -r case_name item path want; do
+  archive_only_run "$case_name" "$WS" "$item" "$path"
+  [[ "$ARCHIVE_ONLY" == "$want" ]] \
+    && pass "--archive, $case_name: $want" \
+    || fail "--archive, $case_name: $want" "got=$ARCHIVE_ONLY"
+done <<<"$ARCHIVE_ONLY_ROWS"
 
 # An archive that cannot be built, its root a file: the refusal names it and
 # every path the close-out would have removed stays, as does the worktree's
@@ -263,6 +293,21 @@ archive_fails_run archive-goes-on "$ARCHIVE_GOES_ON"
 [[ "$ARCHIVE_FAILS" == *" kept=some" ]] \
   && pass "control: a failed archive that does not stop the close-out removes the item's files" \
   || fail "control: a failed archive that does not stop the close-out removes the item's files" "$ARCHIVE_FAILS"
+
+# The --archive rules' must-fail controls, one per rule: a path that does
+# not exist handed to tar, and the archive decided by the removed paths alone.
+NO_EXISTS="$(mutant_scripts no-exists workflow-state)/workflow-state" || exit 1
+mutate_file "$NO_EXISTS" '[[ ! -e "$unit" && ! -L "$unit" ]] || extra+=("$unit")' 'extra+=("$unit")'
+archive_only_run no-exists "$NO_EXISTS" KEN-1 missing
+[[ "$ARCHIVE_ONLY" == "rc=1 "* ]] \
+  && pass "control: a missing --archive path handed to tar refuses the close-out" \
+  || fail "control: a missing --archive path handed to tar refuses the close-out" "got=$ARCHIVE_ONLY"
+TARGETS_ONLY="$(mutant_scripts targets-only workflow-state)/workflow-state" || exit 1
+mutate_file "$TARGETS_ONLY" ' || "${#extra[@]}" -gt 0 ]]' ' ]]'
+archive_only_run targets-only "$TARGETS_ONLY" KEN-5 tree/tmp
+[[ "$ARCHIVE_ONLY" == "rc=0 kept=none" ]] \
+  && pass "control: an archive decided by the removed paths alone drops a worktree's tmp/" \
+  || fail "control: an archive decided by the removed paths alone drops a worktree's tmp/" "got=$ARCHIVE_ONLY"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

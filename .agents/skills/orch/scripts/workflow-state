@@ -1311,9 +1311,11 @@ cmd_prune() {
         archive_write "prune-$now_epoch" "$rows" ${candidates[@]+"${candidates[@]}"} \
             || { state_message prune-archive-failed "$@" >&2; return 1; }
         archive="$ARCHIVE"
+        # The rows reach jq on stdin, never argv: every row past the retention
+        # since the last prune can outgrow the kernel's cap on one argument.
         if [[ "$n_rows" -gt 0 ]] && ! atomic_update "$state_file" \
-            '.fleet_log = ((.fleet_log // []) - $r.fleet_log) | .lanes = ((.lanes // []) - $r.lanes)' \
-            --argjson r "$rows"; then
+            '.fleet_log = ((.fleet_log // []) - $r[0].fleet_log) | .lanes = ((.lanes // []) - $r[0].lanes)' \
+            --slurpfile r /dev/stdin <<<"$rows"; then
             return 1
         fi
         for unit in ${candidates[@]+"${candidates[@]}"}; do
