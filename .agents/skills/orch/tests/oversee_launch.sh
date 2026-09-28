@@ -374,6 +374,24 @@ harness_ended() { # -> the recorded exit status, once overseer-run wrote one
 assert_eq "$(harness_ended)|$(recorded exit.at | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T')" "143|1" \
   "a harness that ends leaves its exit status and time on the session record"
 tm kill-window -t "$(recorded window)"
+# register on a Copilot pane, whose command names no harness: the harness is
+# the process under the pane carrying Copilot's Linux name, MainThread, here a
+# copy of sleep under a shell, and the account is --account's.
+mkdir -p "$TMP_ROOT/copilot-bin"
+cp "$(command -v sleep)" "$TMP_ROOT/copilot-bin/MainThread"
+COPILOT_PANE="$(tm new-window -d -t fleet:7 -n copilothand -P -F '#{pane_id}' "/bin/sh -c \"'$TMP_ROOT/copilot-bin/MainThread' 100000; :\"")"
+register_copilot() { # [OVERSEE_BIN]
+  OVERSEE_BIN="${1:-}" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$COPILOT_PANE" -- register --account "$H/.1copilot"
+}
+register_copilot
+assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded home)" \
+  "0|copilot|$H/.1copilot|$H/.1copilot" \
+  "register on a copilot pane records harness copilot, read off the process under it"
+COPILOTCTL="$(mutant_scripts copilotctl oversee)" || exit 1
+mutate_file "$COPILOTCTL/oversee" '[[ "$below" != found ]] || harness=copilot' ': || harness=copilot'
+register_copilot "$COPILOTCTL/oversee"
+assert_eq "$RC|$(recorded harness)" "0|none" \
+  "control: a register that reads no process under the pane records no harness for copilot"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

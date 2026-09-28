@@ -1480,6 +1480,51 @@ assert_eq "$RC|$OUT" \
   "control: a print that ignores the record names the environment's account for the recorded pane"
 fleet_state
 
+# A Copilot overseer: the printed line is its own row's, the brief on -i and
+# the account its record names under COPILOT_HOME. Every other mode needs a
+# reading of a Copilot account, which lanes does not make, and refuses before
+# any; a record naming no account refuses the line rather than print one on
+# an account nothing named.
+COPILOT_LINE="env COPILOT_HOME='$H/.1copilot' copilot --autopilot --max-autopilot-continues 3 --allow-all -i '$BRIEF'"
+copilot_row() { # NAME [SUCCEED_BIN] ARGS... — the run on a pane whose record names $H/.1copilot
+  local name="$1" bin="$2"
+  shift 2
+  new_caller "$UNDER_MARK"
+  record_account "$CALLER_PANE" "$H/.1copilot"
+  SUCCEED_BIN="${bin:-$SUCCEED}" run_succeed "$name" '' "$@"
+}
+copilot_row printcopilot '' --print-launch-line --harness copilot -- --allow-all
+assert_eq "$RC|$OUT|$(overseers)" "0|$COPILOT_LINE|0" \
+  "a copilot overseer's printed line runs copilot on its recorded account with the brief on -i"
+copilot_row checkcopilot '' --check-marks --harness copilot
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "1|oversee-succeed: copilot-unmeasured pane=$CALLER_PANE mode=check" \
+  "a copilot overseer's marks are refused before any account reading, lanes measuring none"
+fleet_state
+new_caller "$UNDER_MARK"
+run_succeed printcopilotnone '' --print-launch-line --harness copilot -- --allow-all
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "1|oversee-succeed: copilot-account-unknown pane=$CALLER_PANE" \
+  "a copilot overseer whose record names no account prints no line"
+# Controls, one per rule: the builder's copilot arm, the refusal of every
+# judging mode, and the refusal of a line with no account.
+COPILOTARM="$(mutant_scripts copilotarm lib/overseer-launch.sh)" || exit 1
+mutate_file "$COPILOTARM/lib/overseer-launch.sh" '    copilot) OL_LANE_VAR=COPILOT_HOME; cmd="copilot"; brief_flag=" -i" ;;' '    copilot-x) ;;'
+copilot_row printcopilotctl "$COPILOTARM/oversee-succeed" --print-launch-line --harness copilot -- --allow-all
+assert_eq "$RC|$(grep -c "^env CODEX_HOME='$H/.1copilot' codex " <<<"$OUT")" "0|1" \
+  "control: without its arm the copilot line is built as codex's"
+COPILOTMODE="$(mutant_scripts copilotmode oversee-succeed)" || exit 1
+mutate_file "$COPILOTMODE/oversee-succeed" '[[ "$CALLER_HARNESS" != copilot || "$MODE" == print ]]' '[[ "$CALLER_HARNESS" != copilot || "$MODE" != print ]]'
+copilot_row checkcopilotctl "$COPILOTMODE/oversee-succeed" --check-marks --harness copilot
+assert_eq "$RC|$(grep -c '^oversee-succeed: copilot-unmeasured ' <<<"$OUT")" "0|0" \
+  "control: without the refusal a copilot overseer's marks are judged on a reading lanes cannot make"
+COPILOTACCT="$(mutant_scripts copilotacct oversee-succeed)" || exit 1
+mutate_file "$COPILOTACCT/oversee-succeed" '[[ -n "$CALLER_CFG" ]] || die copilot-account-unknown' ': || die copilot-account-unknown'
+fleet_state
+new_caller "$UNDER_MARK"
+SUCCEED_BIN="$COPILOTACCT/oversee-succeed" run_succeed printcopilotnonectl '' --print-launch-line --harness copilot -- --allow-all
+assert_eq "$RC|$(grep -c "^env COPILOT_HOME='' copilot " <<<"$OUT")" "0|1" \
+  "control: without the refusal the line opens copilot on an empty COPILOT_HOME"
+fleet_state
+
 # The printed line is replayed verbatim into a DEAD pane, and nobody is at that
 # pane to answer a folder-trust question either. A codex line therefore carries
 # the same preparation a live succession makes and names the home the trust was

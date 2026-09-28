@@ -4,9 +4,8 @@
 # adapter reads, and runs with its harness's own compaction off, so the handoff
 # comes first. A launch that turned compaction off on a session whose window
 # nothing can name would run it into its wall with neither, so each harness is
-# admitted only where both halves hold, and Copilot CLI, which names no switch
-# to turn its compaction off, on its own compaction. A launch naming no fleet
-# state is judged on none of it.
+# admitted only where both halves hold. A launch naming no fleet state is
+# judged on none of it.
 #
 # Every row stops before a window could open: a launch the gate passes is
 # handed an empty worktree path by the stubbed worktree CLI and refused later,
@@ -106,9 +105,8 @@ a codex --cmd without them is refused, one word field per word|open-terminal: la
 a codex --cmd carrying them passes|passed|${FLEET[*]} --harness codex --cmd 'codex -m gpt-6-astra -c model_reasoning_effort=high $CODEX_QUESTION $CODEX_WORDS {item}'
 a fleet --cmd naming no harness is refused|open-terminal: unsupported-for-oversee harness=none|${FLEET[*]} --cmd 'claude --model opus {item}'
 opencode in a fleet is refused|open-terminal: unsupported-for-oversee harness=opencode|${FLEET[*]} --harness opencode --launch-flags '--model m'
-copilot in a fleet passes on its own compaction|passed|${FLEET[*]} --harness copilot --launch-flags '--model claude-opus-5 --reasoning-effort high'
-a copilot --cmd carrying its question-off word passes, owing no compaction words|passed|${FLEET[*]} --harness copilot --cmd 'copilot --model claude-opus-5 --reasoning-effort high --no-ask-user -i {item}'
-a copilot --cmd without its question-off word is refused|open-terminal: launch-question-tool-missing harness=copilot word=--no-ask-user|${FLEET[*]} --harness copilot --cmd 'copilot --model claude-opus-5 --reasoning-effort high -i {item}'
+copilot in a fleet is refused, no switch turning its compaction off and no adapter reading its window|open-terminal: unsupported-for-oversee harness=copilot|${FLEET[*]} --harness copilot --launch-flags '--model claude-opus-5 --reasoning-effort high'
+copilot with no fleet passes|passed|--harness copilot --launch-flags '--model claude-opus-5 --reasoning-effort high'
 opencode with no fleet passes|passed|--harness opencode --launch-flags '--model m'
 claude on a model with no window, with no fleet, passes|passed|--harness claude --launch-flags '--model sonnet --effort high'
 ROWS
@@ -196,10 +194,6 @@ control() { # NAME OLD NEW
 control unsupported-ctrl '*) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; exit 1 ;;' '*) ;;'
 assert_eq "$(OT="$CTRL_OT" launch unsupported-ctrl "${FLEET[@]}" --harness opencode --launch-flags '--model m')" passed \
   "control: without its refusal an opencode fleet launch passes the gate"
-control copilot-ctrl '    copilot) ;;' '    copilot-unadmitted) ;;'
-assert_eq "$(OT="$CTRL_OT" launch copilot-ctrl "${FLEET[@]}" --harness copilot --launch-flags '--model claude-opus-5 --reasoning-effort high')" \
-  "open-terminal: unsupported-for-oversee harness=copilot" \
-  "control: without its arm a copilot fleet launch is refused as no adapter reads it"
 control window-ctrl 'ot_message launch-window-unknown "harness=$LAUNCH_HARNESS" "model=${LAUNCH_MODEL:-none}" >&2' ': '
 assert_eq "$(OT="$CTRL_OT" launch window-ctrl "${FLEET[@]}" --harness claude --launch-flags '--model sonnet --effort high')" passed \
   "control: without its refusal a claude fleet lane on a model with no window passes"

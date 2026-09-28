@@ -493,8 +493,8 @@ fi
 # gates above are, and only where a fleet state is named: a launch outside any
 # fleet has no overseer to hand off to. A launch that turns compaction off on a
 # session whose window nothing can name would run it into its wall with neither
-# a handoff nor a compaction, so each harness that can turn it off is admitted
-# only where both halves hold, and one that cannot on its own compaction:
+# a handoff nor a compaction, so each harness is admitted only where both halves
+# hold:
 #   claude  its words from the launch-choice table, which a --cmd template has
 #           to carry itself as it carries the question-tool words, on a model
 #           whose window the claude adapter names
@@ -503,9 +503,6 @@ fi
 #           pi-hooks carrier that sends the window, both read on this machine
 #           under the Pi root the lane runs on (pi_local_gate), or for a hosted
 #           lane on its host once create has made it (host_pi_gate)
-#   copilot nothing to read: no switch turns its automatic compaction off,
-#           and no adapter reads its window, so the lane compacts at its wall
-#           rather than handing off at a mark
 # Every other harness, and a launch naming none, has no adapter. A wake is not
 # judged: it re-enters a session its own launch was admitted with, and names no
 # model of its own.
@@ -551,7 +548,6 @@ if [[ "$FLEET" == true && "$WAKE" != true ]]; then
         fi
       fi
       ;;
-    copilot) ;;
     *) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; exit 1 ;;
   esac
 fi

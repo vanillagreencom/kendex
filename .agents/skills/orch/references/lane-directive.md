@@ -26,7 +26,7 @@ A fleet launch, one naming `--state-dir`, meets one more gate, which admits a ha
 
 - `launch-compaction-missing` (naming `harness` and one `word` per word): the `--cmd` command leaves that harness's own compaction on. Add the words, in order; [skill-rules.md § Coordination](skill-rules.md#coordination) lists them.
 - `launch-window-unknown` (naming the claude `model`): the claude adapter names no window for that model. Launch on a model its window table names.
-- `unsupported-for-oversee` (naming `harness`, `none` for a launch naming none): no adapter reads that harness, or, with `reason=no-window-read`, the Pi carrier installed sends no `context_window`. Launch on claude, codex, copilot, or a Pi with the current pi-hooks. A copilot lane is admitted with no adapter because nothing turns its own compaction off ([skill-rules.md](skill-rules.md#coordination), Compaction).
+- `unsupported-for-oversee` (naming `harness`, `none` for a launch naming none): no adapter reads that harness, or, with `reason=no-window-read`, the Pi carrier installed sends no `context_window`. Launch on claude, codex, or a Pi with the current pi-hooks. A copilot fleet lane stays refused until KEN-1935's statusLine record names its window and the KEN-1661 shared handoff judge covers a harness whose compaction stays on ([skill-rules.md](skill-rules.md#coordination), Compaction).
 - `compaction-on` and `pi-settings-unreadable` (naming the `file`): Pi would compact the lane, or its settings file could not be read. Set Pi's `compaction.enabled` to `false`, or repair the file.
 - `pi-carrier-unreadable` (naming the `file`): the host's pi-hooks carrier file could not be read.
 

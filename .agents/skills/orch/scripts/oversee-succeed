@@ -433,7 +433,9 @@ message() { # KEY FIELD=VALUE...
     invalid-context-mark) text='ORCH_HANDOFF_CONTEXT_PCT takes a whole number of percent from 1 to 100.' ;;
     pane-unreadable) text='The caller pane could not be read.' ;;
     harness-unnamed) text='The caller pane runs no harness this script launches, and neither --harness nor a context reading of this pane names one.' ;;
-    invalid-harness) text='--harness takes claude or codex.' ;;
+    invalid-harness) text='--harness takes claude, codex or copilot.' ;;
+    copilot-unmeasured) text='This overseer runs Copilot CLI, and lanes measures no Copilot account until KEN-1935 adds that reading, so no mark, wall or lane pick can be judged for it. Nothing was launched. For a Copilot overseer this script builds the --print-launch-line line alone, and --dead-pane replays it.' ;;
+    copilot-account-unknown) text='This overseer runs Copilot CLI and its launch record names no account, and no reader of COPILOT_HOME answers for a session until KEN-1935 adds one. Nothing was printed. Record the account with oversee register --account DIR from this pane, then print the line again.' ;;
     invalid-context) text='--context takes TOKENS:WINDOW, two whole numbers, the window empty where no adapter named one.' ;;
     context-unmeasured) text='No account mark is reached and the context mark was not judged: the --context reading names no window (window-unnamed), or this run was handed none (context-unread). Nothing was launched. At the context mark, run the succession the turn-end refusal names, which carries the reading. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
     context-below-mark) text='No mark is reached; nothing was launched. The shared context rule requires no handoff at this reading. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
@@ -717,7 +719,7 @@ JUDGES=0
 [[ "$MODE" != succeed && "$MODE" != check ]] || JUDGES=1
 (( JUDGES || ! CONTEXT_GIVEN )) || die mode-conflict "mode=$MODE" "context=$CONTEXT_ARG"
 [[ "$MODE" != dead || -z "$HARNESS_ARG" ]] || die mode-conflict "mode=$MODE" "harness=$HARNESS_ARG"
-case "$HARNESS_ARG" in '' | claude | codex) ;; *) die invalid-harness "value=$HARNESS_ARG" ;; esac
+case "$HARNESS_ARG" in '' | claude | codex | copilot) ;; *) die invalid-harness "value=$HARNESS_ARG" ;; esac
 # Only a supplied reading is judged; a stored record can name identity alone.
 tokens="" window="" CONTEXT_STATE=unjudged
 if (( CONTEXT_GIVEN )); then
@@ -859,6 +861,11 @@ if [[ "$MODE" != dead ]]; then
       *) die harness-unnamed "pane=$CALLER_PANE" ;;
     esac
   fi
+  # Every mode but `print` judges an account or picks one through `lanes`,
+  # which measures no Copilot account, so a Copilot caller is refused before
+  # any reading rather than on the reading that cannot be made.
+  [[ "$CALLER_HARNESS" != copilot || "$MODE" == print ]] \
+    || die copilot-unmeasured "pane=$CALLER_PANE" "mode=$MODE"
   # The model passes through the rule a reading takes (lib/lane-context.sh §
   # lane_context_mark_model), so a codex session is judged on its account's
   # binding bucket whichever of the record and the reading named its model.
@@ -922,8 +929,19 @@ fi
 # lane variable, so the record is the one place that says which account it was
 # opened on, and the line `print` records for a dead-pane relaunch opens its
 # successor there.
+#
+# A Copilot session's account is the one its record or its own start row
+# names, and no other: lane_context_caller_cfg has no Copilot rule, and its
+# reading of the other harnesses' variables would name another harness's
+# account. The line is refused where neither names one.
 CALLER_CFG=""
-[[ "$MODE" == dead ]] || CALLER_CFG="${OL_KNOWN_ACCOUNT:-$(lane_context_caller_cfg "$CALLER_HARNESS")}"
+case "$MODE:$CALLER_HARNESS" in
+  dead:*) ;;
+  *:copilot)
+    CALLER_CFG="$OL_KNOWN_ACCOUNT"
+    [[ -n "$CALLER_CFG" ]] || die copilot-account-unknown "pane=$CALLER_PANE" ;;
+  *) CALLER_CFG="${OL_KNOWN_ACCOUNT:-$(lane_context_caller_cfg "$CALLER_HARNESS")}" ;;
+esac
 CALLER_STATE=unreadable HEADROOM_FIELD=unreadable
 CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS=""
 RATE_STATE=unreadable WALL_PROJECTED="" QUALIFYING_STATE=unreadable QUALIFYING_COUNT="" QUALIFYING_HEADROOM=""

@@ -222,21 +222,22 @@ ol_pick_lane() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
 # account shim, an env prefix in front of it is overwritten for the shim's
 # own name and the session starts on the bare account with nothing on screen
 # saying so.
+#
+# The brief is a positional prompt on claude and codex; copilot takes it as
+# the value of `-i`, which starts the interactive session and submits it.
 OL_CMD="" OL_LANE_VAR="" OL_LAUNCH_HOME="" OL_FORM="" OL_TRUST_REASON="" OL_TRUST_ROUTE=""
 ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
-  local harness="$1" handoff="$2" lane_dir="$3" launch_dir="$4" flag cmd
+  local harness="$1" handoff="$2" lane_dir="$3" launch_dir="$4" flag cmd brief_flag=""
   shift 4
-  if [[ "$harness" == claude ]]; then
-    OL_LANE_VAR=CLAUDE_CONFIG_DIR
-    cmd="claude -n overseer"
-  else
-    OL_LANE_VAR=CODEX_HOME
-    cmd="codex"
-  fi
+  case "$harness" in
+    claude) OL_LANE_VAR=CLAUDE_CONFIG_DIR; cmd="claude -n overseer" ;;
+    copilot) OL_LANE_VAR=COPILOT_HOME; cmd="copilot"; brief_flag=" -i" ;;
+    *) OL_LANE_VAR=CODEX_HOME; cmd="codex" ;;
+  esac
   for flag in "$@"; do
     cmd+=" $(printf %q "$flag")"
   done
-  cmd+=" 'Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $handoff'"
+  cmd+="$brief_flag 'Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $handoff'"
   if ! lane_trust_prepare "$harness" "$lane_dir" "$launch_dir"; then
     OL_REASON=launch-trust-missing
     OL_TRUST_REASON="$LANE_TRUST_REASON"
