@@ -15,6 +15,15 @@
 # The verdict counters and their two writers: every helper below reports
 # through these, and each suite prints the totals itself.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+# Every gate setting a child reads comes from the case: an inherited
+# REVIEW_GATE_* or PR_REVIEW_GATE value outranks the sandbox's committed file
+# in every script under test. A case sets its own on the command it runs.
+for inherited in $(compgen -e); do
+  case "$inherited" in
+    REVIEW_GATE_* | PR_REVIEW_GATE) unset "$inherited" ;;
+  esac
+done
+unset inherited
 
 PASS=0
 FAIL=0

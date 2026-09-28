@@ -6,6 +6,7 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 . "$TEST_DIR/lib/sandbox.sh"
+. "$TEST_DIR/lib/workflow-edit.sh"
 
 sandbox
 expect_clean 'sound installation' "$DIR"
@@ -74,7 +75,7 @@ while IFS='~' read -r label action data want check value error_code error_value 
   fi
   rows=$((rows + 1))
   sandbox
-  override=''; exported=''
+  override=''; exported=''; writer_exported=''
   case "$action" in
     append) printf '%b\n' "$data" >>"$DIR/kendex.settings.toml" ;;
     replace) printf '%b\n' "$data" >"$DIR/kendex.settings.toml" ;;
@@ -83,6 +84,9 @@ while IFS='~' read -r label action data want check value error_code error_value 
       printf '%b\n' "$data" >"$DIR/.kendex/settings.toml"
       commit "$DIR" ;;
     exported) settings "$DIR" REVIEW_GATE_MODE bogus; exported=enforce ;;
+    exported-writer)
+      rm -- "${DIR:?}/.github/workflows/review-gate-writer.yml"
+      commit "$DIR"; writer_exported=optional ;;
     untracked|explicit)
       (cd "$DIR" && git rm -q --cached kendex.settings.toml && git commit -q -m "untrack settings")
       [ "$action" != explicit ] || override=kendex.settings.toml ;;
@@ -114,6 +118,8 @@ while IFS='~' read -r label action data want check value error_code error_value 
     REVIEW_GATE_SETTINGS_FILE="$override" run_validate "$DIR"
   elif [ "$exported" != '' ]; then
     REVIEW_GATE_MODE="$exported" run_validate "$DIR"
+  elif [ "$writer_exported" != '' ]; then
+    REVIEW_GATE_WRITER="$writer_exported" REVIEW_GATE_MODE=off run_validate "$DIR"
   else
     run_validate "$DIR"
   fi
@@ -153,6 +159,10 @@ untracked settings~untracked~~FAIL~settings-untracked~kendex.settings.toml~~~~~
 nested unknown key names its source~nested~[env]\nREVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGIN = "x"~FAIL~settings-unknown~.kendex/settings.toml:REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGIN~~~~~
 nested mode is unread~nested~[env]\nREVIEW_GATE_MODE = "off"~FAIL~settings-mode-source~.kendex/settings.toml~~~~~
 root mode is read~append~REVIEW_GATE_MODE = "off"~clean~~~~~~~
+illegal writer setting with a writer present~append~REVIEW_GATE_WRITER = "bogus"~FAIL~settings-writer~2~writer-setting~bogus~~~
+optional writer setting is legal with a writer present~append~REVIEW_GATE_WRITER = "optional"~clean~settings-writer~enforced~~~~~
+nested writer is unread~nested~[env]\nREVIEW_GATE_WRITER = "optional"~FAIL~settings-writer-source~.kendex/settings.toml~~~~~
+exported writer settings cannot hide a missing writer~exported-writer~~FAIL~workflow-count~0~~~~~
 the default assigned explicitly~append~REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standard:current"~clean~class-policy-default~default-assigned~~~~~
 explicit untracked source~explicit~~clean~~~~~settings-explicit~@/kendex.settings.toml~
 double-quoted key~append~"REVIEW_GATE_THREADS" = "off"~FAIL~settings-key-shape~kendex.settings.toml:"REVIEW_GATE_THREADS" = "off"~~~~~
@@ -203,6 +213,19 @@ decision record the loader refuses~dotenv~REVIEW_GATE_CLASS_POLICY=""\nREVIEW_GA
 default class policy with no classifier installed~no-classifier~~FAIL~settings-values~2~policy-classifier~@/.agents/skills/review-gate/scripts/../../harness-ci/scripts/change-class~~~
 ROWS
 [ "$rows" -gt 0 ] && [ "$((PASS + FAIL - before))" -eq "$rows" ] || { printf 'fixture-error=settings-table value=%q\n' "$rows" >&2; exit 2; }
+
+# The workflow group's scrub: without it the exported writer settings above
+# pass a repository whose committed settings require a writer.
+sandbox
+rm -- "${DIR:?}/.github/workflows/review-gate-writer.yml"
+commit "$DIR"
+file_edit "$DIR" "$VALIDATE_REL" 1 '^  wf_out="\$\("\$\{scrub\[@\]\}" "\$workflow_tool"\)" \|\| wf_rc=\$\?$' \
+  's/"\${scrub\[@\]}" "\$workflow_tool"/"$workflow_tool"/'
+chmod +x "$DIR/$VALIDATE_REL"
+REVIEW_GATE_WRITER=optional REVIEW_GATE_MODE=off run_validate "$DIR"
+if grep -qxF 'ok check=workflow-absent value=optional' <<<"$OUT"; then
+  ok 'control: an unscrubbed workflow check reads the exported writer settings'
+else bad "control: workflow scrub (rc=$RC)" "$OUT"; fi
 
 rows=0; before=$((PASS + FAIL))
 while IFS='|' read -r shape target check value; do

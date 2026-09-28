@@ -44,12 +44,15 @@ Usage: validate-workflow.sh [--adopt] [--templates-dir DIR] [--adopted-path-file
 Checks that THIS repository's adopted review-gate writer workflow is still
 the shipped template.
 
-A repository with no writer passes only when it runs no review gate:
-REVIEW_GATE_WRITER=optional together with REVIEW_GATE_MODE=off prints one
-`ok check=workflow-absent` line. REVIEW_GATE_WRITER=optional under an
-enforced mode is one `FAIL check=workflow-absent-mode` line, and the default
+A repository with no writer passes only when it posts no gate status:
+REVIEW_GATE_WRITER=optional together with REVIEW_GATE_MODE=off, both read
+from the environment and the committed kendex.settings.toml only, prints one
+`ok check=workflow-absent` line. A tracked workflow that names the engine
+outside a comment is still a writer there, and fails as
+`workflow-reference-count`. REVIEW_GATE_WRITER=optional under an enforced
+mode is one `FAIL check=workflow-absent-mode` line, and the default
 REVIEW_GATE_WRITER=required keeps `FAIL check=workflow-count`. A writer that
-is present is checked in full whatever REVIEW_GATE_WRITER says.
+is executed is checked in full whatever REVIEW_GATE_WRITER says.
 
 --adopt re-installs the template over an adopted copy that still equals a
 version of the template this repository's history shipped, so a refresh that
@@ -106,9 +109,10 @@ Exit codes:
      `ok check=workflow-readopted` line names)
   1  at least one FAIL line
   2  the check could not run at all (bad arguments, not a git repository, no
-     shipped template to compare against, a history or write failure, or,
-     with no writer found, an unreadable or invalid REVIEW_GATE_WRITER or
-     REVIEW_GATE_MODE)
+     shipped template to compare against, a history or write failure). With
+     no writer found, an unreadable or invalid REVIEW_GATE_WRITER exits 2,
+     and so does REVIEW_GATE_MODE, which is read only when
+     REVIEW_GATE_WRITER=optional
 USAGE
 }
 
@@ -285,28 +289,46 @@ while IFS= read -r -d '' wf; do
   adopted="$wf"
 done <"$TMP/workflows"
 
+# The single-writer contract is about how many workflows can post the gate
+# status, and an INVOCATION has no closed set of spellings — `exec X`,
+# `bash X`, `sh -c`, a variable holding the path. Rather than keep a list
+# nobody can finish, this counts tracked workflows whose CODE mentions the
+# engine at all. It over-approximates on purpose and says only what it
+# proves: a second workflow naming the engine outside a comment is something
+# a person has to look at, whether or not it turns out to run it.
+engine_refs=0
+engine_ref_files=""
+while IFS= read -r -d '' wf; do
+  [ -n "$wf" ] && [ -f "$wf" ] && [ ! -L "$wf" ] || continue
+  code_lines "$wf" >"$TMP/wf.code"
+  ref_rc=0
+  grep -qF -- 'review-writer.sh' "$TMP/wf.code" || ref_rc=$?
+  [ "$ref_rc" -le 1 ] || die workflow-reference-read "$wf" "$wf: unreadable while counting engine references (grep exit $ref_rc)"
+  [ "$ref_rc" -eq 0 ] || continue
+  engine_refs=$((engine_refs + 1))
+  engine_ref_files="${engine_ref_files:+$engine_ref_files, }$wf"
+done <"$TMP/workflows"
+
 if [ "$adopted_count" -eq 0 ]; then
-  # An absent writer is a repository with no review gate only when the
-  # engine's own switch says so. Under an enforced mode every consumer of the
-  # gate status would wait on a status nothing posts. Both keys are read here
-  # alone: a present writer is checked in full whatever they say, so a
-  # settings fault stays validate.sh's settings finding rather than stopping
-  # this check. Settings resolve against the repository root, where CI runs.
-  WRITER_SETTING="$(rg_setting REVIEW_GATE_WRITER required)" || exit 2
-  case "$WRITER_SETTING" in
-    required | optional) ;;
-    *) die writer-setting "$WRITER_SETTING" "REVIEW_GATE_WRITER must be 'required' or 'optional'" ;;
+  # A missing writer passes only where the engine's own switch is off: under
+  # an enforced mode every consumer of the gate status would wait on a status
+  # nothing posts. lib/settings.sh judges both keys for every reader. A
+  # workflow naming the engine by another spelling is still a writer, so the
+  # reference count above has to be zero. Settings resolve against the
+  # repository root, where CI runs.
+  writer_state="$(rg_writer_state)" || exit 2
+  case "$writer_state" in
+    none)
+      if [ "$engine_refs" -gt 0 ]; then
+        bad workflow-reference-count "$engine_refs" "no tracked workflow executes review-writer.sh, yet $engine_refs name it outside a comment ($engine_ref_files) — a workflow reaching the engine by another spelling is a writer this check cannot compare. Read it, and delete the reference or adopt the template"
+      else
+        ok workflow-absent optional "no tracked workflow executes review-writer.sh, and REVIEW_GATE_WRITER=optional with REVIEW_GATE_MODE=off says this repository posts no gate status"
+      fi
+      ;;
+    enforced) bad workflow-absent-mode enforce "no tracked workflow executes review-writer.sh, and REVIEW_GATE_WRITER=optional permits that only while REVIEW_GATE_MODE=off — with the gate enforced, every pull request waits on a gate status nothing posts. Set REVIEW_GATE_MODE = \"off\" in kendex.settings.toml, or copy templates/review-gate-writer.yml in (references/adoption.md)" ;;
+    required) bad workflow-count "$adopted_count" "no tracked workflow under .github/workflows/ EXECUTES review-writer.sh — nothing writes this repo's gate status; copy templates/review-gate-writer.yml in (references/adoption.md), or, for a repository that posts no gate status, set REVIEW_GATE_WRITER = \"optional\" and REVIEW_GATE_MODE = \"off\" in kendex.settings.toml" ;;
+    *) die writer-state "$writer_state" "lib/settings.sh rg_writer_state printed a state it does not define" ;;
   esac
-  if [ "$WRITER_SETTING" = optional ]; then
-    gate_mode="$(rg_setting REVIEW_GATE_MODE enforce)" || exit 2
-    case "$gate_mode" in
-      off) ok workflow-absent "$WRITER_SETTING" "no tracked workflow executes review-writer.sh, and REVIEW_GATE_WRITER=optional with REVIEW_GATE_MODE=off says this repository runs no review gate" ;;
-      enforce) bad workflow-absent-mode "$gate_mode" "no tracked workflow executes review-writer.sh, and REVIEW_GATE_WRITER=optional permits that only while REVIEW_GATE_MODE=off — with the gate enforced, every pull request waits on a gate status nothing posts. Set REVIEW_GATE_MODE = \"off\" in kendex.settings.toml, or copy templates/review-gate-writer.yml in (references/adoption.md)" ;;
-      *) die mode-setting "$gate_mode" "REVIEW_GATE_MODE must be 'enforce' or 'off'" ;;
-    esac
-  else
-    bad workflow-count "$adopted_count" "no tracked workflow under .github/workflows/ EXECUTES review-writer.sh — nothing writes this repo's gate status; copy templates/review-gate-writer.yml in (references/adoption.md), or, for a repository with no review gate, set REVIEW_GATE_WRITER = \"optional\" and REVIEW_GATE_MODE = \"off\""
-  fi
   if [ -n "$nested_engine" ]; then
     rg_report note workflow-nested "$nested_engine" "a NESTED file does execute the engine ($nested_engine), and GitHub runs only direct children of .github/workflows/ — move it up one level"
   fi
@@ -332,26 +354,6 @@ elif git ls-files --error-unmatch -- "$exec_target" >/dev/null 2>&1; then
 else
   bad workflow-target-untracked "$exec_target" "$adopted execs $exec_target, which is NOT tracked — Actions checks out tracked files only, so that path is absent in CI and the writer fails to execute on every leg (\`git add $exec_target\`)"
 fi
-
-# The single-writer contract is about how many workflows can post the gate
-# status, and an INVOCATION has no closed set of spellings — `exec X`,
-# `bash X`, `sh -c`, a variable holding the path. Rather than keep a list
-# nobody can finish, this counts tracked workflows whose CODE mentions the
-# engine at all. It over-approximates on purpose and says only what it
-# proves: a second workflow naming the engine outside a comment is something
-# a person has to look at, whether or not it turns out to run it.
-engine_refs=0
-engine_ref_files=""
-while IFS= read -r -d '' wf; do
-  [ -n "$wf" ] && [ -f "$wf" ] && [ ! -L "$wf" ] || continue
-  code_lines "$wf" >"$TMP/wf.code"
-  ref_rc=0
-  grep -qF -- 'review-writer.sh' "$TMP/wf.code" || ref_rc=$?
-  [ "$ref_rc" -le 1 ] || die workflow-reference-read "$wf" "$wf: unreadable while counting engine references (grep exit $ref_rc)"
-  [ "$ref_rc" -eq 0 ] || continue
-  engine_refs=$((engine_refs + 1))
-  engine_ref_files="${engine_ref_files:+$engine_ref_files, }$wf"
-done <"$TMP/workflows"
 
 if [ "$engine_refs" -gt 1 ]; then
   bad workflow-reference-count "$engine_refs" "$engine_refs tracked workflows name review-writer.sh outside a comment ($engine_ref_files) — the gate has exactly one writer by design, and a second workflow reaching the engine by any spelling can post gate statuses outside the single-writer group. Read it and delete the reference, or the workflow"

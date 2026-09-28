@@ -2,7 +2,7 @@
 # Copies the refresh workflow and records exact template copies for kendex
 # verification. Existing refresh copies are writable only while their bytes
 # still match the hash recorded by their previous adoption. The writer is
-# validated by validate-workflow.sh, which alone decides whether its absence
+# validated by validate-workflow.sh, which also decides whether its absence
 # is allowed.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

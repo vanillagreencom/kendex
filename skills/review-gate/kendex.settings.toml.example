@@ -129,9 +129,10 @@ REVIEW_GATE_RENDER_PATHS = ""
 REVIEW_GATE_MODE = "enforce"
 
 # Whether this project must run the workflow that posts the gate's verdict.
-# "optional" lets a project with no review gate keep the automatic package
-# refresh without that workflow, and only while REVIEW_GATE_MODE is "off".
-# A workflow that is present is still checked either way.
+# "optional" lets a project that posts no gate verdict keep the automatic
+# package refresh without that workflow, and only while REVIEW_GATE_MODE is
+# "off". Only your shell and this committed file can set it. A workflow that
+# is present is still checked either way.
 # values: required | optional
 REVIEW_GATE_WRITER = "required"
 

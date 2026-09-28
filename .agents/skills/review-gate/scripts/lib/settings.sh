@@ -12,10 +12,13 @@
 #      REVIEW_GATE_SETTINGS_FILE consults only itself);
 #   4. the built-in default passed by the caller.
 #
-# ONE per-key exception: REVIEW_GATE_MODE skips layer 2. The local waiter
-# and the CI gate must resolve that switch identically, and CI has no
-# .env.local — a dotenv value could disable the wait while the gate still
-# enforces. It reads environment, then the settings files, then the default.
+# ONE per-key exception, for REVIEW_GATE_MODE and REVIEW_GATE_WRITER: they
+# skip layer 2 and the machine-local .kendex/settings.toml. The local waiter
+# and the CI gate must resolve the mode identically, and the consumer refresh
+# must judge a missing writer as CI does, and CI has neither machine-local
+# file — a local value could disable the wait while the gate still enforces,
+# or pass a writer-less adoption that fails every CI run. Each reads
+# environment, then the committed kendex.settings.toml, then the default.
 #
 # REVIEW_GATE_SETTINGS_FILE=/dev/null is the force-defaults handle and means
 # NO settings source at all: layers 2-3 are skipped whole, leaving explicit
@@ -233,13 +236,14 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # .env.local says — an override must never let a broken file pass
   # silently. The list is the same one extraction walks below: an explicit
   # REVIEW_GATE_SETTINGS_FILE consults only itself (set-but-EMPTY is unset:
-  # "" names no file), REVIEW_GATE_MODE reads the COMMITTED file alone (CI's
-  # checkout has no machine-local .kendex/), and /dev/null selects no
+  # "" names no file), REVIEW_GATE_MODE and REVIEW_GATE_WRITER read the
+  # COMMITTED file alone (CI's checkout has no machine-local .kendex/), and
+  # /dev/null selects no
   # sources at all, so nothing is checked for it.
   if [ "${REVIEW_GATE_SETTINGS_FILE:-}" != "/dev/null" ]; then
     if [ -n "${REVIEW_GATE_SETTINGS_FILE:-}" ]; then
       set -- "$REVIEW_GATE_SETTINGS_FILE"
-    elif [ "$name" = "REVIEW_GATE_MODE" ]; then
+    elif [ "$name" = "REVIEW_GATE_MODE" ] || [ "$name" = "REVIEW_GATE_WRITER" ]; then
       set -- "kendex.settings.toml"
     else
       set -- ".kendex/settings.toml" "kendex.settings.toml"
@@ -254,12 +258,12 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     # not mask a broken .env.local (directory, dangling symlink, BOM,
     # unreadable bytes) — every PRESENT source fails loud, the clause the
     # generic loader honors before re-asserting process values. A key is
-    # validated against exactly the sources IT reads, so REVIEW_GATE_MODE
-    # skips this probe: it never reads the layer, and CI's clean checkout
+    # validated against exactly the sources IT reads, so REVIEW_GATE_MODE and
+    # REVIEW_GATE_WRITER skip this probe: it never reads the layer, and CI's clean checkout
     # would resolve while a broken machine-local file failed here — the
     # install-dependent waiter/gate split the exception exists to prevent.
     case "$name" in
-      REVIEW_GATE_MODE) ;;
+      REVIEW_GATE_MODE | REVIEW_GATE_WRITER) ;;
       *)
         rg_settings_usable ".env.local" || return 1
         if [ -f ".env.local" ]; then
@@ -286,11 +290,11 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     printf '%s' "$default"
     return 0
   fi
-  # .env.local beats the settings files — EXCEPT for REVIEW_GATE_MODE, the
-  # named per-key exception (header contract): the waiter and the gate must
-  # resolve that switch from sources both sides can see.
+  # .env.local beats the settings files — EXCEPT for REVIEW_GATE_MODE and
+  # REVIEW_GATE_WRITER, the named per-key exception (header contract): a local
+  # reader and CI must resolve them from sources both sides can see.
   case "$name" in
-    REVIEW_GATE_MODE) ;;
+    REVIEW_GATE_MODE | REVIEW_GATE_WRITER) ;;
     *)
       status=0
       val="$(rg_dotenv_layer ".env.local" "$name")" || status=$?
@@ -380,4 +384,34 @@ rg_pr_deadline_seconds() {
       ;;
   esac
   printf '%s' "$value"
+}
+
+# Whether this repository runs the gate's writer workflow, judged here because
+# three readers must agree: validate-workflow.sh on a repository with no
+# writer, validate.sh's settings group, and pr-watch.sh on a missing gate row.
+# Prints one word, or the keyed refusal and status 2:
+#   required  REVIEW_GATE_WRITER=required, the default
+#   enforced  optional, but REVIEW_GATE_MODE=enforce still needs a gate status
+#   none      optional with REVIEW_GATE_MODE=off: nothing posts a gate status
+# The mode is read only for an optional writer.
+rg_writer_state() {
+  local writer mode
+  writer="$(rg_setting REVIEW_GATE_WRITER required)" || return 2
+  case "$writer" in
+    required) printf 'required'; return 0 ;;
+    optional) ;;
+    *)
+      rg_message error writer-setting "$writer" "::error::REVIEW_GATE_WRITER must be 'required' or 'optional'" >&2
+      return 2
+      ;;
+  esac
+  mode="$(rg_setting REVIEW_GATE_MODE enforce)" || return 2
+  case "$mode" in
+    off) printf 'none' ;;
+    enforce) printf 'enforced' ;;
+    *)
+      rg_message error mode-setting "$mode" "::error::REVIEW_GATE_MODE must be 'enforce' or 'off'" >&2
+      return 2
+      ;;
+  esac
 }
