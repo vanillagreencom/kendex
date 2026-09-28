@@ -2974,7 +2974,7 @@ assert_eq "RC=$RC peer=$(grep -cF 'Peer note.' "$ERR_FILE")" "RC=2 peer=1" \
 
 # The deliver arm's acknowledgement removed: the same lines are handed over
 # at every finished call of the lead's.
-mutant deliver-no-ack -e 's@^    \[ "\$CALLER" != lead \] || { ACK_LINES=\$LINES; acknowledge; }$@    :@'
+mutant deliver-no-ack -e '/^    acknowledge$/d'
 new_lane control_deliver_ack ken-222
 install_arms "$MUTANT_PATH"
 send KEN-222 'Rebase first.'
