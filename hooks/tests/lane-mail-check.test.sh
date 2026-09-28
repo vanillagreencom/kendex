@@ -1457,6 +1457,7 @@ assert_eq "$(gap_record)" "null transcript-unnamed $OVERSEER_SERVER $OVERSEER_PA
 # with the reader's word for why, and a usage object the adapter does not read
 # is reported under its own key as a lane's is: one row per word.
 overseer_gap_word() { # NAME TRANSCRIPT_LINE [INSTALL_DIR]
+  local cop_transcript="$TMP_ROOT/session-state/s1/events.jsonl"
   new_overseer "$1"
   printf '%s\n' "$2" > "$TRANSCRIPT"
   if [ -n "${3:-}" ]; then
@@ -1465,8 +1466,19 @@ overseer_gap_word() { # NAME TRANSCRIPT_LINE [INSTALL_DIR]
     install_hook "$HOOK" "$LANE/$3/hooks/lane-mail-check.sh"
   fi
   judge_says "$HEADROOM_MARK_LINE"
-  # shellcheck disable=SC2046
-  stop_at "$TRANSCRIPT" false $(overseer_env)
+  if [ "${3:-}" = .github ]; then
+    # Copilot's own agentStop, the lead's: its transcript sits in the
+    # directory named for the session.
+    mkdir -p "${cop_transcript%/*}"
+    printf '%s\n' "$2" > "$cop_transcript"
+    # shellcheck disable=SC2046
+    run_payload "$(jq -nc --arg p "$cop_transcript" \
+      '{sessionId:"s1", timestamp:1, cwd:"/w", transcriptPath:$p, stopReason:"end_turn", stop_hook_active:false}')" \
+      $(overseer_env)
+  else
+    # shellcheck disable=SC2046
+    stop_at "$TRANSCRIPT" false $(overseer_env)
+  fi
   printf 'record=%s unread=%s unlisted=%s' "$(gap_record)" \
     "$(grep -cFx -- "lane-mail-check: usage-unread=$TRANSCRIPT" "$ERR_FILE")" \
     "$(grep -c '^lane-mail-check: harness-unlisted=' "$ERR_FILE")"
@@ -1477,9 +1489,24 @@ assert_eq "$(overseer_gap_word overseer_usage_absent '{"type":"user"}')" \
 assert_eq "$(overseer_gap_word overseer_usage_unread "$(usage_line unread 900000)")" \
   "record=null usage-unread $OVERSEER_SERVER $OVERSEER_PANE unread=1 unlisted=0" \
   "a usage object the adapter does not read writes the gap usage-unread and is reported under its own key" "$ERR_FILE"
-assert_eq "$(overseer_gap_word overseer_harness_unlisted "$(usage_line claude 600000)" .other)" \
+# An install whose harness no adapter reads, one naming none and Copilot's,
+# reports that under harness-unlisted and writes no gap: its context is never
+# read, so a gap would stand at every turn end for the session's life.
+while IFS='|' read -r install what; do
+  assert_eq "$(overseer_gap_word "overseer_unlisted_${install#.}" "$(usage_line claude 600000)" "$install")" \
+    "record=none unread=0 unlisted=1" \
+    "$what reports harness-unlisted and writes no gap record" "$ERR_FILE"
+done <<INSTALLS
+.other|an install naming no harness
+.github|a Copilot install
+INSTALLS
+variant unlisted-gap -e 's/^    READ_GAP=""$/    READ_GAP=harness-unlisted/'
+HOOK_SAVED="$HOOK"
+HOOK="$VARIANT_PATH"
+assert_eq "$(overseer_gap_word control_unlisted_gap "$(usage_line claude 600000)" .github)" \
   "record=null harness-unlisted $OVERSEER_SERVER $OVERSEER_PANE unread=0 unlisted=1" \
-  "an install naming no harness writes the gap harness-unlisted" "$ERR_FILE"
+  "control: a hook that names a gap for a harness it never reads writes one at every turn end"
+HOOK="$HOOK_SAVED"
 variant no-overseer-unread -e 's/^          "\$LANE_CONTEXT_UNREAD") message usage-unread "\$TRANSCRIPT" ;;$/          "$LANE_CONTEXT_UNREAD") ;;/'
 HOOK_SAVED="$HOOK"
 HOOK="$VARIANT_PATH"
@@ -1739,6 +1766,30 @@ assert_eq "$(unrecorded_rows "$OVERSEER_PANE")" \
   "RC=0 first=- recorded=0 judged=2 record=600000 null $OVERSEER_SERVER $OVERSEER_PANE" \
   "control: a hook that skips the lost overseer leaves its record standing, stale and silent"
 install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
+# A fleet state that cannot be read names no pane at all: the session whose
+# reading the context record holds is not taken for the overseer the record
+# lost, and its record stands as it was.
+state_unread() { # NAME
+  new_overseer "$1"
+  judge_says "$HEADROOM_MARK_LINE"
+  # shellcheck disable=SC2046
+  stop_at "$TRANSCRIPT" false $(overseer_env)
+  plant_install workflow-state
+  printf '#!/bin/sh\ncase "$1" in\n  path) echo "%s/tmp/workflow-state-oversee.json" ;;\n  *) echo "workflow-state: lock-failed lock-file=x" >&2; exit 3 ;;\nesac\n' "$LANE" \
+    > "$LANE/.claude/skills/orch/scripts/workflow-state"
+  chmod +x "$LANE/.claude/skills/orch/scripts/workflow-state"
+  # shellcheck disable=SC2046
+  stop_at "$TRANSCRIPT" false $(overseer_env)
+  printf 'RC=%s first=%s record=%s' "$RC" "$(first_line)" "$(gap_record)"
+}
+assert_eq "$(state_unread overseer_state_unread)" "RC=0 first=- record=600000 null $OVERSEER_SERVER $OVERSEER_PANE" \
+  "a fleet state that cannot be read writes no pane-unrecorded gap over the overseer's reading" "$ERR_FILE"
+variant ungated-unrecorded -e '/^  \[ "\$OVERSEER_UNRECORDED" -eq 1 \] || return 0$/d'
+HOOK_SAVED="$HOOK"
+HOOK="$VARIANT_PATH"
+assert_eq "$(state_unread control_state_unread | cut -d' ' -f1)" "RC=1" \
+  "control: without the unrecorded gate a fleet state that cannot be read reaches the lost-overseer path"
+HOOK="$HOOK_SAVED"
 
 # The mailbox rules are untouched: an overseer's checkout carries the fleet's
 # own mailbox directory, and its branch names no mailbox in it.
