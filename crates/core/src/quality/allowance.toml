@@ -40,7 +40,7 @@ name = "review-gate"
 
 [[package.file]]
 path = "templates/review-gate-writer.yml"
-hash = "f557ce127144518f76566f1c851eeef1b2192fa68c308ca11370e2773056a66d"
+hash = "c5036ee4e65f4e22c7d5e7dcbb74d213b137a12f93441ad9a3e92a31d6d25603"
 
 [[package.file.finding]]
 rule = "rce"

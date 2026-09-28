@@ -621,9 +621,9 @@ jobs:
           # fetched here would run before, and persist into, the step that
           # holds the credential.
           GH_TOKEN: ""
-          # <run>-<attempt>-<commit>. The last field is the kendex commit this
-          # build came from, so the installer is fetched from the same commit
-          # the release tag below pins. Same installer, no second one.
+          # A release tag. The installer is fetched from that same tag, so it
+          # comes from the commit the pinned release was built from. Same
+          # installer, no second one.
           KENDEX_VERSION: v1.1.0
           KENDEX_INSTALLER_REPO: vanillagreencom/kendex
         run: |
