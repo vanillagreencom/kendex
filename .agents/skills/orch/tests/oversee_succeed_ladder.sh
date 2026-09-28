@@ -20,6 +20,11 @@ SUCCEED="$TEST_DIR/../scripts/oversee-succeed"
 # The context reading a turn-end hook records in the overseer mailbox.
 # shellcheck source=../scripts/lib/lane-context.sh
 source "$TEST_DIR/../scripts/lib/lane-context.sh"
+# The caller's full-bypass permission word, read from the launch table the
+# launcher writes it from, so this file spells no permission switch.
+# shellcheck source=../scripts/lib/lane-launch.sh
+source "$TEST_DIR/../scripts/lib/lane-launch.sh"
+BYPASS="$(launch_choice_permission_write claude)" || { echo "fixture: no claude permission word in the launch table" >&2; exit 1; }
 
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 SOCK="oversee-succeed-ladder-$$"
@@ -123,7 +128,7 @@ run_succeed() {
     CLAUDE_CONFIG_DIR="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
     ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.fclaude:$H/.codex" ORCH_LANES_USAGE_TTL=0 \
     ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 ORCH_QUESTION_TOOL=overseer \
-    ${pref[@]+"${pref[@]}"} "${SUCCEED_BIN:-$SUCCEED}" --wait-secs 20 -- --dangerously-skip-permissions 2>&1)" || RC=$?
+    ${pref[@]+"${pref[@]}"} "${SUCCEED_BIN:-$SUCCEED}" --wait-secs 20 -- "$BYPASS" 2>&1)" || RC=$?
 }
 # A claim from this suite's tmux server on a pane that stays live, on LANE.
 write_claim() { # ROW LANE
