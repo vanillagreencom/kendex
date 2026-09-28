@@ -1,15 +1,15 @@
 //! Authoring validation over a catalog directory: what a maintainer can
 //! know about their own content before anyone installs it.
 //!
-//! Four passes over every item. The structural pass asks whether each
-//! harness's loader could hold this item at all — a name it will not
-//! accept, a SKILL.md that disagrees with its own directory. The settings
-//! pass reads a settings template against the grammar the shell loaders
-//! read a consumer's settings file with. The tracked-output pass holds
-//! each path an agent declares as tracked output against the catalog
-//! repository's own ignore rules. The safety pass runs the same rules an
-//! install runs, so a catalog finds out in its own CI rather than in
-//! somebody else's plan preview.
+//! Three passes over every item, and one over every agent. The structural
+//! pass asks whether each harness's loader could hold this item at all — a
+//! name it will not accept, a SKILL.md that disagrees with its own
+//! directory. The settings pass reads a settings template against the
+//! grammar the shell loaders read a consumer's settings file with. The
+//! safety pass runs the same rules an install runs, so a catalog finds out
+//! in its own CI rather than in somebody else's plan preview. The
+//! tracked-output pass holds each path an agent declares as tracked output
+//! against the catalog repository's own ignore rules.
 //!
 //! Every pass only reports what an author can act on. Anything rendering
 //! resolves on its own is not a problem this can help with, and naming it
@@ -86,8 +86,9 @@ pub struct CheckFinding {
     /// The harness whose loader complains, [`SETTINGS_PASS`],
     /// [`TRACKED_OUTPUT_PASS`], [`CATALOG_PASS`] or [`SAFETY_PASS`].
     pub pass: String,
-    /// `error`/`warning` for structural and settings findings; the safety
-    /// severity (`low`..`critical`) for safety findings.
+    /// `error`/`warning` for structural and settings findings, `warning`
+    /// for tracked-output findings; the safety severity (`low`..`critical`)
+    /// for safety findings.
     pub severity: &'static str,
     /// The safety rule that fired; `None` otherwise.
     pub rule: Option<String>,

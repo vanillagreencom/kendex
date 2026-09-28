@@ -56,7 +56,7 @@ Without a `[marketplace]` table the directory listing falls back to what GitHub 
 ## What each kind needs
 
 - Skill: `skills/<name>/SKILL.md` with frontmatter `name` (matching the folder) and `description`; extra files in the folder ship with it.
-- Agent: `agents/<name>.md` with frontmatter `name` and `description`; optional `model`, `color`, tool allow and deny lists, and `tracked-outputs`, paths it commits files to; `kendex verify` fails a project that ignores one.
+- Agent: `agents/<name>.md` with frontmatter `name` and `description`; optional `model`, `color`, tool allow and deny lists, and `tracked-outputs`, file paths it commits (`docs/plans/<slug>.md`); `kendex verify` fails a project installing the agent that ignores one.
 - Hook: `hooks/<name>.sh` with a comment header naming `event`, an optional `matcher`, and a `description`.
 - Command: `commands/<name>.md` with frontmatter `description`.
 - MCP server: `mcp/<name>.toml` describing the invocation.
@@ -89,7 +89,7 @@ Write the summary where the kind already keeps its metadata; kendex reads no sec
 
 `description` and `summary` are not the same job. A `description` is what an agent reads to decide whether to load the package, so it is written for the agent; a `summary` is what a person reads to decide whether they want it. Where a package writes only a description, that description is shown.
 
-Write a summary as one or two short sentences about what the package does and what it changes for the person using it. Leave the precise rules, flags and limits to the package's own documentation. A long summary is not refused: a row clamps it to two lines and a preview links the package's page.
+Write a summary as one or two short sentences about what the package does and what it changes for the person using it. Leave the precise rules, flags and limits to the package's own documentation. A long summary is not refused: a row clamps it to two lines.
 
 A package that writes neither shows no line. That is a supported state: kendex never fills the gap with the command a hook runs, the URL an MCP server is reached at, the path a file sits at, or anything read out of a script. Those stay in the package's details, where someone inspecting execution looks for them.
 
@@ -164,4 +164,4 @@ Validates every package the way installing validates it: names a harness's loade
 
 ## Publishing
 
-Push the repository to GitHub, make it public, and submit it from the app (Mine, then Submit to community), with `kendex marketplace submit`, or at [kendex.ai/submit](https://kendex.ai/submit). kendex.ai verifies your push authority over the repository, indexes it and lists it. The listing follows the repository id, so a renamed repository keeps its listing.
+Push the repository to GitHub, make it public, and submit it from the app (Mine, then Submit to community), with `kendex marketplace submit`, or at [kendex.ai/submit](https://kendex.ai/submit). kendex.ai verifies your push authority over the repository, indexes it and lists it. The listing follows the repository id, so a rename keeps it.

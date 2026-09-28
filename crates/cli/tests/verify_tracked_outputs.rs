@@ -1,31 +1,39 @@
 //! `kendex verify`: a path an installed agent declares as tracked output
 //! that the project's repository ignores fails the run, on a row naming
-//! the agent, the path and the rule, and the same declaration in a project
-//! that leaves the path tracked fails nothing.
+//! the agent, the path and the rule; the same declaration in a project
+//! that leaves the path tracked fails nothing; and a declared path git
+//! cannot judge fails the run with the scope named as not checked.
 //!
-//! The must-fail control is `tracked_output_rows` skipping every standing:
-//! the ignored row then prints nothing and the run closes clean.
+//! The must-fail controls are `tracked_output_rows` skipping every
+//! standing, which leaves the ignored row clean; dropping its stderr
+//! line, which leaves the ignored row's detail only in the document; and
+//! its error branch dropping the `outputs_failed` count, which leaves the
+//! unjudged row clean.
 #![cfg(unix)]
 
 use std::path::PathBuf;
 
-use kendex_core::attest::{Document, State};
+use kendex_core::attest::{Document, Row, State};
 
 use super::verify_records::{commit, kendex, repository, said, write};
 use crate::test_util::{rooted, source_path};
 
-const PLANNER: &str = "---\nname: planner\ndescription: plans\ntracked-outputs: [docs/plans/<slug>.md]\n---\n\nPlan it.\n";
-
-/// A project with the planner installed from a path catalog, its
-/// repository ignoring what `ignore` names. Installed and committed.
+/// A project with a planner declaring `declared` installed from a path
+/// catalog, its repository ignoring what `ignore` names. Installed and
+/// committed.
 #[allow(clippy::unwrap_used)]
-fn installed(ignore: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+fn installed(declared: &str, ignore: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let catalog = home.join("catalog");
     let project = home.join("project");
     write(&catalog.join("kendex.toml"), "is_source_catalog = true\n");
-    write(&catalog.join("agents/planner.md"), PLANNER);
+    write(
+        &catalog.join("agents/planner.md"),
+        &format!(
+            "---\nname: planner\ndescription: plans\ntracked-outputs: [{declared}]\n---\n\nPlan it.\n"
+        ),
+    );
     write(
         &project.join("kendex.toml"),
         &format!(
@@ -41,30 +49,47 @@ fn installed(ignore: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
     (tmp, home, project)
 }
 
+/// What one verify run must show.
+enum Expected {
+    /// One failed row whose detail, and the human line on stderr, opens
+    /// with this text.
+    Ignored(&'static str),
+    /// No row, and a clean run.
+    Tracked,
+    /// No row, a failed run, and stderr saying the scope's tracked
+    /// outputs were not checked.
+    Unjudged,
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_ignored_tracked_output_fails_verify_and_a_tracked_one_does_not() {
-    for (ignore, expected) in [
+    for (declared, ignore, expected) in [
         (
+            "docs/plans/<slug>.md",
             "docs/plans/\n",
-            Some("tracked output docs/plans/<slug>.md is ignored (.gitignore:1:docs/plans/)"),
+            Expected::Ignored(
+                "tracked output docs/plans/<slug>.md is ignored (.gitignore:1:docs/plans/)",
+            ),
         ),
-        ("target/\n", None),
+        ("docs/plans/<slug>.md", "target/\n", Expected::Tracked),
+        ("../outside.md", "target/\n", Expected::Unjudged),
     ] {
-        let (_tmp, home, project) = installed(ignore);
+        let (_tmp, home, project) = installed(declared, ignore);
         let output = kendex(&home, &project, &["verify", "--scope", "project", "--json"]);
         let document: Document = serde_json::from_slice(&output.stdout)
             .unwrap_or_else(|error| panic!("no document: {error}\n{}", said(&output)));
-        let rows: Vec<_> = document
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let rows: Vec<&Row> = document
             .rows
             .iter()
             .filter(|row| row.kind == "tracked-output")
             .collect();
         match expected {
-            Some(detail) => {
-                assert!(!output.status.success(), "{ignore:?}: {}", said(&output));
-                assert!(!document.clean, "{ignore:?}");
-                assert_eq!(rows.len(), 1, "{ignore:?}: {rows:?}");
+            Expected::Ignored(detail) => {
+                assert!(!output.status.success(), "{declared}: {}", said(&output));
+                assert!(!document.clean, "{declared}");
+                assert_eq!(rows.len(), 1, "{declared}: {rows:?}");
                 assert_eq!(rows[0].name, "planner");
                 assert_eq!(rows[0].state, State::Failed);
                 assert!(
@@ -72,12 +97,18 @@ fn an_ignored_tracked_output_fails_verify_and_a_tracked_one_does_not() {
                     "{:?}",
                     rows[0].detail
                 );
-                assert!(said(&output).contains(detail), "{}", said(&output));
+                assert!(stderr.contains(detail), "{stderr}");
             }
-            None => {
-                assert!(output.status.success(), "{ignore:?}: {}", said(&output));
-                assert!(document.clean, "{ignore:?}");
-                assert_eq!(rows, Vec::<&kendex_core::attest::Row>::new(), "{ignore:?}");
+            Expected::Tracked => {
+                assert!(output.status.success(), "{declared}: {}", said(&output));
+                assert!(document.clean, "{declared}");
+                assert_eq!(rows, Vec::<&Row>::new(), "{declared}");
+            }
+            Expected::Unjudged => {
+                assert!(!output.status.success(), "{declared}: {}", said(&output));
+                assert!(!document.clean, "{declared}");
+                assert_eq!(rows, Vec::<&Row>::new(), "{declared}");
+                assert!(stderr.contains("tracked outputs not checked"), "{stderr}");
             }
         }
     }

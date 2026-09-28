@@ -53,11 +53,15 @@ pub struct SourceAgent {
     /// so dropping or rewriting them here would hide a warning the author
     /// should see.
     pub tags: Vec<String>,
-    /// Paths, relative to the root of the project the agent works in,
-    /// where it writes output that has to be committed: a plan, a report.
-    /// Read by no renderer; `tracked_output` holds each against the
-    /// repository's ignore rules, since a file written to an ignored path
-    /// reaches no other checkout.
+    /// File paths, relative to the root of the project the agent works in,
+    /// of output it writes that has to be committed: a plan, a report. A
+    /// placeholder stands for the part the agent fills in, as in
+    /// `docs/plans/<slug>.md`; git matches it as a literal file name, so a
+    /// rule over the directory and a file glob such as `*.md` both reach
+    /// it, where a bare directory path would pass the glob. Read by no
+    /// renderer; `tracked_output` holds each against the repository's
+    /// ignore rules, since a file written to an ignored path reaches no
+    /// other checkout.
     pub tracked_outputs: Vec<String>,
     pub body: String,
     /// Parse-time findings worth surfacing (unknown keys, odd shapes) that
@@ -211,7 +215,10 @@ mod tests {
                 "tracked-outputs: [docs/plans/<slug>.md, docs/plans/<slug>-research.md]\n",
                 vec!["docs/plans/<slug>.md", "docs/plans/<slug>-research.md"],
             ),
-            ("tracked-outputs:\n  - reports/\n", vec!["reports/"]),
+            (
+                "tracked-outputs:\n  - reports/<date>.md\n",
+                vec!["reports/<date>.md"],
+            ),
             ("", vec![]),
         ] {
             let agent =
