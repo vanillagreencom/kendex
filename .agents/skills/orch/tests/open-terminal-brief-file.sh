@@ -10,8 +10,11 @@
 # terminal's argument, or the paste the tmux stub logged), runs it in a real
 # shell, and compares what a stub harness received with the file.
 #
-# The pairing refusals, one row each: a --brief-file with no {brief}, a
-# {brief} with no --brief-file, and a path that is not a readable file.
+# The refusals, each with its control: a --brief-file with no {brief}, a
+# {brief} with no --brief-file, a path that is not a readable file, a file
+# holding only whitespace, and a {brief} inside a quote or behind a backslash.
+# The inline-brief rows, balanced and unbalanced, are
+# open-terminal-claude-handoff.sh's.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # An inherited lane or host setting would point these launches at the
@@ -153,17 +156,18 @@ assert_eq "rc=$RC ssh=$(grep -cxF "clear; ssh 'lane.example'" "$RUN/tmux.log") h
   "the hosted launch types a remote line whose brief the harness receives verbatim through the provider's shell" "$OUT"
 
 # The must-fail control: a copy of open-terminal that places the brief between
-# bare quotes, the hand interpolation the file route replaces. Its PROJECT_ROOT
-# resolves through a git repository of its own.
-QUOTE_OT="$(mutant_scripts brief-unquoted open-terminal)/open-terminal" || exit 1
-git -C "$TMP_ROOT/brief-unquoted" init -q
-orch_fixture_shared_libs "$TMP_ROOT/brief-unquoted"
-mutate_file "$QUOTE_OT" 'quoted="$(lane_single_quote "$BRIEF_TEXT")"' "quoted=\"'\$BRIEF_TEXT'\""
+# bare double quotes, the hand interpolation the file route replaces. The line
+# still parses and the harness still runs, so the only thing that differs from
+# the rows above is the brief it receives: its $HOME and backticks expanded.
+# Its PROJECT_ROOT resolves through a git repository of its own.
+QUOTE_OT="$(mutant_scripts brief-double-quoted open-terminal)/open-terminal" || exit 1
+git -C "$TMP_ROOT/brief-double-quoted" init -q
+orch_fixture_shared_libs "$TMP_ROOT/brief-double-quoted"
+mutate_file "$QUOTE_OT" 'quoted="$(lane_single_quote "$BRIEF_TEXT")"' 'quoted="\"$BRIEF_TEXT\""'
 run_ot "$QUOTE_OT" "TMUX=" --ghostty --harness claude --cmd "$CMD" --brief-file "$BRIEF_FILE" CC-4
 line="$(gui_line)" || line=""
-got="$(received "$line")"
-assert_eq "$([[ "$got" != verbatim ]] && echo reddened || echo "$got")" "reddened" \
-  "control: a brief placed between bare quotes does not reach the harness verbatim"
+assert_eq "rc=$RC harness=$(received "$line")" "rc=0 harness=altered" \
+  "control: a brief placed between bare double quotes reaches the harness altered" "$OUT"
 
 echo "=== a brief file and its placeholder come as a pair ==="
 # refusal_row LABEL OT KEY FIELD ARGS... — a launch refused before any window
@@ -183,43 +187,65 @@ control_row() {
   run_ot "$ot" "TMUX=" --ghostty --harness claude "$@" CC-5
   assert_eq "rc=$RC creates=$(grep -c '^create ' "$RUN/worktree.log")" "rc=0 creates=1" "$label" "$OUT"
 }
-# mutant NAME OLD NEW — a copy of open-terminal with one refusal's condition
-# replaced, in a git repository of its own.
+# mutant NAME OLD NEW — sets MUTANT_OT to a copy of open-terminal with one
+# refusal's condition replaced, in a git repository of its own. Run in this
+# shell, not a substitution, so mutate_file's two assertions are counted.
 mutant() {
-  local ot
-  ot="$(mutant_scripts "$1" open-terminal)/open-terminal" || exit 1
+  local scripts
+  scripts="$(mutant_scripts "$1" open-terminal)" || exit 1
+  MUTANT_OT="$scripts/open-terminal"
   git -C "$TMP_ROOT/$1" init -q
   orch_fixture_shared_libs "$TMP_ROOT/$1"
-  mutate_file "$ot" "$2" "$3" >&2
-  printf '%s\n' "$ot"
+  mutate_file "$MUTANT_OT" "$2" "$3"
 }
 
 INLINE_CMD="$HARNESS_STUB --model opus --effort high $QUESTION_OFF_ALL 'an inline brief'"
 refusal_row "a brief file beside a command with no {brief} is refused, since it would reach no harness" \
   "$OT" brief-unreferenced option=--brief-file --cmd "$INLINE_CMD" --brief-file "$BRIEF_FILE"
+mutant brief-unreferenced '[[ "$CMD_TEMPLATE" == *"{brief}"* ]] || { ot_message brief-unreferenced' 'true || { ot_message brief-unreferenced'
 control_row "control: without its refusal the unreferenced brief file launches" \
-  "$(mutant brief-unreferenced '[[ "$CMD_TEMPLATE" == *"{brief}"* ]] || { ot_message brief-unreferenced' 'true || { ot_message brief-unreferenced')" \
+  "$MUTANT_OT" \
   --cmd "$INLINE_CMD" --brief-file "$BRIEF_FILE"
 
 refusal_row "a {brief} with no brief file is refused, since the harness would start on an empty brief" \
   "$OT" brief-file-missing option=--cmd --cmd "$CMD"
+mutant brief-file-missing 'elif [[ "$CMD_TEMPLATE" == *"{brief}"* ]]; then' 'elif false; then'
 control_row "control: without its refusal the placeholder with no file launches" \
-  "$(mutant brief-file-missing 'elif [[ "$CMD_TEMPLATE" == *"{brief}"* ]]; then' 'elif false; then')" \
+  "$MUTANT_OT" \
   --cmd "$CMD"
 
 refusal_row "a brief file path that is not a readable file is refused, naming the path" \
   "$OT" brief-file-unreadable "path=$TMP_ROOT/absent.md" --cmd "$CMD" --brief-file "$TMP_ROOT/absent.md"
+mutant brief-unreadable '2>/dev/null)" || { ot_message brief-file-unreadable' '2>/dev/null)" || BRIEF_TEXT=x || { ot_message brief-file-unreadable'
 control_row "control: without its refusal the unreadable brief file launches" \
-  "$(mutant brief-unreadable '2>/dev/null)" || { ot_message brief-file-unreadable' '2>/dev/null)" || true || { ot_message brief-file-unreadable')" \
+  "$MUTANT_OT" \
   --cmd "$CMD" --brief-file "$TMP_ROOT/absent.md"
 
-# An inline brief is still the caller's own shell text: one whose quotes
-# balance launches as before, and one that leaves a quote open is refused with
-# the key whose remedy names the file route.
-refusal_row "an inline brief that leaves a quote open is refused before a worktree" \
-  "$OT" cmd-unbalanced-quote item=CC-5 --cmd "$HARNESS_STUB --model opus --effort high $QUESTION_OFF_ALL 'the agent\\'s brief'"
-run_ot "$OT" "TMUX=" --ghostty --harness claude --cmd "$INLINE_CMD" CC-6
-assert_eq "rc=$RC" "rc=0" "an inline brief whose quotes balance still launches" "$OUT"
+# A zero-byte file, one holding newlines alone and one holding spaces alone
+# each leave the harness nothing to do.
+EMPTY_BRIEF="$TMP_ROOT/empty.md"
+for content in "" $'\n\n' $'  \t \n'; do
+  printf '%s' "$content" > "$EMPTY_BRIEF"
+  refusal_row "a brief file holding $(printf '%q' "$content") is refused as empty, naming the path" \
+    "$OT" brief-file-empty "path=$EMPTY_BRIEF" --cmd "$CMD" --brief-file "$EMPTY_BRIEF"
+done
+mutant brief-empty '[[ "$BRIEF_TEXT" == *[![:space:]]* ]] || { ot_message brief-file-empty' 'true || { ot_message brief-file-empty'
+control_row "control: without its refusal the whitespace-only brief file launches" \
+  "$MUTANT_OT" \
+  --cmd "$CMD" --brief-file "$EMPTY_BRIEF"
+
+echo "=== {brief} stands bare, since open-terminal supplies its quotes ==="
+# Inside single quotes the brief's own quotes would close the caller's early;
+# inside double quotes its $ and backticks would reach the shell; behind a
+# backslash its opening quote would be escaped.
+mutant brief-quoted 'if [[ "${text:i:7}" == "{brief}" &&' 'if false && [[ "${text:i:7}" == "{brief}" &&'
+QUOTED_OT="$MUTANT_OT"
+for placed in "'{brief}'" '"{brief}"' '\{brief}'; do
+  refusal_row "a {brief} written as $placed is refused before a worktree" \
+    "$OT" brief-quoted item=CC-5 --cmd "$HARNESS_STUB --model opus --effort high $QUESTION_OFF_ALL $placed" --brief-file "$BRIEF_FILE"
+  control_row "control: without its refusal a {brief} written as $placed launches" \
+    "$QUOTED_OT" --cmd "$HARNESS_STUB --model opus --effort high $QUESTION_OFF_ALL $placed" --brief-file "$BRIEF_FILE"
+done
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -18,10 +18,12 @@ ot_message() { # REASON FIELD=VALUE...
     items-missing) text='Specify a work item.' ;;
     tracker-invalid) text='The tracker must be linear or github.' ;;
     command-missing) text='Select a harness or a custom command.' ;;
-    cmd-unbalanced-quote) text='The --cmd command leaves a quote open, so the shell that runs it would stop on the next word. Write the brief to a file, pass it as --brief-file PATH and put {brief} in the --cmd command where the brief goes: open-terminal quotes it for the GUI, the pane and the hosted remote shell alike. Nothing was launched.' ;;
-    brief-unreferenced) text='The --cmd command carries no {brief}, so the brief file would reach no harness. Put {brief} in the --cmd command where the brief goes. Nothing was launched.' ;;
+    cmd-unbalanced-quote) text='The --cmd command leaves a quote open, so the shell that runs it would read the rest of the line as quoted text and either refuse it or wait for a closing quote, and the harness would never start. Write the brief to a file, pass it as --brief-file PATH and put a bare {brief} in the --cmd command where the brief goes: open-terminal quotes it for the GUI, the pane and the hosted remote shell alike. Nothing was launched.' ;;
+    brief-quoted) text='The --cmd command puts {brief} inside a quote or behind a backslash. open-terminal supplies the brief'"'"'s own quotes, so a quote around them would close early, split the brief into words or expand its $ and backticks. Write {brief} bare, outside every quote. Nothing was launched.' ;;
+    brief-unreferenced) text='No --cmd command carries {brief}, so the brief file would reach no harness. A brief file goes with a --cmd command that has {brief} where the brief goes; a --harness launch without --cmd writes its own brief. Nothing was launched.' ;;
     brief-file-missing) text='The --cmd command carries {brief} but no --brief-file names the brief, so the harness would start on an empty brief. Write the brief to a file and pass it as --brief-file PATH. Nothing was launched.' ;;
     brief-file-unreadable) text='The --brief-file path is not a readable file. Write the brief to a regular file and pass its path. Nothing was launched.' ;;
+    brief-file-empty) text='The --brief-file holds no text but whitespace, so the harness would start with nothing to do and hold its seat idle. Write the brief into the file. Nothing was launched.' ;;
     desktop-harness) text='Use the Codex Desktop thread tools for this harness.' ;;
     unsupported-for-oversee) text='No harness adapter reads this fleet lane'"'"'s context window, so nothing would judge its handoff mark. Nothing was launched. harness=none is a launch naming no harness; reason=no-window-read is a Pi whose installed pi-hooks sends no context_window on its Stop payload, so install the current pi-hooks. A hosted lane'"'"'s host keeps the item its create made, so launch it again with --relaunch after the fix. Launch the lane on claude, codex or pi.' ;;
     launch-window-unknown) text='The claude adapter names no context window for this model, so this fleet lane would run with compaction off and no capacity for the shared rule to judge. Nothing was launched. Launch it on a model the window table in scripts/lib/adapters/claude.sh names.' ;;
@@ -174,9 +176,11 @@ Options:
                     terminals, which receive no TMUX or TMUX_PANE.
   --cmd "..."       Custom command; {issue}, {item}, and {repo} are replaced.
                     {brief} is replaced by the --brief-file text, quoted so
-                    every shell on the way reads it back verbatim; a brief
-                    written inline must balance its own quotes, and one that
-                    leaves a quote open is refused as cmd-unbalanced-quote.
+                    every shell on the way reads it back verbatim, so {brief}
+                    stands bare: one inside a quote or behind a backslash is
+                    refused as brief-quoted. A brief written inline must
+                    balance its own quotes, and one that leaves a quote open
+                    is refused as cmd-unbalanced-quote.
                     It is the WHOLE command: it is rendered verbatim and no
                     launch flag is appended to it, so a --cmd launch names its
                     own model, reasoning effort, permission posture and
@@ -187,10 +191,11 @@ Options:
   --brief-file PATH The brief a --cmd command places as {brief}: the file's
                     text less its trailing newlines, the one route for a brief
                     holding any quote, `$` or backtick. The two come as a pair:
-                    a --brief-file with no {brief} in --cmd is refused as
-                    brief-unreferenced, a {brief} with no --brief-file as
-                    brief-file-missing, and a path that is not a readable
-                    file as brief-file-unreadable.
+                    a --brief-file with no --cmd carrying {brief} is refused
+                    as brief-unreferenced, a {brief} with no --brief-file as
+                    brief-file-missing, a path that is not a readable file as
+                    brief-file-unreadable, and a file holding only whitespace
+                    as brief-file-empty.
   --lane <spec>     Launch under a chosen harness account. `auto` picks the
                     qualifying account with the fewest launches in flight for
                     --harness, never an account a fleet records as its

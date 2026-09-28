@@ -205,6 +205,9 @@ BRIEF_TEXT=""
 if [[ -n "$BRIEF_FILE" ]]; then
   [[ "$CMD_TEMPLATE" == *"{brief}"* ]] || { ot_message brief-unreferenced "option=--brief-file" >&2; exit 1; }
   BRIEF_TEXT="$(cat -- "$BRIEF_FILE" 2>/dev/null)" || { ot_message brief-file-unreadable "path=$BRIEF_FILE" >&2; exit 1; }
+  # A brief of whitespace alone starts a harness with nothing to do, which the
+  # launch reports as a lane opened while it holds its seat idle.
+  [[ "$BRIEF_TEXT" == *[![:space:]]* ]] || { ot_message brief-file-empty "path=$BRIEF_FILE" >&2; exit 1; }
 elif [[ "$CMD_TEMPLATE" == *"{brief}"* ]]; then
   ot_message brief-file-missing "option=--cmd" >&2
   exit 1
@@ -1231,7 +1234,7 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
 LANE_FORM=unchecked
 
 # A --cmd template with {issue}, {item} and {repo} filled and {brief} still
-# standing: the caller's own shell text, which cmd_has_unbalanced_quote judges
+# standing: the caller's own shell text, which cmd_template_quote_refusal judges
 # and start_cmd places the brief into.
 cmd_template_text() { # ITEM REPO
   local out="${CMD_TEMPLATE//\{issue\}/$1}"
@@ -1240,21 +1243,31 @@ cmd_template_text() { # ITEM REPO
 }
 
 # Judges the one text a caller writes as shell, a --cmd template before its
-# {brief} is filled; a brief given as --brief-file is quoted by start_cmd and
-# never reaches it. GUI launches use Bash, while tmux uses the pane shell. Their
-# common rule is that a backslash cannot escape a quote from inside single
-# quotes.
-cmd_has_unbalanced_quote() {
+# {brief} is filled, and prints the key of the refusal it earns, or nothing.
+# A brief given as --brief-file is quoted by start_cmd and never reaches it.
+# GUI launches use Bash, while tmux uses the pane shell. Their common rule is
+# that a backslash cannot escape a quote from inside single quotes.
+#
+#   brief-quoted          a {brief} inside a quote, or behind a backslash:
+#                         start_cmd supplies the brief's own single quotes, so
+#                         a quote around them closes early, word-splits or
+#                         expands the brief, and a backslash escapes the first
+#   cmd-unbalanced-quote  the template ends with a quote still open
+cmd_template_quote_refusal() { # TEXT
   local text="$1" quote="" char escaped=false i
   for ((i = 0; i < ${#text}; i++)); do
     char="${text:i:1}"
+    if [[ "${text:i:7}" == "{brief}" && ( -n "$quote" || "$escaped" == true ) ]]; then
+      printf 'brief-quoted\n'
+      return
+    fi
     if [[ "$escaped" == true ]]; then escaped=false; continue; fi
     if [[ "$quote" != "'" && "$char" == \\ ]]; then escaped=true; continue; fi
     if [[ -z "$quote" && ( "$char" == "'" || "$char" == '"' ) ]]; then quote="$char"
     elif [[ "$char" == "$quote" ]]; then quote=""
     fi
   done
-  [[ -n "$quote" ]]
+  [[ -z "$quote" ]] || printf 'cmd-unbalanced-quote\n'
 }
 
 # The composer of the main TUI, at column 0: the harness's prompt marker
@@ -2441,9 +2454,11 @@ for raw in "${ITEMS[@]}"; do
     break
   fi
   cmd="$(start_cmd "$item" "$wt_id" "$repo")"
-  if [[ -n "$CMD_TEMPLATE" ]] && cmd_has_unbalanced_quote "$(cmd_template_text "$item" "$repo")"; then
-    ot_message cmd-unbalanced-quote "item=$item" >&2
-    exit 1
+  if [[ -n "$CMD_TEMPLATE" ]]; then
+    # The classifier only prints, so a failed substitution is the shell's own
+    # failure, which the shell has already reported.
+    if ! quote_refusal="$(cmd_template_quote_refusal "$(cmd_template_text "$item" "$repo")")"; then exit 1; fi
+    [[ -z "$quote_refusal" ]] || { ot_message "$quote_refusal" "item=$item" >&2; exit 1; }
   fi
   # The worktree create is the ownership claim: exit 75 means another session
   # holds this item, which skips it without touching its siblings. Any other
