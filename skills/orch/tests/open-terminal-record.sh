@@ -373,6 +373,9 @@ mutate_file "$RETIRED_MUTANT/open-terminal" 'lane_handoff_standing "$3" /dev/std
   'lane_handoff_standing "$3" /dev/stderr "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} handoff-standing "$2"'
 assert_eq "$(retired_under "$RETIRED_MUTANT/open-terminal")" "rc=0 retired=0 session=$CLAUDE222" \
   "control: asked under the fleet's --state-dir the relaunch misses the record and resumes the retired session"
+# Both are relaunches, each renewing running_at, so the wake row below reads
+# the stamp the last of them left.
+RELAUNCH_RUNNING_AT="$(running_at CC-1)"
 
 echo "=== a wake rewrites the session it resumed and nothing else ==="
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.session_id = null | .status = "done")' >/dev/null
