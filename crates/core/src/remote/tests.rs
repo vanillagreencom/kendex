@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use super::*;
 use crate::env::FakeOs;
@@ -682,12 +682,17 @@ fn background_refresh_still_skips_a_busy_source_without_the_foreground_wait() {
         .remove(crate::manifest::DEFAULT_SOURCE_NAME);
     crate::manifest::save(&crate::manifest::manifest_path(&f.env, &scope), &manifest).unwrap();
     let guard = store::lock_repo(&f.env, &key_for(&f.env), REPO).unwrap();
+    store::reset_wait_counts();
 
-    let started = Instant::now();
     let notes = crate::drift::refresh::refresh_stale(&f.env, &[scope]);
+    let waits = store::wait_counts();
     drop(guard);
 
-    assert!(started.elapsed() < Duration::from_secs(1), "{notes:?}");
+    assert_eq!(
+        waits,
+        (0, 1),
+        "the busy source took the foreground wait: {waits:?} {notes:?}"
+    );
     assert!(notes.iter().any(|note| note == "owner/repo: busy, skipped"));
 }
 
