@@ -78,6 +78,17 @@ triggers() { # WORKFLOW
   ' "$1" | LC_ALL=C sort
 }
 
+# The entries of JOB's own `permissions:` block, `scope: level` each, sorted
+# and blank-separated; the workflow-level block is never read.
+job_permissions() { # WORKFLOW JOB
+  awk -v job="$2" '
+    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == job ":"); in_perms = 0; next }
+    in_job && /^    permissions:/ { in_perms = 1; next }
+    in_job && in_perms && /^      [a-z-]+: / { sub(/^ +/, ""); print; next }
+    in_perms { in_perms = 0 }
+  ' "$1" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//'
+}
+
 # Whether the job named CI runs on EVENT with every job it needs at RESULT:
 # `yes`, `no`, or the refusal gh_eval printed.
 ci_runs() { # WORKFLOW EVENT RESULT

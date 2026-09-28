@@ -26,13 +26,14 @@
 #      exit 2 and the `change-class-action: wiring-error: cause=` key, the
 #      wrapped classifier's own wiring error and the delimiter guard included,
 #      and a refused step writing no lanes output.
-#   4. action.yml: its `outputs:` block declares exactly the names classify
-#      writes, each forwarding the classify step's output of the same name,
-#      and the classify step's `env:` block maps each declared input to
+#   4. action.yml: each name classify writes is either declared under
+#      `outputs:`, forwarding the classify step's output of the same name,
+#      or read by the action's own later steps alone, and the classify
+#      step's `env:` block maps each declared input to
 #      exactly one variable, its name upper-cased with `-` as `_`, each one
-#      classify's Environment header lists. A copy carrying a misspelled
-#      `lanes` value and one carrying a misspelled `inputs.lanes-from` are
-#      the controls. A workflow reads the action, never the script, and
+#      classify's Environment header lists. Copies carrying a misspelled
+#      `lanes` value, an upload step reading no record_dir and a misspelled
+#      `inputs.lanes-from` are the controls. A workflow reads the action, never the script, and
 #      GitHub reads an undeclared input as empty, so a broken mapping there
 #      publishes an empty `lanes` or `lane_verdicts` with every row above
 #      green.
@@ -51,7 +52,8 @@
 #      next, its covers line per case, and record_dir naming it on the two
 #      events a later run reads and empty on every other; the record's file
 #      name bound to the member proof unzips and to the directory the
-#      action uploads; and one mutant copy per rule.
+#      action uploads, and the artifact's name to the one proof looks up;
+#      and one mutant copy per rule.
 set -euo pipefail
 
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -415,7 +417,7 @@ run "$CLASSIFY" LANES_FROM="$TMP/decl/good" STUB_PATHS=Makefile STUB_NO_OUTSIDE=
 check "a refused lane read writes no lanes or lane_verdicts output" "" \
   "$(grep '^lane' "$OUT" || true)"
 
-# --- 4. action.yml forwards every output classify writes -------------------
+# --- 4. action.yml forwards or reads every output classify writes ----------
 
 # The names one classify run writes, heredoc-delimited values skipped. The
 # standard row reaches every writer, lanes last.
@@ -440,8 +442,25 @@ declared() { # ACTION_YML
     on && /^    value: / { value = $0; sub(/^    value: /, "", value); print name " " value }
   ' "$1" | LC_ALL=C sort
 }
-check "action.yml declares exactly the outputs classify writes, each forwarded by name" \
-  "$forwarded" "$(declared "$ACTION")"
+# The classify outputs the action's own steps under `runs:` read, sorted.
+steps_read() { # ACTION_YML
+  awk '/^runs:/ { on = 1 } on' "$1" | grep -oE 'steps\.classify\.outputs\.[a-z_]+' |
+    sed 's/.*\.//' | LC_ALL=C sort -u
+}
+case " $(steps_read "$ACTION" | tr '\n' ' ') " in
+  *" record_dir "*) ;;
+  *) echo "the step reader found no record_dir read in $ACTION, so it is broken" >&2; exit 1 ;;
+esac
+# Each declared entry that forwards no written name under its own, and each
+# written name neither declared nor read by a step; empty where all hold.
+forwarding() { # ACTION_YML
+  local names
+  names="$( { declared "$1" | cut -d' ' -f1; steps_read "$1"; } | LC_ALL=C sort -u)"
+  comm -13 <(printf '%s\n' "$forwarded") <(declared "$1") | sed 's/^/declared-unforwarded: /'
+  comm -23 <(printf '%s\n' "$written") <(printf '%s\n' "$names") | sed 's/^/written-unread: /'
+}
+check "each output classify writes is forwarded by name or read by the action's own steps" \
+  "" "$(forwarding "$ACTION")"
 
 needle='value: ${{ steps.classify.outputs.lanes }}'
 [ "$(grep -cF -- "$needle" "$ACTION")" -eq 1 ] ||
@@ -452,11 +471,13 @@ NEEDLE="$needle" awk '
   { print }
 ' "$ACTION" >"$TMP/action.yml"
 ! cmp -s "$ACTION" "$TMP/action.yml" || { echo "the action.yml mutant changed nothing" >&2; exit 1; }
-if [ "$forwarded" != "$(declared "$TMP/action.yml")" ]; then
-  ok "must-fail: an action.yml whose lanes value is misspelled fails the forwarding row"
-else
-  bad "must-fail: an action.yml whose lanes value is misspelled fails the forwarding row"
-fi
+check "must-fail: an action.yml whose lanes value is misspelled fails the forwarding row" \
+  'declared-unforwarded: lanes ${{ steps.classify.outputs.lane }}' "$(forwarding "$TMP/action.yml")"
+[ "$(grep -c 'steps\.classify\.outputs\.record_dir' "$ACTION")" -eq 2 ] ||
+  { echo "the upload step no longer reads record_dir on two lines of $ACTION" >&2; exit 1; }
+sed 's/steps\.classify\.outputs\.record_dir/steps.classify.outputs.record_path/' "$ACTION" >"$TMP/action.yml"
+check "must-fail: an action.yml whose upload step reads no record_dir fails the forwarding row" \
+  'written-unread: record_dir' "$(forwarding "$TMP/action.yml")"
 
 # The inputs, the other way: `NAME: ${{ inputs.<input> }}` per entry of
 # ACTION_YML's `inputs:` block, NAME upper-cased with `-` as `_`, sorted.
@@ -786,36 +807,46 @@ case "$(skip_answer "$mutant" "STUB_TREE=t1 STUB_WORKFLOW= RUNNER_TEMP=$RUNNER")
   *) bad "must-fail: a classify recording an unread workflow writes the record" ;;
 esac
 
-# The record's name, bound at both ends: the one file in record_dir is the
+# The record's names, bound at both ends. The one file in record_dir is the
 # member proof unzips, and the upload step uploads record_dir itself, so the
-# artifact's root is that directory and its member the file's own name. A
+# artifact's root is that directory and its member the file's own name; a
 # file uploaded on its own lands at the artifact root under its basename.
+# The artifact's name is the upload step's prefix before proof_tree, and
+# proof looks a record up by its own prefix before the tree.
 proof_member() { # PROOF — the member its unzip reads
   sed -n 's/^.*unzip -p "\$WORK\/record\.zip" \([^ ]*\) >.*$/\1/p' "$1"
 }
-upload_path() { # ACTION_YML — the upload step's `path:`
-  awk '
+proof_prefix() { # PROOF — the artifact name before the tree
+  sed -n 's/^artifact_name="\(.*\)\$tree"$/\1/p' "$1"
+}
+upload_key() { # ACTION_YML KEY — the upload step's KEY under `with:`
+  awk -v key="$2" '
     /^    - / { upload = 0 }
     /^      uses: actions\/upload-artifact@/ { upload = 1 }
-    upload && /^        path: / { sub(/^        path: /, ""); print }
+    upload && index($0, "        " key ": ") == 1 { print substr($0, length(key) + 11) }
   ' "$1"
 }
 binding() { # PROOF ACTION_YML — `bound`, or what disagrees
-  local member written
+  local member written prefix name
   member="$(proof_member "$1")"
-  [ -n "$member" ] || { echo "no unzip member read from $1, so the reader is broken"; return 0; }
+  prefix="$(proof_prefix "$1")"
+  [ -n "$member" ] && [ -n "$prefix" ] ||
+    { echo "no unzip member or artifact prefix read from $1, so a reader is broken"; return 0; }
   record_answer "$CLASSIFY" pr-all >/dev/null
   written="$(ls -A "$(sed -n 's/^record_dir=//p' "$OUT")")"
+  name="$(upload_key "$2" name)"
   if [ "$written" != "$member" ]; then
     echo "classify writes $written, proof reads $member"
-  elif [ "$(upload_path "$2")" != '${{ steps.classify.outputs.record_dir }}' ]; then
-    echo "the upload step uploads $(upload_path "$2"), not record_dir"
+  elif [ "$(upload_key "$2" path)" != '${{ steps.classify.outputs.record_dir }}' ]; then
+    echo "the upload step uploads $(upload_key "$2" path), not record_dir"
+  elif [ "$name" != "$prefix\${{ steps.classify.outputs.proof_tree }}" ]; then
+    echo "the upload step names $name, proof looks up $prefix<tree>"
   else
     echo bound
   fi
 }
 PROOF_SCRIPT="$ROOT/.github/actions/change-class/proof"
-check "the record classify writes is the member proof reads, in the directory the action uploads" \
+check "the record classify writes is the member and artifact proof reads, as the action uploads it" \
   bound "$(binding "$PROOF_SCRIPT" "$ACTION")"
 sed 's/unzip -p "$WORK\/record.zip" record >/unzip -p "$WORK\/record.zip" change-class-record >/' \
   "$PROOF_SCRIPT" >"$TMP/proof-member"
@@ -827,6 +858,11 @@ awk '$0 == "        path: ${{ steps.classify.outputs.record_dir }}" { print "   
 check "must-fail: an action uploading the record file itself breaks the binding" \
   'the upload step uploads ${{ runner.temp }}/change-class-record/record, not record_dir' \
   "$(binding "$PROOF_SCRIPT" "$TMP/action-upload.yml")"
+awk '$0 == "        name: change-class-proof-${{ steps.classify.outputs.proof_tree }}" { print "        name: change-class-record-${{ steps.classify.outputs.proof_tree }}"; n++; next } { print } END { exit n != 1 }' \
+  "$ACTION" >"$TMP/action-name.yml" || { echo "the artifact name is no longer one line in $ACTION" >&2; exit 1; }
+check "must-fail: an action uploading under another artifact name breaks the binding" \
+  'the upload step names change-class-record-${{ steps.classify.outputs.proof_tree }}, proof looks up change-class-proof-<tree>' \
+  "$(binding "$PROOF_SCRIPT" "$TMP/action-name.yml")"
 
 # One copy per proof rule, the rule planted wrong and every other line kept.
 # NEEDLE@REPLACEMENT@TABLE:ROW, split on `@` because a rule spells `||`.

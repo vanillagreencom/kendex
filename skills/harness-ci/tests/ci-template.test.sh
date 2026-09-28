@@ -308,16 +308,7 @@ assert_eq "those paths are scripts this package ships" "yes yes" \
 # --- 4a. The permission the proof reads with ------------------------------
 # The action reads the workflow's earlier runs and their records with the job
 # token, so the changes job grants `actions: read`; a template without it
-# gets one refusal per run and no reuse. The job's own permissions block is
-# read, at the job's indent, never the workflow-level one.
-job_permissions() { # TEMPLATE JOB — the job's permissions entries, sorted and spaced
-  awk -v job="$2" '
-    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == job ":"); in_perms = 0; next }
-    in_job && /^    permissions:/ { in_perms = 1; next }
-    in_job && in_perms && /^      [a-z-]+: / { sub(/^ +/, ""); print; next }
-    in_perms { in_perms = 0 }
-  ' "$1" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//'
-}
+# gets one refusal per run and no reuse.
 assert_eq "the changes job grants the proof's read and the checkout's, nothing more" \
   "actions: read contents: read" "$(job_permissions "$TEMPLATE" changes)"
 awk '$0 == "      actions: read" { n++; next } { print } END { if (n != 1) exit 2 }' \

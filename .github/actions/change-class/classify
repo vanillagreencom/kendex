@@ -79,7 +79,8 @@
 #                      absent or malformed.
 #   record_dir         the directory holding the record below, whose one
 #                      file is `record`, where this run wrote one; empty
-#                      where it did not. The action uploads that directory,
+#                      where it did not. The action's upload step alone
+#                      reads it, and no workflow: it uploads that directory,
 #                      so the artifact's member is `record`, the name
 #                      `proof` reads.
 #

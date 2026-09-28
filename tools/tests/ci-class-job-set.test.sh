@@ -23,7 +23,8 @@
 #   2. the names: the lanes the gates read, the lanes the changes job
 #      publishes and the lanes ci-job-set selects are one set, compared by
 #      name, and each aggregate, on its own, holds every job it needs to the
-#      lane or event condition that job's own `if:` reads.
+#      lane or event condition that job's own `if:` reads; and the changes
+#      job grants the `actions: read` the action's proof reads with.
 #   3. the job set: each gated job's own `if:` and the shard matrix's `os:`
 #      and `shard:` expressions, read out of the workflow and EVALUATED
 #      against a selection and an event, with GitHub's implicit success() where a
@@ -643,6 +644,16 @@ check "a merge group of a lane-source diff with its pull request's proof runs no
 # different member of the set, never a substring match of the right one.
 
 OUTPUT_NAME='needs\.changes\.outputs\.[a-z_]+'
+
+# The changes job's token reads this workflow's runs and their records for
+# the action's proof; without `actions: read` every proof is refused and the
+# merge group runs the lanes its pull request already ran. The reader is the
+# harness-ci workflow library's.
+check "the changes job grants the proof's read and the checkout's, nothing more" \
+  "actions: read contents: read" "$(job_permissions "$WORKFLOW" changes)"
+plant "$WORKFLOW" "      actions: read" "" "$TMP/no-actions-read.yml" changes
+check "must-fail: a changes job without actions: read is named" "contents: read" \
+  "$(job_permissions "$TMP/no-actions-read.yml" changes)"
 
 # A shard matrix key's expression, `os` or `shard`, the `${{ }}` stripped.
 matrix_expr() { # WORKFLOW KEY

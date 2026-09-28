@@ -13,8 +13,8 @@
 #      changed, so a refusal is attributable to that change alone. Every row
 #      with no API call runs against a gh that fails every call.
 #   2. the record: the accepted row's record is the file the artifact holds,
-#      the calls each path makes come in order, and a newer record whose run
-#      failed is passed over for an older one whose run passed.
+#      each event's calls come in order, and a newer record whose run failed
+#      is passed over for an older one whose run passed.
 #   3. the must-fail inverses: one copy of proof per rule, that rule planted
 #      away, answers the row the rule decides other than the table says.
 set -euo pipefail
@@ -121,7 +121,8 @@ printf 'not a zip\n' >"$TMP/garbage.zip"
 #
 # The runs it knows: the merge_group run for S, and the pull request's
 # passing run and an older failed one, both at P, both naming pull request
-# PR at that head.
+# PR at that head. FAKE_PROVER is the run whose record the tree's artifact
+# list names: the merge_group run for a push, the pull request's for a group.
 mkdir -p "$TMP/bin"
 cat >"$TMP/bin/gh" <<'FAKE_GH'
 #!/usr/bin/env bash
@@ -169,14 +170,13 @@ runs_list() { # RUN_JSON... — a whole list
 artifact_json() { # ID NAME EXPIRED RUN
   printf '{"id":%s,"name":"%s","expired":%s,"workflow_run":{"id":%s}}' "$1" "$2" "$3" "$4"
 }
-# The artifacts named for the tree, of RUN or of every run.
+# The artifacts named for the tree, the one RUN left among them.
 the_artifacts() { # RUN
   local name="change-class-proof-$FAKE_TREE"
   case "$mode" in
     malformed-artifacts) printf '{"artifacts":{}}\n' ;;
     no-artifact) printf '{"artifacts":[]}\n' ;;
     other-name) printf '{"artifacts":[%s]}\n' "$(artifact_json "$FAKE_ARTIFACT" "change-class-proof-$FAKE_OTHER_TREE" false "$1")" ;;
-    other-run) printf '{"artifacts":[%s]}\n' "$(artifact_json "$FAKE_ARTIFACT" "$name" false 1)" ;;
     expired) printf '{"artifacts":[%s]}\n' "$(artifact_json "$FAKE_ARTIFACT" "$name" true "$1")" ;;
     # Newest first, as the API lists them: the failed run's record ahead of
     # the passing run's.
@@ -210,12 +210,6 @@ case "$args" in
       *) runs_list "$(the_run "$FAKE_RUN_MG")" ;;
     esac
     exit 0 ;;
-  *"actions/runs/"*"/artifacts"*)
-    [ "$mode" != artifacts-api-error ] || exit 1
-    [[ "$args" == *"name=change-class-proof-$FAKE_TREE"* ]] || exit 1
-    run="${args#*actions/runs/}"
-    the_artifacts "${run%%/*}"
-    exit 0 ;;
   *"actions/runs/"*)
     [ "$mode" != runs-api-error ] || exit 1
     [ "$mode" != unreadable-run ] || { printf '"not a run"\n'; exit 0; }
@@ -229,7 +223,7 @@ case "$args" in
   *"actions/artifacts -f"*)
     [ "$mode" != artifacts-api-error ] || exit 1
     [[ "$args" == *"name=change-class-proof-$FAKE_TREE"* ]] || exit 1
-    the_artifacts "$FAKE_RUN_PR"
+    the_artifacts "$FAKE_PROVER"
     exit 0 ;;
 esac
 exit 1
@@ -253,13 +247,13 @@ OUT="$TMP/out"
 # NAME=VALUE override, the later winning. Prints the exit status; the lines
 # are in $OUT.
 run() { # SCRIPT KIND(push|merge_group) MODE ZIP [NAME=VALUE]...
-  local script="$1" kind="$2" mode="$3" zip="$4" status=0 ref
+  local script="$1" kind="$2" mode="$3" zip="$4" status=0 ref prover
   shift 4
   : >"$CALLS"
   : >"$OUT"
   case "$kind" in
-    push) ref=refs/heads/main ;;
-    merge_group) ref="$QUEUE_REF" ;;
+    push) ref=refs/heads/main prover="$RUN_MG" ;;
+    merge_group) ref="$QUEUE_REF" prover="$RUN_PR" ;;
   esac
   mkdir -p "$TMP/work"
   rm -rf -- "${TMP:?}/work"/*
@@ -268,7 +262,7 @@ run() { # SCRIPT KIND(push|merge_group) MODE ZIP [NAME=VALUE]...
     FAKE_WORKFLOW="$WORKFLOW" FAKE_WORKFLOW_ID="$WORKFLOW_ID" FAKE_REPO="$REPO_NAME" \
     FAKE_S="$S" FAKE_P="$P" FAKE_B="$B" FAKE_TREE="$TREE" FAKE_OTHER_TREE="$OTHER_TREE" FAKE_PR="$PR" \
     FAKE_RUN_MG="$RUN_MG" FAKE_RUN_PR="$RUN_PR" FAKE_RUN_PR_FAILED="$RUN_PR_FAILED" \
-    FAKE_ARTIFACT="$ARTIFACT" FAKE_ARTIFACT_FAILED="$ARTIFACT_FAILED" \
+    FAKE_ARTIFACT="$ARTIFACT" FAKE_ARTIFACT_FAILED="$ARTIFACT_FAILED" FAKE_PROVER="$prover" \
     EVENT="$kind" HEAD="$S" REPO="$REPO" \
     GITHUB_SHA="$S" GITHUB_REPOSITORY="$REPO_NAME" GITHUB_REF="$ref" \
     GITHUB_ACTOR='github-merge-queue[bot]' GITHUB_TRIGGERING_ACTOR='github-merge-queue[bot]' \
@@ -296,12 +290,13 @@ answer() { # SCRIPT KIND MODE ZIP [NAME=VALUE]...
 # Every row is an accepted row with ONE thing changed. The call column is the
 # no-call rows' load-bearing assertion: they run under api-error, so a script
 # that consulted the API before checking its own event would refuse for a
-# plausible reason with a non-empty log. A push reads the workflow, its runs
-# for the sha, the run's artifacts and the zip; a merge group reads the
-# workflow, the artifacts named for its tree, the run each names and the zip.
+# plausible reason with a non-empty log. Both events read the workflow, the
+# artifacts named for the tree, the run each names and the zip; a push reads
+# its runs for the sha after the workflow, to hold it to one run. The `group:`
+# rows and the record rows run on a merge group and stand for both.
 rows() {
   cat <<ROWS
-queue push with an exact merge-group proof|push|valid|valid||true exact-proof $RUN_MG 4
+queue push with an exact merge-group proof|push|valid|valid||true exact-proof $RUN_MG 5
 squashed merge group with its pull request's proof|merge_group|valid|valid||true exact-proof $RUN_PR 4
 merged merge group with its pull request's proof|merge_group|valid|valid|GITHUB_SHA=$M HEAD=$M|true exact-proof $RUN_PR 4
 no GITHUB_SHA|merge_group|api-error|valid|GITHUB_SHA=|false no-github-sha  0
@@ -332,15 +327,8 @@ push: runs payload is not a list|push|malformed-runs|valid||false malformed-runs
 push: runs payload is truncated below its own total|push|truncated|valid||false malformed-runs  2
 push: no run for the sha|push|missing|valid||false missing-proof  2
 push: two merge-group runs for the pushed sha|push|ambiguous|valid||false ambiguous-proof  2
-push: the run is for another sha|push|wrong-sha|valid||false mismatched-proof  2
-push: the run is not from a queue branch|push|wrong-branch|valid||false mismatched-proof  2
-push: the run is missing every field but its id|push|malformed-run|valid||false mismatched-proof  2
-push: artifacts read fails|push|artifacts-api-error|valid||false artifacts-api-error  3
-push: artifacts payload is not a list|push|malformed-artifacts|valid||false malformed-artifacts  3
-push: no artifact on the run|push|no-artifact|valid||false missing-record  3
-push: the artifact names another tree|push|other-name|valid||false missing-record  3
-push: the artifact belongs to another run|push|other-run|valid||false missing-record  3
-push: the artifact has expired|push|expired|valid||false expired-record  3
+push: the run is for another sha|push|wrong-sha|valid||false mismatched-proof  4
+push: the run is not from a queue branch|push|wrong-branch|valid||false mismatched-proof  4
 group: artifacts read fails|merge_group|artifacts-api-error|valid||false artifacts-api-error  2
 group: artifacts payload is not a list|merge_group|malformed-artifacts|valid||false malformed-artifacts  2
 group: no artifact for the tree|merge_group|no-artifact|valid||false missing-record  2
@@ -379,7 +367,7 @@ while IFS='|' read -r label kind mode zip overrides expected; do
   # shellcheck disable=SC2086 # the overrides are blank-separated words
   check "$label" "$expected" "$(answer "$PROOF" "$kind" "$mode" "$zip" $overrides)"
 done < <(rows)
-[ "$table_rows" -eq 63 ] || { echo "the table read $table_rows rows" >&2; exit 1; }
+[ "$table_rows" -eq 56 ] || { echo "the table read $table_rows rows" >&2; exit 1; }
 
 # The tree and the workflow are printed on every answer, a refusal's too:
 # the record a run leaves is written from them.
@@ -399,16 +387,17 @@ run "$PROOF" merge_group valid valid >/dev/null
 check "the accepted row's record is the file the artifact holds" "$RECORD" "$(cat "$(line record)")"
 check "the record path is inside the work directory given" "$TMP/work/record" "$(line record)"
 calls_made() { sed 's/^api //; s/^--method GET //; s/^repos\/[^/]*\/[^/]*\///; s/ -f .*//' "$CALLS"; }
-check "a merge group reads the workflow, its tree's artifacts, the run one names and the zip, in that order" \
+check "a merge group reads the workflow, the tree's artifacts, the run one names and the zip, in that order" \
   "actions/workflows/ci.yml
 actions/artifacts
 actions/runs/$RUN_PR
 actions/artifacts/$ARTIFACT/zip" "$(calls_made)"
 run "$PROOF" push valid valid >/dev/null
-check "a push reads the workflow, its runs for the sha, the run's artifacts and the zip, in that order" \
+check "a push reads the workflow, its runs for the sha, then the tree's artifacts, the run one names and the zip" \
   "actions/workflows/ci.yml
 actions/workflows/$WORKFLOW_ID/runs
-actions/runs/$RUN_MG/artifacts
+actions/artifacts
+actions/runs/$RUN_MG
 actions/artifacts/$ARTIFACT/zip" "$(calls_made)"
 check "a newer record whose run failed is passed over for the passing run's" \
   "true exact-proof $RUN_PR 5" "$(answer "$PROOF" merge_group failed-then-valid valid)"
@@ -462,9 +451,7 @@ gh-readonly-queue/$default_branch/pr-@gh-readonly-queue/[^/]+/pr-@ineligible mer
 [ "$run_count" -eq 1 ] ||@true ||@push: two merge-group runs for the pushed sha
     ($event != "merge_group" or ((.head_sha == $sha) and (.head_branch | test($branch_re)))) and@    ($event != "merge_group" or ((.head_branch | test($branch_re)))) and@push: the run is for another sha
     ($event != "merge_group" or ((.head_sha == $sha) and (.head_branch | test($branch_re)))) and@    ($event != "merge_group" or ((.head_sha == $sha))) and@push: the run is not from a queue branch
-  [.artifacts[] | select(.name == $name and .workflow_run.id == $run)]@  [.artifacts[] | select(.name == $name)]@push: the artifact belongs to another run
-  | map(select(.expired == false)) | .[0].id // empty' <<<"$artifacts_json" 2>/dev/null)"; then@  | .[0].id // empty' <<<"$artifacts_json" 2>/dev/null)"; then@push: the artifact has expired
-    .artifacts[] | select(.name == $name and .expired == false)@    .artifacts[] | select(.name == $name)@group: the artifact has expired
+  .artifacts[] | select(.name == $name and .expired == false)@  .artifacts[] | select(.name == $name)@group: the artifact has expired
     (.workflow_id == $workflow_id) and (.event == $event) and@    (.workflow_id == $workflow_id) and@group: the run has the wrong event
     (.status == "completed") and (.conclusion == "success") and@    (.conclusion == "success") and@group: the run has not completed
     (.status == "completed") and (.conclusion == "success") and@    (.status == "completed") and@group: the run did not succeed
@@ -475,11 +462,11 @@ gh-readonly-queue/$default_branch/pr-@gh-readonly-queue/[^/]+/pr-@ineligible mer
 any(.pull_requests[]?; .number == $pr and .head.sha == $head)@any(.pull_requests[]?; .head.sha == $head)@group: the run is another pull request's
 any(.pull_requests[]?; .number == $pr and .head.sha == $head)@any(.pull_requests[]?; .number == $pr)@group: the run tested a head the pull request has left
     ($event != "pull_request" or (.head_sha as $head | any(.pull_requests[]?; .number == $pr and .head.sha == $head))) and@@group: the run names no pull request
-    [ "$qualified" != "$run_id" ] || take_record "$artifact" "$run_id"@    take_record "$artifact" "$run_id"@a newer record whose run failed
+  [ "$qualified" != "$run_id" ] || take_record "$artifact" "$run_id"@  take_record "$artifact" "$run_id"@a newer record whose run failed
   [ "$recorded_tree" = "$tree" ] && [ "$recorded_workflow" = "$workflow_path" ] ||@  [ "$recorded_workflow" = "$workflow_path" ] ||@the record names another tree
   [ "$recorded_tree" = "$tree" ] && [ "$recorded_workflow" = "$workflow_path" ] ||@  [ "$recorded_tree" = "$tree" ] ||@the record names another workflow
 ROWS
-[ "$mutants" -eq 35 ] || { echo "the mutant table read $mutants rows" >&2; exit 1; }
+[ "$mutants" -eq 33 ] || { echo "the mutant table read $mutants rows" >&2; exit 1; }
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -145,13 +145,6 @@ outputs:
       and false everywhere else. Empty where no declaration was read. A workflow republishes the lines as step outputs of its
       own, since a composite action publishes only the outputs it declares.
     value: ${{ steps.classify.outputs.lane_verdicts }}
-  record_dir:
-    description: >-
-      The directory holding the record of this run, whose one file is
-      `record`, where classify wrote one: on pull_request and merge_group,
-      where the tree and workflow read. Empty everywhere else. The step
-      below uploads it.
-    value: ${{ steps.classify.outputs.record_dir }}
   changed_skills:
     description: Blank-separated first path segments under skills/ the diff touched.
     value: ${{ steps.classify.outputs.changed_skills }}
