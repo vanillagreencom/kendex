@@ -54,8 +54,14 @@ Output, one JSON object on stdout:
   "open_secs":           created to merged,
   "bot_reviews":         reviews submitted by Bot accounts other than the
                          PR's author,
-  "push_times":          every push the PR carries, ascending and unique: each
-                         commit's committer date and each force push,
+  "push_times":          each push to the PR's head branch, ascending and
+                         unique, as the repository's activity log records it:
+                         a push a later rebase rewrote keeps its time, and a
+                         commit counts from its push, not its committer date.
+                         The log is read for the branch's life that holds the
+                         PR's opening, between the deletions around it. Null
+                         where the PR names no head repository or branch, or
+                         the log records no push in that life,
   "bot_review_times":    each of those Bot reviews' submission, ascending
 }
 
@@ -74,7 +80,8 @@ through every page with the GraphQL cursor, up to 20 pages of 50 suites per
 commit and 10 pages of 100 runs per suite; a connection still open at that
 cap refuses the same way, as `truncated: check-suites` or
 `truncated: check-runs`. Each head's status history is read through every
-page of the REST commit statuses endpoint.
+page of the REST commit statuses endpoint, and the head branch's pushes
+through every page of the REST repository activity endpoint.
 
 Examples:
   pr-timeline.sh 42
@@ -109,7 +116,7 @@ RUNS_PAGE_QUERY='query runsPage($id: ID!, $cursor: String!) {
 QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      number state createdAt mergedAt author { login }
+      number state createdAt mergedAt author { login } headRefName headRepository { nameWithOwner }
       mergeCommit { oid ...suites }
       firstCommit: commits(first: 1) { nodes { commit { authoredDate } } }
       headCommit: commits(last: 1) { nodes { commit { oid committedDate ...gate ...suites } } }
@@ -250,7 +257,7 @@ def secs($a; $b): if $a == null or $b == null then null else ($b | fromdate) - (
       _checks: {head: rollup($head_suites), group: rollup($group_suites)},
       open_secs: secs($stamps.created; $stamps.merged),
       bot_reviews: ($bot | length),
-      push_times: ([$p.commits.nodes[].commit.committedDate, ($pushes[] | .createdAt)] | map(select(. != null)) | unique),
+      push_times: null,
       bot_review_times: ($bot | map(.submittedAt) | sort)
     }
   end'
@@ -328,7 +335,37 @@ pr_timeline() {
             first="$earliest"
         fi
     done
-    jq -c --arg first "$first" '.stamps.first_gate_met = (if $first == "" then null else $first end)' <<<"$result"
+    result=$(jq -c --arg first "$first" '.stamps.first_gate_met = (if $first == "" then null else $first end)' <<<"$result") \
+        || { github_error 'pr-timeline: unreadable response'; exit 1; }
+
+    # push_times, from the head branch's activity log: GitHub records no plain
+    # push on the pull request, and a commit's committer date is when it was
+    # made, which a rebase rewrites. A branch name comes back after a
+    # deletion, so the pushes read are the ones of the branch's life the PR
+    # opened in: after the last deletion before the opening, up to the first
+    # deletion after it.
+    local head_repo head_ref ref_query activity pushes=null
+    if ! head_repo=$(jq -r '.repository.pullRequest.headRepository.nameWithOwner // empty' <<<"$data") \
+        || ! head_ref=$(jq -r '.repository.pullRequest.headRefName // empty' <<<"$data") \
+        || ! ref_query=$(jq -rn --arg ref "refs/heads/$head_ref" '$ref | @uri'); then
+        github_error 'pr-timeline: unreadable response'
+        exit 1
+    fi
+    if [[ -n "$head_repo" && -n "$head_ref" ]]; then
+        activity=$(gh_rest "repos/$head_repo/activity?ref=$ref_query&per_page=100" --paginate) || exit 1
+        if ! pushes=$(jq -cs --arg opened "$(jq -r '.repository.pullRequest.createdAt' <<<"$data")" '
+            [.[][]] as $a
+            | ([$a[] | select(.activity_type == "branch_deletion" and .timestamp < $opened) | .timestamp] | max) as $from
+            | ([$a[] | select(.activity_type == "branch_deletion" and .timestamp >= $opened) | .timestamp] | min) as $to
+            | [$a[] | select(.activity_type | IN("branch_creation", "push", "force_push"))
+                    | select(($from == null or .timestamp > $from) and ($to == null or .timestamp <= $to))
+                    | .timestamp] | unique
+            | if length == 0 then null else . end' <<<"$activity"); then
+            github_error "pr-timeline: unreadable activity for $head_repo $head_ref"
+            exit 1
+        fi
+    fi
+    jq -c --argjson pushes "$pushes" '.push_times = $pushes' <<<"$result"
 }
 
 pr_timeline "$@"

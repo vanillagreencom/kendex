@@ -12,7 +12,7 @@
 
 ## Context
 
-KEN-1955 splits the gate_green phase of `oversee-cycle record` into the waits it holds: a bot reviewing a push, the lane working the review threads, and the lane parked or walled. The first two come from `pr-timeline`'s push and bot-review times. The third has no source. The lane record keeps `parked` only until the relaunch drops it, and nothing records a usage wall. A wall the overseer waits out in the lane's own window, the recovery `oversee-events.md` gives when no other account qualifies, writes nothing anywhere. The watch's usage-limit row holds when it first saw the banner, and it clears that row when the banner goes.
+KEN-1955 splits the gate_green phase of `oversee-cycle record` into the waits it holds: a bot reviewing a push, the lane working the review threads, and the lane parked or walled. The first two come from `pr-timeline`: its bot-review times, and push times it reads from the head branch's activity log, since GitHub records no plain push on the pull request and a rebase rewrites every committer date. The third has no source. The lane record keeps `parked` only until the relaunch drops it, and nothing records a usage wall. A wall the overseer waits out in the lane's own window, the recovery `oversee-events.md` gives when no other account qualifies, writes nothing anywhere. The watch's usage-limit row holds when it first saw the banner, and it clears that row when the banner goes.
 
 ## Decision
 

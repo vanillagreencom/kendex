@@ -55,8 +55,9 @@
 #                           next push or the gate: the lane working the threads
 #             the gap opens in the wait the latest push or bot review before
 #             it opened, bot_wait where there is neither
-#             pushes and bot reviews are pr-timeline's `push_times` and
-#             `bot_review_times`. Null while any stamp is missing
+#             pushes and bot reviews are pr-timeline's `push_times`, the
+#             head branch's push log, and `bot_review_times`. Null while any
+#             stamp is missing or where the timeline read no push log
 #   cause     the largest gate wait, the earlier of bot_wait, thread_fix and
 #             paused winning a tie, where the phase is gate_green; null on any
 #             other phase
@@ -300,7 +301,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
        [range(1; $seq | length) as $i | {phase: $seq[$i].name, secs: ($seq[$i].at - $seq[$i - 1].at)}]
        | sort_by(- .secs) | first end) as $dominant
   | ($seq | map(.name) | index("gate_green")) as $gate
-  | (if ($missing | length) > 0 or $gate == 0 then null
+  | (if ($missing | length) > 0 or $gate == 0 or $t.push_times == null then null
      else gate_waits($seq[$gate - 1].at; $seq[$gate].at) end) as $waits
   | {pr: $t.pr, class: $class, class_cause: (if $cause == "" then null else $cause end),
      tier: $tier, stamps: $stamps, target: $target, actual: $actual,
