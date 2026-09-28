@@ -2170,13 +2170,17 @@ host_lane_rows() { # HARNESS [READINGS]
 # that rather than matching the provider's bytes for itself, and the account
 # field, the harness match and the dropped invalid row are decided once.
 #
-# Fields: `account` and `harness`, plus the optional `status`,
+# Fields: `account` and `harness`, plus the optional `status`, `detail`,
 # `session-5h-pct`, `weekly-pct`, `model-pct`, `model-label`,
 # `session-resets`, `weekly-resets` and `model-resets`. A percentage the row
 # omits is a window the provider did not measure, which emit_lane reports as
-# no_usage_data rather than as an idle account. A field this script cannot
-# read drops the whole row with a notice: a percentage nobody can parse must
-# not be judged as room.
+# no_usage_data rather than as an idle account. `detail` is the provider's own
+# words for the row's status, carried into the record's `detail` as written,
+# so the refusal it names (`http-429-rate_limit_error`,
+# `http-403-permission_error`) reaches a reader of the record whatever status
+# word the provider chose. It judges nothing: the status alone decides the
+# row. A field this script cannot read drops the whole row with a notice: a
+# percentage nobody can parse must not be judged as room.
 #
 # Status: 0 the provider answered, rows or none; 2 the optional verb is absent,
 # with nothing on stderr; 1 the verb failed or this function could not run it,
@@ -2207,11 +2211,11 @@ host_account_records() { # HOST HARNESS [READINGS] — one lane record per accou
 # map included, and the day, and is a miss under any other.
 host_account_rows() { # ROWS HARNESS [READINGS|CACHE]
 	local rows="$1" want="$2" mode="${3:-}" line field key value bad retire said
-	local account harness status s_pct w_pct m_pct m_label s_reset w_reset m_reset
+	local account harness status detail s_pct w_pct m_pct m_label s_reset w_reset m_reset
 	local buckets
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
-		account=""; harness=""; status="ok"; bad=""; said=""
+		account=""; harness=""; status="ok"; detail=""; bad=""; said=""
 		s_pct=null; w_pct=null; m_pct=null
 		m_label=""; s_reset=""; w_reset=""; m_reset=""
 		# The row's fields, one per line. `printf '%s\n'`, never `%s`: a last
@@ -2226,6 +2230,7 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE]
 				account) account="$value" ;;
 				harness) harness="$value" ;;
 				status) status="$value"; said="${value:+status}" ;;
+				detail) detail="$value" ;;
 				model-label) m_label="$value" ;;
 				session-resets) s_reset="$value" ;;
 				weekly-resets) w_reset="$value" ;;
@@ -2291,7 +2296,7 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE]
 			message host-account-invalid "$account" buckets >&2
 			continue
 		}
-		emit_lane "$(lane_alias_for "$account")" "$harness" "$account" "$status" "" "" "$buckets" null false host
+		emit_lane "$(lane_alias_for "$account")" "$harness" "$account" "$status" "$detail" "" "$buckets" null false host
 	done <<<"$rows"
 }
 
