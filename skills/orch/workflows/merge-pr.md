@@ -34,6 +34,8 @@ Bind the repository root as `[MAIN_REPO_ROOT]` and create the directory every st
 mkdir -p [MAIN_REPO_ROOT]/tmp
 ```
 
+**No hand-back leaves an armed PR.** Every route below that ends this run without a merged PR, each `records [STOP_NAME]` branch, each hand-back, the recovery-cycle cap, an `ask` answer that skips the merge and the `closed` verdict included, first takes [merge-pr-restack.md § Unarm at a stop](merge-pr-restack.md#unarm-at-a-stop) for the PR it is stopping, with `[STOP_DIR]` being `[MAIN_REPO_ROOT]/tmp`. On the batch route that is every PR in scope, since a cross-check stop exists to keep them from landing together.
+
 **Stop routes.** Every `records [STOP_NAME]` branch below records against the `[STATE_KEY]` § 3 resolved for the PR it is stopping, renders into the one path this workflow uses, and posts that file on that PR:
 
 ```bash
@@ -270,7 +272,7 @@ Use the output as `MAIN_REPO_ROOT`.
    | `queued` | Still armed at the deadline. `cause: still_progressing` means the merge is live: run the wait again, and keep repeating until a verdict terminates it. `cause: progress_unobservable` means no poll could read the queue's checks, which is not evidence of an idle queue: run the wait again on the same head under the bound below, rather than straight into the Recovery cycle. `cause: stalled` takes the Recovery cycle below |
    | `not_queued` | The arm this step made is gone — an ejection or a silent disarm — not a merge that never fired. Take the Recovery cycle below, where `ejected` and `disarmed` already go. Never re-arm here: the head's merge-group run has just failed, and re-arming it into a shared queue can eject the PRs batched with it |
    | `closed` | Hand back with the verdict; no replay |
-   | `unknown` | Unrecognized, or `status: error` — a read failed and says nothing about the arm, which after exit `75` is usually still live. Unarm before handing back, in `merge-pr-restack.md` step 1's order. Hand back with the `error` and `cause` fields, and never re-arm |
+   | `unknown` | Unrecognized, or `status: error` — a read failed and says nothing about the arm, which after exit `75` is usually still live. Unarm before handing back, by § 1's no-armed-hand-back rule. Hand back with the `error` and `cause` fields, and never re-arm |
 
    A `still_progressing` repeat is left unbounded on purpose. It terminates: the signal stays true only while a check-run is not completed or the queue entry is still moving, and GitHub's own workflow timeout finally fails a run whose runner died. Entry movement ends too — a position only falls, so the PR reaches the front and merges or leaves the queue. Returning early would leave the PR armed with the merge free to fire behind a departed lane, and steps 5 and 6 would never run on it — which is the whole reason the lane waits here rather than handing back.
 
