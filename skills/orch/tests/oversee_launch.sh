@@ -543,6 +543,35 @@ mutate_file "$PENDCTL/lib/overseer-launch.sh" \
   '  if [[ "$pending" == pending ]] && ! ol_record_pending "$line" "$identity"; then' '  if false; then'
 pending_seen "$PENDCTL/oversee"
 assert_eq "$PENDING_SEEN" "none" "control: a succession that skips the pending write leaves none to read"
+# A stop the host refuses at the commit point closes the successor and puts
+# the record back: the predecessor keeps running and stays the recorded
+# overseer, never two overseers and never a successor recorded beside it. A
+# tmux on the run's PATH refuses the swap `stop --successor` makes.
+STOP_BIN="$TMP_ROOT/stop-refused-bin"
+mkdir -p "$STOP_BIN"
+printf '#!/bin/sh\n[ "$1" != swap-window ] || { echo "fixture: swap refused" >&2; exit 1; }\nexec %s "$@"\n' \
+  "$(command -v tmux)" > "$STOP_BIN/tmux"
+chmod +x "$STOP_BIN/tmux"
+stop_refused() { # [OVERSEE_BIN]
+  PRED_GEN="$(recorded generation)"
+  OVERSEE_BIN="${1:-}" run_oversee PATH="$STOP_BIN:$BIN:$PATH" -- launch --predecessor "$PRED" --wait-secs 20
+}
+stop_refused
+assert_eq "$RC|$(keyed close-failed "$OUT" | sed -n 1p)|$(overseers)|$(listed "$PRED")|$(recorded pane)|$(recorded generation)|$(recorded pending)" \
+  "1|oversee: close-failed predecessor=$PRED|1|1|$PRED|$PRED_GEN|none" \
+  "a stop the host refuses closes the successor and keeps the predecessor running and recorded"
+# Its control: a refused stop passed over leaves the successor running beside
+# the predecessor and recorded in its place.
+STOP_PRIOR="$(jq -c .overseer "$FLEET_STATE")"
+STOPCTL="$(mutant_scripts stopctl oversee)" || exit 1
+mutate_file "$STOPCTL/oversee" '      stop-failed) abandon close-failed "predecessor=$PREDECESSOR" ;;' '      stop-failed) ;;'
+stop_refused "$STOPCTL/oversee"
+assert_eq "$RC|$(overseers)|$(listed "$PRED")" "0|2|1" \
+  "control: a refused stop passed over runs two overseers"
+tm kill-window -t "$(recorded window)"
+jq --argjson prior "$STOP_PRIOR" '.overseer = $prior' "$FLEET_STATE" > "$FLEET_STATE.tmp" \
+  && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
+
 # A pending write the state refuses stops the succession before anything
 # opens: the predecessor keeps running and stays the recorded overseer.
 pendfail_stub() { # SCRIPTS_DIR — a workflow-state there that refuses the pending write
