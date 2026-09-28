@@ -74,6 +74,8 @@ T="$TMP_ROOT/t"; mkdir -p "$T"
 { claude_line claude-fable-5-1 700000
   jq -nc '{type:"assistant",message:{model:"<synthetic>",usage:{input_tokens:0,cache_read_input_tokens:0,cache_creation_input_tokens:0}}}'; } > "$T/claude-synthetic"
 claude_line claude-sonnet-5 400000 > "$T/claude-sonnet"
+claude_line claude-haiku-4-5-20251001 150000 > "$T/claude-haiku"
+claude_line claude-sonnet-4-6 150000 > "$T/claude-unknown"
 jq -nc '{type:"assistant",message:{model:"claude-opus-5-5",usage:{prompt_tokens:5}}}' > "$T/claude-unread"
 jq -nc '{type:"user",message:{content:"hi"}}' > "$T/none"
 { codex_context gpt-6-astra; codex_count 1000 258400; codex_count 232560 258400; } > "$T/codex-last"
@@ -94,7 +96,9 @@ done <<'ROWS'
 claude-last|claude||rc=0 1000|1000000|claude-opus-5-5
 claude-partial|claude||rc=0 1000|1000000|claude-opus-5-5
 claude-synthetic|claude||rc=0 700000|1000000|claude-fable-5-1
-claude-sonnet|claude||rc=0 400000||claude-sonnet-5
+claude-sonnet|claude||rc=0 400000|1000000|claude-sonnet-5
+claude-haiku|claude||rc=0 150000|200000|claude-haiku-4-5-20251001
+claude-unknown|claude||rc=0 150000||claude-sonnet-4-6
 claude-unread|claude||rc=0 unread
 none|claude||rc=0
 codex-last|codex||rc=0 232560|258400|gpt-6-astra
@@ -106,6 +110,31 @@ pi-last|pi||rc=0 1000||m
 pi-provider|pi|200000|rc=0 1000|200000|pi-claude/claude-opus-5-5
 pi-claude-spelled|pi|200000|rc=0 unread
 claude-last|opencode||rc=3
+ROWS
+
+echo "=== the claude window table names a model only where its window is established ==="
+# `model|window`: the aliases a launch passes and the ids a transcript names.
+# claude-sonnet-4-6 runs 200K or, as its [1m] variant, 1M under one id, and
+# claude-sonnet-5-5 is a model no row has evidence for; both stay unnamed.
+while IFS='|' read -r model want; do
+  assert_eq "$(bash -c 'set -euo pipefail; source "$1"; lane_adapter_claude_window "$2"' _ "$LIB" "$model")" "$want" \
+    "claude window of $model: ${want:-none}"
+done <<'ROWS'
+fable|1000000
+opus[1m]|1000000
+claude-opus-5-5|1000000
+sonnet|1000000
+Sonnet|1000000
+claude-sonnet-5|1000000
+haiku|200000
+claude-haiku-4-5|200000
+claude-haiku-4-5-20251001|200000
+claude-sonnet-4-6|
+claude-sonnet-4-5|
+claude-sonnet-5-5|
+sonnet[1m]|
+haiku[1m]|
+|
 ROWS
 
 echo "=== effective compaction settings preserve unresolved token use ==="
@@ -301,6 +330,8 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'codex reads codex-last as'
   control codex-evidence adapters/codex.sh 'then $window else "" end;' 'then $window else $window end;' \
     'codex configuration  gives point unresolved'
+  control claude-window-substring adapters/claude.sh '      ${pair%=*}) printf' '      *${pair%=*}*) printf' \
+    'claude window of claude-sonnet-4-6: none'
   control claude-evidence adapters/claude.sh '[ "${DISABLE_AUTO_COMPACT:-}" = 1 ]' '[ "${DISABLE_AUTO_COMPACT:-}" = 0 ]' \
     'claude configuration 0 gives point unresolved'
   control strict-mark lane-context.sh '-gt $(($2 * pct))' '-ge $(($2 * pct))' \
