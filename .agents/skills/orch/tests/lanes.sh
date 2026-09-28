@@ -415,7 +415,7 @@ echo "=== pick: a Pi launch is judged on the account its model's provider bills 
 PI_CLAUDE='--model pi-claude/claude-opus-5-5'
 table \
   "a pi-claude model picks the Claude seat with room, as the Claude variable||pick --harness pi $PI_CLAUDE|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
-  "a pi-claude model is refused as a claude pick where every Claude seat is walled||pick --harness pi $PI_CLAUDE --max-pct 15|rc=3 key=no-candidate,harness=claude,max-pct=15,model=pi-claude/claude-opus-5-5,walled=3,unmeasured=1" \
+  "a pi-claude model is refused as a claude pick where every Claude seat is walled||pick --harness pi $PI_CLAUDE --max-pct 15|rc=3 key=no-candidate,harness=claude,max-pct=15,model=pi-claude/claude-opus-5-5,walled=3,unmeasured=1,seats=0" \
   "a named Claude seat with room is judged for a pi-claude model||pick --lane $H/.claude --harness pi $PI_CLAUDE|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "a named walled Claude seat is refused for a pi-claude model on its own window||pick --lane $H/.nclaude --harness pi $PI_CLAUDE --json|rc=3 wall=95 binding_bucket=weekly" \
   "a provider nothing measures is unmeasured, never room|$POOL=1/10|pick --harness pi --model sonnet|rc=5 key=pick-provider-unmeasured,harness=pi,model=sonnet" \

@@ -660,7 +660,7 @@ PI_CLAUDE='cmd=true --model pi-claude/claude-opus-5-5:high'
 table \
   "auto launches a pi-claude model on the Claude seat with room, under the Claude variable|$PI_CLAUDE|--harness pi --lane auto CC-1680|rc=0 launched=1 cmd_lane=claude pi_root=none claim_lanes=claude" \
   "auto refuses a pi-claude model when every Claude seat is walled|$PI_CLAUDE|--harness pi --lane auto --lane-max-pct 15 CC-1681|rc=1 launched=nolog creates=nolog pickrefusal=lane-unavailable,harness=pi" \
-  "a named walled Claude seat is refused for a pi-claude model|$PI_CLAUDE|--harness pi --lane $H/.nclaude CC-1682|rc=1 launched=nolog walled=lane=$H/.nclaude,model=pi-claude/claude-opus-5-5:high,pct=95,bucket=weekly" \
+  "a named walled Claude seat is refused for a pi-claude model|$PI_CLAUDE|--harness pi --lane $H/.nclaude CC-1682|rc=1 launched=nolog walled=lane=$H/.nclaude,model=pi-claude/claude-opus-5-5:high,pct=95,bucket=weekly,projected-headroom=5" \
   "a named Claude seat with room launches a pi-claude model under the Claude variable|$PI_CLAUDE|--harness pi --lane $H/.claude CC-1683|rc=0 launched=1 cmd_lane=claude pi_root=none walled=none" \
   "auto refuses a provider nothing measures by its own cause|cmd=true --model openai/gpt-6:high|--harness pi --lane auto CC-1684|rc=1 launched=nolog creates=nolog pickrefusal=lane-provider-unmeasured,harness=pi,model=openai/gpt-6:high"
 # The controls drop the unmeasured arm of the auto refusal, which then names
