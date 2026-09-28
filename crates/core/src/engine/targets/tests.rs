@@ -214,8 +214,9 @@ const COPILOT_ROWS: &[CopilotRow] = &[
 /// scopes, with and without a declared environment, under `/bin/sh` and
 /// `bash`. Copilot shows the model a preToolUse denial's
 /// `permissionDecisionReason` and never its stderr, so a refusal's stderr has
-/// to come back as that reason, exactly; every other run's stdout is the
-/// script's own, and the status is always the script's.
+/// to come back as that reason, exactly; every other run's stdout holding a
+/// non-space character is the script's own, and the status is always the
+/// script's.
 #[cfg(unix)]
 #[test]
 fn a_copilot_refusal_reaches_stdout_as_the_denial_reason_and_nothing_else_changes() {

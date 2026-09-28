@@ -630,7 +630,7 @@ a count of one passes the duplicate row, both files listed|instruction:duplicate
 a nested AGENTS.md read from sub/ alone differs|instruction:nested|differs|for the working directory only
 a hidden personal skill brought back by COPILOT_SKILLS_DIRS differs|skill-dirs:COPILOT_HOME|differs|exports both
 a hook that received its trigger, refuses it on replay and held it back passes|hook:block-argv-kill|pass|was never written
-a bare cd received and refused on replay passes|hook:block-bare-cd|pass|refuses Copilot's payload for it when replayed
+a bare cd received and refused on replay passes|hook:block-bare-cd|pass|the model was shown: Denied by preToolUse hook: block-bare-cd: refused=standin
 a refusal the model was shown under the hook's name passes|hook:block-argv-kill|pass|the model was shown: Denied by preToolUse hook: block-argv-kill: refused=standin
 a hook with no trigger passes on running|hook:command-safety|pass|reading the payload Copilot sent
 an excluded hook is excluded with the table's reason|hook:reviewer-read-only|excluded|(hooks/README.md)

@@ -247,16 +247,18 @@ const COPILOT_ANSWER_TAIL: &str = concat!(
 /// object on stdout, which Copilot merges with the exit-2 denial
 /// ([hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference)).
 /// So a run that exits 2 with stderr and nothing but whitespace on stdout has
-/// that stderr written back as that object; every other run's stdout passes
-/// as the script wrote it, the script's own answer included. The exit status
+/// that stderr written back as that object; any other run's stdout passes
+/// as the script wrote it where it holds a non-space character, the script's
+/// own answer included, and is dropped where it is only whitespace. The exit status
 /// is always the script's, so a refusal stays a denial and an unexpected
 /// failure stays Copilot's `hook errored` denial whether or not the answer
 /// could be built, and stderr is replayed for Copilot's log.
 ///
-/// Every Copilot registration takes this, whatever its event: each reader of
-/// a registration asks [`hook_target`] for the command without naming one.
-/// Only preToolUse reads the object; Copilot parses no other event's stdout
-/// at exit 2 for those keys.
+/// Every Copilot registration of a hook with a script takes this, whatever
+/// its event: each reader of a registration asks [`hook_target`] for the
+/// command without naming one. A `[[custom-hooks]]` command is registered as
+/// written and never takes it. Only preToolUse reads the object: at
+/// permissionRequest Copilot takes the denial from `behavior` and `message`.
 // REVISIT(D011): drop the answer once Copilot carries stderr into the tool result.
 fn copilot_answer(run: &str) -> String {
     format!("{COPILOT_ANSWER_HEAD}{run}{COPILOT_ANSWER_TAIL}")

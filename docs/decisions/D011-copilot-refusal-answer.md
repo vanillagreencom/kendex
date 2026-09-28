@@ -8,7 +8,7 @@
 
 **Research**: —
 
-**Applies to**: `crates/core/src/engine/targets.rs` (`copilot_answer`), every Copilot hook registration kendex writes
+**Applies to**: `crates/core/src/engine/targets.rs` (`copilot_answer`), every Copilot registration of a hook with a script (catalog hooks); a `[[custom-hooks]]` command is registered as written and not covered
 
 ## Context
 
@@ -16,13 +16,13 @@ A catalog hook refuses with its reason on stderr and exit 2. Copilot CLI denies 
 
 ## Decision
 
-1. Every Copilot registration's command runs the script and captures its stdout, stderr and status. Where the script exits 2 with stderr and prints only whitespace on stdout, the command writes that stderr as the `permissionDecisionReason` of a deny object. Every other run's stdout passes through unchanged.
+1. The Copilot registration of every hook with a script runs the script and captures its stdout, stderr and status. Where the script exits 2 with stderr and prints only whitespace on stdout, the command writes that stderr as the `permissionDecisionReason` of a deny object. Any other run's stdout passes through unchanged where it holds a non-space character, and stdout that is only whitespace is dropped. A `[[custom-hooks]]` command is the person's own and is registered as written, so its refusal still reads `hook exited with code 2`. The reason reaches the model for a preToolUse refusal only: at `permissionRequest` Copilot reads the denial from `behavior` and `message`.
 2. The status is always the script's. A refusal stays a denial, and an unexpected failure stays Copilot's `hook errored` denial. Nothing moves to exit 0.
 3. The wrapper applies at every event, because every reader of a registration (install, removal, the scan, delivery) asks `hook_target` for the command without naming an event. Only preToolUse reads those keys.
 
 ## Rationale
 
-- One owner: no hook carries Copilot output of its own, and a hook added to the catalog is covered without a line of its own.
+- One owner: no hook has to write a Copilot refusal answer of its own, and a hook added to the catalog is covered without a line of its own.
 - The wrapper is POSIX `sh` plus `awk`, so a hook refusing because `jq` is missing still gets its reason through.
 - An answer the script writes itself, such as the halt, deliver and stop answers in `lane-mail-check.sh`, passes unchanged, so the wrapper never writes a second JSON object, which Copilot would fail to parse.
 
