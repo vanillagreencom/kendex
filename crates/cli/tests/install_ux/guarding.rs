@@ -431,6 +431,10 @@ fn a_lapsed_arming_fails_verify_and_is_named_by_refresh() {
     let out = spoke(&red);
     assert_eq!(red.status.code(), Some(1), "{out}");
     assert!(out.contains(ROW), "{out}");
+    assert!(
+        out.contains("1 checked, 1 OK, 0 failed; 1 other row failed"),
+        "the closing line counts the lapsed arming: {out}"
+    );
     // The package's own words travel with the row: they name the lane.
     assert!(out.contains("pre-push"), "{out}");
 

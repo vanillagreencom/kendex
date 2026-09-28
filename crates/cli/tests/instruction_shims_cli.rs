@@ -86,7 +86,10 @@ fn verify_names_the_shim_and_apply_writes_it() {
     assert!(!output.status.success(), "{text}");
     assert!(text.contains("✗ shim CLAUDE.md [claude]"), "{text}");
     assert!(text.contains("not written yet"), "{text}");
-    assert!(text.contains("nothing installed"), "{text}");
+    assert!(
+        text.contains("nothing installed; 2 other rows failed"),
+        "the closing line counts the failed shim and inventory: {text}"
+    );
 
     let output = kendex(&home, &project, &["apply", "--plan"]);
     let text = said(&output);
