@@ -1,8 +1,7 @@
 // Where a `pane: true` agent runs when the dispatcher probes tmux: headless
 // through the one-shot runner when no server answers, in a pane when one
-// does, and refused under `paneOnly`. Also the session a headless pane agent
-// resumes, and how `stop_subagent` retires an agent whose latest task ran
-// headless.
+// does, and refused under `paneOnly`. Also how `stop_subagent` retires an
+// agent whose latest task ran headless.
 
 import assert from "node:assert/strict";
 import { join } from "node:path";
@@ -120,29 +119,6 @@ for (const [mode, dispatch] of [
 		assert.equal(spawns.length, 2);
 	});
 }
-
-test("a headless pane agent resumes its one session on redelegation", async () => {
-	delete process.env.TMUX;
-	const runtimeRoot = tempRuntime();
-	installMockSpawn([finished(), finished()]);
-
-	const first = (await dispatchSingle(runtimeRoot)).details.results[0];
-	const second = (await dispatchSingle(runtimeRoot)).details.results[0];
-
-	assert.equal(first.sessionPath, join(runtimeRoot, "sessions", "bg-generalist-pane.jsonl"));
-	assert.equal(second.sessionPath, first.sessionPath);
-});
-
-test("two headless tasks for one pane agent in a parallel dispatch take distinct sessions", async () => {
-	delete process.env.TMUX;
-	installMockSpawn([finished(), finished()]);
-
-	const result = await runParallelDispatch({ ...flow(tempRuntime(), "parallel"), tasks: [{ agent: "generalist", task: "tidy the docs" }, { agent: "generalist", task: "tidy the tests" }] });
-
-	const [first, second] = result.details.results.map((item) => item.sessionPath);
-	assert.ok(first && second);
-	assert.notEqual(first, second);
-});
 
 test("a pane agent keeps its pane where the tmux server answers", async () => {
 	const tmuxCalls = recordTmux(true);

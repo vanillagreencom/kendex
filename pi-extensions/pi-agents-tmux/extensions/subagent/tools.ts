@@ -5,14 +5,14 @@ const TaskItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task to delegate to the agent" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
-	sessionKey: Type.Optional(Type.String({ description: "Optional lane id for resuming a bg (non-pane) agent across calls. Omit for a fresh one-shot lane; same key + agent => same persisted pi session. Ignored for pane agents." })),
+	sessionKey: Type.Optional(Type.String({ description: "Optional lane id for resuming a bg (non-pane) agent across calls. Omit for a fresh one-shot lane; same key + agent => same persisted pi session. Ignored for pane agents that run in a pane; honored when a pane agent runs headless because no tmux server is reachable." })),
 });
 
 const ChainItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
-	sessionKey: Type.Optional(Type.String({ description: "Optional lane id for resuming a bg (non-pane) agent across calls. Omit for a fresh one-shot lane; same key + agent => same persisted pi session. Ignored for pane agents." })),
+	sessionKey: Type.Optional(Type.String({ description: "Optional lane id for resuming a bg (non-pane) agent across calls. Omit for a fresh one-shot lane; same key + agent => same persisted pi session. Ignored for pane agents that run in a pane; honored when a pane agent runs headless because no tmux server is reachable." })),
 });
 
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
@@ -33,7 +33,7 @@ export const SubagentParams = Type.Object({
 	sessionKey: Type.Optional(
 		Type.String({
 			description:
-				"For bg (non-pane) agents only, single mode. Optional lane id used as the resumed pi session file name; omit for a fresh one-shot lane. Use a stable workflow-scoped id like 'review-issue-123' when you want continuity. Ignored for pane agents (panes already persist via their own session file).",
+				"For bg (non-pane) agents only, single mode. Optional lane id used as the resumed pi session file name; omit for a fresh one-shot lane. Use a stable workflow-scoped id like 'review-issue-123' when you want continuity. Ignored for pane agents that run in a pane (panes already persist via their own session file); honored when a pane agent runs headless because no tmux server is reachable.",
 		}),
 	),
 	forceSpawn: Type.Optional(
@@ -52,7 +52,7 @@ export const SubagentParams = Type.Object({
 	paneOnly: Type.Optional(
 		Type.Boolean({
 			description:
-				"For pane-mode agents only. When true and no tmux server is reachable, the call errors. Omit/false runs a pane agent headless as a bg one-shot process there, with the same model and thinking, resuming one session per agent and completing through its final output, and heads the result with `pane-fallback reason=no-tmux`.",
+				"For pane-mode agents only. When true and no tmux server is reachable, the call errors. Omit/false runs a pane agent headless as a bg one-shot process there, with the same model and thinking, on a fresh session unless sessionKey is passed, completing through its final output, and heads the result with `pane-fallback reason=no-tmux`.",
 			default: false,
 		}),
 	),

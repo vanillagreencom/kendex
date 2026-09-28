@@ -6,7 +6,7 @@ Deep halves of the Pi (`pi-agents-tmux`) runtime note in [../SKILL.md](../SKILL.
 
 Pane agents (`pane: true` in agent frontmatter) live in a persistent tmux pane keyed by agent name; the extension reuses the existing pane on every redelegation. Do not pass `forceSpawn: true` unless you need a fresh pane — it errors if a live pane already exists; drop the flag or `/agents:stop <name>` first. The `taskId` is returned in two places: the structured `taskId` field on the tool result and an inline `Task ID: <id>` line in the assistant-visible content text — read whichever the harness exposes; no follow-up `get_subagent_result` call is needed to learn the id. Store the `taskId` and agent name in workflow state (`child_sessions[agent].agent_id` or `review_agent_ids[...]`).
 
-Where no tmux server is reachable, as in a hosted lane's sandbox, the extension runs a pane agent headless instead: the tool result opens with `pane-fallback reason=no-tmux`, carries the same `Task ID:` line and holds the agent's return with no follow-up wake, each redelegation resumes that agent's headless session, and `stop_subagent` retires it with nothing to kill.
+Where no tmux server is reachable, as in a hosted lane's sandbox, the extension runs a pane agent headless instead: the tool result opens with `pane-fallback reason=no-tmux`, carries the same `Task ID:` line and holds the agent's return with no follow-up wake, and `stop_subagent` retires it with nothing to kill.
 
 ## Bg agents (Pi)
 
