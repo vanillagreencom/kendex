@@ -32,7 +32,8 @@ fleet() {
 }
 # account ALIAS HARNESS VERDICT RESETS — one `lanes list --json` record, its
 # binding bucket the weekly window resetting at RESETS, and an Opus-scoped
-# window at 100% resetting a day later than 2026-10-03.
+# window at 100% with a reset of its own, so a launch on Opus dates to that
+# reset rather than the binding bucket's.
 account() {
   jq -nc --arg a "$1" --arg h "$2" --arg v "$3" --arg r "$4" '{
     alias: $a, harness: $h, config_dir: ("/home/u/." + $a), measured_through: "local",
