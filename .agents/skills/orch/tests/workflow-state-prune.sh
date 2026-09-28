@@ -469,30 +469,31 @@ got="$(jq -c '[any(.fleet_log[]; .text == "old"), any(.lanes[]; .item == "KEN-2"
   && pass "the pruned rows had already left the state" \
   || fail "the pruned rows had already left the state" "got=$got"
 
-# Aged rows past the kernel's cap on one argument, 128 KiB on Linux: 500 old
-# fleet_log rows of 300 bytes each, as a fleet that ran past the retention
-# with no succession gathers. BIG reads, for the prune SCRIPT ran over them,
+# Aged rows past both kernels' argument limits, Linux's 128 KiB cap on one
+# argument and macOS's 1 MiB ARG_MAX for argv and environment together: 4000
+# old fleet_log rows of 300 bytes each, about 1.2 MB, as a fleet that ran past
+# the retention with no succession gathers. BIG reads, for the prune SCRIPT ran over them,
 # its status, count line and the rows left in the state.
 big_run() { # NAME SCRIPT
   local bp="$TMP_ROOT/big-$1" rc=0 out
   mkdir -p "$bp"
   (cd "$bp" && "$WS" init oversee >/dev/null)
   jq --arg old "$old_at" --arg text "$(printf '%0300d' 0)" \
-    '.fleet_log = [range(500) | {at: $old, kind: "ruling", item: "KEN-\(.)", text: $text}]' \
+    '.fleet_log = [range(4000) | {at: $old, kind: "ruling", item: "KEN-\(.)", text: $text}]' \
     "$bp/tmp/workflow-state-oversee.json" > "$bp/next" && mv -- "$bp/next" "$bp/tmp/workflow-state-oversee.json"
   out="$(run_prune "$bp" "$2" "" 2>&1)" || rc=$?
   BIG="rc=$rc $(grep '^pruned fleet_log=' <<<"$out" || true) left=$(jq '.fleet_log | length' "$bp/tmp/workflow-state-oversee.json")"
 }
 big_run shipped "$WS"
-[[ "$BIG" == "rc=0 pruned fleet_log=500 lanes=0 progress_reports=0 paths=0 left=0" ]] \
-  && pass "aged rows past the cap on one argument are pruned from the state" \
-  || fail "aged rows past the cap on one argument are pruned from the state" "$BIG"
+[[ "$BIG" == "rc=0 pruned fleet_log=4000 lanes=0 progress_reports=0 paths=0 left=0" ]] \
+  && pass "aged rows past both argument limits are pruned from the state" \
+  || fail "aged rows past both argument limits are pruned from the state" "$BIG"
 
 # Its must-fail control: the same rows handed to jq as one argument.
 ROWS_ARGV="$(mutant_scripts rows-argv workflow-state)/workflow-state" || exit 1
 mutate_file "$ROWS_ARGV" 'slurpfile r /dev/stdin <<<"$rows"' 'argjson r "[$rows]"'
 big_run rows-argv "$ROWS_ARGV"
-[[ "$BIG" == "rc=1 "*" left=500" ]] \
+[[ "$BIG" == "rc=1 "*" left=4000" ]] \
   && pass "control: the rows handed to jq as one argument leave every row in the state" \
   || fail "control: the rows handed to jq as one argument leave every row in the state" "$BIG"
 
