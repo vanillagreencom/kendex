@@ -88,10 +88,10 @@ function buildDeps(opts: {
 		taskNeedsSummaryBackfill: () => false,
 		removeDashboardAgent: () => {},
 		resolvePiBridgeBin: async () => undefined,
+		retireSubagent: async () => ({ kind: "pane", entry: { agent: "planner", ...paneEntry } }),
 		runtimeSessionId: () => "session-test",
 		sessionRuntimeDir: () => opts.runtimeRoot,
 		steerDiagnostics: () => [],
-		stopPersistentPane: async () => ({ agent: "planner", paneId: "%42", sessionFile: paneEntry.sessionFile }),
 		updateDashboard: (item: any) => {
 			opts.updateDashboardSpy.calls.push(item);
 		},

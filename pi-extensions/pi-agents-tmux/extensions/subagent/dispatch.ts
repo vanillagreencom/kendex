@@ -72,6 +72,26 @@ function runsInPane(agent: AgentConfig | undefined, lane: PaneLane): boolean {
 	return agent?.pane === true && lane.kind === "pane";
 }
 
+/** The bg session key a pane agent run headless resumes, as its pane would resume its one session file. */
+export const HEADLESS_PANE_SESSION_KEY = "pane";
+
+/**
+ * Gives each pane agent run headless its agent's one resumed session, in
+ * place of any caller key, which pane agents ignore. A second task for the
+ * same agent in one concurrent dispatch gets a fresh lane instead, so two
+ * running children never write one session file.
+ */
+function headlessPaneSessionKeys<T extends DispatchItem>(items: readonly T[], agents: AgentConfig[], lane: PaneLane, concurrent: boolean): T[] {
+	if (lane.kind === "pane") return [...items];
+	const claimed = new Set<string>();
+	return items.map((item) => {
+		if (!agents.find((agent) => agent.name === item.agent)?.pane) return item;
+		if (concurrent && claimed.has(item.agent)) return { ...item, sessionKey: createOneShotSessionKey() };
+		claimed.add(item.agent);
+		return { ...item, sessionKey: HEADLESS_PANE_SESSION_KEY };
+	});
+}
+
 /**
  * Heads the tool result with one `pane-fallback reason=no-tmux` line when a
  * pane agent ran headless, and names each such task the way a queued pane
@@ -239,7 +259,7 @@ async function chainDispatch(
 	flow: DispatchFlowContext & { chain: DispatchTask[] },
 	lane: PaneLane,
 ): Promise<ToolTextResult> {
-	const chainSteps = assignEphemeralSessionKeys(flow.chain);
+	const chainSteps = headlessPaneSessionKeys(assignEphemeralSessionKeys(flow.chain), flow.agents, lane, false);
 	const results: SingleResult[] = [];
 	let previousOutput = "";
 
@@ -394,7 +414,7 @@ async function parallelDispatch(
 	flow: DispatchFlowContext & { tasks: DispatchTask[] },
 	lane: PaneLane,
 ): Promise<ToolTextResult> {
-	const parallelTasks = assignEphemeralSessionKeys(flow.tasks);
+	const parallelTasks = headlessPaneSessionKeys(assignEphemeralSessionKeys(flow.tasks), flow.agents, lane, true);
 
 	const allResults: SingleResult[] = new Array(flow.tasks.length);
 	for (let i = 0; i < flow.tasks.length; i++) {
@@ -557,6 +577,7 @@ async function singleDispatch(
 	lane: PaneLane,
 ): Promise<ToolTextResult> {
 	const agent = flow.agents.find((candidate) => candidate.name === flow.agent);
+	const [{ sessionKey }] = headlessPaneSessionKeys([{ agent: flow.agent, sessionKey: flow.sessionKey }], flow.agents, lane, false);
 	const result = runsInPane(agent, lane)
 		? await runPersistentPaneAgent(
 				flow.cwd,
@@ -588,7 +609,7 @@ async function singleDispatch(
 				flow.signal,
 				flow.onUpdate,
 				flow.makeDetails("single"),
-				flow.sessionKey,
+				sessionKey,
 			);
 	if (!runsInPane(agent, lane)) {
 		flow.updateDashboard({

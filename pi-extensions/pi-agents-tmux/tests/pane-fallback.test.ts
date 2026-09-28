@@ -1,44 +1,55 @@
 // Where a `pane: true` agent runs when the dispatcher probes tmux: headless
 // through the one-shot runner when no server answers, in a pane when one
-// does, and refused under `paneOnly`. Also how `stop_subagent` retires an
-// agent whose latest task ran headless.
+// does, and refused under `paneOnly`. Also the session a headless pane agent
+// resumes, and how `stop_subagent` retires an agent whose latest task ran
+// headless.
 
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import test, { after, afterEach } from "node:test";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
-import { runSingleDispatch } from "../extensions/subagent/dispatch.js";
+import { runChainDispatch, runParallelDispatch, runSingleDispatch } from "../extensions/subagent/dispatch.js";
 import { retireSubagent, setPaneExecCaptureForTests } from "../extensions/subagent/pane.js";
+import { registerPaneSupportTools } from "../extensions/subagent/pane-support-tools.js";
 import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
-import { upsertTaskRecord } from "../extensions/subagent/tasks.js";
-import { bridgeEvent, bridgeStdout, cleanupTempRuntimes, installMockSpawn, makeDetails, mockPiEvents, tempRuntime } from "./single-agent-fixture.js";
+import { upsertTaskRecord, writePaneRegistry } from "../extensions/subagent/tasks.js";
+import { PANE_LAUNCHER_VERSION, type SingleResult } from "../extensions/subagent/types.js";
+import { bridgeEvent, bridgeStdout, cleanupTempRuntimes, installMockSpawn, makeDetails, mockPiEvents, tempRuntime, testAgent } from "./single-agent-fixture.js";
 
 after(cleanupTempRuntimes);
 
 const suiteTmux = process.env.TMUX;
 afterEach(() => {
-	process.env.TMUX = suiteTmux;
+	if (suiteTmux === undefined) delete process.env.TMUX;
+	else process.env.TMUX = suiteTmux;
 	setPaneExecCaptureForTests();
 	setSingleAgentSpawnForTests();
 });
+
+const NOTICE = "pane-fallback reason=no-tmux";
 
 function paneAgent(): AgentConfig {
 	return { name: "generalist", description: "maintenance", pane: true, source: "project", systemPrompt: "", filePath: "generalist.md" };
 }
 
-function dispatch(runtimeRoot: string, paneOnly = false) {
-	return runSingleDispatch({
-		agent: "generalist",
-		agents: [paneAgent()],
+const agents = [paneAgent(), testAgent()];
+
+function flow(runtimeRoot: string, mode: "single" | "parallel" | "chain", paneOnly = false) {
+	return {
+		agents,
 		cwd: runtimeRoot,
-		makeDetails: () => makeDetails,
+		makeDetails: (_mode: typeof mode) => makeDetails,
 		paneOnly,
 		parentSessionId: "parent-session",
 		pi: mockPiEvents([]),
 		removeDashboardAgent: () => undefined,
 		runtimeRoot,
-		task: "tidy the docs",
 		updateDashboard: () => undefined,
-	});
+	};
+}
+
+function dispatchSingle(runtimeRoot: string, paneOnly = false) {
+	return runSingleDispatch({ ...flow(runtimeRoot, "single", paneOnly), agent: "generalist", task: "tidy the docs" });
 }
 
 // Records every tmux call; `split-window` is the pane launch and fails with a
@@ -55,24 +66,36 @@ function recordTmux(serverAnswers: boolean): string[][] {
 	return calls;
 }
 
-const finished = { stdout: bridgeStdout([bridgeEvent("message_end", { message: { role: "assistant", content: [{ type: "text", text: "docs tidied" }] } })]) };
+const finished = () => ({ stdout: bridgeStdout([bridgeEvent("message_end", { message: { role: "assistant", content: [{ type: "text", text: "docs tidied" }] } })]) });
 
-for (const [label, setup] of [
-	["$TMUX is unset", () => delete process.env.TMUX],
-	["the named tmux server does not answer", () => recordTmux(false)],
-] as const) {
-	test(`a pane agent runs headless and returns its result when ${label}`, async () => {
-		setup();
-		const spawns = installMockSpawn([finished]);
+function taskIdLines(text: string): string[] {
+	return text.split("\n").filter((line) => line.startsWith("Task ID: "));
+}
 
-		const result = await dispatch(tempRuntime());
+function resultFor(results: SingleResult[], agent: string): SingleResult {
+	const found = results.find((result) => result.agent === agent);
+	assert.ok(found, `no result for ${agent}`);
+	return found;
+}
 
-		const [notice, cause, taskLine] = result.content[0].text.split("\n");
-		assert.equal(notice, "pane-fallback reason=no-tmux");
+for (const row of [
+	{ label: "$TMUX is unset", cause: /\$TMUX is unset/, probed: false, setup: () => delete process.env.TMUX },
+	{ label: "the named tmux server does not answer", cause: /tmux is unavailable: no server running/, probed: true, setup: () => (process.env.TMUX = "/tmp/tmux-test/default,1,0") },
+]) {
+	test(`a pane agent runs headless and returns its result when ${row.label}`, async () => {
+		row.setup();
+		const tmuxCalls = recordTmux(false);
+		const spawns = installMockSpawn([finished()]);
+
+		const result = await dispatchSingle(tempRuntime());
+
+		const [notice, cause] = result.content[0].text.split("\n");
+		assert.equal(notice, NOTICE);
+		assert.match(cause, row.cause);
 		assert.match(cause, /Pane agents ran headless as background one-shot processes: generalist\.$/);
+		assert.equal(tmuxCalls.some((args) => args[0] === "display-message"), row.probed);
 		const outcome = result.details.results[0];
-		assert.equal(taskLine, `Task ID: ${outcome.taskId}`);
-		assert.equal(result.content[0].text.split("pane-fallback reason=no-tmux").length, 2);
+		assert.deepEqual(taskIdLines(result.content[0].text), [`Task ID: ${outcome.taskId}`]);
 		assert.match(result.content[0].text, /docs tidied$/);
 		assert.equal(outcome.kind, "oneshot");
 		assert.equal(result.isError, undefined);
@@ -80,11 +103,52 @@ for (const [label, setup] of [
 	});
 }
 
+for (const [mode, dispatch] of [
+	["parallel", (runtimeRoot: string) => runParallelDispatch({ ...flow(runtimeRoot, "parallel"), tasks: [{ agent: "generalist", task: "tidy the docs" }, { agent: "reviewer-test", task: "review code" }] })],
+	["chain", (runtimeRoot: string) => runChainDispatch({ ...flow(runtimeRoot, "chain"), chain: [{ agent: "generalist", task: "tidy the docs" }, { agent: "reviewer-test", task: "review {previous}" }] })],
+] as const) {
+	test(`a ${mode} dispatch notes the fallback once and names only the pane agent's task`, async () => {
+		delete process.env.TMUX;
+		const spawns = installMockSpawn([finished(), finished()]);
+
+		const result = await dispatch(tempRuntime());
+
+		const text = result.content[0].text;
+		assert.equal(text.split(NOTICE).length, 2);
+		assert.match(text.split("\n")[1], /one-shot processes: generalist\.$/);
+		assert.deepEqual(taskIdLines(text), [`Task ID: ${resultFor(result.details.results, "generalist").taskId}`]);
+		assert.equal(spawns.length, 2);
+	});
+}
+
+test("a headless pane agent resumes its one session on redelegation", async () => {
+	delete process.env.TMUX;
+	const runtimeRoot = tempRuntime();
+	installMockSpawn([finished(), finished()]);
+
+	const first = (await dispatchSingle(runtimeRoot)).details.results[0];
+	const second = (await dispatchSingle(runtimeRoot)).details.results[0];
+
+	assert.equal(first.sessionPath, join(runtimeRoot, "sessions", "bg-generalist-pane.jsonl"));
+	assert.equal(second.sessionPath, first.sessionPath);
+});
+
+test("two headless tasks for one pane agent in a parallel dispatch take distinct sessions", async () => {
+	delete process.env.TMUX;
+	installMockSpawn([finished(), finished()]);
+
+	const result = await runParallelDispatch({ ...flow(tempRuntime(), "parallel"), tasks: [{ agent: "generalist", task: "tidy the docs" }, { agent: "generalist", task: "tidy the tests" }] });
+
+	const [first, second] = result.details.results.map((item) => item.sessionPath);
+	assert.ok(first && second);
+	assert.notEqual(first, second);
+});
+
 test("a pane agent keeps its pane where the tmux server answers", async () => {
 	const tmuxCalls = recordTmux(true);
-	const spawns = installMockSpawn([finished]);
+	const spawns = installMockSpawn([finished()]);
 
-	await assert.rejects(dispatch(tempRuntime()), /planted split-window refusal/);
+	await assert.rejects(dispatchSingle(tempRuntime()), /planted split-window refusal/);
 
 	assert.ok(tmuxCalls.some((args) => args[0] === "split-window"));
 	assert.equal(spawns.length, 0);
@@ -92,21 +156,71 @@ test("a pane agent keeps its pane where the tmux server answers", async () => {
 
 test("paneOnly refuses a pane agent where no tmux server is reachable", async () => {
 	delete process.env.TMUX;
-	const spawns = installMockSpawn([finished]);
+	const spawns = installMockSpawn([finished()]);
 
-	await assert.rejects(dispatch(tempRuntime(), true), /Persistent pane agents require tmux \(\$TMUX is unset\)\./);
+	await assert.rejects(dispatchSingle(tempRuntime(), true), /Persistent pane agents require tmux \(\$TMUX is unset\)\./);
 
 	assert.equal(spawns.length, 0);
 });
 
-test("stop_subagent retires an agent whose latest task ran headless without a pane", async () => {
-	const runtimeRoot = tempRuntime();
+function paneEntry(runtimeRoot: string) {
+	return {
+		agent: "generalist",
+		paneId: "%42",
+		windowName: "agent:generalist",
+		cwd: runtimeRoot,
+		sessionFile: join(runtimeRoot, "sessions", "generalist.jsonl"),
+		promptFile: join(runtimeRoot, "prompts", "generalist.md"),
+		launcherFile: join(runtimeRoot, "launchers", "generalist.sh"),
+		launcherVersion: PANE_LAUNCHER_VERSION,
+		startedAt: new Date().toISOString(),
+	};
+}
+
+async function seedLatestTask(runtimeRoot: string, kind: "oneshot" | "pane") {
 	const now = new Date().toISOString();
-	await upsertTaskRecord(runtimeRoot, { taskId: "generalist-1", agent: "generalist", task: "tidy the docs", status: "completed", kind: "oneshot", createdAt: now, updatedAt: now });
+	await upsertTaskRecord(runtimeRoot, { taskId: "generalist-1", agent: "generalist", task: "tidy the docs", status: "completed", kind, createdAt: now, updatedAt: now });
+}
 
-	const retired = await retireSubagent(runtimeRoot, "generalist");
+// One row per rule: a registry entry is stopped as a pane whatever ran last,
+// and only a one-shot latest task makes a missing entry a headless retirement.
+for (const row of [
+	{ label: "no pane entry and a one-shot latest task is headless", pane: false, kind: "oneshot", expect: "headless" },
+	{ label: "a pane entry is stopped as a pane after a one-shot task", pane: true, kind: "oneshot", expect: "pane" },
+	{ label: "no pane entry and a pane latest task is refused", pane: false, kind: "pane", expect: /No pane registry entry for agent: generalist/ },
+] as const) {
+	test(`retireSubagent: ${row.label}`, async () => {
+		const runtimeRoot = tempRuntime();
+		setPaneExecCaptureForTests(async () => ({ code: 1, stdout: "", stderr: "no server running" }));
+		if (row.pane) await writePaneRegistry(runtimeRoot, { generalist: paneEntry(runtimeRoot) });
+		await seedLatestTask(runtimeRoot, row.kind);
 
-	assert.equal(retired.kind, "headless");
-	assert.equal(retired.kind === "headless" && retired.record.taskId, "generalist-1");
-	await assert.rejects(retireSubagent(runtimeRoot, "planner"), /No pane registry entry for agent: planner/);
+		if (row.expect instanceof RegExp) {
+			await assert.rejects(retireSubagent(runtimeRoot, "generalist"), row.expect);
+			return;
+		}
+		assert.equal((await retireSubagent(runtimeRoot, "generalist")).kind, row.expect);
+	});
+}
+
+test("stop_subagent reports no_pane for an agent whose latest task ran headless", async () => {
+	const runtimeRoot = tempRuntime();
+	await seedLatestTask(runtimeRoot, "oneshot");
+	const tools: Array<{ name: string; execute: (...args: any[]) => Promise<any> }> = [];
+	registerPaneSupportTools({
+		ensurePaneBridgeMetadata: async () => undefined,
+		persistRuntimeSnapshot: async () => undefined,
+		pi: { registerTool: (tool: any) => tools.push(tool) } as any,
+		removeDashboardAgent: () => undefined,
+		retireSubagent,
+		runtimeSessionId: () => "parent-session",
+		sessionRuntimeDir: () => runtimeRoot,
+	});
+	const stop = tools.find((tool) => tool.name === "stop_subagent");
+	assert.ok(stop);
+
+	const result = await stop.execute("call-1", { agent: "generalist" }, undefined, undefined, {});
+
+	assert.equal(result.content[0].text.split("\n")[0], "no_pane=generalist");
+	assert.equal(result.isError, undefined);
 });

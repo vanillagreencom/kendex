@@ -52,7 +52,7 @@ export const SubagentParams = Type.Object({
 	paneOnly: Type.Optional(
 		Type.Boolean({
 			description:
-				"For pane-mode agents only. When true and no tmux server is reachable, the call errors. Omit/false runs a pane agent headless as a bg one-shot process there, with the same model, thinking and tools, and heads the result with `pane-fallback reason=no-tmux`.",
+				"For pane-mode agents only. When true and no tmux server is reachable, the call errors. Omit/false runs a pane agent headless as a bg one-shot process there, with the same model and thinking, resuming one session per agent and completing through its final output, and heads the result with `pane-fallback reason=no-tmux`.",
 			default: false,
 		}),
 	),
