@@ -2631,11 +2631,12 @@ expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
 # --- the checkout's overseer mailbox --------------------------------------
 # `lane-mail peer send --repo` writes the overseer mailbox of another
 # repository's main checkout, which only a fleet's watch read. A lead session
-# working in a checkout where no fleet watch runs — no lane record names it
-# and no live watch record holds the fleet state — reads that mailbox through
-# the same hooks a lane reads its own with, so a note from a peer repository
-# reaches it at its next turn end or tool call. A lane record or a live watch
-# wins, so a fleet's delivery is unchanged.
+# working in a checkout where no fleet watch runs — no lane record names it,
+# no live watch record holds the fleet state and the fleet state does not
+# record it as the overseer — reads that mailbox through the same hooks a lane
+# reads its own with, so a note from a peer repository reaches it at its next
+# turn end or tool call. A lane record, a live watch or the recorded overseer
+# keeps it off.
 PEER_SENDER="$TMP_ROOT/peer-sender"
 mkdir -p "$PEER_SENDER"
 git -C "$PEER_SENDER" init -q
@@ -2734,12 +2735,34 @@ expect 2 "lane-mail-check: unread=1" "a watch record whose pid has exited holds 
 
 # A `.overseer` record outlives the watch that wrote it, and outside tmux a
 # watch writes none: the record is no judge of who reads the mailbox.
+# The session here runs in another pane of the same tmux server.
 new_plain_session peer_stale_record
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
 record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
 peer_send 'Left by an exited fleet.'
-stop
-expect 2 "lane-mail-check: unread=1" "a stale overseer record with no live watch hands a plain session the note"
+# shellcheck disable=SC2046
+stop $(overseer_env %3)
+expect 2 "lane-mail-check: unread=1" "an overseer record naming another pane, with no live watch, hands a plain session the note"
+
+# The overseer a single-pass watch serves writes no watch record, and inside
+# tmux its `.overseer` record names its own pane: its watch reads the mailbox,
+# so its own hooks leave every line there.
+single_pass_overseer() { # NAME [JUDGE]
+  new_overseer "$1"
+  install_arms "${2:-$HOOK}"
+  judge_says "$BELOW_MARK_LINE"
+  peer_send 'For the single-pass watch.'
+}
+single_pass_overseer peer_single_pass
+# shellcheck disable=SC2046
+stop $(overseer_env)
+expect 0 - "the recorded overseer of a single-pass watch is handed nothing at its turn end"
+# shellcheck disable=SC2046
+CALL_ENV=($(overseer_env))
+tool deliver
+CALL_ENV=()
+assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" "nor after its tool call"
+assert_eq "$(overseer_unread 'For the single-pass watch.')" "1" "and the note stays unread for the next pass"
 
 # A lane reads its own mailbox and never the overseer's beside it.
 new_lane peer_lane ken-71
@@ -2865,7 +2888,7 @@ hole_watch_library
 stop
 expect 2 "lane-mail-check: unread=1" "control: without the library refusal a library that answers nothing reads as no live watch"
 
-mutant peer-ignores-watch -e 's@^    0) return 0 ;;$@    0) return 1 ;;@'
+mutant peer-ignores-watch -e '/^watch_live() {/,/^}/ s@^    0) return 0 ;;$@    0) return 1 ;;@'
 new_plain_session control_peer_watched
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 start_watch
@@ -2874,12 +2897,18 @@ stop
 stop_watch
 expect 2 "lane-mail-check: unread=1" "control: without the live-watch rule a plain session takes the watch's mail"
 
-mutant peer-idle-stands-down -e 's@^    1) return 1 ;;$@    1) return 0 ;;@'
+mutant peer-idle-stands-down -e '/^watch_live() {/,/^}/ s@^    1) return 1 ;;$@    1) return 0 ;;@'
 new_plain_session control_peer_idle
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 peer_send 'Nobody watching.'
 stop
 expect 0 - "control: without the no-watch rule a checkout with no live watch leaves the note unread"
+
+mutant peer-ignores-overseer -e 's@^  watch_live || overseer_identified$@  watch_live@'
+single_pass_overseer control_peer_single_pass "$MUTANT_PATH"
+# shellcheck disable=SC2046
+stop $(overseer_env)
+expect 2 "lane-mail-check: unread=1" "control: without the recorded-overseer rule a single-pass overseer takes its watch's mail"
 
 mutant lane-reads-overseer -e 's@^    MAILBOX_ITEM="\$ITEM"$@    MAILBOX_ITEM=overseer@'
 new_lane control_peer_lane ken-72
