@@ -21,7 +21,7 @@ Every Copilot command `open-terminal` and the overseer launchers build carries e
 | `--context long_context` | The long context tier, named on the command and not left to `contextTier` in the account's settings. |
 | `--no-auto-update` | The CLI runs the version the host installed and downloads none. |
 | `--no-ask-user` | Takes the `ask_user` tool away, on every lane and on an overseer while `ORCH_QUESTION_TOOL` is `off`, its default. A lane asks through `lane-mail` ([skill-rules.md § Coordination](skill-rules.md#coordination)). |
-| `COPILOT_ALLOW_ALL=true` | `copilot help environment`: exactly `true` also trusts the working directory without prompting and loads its hooks and skills; another truthy spelling approves tools alone. So no folder-trust dialog opens. |
+| `COPILOT_ALLOW_ALL=true` | Only where the command carries `--allow-all` or `--yolo`. `copilot help environment`: any truthy value approves every tool, and exactly `true` also trusts the working directory without prompting and loads its hooks and skills. So it adds folder trust to the posture the caller chose. A command without either spelling keeps its permission prompts and its folder-trust dialog. |
 | `COPILOT_SKILLS_DIRS=~/.agents/skills` | Any `COPILOT_HOME` hides the shared skills under `~/.agents/skills`, and this names them back: measured by `tools/harness-smoke`, row `skill-dirs:COPILOT_HOME`. |
 | `COPILOT_HOME=<account>` | The account, where a lane is named. A launch naming none opens on the `COPILOT_HOME` the pane inherits. |
 
@@ -30,7 +30,7 @@ The first three rows are launch settings. A caller's copy of any one of them, ty
 | Words the caller passes in `--launch-flags` | Why |
 |---------------------------------------------|-----|
 | `--model`, `--reasoning-effort` | A launch under `--lane` that names neither refuses as `launch-model-missing` and `launch-effort-missing` (`open-terminal --help`). |
-| `--allow-all` | The permission posture. A resumed session ignores `defaultPermissionMode` from settings (`copilot help config`), so a resume carries `--allow-all` only where the relaunch's `--launch-flags` carry it. A launch without it prints `permission-prompt` and still launches. |
+| `--allow-all` | The permission posture. A resumed session ignores `defaultPermissionMode` from settings (`copilot help config`), so a resume carries `--allow-all` only where the relaunch's `--launch-flags` carry it. A launch without it prints `permission-prompt`, carries no `COPILOT_ALLOW_ALL`, and still launches. |
 
 GitHub tokens pass through. A lane's own `gh` calls sign in with `GH_TOKEN`. Copilot reads `COPILOT_GITHUB_TOKEN`, the account token a host exports, ahead of `GH_TOKEN` and `GITHUB_TOKEN` (`copilot help environment`), and it logs `Unsupported token type, ignoring` for a token it does not accept (measured). No token value enters a command.
 

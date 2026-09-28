@@ -1256,7 +1256,7 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
     codex)
       [[ "$form" != unchecked ]] || verified=false
       extra=$(lane_launch_compaction_env "$cmd" "$harness" "$verified") || return 1 ;;
-    copilot) extra="$(lane_copilot_env)" || return 1 ;;
+    copilot) extra="$(lane_copilot_env "$cmd")" || return 1 ;;
   esac
   [[ -z "$var" ]] || account="$var=$(lane_single_quote "$dir")"
   case "$form" in
@@ -1265,13 +1265,18 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
   esac
 }
 
-# The environment every copilot command carries, fresh or resumed, a lane's or
+# The environment a copilot command CMD carries, fresh or resumed, a lane's or
 # an overseer's, as the assignments `env` takes ahead of the command:
-#   COPILOT_ALLOW_ALL=true  exactly `true` also trusts the working directory
-#                  without prompting, loading its hooks and skills, where any
-#                  other truthy spelling approves tools alone (`copilot help
-#                  environment`, 1.0.88), so no folder-trust dialog waits at a
-#                  lane's pane with nobody to answer it.
+#   COPILOT_ALLOW_ALL=true  only where CMD itself carries a full allow-all
+#                  spelling, `--allow-all` or `--yolo` (lane_copilot_allows_all
+#                  below). Any truthy value approves every tool, and exactly
+#                  `true` also trusts the working directory without prompting,
+#                  loading its hooks and skills (`copilot help environment`,
+#                  1.0.88). So it adds folder trust to a posture the caller
+#                  already chose, never tool approval the caller left out; a
+#                  command without either spelling keeps its permission prompts
+#                  and its folder-trust dialog, as open-terminal's
+#                  permission-prompt warning says.
 #   COPILOT_SKILLS_DIRS  the shared skills under HOME, ~/.agents/skills, where
 #                  kendex installs a global skill for Copilot: any COPILOT_HOME
 #                  hides them, and this names them back (measured by
@@ -1282,9 +1287,25 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
 # ignoring" for a token it does not accept (measured on 1.0.88), so no token
 # value is written into a command.
 # Returns 1 where HOME is empty, with nothing to name the skills by.
-lane_copilot_env() {
+lane_copilot_env() { # CMD
+  local allow=""
   [[ -n "${HOME:-}" ]] || return 1
-  printf 'COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS=%s\n' "$(lane_single_quote "$HOME/.agents/skills")"
+  ! lane_copilot_allows_all "$1" || allow="COPILOT_ALLOW_ALL=true "
+  printf '%sCOPILOT_SKILLS_DIRS=%s\n' "$allow" "$(lane_single_quote "$HOME/.agents/skills")"
+}
+
+# Whether CMD carries one of the copilot row's transferable permission
+# spellings, the full allow-all ones, as a word the shell hands copilot. The
+# tools-only `--allow-all-tools` is not one: it leaves paths and URLs asking.
+lane_copilot_allows_all() { # CMD
+  local spellings i
+  spellings="$(launch_choice_transfer_permission_spellings copilot)"
+  launch_choice_shell_words "$1"
+  for ((i = 0; i < ${#LAUNCH_CHOICE_ARGV[@]}; i++)); do
+    launch_choice_permission_match "$spellings" "${LAUNCH_CHOICE_ARGV[i]}" "${LAUNCH_CHOICE_ARGV[i+1]:-}"
+    (( LAUNCH_CHOICE_PERMISSION_SPAN == 0 )) || return 0
+  done
+  return 1
 }
 
 # The lane variable's value in the DEEPEST process under pane pid $1 that
