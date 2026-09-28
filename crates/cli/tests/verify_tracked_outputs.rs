@@ -12,13 +12,15 @@
 //! The must-fail controls are `tracked_output_rows` skipping every
 //! standing, which leaves the ignored rows without a row; answering
 //! `Warnings::Warn` whatever `--strict` asked, which leaves the strict row
-//! clean; its warning branch counting into `outputs_failed`, which fails
-//! the warned run and the consumer refresh; `head` dropping the warning
-//! count, which leaves the warned closing line without it; its error branch
-//! dropping the `outputs_failed` count, which leaves the unjudged row
-//! clean; the engine recording an agent it placed nowhere, which gives the
-//! unplaced row a tracked-output row; and `--strict` added to the verify
-//! line of `refresh-consumer.sh`, which fails the consumer refresh.
+//! clean; its fail branch printing a warning line, which leaves the strict
+//! row without its failed line; its warning branch counting into
+//! `outputs_failed`, which fails the warned run and the consumer refresh;
+//! `head` dropping the warning count, which leaves the warned closing line
+//! without it; its error branch dropping the `outputs_failed` count, which
+//! leaves the unjudged row clean; the engine recording an agent it placed
+//! nowhere, which gives the unplaced row a tracked-output row; and
+//! `--strict` added to the verify line of `refresh-consumer.sh`, which
+//! fails the consumer refresh.
 #![cfg(unix)]
 
 use std::path::PathBuf;
@@ -64,8 +66,9 @@ enum Expected {
     /// One warning row whose detail, and the `warning: ` line on stderr,
     /// carries this text; a clean run whose closing line counts it apart.
     Warned(&'static str),
-    /// One failed row whose detail, and the human line on stderr, opens
-    /// with this text; a failed run counting it among the other rows.
+    /// One failed row whose detail, and the `✗ ` line on stderr, carries
+    /// this text and no `warning: ` line; a failed run counting it among
+    /// the other rows.
     Failed(&'static str),
     /// No row, and a clean run.
     Tracked,
@@ -161,7 +164,11 @@ fn an_ignored_tracked_output_warns_and_fails_only_under_strict() {
                 assert!(!output.status.success(), "{declared}: {}", said(&output));
                 assert!(!document.clean, "{declared}");
                 one_row(&rows, State::Failed, detail);
-                assert!(stderr.contains(detail), "{stderr}");
+                assert!(
+                    stderr.contains(&format!("✗ agent planner: {detail}")),
+                    "{stderr}"
+                );
+                assert!(!stderr.contains("warning: agent planner"), "{stderr}");
                 assert!(
                     stderr.contains("0 failed; 1 other row failed\n"),
                     "{stderr}"
