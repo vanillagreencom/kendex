@@ -1170,10 +1170,12 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "a count no successor settles does not fire the qualifying-set trigger"
 # The judgement walks the preference as a succession would: a codex entry whose
 # successor finds no other codex account above the trigger settles the same
-# count, and a preference the walk cannot read refuses the judgement.
+# count, a pi entry on a provider no lane measures reads no count and is passed
+# over, and a preference the walk cannot read refuses the judgement.
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 for pref_row in \
   "codex:1:high|0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
+  "pi:github-copilot/gpt-5:high,codex:1:high|0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
   "bogus|1|oversee-succeed: invalid-preference entry=bogus"; do
   IFS='|' read -r pref_value pref_rc pref_want <<<"$pref_row"
   new_caller "$UNDER_MARK"
@@ -1376,7 +1378,7 @@ ROWS
 new_caller "$MARK"
 for row in "badcontext|--check-marks --context 12|1|oversee-succeed: invalid-context value=12" \
            "printcontext|--print-launch-line --context 12:100|1|oversee-succeed: mode-conflict mode=print context=12:100" \
-           "badharness|--print-launch-line --harness pi|1|oversee-succeed: invalid-harness value=pi"; do
+           "badharness|--print-launch-line --harness opencode|1|oversee-succeed: invalid-harness value=opencode"; do
   IFS='|' read -r row_name row_args row_rc row_first <<<"$row"
   # shellcheck disable=SC2086
   NO_CONTEXT=1 run_succeed "$row_name" '' $row_args
@@ -1471,7 +1473,7 @@ assert_eq "$RC|$OUT" \
 # The control on the record fallback: a copy that never reads the recorded
 # account prints the environment's for the pane the record names.
 PRINTREC="$(mutant_scripts printrec oversee-succeed)" || exit 1
-mutate_file "$PRINTREC/oversee-succeed" 'CALLER_CFG="${OL_KNOWN_ACCOUNT:-$(lane_context_caller_cfg "$CALLER_HARNESS")}"' 'CALLER_CFG="$(lane_context_caller_cfg "$CALLER_HARNESS")"'
+mutate_file "$PRINTREC/oversee-succeed" 'CALLER_CFG="$OL_KNOWN_ACCOUNT"' 'CALLER_CFG=""'
 new_caller "$UNDER_MARK"
 record_account "$CALLER_PANE" "$H/.eclaude"
 SUCCEED_BIN="$PRINTREC/oversee-succeed" run_succeed printrecctl '' --print-launch-line --harness claude

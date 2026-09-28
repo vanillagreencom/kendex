@@ -3,7 +3,7 @@
 # ORCH_OVERSEER_PREFERENCE entry names the model its successor runs, the pick
 # is judged on the bucket that walls that model, and an unset setting walks
 # lib/overseer-launch.sh's default ladder. Run over a real tmux server on a
-# private socket, as oversee_succeed.sh is; claude, codex and kendex are stubs
+# private socket, as oversee_succeed.sh is; claude, codex, pi and kendex are stubs
 # on PATH, and `lanes pick` answers from the lanes-fixture usage bodies. The
 # caller's own account is walled for the model it runs in every row, so every
 # row reaches the headroom mark, or is the wall recovery, and walks.
@@ -41,10 +41,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN" "$TMP_ROOT/work/tmp"
 # A harness stub records its lane and argv and draws the hint a running turn
-# shows, so the successor reads as working.
-for harness in claude codex; do
+# shows, so the successor reads as working. A pi successor runs on claude's
+# account variable, the one the pi-claude bridge reads.
+for harness in claude codex pi; do
   lane_var=CLAUDE_CONFIG_DIR
-  [[ "$harness" == claude ]] || lane_var=CODEX_HOME
+  [[ "$harness" != codex ]] || lane_var=CODEX_HOME
   cat > "$BIN/$harness" <<STUB
 #!/bin/sh
 { printf 'lane=%s\n' "\${$lane_var:-}"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.$harness"
@@ -68,7 +69,7 @@ case "$1:$2:$3" in
   *) exit 1 ;;
 esac
 STUB
-chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex"
+chmod +x "$BIN/claude" "$BIN/codex" "$BIN/pi" "$BIN/kendex"
 # A caller whose foreground process names claude: a copy of sleep, since a
 # script or a shell named for the harness can reset the name tmux reads.
 cp "$(command -v sleep)" "$BIN/hclaude"
@@ -85,6 +86,11 @@ make_codex_lane "$H/.codex"
 make_codex_lane "$H/.dcodex"
 FETCHER="$TMP_ROOT/fetch"
 make_fetcher "$FETCHER"
+# A pi install a pi successor may open on: its user settings turn compaction
+# off, and its pi-hooks carrier sends the context window.
+mkdir -p "$H/.pi/agent/packages/@vanillagreen/pi-hooks/extensions"
+jq -n '{compaction: {enabled: false}}' > "$H/.pi/agent/settings.json"
+printf 'payload.context_window = usage.contextWindow;\n' > "$H/.pi/agent/packages/@vanillagreen/pi-hooks/extensions/stop.ts"
 
 # seat LANE SESSION_PCT FABLE_PCT OPUS_PCT — LANE's usage: the 5-hour window
 # at SESSION_PCT, which walls every model, the weekly window at 20, and the
@@ -340,6 +346,64 @@ run_succeed fable unset
 assert_eq "$RC|$(launched claude)|$(launched codex)" \
   "0|$H/.fclaude fable|none" \
   "the default ladder opens on Fable where a seat has Fable room"
+
+# A pi overseer on the pi-claude provider, its pane naming no harness and its
+# launch record naming pi, Fable and the account .claude, whose Fable and Opus
+# windows are spent. Its wall recovery walks a pi entry on Opus, which spends a
+# claude account: the pick leaves the walled account out and lands on .eclaude.
+FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
+new_pi_caller() {
+  tm kill-window -a -t fleet:0
+  rm -f -- "${TMP_ROOT:?}"/argv.*
+  CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' 'exec sleep 100000')"
+  CALLER_WINDOW="$(tm display-message -p -t "$CALLER_PANE" '#{window_id}')"
+  jq -n --arg server "$SERVER_PID" --arg pane "$CALLER_PANE" --arg account "$H/.claude" --arg cwd "$TMP_ROOT/work" \
+    '{issue_id: "oversee", overseer: {runtime: "tmux", generation: 1, server: $server, pane: $pane,
+      harness: "pi", account: $account, home: $account, model: "pi-claude/claude-fable-5-1",
+      effort: "high", cwd: $cwd, launch_line: "recorded"}}' > "$FLEET_STATE"
+}
+seat claude 10 99 99
+seat eclaude 10 99 10
+CALLER_FLAGS=(--model pi-claude/claude-fable-5-1 --thinking high)
+new_pi_caller
+run_succeed piwalled 'pi:pi-claude/claude-opus-5-5:high' --walled-pane "$CALLER_PANE" --harness pi
+assert_eq "$RC|$(caller_open)|$(launched pi)|$(grep -cx -e --thinking -e high "$TMP_ROOT/argv.pi")|$(tail -n 1 "$TMP_ROOT/argv.pi")" \
+  "0|no|$H/.eclaude pi-claude/claude-opus-5-5|2|/skill:orch oversee after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md" \
+  "a walled pi overseer is recovered onto a pi entry with a model, on a claude account with room for it"
+# Its control: a preference parse naming no pi refuses the entry.
+PIPARSECTL="$(mutant_scripts piparsectl lib/overseer-launch.sh)" || exit 1
+mutate_file "$PIPARSECTL/lib/overseer-launch.sh" \
+  '       || "$entry" =~ ^pi:[a-z][a-z0-9.-]*/[a-z0-9][a-z0-9._/-]*:[a-z]+$ ]]' '       ]]'
+new_pi_caller
+SUCCEED_BIN="$PIPARSECTL/oversee-succeed" run_succeed piparsectl 'pi:pi-claude/claude-opus-5-5:high' --walled-pane "$CALLER_PANE" --harness pi
+assert_eq "$RC|$(first_key)|$(caller_open)|$(launched pi)" "1|invalid-preference|yes|none" \
+  "control: a preference parse naming no pi refuses the pi entry"
+# A pi entry naming no provider is no pi model: refused as a setting to fix.
+new_pi_caller
+run_succeed pinomodel 'pi:fable:high' --walled-pane "$CALLER_PANE" --harness pi
+assert_eq "$RC|$(keyed invalid-preference | awk '{print $2, $3}')|$(caller_open)|$(launched pi)" \
+  "1|invalid-preference entry=pi:fable:high|yes|none" \
+  "a pi entry with no provider/id model refuses invalid-preference"
+rm -f -- "${FLEET_STATE:?}"
+CALLER_FLAGS=("$BYPASS")
+
+# A claude overseer under full bypass: the pi row names no permission word, so
+# its pi entry is skipped before its pick and the walk ends on its own harness.
+pi_skip_row() { # [SUCCEED_BIN]
+  new_caller
+  SUCCEED_BIN="${1:-}" run_succeed "piskip${1:+ctl}" 'pi:pi-claude/claude-opus-5-5:high'
+}
+pi_skip_row
+assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched pi)|$(launched claude | awk '{print $1}')" \
+  "0|oversee-succeed: entry-permission-untransferable entry=pi:pi-claude/claude-opus-5-5:high source=claude target=pi|none|$H/.fclaude" \
+  "a claude caller skips a pi entry no permission posture crosses to"
+# Its control: a walk that asks the source row alone chooses the pi entry and
+# then refuses, launching nothing.
+PISKIPCTL="$(mutant_scripts piskipctl oversee-succeed)" || exit 1
+mutate_file "$PISKIPCTL/oversee-succeed" '                && launch_choice_permission_write "$harness" >/dev/null; }; then' '                ; }; then'
+pi_skip_row "$PISKIPCTL/oversee-succeed"
+assert_eq "$RC|$(first_key)|$(launched pi)|$(launched claude)" "1|launch-choice-failed|none|none" \
+  "control: a walk that asks the source row alone chooses the pi entry and refuses"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

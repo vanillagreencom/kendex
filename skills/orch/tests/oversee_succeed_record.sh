@@ -85,6 +85,12 @@ claude_usage 10 10 99 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 jq -n '{rate_limit: {primary_window: {used_percent: 20, reset_at: 1785000000, limit_window_seconds: 18000}, secondary_window: null}}' \
   > "$FIXTURE_DIR/.codex.json"
+# A pi install a pi successor may open on: its user settings turn compaction
+# off, and its pi-hooks carrier sends the context window.
+PI_AGENT="$H/.pi/agent"
+mkdir -p "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions"
+jq -n '{compaction: {enabled: false}}' > "$PI_AGENT/settings.json"
+printf 'payload.context_window = usage.contextWindow;\n' > "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions/stop.ts"
 
 env PATH="$BIN:$PATH" tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 220 -y 50 'exec sleep 100000'
 tm set-option -g default-shell /bin/sh
@@ -183,6 +189,8 @@ for row in \
   "this:$H/.claude:fable:pending|Opus 5|CLAUDE_CONFIG_DIR=$H/.eclaude|mail|account-below-mark headroom=90|a pending successor, the reading, the environment and a mailbox note all disagree: the current record decides" \
   "other:$H/.eclaude:claude-opus-5|Fable 5.1|CLAUDE_CONFIG_DIR=$H/.claude|-|account-below-mark headroom=90|a record naming another session is not this one's: the bootstrap readings decide" \
   "otherserver:$H/.eclaude:claude-opus-5|Fable 5.1|CLAUDE_CONFIG_DIR=$H/.claude|-|account-below-mark headroom=90|a record naming this pane id on another tmux server is not this one's" \
+  "pi:$H/.claude:pi-claude/claude-opus-5|Fable 5.1|CLAUDE_CONFIG_DIR=$H/.eclaude|-|mark-reached kind=headroom value=1|a pi record on the pi-claude provider: its claude account, judged on the claude model the provider runs" \
+  "pi::github-copilot/gpt-5|Fable 5.1|CLAUDE_CONFIG_DIR=$H/.claude|-|mark-unmeasured kind=headroom reason=headroom-none succession=on|a pi record on another provider spends no account lanes measures, and no environment account stands in" \
   ; do
   IFS='|' read -r row_record row_reading row_lane row_mail row_want row_what <<<"$row"
   new_caller claude
@@ -198,6 +206,7 @@ for row in \
     this) state "$(record "$CALLER_PANE" "$rec_account" "$rec_model" "$([[ -z "$rec_pending" ]] && echo '{}' || echo "$PENDING")")" ;;
     other) state "$(record %999 "$rec_account" "$rec_model")" ;;
     otherserver) state "$(record "$CALLER_PANE" "$rec_account" "$rec_model" '{"server": "1"}')" ;;
+    pi) state "$(record "$CALLER_PANE" "$rec_account" "$rec_model" '{"harness": "pi"}')" ;;
   esac
   run_succeed "$row_lane" --check-marks
   assert_eq "$RC|$(judged)" "0|$row_want" "--check-marks: $row_what" "$TMP_ROOT/err"
@@ -300,6 +309,17 @@ harness_row "$HARNESSCTL/oversee-succeed"
 assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
   "control: a caller that takes --harness over its record judges the record's account as a codex lane" "$TMP_ROOT/err"
 
+# The control for the pi account rule: a pi model read as naming no account
+# leaves a pi-claude overseer's own claude account unjudged.
+PICTL="$(mutant_scripts pictl lib/lane-context.sh)" || exit 1
+mutate_file "$PICTL/lib/lane-context.sh" '    pi-claude/?*)' '    pi-claude/?*-unread)'
+new_caller claude
+reading "Fable 5.1"
+state "$(record "$CALLER_PANE" "$H/.claude" pi-claude/claude-opus-5 '{"harness": "pi"}')"
+SUCCEED_BIN="$PICTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.eclaude" --check-marks
+assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
+  "control: a pi-claude model read as naming no account leaves the overseer's account unjudged" "$TMP_ROOT/err"
+
 # The control for the model rule: a caller that ignores the record's model is
 # judged on the reading's.
 MODELCTL="$(mutant_scripts modelctl oversee-succeed)" || exit 1
@@ -341,6 +361,36 @@ state "$(record "$CALLER_PANE" "$H/.eclaude" fable)"
 SUCCEED_BIN="$PAIRCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS" --model opus --effort low
 assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer --model fable --effort high $LEAD $BYPASS --model opus --effort low '$BRIEF'" \
   "control: a caller entry that keeps its flags beside the record's pair names two models" "$TMP_ROOT/err"
+
+# A pi overseer's line: its model and level words, its question-tool words and
+# its skill command as the brief. With no record and no reading, --harness
+# names the harness, and a model off the pi-claude provider names no account,
+# so the line carries no lane variable. The pane opens in the work directory,
+# where no pi project settings stand.
+PI_BRIEF="'/skill:orch oversee after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'"
+pi_print_row() { # [SUCCEED_BIN]
+  tm kill-window -a -t fleet:0
+  CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' 'exec sleep 100000')"
+  state none
+  SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line --harness pi \
+    -- --model github-copilot/gpt-5 --thinking high
+}
+pi_print_row
+assert_eq "$RC|$OUT" "0|pi --exclude-tools question --model github-copilot/gpt-5 --thinking high $PI_BRIEF" \
+  "--print-launch-line --harness pi prints the pi line, bare on a provider no lane measures" "$TMP_ROOT/err"
+PIHARNESSCTL="$(mutant_scripts piharnessctl oversee-succeed)" || exit 1
+mutate_file "$PIHARNESSCTL/oversee-succeed" '| codex | pi) ;;' '| codex) ;;'
+pi_print_row "$PIHARNESSCTL/oversee-succeed"
+assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: invalid-harness value=pi" \
+  "control: a --harness check naming no pi refuses the pi overseer's line"
+# The settings a pi successor would compact under refuse its line, as they
+# refuse a pi lane's launch.
+jq -n '{compaction: {enabled: true}}' > "$PI_AGENT/settings.json"
+pi_print_row
+assert_eq "$RC|$(sed -n 1p <<<"$ERR")" \
+  "1|oversee-succeed: pi-handoff-unmarked reason=compaction-on file=$PI_AGENT/settings.json" \
+  "--print-launch-line refuses a pi line whose settings leave compaction on"
+jq -n '{compaction: {enabled: false}}' > "$PI_AGENT/settings.json"
 
 # --- a dead-pane relaunch -------------------------------------------------
 # The relaunched session is identified by the record of the line it replays:

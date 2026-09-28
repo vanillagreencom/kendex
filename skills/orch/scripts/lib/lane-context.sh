@@ -154,6 +154,8 @@ lane_context_caller_cfg() { # SHAPE
 # its recorded reading names. A claude session's account mark is judged on
 # MODEL's own buckets; a codex session's is judged on the account's binding
 # bucket, the reading the fleet has always taken of one, and this answers empty.
+# A pi session's is MODEL as pi spells it, `provider/id`, which
+# lane_context_account below turns into the account and model `lanes` judges.
 #
 # It exists so a caller CHOOSING an account for a session it is about to
 # launch holds that account to the reading the session will take of itself. A
@@ -162,8 +164,30 @@ lane_context_caller_cfg() { # SHAPE
 # and a handoff every cycle.
 lane_context_mark_model() { # HARNESS MODEL
   case "${1:-}" in
-    claude) printf '%s\n' "${2:-}" ;;
+    claude | pi) printf '%s\n' "${2:-}" ;;
     *) printf '\n' ;;
+  esac
+}
+
+# lane_context_account HARNESS MODEL — the account a session of HARNESS on
+# MODEL spends, as `lanes` measures it: LANE_CTX_ACCOUNT_HARNESS the harness
+# whose accounts it reads, LANE_CTX_ACCOUNT_MODEL the model it judges them on.
+# Claude and codex are their own. A pi session on the pi-claude provider runs
+# the claude model after `pi-claude/` under CLAUDE_CONFIG_DIR
+# (pi-extensions/pi-claude-bridge), so it spends a claude account on that
+# model, the `:<thinking>` suffix pi reads as its level dropped; on any other
+# provider it spends no account `lanes` measures, and both are empty.
+LANE_CTX_ACCOUNT_HARNESS="" LANE_CTX_ACCOUNT_MODEL=""
+lane_context_account() { # HARNESS MODEL
+  LANE_CTX_ACCOUNT_HARNESS="${1:-}" LANE_CTX_ACCOUNT_MODEL="${2:-}"
+  [[ "$LANE_CTX_ACCOUNT_HARNESS" == pi ]] || return 0
+  case "$LANE_CTX_ACCOUNT_MODEL" in
+    pi-claude/?*)
+      LANE_CTX_ACCOUNT_HARNESS=claude
+      LANE_CTX_ACCOUNT_MODEL="${LANE_CTX_ACCOUNT_MODEL#pi-claude/}"
+      LANE_CTX_ACCOUNT_MODEL="${LANE_CTX_ACCOUNT_MODEL%%:*}"
+      ;;
+    *) LANE_CTX_ACCOUNT_HARNESS="" LANE_CTX_ACCOUNT_MODEL="" ;;
   esac
 }
 

@@ -16,7 +16,7 @@ Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
                      [--item ISSUE_ID]... [--repo OWNER/REPO]...
                      [--hosted ITEM=REMOTE_ROOT]... [--root ITEM=PATH]...
                      [--handoff PATH] [--state PATH [--skip-lane WINDOW]...]
-                     [--harness claude|codex|copilot] [LANE_WINDOW...] [-- OVERSEER_FLAGS...]
+                     [--harness claude|codex|copilot|pi] [LANE_WINDOW...] [-- OVERSEER_FLAGS...]
        oversee-watch --repeat SECS --state PATH [any option above]...
 
 Blocks until the fleet needs the overseer, then prints every event it found
@@ -418,9 +418,10 @@ Options:
                       and a has-session call failing for any other reason,
                       no server at the socket among them, as tmux-failed
                       naming that socket
-  --harness H         the OVERSEER's harness, claude, codex or copilot, handed
-                      to each oversee-succeed call; a Codex or Copilot CLI
-                      pane reads node, which names none of them
+  --harness H         the OVERSEER's harness, claude, codex, copilot or pi,
+                      handed to each oversee-succeed call; a Codex or Copilot
+                      CLI pane reads node and a pi pane pi, which the pane
+                      reader maps to no one harness
   -- OVERSEER_FLAGS...
                       the flags the OVERSEER itself runs under — its
                       permission flags, plus its current model and effort
