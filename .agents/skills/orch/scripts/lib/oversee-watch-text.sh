@@ -153,9 +153,10 @@ The long pass's events, checked and reported in this order:
                              --repo. A parked record's item is an --item for
                              this check alone, and the merge of the pull
                              request its record names, in that repository,
-                             runs the close below at once: nothing wakes a
-                             parked sandbox. Another pull request on the
-                             branch's name is reported and closes nothing,
+                             runs the close below at once, or item-open for a
+                             record owing a further pull request: nothing
+                             wakes a parked sandbox. Another pull request on
+                             the branch's name is reported and closes nothing,
                              under a parked-merge-unmatched note on stderr
                              naming the recorded key and the keys seen; the
                              repository is matched in lower case, GitHub's
@@ -221,6 +222,14 @@ The long pass's events, checked and reported in this order:
                              provider's `close-refused path=PATH` line, or
                              `path=unknown` without one; the sandbox stays.
                              Never retried, never --force
+  EVENT item-open <item> cause=further-pr
+                             in place of that close, under the merged event of
+                             a parked record whose owes_pr is true: lane-close
+                             --park read an owes-pr: line in the lane's status
+                             file, so the item owes a pull request after the
+                             merged one. Nothing is closed: the record stays
+                             parked and its stopped sandbox keeps the branch
+                             for a relaunch. Reported once, as the merge is
   EVENT handoff <item>       the --item's workflow state carries a `.handoff`
                              record with no `.resumed_at`; the record follows.
                              Emitted once per record, on every surface: it

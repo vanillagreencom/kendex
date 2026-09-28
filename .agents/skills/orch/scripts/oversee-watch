@@ -522,12 +522,14 @@ check_root_entries() { # KIND ENTRY...
 }
 
 # Whether the item is a parked record's, for the merged check's close, with
-# PARKED_KEY the `<repo>#<number>` of the pull request its park judged.
+# PARKED_KEY the `<repo>#<number>` of the pull request its park judged and
+# PARKED_OWES `owes` where its record owes a pull request after that one.
 PARKED_KEY=""
+PARKED_OWES=""
 item_parked() { # ITEM
   local i
   for i in ${PARKED_ITEMS[@]+"${!PARKED_ITEMS[@]}"}; do
-    [[ "${PARKED_ITEMS[$i]}" != "$1" ]] || { PARKED_KEY="${PARKED_KEYS[$i]}"; return 0; }
+    [[ "${PARKED_ITEMS[$i]}" != "$1" ]] || { PARKED_KEY="${PARKED_KEYS[$i]}"; PARKED_OWES="${PARKED_OWED[$i]}"; return 0; }
   done
   return 1
 }
@@ -618,10 +620,12 @@ PREPARE_ROWS_FILTER='
   | [.item, $outcome, (.prepare.since | fromdateiso8601 | tostring), .prepare.log, (.prepare.reason // "")] | join("\u001f")'
 PREPARE_ROWS=""
 
-# The parked records, one per line as item and `<repo>#<number>`: a lane
-# lane-close --park stopped with its disk kept, and the pull request its park
-# judged, whose merge alone the merged check closes it on. Nothing else reads
-# it: its pane is gone and its mailbox is on a stopped disk. The repository
+# The parked records, one per line as item, `<repo>#<number>` and `owes` or
+# nothing: a lane lane-close --park stopped with its disk kept, the pull
+# request its park judged, whose merge alone the merged check acts on, and
+# whether its record's owes_pr says the item owes a pull request after that
+# one. Nothing else reads it: its pane is gone and its mailbox is on a stopped
+# disk. The repository
 # is lowercased here, the one spelling check_repo_set gives every --repo, so
 # the key meets the merged side's whatever case the record's writer used:
 # GitHub reads owner and repository names case-insensitively, and a record
@@ -630,9 +634,10 @@ PARKED_ROWS_FILTER='
   (.lanes // [])[] | select(type == "object" and .status == "parked")
   | if ((.item? | type) != "string" or (.item | length) == 0) then error("lane-field field=item value=\(.item | tojson)")
     elif ((.parked.pr? | type) != "number" or (.parked.repo? | type) != "string") then error("lane-field field=parked value=\(.parked | tojson)")
-    else "\(.item)\u001f\(.parked.repo | ascii_downcase)#\(.parked.pr)" end'
+    else "\(.item)\u001f\(.parked.repo | ascii_downcase)#\(.parked.pr)\u001f\(if .parked.owes_pr == true then "owes" else "" end)" end'
 PARKED_ITEMS=()
 PARKED_KEYS=()
+PARKED_OWED=()
 
 # The one reader of the state, asked by the repeat wrapper before every pass
 # and by the pass itself before every loop: the live set changes on every
@@ -652,7 +657,7 @@ FLEET_CARRIED=""
 # The state text the last read parsed, which the heartbeat's owed items judge.
 FLEET_STATE=""
 fleet_merge() { # [quiet]
-  local state rows dropped line item window where root harness running kept carried parked
+  local state rows dropped line item window where root harness running kept carried parked owes
   state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
   FLEET_STATE="$state"
   rows="$(jq -r "$LANE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$rows" "option=--state" "path=$STATE_FILE"
@@ -660,10 +665,12 @@ fleet_merge() { # [quiet]
   parked="$(jq -r "$PARKED_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$parked" "option=--state" "path=$STATE_FILE"
   PARKED_ITEMS=()
   PARKED_KEYS=()
-  while IFS=$'\x1f' read -r item kept; do
+  PARKED_OWED=()
+  while IFS=$'\x1f' read -r item kept owes; do
     [[ -n "$item" ]] || continue
     PARKED_ITEMS+=("$item")
     PARKED_KEYS+=("$kept")
+    PARKED_OWED+=("$owes")
   done <<<"$parked"
   # The count is the first line; a fleet of no running lane has no second.
   dropped="${rows%%$'\n'*}"
@@ -1299,7 +1306,11 @@ MAIL_STATE_FILE="$(pw_state_file "${REPOS[0]}").mail"
 # before the next item's reads can end the pass, so the next pass reports
 # that merge again and retries, and this pass fails as a whole at its end
 # while its remaining checks still run. A refused close, exit 3, keeps
-# its row: the user settles that checkout, and nothing retries it.
+# its row: the user settles that checkout, and nothing retries it. A parked
+# record that owes a pull request after the merged one is not closed: its
+# sandbox holds the branch that further pull request is cut from, so the pass
+# reports item-open cause=further-pr, the record stays parked for a relaunch,
+# and the committed row keeps the line from repeating.
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
   local errf="$WORK_DIR/merged.err" item branch repo list hit hits prior keys fresh key line retry state="${PW_SEEN[0]}"
@@ -1340,6 +1351,10 @@ check_merged() {
       continue
     fi
     lane_row_commit "$state"
+    if [[ "$PARKED_OWES" == owes ]]; then
+      echo "EVENT item-open $item cause=further-pr"
+      continue
+    fi
     if ! close_hosted_lane "$item"; then
       retry=" $keys "; retry="${retry/ $PARKED_KEY / }"; retry="${retry# }"; retry="${retry% }"
       if [[ -n "$retry" ]]; then state="$(lane_row_set merged "$state" "$item" "$retry")"

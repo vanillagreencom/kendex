@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # lane-close resolves one recorded pane, refuses live lanes, and closes in order.
-# One must-fail control closes the file: lane-close is one script, one surface.
+# Must-fail controls close the file: lane-close's live-state refusal, and the
+# park guard's read of the lane's owes-pr: status line.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
@@ -53,7 +54,8 @@ mkdir -p "$FLEET_DIR"
 mkdir -p "$SCRIPTS/lib" "$FIXTURE/skills/linear/scripts" "$BIN"
 cp "$TEST_DIR/../scripts/lane-close" "$SCRIPTS/lane-close"
 cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TEST_DIR/../scripts/lib/date-ladder.sh" \
-  "$TEST_DIR/../scripts/lib/usage-reset.sh" "$TEST_DIR/../scripts/lib/lane-host-slots.sh" "$SCRIPTS/lib/"
+  "$TEST_DIR/../scripts/lib/usage-reset.sh" "$TEST_DIR/../scripts/lib/lane-host-slots.sh" \
+  "$TEST_DIR/../scripts/lib/lane-gitfile.sh" "$SCRIPTS/lib/"
 chmod +x "$SCRIPTS/lane-close"
 
 cat >"$SCRIPTS/workflow-state" <<'EOF'
@@ -129,6 +131,17 @@ if [[ "$1" == stop-sandbox ]]; then
   printf '%s\n' "${LANE_CLOSE_STOP_SANDBOX_OUT-sandbox-stopped item=$3}"
   exit 0
 fi
+# cat is the park's read of the lane's status file: LANE_CLOSE_STATUS_TEXT is
+# its text, a queue wait naming nothing owed unless a case says otherwise, and
+# LANE_CLOSE_STATUS_CAT_STATUS fails the read, 2 being the protocol's missing
+# file once touch answers.
+if [[ "$1" == cat ]]; then
+  [[ "${LANE_CLOSE_STATUS_CAT_STATUS:-0}" -eq 0 ]] \
+    || { printf 'lane-host-fixture: cat-failed path=%s\n' "$4" >&2; exit "$LANE_CLOSE_STATUS_CAT_STATUS"; }
+  printf '%s\n' "${LANE_CLOSE_STATUS_TEXT-step: merge-pr 5.1 queue wait}"
+  exit 0
+fi
+[[ "$1" != touch ]] || exit 0
 # LANE_CLOSE_HOST_MARKER is the clone's item marker, which the shipped ssh
 # provider's close removes: a close that finds it gone is refused as unowned.
 if [[ -n "${LANE_CLOSE_HOST_MARKER:-}" ]]; then
@@ -422,6 +435,7 @@ lib_mutant() { # NAME OLD NEW [APPEND]
   done
   ln -s "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
   ln -s "$SCRIPTS/lib/lane-host-slots.sh" "$dir/skills/orch/scripts/lib/lane-host-slots.sh"
+  ln -s "$SCRIPTS/lib/lane-gitfile.sh" "$dir/skills/orch/scripts/lib/lane-gitfile.sh"
   python3 - "$SCRIPTS/lib/lane-state.sh" "$dir/skills/orch/scripts/lib/lane-state.sh" "$old" "$new" "${4:-}" <<'MUTPY'
 import pathlib, sys
 source, target, old, new, append = sys.argv[1:]
@@ -1117,9 +1131,21 @@ run_close "$SCRIPT" --park --pr 7
 # provider's side-effect-free check is the first host call, the queue read
 # follows the view, and no stop precedes the reducer's answer.
 check_count() { grep -c -- '^stop-sandbox --check --item KEN-1 host=' "$HOST_CALLS" || true; }
-assert_eq "rc=$RC parked=$(grep -c '^lane-close: parked item=KEN-1 pr=7 head=abc123 status=parked$' <<<"$OUT" || true) view=$(grep -c '^pr view 7 --repo owner/repo --json ' "$GH_CALLS" || true) queue=$(grep -c '^api graphql -f query=.* -F owner=owner -F repo=repo -F number=7$' "$GH_CALLS" || true) reducer=$(grep -c '^7 repo=owner/repo$' "$LANE_CLOSE_PRWATCH_CALLS" || true) stop=$(stop_count KEN-1 codex) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) park=$(park_count) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE") parked_rec=$(jq -c '.lanes[0].parked | [.pr, .head, .repo, (.at | type)]' "$STATE") order=$(awk '{ print $1 ($2 == "--check" ? "-check" : "") }' "$HOST_CALLS" | paste -sd, -)" \
-  'rc=0 parked=1 view=1 queue=1 reducer=1 stop=1 kill=1 park=1 close=0 status=parked parked_rec=[7,"abc123","owner/repo","string"] order=stop-sandbox-check,stop,stop-sandbox' \
-  'a working hosted lane on an open, armed, CLEAN, silent pull request is parked: the provider checked, the harness stopped, the window closed, the sandbox stopped, the record parked with its pull request and head'
+assert_eq "rc=$RC parked=$(grep -c '^lane-close: parked item=KEN-1 pr=7 head=abc123 status=parked$' <<<"$OUT" || true) view=$(grep -c '^pr view 7 --repo owner/repo --json ' "$GH_CALLS" || true) queue=$(grep -c '^api graphql -f query=.* -F owner=owner -F repo=repo -F number=7$' "$GH_CALLS" || true) reducer=$(grep -c '^7 repo=owner/repo$' "$LANE_CLOSE_PRWATCH_CALLS" || true) stop=$(stop_count KEN-1 codex) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) park=$(park_count) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE") parked_rec=$(jq -c '.lanes[0].parked | [.pr, .head, .repo, (.at | type), .owes_pr]' "$STATE") order=$(awk '{ print $1 ($2 == "--check" ? "-check" : "") }' "$HOST_CALLS" | paste -sd, -) status_read=$(grep -c '^cat --item KEN-1 /srv/worktree/tmp/lane-status-KEN-1.md host=/host$' "$HOST_CALLS" || true)" \
+  'rc=0 parked=1 view=1 queue=1 reducer=1 stop=1 kill=1 park=1 close=0 status=parked parked_rec=[7,"abc123","owner/repo","string",false] order=stop-sandbox-check,cat,stop,stop-sandbox status_read=1' \
+  'a working hosted lane on an open, armed, CLEAN, silent pull request is parked: the provider checked, the status file read, the harness stopped, the window closed, the sandbox stopped, the record parked with its pull request and head, owing nothing'
+
+# A lane whose status file names a pull request owed after this one, a split's
+# next part, is parked with owes_pr on its record, so the watch's merged check
+# keeps its sandbox; a park on that parked record says so again.
+OWES_STATUS=$'step: merge-pr 5.1 queue wait\nowes-pr: PR 2 of 2, the adapter, on wip/ken-1'
+write_state running codex /host linear owner/repo; write_panes python; working_screen
+LANE_CLOSE_STATUS_TEXT="$OWES_STATUS" run_close "$SCRIPT" --park --pr 7
+assert_eq "rc=$RC parked=$(grep -c '^lane-close: parked item=KEN-1 pr=7 head=abc123 owes-pr=yes status=parked$' <<<"$OUT" || true) owes=$(jq -r '.lanes[0].parked.owes_pr' "$STATE")" \
+  'rc=0 parked=1 owes=true' 'a lane whose status file carries an owes-pr: line is parked with owes_pr true on its record'
+run_close "$SCRIPT" --park --pr 7
+assert_eq "rc=$RC parked=$(grep -c '^lane-close: parked item=KEN-1 pr=7 head=abc123 owes-pr=yes status=parked$' <<<"$OUT" || true) host=$(host_call_count)" \
+  'rc=0 parked=1 host=0' 'a park on a parked record that owes a pull request names it and asks nothing'
 
 # On a merge-queue base the arm converts to the queue entry once the checks
 # are green, so a queued pull request reads autoMergeRequest null for the whole
@@ -1167,6 +1193,8 @@ for row in \
   "provider-unsupported|LANE_CLOSE_STOP_SANDBOX_CHECK_STATUS=2|reason=provider-unsupported host=/host exit=2" \
   "check-unparsed|LANE_CLOSE_STOP_SANDBOX_CHECK_OUT=|reason=provider-unsupported host=/host cause=answer-unparsed" \
   "attention|LANE_CLOSE_PRWATCH_RC=1;LANE_CLOSE_PRWATCH_OUT=$TMP_ROOT/prwatch-out|reason=attention pr=7 kinds=threads-open,gate-stale" \
+  "status-missing|LANE_CLOSE_STATUS_CAT_STATUS=2|reason=status-missing path=/srv/worktree/tmp/lane-status-KEN-1.md" \
+  "status-read-failed|LANE_CLOSE_STATUS_CAT_STATUS=1|reason=status-read-failed path=/srv/worktree/tmp/lane-status-KEN-1.md" \
   "reducer-failed|LANE_CLOSE_PRWATCH_RC=2|reason=reducer-failed pr=7 exit=2"; do
   IFS='|' read -r name envs expect <<<"$row"
   write_state running codex /host linear owner/repo; write_panes python; working_screen
@@ -1234,6 +1262,10 @@ LANE_CLOSE_STOP_SANDBOX_CHECK_STATUS=69 run_close "$SCRIPT" --park --pr 7
 assert_eq "rc=$RC busy=$(grep -c '^lane-close: lane-host-busy item=KEN-1 pr=7 step=stop-sandbox-check$' <<<"$ERR" || true) refused=$(grep -c '^lane-close: park-refused ' <<<"$ERR" || true) gh=$(awk 'END { print NR + 0 }' "$GH_CALLS") stop=$(stop_count KEN-1 codex) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=69 busy=1 refused=0 gh=0 stop=0 status=running' 'a stop-sandbox --check lane-host refused at its cap is lane-host-busy, not a provider without the pair, and signals nothing'
 write_state running codex /host linear owner/repo; write_panes python; working_screen
+LANE_CLOSE_STATUS_CAT_STATUS=69 run_close "$SCRIPT" --park --pr 7
+assert_eq "rc=$RC busy=$(grep -c '^lane-close: lane-host-busy item=KEN-1 pr=7 step=status-read$' <<<"$ERR" || true) refused=$(grep -c '^lane-close: park-refused ' <<<"$ERR" || true) stop=$(stop_count KEN-1 codex) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=69 busy=1 refused=0 stop=0 status=running' 'a status-file read lane-host refused at its cap is lane-host-busy, not a missing file, and signals nothing'
+write_state running codex /host linear owner/repo; write_panes python; working_screen
 LANE_CLOSE_STOP_SANDBOX_STATUS=69 run_close "$SCRIPT" --park --pr 7
 assert_eq "rc=$RC busy=$(grep -c '^lane-close: lane-host-busy item=KEN-1 pr=7 step=stop-sandbox$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=69 busy=1 status=stopped' 'a stop-sandbox lane-host refused at its cap is lane-host-busy over a stopped record'
@@ -1275,6 +1307,12 @@ echo '=== must-fail control ==='
 MUTANT="$(mutant live '  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;' '  *) ;;')"
 write_state running codex /host; write_panes python; printf '› run\n  press to interrupt\n' >"$SCREEN"; run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' 'control: removing the live-state refusal closes a working lane'
+# The park's owes read: a mutant that never finds the line parks a lane owing
+# a further pull request as owing nothing, which the watch's merge completes.
+MUTANT="$(mutant owes "0) grep -q '^owes-pr:' -- \"\$scratch/status\" || found=\$? ;;" "0) found=1 ;;")"
+write_state running codex /host linear owner/repo; write_panes python; working_screen
+LANE_CLOSE_STATUS_TEXT="$OWES_STATUS" run_close "$MUTANT" --park --pr 7
+assert_eq "rc=$RC owes=$(jq -r '.lanes[0].parked.owes_pr' "$STATE")" 'rc=0 owes=false' 'control: without the owes read a lane owing a further pull request is parked owing nothing'
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

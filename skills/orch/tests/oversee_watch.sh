@@ -1185,6 +1185,35 @@ out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/ho
 assert_eq "merged=$(grep -c '^EVENT merged 2' <<<"$out" || true) closes=$(grep -c '^close ' "$STUB_DIR/host.log" || true)" "merged=0 closes=1" \
   "a closed parked lane's merge is not reported again and the close runs once" "$err"
 
+# A parked record owing a further pull request, a split whose next part is cut
+# from the stopped sandbox's branch: its merge closes nothing, item-open names
+# the item as still open, and the record stays parked for a relaunch. The
+# control is the owes branch removed, where the same merge closes the sandbox
+# and the overseer's parked steps would complete the item.
+parked_owes_case() { # NAME [WATCH_BIN]
+  parked_fleet "$1"
+  : > "$STUB_DIR/lane-close.args"
+  jq '(.lanes[] | select(.item == "issue-2")).parked.owes_pr = true' "$STUB_DIR/state.json" > "$STUB_DIR/state.next" && mv -- "$STUB_DIR/state.next" "$STUB_DIR/state.json"
+  printf '[{"number": 2, "headRefName": "issue-2", "mergedAt": "2026-09-20T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+  WATCH_BIN="${2:-}" parked_run --
+  OWES_CLOSES="$(grep -c ' issue-2$' "$STUB_DIR/lane-close.args" || true)"
+}
+parked_owes_case parked_owes_pr
+assert_eq "rc=$rc events=$EVENTS open=$(grep -c '^EVENT item-open issue-2 cause=further-pr$' <<<"$out" || true) host=$HOST_VERBS close=$OWES_CLOSES status=$(jq -r '.lanes[] | select(.item == "issue-2") | .status' "$STUB_DIR/state.json")" \
+  "rc=0 events=merged 2,item-open issue-2 open=1 host= close=0 status=parked" \
+  "a parked record owing a further pull request reports item-open on its merge, closes nothing and stays parked" "$err"
+out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
+  -- --since 2026-09-19T00:00:00Z --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
+assert_eq "events=$(grep -c '^EVENT ' <<<"$out" || true) close=$(grep -c ' issue-2$' "$STUB_DIR/lane-close.args" || true)" "events=1 close=0" \
+  "the next pass repeats neither the merge nor item-open, only its heartbeat, and still closes nothing" "$err"
+OWES_MUTANT_DIR="$TMP_ROOT/owes-mutant"
+OWES_MUTANT="$(mutant_scripts owes-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$OWES_MUTANT_DIR/github"
+mutate_file "$OWES_MUTANT" 'if [[ "$PARKED_OWES" == owes ]]; then' 'if false; then'
+parked_owes_case parked_owes_pr_mutant "$OWES_MUTANT"
+assert_eq "events=$EVENTS close=$OWES_CLOSES" "events=merged 2,lane-closed issue-2 close=1" \
+  "control: without the owes branch the merge closes the sandbox of an item that owes a further pull request" "$err"
+
 # The running lane's pane holds a question: the failing close leaves the pass
 # running, so the lane checks after the merged check still report it.
 parked_fleet parked_close_failed
