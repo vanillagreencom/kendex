@@ -25,9 +25,11 @@
 #          workflow's lanes: the default branch's checkout, never REPO.
 #          Empty means no lane is declared.
 #   COVERS_ALL_LANES  `true` where the calling workflow runs every lane
-#          whenever lanes is true, as the harness-ci template's does; any
-#          other value, empty included, says it does not. Only it lets a run
-#          that reads no declaration record covers=all.
+#          whenever lanes is true, as the harness-ci template's does, and
+#          each lane does the same work on every event: no job or step of
+#          it is gated on the event. Any other value, empty included, says
+#          it does not. Only it lets a run that reads no declaration record
+#          covers=all.
 #   GH_TOKEN  the job token, which `proof` reads workflow runs with
 # Environment, from the runner:
 #   GITHUB_OUTPUT  the step output file every writer appends to
@@ -101,13 +103,19 @@
 #
 # A proof stands down what the proving run covered and nothing else. Its
 # record says `covers=all`, `covers=none` or `covers=lanes` with one
-# `lane_<name>=true|false` line per lane that run's declaration named. A
-# lane whose classified verdict is true and which the record covers turns
-# false with the cause proof-reused; where every lane the diff would run is
-# covered, lanes itself answers false with lanes_cause=proof-reused. With no
-# declaration read, only `covers=all` stands the lanes down: a record of
-# named lanes cannot be mapped onto lanes this run does not name. A lane the
-# proving run skipped, or did not have, keeps its classified verdict.
+# `lane_<name>=true|false` line per lane that run's declaration named. The
+# proving run ran on another event, so a declared lane stands down on it
+# only where the declaration marks the lane `:event-uniform`, the
+# declaration's word that the lane does the same work on every event. A
+# marked lane whose classified verdict is true and which the record covers
+# turns false with the cause proof-reused; where every lane the diff would
+# run is covered, lanes itself answers false with lanes_cause=proof-reused.
+# An unmarked lane keeps its verdict whatever the record says, its `lane:`
+# line naming the proof it held back. With no declaration read, only
+# `covers=all` stands the lanes down, on COVERS_ALL_LANES's word for every
+# lane: a record of named lanes cannot be mapped onto lanes this run does
+# not name. A lane the proving run skipped, or did not have, keeps its
+# classified verdict.
 #
 # The record this run leaves, for the run after it, is written to
 # RUNNER_TEMP/change-class-record/record on pull_request and merge_group,
@@ -120,11 +128,13 @@
 # passes, in the lanes a declaration names, not a list of the jobs the
 # workflow ran:
 #   all    where COVERS_ALL_LANES is true, no declaration was read and
-#          lanes is true; or where a proof covered every lane.
-#   lanes  with one line per declared lane, true for the lanes whose final
-#          verdict is true and the ones the proof covered, where a
-#          declaration was read; or the proving run's own lane lines,
-#          carried forward, where no declaration was read here.
+#          lanes is true; or where no declaration was read and a proof
+#          covered every lane.
+#   lanes  with one line per declared lane, where a declaration was read:
+#          true for each lane the declaration marks event-uniform whose
+#          final verdict is true or which the proof covered, false for the
+#          rest; or the proving run's own lane lines, carried forward, where
+#          no declaration was read here.
 #   none   otherwise: a workflow that selects its jobs itself leaves
 #          COVERS_ALL_LANES unset, and its records say none.
 #
@@ -276,16 +286,18 @@ else
   lanes=true lanes_cause="$class"
 fi
 
-# The declaration: `<lane> <glob>...` per line, `#` to the end of a line a
-# comment, and a lane named on several lines reading every glob they give
-# it. Bash 3.2 has no associative array, so lane N's name and its globs, one
-# per line, sit at index N of two arrays.
+# The declaration: `<lane>[:event-uniform] <glob>...` per line, `#` to the
+# end of a line a comment, and a lane named on several lines reading every
+# glob they give it and marked event-uniform where any of them marks it.
+# Bash 3.2 has no associative array, so lane N's name, its globs, one per
+# line, and its mark sit at index N of three arrays.
 lane_names=()
 lane_globs=()
+lane_uniform=()
 lane_count=0
 declaration_note=""
 read_declaration() { # sets declaration_note and returns 1 where malformed
-  local text line number=0 name glob index
+  local text line number=0 name uniform glob index
   text="$(cat -- "$declaration" 2>/dev/null)" ||
     { declaration_note="cause=unreadable"; return 1; }
   while IFS= read -r line; do
@@ -298,11 +310,16 @@ read_declaration() { # sets declaration_note and returns 1 where malformed
     [ "$#" -gt 0 ] || continue
     name="$1"
     shift
+    uniform=false
     case "$name" in
-      [!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!abcdefghijklmnopqrstuvwxyz0123456789_-]*)
+      *:event-uniform) uniform=true ;;
+    esac
+    case "${name%:event-uniform}" in
+      '' | [!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!abcdefghijklmnopqrstuvwxyz0123456789_-]*)
         declaration_note="cause=bad-name line=$number name=$name"
         return 1 ;;
     esac
+    name="${name%:event-uniform}"
     [ "$#" -gt 0 ] ||
       { declaration_note="cause=no-globs line=$number lane=$name"; return 1; }
     index=0
@@ -312,8 +329,10 @@ read_declaration() { # sets declaration_note and returns 1 where malformed
     if [ "$index" -eq "$lane_count" ]; then
       lane_names[$index]="$name"
       lane_globs[$index]=""
+      lane_uniform[$index]=false
       lane_count=$((lane_count + 1))
     fi
+    [ "$uniform" = false ] || lane_uniform[$index]=true
     for glob in "$@"; do
       lane_globs[$index]="${lane_globs[$index]}$glob
 "
@@ -455,15 +474,20 @@ record_covers_lane() { # NAME — 0 where the proving run covered lane NAME
   grep -qxF -- "lane_$1=true" <<<"$record_lanes"
 }
 
-# Apply the proof. A covered lane whose classified verdict is true turns
-# false; where every lane the diff would run is covered, lanes turns false
-# with it. `proven` is one `true`/`false` per lane, for the record below.
+# Apply the proof. A covered lane marked event-uniform whose classified
+# verdict is true turns false; where every lane the diff would run is
+# covered, lanes turns false with it. `proven` is one value per lane, for
+# the record below: `true` where the record covers the lane and the lane is
+# marked, `unmarked` where the record covers it and the lane is not, and
+# `false` where the record does not cover it.
 proven=()
 applied=""
 index=0
 while [ "$index" -lt "$lane_count" ]; do
   proven[$index]=false
-  ! record_covers_lane "${lane_names[$index]}" || proven[$index]=true
+  if record_covers_lane "${lane_names[$index]}"; then
+    if [ "${lane_uniform[$index]}" = true ]; then proven[$index]=true; else proven[$index]=unmarked; fi
+  fi
   index=$((index + 1))
 done
 if [ "$proof_reuse" = true ] && [ "$lanes" = true ]; then
@@ -476,6 +500,8 @@ if [ "$proof_reuse" = true ] && [ "$lanes" = true ]; then
           lane_values[$index]=false lane_causes[$index]="cause=proof-reused run=$proof_run"
           stood=$((stood + 1))
         else
+          [ "${proven[$index]}" != unmarked ] ||
+            lane_causes[$index]="${lane_causes[$index]} proof-held=not-event-uniform run=$proof_run"
           uncovered=$((uncovered + 1))
         fi
       fi
@@ -543,10 +569,10 @@ case "$EVENT" in
 esac
 if [ "$lanes" = true ] && [ "$lane_state" != read ] && [ "${COVERS_ALL_LANES:-}" = true ]; then
   covers=all
-elif [ "$record_covers" = all ]; then
-  covers=all
 elif [ "$lane_state" = read ]; then
   covers=lanes
+elif [ "$record_covers" = all ]; then
+  covers=all
 elif [ "$record_covers" = lanes ]; then
   covers=carried
 else
@@ -567,7 +593,7 @@ if [ -n "$record_dir" ]; then
         index=0
         while [ "$index" -lt "$lane_count" ]; do
           covered=false
-          [ "${lane_values[$index]}" != true ] && [ "${proven[$index]}" != true ] || covered=true
+          [ "${lane_values[$index]}" != true ] && [ "${proven[$index]}" != true ] || covered="${lane_uniform[$index]}"
           printf 'lane_%s=%s\n' "${lane_names[$index]}" "$covered"
           index=$((index + 1))
         done ;;

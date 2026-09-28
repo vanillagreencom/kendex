@@ -40,15 +40,17 @@
 #   5. the lane verdicts: one lane reached, two lanes reached, a lane named
 #      on two lines, an unclaimed path outside the docs set and one inside
 #      it, a docs path a lane claims, lanes=false, no changed path, and an
-#      absent and six malformed declarations, one with a valid lane ahead
-#      of the bad line, one whose name starts with `-` and one that is a
+#      absent and seven malformed declarations, one with a valid lane ahead
+#      of the bad line, one whose name starts with `-`, one that is the
+#      event-uniform mark with no name and one that is a
 #      directory, so it exists but cannot be read, each row
 #      asserting the verdict lines and the declaration's state; the judged
 #      tree carries a declaration of its own that no row may read, and
 #      every run starts in a directory holding files the globs would expand
 #      to. One mutant copy per rule must fail the row the rule decides.
 #   6. the proof: what a proof's record stands down, with and without a
-#      declaration, per what it covers; the record this run writes for the
+#      declaration, per what it covers, a declared lane only where the
+#      declaration marks it event-uniform; the record this run writes for the
 #      next, its covers line per case, and record_dir naming it on the two
 #      events a later run reads and empty on every other; the record's file
 #      name bound to the member proof unzips and to the directory the
@@ -154,16 +156,17 @@ mkdir -p "$CWD/src" "$CWD/tmux" "$CWD/tests" "$CWD/docs"
 : >"$CWD/docs/decoy.md"
 
 # The lane declarations, one checkout root each. `good` names `check` on two
-# lines and carries a comment that would claim src/* for tmux if it were read
-# as globs. The judged tree carries one of its own, which reaches every path:
-# a row that reads it publishes `lane_evil`.
+# lines, marking it event-uniform on the first alone, marks `tmux` too and
+# leaves `docs-build` unmarked, and carries a comment that would claim src/*
+# for tmux if it were read as globs. The judged tree carries one of its own,
+# which reaches every path: a row that reads it publishes `lane_evil`.
 declare_lanes() { # NAME CONTENT
   mkdir -p "$TMP/decl/$1/.github"
   printf '%s' "$2" >"$TMP/decl/$1/.github/ci-lanes.conf"
 }
 declare_lanes good '# Lanes and the paths each reads.
-check src/* Cargo.toml
-tmux tmux/*   # not src/*
+check:event-uniform src/* Cargo.toml
+tmux:event-uniform tmux/*   # not src/*
 check tests/*
 
 docs-build docs/*
@@ -180,6 +183,8 @@ Bad x
 '
 declare_lanes bad-leading 'check src/*
 -check tests/*
+'
+declare_lanes bad-mark-only ':event-uniform src/*
 '
 mkdir -p "$TMP/decl/absent" "$TMP/decl/unreadable/.github/ci-lanes.conf" \
   "$TMP/subject/.github"
@@ -571,6 +576,7 @@ no-globs|no-globs|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=ma
 no-lanes|no-lanes|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=malformed cause=no-lanes
 bad-after-good|bad-after-good|standard|true|docs/guide.md||lane_verdicts= state=malformed cause=bad-name line=2 name=Bad
 bad-leading|bad-leading|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=malformed cause=bad-name line=2 name=-check
+bad-mark-only|bad-mark-only|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=malformed cause=bad-name line=1 name=:event-uniform
 unreadable|unreadable|standard|false|src/main.rs|src/main.rs|lane_verdicts= state=malformed cause=unreadable
 ROWS
 }
@@ -606,7 +612,7 @@ while IFS='|' read -r name decl class docs paths outside expected; do
   rows=$((rows + 1))
   check "lane row $name" "$expected" "$(lane_answer "$CLASSIFY" "$name")"
 done < <(lane_rows)
-[ "$rows" -eq 16 ] || { echo "the lane table read $rows rows" >&2; exit 1; }
+[ "$rows" -eq 17 ] || { echo "the lane table read $rows rows" >&2; exit 1; }
 
 # GitHub reads a `::warning` line off the step's stdout; a declaration the
 # step could not use says so there, and one it read says nothing.
@@ -641,7 +647,7 @@ while IFS='@' read -r needle replacement row; do
 done <<'ROWS'
 declaration="$lanes_root/.github/ci-lanes.conf"@declaration="$judged_root/.github/ci-lanes.conf"@one-lane
     line="${line%%#*}"@    line="$line"@one-lane
-      [!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!abcdefghijklmnopqrstuvwxyz0123456789_-]*)@      never-a-lane-name)@bad-name
+[!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!abcdefghijklmnopqrstuvwxyz0123456789_-]*)@never-a-lane-name)@bad-name
 { declaration_note="cause=no-globs line=$number lane=$name"; return 1; }@:@no-globs
 [ "$lane_count" -gt 0 ] || { declaration_note="cause=no-lanes"; return 1; }@:@no-lanes
           lane_hits[$index]="cause=claimed path=$path glob=$LANE_GLOB_HIT"@          lane_hits[$index]=""@two-lanes
@@ -649,14 +655,15 @@ declaration="$lanes_root/.github/ci-lanes.conf"@declaration="$judged_root/.githu
  && outside_docs "$path"; then@ && true; then@unclaimed-docs
     every="cause=no-changed-paths"@    every=""@no-paths
     lane_state="malformed" lane_count=0@    lane_state="malformed"@bad-after-good
-      [!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!@      *[!@bad-leading
+[!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!@*[!@bad-leading
+      '' | [!@      [!@bad-mark-only
     set -f@    :@one-lane
   set -f; for glob in@  for glob in@one-lane
     lane_values[$index]=false lane_causes[$index]="cause=lanes-false lanes_cause=$lanes_cause"@    lane_values[$index]=true lane_causes[$index]="cause=lanes-false lanes_cause=$lanes_cause"@docs-only
     lane_values[$index]=false lane_causes[$index]="cause=unreached"@    lane_values[$index]=true lane_causes[$index]="cause=unreached"@one-lane
 { declaration_note="cause=unreadable"; return 1; }@:@unreadable
 ROWS
-[ "$mutants" -eq 16 ] || { echo "the lane mutant table read $mutants rows" >&2; exit 1; }
+[ "$mutants" -eq 17 ] || { echo "the lane mutant table read $mutants rows" >&2; exit 1; }
 
 # The refusal of a lanes-from naming the judged tree, planted away.
 needle='[ "$lanes_root" != "$judged_root" ] ||'
@@ -675,7 +682,10 @@ check "must-fail: a classify reading lanes from the judged tree is not refused" 
 # --- 6. The proof -------------------------------------------------------------
 
 # What a proof stands down. Every row reuses run 42 on tree t1 and reads the
-# `good` declaration where DECL says so.
+# `good` declaration where DECL says so. The covered and gated rows hand the
+# same record covering `check`, which `good` marks event-uniform, and
+# `docs-build`, which it does not: the proof stands the first down and never
+# the second.
 # ROW|DECL|CLASS|DOCS|PATHS|OUTSIDE|RECORD (lines joined with commas)|EXPECTED
 proof_rows() {
   cat <<'ROWS'
@@ -684,7 +694,8 @@ lanes-no-decl|-|standard|false|src/main.rs|src/main.rs|covers=lanes,lane_check=t
 none-no-decl|-|standard|false|src/main.rs|src/main.rs|covers=none|lanes=true lanes_cause=standard lane_verdicts=
 no-covers-no-decl|-|standard|false|src/main.rs|src/main.rs|tree=t1|lanes=true lanes_cause=standard lane_verdicts=
 all-decl|good|standard|false|src/main.rs|src/main.rs|covers=all|lanes=false lanes_cause=proof-reused lane_verdicts=lane_check=false,lane_tmux=false,lane_docs-build=false
-lanes-decl-covered|good|small|false|src/main.rs|src/main.rs|covers=lanes,lane_check=true|lanes=false lanes_cause=proof-reused lane_verdicts=lane_check=false,lane_tmux=false,lane_docs-build=false
+lanes-decl-covered|good|small|false|src/main.rs|src/main.rs|covers=lanes,lane_check=true,lane_docs-build=true|lanes=false lanes_cause=proof-reused lane_verdicts=lane_check=false,lane_tmux=false,lane_docs-build=false
+lanes-decl-gated|good|standard|false|src/main.rs docs/guide.md|src/main.rs|covers=lanes,lane_check=true,lane_docs-build=true|lanes=true lanes_cause=standard lane_verdicts=lane_check=false,lane_tmux=false,lane_docs-build=true
 lanes-decl-partial|good|standard|false|src/main.rs tmux/tmux.conf|src/main.rs tmux/tmux.conf|covers=lanes,lane_check=true,lane_tmux=false|lanes=true lanes_cause=standard lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
 lanes-decl-unnamed|good|standard|false|src/main.rs|src/main.rs|covers=lanes,lane_tmux=true|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_tmux=false,lane_docs-build=false
 every-decl|good|standard|false|Makefile|Makefile|covers=lanes,lane_check=true,lane_tmux=true|lanes=true lanes_cause=standard lane_verdicts=lane_check=false,lane_tmux=false,lane_docs-build=true
@@ -710,7 +721,7 @@ while IFS='|' read -r name decl class docs paths outside record expected; do
   rows=$((rows + 1))
   check "proof row $name" "$expected" "$(proof_answer "$CLASSIFY" "$name")"
 done < <(proof_rows)
-[ "$rows" -eq 11 ] || { echo "the proof table read $rows rows" >&2; exit 1; }
+[ "$rows" -eq 12 ] || { echo "the proof table read $rows rows" >&2; exit 1; }
 check "a proof's stand-down names the run on the lane's line" \
   "lane: name=check verdict=false cause=proof-reused run=42" \
   "$(proof_answer "$CLASSIFY" lanes-decl-partial >/dev/null; grep '^lane: name=check ' "$TMP/err")"
@@ -719,13 +730,17 @@ check "the proof outputs carry the run, the tree and the record" \
   "$(outputs | tr ' ' '\n' | grep '^proof_' | tr '\n' ' ' | sed 's/ $//')"
 check "the step says what the proof answered" "proof: reuse=true reason=exact-proof run=42 stub" \
   "$(grep '^proof: reuse=' "$TMP/err")"
+check "a proof held back from an unmarked lane names the run on the lane's line" \
+  "lane: name=docs-build verdict=true cause=claimed path=docs/guide.md glob=docs/* proof-held=not-event-uniform run=42" \
+  "$(proof_answer "$CLASSIFY" lanes-decl-gated >/dev/null; grep '^lane: name=docs-build ' "$TMP/err")"
 
 # The record this run leaves, on the two events a later run reads.
 # ROW|EVENT|DECL|CLASS|DOCS|PATHS|OUTSIDE|REUSE|RECORD|ENV|EXPECTED (the
 # file's lines joined with commas, or `absent`). ENV is blank-separated
 # NAME=VALUE words. The pr-all row is the template's case, a workflow that
 # runs every lane on lanes=true; pr-selecting is kendex's own, a workflow
-# selecting its jobs itself, which sets no covers-all-lanes.
+# selecting its jobs itself, which sets no covers-all-lanes. pr-decl-gated
+# runs `docs-build`, which `good` leaves unmarked, and records it uncovered.
 RUNNER="$TMP/runner"
 mkdir -p "$RUNNER"
 RECORD_DIR="${RUNNER:?}/change-class-record"
@@ -740,7 +755,8 @@ mg-reused-all|merge_group|-|standard|false|src/main.rs|src/main.rs|true|covers=a
 pr-carried|pull_request|-|standard|true|docs/guide.md||true|covers=lanes,lane_check=true||tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=true,covers=lanes,lane_check=true,changed_path=docs/guide.md
 pr-decl|pull_request|good|standard|false|src/main.rs tmux/tmux.conf|src/main.rs tmux/tmux.conf|true|covers=lanes,lane_check=true,lane_tmux=false||tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=true,lane_docs-build=false,changed_path=src/main.rs,changed_path=tmux/tmux.conf
 pr-decl-no-proof|pull_request|good|standard|false|src/main.rs|src/main.rs|false||$COVERS_ALL|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=false,lane_docs-build=false,changed_path=src/main.rs
-mg-decl-all|merge_group|good|standard|false|src/main.rs|src/main.rs|true|covers=all||tree=t1,workflow=.github/workflows/ci.yml,event=merge_group,change_class=standard,docs_only=false,covers=all,changed_path=src/main.rs
+pr-decl-gated|pull_request|good|standard|false|src/main.rs docs/guide.md|src/main.rs|false||$COVERS_ALL|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=false,lane_docs-build=false,changed_path=src/main.rs,changed_path=docs/guide.md
+mg-decl-all|merge_group|good|standard|false|src/main.rs|src/main.rs|true|covers=all||tree=t1,workflow=.github/workflows/ci.yml,event=merge_group,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=true,lane_docs-build=false,changed_path=src/main.rs
 push|push|-|standard|false|src/main.rs|src/main.rs|false||$COVERS_ALL|absent
 ROWS
 }
@@ -775,7 +791,7 @@ while IFS='|' read -r name event decl class docs paths outside reuse record env 
   rows=$((rows + 1))
   check "record row $name" "$expected" "$(record_answer "$CLASSIFY" "$name")"
 done < <(record_rows)
-[ "$rows" -eq 10 ] || { echo "the record table read $rows rows" >&2; exit 1; }
+[ "$rows" -eq 11 ] || { echo "the record table read $rows rows" >&2; exit 1; }
 check "the step names the record it wrote" "record: path=$RECORD_DIR/record tree=t1 covers=all" \
   "$(record_answer "$CLASSIFY" pr-all >/dev/null; grep '^record: ' "$TMP/err")"
 check "a push says why it leaves no record" "record: skipped cause=unrecorded-event event=push" \
@@ -896,11 +912,16 @@ if [ "$proof_reuse" = true ] && [ "$lanes" = true ]; then@if [ "$proof_reuse" = 
     *) record_covers=none ;;@    *) record_covers=all ;;@proof:no-covers-no-decl
 if [ "$lanes" = true ] && [ "$lane_state" != read ] && [ "${COVERS_ALL_LANES:-}" = true ]; then@if false; then@record:pr-all
  && [ "${COVERS_ALL_LANES:-}" = true ]; then@; then@record:pr-selecting
-        [ "${lane_values[$index]}" != true ] && [ "${proven[$index]}" != true ] || covered=true@        [ "${lane_values[$index]}" != true ] || covered=true@record:pr-decl
+[ "${lane_values[$index]}" != true ] && [ "${proven[$index]}" != true ] ||@[ "${lane_values[$index]}" != true ] ||@record:pr-decl
+ || covered="${lane_uniform[$index]}"@ || covered=true@record:pr-decl-gated
+elif [ "$lane_state" = read ]; then@elif false; then@record:mg-decl-all
+      *:event-uniform) uniform=true ;;@      *:event-uniform) uniform=false ;;@proof:lanes-decl-covered
+    [ "$uniform" = false ] || lane_uniform[$index]=true@    lane_uniform[$index]="$uniform"@proof:lanes-decl-covered
+    if [ "${lane_uniform[$index]}" = true ]; then proven[$index]=true;@    if true; then proven[$index]=true;@proof:lanes-decl-gated
 elif [ "$record_covers" = lanes ]; then@elif false; then@record:pr-carried
   pull_request | merge_group)@  pull_request | merge_group | push)@record:push
 ROWS
-[ "$mutants" -eq 11 ] || { echo "the proof mutant table read $mutants rows" >&2; exit 1; }
+[ "$mutants" -eq 16 ] || { echo "the proof mutant table read $mutants rows" >&2; exit 1; }
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
