@@ -225,32 +225,48 @@ assert_eq "$(jq -r '.usage.rows' "$TMP_ROOT/writer"/usage/host-accounts-*.json |
 # The startup scan is skipped only while the `.pruned` marker holds this
 # policy and the cache directory is unchanged since it was written; a policy
 # change, a day change, a write under any policy and the scan's own deletion
-# each send the next process through the scan. A scan that deletes makes
-# the directory newer than the marker it wrote first, so one more scan
-# follows before the next skip; every deleting row is followed by that pair,
-# so the row after it is sent through the scan by its own cause alone. The
-# cache-read log counts the files the
-# scan judged: `check` reads no record of its own. The records are seeded
-# under the first policy, so the first scan deletes nothing. A scan
+# each send the next process through the scan. The cache-read log counts the
+# files the scan judged: `check` reads no record of its own. The records are
+# seeded under the first policy, so the first scan deletes nothing. A scan
 # that failed leaves no valid marker, so the deletion failure below is
 # refused on every run, not the first.
+#
+# Bash 3.2 compares whole-second mtimes, so a change in the second the
+# marker was written is not newer than it. Each row whose claim is a change
+# after the marker makes that order explicit: `age-dir` backdates the
+# directory before the change, and `age-marker` then dates the marker between
+# the two, so the change alone makes the directory newer. A write row takes
+# both before its write; a deleting row takes `age-dir` before its run, and
+# the row after it `age-marker`, since the scan writes the marker before it
+# deletes. Every other row reads real mtimes: a scan row's policy or day
+# decides it, and a skip row follows a scan that wrote its marker after the
+# directory last changed.
+AGED_DIR=200001010000
+AGED_MARKER=200101010000
 scan_ran() { [[ "$(grep -c '' "$TMP_ROOT/cache-reads" || true)" -gt 0 ]] && printf scanned || printf skipped; }
 LANES="$ORIGINAL_LANES"
 state="$TMP_ROOT/marker"
 cache_run "$state" ORCH_LANE_EXCLUDE=sclaude list --json --no-cache > "$TMP_ROOT/out"
 for row in '|ORCH_LANE_EXCLUDE=sclaude||scanned|the first run under a policy scans' \
   '|ORCH_LANE_EXCLUDE=sclaude||skipped|an unchanged directory under the same policy is not scanned again' \
-  'write|ORCH_LANE_EXCLUDE=sclaude||scanned|a write under another policy sends the next run through the scan' \
+  'age-dir age-marker write|ORCH_LANE_EXCLUDE=sclaude||scanned|a write under another policy sends the next run through the scan' \
   '|ORCH_LANE_EXCLUDE=sclaude||skipped|the scan after that write marks the directory again' \
-  '|ORCH_LANE_EXCLUDE=sclaude,zclaude||scanned|a policy change scans and deletes the provider record' \
-  '|ORCH_LANE_EXCLUDE=sclaude,zclaude||scanned|that deletion sends the next run through the scan once more' \
+  'age-dir|ORCH_LANE_EXCLUDE=sclaude,zclaude||scanned|a policy change scans and deletes the provider record' \
+  'age-marker|ORCH_LANE_EXCLUDE=sclaude,zclaude||scanned|that deletion sends the next run through the scan once more' \
   '|ORCH_LANE_EXCLUDE=sclaude,zclaude||skipped|the scan after a policy change marks the directory again' \
   '|ORCH_LANE_EXCLUDE=sclaude,zclaude|2099-01-01|scanned|a day change scans' \
-  '|ORCH_LANE_EXCLUDE=claude||scanned|a tightened policy scans and deletes' \
-  '|ORCH_LANE_EXCLUDE=claude||scanned|a deletion sends the next run through the scan once more' \
+  'age-dir|ORCH_LANE_EXCLUDE=claude||scanned|a tightened policy scans and deletes' \
+  'age-marker|ORCH_LANE_EXCLUDE=claude||scanned|a deletion sends the next run through the scan once more' \
   '|ORCH_LANE_EXCLUDE=claude||skipped|the scan after a deletion marks the directory again'; do
   IFS='|' read -r prep policy today expected name <<<"$row"
-  [[ "$prep" != write ]] || cache_run "$state" ORCH_LANE_EXCLUDE= list --local --json --no-cache > "$TMP_ROOT/out"
+  for step in $prep; do
+    case "$step" in
+      age-dir) touch -t "$AGED_DIR" "$state/usage" || fail "marker row: cannot backdate $state/usage" ;;
+      age-marker) touch -t "$AGED_MARKER" "$state/usage/.pruned" || fail "marker row: cannot backdate $state/usage/.pruned" ;;
+      write) cache_run "$state" ORCH_LANE_EXCLUDE= list --local --json --no-cache > "$TMP_ROOT/out" ;;
+      *) fail "marker row: unknown prep step $step" ;;
+    esac
+  done
   : > "$TMP_ROOT/cache-reads"
   FAKE_TODAY="$today" cache_run "$state" "$policy" check "$H/.eclaude" > "$TMP_ROOT/out"
   assert_eq "$(scan_ran)" "$expected" "$name"
