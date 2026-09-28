@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # lane-mail watch: the lane's standing mailbox monitor. A harness background
 # wake (Claude Code Monitor, Pi bg_task) runs it and starts a turn for each
-# announcement it prints, and that turn runs the `inbox` command the
-# announcement names. Each case starts the real script in the background over a
+# announcement it prints, or, under --once, a Copilot background command whose
+# exit at its first announcement is the wake; that turn runs the `inbox`
+# command the announcement names. Each case starts the real script in the background over a
 # lane worktree under TMP_ROOT, appends with the real `send`, and reads what the
 # watch printed. Polls are counted from the liveness record the watch rewrites,
 # so a row asserting silence waits for polls that ran rather than for a fixed
@@ -242,8 +243,46 @@ liveness_rows() { # [BIN] — with BIN, only collects LIVENESS
 LIVENESS=""
 liveness_rows
 
+# --once, for a harness whose only wake is a background command's exit: the
+# watch exits 0 at its first announcement, which is the wake, and the exit
+# withdraws its liveness record, so a send meanwhile reads no monitor until the
+# lane re-arms. The re-armed watch announces what still stands unread.
+once_row() { # [BIN] — ONCE holds how the watch ended
+  local tries=0 rc=0
+  new_lane "once${1:+-mutant}"
+  start_watch "${1:-$LANE_MAIL}" --item KEN-1 --once
+  await_polls 1
+  send_directive 'Wake up.'
+  await_announced 1
+  while kill -0 "$WATCH_PID" 2>/dev/null && [ "$tries" -lt 15 ]; do sleep 0.2; tries=$((tries + 1)); done
+  if kill -0 "$WATCH_PID" 2>/dev/null; then
+    ONCE=running
+    stop_watch
+  else
+    wait "$WATCH_PID" || rc=$?
+    WATCH_PID=""
+    ONCE="exit=$rc"
+  fi
+}
+once_row
+assert_eq "$ONCE $(mail_lines | tr '\n' '|')" "exit=0 lane-mail: mail=KEN-1 new=1|" \
+  "a --once watch exits 0 at its first announcement"
+assert_eq "$([ -e "$BOX/to-lane.watch" ] && echo kept || echo withdrawn)" "withdrawn" \
+  "its exit withdraws the liveness record"
+send_directive 'While it is down.'
+assert_eq "${SENT##* }" "monitor=none" "a send before the lane re-arms reads no monitor"
+start_watch "$LANE_MAIL" --item KEN-1 --once
+await_announced 1
+assert_eq "$(sed -n 1p "$WATCH_OUT")" "lane-mail: mail=KEN-1 new=2" \
+  "the re-armed watch announces at once every directive still unread"
+stop_watch
+
 # Refusals, keyed on their first line.
 new_lane refusals
+RC=0
+lm inbox --item KEN-1 --once >/dev/null 2>"$TMP_ROOT/err" || RC=$?
+assert_eq "$RC=$(head -n 1 "$TMP_ROOT/err")" "2=lane-mail: option-unknown=--once" \
+  "--once on a verb other than watch is refused rather than dropped"
 RC=0
 lm watch --item KEN-1 --interval soon >/dev/null 2>"$TMP_ROOT/err" || RC=$?
 assert_eq "$RC=$(head -n 1 "$TMP_ROOT/err")" "2=lane-mail: seconds-invalid=--interval" \
@@ -338,6 +377,11 @@ await_polls 2
 assert_eq "$([ "$(announced)" -gt 1 ] && echo repeated || echo once)" "repeated" \
   "control: without the announced count the same directive is announced at every poll"
 stop_watch
+
+mutant once-keeps-running '        [ "$ONCE" -eq 0 ] || exit 0' '        :'
+once_row "$MUTANT"
+assert_eq "$ONCE" "running" \
+  "control: without its exit a --once watch keeps polling after its announcement, and wakes nobody"
 
 mutant wider-window 'now - at <= 2 * interval + 5' 'now - at <= 4 * interval + 5'
 LIVENESS=""

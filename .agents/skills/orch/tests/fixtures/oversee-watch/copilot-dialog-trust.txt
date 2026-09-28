@@ -1,0 +1,50 @@
+ [Current]  Sessions   Issues   Pull requests   Gists
+
+  ╭─╮╭─╮
+  ╰─╯╰─╯  Copilot v1.0.88 uses AI.
+  █ ▘▝ █  Check for mistakes.
+   ▔▔▔▔ 
+
+ ● No copilot-instructions.md found. Run /init to generate.
+
+ ● Tip: /context
+   └ Show context window token usage and visualization
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Confirm folder trust                                                                                                                                         │
+│ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ /tmp/claude-1000/-home-dev-dev--worktrees-kendex-ken-1985/93b5cd86-d2f0-484d-8827-cc1a8dcecaec/scratchpad/cp2                                            │ │
+│ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│                                                                                                                                                              │
+│ Copilot can read files in this folder and, with your permission, edit them or run code and shell commands. It will remember your permissions for the rest of │
+│  this session.                                                                                                                                               │
+│                                                                                                                                                              │
+│ Do you trust the files in this folder?                                                                                                                       │
+│                                                                                                                                                              │
+│ ❯ 1. Yes                                                                                                                                                     │
+│   2. Yes, and remember this folder for future sessions                                                                                                       │
+│   3. No (Esc)                                                                                                                                                │
+│                                                                                                                                                              │
+│ ↑/↓ to navigate · enter to select · esc to cancel                                                                                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

@@ -43,16 +43,25 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/adapters/claude.sh"
 # cannot go on being prefixed with the other harness's variable, which starts it
 # on whatever account that harness defaults to with nothing on screen saying so.
 #
-# Codex is named. A Pi launch on the Copilot pool (lane_pick_harness below)
-# takes Pi's own variable, PI_CODING_AGENT_DIR, the directory whose Pi login
-# spends that pool, as lane-host-ssh gives a hosted Pi lane. Every other
-# harness takes the Claude variable, which is what a local `--lane` launch on a
-# further harness has always done, a Pi launch on any other model included, so
-# a Pi lane named on a Claude config dir is never handed that dir as its Pi
-# root. A harness added to this repository adds its arm HERE.
+# Codex and Copilot are named. A Pi launch on the Copilot pool
+# (lane_pick_harness below) takes Pi's own variable, PI_CODING_AGENT_DIR, the
+# directory whose Pi login spends that pool, as lane-host-ssh gives a hosted Pi
+# lane. Every other harness takes the Claude variable, which is what a local
+# `--lane` launch on a further harness has always done, a Pi launch on any
+# other model included, so a Pi lane named on a Claude config dir is never
+# handed that dir as its Pi root. `lanes` measures no Copilot CLI account, so a
+# copilot value reaches here from a lane the caller named and never from a
+# pick. A harness added to this repository adds its arm HERE.
+#
+# COPILOT_HOME is Copilot's one account variable: it moves the whole config
+# root, settings, state and login list alike, so the directory IS the account
+# there as it is for the other two.
 lane_env_prefix() { # HARNESS DIR [MODEL]
   local var=CLAUDE_CONFIG_DIR
-  [[ "$1" != codex ]] || var=CODEX_HOME
+  case "$1" in
+    codex) var=CODEX_HOME ;;
+    copilot) var=COPILOT_HOME ;;
+  esac
   [[ "$(lane_pick_harness "$1" "${3:-}")" != pi ]] || var=PI_CODING_AGENT_DIR
   printf '%s=%s\n' "$var" "$2"
 }
@@ -119,7 +128,9 @@ lane_pick_harness() { # HARNESS MODEL
 # from --settings. Codex defers normal compaction to its reported usable-window
 # cap; it can still compact between external handoff checks or on other paths.
 # references/skill-rules.md, Compaction, cites the verified runtime contract.
-# Pi uses its settings file, which open-terminal reads instead.
+# Pi uses its settings file, which open-terminal reads instead. Copilot's
+# flags and `copilot help config` (1.0.88) name no switch that turns its
+# automatic compaction off, so its row has none.
 #
 # The FIRST spelling of each list is the one written; the rest are further
 # spellings a caller may have typed, which launch_choice_value reads.
@@ -143,6 +154,22 @@ lane_pick_harness() { # HARNESS MODEL
 #             field: `--model sonnet:high` names the level pi will run at, so a
 #             launch passing it has made the effort choice and is not asked for
 #             it again.
+#   copilot   `copilot --help` (1.0.88): `--model <model>`, `--reasoning-effort
+#             <level>` with none, minimal, low, medium, high, xhigh and max;
+#             `--allow-all` and `--yolo` each equal `--allow-all-tools
+#             --allow-all-paths --allow-all-urls`, and `--allow-all-tools`
+#             alone is the permission the non-interactive mode requires. Only
+#             the two full spellings transfer: the tools-only word leaves paths
+#             and URLs asking. `--autopilot` starts the session in autopilot
+#             mode, which sends the session continuation messages of its own,
+#             as many as `--max-autopilot-continues <count>` allows, 5 by
+#             default. Both are launch settings, carried by every command built
+#             here, a resume included: nobody sits at a lane's pane to answer a
+#             turn that stopped short, and 3 bounds what such a stop, or a turn
+#             ended to wait on the lane's mailbox monitor, spends of the
+#             account's pool. `-i <prompt>` starts the interactive session and
+#             submits the prompt, and `--resume=<id>` resumes a session by its
+#             id; open-terminal's start_cmd renders both.
 # The question-tool words, measured on the same installs:
 #   claude    `claude --help`: `--disallowedTools <tools...>`, comma or space
 #             separated. Variadic, so the words are one `=` token: a bare
@@ -163,11 +190,14 @@ lane_pick_harness() { # HARNESS MODEL
 #             switch its docs name is the OPENCODE_PERMISSION environment
 #             variable, JSON no flag word carries: the row names none, and an
 #             opencode lane keeps its question tool.
+#   copilot   `copilot --help`: `--no-ask-user` disables the ask_user tool, the
+#             clarifying question the CLI otherwise asks at the pane.
 LAUNCH_CHOICE_FLAGS=(
   'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions|-|--disallowedTools=AskUserQuestion,EnterPlanMode|--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}'
   'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false|-c features.default_mode_request_user_input=false|-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0'
   'opencode|-m --model|-|-|-|-|-|-|-|-'
   'pi|--model|--thinking|:|-|-|-|-|--exclude-tools question|-'
+  'copilot|--model|--reasoning-effort|-|-|--allow-all --yolo --allow-all-tools|--allow-all --yolo|--autopilot --max-autopilot-continues 3|--no-ask-user|-'
 )
 # The row for harness $1, empty where the table names no such harness.
 launch_choice_row() { # HARNESS
@@ -1081,11 +1111,13 @@ lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
 # render `1codex` running claude's arguments. Both fall through to the prefix
 # form, which selected these lanes correctly all along.
 #
-# Local claude and codex launches only, which the caller establishes before it
-# asks: a launch on another machine answers about the wrong PATH, and
-# CLAUDE_CONFIG_DIR and CODEX_HOME are those two harnesses' own variables. A
-# rendered command that does not open on the harness word has no first word to
-# replace, so it keeps the prefix — which the account check still verifies.
+# Local claude, codex and copilot launches only, which the caller establishes
+# before it asks: a launch on another machine answers about the wrong PATH,
+# and CLAUDE_CONFIG_DIR, CODEX_HOME and COPILOT_HOME are those harnesses' own
+# variables. A rendered command that does not open on the harness word has no
+# first word to replace, so it keeps the prefix — which the account check
+# still verifies. A Copilot launcher such as `1copilot` exports COPILOT_HOME
+# for its own name exactly as the others do.
 #
 # TEMPLATE non-empty says the command is the CALLER'S own, from a --cmd
 # template, whose first word is not ours to replace. It is an input to this
@@ -1095,7 +1127,7 @@ lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
 # whatever its caller initialised the form to, and is read back by nothing.
 lane_launch_form() { # CMD HARNESS LANE_DIR [TEMPLATE]
   local cmd="$1" harness="$2" dir="$3" template="${4:-}" name path
-  if [[ -z "$dir" || -n "$template" ]] || [[ ! "$harness" =~ ^(claude|codex)$ ]]; then
+  if [[ -z "$dir" || -n "$template" ]] || [[ ! "$harness" =~ ^(claude|codex|copilot)$ ]]; then
     printf 'unchecked\n'
     return
   fi

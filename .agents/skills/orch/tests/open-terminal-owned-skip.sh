@@ -615,13 +615,14 @@ done
 #
 # That reader captures `ps -A` before an awk moves the command name into a
 # field of its own and strips the executable path macOS puts in `comm`. Its
-# matcher compares the harness name against the third field the transform
-# prints. Let either transform regress and no name matches, the pid loop never
+# matcher compares the name the transform prints against the process names
+# lane_harness_process_re gives the harness, read on the line above it. Let
+# either transform regress and no name matches, the pid loop never
 # runs, lane_session_state prints idle, the pane's idle rung stands and the
 # wake resumes beside a live session: the fail-open this branch closes, with
 # every wake row still green.
 #
-# The row reads the three lines out of the shared library under test rather
+# The row reads the four lines out of the shared library under test rather
 # than spelling them again, so a change to any moves it. Only the transforms
 # are pinned, not the awk's every detail: the substr offset that trims ps's column
 # padding has no consumer, since the matcher and the parent-tree scan below it
@@ -631,9 +632,10 @@ done
 # rather than a count.
 REAL_TABLE_READ="$(sed -n 's/^  raw="\$(\(ps -A.*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
 REAL_TABLE_TRANSFORM="$(sed -n 's/^  table="\$(\(awk .*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
-REAL_PID_MATCH="$(sed -n 's/^  candidates="\$(\(awk .*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
-assert_eq "read=$(grep -c . <<<"$REAL_TABLE_READ") transform=$(grep -c . <<<"$REAL_TABLE_TRANSFORM") match=$(grep -c . <<<"$REAL_PID_MATCH")" \
-  "read=1 transform=1 match=1" "the real reader, transform and matcher are each one line of the script under test"
+REAL_NAME_RE="$(sed -n 's/^  name_re="\$(\(lane_harness_process_re .*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
+REAL_PID_MATCH="$(sed -n 's/^  candidates="\$(\(LANE_OWNED_RE=.* awk .*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
+assert_eq "read=$(grep -c . <<<"$REAL_TABLE_READ") transform=$(grep -c . <<<"$REAL_TABLE_TRANSFORM") names=$(grep -c . <<<"$REAL_NAME_RE") match=$(grep -c . <<<"$REAL_PID_MATCH")" \
+  "read=1 transform=1 names=1 match=1" "the real reader, transform, name ERE and matcher are each one line of the script under test"
 
 # The first runs both against THIS box, with PROC_BIN off the PATH, and asks
 # for the pid of the shell running this suite under its own command name. It
@@ -645,6 +647,10 @@ real_found="$(
   set -- unused "$HARNESS"
   raw="$(eval "$REAL_TABLE_READ")" || exit 3
   table="$(eval "$REAL_TABLE_TRANSFORM")" || exit 3
+  # The function the name ERE line calls, from the library it is read out of.
+  # shellcheck source=../scripts/lib/lane-state.sh
+  source "$SRC_LIB_DIR/lane-state.sh"
+  name_re="$(eval "$REAL_NAME_RE")" || exit 4
   pids="$(eval "$REAL_PID_MATCH")" || exit 4
   grep -cx -- "$SUITE_PID" <<<"$pids" || true
 )" || real_rc=$?

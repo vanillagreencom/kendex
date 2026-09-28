@@ -288,7 +288,8 @@ fi
 #                      reads this setting at all
 #   tmux_wait_harness  the premise ahead of the account read, so whatever
 #                      lane_account_ok reaches and nothing else
-#   lane_account_ok    a local claude or codex lane with a --lane and no --cmd
+#   lane_account_ok    a local claude, codex or copilot lane with a --lane and
+#                      no --cmd
 # Neither of the last two is reachable on a hosted lane: LANE_FORM stays
 # `unchecked` outside the local branch, which is what lane_account_readable
 # answers on, so a hosted codex lane, a hosted --cmd lane and a hosted relaunch
@@ -319,7 +320,7 @@ if [[ "$TERMINAL_MODE" == "tmux" && "$WAKE" != true ]]; then
   elif [[ -z "$CMD_TEMPLATE" ]]; then
     case "$HARNESS" in
       claude) TIMEOUT_IS_READ=true ;;
-      codex) [[ -z "$LANE" ]] || TIMEOUT_IS_READ=true ;;
+      codex | copilot) [[ -z "$LANE" ]] || TIMEOUT_IS_READ=true ;;
     esac
   fi
 fi
@@ -492,8 +493,8 @@ fi
 # gates above are, and only where a fleet state is named: a launch outside any
 # fleet has no overseer to hand off to. A launch that turns compaction off on a
 # session whose window nothing can name would run it into its wall with neither
-# a handoff nor a compaction, so each harness is admitted only where both halves
-# hold:
+# a handoff nor a compaction, so each harness that can turn it off is admitted
+# only where both halves hold, and one that cannot on its own compaction:
 #   claude  its words from the launch-choice table, which a --cmd template has
 #           to carry itself as it carries the question-tool words, on a model
 #           whose window the claude adapter names
@@ -502,6 +503,9 @@ fi
 #           pi-hooks carrier that sends the window, both read on this machine
 #           under the Pi root the lane runs on (pi_local_gate), or for a hosted
 #           lane on its host once create has made it (host_pi_gate)
+#   copilot nothing to read: no switch turns its automatic compaction off,
+#           and no adapter reads its window, so the lane compacts at its wall
+#           rather than handing off at a mark
 # Every other harness, and a launch naming none, has no adapter. A wake is not
 # judged: it re-enters a session its own launch was admitted with, and names no
 # model of its own.
@@ -547,6 +551,7 @@ if [[ "$FLEET" == true && "$WAKE" != true ]]; then
         fi
       fi
       ;;
+    copilot) ;;
     *) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; exit 1 ;;
   esac
 fi
@@ -1130,13 +1135,16 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
     local rearm=""
     case "$HARNESS" in
       claude | pi) rearm=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item $mail_id through your harness background wake" ;;
+      copilot) rearm=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --once --item $mail_id as a background command" ;;
       *) rearm="" ;;
     esac
     line=" 'Resume the orch workflow for $mail_id from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item $mail_id first and act on every directive it prints$rearm.'"
   fi
   if [[ -n "$wake_dir" && "$HARNESS" == pi ]]; then printf 'pi-bridge send --cwd %q%s\n' "$wake_dir" "$line"; return; fi
   # claude and pi take the line as a trailing positional on their own resume
-  # form: `claude [options] [prompt]`, `pi [options] [messages...]`.
+  # form: `claude [options] [prompt]`, `pi [options] [messages...]`; copilot
+  # takes it as the value of `-i`, and its session id attached to `--resume`,
+  # whose value is optional, so a bare id can never be read as a prompt.
   #
   # The hosted codex arm cannot take one. `codex resume` declares its prompt as
   # conflicting with --last, so the two never appear together: `codex resume
@@ -1160,15 +1168,21 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   if [[ -n "$session_id" ]]; then
     case "$HARNESS" in claude) printf 'claude -n %q %s--resume %q%s%s\n' "$item" "$flags" "$session_id" "$print" "$line" ;;
       codex) printf 'codex %sresume %s%q%s\n' "$exec" "$flags" "$session_id" "$line" ;;
-      pi) printf 'pi %s--session %q%s\n' "$flags" "$session_id" "$line" ;; esac; return
+      pi) printf 'pi %s--session %q%s\n' "$flags" "$session_id" "$line" ;;
+      copilot) printf 'copilot %s--resume=%q -i%s\n' "$flags" "$session_id" "$line" ;; esac; return
   fi
+  # The copilot arms take the brief as the value of `-i`, which starts the
+  # interactive session and submits it, and are prose built from the same
+  # shell-inert characters as the codex arms, for the same reason.
   case "$TRACKER:$HARNESS" in
     linear:claude)   printf "claude -n %q %s'/orch start %s'\n" "$item" "$flags" "$item" ;;
     linear:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s'\n" "$flags" "$item" ;;
+    linear:copilot)  printf "copilot %s-i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s'\n" "$flags" "$item" ;;
     linear:opencode) printf "opencode %s--prompt '/orch start %s'\n" "$flags" "$item" ;;
     linear:pi)       printf "pi %s'/skill:orch start %s'\n" "$flags" "$item" ;;
     github:claude)   printf "claude -n github-%q %s'/orch start github %s#%s'\n" "$item" "$flags" "$repo" "$item" ;;
     github:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s'\n" "$flags" "$repo" "$item" ;;
+    github:copilot)  printf "copilot %s-i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s'\n" "$flags" "$repo" "$item" ;;
     github:opencode) printf "opencode %s--prompt '/orch start github %s#%s'\n" "$flags" "$repo" "$item" ;;
     github:pi)       printf "pi %s'/skill:orch start github %s#%s'\n" "$flags" "$repo" "$item" ;;
     *) ot_message harness-unsupported "harness=$HARNESS" >&2; exit 1 ;;
@@ -2050,7 +2064,7 @@ launch_finish() {
   wake_args=()
   if [[ "$WAKE" == true ]]; then wake_args=("$wt"); fi
   # A Pi wake goes to the live session through pi-bridge and reads no store.
-  if [[ "$RELAUNCH" == true && "$HOST_RELAUNCH" == false && -z "$CMD_TEMPLATE" && "$HARNESS" =~ ^(claude|codex|pi)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
+  if [[ "$RELAUNCH" == true && "$HOST_RELAUNCH" == false && -z "$CMD_TEMPLATE" && "$HARNESS" =~ ^(claude|codex|pi|copilot)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
     resume_rc=0
     session_file="$(find_relaunch_session "$HARNESS" "$item" "$wt")" || resume_rc=$?
     [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1; }

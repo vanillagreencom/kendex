@@ -335,6 +335,7 @@ walled_screen() { # RESET
   printf '%s\n\n%s\n%s\n' '⏺ I will keep going.' "You've hit your session limit · resets $1" "$CLAUDE_COMPOSER" >"$SCREEN"
 }
 codex_screen() { cp -- "$PANE_FIXTURES/codex-composer-idle.txt" "$SCREEN"; }
+copilot_screen() { cp -- "$PANE_FIXTURES/copilot-idle.txt" "$SCREEN"; }
 
 # A local lane's harness: a real process, so the SIGTERM and its exit are
 # real, started detached so init reaps it rather than this shell holding it as
@@ -359,12 +360,15 @@ export LANE_CLOSE_STATE_LIB
 proc_table_install "$PROC_BIN"
 LOCAL_PATH="$PROC_BIN:$PATH"
 LANE_PID=""
-start_local_harness() { # HARNESS
-  [[ -x "$HARNESS_BIN/$1" ]] || cp -- "$(command -v bash)" "$HARNESS_BIN/$1"
-  LANE_PID="$( (cd -- "$LANE_ROOT" && exec "$HARNESS_BIN/$1" -c 'trap "exit 0" TERM; while :; do sleep 0.1; done' \
+# NAME is the process name, the harness's own where none is given: Copilot's
+# binary carries MainThread on Linux.
+start_local_harness() { # HARNESS [NAME]
+  local name="${2:-$1}"
+  [[ -x "$HARNESS_BIN/$name" ]] || cp -- "$(command -v bash)" "$HARNESS_BIN/$name"
+  LANE_PID="$( (cd -- "$LANE_ROOT" && exec "$HARNESS_BIN/$name" -c 'trap "exit 0" TERM; while :; do sleep 0.1; done' \
     </dev/null >/dev/null 2>&1 & printf '%s' "$!") )"
   LANE_PIDS+=" $LANE_PID"
-  proc_table_write "$PROC_TABLE" "$LANE_PID 1 $1"
+  proc_table_write "$PROC_TABLE" "$LANE_PID 1 $name"
   proc_cwd_write "$PROC_CWD_FILE" "$LANE_PID=$LANE_ROOT_REAL"
 }
 
@@ -580,15 +584,29 @@ done
 if proc_table_readable; then
   for reader_row in "proc|$SCRIPT|$LOCAL_PATH" "lsof|$NOPROC|$NOPROC_PATH"; do
     IFS='|' read -r reader reader_script reader_path <<<"$reader_row"
-    for harness in claude codex pi; do
+    # HARNESS:PROCESS: a copilot lane's pane reads node, its npm loader, and
+    # its screen is Copilot's own idle composer.
+    for harness_row in claude:claude codex:codex pi:pi copilot:MainThread; do
+      harness="${harness_row%%:*}"
       MAIL_ROOT="$LANE_ROOT" write_state running "$harness" ""
-      write_panes python; claude_screen
-      start_local_harness "$harness"
+      if [[ "$harness" == copilot ]]; then write_panes node; copilot_screen; else write_panes python; claude_screen; fi
+      start_local_harness "$harness" "${harness_row#*:}"
       PATH="$reader_path" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$reader_script"
       assert_eq "rc=$RC lane=$(proc_state_after "$LANE_PID") typed=$(typed_count) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
         'rc=0 lane=gone typed=0 host=0 status=done' "a local $harness lane is stopped by SIGTERM to its own process, its directory read through $reader"
     done
   done
+
+  # Control: read under its harness name alone, the copilot lane's process is
+  # none of its harness's, so the stop signals nothing and the pane outlives
+  # the close.
+  MAIL_ROOT="$LANE_ROOT" write_state running copilot ""; write_panes node; copilot_screen
+  start_local_harness copilot MainThread
+  MUTANT="$(lib_mutant copilot-name "    copilot) printf '%s\\n' '^(copilot|MainThread)\$' ;;" '')"
+  PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" ORCH_LANE_CLOSE_SECS=1 run_close "$MUTANT"
+  assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=copilot pane=%7 processes=0$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=1 timeout=1 lane=alive status=running' "control: under its harness name alone a copilot lane's MainThread is never signalled"
+  kill "$LANE_PID" 2>/dev/null || true
 
   # A host with no directory reader at all refuses under its own cause, never
   # as a failed process read.

@@ -20,7 +20,7 @@ ot_message() { # REASON FIELD=VALUE...
     command-missing) text='Select a harness or a custom command.' ;;
     cmd-unbalanced-quote) text='Put the brief in a file and reference it, or escape the quote.' ;;
     desktop-harness) text='Use the Codex Desktop thread tools for this harness.' ;;
-    unsupported-for-oversee) text='No harness adapter reads this fleet lane'"'"'s context window, so nothing would judge its handoff mark. Nothing was launched. harness=none is a launch naming no harness; reason=no-window-read is a Pi whose installed pi-hooks sends no context_window on its Stop payload, so install the current pi-hooks. A hosted lane'"'"'s host keeps the item its create made, so launch it again with --relaunch after the fix. Launch the lane on claude, codex or pi.' ;;
+    unsupported-for-oversee) text='No harness adapter reads this fleet lane'"'"'s context window, so nothing would judge its handoff mark. Nothing was launched. harness=none is a launch naming no harness; reason=no-window-read is a Pi whose installed pi-hooks sends no context_window on its Stop payload, so install the current pi-hooks. A hosted lane'"'"'s host keeps the item its create made, so launch it again with --relaunch after the fix. Launch the lane on claude, codex, pi or copilot.' ;;
     launch-window-unknown) text='The claude adapter names no context window for this model, so this fleet lane would run with compaction off and no capacity for the shared rule to judge. Nothing was launched. Launch it on a model the window table in scripts/lib/adapters/claude.sh names.' ;;
     launch-compaction-missing) text='This fleet --cmd command lacks the required compaction policy settings, so the handoff rule cannot rely on the expected capacity. Nothing was launched. Add the words this line names, in that order, inside the command, each quoted so the shell passes it whole: the claude word as --settings='"'"'{"env":{"DISABLE_AUTO_COMPACT":"1"}}'"'"'.' ;;
     compaction-on) text='Pi would compact this fleet lane on its own before its handoff mark. Nothing was launched. Set compaction.enabled to false in the settings file named, and leave no project .pi/settings.json setting it back to true; the shared context rule controls handoff. A hosted lane'"'"'s host keeps the item its create made, so launch it again with --relaunch after the fix.' ;;
@@ -145,7 +145,7 @@ usage() {
 Usage: open-terminal [--tracker linear|github] [--repo OWNER/REPO] ITEM... [options]
 
 Options:
-  --harness <name>  claude, codex, opencode, pi
+  --harness <name>  claude, codex, opencode, pi, copilot
   --tmux            Open tmux windows in the fleet's tmux session: the
                     session ORCH_TMUX_SESSION names; else, under --state-dir,
                     the session the fleet state records as tmux.session;
@@ -359,6 +359,7 @@ Options:
                       pi        --model, --thinking; pi also spells the level on
                                 the model value, `--model sonnet:high`, which
                                 names both choices in one token
+                      copilot   --model, --reasoning-effort
                     The model also gates the lane, which is judged on that
                     model's own window rather than the account's binding one.
                     Every codex command built here, fresh launch, relaunch
@@ -366,12 +367,17 @@ Options:
                     check_for_update_on_startup=false ahead of these flags,
                     so Codex never opens its startup update prompt, where a
                     pasted line would install the update and end the session.
+                    Every copilot command built here carries --autopilot
+                    --max-autopilot-continues 3 ahead of these flags, so a
+                    turn that stops short is continued with nobody at the
+                    pane, at most three times.
                     EVERY COMMAND BUILT HERE TAKES THE HARNESS QUESTION TOOL
                     AWAY WHERE A ROW BELOW NAMES WORDS, ahead of these flags;
                     a lane asks through lane-mail.
                       claude    --disallowedTools=AskUserQuestion,EnterPlanMode
                       codex     -c features.default_mode_request_user_input=false
                       pi        --exclude-tools question
+                      copilot   --no-ask-user
                     An opencode lane keeps its tool: no flag turns it off. A
                     --cmd launch on a harness with words carries them in its
                     command, --lane or not, or is refused as
@@ -379,12 +385,14 @@ Options:
   --relaunch        Replace a dead session on items that may already have a
                     worktree: an existing tree is reused instead of being read
                     as another session's claim. The newest matching Claude,
-                    Codex, or Pi session resumes natively, and the resumed
-                    command carries one continuation line telling the lane to
-                    resume its orch workflow and read `lane-mail inbox`, and a
-                    claude or pi lane to re-arm its mailbox monitor
-                    (`lane-mail watch`), so no follow-up is pasted into the
-                    pane. A codex lane arms no monitor: Codex starts no turn
+                    Codex, Pi or Copilot session resumes natively, a Copilot
+                    one being the newest whose session record names the lane's
+                    worktree, and the resumed command carries one continuation
+                    line telling the lane to resume its orch workflow and read
+                    `lane-mail inbox`, and a claude or pi lane to re-arm its
+                    mailbox monitor (`lane-mail watch`), a copilot lane its
+                    `lane-mail watch --once`, so no follow-up is pasted into
+                    the pane. A codex lane arms no monitor: Codex starts no turn
                     for its output. A hosted codex lane is
                     the exception: it resumes with no line, reported as
                     resume-lineless, and its line is pasted into the pane

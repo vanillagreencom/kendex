@@ -52,7 +52,7 @@ message() { # REASON FIELD=VALUE...
         '  no-state-type   the linear payload carried no state_type, so it answered nothing.' \
         '  tracker-unknown  tracker is neither linear nor github. Pass --tracker linear|github.' \
         'source=derived is a tracker read from the item key rather than from the record or --tracker, and source=given is one of those two.' ;;
-    harness-unsupported) printf '%s\n' 'The recorded harness has no close-out path. harness=unknown is a record that carries none: pass --harness claude|codex|pi.' ;;
+    harness-unsupported) printf '%s\n' 'The recorded harness has no close-out path. harness=unknown is a record that carries none: pass --harness claude|codex|pi|copilot.' ;;
     ask-unanswered) printf '%s\n' 'The lane asked the overseer a question and is waiting for the answer. Closing it would end the session that answer would reach. Answer the ask, then close the lane.' ;;
     mail-read-failed) printf '%s\n' 'The lane mailbox could not be read, so nothing here says whether the lane asked anything. Close-out changed nothing.' ;;
     lane-host-busy) printf '%s\n' 'lane-host refused the provider call step names at its per-home cap on provider calls; its own line is above and the provider ran nothing. The window and the fleet record are unchanged: run lane-close again. The exit status is lane-host'"'"'s own 69.' ;;
@@ -104,7 +104,7 @@ message() { # REASON FIELD=VALUE...
 usage() {
   cat <<'EOF'
 Usage: lane-close [--state-dir PATH] [--keep-sandbox | --park --pr N]
-                  [--harness claude|codex|pi] [--tracker linear|github]
+                  [--harness claude|codex|pi|copilot] [--tracker linear|github]
                   [--repo OWNER/REPO] ITEM
 
 Close one lane recorded in the oversee workflow state. The command refuses a
@@ -131,7 +131,9 @@ stop-failed. A status 4 without that line, a provider's own answer such as a
 sandbox it stopped, refuses as stop-failed cause=provider status=4.
 The local stop reads each harness process's directory through /proc, or
 through lsof on a host without /proc such as macOS; a host with neither
-refuses as stop-failed cause=cwd-reader-missing.
+refuses as stop-failed cause=cwd-reader-missing. The processes it signals are
+the ones named for the harness, and for copilot also MainThread, the name the
+Copilot CLI binary carries on Linux.
 A record already marked stopped can close its kept sandbox without a pane. A
 preparing record, a hosted launch whose background job has written no
 outcome, closes without a harness exit: the job the record names is stopped
@@ -708,7 +710,7 @@ pane_cmd="$LANE_PANE_CMD"
 # that shell as the pane process and the harness as its child, so this answers
 # for the direct launches and leaves the rest to --harness.
 case "$pane_cmd" in
-  claude|codex|pi) derive_identity harness "$pane_cmd" ;;
+  claude|codex|pi|copilot) derive_identity harness "$pane_cmd" ;;
 esac
 pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
   || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
@@ -889,7 +891,7 @@ stop_harness() {
 # signal is the same. A stop the full close skipped ends the close-out.
 stop_and_await_exit() {
   case "$harness" in
-    claude|codex|pi) ;;
+    claude|codex|pi|copilot) ;;
     *) message harness-unsupported "item=$ITEM" "harness=${harness:-unknown}" >&2; exit 1 ;;
   esac
   refuse_unanswered_ask

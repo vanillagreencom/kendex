@@ -30,8 +30,10 @@
 #           again for up to PANE_WRITE_SETTLE_SECS (default 2) while a
 #           default-command wrapper still holds the pane. Any other
 #           word is a process name: the pane's foreground command, or the pane
-#           process or a process below it, carries that name. The second form
-#           is a harness started under a shell or through a wrapper script.
+#           process or a process below it, carries that name, or one of the
+#           names lane_harness_process_re gives a harness running under
+#           another. The second form is a harness started under a shell or
+#           through a wrapper script.
 #   ACTION  `text`: paste VALUE itself as one bracketed paste, then press
 #           Enter. `file`: the same with a file's bytes. `key`: press the one
 #           key VALUE names, from PANE_WRITE_KEYS.
@@ -168,10 +170,11 @@ pane_write_expect() { # EXPECT
     [[ "$PANE_WRITE_CMD" == "$1" ]] && return 0
     table="$(lane_process_table)" \
       || { pane_write_refuse 1 pane-read-failed "pane=$PANE_WRITE_ID" operation=ps; return; }
-    # The name as a whole-name ERE, its metacharacters escaped.
-    name_re="$(printf '%s' "$1" | sed 's/[][\\.*^$+?(){}|]/\\&/g')" \
+    # The names that process runs under, lib/lane-state.sh's answer, so a
+    # harness whose process is not named for it is still found.
+    name_re="$(lane_harness_process_re "$1")" \
       || { pane_write_refuse 1 pane-read-failed "pane=$PANE_WRITE_ID" operation=ps; return; }
-    found="$(lane_process_below "$table" "$PANE_WRITE_PID" "^$name_re\$" 1)" \
+    found="$(lane_process_below "$table" "$PANE_WRITE_PID" "$name_re" 1)" \
       || { pane_write_refuse 1 pane-read-failed "pane=$PANE_WRITE_ID" operation=ps; return; }
     [[ "$found" != found ]] || return 0
   fi

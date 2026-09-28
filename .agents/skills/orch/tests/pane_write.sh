@@ -42,6 +42,10 @@ tm new-window -d -t w -n twin 'exec sleep 100000'
 # A harness under a shell that does not exec it, the shape a lane started by
 # typing its wrapper at a prompt keeps for its whole life.
 tm new-window -d -t w -n nest '/bin/sh -c "sleep 100000; :"'
+# A copilot lane: under the pane's shell a process named as the Copilot CLI
+# binary is on Linux, MainThread, a copy of bash kept from exec'ing its sleep.
+cp "$(command -v bash)" "$TMP_ROOT/MainThread"
+tm new-window -d -t w -n copilot "/bin/sh -c \"'$TMP_ROOT/MainThread' -c 'sleep 100000; :'; :\""
 # A shell is_bare_shell does not name, started as tmux's default-shell: a copy
 # of bash under a name of its own. It stays the default from here on, which
 # the rows that expect a shell read at write time.
@@ -164,6 +168,7 @@ ROWS=(
   "a proven pane id receives the paste|-|--pane;$LANE_PANE;--expect;cat;--file;$HELLO|rc=0 key=none received=hello,"
   "a key is pressed in the pane|-|--window;lane;--expect;cat;--key;Enter|rc=0 key=none received=,"
   "a process below the pane's shell is the expected one|-|--window;nest;--expect;sleep;--key;Enter|rc=0 key=none received="
+  "a copilot lane's binary, named MainThread, is copilot|-|--window;copilot;--expect;copilot;--key;Enter|rc=0 key=none received="
   "a shell named only by tmux's default-shell is a window's own shell|-|--window;own;--expect;shell;--key;Enter|rc=0 key=none received="
 )
 for r in "${ROWS[@]}"; do
@@ -283,6 +288,7 @@ CONTROLS=(
   "lib/pane-write.sh@mismatch@  pane_write_expect \"\$expect\" || return@  : || return@-@--window;lane;--expect;claude;--file;$HELLO@rc=0 key=none received=hello,"
   "lib/lane-state.sh@child@if (q == root) { print \"found\"; exit }@if (q == root) { print \"none\"; exit }@-@--window;nest;--expect;sleep;--key;Enter@rc=1 key=process-mismatch received="
   "lib/pane-write.sh@default-shell@\"\$default\" ]] || return 0@\"\$default\" ]] || :@-@--window;own;--expect;shell;--key;Enter@rc=1 key=process-mismatch received="
+  "lib/lane-state.sh@copilot-names@    copilot) printf '%s\\n' '^(copilot|MainThread)\$' ;;@    copilot-none) ;;@-@--window;copilot;--expect;copilot;--key;Enter@rc=1 key=process-mismatch received="
   "lib/lane-state.sh@anchor@        if (name[pid[i]] !~ re) continue@        if (name[pid[i]] !~ re) continue; else { print \"found\"; exit }@-@--window;lane;--expect;sleep;--file;$HELLO@rc=0 key=none received=hello,"
   "lib/pane-write.sh@file-unreadable@    file) [[ -f \"\$value\" && -r \"\$value\" ]] ||@    file) [[ -f \"\$value\" && -r \"\$value\" ]] || true ||@-@--window;lane;--expect;cat;--file;$TMP_ROOT/absent@rc=2 key=write-failed received="
   "lib/pane-write.sh@expect-missing@  [[ -n \"\$1\" ]] || { pane_write_refuse 1 expect-missing@  [[ -n \"\$1\" ]] || true || { pane_write_refuse 1 expect-missing@-@--window;lane;--expect;;--file;$HELLO@rc=1 key=process-mismatch received="

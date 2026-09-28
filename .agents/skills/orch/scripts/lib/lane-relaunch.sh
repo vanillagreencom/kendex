@@ -62,9 +62,23 @@ pi_relaunch_root() { # WORKTREE HOME
   printf '%s\n' "$root"
 }
 
+# The directory a Copilot session record names, from the `cwd:` line of its
+# workspace.yaml, empty where the file names none.
+copilot_session_cwd() { # WORKSPACE_YAML
+  awk 'index($0, "cwd: ") == 1 { print substr($0, 6); exit }' "$1"
+}
+
 # Find the newest transcript whose harness kickoff names the item.
+#
+# Copilot is the exception: its session-state/<id>/workspace.yaml records the
+# session's own id and directory, plain `id:` and `cwd:` lines written as
+# the session starts, before any turn (measured on 1.0.88), and how its
+# events.jsonl records a kickoff is not measured. So a copilot session is the
+# newest record whose directory is the lane's worktree, one item's alone. A
+# record quoting its path names no directory here and matches nothing, which
+# renders the fresh brief.
 find_relaunch_session() { # HARNESS ITEM WORKTREE
-  local harness="$1" item="$2" cwd="$3" home="${LANES_HOME:-$HOME}" config roots root inventory id_match match_filter files file best="" best_root="" rc relative target
+  local harness="$1" item="$2" cwd="$3" home="${LANES_HOME:-$HOME}" config roots root inventory id_match match_filter="" files file best="" best_root="" rc relative target recorded
   command -v jq >/dev/null 2>&1 || return 2
   # Whether a kickoff record names the item, for every harness: one expression,
   # so the letter-case rule has a single home and one test pins it. The id is
@@ -86,6 +100,10 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
       roots="$(jq -er --arg d "$config" 'if type=="array" and all(.[]; (.config_dir|type)=="string") then ([.[]|.config_dir]+[$d]|unique[]|.+"/sessions") else error("inventory") end' <<<"$inventory")" || return 2
       match_filter='[inputs|fromjson?|select(.type=="event_msg" and .payload.type=="user_message")|.payload.message]'"$id_match" ;;
     pi) roots="$(pi_relaunch_root "$cwd" "$home")" || return 2; match_filter='[inputs|fromjson?|select(.type=="message" and .message.role=="user")|.message.content]'"$id_match" ;;
+    copilot)
+      config="${COPILOT_HOME:-$home/.copilot}"; [[ "${LANE_ENV%%=*}" != COPILOT_HOME ]] || config="${LANE_ENV#*=}"
+      roots="$config/session-state"
+      cwd="$(cd -- "$cwd" && pwd -P)" || return 2 ;;
   esac
   [[ "$TRACKER" != github ]] || item="#$item"
   while IFS= read -r root; do
@@ -95,12 +113,18 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
     # Only direct project children are lead transcripts; other stores recurse.
     if [[ "$harness" == claude ]]; then
       files="$(find -H "$root" -mindepth 2 -maxdepth 2 -type f -name '*.jsonl' -print 2>/dev/null)" || return 2
+    elif [[ "$harness" == copilot ]]; then
+      files="$(find -H "$root" -mindepth 2 -maxdepth 2 -type f -name workspace.yaml -print 2>/dev/null)" || return 2
     else
       files="$(find -H "$root" -type f -name '*.jsonl' -print 2>/dev/null)" || return 2
     fi
     while IFS= read -r file; do
       [[ -n "$file" ]] || continue
-      if jq -Rne --arg i "$item" "$match_filter" "$file" >/dev/null 2>&1; then
+      if [[ "$harness" == copilot ]]; then
+        recorded="$(copilot_session_cwd "$file")" || return 2
+        [[ "$recorded" == "$cwd" ]] || continue
+        [[ -n "$best" && ! "$file" -nt "$best" ]] || { best="$file"; best_root="$root"; }
+      elif jq -Rne --arg i "$item" "$match_filter" "$file" >/dev/null 2>&1; then
         [[ -n "$best" && ! "$file" -nt "$best" ]] || { best="$file"; best_root="$root"; }
       else rc=$?; [[ "$rc" -eq 1 ]] || return 2; fi
     done <<<"$files"
@@ -115,15 +139,17 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
   printf '%s\n' "$best"
 }
 # The id a harness resumes a transcript by: the file's basename for claude,
-# the session_meta id inside a codex transcript, and the file itself for pi,
-# whose --session takes a path. Empty is a transcript the harness cannot
-# resume, and a failure.
+# the session_meta id inside a codex transcript, the file itself for pi,
+# whose --session takes a path, and the `id:` line of a copilot session's
+# workspace.yaml. Empty is a transcript the harness cannot resume, and a
+# failure.
 session_id_of() { # HARNESS SESSION_FILE
   local id=""
   case "$1" in
     claude) id="$(basename "$2" .jsonl)" ;;
     codex) id="$(jq -Rrn 'first(inputs|fromjson?|select(.type=="session_meta")|.payload.id)//empty' "$2")" ;;
     pi) id="$2" ;;
+    copilot) id="$(awk 'index($0, "id: ") == 1 { print substr($0, 5); exit }' "$2")" || return 1 ;;
   esac
   [[ -n "$id" ]] || return 1
   printf '%s\n' "$id"

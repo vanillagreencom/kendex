@@ -55,7 +55,7 @@ Lane side, rooted at the lane's own git worktree:
               moving no cursor. With --ack N, print nothing and advance
               to-lane.cursor to N, the count a --peek printed, never back and
               never past an unread halt
-  watch --item ITEM [--root ROOT] [--interval S]
+  watch --item ITEM [--root ROOT] [--interval S] [--once]
               the lane's standing mailbox monitor, run under its harness's
               background wake. Every --interval, when envelopes `inbox` would
               print lie past to-lane.cursor and this watch has not announced
@@ -69,7 +69,10 @@ Lane side, rooted at the lane's own git worktree:
               Each poll rewrites to-lane.watch, the liveness record a send's
               receipt reads. Moves no cursor, runs until it is stopped, and
               refuses `mailbox-missing` when the mailbox directory is absent
-              at its start or removed while it runs
+              at its start or removed while it runs. With --once it exits 0
+              after its first announcement, withdrawing to-lane.watch, for a
+              harness whose only background wake is a command's exit: the
+              lane re-arms it once it has read what it announced
 
 Overseer side:
   send --item ITEM (--re MSGID | --directive | --halt) --file PATH
@@ -216,6 +219,7 @@ Options:
                 send and resolve only: the sender's name for this delivery
   --timeout S   seconds before `wait` exits 124; 0 never times out
   --interval S  seconds between `wait` and `watch` polls (default 5)
+  --once        watch only: exit after the first announcement
 
 Header, the first line drain and inbox --peek print: `count=<complete lines>
 first=<id>`, the id carried by the file's first line, empty when that line is
@@ -243,7 +247,9 @@ to-lane.watch, `at=<epoch> interval=<s>` rewritten by `watch` at every poll,
 is no older than twice its interval plus five seconds by the sender's clock,
 so a monitor is polling that mailbox and wakes its lane; it is `none`
 otherwise, and a Claude Code, Codex or Pi lane needs a wake while a lane on
-another harness takes none. A `peer send` writes a peer's overseer mailbox, so
+another harness takes none. A Copilot lane's `none` is a `watch --once` that
+announced and is not yet re-armed, and the re-armed watch announces what
+still stands unread. A `peer send` writes a peer's overseer mailbox, so
 its receipt always names item `overseer` rather than the repository it reached.
 Silence is not a success: a send that printed no receipt appended nothing.
 
@@ -435,6 +441,7 @@ WAIT_GIVEN=0
 DUE=0
 DEFAULT=0
 DELIVERY_ID=""
+ONCE=0
 
 need_val() { [ "$#" -ge 2 ] && [ -n "${2:-}" ] || refuse missing-value "$1"; }
 
@@ -468,6 +475,7 @@ while [ "$#" -gt 0 ]; do
     --text) need_val "$@"; FILE="$2"; shift 2 ;;
     --default) DEFAULT=1; shift ;;
     --delivery-id) need_val "$@"; DELIVERY_ID="$2"; shift 2 ;;
+    --once) ONCE=1; shift ;;
     --help | -h) usage; exit 0 ;;
     *) refuse option-unknown "$1" ;;
   esac
@@ -525,6 +533,7 @@ for given in $OPTS_GIVEN; do
       esac ;;
     --text | --default) [ "$VERB" = resolve ] || refuse option-unknown "$given" ;;
     --delivery-id) case "$VERB" in send | resolve) ;; *) refuse option-unknown --delivery-id ;; esac ;;
+    --once) [ "$VERB" = watch ] || refuse option-unknown --once ;;
   esac
 done
 
@@ -1485,6 +1494,10 @@ case "$VERB" in
       if [ "$NEW" -ne 0 ]; then
         REFUSE_EXTRA="new=$NEW" lm_message mail "$ITEM"
         printf '%s\n' "$WATCH_READ"
+        # The exit is the wake, and the EXIT trap above withdraws the
+        # liveness record with it, so a send meanwhile reads the monitor as
+        # the none it is until the lane re-arms.
+        [ "$ONCE" -eq 0 ] || exit 0
       fi
       ANNOUNCED="$(lm_count "$WORK_DIR/lane.jsonl")"
       # The copies of the mailbox this poll read go before the wait, so a

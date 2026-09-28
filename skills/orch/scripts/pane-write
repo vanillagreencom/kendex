@@ -21,13 +21,14 @@ runs the process meant. Nothing is typed on a refusal.
   --pane PANE      a pane id (%N) the caller proved, such as the one
                    tmux new-window -P printed for a window it opened
   --expect PROCESS the process the pane must run: the lane's harness (claude,
-                   codex, pi), ssh for a lane whose record carries host, or
-                   shell for a window just opened, which accepts bash, zsh,
-                   fish, sh, dash and tmux's default-shell, read again for up
-                   to $PANE_WRITE_SETTLE_SECS (default 2, 0-99) while a
+                   codex, pi, copilot), ssh for a lane whose record carries
+                   host, or shell for a window just opened, which accepts bash,
+                   zsh, fish, sh, dash and tmux's default-shell, read again for
+                   up to $PANE_WRITE_SETTLE_SECS (default 2, 0-99) while a
                    default-command wrapper holds the pane. For any name but
                    shell, the pane's foreground command, or the pane process or
-                   a process below it, must carry the name
+                   a process below it, must carry the name; copilot's process
+                   carries MainThread on Linux, which it matches too
   --file PATH      paste the file's bytes as one bracketed paste, then Enter
   --key KEY        press one key: Enter, Up, Down, C-c or a digit 0-9
 
