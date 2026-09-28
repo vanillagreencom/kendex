@@ -29,8 +29,8 @@
 # It writes the record's `cycle` object, appends one `cycle` row to the fleet
 # log, and prints the same line:
 #   cycle item=ITEM pr=N class=C tier=T target=S actual=S verdict=V phase=P
-#     phase_secs=S missing=A,B review=N fix=N bot=N full_validations=N
-#     escaped=B refixed=B
+#     phase_secs=S cause=W bot_wait=S thread_fix=S paused=S missing=A,B
+#     review=N fix=N bot=N full_validations=N escaped=B refixed=B
 # (one line). A value it could not read prints `-`.
 #   stamps    launched (the record's launched_at), first_commit, pr_opened,
 #             gate_green, ci_green, armed (armed, else queued), merged
@@ -43,15 +43,33 @@
 #   phase     the longest gap between two consecutive stamps in time order,
 #             named by the stamp that ends it; the earliest wins a tie. Null
 #             while any stamp is missing, since a missing stamp joins two gaps
+#   gate waits  the gap that ends at gate_green, split into the waits it
+#             holds, which sum to it:
+#               paused      the lane was parked or walled: the lane record's
+#                           `pauses`, and a `parked` still standing, which runs
+#                           on past the gap; a record whose pauses do not read
+#                           refuses as pauses-unreadable
+#               bot_wait    the rest of the time after a push up to the next
+#                           bot review: the bot reviewing the push
+#               thread_fix  the rest of the time after a bot review up to the
+#                           next push or the gate: the lane working the threads
+#             the gap opens in the wait the latest push or bot review before
+#             it opened, bot_wait where there is neither
+#             pushes and bot reviews are pr-timeline's `push_times` and
+#             `bot_review_times`. Null while any stamp is missing
+#   cause     the largest gate wait, the earlier of bot_wait, thread_fix and
+#             paused winning a tie, where the phase is gate_green; null on any
+#             other phase
 #   escaped   a micro tier whose merged class is small or standard, or a small
 #             tier whose merged class is standard
 #   refixed   a push landed after the first review-gate pass; null where no
 #             gate pass or no push was read
 # When this record makes the third miss on one phase among the fleet's
 # records, it also prints and logs
-#   repeat-miss phase=P items=A,B,C
-# which is the bar for filing a CI or process issue in that repository. A
-# record that was already a miss on that phase does not make it again.
+#   repeat-miss phase=P items=A,B,C causes=W,W,W
+# which is the bar for filing a CI or process issue in that repository;
+# causes names each item's cause in the order of items. A record that was
+# already a miss on that phase does not make it again.
 #
 # rollup prints, and appends to the fleet log, one row per class with any
 # recorded lane, in the order of the target table, then unclassified; with no
@@ -64,8 +82,8 @@
 #
 # Every refusal's first stderr line is `oversee-cycle: KEY=VALUE`.
 # Exit status: 0 done; 1 a refusal (state-missing, state-unreadable,
-# record-missing, timeline-failed, not-merged, state-write-failed,
-# fleet-log-failed); 2 usage.
+# record-missing, pauses-unreadable, timeline-failed, not-merged,
+# state-write-failed, fleet-log-failed); 2 usage.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -241,8 +259,32 @@ else
   class_cause="$CHANGE_CLASS_CAUSE"
 fi
 
-cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson rounds "$rounds" \
+# The lane's pauses in epoch seconds: each one the record keeps, and a park
+# still standing, which no relaunch has closed.
+pauses="$(jq -c '[(.pauses // [])[] | {from: (.from | fromdate), to: (if .to == null then null else .to | fromdate end)}]
+  + (if .parked.at == null then [] else [{from: (.parked.at | fromdate), to: null}] end)' <<<"$lane" 2>"$WORK/pauses.err")" \
+  || refuse pauses-unreadable "$ITEM" "$WORK/pauses.err"
+
+cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson rounds "$rounds" --argjson pauses "$pauses" \
   --argjson targets "$TARGETS" --arg class "$class" --arg cause "$class_cause" --arg tier "$TIER" '
+  # The gate waits of the gap FROM..TO, epoch seconds: an instant a pause
+  # covers is paused, any other is the wait the latest push or bot review at
+  # or before it opened, bot_wait where neither came yet. A push and a bot
+  # review in one second read the push first.
+  def gate_waits($from; $to):
+    ($pauses | map({a: ([.from, $from] | max), b: ([.to // $to, $to] | min)})
+     | map(select(.b > .a)) | sort_by(.a)
+     | reduce .[] as $p ([]; if length > 0 and $p.a <= .[-1].b
+         then .[-1].b = ([.[-1].b, $p.b] | max) else . + [$p] end)) as $union
+    | def paused($a; $b): [$union[] | ([.b, $b] | min) - ([.a, $a] | max) | select(. > 0)] | add // 0;
+    ([$t.push_times[] | {at: fromdate, wait: "bot_wait"}] + [$t.bot_review_times[] | {at: fromdate, wait: "thread_fix"}]
+     | sort_by(.at, .wait)) as $events
+    | ([{at: $from, wait: ([$events[] | select(.at <= $from)] | last | .wait // "bot_wait")}]
+       + [$events[] | select(.at > $from and .at < $to)] + [{at: $to}])
+    | [range(1; length) as $i | {wait: .[$i - 1].wait, secs: ((.[$i].at - .[$i - 1].at) - paused(.[$i - 1].at; .[$i].at))}]
+    | {bot_wait: ([.[] | select(.wait == "bot_wait") | .secs] | add // 0),
+       thread_fix: ([.[] | select(.wait == "thread_fix") | .secs] | add // 0),
+       paused: paused($from; $to)};
   $t.stamps as $s
   | {launched: $lane.launched_at, first_commit: $s.first_commit, pr_opened: $s.created,
      gate_green: $s.gate_met, ci_green: $s.ci_green, armed: ($s.armed // $s.queued),
@@ -257,11 +299,17 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
   | (if ($missing | length) > 0 then {phase: null, secs: null} else
        [range(1; $seq | length) as $i | {phase: $seq[$i].name, secs: ($seq[$i].at - $seq[$i - 1].at)}]
        | sort_by(- .secs) | first end) as $dominant
+  | ($seq | map(.name) | index("gate_green")) as $gate
+  | (if ($missing | length) > 0 or $gate == 0 then null
+     else gate_waits($seq[$gate - 1].at; $seq[$gate].at) end) as $waits
   | {pr: $t.pr, class: $class, class_cause: (if $cause == "" then null else $cause end),
      tier: $tier, stamps: $stamps, target: $target, actual: $actual,
      verdict: (if $class == null then "unclassified" elif $actual == null then "unmeasured"
                elif $actual > $target then "miss" else "met" end),
-     phase: $dominant.phase, phase_secs: $dominant.secs, missing: $missing, rounds: $rounds,
+     phase: $dominant.phase, phase_secs: $dominant.secs, gate_waits: $waits,
+     cause: (if $dominant.phase != "gate_green" or $waits == null then null
+             else $waits | to_entries | sort_by(- .value) | first.key end),
+     missing: $missing, rounds: $rounds,
      escaped: (if $class == null then null
                else ($tier == "micro" and ($class | IN("small", "standard")))
                  or ($tier == "small" and $class == "standard") end),
@@ -276,6 +324,8 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
 line="$(jq -r --arg item "$ITEM" 'def n: if . == null then "-" else tostring end;
   "cycle item=\($item) pr=\(.pr) class=\(.class | n) tier=\(.tier) target=\(.target | n)"
   + " actual=\(.actual | n) verdict=\(.verdict) phase=\(.phase | n) phase_secs=\(.phase_secs | n)"
+  + " cause=\(.cause | n) bot_wait=\(.gate_waits.bot_wait | n) thread_fix=\(.gate_waits.thread_fix | n)"
+  + " paused=\(.gate_waits.paused | n)"
   + " missing=\(if .missing == [] then "-" else .missing | join(",") end)"
   + " review=\(.rounds.review | n) fix=\(.rounds.fix | n) bot=\(.rounds.bot | n)"
   + " full_validations=\(.rounds.full_validations | n) escaped=\(.escaped | n) refixed=\(.refixed | n)"' <<<"$cycle")"
@@ -299,8 +349,10 @@ repeat="$(jq -r --argjson cycle "$cycle" --argjson prior "$(jq -c '.cycle // nul
      or ($prior.verdict == "miss" and $prior.phase == $cycle.phase)
   then empty else
     [.lanes[]? | select(.cycle.verdict == "miss")
-               | select(.cycle.phase == $cycle.phase) | .item]
-    | select(length == 3) | "repeat-miss phase=\($cycle.phase) items=\(join(","))" end' "$STATE_FILE")" \
+               | select(.cycle.phase == $cycle.phase)]
+    | select(length == 3)
+    | "repeat-miss phase=\($cycle.phase) items=\(map(.item) | join(","))"
+      + " causes=\(map(.cycle.cause // "-") | join(","))" end' "$STATE_FILE")" \
   || refuse state-unreadable "$STATE_FILE"
 if [[ -n "$repeat" ]]; then
   log_row "$ITEM" "$repeat"

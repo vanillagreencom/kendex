@@ -33,7 +33,10 @@ Output, one JSON object on stdout:
     "created":          the PR opened,
     "last_push":        the later of the final head's committer date and the
                         last force push,
-    "first_bot_review": the first review a Bot account submitted,
+    "first_bot_review": the first review a Bot account other than the PR's
+                        author submitted: a lane that opens its PR as an app
+                        answers its threads in reviews of its own, which are
+                        no bot's review of the PR,
     "first_gate_met":   the first success the gate context posted on any head
                         the PR carried, force-pushed-over heads included,
                         read from each head's whole status history, since a
@@ -49,7 +52,11 @@ Output, one JSON object on stdout:
                          final head,
   "ci_merge_group_secs": the same over the merge commit's merge_group runs,
   "open_secs":           created to merged,
-  "bot_reviews":         reviews submitted by Bot accounts
+  "bot_reviews":         reviews submitted by Bot accounts other than the
+                         PR's author,
+  "push_times":          every push the PR carries, ascending and unique: each
+                         commit's committer date and each force push,
+  "bot_review_times":    each of those Bot reviews' submission, ascending
 }
 
 Every stamp is ISO 8601 UTC, and every stamp and duration is null where the
@@ -102,12 +109,12 @@ RUNS_PAGE_QUERY='query runsPage($id: ID!, $cursor: String!) {
 QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      number state createdAt mergedAt
+      number state createdAt mergedAt author { login }
       mergeCommit { oid ...suites }
       firstCommit: commits(first: 1) { nodes { commit { authoredDate } } }
       headCommit: commits(last: 1) { nodes { commit { oid committedDate ...gate ...suites } } }
-      commits(last: 100) { totalCount nodes { commit { oid } } }
-      reviews(first: 100) { totalCount nodes { submittedAt author { __typename } } }
+      commits(last: 100) { totalCount nodes { commit { oid committedDate } } }
+      reviews(first: 100) { totalCount nodes { submittedAt author { __typename login } } }
       timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, AUTO_MERGE_ENABLED_EVENT, ADDED_TO_MERGE_QUEUE_EVENT]) {
         pageInfo { hasNextPage }
         nodes {
@@ -220,7 +227,8 @@ def secs($a; $b): if $a == null or $b == null then null else ($b | fromdate) - (
   suites($head) as $head_suites
   | [if $p.mergeCommit == null then empty else suites($p.mergeCommit)[] | select(.workflowRun.event == "merge_group") end] as $group_suites
   | [$p.timelineItems.nodes[] | select(.__typename == "HeadRefForcePushedEvent")] as $pushes
-  | [$p.reviews.nodes[] | select(.author.__typename == "Bot" and .submittedAt != null)] as $bot
+  | [$p.reviews.nodes[] | select(.author.__typename == "Bot" and .submittedAt != null
+      and .author.login != $p.author.login)] as $bot
   | {
       first_commit: ($p.firstCommit.nodes[0].commit.authoredDate // null),
       created: $p.createdAt,
@@ -241,7 +249,9 @@ def secs($a; $b): if $a == null or $b == null then null else ($b | fromdate) - (
       ci_merge_group_secs: null,
       _checks: {head: rollup($head_suites), group: rollup($group_suites)},
       open_secs: secs($stamps.created; $stamps.merged),
-      bot_reviews: ($bot | length)
+      bot_reviews: ($bot | length),
+      push_times: ([$p.commits.nodes[].commit.committedDate, ($pushes[] | .createdAt)] | map(select(. != null)) | unique),
+      bot_review_times: ($bot | map(.submittedAt) | sort)
     }
   end'
 

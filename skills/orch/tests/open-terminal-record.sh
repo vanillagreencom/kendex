@@ -459,15 +459,18 @@ echo "=== a relaunch of a parked record starts its sandbox before create --relau
 # lane-close --park left the record parked with its sandbox stopped. The
 # relaunch asks the provider to start it, requires the protocol's line, and
 # only then creates with --relaunch; the record it rewrites reads running and
-# carries no `parked`. A start that fails, or answers without the line,
-# fails the item before any create, and the record stays parked.
-"$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-65")) |= (.status = "parked" | .parked = {pr: 65, head: "abc", repo: "o/r", at: "t"})' >/dev/null
+# carries no `parked`, the park kept as a pause from its time to the start.
+# A start that fails, or answers without the line, fails the item before any
+# create, and the record stays parked.
+PARKED_AT=2026-09-20T10:00:00Z
+PAUSE_READ='[.lanes[] | select(.item == "CC-65") | .pauses[-1] | [.from, .cause, (.to | fromdate) > (.from | fromdate)]] | first'
+"$WS" --state-dir "$STATE" update oversee --arg at "$PARKED_AT" '(.lanes[] | select(.item == "CC-65")) |= (.status = "parked" | .parked = {pr: 65, head: "abc", repo: "o/r", at: $at})' >/dev/null
 : > "$TMP_ROOT/host.log"
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
   run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-65
-assert_eq "rc=$RC started=$(grep -c '^open-terminal: host-started item=CC-65 ' <<<"$OUT" || true) order=$(awk '$1 == "start" || $1 == "create" { print $1 }' "$TMP_ROOT/host.log" | paste -sd, -) start=$(grep -c '^start --item CC-65 $' "$TMP_ROOT/host.log" || true) status=$(field "$(record CC-65)" status) parked=$("$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "CC-65") | has("parked")] | first')" \
-  "rc=0 started=1 order=start,create start=1 status=running parked=false" \
-  "a parked record's relaunch starts the sandbox, then creates with --relaunch, and the running record drops parked"
+assert_eq "rc=$RC started=$(grep -c '^open-terminal: host-started item=CC-65 ' <<<"$OUT" || true) order=$(awk '$1 == "start" || $1 == "create" { print $1 }' "$TMP_ROOT/host.log" | paste -sd, -) start=$(grep -c '^start --item CC-65 $' "$TMP_ROOT/host.log" || true) status=$(field "$(record CC-65)" status) parked=$("$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "CC-65") | has("parked")] | first') pause=$("$WS" --state-dir "$STATE" get oversee "$PAUSE_READ" | jq -c .)" \
+  "rc=0 started=1 order=start,create start=1 status=running parked=false pause=[\"$PARKED_AT\",\"parked\",true]" \
+  "a parked record's relaunch starts the sandbox, then creates with --relaunch, and the running record drops parked and keeps it as a pause"
 for row in 'LANE_HOST_STUB_START_STATUS=1|host-start-failed item=CC-65 exit=1' 'LANE_HOST_STUB_START_OUT=|host-start-failed item=CC-65 cause=answer-unparsed'; do
   IFS='|' read -r plant expect <<<"$row"
   "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-65")) |= (.status = "parked" | .parked = {pr: 65, head: "abc", repo: "o/r", at: "t"})' >/dev/null
@@ -491,6 +494,17 @@ STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/hos
 assert_eq "rc=$RC started=$(grep -c '^open-terminal: host-started item=CC-65 host=.* status=stopped$' <<<"$OUT" || true) creates=$(grep -c '^create ' "$TMP_ROOT/host.log" || true) status=$(field "$(record CC-65)" status) parked=$("$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "CC-65") | has("parked")] | first')" \
   "rc=75 started=1 creates=1 status=stopped parked=false" \
   "a create that fails after a confirmed start leaves the record stopped with parked dropped, the sandbox being up"
+# The control: a copy of the launcher whose unpark drops the park without
+# keeping it, beside links to its helpers in a git repo of its own.
+UNPAUSED_OT="$(mutant_scripts unpaused open-terminal)/open-terminal" || exit 1
+git -C "$TMP_ROOT/unpaused" init -q
+orch_fixture_shared_libs "$TMP_ROOT/unpaused"
+mutate_file "$UNPAUSED_OT" '  else .pauses = ((.pauses // []) + [{from: .parked.at, to: $at, cause: "parked"}]) end) | del(.parked);'"'" '  else . end) | del(.parked);'"'"
+"$WS" --state-dir "$STATE" update oversee --arg at "$PARKED_AT" '(.lanes[] | select(.item == "CC-65")) |= (del(.pauses) | .status = "parked" | .parked = {pr: 65, head: "abc", repo: "o/r", at: $at})' >/dev/null
+STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
+  run_ot SCRIPT="$UNPAUSED_OT" --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-65
+assert_eq "rc=$RC pauses=$("$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "CC-65") | .pauses // [] | length] | first')" "rc=0 pauses=0" \
+  "control: without the pause the unpark keeps, a relaunch loses the parked time"
 # A stopped record, --keep-sandbox's, is not parked: its sandbox is up and the
 # relaunch asks for no start.
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-65")) |= (.status = "stopped")' >/dev/null

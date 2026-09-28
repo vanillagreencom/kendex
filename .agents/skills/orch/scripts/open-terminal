@@ -1043,6 +1043,12 @@ launch_ambient_codex_home() {
   ( CODEX_HOME="$ambient"; lane_context_caller_cfg codex )
 }
 
+# unpark(AT): a lane record with its `parked` dropped and, where that park
+# carried its time, the park appended to `pauses` as {from, to: AT, cause}.
+# The one spelling of ending a park, for both writes that end one.
+UNPARK_JQ='def unpark($at): (if .parked.at == null then .
+  else .pauses = ((.pauses // []) + [{from: .parked.at, to: $at, cause: "parked"}]) end) | del(.parked);'
+
 # One lane record per item in the oversee workflow state WORKFLOW_STATE_ARGS
 # addresses, which is what oversee-watch --state reads the live fleet from.
 # The shell always builds the complete record; the jq filter is the one judge
@@ -1065,6 +1071,8 @@ launch_ambient_codex_home() {
 # does so, which a relaunch renews and a wake keeps: oversee-watch measures a
 # lane's start from it, never from launched_at, which a background
 # preparation precedes and a relaunch keeps.
+# The park it drops is kept as one of the record's `pauses`, closed at the
+# resume, since oversee-cycle reads a lane's parked time from them.
 lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATUS]
   # LAUNCHED_AT was read before the terminal opened: the first record's value
   # is the floor the watch applies to merges and new issues, and the model is
@@ -1093,10 +1101,10 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   # update-report, so the refusal and the write are one locked step: a wake
   # that names no entry leaves the state as it was and reports so.
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
-    '(.lanes // []) as $l
+    "$UNPARK_JQ"'(.lanes // []) as $l
      | ($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at, .over_cap) else . end) as $patch
      | if any($l[]; .item == $rec.item)
-       then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare, .parked) end) + $patch else . end))), report: "rewritten"}
+       then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) | unpark($rec.launched_at) end) + $patch else . end))), report: "rewritten"}
        elif $mode == "wake" then {state: ., report: "unrecorded"}
        else {state: (.lanes = $l + [$rec]), report: "appended"} end' --argjson rec "$rec" --arg mode "$mode")" || return 1
   [[ "$report" != '"unrecorded"' ]] || return 2
@@ -2622,8 +2630,9 @@ for raw in "${ITEMS[@]}"; do
     # in it, which is what stopped means, so a create that fails from here
     # leaves a record a plain relaunch recovers, never a parked one over a
     # running sandbox. lane_record_write rewrites it running on success.
+    started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update oversee --arg item "$wt_id" \
-        '(.lanes[] | select(.item == $item)) |= (del(.parked) | .status = "stopped")' >/dev/null; then
+        --arg at "$started_at" "$UNPARK_JQ"'(.lanes[] | select(.item == $item)) |= (unpark($at) | .status = "stopped")' >/dev/null; then
       ot_message parked-record-failed "item=$item" >&2
       failed=$((failed + 1))
       continue

@@ -1965,6 +1965,24 @@ lane_row_prune() {
 # names from sharing one snapshot and classifying each other's screens.
 LANE_OBS=""
 LANE_TURNS=()
+# wall_pause LANE SEEN_AT — the wall this watch first saw on LANE's pane at
+# SEEN_AT, epoch, and sees no longer this pass, kept as {from, to, cause} in
+# the `pauses` of the last lane record whose window LANE names: oversee-cycle
+# reads a lane's walled time from there and nowhere else. The pass that sees
+# the banner gone, replaced or its window gone is the wall's end, so the pause
+# runs to that pass. A window no record names keeps nothing. A write that
+# fails is said and the pass goes on, since the wall's history is not what
+# the overseer acts on.
+wall_pause() { # LANE SEEN_AT
+  local errf="$WORK_DIR/wall-pause.err"
+  [[ "$2" =~ ^[0-9]+$ && "$2" -lt "$PASS_NOW" ]] || return 0
+  "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update oversee \
+    --arg window "$1" --argjson from "$2" --argjson to "$PASS_NOW" \
+    '([(.lanes // []) | to_entries[] | select(.value.window == $window) | .key] | last) as $i
+     | if $i == null then . else .lanes[$i].pauses += [{from: ($from | todate), to: ($to | todate), cause: "walled"}] end' \
+    >/dev/null 2>"$errf" || { ow_message wall-unrecorded "lane=$1" >&2; cat -- "$errf" >&2; }
+}
+
 lane_field() { awk -F'\t' -v i="$2" -v field="$3" '$1 == i { print $field }' <<<"$1"; }
 lane_obs_state() { lane_field "$1" "$2" 2; }
 lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
@@ -2024,7 +2042,7 @@ observe_lanes() {
   LANE_TURNS=()
   LANE_ROWS=()
   [[ ${#LANES[@]} -gt 0 ]] || return 0
-  local lane target pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
+  local lane kind target pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
   local banner banner_rc reset_key seen_at seen_pane seen_reported seen_key
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
@@ -2033,6 +2051,10 @@ observe_lanes() {
     if ! lane_window_listed "$lane"; then
       LANE_OBS+="$i"$'\t'"gone"$'\t\t\t\n'
       state="$(lane_row_clear lane-asking "$state" "$lane")"
+      if ! prior="$(lane_row_get usage-limit "$state" "$lane")"; then
+        die state-read-failed "" "lane=$lane" "row=usage-limit"
+      fi
+      [[ -z "$prior" ]] || wall_pause "$lane" "${prior%%|*}"
       state="$(lane_row_clear usage-limit "$state" "$lane")"
       state="$(lane_row_clear model-capacity "$state" "$lane")"
       state="$(lane_row_clear lane-exited "$state" "$lane")"
@@ -2090,14 +2112,22 @@ observe_lanes() {
     reset_key="$(usage_reset_key "$banner")"
     prior="$(lane_row_get usage-limit "$state" "$lane")"
     if [[ -n "$banner" ]]; then
-      seen_pane=""; seen_key=""
+      seen_at=""; seen_pane=""; seen_key=""
       [[ -z "$prior" ]] || IFS='|' read -r seen_at seen_pane seen_reported seen_key <<<"$prior"
-      [[ "$seen_pane" == "$key" && "$seen_key" == "$reset_key" ]] \
-        || state="$(lane_row_set usage-limit "$state" "$lane" "$PASS_NOW|$key||$reset_key")"
+      if [[ "$seen_pane" != "$key" || "$seen_key" != "$reset_key" ]]; then
+        [[ -z "$prior" ]] || wall_pause "$lane" "$seen_at"
+        state="$(lane_row_set usage-limit "$state" "$lane" "$PASS_NOW|$key||$reset_key")"
+      fi
     else
+      [[ -z "$prior" ]] || wall_pause "$lane" "${prior%%|*}"
       state="$(lane_row_clear usage-limit "$state" "$lane")"
     fi
   done
+  # A wall on a window that left the fleet ends with it.
+  while IFS=$'\t' read -r kind lane prior; do
+    [[ "$kind" == usage-limit ]] && ! window_listed "$lane" || continue
+    wall_pause "$lane" "${prior%%|*}"
+  done <<<"$state"
   state="$(lane_row_prune usage-limit "$state" "${LANES[@]}")"
   state="$(lane_row_prune model-capacity "$state" "${LANES[@]}")"
   state="$(lane_row_prune lane-exited "$state" "${LANES[@]}")"

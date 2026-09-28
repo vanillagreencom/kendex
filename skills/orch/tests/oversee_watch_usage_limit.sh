@@ -387,6 +387,56 @@ expect="rc=0 first=EVENT+usage-limit+gh-1+resets=2026-09-02T16:50:00Z out~EVENT+
 assert_eq "$(watch "$expect")" "$expect" \
   "control: with the early exit restored the asking lane goes unreported" "$ERR"
 
+echo "=== a wall that ends is kept as a pause on the lane record ==="
+# The sighting row's first-seen time opens the pause and the pass that sees
+# the wall end closes it, on the lane record whose window is the walled one:
+# the banner gone from the screen, or the window gone. A window no record
+# names keeps nothing. PAUSES reads each record's pauses, item:from-to:cause.
+PAUSES='[.lanes[] | "\(.item):" + ((.pauses // []) | map("\(.from)-\(.to):\(.cause)") | join(","))] | join(" ")'
+next_pass() { rm -f -- "${STUB_DIR:?}/pane-gh-2.calls" "${STUB_DIR:?}/cmd-gh-2.calls"; }
+wall_then() { # NAME END — a wall on gh-2 at RESET_NOW, then END 600 s on
+  new_case "$1"
+  printf '{"triaged":[],"lanes":[{"item":"KEN-1","window":"gh-1"},{"item":"KEN-2","window":"gh-2"}]}\n' > "$STUB_DIR/oversee-state.json"
+  screen banner_idle
+  printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
+  run TZ=UTC
+  case "$2" in
+    cleared) screen healthy ;;
+    gone) printf 'gh-1\n' > "$STUB_DIR/windows.txt" ;;
+    *) echo "wall_then: unknown end $2" >&2; exit 1 ;;
+  esac
+  next_pass
+  printf '%s' "$((RESET_NOW + 600))" > "$STUB_DIR/now.epoch"
+  run TZ=UTC
+  jq -r "$PAUSES" "$STUB_DIR/oversee-state.json"
+}
+WALL_PAUSE="KEN-1: KEN-2:2026-09-02T16:00:00Z-2026-09-02T16:10:00Z:walled"
+while IFS='|' read -r label end; do
+  assert_eq "$(wall_then "wall_$end" "$end")" "$WALL_PAUSE" "$label" "$ERR"
+done <<'ROWS'
+a banner gone from the screen closes the wall at that pass, on the walled lane's record alone|cleared
+a window gone from the fleet closes its wall the same way|gone
+ROWS
+new_case wall_unrecorded_window
+printf '{"triaged":[],"lanes":[{"item":"KEN-1","window":"gh-1"}]}\n' > "$STUB_DIR/oversee-state.json"
+screen banner_idle
+printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
+run TZ=UTC
+screen healthy
+next_pass
+printf '%s' "$((RESET_NOW + 600))" > "$STUB_DIR/now.epoch"
+run TZ=UTC
+assert_eq "$(jq -r "$PAUSES" "$STUB_DIR/oversee-state.json") $(grep -c wall-unrecorded "$ERR" || true)" "KEN-1: 0" \
+  "a wall on a window no record names keeps nothing and says nothing" "$ERR"
+
+# The control: a copy of the watch whose pause write keeps nothing.
+PAUSE_DIR="$TMP_ROOT/unpaused"
+PAUSE_WATCH="$(mutant_scripts unpaused/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$PAUSE_DIR/github"
+mutate_file "$PAUSE_WATCH" '| if $i == null then . else .lanes[$i].pauses += [{from: ($from | todate), to: ($to | todate), cause: "walled"}] end' '| .'
+assert_eq "$(WATCH_BIN="$PAUSE_WATCH" wall_then wall_control cleared)" "KEN-1: KEN-2:" \
+  "control: without the pause write a wall that ended leaves the lane record with no walled time" "$ERR"
+
 cat > "$TMP_ROOT/bin/grep" <<'EOF'
 #!/usr/bin/env bash
 if [[ -f "$STUB_DIR/reset-grep-fail" && "${1:-}" == "-Em1" ]]; then

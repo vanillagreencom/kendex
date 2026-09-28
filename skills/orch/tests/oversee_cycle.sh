@@ -118,7 +118,8 @@ timeline() {
       stamps: {first_commit: $fc, created: $cr, last_push: $push, first_bot_review: null,
                first_gate_met: $fg, gate_met: $gate, ci_green: $ci, armed: $armed,
                queued: null, merged: $merged},
-      ci_head_secs: 60, ci_merge_group_secs: null, open_secs: null, bot_reviews: 0}' > "$CASE/timeline.json"
+      ci_head_secs: 60, ci_merge_group_secs: null, open_secs: null, bot_reviews: 0,
+      push_times: [$push], bot_review_times: []}' > "$CASE/timeline.json"
 }
 edit_json() { jq "$2" "$1" > "$1.new" && mv -- "$1.new" "$1"; } # FILE FILTER
 
@@ -169,7 +170,7 @@ echo "=== a class the classifier did not give is unclassified, never judged ==="
 new_case unclassified
 timeline 5401
 assert_eq "$(record KEN-1 standard)" \
-  "rc=0 cycle item=KEN-1 pr=7 class=- tier=standard target=- actual=5401 verdict=unclassified phase=merged phase_secs=4981 missing=- review=- fix=- bot=- full_validations=- escaped=- refixed=false" \
+  "rc=0 cycle item=KEN-1 pr=7 class=- tier=standard target=- actual=5401 verdict=unclassified phase=merged phase_secs=4981 cause=- bot_wait=180 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- escaped=- refixed=false" \
   "the classifier's refusal records no class and no target"
 assert_eq "$(head -n 1 "$CASE/err")" "oversee-cycle: class-unread cause=classifier-exit-2" "and names the cause on stderr"
 
@@ -208,7 +209,7 @@ timeline 1500 300 500
 jq -n '{first_panel: {agents: ["a"]}, rereview_cycles: 2, cycles: 5, pr_comment_review: {iterations: 4},
         validate_rounds: [{mode: "full"}, {mode: "range"}, {mode: "full"}]}' > "$REPO/tmp/workflow-state-KEN-2.json"
 assert_eq "$(record KEN-2 micro)" \
-  "rc=0 cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 actual=1500 verdict=miss phase=merged phase_secs=1080 missing=- review=3 fix=5 bot=4 full_validations=2 escaped=false refixed=true" \
+  "rc=0 cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 actual=1500 verdict=miss phase=merged phase_secs=1080 cause=- bot_wait=180 thread_fix=0 paused=0 missing=- review=3 fix=5 bot=4 full_validations=2 escaped=false refixed=true" \
   "the printed line: a miss whose longest gap ends at the merge, and a push after the first gate pass"
 assert_eq "$(state '.lanes[] | select(.item == "KEN-2") | .cycle | [.class, .tier, .verdict, .stamps]')" \
   "[\"micro\",\"micro\",\"miss\",{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":\"$(at 120)\",\"gate_green\":\"$(at 300)\",\"ci_green\":\"$(at 360)\",\"armed\":\"$(at 420)\",\"merged\":\"$(at 1500)\"}]" \
@@ -283,8 +284,8 @@ printf small > "$CASE/class"
 timeline 1100
 jq --arg armed "$(at 1010)" '.stamps.ci_green = null | .stamps.armed = $armed' "$CASE/timeline.json" > "$CASE/t" && mv -- "$CASE/t" "$CASE/timeline.json"
 got="$(record KEN-1 standard)"
-assert_eq "$(field verdict "$got") $(field phase "$got") $(field phase_secs "$got") $(field missing "$got")" \
-  "verdict=met phase=- phase_secs=- missing=ci_green" "the verdict stands, the phase is unnamed and the absent stamp is listed"
+assert_eq "$(field verdict "$got") $(field phase "$got") $(field phase_secs "$got") $(field bot_wait "$got") $(field missing "$got")" \
+  "verdict=met phase=- phase_secs=- bot_wait=- missing=ci_green" "the verdict stands, the phase and its gate waits are unnamed and the absent stamp is listed"
 
 new_case no-launch
 printf small > "$CASE/class"
@@ -299,10 +300,64 @@ new_case phase
 printf small > "$CASE/class"
 jq -n --arg merge "$MERGE" --arg fc "$(at 900)" --arg cr "$(at 960)" --arg gate "$(at 1000)" --arg ci "$(at 1010)" --arg m "$(at 1100)" \
   '{pr: 7, merge_commit: $merge, stamps: {first_commit: $fc, created: $cr, last_push: $cr, first_gate_met: null,
-    gate_met: $gate, ci_green: $ci, armed: null, queued: $gate, merged: $m}}' > "$CASE/timeline.json"
+    gate_met: $gate, ci_green: $ci, armed: null, queued: $gate, merged: $m}, push_times: [], bot_review_times: []}' > "$CASE/timeline.json"
 assert_eq "$(record KEN-3 micro)" \
-  "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1800 actual=1100 verdict=met phase=first_commit phase_secs=900 missing=- review=- fix=- bot=- full_validations=- escaped=true refixed=-" \
+  "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1800 actual=1100 verdict=met phase=first_commit phase_secs=900 cause=- bot_wait=40 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- escaped=true refixed=-" \
   "launch to first commit dominates, queued stands in for armed, a micro tier merged small escaped, and no gate pass leaves refixed unknown"
+
+echo "=== the gate_green phase is split into the waits it holds ==="
+# gate_timeline PUSHES REVIEWS MERGED: a PR whose gate_green gap, opened at
+# 120 to the gate at 3000, is the longest unless MERGED is late; CI 3060,
+# armed 3100. PUSHES and REVIEWS are space-separated seconds past T0, `-`
+# for none.
+gate_timeline() {
+  local lists
+  lists="$(jq -n --argjson t0 "$T0" --arg p "$1" --arg r "$2" \
+    'def times($s): [$s | split(" ")[] | select(. != "-" and . != "") | tonumber + $t0 | todate];
+     {push_times: times($p), bot_review_times: times($r)}')"
+  jq -n --arg merge "$MERGE" --arg fc "$(at 60)" --arg cr "$(at 120)" --arg gate "$(at 3000)" \
+    --arg ci "$(at 3060)" --arg armed "$(at 3100)" --arg merged "$(at "$3")" --argjson lists "$lists" \
+    '{pr: 7, merge_commit: $merge,
+      stamps: {first_commit: $fc, created: $cr, last_push: $cr, first_gate_met: $gate, gate_met: $gate,
+               ci_green: $ci, armed: $armed, queued: null, merged: $merged}} + $lists' > "$CASE/timeline.json"
+}
+# pauses PAUSES PARKED: the lane record's pauses, `from-to` pairs in seconds
+# past T0, and a park standing since PARKED, `-` for none of either.
+pauses() { # ITEM PAUSES PARKED
+  edit_json "$CASE/state/workflow-state-oversee.json" "$(jq -rn --argjson t0 "$T0" --arg item "$1" --arg p "$2" --arg k "$3" '
+    def iso: tonumber + $t0 | todate;
+    "(.lanes[] | select(.item == \($item | tojson))) |= (.pauses = \([$p | split(" ")[] | select(. != "-") | split("-")
+       | {from: (.[0] | iso), to: (.[1] | iso), cause: "walled"}] | tojson)"
+    + (if $k == "-" then ")" else " | .parked = {at: \($k | iso | tojson)})" end)')"
+}
+# One row per rule: the wait a push opens, the wait a bot review opens, a
+# pause taken out of the wait it falls in, pauses overlapping one another and
+# a park still standing, the wait the gap opens in read from before it, and a
+# phase other than gate_green.
+#   label|pushes|reviews|pauses|parked|merged|waits
+while IFS='|' read -r label pushes reviews paused parked merged want; do
+  [[ -n "$label" ]] || continue
+  new_case "split-${label// /-}"
+  printf micro > "$CASE/class"
+  gate_timeline "$pushes" "$reviews" "$merged"
+  pauses KEN-1 "$paused" "$parked"
+  got="$(record KEN-1 standard)"
+  assert_eq "$(field phase "$got") $(field cause "$got") $(field bot_wait "$got") $(field thread_fix "$got") $(field paused "$got")" "$want" "$label"
+done <<'ROWS'
+a push waits on a bot, a review on the lane, and a wall comes out of the wait it fell in|100 1400|400 1500 2000|600-1000|-|3200|phase=gate_green cause=thread_fix bot_wait=380 thread_fix=2100 paused=400
+a wall over most of the gap is the cause|100 1400|400 1500 2000|400-2900|-|3200|phase=gate_green cause=paused bot_wait=280 thread_fix=100 paused=2500
+overlapping pauses count once and a standing park runs to the gate|100 1400|400 1500 2000|2400-2600|2500|3200|phase=gate_green cause=thread_fix bot_wait=380 thread_fix=1900 paused=600
+a review before the gap opens it on the lane|1400|110 1500|-|-|3200|phase=gate_green cause=thread_fix bot_wait=100 thread_fix=2780 paused=0
+no push and no review is all bot wait|-|-|-|-|3200|phase=gate_green cause=bot_wait bot_wait=2880 thread_fix=0 paused=0
+another phase names no cause and keeps the split|100 1400|400 1500 2000|-|-|9000|phase=merged cause=- bot_wait=380 thread_fix=2500 paused=0
+ROWS
+new_case split-record
+printf micro > "$CASE/class"
+gate_timeline "100 1400" "400 1500 2000" 3200
+pauses KEN-1 600-1000 -
+record KEN-1 standard >/dev/null
+assert_eq "$(state '.lanes[] | select(.item == "KEN-1") | .cycle | [.cause, .gate_waits]')" \
+  '["thread_fix",{"bot_wait":380,"thread_fix":2100,"paused":400}]' "the lane record carries the cause and the gate waits"
 
 echo "=== refusals ==="
 new_case refusals
@@ -332,6 +387,8 @@ assert_eq "$(state '[.lanes[] | has("cycle")] | any')" "false" "and no refusal w
 #   f   a miss whose first commit at 4000 s makes that gap the phase
 #   n   a miss with CI green absent, so no phase is named
 #   ok  a met record at 800 s, its phase merged too
+#   g   a miss on gate_green whose longest wait is the thread fix
+#   w   the same miss with a wall over that wait
 echo "=== the repeat-miss bar ==="
 repeat_row() { # CASE SEQUENCE — prints the bar lines the last record printed
   local step kind item got="" armed
@@ -344,24 +401,27 @@ repeat_row() { # CASE SEQUENCE — prints the bar lines the last record printed
       f) timeline 5000; edit_json "$CASE/timeline.json" ".stamps.first_commit = \"$(at 4000)\"" ;;
       n) timeline 5000; edit_json "$CASE/timeline.json" '.stamps.ci_green = null' ;;
       ok) timeline 800 ;;
+      g) gate_timeline "100 1400" "400 1500 2000" 3200 ;;
+      w) gate_timeline "100 1400" "400 1500 2000" 3200; pauses "$item" 400-2900 - ;;
       *) echo "repeat_row: unknown step $step" >&2; exit 2 ;;
     esac
     got="$(record "$item" micro)"
   done
   grep '^repeat-miss' <<<"$got" || true
 }
-REPEAT_ROWS='third|m:1 m:2 m:3|repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3
+REPEAT_ROWS='third|m:1 m:2 m:3|repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3 causes=-,-,-
 met-record|m:1 m:2 m:3 ok:4|
 met-not-counted|ok:1 m:2 m:3|
 other-phase|m:1 m:2 f:3|
 unnamed-phase|n:1 n:2 n:3|
 recorded-again|m:1 m:2 m:3 m:3|
-fourth|m:1 m:2 m:3 m:4|'
+fourth|m:1 m:2 m:3 m:4|
+causes|g:1 w:2 g:3|repeat-miss phase=gate_green items=KEN-1,KEN-2,KEN-3 causes=thread_fix,paused,thread_fix'
 while IFS='|' read -r name sequence want; do
   assert_eq "$(repeat_row "repeat-$name" "$sequence")" "$want" "repeat bar, $name: $sequence"
 done <<<"$REPEAT_ROWS"
 repeat_row repeat-log "m:1 m:2 m:3" >/dev/null
-assert_eq "$(state '.fleet_log[-1].text')" '"repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3"' "the fleet log carries the bar line"
+assert_eq "$(state '.fleet_log[-1].text')" '"repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3 causes=-,-,-"' "the fleet log carries the bar line"
 
 # --- the rollup --------------------------------------------------------------
 echo "=== the rollup counts each class, its median and p90 ==="
@@ -423,6 +483,14 @@ new_case c-lane-root; printf micro > "$CASE/class"; timeline 1200
 edit_json "$CASE/state/workflow-state-oversee.json" "(.lanes[] | select(.item == \"KEN-5\")).mail_root = \"$ELSE\""
 assert_eq "$(field fix "$(record KEN-5 micro)")" "fix=-" \
   "control: read from the caller's checkout, another repository's lane has no rounds"
+
+control m-split oversee-cycle '     else gate_waits($seq[$gate - 1].at; $seq[$gate].at) end) as $waits' '     else null end) as $waits'
+new_case c-split; printf micro > "$CASE/class"
+gate_timeline "100 1400" "400 1500 2000" 3200
+pauses KEN-1 600-1000 -
+got="$(record KEN-1 standard)"
+assert_eq "$(field phase "$got") $(field cause "$got") $(field paused "$got")" "phase=gate_green cause=- paused=-" \
+  "control: without the split the gate_green phase stays undivided and names no cause"
 RUN_BIN=""
 
 echo
