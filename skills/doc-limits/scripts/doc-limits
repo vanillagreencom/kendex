@@ -46,9 +46,9 @@ blob sizes, so checkout conversion (eol=crlf, autocrlf) adds none, and an
 edit counts as growth once staged. REF is the tree the change is measured
 from: HEAD^1 of a pull request merge commit, or $(git merge-base HEAD BASE)
 for a branch checkout. A base branch tip that moved after the branch point
-charges its own edits to the change. Two changes passing against the same
-base put one document over its limit in a merge group only when each grows
-it by more than the margin.
+charges its own edits to the change. The check runs at pull-request time
+and is not wired into a merge group: a byte ceiling is a context budget and
+must not eject a group.
 No mode writes files or changes the index.
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -449,7 +449,7 @@ while IFS="$TAB" read -r oid f limit class; do
     violations=$((violations + 1))
   elif [ -n "$AGAINST_OID" ] && [ "$stored" -gt "$prior" ] && [ "$n" -gt "$((limit - margin))" ]; then
     notice document-near-limit path "$f" "doc-limits FAIL: $f: stored size grown from $prior to $stored bytes; its $n bytes are within the $margin-byte margin under $limit bytes (class $class)"
-    printf '  another change growing this document could carry it past the limit in a merge group where each change passes alone\n'
+    printf '  another change landing beside this one could carry this document past the limit, though each passes alone\n'
     remedy "$class"
     violations=$((violations + 1))
   fi

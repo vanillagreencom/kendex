@@ -355,9 +355,10 @@ check "the shard matrix expands ci-job-set's roster, in order, when nothing clas
 
 # The document byte ceilings and the work-marker scan run in the job a
 # `render` or `trivial` diff runs, and in no other, so every class that runs
-# any gated job runs both scans. Each `run:` line is read with the job it
-# sits in. The job a `render` diff runs is read off a merge group, where no
-# job held to the pull-request event runs beside it.
+# any gated job runs both scans on a pull request; on a merge group their
+# steps stand down, as the step table below holds. Each `run:` line is read
+# with the job it sits in. The job a `render` diff runs is read off a merge
+# group, where no job held to the pull-request event runs beside it.
 job_of_run() { # WORKFLOW COMMAND — the jobs whose `run:` line names it, sorted and spaced
   COMMAND="$2" awk '
     /^jobs:/ { in_jobs = 1; next }

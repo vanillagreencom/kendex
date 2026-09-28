@@ -2,11 +2,11 @@
 # Pins for doc-limits --against: a document the change grows into the margin
 # under its limit fails, and a run without --against judges the limit alone.
 #
-# Two pull requests that each grow one document pass their own runs and meet
-# over its limit only in the merge group that carries both. The pull request
-# run passes --against with the tree it is measured from, the merge commit's
-# first parent, and fails the growth while the document can still be split;
-# the merge group run passes no --against, so a group that fits merges.
+# Two pull requests that each grow one document pass their own runs and can
+# meet over its limit once both land. The pull request run passes --against
+# with the tree it is measured from, the merge commit's first parent, and
+# fails the growth while the document can still be split; no merge group run
+# is wired, because a byte ceiling is a budget and must not eject a group.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 unset DOC_LIMITS_CLASSES DOC_LIMITS_DEFAULT_CLASSES DOC_LIMITS_EXCLUDES DOC_LIMITS_SETTINGS_FILE DOC_LIMITS_MARGIN_PCT
@@ -97,7 +97,7 @@ while IFS='|' read -r label prior now pct mode rc first; do
   ROWS=$((ROWS + 1))
 done <<'ROWS'
 a pull request growing a document to one byte under its limit fails|900|1023|-|against|1|NEAR
-the merge group judging the same tree passes|900|1023|-|ceiling|0|OK
+a run without --against judging the same tree passes|900|1023|-|ceiling|0|OK
 growth to the margin's lower edge passes|900|1004|-|against|0|OK
 growth one byte into the margin fails|900|1005|-|against|1|NEAR
 a document left unchanged inside the margin passes|1023|1023|-|against|0|OK

@@ -12,8 +12,9 @@ name: Skill Tests
 # turns it and the changed paths into one `<lane>=true|false` line per gated
 # lane and the list of shell shards the changed packages select, and every
 # `if:` in this file reads one of those lines. Of the gated jobs, a `render`
-# or `trivial` diff runs the bot-instructions job alone, which also carries
-# the document byte ceilings and the work-marker scan. Every other diff, and
+# or `trivial` diff runs the bot-instructions job alone, which on a pull
+# request also carries the document byte ceilings and the work-marker scan.
+# Every other diff, and
 # a `trivial` one changing a path tools/rust-reads names, runs that job, the
 # shell shards its packages select and each other lane as `tools/ci-job-set`
 # selects it; the invariant comment there is the one statement of what each
@@ -320,10 +321,11 @@ jobs:
       # render reviews every later pull request under rules nobody chose.
       #
       # doc-limits also fails a document the pull request grows into the
-      # margin under its ceiling (DOC_LIMITS_MARGIN_PCT), measured from HEAD^1,
-      # so two pull requests passing against the same base put one document
-      # over its ceiling on main only when each grows it by more than the
-      # margin.
+      # margin under its ceiling (DOC_LIMITS_MARGIN_PCT). Growth measured from
+      # HEAD^1 cannot see a concurrent change to the classes or the exclusions,
+      # or another queued pull request's growth, so a document can still land
+      # on main over its ceiling; the next pull request's doc-limits step
+      # names it.
       - name: doc-limits (document byte ceilings)
         if: always() && github.event_name == 'pull_request'
         working-directory: candidate
@@ -725,7 +727,7 @@ jobs:
       # against roughly a third of that on Linux. `guards-scans` is the scans
       # below, each one pass over a tracked-file roster or the shell roster;
       # the document-set and work-marker scans run in the bot-instructions
-      # job instead, which every class runs. The 68 suite files after them are
+      # job instead, which every class runs, on a pull request. The 68 suite files after them are
       # the other two shards' work, and the ruff install rides with `guards-commit` because the suite
       # that needs it, commit-guards' own py-names.test.sh, runs there.
       #

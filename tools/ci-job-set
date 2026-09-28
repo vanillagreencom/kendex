@@ -88,10 +88,10 @@
 #     selection runs on the pull request that makes it. Any path under
 #     .github/ selects every shard.
 #   - A `render` or `trivial` diff runs bot_instructions alone, the one
-#     seconds-long verify job: its check, the document byte ceilings and the
-#     work-marker scan. The classifier proved a `render` diff by
-#     re-rendering it, and a `trivial` one is inside the docs path set and
-#     its line ceiling, or a plan of any size.
+#     seconds-long verify job: its check and, on a pull request, the
+#     document byte ceilings and the work-marker scan. The classifier
+#     proved a `render` diff by re-rendering it, and a `trivial` one is
+#     inside the docs path set and its line ceiling, or a plan of any size.
 #   - The exception: a `trivial` diff changing a path a tools/rust-reads
 #     include or manifest row names, or a path under a directory it names,
 #     takes the measured row its paths select, so the cargo lane runs on a
@@ -108,8 +108,9 @@
 #                       userland. shell_shards is true exactly where both
 #                       lists are non-empty.
 #   bot_instructions    the rendered review-bot instruction files and the root
-#                       AGENTS.md region they own, the document byte
-#                       ceilings, and the index-wide work-marker scan.
+#                       AGENTS.md region they own and, on a pull request,
+#                       the document byte ceilings and the index-wide
+#                       work-marker scan.
 #   cargo_linux         the workspace tests on Linux.
 #   cargo_macos         the workspace tests on the platform the app ships on.
 #   cargo_lint          clippy, fmt and doc over the workspace.
