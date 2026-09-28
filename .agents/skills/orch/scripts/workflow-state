@@ -148,9 +148,9 @@ state_message() {
       [[ -z "$err" ]] || printf '%s\n' "$err"
       ;;
     prune-archive-failed)
-      printf 'workflow-state: prune-archive-failed path=%s\n' "$archive_dir"
-      printf '%s\n' "Error: prune: the archive under $archive_dir could not be built; nothing was removed"
-      [[ -z "$err" ]] || printf '%s\n' "$err"
+      printf 'workflow-state: prune-archive-failed path=%s\n' "$ARCHIVE_DIR"
+      printf '%s\n' "Error: prune: the archive under $ARCHIVE_DIR could not be built; nothing was removed"
+      [[ -z "$ARCHIVE_ERR" ]] || printf '%s\n' "$ARCHIVE_ERR"
       ;;
     prune-remove-failed)
       printf 'workflow-state: prune-remove-failed path=%s kept=%s\n' "$unit" "$archive"
@@ -231,9 +231,18 @@ state_message() {
       printf '%s\n' "Error: remove requires an issue_id"
       ;;
     remove-failed)
-      printf 'workflow-state: remove-failed path=%s\n' "$unit"
-      printf '%s\n' "Error: remove: $unit could not be removed; every path before it is gone"
+      printf 'workflow-state: remove-failed path=%s kept=%s\n' "$unit" "$archive"
+      printf '%s\n' "Error: remove: $unit could not be removed; every path before it is gone, and the archive holds it and them"
       [[ -z "$err" ]] || printf '%s\n' "$err"
+      ;;
+    remove-archive-failed)
+      printf 'workflow-state: remove-archive-failed path=%s\n' "$ARCHIVE_DIR"
+      printf '%s\n' "Error: remove: the archive under $ARCHIVE_DIR could not be built; nothing was removed"
+      [[ -z "$ARCHIVE_ERR" ]] || printf '%s\n' "$ARCHIVE_ERR"
+      ;;
+    archive-value)
+      printf 'workflow-state: archive-value option=%s\n' "--archive"
+      printf '%s\n' "Error: --archive requires a path argument"
       ;;
     exists-issue)
       printf 'workflow-state: exists-issue command=%s\n' "exists"
@@ -1127,6 +1136,45 @@ unit_names_item() { # UNIT ITEM
     [[ "${1##*/}" =~ $re ]]
 }
 
+# The one archive the prune and an item's close-out each write before they
+# remove anything: PATHS, each absolute, and RECORDS, where it is not empty,
+# as records.json, in one tarball FLEET_DIR/archive/REPO/oversee/STEM-RANDOM.tgz.
+# FLEET_DIR defaults to ~/.fleet, the root lane-host close also archives
+# under, and REPO is the main checkout's directory name. Private, as
+# lane-host close keeps a lane's archive: it holds whatever the removed paths
+# held, secrets included. Paths are relative to /, as that close archives
+# them, so a path outside the state directory archives the same way, and tar
+# keeps each file's bytes and modification time as written. Sets ARCHIVE to
+# the tarball; a failure removes what it wrote and returns 1, ARCHIVE_DIR and
+# ARCHIVE_ERR, the failing step's own words, left for the caller's refusal.
+ARCHIVE="" ARCHIVE_DIR="" ARCHIVE_ERR=""
+archive_write() { # STEM RECORDS PATH...
+    local stem="$1" records="$2" repo_root stage="" saved_umask unit rc=0
+    shift 2
+    ARCHIVE="" ARCHIVE_DIR="" ARCHIVE_ERR=""
+    repo_root=$(project_root) || return 1
+    ARCHIVE_DIR="${FLEET_DIR:-$HOME/.fleet}/archive/${repo_root##*/}/oversee"
+    saved_umask=$(umask)
+    umask 077
+    if ! ARCHIVE_ERR=$(mkdir -p -- "$ARCHIVE_DIR" 2>&1); then
+        rc=1
+    elif ! stage=$(mktemp -d "$ARCHIVE_DIR/$stem-XXXXXX" 2>&1); then
+        ARCHIVE_ERR="$stage"; stage=""; rc=1
+    elif ! { { [[ -z "$records" ]] || printf '%s\n' "$records" > "$stage/records.json"; } \
+             && { [[ -z "$records" ]] || printf '%s\n' "${stage#/}/records.json"
+                  for unit in "$@"; do printf '%s\n' "${unit#/}"; done
+                } > "$stage/paths" \
+             && tar -czf "$stage.tgz" -C / -T "$stage/paths" 2>"$stage/tar.err"; }; then
+        ARCHIVE_ERR=$(cat -- "$stage/tar.err" 2>/dev/null) || ARCHIVE_ERR=""
+        rc=1
+    else
+        ARCHIVE="$stage.tgz"
+    fi
+    umask "$saved_umask"
+    [[ -z "$stage" ]] || rm -rf -- "${stage:?}"
+    [[ "$rc" -eq 0 ]] || { [[ -z "$stage" ]] || rm -f -- "${stage:?}.tgz"; return 1; }
+}
+
 # `prune [--keep PATH]...`: the retention that
 # schemas/workflow-state.md § Recording policy states, applied to the fleet
 # state and the directory holding it.
@@ -1255,44 +1303,19 @@ cmd_prune() {
         [[ -z "$pd" || "$unit" != "$pd"/* ]] || reports=$((reports + 1))
     done
 
-    local n_rows n_log n_lanes repo_root archive_dir stage="" archive=none saved_umask
+    local n_rows n_log n_lanes archive=none
     n_log=$(jq '.fleet_log | length' <<<"$rows") || return 1
     n_lanes=$(jq '.lanes | length' <<<"$rows") || return 1
     n_rows=$((n_log + n_lanes))
     if [[ "$n_rows" -gt 0 || "${#candidates[@]}" -gt 0 ]]; then
-        repo_root=$(project_root) || return 1
-        archive_dir="${FLEET_DIR:-$HOME/.fleet}/archive/${repo_root##*/}/oversee"
-        # Private, as lane-host close keeps a lane's archive: the archive holds
-        # whatever the state directory held, secrets included. Paths are
-        # relative to /, as that close archives them, so a progress directory
-        # outside the state directory archives the same way. The refusal's key
-        # is the first line, and the failing step's own words follow it.
-        saved_umask=$(umask)
-        umask 077
-        if ! err=$(mkdir -p -- "$archive_dir" 2>&1); then
-            :
-        elif ! stage=$(mktemp -d "$archive_dir/prune-$now_epoch-XXXXXX" 2>&1); then
-            err="$stage"; stage=""
-        elif ! { printf '%s\n' "$rows" > "$stage/records.json" \
-                 && { printf '%s\n' "${stage#/}/records.json"
-                      for unit in ${candidates[@]+"${candidates[@]}"}; do printf '%s\n' "${unit#/}"; done
-                    } > "$stage/paths" \
-                 && tar -czf "$stage.tgz" -C / -T "$stage/paths" 2>"$stage/tar.err"; }; then
-            err=$(cat -- "$stage/tar.err" 2>/dev/null) || err=""
-        else
-            archive="$stage.tgz"
-        fi
-        umask "$saved_umask"
-        if [[ "$archive" == none ]]; then
-            [[ -z "$stage" ]] || rm -rf -- "${stage:?}" "${stage:?}.tgz"
-            state_message prune-archive-failed "$@" >&2; return 1
-        fi
+        archive_write "prune-$now_epoch" "$rows" ${candidates[@]+"${candidates[@]}"} \
+            || { state_message prune-archive-failed "$@" >&2; return 1; }
+        archive="$ARCHIVE"
         if [[ "$n_rows" -gt 0 ]] && ! atomic_update "$state_file" \
-            '.fleet_log = ((.fleet_log // []) - $r[0].fleet_log) | .lanes = ((.lanes // []) - $r[0].lanes)' \
-            --slurpfile r "$stage/records.json"; then
-            rm -rf -- "${stage:?}"; return 1
+            '.fleet_log = ((.fleet_log // []) - $r.fleet_log) | .lanes = ((.lanes // []) - $r.lanes)' \
+            --argjson r "$rows"; then
+            return 1
         fi
-        rm -rf -- "${stage:?}"
         for unit in ${candidates[@]+"${candidates[@]}"}; do
             err=$(rm -rf -- "${unit:?}" 2>&1) || { state_message prune-remove-failed "$@" >&2; return 1; }
             printf 'pruned path=%s\n' "$unit"
@@ -1303,25 +1326,56 @@ cmd_prune() {
     printf 'kept=%s\n' "$archive"
 }
 
-# `remove ITEM`: the item's close-out. Every entry state_units yields that
-# names ITEM goes whatever its age, the item's workflow state and its lock
-# among them. The lane status file and the lane mailbox stay: the recording
-# policy gives those two their own retention, which the prune applies. Prints
-# `removed path=PATH` per path; a state directory that is not there holds none.
+# `remove ITEM [--archive PATH]...`: the item's close-out. Every entry
+# state_units yields that names ITEM goes whatever its age, the item's workflow
+# state and its lock among them. The lane status file and the lane mailbox
+# stay: the recording policy gives those two their own retention, which the
+# prune applies. Before anything goes, one archive_write takes what goes,
+# those two beside it, and each --archive PATH that exists, which the caller
+# removes after this close-out: merge-pr names the worktree's tmp/, whose
+# round artifacts, validation runs and lane mailbox go with the worktree. A
+# failed archive removes nothing, and with nothing to remove and no such PATH
+# there is nothing to archive. Prints `removed path=PATH` per path, then
+# `removed kept=ARCHIVE`, or `removed kept=none` where nothing was archived.
 # Where no fleet state stands, no overseer prunes the directory, so the
 # close-out runs the prune too and prints its lines after its own.
 cmd_remove() {
-    local item="${1:-}" sd unit err
+    local item="${1:-}" sd unit err now_epoch archive=none field=archive
+    local -a extra=() targets=() evidence=()
     [[ -n "$item" ]] || { state_message remove-issue "$@" >&2; return 2; }
-    [[ -d "$STATE_DIR" ]] || return 0
-    sd=$(cd -P -- "$STATE_DIR" && pwd -P) || return 1
-    state_units "$sd" "$(get_state_file oversee)" "" || return 1
-    for unit in ${UNITS[@]+"${UNITS[@]}"}; do
-        unit_names_item "$unit" "$item" || continue
-        [[ "$unit" != "$sd/lane-status-$item.md" && "$unit" != "$sd/lane-mail/$item" ]] || continue
+    shift
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --archive)
+                [[ $# -ge 2 && -n "$2" ]] || { state_message archive-value "$@" >&2; return 2; }
+                unit="$2"
+                [[ "$unit" == /* ]] || unit="$PWD/$unit"
+                [[ ! -e "$unit" && ! -L "$unit" ]] || extra+=("$unit")
+                shift 2 ;;
+            *) state_message unknown-option "$@" >&2; return 2 ;;
+        esac
+    done
+    if [[ -d "$STATE_DIR" ]]; then
+        sd=$(cd -P -- "$STATE_DIR" && pwd -P) || return 1
+        state_units "$sd" "$(get_state_file oversee)" "" || return 1
+        for unit in ${UNITS[@]+"${UNITS[@]}"}; do
+            unit_names_item "$unit" "$item" || continue
+            evidence+=("$unit")
+            [[ "$unit" == "$sd/lane-status-$item.md" || "$unit" == "$sd/lane-mail/$item" ]] || targets+=("$unit")
+        done
+    fi
+    if [[ "${#targets[@]}" -gt 0 || "${#extra[@]}" -gt 0 ]]; then
+        now_epoch=$(date -u +%s) || { state_message clock-unreadable "$@" >&2; return 1; }
+        archive_write "close-$item-$now_epoch" "" ${evidence[@]+"${evidence[@]}"} ${extra[@]+"${extra[@]}"} \
+            || { state_message remove-archive-failed "$@" >&2; return 1; }
+        archive="$ARCHIVE"
+    fi
+    for unit in ${targets[@]+"${targets[@]}"}; do
         err=$(rm -rf -- "${unit:?}" 2>&1) || { state_message remove-failed "$@" >&2; return 1; }
         printf 'removed path=%s\n' "$unit"
     done
+    printf 'removed kept=%s\n' "$archive"
+    [[ -d "$STATE_DIR" ]] || return 0
     fleet_state_file >/dev/null || cmd_prune
 }
 
@@ -1461,12 +1515,20 @@ EOF
                                 unknown command, and a settings file bash 3.2
                                 cannot parse kills the script before dispatch —
                                 and is never read as "no record stands"
-  remove <issue_id>             The item's close-out: delete every entry of the
+  remove <issue_id> [--archive PATH]...
+                                The item's close-out: delete every entry of the
                                 state directory whose name carries the key as a
                                 whole token, its state file and lock sidecar
                                 among them, keeping the lane status file, the
-                                lane mailbox and the fleet's own files. Prints
-                                "removed path=PATH" per path; absent is success.
+                                lane mailbox and the fleet's own files. First
+                                archives what it deletes, those two kept
+                                entries and each --archive PATH that exists
+                                under FLEET_DIR/archive/REPO/oversee, as prune
+                                does; a failed archive deletes nothing and is
+                                refused as remove-archive-failed. Prints
+                                "removed path=PATH" per path, then
+                                "removed kept=ARCHIVE", or "removed kept=none"
+                                where nothing was archived; absent is success.
                                 Where no fleet state exists it then runs prune
                                 and prints its lines
   fleet-log takeover|audit      Print fleet_log rows of the oversee state, one
