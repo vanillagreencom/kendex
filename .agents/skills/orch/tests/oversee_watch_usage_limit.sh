@@ -166,11 +166,13 @@ lane() {
 # run [ENV=VAL ...] — one single-pass watch over gh-1 and gh-2; OUT, RC and
 # ERR (a file) are what `watch` reads.
 RUN_SEQ=0
-# RUN_LANES names other windows for one run.
+# RUN_LANES names other windows for one run, `none` for no window at all.
 run() {
+  local lanes="${RUN_LANES:-gh-1 gh-2}"
+  [[ "$lanes" != none ]] || lanes=""
   ERR="$TMP_ROOT/run-$((++RUN_SEQ)).err"
   # shellcheck disable=SC2086 # the windows are words
-  OUT="$(run_watch "$@" -- --max-loops 1 ${RUN_LANES:-gh-1 gh-2} 2>"$ERR")" && RC=0 || RC=$?
+  OUT="$(run_watch "$@" -- --max-loops 1 $lanes 2>"$ERR")" && RC=0 || RC=$?
 }
 
 # watch EXPECT — prints the run's value of every `name=` field EXPECT names,
@@ -393,8 +395,9 @@ echo "=== a wall that ends is kept as a pause on the lane record ==="
 # The sighting row's first-seen time opens the pause and the pass that sees
 # the wall end closes it, on the lane record whose window is the walled one:
 # the banner gone from the screen or replaced by another wall, the window gone
-# from tmux, or the window no longer in the fleet the watch carries. A window
-# no record names keeps nothing. PAUSES reads each record's pauses, item:from-to:cause.
+# from tmux, or the window no longer in the fleet the watch carries, the last
+# window of a fleet left with none included. A window no record names keeps
+# nothing. PAUSES reads each record's pauses, item:from-to:cause.
 PAUSES='[.lanes[] | "\(.item):" + ((.pauses // []) | map("\(.from)-\(.to):\(.cause)") | join(","))] | join(" ")'
 next_pass() { rm -f -- "${STUB_DIR:?}/pane-gh-2.calls" "${STUB_DIR:?}/cmd-gh-2.calls"; }
 wall_then() { # NAME END — a wall on gh-2 at RESET_NOW, then END 600 s on
@@ -409,6 +412,7 @@ wall_then() { # NAME END — a wall on gh-2 at RESET_NOW, then END 600 s on
     replaced) screen "banner:You've hit your session limit \xc2\xb7 resets 21:00" ;;
     gone) printf 'gh-1\n' > "$STUB_DIR/windows.txt" ;;
     left) lanes=gh-1 ;;
+    emptied) lanes=none ;;
     *) echo "wall_then: unknown end $2" >&2; exit 1 ;;
   esac
   next_pass
@@ -424,6 +428,7 @@ a banner gone from the screen closes the wall at that pass, on the walled lane's
 a banner replaced by another wall closes the first one|replaced
 a window gone from tmux closes its wall the same way|gone
 a window the fleet no longer carries closes its wall the same way|left
+the last windows leaving the fleet close their walls the same way|emptied
 ROWS
 new_case wall_unrecorded_window
 printf '{"triaged":[],"lanes":[{"item":"KEN-1","window":"gh-1"}]}\n' > "$STUB_DIR/oversee-state.json"

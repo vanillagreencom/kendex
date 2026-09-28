@@ -2041,10 +2041,11 @@ observe_lanes() {
   LANE_OBS=""
   LANE_TURNS=()
   LANE_ROWS=()
-  [[ ${#LANES[@]} -gt 0 ]] || return 0
+  # No early return for an empty fleet: the rows of the last lanes to leave
+  # still end their walls and are pruned below.
   local lane kind target pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
   local banner banner_rc reset_key seen_at seen_pane seen_reported seen_key
-  for lane in "${LANES[@]}"; do
+  for lane in ${LANES[@]+"${LANES[@]}"}; do
     i=$((i + 1))
     capture="$(lane_pane_file "$i")"
     rm -f "$capture" "$capture.$$.tmp"
@@ -2128,10 +2129,10 @@ observe_lanes() {
     [[ "$kind" == usage-limit ]] && ! window_listed "$lane" || continue
     wall_pause "$lane" "${prior%%|*}"
   done <<<"$state"
-  state="$(lane_row_prune usage-limit "$state" "${LANES[@]}")"
-  state="$(lane_row_prune model-capacity "$state" "${LANES[@]}")"
-  state="$(lane_row_prune lane-exited "$state" "${LANES[@]}")"
-  state="$(lane_row_prune lane-idle "$state" "${LANES[@]}")"
+  state="$(lane_row_prune usage-limit "$state" ${LANES[@]+"${LANES[@]}"})"
+  state="$(lane_row_prune model-capacity "$state" ${LANES[@]+"${LANES[@]}"})"
+  state="$(lane_row_prune lane-exited "$state" ${LANES[@]+"${LANES[@]}"})"
+  state="$(lane_row_prune lane-idle "$state" ${LANES[@]+"${LANES[@]}"})"
   lane_row_commit "$state"
 }
 
