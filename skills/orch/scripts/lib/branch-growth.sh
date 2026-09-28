@@ -199,8 +199,8 @@ BRANCH_SIZE_MIRROR=""
 # counts as test lines exactly when its path is listed. Each rename end is
 # listed on its own, as a reader without rename detection names each apart.
 BRANCH_SIZE_TEST_FILES=""
-# The same paths' additions plus deletions, render mirrors left out, for the
-# implement receipt. This shares the report's render classification.
+# Every counted row's additions plus deletions, render mirrors left out, for
+# the implement receipt. This shares the report's render classification.
 BRANCH_SIZE_BASELINE=""
 # Split the branch's added lines into production, test, and mandated render
 # mirror lines. Additions alone are counted there, so a rewrite that moves
