@@ -68,11 +68,10 @@ REVIEW_GATE_API_ATTEMPTS = "1"
 # Seconds between those tries.
 REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 
-# One pull request's share of the writer's converge step, which covers every
-# open pull request in one pass. Past it that pull request's evaluation is its
-# own convergence failure and the pass moves on, leaving its status for the
-# next one. Size it under the step's own timeout-minutes divided by the pull
-# requests a pass expects; a repository that widens that step widens this.
+# Seconds one pull request may take in the writer's pass over every open
+# pull request. Past it, that pull request's status waits for the next pass
+# and this pass moves on. Keep it under the writer step's timeout-minutes
+# divided by the pull requests one pass handles, and raise both together.
 REVIEW_GATE_PR_DEADLINE_SECONDS = "120"
 
 # Which later changes an earlier review still covers: docs, comments and
@@ -100,10 +99,8 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 
 # How much review each size of change needs before it can merge. Generated
 # files, trivial and micro changes need no review; a small change needs one
-# bot review round; a standard change keeps the full review gate. Every
-# repository runs this same value unless a decision record says otherwise.
-# To use other rows, or "" to turn it off, also set
-# REVIEW_GATE_CLASS_POLICY_DECISION.
+# bot review round; a standard change keeps the full review gate. Other
+# rows, or "" to turn it off, need REVIEW_GATE_CLASS_POLICY_DECISION below.
 REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standard:current"
 
 # The decision record behind a class policy other than the default, as a

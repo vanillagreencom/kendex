@@ -99,11 +99,9 @@ REVIEWER_SLOT_BUDGET = "0"
 # How a session asks you questions, reports to you and decides without you.
 
 # Whether a launched overseer may open a question dialog in its terminal.
-# "off": the overseer starts without the dialog, as every lane does, on each
-# harness that can turn the dialog off; every question for you is then mail,
-# which reaches Slack, the report and the chat. "overseer": the overseer keeps
-# the dialog, and lanes still start without it. The question-tools table in
-# the orch skill rules lists the harnesses that can turn the dialog off.
+# "off": on a harness that can turn the dialog off, the overseer starts
+# without it, as every lane does, and each question for you goes out as mail
+# to Slack, the report and the chat. "overseer": the overseer keeps it.
 # values: off | overseer
 ORCH_QUESTION_TOOL = "off"
 
@@ -130,11 +128,10 @@ ORCH_DECISION_MODE = "auto-recommended"
 # values: auto | ask
 ORCH_MERGE_AUTONOMY = "auto"
 
-# The overseer's status report: what landed, what is running, what is next
-# and what waits on you, pasted into its chat and saved as a progress report.
-# "on" writes one on the schedule below; "off" writes none on a schedule. A
-# live overseer's report at its own handover is written whatever this says; a
-# dead or walled overseer's handover writes none.
+# The overseer's status report on what landed, is running, comes next and
+# waits on you, pasted into its chat and saved. "on" writes one on the
+# schedule below; "off" writes none on a schedule. A live overseer's
+# handover writes one either way; a dead or walled overseer's writes none.
 # values: on | off
 ORCH_REPORT = "on"
 
@@ -238,11 +235,10 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # go past it is refused.
 ORCH_OVERSEER_LANES = "3"
 
-# Max live lanes on one account. open-terminal refuses a fleet launch that
-# would put the lane's account past it. Zero turns this cap off. The measured
-# fleet burn is about 1.5 points of a five-hour window per lane per 10
-# minutes. The default of 3 lanes spends about 4.5 points per 10 minutes, so
-# three lanes wall an account in about 3.7 hours.
+# Most lanes one account runs at once. A launch that would go past it is
+# refused, and 0 turns the cap off. Each lane spends about 1.5 points of an
+# account's five-hour window per 10 minutes, so the default of 3 lanes uses
+# up an account's window in about 3.7 hours.
 ORCH_LANE_ACCOUNT_CLAIMS = "3"
 
 # Whether a finished overseer starts its own replacement. "on" starts one.
