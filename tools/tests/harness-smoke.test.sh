@@ -545,11 +545,14 @@ package_table() { # ROWS — label|row|result|clause, each against the last run
   done <<<"$1"
 }
 
+# No lane session runs on Copilot, so its two lane rows stay pending and hold a
+# run where every other row works at exit 3.
 package_run "$SMOKE"
-if [ "$PKG_RC" = 0 ]; then
-  ok "a run where every copilot row works exits 0"
+pkg_unanswered="$(awk '$1 == "copilot" && ($3 == "fail" || $3 == "unanswerable" || $3 == "pending") { print $2 }' "$TMP/pkg-out" | LC_ALL=C sort | tr '\n' ' ')"
+if [ "$PKG_RC" = 3 ] && [ "$pkg_unanswered" = "lane-mail lane-question " ]; then
+  ok "a run where every other copilot row works exits 3 on the two pending lane rows"
 else
-  bad "a run where every copilot row works exits 0" "rc=$PKG_RC: $(grep -E '^copilot +[^ ]+ +(fail|unanswerable|pending)' "$TMP/pkg-out" | head -3 | tr '\n' ';')"
+  bad "a run where every other copilot row works exits 3 on the two pending lane rows" "rc=$PKG_RC, rows not passing: ${pkg_unanswered:--}"
 fi
 package_table "a listed skill passes|skill:worktree|pass|copilot skill list lists it
 a listed agent passes|agent:reviewer-doc|pass|lists it
@@ -566,8 +569,9 @@ a hook that received its trigger, refuses it on replay and held it back passes|h
 a bare cd received and refused on replay passes|hook:block-bare-cd|pass|refuses Copilot's payload for it when replayed
 a hook with no trigger passes on running|hook:command-safety|pass|reading the payload Copilot sent
 an excluded hook is excluded with the table's reason|hook:reviewer-read-only|excluded|(hooks/README.md)
-the lane-mail row the table enforces is skipped, naming the missing session|lane-mail|skipped|skipped=this script runs no lane session on copilot, and
-and so is the lane-question row|lane-question|skipped|skipped=this script runs no lane session on copilot, and
+the lane-mail row the table enforces is pending, naming the missing session|lane-mail|pending|pending=this script runs no lane session on copilot, and
+and so is the lane-question row|lane-question|pending|pending=this script runs no lane session on copilot, and
+the pending lane row names the live-lane proof it waits on|lane-mail|pending|proof: a live copilot lane session
 the recorded payload carries the command|helper:payload|pass|its keys: toolName,toolArgs
 a hook and a tool call in the project root pass|helper:cwd|pass|both run in the project root
 the launch environment reaching both passes|helper:env|pass|reaches a hook and a tool call"
@@ -636,7 +640,7 @@ fi
 # check that takes any record, and a nested reading that ignores the root
 # listing, each pass what their rows do not; a no-session row that never reads
 # the enforced cell leaves the lane-mail row unanswerable where its row wants
-# skipped.
+# pending, and one that reads it skipped lets that run exit 0.
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 ln -s -- "$REPO/agents" "$STAND/agents"
 cp "$REPO"/hooks/*.sh "$STAND/hooks/"
@@ -651,9 +655,18 @@ package_case "control: a marker read that never looks passes a command that went
 plant "$STAND_SMOKE" 's/^    case "\$command" in \*"\$2"\*) printf/    case "$command" in *) printf/'
 package_run "$STAND_SMOKE" STANDIN_FEED=helper
 package_case "control: a trigger check that takes any record replays the helper payload for a hook the trigger never reached" hook:block-repo-copy fail "passes the payload Copilot sent"
-plant "$STAND_SMOKE" 's/^    \*:enforced) row "\$1" "\$2" skipped /    *:enforced-never) row "$1" "$2" skipped /'
+plant "$STAND_SMOKE" 's/^    \*:enforced) row "\$1" "\$2" pending /    *:enforced-never) row "$1" "$2" pending /'
 package_run "$STAND_SMOKE"
 package_case "control: a no-session row that ignores the enforced cell is unanswerable" lane-mail unanswerable "runs no lane session on copilot"
+plant "$STAND_SMOKE" 's/^    \*:enforced) row "\$1" "\$2" pending /    *:enforced) row "$1" "$2" skipped /'
+package_run "$STAND_SMOKE" STANDIN_SKILLS="$PKG_SKILLS_ALL
+smoke-skill"
+package_case "control: an unmeasured enforced row read skipped" lane-mail skipped "runs no lane session on copilot"
+if [ "$PKG_RC" = 0 ]; then
+  ok "control: and that run exits 0"
+else
+  bad "control: and that run exits 0" "rc=$PKG_RC, rows not passing: $(awk '$1 == "copilot" && ($3 == "fail" || $3 == "unanswerable" || $3 == "pending") { printf "%s ", $0 }' "$TMP/pkg-out")"
+fi
 plant "$STAND_SMOKE" 's/^  elif grep -qFx -- sub\/AGENTS.md <<<"\$root_sources"; then$/  elif false; then/'
 package_run "$STAND_SMOKE" STANDIN_NESTED_ROOT=1
 package_case "control: a nested reading that ignores the root listing differs where the root lists it" instruction:nested differs "for the working directory only"

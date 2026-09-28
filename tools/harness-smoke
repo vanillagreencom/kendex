@@ -19,7 +19,7 @@
 # Where the harness runs that hook, the lane-mail row runs a one-turn lane
 # session that makes two tool calls, sends the directive at the first of them,
 # and passes only where the lane read it and its cursor moved; on a harness
-# this script starts no lane session on, the row is skipped naming that. Where the
+# this script starts no lane session on, the row is pending naming that. Where the
 # harness runs no hooks, the lane's own workflow reads the mailbox at a wait
 # point instead, so the row asks that harness's listing for the instruction
 # kendex rendered there and reports advisory, never pass.
@@ -35,11 +35,13 @@
 # project agent for it. A row is `pass`,
 # `fail`, `advisory` (the harness runs no hooks; kendex installs text, and
 # the row checks the harness lists that text), `unanswerable` (this machine
-# or this harness cannot answer, with the reason), or `skipped` (left out by
-# --only, by the frontmatter of the hook a row measures, or by the lane
-# session this script does not start on that harness, with its reason).
+# or this harness cannot answer, with the reason), `pending` (a lane-mail or
+# lane-question row the table enforces on a harness this script starts no lane
+# session on: the live-lane proof it needs is not made here, with that reason),
+# or `skipped` (left out by --only, or by the frontmatter of the hook a row
+# measures, with its reason).
 # Copilot also answers one row per package this checkout ships, under the
-# package table below, which adds `differs`, `excluded` and `pending`.
+# package table below, which adds `differs` and `excluded`.
 # Silence is never a pass: a run that says nothing about the
 # package is a fail, and a run the harness could not complete is
 # unanswerable with its last line.
@@ -840,9 +842,8 @@ question_row() { # HARNESS TOOL LABEL [CMD...]
 # A lane-mail or lane-question row on a harness this script starts no lane
 # session on. Where the table says the hook does not run there, the row is the
 # one mail_row or question_row gives with that label. Where it says the hook
-# runs, the row is skipped naming the missing session: no machine answers a
-# run this script never makes, so unanswerable would hold every such run at
-# exit 3 for a reason no host can clear.
+# runs, the row is pending naming the missing session and the live-lane proof
+# it waits on: the table's claim is unmeasured, so the run exits 3, never 0.
 no_session() { # HARNESS ROW — ROW is lane-mail or lane-question
   local why="this script runs no lane session on $1" cell=""
   case "$2" in
@@ -850,7 +851,7 @@ no_session() { # HARNESS ROW — ROW is lane-mail or lane-question
     lane-question) cell=$(mail_cell "$1" lane-mail-halt) ;;
   esac
   case "$2:$cell" in
-    *:enforced) row "$1" "$2" skipped "harness=$1 skipped=$why, and $MAIL_TABLE reads $cell" ;;
+    *:enforced) row "$1" "$2" pending "harness=$1 pending=$why, and $MAIL_TABLE reads $cell; proof: a live $1 lane session" ;;
     lane-mail:*) mail_row "$1" "$why" '' ;;
     lane-question:*) question_row "$1" - "$why" ;;
   esac
@@ -1302,10 +1303,10 @@ antigravity_rows() {
 # where copilot is not on PATH, `skipped` where --only leaves it out, and the
 # one answer a producer below recorded where copilot ran. Beside the results
 # above, a row here reads `differs` (it works, and its evidence says how it
-# differs from Claude Code), `excluded` (kendex installs no Copilot render of
-# that hook, for the reason the copilot cell of hooks/README.md gives), or
-# `pending`. The skill, instruction and skill-directory rows need no model turn
-# and answer wherever copilot is on PATH. The agent, hook, helper, duplicate
+# differs from Claude Code) or `excluded` (kendex installs no Copilot render of
+# that hook, for the reason the copilot cell of hooks/README.md gives). The
+# skill, instruction and skill-directory rows need no model turn and answer
+# wherever copilot is on PATH. The agent, hook, helper, duplicate
 # and subagent rows need a login and spend four model turns: the agent listing,
 # one session of tool calls, the duplicate count and the subagent.
 # `agent:effort` reads skipped: nothing here reads the effort a subagent runs
