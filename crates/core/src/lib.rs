@@ -74,6 +74,7 @@ pub mod source_read;
 pub mod source_ref;
 pub mod tags;
 pub mod template;
+pub mod tracked_output;
 pub mod trash;
 pub mod update_channel;
 pub mod update_feed;

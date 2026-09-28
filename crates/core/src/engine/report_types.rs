@@ -302,6 +302,10 @@ pub struct EngineReport {
     /// sources' revisions, each taken from the record. Empty on a plan
     /// that holds nothing.
     pub held: Vec<HeldPin>,
+    /// The paths each enabled agent the scope declares names as tracked
+    /// output in its own definition, by agent name. `verify` holds them
+    /// against the project's ignore rules (`tracked_output`).
+    pub tracked_outputs: BTreeMap<String, Vec<String>>,
 }
 
 /// One declaration a held plan read at the commit the record names
@@ -390,6 +394,7 @@ impl EngineReport {
             stood_in: StoodInRecord::default(),
             record: Lock::default(),
             held: Vec::new(),
+            tracked_outputs: BTreeMap::new(),
         }
     }
 }

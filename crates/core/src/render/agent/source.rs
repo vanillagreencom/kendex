@@ -53,6 +53,12 @@ pub struct SourceAgent {
     /// so dropping or rewriting them here would hide a warning the author
     /// should see.
     pub tags: Vec<String>,
+    /// Paths, relative to the root of the project the agent works in,
+    /// where it writes output that has to be committed: a plan, a report.
+    /// Read by no renderer; `tracked_output` holds each against the
+    /// repository's ignore rules, since a file written to an ignored path
+    /// reaches no other checkout.
+    pub tracked_outputs: Vec<String>,
     pub body: String,
     /// Parse-time findings worth surfacing (unknown keys, odd shapes) that
     /// do not make the agent unusable.
@@ -99,6 +105,12 @@ pub fn parse_source_agent(text: &str) -> Result<SourceAgent, String> {
                     .push("`tags:` is not a list — ignored".to_owned()),
             },
             "effort" => agent.effort = scalar(value),
+            "tracked-outputs" => match parsed.map.string_list(key) {
+                Some(list) => agent.tracked_outputs = list,
+                None => agent
+                    .warnings
+                    .push("`tracked-outputs:` is not a list — ignored".to_owned()),
+            },
             "tools" => match parsed.map.string_list(key) {
                 Some(list) => {
                     if let Some(Value::List(items)) = parsed.map.get(key)
@@ -188,6 +200,39 @@ mod tests {
             "---\nname: rust\ndescription: Rust engineer\nsummary: Tunes hot paths.\n---\nBody.\n",
         );
         assert_eq!(header.summary_or_description(), Some("Tunes hot paths."));
+    }
+
+    /// Both list spellings carry the declared paths as written, and a
+    /// value that is no list is said rather than read as an empty one.
+    #[test]
+    fn tracked_outputs_are_read_as_written() {
+        for (header, expected) in [
+            (
+                "tracked-outputs: [docs/plans/<slug>.md, docs/plans/<slug>-research.md]\n",
+                vec!["docs/plans/<slug>.md", "docs/plans/<slug>-research.md"],
+            ),
+            ("tracked-outputs:\n  - reports/\n", vec!["reports/"]),
+            ("", vec![]),
+        ] {
+            let agent =
+                parse_source_agent(&format!("---\nname: p\ndescription: d\n{header}---\nB.\n"))
+                    .unwrap();
+            assert_eq!(agent.tracked_outputs, expected, "{header}");
+            assert!(agent.warnings.is_empty(), "{:?}", agent.warnings);
+        }
+        let mapped = parse_source_agent(
+            "---\nname: p\ndescription: d\ntracked-outputs:\n  plans: docs/plans/\n---\nB.\n",
+        )
+        .unwrap();
+        assert!(mapped.tracked_outputs.is_empty());
+        assert!(
+            mapped
+                .warnings
+                .iter()
+                .any(|w| w.contains("tracked-outputs")),
+            "{:?}",
+            mapped.warnings
+        );
     }
 
     #[test]

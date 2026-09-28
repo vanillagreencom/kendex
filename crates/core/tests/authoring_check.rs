@@ -603,3 +603,58 @@ fn a_source_beside_a_member_list_is_still_that_sets_breakage() {
     let report = check(&sealed, "repo").unwrap();
     assert!(report.failing(false) >= 1, "{:?}", report.catalog);
 }
+
+/// A path an agent declares as tracked output that the catalog's own
+/// repository ignores is an advisory naming the agent, the path and the
+/// rule: a plain check passes, `--strict` fails. The same declaration in
+/// a repository that leaves the path tracked finds nothing. The must-fail
+/// control is the pass dropping every standing: the ignored row then
+/// finds nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_ignored_tracked_output_is_an_agents_advisory() {
+    for (ignore, expected) in [
+        (
+            "docs/plans/\n",
+            Some(
+                "declares docs/plans/<slug>.md as tracked output, and this repository ignores it (.gitignore:1:docs/plans/)",
+            ),
+        ),
+        ("target/\n", None),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = rooted(&tmp);
+        let agents = root.join("agents");
+        fs::create_dir_all(&agents).unwrap();
+        fs::write(
+            agents.join("planner.md"),
+            "---\nname: planner\ndescription: plans\ntracked-outputs: [docs/plans/<slug>.md]\n---\nPlan it.\n",
+        )
+        .unwrap();
+        fs::write(root.join(".gitignore"), ignore).unwrap();
+        let init = kendex_core::process::Hardened::git(&["init", "-q"], Some(&root))
+            .env("HOME", root.to_str().unwrap())
+            .env("KENDEX_REAL_HOME", "1")
+            .run()
+            .unwrap();
+        assert!(init.status.success());
+        let sealed = SealedSource::open(&root).unwrap();
+        let report = check(&sealed, "repo").unwrap();
+        let found: Vec<_> = report
+            .findings()
+            .filter(|finding| finding.pass == kendex_core::check_catalog::TRACKED_OUTPUT_PASS)
+            .collect();
+        match expected {
+            Some(message) => {
+                assert_eq!(found.len(), 1, "{found:?}");
+                assert_eq!(
+                    (found[0].kind, found[0].name.as_str(), found[0].severity),
+                    ("agent", "planner", "warning")
+                );
+                assert_eq!(found[0].message, message);
+                assert_eq!((report.failing(false), report.failing(true)), (0, 1));
+            }
+            None => assert_eq!(found, Vec::new(), "{ignore:?}"),
+        }
+    }
+}

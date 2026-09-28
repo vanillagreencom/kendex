@@ -127,6 +127,11 @@ pub(super) fn desired_agent(
             remediation: None,
         });
     }
+    if enabled && !parsed.tracked_outputs.is_empty() {
+        state
+            .tracked_outputs
+            .insert(ctx.name.to_owned(), parsed.tracked_outputs.clone());
+    }
     let skills =
         super::agent_skills::assigned_skills(ctx, parsed.role, updated_manifest, manifest_changed)?;
     for harness in ctx.harnesses.clone() {

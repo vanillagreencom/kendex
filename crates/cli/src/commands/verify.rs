@@ -12,6 +12,7 @@ use kendex_core::env::Env;
 use kendex_core::lock::lock_path;
 use kendex_core::manifest::Manifest;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
+use kendex_core::tracked_output::Held;
 
 use super::engine_common::print_unmanaged;
 use super::{resolve_scopes, scope_label};
@@ -117,14 +118,18 @@ struct Tally {
     shims_failed: usize,
     setup_failed: usize,
     bookkeeping_failed: usize,
+    /// Declared tracked outputs the project ignores, and projects whose
+    /// ignore rules git could not be asked about.
+    outputs_failed: usize,
     rows: Vec<Row>,
 }
 
 impl Tally {
     /// The failed rows the lock-entry count leaves out: shims, lapsed
-    /// armings, the two bookkeeping files and adopted workflow copies.
+    /// armings, the two bookkeeping files, adopted workflow copies and
+    /// ignored tracked outputs.
     fn beside_failed(&self) -> usize {
-        self.shims_failed + self.setup_failed + self.bookkeeping_failed
+        self.shims_failed + self.setup_failed + self.bookkeeping_failed + self.outputs_failed
     }
 
     fn clean(&self) -> bool {
@@ -132,6 +137,7 @@ impl Tally {
             || self.shims_failed > 0
             || self.setup_failed > 0
             || self.bookkeeping_failed > 0
+            || self.outputs_failed > 0
             || self.recordless
             || !self.gaps.is_empty())
     }
@@ -140,18 +146,21 @@ impl Tally {
 /// Drift check over lock entries; non-zero exit on any failing row — this
 /// is the signal consuming repos compose in shell pipelines.
 ///
-/// Seven things are named beside the rows without changing the count,
+/// Eight things are named beside the rows without changing the count,
 /// which is a count of lock entries and nothing else: content nothing
 /// manages, what a scope declares that its record does not hold, the
 /// instruction shims the scope owes, a repository effect kendex recorded
 /// arming that the package no longer stands behind, the two files a
 /// project commits about itself — the record and the inventory, each held
-/// to what this pass would write — and each adopted workflow copy, held to
-/// its template's bytes. Each of the last five is printed as a row of its
-/// own where it fails, counted after the lock entries on the closing line,
-/// and a failing one closes the run non-zero like a failing lock row. The
-/// arming check fails closed: a recorded arming whose check could not be
-/// taken is a row nothing measured, never a clean one.
+/// to what this pass would write — each adopted workflow copy, held to
+/// its template's bytes, and each path an agent the project declares names
+/// as tracked output that the project's repository ignores. Each of the
+/// last six is printed as a row of its own where it fails, counted after
+/// the lock entries on the closing line, and a failing one closes the run
+/// non-zero like a failing lock row. The arming check and the ignore check
+/// fail closed: a recorded arming whose check could not be taken is a row
+/// nothing measured, never a clean one, and a git that cannot say whether
+/// it ignores a declared path fails the run.
 ///
 /// A recorded entry nothing in the scope declares fails its row, and a
 /// declared installation the record does not hold is a gap, for every
@@ -321,6 +330,9 @@ fn check_scope(
         ));
     }
     tally.setup_failed += super::repo_effects::say_lapsed(env, &scope, names);
+    if let Scope::Project { root } = &scope {
+        tracked_output_rows(root, &report, &placer, &named, tally, style);
+    }
     let record = match fallback {
         true => None,
         false => attest::record(env, &scope, &lock, &report, &output.floor(&scope))?,
@@ -399,6 +411,60 @@ fn bookkeeping_rows(
         ));
     }
     Ok(())
+}
+
+/// Each path an agent the project declares names as tracked output that
+/// the project's repository ignores, as a failed row: a plan or report the
+/// agent writes there reaches no other checkout and no review. A path left
+/// tracked is the ordinary state and makes no row. The global scope has no
+/// repository to ask, so only a project comes here.
+fn tracked_output_rows(
+    root: &Path,
+    report: &kendex_core::engine::EngineReport,
+    placer: &Placer,
+    named: &dyn Fn(&str) -> bool,
+    tally: &mut Tally,
+    style: &Style,
+) {
+    let declared = report
+        .tracked_outputs
+        .iter()
+        .filter(|(agent, _)| named(agent))
+        .map(|(agent, paths)| (agent.as_str(), paths.as_slice()));
+    let standings = match kendex_core::tracked_output::standings(root, declared) {
+        Ok(standings) => standings,
+        Err(error) => {
+            ui::stderr(&style.refusal(
+                &format!(
+                    "{}: tracked outputs not checked: ",
+                    scope_label(placer.scope)
+                ),
+                &error,
+            ));
+            tally.outputs_failed += 1;
+            return;
+        }
+    };
+    for standing in standings {
+        let rule = match standing.held {
+            Held::Ignored { rule } => rule,
+            Held::Tracked => continue,
+        };
+        let problem = format!(
+            "tracked output {} is ignored ({rule}); a file the agent writes there reaches no other checkout",
+            standing.path
+        );
+        ui::stderr(&style.report_verdict(&format!("agent {}", standing.agent), Some(&problem)));
+        tally.outputs_failed += 1;
+        tally.rows.push(placer.row(
+            "tracked-output",
+            &standing.agent,
+            None,
+            State::Failed,
+            Some(problem),
+            &[],
+        ));
+    }
 }
 
 /// Both directions the record can fall short of the scope, as rows and as

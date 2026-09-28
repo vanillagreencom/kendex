@@ -316,6 +316,9 @@ pub struct DesiredState {
     /// invariant 4's conflict where the record is another catalog's
     /// (`plan_pass::plan_rebound`).
     pub withheld: BTreeMap<(ItemKind, String, HarnessId), Withholding>,
+    /// The paths each enabled agent this pass read declares as tracked
+    /// output, by agent name; `EngineReport::tracked_outputs`.
+    pub tracked_outputs: BTreeMap<String, Vec<String>>,
 }
 
 /// Why a hook is withheld from a tool, and so what becomes of a copy

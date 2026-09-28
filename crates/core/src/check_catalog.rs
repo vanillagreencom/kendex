@@ -1,13 +1,15 @@
 //! Authoring validation over a catalog directory: what a maintainer can
 //! know about their own content before anyone installs it.
 //!
-//! Three passes over every item. The structural pass asks whether each
+//! Four passes over every item. The structural pass asks whether each
 //! harness's loader could hold this item at all — a name it will not
 //! accept, a SKILL.md that disagrees with its own directory. The settings
 //! pass reads a settings template against the grammar the shell loaders
-//! read a consumer's settings file with. The safety pass runs the same
-//! rules an install runs, so a catalog finds out in its own CI rather than
-//! in somebody else's plan preview.
+//! read a consumer's settings file with. The tracked-output pass holds
+//! each path an agent declares as tracked output against the catalog
+//! repository's own ignore rules. The safety pass runs the same rules an
+//! install runs, so a catalog finds out in its own CI rather than in
+//! somebody else's plan preview.
 //!
 //! Every pass only reports what an author can act on. Anything rendering
 //! resolves on its own is not a problem this can help with, and naming it
@@ -49,6 +51,10 @@ pub const SAFETY_PASS: &str = "safety";
 /// one item — a broken control file, a skipped colliding directory.
 pub const CATALOG_PASS: &str = "catalog";
 
+/// The `pass` of a finding about a path an agent declares as tracked
+/// output that the catalog's own repository ignores.
+pub const TRACKED_OUTPUT_PASS: &str = "tracked-output";
+
 /// Every kind a catalog can offer, in report order.
 const CHECKED_KINDS: [ItemKind; 5] = [
     ItemKind::Agent,
@@ -77,7 +83,8 @@ pub struct CheckFinding {
     pub line: Option<u32>,
     pub kind: &'static str,
     pub name: String,
-    /// The harness whose loader complains, [`SETTINGS_PASS`], or [`SAFETY_PASS`].
+    /// The harness whose loader complains, [`SETTINGS_PASS`],
+    /// [`TRACKED_OUTPUT_PASS`], [`CATALOG_PASS`] or [`SAFETY_PASS`].
     pub pass: String,
     /// `error`/`warning` for structural and settings findings; the safety
     /// severity (`low`..`critical`) for safety findings.
@@ -329,6 +336,7 @@ pub fn check_item(
         &input.location,
         path,
     )?);
+    structural.extend(tracked_outputs(sealed, kind, name, &input)?);
     let file = input.location.clone();
     // The safety half of the authoring check: the same rules an install
     // runs, over the same content.
@@ -360,6 +368,50 @@ pub(crate) fn audit_input(
         publisher,
         content: content(sealed, kind, path)?,
     })
+}
+
+/// Each path the agent declares as tracked output that the catalog's own
+/// repository ignores, relative to the catalog root. Advisory: the agent
+/// installs and runs, and what it writes here is lost to every other
+/// checkout of this repository. An agent file that will not parse
+/// declares nothing this pass can read.
+fn tracked_outputs(
+    sealed: &SealedSource,
+    kind: ItemKind,
+    name: &str,
+    input: &AuditInput,
+) -> Result<Vec<CheckFinding>> {
+    let (ItemKind::Agent, Content::Document { text }) = (kind, &input.content) else {
+        return Ok(Vec::new());
+    };
+    let Ok(agent) = crate::render::agent::parse_source_agent(text) else {
+        return Ok(Vec::new());
+    };
+    let standings = crate::tracked_output::standings(
+        sealed.root(),
+        [(name, agent.tracked_outputs.as_slice())],
+    )?;
+    Ok(standings
+        .into_iter()
+        .filter_map(|standing| match standing.held {
+            crate::tracked_output::Held::Ignored { rule } => Some(CheckFinding {
+                file: input.location.clone(),
+                line: None,
+                kind: kind.name(),
+                name: name.to_owned(),
+                pass: TRACKED_OUTPUT_PASS.to_owned(),
+                severity: "warning",
+                rule: None,
+                message: format!(
+                    "declares {} as tracked output, and this repository ignores it ({rule})",
+                    standing.path
+                ),
+                fix: "stop ignoring the path, or declare where the agent's output is committed"
+                    .to_owned(),
+            }),
+            crate::tracked_output::Held::Tracked => None,
+        })
+        .collect())
 }
 
 /// A skill's whole tree; anything else is one file. Read through the same

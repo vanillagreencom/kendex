@@ -259,6 +259,7 @@ pub fn plan_scope(
         notes: state.notes,
         warnings: state.warnings,
         excluded_hooks: state.excluded_hooks,
+        tracked_outputs: state.tracked_outputs,
         set_changes,
         sweepable,
         kept,
