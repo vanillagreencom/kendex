@@ -1085,7 +1085,7 @@ text_line() { # SPELLING TEXT
       ;;
     pi)
       jq -nc --arg t "$2" \
-        '{type:"message",id:"e2",parentId:"e1",timestamp:"2026-09-19T00:00:00Z",
+        '{type:"message",id:"e2",parentId:"e1",timestamp:"2026-09-19T00:00:00.215Z",
           message:{role:"assistant",model:"m",stopReason:"stop",content:[{type:"text",text:$t}],
                    usage:{input:1,output:7,cacheRead:0,cacheWrite:0,totalTokens:8,cost:{total:0}}}}'
       ;;
@@ -1093,16 +1093,20 @@ text_line() { # SPELLING TEXT
   esac
 }
 
+# The stamp a harness writes on a record, in the shipped format: an ISO 8601
+# UTC time with milliseconds, as Claude Code and Pi both write one.
+STAMP='def stamp: todate | sub("Z$"; ".215Z");'
+
 # The prompt record that opens a turn at EPOCH, in that harness's spelling:
 # Claude Code's `user` record with string content, and Pi's `message` record
 # whose role is user (`UserMessage`, @earendil-works/pi-ai). A turn's sent
 # test counts an ask or notice stamped at or after it.
 prompt_line() { # SPELLING EPOCH
   case "$1" in
-    claude) jq -nc --argjson t "$2" '{type:"user",timestamp:($t | todate),message:{role:"user",content:"go"}}' ;;
+    claude) jq -nc --argjson t "$2" "$STAMP"'{type:"user",timestamp:($t | stamp),message:{role:"user",content:"go"}}' ;;
     pi)
-      jq -nc --argjson t "$2" \
-        '{type:"message",id:"e1",parentId:null,timestamp:($t | todate),
+      jq -nc --argjson t "$2" "$STAMP"'
+        {type:"message",id:"e1",parentId:null,timestamp:($t | stamp),
           message:{role:"user",content:[{type:"text",text:"go"}],timestamp:($t * 1000)}}'
       ;;
     *) printf 'prompt_line: no such spelling: %s\n' "$1" >&2; return 1 ;;
@@ -1157,14 +1161,25 @@ new_handoff_lane question_ask KEN-64
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-64 --file "$TMP_ROOT/ask.txt" >/dev/null)
 stop_at "$TRANSCRIPT" false
 expect 0 "$GAP" "a turn in which the lane sent its ask ends"
-{ prompt_line claude "$(after_sent KEN-64 1)"; text_line claude 'Which base?'; } > "$TRANSCRIPT"
+# Two turns in one window: the earlier turn's prompt, the ask it sent, and a
+# new prompt after the ask. The last prompt opens the turn; the Pi spelling
+# of this row and the next stands with the Pi lanes below.
+{ prompt_line claude "$OPENED"; prompt_line claude "$(after_sent KEN-64 1)"; text_line claude 'Which base?'; } > "$TRANSCRIPT"
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
-  "an ask sent before this turn opened does not carry this turn's question"
+  "an ask sent in an earlier turn of the window does not carry this turn's question"
+# A tool's result opens no turn: stamped after the ask, it leaves the ask in
+# the turn that asks the question.
+{ prompt_line claude "$OPENED"
+  jq -nc --argjson t "$(after_sent KEN-64 1)" "$STAMP"'{type:"user",timestamp:($t | stamp),
+    message:{role:"user",content:[{type:"tool_result",tool_use_id:"t1",content:"ok"}]}}'
+  text_line claude 'Which base?'; } > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+expect 0 "$GAP" "a tool_result record after the ask opens no turn"
 # A turn opened before the window holds no prompt, and the window's first
 # stamp stands in for it.
-{ jq -nc --argjson t "$(after_sent KEN-64 1)" \
-    '{type:"assistant",timestamp:($t | todate),message:{role:"assistant",content:[{type:"tool_use",name:"Bash",input:{}}]}}'
+{ jq -nc --argjson t "$(after_sent KEN-64 1)" "$STAMP"'
+    {type:"assistant",timestamp:($t | stamp),message:{role:"assistant",content:[{type:"tool_use",name:"Bash",input:{}}]}}'
   text_line claude 'Which base?'; } > "$TRANSCRIPT"
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
@@ -1246,6 +1261,20 @@ new_pi_lane question_pi_ask KEN-62
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-62 --file "$TMP_ROOT/ask.txt" >/dev/null)
 stop_pi_at "$TRANSCRIPT" false
 expect 0 "$GAP" "a Pi turn in which the lane sent its ask ends"
+# The two rows above in Pi's spelling: an earlier turn's ask carries no
+# question of a later prompt's turn, and a toolResult record opens no turn.
+new_pi_lane question_pi_turns KEN-51
+(cd "$LANE" && "$LANE_MAIL" ask --item KEN-51 --file "$TMP_ROOT/ask.txt" >/dev/null)
+{ prompt_line pi "$OPENED"; prompt_line pi "$(after_sent KEN-51 1)"; text_line pi 'Which base?'; } > "$TRANSCRIPT"
+stop_pi_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
+  "pi: an ask sent in an earlier turn of the window does not carry this turn's question"
+{ prompt_line pi "$OPENED"
+  jq -nc --argjson t "$(after_sent KEN-51 1)" "$STAMP"'{type:"message",id:"e4",parentId:"e1",timestamp:($t | stamp),
+    message:{role:"toolResult",toolCallId:"t1",toolName:"bash",content:[{type:"text",text:"ok"}],isError:false}}'
+  text_line pi 'Which base?'; } > "$TRANSCRIPT"
+stop_pi_at "$TRANSCRIPT" false
+expect 0 "$GAP" "pi: a toolResult record after the ask opens no turn"
 new_pi_lane question_pi_none KEN-61
 { prompt_line pi "$OPENED"; text_line pi 'Pushed the fix; CI is running.'; } > "$TRANSCRIPT"
 stop_pi_at "$TRANSCRIPT" false
@@ -1258,7 +1287,7 @@ assert_eq "$(notices KEN-61)" none "and writes nothing to the mailbox"
 # notice this hook sent at the turn before.
 pi_wake_line() { # EPOCH
   jq -nc --argjson t "$1" \
-    '{type:"custom_message",customType:"bg-task",content:"lane-mail: mail=KEN-56 new=1",display:false,id:"e3",parentId:"e2",timestamp:($t | todate)}'
+    "$STAMP"'{type:"custom_message",customType:"bg-task",content:"lane-mail: mail=KEN-56 new=1",display:false,id:"e3",parentId:"e2",timestamp:($t | stamp)}'
 }
 new_pi_lane question_pi_wake KEN-56
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-56 --file "$TMP_ROOT/ask.txt" >/dev/null)
@@ -1277,7 +1306,7 @@ expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
 # body and a stop hook's feedback among it, and opens no turn: an ask sent
 # after the prompt still carries the question when one follows it.
 meta_line() { # EPOCH TEXT
-  jq -nc --argjson t "$1" --arg c "$2" '{type:"user",isMeta:true,timestamp:($t | todate),message:{role:"user",content:[{type:"text",text:$c}]}}'
+  jq -nc --argjson t "$1" --arg c "$2" "$STAMP"'{type:"user",isMeta:true,timestamp:($t | stamp),message:{role:"user",content:[{type:"text",text:$c}]}}'
 }
 new_handoff_lane question_meta KEN-55
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-55 --file "$TMP_ROOT/ask.txt" >/dev/null)

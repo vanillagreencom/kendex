@@ -154,23 +154,25 @@ for row in \
 done
 
 echo "=== a pi --cmd launch without the unattended words is refused ==="
-# HARNESS|TEMPLATE|ITEM|RC|REFUSAL LINE (`-` for none)|TEXT PRINTED|WHAT
+# HARNESS|TEMPLATE|ITEM|RC|REFUSAL LINE (`-` for none)|TEXT PRINTED|CREATED|WHAT
 # Every template carries its harness's question-tool words, so the gate
-# judged is this one. The refusal prints the text on its last line, whole.
+# judged is this one. The refusal prints the text on its last line, whole,
+# and a refused launch makes no worktree.
 PI_Q='--exclude-tools question'
 for row in \
-  "pi|true $PI_Q|CC-26|1|open-terminal: launch-unattended-missing harness=pi flag=--append-system-prompt|yes|a pi template without the words is refused, naming the flag and printing the text" \
-  "pi|true $PI_Q --append-system-prompt 'Ask when stuck.'|CC-27|1|open-terminal: launch-unattended-missing harness=pi flag=--append-system-prompt|yes|a pi template appending other text is refused" \
-  "pi|true $PI_Q '$PI_UNATTENDED_TEXT'|CC-23|1|open-terminal: launch-unattended-missing harness=pi flag=--append-system-prompt|yes|the text with no flag before it is not the words" \
-  "pi|true $PI_Q --append-system-prompt '$PI_UNATTENDED_TEXT' --append-system-prompt 'Ask when stuck.'|CC-24|0|-|no|the words beside another appended text launch" \
-  "claude|true --disallowedTools=AskUserQuestion,EnterPlanMode|CC-25|0|-|no|a claude template is not asked for words its harness has none of" \
+  "pi|true $PI_Q|CC-26|1|open-terminal: launch-unattended-missing harness=pi flag=--append-system-prompt|yes|no|a pi template without the words is refused, naming the flag and printing the text" \
+  "pi|true $PI_Q --append-system-prompt 'Ask when stuck.'|CC-27|1|open-terminal: launch-unattended-missing harness=pi flag=--append-system-prompt|yes|no|a pi template appending other text is refused" \
+  "pi|true $PI_Q '$PI_UNATTENDED_TEXT'|CC-23|1|open-terminal: launch-unattended-missing harness=pi flag=--append-system-prompt|yes|no|the text with no flag before it is not the words" \
+  "pi|true $PI_Q --append-system-prompt '$PI_UNATTENDED_TEXT' --append-system-prompt 'Ask when stuck.'|CC-24|0|-|no|yes|the words beside another appended text launch" \
+  "claude|true --disallowedTools=AskUserQuestion,EnterPlanMode|CC-25|0|-|no|yes|a claude template is not asked for words its harness has none of" \
   ; do
-  IFS='|' read -r harness template item want_rc want_err want_text what <<<"$row"
+  IFS='|' read -r harness template item want_rc want_err want_text want_created what <<<"$row"
   launch "$item" --harness "$harness" --cmd "$template"
   refusal="$(awk '$2 == "launch-unattended-missing" { print; exit }' <<<"$ERR")"
   printed=no
   [[ "$(tail -n 1 <<<"$ERR")" != "$PI_UNATTENDED_TEXT" ]] || printed=yes
-  assert_eq "rc=$RC refusal=${refusal:--} printed=$printed" "rc=$want_rc refusal=$want_err printed=$want_text" "gate: $what"
+  assert_eq "rc=$RC created=$CREATED refusal=${refusal:--} printed=$printed" \
+    "rc=$want_rc created=$want_created refusal=$want_err printed=$want_text" "gate: $what"
 done
 
 echo "=== must-fail controls ==="
