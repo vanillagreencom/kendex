@@ -1,7 +1,9 @@
 //! The session hook's view of a declaration sitting on files no record
 //! accounts for: `kendex check --quiet` prints the stale line with the
 //! take-over as its fix, the fix settles it, and a copy the render matches
-//! is recorded with nothing printed and a clean exit.
+//! is recorded with nothing printed and a clean exit, except in a checkout
+//! off the default branch, where it is reported as not recorded and the
+//! tree is left as git had it.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -183,4 +185,152 @@ fn a_matching_copy_is_recorded_silently_under_quiet() {
         recorded.entries.keys()
     );
     assert_eq!(fs::read(&w.rendered).unwrap(), rendered);
+}
+
+/// One git command in a fixture repository, through the constructor that
+/// drops the caller's git environment.
+#[allow(clippy::unwrap_used)]
+fn git(dir: &Path, args: &[&str]) -> String {
+    let output = kendex_core::process::Hardened::git(args, Some(dir))
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+fn commit(dir: &Path, message: &str) {
+    git(dir, &["add", "-A"]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--quiet",
+            "-m",
+            message,
+        ],
+    );
+}
+
+const MANIFEST: &str = "schema = 6\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n[skills.deploy]\nsource = \"cat\"\n";
+
+/// Where a checkout stands once `Arrange` has run in a repository on the
+/// default branch.
+type Arrange = fn(&Path) -> PathBuf;
+
+/// A repository whose default branch records `deploy`, and the checkout
+/// `arrange` hands back, whose own commit adds `ship` to the manifest with
+/// its render and leaves `.kendex-lock.json` as the default branch holds
+/// it: the tree a lane commits under D007.
+#[allow(clippy::unwrap_used)]
+fn a_lane_adding_a_package(arrange: Arrange) -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let root = home.join("project");
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    for skill in ["deploy", "ship"] {
+        fs::create_dir_all(root.join(format!("catalog/skills/{skill}"))).unwrap();
+        fs::write(
+            root.join(format!("catalog/skills/{skill}/SKILL.md")),
+            format!("---\nname: {skill}\ndescription: Do it.\n---\n\nRun {skill}.\n"),
+        )
+        .unwrap();
+    }
+    fs::write(root.join("kendex.toml"), MANIFEST).unwrap();
+    git(&root, &["init", "--quiet", "-b", "main"]);
+    git(&root, &["config", "gc.auto", "0"]);
+    git(&root, &["config", "maintenance.auto", "false"]);
+    let applied = kendex(&home, &root, &["apply", "--yes", "--leave"]);
+    assert!(applied.status.success(), "{}", said(&applied));
+    commit(&root, "deploy");
+
+    let checkout = arrange(&root);
+    fs::write(
+        checkout.join("kendex.toml"),
+        format!("{MANIFEST}[skills.ship]\nsource = \"cat\"\n"),
+    )
+    .unwrap();
+    let applied = kendex(&home, &checkout, &["apply", "--yes", "--leave"]);
+    assert!(applied.status.success(), "{}", said(&applied));
+    git(&checkout, &["checkout", "--", ".kendex-lock.json"]);
+    commit(&checkout, "ship");
+    assert_eq!(
+        git(&checkout, &["status", "--porcelain"]),
+        "",
+        "the fixture starts clean"
+    );
+    (tmp, home, checkout)
+}
+
+/// The session start D007 is about: `kendex check --quiet`, as the
+/// session hook runs it, in a lane that adds a package. Off the default
+/// branch, on a branch, in a linked worktree and on a detached HEAD
+/// alike, it reports the proven render as not recorded and leaves the
+/// tree as git had it. The default-branch row is the control: the same
+/// state there is settled into the record, so `.kendex-lock.json` is
+/// modified and the report is clean.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_session_start_off_the_default_branch_writes_nothing_git_sees() {
+    let rows: [(&str, Arrange, Option<&str>); 4] = [
+        (
+            "a branch in the checkout",
+            |root| {
+                git(root, &["switch", "--quiet", "-c", "lane"]);
+                root.to_path_buf()
+            },
+            Some("branch 'lane'"),
+        ),
+        (
+            "a linked worktree on a branch",
+            |root| {
+                let linked = root.with_file_name("lane");
+                let at = linked.to_str().unwrap();
+                git(root, &["worktree", "add", "--quiet", "-b", "lane", at]);
+                kendex_core::paths::canonical(&linked).unwrap()
+            },
+            Some("branch 'lane'"),
+        ),
+        (
+            "a detached HEAD",
+            |root| {
+                git(root, &["switch", "--quiet", "--detach"]);
+                root.to_path_buf()
+            },
+            Some("a detached HEAD"),
+        ),
+        ("the default branch", |root| root.to_path_buf(), None),
+    ];
+    for (shape, arrange, off) in rows {
+        let (_tmp, home, checkout) = a_lane_adding_a_package(arrange);
+        let checked = kendex(&home, &checkout, &["check", "--quiet"]);
+        let status = git(&checkout, &["status", "--porcelain"]);
+        let text = String::from_utf8_lossy(&checked.stdout);
+        let (tree, code) = match off {
+            Some(_) => ("", 1),
+            None => (" M .kendex-lock.json\n", 0),
+        };
+        assert_eq!(status, tree, "{shape}: {}", said(&checked));
+        assert_eq!(
+            checked.status.code(),
+            Some(code),
+            "{shape}: {}",
+            said(&checked)
+        );
+        if let Some(checkout_word) = off {
+            assert!(
+                text.contains(&format!(
+                    "skill 'ship' for Claude Code matches its source but is not recorded: {checkout_word} leaves the install record as 'main' holds it"
+                )),
+                "{shape}: {text}"
+            );
+        }
+    }
 }

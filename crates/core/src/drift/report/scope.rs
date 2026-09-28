@@ -622,8 +622,11 @@ impl ScopeCheck<'_> {
     /// carrying committed renders and no record, the copy an earlier
     /// build left unrecorded — is recorded without a word: either exit
     /// would land the same bytes, and a line about it would teach the
-    /// reader to skim. A copy that differs is stale, with the count, in
-    /// the section an agent reads first: the state this is most often is
+    /// reader to skim. Off the branch the committed record is written on
+    /// (D007) it is not recorded, and a line says so with no fix, since
+    /// the record on that branch gains it after the merge. A copy that
+    /// differs is stale, with the count, in the section an agent reads
+    /// first: the state this is most often is
     /// a render some commits behind its source. Its fix is the take-over
     /// only where the pass answered for the whole scope; otherwise the
     /// plan, which names every position, is what to see next. A position
@@ -706,6 +709,9 @@ impl ScopeCheck<'_> {
         for (key, install) in &occupied {
             match verdicts.get(key) {
                 Some(crate::drift::copies::Verdict::Recorded) => {}
+                Some(crate::drift::copies::Verdict::Unrecorded(off)) => {
+                    self.unrecorded_line(install, off, sections);
+                }
                 Some(crate::drift::copies::Verdict::Differs {
                     files,
                     rendered_from,
@@ -766,6 +772,34 @@ impl ScopeCheck<'_> {
                     global: self.global,
                 },
             }),
+        ));
+    }
+
+    /// The line for a copy that is the render, left out of the record
+    /// because this checkout does not write it. No remedy: the fix is the
+    /// merge, after which the record on the default branch gains it.
+    fn unrecorded_line(
+        &self,
+        install: &crate::engine::Occupied,
+        off: &crate::lock::branch::OffBranch,
+        sections: &mut Sections,
+    ) {
+        let checkout = match &off.head {
+            Some(branch) => format!("branch '{}'", shown(branch)),
+            None => "a detached HEAD".to_owned(),
+        };
+        sections.unrecorded.push(drift(
+            format!(
+                "{}{} '{}' for {} matches its source but is not recorded: {} leaves the install record as '{}' holds it, and '{}' records it after the merge",
+                self.prefix,
+                install.kind.name(),
+                shown(&install.name),
+                install.harness.display_name(),
+                checkout,
+                shown(&off.records_on),
+                shown(&off.records_on)
+            ),
+            None,
         ));
     }
 

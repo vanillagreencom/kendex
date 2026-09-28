@@ -306,6 +306,7 @@ pub fn skill_names(lock: &Lock) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
+pub mod branch;
 mod file;
 mod roots;
 pub use file::{

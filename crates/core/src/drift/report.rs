@@ -7,7 +7,9 @@
 //! render or something older needs the render, so for that state alone
 //! the check plans the scope — once per state and inside the session
 //! hook's budget, the verdicts memoized by `drift::copies` — claims a
-//! copy the render matches into the record without a word, and reports a
+//! copy the render matches into the record without a word (off the
+//! branch the committed record is written on, it reports the copy as
+//! unrecorded instead, with no fix), and reports a
 //! copy it does not as stale with the count and, where the pass answered
 //! for the whole scope, the take-over as the fix (`scope::blocked_lines`).
 //!
@@ -479,6 +481,9 @@ struct Sections {
     missing: Vec<Line>,
     record_cleanup: Vec<Line>,
     blocked: Vec<Line>,
+    /// A copy that is its source's render, left out of the committed
+    /// record by a checkout off the branch that record is written on.
+    unrecorded: Vec<Line>,
     /// A Pi package this project declares that the global manifest
     /// declares too.
     declared_twice: Vec<Line>,
@@ -502,6 +507,7 @@ impl Sections {
             &self.missing,
             &self.record_cleanup,
             &self.blocked,
+            &self.unrecorded,
             &self.shadowed,
             &self.references,
             &self.unevaluated,
@@ -529,6 +535,7 @@ impl Sections {
             missing: Vec::new(),
             record_cleanup: Vec::new(),
             blocked: Vec::new(),
+            unrecorded: Vec::new(),
             declared_twice: Vec::new(),
             shadowed: Vec::new(),
             references: Vec::new(),
@@ -553,6 +560,7 @@ impl Sections {
             ("missing on disk", self.missing),
             ("record cleanup needed", self.record_cleanup),
             ("blocked by files already there", self.blocked),
+            ("not recorded on this branch", self.unrecorded),
             ("declared at both scopes", self.declared_twice),
             ("loaded twice by pi", self.shadowed),
             ("broken references", self.references),

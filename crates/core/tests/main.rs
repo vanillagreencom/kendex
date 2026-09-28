@@ -63,6 +63,7 @@ mod instruction_shims;
 mod invariants;
 mod kinds;
 mod lock_from_another_project;
+mod lock_record_branch;
 mod marketplace_index;
 mod marketplace_subscribe;
 mod me_client;

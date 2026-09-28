@@ -11,7 +11,8 @@
 //! honest "maybe", never a guessed verdict. The one deep read the check
 //! makes itself is for a declaration sitting on files no record accounts
 //! for: it plans the scope to compare them with the render, records the
-//! copies that match and reports the rest as stale — once per state,
+//! copies that match where the committed record may be written
+//! (`crate::lock::branch`) and reports the rest as stale — once per state,
 //! inside the session hook's budget, with the verdicts memoized
 //! ([`copies`]) and the background refresh finishing a pass the budget
 //! cut short.
