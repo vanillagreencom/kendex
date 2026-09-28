@@ -20,7 +20,7 @@ fn claude_hooks_use_the_project_dir_variable_and_absolute_global_paths() {
     assert_eq!(path, PathBuf::from("/p/.claude/hooks/guard.sh"));
     assert_eq!(
         command,
-        "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\""
+        format!("{CLAUDE_OUTSIDE_COPILOT}bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\"")
     );
     assert_eq!(registry, PathBuf::from("/p/.claude/settings.json"));
     assert_eq!(feature, None);
@@ -30,7 +30,10 @@ fn claude_hooks_use_the_project_dir_variable_and_absolute_global_paths() {
     else {
         panic!("claude hooks are script targets");
     };
-    assert_eq!(command, "bash \"/h/.claude/hooks/guard.sh\"");
+    assert_eq!(
+        command,
+        format!("{CLAUDE_OUTSIDE_COPILOT}bash \"/h/.claude/hooks/guard.sh\"")
+    );
 }
 
 #[test]
@@ -234,7 +237,9 @@ fn a_declared_environment_is_assigned_ahead_of_the_script_that_names_the_hook() 
     };
     assert_eq!(
         command,
-        format!("h=\"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\"; {assignment}\"$h\"")
+        format!(
+            "{CLAUDE_OUTSIDE_COPILOT}h=\"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\"; {assignment}\"$h\""
+        )
     );
 }
 
@@ -279,6 +284,57 @@ fn a_declared_path_reaches_the_script_and_not_the_interpreter_lookup() {
                 "PATH={launching}: {line}\n{}",
                 String::from_utf8_lossy(&out.stderr)
             );
+        }
+    }
+}
+
+/// A Claude Code hook command runs its script in Claude Code's hook
+/// environment and exits 0 without running it in a Copilot CLI hook process,
+/// which is told apart by the `COPILOT_PROJECT_DIR` Copilot sets there. One
+/// row per command shape: each scope, each with and without a declared
+/// environment. The script exits 3, so a run is told from the skip by its
+/// status as well as by the file it writes. The child always gets
+/// `COPILOT_PROJECT_DIR`, empty for Claude Code, so no value in the test's own
+/// environment reaches it; the prefix reads an empty value as an unset one.
+#[cfg(unix)]
+#[test]
+fn a_claude_hook_command_runs_its_script_outside_a_copilot_hook_process_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = crate::test_util::rooted(&tmp);
+    let env = Env::fake(&root, FakeOs::Linux);
+    let project = Scope::Project { root: root.clone() };
+    let hooks = root.join(".claude/hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    std::fs::write(
+        hooks.join("guard.sh"),
+        "printf ran >\"$CLAUDE_PROJECT_DIR/ran\"\nexit 3\n",
+    )
+    .unwrap();
+    let ran = root.join("ran");
+    let vars = BTreeMap::from([("SMOKE".to_owned(), "1".to_owned())]);
+    let root_text = crate::paths::slashed(&root);
+    for scope in [&project, &Scope::Global] {
+        for declared in [None, Some(&vars)] {
+            let Some(HookTarget::Script { command, .. }) =
+                hook_target(&env, scope, HarnessId::Claude, "guard", declared)
+            else {
+                panic!("claude hooks are script targets");
+            };
+            for (copilot, expected) in [("", (Some(3), true)), (&*root_text, (Some(0), false))] {
+                let _ = std::fs::remove_file(&ran);
+                let out = crate::process::Hardened::program("/bin/sh", &["-c", &command])
+                    .env("PATH", "/usr/bin:/bin")
+                    .env("CLAUDE_PROJECT_DIR", &root_text)
+                    .env("COPILOT_PROJECT_DIR", copilot)
+                    .run()
+                    .unwrap();
+                assert_eq!(
+                    (out.status.code(), ran.exists()),
+                    expected,
+                    "{scope:?} COPILOT_PROJECT_DIR={copilot:?}: {command}\n{}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
         }
     }
 }

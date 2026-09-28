@@ -28,7 +28,8 @@
 # installs: skill and hook everywhere; agent everywhere but Antigravity;
 # command on Claude, Codex, OpenCode, Pi and Gemini; mcp on every harness but
 # Pi; pi-ext on Pi alone; lane-mail and lane-question everywhere; mail-wake
-# on Claude, Codex and Pi. Plugin has no row anywhere —
+# on Claude, Codex and Pi; mixed-hook on Claude and Copilot, asked of one
+# project installed for both, whose .claude/settings.json Copilot also reads. Plugin has no row anywhere —
 # `Plugin` has `install: NONE` on all eight harnesses, so kendex renders no
 # plugin for one to load — and Antigravity has no agent row for the same
 # reason: agy reads agents from its global root alone, so kendex renders no
@@ -49,7 +50,9 @@
 # The scratch projects live under tmp/ in this checkout, one git repository
 # per harness with the fixture installed for that harness alone, so no harness
 # reads them as part of this checkout, no harness answers for another's
-# render, and kendex's project-scope writes land nowhere shared. Per-harness gates the check has to
+# render, and kendex's project-scope writes land nowhere shared; the mixed-hook
+# rows' project is the one installed for two harnesses, because that is the
+# question they ask. Per-harness gates the check has to
 # open, each said on its row: Codex runs project hooks only after persisted
 # hook trust, so the exec run carries --dangerously-bypass-hook-trust, and it
 # reads a project's `config.toml` only once that project is trusted, so every
@@ -74,8 +77,8 @@
 # included), 1 when any row failed, 2 when the fixture could not be installed
 # or `kendex verify` refused it, 3 when nothing failed but a row was
 # unanswerable or pending, so a harness that died on the render never reads
-# as a clean run. Model turns: seven on claude, three on codex, two on
-# antigravity, five on pi, one on gemini, five on copilot, two on cursor when
+# as a clean run. Model turns: eight on claude, three on codex, two on
+# antigravity, five on pi, one on gemini, six on copilot, two on cursor when
 # logged in.
 #
 # The report is the row table: one aligned line per row as it is decided, then
@@ -325,7 +328,26 @@ EOF
 EOF
   hook_body PreToolUse
 } >"$CATALOG/hooks/smoke-tool.sh"
-chmod +x "$CATALOG/hooks/smoke-session.sh" "$CATALOG/hooks/smoke-tool.sh"
+# The mixed-hook rows' excluded hook: its harnesses line names Claude Code
+# alone and its matcher is empty, as the lane-mail hooks' is, so a Copilot
+# session in a project installed for both meets an excluded hook and an empty
+# matcher in .claude/settings.json.
+{
+  cat <<'EOF'
+#!/usr/bin/env bash
+# ---
+# name: smoke-claude-only
+# event: PreToolUse
+# matcher:
+# description: Harness smoke fixture hook installed for Claude Code alone; appends its event and path to smoke-fired at the project root before a tool runs.
+# safety: Appends to three files at the project root, and where a row planted one, renames smoke-sentinel to smoke-sent and runs it once; never refuses a tool.
+# timeout: 10
+# harnesses: [claude-code]
+# ---
+EOF
+  hook_body PreToolUse
+} >"$CATALOG/hooks/smoke-claude-only.sh"
+chmod +x "$CATALOG/hooks/smoke-session.sh" "$CATALOG/hooks/smoke-tool.sh" "$CATALOG/hooks/smoke-claude-only.sh"
 
 # The server is a real stdio MCP endpoint, so a harness that starts it gets an
 # `initialize` and a `tools/list` it accepts rather than a process that dies
@@ -925,11 +947,12 @@ wake_row() { # HARNESS LABEL CMD...
 
 questions() { # HARNESS — the rows this harness answers, in the order it answers them
   case "$1" in
-    claude) printf '%s' 'skill hook agent command mcp mail-wake lane-mail lane-question' ;;
+    claude) printf '%s' 'skill hook agent command mcp mixed-hook mail-wake lane-mail lane-question' ;;
     opencode | gemini) printf '%s' 'skill agent hook command mcp lane-mail lane-question' ;;
     codex) printf '%s' 'skill command agent hook mcp mail-wake lane-mail lane-question' ;;
     pi) printf '%s' 'skill agent command pi-ext hook mail-wake lane-mail lane-question' ;;
     antigravity) printf '%s' 'skill hook mcp lane-mail lane-question' ;;
+    copilot) printf '%s' 'skill agent hook mcp mixed-hook lane-mail lane-question' ;;
     *) printf '%s' 'skill agent hook mcp lane-mail lane-question' ;;
   esac
 }
@@ -971,6 +994,81 @@ copied_home() { # NAME SOURCE-DIR FILE — prints the isolated dir
   printf '%s' "$home"
 }
 
+# ---- the mixed install -----------------------------------------------------
+# Copilot CLI runs the hooks in .claude/settings.json beside its own, so one
+# project installed for Claude Code and Copilot together is its own question:
+# it holds smoke-tool, which both harnesses install, and smoke-claude-only,
+# which names Claude Code alone. Every hook fixture appends its own rendered
+# path, so the marker tells each copy apart. The Copilot row passes where
+# `copilot skill list` names no settings file it could not load, one tool call
+# ran the .github/hooks copy of smoke-tool, and neither .claude/hooks script
+# ran. The Claude Code row is the control: its tool call ran both of its own
+# copies, so the registrations Copilot skips still run in Claude Code.
+MIXED="$DIR/mixed/project"
+MIXED_READY=0
+MIXED_TASK='Run the shell command true with your terminal tool, then reply with exactly: ok'
+mixed_world() { # installs the mixed project once; exits 2 when kendex cannot install or verify it
+  [ "$MIXED_READY" -eq 0 ] || return 0
+  MIXED_READY=1
+  scratch_repo "$MIXED"
+  if ! (cd "$MIXED" && kendex add "$CATALOG" --hook smoke-tool,smoke-claude-only --harness claude,copilot -y) \
+    >"$LOGS/mixed-kendex-add.log" 2>&1; then
+    refused add claude,copilot "$LOGS/mixed-kendex-add.log"
+  fi
+  if ! (cd "$MIXED" && kendex verify --scope project) >"$LOGS/mixed-kendex-verify.log" 2>&1; then
+    refused verify claude,copilot "$LOGS/mixed-kendex-verify.log"
+  fi
+  note verified claude,copilot "$MIXED"
+}
+fired_count() { # RENDER-PATH — the PreToolUse lines the copy rendered there wrote, 0 with no marker; 2 when it cannot be read
+  local n rc=0
+  [ -f "$MARKER" ] || { printf '0'; return 0; }
+  n=$(grep -cxF -- "PreToolUse $PROJECT/$1" "$MARKER") || rc=$?
+  [ "$rc" -le 1 ] || return 2
+  printf '%s' "$n"
+}
+mixed_copilot_row() { # HOME — the isolated COPILOT_HOME; COPILOT_ALLOW_ALL=true trusts the project
+  mixed_world
+  local PROJECT="$MIXED" MARKER="$MIXED/smoke-fired" startup own shared excluded
+  run copilot-mixed-startup env COPILOT_HOME="$1" COPILOT_ALLOW_ALL=true copilot skill list
+  startup=$(grep -m 1 -F 'could not be loaded' <<<"$OUT") || startup=""
+  rm -f -- "$MARKER"
+  run copilot-mixed env COPILOT_HOME="$1" COPILOT_ALLOW_ALL=true copilot -p "$MIXED_TASK" --allow-all-tools -s
+  if ! own=$(fired_count .github/hooks/smoke-tool.sh) || ! shared=$(fired_count .claude/hooks/smoke-tool.sh) ||
+    ! excluded=$(fired_count .claude/hooks/smoke-claude-only.sh); then
+    row copilot mixed-hook unanswerable "the marker $MARKER could not be read"
+    return 0
+  fi
+  if [ -n "$startup" ]; then
+    row copilot mixed-hook fail "copilot skill list reports a settings file it could not load: $(clip "$startup")"
+  elif [ "$shared" -gt 0 ] || [ "$excluded" -gt 0 ]; then
+    row copilot mixed-hook fail "copilot -p ran the Claude Code copies, smoke-tool $shared time(s) and smoke-claude-only $excluded time(s), beside its own smoke-tool $own time(s)"
+  elif [ "$own" -gt 0 ]; then
+    row copilot mixed-hook pass "copilot skill list reports no settings file it could not load, and copilot -p ran .github/hooks/smoke-tool.sh $own time(s) and neither .claude/hooks copy"
+  elif [ "$STATUS" -ne 0 ]; then
+    row copilot mixed-hook unanswerable "copilot -p exited $STATUS before any hook ran: $(clip "$(last_line)")"
+  else
+    row copilot mixed-hook fail "copilot -p ran no copy of smoke-tool (marker: $(marker_text))"
+  fi
+}
+mixed_claude_row() { # HOME — the isolated CLAUDE_CONFIG_DIR, which trusts the project
+  mixed_world
+  local PROJECT="$MIXED" MARKER="$MIXED/smoke-fired" shared excluded
+  rm -f -- "$MARKER"
+  run claude-mixed env CLAUDE_CONFIG_DIR="$1" claude -p "$MIXED_TASK"
+  if ! shared=$(fired_count .claude/hooks/smoke-tool.sh) || ! excluded=$(fired_count .claude/hooks/smoke-claude-only.sh); then
+    row claude mixed-hook unanswerable "the marker $MARKER could not be read"
+    return 0
+  fi
+  if [ "$shared" -gt 0 ] && [ "$excluded" -gt 0 ]; then
+    row claude mixed-hook pass "claude -p ran .claude/hooks/smoke-tool.sh $shared time(s) and .claude/hooks/smoke-claude-only.sh $excluded time(s) in the project installed for Copilot too"
+  elif [ "$STATUS" -ne 0 ]; then
+    row claude mixed-hook unanswerable "claude -p exited $STATUS before both hooks ran: $(clip "$(last_line)")"
+  else
+    row claude mixed-hook fail "claude -p ran smoke-tool $shared time(s) and smoke-claude-only $excluded time(s) in the project installed for Copilot too (marker: $(marker_text))"
+  fi
+}
+
 # Claude Code: a slash invocation expands the skill or the command, or answers
 # Unknown command; --agent runs the session as that agent or lists what
 # exists; the SessionStart registration in .claude/settings.json runs the
@@ -985,7 +1083,7 @@ claude_rows() {
   # transcript directory for a dead scratch path out of the real config.
   local home
   home=$(copied_home claude-home "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" .credentials.json)
-  jq -n --arg p "$PROJECT" '{hasCompletedOnboarding: true, projects: {($p): {hasTrustDialogAccepted: true, enabledMcpjsonServers: ["smoke-mcp"]}}}' \
+  jq -n --arg p "$PROJECT" --arg m "$MIXED" '{hasCompletedOnboarding: true, projects: {($p): {hasTrustDialogAccepted: true, enabledMcpjsonServers: ["smoke-mcp"]}, ($m): {hasTrustDialogAccepted: true}}}' \
     >"$home/.claude.json"
   rm -f -- "$MARKER"
   run claude-skill env CLAUDE_CONFIG_DIR="$home" claude -p '/smoke-skill'
@@ -1000,6 +1098,7 @@ claude_rows() {
   run claude-mcp env CLAUDE_CONFIG_DIR="$home" claude mcp list
   judge claude mcp 'smoke-mcp: .* Connected' 'smoke-mcp: .*(Pending approval|Failed)' \
     'claude mcp list' "McpStart $PROJECT"
+  mixed_claude_row "$home"
   wake_row claude 'claude -p (arms Monitor, ends its turn)' \
     env CLAUDE_CONFIG_DIR="$home" claude -p "$(wake_task 'Start a Monitor with timeout_ms 120000')"
   mail_row claude 'claude -p (two tool calls, then the turn ends)' '' \
@@ -1234,6 +1333,7 @@ copilot_rows() {
   # A config reading, not a connection, so there is no marker to pin.
   run copilot-mcp env COPILOT_HOME="$home" copilot mcp list
   judge copilot mcp '^ +smoke-mcp \(local\)' '' 'copilot mcp list'
+  mixed_copilot_row "$home"
   no_session copilot lane-mail
   no_session copilot lane-question
   copilot_packages live "$home"

@@ -38,13 +38,15 @@ Claude Code reads no shared skills tree at either scope, so its own directory ho
 
 ## Hooks
 
-Enforced: Claude runs the registered command and gates the tool call on its exit status. The script lands at `<root>/hooks/<name>.sh` and the registration goes into that scope's `settings.json` under `hooks.<event>` in the nested matcher-plus-handlers shape; the command uses `$CLAUDE_PROJECT_DIR` at project scope and an absolute path at global scope. Event names pass through unmapped and timeouts travel in seconds as declared. Disabling renames the script to `<name>.sh.disabled` and reverses the registration (`crates/core/src/engine/targets.rs`, `crates/core/src/engine/desired_kinds.rs`).
+Enforced: Claude runs the registered command and gates the tool call on its exit status. The script lands at `<root>/hooks/<name>.sh` and the registration goes into that scope's `settings.json` under `hooks.<event>` in the nested matcher-plus-handlers shape; the command uses `$CLAUDE_PROJECT_DIR` at project scope and an absolute path at global scope, and opens with a test that exits 0 in a Copilot CLI hook process (§ Cross-reads). Event names pass through unmapped and timeouts travel in seconds as declared. Disabling renames the script to `<name>.sh.disabled` and reverses the registration (`crates/core/src/engine/targets.rs`, `crates/core/src/engine/desired_kinds.rs`).
 
 Agent scoping: a custom hook scoped to an agent lives in that agent's own `hooks:` block and is enforced there; an every-agent custom hook registers in `settings.json` and covers the main session too. Claude is the only harness with scoped enforcement (`crates/core/src/hook/delivery.rs`).
 
 ## Cross-reads
 
 Copilot CLI reads `.claude/settings.json` and `.claude/settings.local.json` for `companyAnnouncements`, `disableAllHooks`, `enabledPlugins`, `extraKnownMarketplaces` and `hooks`, and discovers skills from `.claude/skills`; VS Code discovers agents from `.claude/agents`. The Copilot adapter claims none of these paths; a write kendex makes here that Copilot will read is reported as a note on the plan (`cross_read_note`, `crates/core/src/engine/desired_skill.rs`).
+
+Copilot CLI runs each command in those `hooks` beside its own hooks, so a hook installed for both harnesses would run twice per Copilot event, and a hook whose `harnesses:` line leaves Copilot out would run on Copilot anyway. Every hook command kendex registers here therefore opens with `[ -z "${COPILOT_PROJECT_DIR-}" ] || exit 0;`. Copilot sets `COPILOT_PROJECT_DIR` for every hook it starts and not for its tool calls, and Claude Code never sets it. A Copilot session runs only its native `.github/hooks` copy, and a Claude Code session started from a Copilot tool call still runs its hooks. Copilot does not document the variable; it is measured on Copilot CLI 1.0.88, and the `mixed-hook` rows of `tools/harness-smoke` check it on each run (`CLAUDE_OUTSIDE_COPILOT`, `crates/core/src/engine/targets.rs`). A custom hook whose declaration is a command is registered as written, without the test.
 
 ## Instruction shim
 

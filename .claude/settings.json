@@ -31,34 +31,34 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-bare-cd.sh\""
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-bare-cd.sh\""
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit-check.sh\"",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit-check.sh\"",
             "timeout": 60
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-repo-copy.sh\""
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-repo-copy.sh\""
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-unsafe-rm.sh\""
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-unsafe-rm.sh\""
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-argv-kill.sh\"",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-argv-kill.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-worktree-refresh.sh\"",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-worktree-refresh.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/command-safety.sh\"",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/command-safety.sh\"",
             "timeout": 10
           }
         ]
@@ -68,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/reviewer-read-only.sh\"",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/reviewer-read-only.sh\"",
             "timeout": 10
           }
         ]
@@ -77,7 +77,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-halt.sh\"",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-halt.sh\"",
             "timeout": 30
           }
         ]
@@ -88,7 +88,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/task-completed-check.sh\"",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/task-completed-check.sh\"",
             "timeout": 600
           }
         ]
@@ -99,7 +99,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-drift-check.sh\"",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-drift-check.sh\"",
             "timeout": 30
           }
         ]
@@ -110,12 +110,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/doc-drift-check.sh\"",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/doc-drift-check.sh\"",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-check.sh\"",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-check.sh\"",
             "timeout": 30
           }
         ]
@@ -126,7 +126,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/reviewer-stop-check.sh\"",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/reviewer-stop-check.sh\"",
             "timeout": 30
           }
         ]
@@ -137,7 +137,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-deliver.sh\"",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-deliver.sh\"",
             "timeout": 30
           }
         ]

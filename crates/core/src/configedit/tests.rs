@@ -39,6 +39,46 @@ fn owned_hook_templates_are_reconciled_by_script_path() {
     }
 }
 
+/// A Claude Code entry written before its command opened with the Copilot
+/// skip is the same registration: a refresh replaces it where it stands and a
+/// removal takes it, so it never runs beside the entry that replaced it. The
+/// person's own command naming another script is not claimed.
+#[test]
+fn a_claude_hook_entry_without_the_copilot_skip_is_the_same_registration() {
+    use crate::engine::targets::{CLAUDE_OUTSIDE_COPILOT, HookTarget, hook_target};
+    use crate::env::{Env, FakeOs};
+    use crate::model::{HarnessId, Scope};
+    let env = Env::fake("/h", FakeOs::Linux);
+    for scope in [Scope::Project { root: "/p".into() }, Scope::Global] {
+        let Some(HookTarget::Script { command, .. }) =
+            hook_target(&env, &scope, HarnessId::Claude, "guard", None)
+        else {
+            panic!("claude hooks are script targets");
+        };
+        let old = command.strip_prefix(CLAUDE_OUTSIDE_COPILOT).unwrap();
+        let user = json!({"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/mine.sh\""});
+        let stale = json!({"type": "command", "command": old});
+        let current = json!({"type": "command", "command": command, "timeout": 10});
+        for (handlers, expected) in [
+            (json!([stale, user]), json!([current, user])),
+            (json!([stale, user, current]), json!([current, user])),
+        ] {
+            let mut events = json!({"PreToolUse": [{"matcher": "Bash", "hooks": handlers}]});
+            let mut removed = events.clone();
+            let events = events.as_object_mut().unwrap();
+            nested::upsert_in(events, "PreToolUse", Some("Bash"), &command, Some(10)).unwrap();
+            assert_eq!(events["PreToolUse"][0]["hooks"], expected, "{scope:?}");
+            let removed = removed.as_object_mut().unwrap();
+            nested::remove_in(removed, "PreToolUse", Some("Bash"), &command);
+            assert_eq!(
+                removed["PreToolUse"][0]["hooks"],
+                json!([user]),
+                "{scope:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn hook_upsert_is_idempotent_and_preserves_unrelated_keys() {
     let start = r#"{"model": "opus", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "other"}]}]}}"#;

@@ -117,7 +117,7 @@ fn hook_registration_round_trips_and_spares_unrelated_settings() {
     assert_eq!(group["matcher"], "Bash");
     assert_eq!(
         group["hooks"][0]["command"],
-        "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\""
+        "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\""
     );
     assert_eq!(group["hooks"][0]["timeout"], 10);
     assert!(is_clean(&f), "a fresh registration is not drift");
