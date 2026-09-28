@@ -103,6 +103,7 @@ for row in \
   "claude|-|CC-1|claude -n CC-1 '--disallowedTools=AskUserQuestion,EnterPlanMode' '/orch start CC-1'|claude denies AskUserQuestion and EnterPlanMode; naming no model, it keeps its compaction" \
   "claude|--model opus|CC-6|claude -n CC-6 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'opus' '/orch start CC-6'|a claude model the adapter names a window for turns its compaction off" \
   "claude|--model sonnet|CC-8|claude -n CC-8 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-5' '/orch start CC-8'|a claude alias is written as its model id, whose window turns its compaction off" \
+  "claude|--model=sonnet|CC-10|claude -n CC-10 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model=claude-sonnet-5' '/orch start CC-10'|the attached form of a claude alias is written as its model id too" \
   "claude|--model claude-sonnet-4-6|CC-7|claude -n CC-7 '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-4-6' '/orch start CC-7'|a claude model with no window keeps its compaction, and there is no mark to hand off at" \
   "codex|-|CC-2|codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-2'|codex disables the request_user_input feature after its update and compaction settings" \
   "pi|-|CC-3|pi '--exclude-tools' 'question' '/skill:orch start CC-3'|pi excludes the pi-questions tool" \
@@ -140,14 +141,36 @@ for row in \
   assert_eq "rc=$RC created=$CREATED refusal=${refusal:--}" "rc=$want_rc created=$want_created refusal=$want_err" "gate: $what"
 done
 
-echo "=== must-fail control ==="
-# The model words handed on as named: the sonnet launch renders the bare alias.
-REWRITE='  if [[ "$model_id" != "$model" ]]; then'
-assert_eq "$(grep -c -F -e "$REWRITE" "$REPO/scripts/lib/lane-launch.sh")" 1 "control finds its one site"
-perl -i -pe 'BEGIN { $o = shift } s/\Q$o\E/  if false; then/' "$REWRITE" "$REPO/scripts/lib/lane-launch.sh"
+echo "=== must-fail controls ==="
+# lead_control OLD NEW... — the lane-launch.sh copy restored, then each OLD
+# replaced by its NEW at its one site.
+lead_control() { # OLD NEW...
+  cp "$SCRIPTS_DIR/lib/lane-launch.sh" "$REPO/scripts/lib/lane-launch.sh"
+  while (( $# )); do
+    assert_eq "$(grep -c -F -e "$1" "$REPO/scripts/lib/lane-launch.sh")" 1 "control finds its one site"
+    perl -i -pe 'BEGIN { ($o, $n) = (shift, shift) } s/\Q$o\E/$n/' "$1" "$2" "$REPO/scripts/lib/lane-launch.sh"
+    shift 2
+  done
+}
+SETTINGS="'--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' "
+QUESTION="'--disallowedTools=AskUserQuestion,EnterPlanMode'"
+# No rewrite at all: the id is judged and the bare alias written.
+lead_control '  if [[ "$model_id" != "$model" ]]; then' '  if false; then'
 launch CC-9 --harness claude --launch-flags '--model sonnet'
-assert_eq "$CMD" "claude -n CC-9 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'sonnet' '/orch start CC-9'" \
+assert_eq "$CMD" "claude -n CC-9 $SETTINGS$QUESTION '--model' 'sonnet' '/orch start CC-9'" \
   "control: without the rewrite a claude alias reaches the command as named"
+# The attached form missed: the alias runs as named, judged so, and keeps its
+# compaction on, the attached row's value and words both gone.
+ATTACHED='      words="${words//"$nl$spelling$model$nl"/$nl$spelling$model_id$nl}"'
+lead_control "$ATTACHED" '      :'
+launch CC-21 --harness claude --launch-flags '--model=sonnet'
+assert_eq "$CMD" "claude -n CC-21 $QUESTION '--model=sonnet' '/orch start CC-21'" \
+  "control: an attached alias the rewrite misses keeps its compaction on"
+# The same miss with no judge after it: compaction off on the bare alias.
+lead_control "$ATTACHED" '      :' '      || model_id="$model"' '      || :'
+launch CC-22 --harness claude --launch-flags '--model=sonnet'
+assert_eq "$CMD" "claude -n CC-22 $SETTINGS$QUESTION '--model=sonnet' '/orch start CC-22'" \
+  "control: without the check after it, that miss turns compaction off on the bare alias"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

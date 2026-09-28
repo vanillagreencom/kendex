@@ -587,6 +587,11 @@ run_succeed callerflags '' -- --model fable --effort high --permission-mode bypa
 assert_eq "$RC|$(overseers)|$(recorded claude)" \
   "0|1|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;--model;fable;--effort;high;--permission-mode;bypassPermissions;--verbose;$BRIEF;" \
   "the caller entry carries the caller's model, effort and permission words whole"
+new_caller "$MARK"
+run_succeed attachedcaller '' -- --model=sonnet --effort high --permission-mode bypassPermissions --verbose
+assert_eq "$RC|$(overseers)|$(recorded claude)" \
+  "0|1|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;--model=claude-sonnet-5;--effort;high;--permission-mode;bypassPermissions;--verbose;$BRIEF;" \
+  "a caller's attached sonnet model word is carried as the model id"
 
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 

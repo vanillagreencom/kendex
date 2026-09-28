@@ -96,6 +96,7 @@ done <<ROWS
 claude on a model with a window passes|passed|${FLEET[*]} --harness claude --launch-flags '--model opus --effort high'
 claude on sonnet, written as claude-sonnet-5, passes|passed|${FLEET[*]} --harness claude --launch-flags '--model sonnet --effort high'
 claude on haiku, written as claude-haiku-4-5, passes|passed|${FLEET[*]} --harness claude --launch-flags '--model haiku --effort high'
+claude on the attached --model=sonnet passes the same way|passed|${FLEET[*]} --harness claude --launch-flags '--model=sonnet --effort high'
 a claude --cmd on the bare sonnet alias, run as written, is refused|open-terminal: launch-window-unknown harness=claude model=sonnet|${FLEET[*]} --harness claude --cmd "claude --model sonnet --effort high \$CLAUDE_QUESTION \$CLAUDE_WORDS {item}"
 claude on a model whose window no row names is refused|open-terminal: launch-window-unknown harness=claude model=claude-sonnet-4-6|${FLEET[*]} --harness claude --launch-flags '--model claude-sonnet-4-6 --effort high'
 claude naming no model is refused the same way|open-terminal: launch-window-unknown harness=claude model=none|${FLEET[*]} --harness claude
@@ -200,7 +201,7 @@ assert_eq "$(OT="$CTRL_OT" launch unsupported-ctrl "${FLEET[@]}" --harness openc
 control window-ctrl 'ot_message launch-window-unknown "harness=$LAUNCH_HARNESS" "model=${LAUNCH_MODEL:-none}" >&2' ': '
 assert_eq "$(OT="$CTRL_OT" launch window-ctrl "${FLEET[@]}" --harness claude --launch-flags '--model claude-sonnet-4-6 --effort high')" passed \
   "control: without its refusal a claude fleet lane on a model with no window passes"
-control alias-id-ctrl '[[ -n "$CMD_TEMPLATE" ]] || gate_model=' '[[ -n "$CMD_TEMPLATE" ]] || : gate_model='
+control alias-id-ctrl '        [[ "$LAUNCH_CHOICE_COMPACTION" == on ]] || gate_window=false' '        launch_choice_compaction "$LAUNCH_HARNESS" "$LAUNCH_MODEL" >/dev/null || gate_window=false'
 assert_eq "$(OT="$CTRL_OT" launch alias-id-ctrl "${FLEET[@]}" --harness claude --launch-flags '--model sonnet --effort high')" \
   "open-terminal: launch-window-unknown harness=claude model=sonnet" \
   "control: judged on the alias rather than the id it is written as, a sonnet fleet lane is refused"
