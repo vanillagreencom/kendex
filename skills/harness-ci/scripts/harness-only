@@ -41,7 +41,10 @@
 # pull request, the commit the base endpoint resolved to on the others — and
 # one `head-rev: <rev>` line naming the commit the head endpoint resolved to.
 # A caller that must read the same range's committed state reads those lines
-# rather than resolving either endpoint a second time.
+# rather than resolving either endpoint a second time. Where the diff changes
+# .kendex-generated.json and every entry it gains or loses names a path the
+# same diff adds or deletes, one `inventory-change: names-only added=<n>
+# removed=<n>` line says so; change-class reads it.
 #
 # Exit 0 on any verdict. Exit 2 on a WIRING error — an unknown flag, a missing
 # --event, a flag where a value belongs, an unwritable --output. Those are
@@ -68,6 +71,7 @@ changed=""
 outside=""
 base_rev=""
 head_rev=""
+inventory_change=""
 classification="harness"
 verdict_key="harness_only"
 tool_name="harness-only"
@@ -204,6 +208,7 @@ verdict() { # true|false [FIELDS REASON]
   report_changed_paths
   [ -z "$base_rev" ] || printf 'base-rev: %s\n' "$base_rev" >&2
   [ -z "$head_rev" ] || printf 'head-rev: %s\n' "$head_rev" >&2
+  [ -z "$inventory_change" ] || printf 'inventory-change: %s\n' "$inventory_change" >&2
   printf '%s=%s\n' "$verdict_key" "$1"
   exit 0
 }
@@ -326,10 +331,53 @@ inventory_paths() { # JSON — validate writer entries and retain only their pat
     else "" | halt_error(21) end
   ' <<<"$1"
 }
+base_document="$base_inventory"
+head_document="$head_inventory"
 base_inventory="$(inventory_paths "$base_inventory" 2>/dev/null)" \
   || verdict false "cause=invalid-generated-paths" "generated paths are invalid"
 head_inventory="$(inventory_paths "$head_inventory" 2>/dev/null)" \
   || verdict false "cause=invalid-generated-paths" "generated paths are invalid"
+
+# The inventory's own change, for change-class: `names-only` where every entry
+# the inventory gains names a path this diff adds, and every entry it loses a
+# path this diff deletes. A changed entry for a path listed at both endpoints,
+# an entry for a path that stays, an edit that moves no entry, or a lookup
+# that fails leaves the line out, and the inventory stays on the diff.
+inventory_delta() { # BASE_DOCUMENT HEAD_DOCUMENT -> one `KIND PATH` per entry
+  printf '%s\n%s\n' "$1" "$2" | jq -ers '
+    def entry_path: if type == "string" then . else .path end;
+    .[0] as $base | .[1] as $head
+    | ($base | map(entry_path)) as $base_paths
+    | ($head | map(entry_path)) as $head_paths
+    | [(($head - $base)[] | entry_path
+        | . as $path | if ($base_paths | index($path)) == null
+          then "added \($path)" else "changed \($path)" end),
+       (($base - $head)[] | entry_path
+        | . as $path | if ($head_paths | index($path)) == null
+          then "removed \($path)" else "changed \($path)" end)]
+    | if length == 0 then "unmoved -" else .[] end
+  '
+}
+names_only_change() { # -> prints `names-only added=N removed=M`, or fails
+  local delta kind path want_base want_head at_base at_head added=0 removed=0
+  delta="$(inventory_delta "$base_document" "$head_document" 2>/dev/null)" || return 1
+  while IFS=' ' read -r kind path; do
+    case "$kind" in
+      added) want_base=absent; want_head=present; added=$((added + 1)) ;;
+      removed) want_base=present; want_head=absent; removed=$((removed + 1)) ;;
+      *) return 1 ;;
+    esac
+    grep -qxF -- "$path" <<<"$changed" || return 1
+    at_base="$(git_repo ls-tree "$base" -- "$path")" || return 1
+    at_head="$(git_repo ls-tree "$head_rev" -- "$path")" || return 1
+    [ "$want_base" = "$([ -n "$at_base" ] && echo present || echo absent)" ] || return 1
+    [ "$want_head" = "$([ -n "$at_head" ] && echo present || echo absent)" ] || return 1
+  done <<<"$delta"
+  printf 'names-only added=%s removed=%s' "$added" "$removed"
+}
+if grep -qxF .kendex-generated.json <<<"$changed"; then
+  inventory_change="$(names_only_change)" || inventory_change=""
+fi
 printf '%s\n%s\n' "$base_inventory" "$head_inventory" | jq -es '
   .[0] as $base | .[1] | all(.[]; . as $path | ($base | index($path)) != null)
 ' >/dev/null 2>&1 || verdict false "cause=generated-ownership-gain" \

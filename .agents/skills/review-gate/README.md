@@ -41,7 +41,7 @@ Every repository applies this policy to the class from the shared `harness-ci` c
 | `small` | One normal bot round | Enforced | Enforced |
 | `standard` | Current review-gate behavior | Current review-gate behavior | Current review-gate behavior |
 
-`trivial` holds a documentation-set diff within the classifier's line ceiling, and a diff only under `docs/plans/` at any size; a `HARNESS_CI_TRIVIAL_PATHS` allowlist replaces both with a diff of its paths within that ceiling. Each holds once the classifier's instruction-source, narrow-change and render refusals have passed it. `change-class --help` states each rule and the refusals ahead of them.
+`trivial` holds a documentation-set diff within the classifier's line ceiling, and a diff only under `docs/plans/` at any size; a `HARNESS_CI_TRIVIAL_PATHS` allowlist replaces both with a diff of its paths within that ceiling. Each holds once the classifier's configuration, instruction-pointer, narrow-change and render refusals have passed it, and a diff carrying an `AGENTS.md` or `SKILL.md` takes `small` in place of `trivial` or `micro`. `change-class --help` states each rule and the refusals ahead of them.
 
 A `none` row puts the pull request OUTSIDE the review gate, apart from the one thread term below: no review evidence, no thread wait, no standing objection and no suppressed finding is read for it, because a gate that cannot stop a bot from commenting must not run on a change it waives. What stays enforced is everything outside that gate — required CI checks, commit guards and merge conflicts — and the orch merge path still refuses a `CHANGES_REQUESTED` review at its readiness check, in every mode.
 

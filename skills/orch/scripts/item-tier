@@ -45,6 +45,8 @@
 # environment failure, its `item-tier-error: cause=` line naming which, and
 # prints no tier.
 set -euo pipefail
+# The narrow-change list's globs are bash patterns with extglob on.
+shopt -s extglob
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"

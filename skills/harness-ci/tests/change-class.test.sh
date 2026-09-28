@@ -175,7 +175,7 @@ render-verifier-prints-human-rows|standard|human|CLAUDE.md:2
 render-verifier-other-document-version|standard|other-version|CLAUDE.md:2
 render-path-no-passing-position-covers|standard|clean|.codex/agents/rust.md:4
 render-inventory-gain|standard|clean|.kendex-generated.json:1
-instruction-source|standard|clean|AGENTS.md:10
+instruction-source|small|clean|AGENTS.md:10
 configuration-source|standard|clean|kendex.settings.toml:2 runtime/product.ts:2
 trivial-at-ceiling|trivial|dirty|docs/guide.md:20
 trivial-docs-one-over|small|dirty|docs/guide.md:21
@@ -1395,10 +1395,11 @@ TOML
   # The other half of that chain, as it measures: a commit cut from the
   # de-listing that hand edits the path the de-listing dropped. That path is
   # in the inventory at neither endpoint, so harness-only calls it product
-  # source and the diff takes the class its own size earns. `micro` waives no
-  # CI lane, and the de-listing that precedes it is refused the render class
-  # above, so it reaches nobody as a waiver. A change in this line is a change
-  # in what the classifier ships and is reviewed as one.
+  # source and the diff is measured: its size earns micro, and a SKILL.md
+  # takes no class below small. `small` waives no CI lane, and the de-listing
+  # that precedes it is refused the render class above, so it reaches nobody
+  # as a waiver. A change in this line is a change in what the classifier
+  # ships and is reviewed as one.
   git -C "$consumer" checkout -q -B de-listed-edited de-listed
   printf '\nA LINE NO RENDER PRODUCED.\n' \
     >>"$consumer/.claude/skills/second/SKILL.md"
@@ -1407,7 +1408,7 @@ TOML
   de_listed_edit_err="$(classify_stderr --repo "$consumer" \
     --event pull_request --base de-listed --head HEAD)"
   assert_eq "a hand edit to a de-listed path measures as product code after a refused de-listing" \
-    "class: class=micro measured=true cause=production-within-micro production=2" \
+    "class: class=small measured=true cause=instruction-file path=.claude/skills/second/SKILL.md glob=*/SKILL.md measured-class=micro" \
     "$(printf '%s\n' "$de_listed_edit_err" | grep '^class: ')"
 
   # Must-fail inverse: the render proof replaced by a comparison with the

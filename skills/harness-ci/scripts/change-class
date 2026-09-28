@@ -59,6 +59,10 @@
 #   small    one subsystem, production additions within the small ceiling. A
 #            path's subsystem is its first directory, with a leading render
 #            root removed first so a source and the render mirroring it agree.
+#            An AGENTS.md or SKILL.md edit that earns trivial or micro answers
+#            small instead, cause=instruction-file: it changes how every agent
+#            behaves, and small is the lowest class the default review policy
+#            gives a bot review round.
 #   standard everything else, and every diff this script cannot prove into a
 #            narrower class. A size is measured only where harness-only read
 #            every changed path against an inventory it could read: that file
@@ -69,15 +73,19 @@
 #            adds later — answers standard carrying that cause, named here or
 #            not. Fail-closed: standard buys a diff nothing.
 #
-# A changed configuration or instruction source refuses every narrow class,
-# not only render: those files decide what is rendered and what each judgement
-# below reads. A harness's own registry files refuse every narrow class but
+# A changed kendex configuration file refuses every narrow class, not only
+# render: those files decide what is rendered and what each judgement below
+# reads. A harness's own registry files refuse every narrow class but
 # render, the files it executes as configuration: its hooks, its permissions,
 # and the MCP servers it may run. kendex writes keys in those and never the
 # file, so a re-rendered one reaches render only where the row owning it says
 # the rest of the file did not move. The paths trivial, micro and small all
 # refuse are orch's references/narrow-change.conf, beside this package; the
-# ceilings in that file are micro's and small's alone.
+# ceilings in that file are micro's and small's alone. The render inventory
+# on that list is read against it only where its change is more than names:
+# where harness-only prints `inventory-change: names-only`, the inventory
+# lists or unlists only paths the same diff adds or deletes, a render effect,
+# and it leaves the path set that list and the subsystem rule read.
 #
 # THE CLASS IS NEVER READ FROM A LABEL, A BRANCH NAME, A PULL REQUEST TITLE or
 # any other author-writable field, and no flag carries one: the author of the
@@ -99,6 +107,8 @@
 # event, and a checkout without that orch, answer render or standard and never
 # a measured class. The render class reads nothing of orch's.
 set -euo pipefail
+# The narrow-change list's globs are bash patterns with extglob on.
+shopt -s extglob
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HARNESS_ONLY="$SCRIPT_DIR/harness-only"
@@ -236,6 +246,12 @@ fi
 if ! head_rev="$(sed -n 's/^head-rev: //p' "$harness_err" | tail -1)"; then
   head_rev=""
 fi
+# harness-only's judgement of the inventory's own change, repeated as it
+# stands. An absent or unreadable line leaves the inventory on the diff.
+sed -n '/^inventory-change: /p' "$harness_err" >&2
+if ! inventory_change="$(sed -n 's/^inventory-change: //p' "$harness_err" | tail -1)"; then
+  inventory_change=""
+fi
 
 # The committed inventory is the file every rule below is judged by: generated
 # ownership is read from it, so the render branch and the size rules both
@@ -301,9 +317,8 @@ path_matches() { # MODE(every|any) — against GLOB_LIST
 }
 
 # Two groups, refused at two places. First, ahead of everything, kendex's own
-# configuration and the instruction sources it renders from, with
-# .gemini/settings.json beside them: the shim row kendex prints for it weighs
-# one key of a document whose other keys decide what that harness loads, and
+# configuration, with .gemini/settings.json beside it: the shim row kendex
+# prints for it weighs one key of a document whose other keys decide what that harness loads, and
 # the row vouches for nothing else in it, so a refresh that rewrites it
 # answers cause=configuration-source rather than reaching the render proof.
 # Second, below the render branch, the registry files a harness reads its
@@ -320,7 +335,7 @@ path_matches() { # MODE(every|any) — against GLOB_LIST
 # .github/hooks/<name>.json. A harness kendex adds later has to join this
 # list, which no rule does for it.
 set_globs 'kendex.toml kendex.settings.toml kendex-local.toml
-  .kendex/settings.toml .gemini/settings.json AGENTS.md */AGENTS.md'
+  .kendex/settings.toml .gemini/settings.json'
 ! path_matches any ||
   answer standard "cause=configuration-source $PATH_MATCH_HIT" measured
 REGISTRY_GLOBS='.claude/settings.json .claude/settings.local.json .mcp.json
@@ -547,6 +562,16 @@ set_globs 'CLAUDE.md */CLAUDE.md'
 ! path_matches any ||
   answer standard "cause=instruction-pointer $PATH_MATCH_HIT" measured
 
+# A names-only inventory change is the render effect of paths the diff adds
+# or deletes, which are measured themselves; the inventory leaves the path
+# set before the list and the subsystem rule read it. Any other change to it,
+# a changed entry or an entry for a path that stays, keeps it on the diff.
+case "$inventory_change" in
+  names-only | names-only\ *)
+    changed="$(awk '$0 != ".kendex-generated.json"' <<<"$changed")" ||
+      answer standard "cause=path-set-unreadable" ;;
+esac
+
 [ -r "$NARROW_CONF" ] || answer standard "cause=narrow-change-list-unreadable"
 if ! excluded="$(sed -n 's/^path //p' "$NARROW_CONF" | tr '\n' ' ')"; then
   answer standard "cause=narrow-change-list-unreadable"
@@ -609,6 +634,18 @@ measure() {
 }
 measure || answer standard "$MEASURE_CAUSE"
 
+# An AGENTS.md or SKILL.md edit changes how every agent behaves, so it never
+# answers below small, the lowest class the default review policy gives a bot
+# round; CLAUDE.md is refused above by name. Every trivial and micro answer
+# goes through here.
+set_globs 'AGENTS.md */AGENTS.md SKILL.md */SKILL.md'
+instruction_file=""
+! path_matches any || instruction_file="$PATH_MATCH_HIT"
+answer_narrow() { # CLASS FIELDS
+  [ -n "$instruction_file" ] || answer "$1" "$2"
+  answer small "cause=instruction-file $instruction_file measured-class=$1"
+}
+
 trivial_max="${HARNESS_CI_TRIVIAL_MAX_LINES:-20}"
 case "$trivial_max" in
   '' | *[!0123456789]*)
@@ -623,7 +660,7 @@ if [ -n "${HARNESS_CI_TRIVIAL_PATHS:-}" ]; then
   if [ "$total" -le "$trivial_max" ]; then
     set_globs "$HARNESS_CI_TRIVIAL_PATHS"
     path_matches every &&
-      answer trivial "cause=allowlisted-paths lines=$total"
+      answer_narrow trivial "cause=allowlisted-paths lines=$total"
   fi
 else
   # The shipped allowlist is that mode's own path set, read from its verdict.
@@ -631,10 +668,10 @@ else
     --output /dev/null 2>/dev/null)" &&
     [ "$docs_verdict" = "docs_only=true" ]; then
     [ "$total" -gt "$trivial_max" ] ||
-      answer trivial "cause=documentation-paths lines=$total"
+      answer_narrow trivial "cause=documentation-paths lines=$total"
     set_globs 'docs/plans/*'
     ! path_matches every ||
-      answer trivial "cause=plan-paths lines=$total"
+      answer_narrow trivial "cause=plan-paths lines=$total"
   fi
 fi
 
@@ -648,7 +685,7 @@ if ! { micro_max="$(ceiling micro_max_production)" &&
 fi
 
 [ "$production" -gt "$micro_max" ] ||
-  answer micro "cause=production-within-micro production=$production"
+  answer_narrow micro "cause=production-within-micro production=$production"
 
 # The render roots are the measurement's own list, so a source and the render
 # mirroring it reduce to one subsystem.
