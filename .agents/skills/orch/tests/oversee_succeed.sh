@@ -1593,8 +1593,8 @@ assert_eq "$RC|$(grep -c -F "$COPILOT_ENV COPILOT_HOME='$H/.1copilot' codex " <<
 COPILOTMODE="$(mutant_scripts copilotmode lib/lane-launch.sh)" || exit 1
 mutate_file "$COPILOTMODE/lib/lane-launch.sh" '    claude | codex | copilot) printf' '    claude | codex) printf'
 LANE_DIRS="$COPILOT_DIRS" copilot_row checkcopilotctl "$COPILOTMODE/oversee-succeed" --check-marks --harness copilot
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "0|oversee-succeed: mark-unmeasured kind=headroom reason=headroom-unreadable succession=on" \
-  "control: with lanes judging no copilot pick the copilot overseer's account reads unmeasured"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "0|oversee-succeed: mark-unmeasured kind=headroom reason=headroom-none succession=on" \
+  "control: with lanes judging no copilot pick the copilot overseer's account is one lanes measures none of"
 COPILOTACCT="$(mutant_scripts copilotacct oversee-succeed)" || exit 1
 mutate_file "$COPILOTACCT/oversee-succeed" '[[ "$CALLER_HARNESS" != copilot || -n "$CALLER_CFG" ]] || die copilot-account-unknown' ': || die copilot-account-unknown'
 fleet_state
