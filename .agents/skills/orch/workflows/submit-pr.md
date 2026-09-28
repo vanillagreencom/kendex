@@ -178,7 +178,7 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
    env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-merge [PR_NUMBER] --auto --require-context "[GATE_CONTEXT]" --expected-head [HEAD_SHA]
    ```
 
-   Exit `75` armed it. GitHub then holds the merge until the review gate, every required check and thread resolution pass, so the CI wait, the gate wait and § 6.1 are the lane's triage and fix work, not preconditions of the arm, and a turn that ends mid-chain leaves the PR armed. The late-findings guard starts where [merge-pr.md](merge-pr.md) § 5 step 1 arms the prepared head again and waits in `queue-wait`; the window before it is the accepted gap [merge-pr.md](merge-pr.md) § 5 step 5 answers. Exit `0` merged it: § 6 enters [merge-pr.md](merge-pr.md), whose § 3.2 takes a merged PR straight to its post-merge steps. Exit `1` with first line `arm: no-merge-gate=unverified repo=<owner/repo>` armed nothing because the base branch's rules could not be read: a read failure, not a ruleset gap. Report it and continue; [merge-pr.md](merge-pr.md) § 5 arms the prepared head after § 6.1. Exit `1` with any other `arm: no-merge-gate=<gap>` armed nothing because that base branch does not require `[GATE_CONTEXT]`, or has no merge gate at all, and an arm there would merge before review: report the line once and continue. That repository's merge keeps the route [merge-pr.md](merge-pr.md) § 5 sets out, after § 6.1, and the fix that lets it arm here is its ruleset requiring the review gate. Any other exit `1` armed nothing, an open review thread among its causes: continue, and [merge-pr.md](merge-pr.md) § 5 arms the prepared head after § 6.1.
+   Exit `75` armed it. GitHub then holds the merge until the review gate, every required check and thread resolution pass, so the CI wait, the gate wait and § 6.1 are the lane's triage and fix work, not preconditions of the arm, and a turn that ends mid-chain leaves the PR armed. The late-findings guard starts where [merge-pr.md](merge-pr.md) § 5 step 1 arms the prepared head again and waits in `queue-wait`; the window before it is the accepted gap [merge-pr.md](merge-pr.md) § 5 step 5 answers. Exit `0` merged it: § 6 enters [merge-pr.md](merge-pr.md), whose § 3.2 takes a merged PR straight to its post-merge steps. Every exit `1` armed nothing new, but an arm an earlier pass of this step made may still be live (`pr-merge --help`: a pre-existing queue entry or auto-merge request may remain active), and it would merge without what this refusal names. So on any exit `1` run [merge-pr-restack.md](merge-pr-restack.md) step 1 before going on; it reads the live arm and queue entry itself and unarms only what it finds. A hand-back there takes § 6.1's unconfirmed-disarm route, which ends this run. Exit `1` with first line `arm: no-merge-gate=unverified repo=<owner/repo>` armed nothing because the base branch's rules could not be read: a read failure, not a ruleset gap. Report it and continue; [merge-pr.md](merge-pr.md) § 5 arms the prepared head after § 6.1. Exit `1` with any other `arm: no-merge-gate=<gap>` armed nothing because that base branch does not require `[GATE_CONTEXT]`, or has no merge gate at all, and an arm there would merge before review: report the line once and continue. That repository's merge keeps the route [merge-pr.md](merge-pr.md) § 5 sets out, after § 6.1, and the fix that lets it arm here is its ruleset requiring the review gate. Any other exit `1` armed nothing, an open review thread among its causes: continue, and [merge-pr.md](merge-pr.md) § 5 arms the prepared head after § 6.1.
 
 Once the PR exists, this run is a continuing action. Clear any stop a capped run left before entering another post-PR gate:
 
@@ -398,6 +398,19 @@ Re-run the gate-3 command once. If threads remain and the external-round cap is 
 `MERGE_READY = true` only when all four gates are met.
 
 **No stop leaves an armed PR.** Once `MERGE_READY` is false, whether by these gates or by a stop that sent the run here, run [merge-pr-restack.md](merge-pr-restack.md) step 1 on the PR before § 6.2 or § 7 reports the stop. It reads the live arm and queue membership and unarms in its order, so a PR § 2 step 5 armed never merges behind a stopped lane with no guard and no post-merge steps; a PR it finds neither armed nor queued needs nothing.
+
+**Unconfirmed disarm.** A hand-back from that step means its final read still found the PR armed or queued. Run step 1 once more. A second hand-back replaces the ordinary stop with one saying the PR is still armed, which `record` writes over any earlier stop and the `record-if-empty` calls after it keep:
+
+```bash
+.agents/skills/orch/scripts/workflow-state post-pr-stop record [ISSUE_ID] disarm-unconfirmed merge "PR #[PR_NUMBER] is still armed or queued: the lane could not disarm it, and GitHub can merge it with no lane watching" [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
+.agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
+```
+
+In a lane, also tell the overseer: write a notice naming the PR and the stop to `[WORKTREE_PATH]/tmp/disarm-unconfirmed-[ISSUE_ID].md` with the harness file-write tool, then send it:
+
+```bash
+.agents/skills/orch/scripts/lane-mail notice --item [ISSUE_ID] --file [WORKTREE_PATH]/tmp/disarm-unconfirmed-[ISSUE_ID].md
+```
 
 ### 6.2 Standalone Summary
 

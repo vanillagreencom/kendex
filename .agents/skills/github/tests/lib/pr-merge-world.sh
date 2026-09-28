@@ -51,6 +51,8 @@
 #          pr-merge.test.sh builds with the required-context refusal cut) |
 #          gated-unread:<context> (gated, run from $UNREAD_PR_MERGE, the copy
 #          whose failed required-set read is not told apart) |
+#          gated-autoless:<context> (gated-immediate, run from
+#          $AUTOLESS_PR_MERGE, the copy whose needs-auto check is cut) |
 #          force | admin | admin-credential (the retired flags) | check-classified |
 #          auto-classified | immediate-classified | expected-classified:<sha> |
 #          dry-classified
@@ -311,6 +313,7 @@ argv_for() {
     gated:*) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch --require-context "$(printf '%s' "${1#gated:}" | tr '+' ' ')" ;;
     gated-immediate:*) printf '%s\n' "$PR_MERGE" 123 --keep-branch --require-context "$(printf '%s' "${1#gated-immediate:}" | tr '+' ' ')" ;;
     gated-mutant:*) printf '%s\n' "$MUTANT_PR_MERGE" 123 --auto --keep-branch --require-context "$(printf '%s' "${1#gated-mutant:}" | tr '+' ' ')" ;;
+    gated-autoless:*) printf '%s\n' "$AUTOLESS_PR_MERGE" 123 --keep-branch --require-context "$(printf '%s' "${1#gated-autoless:}" | tr '+' ' ')" ;;
     gated-unread:*) printf '%s\n' "$UNREAD_PR_MERGE" 123 --auto --keep-branch --require-context "$(printf '%s' "${1#gated-unread:}" | tr '+' ' ')" ;;
     admin-credential) printf '%s\n' "$PR_MERGE" 123 --admin-credential --keep-branch ;;
     router-in:*) printf '%s\n' "$GITHUB" -C "$TMPDIR/settings-${1#router-in:}" pr-merge 123 --auto --keep-branch ;;

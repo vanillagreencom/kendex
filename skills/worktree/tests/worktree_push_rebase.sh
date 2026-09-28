@@ -624,10 +624,14 @@ step() {
     # required-status-checks rule that demands an up-to-date branch or not.
     # The stub answers the rules read through the caller's own --jq and logs
     # every gh call, so a row sees the policy the push reads and how often.
-    # `rules-fail` is the same GitHub with the rules read failing.
-    queue | queue-strict | rules-fail)
+    # `rules-fail` is the same GitHub with the rules read failing, and
+    # `strict-here` a GitHub where the checkout's own repository demands an
+    # up-to-date branch while any repository GH_REPO names does not.
+    queue | queue-strict | rules-fail | strict-here)
       queue_strict=false
       [[ "$1" != queue-strict ]] || queue_strict=true
+      here_only=false
+      [[ "$1" != strict-here ]] || here_only=true
       rules_exit=0
       [[ "$1" != rules-fail ]] || rules_exit=1
       mkdir -p "$ROOT/bin"
@@ -637,6 +641,11 @@ step() {
 set -euo pipefail
 printf '%s\n' "\$*" >>"$ROOT/gh.calls"
 [[ "$rules_exit" == 0 ]] || { echo 'gh: HTTP 502' >&2; exit $rules_exit; }
+strict=$queue_strict
+if [[ "$here_only" == true ]]; then
+  strict=true
+  [[ -z "\${GH_REPO:-}" ]] || strict=false
+fi
 jq_filter="" prev=""
 for a in "\$@"; do
   [[ "\$prev" != --jq ]] || jq_filter="\$a"
@@ -644,13 +653,15 @@ for a in "\$@"; do
 done
 case "\${1:-}:\${2:-}" in
   api:repos/*/rules/branches/main)
-    jq -r "\$jq_filter" <<<'[{"type":"merge_queue","parameters":{}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":$queue_strict}}]'
+    jq -r "\$jq_filter" <<<'[{"type":"merge_queue","parameters":{}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":'"\$strict"'}}]'
     ;;
 esac
 EOF
       chmod +x "$ROOT/bin/gh"
       ROW_PATH="$ROOT/bin"
       ;;
+    # A lane environment that names another repository.
+    inherited-repo) ROW_GH_REPO=other/repository ;;
     # A record the checkout already holds, for a branch that is not main.
     other-record)
       printf 'other strict\n' >"$(git -C "$WT" rev-parse --absolute-git-dir)/kendex-base-policy"
@@ -661,8 +672,8 @@ EOF
     # one whose rules reading never answers from the checkout's own record,
     # one that seeds an unread rules answer as a queue, one that reads a trial
     # merge that could not run as clean, and one whose record answers for any
-    # branch.
-    unfixed-queue-skip | unfixed-queue-conflict | unfixed-strict | unfixed-cache | unfixed-unverified | unfixed-trial | unfixed-branch-key)
+    # branch, and one whose rules read keeps an inherited GH_REPO.
+    unfixed-queue-skip | unfixed-queue-conflict | unfixed-strict | unfixed-cache | unfixed-unverified | unfixed-trial | unfixed-branch-key | unfixed-inherited-repo)
       step standalone
       case "$1" in
         unfixed-queue-skip)
@@ -694,6 +705,11 @@ EOF
           mutant="$ROOT/pkg/worktree/scripts/lib/base-reading.sh"
           mutant_from='*) BASE_READING=trial-failed ;;'
           mutant_to='*) BASE_READING=merges-cleanly ;;'
+          ;;
+        unfixed-inherited-repo)
+          mutant="$ROOT/pkg/worktree/scripts/lib/base-reading.sh"
+          mutant_from='&& env -u GH_REPO -u GITHUB_REPOSITORY gh api'
+          mutant_to='&& gh api'
           ;;
         unfixed-branch-key)
           mutant="$ROOT/pkg/worktree/scripts/lib/base-reading.sh"
@@ -736,7 +752,7 @@ build() {
   MAIN="$ROOT/main"
   WT="$ROOT/trees/$ISSUE"
   BASE="" END="" END1="" END2="" EXTERNAL="" PUBLISHED="" PRE=""
-  UNMAPPED="" ROW_SCRIPT="" ROW_PATH="" ROW_CWD="" SEED=""
+  UNMAPPED="" ROW_SCRIPT="" ROW_PATH="" ROW_CWD="" SEED="" ROW_GH_REPO=""
   LOCAL_LINK=""
   for word in "$@"; do
     step "$word"
@@ -886,7 +902,9 @@ run() {
     [[ "${argv[i]}" == @wt ]] && argv[i]="$WT"
     [[ "${argv[i]}" == @empty ]] && argv[i]=""
   done
-  (cd "${ROW_CWD:-$MAIN}" && PATH="${ROW_PATH:+$ROW_PATH:}$PATH" "${ROW_SCRIPT:-$WORKTREE_SCRIPT}" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  local -a env_pre=()
+  [[ -z "$ROW_GH_REPO" ]] || env_pre=(env "GH_REPO=$ROW_GH_REPO")
+  (cd "${ROW_CWD:-$MAIN}" && PATH="${ROW_PATH:+$ROW_PATH:}$PATH" ${env_pre[@]+"${env_pre[@]}"} "${ROW_SCRIPT:-$WORKTREE_SCRIPT}" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
   printf 'rc=%s out=%s err=%s %s' "$rc" \
     "$(message_records <"$ROOT/out" | alias_text)" "$(message_records <"$ROOT/err" | alias_text)" "$(state | sed 's/remote=,/remote=/')"
 }
@@ -1026,6 +1044,8 @@ a rules read that fails keeps the rebase|pair rules-fail advance fix|push @wt --
 must-fail: with an unread rules answer seeded as a queue, that branch is pushed unrebased|pair rules-fail advance fix unfixed-unverified|push @wt --set-upstream|0|-|skip-queue|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
 a trial merge that cannot run keeps the rebase|pair queue advance fix merge-tree-fails|push @wt --set-upstream|0|map1|map:1|head=rebased ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- auth=- map=hop:map1
 must-fail: with a trial that could not run read as clean, that branch is pushed unrebased|pair queue advance fix merge-tree-fails unfixed-trial|push @wt --set-upstream|0|-|skip-queue|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
+an inherited GH_REPO does not stand for the checkout, whose strict rule keeps the rebase|pair strict-here inherited-repo advance fix|push @wt --set-upstream|0|map1|map:1|head=rebased ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- auth=- map=hop:map1
+must-fail: with the inherited GH_REPO kept, the queue of the other repository skips the rebase|pair strict-here inherited-repo advance fix unfixed-inherited-repo|push @wt --set-upstream|0|-|skip-queue|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
 '
 
 echo "=== worktree push ==="

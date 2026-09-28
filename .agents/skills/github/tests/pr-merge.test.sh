@@ -87,41 +87,33 @@ a genuine merge failure with no proof stays blocked with gh's output|checks:ci-r
 a failed CLI is still a success when the exact-head snapshot is MERGED|checks:ci-required merge-fail:transport post:MERGED merge-commit:merged-oid|immediate|0|-|{no-token};MERGED PR #123|calls=$PRE,merge,graphql:queue auth=<unset>
 "
 
-# The must-fail control for the arm's required-context refusal: a copy of the
-# scripts tree whose refusal assignment is cut, the read and the test kept, so
-# a base that lacks the named context arms anyway.
-MUTANT="$TMPDIR/mutant"
-mkdir -p "$MUTANT/skills/github"
-cp -R "$REPO_ROOT/skills/github/scripts" "$MUTANT/skills/github/scripts"
-MUTANT_PR_MERGE="$MUTANT/skills/github/scripts/commands/pr-merge.sh"
-[[ "$(grep -c '^            gate_gap=required_context$' "$MUTANT_PR_MERGE")" == 1 ]] || {
-  echo "FIXTURE: the required-context refusal was not unique in $MUTANT_PR_MERGE" >&2
-  exit 2
+# The arm at creation's must-fail controls, each a copy of the scripts tree
+# with one whole line of pr-merge.sh replaced, the rest kept: the
+# required-context refusal cut, so a base lacking the context arms anyway; the
+# failed-read arm cut, so a read failure falls through to the missing-context
+# answer and its ruleset remedy; and the needs-auto check cut, so the gated
+# option runs the immediate mode instead of refusing its usage.
+mutant_copy() { # NAME FROM TO -> prints the copy's pr-merge.sh
+  local dest="$TMPDIR/$1" script
+  mkdir -p "$dest/skills/github"
+  cp -R "$REPO_ROOT/skills/github/scripts" "$dest/skills/github/scripts"
+  script="$dest/skills/github/scripts/commands/pr-merge.sh"
+  [[ "$(grep -cxF -- "$2" "$script")" == 1 ]] || {
+    echo "FIXTURE: the $1 line was not unique in $script" >&2
+    exit 2
+  }
+  F="$2" T="$3" awk 'BEGIN { f = ENVIRON["F"]; t = ENVIRON["T"] } $0 == f { $0 = t } { print }' "$script" >"$script.edit"
+  cat -- "$script.edit" >"$script"
+  rm -f -- "${script:?}.edit"
+  ! grep -qxF -- "$2" "$script" || {
+    echo "FIXTURE: the $1 edit matched nothing in $script" >&2
+    exit 2
+  }
+  printf '%s\n' "$script"
 }
-sed -i.bak 's/^            gate_gap=required_context$/            : gate_gap=required_context/' "$MUTANT_PR_MERGE"
-rm -f -- "${MUTANT_PR_MERGE:?}.bak"
-grep -q '^            : gate_gap=required_context$' "$MUTANT_PR_MERGE" || {
-  echo "FIXTURE: the required-context edit matched nothing in $MUTANT_PR_MERGE" >&2
-  exit 2
-}
-# The second control: a copy whose failed read is no longer told apart, so it
-# falls through to the missing-context answer and its ruleset remedy.
-UNREAD="$TMPDIR/unread"
-mkdir -p "$UNREAD/skills/github"
-cp -R "$REPO_ROOT/skills/github/scripts" "$UNREAD/skills/github/scripts"
-UNREAD_PR_MERGE="$UNREAD/skills/github/scripts/commands/pr-merge.sh"
-unread_from='        if ! rule_lines=$(with_token "$token" required_rule_lines "$pr_num"); then'
-[[ "$(grep -cxF -- "$unread_from" "$UNREAD_PR_MERGE")" == 1 ]] || {
-  echo "FIXTURE: the failed-read arm was not unique in $UNREAD_PR_MERGE" >&2
-  exit 2
-}
-F="$unread_from" awk 'BEGIN { f = ENVIRON["F"] } $0 == f { $0 = "        if false; then" } { print }' "$UNREAD_PR_MERGE" >"$UNREAD_PR_MERGE.edit"
-cat -- "$UNREAD_PR_MERGE.edit" >"$UNREAD_PR_MERGE"
-rm -f -- "${UNREAD_PR_MERGE:?}.edit"
-! grep -qxF -- "$unread_from" "$UNREAD_PR_MERGE" || {
-  echo "FIXTURE: the failed-read edit matched nothing in $UNREAD_PR_MERGE" >&2
-  exit 2
-}
+MUTANT_PR_MERGE="$(mutant_copy mutant '            gate_gap=required_context' '            : gate_gap=required_context')" || exit 2
+UNREAD_PR_MERGE="$(mutant_copy unread '        if ! rule_lines=$(with_token "$token" required_rule_lines "$pr_num"); then' '        if false; then')" || exit 2
+AUTOLESS_PR_MERGE="$(mutant_copy autoless '    if [ -n "$require_context" ] && [ "$auto" != true ]; then' '    if false; then')" || exit 2
 
 # The arm a PR takes right after it opens: before any check has run, it arms
 # only where the base branch requires the review gate's context, so GitHub
@@ -133,6 +125,7 @@ a required set that cannot be read refuses as unverified, never as a missing rul
 must-fail: with the failed read not told apart, it is named a missing rule|checks:none required:Review+gate repo:no-protection post-auto|gated-unread:Review+gate|1|-|arm: no-merge-gate=required_context repo=owner/repo;{context-remedy:Review+gate}|calls=$CHECK auth=<unset>
 must-fail: with the refusal cut, the base that lacks the named context arms|checks:none required:CI post-auto|gated-mutant:Review+gate|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>
 the named context gates only the arm, so it needs --auto|-|gated-immediate:Review+gate|1|-|Error: --require-context gates the --auto arm and needs --auto|calls=- auth=-
+must-fail: with the needs-auto check cut, the gated option runs the immediate mode past its usage error|checks:ci-required post:MERGED merge-commit:merged-oid|gated-autoless:Review+gate|1|-|arm: no-merge-gate=required_context repo=owner/repo;{context-remedy:Review+gate}|calls=$CHECK auth=<unset>
 "
 
 run_table "the terminal states" "\

@@ -1,6 +1,6 @@
 # Merge-pr restack cycle
 
-Use this cycle only for a `conflicting` queue-wait verdict. A base conflict is not a CI failure.
+Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-base-conflict` refusal that [submit-pr.md](submit-pr.md) § 2 step 1 routes here: steps 1-3, and step 4 returns to that step instead of `merge-pr.md`. [submit-pr.md](submit-pr.md) § 2 step 5 and § 6.1 run step 1 alone, to unarm a PR, and push or restack nothing. A base conflict is not a CI failure.
 
 1. Unarm the PR before any push. If live `autoMergeRequest` is set, disable auto-merge first. If `isInMergeQueue` remains true, read the PR node id with `gh pr view [PR_NUMBER] --json id`, call GraphQL `dequeuePullRequest`, then re-read both fields. Either still set means hand back without pushing. This order prevents an armed PR from re-entering the queue while it is dequeued.
 

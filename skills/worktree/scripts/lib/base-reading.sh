@@ -19,7 +19,10 @@
 # A definite answer is kept in the checkout's own git dir as
 # `kendex-base-policy`, keyed by BRANCH, so a checkout reads GitHub once. An
 # unverified read is not kept, and a cache that cannot be written only costs
-# the next call another read. The repository is the one gh resolves from WT.
+# the next call another read. The repository is the one gh resolves from WT:
+# an inherited GH_REPO or GITHUB_REPOSITORY outranks the working directory for
+# gh, so both come off, or another repository's policy would stand for this
+# checkout's base.
 base_policy_read() { # WT BRANCH
   local wt="$1" branch="$2" cache="" line="" uri="" rules=""
   BASE_POLICY=unverified
@@ -35,7 +38,7 @@ base_policy_read() { # WT BRANCH
   fi
   command -v gh >/dev/null 2>&1 || return 0
   uri="$(jq -rn --arg v "$branch" '$v | @uri' 2>/dev/null)" || return 0
-  rules="$(cd -- "$wt" && gh api "repos/{owner}/{repo}/rules/branches/$uri" --paginate \
+  rules="$(cd -- "$wt" && env -u GH_REPO -u GITHUB_REPOSITORY gh api "repos/{owner}/{repo}/rules/branches/$uri" --paginate \
     --jq '.[] | select(.type == "merge_queue" or .type == "required_status_checks") | "\(.type) \(.parameters.strict_required_status_checks_policy // false)"' 2>/dev/null)" \
     || return 0
   case $'\n'"$rules"$'\n' in
