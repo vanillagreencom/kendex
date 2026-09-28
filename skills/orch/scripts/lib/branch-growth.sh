@@ -193,10 +193,10 @@ branch_allowance_check() {
 BRANCH_SIZE_PRODUCTION=""
 BRANCH_SIZE_TEST=""
 BRANCH_SIZE_MIRROR=""
-# Every path whose lines the split counted as test lines, one per line: both
-# ends of a rename, since a reader listing the diff without rename detection
-# names each end apart. A render mirror is counted at its source and is not
-# listed.
+# Every changed path the split's test rule names, one per line. A rename's
+# lines are counted by its new end, but each end is listed by its own test
+# status, since a reader listing the diff without rename detection names each
+# end apart. A render mirror is counted at its source and is not listed.
 BRANCH_SIZE_TEST_FILES=""
 # The same paths' additions plus deletions, render mirrors left out, for the
 # implement receipt. This shares the report's render classification.
@@ -332,8 +332,8 @@ branch_size_classified() {
         if (is_test(path[i])) {
           tests += lines[i]
           test_files = test_files "\n" path[i]
-          if (old_path[i] != path[i]) test_files = test_files "\n" old_path[i]
         } else production += lines[i]
+        if (old_path[i] != path[i] && is_test(old_path[i])) test_files = test_files "\n" old_path[i]
       }
       printf "%d %d %d %d%s", production + 0, tests + 0, mirror + 0, baseline + 0, test_files
     }

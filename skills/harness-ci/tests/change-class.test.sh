@@ -189,6 +189,7 @@ small-at-ceiling|small|dirty|runtime/product.ts:150
 small-one-over|standard|dirty|runtime/product.ts:151
 small-two-subsystems|standard|dirty|runtime/product.ts:30 payload/data.conf:30
 small-test-path-in-another-subsystem|small|dirty|runtime/product.ts:30 payload/tests/data.conf:30
+small-test-path-and-its-render-in-another-subsystem|small|dirty|runtime/product.ts:30 skills/x/tests/data.conf:30 .claude/skills/x/tests/data.conf:30
 render-root-is-one-subsystem|small|dirty|runtime/one.ts:30 .agents/runtime/two.ts:30
 excluded-path|standard|dirty|.github/workflows/ci.yml:3
 CASES
@@ -1088,27 +1089,40 @@ PATH="$stub_bin:$PATH" assert_class "a checkout whose default branch is not main
 # beside it. Without the contract the library answers `command not found` for
 # the roots call and drops the base endpoint from the measurement, and errexit
 # is off inside `measure`, so the run would carry on and publish a class
-# measured over a range nobody named.
-skewed_root="$SANDBOX/skewed-orch"
-skewed_class="$(plant_package "$skewed_root" none)"
-mkdir -p "$skewed_root/orch/scripts/lib" "$skewed_root/orch/references"
-cp "$ORCH_PACKAGE/references/narrow-change.conf" "$skewed_root/orch/references/"
-cp -R "$ORCH_PACKAGE/scripts/." "$skewed_root/orch/scripts/"
-skewed_lib="$skewed_root/orch/scripts/lib/branch-growth.sh"
-assert_eq "the skewed library drops exactly one contract line" 1 \
-  "$(grep -c '^BRANCH_GROWTH_CONTRACT=' "$skewed_lib")"
-grep -v '^BRANCH_GROWTH_CONTRACT=' "$skewed_lib" >"$skewed_lib.old"
-mv "$skewed_lib.old" "$skewed_lib"
+# measured over a range nobody named. An orch at contract 1 sets no
+# BRANCH_SIZE_TEST_FILES, which the subsystem rule reads. Each row plants an
+# orch whose contract line is the row's, or has none.
 reset_case
 set_verifier dirty
 write_lines "$repo" runtime/product.ts 3
 git -C "$repo" add -A
 git -C "$repo" commit -q -m "a diff a skewed orch would misjudge"
-skewed_err="$(PATH="$stub_bin:$PATH" "$skewed_class" --repo "$repo" \
-  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
-assert_eq "an orch without the measurement contract is refused" \
-  "class: class=standard measured=false cause=orch-too-old path=$skewed_root/harness-ci/scripts/../../orch contract=0" \
-  "$(printf '%s\n' "$skewed_err" | grep '^class: ')"
+skewed_rows=0
+while IFS='|' read -r contract_line reported; do
+  skewed_rows=$((skewed_rows + 1))
+  skewed_root="$SANDBOX/skewed-orch-$skewed_rows"
+  skewed_class="$(plant_package "$skewed_root" none)"
+  mkdir -p "$skewed_root/orch/references"
+  cp "$ORCH_PACKAGE/references/narrow-change.conf" "$skewed_root/orch/references/"
+  cp -R "$ORCH_PACKAGE/scripts" "$skewed_root/orch/"
+  skewed_lib="$skewed_root/orch/scripts/lib/branch-growth.sh"
+  CONTRACT_LINE="$contract_line" awk '/^BRANCH_GROWTH_CONTRACT=/ {
+      if (ENVIRON["CONTRACT_LINE"] != "") print ENVIRON["CONTRACT_LINE"]
+      next
+    } { print }' "$ORCH_PACKAGE/scripts/lib/branch-growth.sh" >"$skewed_lib"
+  assert_eq "the contract-$reported library replaces the one contract line" \
+    "1 ${contract_line:-none}" \
+    "$(grep -c '^BRANCH_GROWTH_CONTRACT=' "$ORCH_PACKAGE/scripts/lib/branch-growth.sh") $(grep '^BRANCH_GROWTH_CONTRACT=' "$skewed_lib" || echo none)"
+  skewed_err="$(PATH="$stub_bin:$PATH" "$skewed_class" --repo "$repo" \
+    --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+  assert_eq "an orch at measurement contract $reported is refused" \
+    "class: class=standard measured=false cause=orch-too-old path=$skewed_root/harness-ci/scripts/../../orch contract=$reported" \
+    "$(printf '%s\n' "$skewed_err" | grep '^class: ')"
+done <<'CONTRACTS'
+|0
+BRANCH_GROWTH_CONTRACT=1|1
+CONTRACTS
+require_rows change-class-skewed-orch "$skewed_rows"
 
 # The judged tree's configuration decides nothing. A render root its working
 # tree names does not move the measurement, and the private env file the
@@ -1255,23 +1269,31 @@ assert_eq "a base settings file the reader refuses answers standard, unmeasured"
   "$(printf '%s\n' "$refused_err" | grep '^class: ')"
 
 # A test path belongs to no subsystem: the table row
-# small-test-path-in-another-subsystem pins it from the built-in test rule.
-# Each control below plants a copy that loses one side of it, the classifier
-# no longer setting the measurement's test paths aside or the measurement no
-# longer listing them, and the row's diff falls back to several-subsystems.
-subsystem_class() { # CLASSIFIER -> the class: line for the row's diff
-  local err
+# small-test-path-in-another-subsystem pins it from the built-in test rule,
+# and small-test-path-and-its-render-in-another-subsystem for a test source
+# beside its render mirror. Each control below plants a copy that loses one
+# side of it, the classifier no longer setting the measurement's test paths
+# aside, or a mirror of one, or the measurement no longer listing them, and
+# the row's diff falls back to several-subsystems.
+subsystem_class() { # CLASSIFIER PATH:LINES... -> the class: line for the diff
+  local err spec classifier="$1"
+  shift
   reset_case
   set_verifier dirty
-  write_lines "$repo" runtime/product.ts 30
-  write_lines "$repo" payload/tests/data.conf 30
+  for spec in "$@"; do
+    write_lines "$repo" "${spec%:*}" "${spec##*:}"
+  done
   git -C "$repo" add -A
   git -C "$repo" commit -q -m "a script beside its test data in another directory"
-  err="$(PATH="$stub_bin:$PATH" "$1" --repo "$repo" --event pull_request \
+  err="$(PATH="$stub_bin:$PATH" "$classifier" --repo "$repo" --event pull_request \
     --base "$base" --head HEAD 2>&1 >/dev/null)" || true
   printf '%s\n' "$err" | sed -n '/^class: /p'
 }
 skip_line="$(cat <<'LINE'
+  case "$test_files" in *$'\n'"$path"$'\n'* | *$'\n'"$rest"$'\n'*) continue ;; esac
+LINE
+)"
+path_only_line="$(cat <<'LINE'
   case "$test_files" in *$'\n'"$path"$'\n'*) continue ;; esac
 LINE
 )"
@@ -1283,7 +1305,16 @@ assert_eq "the classifier control drops the one test-path skip" "1 0" \
   "$(grep -cxF -- "$skip_line" "$CHANGE_CLASS") $(grep -cxF -- "$skip_line" "$unskipped_class" || true)"
 assert_eq "a classifier that sets no test path aside counts two subsystems" \
   "class: class=standard measured=true cause=several-subsystems production=30" \
-  "$(subsystem_class "$unskipped_class")"
+  "$(subsystem_class "$unskipped_class" runtime/product.ts:30 payload/tests/data.conf:30)"
+mirrorless_class="$(plant_package "$SANDBOX/mirrorless" link)"
+DROP_LINE="$skip_line" KEEP_LINE="$path_only_line" awk '
+  $0 == ENVIRON["DROP_LINE"] { print ENVIRON["KEEP_LINE"]; next } { print }' \
+  "$CHANGE_CLASS" >"$mirrorless_class"
+assert_eq "the mirror control keeps the skip for the path alone" "1 0 1" \
+  "$(grep -cxF -- "$skip_line" "$CHANGE_CLASS") $(grep -cxF -- "$skip_line" "$mirrorless_class" || true) $(grep -cxF -- "$path_only_line" "$mirrorless_class")"
+assert_eq "a classifier that keeps a test source's mirror counts two subsystems" \
+  "class: class=standard measured=true cause=several-subsystems production=30" \
+  "$(subsystem_class "$mirrorless_class" runtime/product.ts:30 skills/x/tests/data.conf:30 .claude/skills/x/tests/data.conf:30)"
 unlisted_root="$SANDBOX/unlisted-orch"
 unlisted_class="$(plant_package "$unlisted_root" none)"
 mkdir -p "$unlisted_root/orch/references"
@@ -1296,18 +1327,24 @@ assert_eq "the measurement control drops the one test-path record" "1 0" \
   "$(grep -cxF -- "$list_line" "$ORCH_PACKAGE/scripts/lib/branch-growth.sh") $(grep -cxF -- "$list_line" "$unlisted_root/orch/scripts/lib/branch-growth.sh" || true)"
 assert_eq "a measurement that lists no test path leaves two subsystems" \
   "class: class=standard measured=true cause=several-subsystems production=30" \
-  "$(subsystem_class "$unlisted_class")"
+  "$(subsystem_class "$unlisted_class" runtime/product.ts:30 payload/tests/data.conf:30)"
 
 # A lane and CI classify one diff alike. CI's classify step may carry
-# ORCH_SIZE_TEST_PATHS in its environment; a lane's run, item-tier or
-# review-policy through orch's lib/change-class.sh, carries none, and the
+# ORCH_SIZE_TEST_PATHS in its environment; a lane's run carries none, whether
+# item-tier or dev-validate-run through orch's lib/change-class.sh, which the
+# lane rows call, or review-policy, which calls change-class itself, and the
 # classifier takes the glob from the base endpoint's settings instead. A
 # script beside a fixture only that glob calls a test answers one class both
-# ways: the fixture's lines are test lines, and the fixture, both ends of a
-# move included, sits in no subsystem.
+# ways: the fixture's lines are test lines, and the fixture, moved a level
+# down or up, sits in no subsystem. Each end of a rename is judged on its
+# own: a production file moved into a test directory still leaves its old
+# subsystem behind, and a test file moved out of one leaves none.
 fixture="$(new_repo change-class-fixture)"
 printf '[env]\nORCH_SIZE_TEST_PATHS = "bin/fixtures/*"\n' >"$fixture/kendex.settings.toml"
 write_lines "$fixture" bin/fixtures/kept.txt 40
+write_lines "$fixture" bin/fixtures/deep/nested.txt 43
+write_lines "$fixture" lib/core.sh 41
+write_lines "$fixture" payload/tests/data.conf 42
 commit_paths "$fixture" baseline seed.txt
 fixture_base="$(git -C "$fixture" rev-parse HEAD)"
 fixture_rows=0
@@ -1320,6 +1357,13 @@ while IFS='|' read -r label script_lines fixture_edit expected; do
     move)
       mkdir -p "$fixture/bin/fixtures/moved"
       git -C "$fixture" mv bin/fixtures/kept.txt bin/fixtures/moved/kept.txt ;;
+    move-up) git -C "$fixture" mv bin/fixtures/deep/nested.txt bin/fixtures/nested.txt ;;
+    into-test)
+      mkdir -p "$fixture/runtime/tests"
+      git -C "$fixture" mv lib/core.sh runtime/tests/core.sh ;;
+    out-of-test)
+      mkdir -p "$fixture/runtime/data"
+      git -C "$fixture" mv payload/tests/data.conf runtime/data/data.conf ;;
     *) echo "unknown fixture edit $fixture_edit" >&2; exit 1 ;;
   esac
   git -C "$fixture" add -A
@@ -1340,6 +1384,9 @@ done <<'FIXTURES'
 a script within micro beside a new fixture|10|add|class: class=micro measured=true cause=production-within-micro production=10
 a script within small beside a new fixture|30|add|class: class=small measured=true cause=production-within-small subsystem=runtime
 a script within small beside a fixture moved a level down|30|move|class: class=small measured=true cause=production-within-small subsystem=runtime
+a script within small beside a fixture moved a level up|30|move-up|class: class=small measured=true cause=production-within-small subsystem=runtime
+a script beside a production file moved into a test directory|30|into-test|class: class=standard measured=true cause=several-subsystems production=30
+a script beside a test file moved out beside it|30|out-of-test|class: class=small measured=true cause=production-within-small subsystem=runtime
 FIXTURES
 require_rows change-class-fixture "$fixture_rows"
 
