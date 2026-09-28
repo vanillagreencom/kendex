@@ -18,7 +18,7 @@ echo "=== lane-mail-check: copilot ==="
 # payload spells its fields in camelCase, and every refusal is also the
 # documented JSON answer on stdout. Every row here installs the hooks where
 # kendex renders them for Copilot and sends the payload in the camelCase shape
-# Copilot's hooks reference gives for its event, not a captured one. A
+# Copilot's hooks reference gives for its event, not a captured one. A custom
 # subagent's agentStop carries its own session id and the lead's transcript,
 # the shape Copilot CLI 1.0.88 was measured sending (the copilot_stop rows
 # run with COP_SESSION=c1); a sessionStart or prompt payload carrying agent_id
@@ -242,8 +242,11 @@ expect 0 - "and out of an object toolArgs"
 
 # The deliver arm hands the lines over under the key Copilot's reference
 # reads, top-level `additionalContext`, to a session the judge recorded as a
-# lead, and acknowledges them; a subagent's call carries a session id nothing
-# recorded, and is handed nothing, saying so on stderr alone.
+# lead, and acknowledges them; a custom subagent's call carries a session id
+# nothing recorded, the shape Copilot CLI 1.0.88 was measured sending, and is
+# handed nothing, saying so on stderr alone. Whether a built-in task-tool
+# subagent's calls carry their own session id or the lead's is a pending
+# live-lane proof, so no row sends one.
 new_copilot_lane copilot_deliver ken-203
 mkdir -p "$LANE/tmp/lane-mail/KEN-203"
 copilot_context start
