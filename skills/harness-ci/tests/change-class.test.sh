@@ -1143,12 +1143,14 @@ PATH="$stub_bin:$PATH" assert_class \
 assert_eq "and the file its settings name never ran" "absent" \
   "$([ -e "$marker" ] && echo present || echo absent)"
 
-# The measurement settings the base revision holds reach change-class and
-# branch-size-check alike, so the class and the size report count the same
-# lines. A test glob set only in the base's settings file moves a 30-line
-# script from production to test in both; read from nowhere, it stays
-# production and change-class answers small. The process environment still
-# outranks the file.
+# change-class reads the base tip's settings files and branch-size-check the
+# worktree's, through the same reader. They count the same lines where the
+# base tip and the branch hold the same settings, as here, and can differ for
+# a branch forked before main changed one, which the fork-point rows below
+# build. A test glob in the settings file moves a 30-line script from
+# production to test in both; read from nowhere, it stays production and
+# change-class answers small. The process environment still outranks the
+# file.
 ladder="$(new_repo change-class-ladder)"
 printf '[env]\nORCH_SIZE_TEST_PATHS = "checks/*"\n' >"$ladder/kendex.settings.toml"
 commit_paths "$ladder" baseline seed.txt
