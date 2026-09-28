@@ -139,9 +139,11 @@
 #        PI_CODING_AGENT_DIR (lib/lane-launch.sh § lane_pick_harness). On any
 #        other provider it spends one no lane measures, so that entry takes
 #        no pick and launches with no lane variable, and a qualifying mark
-#        never chooses it. A pi caller's own model is its record's, else the
-#        --model word after --, else its reading's; one naming no provider
-#        spends an account nothing names, and its caller entry refuses
+#        never chooses it. A pi caller's own model is the first of its
+#        record's, the --model word after -- and its reading's that names a
+#        provider (lib/overseer-launch.sh § ol_pi_model), and its successor
+#        runs and records that one; where none names a provider it spends an
+#        account nothing names, and its caller entry refuses
 #        `pi-account-unknown`. No permission posture crosses to or from pi,
 #        whose row names no permission word. Unset, the setting is the ladder
 #        lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE names; set to empty,
@@ -888,22 +890,17 @@ if [[ "$MODE" != dead ]]; then
   # The model passes through the rule a reading takes (lib/lane-context.sh §
   # lane_context_mark_model), so a codex session is judged on its account's
   # binding bucket whichever of the record and the reading named its model.
-  # A pi session's account follows the provider its model names, and a pi
-  # overseer passes its `--model` word after --, so where no record names its
-  # model that word, the one a relaunch of it runs, answers ahead of the
-  # reading where it names a provider. Pi takes a bare pattern too, and a
-  # bare word beside a reading's `provider/id` leaves the reading answering,
-  # so a turn-end judgement, handed no flags, and the succession it asks for
-  # read one account. A bare word answers only where the reading names no
-  # provider either, which the caller entry refuses as unknown.
-  caller_model="${OL_KNOWN_MODEL:-$reading_model}"
-  if [[ "$CALLER_HARNESS" == pi && -z "$OL_KNOWN_MODEL" ]]; then
+  # A pi session's account follows the provider its model names, and its
+  # record, its `--model` word after -- and its reading each can name the
+  # model with or without one: lib/overseer-launch.sh § ol_pi_model is the one
+  # precedence over the three, so a turn-end judgement, handed no flags, and
+  # the succession it asks for read one account.
+  caller_model="${OL_KNOWN_MODEL:-$reading_model}" flag_model=""
+  if [[ "$CALLER_HARNESS" == pi ]]; then
     if ! flag_model="$(launch_choice_launch_model pi "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}")"; then
       die launch-choice-failed harness=pi step=model-read
     fi
-    if [[ "$flag_model" == ?*/?* || ( -n "$flag_model" && "$caller_model" != ?*/?* ) ]]; then
-      caller_model="$flag_model"
-    fi
+    caller_model="$(ol_pi_model "$OL_KNOWN_MODEL" "$flag_model" "$reading_model")"
   fi
   CALLER_MODEL="$(lane_context_mark_model "$CALLER_HARNESS" "$caller_model")"
   # The harness and model `lanes` measures this session's account as
@@ -1115,6 +1112,21 @@ walk_entries() {
       # a spent account: refused rather than launched bare.
       [[ "$CALLER_ACCOUNT_HARNESS" != unknown ]] || die pi-account-unknown "model=${CALLER_MODEL:-none}"
       [[ -z "$OL_CUR_MODEL" ]] || model="$OL_CUR_MODEL" effort="$OL_CUR_EFFORT"
+      # A pi successor runs, and so records, the provider-bearing model its
+      # caller's account was judged on, in place of a model from the record or
+      # the flags that names no provider, so no generation's record holds a
+      # bare model the next would have to read (ol_pi_model). A flag model
+      # naming its provider, the split --provider form included, is kept.
+      if [[ "$CALLER_HARNESS" == pi && "$CALLER_MODEL" == ?*/?* ]]; then
+        if [[ -n "$model" ]]; then
+          [[ "$model" == ?*/?* ]] || model="${CALLER_MODEL%%:*}"
+        elif [[ "$flag_model" != ?*/?* ]]; then
+          model="${CALLER_MODEL%%:*}"
+          if ! effort="$(launch_choice_effort pi "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}")"; then
+            die launch-choice-failed harness=pi step=effort-read
+          fi
+        fi
+      fi
       FALLBACK_WALKED="${CALLER_HARNESS:-none}"
       # This entry names no model in the LAUNCH — it passes the overseer's own
       # flags after -- instead — unless its launch record names a model, in

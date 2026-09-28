@@ -13,6 +13,7 @@
 #                          ladder where the setting is unset
 #   ol_preference_entries  the ORCH_OVERSEER_PREFERENCE parse
 #   ol_account             the account a session spends, as `lanes` judges it
+#   ol_pi_model            a pi session's model, out of the sources naming it
 #   ol_entry_model         one entry's harness, model and effort
 #   ol_lanes               `lanes` on this machine's copy of each account
 #   ol_pick_record         one `lanes pick --json` record, for a caller's
@@ -135,6 +136,20 @@ ol_account() { # HARNESS MODEL
     ?*/?*) OL_ACCOUNT_HARNESS=none OL_ACCOUNT_MODEL="" ;;
     *) OL_ACCOUNT_HARNESS=unknown OL_ACCOUNT_MODEL="" ;;
   esac
+}
+
+# ol_pi_model MODEL... — the model a pi session runs, out of the sources that
+# can name it given in precedence order, its launch record, its `--model` word
+# and its context reading: the first that names its provider, `provider/id`,
+# which is what names its account (ol_account), else the first that names a
+# model at all, else empty. Pi resolves a bare model to a provider itself, so
+# a bare model from any source never outranks one naming its provider, and
+# answers only where none does, which ol_account reads as `unknown`.
+ol_pi_model() { # MODEL...
+  local m
+  for m in "$@"; do [[ "$m" != ?*/?* ]] || { printf '%s\n' "$m"; return 0; }; done
+  for m in "$@"; do [[ -z "$m" ]] || { printf '%s\n' "$m"; return 0; }; done
+  printf '\n'
 }
 
 # ol_entry_model ENTRY — one entry ol_preference_entries admitted, split into

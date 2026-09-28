@@ -382,6 +382,37 @@ split_row "$SPLITCTL/oversee-succeed"
 assert_eq "$(jq -r '.overseer.model' "$FLEET_STATE")|$(judged)" \
   "claude-fable-5-1|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
   "control: an identity that reads the bare model word leaves the next generation's account unjudged" "$TMP_ROOT/err"
+# A pi overseer nothing recorded, started with a bare `--model <id>`, whose
+# reading names `pi-claude/<id>`: it hands over at its context mark, and the
+# successor runs and records the provider-bearing model its account was chosen
+# from, so the next generation's judgement and succession read the claude
+# account rather than a bare model that names none.
+bare_row() { # [SUCCEED_BIN]
+  new_caller
+  mkdir -p "$MAILBOX_DIR"
+  lane_context_record "$MAILBOX_DIR" pi 100000 1000000 pi-claude/claude-fable-5-1 "" "$SERVER_PID $CALLER_PANE"
+  state null
+  SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --context 950000:1000000 --wait-secs 20 \
+    -- --model claude-fable-5-1 --thinking high
+  BARE_RC="$RC" BARE_MODEL="$(jq -r '.overseer.model' "$FLEET_STATE")"
+  CALLER_PANE="$(jq -r '.overseer.pane' "$FLEET_STATE")"
+  SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
+  BARE_JUDGED="$(judged)"
+  SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --context 950000:1000000 --wait-secs 20 \
+    -- --model claude-fable-5-1 --thinking high
+}
+bare_row
+assert_eq "$BARE_RC|$BARE_MODEL|$BARE_JUDGED|$RC|$(jq -r '.overseer.model' "$FLEET_STATE")" \
+  "0|pi-claude/claude-fable-5-1|account-below-mark headroom=90|0|pi-claude/claude-fable-5-1" \
+  "a bare --model pi overseer hands over on its reading's provider, and the next generation judges and hands over on the claude account" "$TMP_ROOT/err"
+# Its control: a successor that runs, and records, its caller's bare flag
+# leaves the next generation's succession refusing an account it cannot name.
+BARECTL="$(mutant_scripts barectl oversee-succeed)" || exit 1
+mutate_file "$BARECTL/oversee-succeed" '      if [[ "$CALLER_HARNESS" == pi && "$CALLER_MODEL" == ?*/?* ]]; then' '      if false; then'
+bare_row "$BARECTL/oversee-succeed"
+assert_eq "$BARE_MODEL|$RC|$(grep -m1 -o '^oversee-succeed: pi-account-unknown [^ ]*' <<<"$ERR")" \
+  "claude-fable-5-1|1|oversee-succeed: pi-account-unknown model=claude-fable-5-1" \
+  "control: a successor recording the bare flag leaves the next generation refusing pi-account-unknown"
 
 # The control for the model rule: a caller that ignores the record's model is
 # judged on the reading's.
@@ -471,7 +502,7 @@ pi_claude_row claude-opus-5
 assert_eq "$RC|$(sed -n 1p <<<"$ERR")|$OUT" "1|oversee-succeed: pi-account-unknown model=claude-opus-5|" \
   "--print-launch-line refuses a pi overseer whose model names no provider"
 PIFLAGCTL="$(mutant_scripts piflagctl oversee-succeed)" || exit 1
-mutate_file "$PIFLAGCTL/oversee-succeed" '      caller_model="$flag_model"' '      :'
+mutate_file "$PIFLAGCTL/oversee-succeed" '    caller_model="$(ol_pi_model "$OL_KNOWN_MODEL" "$flag_model" "$reading_model")"' '    caller_model="$(ol_pi_model "$OL_KNOWN_MODEL" "" "$reading_model")"'
 pi_claude_row pi-claude/claude-opus-5 "$PIFLAGCTL/oversee-succeed"
 assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: pi-account-unknown model=none" \
   "control: a caller that reads no --model word leaves a record-less pi overseer's account unknown"
@@ -498,7 +529,7 @@ pi_reading_row "$PIPANECTL/oversee-succeed"
 assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: harness-unnamed pane=$CALLER_PANE" \
   "control: a reading harness naming no pi leaves a pi pane unnamed"
 PIREADCTL="$(mutant_scripts pireadctl oversee-succeed)" || exit 1
-mutate_file "$PIREADCTL/oversee-succeed" 'caller_model="${OL_KNOWN_MODEL:-$reading_model}"' 'caller_model="${OL_KNOWN_MODEL:-}"'
+mutate_file "$PIREADCTL/oversee-succeed" '    caller_model="$(ol_pi_model "$OL_KNOWN_MODEL" "$flag_model" "$reading_model")"' '    caller_model="$(ol_pi_model "$OL_KNOWN_MODEL" "$flag_model" "")"'
 SUCCEED_BIN="$PIREADCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
 assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
   "control: a caller that ignores the pi reading's model leaves the account unjudged" "$TMP_ROOT/err"
@@ -517,10 +548,9 @@ pi_bare_flag_row
 assert_eq "$RC|$(sed -n 1p <<<"$ERR" | awk '{print $2}')|$(grep -o 'mark=[a-z]*' <<<"$(sed -n 1p <<<"$ERR")")" \
   "3|no-lane-qualifies|mark=headroom" \
   "the succession beside a bare --model word reads the reading's claude account"
-PIBARECTL="$(mutant_scripts pibarectl oversee-succeed)" || exit 1
-mutate_file "$PIBARECTL/oversee-succeed" \
-  '    if [[ "$flag_model" == ?*/?* || ( -n "$flag_model" && "$caller_model" != ?*/?* ) ]]; then' \
-  '    if [[ -n "$flag_model" ]]; then'
+PIBARECTL="$(mutant_scripts pibarectl lib/overseer-launch.sh)" || exit 1
+mutate_file "$PIBARECTL/lib/overseer-launch.sh" \
+  '  for m in "$@"; do [[ "$m" != ?*/?* ]] || { printf '"'"'%s\n'"'"' "$m"; return 0; }; done' ''
 pi_bare_flag_row "$PIBARECTL/oversee-succeed"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT" | awk '{print $2}')" "0|context-unmeasured" \
   "control: a bare --model word taken over the reading leaves the succession's account unmeasured"
