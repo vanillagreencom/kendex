@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# overseer-run — runs an overseer session's launch command and, once it
+# returns, writes the harness's exit status into the oversee state's session
+# record, so a harness killed before its SessionEnd hook ran is still read as
+# gone without anyone reading its pane.
+#
+# Usage: overseer-run COMMAND [ARG]...
+#
+# lib/overseer-launch.sh's ol_session_open puts this in front of every line an
+# overseer launch types into its pane. COMMAND runs as this script's child, so
+# the status is the one the shell would have seen. The record takes it as
+# `overseer.exit = {status, at}` only where it names this pane on this tmux
+# server (ol_record_exit); outside tmux nothing is written. A pane key, a
+# library or a write that fails is said on stderr under
+# `overseer-run: exit-unrecorded=<status>`; the command's own status is this
+# script's either way.
+set -euo pipefail
+
+usage() { sed -n '/^# Usage:/,/^# script.s either way/p' "$0" | sed 's/^# \{0,1\}//'; }
+case "${1:-}" in
+  -h | --help | help) usage; exit 0 ;;
+  "") usage >&2; exit 2 ;;
+esac
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export SCRIPT_DIR
+
+rc=0
+"$@" || rc=$?
+
+# Every line this script writes, and the only place its text lives.
+unrecorded() { # CAUSE
+  printf 'overseer-run: exit-unrecorded=%s\nthe exit status could not be written to the session record, so the watch reads this session from its rows and its pane:\n%s\n' \
+    "$rc" "$1" >&2
+}
+
+# Outside tmux there is no pane to key the record by, and no record names one.
+[[ -n "${TMUX:-}" && -n "${TMUX_PANE:-}" ]] || exit "$rc"
+DEP_ERR="$(mktemp)" || { unrecorded "mktemp failed"; exit "$rc"; }
+trap 'rm -f -- "${DEP_ERR:?}"' EXIT
+# The pane key is lib/lane-context.sh's, the pair the record keys the session
+# on; the writer is the record's owner. Sourced after the command returns, so
+# a library that cannot load costs the record and never the session.
+# shellcheck source=lib/lane-context.sh
+source "$SCRIPT_DIR/lib/lane-context.sh" 2>"$DEP_ERR" || { unrecorded "$(cat -- "$DEP_ERR")"; exit "$rc"; }
+# shellcheck source=lib/overseer-launch.sh
+source "$SCRIPT_DIR/lib/overseer-launch.sh" 2>"$DEP_ERR" || { unrecorded "$(cat -- "$DEP_ERR")"; exit "$rc"; }
+key="$(lane_context_caller_key)" || { unrecorded "tmux reported no server pid for pane $TMUX_PANE"; exit "$rc"; }
+ol_record_exit "${key%% *}" "${key#* }" "$rc" || unrecorded "$(cat -- "$DEP_ERR")"
+exit "$rc"

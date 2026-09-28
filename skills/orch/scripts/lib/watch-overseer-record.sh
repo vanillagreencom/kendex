@@ -102,6 +102,7 @@ overseer_command_record() {
   # The pane's own event rows file, the one path its hooks write to and every
   # reader of this record reads (lib/session-rows.sh).
   rows="$(session_rows_overseer_file "$PWD" "$server" "$pane")"
+  # A start is a live session, so no exit a record carries stands.
   # The five fields this watch observes replace the prior's; the launcher's
   # own, runtime, generation and the launch identity (harness, account, home,
   # model, effort and cwd), stay only where the prior names THIS pane on THIS
@@ -118,7 +119,7 @@ overseer_command_record() {
       .overseer = ((((.overseer // {})
         | if ol_names($server; $pane) then . else {} end)
         + {server: $server, pane: $pane, window: $window, launch_line: $line, session_rows: $rows})
-        | del(.pending))' 2>&1)" \
+        | del(.pending, .exit))' 2>&1)" \
     || overseer_record_notice "$detail" "$held" overseer-unrecorded "pane=$pane" "step=write"
   return 0
 }

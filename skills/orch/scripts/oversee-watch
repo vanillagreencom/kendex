@@ -2310,7 +2310,9 @@ overseer_mark_check() { # ROWS IDENTITY PANE
 # both read one session the one way. A pane that cannot be read is noted once
 # and returns 1: its state settles nothing.
 #
-# The harness's own rows settle it first (lib/session-rows.sh): a SessionEnd
+# An exit status `overseer-run` wrote into the record settles it first, as
+# `exited`, OV_SOURCE `record`. The harness's own rows settle it next
+# (lib/session-rows.sh): a SessionEnd
 # is `exited` and a usage-limit StopFailure is `walled` whatever the pane
 # shows, OV_SOURCE `rows`. A session its rows call live is still `exited` when
 # the pane's process is a bare shell with nothing under it, which a harness
@@ -2330,7 +2332,7 @@ OV_SCREEN=""
 OV_STATE=""
 OV_SOURCE=""
 overseer_pane_read() { # PANE
-  local pane="$1" pane_identity server actual_pane obs pid cmd rows cause
+  local pane="$1" pane_identity server actual_pane obs pid cmd rows cause exit_status
   local errf="$WORK_DIR/overseer.err"
   OV_SCREEN=""
   OV_WINDOW="$(tmux display-message -p -t "$pane" '#{window_id}' 2>"$errf")" \
@@ -2354,14 +2356,19 @@ overseer_pane_read() { # PANE
     || { overseer_note overseer-unreadable "pane=$pane" "value=${obs:-<empty>}"; return 1; }
   pid="${obs%%[[:blank:]]*}"
   cmd="${obs#*[[:blank:]]}"
-  # The rows file the record names for THIS pane on THIS server, and none for
-  # a record naming another session: that one's rows are not this pane's.
-  cause=unrecorded
+  # The rows file and the exit status the record holds for THIS pane on THIS
+  # server, and neither for a record naming another session: that one's are
+  # not this pane's. An exit status is `overseer-run`'s, written once the
+  # launch line returned (lib/overseer-launch.sh § ol_record_exit): the
+  # harness is gone, whatever its rows last said, `source=record`.
+  cause=unrecorded exit_status=""
   if ! rows="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee \
     "if (.overseer.server // \"\") == \"$server\" and (.overseer.pane // \"\") == \"$pane\"
-     then .overseer.session_rows // \"\" else \"\" end" 2>"$errf")"; then
+     then \"\\(.overseer.exit.status // \"\")\\t\\(.overseer.session_rows // \"\")\" else \"\" end" 2>"$errf")"; then
     cause=state-unreadable rows=""
   fi
+  if [[ "$rows" == *$'\t'* ]]; then exit_status="${rows%%$'\t'*}" rows="${rows#*$'\t'}"; fi
+  if [[ -n "$exit_status" ]]; then OV_STATE=exited; OV_SOURCE=record; return 0; fi
   if [[ -n "$rows" ]]; then
     cause=unreadable
     if session_rows_verdict "$rows"; then cause="$SESSION_ROWS_VERDICT"; fi

@@ -139,6 +139,25 @@ assert_eq "$(grep '^EVENT overseer-walled' <<<"$OUT")|$(sed -n 2p <<<"$OUT")" \
 one_pass five_mark "$FIVE_MARK" "$START"
 assert_eq "$ONE_PASS" "rc=0 walled=0 marks=1 launched=0" "a mark above zero is reported as the mark alone" "$ERR"
 
+# The exit status overseer-run writes into the record once the launch line
+# returns: over a blank pane with a live harness process and rows saying
+# live, the record's status is the death, `source=record`. With no status the
+# judgement falls through to the rows, which say live.
+exit_case() { # NAME [STATUS]
+  rows_case "$1" blank "$START"
+  if [[ -n "${2:-}" ]]; then
+    jq --argjson status "$2" '.overseer.exit = {status: $status, at: "2026-09-28T01:00:00Z"}' \
+      "$STUB_DIR/oversee-state.json" > "$STUB_DIR/state.tmp" && mv -- "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
+  fi
+  run TMUX_PANE="$PANE" -- --max-loops 2
+  EXIT_CASE="event=$(grep '^EVENT overseer-dead' <<<"$OUT" || echo none) launched=$(succeed_calls --dead-pane)"
+}
+exit_case record_exit 137
+assert_eq "$EXIT_CASE" "event=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=record launched=1" \
+  "a recorded exit status is the death whatever the pane and the rows show" "$ERR"
+exit_case record_no_exit
+assert_eq "$EXIT_CASE" "event=none launched=0" "with no status the rows judge, and they say live" "$ERR"
+
 # The record names another pane's rows: they are not this pane's, and the
 # pane is the fallback, said as `unrecorded`.
 rows_case other_session blank "$START" "$END_EXIT"
@@ -158,6 +177,15 @@ rows_case dead_rows_mutant blank "$START" "$END_EXIT"
 WATCH_BIN="$MUTANT_SCRIPTS/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true)" "events=0" \
   "control: without the rows verdict a SessionEnd row over a blank pane is no death" "$ERR"
+
+# The recorded exit ignored: the same record reads live off its rows.
+EXIT_CTL="$(mutant_scripts exit-ctl/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/exit-ctl/github"
+mutate_file "$EXIT_CTL/oversee-watch" \
+  '  if [[ -n "$exit_status" ]]; then OV_STATE=exited; OV_SOURCE=record; return 0; fi' ':'
+WATCH_BIN="$EXIT_CTL/oversee-watch" exit_case record_exit_mutant 137
+assert_eq "$EXIT_CASE" "event=none launched=0" \
+  "control: without the recorded exit a harness gone before its SessionEnd reads live" "$ERR"
 
 # The zero mark left to the walled session: the pass only reports the mark.
 MARK_CTL="$(mutant_scripts mark-ctl/orch oversee-watch)" || exit 1

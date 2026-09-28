@@ -240,7 +240,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(keyed registered "$OUT" | sed -n 1p)|$(r
 [[ "$PRIOR_LINE" != none ]] || fail "control premise: the record held no launch line before register"
 jq --arg line "$PRIOR_LINE" '.overseer.launch_line = $line' "$FLEET_STATE" > "$FLEET_STATE.tmp" && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
 LINECTL="$(mutant_scripts linectl lib/overseer-launch.sh)" || exit 1
-mutate_file "$LINECTL/lib/overseer-launch.sh" '($p | del(.pending, .launch_line))' '($p | del(.pending))'
+mutate_file "$LINECTL/lib/overseer-launch.sh" '($p | del(.pending, .exit, .launch_line))' '($p | del(.pending, .exit))'
 OVERSEE_BIN="$LINECTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
 assert_eq "$RC|$(recorded launch_line)" "0|$PRIOR_LINE" \
   "control: a register that keeps the prior fields whole carries the launched session's line"
@@ -354,6 +354,20 @@ run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(keyed overseer-launched "$OUT" | sed -n 1p | cut -d' ' -f1-2)|$(overseers)" \
   "0|oversee: overseer-launched|1" \
   "a session whose SessionStart row stands is up, whatever its screen shows"
+# The launch line runs under overseer-run: a harness that ends, here killed
+# before any hook of its own could run, leaves its exit status on the record.
+harness_ended() { # -> the recorded exit status, once overseer-run wrote one
+  local run_pid harness_pid waited=0
+  run_pid="$(pgrep -P "$(tm display-message -p -t "$(recorded pane)" '#{pane_pid}')")" || return 1
+  harness_pid="$(pgrep -P "$run_pid")" || return 1
+  harness_pid="${harness_pid%%$'\n'*}"
+  kill -TERM "$harness_pid"
+  # A real wait: the wrapper writes the record after its child is reaped.
+  until [[ "$(recorded exit.status)" != none || "$waited" -ge 50 ]]; do sleep 0.1; waited=$((waited + 1)); done
+  recorded exit.status
+}
+assert_eq "$(harness_ended)|$(recorded exit.at | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T')" "143|1" \
+  "a harness that ends leaves its exit status and time on the session record"
 tm kill-window -t "$(recorded window)"
 ROWWAITCTL="$(mutant_scripts rowwaitctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$ROWWAITCTL/lib/overseer-launch.sh" \

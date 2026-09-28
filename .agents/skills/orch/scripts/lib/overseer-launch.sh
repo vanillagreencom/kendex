@@ -291,7 +291,9 @@ ol_record_line_identity() { # LINE
 }
 
 # ol_session_open CWD NAME LINE PLACEMENT — the runtime's `create`: a session
-# named NAME with its shell in CWD running LINE, placed by PLACEMENT, which is
+# named NAME with its shell in CWD running LINE under `overseer-run`, which
+# writes the harness's exit status into the session record once LINE returns
+# (ol_record_exit), placed by PLACEMENT, which is
 # `--after SESSION` for a successor beside its predecessor or `--session
 # NAME` for a first launch into a tmux session. Into OL_SESSION, OL_WINDOW
 # and OL_SERVER. Returns 1 with OL_REASON=create-failed; the provider's own
@@ -305,7 +307,8 @@ ol_record_line_identity() { # LINE
 OL_SESSION="" OL_WINDOW="" OL_SERVER="" OL_OPEN_OUT=""
 ol_session_open() { # CWD NAME LINE PLACEMENT_FLAG PLACEMENT_VALUE
   OL_SESSION="" OL_WINDOW="" OL_SERVER="" OL_OPEN_OUT=""
-  OL_OPEN_OUT="$("$SCRIPT_DIR/overseer-host" create --cwd "$1" --name "$2" "$4" "$5" --line "$3" 2>"$DEP_ERR")" \
+  OL_OPEN_OUT="$("$SCRIPT_DIR/overseer-host" create --cwd "$1" --name "$2" "$4" "$5" \
+    --line "$(lane_single_quote "$SCRIPT_DIR/overseer-run") $3" 2>"$DEP_ERR")" \
     || { OL_REASON=create-failed; return 1; }
   ol_session_from_out
   [[ -n "$OL_SESSION" && -n "$OL_WINDOW" ]] || { OL_REASON=create-failed; return 1; }
@@ -406,13 +409,13 @@ ol_record_get() {
 # checkout the session starts in, IDENTITY's `cwd`, or this launcher's own
 # where that is unknown; OL_ROWS holds it for ol_session_verify. `pending` is
 # dropped: the successor it named is the session written here, or a launch
-# that never opened. The prior's `launch_line` goes with it where LINE is
-# empty: `oversee register` writes a session a person opened by hand, whose
-# line nothing here knows, and a line kept from the prior would be replayed
-# for this session's death as if it were its own, the prior's account and
-# permission words included. Every other field the prior carried stays. The
-# generation written is in OL_GENERATION. Returns 1 with the writer's words in
-# DEP_ERR.
+# that never opened. `exit` is dropped: it is a session's that ended. The
+# prior's `launch_line` goes with it where LINE is empty: `oversee register`
+# writes a session a person opened by hand, whose line nothing here knows, and
+# a line kept from the prior would be replayed for this session's death as if
+# it were its own, the prior's account and permission words included. Every
+# other field the prior carried stays. The generation written is in
+# OL_GENERATION. Returns 1 with the writer's words in DEP_ERR.
 OL_GENERATION="" OL_ROWS=""
 ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
   local prior="${OL_PRIOR:-null}" record cwd
@@ -426,7 +429,7 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
       ($prior // {}) as $p
       | (($p.generation // 0) | if type == "number" then . else 0 end) as $g
       | (if ($p | ol_names($server; $session)) and $g > 0 then $g else $g + 1 end) as $next
-      | ($p | del(.pending, .launch_line)) + {runtime: $runtime, server: $server, window: $window, generation: $next}
+      | ($p | del(.pending, .exit, .launch_line)) + {runtime: $runtime, server: $server, window: $window, generation: $next}
       + $identity
       + (if $runtime == "tmux" then {pane: $session, session_rows: $rows} else {session: $session} end)
       + (if $line == "" then {} else {launch_line: $line} end)' 2>"$DEP_ERR")" \
@@ -473,6 +476,22 @@ ol_record_current() { # SERVER PANE
       else empty end' <<<"$record" 2>"$DEP_ERR")" || return 2
   [[ -n "$fields" ]] || return 1
   IFS="$sep" read -r OL_CUR_HARNESS OL_CUR_ACCOUNT OL_CUR_HOME OL_CUR_MODEL OL_CUR_EFFORT OL_CUR_CWD <<<"$fields"
+}
+
+# ol_record_exit SERVER PANE STATUS — the harness's exit status and the UTC
+# time it returned, as the record's `exit` member `{status, at}`, written by
+# `overseer-run` once the launch line it runs returns. Only a record naming
+# that session on that server takes it: a line that outlived its record, a
+# successor's having replaced it, says nothing about the session recorded now.
+# oversee-watch reads it as the session's death ahead of its pane process.
+# Returns 1 with the writer's words in DEP_ERR.
+ol_record_exit() { # SERVER PANE STATUS
+  local at
+  at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
+  "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg pane "$2" \
+    --argjson status "$3" --arg at "$at" "$OL_JQ_DEFS"'
+      if (.overseer | ol_names($server; $pane)) then .overseer.exit = {status: $status, at: $at} else . end' \
+    >/dev/null 2>"$DEP_ERR"
 }
 
 # ol_record_restore — OL_PRIOR written back whole, for an abandoned launch:

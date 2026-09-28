@@ -45,11 +45,14 @@ the last mail pass.
 
 The long pass's events, checked and reported in this order:
   EVENT overseer-dead <pane> window=<window> passes=<N> succession=<on|off>
-        source=<rows|process|pane> [record=<server>:<pane>|none]
+        source=<record|rows|process|pane> [record=<server>:<pane>|none]
                              the OVERSEER's own session — the $TMUX_PANE this
                              watch was started from — read `exited` on N
                              consecutive passes. `source` names what settled
-                             it: `rows`, a SessionEnd row its harness wrote to
+                             it: `record`, the exit status `overseer-run`
+                             wrote into the fleet state's overseer.exit once
+                             the launch line returned; `rows`, a SessionEnd
+                             row its harness wrote to
                              the file the fleet state's overseer.session_rows
                              names; `process`, a pane whose process is a bare
                              shell with nothing under it; `pane`, the named
