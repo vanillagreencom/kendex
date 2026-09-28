@@ -59,10 +59,11 @@
 #   small    one subsystem, production additions within the small ceiling. A
 #            path's subsystem is its first directory, with a leading render
 #            root removed first so a source and the render mirroring it agree.
-#            An AGENTS.md or SKILL.md edit that earns trivial or micro answers
-#            small instead, cause=instruction-file: it changes how every agent
-#            behaves, and small is the lowest class the default review policy
-#            gives a bot review round.
+#            An agent instruction file, an `instruction` line of orch's
+#            narrow-change.conf (AGENTS.md, SKILL.md), that earns trivial or
+#            micro answers small instead, cause=instruction-file: it changes
+#            how every agent behaves, and small is the lowest class the
+#            default review policy gives a bot review round.
 #   standard everything else, and every diff this script cannot prove into a
 #            narrower class. A size is measured only where harness-only read
 #            every changed path against an inventory it could read: that file
@@ -83,9 +84,11 @@
 # refuse are orch's references/narrow-change.conf, beside this package; the
 # ceilings in that file are micro's and small's alone. The render inventory
 # on that list is read against it only where its change is more than names:
-# where harness-only prints `inventory-change: names-only`, the inventory
-# lists or unlists only paths the same diff adds or deletes, a render effect,
-# and it leaves the path set that list and the subsystem rule read.
+# where harness-only prints `inventory-change: names-only` and each root it
+# names is one of the measurement's render roots, the inventory lists only
+# render mirrors the same diff adds beside their sources and unlists only
+# paths it deletes, a render effect, and it leaves the path set that list
+# and the subsystem rule read.
 #
 # THE CLASS IS NEVER READ FROM A LABEL, A BRANCH NAME, A PULL REQUEST TITLE or
 # any other author-writable field, and no flag carries one: the author of the
@@ -557,25 +560,89 @@ set_globs "$REGISTRY_GLOBS"
 # A harness instruction pointer is a render when the whole diff is generated
 # and the proof above passed. Anywhere else nothing re-rendered it, and the
 # shipped documentation set would take a root one for ordinary markdown, so
-# the narrow classes refuse it by name as they refuse the file it points at.
+# the narrow classes refuse it by name, while the AGENTS.md it points at is
+# held to small below.
 set_globs 'CLAUDE.md */CLAUDE.md'
 ! path_matches any ||
   answer standard "cause=instruction-pointer $PATH_MATCH_HIT" measured
 
+# The measurement's library, sourced from orch beside this package, and the
+# render roots it pairs a mirror against. MEASURE_CAUSE names a failure.
+MEASURE_CAUSE=""
+load_measurement() {
+  if [ ! -r "$ORCH_DIR/scripts/lib/branch-growth.sh" ]; then
+    MEASURE_CAUSE="cause=orch-absent path=$ORCH_DIR"
+    return 1
+  fi
+  # shellcheck source=../../orch/scripts/lib/branch-growth.sh
+  if ! . "$ORCH_DIR/scripts/lib/branch-growth.sh"; then
+    MEASURE_CAUSE="cause=orch-unreadable"
+    return 1
+  fi
+  # errexit is off wherever this runs, as `load_measurement ||` or inside
+  # `measure ||`, so a library that is there but older answers `command not
+  # found` on stderr and carries on into a signature that drops an argument.
+  # Every call below is checked, and the contract is checked before the
+  # first of them.
+  local orch_contract="${BRANCH_GROWTH_CONTRACT:-0}"
+  case "$orch_contract" in '' | *[!0123456789]*) orch_contract=0 ;; esac
+  if [ "$orch_contract" -lt "$ORCH_CONTRACT_REQUIRED" ]; then
+    MEASURE_CAUSE="cause=orch-too-old path=$ORCH_DIR contract=$orch_contract"
+    return 1
+  fi
+  branch_growth_render_roots_from_env
+}
+
 # A names-only inventory change is the render effect of paths the diff adds
 # or deletes, which are measured themselves; the inventory leaves the path
-# set before the list and the subsystem rule read it. Any other change to it,
-# a changed entry or an entry for a path that stays, keeps it on the diff.
+# set before the list and the subsystem rule read it. harness-only pairs each
+# added entry with a source the diff adds and names its root; a root outside
+# the measurement's render roots, or roots this script cannot load, keep the
+# inventory on the diff, where the list below refuses it. Any other change to
+# it, a changed entry or an entry for a path that stays, keeps it there too.
+names_only_roots_rendered() { # ROOTS
+  local root listed
+  [ "$1" != - ] || return 0
+  load_measurement || return 1
+  set -f
+  for root in ${1//,/ }; do
+    for listed in $BRANCH_GROWTH_RENDER_ROOTS; do
+      [ "$root" = "$listed" ] && continue 2
+    done
+    set +f
+    echo "inventory-kept: cause=root-not-rendered root=$root" >&2
+    return 1
+  done
+  set +f
+}
 case "$inventory_change" in
-  names-only | names-only\ *)
-    changed="$(awk '$0 != ".kendex-generated.json"' <<<"$changed")" ||
-      answer standard "cause=path-set-unreadable" ;;
+  names-only\ *\ roots=*)
+    if names_only_roots_rendered "${inventory_change##* roots=}"; then
+      changed="$(awk '$0 != ".kendex-generated.json"' <<<"$changed")" ||
+        answer standard "cause=path-set-unreadable"
+    fi ;;
 esac
 
+# orch's list, as `KEYWORD GLOB` lines. A `superseded` line names a `path`
+# line kept for a reader from before the list's extglob grammar, which reads
+# an extglob as literal text; this reader drops that line and reads the
+# narrower lines beside it.
+list_globs() { # KEYWORD
+  awk -v kind="$1" '
+    $1 == "superseded" { drop[$2] = 1 }
+    $1 == kind { glob[++n] = $2 }
+    END { for (i = 1; i <= n; i++) if (!(glob[i] in drop)) print glob[i] }
+  ' "$NARROW_CONF"
+}
 [ -r "$NARROW_CONF" ] || answer standard "cause=narrow-change-list-unreadable"
-if ! excluded="$(sed -n 's/^path //p' "$NARROW_CONF" | tr '\n' ' ')"; then
+if ! excluded="$(list_globs path)" ||
+  ! instruction_globs="$(list_globs instruction)"; then
   answer standard "cause=narrow-change-list-unreadable"
 fi
+# A list with no `instruction` line is one from before the floor: AGENTS.md
+# left this script's configuration-source refusal on the promise of that
+# floor, so it is refused rather than read without it.
+[ -n "$instruction_globs" ] || answer standard "cause=narrow-change-floor-missing"
 set_globs "$excluded"
 ! path_matches any || answer standard "cause=excluded-path $PATH_MATCH_HIT" measured
 
@@ -583,11 +650,9 @@ set_globs "$excluded"
 # production/test split and the render-mirror pairing branch-size-check judges
 # an allowance by. It is handed the base endpoint this call named, so the lines
 # are counted over the range the paths came from.
-MEASURE_CAUSE=""
 production=""
 total=""
 measure() {
-  local orch_contract
   # The two events that define a range these rules can be read over. A pull
   # request's base end is the merge base harness-only resolved; a merge
   # group's base is an ancestor of its head by construction, so the
@@ -600,26 +665,7 @@ measure() {
       MEASURE_CAUSE="cause=unsupported-event event=$event"
       return 1 ;;
   esac
-  if [ ! -r "$ORCH_DIR/scripts/lib/branch-growth.sh" ]; then
-    MEASURE_CAUSE="cause=orch-absent path=$ORCH_DIR"
-    return 1
-  fi
-  # shellcheck source=../../orch/scripts/lib/branch-growth.sh
-  if ! . "$ORCH_DIR/scripts/lib/branch-growth.sh"; then
-    MEASURE_CAUSE="cause=orch-unreadable"
-    return 1
-  fi
-  # errexit is off for this whole function, which runs as `measure || answer`,
-  # so a library that is there but older answers `command not found` on stderr
-  # and carries on into a signature that drops an argument. Every call below
-  # is checked, and the contract is checked before the first of them.
-  orch_contract="${BRANCH_GROWTH_CONTRACT:-0}"
-  case "$orch_contract" in '' | *[!0123456789]*) orch_contract=0 ;; esac
-  if [ "$orch_contract" -lt "$ORCH_CONTRACT_REQUIRED" ]; then
-    MEASURE_CAUSE="cause=orch-too-old path=$ORCH_DIR contract=$orch_contract"
-    return 1
-  fi
-  branch_growth_render_roots_from_env
+  load_measurement || return 1
   # The base endpoint is this call's own and is non-empty here: harness-only
   # refuses a call without one before it reads a diff, and the empty-paths
   # branch above repeats that refusal as this script's answer. So the
@@ -634,11 +680,11 @@ measure() {
 }
 measure || answer standard "$MEASURE_CAUSE"
 
-# An AGENTS.md or SKILL.md edit changes how every agent behaves, so it never
-# answers below small, the lowest class the default review policy gives a bot
-# round; CLAUDE.md is refused above by name. Every trivial and micro answer
-# goes through here.
-set_globs 'AGENTS.md */AGENTS.md SKILL.md */SKILL.md'
+# An agent instruction file, an `instruction` line of orch's list, changes
+# how every agent behaves, so it never answers below small, the lowest class
+# the default review policy gives a bot round; CLAUDE.md is refused above by
+# name. Every trivial and micro answer goes through here.
+set_globs "$instruction_globs"
 instruction_file=""
 ! path_matches any || instruction_file="$PATH_MATCH_HIT"
 answer_narrow() { # CLASS FIELDS

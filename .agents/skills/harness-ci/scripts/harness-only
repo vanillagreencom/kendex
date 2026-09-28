@@ -42,9 +42,10 @@
 # one `head-rev: <rev>` line naming the commit the head endpoint resolved to.
 # A caller that must read the same range's committed state reads those lines
 # rather than resolving either endpoint a second time. Where the diff changes
-# .kendex-generated.json and every entry it gains or loses names a path the
-# same diff adds or deletes, one `inventory-change: names-only added=<n>
-# removed=<n>` line says so; change-class reads it.
+# .kendex-generated.json, every entry it gains names a render mirror the same
+# diff adds beside its source, and every entry it loses a path the same diff
+# deletes, one `inventory-change: names-only added=<n> removed=<n>
+# roots=<root>[,<root>...]|-` line says so; change-class reads it.
 #
 # Exit 0 on any verdict. Exit 2 on a WIRING error — an unknown flag, a missing
 # --event, a flag where a value belongs, an unwritable --output. Those are
@@ -339,10 +340,15 @@ head_inventory="$(inventory_paths "$head_inventory" 2>/dev/null)" \
   || verdict false "cause=invalid-generated-paths" "generated paths are invalid"
 
 # The inventory's own change, for change-class: `names-only` where every entry
-# the inventory gains names a path this diff adds, and every entry it loses a
-# path this diff deletes. A changed entry for a path listed at both endpoints,
-# an entry for a path that stays, an edit that moves no entry, or a lookup
-# that fails leaves the line out, and the inventory stays on the diff.
+# the inventory gains names a render mirror this diff adds, ROOT/SOURCE with
+# SOURCE added by the same diff, and every entry it loses a path this diff
+# deletes. `roots=` lists each ROOT, `-` for none, and change-class holds them
+# to the measurement's render roots, which this script does not read. The
+# pairing is exact, narrower than the measurement's stem pairing, so a render
+# that changes its extension keeps the inventory on the diff. A changed entry
+# for a path listed at both endpoints, an entry for a path that stays or has
+# no source beside it, an edit that moves no entry, or a lookup that fails
+# leaves the line out, and the inventory stays on the diff.
 inventory_delta() { # BASE_DOCUMENT HEAD_DOCUMENT -> one `KIND PATH` per entry
   printf '%s\n%s\n' "$1" "$2" | jq -ers '
     def entry_path: if type == "string" then . else .path end;
@@ -358,22 +364,35 @@ inventory_delta() { # BASE_DOCUMENT HEAD_DOCUMENT -> one `KIND PATH` per entry
     | if length == 0 then "unmoved -" else .[] end
   '
 }
-names_only_change() { # -> prints `names-only added=N removed=M`, or fails
-  local delta kind path want_base want_head at_base at_head added=0 removed=0
+# Whether this diff changes PATH from its state at the base to its state at
+# the head, each `present` or `absent`. A failed lookup is neither.
+diff_moves() { # PATH BASE_STATE HEAD_STATE
+  local at_base at_head
+  grep -qxF -- "$1" <<<"$changed" || return 1
+  at_base="$(git_repo ls-tree "$base" -- "$1")" || return 1
+  at_head="$(git_repo ls-tree "$head_rev" -- "$1")" || return 1
+  [ "$2" = "$([ -n "$at_base" ] && echo present || echo absent)" ] &&
+    [ "$3" = "$([ -n "$at_head" ] && echo present || echo absent)" ]
+}
+names_only_change() { # -> prints `names-only added=N removed=M roots=R,...`, or fails
+  local delta kind path root roots="" added=0 removed=0
   delta="$(inventory_delta "$base_document" "$head_document" 2>/dev/null)" || return 1
   while IFS=' ' read -r kind path; do
     case "$kind" in
-      added) want_base=absent; want_head=present; added=$((added + 1)) ;;
-      removed) want_base=present; want_head=absent; removed=$((removed + 1)) ;;
+      added)
+        case "$path" in */*) ;; *) return 1 ;; esac
+        diff_moves "$path" absent present || return 1
+        diff_moves "${path#*/}" absent present || return 1
+        root="${path%%/*}"
+        case ",$roots," in *",$root,"*) ;; *) roots="${roots:+$roots,}$root" ;; esac
+        added=$((added + 1)) ;;
+      removed)
+        diff_moves "$path" present absent || return 1
+        removed=$((removed + 1)) ;;
       *) return 1 ;;
     esac
-    grep -qxF -- "$path" <<<"$changed" || return 1
-    at_base="$(git_repo ls-tree "$base" -- "$path")" || return 1
-    at_head="$(git_repo ls-tree "$head_rev" -- "$path")" || return 1
-    [ "$want_base" = "$([ -n "$at_base" ] && echo present || echo absent)" ] || return 1
-    [ "$want_head" = "$([ -n "$at_head" ] && echo present || echo absent)" ] || return 1
   done <<<"$delta"
-  printf 'names-only added=%s removed=%s' "$added" "$removed"
+  printf 'names-only added=%s removed=%s roots=%s' "$added" "$removed" "${roots:--}"
 }
 if grep -qxF .kendex-generated.json <<<"$changed"; then
   inventory_change="$(names_only_change)" || inventory_change=""

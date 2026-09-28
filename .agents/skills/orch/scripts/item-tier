@@ -16,7 +16,9 @@
 #                    or the class above the one a run escaped from.
 #   --path PATH      a file the item's **Location** names. A path one of that
 #                    file's `path` lines matches is refused by every narrow
-#                    class, so it answers standard.
+#                    class, so it answers standard; one its `instruction`
+#                    lines match answers small, as change-class holds that
+#                    file to no lower than small.
 #   --base, --head   the item's branch, classified by harness-ci's
 #                    change-class through lib/change-class.sh. render and
 #                    trivial count as micro. A class the classifier's
@@ -115,16 +117,40 @@ consider() { # CLASS CAUSE
   fi
 }
 
+# A --path against one group of the list's globs: the first match decides.
+consider_path() { # PATH GLOBS CLASS CAUSE
+  local glob
+  while IFS= read -r glob; do
+    [ -n "$glob" ] || continue
+    # shellcheck disable=SC2254
+    case "$1" in
+      $glob) consider "$3" "$4 path=$1 glob=$glob"; return ;;
+    esac
+  done <<<"$2"
+}
+
 # The ceilings and the path list, read once and only when an input needs them.
 micro_max=""
 small_max=""
 excluded=""
+instruction=""
 conf_cause=""
+# The list's `KEYWORD GLOB` lines, less a `path` line a `superseded` line
+# keeps for a reader from before the extglob grammar, as the list's header
+# states.
+list_globs() { # KEYWORD
+  awk -v kind="$1" '
+    $1 == "superseded" { drop[$2] = 1 }
+    $1 == kind { glob[++n] = $2 }
+    END { for (i = 1; i <= n; i++) if (!(glob[i] in drop)) print glob[i] }
+  ' "$NARROW_CONF"
+}
 read_conf() {
   [ -r "$NARROW_CONF" ] || { conf_cause="narrow-change-unreadable"; return 1; }
   micro_max="$(sed -n 's/^micro_max_production=\([0123456789][0123456789]*\)$/\1/p' "$NARROW_CONF" | tail -1)" &&
     small_max="$(sed -n 's/^small_max_production=\([0123456789][0123456789]*\)$/\1/p' "$NARROW_CONF" | tail -1)" &&
-    excluded="$(sed -n 's/^path //p' "$NARROW_CONF")" ||
+    excluded="$(list_globs path)" &&
+    instruction="$(list_globs instruction)" ||
     { conf_cause="narrow-change-unreadable"; return 1; }
   [ -n "$micro_max" ] && [ -n "$small_max" ] ||
     { conf_cause="narrow-change-ceilings-missing"; return 1; }
@@ -143,17 +169,12 @@ if [ -n "$production" ] || [ "${#paths[@]}" -gt 0 ]; then
         consider standard "estimate-past-small production=$production"
       fi
     fi
-    # A `path` glob matches the whole path, `*` crossing `/`, as the list's
-    # header states. Expansion is off so a glob never names local files.
+    # A glob matches the whole path, `*` crossing `/`, as the list's header
+    # states. Expansion is off so a glob never names local files.
     set -f
     for path in ${paths[@]+"${paths[@]}"}; do
-      while IFS= read -r glob; do
-        [ -n "$glob" ] || continue
-        # shellcheck disable=SC2254
-        case "$path" in
-          $glob) consider standard "excluded-path path=$path glob=$glob"; break ;;
-        esac
-      done <<<"$excluded"
+      consider_path "$path" "$excluded" standard excluded-path
+      consider_path "$path" "$instruction" small instruction-file
     done
     set +f
   fi
