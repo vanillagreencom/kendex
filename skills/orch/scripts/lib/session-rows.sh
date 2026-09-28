@@ -103,23 +103,25 @@ session_rows_verdict() { # FILE
 }
 
 # session_rows_start FILE [SINCE] — the last SessionStart row of FILE, at or
-# after the epoch SINCE where given, split into SR_HARNESS, SR_ACCOUNT,
-# SR_MODEL, SR_CWD, SR_SESSION and SR_TRANSCRIPT, each empty where the row
-# carries none. `session_id` and `transcript_path` are the payload's own, kept
-# as the harness emitted them and never copied into a record. Exit 1 where no
-# such row stands, 2 where the file could not be read.
-SR_HARNESS="" SR_ACCOUNT="" SR_MODEL="" SR_CWD="" SR_SESSION="" SR_TRANSCRIPT=""
+# after the epoch SINCE where given, split into SR_HARNESS, SR_ACCOUNT, SR_MODEL
+# and SR_CWD, each empty where the row carries none. The row's `session_id`
+# and `transcript_path` are not read here: the turn-end hook binds the
+# transcript to the session from its own payload (lib/lane-context.sh §
+# lane_context_transcript_owned), the one reader of that pair, and neither is
+# copied into a record. Exit 1 where no such row stands, 2 where the file
+# could not be read.
+SR_HARNESS="" SR_ACCOUNT="" SR_MODEL="" SR_CWD=""
 session_rows_start() { # FILE [SINCE]
   local fields sep=$'\x1f'
-  SR_HARNESS="" SR_ACCOUNT="" SR_MODEL="" SR_CWD="" SR_SESSION="" SR_TRANSCRIPT=""
+  SR_HARNESS="" SR_ACCOUNT="" SR_MODEL="" SR_CWD=""
   session_rows_last "$1" SessionStart || return 2
   [ -n "$SESSION_ROW" ] || return 1
   fields="$(jq -r --argjson since "${2:-0}" --arg sep "$sep" '
     select((.at // 0) >= $since)
-    | [.harness, .account, .model, .cwd, .session_id, .transcript_path]
+    | [.harness, .account, .model, .cwd]
     | map(. // "" | tostring) | join($sep)' <<<"$SESSION_ROW")" || return 2
   [ -n "$fields" ] || return 1
-  IFS="$sep" read -r SR_HARNESS SR_ACCOUNT SR_MODEL SR_CWD SR_SESSION SR_TRANSCRIPT <<<"$fields"
+  IFS="$sep" read -r SR_HARNESS SR_ACCOUNT SR_MODEL SR_CWD <<<"$fields"
 }
 
 # session_rows_top_level PANE_PID — 0 where exactly one process that is not a

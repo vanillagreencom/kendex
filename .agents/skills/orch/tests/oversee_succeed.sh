@@ -1471,7 +1471,7 @@ assert_eq "$RC|$OUT" \
 # The control on the record fallback: a copy that never reads the recorded
 # account prints the environment's for the pane the record names.
 PRINTREC="$(mutant_scripts printrec oversee-succeed)" || exit 1
-mutate_file "$PRINTREC/oversee-succeed" 'CALLER_CFG="${OL_CUR_ACCOUNT:-$(lane_context_caller_cfg "$CALLER_HARNESS")}"' 'CALLER_CFG="$(lane_context_caller_cfg "$CALLER_HARNESS")"'
+mutate_file "$PRINTREC/oversee-succeed" 'CALLER_CFG="${OL_KNOWN_ACCOUNT:-$(lane_context_caller_cfg "$CALLER_HARNESS")}"' 'CALLER_CFG="$(lane_context_caller_cfg "$CALLER_HARNESS")"'
 new_caller "$UNDER_MARK"
 record_account "$CALLER_PANE" "$H/.eclaude"
 SUCCEED_BIN="$PRINTREC/oversee-succeed" run_succeed printrecctl '' --print-launch-line --harness claude
