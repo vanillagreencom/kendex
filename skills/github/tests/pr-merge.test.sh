@@ -125,6 +125,7 @@ a required set that cannot be read refuses as unverified, never as a missing rul
 must-fail: with the failed read not told apart, it is named a missing rule|checks:none required:Review+gate repo:no-protection post-auto|gated-unread:Review+gate|1|-|arm: no-merge-gate=required_context repo=owner/repo;{context-remedy:Review+gate}|calls=$CHECK auth=<unset>
 must-fail: with the refusal cut, the base that lacks the named context arms|checks:none required:CI post-auto|gated-mutant:Review+gate|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>
 the named context gates only the arm, so it needs --auto|-|gated-immediate:Review+gate|1|-|Error: --require-context gates the --auto arm and needs --auto|calls=- auth=-
+an empty context name is refused before any read, never read as the option absent|checks:none required:CI post-auto|gated:|1|-|Error: --require-context needs a non-empty context name|calls=- auth=-
 must-fail: with the needs-auto check cut, the gated option runs the immediate mode past its usage error|checks:ci-required post:MERGED merge-commit:merged-oid|gated-autoless:Review+gate|1|-|arm: no-merge-gate=required_context repo=owner/repo;{context-remedy:Review+gate}|calls=$CHECK auth=<unset>
 "
 

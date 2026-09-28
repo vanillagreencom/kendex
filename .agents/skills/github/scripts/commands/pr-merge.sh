@@ -1091,7 +1091,15 @@ main() {
             shift
             ;;
         --expected-head) supplied_head="${2:-}"; shift 2 ;;
-        --require-context) require_context="${2:-}"; shift 2 ;;
+        --require-context)
+            # An empty name would read as the option being absent and skip
+            # the arm's required-context check, so it is refused here.
+            if [ -z "${2:-}" ]; then
+                echo "Error: --require-context needs a non-empty context name" >&2; exit 1
+            fi
+            require_context="$2"
+            shift 2
+            ;;
         --dry-run)
             dry_run=true
             shift
