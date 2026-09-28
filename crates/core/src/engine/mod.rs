@@ -88,6 +88,24 @@ pub use scoring::{ItemSafety, SafetyTarget};
 pub use removal::edit_holds;
 pub(crate) use targets::{hook_target, mcp_registry};
 
+/// Every settings or registry file one lock entry registered itself in,
+/// deduplicated: where an installation that wrote no file of its own (a
+/// plugin, an MCP server, a hook whose body is a command) lives.
+pub fn registered_in(
+    env: &crate::env::Env,
+    scope: &crate::model::Scope,
+    entry: &crate::lock::LockEntry,
+) -> Vec<std::path::PathBuf> {
+    let mut files: Vec<std::path::PathBuf> = owned::installed(env, scope, entry)
+        .edits
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
+    files.sort();
+    files.dedup();
+    files
+}
+
 /// Every file path one lock entry put on this machine — what a cheap
 /// existence check can stat without reading any source.
 pub fn installed_paths(

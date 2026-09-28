@@ -788,8 +788,9 @@ impl ScopeCheck<'_> {
 
     /// One line per entry the check proved on disk and left out of the
     /// committed record, occupied or not: where its render sits, the
-    /// record's hash for it (none) beside the render's, and why the record
-    /// stays as it is. No remedy: the record is written on the default
+    /// record's hash for it (none) beside the render's, or the files it is
+    /// registered in where it wrote none, and why the record stays as it
+    /// is. No remedy: the record is written on the default
     /// branch after the merge, or by a check run there by hand.
     fn unrecorded_lines(
         &self,
@@ -816,24 +817,40 @@ impl ScopeCheck<'_> {
             Scope::Project { root } => Some(root.as_path()),
             Scope::Global => None,
         };
-        for entry in unrecorded.entries.values() {
-            let paths = crate::engine::installed_paths(self.env, self.scope, entry)
+        let listed = |paths: Vec<std::path::PathBuf>| {
+            paths
                 .iter()
                 .map(|path| {
                     let below = root.and_then(|root| path.strip_prefix(root).ok());
                     shown(&crate::paths::slashed(below.unwrap_or(path)))
                 })
                 .collect::<Vec<_>>()
-                .join(", ");
+                .join(", ")
+        };
+        for entry in unrecorded.entries.values() {
+            // Where the render sits and what it hashes to; an installation
+            // that wrote no file of its own (a plugin, an MCP server, a
+            // hook whose body is a command) is its registration instead,
+            // which has no rendered hash to name.
+            let files = crate::engine::installed_paths(self.env, self.scope, entry);
+            let registered = crate::engine::registered_in(self.env, self.scope, entry);
+            let at = match (files.is_empty(), registered.is_empty()) {
+                (false, _) => format!(
+                    ": {}, recorded hash none, rendered hash {}",
+                    listed(files),
+                    shown(entry.rendered_hash.as_deref().unwrap_or("none"))
+                ),
+                (true, false) => format!(": registered in {}", listed(registered)),
+                (true, true) => String::new(),
+            };
             sections.unrecorded.push(drift(
                 format!(
-                    "{}{} '{}' for {} has no row in the install record: {}, recorded hash none, rendered hash {}; {}",
+                    "{}{} '{}' for {} has no row in the install record{}; {}",
                     self.prefix,
                     entry.kind.name(),
                     shown(&entry.name),
                     entry.harness.display_name(),
-                    paths,
-                    shown(entry.rendered_hash.as_deref().unwrap_or("none")),
+                    at,
                     why
                 ),
                 None,

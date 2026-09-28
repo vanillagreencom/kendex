@@ -120,9 +120,11 @@ pub enum Verdict {
 #[derive(Debug)]
 pub enum Settled {
     /// Every occupied installation judged. `record_failed` carries why
-    /// the record write for the proven copies failed, when it did, a
-    /// failure to read which branch the checkout is on included; those
-    /// copies then read as left, since nothing was recorded.
+    /// the record write for the proven copies failed, when it did: a
+    /// failure to read which branch the checkout is on, and a memoized
+    /// proof that no longer holds on disk where the record is withheld,
+    /// included; those copies then read as left, since nothing was
+    /// recorded.
     /// `unrecorded` is every proven entry the check left out of the
     /// record on purpose.
     Judged {
@@ -366,8 +368,12 @@ enum Claim {
 }
 
 /// The binding for a non-empty proven set. Whether the record may be
-/// written is asked first, so a check that may not write it pays for no
-/// hashing.
+/// written is asked first. Where it may not, a set read off the memo is
+/// still held to disk as the write would hold it, and the plan dropped: the
+/// memo keys only occupied positions, so a proven entry no stat reads (a
+/// hook's script, a registration, an agent whose file went) can have moved
+/// since, and it is reported as a matching render only while it still is
+/// one. A set this pass just measured needs no second read.
 fn bind(
     env: &Env,
     scope: &Scope,
@@ -375,14 +381,24 @@ fn bind(
     lock: &Lock,
     copies: &UnmanagedCopies,
     mode: CheckMode,
+    fresh: bool,
 ) -> Result<Binding> {
     let project = matches!(scope.canonical(), Scope::Project { .. });
-    if mode == CheckMode::ReportOnly && project {
-        return Ok(Binding::Withheld(Withheld::ReportOnly));
-    }
-    Ok(match crate::lock::branch::recording(scope)? {
-        Recording::Elsewhere(off) => Binding::Withheld(Withheld::OffBranch(off)),
-        Recording::Here => match crate::engine::claim_plan(env, scope, manifest, lock, copies)? {
+    let withheld = match mode {
+        CheckMode::ReportOnly if project => Some(Withheld::ReportOnly),
+        CheckMode::ReportOnly | CheckMode::Settle => match crate::lock::branch::recording(scope)? {
+            Recording::Elsewhere(off) => Some(Withheld::OffBranch(off)),
+            Recording::Here => None,
+        },
+    };
+    Ok(match withheld {
+        Some(why) => {
+            if !fresh {
+                crate::engine::claim_plan(env, scope, manifest, lock, copies)?;
+            }
+            Binding::Withheld(why)
+        }
+        None => match crate::engine::claim_plan(env, scope, manifest, lock, copies)? {
             Some(plan) => Binding::Record(plan),
             None => Binding::Nothing,
         },
@@ -447,7 +463,7 @@ pub fn settle(
             });
             let binding = match copies.proven.entries.is_empty() {
                 true => Ok(Binding::Nothing),
-                false => bind(&env, &scope, &manifest, &lock, &copies, mode),
+                false => bind(&env, &scope, &manifest, &lock, &copies, mode, fresh),
             };
             let _ = sender.send(Stage::Bound(binding));
         })
