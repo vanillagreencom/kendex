@@ -23,7 +23,7 @@ use crate::ui::{self, Span, Status, Style};
 /// compared against.
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct Output {
-    /// Render each package that follows its source at the commit the install record names, not at the source's revision now; that commit must be on the source's history and, with --base, no older than the base revision's record names. A package with a revision of its own, or whose installations disagree on a commit, resolves as usual. An adopted workflow copy is compared with its template at that recorded commit; without this flag, with its template at the revision the manifest declares now, which is what fails a copy a refresh left behind
+    /// Render each package that follows its source at the commit the install record names, not at the source's revision now; that commit must be on the source's history and, with --base, no older than the base revision's record names. A package with a revision of its own, or whose installations disagree on a commit, resolves as usual. An adopted workflow copy is compared with its template at that recorded commit; without this flag, with its template at the revision the manifest declares now, so a revision bump fails a stale copy before any refresh records it
     #[arg(long)]
     pub at_record: bool,
     /// Also print one JSON document on stdout: every row with its state and the positions it occupies
@@ -95,7 +95,7 @@ fn record_warnings(style: &Style, scope: &Scope, warnings: &[String]) {
 /// Everything a run gathers across its scopes, and what closes it.
 #[derive(Default)]
 struct Tally {
-    /// The count the closing line reports: lock entries, nothing else.
+    /// The count the closing line opens with: lock entries, nothing else.
     checked: usize,
     failed: usize,
     /// What this run did not check, said once at the end: a count of
@@ -111,8 +111,9 @@ struct Tally {
     /// which scope it was, where it found it.
     recordless: bool,
     /// Instruction shims not in sync, recorded armings the package no
-    /// longer stands behind, and the two bookkeeping files: each printed
-    /// its own row where it was found, and these are for the exit code.
+    /// longer stands behind, the two bookkeeping files and adopted
+    /// workflow copies: each printed its own row where it was found, and
+    /// these are for the exit code and the closing line's other-rows count.
     shims_failed: usize,
     setup_failed: usize,
     bookkeeping_failed: usize,
@@ -120,8 +121,8 @@ struct Tally {
 }
 
 impl Tally {
-    /// The failed rows the count leaves out: shims, lapsed armings and
-    /// bookkeeping files.
+    /// The failed rows the lock-entry count leaves out: shims, lapsed
+    /// armings, the two bookkeeping files and adopted workflow copies.
     fn beside_failed(&self) -> usize {
         self.shims_failed + self.setup_failed + self.bookkeeping_failed
     }

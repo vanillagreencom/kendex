@@ -21,8 +21,8 @@ Options:
           whose installations disagree on a commit, resolves as usual. An
           adopted workflow copy is compared with its template at that recorded
           commit; without this flag, with its template at the revision the
-          manifest declares now, which is what fails a copy a refresh left
-          behind
+          manifest declares now, so a revision bump fails a stale copy before
+          any refresh records it
 
       --json
           Also print one JSON document on stdout: every row with its state and

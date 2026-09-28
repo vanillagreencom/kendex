@@ -135,9 +135,10 @@ fn hash(bytes: &[u8]) -> String {
     format!("sha256:{}", crate::hash::hex(&Sha256::digest(bytes)))
 }
 
-/// A copy that is not its template's bytes, named by both hashes and the
-/// revision the template was read at, with the step that copies it again:
-/// refresh moves the template and its recorded hash, never the copy.
+/// A copy that is not its template's bytes, named by both hashes and, where
+/// its source has one, the revision the template was read at, with the step
+/// that copies it again: refresh moves the template and its recorded hash,
+/// never the copy.
 fn differs(record: &Record, item: &Desired, actual: &[u8]) -> String {
     let at = item
         .source_commit

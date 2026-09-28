@@ -1,6 +1,6 @@
 //! An adopted copy held to the template the pass rendered: its finding
-//! names the revision that template was read at, both hashes, and the
-//! package whose adoption step copies the template again.
+//! names both hashes, the revision that template was read at where its
+//! source has one, and the package whose adoption step copies it again.
 
 use std::fs;
 use std::path::{Path, PathBuf};
