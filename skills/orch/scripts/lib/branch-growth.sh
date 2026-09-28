@@ -193,10 +193,10 @@ branch_allowance_check() {
 BRANCH_SIZE_PRODUCTION=""
 BRANCH_SIZE_TEST=""
 BRANCH_SIZE_MIRROR=""
-# Every changed path the split's test rule names, by itself or past a render
-# root, one per line, read from every numstat row before the line count skips
-# any, a binary file's included. Each end of a rename is listed on its own: a
-# reader listing the diff without rename detection names each end apart.
+# Every changed path the test rule names, by itself or past a render root,
+# one per line, from every numstat row, a binary file's included; the split
+# counts a row as test lines exactly when its path is listed. Each rename end
+# is listed on its own, as a reader without rename detection names each apart.
 BRANCH_SIZE_TEST_FILES=""
 # The same paths' additions plus deletions, render mirrors left out, for the
 # implement receipt. This shares the report's render classification.
@@ -301,7 +301,7 @@ branch_size_classified() {
     }
     function list_if_test(p,   rest) {
       rest = render_rest(p)
-      if (is_test(p) || (rest != "" && is_test(rest))) test_files = test_files "\n" p
+      if (is_test(p) || (rest != "" && is_test(rest))) { listed[p] = 1; test_files = test_files "\n" p }
     }
     function pairs_with_source(rest,   rest_stem, s) {
       rest_stem = stem_path(rest)
@@ -336,7 +336,7 @@ branch_size_classified() {
       for (i = 1; i <= n; i++) {
         if (mirror_rest[i] != "" && pairs_with_source(mirror_rest[i])) { mirror += lines[i]; continue }
         baseline += changed[i]
-        if (is_test(path[i])) tests += lines[i]; else production += lines[i]
+        if (path[i] in listed) tests += lines[i]; else production += lines[i]
       }
       printf "%d %d %d %d%s", production + 0, tests + 0, mirror + 0, baseline + 0, test_files
     }

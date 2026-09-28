@@ -1312,13 +1312,15 @@ unlisted_class="$(plant_package "$unlisted_root" none)"
 mkdir -p "$unlisted_root/orch/references"
 cp "$ORCH_PACKAGE/references/narrow-change.conf" "$unlisted_root/orch/references/"
 cp -R "$ORCH_PACKAGE/scripts" "$unlisted_root/orch/"
-list_line='      if (is_test(p) || (rest != "" && is_test(rest))) test_files = test_files "\n" p'
+list_line='      if (is_test(p) || (rest != "" && is_test(rest))) { listed[p] = 1; test_files = test_files "\n" p }'
 DROP_LINE="$list_line" awk '$0 != ENVIRON["DROP_LINE"]' "$ORCH_PACKAGE/scripts/lib/branch-growth.sh" \
   >"$unlisted_root/orch/scripts/lib/branch-growth.sh"
 assert_eq "the measurement control drops the one test-path record" "1 0" \
   "$(grep -cxF -- "$list_line" "$ORCH_PACKAGE/scripts/lib/branch-growth.sh") $(grep -cxF -- "$list_line" "$unlisted_root/orch/scripts/lib/branch-growth.sh" || true)"
 control_rows=0
-while IFS='|' read -r label specs; do
+# A measurement that lists nothing also counts every test line as production,
+# so its row names the production count it reaches.
+while IFS='|' read -r label listless_production specs; do
   control_rows=$((control_rows + 1))
   # shellcheck disable=SC2086
   assert_eq "a classifier that sets no test path aside counts two subsystems: $label" \
@@ -1326,13 +1328,13 @@ while IFS='|' read -r label specs; do
     "$(subsystem_class "$unskipped_class" $specs)"
   # shellcheck disable=SC2086
   assert_eq "a measurement that lists no test path leaves two subsystems: $label" \
-    "class: class=standard measured=true cause=several-subsystems production=30" \
+    "class: class=standard measured=true cause=several-subsystems production=$listless_production" \
     "$(subsystem_class "$unlisted_class" $specs)"
 done <<'CONTROLS'
-a test file|runtime/product.ts:30 payload/tests/data.conf:30
-a test source beside its render mirror|runtime/product.ts:30 skills/x/tests/data.conf:30 .claude/skills/x/tests/data.conf:30
-a test under a render root with no source|runtime/product.ts:30 .claude/hooks/tests/data.conf:30
-a binary test file|runtime/product.ts:30 payload/tests/image.png:binary
+a test file|60|runtime/product.ts:30 payload/tests/data.conf:30
+a test source beside its render mirror|60|runtime/product.ts:30 skills/x/tests/data.conf:30 .claude/skills/x/tests/data.conf:30
+a test under a render root with no source|60|runtime/product.ts:30 .claude/hooks/tests/data.conf:30
+a binary test file|30|runtime/product.ts:30 payload/tests/image.png:binary
 CONTROLS
 require_rows change-class-subsystem-controls "$control_rows"
 
@@ -1343,12 +1345,15 @@ require_rows change-class-subsystem-controls "$control_rows"
 # classifier takes the glob from the base endpoint's settings instead. A
 # script beside a fixture only that glob calls a test answers one class both
 # ways: the fixture's lines are test lines, and the fixture, moved a level
-# down or up, sits in no subsystem, nor does its render mirror, which only
-# the glob's reading of the path past the render root calls a test. Each end of a rename is judged on its
-# own: a production file moved into a test directory still leaves its old
-# subsystem behind, and a test file moved out of one leaves none.
+# down or up, sits in no subsystem. So does a render-root copy only the
+# glob's reading of the path past the render root calls a test, a mirror of
+# a source beside it or one with none, and its lines are test lines too.
+# Each end of a rename is judged on its own: a production file moved into a
+# test directory still leaves its old subsystem behind, and a test file moved
+# out of one leaves none.
 fixture="$(new_repo change-class-fixture)"
-printf '[env]\nORCH_SIZE_TEST_PATHS = "bin/fixtures/*"\n' >"$fixture/kendex.settings.toml"
+fixture_globs='bin/fixtures/* skills/*/fixtures/*'
+printf '[env]\nORCH_SIZE_TEST_PATHS = "%s"\n' "$fixture_globs" >"$fixture/kendex.settings.toml"
 write_lines "$fixture" bin/fixtures/kept.txt 40
 write_lines "$fixture" bin/fixtures/deep/nested.txt 43
 write_lines "$fixture" lib/core.sh 41
@@ -1365,6 +1370,7 @@ while IFS='|' read -r label script_lines fixture_edit expected; do
     mirror)
       write_lines "$fixture" bin/fixtures/probe.txt 40
       write_lines "$fixture" .agents/bin/fixtures/probe.txt 40 ;;
+    unpaired-mirror) write_lines "$fixture" .claude/skills/x/fixtures/data 40 ;;
     move)
       mkdir -p "$fixture/bin/fixtures/moved"
       git -C "$fixture" mv bin/fixtures/kept.txt bin/fixtures/moved/kept.txt ;;
@@ -1379,7 +1385,7 @@ while IFS='|' read -r label script_lines fixture_edit expected; do
   esac
   git -C "$fixture" add -A
   git -C "$fixture" commit -q -m "$label"
-  ci_err="$(env -u ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS='bin/fixtures/*' \
+  ci_err="$(env -u ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS="$fixture_globs" \
     "$CHANGE_CLASS" --repo "$fixture" --event pull_request --base "$fixture_base" \
     --head HEAD 2>&1 >/dev/null)" || true
   assert_eq "$label, in CI" "$expected" "$(printf '%s\n' "$ci_err" | sed -n '/^class: /p')"
@@ -1394,6 +1400,7 @@ while IFS='|' read -r label script_lines fixture_edit expected; do
 done <<'FIXTURES'
 a script within micro beside a new fixture|10|add|class: class=micro measured=true cause=production-within-micro production=10
 a script within small beside a new fixture|30|add|class: class=small measured=true cause=production-within-small subsystem=runtime
+a script within micro beside a render-root fixture with no source|10|unpaired-mirror|class: class=micro measured=true cause=production-within-micro production=10
 a script within small beside a fixture and its render mirror|30|mirror|class: class=small measured=true cause=production-within-small subsystem=runtime
 a script within small beside a fixture moved a level down|30|move|class: class=small measured=true cause=production-within-small subsystem=runtime
 a script within small beside a fixture moved a level up|30|move-up|class: class=small measured=true cause=production-within-small subsystem=runtime
@@ -1401,6 +1408,20 @@ a script beside a production file moved into a test directory|30|into-test|class
 a script beside a test file moved out beside it|30|out-of-test|class: class=small measured=true cause=production-within-small subsystem=runtime
 FIXTURES
 require_rows change-class-fixture "$fixture_rows"
+# The listing control on the render-root fixture row: a measurement that lists
+# nothing scores the fixture's lines as production and its top-level
+# directory as a subsystem.
+git -C "$fixture" checkout -q -B case-unlisted "$fixture_base"
+write_lines "$fixture" runtime/probe.sh 10
+write_lines "$fixture" .claude/skills/x/fixtures/data 40
+git -C "$fixture" add -A
+git -C "$fixture" commit -q -m "a render-root fixture under a measurement that lists nothing"
+unlisted_err="$(env -u ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS="$fixture_globs" \
+  "$unlisted_class" --repo "$fixture" --event pull_request --base "$fixture_base" \
+  --head HEAD 2>&1 >/dev/null)" || true
+assert_eq "a measurement that lists no test path scores a render-root fixture as production" \
+  "class: class=standard measured=true cause=several-subsystems production=50" \
+  "$(printf '%s\n' "$unlisted_err" | sed -n '/^class: /p')"
 
 # The render rows the issue names, built from a REAL render rather than a stub
 # exit code. The consumer's manifest carries its own project instructions, so
