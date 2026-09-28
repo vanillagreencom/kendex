@@ -400,6 +400,7 @@ counted() {
 #                 the tmux log, single-quoted as the launch shell needs it
 #   pi_root       the same for a PI_CODING_AGENT_DIR prefix, or none
 #   poolrefusal   every field of the first copilot-pool-* line, key first, or none
+#   compactionon  the file field of the first compaction-on line, or none
 #   claim_lanes   the distinct lanes those claims name, sorted
 #   claim_window  the window the single claim names; claim_pane its pane id
 #   out_lanes     the lanes the launch output names, in order
@@ -445,6 +446,10 @@ observe() {
       claims) value="$([[ -d "$RUN/state/claims" ]] && ls -1 "$RUN/state/claims" | wc -l | tr -d '[:space:]' || echo nolog)" ;;
       cmd_lane) value="$(grep -oE "env CLAUDE_CONFIG_DIR='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^env CLAUDE_CONFIG_DIR='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
       pi_root) value="$(grep -oE "env PI_CODING_AGENT_DIR='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^env PI_CODING_AGENT_DIR='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
+      compactionon)
+        value="$(awk '$1 == "open-terminal:" && $2 == "compaction-on" { print $4; exit }' <<<"$OUT")"
+        value="${value:-none}"
+        ;;
       poolrefusal)
         value="$(awk '$1 == "open-terminal:" && $2 ~ /^copilot-pool-/ { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' <<<"$OUT")"
         value="${value:-none}"
@@ -764,6 +769,29 @@ pi_control ctl-pi-provider lib/lane-launch.sh '[[ -z "$provider" ]] || model="$p
   "$PI_POOL=100000/1000000;$PI_PROVIDER" --harness pi --lane "$H/.eclaude" CC-1667
 assert_eq "$(observe "rc=0 launched=1 unreadable=none")" "rc=0 launched=1 unreadable=none" \
   "control: the provider flag unread launches a Pi lane on the Copilot pool unjudged"
+
+# A fleet batch on the pool re-picks each item after the first, and the Pi root
+# that re-pick names is the one the fleet gate reads: here pi1 (10) takes the
+# first item, its claim moves the second onto pi2 (20), whose own settings turn
+# compaction on, so the second is refused naming that file. Its control drops
+# the re-pick's root and gate, and the second item launches unchecked.
+pi_fleet_root() { # DIR COMPACTION
+  mkdir -p "$1/packages/@vanillagreen/pi-hooks/extensions"
+  printf 'export const f = { context_window: 1 };\n' > "$1/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
+  printf '{"compaction":{"enabled":%s}}\n' "$2" > "$1/settings.json"
+}
+pi_fleet_root "$H/.pi1" false
+pi_fleet_root "$H/.pi2" true
+PI_BATCH="ORCH_LANE_COPILOT_POOL=$H/.pi1=100000/1000000,$H/.pi2=200000/1000000;$PI_COPILOT"
+run_ot "$PI_BATCH" --harness pi --lane auto --state-dir "$TMP_ROOT/pi-fleet-1" CC-1670 CC-1671
+assert_eq "$(observe "launched=1 pi_root=pi1 compactionon=file=$H/.pi2/settings.json")" \
+  "launched=1 pi_root=pi1 compactionon=file=$H/.pi2/settings.json" \
+  "a fleet batch's re-pick onto a second pool account is gated on that account's own settings"
+pi_control ctl-pi-repick open-terminal 'ot_message lane-selected "lane=$LANE_ENV"; pi_lane_root_apply || return 1; }' \
+  'ot_message lane-selected "lane=$LANE_ENV"; }' "$PI_BATCH" --harness pi --lane auto --state-dir "$TMP_ROOT/pi-fleet-2" CC-1670 CC-1671
+assert_eq "$(observe "launched=2 pi_root=pi1,pi2 compactionon=none")" "launched=2 pi_root=pi1,pi2 compactionon=none" \
+  "control: a re-pick that keeps the first root launches the second item on an account nobody gated"
+rm -f -- "${H:?}/.pi1/settings.json" "${H:?}/.pi2/settings.json"
 
 echo "=== a launch is refused when the model it passes has no window left ==="
 # An account with plan-wide weekly room can still have none left for ONE model.

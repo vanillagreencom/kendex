@@ -507,9 +507,11 @@ fi
 # model of its own.
 #
 # pi_local_gate reads the root lib/adapters/pi.sh names, PI_CODING_AGENT_DIR or
-# the home default. A lane launch on the Copilot pool runs on the root its lane
-# names instead (lane_env_prefix), which is resolved further down, so that
-# launch is judged there by pi_lane_root_apply, once per root it is given.
+# the home default. A local lane launch on a Copilot model can run on the root
+# its lane names instead (lane_env_prefix), which is resolved further down, so
+# its gate is deferred, PI_GATE_DEFERRED says so, and pi_lane_root_apply runs
+# it once per lane it is given, whichever root that lane leaves in place.
+PI_GATE_DEFERRED=false
 pi_local_gate() {
   local pi_compaction_rc=0
   lane_adapter_pi_compaction_on "$CLAIM_ROOT" || pi_compaction_rc=$?
@@ -537,8 +539,12 @@ if [[ "$FLEET" == true && "$WAKE" != true ]]; then
       fi
       ;;
     pi)
-      if [[ "$LANE_HOST" == local && ( -z "$LANE" || -z "$(lane_pick_harness pi "$LAUNCH_MODEL")" ) ]]; then
-        pi_local_gate || exit 1
+      if [[ "$LANE_HOST" == local ]]; then
+        if [[ -n "$LANE" && -n "$(lane_pick_harness pi "$LAUNCH_MODEL")" ]]; then
+          PI_GATE_DEFERRED=true
+        else
+          pi_local_gate || exit 1
+        fi
       fi
       ;;
     *) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; exit 1 ;;
@@ -622,17 +628,20 @@ pick_auto_lane() {
   ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --harness "$LANE_HARNESS" ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} \
     ${model_args[@]+"${model_args[@]}"}
 }
-# A local Pi launch on the Copilot pool runs under PI_CODING_AGENT_DIR set to
-# its lane (lane_env_prefix), so every reader here of Pi's root, the fleet
-# gate's settings and carrier reads and the relaunch transcript lookup, is
-# pointed at that directory, and the fleet gate is asked of it. Called for the
-# lane resolved up front and again for each one a batch re-picks. Returns 1 with
-# the gate's refusal printed. A hosted lane's root is its host's, and
-# host_pi_gate reads it there.
+# A Pi launch on the Copilot pool runs under PI_CODING_AGENT_DIR set to its
+# lane (lane_env_prefix), so every reader here of Pi's root, the fleet gate's
+# settings and carrier reads and the relaunch transcript lookup, is pointed at
+# that directory. A hosted lane's root is its host's, which host_pi_gate reads
+# there, and nothing here reads Pi's root for it. A fleet gate the early arm
+# deferred runs here on whatever root the lane leaves, the lane's own or, for a
+# lane the spec picked on another harness (`auto:claude`), the inherited one.
+# Called for the lane resolved up front and again for each one a batch
+# re-picks. Returns 1 with the gate's refusal printed.
 pi_lane_root_apply() {
-  [[ "$LANE_HOST" == local && "${LANE_ENV%%=*}" == PI_CODING_AGENT_DIR ]] || return 0
-  PI_CODING_AGENT_DIR="${LANE_ENV#*=}"
-  [[ "$FLEET" != true || "$WAKE" == true ]] || pi_local_gate
+  if [[ "${LANE_ENV%%=*}" == PI_CODING_AGENT_DIR ]]; then
+    PI_CODING_AGENT_DIR="${LANE_ENV#*=}"
+  fi
+  [[ "$PI_GATE_DEFERRED" != true ]] || pi_local_gate
 }
 # The refusal for an `auto` pick `lanes` answered with RC, the fields after it
 # appended. Every one stops the launch, and each names what answers it: 3 is
