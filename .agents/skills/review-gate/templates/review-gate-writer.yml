@@ -621,16 +621,18 @@ jobs:
           # fetched here would run before, and persist into, the step that
           # holds the credential.
           GH_TOKEN: ""
-          # A release tag. The installer is fetched from that same tag, so it
-          # comes from the commit the pinned release was built from. Same
-          # installer, no second one.
+          # The installer is fetched at an immutable commit, the one the
+          # release tag names; the tag only names the version installed. A
+          # tag can be moved, and a moved one would run another installer
+          # here. Both values are written together from one tag.
           KENDEX_VERSION: v1.1.0
+          KENDEX_INSTALLER_SHA: 56b844692779c5cc75a05dba34a925be3d5b7b63
           KENDEX_INSTALLER_REPO: vanillagreencom/kendex
         run: |
           set -euo pipefail
           policy="$(.agents/skills/review-gate/scripts/review-policy --check-config)"
           if [ "$policy" = "review-policy=active" ]; then
-            curl -fsSL "https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/${KENDEX_VERSION##*-}/install.sh" | sh -s -- --version "$KENDEX_VERSION"
+            curl -fsSL "https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KENDEX_INSTALLER_SHA/install.sh" | sh -s -- --version "$KENDEX_VERSION"
           fi
 
       - name: Evaluate and converge the gate

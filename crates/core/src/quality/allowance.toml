@@ -40,18 +40,18 @@ name = "review-gate"
 
 [[package.file]]
 path = "templates/review-gate-writer.yml"
-hash = "c5036ee4e65f4e22c7d5e7dcbb74d213b137a12f93441ad9a3e92a31d6d25603"
+hash = "dbcde28c43e0405c2e93a418b8beb71342a6e7e9afc4906531fa45fcaac2ad57"
 
 [[package.file.finding]]
 rule = "rce"
-line = 633
-message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/${K… 99f983ea52d58ae0`, so whatever the far end serves is what runs"
+line = 635
+message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KE… c4e2972fc18a3f5a`, so whatever the far end serves is what runs"
 
 [[package.file]]
 path = "templates/kendex-refresh.yml"
-hash = "f61c36f94884b7b278c40c3f17823c0320ed7209710dcb177a28a44605d9bdb0"
+hash = "ba48a42c9e2d4903b1150f3c1339ba8162475312e28da01f0c5276de61c4d965"
 
 [[package.file.finding]]
 rule = "rce"
-line = 41
-message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/${K… 99f983ea52d58ae0`, so whatever the far end serves is what runs"
+line = 46
+message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KE… c4e2972fc18a3f5a`, so whatever the far end serves is what runs"

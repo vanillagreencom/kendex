@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# Pin the kendex the review-gate workflow templates install to a release tag,
+# and the installer they fetch to the commit that tag names.
+#
+# Usage: tools/installer-pin <tag>
+#        tools/installer-pin --check
+#
+# <tag>: write `KENDEX_VERSION: <tag>` and `KENDEX_INSTALLER_SHA: <commit>`,
+#   the commit the local tag names, into every pin site, then check them.
+# --check: every pin site names one version, and its KENDEX_INSTALLER_SHA is
+#   the commit the local tag of that version names.
+# -h, --help: print this help.
+#
+# Both templates fetch install.sh at KENDEX_INSTALLER_SHA and run it before a
+# credentialed step, so it must be an immutable commit: a tag can be moved.
+# The tag only selects the binary release. One run writes both values from
+# one tag, so neither lands without the other.
+#
+# The pin sites are the two templates, their renders under .agents/skills/,
+# and this repository's adopted writer workflow. Each holds exactly one line
+# of each variable. Tags resolve in this checkout only; nothing is fetched.
+#
+# Every line this script writes opens `installer-pin: <key>=<value>`:
+#   option=<arg>      unknown or missing argument (exit 2)
+#   tag=<tag>         no local tag of that name resolves to a commit (exit 1)
+#   site=<path>       a pin site is missing, a symlink, or does not hold
+#                     exactly one line of each variable (exit 1)
+#   mismatch=<path>   the site names another version than the first site, or
+#                     a SHA that is not its version's commit (exit 1)
+#   pinned=<tag>      every site names <tag> and its commit
+set -euo pipefail
+export LC_ALL=C
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+usage='usage: tools/installer-pin <tag> | --check'
+sites="skills/review-gate/templates/review-gate-writer.yml
+skills/review-gate/templates/kendex-refresh.yml
+.agents/skills/review-gate/templates/review-gate-writer.yml
+.agents/skills/review-gate/templates/kendex-refresh.yml
+.github/workflows/review-gate-writer.yml"
+
+say() { # KEY VALUE [LINE...] — the keyed line, then each explanation line
+  printf 'installer-pin: %s=%s\n' "$1" "$2"
+  shift 2
+  for line in "$@"; do printf '%s\n' "$line"; done
+}
+
+commit_of() { # TAG — the commit the local tag names
+  git -C "$root" rev-parse --verify --quiet "refs/tags/$1^{commit}" ||
+    { say tag "$1" "no local tag of that name resolves to a commit; fetch the tags first" >&2; exit 1; }
+}
+
+value() { # SITE VARIABLE — the variable's value on its one line in SITE
+  local count
+  { [ -f "$root/$1" ] && [ ! -L "$root/$1" ]; } ||
+    { say site "$1" "is missing or a symlink; no pin is read or written through one" >&2; exit 1; }
+  count="$(grep -c -E "^ *$2: " -- "$root/$1")" || [ "$?" -eq 1 ] ||
+    { say site "$1" "could not be read" >&2; exit 1; }
+  [ "$count" = 1 ] || { say site "$1" "holds $count lines of $2, not 1" >&2; exit 1; }
+  sed -n -E "s/^ *$2: (.*)$/\\1/p" -- "$root/$1"
+}
+
+check() {
+  local site version sha want first=""
+  while IFS= read -r site; do
+    version="$(value "$site" KENDEX_VERSION)" || exit 1
+    sha="$(value "$site" KENDEX_INSTALLER_SHA)" || exit 1
+    [ -n "$first" ] || first="$version"
+    [ "$version" = "$first" ] ||
+      { say mismatch "$site" "names $version, the first site names $first" >&2; exit 1; }
+    want="$(commit_of "$version")" || exit 1
+    [ "$sha" = "$want" ] ||
+      { say mismatch "$site" "KENDEX_INSTALLER_SHA is $sha, tag $version names $want" >&2; exit 1; }
+  done <<<"$sites"
+  say pinned "$first"
+}
+
+pin() { # TAG
+  local site path sha
+  sha="$(commit_of "$1")" || exit 1
+  # Every site is read before any is written, so a bad one writes none.
+  while IFS= read -r site; do
+    value "$site" KENDEX_VERSION >/dev/null
+    value "$site" KENDEX_INSTALLER_SHA >/dev/null
+  done <<<"$sites"
+  while IFS= read -r site; do
+    path="$root/$site"
+    PIN_VERSION="$1" PIN_SHA="$sha" awk '
+      match($0, /^ *KENDEX_VERSION: /) { print substr($0, 1, RLENGTH) ENVIRON["PIN_VERSION"]; next }
+      match($0, /^ *KENDEX_INSTALLER_SHA: /) { print substr($0, 1, RLENGTH) ENVIRON["PIN_SHA"]; next }
+      { print }
+    ' "$path" >"$path.pin"
+    cat -- "$path.pin" >"$path"
+    rm -- "$path.pin"
+  done <<<"$sites"
+  check
+}
+
+case "${1:-}" in
+  -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}" ;;
+  --check) [ "$#" -eq 1 ] || { say option "$2" "$usage" >&2; exit 2; }; check ;;
+  ''|-*) say option "${1:-}" "$usage" >&2; exit 2 ;;
+  *) [ "$#" -eq 1 ] || { say option "$2" "$usage" >&2; exit 2; }; pin "$1" ;;
+esac
