@@ -152,7 +152,7 @@ Reuse the `[ISSUE]` and `[PR_BRANCH]` § 3 resolved for this PR, and worktree co
 
 ### 4.1 Detach Orphaned Children
 
-**Skip if** no `[ISSUE]` was extracted, or `TRACKER=github`.
+**Skip if** no `[ISSUE]` was extracted, `TRACKER=github`, or workflow state for `[STATE_KEY]` records `children_detached`: [submit-pr.md](submit-pr.md) § 2 step 5 already ran this detach, before its arm.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues children [ISSUE] --pending --recursive
@@ -222,7 +222,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    A `[MICRO_ENTRY]` run continues only where the mode resolved above is `exempt` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`: the class is measured over both endpoints, and a retarget changes it without moving the head, so the fresh answer is what carries the exemption and the head says it is the same run. Any other answer arms nothing and escapes by micro.md condition 9. Read workflow state `pr.size_check` for `[STATE_KEY]`, and use it only when its `head_sha` equals `[PREPARED_HEAD]`, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.
 
-   **Merge route.** One route, on every change class: take the `--auto` arm below, and reach the direct attempt only where that arm answers `arm: no-merge-gate`. That answer does not mean the base has no queue: a base that still queues the PR answers the direct attempt with exit `75`, which takes the queue-wait block. An item whose workflow state carries `pr_approval.forced` takes the same arm. A PR [submit-pr.md](submit-pr.md) § 2 step 5 armed at creation takes it too: the arm binds the prepared head and answers exit `75`, and the lane waits in the queue-wait block.
+   **Merge route.** One route, on every change class: take the `--auto` arm below, and reach the direct attempt only where that arm answers `arm: no-merge-gate`. That answer does not mean the base has no queue: a base that still queues the PR answers the direct attempt with exit `75`, which takes the queue-wait block. An item whose workflow state carries `pr_approval.forced` takes the same arm. A PR [submit-pr.md](submit-pr.md) § 2 step 5 armed at creation, whose queue wait workflow state still records, takes neither: that running wait is read below, before the `--auto` arm.
 
    The lane arms its own head under the token the `github.sh` router selects, which in a lane sandbox is the lanes app's installation token, and waits in `queue-wait` to a terminal verdict. No overseer merges for it and no setting routes it past the queue (`pr-merge --help` § Retired settings).
 
@@ -237,6 +237,18 @@ Use the output as `MAIN_REPO_ROOT`.
    Exit `75` means GitHub queued or armed the PR: take the queue-wait block below the `--auto` arm.
 
    Exit `1` BLOCKED → run `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]` and return to § 3.2 with its cause and detail.
+
+   **A queue wait already running.** Read the one [submit-pr.md](submit-pr.md) § 2 step 5 started after its arm at creation:
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state get [STATE_KEY] '.queue_guard.run_dir // ""'
+   ```
+
+   A non-empty answer is that wait's run directory. Take no arm and start no waiter: follow [Waiter launch](../references/waiter-launch.md) § Completion on that directory, clear the record once its completion file is read, then route its recorded exit and result through the table below, as for a wait this step started. An empty answer takes the `--auto` arm below.
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state update [STATE_KEY] '.queue_guard = null'
+   ```
 
    **The `--auto` arm** takes only that same head:
 

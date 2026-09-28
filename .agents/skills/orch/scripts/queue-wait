@@ -91,11 +91,11 @@ queue_message() {
       ;;
     late-findings)
       printf 'queue-wait: late-findings threads=%s pr=%s\n' "$count" "$PR_NUM"
-      printf '%s\n' "queue-wait: late-findings guard: $count unresolved review thread(s) on PR #$PR_NUM while queued/armed — disarming and dequeuing"
+      printf '%s\n' "queue-wait: late-findings guard: $count unresolved review thread(s) on PR #$PR_NUM while queued — disarming and dequeuing"
       ;;
     guard-blind)
       printf 'queue-wait: guard-blind failures=%s pr=%s\n' "$guard_fetch_failures" "$PR_NUM"
-      printf '%s\n' "queue-wait: late-findings guard: thread fetch failed $guard_fetch_failures consecutive probes — no thread evidence while PR #$PR_NUM sits queued/armed; still retrying"
+      printf '%s\n' "queue-wait: late-findings guard: thread fetch failed $guard_fetch_failures consecutive probes — no thread evidence while PR #$PR_NUM sits queued; still retrying"
       ;;
     checks-blind)
       printf 'queue-wait: checks-blind failures=%s commit=%s repo=%s\n' "$checkrun_fetch_failures" "$head_oid" "$REPO"
@@ -195,7 +195,7 @@ Verdicts (the semantics behind merge-pr § 5 step 1's routing table):
               queue, and the arming is gone — or, while armed and not
               enqueued, a required check has failed (see the probe below).
   dequeued    the late-findings guard saw an unresolved review thread while
-              the PR was queued or armed and pulled the arming (cause
+              the PR was in the merge queue and pulled the arming (cause
               late_findings). A failed pull instead reports cause
               late_findings_dequeue_failed with the PR still queued.
   closed      the PR was closed without merging.
@@ -266,10 +266,13 @@ own contract; --no-check-probe suppresses that side effect too.
 Late-findings guard (--no-guard to disable): reviewers post findings
 asynchronously, and the merge queue never re-checks thread resolution once
 a PR is queued (kendex#1289) — a finding landing after enqueue merges
-unless something dequeues. approval-wait gates unresolved threads to zero
-before enqueue, so ANY unresolved review thread observed while the PR is
-queued or armed is late by construction — pre-existing or new, no
-baseline; a thread resolved while queued is fine. Each guard probe reads
+unless something dequeues. The base's thread-resolution rule holds an
+armed PR outside the queue from admission, so the guard reads threads only
+while the PR is IN the merge queue: an armed PR's open threads before then
+are the lane's triage work, which is why a PR armed as it opens can carry
+this wait from the arm on. ANY unresolved review thread observed while the
+PR is queued is late by construction — pre-existing or new, no baseline; a
+thread resolved while queued is fine. Each guard probe reads
 the same reviewThreads surface approval-wait uses, rate-limited by
 QUEUE_WAIT_PROBE_INTERVAL on its own clock, and one final probe runs
 before a still-queued deadline return so the timeout can never skip the
@@ -873,7 +876,7 @@ guard_fire() {
 }
 
 # One rate-limited guard probe. ANY unresolved thread observed while
-# queued/armed fires guard_fire — no baseline, because an unresolved thread in
+# queued fires guard_fire — no baseline, because an unresolved thread in
 # the queue is unsafe whenever it appeared, and enqueue does not prove threads
 # were zero (approval mode emits `approved` on the verdict alone).
 # Failed reads are absorbed rather than treated as a trigger: dequeuing on no
@@ -1172,8 +1175,9 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   if [[ "$armed_now" == true ]]; then
     # Late-findings guard first: an unseen unresolved thread outranks a CI probe,
     # because the queue merges past it on its own. Same rate limit as the
-    # ci-wait probe, on its own clock.
-    if $GUARD; then
+    # ci-wait probe, on its own clock. Only a queued PR: outside the queue the
+    # base's thread-resolution rule holds an armed one from admission.
+    if $GUARD && [[ "$in_queue_now" == true ]]; then
       update_elapsed
       if [ "$guard_last_at" -lt 0 ] || [ $((elapsed - guard_last_at)) -ge "$PROBE_INTERVAL" ]; then
         guard_last_at="$elapsed"
@@ -1234,7 +1238,7 @@ fi
 # Last-chance guard probe before reporting "still queued": the deadline must
 # not skip a late finding that landed since the final poll. guard_probe exits
 # via guard_fire on a trigger; a failed read falls through to the timeout.
-if $GUARD && [[ "$armed_now" == true ]]; then
+if $GUARD && [[ "$in_queue_now" == true ]]; then
   guard_probe
 fi
 emit_result "timeout" "queued"
