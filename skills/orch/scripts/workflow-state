@@ -224,7 +224,7 @@ state_message() {
       ;;
     cycle-cap)
       printf 'workflow-state: cycle-cap count=%s limit=%s\n' "$(jq -r '.entered' <<<"$report")" "$cap"
-      printf '%s\n' "workflow-state: rereview_cycles is at the cap ($(jq -r '.entered' <<<"$report") >= REVIEW_MAX_CYCLES=$cap, entries already taken): the fix loop is over — no further re-review cycle and no further fix round; follow review-pr § 4 At The Cap, \"Capped items are escalated, never dropped\" — one update per still-outstanding blocker and category==fix suggestion records it in escalated_items (outcome \"blocked\") and drops its superseded fixed_items entry in the same write — then go to review-pr § 5 (verdict pass) and report them"
+      printf '%s\n' "workflow-state: rereview_cycles is at the cap ($(jq -r '.entered' <<<"$report") >= REVIEW_MAX_CYCLES=$cap, entries already taken): the fix loop is over — no further re-review cycle and no further fix round; follow review-pr § 4 At The Cap, \"Capped items are escalated, never dropped\" — one update per still-outstanding blocker, and per suggestion § 4 made a blocker, records it in escalated_items (outcome \"blocked\") and drops its superseded fixed_items entry in the same write — then go to review-pr § 5 (verdict pass) and report them"
       ;;
     remove-issue)
       printf 'workflow-state: remove-issue command=%s\n' "remove"

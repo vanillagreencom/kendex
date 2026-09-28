@@ -567,9 +567,10 @@ while IFS='|' read -r expected git_read; do
   assert_eq "the header names what it reads: $git_read" "$expected" \
     "$(grep -qF -- "$git_read" <<<"$help_text" && echo present || echo absent)"
 done <<'GIT_READS'
-present|three reads and no write
+present|four reads and no write
 present|where its object store is
-present|settings files the range's base revision holds
+present|the commit the base endpoint names
+present|settings files that commit holds
 present|The private env file is never read
 present|never the judged checkout's working tree
 present|cause=render-path-unowned
@@ -595,7 +596,7 @@ git_read_sites="$(grep -c 'git -C "$repo"' "$CHANGE_CLASS" | tr -d ' ')"
 git_read_word="$(grep -oE '[a-z]+ reads? and no write' <<<"$help_text" |
   tail -1 | cut -d' ' -f1)"
 assert_eq "the header spells the number of git call sites the script holds" \
-  "3 three" "$git_read_sites $git_read_word"
+  "4 four" "$git_read_sites $git_read_word"
 
 # A refresh that adds a rendered file gains an inventory entry, and the shipped
 # harness-only rule refuses a gain: a branch could otherwise name a product
@@ -1174,6 +1175,81 @@ ladder_json="$(env -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
   --worktree "$ladder" --issue pr-1 --state-dir "$ladder_state" --json 2>/dev/null)" || true
 assert_eq "branch-size-check counts the same lines from the same file" "0,30" \
   "$(jq -r '[.production_lines, .test_lines] | map(tostring) | join(",")' <<<"$ladder_json" 2>/dev/null)"
+
+# Both settings files load in the ladder's order, so .kendex/settings.toml
+# outranks kendex.settings.toml in change-class as it does in
+# branch-size-check.
+order="$(new_repo change-class-ladder-order)"
+printf '[env]\nORCH_SIZE_TEST_PATHS = "none/*"\n' >"$order/kendex.settings.toml"
+mkdir -p "$order/.kendex"
+printf '[env]\nORCH_SIZE_TEST_PATHS = "checks/*"\n' >"$order/.kendex/settings.toml"
+commit_paths "$order" baseline seed.txt
+order_base="$(git -C "$order" rev-parse HEAD)"
+git -C "$order" checkout -q -B case "$order_base"
+write_lines "$order" checks/probe.sh 30
+git -C "$order" add -A
+git -C "$order" commit -q -m "a check script the two base files disagree about"
+order_err="$(env -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
+  "$CHANGE_CLASS" --repo "$order" --event pull_request --base "$order_base" \
+  --head HEAD 2>&1 >/dev/null)" || true
+assert_eq ".kendex/settings.toml outranks kendex.settings.toml" \
+  "class: class=micro measured=true cause=production-within-micro production=0" \
+  "$(printf '%s\n' "$order_err" | grep '^class: ')"
+order_state="$SANDBOX/ladder-order-state"
+"$TEST_DIR/../../orch/scripts/workflow-state" --state-dir "$order_state" \
+  init pr-2 --worktree "$order" --branch case >/dev/null
+order_json="$(env -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
+  WORKTREE_DEFAULT_BRANCH=main "$TEST_DIR/../../orch/scripts/branch-size-check" \
+  --worktree "$order" --issue pr-2 --state-dir "$order_state" --json 2>/dev/null)" || true
+assert_eq "and branch-size-check ranks the two files the same way" "0,30" \
+  "$(jq -r '[.production_lines, .test_lines] | map(tostring) | join(",")' <<<"$order_json" 2>/dev/null)"
+
+# The settings are the base endpoint's, never the merge base's: the author
+# picks the merge base by choosing where to fork. Main allowlists src/ after
+# the fork point, which takes away the plan exemption, so a 500-line plan
+# forked before that commit is classed as one forked at the tip is.
+forked="$(new_repo change-class-fork-point)"
+commit_paths "$forked" baseline seed.txt
+fork_old="$(git -C "$forked" rev-parse HEAD)"
+printf '[env]\nHARNESS_CI_TRIVIAL_PATHS = "src/*"\n' >"$forked/kendex.settings.toml"
+commit_paths "$forked" "main tightens the trivial allowlist" seed.txt
+fork_tip="$(git -C "$forked" rev-parse HEAD)"
+fork_rows=0
+while IFS='|' read -r label fork_at; do
+  fork_rows=$((fork_rows + 1))
+  git -C "$forked" checkout -q -B "case-$fork_rows" "$fork_at"
+  write_lines "$forked" docs/plans/p.md 500
+  git -C "$forked" add -A
+  git -C "$forked" commit -q -m "a long plan"
+  fork_err="$(env -u HARNESS_CI_TRIVIAL_PATHS -u HARNESS_CI_TRIVIAL_MAX_LINES \
+    -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
+    "$CHANGE_CLASS" --repo "$forked" --event pull_request --base "$fork_tip" \
+    --head HEAD 2>&1 >/dev/null)" || true
+  assert_eq "$label" \
+    "class: class=standard measured=true cause=production-past-small production=500" \
+    "$(printf '%s\n' "$fork_err" | grep '^class: ')"
+done <<FORKS
+a plan forked at the tip is classed under the tip's allowlist|$fork_tip
+a plan forked before main tightened it is classed the same way|$fork_old
+FORKS
+require_rows change-class-fork-point "$fork_rows"
+
+# A base settings file kendex-env.sh refuses measures nothing: a
+# single-quoted value is outside the settings contract.
+refused="$(new_repo change-class-base-refused)"
+printf "[env]\nORCH_SIZE_TEST_PATHS = 'checks/*'\n" >"$refused/kendex.settings.toml"
+commit_paths "$refused" baseline seed.txt
+refused_base="$(git -C "$refused" rev-parse HEAD)"
+git -C "$refused" checkout -q -B case "$refused_base"
+write_lines "$refused" checks/probe.sh 3
+git -C "$refused" add -A
+git -C "$refused" commit -q -m "a small diff over a refused settings file"
+refused_err="$(env -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
+  "$CHANGE_CLASS" --repo "$refused" --event pull_request --base "$refused_base" \
+  --head HEAD 2>&1 >/dev/null)" || true
+assert_eq "a base settings file the reader refuses answers standard, unmeasured" \
+  "class: class=standard measured=false cause=base-settings-unreadable base=$refused_base" \
+  "$(printf '%s\n' "$refused_err" | grep '^class: ')"
 
 # The render rows the issue names, built from a REAL render rather than a stub
 # exit code. The consumer's manifest carries its own project instructions, so
