@@ -30,7 +30,9 @@ LINT="$ROOT/tools/bash32-lint"
 # guidance puts scratch under tmp/. The ceiling stops git's upward search at
 # $TMP, so a fixture BELOW $TMP is outside every repository; § 4 asserts that
 # it worked rather than assuming it.
-TMP="$(cd "$(mktemp -d)" && pwd -P)" || exit 2
+TMP="$(mktemp -d)" || { echo "bash32-lint.test: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP && ! -L $TMP ]] || { echo "bash32-lint.test: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo "bash32-lint.test: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
 export GIT_CEILING_DIRECTORIES="$TMP"
 

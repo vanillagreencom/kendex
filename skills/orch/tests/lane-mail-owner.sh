@@ -17,7 +17,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
 # Canonical at creation: lane-mail records an attachment at its physical path,
 # so every expectation built from LANE or BOX must name the same one.
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "lane-mail-owner: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lane-mail-owner: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lane-mail-owner: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # mutant_scripts and mutate_file, the two halves of the controls at the end.
 # shellcheck source=lib/growth-state.sh

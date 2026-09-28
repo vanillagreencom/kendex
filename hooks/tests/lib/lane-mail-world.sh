@@ -19,7 +19,9 @@ LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
 # and on a host whose temp root is a symlink — every macOS one, /var pointing
 # at /private/var — a path this suite composed would name the link where the
 # hook names the target.
-TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "lane-mail-world: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lane-mail-world: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lane-mail-world: scratch=resolve-failed" >&2; exit 1; }
 # FAKE_WATCH is the stand-in watch process the overseer mailbox rows start.
 trap '[ -z "${FAKE_WATCH:-}" ] || kill "$FAKE_WATCH" 2>/dev/null || :; chmod -R u+rwx -- "${TMP_ROOT:?}" 2>/dev/null || :; rm -rf -- "${TMP_ROOT:?}"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"

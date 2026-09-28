@@ -26,7 +26,9 @@ source "$TEST_DIR/../scripts/lib/lane-context.sh"
 source "$TEST_DIR/../scripts/lib/lane-launch.sh"
 BYPASS="$(launch_choice_permission_write claude)" || { echo "fixture: no claude permission word in the launch table" >&2; exit 1; }
 
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "oversee_succeed_ladder: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "oversee_succeed_ladder: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "oversee_succeed_ladder: scratch=resolve-failed" >&2; exit 1; }
 SOCK="oversee-succeed-ladder-$$"
 cleanup() {
   tmux -L "$SOCK" kill-server 2>/dev/null || true

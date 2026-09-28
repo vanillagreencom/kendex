@@ -42,8 +42,10 @@ source "$TEST_DIR/lib/growth-state.sh"
 
 # Physical: on macOS the temp root sits under /var -> /private/var, and a
 # config entry names the path the launch directory really is.
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'chmod -R u+rwX "$TMP_ROOT" 2>/dev/null; rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "lane-launch-trust: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lane-launch-trust: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lane-launch-trust: scratch=resolve-failed" >&2; exit 1; }
+trap 'chmod -R u+rwX "$TMP_ROOT" 2>/dev/null; rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # The library under test, sourced into this shell: the preparation is a
 # function, and a call to it is the smallest surface that can fail.

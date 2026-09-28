@@ -38,7 +38,9 @@ SRC_LIB_DIR="$SCRIPTS_DIR/lib"
 # the way the launcher builds one rather than spelling its checksum.
 # shellcheck source=../scripts/lib/lane-home.sh
 source "$SRC_LIB_DIR/lane-home.sh"
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-owned-skip: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "open-terminal-owned-skip: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "open-terminal-owned-skip: scratch=resolve-failed" >&2; exit 1; }
 # The fleet home every row runs under unless it names its own. A codex launch
 # with no --lane prepares its folder trust under the account this names, so a
 # row leaving it unset would derive that account from the developer's own HOME
@@ -46,7 +48,7 @@ TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 FLEET_HOME="$TMP_ROOT/fleet-home"
 # The fixture sessions this suite started; nothing else is killed.
 LIVE_PIDS=""
-trap 'kill $LIVE_PIDS 2>/dev/null || :; rm -rf "$TMP_ROOT"' EXIT
+trap 'kill $LIVE_PIDS 2>/dev/null || :; rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"

@@ -15,7 +15,9 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "oversee_cycle: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "oversee_cycle: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "oversee_cycle: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # shellcheck source=lib/assertions.sh

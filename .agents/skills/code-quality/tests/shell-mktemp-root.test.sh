@@ -5,14 +5,17 @@
 # the choice). So this suite holds the prose to its spelling and its behaviour
 # instead. ../SKILL.md § Language Discipline must carry the four prescribed
 # lines and, in the catalog tree, the shell-suite rules beside it must cite that
-# section; neither may carry the nested `cd "$(mktemp -d)"` line. The lines
-# SKILL.md fences are then run from inside a scratch caller directory, with a
-# working and with a failing `mktemp`: they exit non-zero on the failure and the
-# caller directory survives every row. Each judge takes a control on a mutant
-# copy.
+# section; neither may carry the hazard line, `mktemp -d` nested inside `cd`.
+# The lines SKILL.md fences are then run from inside a scratch caller
+# directory, with a working and with a failing `mktemp`: they exit non-zero on
+# the failure and the caller directory survives every row. The nested shape
+# itself is a text pattern, so a last row scans every tracked file of the
+# repository holding this suite for it. Each judge takes a control on a mutant
+# copy or a scratch repository.
 #
 # Run: bash skills/code-quality/tests/shell-mktemp-root.test.sh
 set -euo pipefail
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
@@ -24,8 +27,14 @@ PRESCRIBED_LINES='TMP_ROOT="$(mktemp -d)" || { echo "NAME: scratch=mktemp-failed
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "NAME: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "NAME: scratch=resolve-failed" >&2; exit 1; }
 trap '"'"'rm -rf -- "${TMP_ROOT:?}"'"'"' EXIT'
-# The line a failed mktemp turns into the caller's directory.
-HAZARD_LINE='TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"'
+# The line a failed mktemp turns into the caller's directory. Assembled from
+# MKTEMP so this suite's own source never matches the tree scan below, which
+# then needs no exclusion.
+MKTEMP='mktemp -d'
+HAZARD_LINE="TMP_ROOT=\"\$(cd \"\$($MKTEMP)\" && pwd -P)\""
+# The nested shape the tree scan refuses, in both the `cd` and `cd --`
+# spellings, as a git grep extended regex.
+NESTED_ERE='cd (-- )?"?[$][(]mktemp -d'
 # The link the catalog's shell-suite rules cite the prescribed lines through.
 CITATION='(code-quality/SKILL.md#language-discipline)'
 
@@ -177,6 +186,25 @@ $RUN_ROWS
 ROWS_EOF
 }
 
+# scan_tree ROOT: print each tracked file:line under ROOT carrying the nested
+# shape; 0 when none does, 1 when one does, 2 when the scan failed.
+scan_tree() {
+  local root="$1" out status=0 hit
+  out="$(git -C "$root" grep -n -I -E -e "$NESTED_ERE" --)" || status=$?
+  case "$status" in
+    0)
+      while IFS= read -r hit; do
+        printf '%s\n' "${hit%%:*}:$(printf '%s' "${hit#*:}" | cut -d: -f1)"
+      done <<HITS_EOF
+$out
+HITS_EOF
+      return 1
+      ;;
+    1) return 0 ;;
+    *) return 2 ;;
+  esac
+}
+
 # --- rows: the skill carries the lines, the catalog rules cite them ----------
 status=0
 judge_text "$SKILL_DIR/SKILL.md" "$PRESCRIBED_LINES" || status=$?
@@ -200,6 +228,26 @@ if [ -f "$CATALOG_RULES" ]; then
   fi
 else
   printf '  note  catalog rules not judged: no AGENTS.md beside %s (installed copy)\n' "$SKILL_DIR"
+fi
+
+# The tree scan runs where a git work tree tracks this suite, from that tree's
+# root. An installed copy no work tree tracks says so rather than passing on
+# nothing; a tracked suite whose scan fails is a failure, never a clean tree.
+SUITE_FILE="$(basename -- "${BASH_SOURCE[0]}")"
+if git -C "$TEST_DIR" ls-files --error-unmatch -- "$SUITE_FILE" >/dev/null 2>&1; then
+  if ! REPO_ROOT="$(git -C "$TEST_DIR" rev-parse --show-toplevel)"; then
+    fail "tree scan: the work tree tracking $SUITE_FILE names no top level" "$TEST_DIR"
+  else
+    status=0
+    hits="$(scan_tree "$REPO_ROOT")" || status=$?
+    case "$status" in
+      0) pass "tree scan: no tracked file under $REPO_ROOT nests mktemp -d inside cd" ;;
+      1) fail "tree scan: tracked files nest mktemp -d inside cd" "$(printf '%s\n' "$hits" | tr '\n' ' ')" ;;
+      *) fail "tree scan: git grep failed (status $status)" "$REPO_ROOT" ;;
+    esac
+  fi
+else
+  printf '  note  tree not scanned: no git work tree tracks %s (installed copy)\n' "$TEST_DIR/$SUITE_FILE"
 fi
 
 # --- controls: each judge turns red on a mutant copy of SKILL.md -------------
@@ -258,6 +306,31 @@ if [ -n "$mutant" ]; then
   else
     pass "control: the run judge reports the caller removed for a fence carrying the hazard line ($REMOVED rows)"
   fi
+fi
+
+# Control 4, the nested shape planted in both spellings in a scratch
+# repository: the tree scan must name each planted file:line.
+CONTROL_REPO="$TMP_ROOT/scan-control"
+mkdir -p -- "$CONTROL_REPO"
+git -C "$CONTROL_REPO" init -q
+git -C "$CONTROL_REPO" config gc.auto 0
+git -C "$CONTROL_REPO" config maintenance.auto false
+{
+  printf '#!/usr/bin/env bash\n'
+  printf '%s\n' "$HAZARD_LINE"
+  printf '%s\n' "${HAZARD_LINE/cd /cd -- }"
+} > "$CONTROL_REPO/planted.sh"
+git -C "$CONTROL_REPO" add -- planted.sh
+status=0
+hits="$(scan_tree "$CONTROL_REPO")" || status=$?
+want="planted.sh:2
+planted.sh:3"
+if [ "$status" -ne 1 ]; then
+  fail "control: the tree scan answered $status on a repository with the nested shape planted, want 1" "$CONTROL_REPO"
+elif [ "$hits" != "$want" ]; then
+  fail "control: the tree scan named the wrong lines" "got: $(printf '%s' "$hits" | tr '\n' ' ') want: $(printf '%s' "$want" | tr '\n' ' ')"
+else
+  pass "control: the tree scan names each planted line in both spellings"
 fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"

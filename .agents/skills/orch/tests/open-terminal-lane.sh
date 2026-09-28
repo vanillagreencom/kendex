@@ -35,8 +35,10 @@ CODEX_COMPACTION='{"harness":"codex","settings":{"model_auto_compact_token_limit
 
 # Physical: on macOS the temp root sits under /var -> /private/var, and the
 # scripts print the resolved path.
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-lane: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "open-terminal-lane: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "open-terminal-lane: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"

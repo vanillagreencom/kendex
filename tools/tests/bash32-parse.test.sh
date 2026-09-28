@@ -32,7 +32,9 @@ IMAGE_REF="$(sed -n 's#^IMAGE="\(.*\)"$#\1#p' "$PARSE")" || IMAGE_REF=""
 
 mkdir -p "$ROOT/tmp" || exit 2
 W="$(mktemp -d "$ROOT/tmp/bash32-parse.XXXXXX")" || exit 2
-OUTSIDE="$(cd "$(mktemp -d)" && pwd -P)" || exit 2
+OUTSIDE="$(mktemp -d)" || { echo "bash32-parse.test: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $OUTSIDE && ! -L $OUTSIDE ]] || { echo "bash32-parse.test: scratch=not-a-directory value=[$OUTSIDE]" >&2; exit 1; }
+OUTSIDE="$(cd -- "$OUTSIDE" && pwd -P)" || { echo "bash32-parse.test: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${W:?}" "${OUTSIDE:?}"' EXIT
 
 PASS=0

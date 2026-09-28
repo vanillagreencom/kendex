@@ -27,7 +27,9 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$TEST_DIR/../.." && pwd)"
-TMP="$(cd "$(mktemp -d)" && pwd -P)" || { echo "installer-pin.test: mktemp -d failed" >&2; exit 1; }
+TMP="$(mktemp -d)" || { echo "installer-pin.test: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP && ! -L $TMP ]] || { echo "installer-pin.test: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo "installer-pin.test: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
 
 PASS=0

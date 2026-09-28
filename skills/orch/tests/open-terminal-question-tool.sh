@@ -22,8 +22,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-question-tool: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "open-terminal-question-tool: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "open-terminal-question-tool: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # A codex launch naming no --lane prepares its folder trust under the account
 # LANES_HOME points at, so both are pinned inside the fixture: an inherited
 # CODEX_HOME would send that preparation to the developer's live account.

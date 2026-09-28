@@ -21,8 +21,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-copilot: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "open-terminal-copilot: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "open-terminal-copilot: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # The account these launches read their session store from: LANES_HOME's
 # default copilot home, with COPILOT_HOME pinned empty so the developer's own
 # account is never scanned.
