@@ -224,7 +224,15 @@
 #          the whole name selects the pane, and its window part alone is the
 #          item the hosted probe below names. The lane's pane on this tmux server
 #          is the whole reading, so this answers exactly as oversee-watch does
-#          about the same lane. A name no pane on this server carries is
+#          about the same lane, except for a window a running fleet lane
+#          record names as a Pi lane: that one is judged from the rows its
+#          lane-mail-check hook writes in its mailbox (lib/session-rows.sh),
+#          through its host where the record names one, and never from its
+#          pane, so a Pi lane with no row is `unjudged` and never `asking`;
+#          a fleet state whose records cannot be read refuses as
+#          `lanes: state-fleet`. The pane judge is the last-resort fallback
+#          for a window no such record names, whatever harness runs there.
+#          A name no pane on this server carries is
 #          `unjudged`: a window that closed and a name two windows share are
 #          the same silence from here. `gone` is the judge's answer for a
 #          window a caller has already found absent, which this verb never
@@ -745,6 +753,10 @@ message() {
     invalid-handoff-context)
       printf 'lanes: invalid-handoff-context value=%s\n' "$1"
       printf '%s\n' "ORCH_HANDOFF_CONTEXT_PCT must be a whole number of percent from 1 to 100"
+      ;;
+    state-fleet)
+      printf 'lanes: state-fleet window=%s\n' "$1"
+      printf '%s\n' "the fleet state's lane records could not be read, so whether this window is a Pi lane, judged from the rows its hook writes and never from its pane, is unknown; refusing to answer rather than read a Pi lane's pane"
       ;;
     context-fleet)
       printf 'lanes: context-fleet item=%s\n' "$1"
@@ -2411,7 +2423,7 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 # read. A row whose window a running fleet lane record names is that lane, read
 # in its own mailbox, through its host where the record names one.
 context_record_fetch() { # LANE CALLER
-	local lane="$1" caller="$2" rec fields item host root path out rc=0 probe_rc=0
+	local lane="$1" caller="$2" rec
 	rec="$(jq -c --arg w "$lane" 'map(select(((.window // "") | sub("^.*:"; "")) == $w)) | first // empty' <<<"$CONTEXT_LANES")" \
 		|| { printf 'the fleet lane records could not be searched for window %s\n' "$lane"; return 2; }
 	if [[ -z "$rec" ]]; then
@@ -2422,12 +2434,20 @@ context_record_fetch() { # LANE CALLER
 		printf 'no running fleet lane record names the window %s, so the mailbox its reading is recorded in is unknown\n' "$lane"
 		return 2
 	fi
+	mailbox_file_fetch "$rec" "$LANE_CONTEXT_RECORD"
+}
+
+# The file NAME in the lane mailbox the fleet lane record REC names, under the
+# same contract: its bytes on stdout and exit 0, exit 1 where it is not there
+# or is empty, exit 2 with the cause on stdout where it could not be read.
+mailbox_file_fetch() { # REC NAME
+	local rec="$1" fields item host root path out rc=0 probe_rc=0
 	fields="$(jq -r '[(.item // ""), (.host // ""), (.mail_root // "")] | join("\t")' <<<"$rec")" \
-		|| { printf 'the fleet lane record for window %s could not be read\n' "$lane"; return 2; }
+		|| { printf 'the fleet lane record %s could not be read\n' "$rec"; return 2; }
 	item="${fields%%$'\t'*}"; fields="${fields#*$'\t'}"
 	host="${fields%%$'\t'*}"; root="${fields#*$'\t'}"
-	[[ -n "$item" && -n "$root" ]] || { printf 'the fleet lane record for window %s names no item or no mail_root\n' "$lane"; return 2; }
-	path="$root/tmp/lane-mail/$item/$LANE_CONTEXT_RECORD"
+	[[ -n "$item" && -n "$root" ]] || { printf 'the fleet lane record %s names no item or no mail_root\n' "$rec"; return 2; }
+	path="$root/tmp/lane-mail/$item/$2"
 	if [[ -z "$host" ]]; then
 		[[ -e "$path" ]] || return 1
 		out="$(cat -- "$path" 2>&1)" || { printf '%s\n' "$out"; return 2; }
@@ -2449,6 +2469,35 @@ context_record_fetch() { # LANE CALLER
 	[[ "$rc" -ne 2 ]] || return 1
 	printf 'the host of %s answered and the read of %s failed with exit %s\n' "$item" "$path" "$rc"
 	return 2
+}
+
+# What a Pi lane emitted, for `state`: STATE_ROWS is the verdict
+# lib/session-rows.sh § session_rows_lane_verdict reads off the rows its hook
+# wrote in its mailbox, through its host where its record names one, and
+# `unreadable` where they could not be read; it is empty for a window no
+# running fleet lane record names as a Pi lane's, whose pane is judged. Exit 2
+# where the fleet state is there and its records could not be read, since a Pi
+# lane read as any other would be judged by its pane.
+STATE_ROWS=""
+state_rows_read() { # WINDOW
+	local exists records rec rows rc=0
+	STATE_ROWS=""
+	exists="$("$SCRIPT_DIR/workflow-state" exists --json oversee 2>/dev/null | jq -r '.exists')" || return 2
+	[[ "$exists" == true ]] || return 0
+	records="$("$SCRIPT_DIR/workflow-state" get oversee '.lanes // []' 2>/dev/null)" || return 2
+	rec="$(jq -c --arg w "${1#*:}" "$LANE_RUNNING_JQ"'
+		map(select(running and .harness == "pi" and ((.window // "") | sub("^.*:"; "")) == $w)) | first // empty' \
+		<<<"$records")" || return 2
+	[[ -n "$rec" ]] || return 0
+	STATE_ROWS=unreadable
+	rows="$(mailbox_file_fetch "$rec" "$SESSION_ROWS_LANE")" || rc=$?
+	case "$rc" in
+		0) ;;
+		1) rows="" ;;
+		*) return 0 ;;
+	esac
+	session_rows_lane_verdict /dev/stdin <<<"$rows" || return 0
+	STATE_ROWS="$SESSION_ROWS_VERDICT"
 }
 
 render_table() {
@@ -3203,8 +3252,15 @@ case "$SUB" in
 		# same one oversee-watch reads, so the two cannot disagree. A caller
 		# that also holds the lane's worktree — `open-terminal --wake` — passes
 		# the harness process as the sixth argument instead.
+		# A Pi lane is judged from the rows its own hook wrote, never its pane;
+		# the pane is read only for a window no running Pi record names.
+		state_rows_read "$LANE_ARG" || die state-fleet "$LANE_ARG"
+		# No pane on this server carries the name: nothing here sees the lane's
+		# harness, so its rows answer nothing either and the judge says unjudged.
+		[[ -n "$LANE_PANE_ID" ]] || STATE_ROWS=""
 		lane_state_rc=0
-		lane_state LANE_STATE_ANSWER listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" || lane_state_rc=$?
+		lane_state LANE_STATE_ANSWER listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" "" "" "$STATE_ROWS" \
+			|| lane_state_rc=$?
 		[[ "$lane_state_rc" -ne 2 ]] || die lane-scan-failed "$LANE_ARG"
 		# A hosted lane's harness is on another machine, so `unjudged` here is
 		# "no pane on this server carries the name", never "the lane is dead".

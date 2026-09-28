@@ -579,8 +579,8 @@ lane_pane_observe() { # WINDOW
 # The judge.
 # ---------------------------------------------------------------------------
 
-# lane_state OUT_VAR WINDOW CMD PID SCREEN [SESSION] [ACCOUNT] — assigns
-# OUT_VAR exactly one of:
+# lane_state OUT_VAR WINDOW CMD PID SCREEN [SESSION] [ACCOUNT] [ROWS] —
+# assigns OUT_VAR exactly one of:
 #
 #   gone      no window: there is no lane here to ask about
 #   exited    the window outlived its harness — a bare shell with nothing
@@ -605,6 +605,16 @@ lane_pane_observe() { # WINDOW
 #   ACCOUNT  `room` where the caller measured the lane's account and found
 #            the wall its banner reports lifted, `walled` where it found the
 #            wall standing, and "" where it measured nothing
+#   ROWS     for a Pi lane, lib/session-rows.sh § session_rows_lane_verdict's
+#            word, `unreadable` where that read failed; "" for any other lane
+#
+# A PI LANE IS JUDGED FROM WHAT PI EMITS, NEVER FROM ITS PANE: the Stop and
+# PreToolUse rows the lane-mail-check hook writes under the pi-hooks carrier.
+# Past `gone` and `exited`, which are the window and the process and no screen,
+# ROWS answers `idle`, `working` or `walled` alone, under the same ACCOUNT and
+# SESSION rules the pane rungs keep, and a lane with no row, or rows that could
+# not be read, is `unjudged`. Pi's carrier sends no dialog event, so a Pi lane
+# is never `asking`.
 #
 # THE PANE IS ASKED FIRST FOR EVERY RUNG THAT IS NOT `idle`, which the
 # supplied process read decides; the session rule below carries that half.
@@ -649,7 +659,7 @@ lane_pane_observe() { # WINDOW
 # answered. The caller decides whether that ends its run.
 lane_state() {
   local _ls_out="$1" _ls_window="$2" _ls_cmd="$3" _ls_pid="$4" _ls_screen="$5" _ls_session="${6:-}" _ls_account="${7:-}"
-  local _ls_slice _ls_banner _ls_rc=0
+  local _ls_rows="${8:-}" _ls_slice _ls_banner _ls_rc=0
   LANE_PROBE_RC=0
   if [[ "$_ls_window" != listed ]]; then printf -v "$_ls_out" gone; return 0; fi
   if is_bare_shell "$_ls_cmd" && [[ -n "$_ls_pid" ]]; then
@@ -659,6 +669,25 @@ lane_state() {
     # LANE_PROBE_RC carries the status for the caller's note.
     if [[ "$_ls_rc" -eq 1 ]]; then printf -v "$_ls_out" exited; return 0; fi
   fi
+  if [[ "$_ls_rows" == walled ]]; then
+    case "$_ls_account" in
+      "" | walled) printf -v "$_ls_out" walled; return 0 ;;
+      room) _ls_rows=idle ;;
+      *) printf -v "$_ls_out" unjudged; return 0 ;;
+    esac
+  fi
+  case "$_ls_rows" in
+    "") ;;
+    working) printf -v "$_ls_out" working; return 0 ;;
+    idle)
+      case "$_ls_session" in
+        "" | idle) printf -v "$_ls_out" idle ;;
+        busy) printf -v "$_ls_out" working ;;
+        *) printf -v "$_ls_out" unjudged ;;
+      esac
+      return 0 ;;
+    *) printf -v "$_ls_out" unjudged; return 0 ;;
+  esac
   _ls_slice="$(pane_below_last_turn "$_ls_screen")"
   _ls_rc=0
   _ls_banner="$(lane_limit_banner "$_ls_slice")" || _ls_rc=$?

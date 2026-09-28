@@ -222,7 +222,24 @@ The long pass's events, checked and reported in this order:
                              remedy is one continuation line back to the lane
   EVENT idle-after-return <lane>
                              the live harness sits idle on two passes; the
-                             lane's closing lines follow
+                             lane's closing lines follow. A Pi lane is idle,
+                             working or walled by the last row its own
+                             lane-mail-check hook wrote under the pi-hooks
+                             carrier, a Stop at its turn end or a PreToolUse
+                             at the first tool call after one, never by its
+                             pane: the lines under this event are the pane's,
+                             read as payload alone, and a Pi lane with no row
+                             is unjudged, never idle. Its usage-limit block is
+                             that row's error message
+  EVENT start-stalled <item> age=<secs>
+                             a running --state record names a mail_root whose
+                             tmp/lane-status-<item>.md does not exist
+                             ORCH_WATCH_START_STALL_SECS after its
+                             launched_at, on every harness, a hosted one read
+                             through `lane-host cat`: the lane never started
+                             its workflow. Reported once and again every
+                             ORCH_OVERSEER_MARK_REPEAT passes while it stands;
+                             a record whose file once stood is never reported
   EVENT account <alias> config_dir=<dir> harness=<harness> through=<local|host>
                 status=<status> verdict=<room|walled|unmeasured> headroom_pct=<N|->
                 binding_bucket=<bucket|-> binding_resets_at=<utc|->
@@ -674,6 +691,10 @@ Environment:
   ORCH_DIRECTIVE_UNREAD_SECS  age in seconds past which a directive the lane
                               has not read is reported directive-unread, a
                               whole number, default 300
+  ORCH_WATCH_START_STALL_SECS seconds after a running record's launched_at
+                              its status file may still be missing before
+                              start-stalled goes out, a positive whole number,
+                              default 600
 USAGE
 }
 # stderr messages start `oversee-watch: REASON field=value ...`. Backslash,
@@ -702,6 +723,9 @@ ow_message() { # REASON FIELD=VALUE...
     interval-invalid) text='The interval must be a non-negative integer.' ;;
     handoff-invalid) text='The handoff path takes letters, digits and ./_- only, as oversee-succeed reads it.' ;;
     mail-interval-invalid) text='ORCH_WATCH_MAIL_INTERVAL takes a whole number of seconds, with no leading zero.' ;;
+    start-stall-secs-invalid) text='ORCH_WATCH_START_STALL_SECS takes a positive whole number of seconds, with no leading zero.' ;;
+    start-stall-unread) text='The lane status file could not be read through lane-host, so whether the lane started settles nothing this pass: no start-stalled goes out for it and its row stands. The exit is lane_host_fetch'"'"'s: 2 a failed read, 4 no lane-host slot.' ;;
+    lane-rows-unread) text='The Pi lane session rows could not be read, so the lane reads unjudged this pass and its pane is not read in their place. The exit is lane_host_fetch'"'"'s for a hosted lane, 2 a failed read and 4 no lane-host slot; 0 is a file this read reached and could not read, or whose last row names an event no writer writes, and 2 on a local lane is a record naming no mail_root.' ;;
     unread-secs-invalid) text='ORCH_DIRECTIVE_UNREAD_SECS takes a whole number of seconds, with no leading zero.' ;;
     dead-passes-invalid) text='ORCH_OVERSEER_DEAD_PASSES must be a positive integer.' ;;
     mark-repeat-invalid) text='ORCH_OVERSEER_MARK_REPEAT must be a positive integer.' ;;

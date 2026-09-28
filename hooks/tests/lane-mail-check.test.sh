@@ -919,6 +919,65 @@ stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: context=600000" \
   "a lane whose mailbox has been read is judged on the marks at its next turn end"
 
+# --- a Pi lane's turn rows ------------------------------------------------
+# A Pi lane is judged from what Pi emits, never its pane: its turn ends and the
+# first tool call after each, as rows this hook writes in the lane's mailbox
+# directory (orch lib/session-rows.sh § A Pi lane's own rows). The reader of
+# those rows is tested in orch's lane-state suite; these rows pin the writer.
+
+# A Pi lane with the orch install where the Pi hook's walk to its reader looks.
+new_pi_lane() { # NAME ITEM [HOOK]
+  new_handoff_lane "$1" "$2"
+  mkdir -p "$LANE/.pi/skills"
+  ln -s "$LANE/.claude/skills/orch" "$LANE/.pi/skills/orch"
+  install_hook "${3:-$HOOK}" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
+  PI_ROWS="$LANE/tmp/lane-mail/$2/session-rows.jsonl"
+}
+# Each row as event:stop_reason:message, space-joined; `-` for no file.
+pi_rows() {
+  [ -e "$PI_ROWS" ] || { echo -; return 0; }
+  jq -r '"\(.event):\(.stop_reason // ""):\(.message // "")"' "$PI_ROWS" | paste -sd' ' -
+}
+PI_TURN="$TMP_ROOT/pi-turn.jsonl"
+pi_tool() { # [EXTRA_FIELDS_JSON]
+  local extra="${1:-}"
+  [ -n "$extra" ] || extra='{}'
+  ARM_ARGS=(halt)
+  run_payload "$(jq -nc --argjson extra "$extra" '{tool_name:"bash",tool_input:{command:"ls"}} + $extra')"
+  ARM_ARGS=()
+}
+pi_stop() { # [EXTRA_FIELDS_JSON]
+  local extra="${1:-}"
+  [ -n "$extra" ] || extra='{}'
+  run_payload "$(jq -nc --arg p "$PI_TURN" --argjson extra "$extra" \
+    '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:200000} + $extra')"
+}
+
+new_pi_lane pi_rows KEN-95
+usage_line pi 1000 > "$PI_TURN"
+pi_tool
+pi_tool
+pi_stop
+assert_eq "RC=$RC rows=$(pi_rows)" "RC=0 rows=PreToolUse:: Stop:stop:" \
+  "a Pi lane writes one PreToolUse row for its turn's tool calls and a Stop row at its end"
+jq -nc '{type:"message",message:{role:"assistant",model:"m",stopReason:"error",
+  errorMessage:"429 You have hit your usage limit for this period"}}' >> "$PI_TURN"
+pi_stop
+assert_eq "rows=$(pi_rows)" \
+  "rows=PreToolUse:: Stop:stop: Stop:error:429 You have hit your usage limit for this period" \
+  "a turn that ended on an error carries Pi's own message, which is what a reader judges a wall from"
+pi_tool
+assert_eq "last=$(pi_rows | awk '{ print $NF }')" "last=PreToolUse::" \
+  "the first tool call after a turn end opens the next turn"
+PI_ROWS_BEFORE="$(pi_rows)"
+pi_stop '{"agent_type":"worker"}'
+pi_tool '{"agent_type":"worker"}'
+assert_eq "rows=$(pi_rows)" "rows=$PI_ROWS_BEFORE" "a subagent's tool call and turn end write no row of the lead's"
+install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
+rm -f -- "${PI_ROWS:?}"
+stop_at "$PI_TURN" false
+assert_eq "rows=$(pi_rows)" "rows=-" "a Claude Code lane writes no row: its pane is what its readers judge"
+
 # --- the question at a turn end ------------------------------------------
 # A lane that ends its turn on a question it never sent through lane mail
 # asked nobody: the overseer reads the mailbox, never the pane. The turn end
@@ -2668,6 +2727,13 @@ tool deliver
 tool deliver
 assert_eq "RC=$RC context=$(context_line)" "RC=0 context=PostToolUse lane-mail-check: unread=1" \
   "control: without its acknowledgement the deliver arm hands the same lines over again"
+# A Pi lane's turn rows: with the call gone the lane emits nothing, so every reader reads it
+# unjudged.
+mutant no-lane-row -e '/^lane_row$/d'
+new_pi_lane control_pi_rows KEN-96 "$MUTANT_PATH"
+pi_tool
+pi_stop
+assert_eq "rows=$(pi_rows)" "rows=-" "control: without the lane row call a Pi lane writes no row"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

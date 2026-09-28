@@ -1076,12 +1076,14 @@ write_state() { # PATH RECORD...
 }
 FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
 REMOTE_ROOT=/srv/lane/ken-10
-# The hosted lane's disk: a worktree whose .git names its clone, and one ask
-# in its mailbox. The root exists nowhere on this disk, so a pass that read
-# the lane locally would find no mailbox and say nothing.
+# The hosted lane's disk: a worktree whose .git names its clone, the status
+# file a started lane writes, and one ask in its mailbox. The root exists
+# nowhere on this disk, so a pass that read the lane locally would find no
+# mailbox and say nothing.
 remote_disk() { # DIR
   mkdir -p "$1$REMOTE_ROOT/tmp/lane-mail/KEN-10"
   printf 'gitdir: /srv/clone/.git/worktrees/ken-10\n' > "$1$REMOTE_ROOT/.git"
+  printf 'step: dev round 1\n' > "$1$REMOTE_ROOT/tmp/lane-status-KEN-10.md"
   printf '{"id":"remote-1","kind":"ask","at":"t","text":"Hosted question"}\n' > "$1$REMOTE_ROOT/tmp/lane-mail/KEN-10/to-overseer.jsonl"
 }
 # The handoff read's wrapper: at the pass count NAMED, run one shell line
@@ -1370,6 +1372,7 @@ assert_eq "$DELAYS" "60 5" "a lane failure still standing fails no later run, so
 new_case repeat_state_local_root
 LOCAL_ROOT="$TMP_ROOT/elsewhere/ken-11"
 mkdir -p "$LOCAL_ROOT/tmp/lane-mail/KEN-11"
+printf 'step: dev round 1\n' > "$LOCAL_ROOT/tmp/lane-status-KEN-11.md"
 git -C "$LOCAL_ROOT" init -q
 printf '{"id":"local-1","kind":"ask","at":"t","text":"Local question"}\n' > "$LOCAL_ROOT/tmp/lane-mail/KEN-11/to-overseer.jsonl"
 write_state "$STUB_DIR/state.json" "$(lane_record KEN-11 '' '' "$LOCAL_ROOT" running)"

@@ -34,9 +34,20 @@
 # TMUX_PANE, writes nothing and no reader has another session's row to judge
 # (session_rows_top_level).
 #
-# The writer requires lib/file-lock.sh, lib/mailbox-append.sh,
-# lib/lane-context.sh and lib/lane-state.sh sourced by its caller; the readers
-# need jq and tail alone. Sourced, never run. Bash 3.2-safe, like its callers.
+# A Pi LANE's rows are a second file of the same shape, in the lane's own
+# mailbox directory, `tmp/lane-mail/<item>/session-rows.jsonl` under its
+# worktree, the directory lane mail and `lanes context` already read from any
+# host: the same hook writes a Stop row at each turn end and a PreToolUse row
+# at the first tool call after one, which is all a reader needs to tell an
+# idle, working or walled Pi lane apart without its pane
+# (session_rows_lane_write, session_rows_lane_verdict). Claude Code and Codex
+# lanes write none: their pane is still what lib/lane-state.sh reads.
+#
+# The overseer writer requires lib/file-lock.sh, lib/mailbox-append.sh,
+# lib/lane-context.sh and lib/lane-state.sh sourced by its caller, and the lane
+# writer the first two; the overseer readers need jq and tail alone, and the
+# lane verdict lib/lane-state.sh besides. Sourced, never run. Bash 3.2-safe,
+# like its callers.
 
 # Seconds an append waits for the file's lock before it gives up.
 SESSION_ROWS_WAIT=5
@@ -196,4 +207,84 @@ session_rows_write() { # DIR HARNESS [EVENT]
     + (if (.last_assistant_message | type) == "string" then {message: .last_assistant_message} else {} end)
     + (if $account == "" then {} else {account: $account} end)' <<<"$payload")" || return 1
   printf '%s\n' "$row" | mailbox_append_locked "$file" "$SESSION_ROWS_WAIT"
+}
+
+# ---------------------------------------------------------------------------
+# A Pi lane's own rows.
+# ---------------------------------------------------------------------------
+
+# The lane rows file's name inside a lane's mailbox directory.
+SESSION_ROWS_LANE=session-rows.jsonl
+# The transcript tail the Stop row reads its turn's end from: the bound the
+# turn-end hook reads a transcript under, since a session file grows without
+# limit and its last assistant message is at its end.
+SESSION_ROWS_TRANSCRIPT_TAIL=1048576
+
+# Whether FILE's last row is a turn end, or FILE holds none: the one state a
+# PreToolUse row is appended over, so a turn of many tool calls writes one.
+# Run under the append's lock as its guard, whose refusal the writer reads as
+# a turn already open; a file this cannot read answers yes, so the append
+# itself meets the fault and reports it rather than the row going unwritten
+# in silence.
+session_rows_turn_open() { # FILE
+  session_rows_last "$1" || return 0
+  [ -z "$SESSION_ROW" ] && return 0
+  [ "$(jq -r '.event // ""' <<<"$SESSION_ROW")" = Stop ]
+}
+
+# session_rows_lane_write BOX HARNESS EVENT [TRANSCRIPT] — one row for the lane
+# whose mailbox directory is BOX: `Stop` at a turn end, carrying the
+# `stopReason` of the turn's last assistant message in TRANSCRIPT, Pi's
+# `message` record (`AssistantMessage`, @earendil-works/pi-ai), and its
+# `errorMessage` as `message` where that reason is `error`; `PreToolUse` at a
+# tool call, written only over a Stop row or an empty file. Nothing is written,
+# with exit 0, where BOX is not there, or for a PreToolUse a turn already
+# opened. Exit 1 where jq could not build the row, mailbox_append_locked's own
+# 2 and 3 for the write and the lock. The cause is on stderr.
+session_rows_lane_write() { # BOX HARNESS EVENT [TRANSCRIPT]
+  local file="$1/$SESSION_ROWS_LANE" end='{}' row rc=0
+  [ -d "$1" ] || return 0
+  if [ "$3" = Stop ] && [ -n "${4:-}" ] && [ -f "$4" ]; then
+    end="$(tail -c "$SESSION_ROWS_TRANSCRIPT_TAIL" -- "$4" | jq -Rnc '
+      [inputs | fromjson? | select(.type == "message" and .message?.role == "assistant") | .message]
+      | last // {}
+      | {stop_reason: .stopReason, message: (if .stopReason == "error" then .errorMessage else null end)}
+      | with_entries(select(.value | type == "string"))')" || return 1
+  fi
+  row="$(jq -c --arg event "$3" --arg harness "$2" --argjson at "$(date +%s)" \
+    '{at: $at, event: $event, harness: $harness} + .' <<<"$end")" || return 1
+  if [ "$3" = Stop ]; then
+    printf '%s\n' "$row" | mailbox_append_locked "$file" "$SESSION_ROWS_WAIT"
+    return
+  fi
+  printf '%s\n' "$row" | mailbox_append_locked "$file" "$SESSION_ROWS_WAIT" session_rows_turn_open || rc=$?
+  # 4 is the guard's own answer: a turn already open, which is no failure.
+  [ "$rc" -eq 4 ] && return 0
+  return "$rc"
+}
+
+# session_rows_lane_verdict FILE — what a Pi lane's last row says of it, into
+# SESSION_ROWS_VERDICT, with that row in SESSION_ROW:
+#   none     no row: the lane has emitted nothing a reader can judge
+#   working  a PreToolUse row, a turn started after the last turn end
+#   walled   a Stop row whose turn ended on an error lib/lane-state.sh §
+#            lane_limit_banner reads as the account's limit
+#   idle     any other Stop row
+# Exit 2 where the file could not be read, or its last row names an event no
+# writer above writes; the verdict is then `none` and says nothing.
+session_rows_lane_verdict() { # FILE
+  local fields banner
+  SESSION_ROWS_VERDICT=none
+  session_rows_last "$1" || return 2
+  [ -n "$SESSION_ROW" ] || return 0
+  fields="$(jq -r '"\(.event // "")\t\(.stop_reason // "")"' <<<"$SESSION_ROW")" || return 2
+  case "$fields" in
+    PreToolUse$'\t'*) SESSION_ROWS_VERDICT=working ;;
+    Stop$'\t'error)
+      banner="$(lane_limit_banner "$(jq -r '.message // ""' <<<"$SESSION_ROW")")" || return 2
+      SESSION_ROWS_VERDICT=idle
+      [ -z "$banner" ] || SESSION_ROWS_VERDICT=walled ;;
+    Stop$'\t'*) SESSION_ROWS_VERDICT=idle ;;
+    *) return 2 ;;
+  esac
 }
