@@ -167,8 +167,9 @@
 #        claude successor would run on a model the claude adapter names no
 #        window for refuses `model-window-unknown` the same way, as does a pi
 #        successor, `pi-handoff-unmarked`, whose settings leave compaction on
-#        or cannot be read, or whose pi-hooks carrier sends no window. An entry with no
-#        qualifying lane IS skipped.
+#        or cannot be read, or whose pi-hooks carrier sends no window, read
+#        under the Pi root it runs on: the picked account's on the Copilot
+#        pool. An entry with no qualifying lane IS skipped.
 #        A named entry's LAUNCH carries the model and effort words its own row
 #        writes. A same-harness entry keeps the caller's permission words
 #        exactly. A cross-harness entry transfers only a full-bypass posture
@@ -1462,21 +1463,6 @@ else
   launch_choice_lead_settings ${QUESTION_OFF[@]+"${QUESTION_OFF[@]}"} ${lead_model:+--model "$lead_model"} \
     "$harness" ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}
   [[ "$LAUNCH_CHOICE_COMPACTION" != no-window ]] || die model-window-unknown "entry=$entry" "model=$lead_model"
-  # Pi has no launch word for compaction: its settings file turns it off, and
-  # its pi-hooks carrier names the window the handoff mark is read against,
-  # both judged where the successor opens as open-terminal judges a pi lane
-  # (lib/adapters/pi.sh).
-  if [[ "$harness" == pi ]]; then
-    pi_rc=0
-    lane_adapter_pi_compaction_on "$CALLER_PATH" || pi_rc=$?
-    case "$pi_rc" in
-      1) ;;
-      0) die pi-handoff-unmarked reason=compaction-on "file=$LANE_ADAPTER_PI_FILE" ;;
-      *) printf '%s\n' "$LANE_ADAPTER_PI_CAUSE" > "$DEP_ERR"
-         die pi-handoff-unmarked reason=settings-unreadable "file=$LANE_ADAPTER_PI_FILE" ;;
-    esac
-    lane_adapter_pi_window_read "$CALLER_PATH" || die pi-handoff-unmarked reason=no-window-read "dir=$CALLER_PATH"
-  fi
   SUCC_FLAGS+=(${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"})
   # The command itself, the brief naming the handoff, the folder trust a codex
   # successor needs before it reads its arguments and the form the lane
@@ -1495,6 +1481,27 @@ else
   launch_home="$OL_LAUNCH_HOME"
   LANE_FORM="$OL_FORM"
   LANE_TRUST_ROUTE="$OL_TRUST_ROUTE"
+  # Pi has no launch word for compaction: its settings file turns it off, and
+  # its pi-hooks carrier names the window the handoff mark is read against,
+  # both judged where the successor opens as open-terminal judges a pi lane
+  # (lib/adapters/pi.sh), and on the Pi root it runs under: the picked
+  # account's where the line names it as PI_CODING_AGENT_DIR, a successor on
+  # the Copilot pool, as open-terminal's pi_lane_root_apply judges a pool
+  # lane, and this run's own otherwise.
+  if [[ "$harness" == pi ]]; then
+    pi_root="$(lane_adapter_pi_agent_dir)"
+    [[ "$lane_var" != PI_CODING_AGENT_DIR || -z "$lane_dir" ]] || pi_root="$lane_dir"
+    pi_rc=0
+    PI_CODING_AGENT_DIR="$pi_root" lane_adapter_pi_compaction_on "$CALLER_PATH" || pi_rc=$?
+    case "$pi_rc" in
+      1) ;;
+      0) die pi-handoff-unmarked reason=compaction-on "file=$LANE_ADAPTER_PI_FILE" ;;
+      *) printf '%s\n' "$LANE_ADAPTER_PI_CAUSE" > "$DEP_ERR"
+         die pi-handoff-unmarked reason=settings-unreadable "file=$LANE_ADAPTER_PI_FILE" ;;
+    esac
+    PI_CODING_AGENT_DIR="$pi_root" lane_adapter_pi_window_read "$CALLER_PATH" \
+      || die pi-handoff-unmarked reason=no-window-read "dir=$CALLER_PATH"
+  fi
 fi
 
 # The line alone, on stdout, with nothing keyed around it: its one consumer is

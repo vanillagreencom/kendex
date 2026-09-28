@@ -335,6 +335,28 @@ mutate_file "$POOLCTL/lib/overseer-launch.sh" '  [[ "${1:-}" == pi && -z "$OL_AC
 pool_row "$POOLCTL/oversee-succeed"
 assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
   "control: an account reader that ignores the Copilot pool leaves the pi overseer's account unjudged" "$TMP_ROOT/err"
+# At that mark the pick moves the successor onto the pool's other account, a
+# Pi root with no settings file, where pi compacts by default: the handoff
+# gate reads the root the successor runs under, never the caller's, and
+# refuses naming that root's settings file.
+PI_ROOT2="$H/.pi2"
+mkdir -p "$PI_ROOT2"
+pool_succeed_row() { # [SUCCEED_BIN]
+  new_caller claude
+  state "$(record "$CALLER_PANE" "" github-copilot/gpt-5 '{"harness": "pi"}')"
+  SUCCEED_BIN="${1:-}" run_succeed "ORCH_LANE_COPILOT_POOL=$PI_AGENT=98/100,$PI_ROOT2=10/100" \
+    --wait-secs 5 -- --model github-copilot/gpt-5 --thinking high
+}
+pool_succeed_row
+assert_eq "$RC|$(grep -m1 '^oversee-succeed: pi-handoff-unmarked' <<<"$ERR")" \
+  "1|oversee-succeed: pi-handoff-unmarked reason=compaction-on file=$PI_ROOT2/settings.json" \
+  "a pool successor on another Pi root is refused on that root's settings" "$TMP_ROOT/err"
+PIROOTCTL="$(mutant_scripts pirootctl oversee-succeed)" || exit 1
+mutate_file "$PIROOTCTL/oversee-succeed" '    [[ "$lane_var" != PI_CODING_AGENT_DIR || -z "$lane_dir" ]] || pi_root="$lane_dir"' ''
+pool_succeed_row "$PIROOTCTL/oversee-succeed"
+assert_eq "$(grep -c '^oversee-succeed: pi-handoff-unmarked' <<<"$ERR" || true)|$(grep -o "lane=$PI_ROOT2" <<<"$OUT" | head -1)" \
+  "0|lane=$PI_ROOT2" \
+  "control: a gate reading the caller's Pi root lets the pool successor open on an unmarked root"
 
 # The control for the model rule: a caller that ignores the record's model is
 # judged on the reading's.
