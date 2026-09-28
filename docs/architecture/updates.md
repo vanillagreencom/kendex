@@ -1,6 +1,6 @@
 # Release feed and self-update
 
-Covers: crates/core/src/app_update.rs, crates/core/src/update_feed/, crates/core/src/release_digests.rs, crates/core/src/install_channel.rs, crates/core/src/update_channel.rs, crates/core/src/command_update.rs, crates/core/src/command_link.rs, crates/cli/src/commands/update.rs, crates/app/release/, install.sh, packaging/arch/, tools/release-digests, tools/release-channel-point, tools/release-installer-check, tools/release-installer-check.ps1
+Covers: crates/core/src/app_update.rs, crates/core/src/update_feed/, crates/core/src/release_digests.rs, crates/core/src/install_channel.rs, crates/core/src/update_channel.rs, crates/core/src/command_update.rs, crates/core/src/command_link.rs, crates/cli/src/commands/update.rs, crates/app/release/, install.sh, packaging/arch/, packaging/homebrew/, tools/release-digests, tools/release-channel-point, tools/release-installer-check, tools/release-installer-check.ps1
 
 Both shells read one public release feed and replace themselves from it. What the release workflow publishes and how a release is cut is [../RELEASING.md](../RELEASING.md).
 
