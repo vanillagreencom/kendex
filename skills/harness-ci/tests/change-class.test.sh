@@ -131,10 +131,15 @@ reset_case() {
 # producer still writes.
 first_line() { printf '%s' "${1%%$'\n'*}"; }
 
-# LINES lines of content under PATH, so a row names the size it means.
-write_lines() { # REPO PATH COUNT
+# LINES lines of content under PATH, so a row names the size it means, or a
+# few NUL bytes where COUNT is `binary`, which git's numstat counts as `-`.
+write_lines() { # REPO PATH COUNT|binary
   local n=0
   mkdir -p "$1/$(dirname "$2")"
+  if [ "$3" = binary ]; then
+    printf 'bin\000ary\000' >>"$1/$2"
+    return
+  fi
   while [ "$n" -lt "$3" ]; do
     n=$((n + 1))
     printf 'line %d\n' "$n" >>"$1/$2"
@@ -190,6 +195,8 @@ small-one-over|standard|dirty|runtime/product.ts:151
 small-two-subsystems|standard|dirty|runtime/product.ts:30 payload/data.conf:30
 small-test-path-in-another-subsystem|small|dirty|runtime/product.ts:30 payload/tests/data.conf:30
 small-test-path-and-its-render-in-another-subsystem|small|dirty|runtime/product.ts:30 skills/x/tests/data.conf:30 .claude/skills/x/tests/data.conf:30
+unpaired-render-root-test|small|dirty|runtime/product.ts:30 .claude/hooks/tests/data.conf:30
+small-binary-test-path-in-another-subsystem|small|dirty|runtime/product.ts:30 payload/tests/image.png:binary
 render-root-is-one-subsystem|small|dirty|runtime/one.ts:30 .agents/runtime/two.ts:30
 excluded-path|standard|dirty|.github/workflows/ci.yml:3
 CASES
@@ -1268,13 +1275,14 @@ assert_eq "a base settings file the reader refuses answers standard, unmeasured"
   "class: class=standard measured=false cause=base-settings-unreadable base=$refused_base" \
   "$(printf '%s\n' "$refused_err" | grep '^class: ')"
 
-# A test path belongs to no subsystem: the table row
-# small-test-path-in-another-subsystem pins it from the built-in test rule,
-# and small-test-path-and-its-render-in-another-subsystem for a test source
-# beside its render mirror. Each control below plants a copy that loses one
-# side of it, the classifier no longer setting the measurement's test paths
-# aside, or a mirror of one, or the measurement no longer listing them, and
-# the row's diff falls back to several-subsystems.
+# A test path belongs to no subsystem. The table rows from
+# small-test-path-in-another-subsystem to
+# small-binary-test-path-in-another-subsystem pin it for a test file, a test
+# source beside its render mirror, a test under a render root with no source
+# and a binary test file. Each control below plants a copy that loses one side
+# of it, the classifier no longer setting the measurement's list aside or the
+# measurement no longer listing anything, and each of those diffs falls back
+# to several-subsystems.
 subsystem_class() { # CLASSIFIER PATH:LINES... -> the class: line for the diff
   local err spec classifier="$1"
   shift
@@ -1290,10 +1298,6 @@ subsystem_class() { # CLASSIFIER PATH:LINES... -> the class: line for the diff
   printf '%s\n' "$err" | sed -n '/^class: /p'
 }
 skip_line="$(cat <<'LINE'
-  case "$test_files" in *$'\n'"$path"$'\n'* | *$'\n'"$rest"$'\n'*) continue ;; esac
-LINE
-)"
-path_only_line="$(cat <<'LINE'
   case "$test_files" in *$'\n'"$path"$'\n'*) continue ;; esac
 LINE
 )"
@@ -1303,31 +1307,34 @@ unskipped_class="$(plant_package "$SANDBOX/unskipped" link)"
 DROP_LINE="$skip_line" awk '$0 != ENVIRON["DROP_LINE"]' "$CHANGE_CLASS" >"$unskipped_class"
 assert_eq "the classifier control drops the one test-path skip" "1 0" \
   "$(grep -cxF -- "$skip_line" "$CHANGE_CLASS") $(grep -cxF -- "$skip_line" "$unskipped_class" || true)"
-assert_eq "a classifier that sets no test path aside counts two subsystems" \
-  "class: class=standard measured=true cause=several-subsystems production=30" \
-  "$(subsystem_class "$unskipped_class" runtime/product.ts:30 payload/tests/data.conf:30)"
-mirrorless_class="$(plant_package "$SANDBOX/mirrorless" link)"
-DROP_LINE="$skip_line" KEEP_LINE="$path_only_line" awk '
-  $0 == ENVIRON["DROP_LINE"] { print ENVIRON["KEEP_LINE"]; next } { print }' \
-  "$CHANGE_CLASS" >"$mirrorless_class"
-assert_eq "the mirror control keeps the skip for the path alone" "1 0 1" \
-  "$(grep -cxF -- "$skip_line" "$CHANGE_CLASS") $(grep -cxF -- "$skip_line" "$mirrorless_class" || true) $(grep -cxF -- "$path_only_line" "$mirrorless_class")"
-assert_eq "a classifier that keeps a test source's mirror counts two subsystems" \
-  "class: class=standard measured=true cause=several-subsystems production=30" \
-  "$(subsystem_class "$mirrorless_class" runtime/product.ts:30 skills/x/tests/data.conf:30 .claude/skills/x/tests/data.conf:30)"
 unlisted_root="$SANDBOX/unlisted-orch"
 unlisted_class="$(plant_package "$unlisted_root" none)"
 mkdir -p "$unlisted_root/orch/references"
 cp "$ORCH_PACKAGE/references/narrow-change.conf" "$unlisted_root/orch/references/"
 cp -R "$ORCH_PACKAGE/scripts" "$unlisted_root/orch/"
-list_line='          test_files = test_files "\n" path[i]'
+list_line='      if (is_test(p) || (rest != "" && is_test(rest))) test_files = test_files "\n" p'
 DROP_LINE="$list_line" awk '$0 != ENVIRON["DROP_LINE"]' "$ORCH_PACKAGE/scripts/lib/branch-growth.sh" \
   >"$unlisted_root/orch/scripts/lib/branch-growth.sh"
 assert_eq "the measurement control drops the one test-path record" "1 0" \
   "$(grep -cxF -- "$list_line" "$ORCH_PACKAGE/scripts/lib/branch-growth.sh") $(grep -cxF -- "$list_line" "$unlisted_root/orch/scripts/lib/branch-growth.sh" || true)"
-assert_eq "a measurement that lists no test path leaves two subsystems" \
-  "class: class=standard measured=true cause=several-subsystems production=30" \
-  "$(subsystem_class "$unlisted_class" runtime/product.ts:30 payload/tests/data.conf:30)"
+control_rows=0
+while IFS='|' read -r label specs; do
+  control_rows=$((control_rows + 1))
+  # shellcheck disable=SC2086
+  assert_eq "a classifier that sets no test path aside counts two subsystems: $label" \
+    "class: class=standard measured=true cause=several-subsystems production=30" \
+    "$(subsystem_class "$unskipped_class" $specs)"
+  # shellcheck disable=SC2086
+  assert_eq "a measurement that lists no test path leaves two subsystems: $label" \
+    "class: class=standard measured=true cause=several-subsystems production=30" \
+    "$(subsystem_class "$unlisted_class" $specs)"
+done <<'CONTROLS'
+a test file|runtime/product.ts:30 payload/tests/data.conf:30
+a test source beside its render mirror|runtime/product.ts:30 skills/x/tests/data.conf:30 .claude/skills/x/tests/data.conf:30
+a test under a render root with no source|runtime/product.ts:30 .claude/hooks/tests/data.conf:30
+a binary test file|runtime/product.ts:30 payload/tests/image.png:binary
+CONTROLS
+require_rows change-class-subsystem-controls "$control_rows"
 
 # A lane and CI classify one diff alike. CI's classify step may carry
 # ORCH_SIZE_TEST_PATHS in its environment; a lane's run carries none, whether
@@ -1336,7 +1343,8 @@ assert_eq "a measurement that lists no test path leaves two subsystems" \
 # classifier takes the glob from the base endpoint's settings instead. A
 # script beside a fixture only that glob calls a test answers one class both
 # ways: the fixture's lines are test lines, and the fixture, moved a level
-# down or up, sits in no subsystem. Each end of a rename is judged on its
+# down or up, sits in no subsystem, nor does its render mirror, which only
+# the glob's reading of the path past the render root calls a test. Each end of a rename is judged on its
 # own: a production file moved into a test directory still leaves its old
 # subsystem behind, and a test file moved out of one leaves none.
 fixture="$(new_repo change-class-fixture)"
@@ -1354,6 +1362,9 @@ while IFS='|' read -r label script_lines fixture_edit expected; do
   write_lines "$fixture" runtime/probe.sh "$script_lines"
   case "$fixture_edit" in
     add) write_lines "$fixture" bin/fixtures/probe.txt 40 ;;
+    mirror)
+      write_lines "$fixture" bin/fixtures/probe.txt 40
+      write_lines "$fixture" .agents/bin/fixtures/probe.txt 40 ;;
     move)
       mkdir -p "$fixture/bin/fixtures/moved"
       git -C "$fixture" mv bin/fixtures/kept.txt bin/fixtures/moved/kept.txt ;;
@@ -1383,6 +1394,7 @@ while IFS='|' read -r label script_lines fixture_edit expected; do
 done <<'FIXTURES'
 a script within micro beside a new fixture|10|add|class: class=micro measured=true cause=production-within-micro production=10
 a script within small beside a new fixture|30|add|class: class=small measured=true cause=production-within-small subsystem=runtime
+a script within small beside a fixture and its render mirror|30|mirror|class: class=small measured=true cause=production-within-small subsystem=runtime
 a script within small beside a fixture moved a level down|30|move|class: class=small measured=true cause=production-within-small subsystem=runtime
 a script within small beside a fixture moved a level up|30|move-up|class: class=small measured=true cause=production-within-small subsystem=runtime
 a script beside a production file moved into a test directory|30|into-test|class: class=standard measured=true cause=several-subsystems production=30

@@ -811,9 +811,7 @@ fi
 # The render roots are the measurement's own list, so a source and the render
 # mirroring it reduce to one subsystem. A path the measurement counted as a
 # test is left out, read off its list rather than judged again here: a script
-# and the fixture it needs are one change wherever the fixture lives. The
-# measurement lists a test source and not its render mirror, so a mirror is
-# left out where its path with the render root removed is on the list.
+# and the fixture it needs are one change wherever the fixture lives.
 set_globs "$BRANCH_GROWTH_RENDER_ROOTS"
 render_roots=("${GLOB_LIST[@]}")
 subsystem=""
@@ -821,12 +819,11 @@ one_subsystem=true
 test_files=$'\n'"$BRANCH_SIZE_TEST_FILES"$'\n'
 while IFS= read -r path; do
   [ -n "$path" ] || continue
-  rest="$path"
+  case "$test_files" in *$'\n'"$path"$'\n'*) continue ;; esac
   for root in ${render_roots[@]+"${render_roots[@]}"}; do
-    case "$path" in "$root"/*) rest="${path#"$root"/}"; break ;; esac
+    case "$path" in "$root"/*) path="${path#"$root"/}"; break ;; esac
   done
-  case "$test_files" in *$'\n'"$path"$'\n'* | *$'\n'"$rest"$'\n'*) continue ;; esac
-  top="${rest%%/*}"
+  top="${path%%/*}"
   if [ -z "$subsystem" ]; then
     subsystem="$top"
   elif [ "$subsystem" != "$top" ]; then

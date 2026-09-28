@@ -193,10 +193,10 @@ branch_allowance_check() {
 BRANCH_SIZE_PRODUCTION=""
 BRANCH_SIZE_TEST=""
 BRANCH_SIZE_MIRROR=""
-# Every changed path the split's test rule names, one per line. A rename's
-# lines are counted by its new end, but each end is listed by its own test
-# status, since a reader listing the diff without rename detection names each
-# end apart. A render mirror is counted at its source and is not listed.
+# Every changed path the split's test rule names, by itself or past a render
+# root, one per line, read from every numstat row before the line count skips
+# any, a binary file's included. Each end of a rename is listed on its own: a
+# reader listing the diff without rename detection names each end apart.
 BRANCH_SIZE_TEST_FILES=""
 # The same paths' additions plus deletions, render mirrors left out, for the
 # implement receipt. This shares the report's render classification.
@@ -299,6 +299,10 @@ branch_size_classified() {
       for (i = 1; i <= npats; i++) if (p ~ pattern[i]) return 1
       return 0
     }
+    function list_if_test(p,   rest) {
+      rest = render_rest(p)
+      if (is_test(p) || (rest != "" && is_test(rest))) test_files = test_files "\n" p
+    }
     function pairs_with_source(rest,   rest_stem, s) {
       rest_stem = stem_path(rest)
       for (s in source_stem) {
@@ -313,12 +317,15 @@ branch_size_classified() {
       npats = split(ENVIRON["BRANCH_GROWTH_TEST_PATHS"], pattern, " ")
       for (i = 1; i <= npats; i++) pattern[i] = glob_to_regex(pattern[i])
     }
+    NF > 0 {
+      list_if_test(rename_end($3, 1))
+      if (index($3, " => ")) list_if_test(rename_end($3, 2))
+    }
     NF == 0 || ($1 == "-" && $2 == "-") { next }
     $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ { failed = 1; next }
     {
       n += 1
       path[n] = rename_end($3, 2)
-      old_path[n] = rename_end($3, 1)
       lines[n] = $1
       changed[n] = $1 + $2
       mirror_rest[n] = render_rest(path[n])
@@ -329,11 +336,7 @@ branch_size_classified() {
       for (i = 1; i <= n; i++) {
         if (mirror_rest[i] != "" && pairs_with_source(mirror_rest[i])) { mirror += lines[i]; continue }
         baseline += changed[i]
-        if (is_test(path[i])) {
-          tests += lines[i]
-          test_files = test_files "\n" path[i]
-        } else production += lines[i]
-        if (old_path[i] != path[i] && is_test(old_path[i])) test_files = test_files "\n" old_path[i]
+        if (is_test(path[i])) tests += lines[i]; else production += lines[i]
       }
       printf "%d %d %d %d%s", production + 0, tests + 0, mirror + 0, baseline + 0, test_files
     }
