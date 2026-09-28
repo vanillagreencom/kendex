@@ -102,7 +102,7 @@ What an owner's message in the channel does:
 | From anyone not in `SLACK_OWNERS` | Not routed; the relay replies once, then ignores that message until its journal is moved aside, which answers it once more |
 | An edit, a deletion or a thread broadcast | Ignored |
 
-A question answered in the overseer's chat shows in its Slack thread as "Answered in the chat"; one nobody answered by its deadline shows as "No answer by the deadline", with the option that stood. A changed `SLACK_OWNERS` takes effect when the relay restarts; `slack setup` restarts the unit `install` wrote.
+A question answered in the overseer's chat shows in its Slack thread as "Answered in the chat"; one nobody answered by its deadline shows as "No answer by the deadline", with the option that stood. After changing `SLACK_OWNERS`, run `slack setup` for each bound checkout: it invites an added owner to the channel and restarts the unit `install` wrote. A plain restart drops a removed owner but never invites an added one, who could then steer a channel they cannot see.
 
 ## Credential boundary
 

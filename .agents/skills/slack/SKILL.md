@@ -44,7 +44,7 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 - The relay never reads or writes a mailbox file itself. An owner's words land through `lane-mail send --delivery-id` or `lane-mail resolve --delivery-id`; who judges a repeat is [DEVELOPMENT.md § Constraints](DEVELOPMENT.md#constraints).
 - The first owner reply in a question's thread closes the question. The ruling the overseer records reaches Slack as a notice with `--ref`, per [orch communication-modes.md § Owner asks](../orch/references/communication-modes.md#owner-asks).
 - Every outbound text and file passes the secret-value pattern the orch skill ships at `references/secret-value.ere`. A match is refused, journaled and never sent.
-- A relay reads its settings at start. After changing `SLACK_OWNERS` or the token, restart the relay; `slack setup` restarts the unit `install` wrote.
+- A relay reads its settings at start. After changing `SLACK_OWNERS`, run `slack setup` for each bound root: it invites an added owner to the channel and restarts the unit `install` wrote. A plain restart drops a removed owner but never invites an added one. After changing the token, restart the relay.
 - The journal holds identifiers only: [schemas/journal.md](schemas/journal.md).
 - The channel binding is installation state written by `setup`, never a setting. The alert channel is the caller's `--channel` argument.
 - Settings live in the project's `kendex.settings.toml` and the token in its private env file: [kendex.settings.toml.example](kendex.settings.toml.example).
