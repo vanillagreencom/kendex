@@ -2160,7 +2160,7 @@ tool halt
 expect 0 - "control: without the harness's directory a halt judge run from the main clone passes the call"
 # The root dropped from the reader's peek: the reader roots itself at the call's
 # cwd and reads the main clone.
-mutant peek-no-root -e 's@inbox --item "\$ITEM" --root "\$ROOT" --peek@inbox --item "$ITEM" --peek@'
+mutant peek-no-root -e 's@inbox --item "\$MAILBOX_ITEM" --root "\$ROOT" --peek@inbox --item "$MAILBOX_ITEM" --peek@'
 install_arms "$MUTANT_PATH"
 tool halt
 expect 0 - "control: without the root the reader's peek from the main clone finds nothing and passes the call"
@@ -2172,7 +2172,7 @@ tool halt
 expect 0 - "control: without the marker read a harness naming no directory passes the call"
 # The read command written without the root: run from the main clone, it
 # reads the main clone and the halt stands.
-mutant ack-no-root -e 's@'"'"'%q inbox --item %q --root %q'"'"' "\$READER" "\$ITEM" "\$ROOT"@'"'"'%q inbox --item %q'"'"' "$READER" "$ITEM"@'
+mutant ack-no-root -e 's@'"'"'%q inbox --item %q --root %q'"'"' "\$READER" "\$MAILBOX_ITEM" "\$ROOT"@'"'"'%q inbox --item %q'"'"' "$READER" "$MAILBOX_ITEM"@'
 install_arms "$MUTANT_PATH"
 CALL_ENV=("CLAUDE_PROJECT_DIR=$LANE")
 tool halt
@@ -2182,7 +2182,7 @@ expect 2 "lane-mail-check: halt=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp
   "control: without the root in it the command run from the main clone leaves the halt standing"
 # The root dropped from the turn end's acknowledgement alone: a turn end from
 # the main clone moves the main clone's cursor, and the directive repeats.
-mutant stop-ack-no-root -e 's@^  "\$READER" inbox --item "\$ITEM" --root "\$ROOT" --ack@  "$READER" inbox --item "$ITEM" --ack@'
+mutant stop-ack-no-root -e 's@^  "\$READER" inbox --item "\$MAILBOX_ITEM" --root "\$ROOT" --ack@  "$READER" inbox --item "$MAILBOX_ITEM" --ack@'
 new_worktree_lane control_stop_ack ken-94
 install_arms "$MUTANT_PATH"
 send KEN-94 'Rebase first.'
@@ -2626,6 +2626,120 @@ text_line claude 'Picked main.' > "$TRANSCRIPT"
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
   "control: without the question test a closing statement is refused as a question"
+
+# --- the checkout's overseer mailbox --------------------------------------
+# `lane-mail peer send --repo` writes the overseer mailbox of another
+# repository's main checkout, which only a fleet's watch read. A lead session
+# working in a checkout that runs no fleet — no lane record names it and the
+# fleet state registers no overseer — reads that mailbox through the same
+# hooks a lane reads its own with, so a note from a peer repository reaches
+# it at its next turn end or tool call. A lane record or a registered overseer
+# wins, so a fleet's delivery is unchanged.
+PEER_SENDER="$TMP_ROOT/peer-sender"
+mkdir -p "$PEER_SENDER"
+git -C "$PEER_SENDER" init -q
+git -C "$PEER_SENDER" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
+peer_send() { # TEXT
+  printf '%s\n' "$1" > "$TMP_ROOT/peer.txt"
+  (cd "$PEER_SENDER" && "$LANE_MAIL" peer send --repo "$LANE" --file "$TMP_ROOT/peer.txt" >/dev/null)
+}
+# A session that is no lane: a repository on a branch no mailbox is named for,
+# every launch marker gone, with the three hooks installed.
+new_plain_session() { # NAME
+  new_lane "$1" main
+  unmark_lanes
+  install_arms
+}
+# The overseer mailbox's unread lines carrying TEXT, read without moving the
+# cursor: what the hook left for another reader.
+overseer_unread() { # TEXT
+  (cd "$LANE" && "$LANE_MAIL" inbox --item overseer --root "$LANE" --peek) | grep -cF -- "$1" || :
+}
+
+new_plain_session peer_plain
+peer_send 'Your pin bump broke our build.'
+stop
+expect 2 "lane-mail-check: unread=1" "a peer note reaches a lead session with no lane record and no registered overseer at its turn end"
+assert_eq "$(grep -c 'Your pin bump broke our build.' "$ERR_FILE")" "1" "the refusal carries the note"
+stop
+expect 0 - "a second turn end passes: the reader advanced the overseer mailbox cursor past what it handed over"
+peer_send 'And the changelog names the wrong version.'
+tool halt
+expect 0 - "a note in the overseer mailbox refuses no tool call: nothing halts a session on that mailbox"
+tool deliver
+assert_eq "RC=$RC context=$(context_line)" "RC=0 context=PostToolUse lane-mail-check: unread=1" \
+  "a peer note reaches the same session in the context its next tool call's hook output carries"
+assert_eq "$(jq -r '.hookSpecificOutput.additionalContext' "$TMP_ROOT/stdout" | grep -cF 'wrong version')" "1" \
+  "that context carries the note itself"
+peer_send 'Reply when the fix lands.'
+run_payload '{"session_id":"s1","stop_hook_active":false,"agent_id":"dev-1"}'
+expect 0 - "a subagent's turn end is handed nothing from the overseer mailbox"
+assert_eq "$(overseer_unread 'Reply when the fix lands.')" "1" "and leaves the note unread for the lead's own turn end"
+
+# A registered overseer's watch reads this mailbox, so a plain session in its
+# checkout leaves every line for it.
+new_plain_session peer_registered
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
+record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
+peer_send 'For the fleet.'
+stop
+expect 0 - "a checkout whose fleet state registers an overseer hands a plain session nothing at its turn end"
+tool deliver
+assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" "nor after its tool call"
+assert_eq "$(overseer_unread 'For the fleet.')" "1" "and the note stays unread for the overseer's watch"
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" update oversee 'del(.overseer)' >/dev/null)
+stop
+expect 2 "lane-mail-check: unread=1" "a fleet state that registers no overseer, standing or not, hands the session the note"
+
+# A lane reads its own mailbox and never the overseer's beside it.
+new_lane peer_lane ken-71
+install_arms
+send KEN-71 'Rebase onto main.'
+peer_send 'Not for the lane.'
+stop
+expect 2 "lane-mail-check: unread=1" "a launched lane in a checkout holding a peer note is refused on its own mailbox alone"
+assert_eq "own=$(grep -cF 'Rebase onto main.' "$ERR_FILE") peer=$(grep -cF 'Not for the lane.' "$ERR_FILE")" "own=1 peer=0" \
+  "the refusal carries the lane's directive and not the peer's note"
+assert_eq "$(overseer_unread 'Not for the lane.')" "1" "which stays unread in the overseer mailbox"
+
+# Whether an overseer is registered is the fleet state's answer. One the
+# install cannot give leaves the mailbox neither read nor passed as read.
+new_plain_session peer_state_broken
+peer_send 'Unjudged.'
+plant_install workflow-state
+BROKEN_STATE="$LANE/.claude/skills/orch/scripts/workflow-state"
+printf '#!/bin/sh\necho "workflow-state: lock-failed lock-file=x" >&2\nexit 3\n' > "$BROKEN_STATE"
+chmod +x "$BROKEN_STATE"
+stop
+expect 2 "lane-mail-check: fleet-state=$BROKEN_STATE" \
+  "a fleet state read that fails for any cause but a missing state refuses, never reads or passes the mailbox"
+assert_eq "$(grep -c '^workflow-state: lock-failed' "$ERR_FILE")" "1" "the script's own keyed line is replayed under the hook's"
+assert_eq "$(overseer_unread 'Unjudged.')" "1" "and the note stays unread"
+
+mutant no-overseer-arm -e 's@^    MAILBOX_ITEM=overseer$@    return 0@'
+new_plain_session control_peer_plain
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+peer_send 'Never read.'
+stop
+expect 0 - "control: without the overseer mailbox arm a peer note never reaches a plain session"
+
+mutant peer-ignores-record -e 's@^    ! overseer_registered || return 0$@    :@'
+new_plain_session control_peer_registered
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
+record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
+peer_send 'Taken from the watch.'
+stop
+expect 2 "lane-mail-check: unread=1" "control: without the registered-overseer rule a plain session takes the watch's mail"
+
+mutant lane-reads-overseer -e 's@^    MAILBOX_ITEM="\$ITEM"$@    MAILBOX_ITEM=overseer@'
+new_lane control_peer_lane ken-72
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+send KEN-72 'Own directive.'
+peer_send 'Peer note.'
+stop
+assert_eq "RC=$RC peer=$(grep -cF 'Peer note.' "$ERR_FILE")" "RC=2 peer=1" \
+  "control: without the own-mailbox rule a lane is handed the peer's note"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

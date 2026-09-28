@@ -23,6 +23,10 @@ An overseer running the § 4 watch reads a peer's reply there, as the `kind=answ
 - `lane-mail send` writes a mailbox of the caller's own repository alone, a lane's or its own overseer's. A `--root` under another repository is refused with the first line `lane-mail: lane-foreign=[ROOT]`. `peer` is the only cross-repository write.
 - Every message carries its sender, so the watch reports an owner's note as `owner-note` and a peer's as `peer-note [REPOSITORY]`. The repository is the `[marketplace]` name in the sender's `kendex.toml`, else the last segment of its origin URL, else its checkout's directory name.
 
+## Who reads a note
+
+A note lands in the target repository's overseer mailbox, and what runs at that checkout decides who reads it. A fleet's overseer reads it through its watch, as the `peer-note` event above. A checkout running no fleet has no watch: where its oversee workflow state registers no overseer, the `lane-mail-check` and `lane-mail-deliver` hooks hand the note to the lead session working in that checkout, at its next turn end and after its next tool call, on the harnesses that run those hooks ([hooks/README.md](https://github.com/vanillagreencom/kendex/blob/main/hooks/README.md)); a launched lane there reads only its own mailbox, a subagent is handed nothing, and a session in a linked worktree of that repository reads nothing from it, since the mailbox sits at the main checkout. On a harness that runs no hooks, and in a checkout whose fleet state still registers an overseer, `lane-mail inbox --item overseer` reads it by hand.
+
 ## What an inbound ask leaves
 
 Everything a peer sends, a note, an ask and an answer alike, arrives in this overseer's `to-lane.jsonl` and reaches it as one `peer-note` event. `pending --item overseer` lists the asks this overseer sent from `to-overseer.jsonl`, and from `to-lane.jsonl` only the directives past its cursor, so it never lists an inbound ask.
