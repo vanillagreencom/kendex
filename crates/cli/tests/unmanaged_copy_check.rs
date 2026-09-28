@@ -299,6 +299,9 @@ enum Run {
     /// The session-drift-check hook itself, fed a fresh start's payload,
     /// with this build's kendex first on PATH.
     Hook,
+    /// The kendex-drift script `kendex drift-hook` installs, run the same
+    /// way.
+    KendexDrift,
     /// `kendex check --quiet`, as a person runs it.
     ByHand,
 }
@@ -309,15 +312,26 @@ enum Run {
 fn run(lane: &Lane, how: Run) -> (String, Option<i32>, String) {
     let output = match how {
         Run::ByHand => kendex(&lane.home, &lane.checkout, &["check", "--quiet"]),
-        Run::Hook => {
-            let hook =
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../hooks/session-drift-check.sh");
+        Run::Hook | Run::KendexDrift => {
+            let (shell, hook) = match how {
+                Run::Hook => (
+                    "bash",
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../hooks/session-drift-check.sh"),
+                ),
+                Run::KendexDrift => {
+                    let script = lane.home.join("kendex-drift.sh");
+                    fs::write(&script, kendex_core::drift::hook::HOOK_SCRIPT).unwrap();
+                    ("sh", script)
+                }
+                Run::ByHand => unreachable!("a check run by hand is no hook"),
+            };
             let bin = Path::new(env!("CARGO_BIN_EXE_kendex")).parent().unwrap();
             let path = std::env::join_paths(std::iter::once(bin.to_path_buf()).chain(
                 std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
             ))
             .unwrap();
-            let mut child = Command::new("bash")
+            let mut child = Command::new(shell)
                 .arg(hook)
                 .current_dir(&lane.checkout)
                 .env_clear()
@@ -347,77 +361,93 @@ fn run(lane: &Lane, how: Run) -> (String, Option<i32>, String) {
     )
 }
 
-/// A session start never writes a tracked file: the session-drift-check
-/// hook runs `kendex check --report-only`, which reports the proven
-/// render's missing row, with its path and both hashes, and leaves the
-/// tree as git had it on a branch, in a linked worktree, on a detached
-/// HEAD and on the default branch alike. A check run by hand keeps D007's
-/// branch rule: off the default branch it records nothing and says why;
-/// on it, the control, it settles the render into the record, so
-/// `.kendex-lock.json` is modified and the report is clean.
-#[test]
+/// The checkout shapes a lane stands in.
+fn on_a_branch(root: &Path) -> PathBuf {
+    git(root, &["switch", "--quiet", "-c", "lane"]);
+    root.to_path_buf()
+}
+
 #[allow(clippy::unwrap_used)]
+fn in_a_linked_worktree(root: &Path) -> PathBuf {
+    let linked = root.with_file_name("lane");
+    let at = linked.to_str().unwrap();
+    git(root, &["worktree", "add", "--quiet", "-b", "lane", at]);
+    kendex_core::paths::canonical(&linked).unwrap()
+}
+
+fn on_a_detached_head(root: &Path) -> PathBuf {
+    git(root, &["switch", "--quiet", "--detach"]);
+    root.to_path_buf()
+}
+
+fn on_the_default_branch(root: &Path) -> PathBuf {
+    root.to_path_buf()
+}
+
+/// A session start never writes a tracked file: the session-drift-check
+/// hook and the kendex-drift script run `kendex check --report-only`,
+/// which reports the proven render's missing row, with its path and both
+/// hashes, and leaves the tree as git had it on a branch, in a linked
+/// worktree, on a detached HEAD and on the default branch alike. A check
+/// run by hand keeps D007's branch rule: off the default branch it records
+/// nothing and says why; on it, the control, it settles the render into
+/// the record, so `.kendex-lock.json` is modified and the report is clean.
+#[test]
 fn a_session_start_writes_nothing_git_sees() {
-    let branch: Arrange = |root| {
-        git(root, &["switch", "--quiet", "-c", "lane"]);
-        root.to_path_buf()
-    };
-    let worktree: Arrange = |root| {
-        let linked = root.with_file_name("lane");
-        let at = linked.to_str().unwrap();
-        git(root, &["worktree", "add", "--quiet", "-b", "lane", at]);
-        kendex_core::paths::canonical(&linked).unwrap()
-    };
-    let detached: Arrange = |root| {
-        git(root, &["switch", "--quiet", "--detach"]);
-        root.to_path_buf()
-    };
-    let default: Arrange = |root| root.to_path_buf();
     let session = "the session check leaves the record as this checkout holds it";
+    let lane =
+        "branch 'lane' leaves the record as 'main' holds it, and 'main' records it after the merge";
+    let detached = "a detached HEAD leaves the record as 'main' holds it";
     // The tree the run leaves, and the reason its line gives; `None` where
     // the run records and prints nothing.
-    let rows: [(&str, Arrange, Run, &str, Option<&str>); 7] = [
-        ("hook, branch", branch, Run::Hook, "", Some(session)),
+    let rows: [(&str, Arrange, Run, &str, Option<&str>); 9] = [
+        ("hook, branch", on_a_branch, Run::Hook, "", Some(session)),
         (
-            "hook, linked worktree",
-            worktree,
+            "hook, worktree",
+            in_a_linked_worktree,
             Run::Hook,
             "",
             Some(session),
         ),
         (
-            "hook, detached HEAD",
-            detached,
+            "hook, detached",
+            on_a_detached_head,
             Run::Hook,
             "",
             Some(session),
         ),
         (
-            "hook, default branch",
-            default,
+            "hook, default",
+            on_the_default_branch,
             Run::Hook,
             "",
             Some(session),
         ),
         (
-            "by hand, branch",
-            branch,
+            "kendex-drift, branch",
+            on_a_branch,
+            Run::KendexDrift,
+            "",
+            Some(session),
+        ),
+        (
+            "kendex-drift, default",
+            on_the_default_branch,
+            Run::KendexDrift,
+            "",
+            Some(session),
+        ),
+        ("by hand, branch", on_a_branch, Run::ByHand, "", Some(lane)),
+        (
+            "by hand, detached",
+            on_a_detached_head,
             Run::ByHand,
             "",
-            Some(
-                "branch 'lane' leaves the record as 'main' holds it, and 'main' records it after the merge",
-            ),
+            Some(detached),
         ),
         (
-            "by hand, detached HEAD",
-            detached,
-            Run::ByHand,
-            "",
-            Some("a detached HEAD leaves the record as 'main' holds it"),
-        ),
-        (
-            "by hand, default branch",
-            default,
+            "by hand, default",
+            on_the_default_branch,
             Run::ByHand,
             " M .kendex-lock.json\n",
             None,
@@ -439,6 +469,9 @@ fn a_session_start_writes_nothing_git_sees() {
                 );
                 assert_unrecorded(&lane, &stdout, why, shape);
             }
+            // The kendex-drift script relays a drift report with no notice
+            // line of its own.
+            (Run::KendexDrift, Some(why)) => assert_unrecorded(&lane, &stdout, why, shape),
             (Run::ByHand, Some(why)) => {
                 assert_eq!(code, Some(1), "{shape}: {all}");
                 assert_unrecorded(&lane, &stdout, why, shape);
@@ -447,7 +480,9 @@ fn a_session_start_writes_nothing_git_sees() {
                 assert_eq!(code, Some(0), "{shape}: {all}");
                 assert_eq!(stdout, "", "{shape}: {all}");
             }
-            (Run::Hook, None) => unreachable!("{shape}: the hook records nothing"),
+            (Run::Hook | Run::KendexDrift, None) => {
+                unreachable!("{shape}: a session hook records nothing")
+            }
         }
     }
 }

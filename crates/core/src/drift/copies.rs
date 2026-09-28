@@ -13,7 +13,7 @@
 //! finished by the detached background refresh, which writes the same
 //! file for the next session to read. A proven copy is recorded only
 //! where the committed record may be written: never at a project scope
-//! in the session hook's report-only check ([`CheckMode::ReportOnly`]),
+//! in the session-start hooks' report-only check ([`CheckMode::ReportOnly`]),
 //! and in a check run by hand only on the branch `lock::branch` names
 //! (D007). Elsewhere it is reported as unrecorded and the record is left
 //! as the checkout holds it.
@@ -72,8 +72,8 @@ pub enum CheckMode {
     /// written (D007): the check a person runs.
     Settle,
     /// No write to a project's committed record on any branch: the
-    /// session hook's check, since a hook run at agent spawn writes no
-    /// tracked file. The global record is not committed and is settled
+    /// session-start hooks' check, since a hook run at agent spawn writes
+    /// no tracked file. The global record is not committed and is settled
     /// as in [`CheckMode::Settle`].
     ReportOnly,
 }

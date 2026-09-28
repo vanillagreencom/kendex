@@ -84,6 +84,8 @@ fake_out() {
     error-inside-a-line) printf '%s' $'could not check:\n  source github.com/x/y unreachable since 2026-08-01: error: cannot lock ref' ;;
     Error-line) printf '%s' 'Error: loading lock file' ;;
     usage-error) printf '%s' $'error: unexpected argument \'--bogus\' found\n\nUsage: kendex check --quiet' ;;
+    # A kendex older than --report-only, in the spelling kendex prints.
+    too-old) printf '%s' $'Error: unexpected argument \'--report-only\' found\n\nUsage: kendex check [OPTIONS]' ;;
     fatal) printf '%s' 'kendex: fatal' ;;
     # A report that spells a keyed line of its own. What the hook relays is
     # data, and data cannot forge the hook's contract: the keyed block is the
@@ -238,11 +240,16 @@ an error: inside a report line is still a completed report|2|error-inside-a-line
 exit 2 with no output is a failure to run, not an empty partial report|2|-|check=could-not-run;exit=2
 an Error: line at exit 2 is a failure to run|2|Error-line|check=could-not-run;exit=2
 a usage error: at exit 2 is a failure to run, never partial|2|usage-error|check=could-not-run;exit=2
+a kendex that refuses --report-only is named too old, with the install route|2|too-old|check=kendex-too-old;install=curl -fsSL https://kendex.ai/install.sh | sh
 exit 3 is a failure to run, and the code is the value|3|fatal|check=could-not-run;exit=3
 exit 3 with no output chooses the same arm|3|-|check=could-not-run;exit=3
 "
 run_row 1 unevaluated >/dev/null
 assert_eq "$(relayed_text)" "$(fake_out unevaluated)" "the final action line is relayed byte for byte"
+# The too-old notice runs nothing in the flag's place: one call, with the flag.
+run_row 2 too-old >/dev/null
+assert_eq "$(calls)" "check --quiet --report-only" "a kendex that refuses the flag is not asked again without it"
+assert_contains "$(relayed_text)" "Error: unexpected argument '--report-only' found" "kendex's refusal is relayed under the notice"
 
 echo "session-drift-check: unreadable stdin"
 # Strict mode must not let a failed payload read abort the session start.

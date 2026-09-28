@@ -625,7 +625,7 @@ impl ScopeCheck<'_> {
     /// build left unrecorded — is recorded without a word: either exit
     /// would land the same bytes, and a line about it would teach the
     /// reader to skim. Where the check may not write the committed record
-    /// (D007: the session hook's report-only check, or a checkout off the
+    /// (D007: the session-start hooks' report-only check, or a checkout off the
     /// branch it is written on) it is not recorded, and a line names the
     /// missing row with no fix, since that branch records it after the
     /// merge. A copy that

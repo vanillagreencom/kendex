@@ -1,5 +1,5 @@
 /**
- * kendex check --quiet output protocol: exit 1 report bytes are relayed.
+ * kendex check --quiet --report-only output protocol: exit 1 report bytes are relayed.
  * At exit 2, leading Error: or error: denotes a precheck failure; all other
  * nonempty reports are incomplete checks. tests/drift-check.test.ts pins the
  * complete result and report for each producer form.
@@ -9,8 +9,12 @@ import { accessSync, constants, statSync } from "node:fs";
 import { runCommandAsync } from "./process.js";
 
 /**
- * Pi port of `hooks/session-drift-check.sh`: run `kendex check --quiet` and
- * classify the exit code the same way the shell hook does.
+ * Pi port of `hooks/session-drift-check.sh`: run `kendex check --quiet
+ * --report-only` and classify the exit code the same way the shell hook does.
+ * `--report-only` keeps a session start from writing the project's committed
+ * install record on any branch; a kendex too old to know the flag refuses it
+ * with a usage error, which reads as could-not-run, never as a reason to run
+ * the check without it.
  *
  *   0 → clean (say nothing)
  *   1 → drift, or packages not yet evaluated (relay the report verbatim)
@@ -52,7 +56,7 @@ export async function runDriftCheck(cwd: string, options: DriftCheckOptions): Pr
 	} catch {
 		return { kind: "unusable-cwd", cwd };
 	}
-	const result = await runCommandAsync(binary, ["check", "--quiet"], cwd, options.timeoutMs);
+	const result = await runCommandAsync(binary, ["check", "--quiet", "--report-only"], cwd, options.timeoutMs);
 	// The report is on stdout; stderr carries only Error: lines and the
 	// non-quiet all-clear, so both are concatenated, stderr first.
 	const report = `${result.stderr}${result.stdout}`.trim();

@@ -65,6 +65,17 @@ type HookCase = (
 );
 
 const CASES: &[HookCase] = &[
+    // The argv the script hands kendex, echoed back as the report it
+    // relays: `--report-only` is what keeps a session start from writing
+    // the project's committed install record.
+    (
+        "argv",
+        "{}",
+        &[],
+        Some("#!/bin/sh\nprintf '%s\\n' \"$*\"\nexit 1\n"),
+        None,
+        "check --quiet --report-only\n",
+    ),
     (
         "disabled",
         "{}",

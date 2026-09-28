@@ -71,7 +71,7 @@
         {
           "key": "sessionDriftCheck",
           "label": "Session-start drift report",
-          "description": "On a fresh session start (startup, new, fork — not resume or reload), run `kendex check --quiet` in the background and hand the agent the drift report: outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Silent when the install is current; one line when no kendex binary is on PATH, and one line naming the reason if the check itself fails unexpectedly. Never blocks startup. Informational only — never installs or removes anything and never touches the project's git; kendex's own source caches under ~/.kendex/cache may be fetched at most once per TTL. Mirrors hooks/session-drift-check.sh.",
+          "description": "On a fresh session start (startup, new, fork — not resume or reload), run `kendex check --quiet --report-only` in the background and hand the agent the drift report: outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Silent when the install is current; one line when no kendex binary is on PATH, and one line naming the reason if the check itself fails unexpectedly. Never blocks startup. Informational only — never installs or removes anything, never touches the project's git and writes no tracked file; kendex's own source caches under ~/.kendex/cache may be fetched at most once per TTL. Mirrors hooks/session-drift-check.sh.",
           "type": "boolean",
           "default": true,
           "category": "Session",

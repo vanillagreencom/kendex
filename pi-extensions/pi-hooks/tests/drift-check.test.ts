@@ -24,7 +24,7 @@ for (const row of [
 			const result = await runDriftCheck(root, { timeoutMs: 5000, binary });
 			const expected = row.result.kind === "clean" ? row.result : { ...row.result, report: row.report };
 			expect(result).toEqual(expected);
-			expect(readFileSync(argsLog, "utf8")).toBe("check --quiet\n");
+			expect(readFileSync(argsLog, "utf8")).toBe("check --quiet --report-only\n");
 			const message = driftMessage(result);
 			expect(message?.split("\n")[0]).toBe(row.key);
 			if (result.kind === "drift") expect(message).toBe(row.report);

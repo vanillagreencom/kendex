@@ -111,7 +111,10 @@ pub const HOOK_SCRIPT: &str = r#"#!/bin/sh
 # timeout: 20
 # harnesses: [claude-code, pi]
 # ---
-# kendex check --quiet protocol: exit 0 is silent, exit 1 relays the report.
+# kendex check --quiet --report-only protocol: exit 0 is silent, exit 1
+# relays the report. --report-only keeps a session start from writing the
+# project's committed install record; a kendex that refuses the flag is a
+# pre-check failure, never a reason to run the check without it.
 # Exit 2 with empty output or a leading Error:/error: is a pre-check failure;
 # other exit-2 output is an incomplete report. Other exits are failures.
 # Error:/error: belongs to the CLI's parsed error protocol. The remaining
@@ -149,7 +152,7 @@ if ! command -v kendex >/dev/null 2>&1; then
   exit 0
 fi
 
-report=$(kendex check --quiet 2>&1)
+report=$(kendex check --quiet --report-only 2>&1)
 code=$?
 case "$code" in
   # Clean is silent whatever stderr held: kendex says things there before

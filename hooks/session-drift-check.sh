@@ -213,6 +213,14 @@ notice() { # KEY VALUE
         printf ':\n%s\n' "$OUTPUT"
       fi
       ;;
+    check=kendex-too-old)
+      # The flag this hook passes is what keeps a session start from writing
+      # a tracked file, so a kendex that refuses it is named for what it is,
+      # with the route that replaces it; running the check without the flag
+      # would be the write the flag exists to stop.
+      printf 'session-drift-check: install=%s\n' "$INSTALL_ROUTE"
+      printf 'This kendex predates the check --report-only flag this hook runs, so drift status is unknown. Update kendex with the install route above, then start a new session. What kendex said:\n%s\n' "$OUTPUT"
+      ;;
     check=incomplete)
       printf 'session-drift-check: exit=%s\n' "$RC"
       printf 'kendex check incomplete (exit %s); some drift status unknown:\n%s\n' "$RC" "$OUTPUT"
@@ -296,8 +304,8 @@ fi
 # assignment would abort before `RC=$?` could run.
 # `--report-only` keeps the check from writing the project's committed install
 # record: a hook run at agent spawn writes no tracked file on any branch. A
-# kendex too old to know the flag refuses it with clap's usage `error:`, which
-# the exit-2 arm below reports as could-not-run.
+# kendex too old to know the flag refuses it by name, which the exit-2 arm
+# below reports as kendex-too-old.
 OUTPUT=$(kendex check --quiet --report-only 2>&1) || RC=$?
 
 case "$RC" in
@@ -316,6 +324,10 @@ case "$RC" in
     # comes from before the check read anything, so nothing was checked
     # and it reads as could-not-run.
     case "$OUTPUT" in
+      "Error: unexpected argument '--report-only'"* | "error: unexpected argument '--report-only'"*)
+        install_route
+        notice check kendex-too-old
+        ;;
       "" | Error:* | error:*) notice check could-not-run ;;
       *) notice check incomplete ;;
     esac
