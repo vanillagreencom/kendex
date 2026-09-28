@@ -9,8 +9,9 @@
 # reader of that directory. The file is keyed by the `<tmux server pid> <pane
 # id>` the session runs in, the pair the fleet state keys the overseer on, so a
 # hook can name its own file before any record names the session, and the
-# oversee state's `overseer.session_rows` names it: oversee-watch reads the
-# path there, and every other reader and the writer compute it through
+# oversee state's `overseer.session_rows` names it: oversee-watch's liveness
+# judgement reads the path there, and every other reader, the watch's context
+# record check included, and the writer compute it through
 # session_rows_overseer_file. Appends
 # take the mailbox's own lock and line rules (lib/mailbox-append.sh), so a
 # killed writer leaves a fragment no reader parses and no row glued to another.

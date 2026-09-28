@@ -506,6 +506,35 @@ assert_eq "runtime=$(recorded runtime) generation=$(recorded generation) account
 assert_eq "harness=$(recorded harness) home=$(recorded home) model=$(recorded model) effort=$(recorded effort) cwd=$(recorded cwd) pending=$(recorded pending)" \
   "harness=claude home=/home/me/.claude model=fable effort=high cwd=/home/me/kendex pending=none" \
   "and keeps its launch identity, dropping a pending successor as it replaces the line" "$ERR"
+# A claude record naming an account and no home, which an earlier `oversee
+# register` wrote, takes the account as its home: the turn-end hook binds the
+# overseer's transcript to that home and reads no context without one. A codex
+# home is its own directory and is never read off the account.
+home_backfill() { # NAME HARNESS [WATCH_BIN]
+  overseer_case "$1" idle
+  jq -n --arg pane "$PANE" --arg window "$WINDOW" --arg harness "$2" \
+    '{triaged: [], overseer: {runtime: "tmux", generation: 10, account: "/home/me/.claude", server: "7000", pane: $pane, window: $window,
+      launch_line: "old", harness: $harness, home: null}}' > "$STUB_DIR/oversee-state.json"
+  printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+  WATCH_BIN="${3:-}" run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
+}
+home_backfill record_home_backfill claude
+assert_eq "home=$(recorded home) account=$(recorded account)" "home=/home/me/.claude account=/home/me/.claude" \
+  "a start over a home-less claude record binds it to its account" "$ERR"
+home_backfill record_home_codex codex
+assert_eq "home=$(recorded home)" "home=none" "a home-less codex record keeps no home, its account not being one" "$ERR"
+HOME_MUTANT="$TMP_ROOT/home-mutant"
+mkdir -p "$HOME_MUTANT/orch"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$HOME_MUTANT/orch/scripts"
+ln -s "$REPO_ROOT/skills/github" "$HOME_MUTANT/github"
+FROM='then .home = .account else . end'
+assert_eq "$(grep -cF -- "$FROM" "$REPO_ROOT/skills/orch/scripts/lib/watch-overseer-record.sh")" "1" \
+  "control: the home binding is one site of the record library"
+FROM="$FROM" perl -pe 's/\Q$ENV{FROM}\E/then . else . end/' \
+  "$REPO_ROOT/skills/orch/scripts/lib/watch-overseer-record.sh" > "$HOME_MUTANT/orch/scripts/lib/watch-overseer-record.sh"
+home_backfill record_home_backfill_mutant claude "$HOME_MUTANT/orch/scripts/oversee-watch"
+assert_eq "home=$(recorded home)" "home=none" "control: a start that binds no home leaves the hook reading no context" "$ERR"
+
 # A record naming another pane is another session's: its generation is not
 # this one's, so the start records only what it observes.
 # Both halves of that test, one row each: a record naming another pane on this

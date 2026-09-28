@@ -2451,6 +2451,65 @@ overseer_mark_check() { # ROWS IDENTITY PANE
   OVERSEER_MARK_ROWS="$(lane_row_set overseer-mark "$rows" "$identity" "$kind|$passes")"
 }
 
+# The overseer's context record, context.json in the overseer mailbox, as its
+# turn-end hook last wrote it (lib/lane-context.sh § lane_context_record),
+# judged each long pass a working overseer is read, so a record that stopped
+# advancing, or advances with no reading, reaches the overseer instead of
+# passing for a context mark that is watching. The hook judges that mark at a
+# turn end and nowhere else, so a turn end that reads nothing leaves it
+# unjudged with nothing but this to say so.
+#
+# `overseer-context-unmeasured` where the record carries a gap, the reason the
+# hook took no reading; `overseer-context-stale` where the record's `at` is
+# more than OVERSEER_CONTEXT_STALE_SECS old while the session took a turn
+# since: a turn end its rows recorded after that time, a StopFailure or the
+# Stop that lifts one, or a screen the pass read, the named fallback, as a
+# turn in flight. Either goes out on every long pass it stands, since the next
+# turn end that reads rewrites the record. No record is a session that has
+# not ended a turn under the hook and says nothing; a record or rows file that
+# cannot be read, or a record the hook does not write, is noted and settles
+# nothing. Reads the state overseer_pane_read left and never runs inside it.
+OVERSEER_CONTEXT_STALE_SECS=3600
+overseer_context_check() { # PANE IDENTITY
+  local pane="$1" identity="$2" file record at age rows event row_at turn=0
+  file="$(lane_context_overseer_box "$PROJECT_ROOT")/$LANE_CONTEXT_RECORD"
+  [[ -e "$file" ]] || return 0
+  if ! record="$(cat -- "$file" 2>/dev/null)" || ! lane_context_record_fields "$record"; then
+    overseer_note overseer-context-unread "path=$file"
+    return 0
+  fi
+  if [[ -n "$LANE_CTX_GAP" ]]; then
+    echo "EVENT overseer-context-unmeasured $pane gap=$LANE_CTX_GAP"
+    PASS_EVENT=1
+    return 0
+  fi
+  if ! at="$(to_epoch "$LANE_CTX_AT")"; then
+    overseer_note overseer-context-unread "path=$file" "at=${LANE_CTX_AT:-none}"
+    return 0
+  fi
+  age=$((PASS_NOW - at))
+  (( age > OVERSEER_CONTEXT_STALE_SECS )) || return 0
+  [[ "$OV_SOURCE" != pane || "$OV_STATE" != working ]] || turn=1
+  if (( ! turn )); then
+    rows="$(session_rows_overseer_file "$PROJECT_ROOT" "${identity%% *}" "$pane")"
+    for event in StopFailure Stop; do
+      if ! session_rows_last "$rows" "$event"; then
+        overseer_note overseer-context-unread "path=$rows"
+        return 0
+      fi
+      [[ -n "$SESSION_ROW" ]] || continue
+      if ! row_at="$(jq -r '.at // 0' <<<"$SESSION_ROW")"; then
+        overseer_note overseer-context-unread "path=$rows"
+        return 0
+      fi
+      if (( row_at > at )); then turn=1; break; fi
+    done
+  fi
+  (( turn )) || return 0
+  echo "EVENT overseer-context-stale $pane age=$age"
+  PASS_EVENT=1
+}
+
 # The overseer's own session as one reading: OV_WINDOW, OV_IDENTITY (`<server>
 # <pane>`, the key its rows are kept under), OV_STATE, the word the shared
 # judge would give it, and OV_SOURCE, what settled that word. The long pass
@@ -2643,6 +2702,7 @@ check_overseer() {
     # nor a walled one runs a turn, so its context and its account settle
     # nothing and its case is the event the branch below carries.
     overseer_mark_check "$rows" "$identity" "$pane"
+    overseer_context_check "$pane" "$identity"
     lane_row_commit "$OVERSEER_MARK_ROWS"
     return 0
   fi

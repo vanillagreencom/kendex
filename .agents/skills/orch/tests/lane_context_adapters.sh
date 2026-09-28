@@ -250,7 +250,7 @@ echo "=== the reading a turn end records, and the report's judgement of it ==="
 BOX="$TMP_ROOT/box"; mkdir -p "$BOX"
 bash -c 'source "$1"; lane_context_record "$2" codex 232560 258400 gpt-6-astra s1 "7000 %9"' _ "$LIB" "$BOX"
 assert_eq "$(jq -c 'del(.at)' "$BOX/context.json")" \
-  '{"harness":"codex","model":"gpt-6-astra","tokens":232560,"window":258400,"used_pct":90,"session_id":"s1","pane_key":"7000 %9"}' \
+  '{"harness":"codex","model":"gpt-6-astra","tokens":232560,"window":258400,"used_pct":90,"session_id":"s1","pane_key":"7000 %9","gap":null}' \
   "the record names the reading, the share used, and the session and pane it belongs to"
 assert_eq "$(bash -c 'source "$1"; lane_context_record_judged "$(cat "$2")" 90' _ "$LIB" "$BOX/context.json" | jq -c '.handoff_due')" \
   "false" "the report judges a recorded reading by the same judge"
@@ -258,6 +258,27 @@ bash -c 'source "$1"; lane_context_record "$2" pi 1000 "" m' _ "$LIB" "$BOX"
 assert_eq "$(bash -c 'source "$1"; lane_context_record_judged "$(cat "$2")" 90' _ "$LIB" "$BOX/context.json" | jq -c '[.window, .used_pct, .handoff_due]')" \
   "[null,null,null]" "a reading with no window is recorded unmeasured and judged neither due nor room"
 assert_eq "$(ls -A "$BOX")" "context.json" "the record lands by a rename, leaving no staged file beside it"
+# A turn end that took no reading writes the reason as the gap, with no token
+# count, and the one parser of a record reads it back as a gap and not as a
+# reading, which the report's judge refuses to judge.
+bash -c 'source "$1"; lane_context_record "$2" claude null "" "" s1 "7000 %9" home-unnamed' _ "$LIB" "$BOX"
+assert_eq "$(jq -c 'del(.at)' "$BOX/context.json")" \
+  '{"harness":"claude","model":null,"tokens":null,"window":null,"used_pct":null,"session_id":"s1","pane_key":"7000 %9","gap":"home-unnamed"}' \
+  "a gap record names the reason and the session and pane, with no reading"
+# shellcheck disable=SC2016  # expanded by the child shell.
+fields() { bash -c 'source "$1"; if lane_context_record_fields "$2"; then
+    printf "rc=0 harness=%s tokens=%s pane=%s gap=%s at=%s\n" "$LANE_CTX_HARNESS" "${LANE_CTX_TOKENS:-none}" "$LANE_CTX_PANE_KEY" "${LANE_CTX_GAP:-none}" "${LANE_CTX_AT:+set}"
+  else echo "rc=$?"; fi' _ "$LIB" "$1"; }
+while IFS='|' read -r record expected what; do
+  assert_eq "$(fields "$record")" "$expected" "$what"
+done <<ROWS
+$(cat "$BOX/context.json")|rc=0 harness=claude tokens=none pane=7000 %9 gap=home-unnamed at=set|a gap record parses with its gap and no tokens
+{"harness":"claude","tokens":5,"gap":null,"pane_key":"k","at":"t"}|rc=0 harness=claude tokens=5 pane=k gap=none at=set|a reading parses with no gap
+{"harness":"claude","tokens":null,"gap":null,"pane_key":"k"}|rc=1|a record with neither a reading nor a gap is no record
+{"harness":"claude","tokens":5,"gap":"home-unnamed","pane_key":"k"}|rc=1|a record carrying both a reading and a gap is no record
+ROWS
+assert_eq "$(bash -c 'source "$1"; if lane_context_record_judged "$(cat "$2")" 90; then echo rc=0; else echo "rc=$?"; fi' _ "$LIB" "$BOX/context.json")" \
+  "rc=1" "the report's judge refuses a gap record as no reading"
 
 echo "=== the ownership gate binds a reading to its own session's file ==="
 # lane_context_transcript_owned holds a transcript to the session id and launch
@@ -355,6 +376,12 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'codex rollout-2026-09-27T00-00-00-s2.jsonl for s1 under codex-home: 1 session-mismatch'
   control owned-codex-home adapters/codex.sh '*) LANE_ADAPTER_OWNED_REASON=home-mismatch; return 1 ;;' '*) ;;' \
     'codex rollout-2026-09-27T00-00-00-s1.jsonl for s1 under other-codex-home: 1 home-mismatch'
+  control gap-written lane-context.sh 'gap: ($gap | nul), at: $at}' 'at: $at}' \
+    'a gap record names the reason and the session and pane, with no reading'
+  control gap-parsed lane-context.sh 'or (.tokens == null and (.gap | type)' 'or (false and (.gap | type)' \
+    'a gap record parses with its gap and no tokens'
+  control gap-judged lane-context.sh '[ -z "$LANE_CTX_GAP" ] || return 1' ':' \
+    "the report's judge refuses a gap record as no reading"
   control owned-binding-missing lane-context.sh 'if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then' 'if false; then' \
     'claude none for s1 under claude-home: 1 binding-missing'
   control owned-home-unnamed lane-context.sh 'if [ -z "${4:-}" ]; then' 'if false; then' \

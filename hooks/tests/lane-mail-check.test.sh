@@ -1409,6 +1409,20 @@ stop_at "$TRANSCRIPT" false $(overseer_env)
 assert_eq "RC=$RC first=$(first_line) argv=$(judge_argv | tail -n 1) reason=$(grep -c 'home-unnamed' "$ERR_FILE")" \
   "RC=2 first=lane-mail-check: transcript-unowned=$TRANSCRIPT argv=--check-marks --harness claude reason=1" \
   "a record naming no launch home cannot bind the transcript, so context is unmeasured and the account mark decides" "$ERR_FILE"
+# That turn end still writes the overseer's context record, with no figure and
+# the gate's reason as its gap, so the record advances at every turn end and
+# oversee-watch can report why it carries no reading.
+gap_record() { jq -r '"\(.tokens) \(.gap) \(.pane_key)"' "$LANE/tmp/lane-mail/overseer/context.json" 2>/dev/null || echo none; }
+assert_eq "$(gap_record)" "null home-unnamed $OVERSEER_SERVER $OVERSEER_PANE" \
+  "and the context record is written with no reading, the gate's reason as its gap and this pane's key" "$ERR_FILE"
+variant no-gap-record -e '/^        overseer_gap_record "\$LANE_CONTEXT_OWNED_REASON"$/d'
+install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+rm -f -- "${LANE:?}/tmp/lane-mail/overseer/context.json"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+assert_eq "$(gap_record)" "none" \
+  "control: a hook that writes no gap record leaves an unowned turn end recording nothing"
+install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 # A Pi install states no transcript shape, so its overseer binds nothing and
 # reads the payload's own window as a Pi lane does; nothing is reported.
 new_overseer overseer_pi
@@ -1615,6 +1629,49 @@ expect 0 - "a session outside tmux has no pane to be the overseer's"
 stop_at "$TRANSCRIPT" false $(overseer_env)
 assert_eq "RC=$RC first=$(first_line) judged=$(judge_calls)" "RC=0 first=- judged=0" \
   "a fleet state recording no overseer names nobody, so nobody is judged"
+
+# The overseer the fleet record lost: the record names another pane, while the
+# overseer's context record names this one, which only its own turn ends
+# write. Its turn end is judged on no mark, reports the gap under its own key
+# with the recorded pane key under it, and still writes the context record,
+# with no figure and the gap `pane-unrecorded`, turn after turn. A session in
+# a third pane the context record does not name is an ordinary one and writes
+# nothing over it.
+new_overseer overseer_unrecorded
+judge_says "$HEADROOM_MARK_LINE"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+record_overseer %4 "$OVERSEER_SERVER"
+unrecorded_rows() { # CALLER_PANE
+  # shellcheck disable=SC2046
+  stop_at "$TRANSCRIPT" false $(overseer_env "$1")
+  printf 'RC=%s first=%s recorded=%s judged=%s record=%s' "$RC" "$(first_line)" \
+    "$(grep -cFx -- "$OVERSEER_SERVER %4" "$ERR_FILE")" "$(judge_calls)" "$(gap_record)"
+}
+assert_eq "$(unrecorded_rows "$OVERSEER_PANE")" \
+  "RC=0 first=lane-mail-check: pane-unrecorded=$OVERSEER_SERVER $OVERSEER_PANE recorded=1 judged=1 record=null pane-unrecorded $OVERSEER_SERVER $OVERSEER_PANE" \
+  "a session whose own reading the context record holds, and the fleet record no longer names, reports it and writes the gap" "$ERR_FILE"
+assert_eq "$(unrecorded_rows "$OVERSEER_PANE")" \
+  "RC=0 first=lane-mail-check: pane-unrecorded=$OVERSEER_SERVER $OVERSEER_PANE recorded=1 judged=1 record=null pane-unrecorded $OVERSEER_SERVER $OVERSEER_PANE" \
+  "and does so again at its next turn end, over its own gap record" "$ERR_FILE"
+assert_eq "$(unrecorded_rows %3)" \
+  "RC=0 first=- recorded=0 judged=1 record=null pane-unrecorded $OVERSEER_SERVER $OVERSEER_PANE" \
+  "a session in a pane neither record names is ordinary and writes nothing over the overseer's record" "$ERR_FILE"
+variant any-pane-unrecorded -e '/^  \[ "\$LANE_CTX_PANE_KEY" = "\$CALLER_KEY" \] || return 0$/d'
+install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+assert_eq "$(unrecorded_rows %3)" \
+  "RC=0 first=lane-mail-check: pane-unrecorded=$OVERSEER_SERVER %3 recorded=1 judged=1 record=null pane-unrecorded $OVERSEER_SERVER %3" \
+  "control: without the pane test an ordinary session overwrites the overseer's record"
+variant no-unrecorded -e 's/^      overseer_unrecorded$/      :/'
+install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+record_overseer %4 "$OVERSEER_SERVER"
+assert_eq "$(unrecorded_rows "$OVERSEER_PANE")" \
+  "RC=0 first=- recorded=0 judged=2 record=600000 null $OVERSEER_SERVER $OVERSEER_PANE" \
+  "control: a hook that skips the lost overseer leaves its record standing, stale and silent"
+install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
 # The mailbox rules are untouched: an overseer's checkout carries the fleet's
 # own mailbox directory, and its branch names no mailbox in it.
@@ -2360,7 +2417,7 @@ assert_eq "unowned=$(grep -c '^lane-mail-check: transcript-unowned' "$ERR_FILE")
 # The overseer identification's control: the pane comparison removed, so any
 # session with no lane is taken for the overseer. An ordinary session in a
 # fleet checkout is then held at its own turn end on marks nobody set for it.
-mutant any-session-overseer -e 's@^  \[ "\$RECORDED_KEY" = "\$CALLER_KEY" \] || return 1$@  :@'
+mutant any-session-overseer -e 's@^  if \[ "\$RECORDED_KEY" != "\$CALLER_KEY" \]; then$@  if false; then@'
 new_overseer control_any_session
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 judge_says "$CONTEXT_MARK_LINE"

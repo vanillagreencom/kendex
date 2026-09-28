@@ -263,43 +263,48 @@ lane_context_handoff_due() { # TOKENS WINDOW PCT
   fi
 }
 
-# lane_context_record BOX HARNESS TOKENS WINDOW MODEL [SESSION] [PANE_KEY] —
-# write a session's reading to BOX/$LANE_CONTEXT_RECORD, through a file renamed
-# over it so no reader meets half a record. `used_pct` is the whole percent of
-# the window used, null with the window. SESSION is the id the harness names
-# the session by and PANE_KEY the `<server pid> <pane id>` it runs in, which is
-# how a successor overseer's reader tells its own record from the one its
-# predecessor left in the same mailbox. Exit non-zero where the record could not
-# be written, the cause on stderr.
-lane_context_record() { # BOX HARNESS TOKENS WINDOW MODEL [SESSION] [PANE_KEY]
+# lane_context_record BOX HARNESS TOKENS WINDOW MODEL [SESSION] [PANE_KEY] [GAP]
+# — write a session's reading to BOX/$LANE_CONTEXT_RECORD, through a file
+# renamed over it so no reader meets half a record. `used_pct` is the whole
+# percent of the window used, null with the window. SESSION is the id the
+# harness names the session by and PANE_KEY the `<server pid> <pane id>` it
+# runs in, which is how a successor overseer's reader tells its own record from
+# the one its predecessor left in the same mailbox. GAP is the word for why a
+# turn end took no reading, with TOKENS `null`: the overseer's turn-end hook
+# writes one where its gate refused the read, so the record still advances at
+# every turn end and says why it carries no figure. Exit non-zero where the
+# record could not be written, the cause on stderr.
+lane_context_record() { # BOX HARNESS TOKENS WINDOW MODEL [SESSION] [PANE_KEY] [GAP]
   local box="${1:?}" staged at
   at=$(date -u +%Y-%m-%dT%H:%M:%SZ) || return 1
   staged="$box/.$LANE_CONTEXT_RECORD.$$"
   if ! jq -nc --arg harness "$2" --argjson tokens "$3" --arg window "$4" --arg model "$5" \
-    --arg session "${6:-}" --arg pane_key "${7:-}" --arg at "$at" '
+    --arg session "${6:-}" --arg pane_key "${7:-}" --arg gap "${8:-}" --arg at "$at" '
     def nul: if . == "" then null else . end;
     ($window | nul | if . == null then null else tonumber end) as $w
     | {harness: $harness, model: ($model | nul), tokens: $tokens, window: $w,
        used_pct: (if $w == null or $w == 0 then null else ($tokens * 100 / $w | floor) end),
-       session_id: ($session | nul), pane_key: ($pane_key | nul), at: $at}' >"$staged"; then
+       session_id: ($session | nul), pane_key: ($pane_key | nul), gap: ($gap | nul), at: $at}' >"$staged"; then
     rm -f -- "${staged:?}"
     return 1
   fi
   mv -f -- "$staged" "$box/$LANE_CONTEXT_RECORD" || { rm -f -- "${staged:?}"; return 1; }
 }
 
-# lane_context_record_fields RECORD — one recorded reading split into
-# LANE_CTX_HARNESS, LANE_CTX_TOKENS, LANE_CTX_WINDOW, LANE_CTX_MODEL,
-# LANE_CTX_PANE_KEY and LANE_CTX_AT, each empty where the record holds none.
-# Exit 1, every field empty, where RECORD is not a record lane_context_record
-# wrote: an object carrying a token count.
+# lane_context_record_fields RECORD — one record split into LANE_CTX_HARNESS,
+# LANE_CTX_TOKENS, LANE_CTX_WINDOW, LANE_CTX_MODEL, LANE_CTX_PANE_KEY,
+# LANE_CTX_GAP and LANE_CTX_AT, each empty where the record holds none. A
+# reading carries a token count and no gap; a gap record carries the gap and
+# no token count. Exit 1, every field empty, where RECORD is neither shape
+# lane_context_record writes.
 lane_context_record_fields() { # RECORD
   local fields rest
   LANE_CTX_HARNESS="" LANE_CTX_TOKENS="" LANE_CTX_WINDOW=""
-  LANE_CTX_MODEL="" LANE_CTX_PANE_KEY="" LANE_CTX_AT=""
-  fields=$(jq -er 'select(type == "object" and (.tokens | type) == "number")
-    | [(.harness // ""), (.tokens | tostring), (.window // "" | tostring),
-       (.model // ""), (.pane_key // ""), (.at // "")] | join("\t")' <<<"${1:-}" 2>/dev/null) || return 1
+  LANE_CTX_MODEL="" LANE_CTX_PANE_KEY="" LANE_CTX_GAP="" LANE_CTX_AT=""
+  fields=$(jq -er 'select(type == "object" and (((.tokens | type) == "number" and .gap == null)
+      or (.tokens == null and (.gap | type) == "string" and .gap != "")))
+    | [(.harness // ""), (.tokens // "" | tostring), (.window // "" | tostring),
+       (.model // ""), (.pane_key // ""), (.gap // ""), (.at // "")] | join("\t")' <<<"${1:-}" 2>/dev/null) || return 1
   # Split by hand for the reason lane_context_collect gives: an empty field
   # would otherwise collapse into its neighbour.
   rest="$fields"
@@ -307,18 +312,20 @@ lane_context_record_fields() { # RECORD
   LANE_CTX_TOKENS="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
   LANE_CTX_WINDOW="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
   LANE_CTX_MODEL="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
-  LANE_CTX_PANE_KEY="${rest%%$'\t'*}"
+  LANE_CTX_PANE_KEY="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+  LANE_CTX_GAP="${rest%%$'\t'*}"
   LANE_CTX_AT="${rest#*$'\t'}"
 }
 
 # lane_context_record_judged RECORD PCT — RECORD with `handoff_due` set from
 # lane_context_handoff_due: true, false, or null where capacity is unknown
 # below the independent token limit.
-# Exit 1 where RECORD is not a record lane_context_record wrote, 2 where PCT is
-# out of range; nothing is printed then.
+# Exit 1 where RECORD is not a reading lane_context_record wrote, a gap record
+# included, 2 where PCT is out of range; nothing is printed then.
 lane_context_record_judged() { # RECORD PCT
   local verdict rc=0 due
   lane_context_record_fields "${1:-}" || return 1
+  [ -z "$LANE_CTX_GAP" ] || return 1
   verdict=$(lane_context_handoff_due "$LANE_CTX_TOKENS" "$LANE_CTX_WINDOW" "${2:-}") || rc=$?
   case "$rc" in
     0)

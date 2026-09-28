@@ -126,6 +126,28 @@ The long pass's events, checked and reported in this order:
                              ORCH_OVERSEER_MARK_REPEAT passes while it stands;
                              a reading that could not be taken leaves the
                              standing mark where it was and says so on stderr
+  EVENT overseer-context-unmeasured <pane> gap=<reason>
+                             the overseer's context record, context.json in
+                             the overseer mailbox, carries no reading: its
+                             turn-end hook read nothing and wrote the reason
+                             as the gap, a transcript-unowned reason
+                             (home-unnamed, binding-missing, session-mismatch,
+                             home-mismatch) or pane-unrecorded, a fleet record
+                             naming another pane. The context mark is judged
+                             at that turn end alone, so it is not being
+                             judged. Repair the record the gap names, with
+                             oversee register from the overseer's own pane,
+                             or run oversee-succeed by hand. Emitted every
+                             long pass the gap stands
+  EVENT overseer-context-stale <pane> age=<seconds>
+                             the overseer's context record was written more
+                             than an hour ago while this session took a turn
+                             since, a StopFailure or Stop row after it or a
+                             screen read as a turn in flight, so its turn
+                             ends are recording nothing and its context mark
+                             is judged by nothing. Repair the turn-end hook or
+                             the record, or run oversee-succeed by hand.
+                             Emitted every long pass it stands
   EVENT pr-watch rc=N        new review-gate attention; reducer output follows
   EVENT merged <PR> <branch> <repo>
                              an --item PR merged at or after --since, in any
@@ -737,6 +759,7 @@ ow_message() { # REASON FIELD=VALUE...
     overseer-wall-unjudged) text='The overseer pane read walled and the account judgement that would confirm it could not be made, so nothing is acted on: this pane carries the limit banners this watch relays about OTHER lanes, and the screen alone cannot tell those from the overseer own account running out. The reading is left to the next pass.' ;;
     overseer-wall-unconfirmed) text='The overseer pane read walled and its own account measures room, so the banner on that screen is one this watch relayed about another lane and the overseer is working. Nothing is launched and no window is closed. The fields name the judgement that refuted it.' ;;
     overseer-wall-lifted) text='The overseer session rows last recorded a usage-limit failure and its own account now measures room, so the wall has lifted and the session is read as live. Only a finished turn writes the row that clears it.' ;;
+    overseer-context-unread) text='The overseer context record, or the session rows file its staleness is judged against, could not be read or is not a shape the turn-end hook writes, so neither overseer-context event is judged this pass.' ;;
     overseer-unwatched) text='The overseer pane is not being watched, so an overseer that dies is reported by nothing. The field names what is missing.' ;;
     overseer-unreadable) text='The overseer pane could not be read, so its state settles nothing this pass.' ;;
     overseer-fallback) text='The overseer session rows could not judge it, so this pass judges its pane, the named fallback, as the watch did before the rows existed. The cause names why: no rows file recorded for this pane (unrecorded), a fleet state that could not be read (state-unreadable), no row in the file yet (none), a row naming a harness that emits no session end or usage-limit event (unsupported), or a file that could not be read (unreadable).' ;;
