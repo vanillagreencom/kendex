@@ -66,6 +66,7 @@ scenario() { # COMMAND PRIOR NOW PCT MODE
     staged) set -- --staged --against "$base" ;;
     bad-ref) set -- --against no-such-ref ;;
     empty-ref) set -- --against "" ;;
+    unstaged) git -C "$R" reset -q -- doc.md; set -- --against "$base" ;;
     *) printf 'harness: unknown mode %s\n' "$mode" >&2; exit 2 ;;
   esac
   [ "$pct" != empty ] || pct=""
@@ -111,9 +112,10 @@ a zero-padded margin is refused|900|1023|08|against|2|error=margin-pct-invalid v
 an empty margin is refused|900|1023|empty|against|2|error=margin-pct-invalid value=''
 a ref that names no commit is refused|900|1023|-|bad-ref|2|error=against-ref-invalid ref=no-such-ref
 an empty ref is refused|900|1023|-|empty-ref|2|error=against-ref-empty ref=''
+an unstaged edit counts as growth once staged|900|1023|-|unstaged|0|OK
 ROWS
-if [ "$ROWS" -lt 18 ]; then
-  printf 'FAIL: ROWS executed %s rows, fewer than its 18\n' "$ROWS" >&2
+if [ "$ROWS" -lt 19 ]; then
+  printf 'FAIL: ROWS executed %s rows, fewer than its 19\n' "$ROWS" >&2
   exit 1
 fi
 
@@ -157,6 +159,28 @@ has_line 'of two documents inside the margin, one is counted' 'notice=documents-
 lacks_text 'of two documents inside the margin, the unchanged one is not named' 'path=b.md'
 rm -f -- "$R/a.md" "$R/b.md"
 
+# Growth compares stored blobs. An unchanged crlf.md checks out with CRLF line
+# ends, 1010 bytes in the worktree over its 1000-byte blob, inside the margin
+# and under the limit; it is judged on the limit alone.
+crlf_case() { # COMMAND: sets RC and OUT
+  local i=0 base
+  rm -f -- "$R/crlf.md" "$R/.gitattributes"
+  printf 'crlf.md text eol=crlf\n' >"$R/.gitattributes"
+  while [ "$i" -lt 10 ]; do
+    head -c 99 /dev/zero | tr '\0' x >>"$R/crlf.md"
+    printf '\r\n' >>"$R/crlf.md"
+    i=$((i + 1))
+  done
+  git -C "$R" add -A
+  git -C "$R" commit -q -m base
+  base="$(git -C "$R" rev-parse HEAD)"
+  RC=0
+  OUT="$(cd "$R" && "$1" --against "$base" 2>&1)" || RC=$?
+  rm -f -- "$R/crlf.md" "$R/.gitattributes"
+}
+crlf_case "$SOURCE_COMMAND"
+check 'an unchanged document whose checkout adds CRLF bytes inside the margin passes' 0 "$OK" "$RC" "$OUT"
+
 # One control per rule the margin adds: a copy of the command with OLD
 # replaced by NEW keeps the matched text and loses that rule, and the row
 # that pins it must go red.
@@ -191,8 +215,16 @@ control() { # LABEL PRIOR NOW PCT MODE WANT-RC WANT-FIRST-LINE: the mutant's run
 mutant no-margin 'elif [ -n "$AGAINST_OID" ]' 'elif false && [ -n "$AGAINST_OID" ]'
 control 'must-fail: without the margin rule, growth to one byte under the limit passes' 900 1023 - against 1 "$NEAR"
 
-mutant no-growth-test '[ "$n" -gt "$prior" ] &&' '{ [ "$n" -gt "$prior" ] || true; } &&'
+mutant no-growth-test '[ "$stored" -gt "$prior" ] &&' '{ [ "$stored" -gt "$prior" ] || true; } &&'
 control 'must-fail: without the growth test, an unchanged document inside the margin fails' 1023 1023 - against 0 "$OK"
+
+mutant measured-growth '[ "$stored" -gt "$prior" ]' '[ "$n" -gt "$prior" ]'
+crlf_case "$MUTANT"
+if [ "$RC" = 0 ] && [ "${OUT%%$'\n'*}" = "$OK" ]; then
+  FAIL=$((FAIL + 1)); printf '  FAIL: %s\n' 'must-fail: with growth read from the worktree size, the CRLF document still passes'
+else
+  PASS=$((PASS + 1)); printf '  ok: %s\n' 'must-fail: with growth read from the worktree size, an unchanged CRLF document fails'
+fi
 
 mutant absent-not-grown '"commit "*) prior=0 ;;' '"commit "*) prior="$n" ;;'
 control 'must-fail: without the absent-document rule, a new document inside the margin passes' - 1010 - against 1 "$NEAR"

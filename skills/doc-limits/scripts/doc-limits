@@ -39,9 +39,12 @@ Check byte ceilings for tracked Markdown and docs/*.html documents. The first
 matching class sets the limit. Other files are outside this check.
 --staged reads document sizes and tracked policy from the index.
 The default reads worktree files, falling back to the index for missing files.
---against REF also fails a document larger than in REF's own tree whose size
-is within the margin under its limit; a document absent from REF counts as
-grown. A pull request run passes the branch it merges into; two changes
+--against REF also fails a document whose index copy is larger than its copy
+in REF's own tree and whose measured size is within the margin under its
+limit; a document absent from REF counts as grown. Growth compares stored
+blob sizes, so checkout conversion (eol=crlf, autocrlf) adds none, and an
+edit counts as growth once staged. A pull request run passes the branch it
+merges into; two changes
 passing against the same base then put one document over its limit in a
 merge group only when each grows it by more than the margin.
 No mode writes files or changes the index.
@@ -416,6 +419,10 @@ while IFS="$TAB" read -r oid f limit class; do
   IFS=' ' read -r actual_oid kind n <&3 || collection_error blob-size-response-incomplete path "$f" "document size response is incomplete: $f"
   [ "$actual_oid" = "$oid" ] && [ "$kind" = blob ] \
     || collection_error document-blob-read-failed path "$f" "could not read document blob: $f"
+  case "$n" in "" | *[!0-9]*) collection_error document-byte-count-invalid path "$f" "invalid blob size for tracked document: $f" ;; esac
+  # Growth compares the index blob with REF's blob, one byte form: the
+  # worktree size below carries checkout conversion REF's blob size lacks.
+  stored="$n"
   if [ "$STAGED" -eq 0 ] && [ -f "$f" ] && [ ! -L "$f" ]; then
     n="$(wc -c 2>/dev/null <"$f")" || collection_error document-measure-failed path "$f" "could not measure tracked document: $f"
     n="${n#"${n%%[![:space:]]*}"}"
@@ -438,8 +445,8 @@ while IFS="$TAB" read -r oid f limit class; do
     notice document-over-limit path "$f" "doc-limits FAIL: $f: $n bytes > $limit bytes (class $class)"
     remedy "$class"
     violations=$((violations + 1))
-  elif [ -n "$AGAINST_OID" ] && [ "$n" -gt "$prior" ] && [ "$n" -gt "$((limit - margin))" ]; then
-    notice document-near-limit path "$f" "doc-limits FAIL: $f: grown from $prior to $n bytes, within the $margin-byte margin under $limit bytes (class $class)"
+  elif [ -n "$AGAINST_OID" ] && [ "$stored" -gt "$prior" ] && [ "$n" -gt "$((limit - margin))" ]; then
+    notice document-near-limit path "$f" "doc-limits FAIL: $f: stored size grown from $prior to $stored bytes; its $n bytes are within the $margin-byte margin under $limit bytes (class $class)"
     printf '  another change growing this document could carry it past the limit in a merge group where each change passes alone\n'
     remedy "$class"
     violations=$((violations + 1))

@@ -21,7 +21,8 @@
 
 ## Growth margin
 
-- `--against REF` adds one rule to the class limit. A document larger than in REF's own tree fails when its size is more than its limit minus the margin.
+- `--against REF` adds one rule to the class limit. A document whose index copy is larger than its copy in REF's own tree fails when its measured size is more than its limit minus the margin.
+- Growth compares stored blob sizes, so a checkout conversion such as `eol=crlf` or `core.autocrlf` adds no growth. An unstaged edit counts as growth once it is staged.
 - `DOC_LIMITS_MARGIN_PCT` sets the margin as a percent of each limit: a decimal integer from 0 to 99 without leading zeros. Its default is `2`. The margin in bytes rounds down. `0` leaves the limit alone. Any other value refuses with exit `2`, and only a run with `--against` reads it.
 - A document REF does not hold at its path counts as grown from 0 bytes, a renamed document included.
 - A document the change leaves unchanged or shrinks is judged on its limit alone.
