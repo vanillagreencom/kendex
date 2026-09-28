@@ -855,7 +855,7 @@ assert_eq "rc=$RC events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true) lau
 # beside it.
 MUTANT_SCRIPTS="$(mutant_scripts mutant/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mutant/github"
-mutate_file "$MUTANT_SCRIPTS/oversee-watch" '    if (( count < DEAD_PASSES )); then' '    if false; then'
+mutate_file "$MUTANT_SCRIPTS/oversee-watch" '    if (( count < passes )); then' '    if false; then'
 overseer_case debounce_mutant exited
 state_with "$LINE"
 WATCH_BIN="$MUTANT_SCRIPTS/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1
@@ -899,7 +899,10 @@ while IFS='|' read -r name state mode event expected_rc expected_events expected
     cat "$CODEX_PANES/codex-composer-idle.txt" > "$STUB_DIR/pane-$PANE.txt"
   fi
   touch "$STUB_DIR/succeed.require-harness"
-  wall_confirmed
+  # A live pane's mark sits above zero, where it is reported as the mark; at
+  # zero it would be a wall and succeeded.
+  if [[ "$state" == walled ]]; then wall_confirmed
+  else printf '%s\n' "${WALL_MARK_LINE/value=0/value=5}" > "$STUB_DIR/succeed.check"; fi
   watch_path=.agents/skills/orch/scripts/oversee-watch
   [[ "$mode" != control ]] || watch_path="$HARNESS_CONTROL/oversee-watch"
   WATCH_BIN="$watch_path" run TMUX_PANE="$PANE" -- --max-loops 2 \
@@ -1027,8 +1030,10 @@ state_with "$LINE"
 wall_confirmed
 run TMUX_PANE="$PANE" -- --max-loops 1
 printf '%b\n' '⏺ Back at it.' '\xe2\x9d\xaf\xc2\xa0' > "$STUB_DIR/pane-$PANE.txt"
+rm -f -- "${STUB_DIR:?}/succeed.check"
 run TMUX_PANE="$PANE" -- --max-loops 1
 printf '%b\n' '⏺ Watching the fleet.' "$WALL_BANNER" '\xe2\x9d\xaf\xc2\xa0' > "$STUB_DIR/pane-$PANE.txt"
+wall_confirmed
 run TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "rc=$RC launched=$(succeed_calls --walled-pane) mail=$(mailbox_lines)" \
   "rc=0 launched=0 mail=0" \

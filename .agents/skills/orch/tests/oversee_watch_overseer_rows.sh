@@ -98,7 +98,7 @@ while IFS='|' read -r name pane rows expected_event expected_launch expected_cap
     "$name" "$ERR"
 done <<ROWS
 dead_rows|blank|start end|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=rows|--dead-pane|no|none
-wall_rows|blank|start wall|EVENT overseer-walled $PANE window=$WINDOW passes=2 succession=on source=rows|--walled-pane|no|none
+wall_rows|blank|start wall|EVENT overseer-walled $PANE window=$WINDOW passes=1 succession=on source=rows|--walled-pane|no|none
 clear_is_live|blank|start clear|none||no|none
 lifted_wall|blank|start wall stop|none||no|none
 other_failure|blank|start overloaded|none||no|none
@@ -114,6 +114,30 @@ rows_case wall_payload blank "$START" "$FAILURE"
 run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "$(sed -n 2p <<<"$OUT")" "$WALL_MESSAGE" "the rows wall's message follows its event line" "$ERR"
 assert_eq "$(succeed_calls --check-marks)" "0" "and no account judgement was asked to confirm it" "$ERR"
+
+# Succeeded in one pass: a wall the rows state, and an account the mark
+# judgement reads at zero headroom under a live session, each run the walled
+# succession in the first pass that reads them. A mark above zero is reported
+# as the mark and succeeds nothing.
+ZERO_MARK="oversee-succeed: mark-reached kind=headroom value=0 mark=10 succession=on account=1claude resets=2026-09-28T03:00:00Z"
+FIVE_MARK="oversee-succeed: mark-reached kind=headroom value=5 mark=10 succession=on account=1claude resets=2026-09-28T03:00:00Z"
+one_pass() { # NAME MARK_LINE ROW... [WATCH_BIN via env]
+  local name="$1" mark="$2"
+  shift 2
+  rows_case "$name" blank "$@"
+  [[ -z "$mark" ]] || printf '%s\n' "$mark" > "$STUB_DIR/succeed.check"
+  run TMUX_PANE="$PANE" -- --max-loops 1
+  ONE_PASS="rc=$RC walled=$(grep -c '^EVENT overseer-walled' <<<"$OUT" || true) marks=$(grep -c '^EVENT overseer-mark' <<<"$OUT" || true) launched=$(succeed_calls --walled-pane)"
+}
+one_pass wall_one_pass "" "$START" "$FAILURE"
+assert_eq "$ONE_PASS" "rc=3 walled=1 marks=0 launched=1" "a rows wall is succeeded in the first pass that reads it" "$ERR"
+one_pass zero_mark "$ZERO_MARK" "$START"
+assert_eq "$ONE_PASS" "rc=3 walled=1 marks=0 launched=1" "an account read at zero headroom is succeeded in the same pass" "$ERR"
+assert_eq "$(grep '^EVENT overseer-walled' <<<"$OUT")|$(sed -n 2p <<<"$OUT")" \
+  "EVENT overseer-walled $PANE window=$WINDOW passes=1 succession=on source=account|account=1claude headroom=0 resets=2026-09-28T03:00:00Z" \
+  "the event names the account as its source and the account's own figures follow it" "$ERR"
+one_pass five_mark "$FIVE_MARK" "$START"
+assert_eq "$ONE_PASS" "rc=0 walled=0 marks=1 launched=0" "a mark above zero is reported as the mark alone" "$ERR"
 
 # The record names another pane's rows: they are not this pane's, and the
 # pane is the fallback, said as `unrecorded`.
@@ -134,6 +158,14 @@ rows_case dead_rows_mutant blank "$START" "$END_EXIT"
 WATCH_BIN="$MUTANT_SCRIPTS/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true)" "events=0" \
   "control: without the rows verdict a SessionEnd row over a blank pane is no death" "$ERR"
+
+# The zero mark left to the walled session: the pass only reports the mark.
+MARK_CTL="$(mutant_scripts mark-ctl/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mark-ctl/github"
+mutate_file "$MARK_CTL/oversee-watch" '    OV_VERDICT=walled OV_SOURCE=account' '    :'
+WATCH_BIN="$MARK_CTL/oversee-watch" one_pass zero_mark_mutant "$ZERO_MARK" "$START"
+assert_eq "$ONE_PASS" "rc=0 walled=0 marks=1 launched=0" \
+  "control: without the zero-mark wall the pass only reports the mark and succeeds nothing" "$ERR"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

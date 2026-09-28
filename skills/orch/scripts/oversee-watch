@@ -2418,7 +2418,7 @@ overseer_judge() { # PANE
 
 check_overseer() {
   local pane="${TMUX_PANE:-}" window screen prior count succession plan
-  local record record_field identity rows attempt completed
+  local record record_field identity rows attempt completed passes=""
   local ov_case row other succeed_rc below banner banner_rc
   local errf="$WORK_DIR/overseer.err"
   # Off tmux there is no overseer pane to read, and with no workflow-state
@@ -2455,6 +2455,16 @@ check_overseer() {
   record="$OVERSEER_RECORD_KEY"
 
   overseer_judge "$pane"
+  # An account the mark judgement reads at zero headroom is a wall whether or
+  # not the harness has met it yet: its next turn fails, and a walled session
+  # hands nothing over, so the succession runs from here, `source=account`.
+  # The judgement is the pass's one memoised reading, which the live arm's
+  # mark check reads too.
+  if [[ "$OV_VERDICT" == live ]] && overseer_marks_judge \
+     && [[ "$OVERSEER_MARK_KEY" == mark-reached && "$OVERSEER_MARK_KIND" == headroom \
+           && "$OVERSEER_MARK_VALUE" == 0 ]]; then
+    OV_VERDICT=walled OV_SOURCE=account
+  fi
   ov_case=""
   case "$OV_VERDICT" in
     exited) ov_case=dead ;;
@@ -2509,7 +2519,12 @@ check_overseer() {
       || die state-read-failed "" "pane=$pane" "row=$row" "value=$prior"
     count=1
     [[ -z "$prior" ]] || count=$((prior + 1))
-    if (( count < DEAD_PASSES )); then
+    # A wall the harness's own row or the account's zero states needs no
+    # second reading: it is not a screen caught between frames, and each pass
+    # it waits is a pass the fleet runs unattended.
+    passes="$DEAD_PASSES"
+    [[ "$ov_case" != walled || "$OV_SOURCE" == pane ]] || passes=1
+    if (( count < passes )); then
       lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" "$count")"
       return 1
     fi
@@ -2542,7 +2557,7 @@ check_overseer() {
     else
       lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" reported)"
     fi
-    echo "EVENT $row $pane window=$window passes=$DEAD_PASSES succession=$succession source=$OV_SOURCE$record_field"
+    echo "EVENT $row $pane window=$window passes=${passes:-$DEAD_PASSES} succession=$succession source=$OV_SOURCE$record_field"
     # The wall's own words under the line, as every lane usage-limit event
     # carries them. A rows wall carries the harness's own message, the limit
     # and its reset. A screen wall carries the banner with the screen on both
@@ -2551,6 +2566,8 @@ check_overseer() {
     # under the reasons check_lanes gives them.
     if [[ "$ov_case" == walled && "$OV_SOURCE" == rows ]]; then
       jq -r '.message // empty' <<<"$SESSION_ROW" || die limit-banner-missing "" "pane=$pane"
+    elif [[ "$ov_case" == walled && "$OV_SOURCE" == account ]]; then
+      echo "account=${OVERSEER_MARK_ACCOUNT:-unknown} headroom=0 resets=${OVERSEER_MARK_RESETS:-none}"
     elif [[ "$ov_case" == walled ]]; then
       below="$(pane_below_last_turn "$screen")"
       banner_rc=0

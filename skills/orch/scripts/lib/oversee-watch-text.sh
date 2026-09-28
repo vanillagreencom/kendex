@@ -73,12 +73,16 @@ The long pass's events, checked and reported in this order:
                              own), and stops: the successor runs a watch of
                              its own
   EVENT overseer-walled <pane> window=<window> passes=<N> succession=<on|off>
-        source=<rows|pane>
-                             the same session read `walled` on N consecutive
-                             passes: from `rows`, a StopFailure row whose
-                             error is `rate_limit`, its message under the
-                             line; or, from the `pane` fallback, read by the
-                             same judge AND its own account judged
+        source=<rows|account|pane>
+                             the same session read `walled`: from `rows`, a
+                             StopFailure row whose error is `rate_limit`, its
+                             message under the line; from `account`, a live
+                             session whose own account the mark judgement
+                             reads at zero headroom, its account and reset
+                             under the line; both on the first pass that
+                             reads them. Or, from the `pane` fallback, on N
+                             consecutive passes read by the same judge AND
+                             its own account judged
                              at or below its trigger: the harness is still
                              running and its ACCOUNT is spent. Such a session
                              takes no turn, so it answers no lane, reads no
