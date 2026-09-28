@@ -546,9 +546,9 @@ assert_eq "generation=$(recorded generation)" "generation=none" \
 
 # --- a record the start cannot write is a notice, and the pane is still judged
 # A start that cannot build or record its command leaves the record as it
-# stood and says so, on stderr and in the fleet log, and then watches the pane
-# it was started from: the pane's death and its wall are read from tmux, not
-# from the record. What the failed record costs is the line a dead-pane
+# stood and says so, on stderr and in the fleet log, and then watches the
+# session it was started from. These records name no rows file, so its death
+# and its wall are read off the pane, the named fallback. What the failed record costs is the line a dead-pane
 # relaunch replays, and only where the fleet state holds none. A refusal here
 # would leave the overseer unwatched with every lane still working, over a
 # pane whose harness the builder could not name.

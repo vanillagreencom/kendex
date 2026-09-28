@@ -434,17 +434,19 @@ Options:
                       A record naming this pane answers the line's harness
                       and account, and its model and effort as a pair where
                       it names a model (`oversee-succeed --help`).
-                      A line this start cannot build or record is the notice
-                      overseer-line-missing or overseer-unrecorded, on stderr
-                      and in the fleet log, and the watch runs on: the pane
-                      is judged from tmux, and a death relaunches from the
-                      line the fleet state already holds where its record
-                      names this pane by server and pane id, the last line
-                      a launch, a succession or a watch start recorded for
-                      it, which a session restarted by hand may not have
-                      been started with; a record naming another pane, or
-                      none, reports the death with no successor, naming
-                      that record
+                      A line this start cannot build or record is the
+                      notice overseer-line-missing or overseer-unrecorded,
+                      on stderr and in the fleet log, and the watch runs
+                      on: the session is judged from the exit status and
+                      rows file the record already holds for this pane, and
+                      from the pane, the named fallback, where it names
+                      none; a death relaunches from the line the fleet
+                      state already holds where its record names this pane
+                      by server and pane id, the last line a launch, a
+                      succession or a watch start recorded for it, which a
+                      session restarted by hand may not have been started
+                      with; a record naming another pane, or none, reports
+                      the death with no successor, naming that record
   --repeat SECS       the watch for a session: run one watch per pass with
                       the other options, sleep SECS after it exits, or
                       ORCH_WATCH_MAIL_INTERVAL where that is shorter and the

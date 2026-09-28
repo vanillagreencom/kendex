@@ -698,8 +698,10 @@ overseer_fleet_log() { # NOTICE_FILE RECORD_FILE ERR_FILE
 }
 
 # A session record the start could not write, said on stderr and in the fleet
-# log and then left behind: the watch goes on to judge the pane, which is
-# read from tmux and not from the record. The reason and its fields are the
+# log and then left behind: the watch goes on to judge the session, from the
+# exit status and rows file the record already holds for this pane where it
+# names them, and from the pane, the named fallback, where it names none
+# (overseer_pane_read). The reason and its fields are the
 # keyed line's, and the fleet log row repeats the reason and the pane so the
 # successor that reads the log at takeover sees what this watch could not
 # record; the other fields stay on stderr, since a path= is as long as the
