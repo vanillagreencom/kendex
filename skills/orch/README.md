@@ -28,7 +28,7 @@ A directive is handed over at the end of the lane's turn where the harness runs 
 
 ## How it works
 
-In a single-issue cycle, the primary agent reads the issue in its worktree and assigns implementation to a coding agent. Review agents inspect the change and return findings, and the coding agent applies the required fixes. The primary agent opens the PR and, by the merge policy, arms auto-merge where the base requires the review gate; a merge-queue base with no up-to-date rule never rebases a clean branch. In overseer mode, the overseer selects unblocked issues and launches a lane for each, and every lane runs the single-issue cycle. `oversee-watch` waits until a lane needs attention, and the overseer then answers the lane's question, relaunches a stopped lane, or runs the post-merge steps after a merge.
+In a single-issue cycle, the primary agent reads the issue in its worktree and assigns implementation to a coding agent. Review agents inspect the change and return findings, and the coding agent applies the required fixes. The primary agent opens the PR and, by the merge policy, arms auto-merge where the base requires the review gate. In overseer mode, the overseer selects unblocked issues and launches a lane for each, and every lane runs the single-issue cycle. `oversee-watch` waits until a lane needs attention, and the overseer then answers the lane's question, relaunches a stopped lane, or runs the post-merge steps after a merge.
 
 ## Settings
 
