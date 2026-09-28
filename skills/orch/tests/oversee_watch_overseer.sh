@@ -24,6 +24,10 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 # same ladder every other reader of that field uses.
 # shellcheck source=../scripts/lib/date-ladder.sh
 source "$REPO_ROOT/skills/orch/scripts/lib/date-ladder.sh"
+# OL_DEFAULT_PREFERENCE, the ladder an unset preference walks, for the mark
+# row that reads it back.
+# shellcheck source=../scripts/lib/overseer-launch.sh
+source "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
 
 PANE=%9
 WINDOW=@7
@@ -369,6 +373,19 @@ MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=500000 s
 marks_seen() { grep -c '^EVENT overseer-mark' <<<"$OUT" || true; }
 mark_stands() { printf '%s\n' "$MARK_LINE" > "$STUB_DIR/succeed.check"; }
 mark_lifts() { rm -f -- "${STUB_DIR:?}/succeed.check"; }
+
+# A fleet whose settings name no preference is told the default ladder the
+# succession will walk, not that the preference is empty. A case of its own,
+# so the mark is news.
+overseer_case mark_default idle
+state_with "$LINE"
+mark_stands
+# The watch inherits this suite's environment, so the setting is dropped from
+# it; every row that reads the preference names its own.
+unset ORCH_OVERSEER_PREFERENCE
+run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=3 -- --max-loops 1
+assert_contains "$OUT" "-- [FLAGS] at the next safe point, with ORCH_OVERSEER_PREFERENCE=$OL_DEFAULT_PREFERENCE choosing the successor lane." \
+  "an unset preference names the default ladder the succession walks" "$ERR"
 
 overseer_case mark_reported idle
 state_with "$LINE"

@@ -306,5 +306,19 @@ assert_eq "$RC|$(first_key)|$(launched claude)|$(launched codex)" \
   "control: a walk that chooses the untransferable entry refuses and launches nothing"
 CALLER_FLAGS=("$BYPASS")
 
+# The ladder's first rung: a claude seat with Fable room takes a Fable
+# successor, although another seat has Opus room. A default that starts on
+# Opus, or puts Opus ahead of Fable, moves this successor down a model.
+seat claude 10 99 99
+seat eclaude 10 99 10
+seat fclaude 10 10 10
+codex_seat codex 99
+codex_seat dcodex 99
+new_caller
+run_succeed fable unset
+assert_eq "$RC|$(launched claude)|$(launched codex)" \
+  "0|$H/.fclaude fable|none" \
+  "the default ladder opens on Fable where a seat has Fable room"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

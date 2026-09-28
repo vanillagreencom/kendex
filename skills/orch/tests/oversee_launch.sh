@@ -82,10 +82,12 @@ TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 
 # run_oversee ENV=VAL... -- ARGS... — the script under an explicit, whole
 # environment with no $TMUX, from the work directory workflow-state resolves
-# `tmp` under, or from RUN_DIR where a row sets it. Sets OUT (both streams)
-# and RC.
+# `tmp` under, or from RUN_DIR where a row sets it. ORCH_OVERSEER_PREFERENCE is
+# claude:1:high, or LAUNCH_PREF where a row sets it, `unset` exporting none.
+# Sets OUT (both streams) and RC.
 run_oversee() {
-  local env_args=()
+  local env_args=() pref=(ORCH_OVERSEER_PREFERENCE="${LAUNCH_PREF:-claude:1:high}")
+  [[ "${LAUNCH_PREF:-}" != unset ]] || pref=()
   while [[ $# -gt 0 && "$1" != -- ]]; do env_args+=("$1"); shift; done
   shift
   rm -f "${TMP_ROOT:?}"/argv.*
@@ -93,7 +95,7 @@ run_oversee() {
   OUT="$(cd "${RUN_DIR:-$TMP_ROOT/work}" && env -i HOME="$H" PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
     ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" ORCH_LANES_USAGE_TTL=0 \
-    ORCH_OVERSEER_PREFERENCE="claude:1:high" ORCH_TMUX_SESSION=fleet \
+    ${pref[@]+"${pref[@]}"} ORCH_TMUX_SESSION=fleet \
     ${env_args[@]+"${env_args[@]}"} "${OVERSEE_BIN:-$OVERSEE}" "$@" 2>&1 </dev/null)" || RC=$?
 }
 FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
@@ -273,6 +275,14 @@ run_oversee ORCH_QUESTION_TOOL=overseer -- launch --wait-secs 20
 assert_eq "$RC|$(recorded_argv)" \
   "0|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$BRIEF;" \
   "ORCH_QUESTION_TOOL=overseer launches the overseer with its question tool"
+tm kill-window -t "$(recorded window)"
+
+# A fleet whose settings name no preference: the first launch walks the default
+# ladder and opens on its Fable rung, a model name the tier ladder knows.
+LAUNCH_PREF=unset run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(recorded model)|$(recorded_argv)" \
+  "0|fable|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$QUESTION_OFF;$BRIEF;" \
+  "an unset preference launches the first overseer on the default ladder's Fable rung"
 tm kill-window -t "$(recorded window)"
 
 # The writer's control: a record write that leaves the launch identity out,
