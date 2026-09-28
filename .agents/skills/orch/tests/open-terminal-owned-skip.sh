@@ -511,9 +511,9 @@ assert_not_contains "$OUT" "open-terminal: lane-woken" "a failed delivery is not
 # bound. open-terminal's validation gate names both settings' readers, and all
 # of them are reached only from open_tmux.
 # So a malformed ORCH_TMUX_VERIFY_SECS must not abort one, in the shape
-# oversee.md hands a wake: from inside tmux, with the lane argument and its
-# launch flags kept, a lane launch naming no model and no effort being refused
-# before the timeout is ever read.
+# oversee-lanes.md hands a wake: from inside tmux, with the lane argument and
+# its launch flags kept, a lane launch naming no model and no effort being
+# refused before the timeout is ever read.
 WAKE_LANE_BIN="$TMP_ROOT/wake-lane-bin"; mkdir -p "$WAKE_LANE_BIN"
 cat > "$WAKE_LANE_BIN/lanes" <<EOF
 #!/usr/bin/env bash

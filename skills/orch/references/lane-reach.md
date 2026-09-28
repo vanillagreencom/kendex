@@ -1,6 +1,6 @@
 # Lane reach
 
-Load from [oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane) when a wake is refused or a lane shows a harness dialog, and from [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) when a lane closes. Reaching a lane at the pane is the Pane paste paragraph there.
+Load from [oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane) when a wake is refused or a lane shows a harness dialog, and from [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) when a lane closes. Reaching a lane at the pane is the Pane paste paragraph in oversee-lanes.md.
 
 ## Wake refusals
 
