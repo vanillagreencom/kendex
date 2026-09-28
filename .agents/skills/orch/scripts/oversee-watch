@@ -630,9 +630,12 @@ PARKED_KEYS=()
 # never a tab: a tab is IFS whitespace, so `read` folds two of them into one
 # and a lane with no window would take `local` as its window name.
 FLEET_CARRIED=""
+# The state text the last read parsed, which the heartbeat's owed items judge.
+FLEET_STATE=""
 fleet_merge() { # [quiet]
   local state rows dropped line item window where root kept carried parked
   state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
+  FLEET_STATE="$state"
   rows="$(jq -r "$LANE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$rows" "option=--state" "path=$STATE_FILE"
   PREPARE_ROWS="$(jq -r "$PREPARE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$PREPARE_ROWS" "option=--state" "path=$STATE_FILE"
   parked="$(jq -r "$PARKED_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$parked" "option=--state" "path=$STATE_FILE"
@@ -958,6 +961,11 @@ if [[ -n "$SINCE" ]]; then
   else
     ow_message triage-disabled "setting=LINEAR_TEAM" "value=${LINEAR_TEAM:-}" >&2
   fi
+fi
+# The heartbeat's owed items read the team's tracker wherever a fleet state
+# names a queue to compare, --since or not, and fail closed as triage does.
+if [[ -n "$STATE_FILE" && -n "${LINEAR_TEAM:-}" && ! -x "$TRACKER" ]]; then
+  die helper-missing "" "path=$TRACKER" "setting=OVERSEE_WATCH_TRACKER"
 fi
 
 check_item_set
@@ -3060,12 +3068,82 @@ check_report() {
   PASS_EVENT=1
 }
 
+# The work the fleet owes and its launch queue lacks, one `owed` line per item,
+# as OWED_LINES. The tracker is the membership and launch_queue only the
+# order: with LINEAR_TEAM, every team item In Progress or In Review, one live
+# read; with none, every open pull request in the item repository, the first
+# --repo, whose head is a GitHub item's branch, issue-N, which ITEM_OPEN holds
+# from the heartbeat's own listing. An item is owed nothing while a record
+# holds it (running or preparing, LANE_RUNNING_JQ's `held`), while it is
+# parked, since the merged check carries a parked lane's pull request, or once
+# its record carries the `cycle` oversee-cycle writes at its merge. The verdict
+# is `dated` where every account of the record's harness reads walled in the
+# roster, until the earliest reset among them; `unjudged` where the roster was
+# not read; `queue` otherwise, an item with no record or no harness included,
+# since its launch picks both. Without --state there is no queue to compare.
+# The queue and the records are the turn's own fleet_merge read, FLEET_STATE,
+# so the heartbeat judges the fleet the pass carried and reads no file again.
+OWED_LINES=""
+owed_read() { # ITEM_OPEN
+  OWED_LINES=""
+  [[ -n "$STATE_FILE" ]] || return 0
+  local errf="$WORK_DIR/owed.err" out items roster=null rc=0
+  if [[ -n "${LINEAR_TEAM:-}" ]]; then
+    out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --state "In Progress,In Review" --max --format=safe 2>"$errf")" || rc=$?
+    [[ "$rc" -eq 0 ]] \
+      || die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "exit=$rc"
+    items="$(jq -c '
+      if type != "array" then error("tracker-type expected=array actual=\(type)") else . end
+      | map(
+          if ((.id? | type) == "string" and (.id | test("^[A-Za-z0-9._-]+$"))) then .
+          else error("tracker-field field=id value=\(.id | tojson)") end
+          | {id, priority: (.priority // "-"),
+             state: ({"In Progress": "in-progress", "In Review": "in-review"}[.state? | strings]
+               // error("tracker-field field=state value=\(.state | tojson)"))})' <<<"$out" 2>"$errf")" \
+      || die tracker-list-invalid "$(cat "$errf")" "team=$LINEAR_TEAM"
+  else
+    items="$(awk -F'\t' '$2 ~ /^issue-[0-9]+$/ { print $2 }' <<<"$1" \
+      | jq -Rnc '[inputs | {id: ., state: "open-pr", priority: "-"}]' 2>"$errf")" \
+      || die pr-list-invalid "$(cat "$errf")" "repo=${REPOS[0]}"
+  fi
+  if [[ "$ACCOUNT_ROSTER_RC" -eq 0 ]]; then
+    roster="$(jq -Rnc '[inputs | select(length > 0) | split("\t")
+      | {harness: (.[0] | split("|")[0]), verdict: (.[1] | split("|")[1]), resets: (.[1] | split("|")[2])}]' \
+      <<<"$ACCOUNT_ROSTER" 2>"$errf")" || die owed-roster-invalid "$(cat "$errf")"
+  fi
+  OWED_LINES="$(jq -r --argjson items "$items" --argjson roster "$roster" "$LANE_RUNNING_JQ"'
+    def token($field): if type == "string" and test("^[A-Za-z0-9._-]+$") then .
+      else error("lane-field field=\($field) value=\(tojson)") end;
+    if type != "object" then error("state-type expected=object actual=\(type)") else . end
+    | (.launch_queue // []) as $queue
+    | if ($queue | type) != "array" or any($queue[]; type != "string")
+      then error("state-field field=launch_queue value=\($queue | tojson)") else . end
+    | (.lanes // []) as $lanes
+    | $items | unique_by(.id)[]
+    | . as $item
+    | select(any($queue[]; . == $item.id) | not)
+    | ([$lanes[] | objects | select(.item == $item.id)] | last) as $rec
+    | select($rec == null or ((($rec | held) or $rec.status == "parked" or $rec.cycle != null) | not))
+    | (if $rec == null then "none" else ($rec.status | token("status")) end) as $lane
+    | ($rec.harness // null | if . == null then . else token("harness") end) as $harness
+    | "owed \($item.id) state=\($item.state) priority=\($item.priority) lane=\($lane) "
+      + (if $harness == null then "verdict=queue"
+         elif $roster == null then "verdict=unjudged harness=\($harness)"
+         else [$roster[] | select(.harness == $harness)] as $accounts
+           | if ($accounts | length) > 0 and all($accounts[]; .verdict == "walled")
+             then "verdict=dated harness=\($harness) until=\([$accounts[].resets | select(. != "-")] | min // "-")"
+             else "verdict=queue" end
+         end)' <<<"$FLEET_STATE" 2>"$errf")" \
+    || die state-invalid "$(cat "$errf")" "option=--state" "path=$STATE_FILE"
+}
+
 # Every --repo's open PRs, each line prefixed with its repo as the reducer's
 # are, and all of them read before the event line goes out: a repo that
 # cannot be listed is a failed pass, not a heartbeat missing a repo. The
-# account roster follows, as the last long pass read it.
+# account roster follows, as the last long pass read it, then the owed items,
+# read before the event line for the same reason.
 heartbeat() {
-  local errf="$WORK_DIR/open.err" repo open open_all="" failing baseline="" file
+  local errf="$WORK_DIR/open.err" repo open open_all="" item_open="" failing baseline="" file
   github_ready
   # The standing lane failures, each reported once and quiet since: a quiet
   # run still names every channel that stays broken. The long pass's are in
@@ -3076,8 +3154,10 @@ heartbeat() {
     open="$(gh pr list --repo "$repo" --state open --limit 50 --json number,headRefName,title \
       --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>"$errf")" \
       || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=open"
+    [[ "$repo" != "${REPOS[0]}" ]] || item_open="$open"
     [[ -z "$open" ]] || open_all+="$(pw_prefix "$repo" "$open")"$'\n'
   done
+  owed_read "$item_open"
   # The current fleet's alone: a row clears on the item's next good read,
   # and an item that left the fleet is read no more.
   if ! failing="$(ow_items="$(printf '%s\n' overseer ${ITEMS[@]+"${ITEMS[@]}"})" awk -F'\t' '
@@ -3095,6 +3175,7 @@ heartbeat() {
     echo "account-roster accounts=$(grep -c . <<<"$ACCOUNT_ROSTER" || true)"
     [[ -z "$ACCOUNT_ROSTER" ]] || awk -F'\t' '{ print "account " $3 }' <<<"$ACCOUNT_ROSTER"
   fi
+  [[ -z "$OWED_LINES" ]] || printf '%s\n' "$OWED_LINES"
   pr_watch_context
   exit 0
 }

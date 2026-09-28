@@ -328,11 +328,19 @@ EOF
 
 # Fake live tracker list. tracker.out is the safe-format issue array (default
 # empty), tracker.err is stderr, and tracker.rc is the exit status. Every argv
-# reaches tracker.args so cases can pin the live-list contract.
+# reaches tracker.args so cases can pin the live-list contract. A `--state`
+# argument filters an array to the comma-separated state names it lists, as
+# Linear's own list does, so a case's other items are the server's to drop; any
+# other reply passes as it stands.
 cat > "$TMP_ROOT/bin/linear-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 printf '%s\n' "$*" > "$STUB_DIR/tracker.args"
+states=""
+args=("$@")
+for i in "${!args[@]}"; do
+  [[ "${args[$i]}" != --state ]] || states="${args[$((i + 1))]:-}"
+done
 if [[ -f "$STUB_DIR/tracker.want-created-since" ]]; then
   want="$(cat "$STUB_DIR/tracker.want-created-since")"
   [[ " $* " == *" --created-since ${want}d "* ]] || {
@@ -343,7 +351,10 @@ fi
 [[ -f "$STUB_DIR/tracker.err" ]] && cat "$STUB_DIR/tracker.err" >&2
 rc=0; [[ -f "$STUB_DIR/tracker.rc" ]] && rc="$(cat "$STUB_DIR/tracker.rc")"
 [[ "$rc" -eq 0 ]] || exit "$rc"
-if [[ -f "$STUB_DIR/tracker.out" ]]; then
+if [[ -f "$STUB_DIR/tracker.out" && -n "$states" ]]; then
+  jq -c --arg states "$states" 'if type == "array" then [.[] | select(.state as $s | $states | split(",") | index($s))] else . end' \
+    "$STUB_DIR/tracker.out" || exit 2
+elif [[ -f "$STUB_DIR/tracker.out" ]]; then
   cat "$STUB_DIR/tracker.out"
 else
   printf '[]\n'

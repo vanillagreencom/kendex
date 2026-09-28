@@ -256,7 +256,20 @@ The long pass's events, checked and reported in this order:
                              account, the fields the account event carries up
                              to `change=`, from the last long pass's reading.
                              `account-roster unread` replaces them when that
-                             reading failed
+                             reading failed. Last, with --state, one line
+                             `owed <item> state=<in-progress|in-review|open-pr>
+                             priority=<N|-> lane=<none|status> verdict=<queue|
+                             dated harness=<h> until=<reset|->|unjudged
+                             harness=<h>>` per item the tracker holds as work
+                             the fleet owes that launch_queue lacks: with
+                             LINEAR_TEAM, the team's In Progress and In Review
+                             items, one live read; with none, the first
+                             --repo's open PRs on an issue-N branch. A record
+                             running, preparing or parked, or carrying its
+                             merge's `cycle`, owes nothing. `dated` is every
+                             roster account of the record's harness walled,
+                             until the earliest reset; `unjudged` is a roster
+                             that was not read
 
 The mail pass's events, in this order, lane by lane and the overseer's own
 mailbox last:
@@ -562,10 +575,12 @@ Inside tmux, an --item with no LANE_WINDOW skips the pane checks with one
 stderr note; outside tmux there is no pane to read and nothing is noted.
 
 Environment:
-  LINEAR_TEAM                 team the triage check reads under --since, from
-                              kendex.settings.toml [env] unless the environment
-                              sets it. Empty or absent skips triage, said once;
-                              with a team a missing tracker CLI or
+  LINEAR_TEAM                 team the triage check reads under --since and
+                              the heartbeat's owed items read with --state,
+                              from kendex.settings.toml [env] unless the
+                              environment sets it. Empty or absent skips
+                              triage, said once, and reads the owed items from
+                              open PRs; with a team a missing tracker CLI or
                               workflow-state exits 2 rather than dropping it
   ORCH_STATE_DIR              workflow-state directory; relative paths join
                               the project root; absolute paths stay unchanged
@@ -693,7 +708,7 @@ ow_message() { # REASON FIELD=VALUE...
     repeat-invalid) text='The repeat delay must be a non-negative integer.' ;;
     state-required) text='The option reads its lanes from the oversee workflow state. Add --state PATH.' ;;
     state-unreadable) text='The oversee state file could not be read. The watch stops rather than carry a partial fleet.' ;;
-    state-invalid) text='The oversee state file is not workflow-state JSON with a lanes array of records naming their item. The watch stops rather than carry a partial fleet.' ;;
+    state-invalid) text='The oversee state file is not workflow-state JSON with a lanes array of records naming their item, each status and harness one word, and a launch_queue of item keys. The watch stops rather than carry a partial fleet.' ;;
     window-absent) text='tmux does not list the window. Passes carry it until one reports it gone; later passes skip it until tmux lists it again.' ;;
     sleep-failed) text='The repeat delay could not be slept. Repeat mode stops rather than run passes back to back.' ;;
     fleet-read) text='The fleet this watch carries, as the last state read gave it; printed again when a re-read changes it. dropped counts every record whose status is not running, which the watch does not carry as a lane, and parked the records among those it carries for the merged check alone.' ;;
@@ -718,6 +733,7 @@ ow_message() { # REASON FIELD=VALUE...
     time-failed) text='The current UTC time could not be read.' ;;
     tracker-list-failed) text='The tracker list command failed.' ;;
     tracker-list-invalid) text='The tracker list output could not be parsed.' ;;
+    owed-roster-invalid) text='The account roster this run read could not be put to the owed items, so the heartbeat names none.' ;;
     handoff-read-failed) text='The handoff record could not be read.' ;;
     lane-close-failed) text='lane-close failed before it completed the close. The next run reports the exit again and retries.' ;;
     parked-merge-unmatched) text='A pull request merged on the parked item'"'"'s branch name, reported above as merged, is not the one its record names, so the parked sandbox stays stopped: recorded= is the record'"'"'s <repo>#<number> in lower case and seen= the merged keys this pass found. The lane closes when the recorded pull request merges in that repository.' ;;
