@@ -2,8 +2,9 @@
 //! hook delivery decision, and the committed file is held to that rendering.
 //! Every cell is `hook::delivery` for one hook on one harness at project
 //! scope, the pi-hooks carrier registered the way a Pi install enforces
-//! hooks. A harness the hook's own `harnesses:` line leaves out, and any
-//! refusal other than the by-name-only one, shows the hook's
+//! hooks. A harness the hook's own `harnesses:` line leaves out, a harness
+//! the `harnesses:` line of a hook it `requires:` leaves out, and any
+//! refusal other than the by-name-only one, show the hook's
 //! `Not run on <id>: <reason>.` sentence instead, and a missing or
 //! unterminated sentence fails the rendering naming the hook and harness.
 //!
@@ -109,10 +110,27 @@ fn reason(description: &str, hook: &str, harness: HarnessId) -> Result<String, S
     }
 }
 
+/// Whether a catalog hook this one `requires:` leaves `harness` out of its
+/// own `harnesses:` line. The dependency walk (`engine/deps.rs`) withholds the
+/// requirer there, so its cell is its own reason too. Only the hooks it names
+/// directly are read, not what those require in turn.
+fn companion_absent(hook: &HookSource, catalog: &[HookSpec], harness: HarnessId) -> bool {
+    hook.requires.iter().any(|name| {
+        catalog
+            .iter()
+            .any(|spec| spec.name == *name && !spec.applies_to(harness))
+    })
+}
+
 /// One cell: core's delivery answer, or the hook's own reason where the hook
-/// does not run there.
-fn cell(world: &World, spec: &HookSpec, harness: HarnessId) -> Result<String, String> {
-    if spec.applies_to(harness) {
+/// does not run there, `withheld` being [`companion_absent`]'s answer.
+fn cell(
+    world: &World,
+    spec: &HookSpec,
+    withheld: bool,
+    harness: HarnessId,
+) -> Result<String, String> {
+    if spec.applies_to(harness) && !withheld {
         match delivery(&world.env, &world.scope, harness, spec) {
             Delivery::Registered | Delivery::InAgentFile => return Ok("enforced".to_owned()),
             Delivery::Advisory => return Ok("advisory".to_owned()),
@@ -147,6 +165,7 @@ fn render(world: &World, hooks: &[HookSource]) -> Result<String, Vec<String>> {
         .chain(HarnessId::ALL.into_iter().filter(advisory))
         .collect();
 
+    let catalog: Vec<HookSpec> = hooks.iter().cloned().map(HookSpec::from).collect();
     let mut findings = Vec::new();
     let mut list = String::new();
     let mut rows = String::new();
@@ -159,7 +178,8 @@ fn render(world: &World, hooks: &[HookSource]) -> Result<String, Vec<String>> {
         let spec = HookSpec::from(hook.clone());
         let mut row = format!("| `{}` |", spec.name);
         for harness in &columns {
-            match cell(world, &spec, *harness) {
+            let withheld = companion_absent(hook, &catalog, *harness);
+            match cell(world, &spec, withheld, *harness) {
                 Ok(text) => row.push_str(&format!(" {text} |")),
                 Err(finding) => findings.push(finding),
             }
@@ -257,6 +277,13 @@ fn each_planted_defect_is_refused_on_its_keyed_line() {
     let copilot_reason = "Not run on copilot: its subagentStop names the agent type `task`, the tool rather than the agent, and carries no `stop_hook_active`. ";
     let antigravity_period = "carries no `stop_hook_active`.";
     for (hook, planted, key) in [
+        // Its own harnesses line names copilot: only the companion rule reads
+        // its copilot reason.
+        (
+            "skill-load-record",
+            ("Not run on copilot: ", ""),
+            "hooks-readme: missing-reason=skill-load-record:copilot",
+        ),
         (
             "reviewer-stop-check",
             (copilot_reason, ""),

@@ -656,8 +656,8 @@ a mixed install whose Copilot ran its own copy alone passes|mixed-hook|pass|and 
 the recorded payload carries the command|helper:payload|pass|its keys: toolName,toolArgs
 a hook and a tool call in the project root pass|helper:cwd|pass|both run in the project root
 the launch environment reaching both passes|helper:env|pass|reaches a hook and a tool call
-a subagent refused before its own load and passed after it passes|hook:skill-load-check|pass|its reply relaying 'skill-load-check: unloaded=linear'
-the calls after each agent's own load passing passes the carrier|hook:skill-load-record|pass|which only a load this hook recorded"
+skill-load-check is excluded with its own cell's reason|hook:skill-load-check|excluded|installs no Copilot render: the Copilot route this describes is built but not installed
+and so is its carrier, with its own|hook:skill-load-record|excluded|installs no Copilot render: skill-load-check, the hook it requires, is not installed there"
 dup_rows="$(awk '$1 == "copilot" { print $2 }' "$TMP/pkg-out" | sort | uniq -d)"
 if [ -z "$dup_rows" ] && [ "$(awk '$1 == "copilot" && $2 ~ /:/' "$TMP/pkg-out" | wc -l)" -gt 0 ]; then
   ok "every package row prints once"
@@ -704,18 +704,6 @@ package_run "$SMOKE" STANDIN_SETTINGS=exit
 package_case "a skill listing that exits non-zero leaves the mixed install unanswerable" mixed-hook unanswerable "copilot skill list exited 1: Error: settings are invalid"
 package_run "$SMOKE" STANDIN_MIXED=0
 package_case "a Copilot that ran no copy fails the mixed install" mixed-hook fail "ran no copy of smoke-tool"
-package_run "$SMOKE" STANDIN_HELD= STANDIN_LOAD_SAYS=NOT-REFUSED
-package_case "a subagent call the parent's load let through fails" hook:skill-load-check fail "the parent's load passed the subagent"
-package_run "$SMOKE" STANDIN_LOAD_SAYS=NOT-REFUSED
-package_case "a refusal the reply does not relay is unanswerable" hook:skill-load-check unanswerable "whether it saw the correction is unknown"
-package_run "$SMOKE" STANDIN_HELD="parent-after child-before"
-package_table "a parent call held after its load fails the judge|hook:skill-load-check|fail|the parent's guarded call after its load
-and the carrier|hook:skill-load-record|fail|the load was not recorded for that agent"
-package_run "$SMOKE" STANDIN_HELD="child-before child-after"
-package_case "a subagent call held after its own load fails" hook:skill-load-check fail "the subagent's guarded call after its own load"
-package_run "$SMOKE" STANDIN_LOAD=nologin
-package_table "a session that cannot log in is pending on its proof|hook:skill-load-check|pending|before any guarded call: Error: Authentication token found
-and so is the carrier's row|hook:skill-load-record|pending|proof: tools/harness-smoke --only copilot"
 package_run "$SMOKE" STANDIN_HOOKS=0
 package_table "tool calls with no hook run fail every hook row|hook:block-repo-copy|fail|ran no repository hook
 and the helper rows with them|helper:payload|fail|ran no repository hook"
@@ -798,10 +786,34 @@ package_case "control: a mixed-hook row that never counts Copilot's own copy pas
 plant "$STAND_SMOKE" 's/^  elif grep -qFx -- sub\/AGENTS.md <<<"\$root_sources"; then$/  elif false; then/'
 package_run "$STAND_SMOKE" STANDIN_NESTED_ROOT=1
 package_case "control: a nested reading that ignores the root listing differs where the root lists it" instruction:nested differs "for the working directory only"
+
+# The skill-load session runs only where the copilot cells of skill-load-check
+# and skill-load-record read enforced, which the committed table does not: the
+# stand-in table reads them enforced, so the session's verdicts are measured
+# here, before a passing live row lets the committed table say so.
+cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
+plant "$STAND_TABLE" '/^| `skill-load-check` |/s/^\(|[^|]*|[^|]*|[^|]*|[^|]*|[^|]*| \)[^|]*|/\1enforced |/
+/^| `skill-load-record` |/s/^\(|[^|]*|[^|]*|[^|]*|[^|]*|[^|]*| \)[^|]*|/\1enforced |/'
+package_run "$STAND_SMOKE"
+package_table "a subagent refused before its own load and passed after it passes|hook:skill-load-check|pass|its reply relaying 'skill-load-check: unloaded=linear'
+the calls after each agent's own load passing passes the carrier|hook:skill-load-record|pass|which only a load this hook recorded"
+package_run "$STAND_SMOKE" STANDIN_HELD= STANDIN_LOAD_SAYS=NOT-REFUSED
+package_case "a subagent call the parent's load let through fails" hook:skill-load-check fail "the parent's load passed the subagent"
+package_run "$STAND_SMOKE" STANDIN_LOAD_SAYS=NOT-REFUSED
+package_case "a refusal the reply does not relay is unanswerable" hook:skill-load-check unanswerable "whether it saw the correction is unknown"
+package_run "$STAND_SMOKE" STANDIN_HELD="parent-after child-before"
+package_table "a parent call held after its load fails the judge|hook:skill-load-check|fail|the parent's guarded call after its load
+and the carrier|hook:skill-load-record|fail|the load was not recorded for that agent"
+package_run "$STAND_SMOKE" STANDIN_HELD="child-before child-after"
+package_case "a subagent call held after its own load fails" hook:skill-load-check fail "the subagent's guarded call after its own load"
+package_run "$STAND_SMOKE" STANDIN_LOAD=nologin
+package_table "a session that cannot log in is pending on its proof|hook:skill-load-check|pending|before any guarded call: Error: Authentication token found
+and so is the carrier's row|hook:skill-load-record|pending|proof: tools/harness-smoke --only copilot"
 plant "$STAND_SMOKE" 's/^  ! grep -qF -- "\$PKG_SKILL_LOAD_REFUSAL" <<<"\$OUT" || relayed=1$/  relayed=1/'
 package_run "$STAND_SMOKE" STANDIN_LOAD_SAYS=NOT-REFUSED
 package_case "control: a relay check that never reads the reply passes a refusal nobody saw" hook:skill-load-check pass "its reply relaying"
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
+cp "$STAND_TABLE.intact" "$STAND_TABLE"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -78,8 +78,9 @@
 # or `kendex verify` refused it, 3 when nothing failed but a row was
 # unanswerable or pending, so a harness that died on the render never reads
 # as a clean run. Model turns: eight on claude, three on codex, two on
-# antigravity, five on pi, one on gemini, seven on copilot, two on cursor when
-# logged in.
+# antigravity, five on pi, one on gemini, six on copilot (seven where the
+# skill-load-check copilot cell of hooks/README.md reads enforced), two on
+# cursor when logged in.
 #
 # The report is the row table: one aligned line per row as it is decided, then
 # the same rows as a markdown table under `| harness | row | result |
@@ -1427,9 +1428,9 @@ antigravity_rows() {
 # that hook, for the reason the copilot cell of hooks/README.md gives). The
 # skill, instruction and skill-directory rows need no model turn and answer
 # wherever copilot is on PATH. The agent, hook, helper, duplicate
-# and subagent rows need a login and spend five model turns: the agent listing,
-# one session of tool calls, the skill-load session, the duplicate count and
-# the subagent.
+# and subagent rows need a login and spend four model turns: the agent listing,
+# one session of tool calls, the duplicate count and the subagent, and a fifth,
+# the skill-load session, where skill-load-check's copilot cell reads enforced.
 # `agent:effort` reads skipped: nothing here reads the effort a subagent runs
 # at.
 #
@@ -1899,6 +1900,8 @@ pkg_hook_session() {
 # refusal counts only where the reply relays the refusal's keyed first line,
 # which only the hook prints. A session that made no guarded call and exited
 # non-zero, a Copilot that cannot log in among them, is pending on its proof.
+# The session runs only where skill-load-check's copilot cell reads enforced;
+# elsewhere each row is `excluded` with its own cell's reason, from pkg_fixed.
 PKG_SKILL_LOAD_HOOKS='skill-load-check skill-load-record'
 PKG_SKILL_LOAD_REFUSAL='skill-load-check: unloaded=linear'
 pkg_skill_load_step() { # STEP VAR — sets VAR to ran, held or absent

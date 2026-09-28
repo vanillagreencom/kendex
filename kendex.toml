@@ -65,7 +65,6 @@ hooks = [
   "task-completed-check",
   "doc-drift-check",
   "skill-load-check",
-  "skill-load-record",
   "reviewer-read-only",
   "reviewer-stop-check",
   "lane-mail-check",
