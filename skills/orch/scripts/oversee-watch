@@ -2384,6 +2384,20 @@ overseer_pane_read() { # PANE
     cause=unreadable
     if session_rows_verdict "$rows"; then cause="$SESSION_ROWS_VERDICT"; fi
   fi
+  # A SessionEnd settles the session only over the bare shell its harness's
+  # exit leaves, the fact the recorded-exit rung reads: over a live harness it
+  # says nothing about the session running now.
+  if [[ "$cause" == ended ]]; then
+    cause=live
+    if is_bare_shell "$cmd"; then
+      pane_has_child "$pid" || true
+      case "$LANE_PROBE_RC" in
+        1) cause=ended ;;
+        0) ;;
+        *) note_probe_unusable "$pane" ;;
+      esac
+    fi
+  fi
   case "$cause" in
     ended) OV_STATE=exited; OV_SOURCE=rows; return 0 ;;
     walled) OV_STATE=walled; OV_SOURCE=rows; return 0 ;;

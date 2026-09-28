@@ -414,6 +414,25 @@ for row in \
   assert_line "${!which}" "$re" "$label"
 done
 
+echo "=== a launched overseer's pane names no harness; its record names its account ==="
+# Every launched overseer runs under overseer-run, whose bash is the pane's
+# foreground command, so the pane names no harness, and where both account
+# variables are set that shape names no account. The launch record names
+# both, and the caller's row stands on it.
+printf '%s %%48 bash\n' "$LIVE_PID" >> "$PANES"
+"$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer "$(jq -nc --arg s "$LIVE_PID" --arg a "$H/.claude" \
+  '{runtime: "tmux", server: $s, pane: "%48", window: "@9", harness: "claude", account: $a, home: $a}')" >/dev/null
+launched_caller() { # [LANES]
+  ( export CODEX_HOME="$H/.codex"
+    CTX_LANES="${1:-$LANES}" CTX_CONFIG_DIR="$H/.eclaude" CTX_TMUX_PANE=%48 CTX_WINDOW_NAME=overseer run_ctx --json ) |
+    jq -r '[.[] | select(.caller == true) | "\(.pane) \(.config_dir)"] | join(",")'
+}
+assert_eq "$(launched_caller)" "%48 $H/.claude" "a launched overseer under overseer-run keeps its caller row, on its recorded account"
+LAUNCHED_CTRL="$(mutant_scripts launched-ctrl lanes)" || exit 1
+mutate_file "$LAUNCHED_CTRL/lanes" '				DEP_ERR=/dev/null ol_caller_known "${caller_key%% *}" "$TMUX_PANE" "$PWD" || true' '				:'
+assert_eq "$(launched_caller "$LAUNCHED_CTRL/lanes")" "%48 null" \
+  "control: a caller read off the pane's command alone names no account for the launched overseer"
+
 echo "=== an empty fleet says so; an unreadable store refuses ==="
 rm -f "$STATE"/claims/*.claim
 EMPTY="$(run_ctx)"

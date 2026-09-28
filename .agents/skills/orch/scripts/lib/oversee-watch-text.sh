@@ -52,10 +52,10 @@ The long pass's events, checked and reported in this order:
                              it: `record`, the exit status `overseer-run`
                              wrote into the fleet state's overseer.exit once
                              the launch line returned, over a bare shell with
-                             nothing under it; `rows`, a SessionEnd
-                             row its harness wrote to
-                             the file the fleet state's overseer.session_rows
-                             names; `process`, a pane whose process is a bare
+                             nothing under it; `rows`, a SessionEnd row its
+                             harness wrote to the file the fleet state's
+                             overseer.session_rows names, over that same bare
+                             shell; `process`, a pane whose process is a bare
                              shell with nothing under it; `pane`, the named
                              fallback where no row can judge, the pane
                              captured and read by the shared judge, with an

@@ -104,7 +104,8 @@ while IFS='|' read -r name pane rows expected_event expected_launch expected_cap
     "event=$expected_event launched=$expected_launch captured=$expected_captured note=$expected_note" \
     "$name" "$ERR"
 done <<ROWS
-dead_rows|blank|start end|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=rows|--dead-pane|no|none
+dead_rows|exited|start end|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=rows|--dead-pane|no|none
+end_over_live|blank|start end|none||no|none
 wall_rows|blank|start wall|EVENT overseer-walled $PANE window=$WINDOW passes=1 succession=on source=rows|--walled-pane|no|none
 clear_is_live|blank|start clear|none||no|none
 lifted_wall|blank|start wall stop|none||no|none
@@ -179,6 +180,23 @@ assert_eq "$EXIT_CASE" "event=none launched=0" \
 exit_case record_no_exit blank
 assert_eq "$EXIT_CASE" "event=none launched=0" "with no status the rows judge, and they say live" "$ERR"
 
+# The mail pass memoises a rows wall's account judgement on its row, as it
+# does a screen wall's on its banner: one unchanged StopFailure row the
+# account refutes, over three mail passes and one long pass in a run whose
+# next long pass is an hour away, is judged once by the mail passes and once
+# by the long pass.
+rows_wall_judged() { # [WATCH_BIN via env]
+  rows_case "$1" blank "$START" "$FAILURE"
+  rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail/KEN-5"
+  mkdir -p "$CASE_REPO_ROOT/tmp/lane-mail/KEN-5"
+  run TMUX_PANE="$PANE" ORCH_WATCH_MAIL_INTERVAL=1 NOTE_AT=3 \
+    OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-note-at.sh" REAL_LANE_MAIL="$REAL_LANE_MAIL" \
+    -- --max-loops 2 --interval 3600 --item KEN-5
+  JUDGED="$(succeed_calls --check-marks)"
+}
+rows_wall_judged rows_wall_memo
+assert_eq "judged=$JUDGED" "judged=2" "a standing rows wall is judged once by the mail passes and once by the long pass" "$ERR"
+
 # The record names another pane's rows: they are not this pane's, and the
 # pane is the fallback, said as `unrecorded`.
 rows_case other_session blank "$START" "$END_EXIT"
@@ -189,15 +207,25 @@ assert_contains "$(cat -- "$ERR")" "oversee-watch: overseer-fallback pane=$PANE 
   "another session's rows file is no reading of this pane" "$ERR"
 
 # --- control ----------------------------------------------------------------
-# The rows verdict ignored: the SessionEnd row then settles nothing, the blank
-# pane reads live, and the death goes unreported.
+# The rows verdict ignored: the SessionEnd row then settles nothing, and the
+# death is the pane fallback's.
 MUTANT_SCRIPTS="$(mutant_scripts mutant/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mutant/github"
 mutate_file "$MUTANT_SCRIPTS/oversee-watch" '    ended) OV_STATE=exited; OV_SOURCE=rows; return 0 ;;' '    ended) ;;'
-rows_case dead_rows_mutant blank "$START" "$END_EXIT"
+rows_case dead_rows_mutant exited "$START" "$END_EXIT"
 WATCH_BIN="$MUTANT_SCRIPTS/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
-assert_eq "events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true)" "events=0" \
-  "control: without the rows verdict a SessionEnd row over a blank pane is no death" "$ERR"
+assert_eq "$(grep '^EVENT overseer-dead' <<<"$OUT" || echo none)" \
+  "EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane" \
+  "control: without the rows verdict the SessionEnd row settles nothing and the pane answers" "$ERR"
+# The SessionEnd taken over a live harness: another session's end in this
+# pane succeeds the working overseer.
+END_CTL="$(mutant_scripts end-ctl/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/end-ctl/github"
+mutate_file "$END_CTL/oversee-watch" '    cause=live' '    :'
+rows_case end_over_live_mutant blank "$START" "$END_EXIT"
+WATCH_BIN="$END_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "launched=$(succeed_calls --dead-pane)" "launched=1" \
+  "control: a SessionEnd taken over a live harness succeeds the working overseer" "$ERR"
 
 # The recorded exit ignored: the bare shell reads dead from its process.
 EXIT_CTL="$(mutant_scripts exit-ctl/orch oversee-watch)" || exit 1
@@ -224,6 +252,14 @@ rows_case wall_after_reset_mutant blank "$START" "$FAILURE"
 WATCH_BIN="$LIFT_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "launched=$(succeed_calls --walled-pane)" "launched=1" \
   "control: without the account's refutation the turn after the reset is succeeded" "$ERR"
+
+# The rows wall's memo key dropped: every mail pass judges the account again.
+MEMO_CTL="$(mutant_scripts memo-ctl/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/memo-ctl/github"
+mutate_file "$MEMO_CTL/oversee-watch" '    if [[ "$OV_SOURCE" == rows ]]; then banner="$SESSION_ROW"' \
+  '    if [[ "$OV_SOURCE" == rows ]]; then banner="$RANDOM"'
+WATCH_BIN="$MEMO_CTL/oversee-watch" rows_wall_judged rows_wall_memo_mutant
+assert_eq "more=$(( JUDGED > 2 ))" "more=1" "control: without the rows wall's memo key each mail pass judges again" "$ERR"
 
 # The zero mark left to the walled session: the pass only reports the mark.
 MARK_CTL="$(mutant_scripts mark-ctl/orch oversee-watch)" || exit 1

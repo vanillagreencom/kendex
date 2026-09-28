@@ -28,9 +28,15 @@
 # session whose last row names another harness reads `unsupported` and its
 # reader takes the pane, the named fallback, reported as fallback.
 #
-# The writer requires lib/file-lock.sh, lib/mailbox-append.sh and
-# lib/lane-context.sh sourced by its caller; the readers need jq and tail
-# alone. Sourced, never run. Bash 3.2-safe, like its callers.
+# ONE OWNER, THE WRITER, for "whose facts are these": only the pane's own
+# top-level harness writes a row, so a harness that session starts in its own
+# pane (second-opinion's `claude -p`, a `codex exec`), which inherits
+# TMUX_PANE, writes nothing and no reader has another session's row to judge
+# (session_rows_top_level).
+#
+# The writer requires lib/file-lock.sh, lib/mailbox-append.sh,
+# lib/lane-context.sh and lib/lane-state.sh sourced by its caller; the readers
+# need jq and tail alone. Sourced, never run. Bash 3.2-safe, like its callers.
 
 # Seconds an append waits for the file's lock before it gives up.
 SESSION_ROWS_WAIT=5
@@ -116,6 +122,28 @@ session_rows_start() { # FILE [SINCE]
   IFS="$sep" read -r SR_HARNESS SR_ACCOUNT SR_MODEL SR_CWD SR_SESSION SR_TRANSCRIPT <<<"$fields"
 }
 
+# session_rows_top_level PANE_PID — 0 where exactly one process that is not a
+# shell stands between this process and PANE_PID, the pane's own shell: the
+# harness that ran this hook, directly under that shell or under the shells
+# and exec'd wrappers a launch puts there (overseer-run, env). A harness
+# nested under another, which the other one's tool shell started, has two;
+# a process under no such pane never reaches it. Exit 1 for either, and for a
+# process table `ps` could not read, which is no evidence of a top-level
+# session. The shell set is lib/lane-state.sh's is_bare_shell.
+session_rows_top_level() { # PANE_PID
+  local pid="$$" line ppid comm harnesses=0 steps=0
+  while [ "$pid" != "$1" ]; do
+    [ "$steps" -lt 64 ] && [ "$pid" -gt 1 ] || return 1
+    line="$(ps -o ppid= -o comm= -p "$pid" 2>/dev/null)" || return 1
+    read -r ppid comm <<<"$line"
+    [ -n "$ppid" ] || return 1
+    is_bare_shell "${comm##*/}" || harnesses=$((harnesses + 1))
+    pid="$ppid"
+    steps=$((steps + 1))
+  done
+  [ "$harnesses" -eq 1 ]
+}
+
 # session_rows_write DIR HARNESS [EVENT] — the hook payload on stdin appended as one row
 # to the file of the session this process runs in, the pane
 # lane_context_caller_key names, in the overseer mailbox directory of the
@@ -127,7 +155,8 @@ session_rows_start() { # FILE [SINCE]
 # turn-end run knows it ran at a Stop whatever its payload carries.
 #
 # Nothing is written, with exit 0, where that directory is not there, since no
-# fleet made it and no reader will look, for a subagent's payload, and for a
+# fleet made it and no reader will look, for a session that is not its pane's
+# top-level harness (session_rows_top_level), for a subagent's payload, and for a
 # Stop payload unless the
 # file's last row is a StopFailure: a turn that ended is what lifts a wall,
 # and nothing else a turn end says is read. Exit 3 where the session sits on
@@ -135,10 +164,12 @@ session_rows_start() { # FILE [SINCE]
 # build the row, and mailbox_append_locked's own 2 and 3 for the write and the
 # lock. The cause is on stderr.
 session_rows_write() { # DIR HARNESS [EVENT]
-  local key file payload event account row
+  local key file payload event account row pane_pid
   key="$(lane_context_caller_key)" || return 3
   file="$(session_rows_overseer_file "$1" "${key%% *}" "${key#* }")"
   [ -d "${file%/*}" ] || return 0
+  pane_pid="$(tmux display-message -p -t "${key#* }" '#{pane_pid}' 2>/dev/null)" || return 3
+  session_rows_top_level "$pane_pid" || return 0
   payload="$(cat)" || return 1
   # A subagent's payload carries its agent_id: its failure is its own turn's,
   # never the session's.

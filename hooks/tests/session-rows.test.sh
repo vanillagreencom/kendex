@@ -34,14 +34,19 @@ assert_eq() { # GOT WANT LABEL
 # shellcheck source=lib/first-line.sh
 . "$TEST_DIR/lib/first-line.sh"
 
-# `display-message -p -t <pane> '#{pid}'`, the one tmux read the row's key
-# takes: TMUX_SERVER_ID is the server's pid.
+# `display-message -p -t <pane> FORMAT`, the two tmux reads a row takes:
+# `#{pid}`, the server's pid TMUX_SERVER_ID names, and `#{pane_pid}`, the
+# pane's shell, which TMUX_PANE_PID names.
 TMUX_BIN="$TMP_ROOT/tmux-bin"
 mkdir -p "$TMUX_BIN"
 cat > "$TMUX_BIN/tmux" <<'TMUXSTUB'
 #!/bin/sh
 [ -n "${TMUX_SERVER_ID:-}" ] || { echo "can't find pane" >&2; exit 1; }
-printf '%s\n' "$TMUX_SERVER_ID"
+for format in "$@"; do :; done
+case "$format" in
+  '#{pane_pid}') printf '%s\n' "${TMUX_PANE_PID:-}" ;;
+  *) printf '%s\n' "$TMUX_SERVER_ID" ;;
+esac
 TMUXSTUB
 chmod +x "$TMUX_BIN/tmux"
 
@@ -50,24 +55,35 @@ chmod +x "$TMUX_BIN/tmux"
 # repository, ROWS the file the session in pane %9 on server 7000 writes.
 CHECKOUT=""
 ROWS=""
-new_checkout() { # NAME
+HOOK_HOME=.claude/hooks
+new_checkout() { # NAME [HOOK_HOME]
+  HOOK_HOME="${2:-.claude/hooks}"
   CHECKOUT="$TMP_ROOT/$1"
   mkdir -p "$CHECKOUT"
   git -C "$CHECKOUT" init -q
   git -C "$CHECKOUT" checkout -q -b main
   git -C "$CHECKOUT" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
-  mkdir -p "$CHECKOUT/.agents/skills/orch" "$CHECKOUT/.claude/hooks" "$CHECKOUT/.claude/skills" \
+  mkdir -p "$CHECKOUT/.agents/skills/orch" "$CHECKOUT/$HOOK_HOME" "$CHECKOUT/.claude/skills" \
     "$CHECKOUT/tmp/lane-mail/overseer"
   ln -s "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
   ln -s ../../.agents/skills/orch "$CHECKOUT/.claude/skills/orch"
-  cp "$HOOK" "$CHECKOUT/.claude/hooks/lane-mail-check.sh"
+  cp "$HOOK" "$CHECKOUT/$HOOK_HOME/lane-mail-check.sh"
   for wrapper in session-start-row session-end-row stop-failure-row; do
-    cp "$HOOKS/$wrapper.sh" "$CHECKOUT/.claude/hooks/$wrapper.sh"
+    cp "$HOOKS/$wrapper.sh" "$CHECKOUT/$HOOK_HOME/$wrapper.sh"
   done
   ROWS="$CHECKOUT/tmp/lane-mail/overseer/session-7000-9.jsonl"
 }
 
 RC=0
+# in_pane COMMAND... — COMMAND as a harness in pane %9 runs its hook: a pane
+# shell, whose pid is the pane's, then one process that is no shell, perl
+# standing in for the harness, forking COMMAND. NESTED=1 puts a second such
+# process between them, a harness another harness started in the same pane.
+in_pane() { # COMMAND...
+  local harness=(perl -e 'exit(system(@ARGV) >> 8)' --)
+  [ "${NESTED:-0}" -eq 0 ] || harness+=(perl -e 'exit(system(@ARGV) >> 8)' --)
+  bash -c 'TMUX_PANE_PID=$$ "$@"; exit $?' pane-shell "${harness[@]}" "$@"
+}
 # run WRAPPER PAYLOAD [ENV=VAL...] — the wrapper as the harness runs it, from
 # the checkout, inside pane %9 of server 7000 on the account /accounts/one.
 run() { # WRAPPER PAYLOAD [ENV=VAL...]
@@ -77,7 +93,8 @@ run() { # WRAPPER PAYLOAD [ENV=VAL...]
   printf '%s' "$payload" |
     (cd "$CHECKOUT" && env -u CLAUDE_PROJECT_DIR -u CODEX_HOME -u LANE_MAIL_ITEM \
       "PATH=$TMUX_BIN:$PATH" TMUX=fake TMUX_PANE=%9 TMUX_SERVER_ID=7000 \
-      CLAUDE_CONFIG_DIR=/accounts/one "$@" bash "$CHECKOUT/.claude/hooks/$wrapper.sh") \
+      CLAUDE_CONFIG_DIR=/accounts/one "$@" bash -c "$(declare -f in_pane); in_pane \"\$@\"" _ \
+      bash "$CHECKOUT/$HOOK_HOME/$wrapper.sh") \
     >"$TMP_ROOT/stdout" 2>"$ERR_FILE" || RC=$?
 }
 
@@ -149,6 +166,21 @@ run session-start-row "$START"
 assert_eq "RC=$RC first=$(first_line) rows=$(row_count)" "RC=0 first=- rows=0" \
   "a lane's session writes no overseer row"
 
+# A harness the overseer started in its own pane, second-opinion's
+# `claude -p` or a `codex exec`, inherits TMUX_PANE: its hook is two
+# harnesses from the pane shell and writes no row, so no reader meets another
+# session's facts in this pane's file.
+new_checkout nested
+NESTED=1 run session-end-row "$END"
+assert_eq "RC=$RC first=$(first_line) rows=$(row_count)" "RC=0 first=- rows=0" \
+  "a harness nested in the pane's own harness writes no row"
+
+# The harness a row names is the one the hook's install directory names.
+new_checkout codex_install .codex/hooks
+run session-start-row "$START"
+assert_eq "RC=$RC harness=$(last_row .harness)" "RC=0 harness=codex" \
+  "a hook installed under .codex/hooks writes a codex row"
+
 # What is reported and passed: an install whose orch scripts lack the row
 # library, a key tmux cannot answer, and a wrapper with no judge beside it.
 new_checkout no_library
@@ -185,7 +217,8 @@ run stop-failure-row "$WALL"
 RC=0
 printf '%s' '{"session_id":"5f0c","stop_hook_active":false}' |
   (cd "$CHECKOUT" && env -u CLAUDE_PROJECT_DIR -u CODEX_HOME "PATH=$TMUX_BIN:$PATH" TMUX=fake TMUX_PANE=%9 \
-    TMUX_SERVER_ID=7000 CLAUDE_CONFIG_DIR=/accounts/one bash "$CHECKOUT/.claude/hooks/lane-mail-check.sh") \
+    TMUX_SERVER_ID=7000 CLAUDE_CONFIG_DIR=/accounts/one bash -c "$(declare -f in_pane); in_pane \"\$@\"" _ \
+    bash "$CHECKOUT/.claude/hooks/lane-mail-check.sh") \
   >"$TMP_ROOT/stdout" 2>"$ERR_FILE" || RC=$?
 assert_eq "RC=$RC rows=$(row_count) last=$(last_row .event)" "RC=0 rows=2 last=Stop" \
   "the overseer's turn end, whose payload names no event, writes the Stop over its wall"
@@ -214,6 +247,31 @@ sed -i.bak 's/= StopFailure \] || return 0/= StopFailure ] || :/' "$LIB"
 assert_eq "$(grep -c -F -- "$STOP_RULE" "$LIB")" "0" "control removed it"
 run session-start-row "$STOP"
 assert_eq "rows=$(row_count)" "rows=1" "control: without the Stop rule a Stop with no wall standing is a row"
+# The top-level gate removed from the same copy: a nested harness writes.
+mutate_lib() { # OLD NEW
+  assert_eq "$(grep -c -F -- "$1" "$LIB")" "1" "control finds: $1"
+  OLD="$1" NEW="$2" perl -i -pe 's/\Q$ENV{OLD}\E/$ENV{NEW}/g' "$LIB"
+  assert_eq "$(grep -c -F -- "$1" "$LIB")" "0" "control removed: $1"
+}
+new_checkout nested_control
+rm -f -- "$CHECKOUT/.agents/skills/orch/scripts"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
+LIB="$CHECKOUT/.agents/skills/orch/scripts/lib/session-rows.sh"
+mutate_lib '  session_rows_top_level "$pane_pid" || return 0' '  :'
+NESTED=1 run session-end-row "$END"
+assert_eq "rows=$(row_count)" "rows=1" "control: without the top-level gate a nested harness writes the pane's row"
+# The harness read from the install replaced by a fixed word: a codex install
+# writes claude.
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  HARNESS_MUTANT="$TMP_ROOT/harness-mutant.sh"
+  cp "$HOOK" "$HARNESS_MUTANT"
+  assert_eq "$(grep -c -F '    _ "$SCRIPTS" "$ROOT" "$HARNESS" "$ROW_EVENT"' "$HARNESS_MUTANT")" "1" "control finds the row's harness"
+  sed -i.bak 's/    _ "\$SCRIPTS" "\$ROOT" "\$HARNESS" "\$ROW_EVENT"/    _ "$SCRIPTS" "$ROOT" claude "$ROW_EVENT"/' "$HARNESS_MUTANT"
+  assert_eq "$(grep -c -F '    _ "$SCRIPTS" "$ROOT" "$HARNESS" "$ROW_EVENT"' "$HARNESS_MUTANT")" "0" "control replaced it"
+  CONTROL_OUT="$(HOOK_UNDER_TEST="$HARNESS_MUTANT" bash "${BASH_SOURCE[0]}" 2>&1 || true)"
+  assert_eq "$(grep -c '^  FAIL  a hook installed under .codex/hooks writes a codex row$' <<<"$CONTROL_OUT")" "1" \
+    "control: a row harness fixed at claude fails the codex install row"
+fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

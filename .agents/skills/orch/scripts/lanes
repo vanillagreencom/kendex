@@ -2805,6 +2805,9 @@ source "$SCRIPT_DIR/lib/lane-launch.sh"
 source "$SCRIPT_DIR/lib/lane-host-slots.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
+# The caller's own launch record and SessionStart row, for `context`.
+# shellcheck source=lib/overseer-launch.sh
+source "$SCRIPT_DIR/lib/overseer-launch.sh"
 # The lib carries the strict mode its other callers run under. This one is
 # deliberately errexit-free — one unreadable lane must not fail the whole
 # inventory — so restore that posture at the seam.
@@ -3060,15 +3063,29 @@ case "$SUB" in
 		# would read as "every lane has room", which is the answer that sends
 		# a lane into its wall.
 		[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die context-claims "$@"
-		# The caller's pane names the SHAPE; lib/lane-context.sh's
-		# lane_context_caller_cfg turns that into the account, and owns the
-		# rule. oversee-succeed's own caller entry pairs them this way, and the
-		# lane's turn-end handoff hook asks the same function about itself, so
-		# no session is one account in this report and another there.
+		# The caller's account: the one its overseer launch record or its
+		# SessionStart row names (lib/overseer-launch.sh § ol_caller_known, the
+		# reader oversee-succeed asks too), else the SHAPE its pane names turned
+		# into an account by lib/lane-context.sh's lane_context_caller_cfg, the
+		# rule the lane's turn-end handoff hook asks about itself, so no session
+		# is one account in this report and another there. A launched overseer
+		# runs under overseer-run, whose bash is the pane's foreground command,
+		# so its pane names no harness and the records answer.
 		caller_cfg=""
 		if [[ -n "${TMUX_PANE:-}" ]]; then
-			caller_cmd="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_command}' 2>/dev/null)" || caller_cmd=""
-			caller_cfg="$(lane_context_caller_cfg "$(lane_context_shape "${caller_cmd#-}")")"
+			OL_KNOWN_ACCOUNT="" OL_KNOWN_HARNESS=""
+			if caller_key="$(lane_context_caller_key)"; then
+				DEP_ERR=/dev/null ol_caller_known "${caller_key%% *}" "$TMUX_PANE" "$PWD" || true
+			fi
+			caller_cfg="$OL_KNOWN_ACCOUNT"
+			if [[ -z "$caller_cfg" ]]; then
+				caller_shape="$OL_KNOWN_HARNESS"
+				if [[ -z "$caller_shape" ]]; then
+					caller_cmd="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_command}' 2>/dev/null)" || caller_cmd=""
+					caller_shape="$(lane_context_shape "${caller_cmd#-}")"
+				fi
+				caller_cfg="$(lane_context_caller_cfg "$caller_shape")"
+			fi
 		fi
 		# Where each row's reading is recorded: a lane's in its own mailbox, which
 		# its fleet lane record places.

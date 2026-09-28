@@ -213,3 +213,20 @@ run() { # ENV=VAL... -- ARGS...
     && RC=0 || RC=$?
   fi
 }
+
+# The real lane-mail, which the stubs below hand every call to.
+REAL_LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
+# A lane-mail that lands a notice in KEN-5's mailbox on its NOTE_AT-th drain,
+# so a run under an unchanging overseer screen ends on that lane's news.
+cat > "$TMP_ROOT/bin/lane-mail-note-at.sh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == drain ]]; then
+  printf 'drain\n' >> "$STUB_DIR/drains.log"
+  if [[ "$(grep -c . "$STUB_DIR/drains.log")" -eq "${NOTE_AT:-0}" ]]; then
+    printf 'Rebased.\n' > "$STUB_DIR/note-at.txt"
+    "$REAL_LANE_MAIL" notice --item KEN-5 --file "$STUB_DIR/note-at.txt" >/dev/null
+  fi
+fi
+exec "$REAL_LANE_MAIL" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/lane-mail-note-at.sh"

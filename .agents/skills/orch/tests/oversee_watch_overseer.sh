@@ -427,6 +427,22 @@ run TMUX_PANE="$PANE" -- --max-loops 1 --handoff tmp/handoffs/FLEET.md --harness
 assert_eq "server=$(recorded server) pane=$(recorded pane) window=$(recorded window)" "server=7000 pane=$PANE window=$WINDOW" \
   "the first start records the tmux server, pane and window" "$ERR"
 assert_eq "$(recorded launch_line)" "$LINE" "and the line a successor of it would run" "$ERR"
+ROWS_PATH="$CASE_REPO_ROOT/tmp/lane-mail/overseer/session-7000-${PANE#%}.jsonl"
+assert_eq "$(recorded session_rows)" "$ROWS_PATH" "and the file its session rows land in" "$ERR"
+# The control: a start that records no rows file leaves a hand-started
+# overseer judged from its pane alone.
+ROWSREC_CTL="$(mutant_scripts rowsrec-ctl/orch lib/watch-overseer-record.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/rowsrec-ctl/github"
+mutate_file "$ROWSREC_CTL/lib/watch-overseer-record.sh" ', session_rows: $rows})' '})'
+overseer_case record_first_start_mutant idle
+printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
+printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+WATCH_BIN="$ROWSREC_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
+assert_eq "$(recorded session_rows)" "none" "control: a start that drops the field records no rows file" "$ERR"
+overseer_case record_first_start idle
+printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
+printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+run TMUX_PANE="$PANE" -- --max-loops 1 --handoff tmp/handoffs/FLEET.md --harness codex -- --verbose --model fable
 assert_eq "$(grep -- '^--print-launch-line' "$STUB_DIR/succeed.args")" \
   "--print-launch-line --handoff tmp/handoffs/FLEET.md --harness codex -- --verbose --model fable" \
   "the handoff path, the harness a node pane cannot name, and the overseer's own flags reach the builder" "$ERR"
@@ -1212,7 +1228,6 @@ fi
 exec "$REAL_LANE_MAIL" "$@"
 EOF
 chmod +x "$TMP_ROOT/bin/lane-mail-order.sh"
-REAL_LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
 
 # The pane exits after one long pass read it live and before the next: no row
 # says so yet, and the note sent then is still left for the successor.
@@ -1302,20 +1317,6 @@ assert_eq "$DIES" "rc=4 launched=0 unreadable=1" \
 
 
 # --- one verdict, judged once a wall ---------------------------------------
-# A lane-mail that lands a notice in KEN-5's mailbox on its NOTE_AT-th drain,
-# so a run under an unchanging overseer screen ends on that lane's news.
-cat > "$TMP_ROOT/bin/lane-mail-note-at.sh" <<'EOF'
-#!/usr/bin/env bash
-if [[ "$1" == drain ]]; then
-  printf 'drain\n' >> "$STUB_DIR/drains.log"
-  if [[ "$(grep -c . "$STUB_DIR/drains.log")" -eq "${NOTE_AT:-0}" ]]; then
-    printf 'Rebased.\n' > "$STUB_DIR/note-at.txt"
-    "$REAL_LANE_MAIL" notice --item KEN-5 --file "$STUB_DIR/note-at.txt" >/dev/null
-  fi
-fi
-exec "$REAL_LANE_MAIL" "$@"
-EOF
-chmod +x "$TMP_ROOT/bin/lane-mail-note-at.sh"
 relayed_banner_case() { # NAME
   overseer_case "$1" walled
   state_with "$LINE"

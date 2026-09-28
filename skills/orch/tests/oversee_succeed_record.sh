@@ -231,9 +231,9 @@ for row in \
 done
 # The row rule's control: a caller that reads no row is judged on the
 # environment's account, as the first row above says it is not.
-ROWCTL="$(mutant_scripts rowctl oversee-succeed)" || exit 1
-mutate_file "$ROWCTL/oversee-succeed" \
-  '  session_rows_start "$(session_rows_overseer_file "$PROJECT_ROOT" "$CALLER_SERVER" "$CALLER_PANE")" || true' \
+ROWCTL="$(mutant_scripts rowctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$ROWCTL/lib/overseer-launch.sh" \
+  '  session_rows_start "$(session_rows_overseer_file "$3" "$1" "$2")" || true' \
   '  :'
 new_caller claude
 reading "Fable 5.1"
@@ -295,7 +295,7 @@ harness_row
 assert_eq "$RC|$(judged)" "0|mark-reached kind=headroom value=5" \
   "--check-marks: the record's harness decides over --harness" "$TMP_ROOT/err"
 HARNESSCTL="$(mutant_scripts harnessctl oversee-succeed)" || exit 1
-mutate_file "$HARNESSCTL/oversee-succeed" '  if [[ -n "$OL_CUR_HARNESS" ]]; then' '  if false; then'
+mutate_file "$HARNESSCTL/oversee-succeed" '  if [[ -n "$OL_KNOWN_HARNESS" ]]; then' '  if false; then'
 harness_row "$HARNESSCTL/oversee-succeed"
 assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
   "control: a caller that takes --harness over its record judges the record's account as a codex lane" "$TMP_ROOT/err"
@@ -304,8 +304,8 @@ assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none 
 # judged on the reading's.
 MODELCTL="$(mutant_scripts modelctl oversee-succeed)" || exit 1
 mutate_file "$MODELCTL/oversee-succeed" \
-  '"${OL_CUR_MODEL:-${SR_MODEL:-$reading_model}}"' \
-  '"${SR_MODEL:-$reading_model}"'
+  '"${OL_KNOWN_MODEL:-$reading_model}"' \
+  '"$reading_model"'
 new_caller claude
 reading "Fable 5.1"
 state "$(record "$CALLER_PANE" "$H/.claude" claude-opus-5)"
@@ -453,7 +453,7 @@ assert_eq "$RC|$(jq -r '.pending.launch_line // "none"' <<<"$SNAP")" "0|none" \
 # The directory rule's control: a caller that ignores its recorded directory
 # opens the successor in the pane's own.
 CWDCTL="$(mutant_scripts cwdctl oversee-succeed)" || exit 1
-mutate_file "$CWDCTL/oversee-succeed" '  if [[ -n "$OL_CUR_CWD" ]]; then CALLER_PATH="$OL_CUR_CWD"' '  if false; then :'
+mutate_file "$CWDCTL/oversee-succeed" '  [[ -z "$OL_KNOWN_CWD" ]] || CALLER_PATH="$OL_KNOWN_CWD"' '  :'
 pending_run "$CWDCTL"
 assert_eq "$RC|$SUCC_CWD" "0|$CALLER_CWD" \
   "control: a caller that ignores its recorded directory opens the successor in the pane's"

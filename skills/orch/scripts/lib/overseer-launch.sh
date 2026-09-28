@@ -504,6 +504,32 @@ ol_record_exit() { # SERVER PANE STATUS
     >/dev/null 2>"$DEP_ERR"
 }
 
+# ol_caller_known SERVER PANE DIR — what the session SERVER PANE is known to
+# run, from the two records that name it: its launch record
+# (ol_record_current) and, for each fact that leaves unknown, its SessionStart
+# row (lib/session-rows.sh) in the overseer mailbox of the checkout DIR is in,
+# a row naming a harness but claude or codex answering nothing. Into
+# OL_KNOWN_HARNESS, OL_KNOWN_ACCOUNT, OL_KNOWN_MODEL and OL_KNOWN_CWD, each
+# empty where neither names it, for the caller's own fallbacks, the pane and
+# the environment, to answer; OL_CUR_* are left as ol_record_current set them.
+# Every reader of a caller's identity asks here, so the watch's succession and
+# `lanes context` cannot name one session two ways. Returns
+# ol_record_current's status: 2 is a state that could not be read, the
+# reader's words in DEP_ERR, and the row still answers.
+OL_KNOWN_HARNESS="" OL_KNOWN_ACCOUNT="" OL_KNOWN_MODEL="" OL_KNOWN_CWD=""
+ol_caller_known() { # SERVER PANE DIR
+  local rc=0
+  ol_record_current "$1" "$2" || rc=$?
+  # A rows file that cannot be read is no row: the caller's fallbacks answer.
+  session_rows_start "$(session_rows_overseer_file "$3" "$1" "$2")" || true
+  case "$SR_HARNESS" in claude | codex) ;; *) SR_HARNESS="" SR_ACCOUNT="" SR_MODEL="" SR_CWD="" ;; esac
+  OL_KNOWN_HARNESS="${OL_CUR_HARNESS:-$SR_HARNESS}"
+  OL_KNOWN_ACCOUNT="${OL_CUR_ACCOUNT:-$SR_ACCOUNT}"
+  OL_KNOWN_MODEL="${OL_CUR_MODEL:-$SR_MODEL}"
+  OL_KNOWN_CWD="${OL_CUR_CWD:-$SR_CWD}"
+  return "$rc"
+}
+
 # ol_record_restore — OL_PRIOR written back whole, for an abandoned launch:
 # the predecessor keeps running, so the record has to name it again, its own
 # launch line included. A prior of null removes the object. Returns 1 with

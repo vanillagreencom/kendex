@@ -11,7 +11,10 @@
 # `overseer.exit` is dropped where the record names this pane on this tmux
 # server (ol_record_exit_clear), so a line run again in the same pane carries
 # no status its predecessor earned. COMMAND runs as this script's child, so
-# the status is the one the shell would have seen. The record takes it as
+# the status is the one the shell would have seen, and tmux names this
+# script's bash as the pane's foreground command for the session's whole
+# life: a reader of a launched overseer's harness takes it from its launch
+# record or its SessionStart row (lib/overseer-launch.sh ol_caller_known). The record takes it as
 # `overseer.exit = {status, at}` only where it names this pane on this tmux
 # server (ol_record_exit); outside tmux nothing is read or written. A pane
 # key, a library or a write that fails is said on stderr under
