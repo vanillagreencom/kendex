@@ -188,6 +188,10 @@ set -euo pipefail
 # comment showing grep -q x f || true, run nothing.
 MSG="the idiom is grep -q x f || true"
 usage() { printf 'creates a mktemp -d scratch dir\n'; }
+# A substitution inside single quotes is text too: the fix block-repo-copy
+# prints, and a swallowed status shown the same way.
+echo '      d=$(mktemp -d); mkdir -p "$d/repo/.git" "$d/repo/target"; touch "$d/repo/f"' >&2
+echo 'x=$(git rev-parse --git-dir || true)' >&2
 status=0
 grep -q x -- "$1" || status=$?
 [ "$status" -le 1 ] || exit 2
@@ -266,6 +270,7 @@ printf 'And a citation that is dead: `docs/gone.md`.\n' >>"$R/README.md"
 printf '# and a source line whose citation is dead: docs/gone.md\n' >>"$R/scripts/cites.sh"
 printf '# and a line-qualified local citation is still judged: docs/gone.md:42\n' >>"$R/scripts/cites.sh"
 printf '#!/usr/bin/env bash\nset -euo pipefail\nD="$(mktemp -d)"\necho "$D"\n' >"$R/scripts/notrap.sh"
+printf '#!/usr/bin/env bash\nset -euo pipefail\nD="`mktemp -d`"\necho "$D"\n' >"$R/scripts/backtick.sh"
 printf '#!/usr/bin/env bash\nset -euo pipefail\necho x\ngit rev-parse --git-dir >/dev/null || true\n' >"$R/scripts/swallow.sh"
 printf '#!/usr/bin/env bash\nset -euo pipefail\necho orphan\n' >"$R/tests/orphan.test.sh"
 git -C "$R" add -A
@@ -274,6 +279,7 @@ fires "the benign fixture is not clean because nothing ran" "README.md:16: [docs
 fires "the benign source file is not clean because nothing ran" "scripts/cites.sh:12: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 fires "a line-suffixed local citation is not mistaken for a repo qualifier" "scripts/cites.sh:13: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 fires "the trapped scratch dir beside it does not shield an untrapped one" "scripts/notrap.sh:3: [mktemp-trap]"
+fires "a backtick substitution inside double quotes still runs mktemp" "scripts/backtick.sh:3: [mktemp-trap]"
 fires "the captured status beside it does not shield a swallowed one" "scripts/swallow.sh:4: [fail-open] git || true swallows exit 2"
 fires "the wired suites beside it, and the workflow path filter globbing everything, do not wire an unwired one" "tests/orphan.test.sh:0: [unwired-suite]"
 
@@ -525,11 +531,13 @@ grep -q x -- "$D" || true
 f
 EOF
 printf '#!/usr/bin/env bash\nset -euo pipefail\necho vendored\n' >"$R/.agents/skills/foo/tests/foo.test.sh"
-# kendex's own render dir under .pi is a managed mirror like the rest.
-mkdir -p "$R/.pi/kendex/hooks"
+# kendex's own render dir under .pi is a managed mirror like the rest, and so
+# is Copilot's under .github.
+mkdir -p "$R/.pi/kendex/hooks" "$R/.github/hooks"
 printf '#!/usr/bin/env bash\nD="$(mktemp -d)"\necho hook\n' >"$R/.pi/kendex/hooks/guard.sh"
+printf '#!/usr/bin/env bash\nD="$(mktemp -d)"\necho hook\n' >"$R/.github/hooks/guard.sh"
 run_pf
-clean "a vendored skill's strict mode, scratch cleanup, masked returns and suite wiring are upstream's to fix" 4
+clean "a vendored skill's strict mode, scratch cleanup, masked returns and suite wiring are upstream's to fix" 5
 
 echo "=== control: the same bytes this repo authors itself still fail ==="
 cp "$R/.agents/skills/foo/scripts/run" "$R/scripts/run.sh"

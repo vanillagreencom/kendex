@@ -94,8 +94,9 @@ Lanes:
                   lane quiet.
   mktemp-trap     a new shell file with an added mktemp invocation and no
                   trap ... EXIT anywhere in it. The invocation is the word at
-                  a command position, not one named in a comment or a string.
-                  Reported once per file.
+                  a command position, not one named in a comment or a string;
+                  a $( or backtick substitution inside double quotes still
+                  runs it. Reported once per file.
   hardcoded-temp-path
                   an added directory-creating call whose first argument opens
                   a path under the /tmp or /var/tmp root: mkdtemp and mkdir
@@ -145,7 +146,8 @@ Scope rules:
   direction stand down. The mktemp assignment shape of fail-open is judged in
   every tree.
   In an installed-artifact subtree (.agents/ and the harness directories'
-  skills, agents, hooks, rules, instructions, packages and kendex trees)
+  skills, agents, hooks, rules, instructions, packages and kendex trees,
+  Copilot's .github/agents, .github/skills and .github/hooks among them)
   masked-returns, fail-open, early-close-pipe, unwired-suite, mktemp-trap and
   the source-file direction of docs-cited-paths stand down. shell-syntax,
   shellcheck-errors, hardcoded-temp-path, applied-migration-edited and
@@ -901,6 +903,24 @@ is_comment_line() { # LINE — leading-whitespace-then-# only; a trailing commen
   return 1
 }
 
+# A line with every quoted span that runs nothing emptied, for the lanes
+# that ask whether a word stands at a command position: text in a message
+# runs nothing, but "$(git … || true)" is a command inside quotes. A
+# single-quoted span never substitutes, so it is emptied whatever it holds; a
+# double-quoted one is kept when it opens a $( or a backtick substitution.
+unquoted_code() { # LINE -> the line on stdout
+  printf '%s\n' "$1" | LC_ALL=C awk '{
+    out = ""; rest = $0
+    while (match(rest, /"[^"]*"|\047[^\047]*\047/)) {
+      seg = substr(rest, RSTART, RLENGTH)
+      q = substr(seg, 1, 1)
+      out = out substr(rest, 1, RSTART - 1) ((q == "\"" && (index(seg, "$(") || index(seg, "`"))) ? seg : q q)
+      rest = substr(rest, RSTART + RLENGTH)
+    }
+    print out rest
+  }'
+}
+
 # The `|| true` shape on a command whose exit 2 means "could not read" or
 # "invoked wrong": true erases that status and the caller reads the empty
 # result as a clean answer. The command must stand at a command position, so
@@ -908,18 +928,7 @@ is_comment_line() { # LINE — leading-whitespace-then-# only; a trailing commen
 # swallowed command, nothing when the shape is absent — a status-capturing
 # `|| status=$?` is a different line.
 swallowed_cmd() { # LINE -> command name on stdout
-  printf '%s\n' "$1" | LC_ALL=C awk '
-    # Blank quoted spans that carry no substitution: text in a message runs
-    # nothing, but "$(git … || true)" is a command inside quotes.
-    {
-      out = ""; rest = $0
-      while (match(rest, /"[^"]*"|\047[^\047]*\047/)) {
-        seg = substr(rest, RSTART, RLENGTH)
-        out = out substr(rest, 1, RSTART - 1) (index(seg, "$(") ? seg : substr(seg, 1, 1) substr(seg, 1, 1))
-        rest = substr(rest, RSTART + RLENGTH)
-      }
-      $0 = out rest
-    }
+  unquoted_code "$1" | LC_ALL=C awk '
     match($0, /(^[[:space:]]*|[;(`{&|][[:space:]]*)(grep|find|git|jq|diff|cmp)([[:space:]][^|]*)?\|\|[[:space:]]*(true|:)([^A-Za-z0-9_.-]|$)/) {
       s = substr($0, RSTART, RLENGTH)
       if (match(s, /(grep|find|git|jq|diff|cmp)/)) print substr(s, RSTART, RLENGTH)
@@ -1232,7 +1241,8 @@ while IFS= read -r f; do
   case "$f" in
     .agents/* | .claude/skills/* | .claude/agents/* | .claude/hooks/* | \
       .cursor/rules/* | .opencode/skills/* | .opencode/agents/* | .opencode/instructions/* | \
-      .codex/agents/* | .codex/hooks/* | .pi/agents/* | .pi/packages/* | .pi/kendex/*)
+      .codex/agents/* | .codex/hooks/* | .github/agents/* | .github/skills/* | .github/hooks/* | \
+      .pi/agents/* | .pi/packages/* | .pi/kendex/*)
       vendored_mirror=1
       ;;
   esac
@@ -1372,9 +1382,12 @@ while IFS= read -r f; do
     if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$is_new" = 1 ] && [ "$has_trap" = 0 ] && [ "$mktemp_reported" = 0 ]; then
       case "$content" in
         *mktemp*)
-          if ! is_comment_line "$content" && printf '%s' "$content" | grep -Eq -- "$MKTEMP_CALL_RE"; then
-            mktemp_reported=1
-            emit "$f" "$n" mktemp-trap "mktemp without an EXIT trap — scratch is never removed"
+          if ! is_comment_line "$content"; then
+            unquoted="$(unquoted_code "$content")"
+            if grep -Eq -- "$MKTEMP_CALL_RE" <<<"$unquoted"; then
+              mktemp_reported=1
+              emit "$f" "$n" mktemp-trap "mktemp without an EXIT trap — scratch is never removed"
+            fi
           fi
           ;;
       esac
