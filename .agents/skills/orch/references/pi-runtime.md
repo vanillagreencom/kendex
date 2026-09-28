@@ -20,7 +20,7 @@ Use `get_subagent_result` only as a recovery/status reader for missed or truncat
 
 ## Lane mailbox wake (Pi)
 
-A Pi lane arms no mailbox monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)). The `pi-hooks` package watches the mailbox its launch created, and when mail other than an answer lands while the session is idle, it starts one turn with a message opening `lane-mail-wake: mail=[ISSUE_ID] new=[N]` and ending in the `lane-mail inbox --item [ISSUE_ID]` command. The woken turn runs that command and acts on every directive it prints. A message opening `lane-mail-wake: peek-failed=` is the same wake after the read that judges the mail failed: run the command it names all the same. What the package does is its [README](https://github.com/vanillagreencom/kendex/blob/main/pi-extensions/pi-hooks/README.md) § Lane mail wake.
+A Pi lane arms no mailbox monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)). The `pi-hooks` package starts a turn in the idle lane when mail other than an answer lands, or when the session settles with such mail unread, by running the `lane-mail-deliver` hook's judge, and the turn opens with what that judge hands over after a tool call: `lane-mail-check: unread=[N]` and the envelopes, already marked read. Act on every directive it carries; a halt among them names the `lane-mail inbox` command that reads it. A turn opening on any other `lane-mail-check:` line is the judge's refusal, which the lane clears as it would after a tool call. What the package does is its [README](https://github.com/vanillagreencom/kendex/blob/main/pi-extensions/pi-hooks/README.md) § Lane mail wake.
 
 ## Standing watch (Pi)
 

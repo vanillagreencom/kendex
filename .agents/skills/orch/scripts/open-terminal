@@ -559,6 +559,7 @@ pi_local_gate() {
        printf '%s\n' "$LANE_ADAPTER_PI_CAUSE" >&2; return 1 ;;
   esac
   lane_adapter_pi_window_read "$CLAIM_ROOT" || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; return 1; }
+  lane_adapter_pi_mail_wake "$CLAIM_ROOT" || { ot_message unsupported-for-oversee "harness=pi" "reason=no-mail-wake" >&2; return 1; }
 }
 if [[ "$FLEET" == true && "$WAKE" != true ]]; then
   case "$LAUNCH_HARNESS" in
@@ -2114,9 +2115,10 @@ open_wake() { # DIR TITLE CMD
 # under the Pi root create named as pi-root, else Pi's default root in the host
 # home, and in the lane's tree: the user and project settings, and the first
 # pi-hooks carrier of the tree's and the root's that its package.json shows
-# installed. Of the carrier only extensions/vocab.ts is read, the file that
-# puts context_window on the Stop payload. A file the host does not hold is one
-# Pi does not read. Returns 1 with its keyed line printed.
+# installed. Of the carrier only package.json, whose extensions list names the
+# lane mail wake, and extensions/vocab.ts, the file that puts context_window on
+# the Stop payload, are read. A file the host does not hold is one Pi does not
+# read. Returns 1 with its keyed line printed.
 host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
   local pi_item="$1" pi_wt="$2" dir i rc root="${3:-.pi/agent}" carrier=@vanillagreen/pi-hooks
   local -a remote=("$root/settings.json" "$4/.pi/settings.json") packages=("$4/.pi/packages" "$root/packages")
@@ -2155,7 +2157,7 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
     host_read "${packages[i]}/$carrier/package.json" "$dir/package.json" pi-carrier-unreadable pi-carrier || rc=$?
     [[ "$rc" -ne 2 ]] || return 1
     [[ "$rc" -eq 0 ]] || continue
-    if ! mkdir -p -- "$dir/packages$i/$carrier/extensions"; then
+    if ! mkdir -p -- "$dir/packages$i/$carrier/extensions" || ! mv -- "$dir/package.json" "$dir/packages$i/$carrier/package.json"; then
       ot_message pi-carrier-unreadable "file=${packages[i]}/$carrier/extensions/vocab.ts" >&2
       return 1
     fi
@@ -2167,6 +2169,8 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
   done
   lane_adapter_pi_carrier_sends "$dir/packages0" "$dir/packages1" \
     || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; return 1; }
+  lane_adapter_pi_carrier_wakes "$dir/packages0" "$dir/packages1" \
+    || { ot_message unsupported-for-oversee "harness=pi" "reason=no-mail-wake" >&2; return 1; }
 )
 
 # Whether a relaunch finds the item's session retired: its handoff record

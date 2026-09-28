@@ -981,7 +981,7 @@ every_row() { # HARNESS RESULT EVIDENCE — one row per question this harness an
   halt_cell=$(mail_cell "$1" lane-mail-halt)
   for q in $(questions "$1"); do
     # A harness the hook does not run on has its lane-mail and lane-question
-    # answers from the table, and Codex its mail-wake answer from its runtime,
+    # answers from the table, and Codex and Pi their mail-wake answers from their runtimes,
     # none of which anything about this machine changes.
     case "$1:$q:$cell:$halt_cell" in
       codex:mail-wake:*) row "$1" "$q" skipped "$WAKE_SKIPPED" ;;

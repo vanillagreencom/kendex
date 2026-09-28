@@ -192,32 +192,56 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 	});
 
 	/**
-	 * Pi defers the run a steer asks for until the settle dispatch has
-	 * returned, and finishes it, its own settle included, before print mode
-	 * disposes the runtime. So the dispatch that steers returns at once: one
-	 * that waited for the settle its steer caused would hold the settle open
-	 * for good, and every later prompt and triggered message with it, which
-	 * this case reads as a dispatch that never returns. A steer whose send
-	 * threw starts no run.
+	 * Print mode disposes the runtime once the prompt it awaited returns, so
+	 * the steered run and the settle it ends in have to be over by then, on
+	 * both shapes of Pi. Before 0.87 the run starts before the send returns
+	 * and nobody awaits it, so the dispatch that steered waits for that settle,
+	 * or the follow-on reads a ctx that throws. From 0.87 Pi runs it after the
+	 * dispatch returns, so a dispatch that waited would never return. A steer
+	 * whose send threw starts no run, and nothing waits for one.
 	 */
-	test("the dispatch that steers returns before the run it asked for, and that run settles before disposal", async () => {
-		const project = initCleanRustRepo("pi-hooks-turn-end-print-");
-		const log = join(project, "print.log");
-		try {
-			registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, customCommand(log, "audit=stop-hook-words", 2));
-			const carrier = installCarrier();
-			await carrier.handler(SETTLED_LISTENER)({}, trusted(project));
-			carrier.invalidate();
-			expect(carrier.sent.map((call) => [call.message.content, call.options])).toEqual([
-				["audit=stop-hook-words", { triggerTurn: true }],
-				["audit=stop-hook-words", { triggerTurn: false }],
-			]);
-			expect(readLog(log)).toBe(stopPayload(false) + stopPayload(true));
-			expect(carrier.errors).toEqual([]);
+	for (const shape of ["immediate", "deferred"] as const) {
+		test(`the steered run settles before disposal, and the dispatch returns (${shape} Pi)`, async () => {
+			const project = initCleanRustRepo("pi-hooks-turn-end-print-");
+			const log = join(project, "print.log");
+			try {
+				registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, customCommand(log, "audit=stop-hook-words", 2));
+				const carrier = installCarrier(undefined, undefined, shape);
+				await carrier.handler(SETTLED_LISTENER)({}, trusted(project));
+				carrier.invalidate();
+				expect(carrier.sent.map((call) => [call.message.content, call.options])).toEqual([
+					["audit=stop-hook-words", { triggerTurn: true }],
+					["audit=stop-hook-words", { triggerTurn: false }],
+				]);
+				expect(readLog(log)).toBe(stopPayload(false) + stopPayload(true));
+				expect(carrier.errors).toEqual([]);
 
-			const unsent = installCarrier(() => { throw new Error("session-bound pi is stale"); });
-			await unsent.handler(SETTLED_LISTENER)({}, trusted(project));
-			expect(unsent.sent).toHaveLength(1);
+				const unsent = installCarrier(() => { throw new Error("session-bound pi is stale"); }, undefined, shape);
+				await unsent.handler(SETTLED_LISTENER)({}, trusted(project));
+				expect(unsent.sent).toHaveLength(1);
+			} finally {
+				rmSync(project, { recursive: true, force: true });
+			}
+		});
+	}
+
+	/**
+	 * Settles overlap before 0.87: another extension's triggered run can settle
+	 * while a speaking hook is still running. Both dispatches steer before the
+	 * run either steer joined settles, and that one settle has to release both,
+	 * or the dispatch left waiting holds Pi's prompt open for good.
+	 */
+	test("two overlapping dispatches that both steer are both released by the settle that follows", async () => {
+		const project = initCleanRustRepo("pi-hooks-turn-end-overlap-");
+		try {
+			registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, customCommand(join(project, "overlap.log"), "audit=overlap", 2));
+			let bothSteered!: () => void;
+			const held = new Promise<void>((resolve) => { bothSteered = resolve; });
+			let sends = 0;
+			const carrier = installCarrier(() => { if (++sends === 2) bothSteered(); }, () => held, "immediate");
+			const onSettled = carrier.handler(SETTLED_LISTENER);
+			await Promise.all([onSettled({}, trusted(project)), onSettled({}, trusted(project))]);
+			expect(carrier.sent.map((call) => call.options)).toEqual([{ triggerTurn: true }, { triggerTurn: true }, { triggerTurn: false }]);
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}

@@ -1079,16 +1079,12 @@ jobs:
         working-directory: pi-extensions/pi-output-policy
         run: npm test
 
-      # The pi-hooks extensions import only types from pi-coding-agent, but
-      # its lane wake suite runs a whole Pi session in process on the 0.87
-      # line, the floor its peer range names: the settle a Stop hook steers
-      # from is where that release changed what a run requested there does.
+      # The pi-hooks lane wake suite runs a whole Pi session in process, and
+      # the package's own test script installs the Pi its devDependencies pin.
       - name: pi-hooks suite
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-hooks
-        run: |
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.87.1 @earendil-works/pi-ai@0.87.1 @earendil-works/pi-coding-agent@0.87.1 @earendil-works/pi-tui@0.87.1
-          npm test
+        run: npm test
 
       # pi-nested-agents-md imports only types from pi-coding-agent, which
       # bun erases, so its suite runs with no install.

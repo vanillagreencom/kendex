@@ -864,14 +864,17 @@ echo "=== a hosted Pi fleet lane is judged on its host's own Pi settings and car
 PI_LOCAL="$TMP_ROOT/pi-local"
 mkdir -p "$PI_LOCAL/packages/@vanillagreen/pi-hooks/extensions"
 printf 'export const f = { context_window: 1 };\n' > "$PI_LOCAL/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
+PI_WAKE_MANIFEST='{"pi":{"extensions":["./extensions/hooks.ts","./extensions/lane-mail-wake.ts"]}}'
+printf '%s\n' "$PI_WAKE_MANIFEST" > "$PI_LOCAL/packages/@vanillagreen/pi-hooks/package.json"
 OFF='{"compaction":{"enabled":false}}' ON='{"compaction":{"enabled":true}}'
 PI_ITEM=140
-# pi_carrier_at PACKAGES [VOCAB] — a pi-hooks carrier installed under
-# PACKAGES on the host disk, with VOCAB as its extensions/vocab.ts.
+# pi_carrier_at PACKAGES [VOCAB [MANIFEST]] — a pi-hooks carrier installed
+# under PACKAGES on the host disk, with VOCAB as its extensions/vocab.ts and
+# MANIFEST as its package.json, one naming no extensions by default.
 pi_carrier_at() {
-  local pkg="$HOSTED_DISK$1/@vanillagreen/pi-hooks"
+  local pkg="$HOSTED_DISK$1/@vanillagreen/pi-hooks" manifest='{"name":"@vanillagreen/pi-hooks"}'
   mkdir -p "$pkg/extensions"
-  printf '{"name":"@vanillagreen/pi-hooks"}\n' > "$pkg/package.json"
+  printf '%s\n' "${3:-$manifest}" > "$pkg/package.json"
   [[ -z "${2:-}" ]] || printf '%s\n' "$2" > "$pkg/extensions/vocab.ts"
 }
 # hosted_pi ROOT CARRIER USER PROJECT [ENV]... — one hosted Pi fleet launch of
@@ -887,10 +890,11 @@ hosted_pi() {
   if [[ "$user" != - ]]; then mkdir -p "${user_file%/*}"; printf '%s\n' "$user" > "$user_file"; fi
   if [[ "$project" != - ]]; then mkdir -p "$HOSTED_DISK/srv/lane/.pi"; printf '%s\n' "$project" > "$HOSTED_DISK/srv/lane/.pi/settings.json"; fi
   case "$carrier" in
-    sends) pi_carrier_at "$pi_dir/packages" 'export const f = { context_window: 1 };' ;;
-    old) pi_carrier_at "$pi_dir/packages" 'export const f = { session_id: 1 };' ;;
+    sends) pi_carrier_at "$pi_dir/packages" 'export const f = { context_window: 1 };' "$PI_WAKE_MANIFEST" ;;
+    nowake) pi_carrier_at "$pi_dir/packages" 'export const f = { context_window: 1 };' ;;
+    old) pi_carrier_at "$pi_dir/packages" 'export const f = { session_id: 1 };' "$PI_WAKE_MANIFEST" ;;
     shadowed) pi_carrier_at /srv/lane/.pi/packages
-              pi_carrier_at "$pi_dir/packages" 'export const f = { context_window: 1 };' ;;
+              pi_carrier_at "$pi_dir/packages" 'export const f = { context_window: 1 };' "$PI_WAKE_MANIFEST" ;;
     none) ;;
   esac
   line=$'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc'
@@ -918,6 +922,7 @@ a settings read the host fails is unreadable|/pi|sends|$OFF|-|LANE_HOST_STUB_CAT
 a host carrier that sends no window is refused though this machine's sends one|/pi|old|$OFF|-|-|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
 a host with no carrier installed is refused|/pi|none|$OFF|-|-|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
 a tree carrier from before the field decides over the root's that sends|/pi|shadowed|$OFF|-|-|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
+a host carrier that lists no lane mail wake is refused|/pi|nowake|$OFF|-|-|open-terminal: unsupported-for-oversee harness=pi reason=no-mail-wake
 a carrier read the host fails is unreadable|/pi|sends|$OFF|-|LANE_HOST_STUB_CAT_STATUS=1 LANE_HOST_STUB_CAT_PATH=$VOCAB|open-terminal: pi-carrier-unreadable file=$VOCAB
 ROWS
 # Each refusal replaced by a pass, in a copy of the launcher.
@@ -933,6 +938,10 @@ busy_mutant pi-window '    || { ot_message unsupported-for-oversee "harness=pi" 
 hosted_pi /pi old "$OFF" - -- SCRIPT="$BUSY_MUTANT_OT"
 assert_eq "$PI_OUTCOME" "rc=0 launched windows=1 marker=root" \
   "control: without its refusal a hosted Pi lane whose host carrier sends no window launches"
+busy_mutant pi-wake '    || { ot_message unsupported-for-oversee "harness=pi" "reason=no-mail-wake" >&2; return 1; }' '    || :'
+hosted_pi /pi nowake "$OFF" - -- SCRIPT="$BUSY_MUTANT_OT"
+assert_eq "$PI_OUTCOME" "rc=0 launched windows=1 marker=root" \
+  "control: without its refusal a hosted Pi lane whose host carrier lists no mail wake launches"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

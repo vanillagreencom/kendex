@@ -47,11 +47,11 @@ The other hook events cannot stop anything in Pi, so the extension delivers what
 
 ## Lane mail wake
 
-- An orch lane is a session whose worktree an orch launch recorded: a launch marker under the repository's git directory names the worktree, and the lane's mailbox is `tmp/lane-mail/<item>/`.
-- In such a session the extension watches the mailbox. When the overseer's mail lands and the session is idle, it asks orch's `lane-mail inbox --peek` what is unread.
-- Unread mail other than an answer starts one turn with a message naming the `lane-mail inbox` command that reads it. An answer is left to the `lane-mail wait` that asked for it.
-- A session that is busy gets its mail from the lane-mail hooks at its next tool call or turn end, and the extension checks again once the session settles.
-- A subagent is never woken.
+- The extension watches the lane mailboxes under the checkout's `tmp/lane-mail`, and checks again each time the session settles.
+- While the session is idle it runs the installed `lane-mail-deliver` hook, the hook that hands a lane its mail after a tool call, and that hook decides whether this session is a lane and what it has unread.
+- What the hook hands over starts one turn, and the hook marks that mail read. An answer is left to the `lane-mail wait` that asked for it.
+- A session that is busy gets its mail from the lane-mail hooks at its next tool call or turn end.
+- A subagent is never woken, and the `enabled` setting turns the wake off with the hooks.
 
 ## Settings
 

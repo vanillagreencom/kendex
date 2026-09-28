@@ -18,7 +18,13 @@
     ]
   },
   "scripts": {
-    "test": "bun test ./tests"
+    "test": "npm install --no-package-lock --ignore-scripts --no-audit --no-fund && bun test ./tests"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-agent-core": "0.87.1",
+    "@earendil-works/pi-ai": "0.87.1",
+    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@earendil-works/pi-tui": "0.87.1"
   },
   "kendex": {
     "extensionManager": {
@@ -100,7 +106,7 @@
     }
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.87.0"
+    "@earendil-works/pi-coding-agent": "*"
   },
   "files": [
     "extensions/",

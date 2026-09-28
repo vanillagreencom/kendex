@@ -127,30 +127,56 @@ export interface Carrier {
  * captured from has been replaced.
  *
  * A `triggerTurn: true` message sent during an `agent_settled` dispatch asks
- * for an agent run, and Pi (0.87.0 on) defers that run until every settled
- * handler has returned, then runs it, and dispatches the settle it ends in
- * with a ctx of its own, before the settle it was asked from is over and the
- * session reads idle. `run` is that run, a later tick unless a case holds it. */
+ * for an agent run, and when that run starts is the Pi release's. `shape`
+ * names which:
+ *
+ * - `deferred`, Pi 0.87.0 on: the run waits until every settled handler has
+ *   returned, then runs, and the settle it ends in is dispatched, before the
+ *   settle it was asked from is over and the session reads idle.
+ * - `immediate`, Pi 0.80.4 through 0.86: the run starts before `sendMessage`
+ *   returns, nobody awaits it, the session reads busy until it settles, and a
+ *   second such message joins it.
+ *
+ * `run` is that run, a later tick unless a case holds it. Every settle ctx
+ * answers `isIdle` from the fake's own run state. */
+export type SettleShape = "deferred" | "immediate";
 export function installCarrier(
 	onSend?: (message: SentMessage) => void,
 	run: () => Promise<void> = () => new Promise((resolve) => setTimeout(resolve, 0)),
+	shape: SettleShape = "deferred",
 ): Carrier {
 	const handlers = new Map<string, ListenerHandler>();
 	const sent: SentCall[] = [];
 	const errors: string[] = [];
 	let stale = false;
 	let settling: Record<string, unknown> | undefined;
+	let running: Promise<void> | undefined;
 	const deferred: (() => Promise<void>)[] = [];
 	const settle = async (event: Record<string, unknown>, ctx: Record<string, unknown>) => {
-		settling = ctx;
+		const own = new Proxy(ctx, {
+			get: (target, key) => {
+				if (stale) throw new Error("extension ctx is stale");
+				return key === "isIdle" ? () => running === undefined : Reflect.get(target, key);
+			},
+		});
+		settling = own;
 		let result: unknown;
 		try {
-			result = await handlers.get("agent_settled")!(event, ctx);
+			result = await handlers.get("agent_settled")!(event, own);
 		} finally {
 			settling = undefined;
 		}
 		for (const action of deferred.splice(0)) await action();
 		return result;
+	};
+	const steeredRun = async (ctx: Record<string, unknown>) => {
+		try {
+			await run();
+			if (shape === "immediate") running = undefined;
+			await settle({}, ctx);
+		} catch (error) {
+			errors.push(error instanceof Error ? error.message : String(error));
+		}
 	};
 	const pi = {
 		on(event: string, cb: ListenerHandler) {
@@ -160,20 +186,13 @@ export function installCarrier(
 			sent.push({ message, options });
 			onSend?.(message);
 			if (options?.triggerTurn !== true || settling === undefined) return;
-			const ctx = new Proxy(settling, {
-				get: (target, key) => {
-					if (stale) throw new Error("extension ctx is stale");
-					return Reflect.get(target, key);
-				},
-			});
-			deferred.push(async () => {
-				try {
-					await run();
-					await settle({}, ctx);
-				} catch (error) {
-					errors.push(error instanceof Error ? error.message : String(error));
-				}
-			});
+			const ctx = settling;
+			if (shape === "deferred") {
+				deferred.push(() => steeredRun(ctx));
+				return;
+			}
+			if (running !== undefined) return;
+			running = new Promise<void>((resolve) => setTimeout(resolve, 0)).then(() => steeredRun(ctx));
 		},
 	};
 	piHooks(pi as never);

@@ -52,15 +52,22 @@ REPO="$TMP_ROOT/repo"
 stage "$REPO"
 PI_AGENT="$TMP_ROOT/pi-agent"
 mkdir -p "$PI_AGENT"
-# The pi-hooks carrier Pi loads, sending the window on its Stop payload or not.
-pi_carrier() { # sends|old|none
+# The pi-hooks carrier Pi loads, sending the window on its Stop payload or not,
+# and listing the lane mail wake among its extensions or not.
+PI_WAKE_MANIFEST='{"pi":{"extensions":["./extensions/hooks.ts","./extensions/lane-mail-wake.ts"]}}'
+pi_carrier() { # sends|old|nowake|none
   rm -rf -- "${PI_AGENT:?}/packages"
   [[ "$1" != none ]] || return 0
   mkdir -p "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions"
-  if [[ "$1" == sends ]]; then
-    printf 'export const f = { context_window: 1 };\n' > "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
-  else
+  if [[ "$1" == old ]]; then
     printf 'export const f = { session_id: 1 };\n' > "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
+  else
+    printf 'export const f = { context_window: 1 };\n' > "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
+  fi
+  if [[ "$1" == nowake ]]; then
+    printf '{"pi":{"extensions":["./extensions/hooks.ts"]}}\n' > "$PI_AGENT/packages/@vanillagreen/pi-hooks/package.json"
+  else
+    printf '%s\n' "$PI_WAKE_MANIFEST" > "$PI_AGENT/packages/@vanillagreen/pi-hooks/package.json"
   fi
 }
 
@@ -135,6 +142,7 @@ compaction off with a carrier that sends the window passes|sends|{"compaction":{
 a project turning compaction back on is refused, naming the project file|sends|{"compaction":{"enabled":false}}|{"compaction":{"enabled":true}}|${FLEET[*]} --harness pi|open-terminal: compaction-on harness=pi file=$REPO/.pi/settings.json
 a carrier that sends no window is refused|old|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
 no carrier installed is refused|none|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
+a carrier that lists no lane mail wake is refused|nowake|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: unsupported-for-oversee harness=pi reason=no-mail-wake
 a settings file jq cannot read is named|sends|not json|-|${FLEET[*]} --harness pi|open-terminal: pi-settings-unreadable @FILE@
 a hosted Pi fleet lane is not judged on this machine's settings or carrier, which are its host's to hold|none|{"compaction":{"enabled":true}}|-|${FLEET[*]} --harness pi --host $BIN/provider|passed
 no fleet passes whatever its settings|none|-|-|--harness pi|passed
@@ -154,6 +162,7 @@ echo "=== a local Pi fleet launch on a Copilot model is judged on the Pi root it
 POOL_ROOT="$TMP_ROOT/pool-root"
 mkdir -p "$POOL_ROOT/packages/@vanillagreen/pi-hooks/extensions"
 printf 'export const f = { context_window: 1 };\n' > "$POOL_ROOT/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
+printf '%s\n' "$PI_WAKE_MANIFEST" > "$POOL_ROOT/packages/@vanillagreen/pi-hooks/package.json"
 pi_carrier sends
 POOL_FLAGS='--model github-copilot/claude-sonnet-5 --thinking high'
 # One measured Claude account for the `auto:claude` pick, under a home of the
@@ -224,6 +233,10 @@ pi_carrier old
 control window-read-ctrl '"$CLAIM_ROOT" || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; return 1; }' '"$CLAIM_ROOT" || :'
 assert_eq "$(OT="$CTRL_OT" launch window-read-ctrl "${FLEET[@]}" --harness pi)" passed \
   "control: without its refusal a Pi fleet lane whose carrier sends no window passes"
+pi_carrier nowake
+control mail-wake-ctrl '"$CLAIM_ROOT" || { ot_message unsupported-for-oversee "harness=pi" "reason=no-mail-wake" >&2; return 1; }' '"$CLAIM_ROOT" || :'
+assert_eq "$(OT="$CTRL_OT" launch mail-wake-ctrl "${FLEET[@]}" --harness pi)" passed \
+  "control: without its refusal a Pi fleet lane whose carrier lists no mail wake passes"
 rm -f -- "$PI_AGENT/settings.json"
 pi_carrier sends
 printf '{"compaction":{"enabled":true}}\n' > "$PI_AGENT/settings.json"

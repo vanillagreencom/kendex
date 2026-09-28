@@ -118,3 +118,26 @@ lane_adapter_pi_carrier_sends() { # ROOT...
   done
   return 1
 }
+
+# Whether the pi-hooks carrier Pi loads for a session started in DIR starts a
+# turn in an idle lane when its overseer's mail lands: 0 where the installed
+# carrier, the project's or else the user's, lists the lane mail wake among
+# the extensions its package.json gives Pi to load, 1 where none installed
+# does or its package.json does not read. A Pi lane arms no mailbox monitor,
+# so a carrier without the wake leaves it reading no mail while it is idle.
+lane_adapter_pi_mail_wake() { # DIR
+  lane_adapter_pi_carrier_wakes "$1/.pi/packages" "$(lane_adapter_pi_agent_dir)/packages"
+}
+
+# The same answer over the package roots ROOT..., the first holding a carrier
+# deciding, as lane_adapter_pi_carrier_sends reads them.
+lane_adapter_pi_carrier_wakes() { # ROOT...
+  local root
+  for root in "$@"; do
+    [ -d "$root/@vanillagreen/pi-hooks/extensions" ] || continue
+    jq -e '(.pi.extensions // []) | index("./extensions/lane-mail-wake.ts") != null' \
+      "$root/@vanillagreen/pi-hooks/package.json" >/dev/null 2>&1 && return 0
+    return 1
+  done
+  return 1
+}

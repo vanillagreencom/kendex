@@ -637,6 +637,7 @@ assert_eq "$(observe "rc=1 pickrefusal=lane-provider-unmeasured,harness=pi,model
 pi_fleet_root() { # DIR COMPACTION
   mkdir -p "$1/packages/@vanillagreen/pi-hooks/extensions"
   printf 'export const f = { context_window: 1 };\n' > "$1/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
+  printf '%s\n' '{"pi":{"extensions":["./extensions/hooks.ts","./extensions/lane-mail-wake.ts"]}}' > "$1/packages/@vanillagreen/pi-hooks/package.json"
   printf '{"compaction":{"enabled":%s}}\n' "$2" > "$1/settings.json"
 }
 pi_fleet_root "$H/.pi1" false
