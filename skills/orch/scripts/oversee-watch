@@ -2313,9 +2313,11 @@ overseer_mark_check() { # ROWS IDENTITY PANE
 # An exit status `overseer-run` wrote into the record, over a pane whose
 # process is a bare shell with nothing under it, settles it first, as
 # `exited`, OV_SOURCE `record`. The harness's own rows settle it next
-# (lib/session-rows.sh): a SessionEnd
-# is `exited` and a usage-limit StopFailure is `walled` whatever the pane
-# shows, OV_SOURCE `rows`. A session its rows call live is still `exited` when
+# (lib/session-rows.sh), OV_SOURCE `rows`: a SessionEnd for any reason but
+# `clear` or `resume` is `exited` only over a pane whose process is a bare
+# shell with nothing under it, and live over a running process; a usage-limit
+# StopFailure is `walled` whatever the screen shows, and overseer_judge holds
+# it to the account judgement. A session its rows call live is still `exited` when
 # the pane's process is a bare shell with nothing under it, which a harness
 # killed before its SessionEnd hook ran leaves, OV_SOURCE `process`: a process
 # fact, read as lib/lane-state.sh's own rung reads it, never the screen.

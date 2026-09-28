@@ -129,7 +129,11 @@ session_rows_start() { # FILE [SINCE]
 # nested under another, which the other one's tool shell started, has two;
 # a process under no such pane never reaches it. Exit 1 for either, and for a
 # process table `ps` could not read, which is no evidence of a top-level
-# session. The shell set is lib/lane-state.sh's is_bare_shell.
+# session. A harness that is the pane's process itself (`tmux new-window
+# claude`, `exec claude` at the prompt, a tmux default command) is where the
+# walk stops and is never counted, so it writes no row and its reader takes
+# the pane fallback; a launched overseer is typed into the pane's shell and is
+# not that shape. The shell set is lib/lane-state.sh's is_bare_shell.
 session_rows_top_level() { # PANE_PID
   local pid="$$" line ppid comm harnesses=0 steps=0
   while [ "$pid" != "$1" ]; do
