@@ -249,6 +249,7 @@ counted() {
 #   pickrefusal   every field of the first refusal of an `auto` pick, a
 #                 copilot-pool-*, lane-provider-unmeasured or lane-unavailable
 #                 line, key first, or none
+#   hostseat      every field of the host-pi-claude-seat line, or none
 #   compactionon  the file field of the first compaction-on line, or none
 #   claim_lanes   the distinct lanes those claims name, sorted
 #   claim_window  the window the single claim names; claim_pane its pane id
@@ -302,6 +303,10 @@ observe() {
         ;;
       pickrefusal)
         value="$(awk '$1 == "open-terminal:" && $2 ~ /^(copilot-pool-|lane-provider-unmeasured$|lane-unavailable$)/ { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' <<<"$OUT")"
+        value="${value:-none}"
+        ;;
+      hostseat)
+        value="$(awk '$1 == "open-terminal:" && $2 == "host-pi-claude-seat" { $1 = ""; $2 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' <<<"$OUT")"
         value="${value:-none}"
         ;;
       claim_lanes) value="$(cat "$RUN"/state/claims/*.claim 2>/dev/null | cut -f3 | sed "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
@@ -593,7 +598,7 @@ table \
   "a named account whose pool is spent is refused on the monthly bucket|$PI_POOL=1000000/1000000;$PI_COPILOT|--harness pi --lane $H/.pi1 CC-1663|rc=1 launched=nolog walled=lane=$H/.pi1,model=github-copilot/claude-sonnet-5:high,pct=100,bucket=monthly,projected-headroom=0" \
   "a named account whose pool has room launches under Pi's root variable while every Claude seat is walled|$PI_POOL=100000/1000000;$PI_COPILOT|--harness pi --lane $H/.pi1 --lane-max-pct 15 CC-1664|rc=0 launched=1 pi_root=pi1 cmd_lane=none walled=none unreadable=none" \
   "the provider on Pi's own flag is the Copilot pool too, judged on the named account|$PI_POOL=100000/1000000;$PI_PROVIDER|--harness pi --lane $H/.eclaude CC-1667|rc=1 launched=nolog unreadable=lane=$H/.eclaude,model=github-copilot/claude-sonnet-5,step=windows" \
-  "a named Pi lane on a provider nothing measures is refused as unmeasured, never launched|cmd=true --model sonnet:high|--harness pi --lane $H/.eclaude CC-1668|rc=1 launched=nolog unreadable=lane=$H/.eclaude,model=sonnet:high,step=windows"
+  "a named Pi lane on a model naming no provider is refused by that cause, never launched|cmd=true --model sonnet:high|--harness pi --lane $H/.eclaude CC-1668|rc=1 launched=nolog unreadable=none pickrefusal=lane-provider-unmeasured,harness=pi,model=sonnet:high"
 # Controls, one per rule: the named gate back on claude and codex alone
 # launches the unmeasured account unjudged; the prefix back on the Claude
 # variable for the pool starts Pi on a root nobody picked; and the provider
@@ -618,8 +623,8 @@ assert_eq "$(observe "rc=0 pi_root=none cmd_lane=pi1")" "rc=0 pi_root=none cmd_l
   "control: the Claude variable for a Pi lane on the pool leaves Pi on a root nobody picked"
 pi_control ctl-pi-provider lib/lane-launch.sh '[[ -z "$provider" ]] || model="$provider/$model"' ':' \
   "$PI_POOL=100000/1000000;$PI_PROVIDER" --harness pi --lane "$H/.eclaude" CC-1667
-assert_eq "$(observe "rc=1 unreadable=lane=$H/.eclaude,model=claude-sonnet-5,step=windows")" \
-  "rc=1 unreadable=lane=$H/.eclaude,model=claude-sonnet-5,step=windows" \
+assert_eq "$(observe "rc=1 pickrefusal=lane-provider-unmeasured,harness=pi,model=claude-sonnet-5")" \
+  "rc=1 pickrefusal=lane-provider-unmeasured,harness=pi,model=claude-sonnet-5" \
   "control: the provider flag unread judges a Pi lane on the Copilot pool as a model naming no provider"
 
 # A fleet batch on the pool re-picks each item after the first, and the Pi root
@@ -658,12 +663,18 @@ table \
   "a named walled Claude seat is refused for a pi-claude model|$PI_CLAUDE|--harness pi --lane $H/.nclaude CC-1682|rc=1 launched=nolog walled=lane=$H/.nclaude,model=pi-claude/claude-opus-5-5:high,pct=95,bucket=weekly" \
   "a named Claude seat with room launches a pi-claude model under the Claude variable|$PI_CLAUDE|--harness pi --lane $H/.claude CC-1683|rc=0 launched=1 cmd_lane=claude pi_root=none walled=none" \
   "auto refuses a provider nothing measures by its own cause|cmd=true --model openai/gpt-6:high|--harness pi --lane auto CC-1684|rc=1 launched=nolog creates=nolog pickrefusal=lane-provider-unmeasured,harness=pi,model=openai/gpt-6:high"
-# The control drops the unmeasured arm of the auto refusal, which then names
-# lanes failing rather than the provider.
+# The controls drop the unmeasured arm of the auto refusal, which then names
+# lanes failing rather than the provider, and the named judge's, which then
+# names a window nobody read.
 pi_control ctl-pi-unmeasured open-terminal '5:unmeasured)' '5:unmeasured-dropped)' \
   "cmd=true --model openai/gpt-6:high" --harness pi --lane auto CC-1684
 assert_eq "$(observe "rc=1 pickrefusal=none failed=exit=5")" "rc=1 pickrefusal=none failed=exit=5" \
   "control: without its arm an auto pick on an unmeasured provider is reported as lanes failing"
+pi_control ctl-pi-named-unmeasured open-terminal '"$LAUNCH_MODEL")" == unmeasured ]]; then' '"$LAUNCH_MODEL")" == unmeasured-dropped ]]; then' \
+  "cmd=true --model sonnet:high" --harness pi --lane "$H/.eclaude" CC-1668
+assert_eq "$(observe "rc=1 pickrefusal=none unreadable=lane=$H/.eclaude,model=sonnet:high,step=windows")" \
+  "rc=1 pickrefusal=none unreadable=lane=$H/.eclaude,model=sonnet:high,step=windows" \
+  "control: without its arm a named Pi lane naming no provider is refused as an unread window"
 
 echo "=== a launch is refused when the model it passes has no window left ==="
 # An account with plan-wide weekly room can still have none left for ONE model.
@@ -970,10 +981,28 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=
   "rc=0 creates=nolog launched=1 calls=accounts;create,--item,CC-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,CC-41,/srv/lane/.git;put,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;cat,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;put,--item,CC-41,/srv/lane/tmp/lane-mail/CC-41/context.json remote=1" \
   "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line"
 HOSTED_LINE="$(hosted_line CC-48)"
-run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model pi-claude/opus --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-48
-assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec pi $Q--exclude-tools$Q ${Q}question$Q $Q--model$Q ${Q}pi-claude/opus$Q $Q--thinking$Q ${Q}high$Q -c $Q$HOSTED_LINE$Q'")" \
+run_ot "ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-48
+assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec pi $Q--exclude-tools$Q ${Q}question$Q $Q--model$Q ${Q}github-copilot/opus$Q $Q--thinking$Q ${Q}high$Q -c $Q$HOSTED_LINE$Q'")" \
   "rc=0 creates=nolog launched=1 remote=1" \
   "a hosted pi relaunch continues natively with the continuation line"
+# A hosted Pi launch on a pi-claude model is refused before any pick, judge or
+# host call, auto and named alike: the host protocol hands a Pi lane its
+# account as its Pi root and carries no Claude seat. The control drops the
+# refusal, and the auto launch goes on to the provider.
+for pi_seat_lane in auto work; do
+  run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model pi-claude/opus --thinking high" --host "$HOST_STUB" --harness pi --lane "$pi_seat_lane" --repo o/r CC-1690
+  assert_eq "$(observe "rc=1 launched=nolog hostseat=host=$HOST_STUB,model=pi-claude/opus") calls=$(host_call)" \
+    "rc=1 launched=nolog hostseat=host=$HOST_STUB,model=pi-claude/opus calls=nolog" \
+    "a hosted Pi launch on a pi-claude model under --lane $pi_seat_lane is refused before any host call"
+done
+PI_OT_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-pi-seat/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-pi-seat/orch"
+mutate_file "$OPEN_TERMINAL" '"$(lane_pick_harness pi "$LAUNCH_MODEL")" == claude ]]; then' '"$(lane_pick_harness pi "$LAUNCH_MODEL")" == claude-dropped ]]; then'
+run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model pi-claude/opus --thinking high" --host "$HOST_STUB" --harness pi --lane auto --repo o/r CC-1690
+assert_eq "$(observe "hostseat=none") called=$([[ "$(host_call)" == nolog ]] && echo no || echo yes)" "hostseat=none called=yes" \
+  "control: without the refusal a hosted Pi launch on a pi-claude model goes on to the provider"
+OPEN_TERMINAL="$PI_OT_SHIPPED"
 # A hosted Pi relaunch on a Copilot model whose pool nothing states is refused
 # as unmeasured, and open-terminal does not ask whether the provider holds the
 # account: the pool reading is the owner's statement, which no provider copy

@@ -42,7 +42,8 @@ ot_message() { # REASON FIELD=VALUE...
     lane-unavailable) text='No lane meets the usage threshold. Wait for a reset, raise the threshold or select a lane. The keyed lanes: line above names what each lane was and, where a threshold applied, the threshold.' ;;
     lane-resolution-failed) text='The lanes helper failed to select an account.' ;;
     copilot-pool-walled) text='Every Pi account this launch could spend is at or above the usage threshold on its Copilot pool, as ORCH_LANE_COPILOT_POOL states it. Nothing was launched. The reading is the owner'"'"'s statement and moves only when the owner restates it; waiting for a reset changes nothing here. The keyed lanes: line above names the pool and the threshold.' ;;
-    lane-provider-unmeasured) text='This Pi launch names a model whose provider bills an account nothing here measures: only pi-claude/ (a Claude seat) and github-copilot/ (the Copilot pool) are judged. Nothing was launched: an unmeasured account is not one with room. Launch it on a model of one of those providers.' ;;
+    lane-provider-unmeasured) text='Nothing measures the account this Pi launch spends: its model names no provider, or a provider other than pi-claude/ (a Claude seat) and github-copilot/ (the Copilot pool), the two whose accounts are judged. Nothing was launched: an unmeasured account is not one with room. Spell the model pi-claude/<model> or github-copilot/<model>, or pass --provider beside a bare --model.' ;;
+    host-pi-claude-seat) text='A Pi launch on a pi-claude/ model spends a Claude seat, and the lane host protocol hands a Pi lane its account as its Pi root, so it cannot carry that seat into the host: pi-claude-bridge would run on the host'"'"'s own Claude login, not the seat judged here. Nothing was picked, judged or created. Launch it without --host, or on a github-copilot/ model.' ;;
     copilot-pool-unstated) text='This Pi launch spends the Copilot pool, and ORCH_LANE_COPILOT_POOL states no reading for any account, so nothing measures what it would spend. Nothing was launched. State the owner'"'"'s reading in that setting (lanes --help); waiting changes nothing.' ;;
     lane-directory-missing) text='The specified lane directory does not exist.' ;;
     lane-unknown) text='The lane is neither a known alias nor a directory.' ;;
@@ -224,16 +225,22 @@ Options:
                     argv being the caller's own. A NAMED lane is then judged
                     on the window for that model, claude and codex, and pi on
                     the account its model's provider bills (--provider beside
-                    a bare --model counts): a pi-claude/ model on the Claude
-                    seat as a claude lane is, and a github-copilot/ model on
-                    the Copilot pool ORCH_LANE_COPILOT_POOL states (`lanes
-                    --help`), which `auto` with --harness pi picks on too,
-                    refusing as copilot-pool-unstated where no pool is stated
-                    and copilot-pool-walled where every stated one is spent;
-                    such a lane runs under PI_CODING_AGENT_DIR, its settings
-                    and carrier read there for a fleet launch. A pi model of
-                    any other provider is refused as unreadable when named and
-                    as lane-provider-unmeasured under `auto`. A judged lane is
+                    a bare --model counts). A pi-claude/ model is judged on
+                    the Claude seat as a claude lane is, and `auto` with
+                    --harness pi picks it among the Claude seats, runs it
+                    under CLAUDE_CONFIG_DIR and refuses it as lane-unavailable
+                    where every seat is walled; a hosted one is refused first
+                    as host-pi-claude-seat, the host protocol carrying no
+                    Claude seat into a Pi lane. A github-copilot/ model is
+                    judged on the Copilot pool ORCH_LANE_COPILOT_POOL states
+                    (`lanes --help`), which `auto` with --harness pi picks on
+                    too, refusing as copilot-pool-unstated where no pool is
+                    stated and copilot-pool-walled where every stated one is
+                    spent; that lane runs under PI_CODING_AGENT_DIR, its
+                    settings and carrier read there for a fleet launch. A pi
+                    model naming no provider, or any other provider, is
+                    refused as lane-provider-unmeasured, named or `auto`. A
+                    judged lane is
                     refused when it is at or above --lane-max-pct once the
                     lanes already on it are charged their expected burn, the
                     projection `auto` judges on, refused as

@@ -180,7 +180,10 @@
 #         --json; 3 is a wall at or above --max-pct; 5 is a lane nothing
 #         measured for this launch, whether no window names --model or the
 #         account's usage could not be read at all, and under --json its record
-#         is printed too, whose `status` says which; 4 is a directory that is no
+#         is printed too, whose `status` says which, or a Pi model whose
+#         provider nothing measures, `pick-provider-unmeasured`, refused before
+#         any lane is read, so it prints no record under --json and its cause
+#         is that keyed stderr line alone; 4 is a directory that is no
 #         configured lane of this harness and no account the provider reports a
 #         reading for, which a launcher reads as nothing to
 #         judge rather than as a refusal; 1 is the judge itself failing, on a
@@ -291,7 +294,8 @@
 #                    launch on NAME — the 5-hour session window, the plan-wide
 #                    weekly window, the model-scoped weekly window whose
 #                    label names NAME, and the monthly Copilot pool a Pi
-#                    launch spends — instead of the binding bucket. A lane
+#                    launch on a `github-copilot/` model spends — instead of
+#                    the binding bucket. A lane
 #                    whose windows answer nothing for NAME is never picked.
 #                    The scoped model window alone is not enough because either
 #                    shared window can wall every model on the account.
@@ -2055,7 +2059,8 @@ collect_lanes() {
 	[[ "$hosted" == "[]" ]] || held="$(jq -r '.[]._id' <<<"$hosted")" || return 1
 	{
 		# `all` is the two harnesses whose accounts this machine measures; the
-		# Copilot pool a Pi launch spends is asked for by name alone.
+		# Copilot pool a Pi launch on a `github-copilot/` model spends is
+		# asked for by name alone.
 		for h in claude codex pi; do
 			[[ "$harness_filter" == "$h" || ( "$harness_filter" == "all" && "$h" != pi ) ]] || continue
 			while IFS= read -r d; do

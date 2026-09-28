@@ -1588,9 +1588,6 @@ overseer_marks() {
   return 0
 }
 
-# Called plainly, so errexit is live throughout this body: a status left to it
-# would exit the hook with neither 0 nor 2 and end the turn with no mark
-# judged. Every status is therefore tested where it is taken.
 # This session's own event row, written by the orch library that owns the
 # rows' shape and file (lib/session-rows.sh), from this hook's own install
 # and never the open repository's, in a CHILD of this interpreter for the
@@ -1629,11 +1626,18 @@ session_row() {
 # answer: a Claude seat is the config dir pi-claude-bridge runs Claude Code on,
 # lane_context_caller_cfg's claude answer, and the Copilot pool is Pi's own
 # root. So is the account of a provider nothing measures, which `lanes` then
-# refuses as unmeasured, never as room. MODEL is the reading's, empty where
-# the transcript gave none, which is a Pi model naming no provider. Returns 1
-# with the account reported unmeasured where the rule could not be asked.
+# refuses as unmeasured, never as room. MODEL is the reading's
+# `<provider>/<model>`, the model alone where Pi's message named no provider,
+# and empty where no reading was taken: no transcript named, no usage line
+# yet, or a usage object the adapter does not read. Returns 1 with the
+# account reported unmeasured where no reading named the model or the rule
+# could not be asked, since neither is a provider to blame.
 pi_account() {
   local judged
+  if [ -z "$MODEL" ]; then
+    message account unmeasured "no reading of this Pi session's transcript named its model, so the provider whose account it spends is unknown"
+    return 1
+  fi
   if ! judged=$("$BASH" -c '. "$1" && lane_pick_harness pi "$2"' _ "$SCRIPTS/lib/lane-launch.sh" "$MODEL" \
     2>"$WORK_DIR/rule.err"); then
     message account unmeasured "$(cat -- "$WORK_DIR/rule.err")"
@@ -1647,10 +1651,13 @@ pi_account() {
       return 1
       ;;
   esac
-  [ -z "$MODEL" ] || PICK_MODEL=(--model "$MODEL")
+  PICK_MODEL=(--model "$MODEL")
   return 0
 }
 
+# Called plainly, so errexit is live throughout this body: a status left to it
+# would exit the hook with neither 0 nor 2 and end the turn with no mark
+# judged. Every status is therefore tested where it is taken.
 handoff_check() {
   [ "$ARM" = stop ] && [ "$CALLER" = lead ] || return 0
   if [ -z "$ITEM" ]; then
@@ -1804,7 +1811,8 @@ handoff_check() {
   # lane of this harness. Every other exit, and a read that passes the ceiling,
   # is an account nothing measured: reported and passed, never read as room and
   # never held, because a setup with no usage endpoint must still end its turns.
-  # A lane whose harness is unnamed is judged on the context mark alone.
+  # `lanes` keeps no Copilot inventory, so a Copilot lane and one whose harness
+  # is unnamed are judged on the context mark alone.
   #
   # Every arm of lane_context_caller_cfg returns 0 and prints one directory,
   # and this hook reaches it only with claude or codex, so the directory is the

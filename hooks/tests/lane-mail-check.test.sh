@@ -672,6 +672,21 @@ stop_pi pi-claude 1000 $(account_env .nclaude)
 assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: account=unlisted" \
   "control: with no Pi arm a Pi lane on a spent Claude seat ends its turn unjudged"
 install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
+# A Pi turn end whose transcript names no model has read no provider, so the
+# account is left unjudged for want of a reading, `lanes` never asked.
+# shellcheck disable=SC2046
+run_payload '{"session_id":"s1","stop_hook_active":false}' "PI_CODING_AGENT_DIR=$PI_ROOT" $(account_env .nclaude)
+assert_eq "RC=$RC first=$(first_line) asked=$(grep -c '^lanes: ' "$ERR_FILE")" \
+  "RC=0 first=lane-mail-check: account=unmeasured asked=0" \
+  "a Pi lane whose model no reading named is unmeasured for that reason, never blamed on a provider"
+
+# An install directory naming no harness has no account to read at all: the
+# gap is reported, naming the directory, and the turn ends.
+install_hook "$HOOK" "$LANE/.opencode/hooks/lane-mail-check.sh"
+stop
+assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "$LANE/.opencode/hooks is no harness" "$ERR_FILE")" \
+  "RC=0 first=lane-mail-check: account=unlisted named=1" \
+  "a harness this install does not name leaves the account unjudged, named, and the turn ends"
 
 # A setting out of range dies inside `lanes` as invalid-percent, whose exit the
 # hook cannot tell from an unmeasurable account, so the bound is judged here.
