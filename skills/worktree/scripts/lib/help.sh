@@ -27,7 +27,8 @@ Commands:
   merged ID        Print the commit the issue tree's pull request merged as
   check            Pre-create git state check of the MAIN checkout (JSON:
                    uncommitted, unpushed); takes no arguments
-  push [ID|PATH]   Push the worktree branch with auto-rebase (push --help)
+  push [ID|PATH]   Push the worktree branch, rebasing it where the base needs
+                   it (push --help)
   fix-links        Restore configured symlinks in a worktree (fix-links --help)
   repair-links     Git-hook-driven variant of fix-links that never destroys
                    untracked data (fix-links --help)
@@ -482,6 +483,18 @@ Usage: worktree push [ID|/path] [--set-upstream|-u] [--no-rebase]
 Push worktree branch to remote. Auto-rebases onto origin/<default> first.
 Uses BOT_REMOTE_NAME from project config if set, otherwise falls back to
 origin.
+
+Merge-queue base: where GitHub's effective rules for the default branch hold
+a merge queue and no required-status-checks rule demanding an up-to-date
+branch, push does not rebase a branch behind that base. A trial merge onto
+origin/<default> decides instead: clean pushes the branch where it stands
+('worktree-rebase-skipped-queue'), and a conflict refuses the push
+('worktree-push-base-conflict') and names the guarded restack, 'create
+--restack', the one route that rebases such a branch. A strict rule, a base
+with no queue, a rules read that fails, or a trial merge that cannot run keeps
+the auto-rebase. The rules are read once per checkout through gh and kept as
+'kendex-base-policy' in the worktree's git dir; orch's base-freshness reads
+the same answer.
 
 Resolution: 'push ISSUE_ID' normally resolves through the configured worktree
 registry. When run from a checkout whose current branch already matches the

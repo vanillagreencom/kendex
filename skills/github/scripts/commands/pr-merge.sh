@@ -41,6 +41,11 @@ Options:
                    Never bypasses actionable unresolved review threads.
   --expected-head SHA
                    Bind GitHub's match-head merge guard to prepared SHA.
+  --require-context NAME
+                   With --auto only: arm only where the base branch requires
+                   the status-check context NAME, read from the same required
+                   set the CI gate uses. The arm right after a PR opens passes
+                   the review gate's context, so nothing merges before review.
   --dry-run        Show what would happen without merging
 
 Modes:
@@ -59,8 +64,10 @@ Merge-mode exit codes:
        Classic auto-merge is armed until protection clears.
   1    BLOCKED PR #N
        The requested operation failed; a pre-existing queue entry or auto-merge request may remain active.
-  1    arm: no-merge-gate=<allow_auto_merge|required_check|unverified> repo=<owner/repo>
-       --auto refused, nothing mutated: GitHub would merge at once with nothing to wait on.
+  1    arm: no-merge-gate=<allow_auto_merge|required_check|required_context|unverified> repo=<owner/repo>
+       --auto refused, nothing mutated: GitHub would merge at once with nothing to wait on,
+       or, for required_context, without the --require-context check. A required set
+       that cannot be read counts as not holding it.
   1    CLOSED (not merged) PR #N
        The PR is closed unmerged. Nothing was attempted.
   1    pr-merge: retired-setting key=<NAME>
@@ -1040,7 +1047,7 @@ refuse_retired_settings() {
 
 main() {
     local pr_num="" method="--squash" delete_branch=true
-    local check_only=false dry_run=false auto=false supplied_head=""
+    local check_only=false dry_run=false auto=false supplied_head="" require_context=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -1073,6 +1080,7 @@ main() {
             shift
             ;;
         --expected-head) supplied_head="${2:-}"; shift 2 ;;
+        --require-context) require_context="${2:-}"; shift 2 ;;
         --dry-run)
             dry_run=true
             shift
@@ -1100,6 +1108,9 @@ main() {
     fi
     if [ -n "$supplied_head" ] && ! [[ "$supplied_head" =~ ^[0-9a-fA-F]{40}$ ]]; then
         echo "Error: --expected-head must be a 40-character commit SHA" >&2; exit 1
+    fi
+    if [ -n "$require_context" ] && [ "$auto" != true ]; then
+        echo "Error: --require-context gates the --auto arm and needs --auto" >&2; exit 1
     fi
 
     if [ "$check_only" = true ]; then
@@ -1156,10 +1167,21 @@ main() {
     # Before any other stderr: callers route on this refusal's first line.
     local gate_gap slug
     [ "$auto" = false ] || [ "$dry_run" = true ] || gate_gap=$(merge_gate_gap "$pr_num" "$token")
+    # Read on its own rather than from the check result, which carries the
+    # required set only when the checks rollup was readable: a PR opened
+    # seconds ago has no check yet, and its rollup read fails.
+    if [ -z "${gate_gap:-}" ] && [ -n "$require_context" ] && [ "$dry_run" != true ] \
+        && ! jq -e --arg c "$require_context" 'index($c) != null' >/dev/null <<<"$(with_token "$token" required_contexts "$pr_num")"; then
+        gate_gap=required_context
+    fi
     if [ -n "${gate_gap:-}" ]; then
         slug=$(kendex_github_resolve_gh_repo "${PROJECT_ROOT:-$PWD}" 2>/dev/null) || slug=unresolved
         echo "arm: no-merge-gate=$gate_gap repo=$slug" >&2
-        echo "  Nothing mutated. Enable auto-merge and a required status check or review rule on the base branch." >&2
+        if [ "$gate_gap" = required_context ]; then
+            echo "  Nothing mutated. The base branch does not require '$require_context'; require it in the repository's ruleset." >&2
+        else
+            echo "  Nothing mutated. Enable auto-merge and a required status check or review rule on the base branch." >&2
+        fi
         exit 1
     fi
 

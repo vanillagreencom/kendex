@@ -1445,6 +1445,10 @@ worktree_path_for_issue() {
 # shellcheck source=lib/restack-state.sh
 source "$SCRIPT_DIR/lib/restack-state.sh"
 
+# Whether push rebases a branch that does not contain its base.
+# shellcheck source=lib/base-reading.sh
+source "$SCRIPT_DIR/lib/base-reading.sh"
+
 open_pr_for_branch() {
   local branch="$1"
   local result="" output=""
@@ -3529,8 +3533,17 @@ case "${1:-}" in
     if [[ "$AUTO_REBASE" == true ]]; then
       git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || true
       if [[ -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
-        if git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD; then
+        base_reading "$WT_PATH" "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH"
+        if [[ "$BASE_READING" == contained ]]; then
           worktree_message rebase-skipped "$CURRENT_BRANCH" "→ origin/$DEFAULT_BRANCH already contained in $CURRENT_BRANCH; skipping rebase" >&2
+        elif [[ "$BASE_READING" == merges-cleanly ]]; then
+          worktree_message rebase-skipped-queue "$CURRENT_BRANCH" "→ $CURRENT_BRANCH merges cleanly onto origin/$DEFAULT_BRANCH, whose merge queue rebuilds each group on the current base; skipping rebase" >&2
+        elif [[ "$BASE_READING" == conflicts ]]; then
+          # A merge-queue base takes no rebase from push: the guarded restack
+          # is the one route that rewrites the branch for it, and it pauses on
+          # a conflict for resolution where this rebase could only abort.
+          worktree_message push-base-conflict "$CURRENT_BRANCH" "Error: $CURRENT_BRANCH conflicts with origin/$DEFAULT_BRANCH. Restack it with 'worktree create <ID> --restack', resolve the conflict, then push." >&2
+          exit 1
         else
           # Snapshot the branch-only commits before/after the rebase so a
           # rewrite is reported as an old→new commit map.

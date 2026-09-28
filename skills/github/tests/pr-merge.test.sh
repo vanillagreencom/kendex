@@ -2,8 +2,9 @@
 # pr-merge: the --check readiness JSON and its stderr verdict, the
 # review-thread gate, the terminal states (a merged or closed PR
 # short-circuits every mode, before and after a state lookup that failed
-# once), the guarded mutation and its post-call outcomes, the retired
-# override flags, and the retired merge settings. The review gate's class
+# once), the guarded mutation and its post-call outcomes, the arm at
+# creation's required context, the retired override flags, and the retired
+# merge settings. The review gate's class
 # policy over that thread gate is pr-merge-thread-waiver.test.sh's. The row
 # format and the world words are lib/pr-merge-world.sh's.
 set -euo pipefail
@@ -84,6 +85,35 @@ the REST fallback keeps classic auto-merge when the queue query fails|checks:ci-
 a second --auto on a queued PR: gh's already-queued failure, the snapshot's entry wins|checks:ci-required head:already-queued-head merge-fail:already-queued post-queue|auto|75|-|{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>
 a genuine merge failure with no proof stays blocked with gh's output|checks:ci-required merge-fail:policy|auto|1|-|{no-token};{merge-failed};failed to run merge: Pull request is not mergeable: the base branch policy prohibits the merge|calls=$PRE,merge:auto,graphql:queue auth=<unset>
 a failed CLI is still a success when the exact-head snapshot is MERGED|checks:ci-required merge-fail:transport post:MERGED merge-commit:merged-oid|immediate|0|-|{no-token};MERGED PR #123|calls=$PRE,merge,graphql:queue auth=<unset>
+"
+
+# The must-fail control for the arm's required-context refusal: a copy of the
+# scripts tree whose refusal assignment is cut, the read and the test kept, so
+# a base that lacks the named context arms anyway.
+MUTANT="$TMPDIR/mutant"
+mkdir -p "$MUTANT/skills/github"
+cp -R "$REPO_ROOT/skills/github/scripts" "$MUTANT/skills/github/scripts"
+MUTANT_PR_MERGE="$MUTANT/skills/github/scripts/commands/pr-merge.sh"
+[[ "$(grep -c '^        gate_gap=required_context$' "$MUTANT_PR_MERGE")" == 1 ]] || {
+  echo "FIXTURE: the required-context refusal was not unique in $MUTANT_PR_MERGE" >&2
+  exit 2
+}
+sed -i.bak 's/^        gate_gap=required_context$/        : gate_gap=required_context/' "$MUTANT_PR_MERGE"
+rm -f -- "${MUTANT_PR_MERGE:?}.bak"
+grep -q '^        : gate_gap=required_context$' "$MUTANT_PR_MERGE" || {
+  echo "FIXTURE: the required-context edit matched nothing in $MUTANT_PR_MERGE" >&2
+  exit 2
+}
+
+# The arm a PR takes right after it opens: before any check has run, it arms
+# only where the base branch requires the review gate's context, so GitHub
+# holds the merge for that review.
+run_table "the arm at creation" "\
+the base requires the named context: the arm is made before any check runs|checks:none required:Review+gate post-auto|gated:Review+gate|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>
+a base that requires other checks but not the named one refuses, naming the repository|checks:none required:CI post-auto|gated:Review+gate|1|-|arm: no-merge-gate=required_context repo=owner/repo;{context-remedy:Review+gate}|calls=$CHECK auth=<unset>
+a required set that cannot be read refuses the same way|checks:none required:Review+gate repo:no-protection post-auto|gated:Review+gate|1|-|arm: no-merge-gate=required_context repo=owner/repo;{context-remedy:Review+gate}|calls=$CHECK auth=<unset>
+must-fail: with the refusal cut, the base that lacks the named context arms|checks:none required:CI post-auto|gated-mutant:Review+gate|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>
+the named context gates only the arm, so it needs --auto|-|gated-immediate:Review+gate|1|-|Error: --require-context gates the --auto arm and needs --auto|calls=- auth=-
 "
 
 run_table "the terminal states" "\

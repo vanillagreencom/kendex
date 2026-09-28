@@ -68,7 +68,7 @@ The full session from inside a worktree: implement → review → submit → fin
    .agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]
    ```
 
-   - Exit 0 → step 6.
+   - Exit 0 → step 6. On a merge-queue base whose rules demand no up-to-date branch, a branch behind it that merges cleanly is fresh; the JSON's `reading` names what decided (`base-freshness --help`).
    - Exit 4 → rebase through the supported reuse path, then re-run the gate; it must exit 0 before step 6:
 
      ```bash
@@ -193,4 +193,4 @@ Terminate every still-active agent in `child_sessions`, then retire the records:
 .agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY auto
 ```
 
-`auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`. Anything else → ask: `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflows. A `MERGE_READY = false` state never auto-merges.
+`auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`. Anything else → ask: `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflows. A `MERGE_READY = false` state never auto-merges from this lane; a PR `submit-pr.md` § 2 step 5 armed at creation stays armed, held by GitHub on the review gate, its required checks and thread resolution.

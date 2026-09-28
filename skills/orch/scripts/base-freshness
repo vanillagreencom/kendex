@@ -10,11 +10,20 @@
 # through the GitHub skill's git-https-auth wrapper when available, then
 # prints one JSON object:
 #
-#   {"branch", "base_branch", "base_ref", "ahead", "behind", "fresh"}
+#   {"branch", "base_branch", "base_ref", "ahead", "behind", "policy",
+#    "reading", "fresh"}
+#
+# `reading` is the one that decided `fresh`, from the worktree skill's
+# lib/base-reading.sh, the same reading `worktree push` rebases by: fresh is
+# `contained` (behind = 0) or `merges-cleanly`, which only a base whose merge
+# queue demands no up-to-date branch can answer; `conflicts`, `trial-failed`
+# and `behind` are stale. `policy` is that base's merge rule (`queue`,
+# `strict`, `no-queue` or `unverified`), empty when behind = 0 left nothing to
+# read.
 #
 # Exit codes:
-#   0  check completed, base is current (behind = 0)
-#   4  check completed, base is STALE (behind > 0) — rebase before review
+#   0  check completed, base is current (fresh = true)
+#   4  check completed, base is STALE (fresh = false) — rebase before review
 #   1  freshness could not be established (no origin, fetch failed);
 #      callers must treat this as stale, never as fresh
 #   2  usage error
@@ -37,10 +46,12 @@ message() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../../worktree/scripts/lib/base-reading.sh
+source "$SCRIPT_DIR/../../worktree/scripts/lib/base-reading.sh"
 
 case "${1:-}" in
     --help|-h)
-        sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+        sed -n '2,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     -*)
@@ -82,8 +93,11 @@ fi
 counts="$(git -C "$worktree" rev-list --left-right --count "$base_ref...HEAD")"
 read -r behind ahead <<<"$counts"
 
+base_reading "$worktree" "$base_branch" "$base_ref"
 fresh=false
-[[ "$behind" -eq 0 ]] && fresh=true
+case "$BASE_READING" in
+    contained | merges-cleanly) fresh=true ;;
+esac
 
 jq -n \
     --arg branch "$branch" \
@@ -91,7 +105,9 @@ jq -n \
     --arg base_ref "$base_ref" \
     --argjson ahead "$ahead" \
     --argjson behind "$behind" \
+    --arg policy "$BASE_POLICY" \
+    --arg reading "$BASE_READING" \
     --argjson fresh "$fresh" \
-    '{branch: $branch, base_branch: $base_branch, base_ref: $base_ref, ahead: $ahead, behind: $behind, fresh: $fresh}'
+    '{branch: $branch, base_branch: $base_branch, base_ref: $base_ref, ahead: $ahead, behind: $behind, policy: $policy, reading: $reading, fresh: $fresh}'
 
 [[ "$fresh" == true ]] || exit 4

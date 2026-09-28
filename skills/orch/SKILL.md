@@ -80,7 +80,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `sync-base` | Resolve, fetch, and fast-forward the checkout that owns the base branch; prints the branch name |
 | `adopt-writer` | After a project refresh, re-install the review-gate writer template over an unedited workflow copy; every orch step that refreshes a project runs it. `--help` |
 | `container-close` | Serialize a Linear container close across linked checkouts; prints `closed` or `deferred`, with closed diagnostics on stderr |
-| `base-freshness` | Gate the review cycle on a current base; unverifiable = stale |
+| `base-freshness` | Gate the review cycle on a current base, or on a clean merge onto a merge-queue base; unverifiable = stale |
 | `review-artifact-check` | Validate a reviewer's JSON artifact, the sole reviewer completion condition |
 | `dev-return-write` | Write a dev agent's round-scoped completion artifact; never hand-author the JSON |
 | `worktree-push` | Push an issue worktree via `worktree push`, reconciling rebased SHAs in workflow state (`.rebase_map`, `fixed_items`, `pr_comment_review.fixes`) in the same call; `--check-live-round` answers whether a fix round is in flight and pushes nothing |

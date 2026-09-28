@@ -1291,6 +1291,7 @@
   ".agents/skills/worktree/kendex.settings.toml.example",
   ".agents/skills/worktree/references/hooks.md",
   ".agents/skills/worktree/references/session-guard.md",
+  ".agents/skills/worktree/scripts/lib/base-reading.sh",
   ".agents/skills/worktree/scripts/lib/help.sh",
   ".agents/skills/worktree/scripts/lib/kendex-env.sh",
   ".agents/skills/worktree/scripts/lib/links.sh",

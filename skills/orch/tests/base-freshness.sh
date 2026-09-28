@@ -4,7 +4,9 @@
 # cycle with no fetch on that path evaluates a stale base. The helper must
 # FETCH origin (a
 # stale remote-tracking ref is not evidence), report ahead/behind of HEAD vs
-# the resolved base branch, and exit 0 fresh / 4 stale / 1 unverifiable.
+# the resolved base branch, and exit 0 fresh / 4 stale / 1 unverifiable. On a
+# merge-queue base with no up-to-date rule, fresh is a clean trial merge
+# rather than behind = 0, and the JSON names the reading that decided it.
 #
 # Bash 3.2 compatible.
 
@@ -20,6 +22,25 @@ BF="$REPO_ROOT/skills/orch/scripts/base-freshness"
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
+
+# GitHub's branch rules come from a gh stub: STUB_RULES is the rules array
+# the base's read answers through its own --jq, none when unset, so no case
+# reaches the real GitHub.
+mkdir -p "$TMP_ROOT/bin"
+cat >"$TMP_ROOT/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+jq_filter="" prev=""
+for a in "$@"; do
+  [[ "$prev" != --jq ]] || jq_filter="$a"
+  prev="$a"
+done
+case "${1:-}:${2:-}" in
+  api:repos/*/rules/branches/*) jq -r "$jq_filter" <<<"${STUB_RULES:-[]}" ;;
+esac
+STUB
+chmod +x "$TMP_ROOT/bin/gh"
+export PATH="$TMP_ROOT/bin:$PATH"
 
 commit_upstream() {
   local msg="$1"
@@ -91,6 +112,54 @@ code=$?
 set -e
 assert_eq "$code" "0" "rebased worktree exits 0"
 assert_eq "$(printf '%s' "$out" | jq -r '.behind')" "0" "rebased worktree reports behind = 0"
+
+# A merge-queue base with no up-to-date rule: behind is no longer stale by
+# itself. A branch that merges cleanly onto the fetched base is fresh, one
+# that conflicts is stale, and a strict rule keeps behind > 0 stale. Each case
+# starts from its own branch off the old base and drops the checkout's policy
+# record, so the rules the case names are the ones read. The control is a
+# copy of the script whose fresh verdict no longer takes a clean merge.
+QUEUE_RULES='[{"type":"merge_queue","parameters":{}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":false}}]'
+STRICT_RULES='[{"type":"merge_queue","parameters":{}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true}}]'
+mkdir -p "$TMP_ROOT/pkg/orch/scripts" "$TMP_ROOT/pkg/worktree/scripts/lib"
+cp "$BF" "$REPO_ROOT/skills/orch/scripts/resolve-base-branch" "$TMP_ROOT/pkg/orch/scripts/"
+cp "$REPO_ROOT/skills/worktree/scripts/lib/base-reading.sh" "$TMP_ROOT/pkg/worktree/scripts/lib/"
+MUTANT_BF="$TMP_ROOT/pkg/orch/scripts/base-freshness"
+[[ "$(grep -cF '    contained | merges-cleanly) fresh=true ;;' "$MUTANT_BF")" == 1 ]] || {
+  echo "FIXTURE: the fresh verdict was not unique in $MUTANT_BF" >&2
+  exit 2
+}
+sed -i.bak 's/^    contained | merges-cleanly) fresh=true ;;$/    contained) fresh=true ;;/' "$MUTANT_BF"
+rm -f -- "${MUTANT_BF:?}.bak"
+grep -qF '    contained) fresh=true ;;' "$MUTANT_BF" || {
+  echo "FIXTURE: the fresh-verdict edit matched nothing in $MUTANT_BF" >&2
+  exit 2
+}
+OLD_BASE="$(git -C "$WT" rev-parse origin/main~2)"
+# label|script|rules|file the branch commits|exit|behind|policy|reading|fresh
+while IFS='|' read -r q_label q_script q_rules q_file q_code q_behind q_policy q_reading q_fresh; do
+  [[ -n "$q_label" ]] || continue
+  git -C "$WT" checkout -q -B "queue-case" "$OLD_BASE"
+  printf 'branch-side\n' >"$WT/$q_file"
+  git -C "$WT" add "$q_file"
+  git -C "$WT" commit -q -m "branch: $q_file"
+  rm -f -- "$WT/.git/kendex-base-policy"
+  [[ "$q_script" == mutant ]] && q_bf="$MUTANT_BF" || q_bf="$BF"
+  set +e
+  out="$(STUB_RULES="$q_rules" env -u WORKTREE_DEFAULT_BRANCH "$q_bf" "$WT" 2>"$TMP_ROOT/err")"
+  code=$?
+  set -e
+  assert_eq "$code:$(printf '%s' "$out" | jq -r '"\(.behind) \(.policy) \(.reading) \(.fresh)"')" \
+    "$q_code:$q_behind $q_policy $q_reading $q_fresh" "$q_label"
+done <<ROWS
+a behind branch that merges cleanly onto a merge-queue base is fresh|real|$QUEUE_RULES|branch-only.txt|0|2|queue|merges-cleanly|true
+must-fail: with the clean merge cut from the fresh verdict, that branch is stale|mutant|$QUEUE_RULES|branch-only.txt|4|2|queue|merges-cleanly|false
+a branch that conflicts with a merge-queue base is stale|real|$QUEUE_RULES|log.txt|4|2|queue|conflicts|false
+a strict up-to-date rule keeps a behind branch stale|real|$STRICT_RULES|branch-only.txt|4|2|strict|behind|false
+a base with no queue keeps a behind branch stale|real|[]|branch-only.txt|4|2|no-queue|behind|false
+ROWS
+git -C "$WT" checkout -q issue-42
+rm -f -- "$WT/.git/kendex-base-policy"
 
 # WORKTREE_DEFAULT_BRANCH overrides the resolved base (resolve-base-branch
 # integration): compare against origin/trunk instead of origin/main.

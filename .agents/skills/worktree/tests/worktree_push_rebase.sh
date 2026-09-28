@@ -607,6 +607,76 @@ step() {
       cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
       ROW_SCRIPT="$ROOT/pkg/worktree/scripts/worktree"
       ;;
+    # A GitHub whose rules for main hold a merge queue, beside a
+    # required-status-checks rule that demands an up-to-date branch or not.
+    # The stub answers the rules read through the caller's own --jq and logs
+    # every gh call, so a row sees the policy the push reads and how often.
+    queue | queue-strict)
+      queue_strict=false
+      [[ "$1" != queue-strict ]] || queue_strict=true
+      mkdir -p "$ROOT/bin"
+      cat >"$ROOT/bin/gh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$*" >>"$ROOT/gh.calls"
+jq_filter="" prev=""
+for a in "\$@"; do
+  [[ "\$prev" != --jq ]] || jq_filter="\$a"
+  prev="\$a"
+done
+case "\${1:-}:\${2:-}" in
+  api:repos/*/rules/branches/main)
+    jq -r "\$jq_filter" <<<'[{"type":"merge_queue","parameters":{}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":$queue_strict}}]'
+    ;;
+esac
+EOF
+      chmod +x "$ROOT/bin/gh"
+      ROW_PATH="$ROOT/bin"
+      ;;
+    # The must-fail controls' worlds for the merge-queue base: a package copy
+    # whose push loses the clean-merge skip, one whose push loses the conflict
+    # refusal, one whose rules reading takes a strict rule for a queue, and
+    # one whose rules reading never answers from the checkout's own record.
+    unfixed-queue-skip | unfixed-queue-conflict | unfixed-strict | unfixed-cache)
+      step standalone
+      case "$1" in
+        unfixed-queue-skip)
+          mutant="$ROW_SCRIPT"
+          mutant_from='elif [[ "$BASE_READING" == merges-cleanly ]]; then'
+          mutant_to='elif false; then'
+          ;;
+        unfixed-queue-conflict)
+          mutant="$ROW_SCRIPT"
+          mutant_from='elif [[ "$BASE_READING" == conflicts ]]; then'
+          mutant_to='elif false; then'
+          ;;
+        unfixed-strict)
+          mutant="$ROOT/pkg/worktree/scripts/lib/base-reading.sh"
+          mutant_from='BASE_POLICY=strict ;;'
+          mutant_to='BASE_POLICY=queue ;;'
+          ;;
+        unfixed-cache)
+          mutant="$ROOT/pkg/worktree/scripts/lib/base-reading.sh"
+          mutant_from='"$branch queue" | "$branch strict" | "$branch no-queue")'
+          mutant_to='"$branch never")'
+          ;;
+      esac
+      [[ "$(grep -cF -- "$mutant_from" "$mutant")" == 1 ]] || {
+        echo "FIXTURE: the $1 arm was not unique in $mutant" >&2
+        exit 2
+      }
+      F="$mutant_from" T="$mutant_to" awk '
+        BEGIN { f = ENVIRON["F"]; t = ENVIRON["T"] }
+        { i = index($0, f); if (i) $0 = substr($0, 1, i - 1) t substr($0, i + length(f)); print }
+      ' "$mutant" >"$mutant.edit"
+      # Written over in place, so the copy keeps its executable bit.
+      cat -- "$mutant.edit" >"$mutant"
+      rm -f -- "${mutant:?}.edit"
+      ! grep -qF -- "$mutant_from" "$mutant" || {
+        echo "FIXTURE: the $1 edit matched nothing in $mutant" >&2
+        exit 2
+      }
+      ;;
     with-helper)
       step standalone
       mkdir -p "$ROOT/pkg/github/scripts/lib"
@@ -790,6 +860,8 @@ err_text() {
     *+*) printf '%s;%s' "$(err_text "${spec%%+*}")" "$(err_text "${spec#*+}")" ;;
     -) printf '' ;;
     skip-rebase) printf 'worktree-rebase-skipped: topic' ;;
+    skip-queue) printf 'worktree-rebase-skipped-queue: topic' ;;
+    base-conflict) printf 'worktree-push-base-conflict: topic' ;;
     map:*) printf 'worktree-rebase-count: %s' "${spec#map:}" ;;
     ambiguous) printf 'worktree-rebase-map-ambiguous: twin subject' ;;
     unmapped) printf 'worktree-push-rebase-unmapped: <end>' ;;
@@ -832,6 +904,7 @@ out_text() {
   case "$1" in
     -) printf '' ;;
     usage) printf 'worktree-help: push' ;;
+    map1) printf '%s' "rebase-map: <end> <head>" ;;
     map2) printf '%s' "rebase-map: <end~1> <head~1>;rebase-map: <end> <head>" ;;
     # The map a rewrite the FIXTURE ran left behind: its old SHAs are the
     # commits the branch carried before that rewrite, the published tip among
@@ -903,6 +976,12 @@ a published branch whose rewrite went unmapped still refuses on its record, its 
 a reuse whose map was refused leaves no authorization, and its record refuses the push before the lease names a republish|pair twins publish twins-main reuse-unmapped|push TOPIC|1|-|unmapped-published|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:published upstream=origin push=- auth=- map=published
 a published branch whose rewrite went unmapped publishes under the same lease once its record is removed|pair twins publish twins-main unmapped-push remove-record record-push|push TOPIC|0|-|skip-rebase|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:end upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=-
 a rewrite made outside the tool authorizes nothing and is refused|pair fix publish advance hand-rebase|push TOPIC|1|-|not-contained|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=-
+a behind branch on a merge-queue base that merges cleanly is pushed where it stands|pair queue advance fix|push @wt --set-upstream|0|-|skip-queue|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
+must-fail: with the clean-merge skip cut, that branch is rebased|pair queue advance fix unfixed-queue-skip|push @wt --set-upstream|0|map1|map:1|head=rebased ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- auth=- map=hop:map1
+a branch on a merge-queue base that conflicts is refused toward the restack, with nothing rebased or pushed|pair queue fix2 conflict-main|push @wt --set-upstream|1|-|base-conflict|head=end ahead=1 tree=file.txt:orig,fix2.txt:fix2 remote=origin:- upstream=- push=- auth=- map=-
+must-fail: with the conflict refusal cut, that branch goes to the push rebase, which can only abort|pair queue fix2 conflict-main unfixed-queue-conflict|push @wt --set-upstream|1|-|rebase-failed|head=end ahead=1 tree=file.txt:orig,fix2.txt:fix2 remote=origin:- upstream=- push=- auth=- map=-
+a merge-queue base whose rules demand an up-to-date branch keeps the rebase|pair queue-strict advance fix fix2|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=- auth=- map=hop:map2
+must-fail: with the strict rule read as a queue, that branch is pushed unrebased|pair queue-strict advance fix fix2 unfixed-strict|push @wt --set-upstream|0|-|skip-queue|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2 remote=origin:end upstream=origin push=- auth=- map=-
 '
 
 echo "=== worktree push ==="
@@ -927,6 +1006,23 @@ while IFS= read -r row; do
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
 [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+
+echo
+echo "=== a checkout reads its base's rules once ==="
+
+# The first push reads GitHub's rules for main and keeps the answer in the
+# worktree's git dir; the next push in that checkout answers from there. The
+# control is a package copy whose record read is cut, which asks GitHub again.
+for cache_case in 'a second push answers from the checkout, not GitHub|pair queue advance fix|1' \
+  'must-fail: with the record read cut, the second push asks GitHub again|pair queue advance fix unfixed-cache|2'; do
+  IFS='|' read -r cache_label cache_world cache_want <<<"$cache_case"
+  # shellcheck disable=SC2086
+  build "cache-$cache_want" $cache_world
+  run "push @wt --set-upstream" >/dev/null
+  commit_main main-advanced2.txt advanced2
+  run "push @wt" >/dev/null
+  assert_eq "$(grep -c '/rules/branches/' "$ROOT/gh.calls" || true)" "$cache_want" "$cache_label"
+done
 
 echo
 echo "=== the uncontained refusal routes by what the branch actually holds ==="
