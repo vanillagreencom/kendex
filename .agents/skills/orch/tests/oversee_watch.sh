@@ -1203,8 +1203,8 @@ parked_owes_case() { # NAME [WATCH_BIN]
   OWES_CLOSES="$(grep -c ' issue-2$' "$STUB_DIR/lane-close.args" || true)"
 }
 # The pass after it, no relaunch between: HEARTBEAT_OWED is its owed line.
-parked_owes_heartbeat() { # [WATCH_BIN]
-  out="$(WATCH_BIN="${1:-}" run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
+parked_owes_heartbeat() { # [WATCH_BIN] [ENV...]
+  out="$(WATCH_BIN="${1:-}" run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" "${@:2}" \
     -- --since 2026-09-19T00:00:00Z --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
   HEARTBEAT_OWED="$(grep '^owed issue-2 ' <<<"$out" || echo -)"
 }
@@ -1216,6 +1216,18 @@ parked_owes_heartbeat
 assert_eq "events=$(grep -c '^EVENT ' <<<"$out" || true) close=$(grep -c ' issue-2$' "$STUB_DIR/lane-close.args" || true) $HEARTBEAT_OWED" \
   "events=1 close=0 owed issue-2 state=in-progress priority=2 lane=parked verdict=further-pr pr=2" \
   "the next pass repeats neither the merge nor item-open, still closes nothing, and its heartbeat names the item owed" "$err"
+# A GitHub-tracked fleet, no LINEAR_TEAM: the merge closed the item's only
+# open PR, so the tracker rows lack it and the parked record alone names it.
+parked_owes_heartbeat "" LINEAR_TEAM
+assert_eq "rc=$rc $HEARTBEAT_OWED" "rc=0 owed issue-2 state=parked priority=- lane=parked verdict=further-pr pr=2" \
+  "with no LINEAR_TEAM the heartbeat names a parked record owing a further PR whose PR merged" "$err"
+PARKED_SRC_MUTANT_DIR="$TMP_ROOT/owes-source-mutant"
+PARKED_SRC_MUTANT="$(mutant_scripts owes-source-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$PARKED_SRC_MUTANT_DIR/github"
+mutate_file "$PARKED_SRC_MUTANT" 'select(.status == "parked" and .parked.owes_pr == true)' 'select(false)'
+parked_owes_heartbeat "$PARKED_SRC_MUTANT" LINEAR_TEAM
+assert_eq "rc=$rc $HEARTBEAT_OWED" "rc=0 -" \
+  "control: without the parked records as a source a GitHub-tracked heartbeat names nothing" "$err"
 OWES_MUTANT_DIR="$TMP_ROOT/owes-mutant"
 OWES_MUTANT="$(mutant_scripts owes-mutant/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$OWES_MUTANT_DIR/github"

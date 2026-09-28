@@ -3268,7 +3268,9 @@ check_report() {
 # read; with none, every open pull request in the item repository, the first
 # --repo, whose head is a GitHub item's branch, issue-N, read whole by a
 # listing of its own. A listing that reaches OWED_PR_LIMIT refuses rather than
-# pass a short set as the whole one. An item is owed nothing while a record
+# pass a short set as the whole one. Either way a parked record owing a
+# further PR is a candidate too, `state=parked` where the tracker rows lack
+# it: its merge closed the open PR a GitHub listing reads. An item is owed nothing while a record
 # holds it (running or preparing, LANE_RUNNING_JQ's `held`) or while it is
 # parked, since the merged check carries a parked lane's pull request, save a
 # parked record whose owes_pr is true once the pull request its park judged
@@ -3353,7 +3355,8 @@ owed_read() { # BASELINE
     | if ($queue | type) != "array" or any($queue[]; type != "string")
       then error("state-field field=launch_queue value=\($queue | tojson)") else . end
     | (.lanes // []) as $lanes
-    | $items | unique_by(.id)[]
+    | $items + [$lanes[] | objects | select(.status == "parked" and .parked.owes_pr == true)
+        | {id: (.item | token("item")), state: "parked", priority: "-"}] | unique_by(.id)[]
     | . as $item
     | select(any($queue[]; . == $item.id) | not)
     | ([$lanes[] | objects | select(.item == $item.id)] | last) as $rec

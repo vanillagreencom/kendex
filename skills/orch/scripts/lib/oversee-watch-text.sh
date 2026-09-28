@@ -309,7 +309,7 @@ The long pass's events, checked and reported in this order:
                              to `change=`, from the last long pass's reading.
                              `account-roster unread` replaces them when that
                              reading failed. Last, with --state, one line
-                             `owed <item> state=<in-progress|in-review|open-pr>
+                             `owed <item> state=<in-progress|in-review|open-pr|parked>
                              priority=<N|-> lane=<none|status> verdict=<queue|
                              further-pr pr=<N>|merged pr=<N>|dated harness=<h>
                              until=<reset|->|unjudged harness=<h>>` per item
@@ -326,7 +326,8 @@ The long pass's events, checked and reported in this order:
                              read from the merged row or from a `cycle` of
                              that pull request: it is `further-pr` with that
                              pull request, the item-open item no relaunch has
-                             rewritten yet. `merged` is a record carrying its
+                             rewritten yet, `state=parked` where neither
+                             source above holds it. `merged` is a record carrying its
                              merge's `cycle`. A record with no harness is `queue`.
                              Every other verdict reads the accounts of the
                              record's host, its `host` or `local`, as

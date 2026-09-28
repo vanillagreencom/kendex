@@ -33,7 +33,7 @@ This is the target state. KEN-2037 lands the admin mode in `pr-merge.sh` and mov
 
 ## Rationale
 
-- The owner's reason is speed, in the words quoted under Context. The queue's numbers bear it out: about four in ten merge-group runs failed or were cancelled (62 of 148), and a run takes a median of about half an hour, so every green pull request waits at least that long in the queue after its own checks passed.
+- The owner's reason is speed, in the words quoted under Context. The queue's numbers bear it out: about four in ten merge-group runs failed or were cancelled (62 of 148), and a run takes a median of about half an hour, so a green pull request typically waits about half an hour in the queue after its own checks passed.
 - The risk an admin merge carries is merging a head nobody checked, not who runs the merge. Binding the merge to the head SHA its checks, `Review gate` and threads were read at closes that risk for whichever actor runs it, so the route names a mode, not an actor.
 - A pull request that changes CI, a ruleset input or a shared harness, or whose PR run skipped a touched shard, has not been judged by its PR run alone; the queue run is the only run that judges it.
 
