@@ -1,6 +1,6 @@
 # CI stage targets against measured values
 
-A kendex pull request should pass its own checks in under 15 minutes, spend under 15 minutes in the merge queue, and merge within 1 hour for a micro or small change and within 3 hours for a standard one; under 5 percent of merge-group runs should fail. Measured over 94 pull requests merged from 2026-09-26 to 2026-09-28, pull request checks meet their target at the median in every class, and the merge queue misses its target everywhere. The queue's CI run alone takes a median of 24 to 29 minutes, and 34 percent of queue runs failed (51 of 150). Micro changes, the smallest, took the longest (median 151 minutes), all of it queue wait. Standard changes meet their 3-hour target at the median (115 minutes) but not at the tail, and their main blocker is the review-and-fix loop before the final push. Of the 51 failed queue runs, 24 were real macOS-only defects the pull request run never ran (KEN-2031), 15 were a document byte ceiling ejecting a group for a budget (KEN-2039), and 12 were flaky tests (KEN-2043 to KEN-2047, KEN-2008). The admin merge now takes a green pull request past the queue ([park-and-resume.md § 3 Admin merge route](park-and-resume.md#admin-merge-route)), and the doc checks table below settles which checks may eject a group.
+A kendex pull request should pass its own checks in under 10 minutes, spend under 15 minutes in the merge queue with 95 percent of merge-group runs passing (under 5 percent failed), and merge within 20 minutes for a micro change, 30 minutes for a small one and 90 minutes for a standard one. Measured over 94 pull requests merged from 2026-09-26 to 2026-09-28, pull request checks, the merge queue and open to merge each miss their target at the median of the standard class, the one class large enough to judge a median (§ Targets against measured values); the micro and small medians miss as well. The queue's CI run alone takes a median of 24 to 29 minutes, and 34 percent of queue runs failed (51 of 150). Micro changes, the smallest, took the longest (median 151 minutes against a 20-minute target), all of it queue wait. Standard changes miss their 90-minute target at the median (115 minutes) and at the tail, and their main blocker is the review-and-fix loop before the final push. Of the 51 failed queue runs, 24 were real macOS-only defects the pull request run never ran (KEN-2031), 15 were a document byte ceiling ejecting a group for a budget (KEN-2039), and 12 were flaky tests (KEN-2043 to KEN-2047, KEN-2008). The admin merge now takes a green pull request past the queue ([park-and-resume.md § 3 Admin merge route](park-and-resume.md#admin-merge-route)), and the doc checks table below settles which checks may eject a group.
 
 Design note, 2026-09-28. Built from the overseer's stage-targets and CI-data drafts, re-measured under owner decision 1790634126 item 7: the class comes from the cycle record only, and every group-run count is one recount over one window.
 
@@ -12,21 +12,22 @@ Design note, 2026-09-28. Built from the overseer's stage-targets and CI-data dra
 - Failed-run classification: the job logs of the 51 failed runs, read by the overseer on 2026-09-28; the 51 run ids equal the recount's 51 failures.
 - Job-level figures (shard walls, stand-down counts): the jobs of the same window's runs, read by the overseer on 2026-09-28.
 - Fleet figures: read by the overseer on 2026-09-28; this repository's token cannot read the fleet repository.
+- Next measurement: 2026-10-01, over the pull requests merged 2026-09-29 to 2026-10-01.
 
 ## Targets against measured values
 
-Median and p90 use the nearest-rank method; with n=3 the p90 is the largest value. The four admin merges (small: 3089; standard: 3072, 3074, 3081) ran no merge group and are left out of the two merge-group rows.
+Median and p90 use the nearest-rank method; with n=3 the p90 is the largest value. Micro (n=3) and small (n=5) are too few pull requests to judge a median; only the standard column (n=86) supports one. The four admin merges (small: 3089; standard: 3072, 3074, 3081) ran no merge group and are left out of the two merge-group rows.
 
 | Measure | Target | micro (n=3) | small (n=5) | standard (n=86) |
 |---|---|---|---|---|
-| PR checks wall, final head (min) | under 15 | median 14, p90 14; 3 of 3 under | median 13, p90 22; 4 of 5 under | median 13, p90 28; 65 of 86 under |
-| Merge-group CI run (min) | under 15 | median 29, p90 43; 0 of 3 under | median 25, p90 30; 0 of 4 under | median 24, p90 29; 2 of 83 under |
-| Merge queue, queued to merged (min) | under 15 | median 133, p90 137 | median 26, p90 33 | median 25, p90 48 |
+| PR checks wall, final head (min) | under 10 | median 14, p90 14; 1 of 3 under | median 13, p90 22; 0 of 5 under | median 13, p90 28; 7 of 86 under |
+| Merge-group CI run (min) | under 15 | median 29, p90 43; 1 of 3 under | median 25, p90 30; 0 of 4 under | median 24, p90 29; 2 of 83 under |
+| Merge queue, queued to merged (min) | under 15 | median 133, p90 137; 0 of 3 under | median 26, p90 33; 0 of 4 under | median 25, p90 48; 1 of 83 under |
 | Merge-group runs failed | under 5 percent | 34 percent (51 of 150), one figure for all classes | same | same |
-| Open to merge (min) | micro and small under 60, standard under 180 | median 151, p90 161; 0 of 3 under | median 47, p90 873; 3 of 5 under | median 115, p90 661; 54 of 86 under |
+| Open to merge (min) | micro under 20, small under 30, standard under 90 | median 151, p90 161; 0 of 3 under | median 47, p90 873; 1 of 5 under | median 115, p90 661; 37 of 86 under |
 | Main blocker (PRs whose longest gap ends there) | none | merge queue 3 | review-and-fix loop 2, merge queue 2, wait for queue entry 1 | review-and-fix loop 43, merge queue 33, wait for queue entry 6, final-head checks 4 |
 
-The 15-minute merge-group target is unreachable while the merge-group Skill Tests run takes 27.9 minutes at the median (p90 37.1) over the 150 runs in the window. Its slowest leg, the guards-tools macOS shard, runs 25.3 minutes at the median and 29.6 at most against its 30-minute timeout. KEN-2031 runs every merge-group job the touched paths select on the pull request, and owner decision 1790634126 item 2 adds splitting that shard so PR checks approach 10 minutes.
+The 15-minute merge-group target is unreachable while the merge-group Skill Tests run takes 27.9 minutes at the median (p90 37.1) over the 150 runs in the window. Its slowest leg, the guards-tools macOS shard, runs 25.3 minutes at the median and 29.6 at most against its 30-minute timeout. KEN-2031 runs every merge-group job the touched paths select on the pull request, and owner decision 1790634126 item 2 adds splitting that shard so PR checks approach their 10-minute target.
 
 ## Main blocker per class
 
@@ -170,6 +171,7 @@ What each doc check prevents, and on which event it runs. "Both" means pull_requ
 
 ## Method
 
+- Counting rule: "N of M under" counts a pull request whose per-PR appendix value, in whole minutes, is at or below the row's target; M is the pull requests with a value in that column. One rule holds for every row.
 - PR checks wall: `ci_head_secs`, first check-run start to last check-run end on the final head.
 - Merge-group CI run: `ci_merge_group_secs`, the same span over the merge commit's merge_group runs.
 - Merge queue: `queued` stamp to `merged` stamp.
