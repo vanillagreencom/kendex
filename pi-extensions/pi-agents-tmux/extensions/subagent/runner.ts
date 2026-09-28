@@ -431,6 +431,12 @@ export function createTranscriptAppender(
 	};
 }
 
+/**
+ * Whether a one-shot child runs under the `bgTaskTimeoutMs` wall-clock
+ * deadline. A pane agent run headless has none, as its pane has none.
+ */
+export type BgDeadline = "bg-task-timeout" | "none";
+
 export async function runSingleAgent(
 	defaultCwd: string,
 	runtimeRoot: string,
@@ -446,6 +452,7 @@ export async function runSingleAgent(
 	onUpdate: OnUpdateCallback | undefined,
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 	sessionKey?: string,
+	deadline: BgDeadline = "bg-task-timeout",
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -515,6 +522,7 @@ export async function runSingleAgent(
 		makeDetails,
 		firstSession,
 		1,
+		deadline,
 	);
 	if (budgetGuard?.warning) first.stderr = [budgetGuard.warning, first.stderr].filter(Boolean).join("\n");
 
@@ -555,6 +563,7 @@ export async function runSingleAgent(
 		makeDetails,
 		retrySession,
 		2,
+		deadline,
 	);
 	const attempts = [summarizeAttempt(first), summarizeAttempt(retry)];
 	retry.attempts = attempts;
@@ -596,6 +605,7 @@ async function runSingleAgentAttempt(
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 	session: BgSessionSelection,
 	attempt: number,
+	deadline: BgDeadline,
 ): Promise<SingleResult> {
 	const args: string[] = ["--mode", "json", "-p", "--name", agent.name, "--session", session.path];
 	if (selectedModel) args.push("--model", selectedModel);
@@ -745,7 +755,7 @@ async function runSingleAgentAttempt(
 			const deliveredSettledSignals = new Set<NodeJS.Signals>();
 			let latestFilteredMessageUpdate: any;
 			const partialMessageState = createPartialAssistantMessageState();
-			const timeoutMs = bgTaskTimeoutMs(cwd ?? defaultCwd);
+			const timeoutMs = deadline === "none" ? 0 : bgTaskTimeoutMs(cwd ?? defaultCwd);
 			const timeoutDeadline = timeoutMs > 0 ? Date.now() + timeoutMs : undefined;
 			let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 			let timeoutGeneration = 0;

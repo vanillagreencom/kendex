@@ -75,7 +75,7 @@
         {
           "key": "bgTaskTimeoutMs",
           "label": "Background task timeout (ms)",
-          "description": "Maximum runtime for one-shot/background child processes before they are marked unresponsive, failed, and terminated. Use 0 to disable.",
+          "description": "Maximum runtime for one-shot/background child processes before they are marked unresponsive, failed, and terminated. A pane agent run headless where no tmux server answers has no deadline. Use 0 to disable.",
           "type": "number",
           "default": 1800000,
           "category": "Execution",

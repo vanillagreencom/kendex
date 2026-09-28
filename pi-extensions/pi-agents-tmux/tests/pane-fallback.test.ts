@@ -10,10 +10,10 @@ import type { AgentConfig } from "../extensions/subagent/agents.js";
 import { runChainDispatch, runParallelDispatch, runSingleDispatch } from "../extensions/subagent/dispatch.js";
 import { retireSubagent, setPaneExecCaptureForTests } from "../extensions/subagent/pane.js";
 import { registerPaneSupportTools } from "../extensions/subagent/pane-support-tools.js";
-import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
+import { setBgTimeoutKillGraceMsForTests, setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
 import { upsertTaskRecord, writePaneRegistry } from "../extensions/subagent/tasks.js";
 import { PANE_LAUNCHER_VERSION, type SingleResult } from "../extensions/subagent/types.js";
-import { bridgeEvent, bridgeStdout, cleanupTempRuntimes, installMockSpawn, makeDetails, mockPiEvents, tempRuntime, testAgent } from "./single-agent-fixture.js";
+import { bridgeEvent, bridgeStdout, cleanupTempRuntimes, installLifecycleMockSpawn, installMockSpawn, makeDetails, mockPiEvents, tempRuntime, testAgent, writeSettings } from "./single-agent-fixture.js";
 
 after(cleanupTempRuntimes);
 
@@ -23,6 +23,7 @@ afterEach(() => {
 	else process.env.TMUX = suiteTmux;
 	setPaneExecCaptureForTests();
 	setSingleAgentSpawnForTests();
+	setBgTimeoutKillGraceMsForTests();
 });
 
 const NOTICE = "pane-fallback reason=no-tmux";
@@ -119,6 +120,22 @@ for (const [mode, dispatch] of [
 		assert.equal(spawns.length, 2);
 	});
 }
+
+test("a headless pane agent arms no bg task deadline while a bg agent in the same dispatch keeps it", async () => {
+	delete process.env.TMUX;
+	const runtimeRoot = tempRuntime();
+	writeSettings(runtimeRoot, { bgTaskTimeoutMs: 5 });
+	setBgTimeoutKillGraceMsForTests(1);
+	// Both children answer after 60 ms, well past the 5 ms deadline.
+	installLifecycleMockSpawn({ closeAfterMs: 60, stdout: finished().stdout });
+
+	const result = await runParallelDispatch({ ...flow(runtimeRoot, "parallel"), tasks: [{ agent: "generalist", task: "tidy the docs" }, { agent: "reviewer-test", task: "review code" }] });
+
+	const headless = resultFor(result.details.results, "generalist");
+	assert.notEqual(headless.stopReason, "unresponsive_timeout");
+	assert.equal(headless.exitCode, 0);
+	assert.equal(resultFor(result.details.results, "reviewer-test").stopReason, "unresponsive_timeout");
+});
 
 test("a pane agent keeps its pane where the tmux server answers", async () => {
 	const tmuxCalls = recordTmux(true);

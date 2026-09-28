@@ -8,6 +8,7 @@ import {
 	prepareSingleResultForReturn,
 	runSingleAgent,
 	truncateForDetails,
+	type BgDeadline,
 	type OnUpdateCallback,
 } from "./runner.js";
 import { createOneShotSessionKey } from "./sessions.js";
@@ -70,6 +71,11 @@ async function resolvePaneLane(flow: DispatchFlowContext, requested: readonly st
 
 function runsInPane(agent: AgentConfig | undefined, lane: PaneLane): boolean {
 	return agent?.pane === true && lane.kind === "pane";
+}
+
+/** The deadline for an agent the one-shot runner takes: a pane agent there runs headless and keeps its pane's lack of one. */
+function oneShotDeadline(agent: AgentConfig | undefined): BgDeadline {
+	return agent?.pane === true ? "none" : "bg-task-timeout";
 }
 
 /**
@@ -303,6 +309,7 @@ async function chainDispatch(
 					chainUpdate,
 					flow.makeDetails("chain"),
 					step.sessionKey,
+					oneShotDeadline(stepAgent),
 				);
 		results.push(result);
 		if (!runsInPane(stepAgent, lane)) {
@@ -495,6 +502,7 @@ async function parallelDispatch(
 						},
 						flow.makeDetails("parallel"),
 						t.sessionKey,
+						oneShotDeadline(taskAgent),
 					);
 			allResults[index] = result;
 			if (!runsInPane(taskAgent, lane)) await updateOneshotDashboard(result, true);
@@ -589,6 +597,7 @@ async function singleDispatch(
 				flow.onUpdate,
 				flow.makeDetails("single"),
 				flow.sessionKey,
+				oneShotDeadline(agent),
 			);
 	if (!runsInPane(agent, lane)) {
 		flow.updateDashboard({
