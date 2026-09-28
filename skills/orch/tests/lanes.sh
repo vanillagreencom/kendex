@@ -316,11 +316,11 @@ COPILOT='--model github-copilot/claude-sonnet-5'
 table \
   "a stated pool with room is picked as a monthly bucket, measured through the statement|$POOL=100000/1000000|pick --harness pi $COPILOT --json|rc=0 alias=pi1 binding_bucket=monthly headroom_pct=90 measured_through=stated" \
   "the picked Pi account comes back as Pi's own root variable|$POOL=100000/1000000|pick --harness pi $COPILOT|rc=0 out=PI_CODING_AGENT_DIR=$H/.pi1" \
-  "a pool at its grant is walled even under a bound of 100|$POOL=1000000/1000000|pick --harness pi $COPILOT --max-pct 100|rc=3 key=no-candidate,harness=pi,max-pct=100,model=github-copilot/claude-sonnet-5,walled=1,unmeasured=0" \
+  "a pool at its grant is walled even under a bound of 100|$POOL=1000000/1000000|pick --harness pi $COPILOT --max-pct 100|rc=3 key=no-candidate,harness=pi,max-pct=100,model=github-copilot/claude-sonnet-5,walled=1,unmeasured=0,seats=0" \
   "one credit short of the grant rounds up to a spent pool|$POOL=999999/1000000|pick --lane $H/.pi1 --harness pi $COPILOT --max-pct 100 --json|rc=3 wall=100 binding_bucket=monthly" \
   "a pool used past its grant reads 100, with no negative headroom|$POOL=1500/1000|pick --lane $H/.pi1 --harness pi $COPILOT --json|rc=3 wall=100 headroom_pct=0" \
   "no stated pool is exit 5 by the setting's name||pick --harness pi $COPILOT|rc=5 key=copilot-pool-unstated,model=github-copilot/claude-sonnet-5,setting=ORCH_LANE_COPILOT_POOL" \
-  "a stated pool every entry of which is excluded is a pick with no candidate, not an unstated one|$POOL=1/10;ORCH_LANE_EXCLUDE=pi1|pick --harness pi $COPILOT|rc=3 key=no-candidate,harness=pi,max-pct=95,model=github-copilot/claude-sonnet-5,walled=0,unmeasured=0" \
+  "a stated pool every entry of which is excluded is a pick with no candidate, not an unstated one|$POOL=1/10;ORCH_LANE_EXCLUDE=pi1|pick --harness pi $COPILOT|rc=3 key=no-candidate,harness=pi,max-pct=95,model=github-copilot/claude-sonnet-5,walled=0,unmeasured=0,seats=0" \
   "a named account the setting states nothing for is unmeasured, never unlisted|$POOL=1/10|pick --lane $H/.eclaude --harness pi $COPILOT --json|rc=5 status=no_usage_data" \
   "a Pi launch on a model outside the Copilot pool has no reading to pick on|$POOL=1/10|pick --harness pi --model sonnet|rc=1 key=invalid-pick-harness,option=--harness" \
   "a listing of every harness leaves the stated pool out|$POOL=1/10|list --json|aliases=claude,eclaude,nclaude,openclaude"
