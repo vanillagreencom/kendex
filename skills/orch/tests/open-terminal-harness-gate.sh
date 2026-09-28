@@ -158,6 +158,8 @@ mkdir -p "$TMP_ROOT/sl"
 printf '#!/bin/sh\n' > "$CP_SL"
 printf '#!/bin/sh\n' > "$CP_OTHER"
 chmod +x "$CP_SL" "$CP_OTHER"
+# A status line named bare resolves on the launch's PATH, which holds $BIN.
+ln -s "$CP_SL" "$BIN/copilot-statusline"
 CP_REFUSED="open-terminal: unsupported-for-oversee harness=copilot reason=status-line"
 # cp_settings JSON — the account's settings file, or none for `-`.
 cp_settings() {
@@ -182,6 +184,8 @@ an account whose status line is another command is refused|{"statusLine":{"type"
 a status line naming a script that is not there is refused|{"statusLine":{"type":"command","command":"@GONE@","refreshInterval":30}}|${FLEET[*]} --harness copilot $CP_FLAGS|$CP_REFUSED cause=command-missing @FILE@
 a status line with no refresh interval is refused|{"statusLine":{"type":"command","command":"@SL@"}}|${FLEET[*]} --harness copilot $CP_FLAGS|$CP_REFUSED cause=refresh-interval @FILE@
 an interval at the record's freshness bound is refused|{"statusLine":{"type":"command","command":"@SL@","refreshInterval":120}}|${FLEET[*]} --harness copilot $CP_FLAGS|$CP_REFUSED cause=refresh-interval @FILE@
+an interval of 0, which refreshes nothing, is refused|{"statusLine":{"type":"command","command":"@SL@","refreshInterval":0}}|${FLEET[*]} --harness copilot $CP_FLAGS|$CP_REFUSED cause=refresh-interval @FILE@
+a status line named bare passes where the launch's PATH resolves it|{"statusLine":{"type":"command","command":"copilot-statusline","refreshInterval":30}}|${FLEET[*]} --harness copilot $CP_FLAGS|passed
 an interval one second under the bound passes|{"statusLine":{"type":"command","command":"@SL@","refreshInterval":119}}|${FLEET[*]} --harness copilot $CP_FLAGS|passed
 a hosted copilot fleet lane is refused|{"statusLine":{"type":"command","command":"@SL@","refreshInterval":30}}|${FLEET[*]} --harness copilot --host $BIN/provider $CP_FLAGS|open-terminal: unsupported-for-oversee harness=copilot reason=hosted
 no fleet passes with no status line|-|--harness copilot $CP_FLAGS|passed
@@ -207,6 +211,9 @@ cp_control cp-exists lib/adapters/copilot.sh '{ [ -n "$command" ] && [ -f "$comm
 cp_control cp-interval lib/adapters/copilot.sh '[ "$interval" -lt "$COPILOT_SESSION_MAX_AGE_S" ]' '[ "$interval" -le "$COPILOT_SESSION_MAX_AGE_S" ]' \
   '{"statusLine":{"type":"command","command":"@SL@","refreshInterval":120}}' "${FLEET[*]} --harness copilot $CP_FLAGS" passed \
   "control: with the bound inclusive an interval every record goes stale at passes"
+cp_control cp-bare lib/adapters/copilot.sh '    *) command="$(command -v -- "$command" 2>/dev/null)" || command="" ;;' '    *) command="" ;;' \
+  '{"statusLine":{"type":"command","command":"copilot-statusline","refreshInterval":30}}' "${FLEET[*]} --harness copilot $CP_FLAGS" "$CP_REFUSED cause=command-missing file=$CP_HOME/settings.json" \
+  "control: without the PATH lookup a status line named bare is refused as missing"
 cp_control cp-hosted open-terminal 'copilot) [[ "$LANE_HOST" == local ]] ||' 'copilot) true ||' \
   '{"statusLine":{"type":"command","command":"@SL@","refreshInterval":30}}' "${FLEET[*]} --harness copilot --host $BIN/provider $CP_FLAGS" passed \
   "control: without the hosted arm a hosted copilot fleet lane is not refused"

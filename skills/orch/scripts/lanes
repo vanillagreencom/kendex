@@ -352,7 +352,9 @@
 # every `~/.*copilot*` directory plus $COPILOT_HOME when it is set; a
 # discovered directory with no config marker (claude `.claude.json` or
 # `.credentials.json`, codex `auth.json` or `config.toml`, copilot
-# `settings.json` or `config.json`) is skipped. A setting names a lane by its
+# `config.json` or `session-state`, which only Copilot CLI writes: a Pi root,
+# whose name can hold `copilot`, writes `settings.json` as a Copilot home
+# does) is skipped. A setting names a lane by its
 # directory name, with or without the leading dot, or by its alias; a name
 # carrying `/` or `~` is a path, names no lane, and is refused.
 #
@@ -989,12 +991,12 @@ lane_dirs() {
 			local markers=(.claude.json .credentials.json)
 			case "$1" in
 				codex) markers=(auth.json config.toml) ;;
-				copilot) markers=(settings.json config.json) ;;
+				copilot) markers=(config.json session-state) ;;
 			esac
 			for d in "$home/.$1" "$home"/.*"$1"*; do
 				[[ -d "$d" ]] || continue
 				! lane_admissible "$d" ||
-					[[ -f "$d/${markers[0]}" || -f "$d/${markers[1]}" ]] || continue
+					[[ -e "$d/${markers[0]}" || -e "$d/${markers[1]}" ]] || continue
 				printf '%s\n' "$d"
 			done
 		fi

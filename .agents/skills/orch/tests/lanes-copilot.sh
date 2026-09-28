@@ -85,8 +85,7 @@ copilot_account 7copilot '{"quota_snapshots":{"premium_interactions":{"entitleme
 copilot_account 8copilot '{"quota_snapshots":{}}'
 copilot_account 9copilot "$(pool 1000 -500)"
 copilot_account 10copilot "$(pool 1000 1200)"
-mkdir -p "$H/.0copilot"
-printf '{}\n' > "$H/.0copilot/settings.json"
+mkdir -p "$H/.0copilot/session-state"
 run_lanes list --harness copilot --local --json
 while IFS='|' read -r label alias field want; do
   assert_eq "$(record "$alias" "$field")" "$want" "$label"
@@ -157,8 +156,7 @@ echo "=== the stored login is read defensively, and the stated pool is its fallb
 new_home login
 while IFS='|' read -r label config want_status want_reason; do
   rm -rf -- "${H:?}/.1copilot"
-  mkdir -p "$H/.1copilot"
-  printf '{}\n' > "$H/.1copilot/settings.json"
+  mkdir -p "$H/.1copilot/session-state"
   [[ "$config" == - ]] || printf '%s\n' "$config" > "$H/.1copilot/config.json"
   printf '%s\n' "$(pool 1000 900)" > "$FIXTURE_DIR/.1copilot.json"
   run_lanes list --harness copilot --local --json
@@ -226,6 +224,24 @@ printf '{}\n' > "$TMP_ROOT/named/config.json"
 names() { jq -r '[.[] | .alias] | sort | join(",")' <<<"$OUT" 2>/dev/null || echo unparseable; }
 run_lanes list --harness copilot --local --json
 assert_eq "$(names)" 1copilot "a directory with no marker is no account"
+# A Pi root named for the Copilot pool it spends holds Pi's settings.json and
+# auth.json and no Copilot marker: it is no Copilot account, and a Pi pick on
+# the pool stated for it returns it.
+mkdir -p "$H/.pi-copilot" "$H/.3copilot/session-state"
+printf '{"compaction":{"enabled":false}}\n' > "$H/.pi-copilot/settings.json"
+printf '{}\n' > "$H/.pi-copilot/auth.json"
+run_lanes list --harness copilot --local --json
+assert_eq "$(names)" 1copilot,3copilot "a Pi root named for the pool is not listed, and a session-state directory marks a Copilot account"
+ROW_ENV=("ORCH_LANE_COPILOT_POOL=$H/.pi-copilot=10/100")
+run_lanes pick --harness pi --model github-copilot/gpt-5 --json
+ROW_ENV=()
+assert_eq "rc=$RC dir=$(jq -r '.config_dir' <<<"$OUT" 2>/dev/null || echo unparseable)" "rc=0 dir=$H/.pi-copilot" \
+  "a Pi pick returns the Pi root named for the pool it spends"
+CTL_MARK="$(mutant_scripts ctl-mark lanes)" || exit 1
+mutate_file "$CTL_MARK/lanes" '				copilot) markers=(config.json session-state) ;;' '				copilot) markers=(settings.json config.json) ;;'
+LANES_BIN="$CTL_MARK/lanes" run_lanes list --harness copilot --local --json
+assert_eq "$(names)" 1copilot,pi-copilot "control: with settings.json as a marker the Pi root reads as a Copilot account"
+rm -rf -- "${H:?}/.3copilot"
 ROW_ENV=(COPILOT_HOME="$TMP_ROOT/elsewhere")
 run_lanes list --harness copilot --local --json
 assert_eq "$(names)" 1copilot,elsewhere "COPILOT_HOME joins the inventory, marker or none"
@@ -293,7 +309,7 @@ run_lanes pick --harness pi --model github-copilot/gpt-5 --json
 ROW_ENV=()
 assert_eq "$(jq -r '.config_dir' <<<"$OUT" 2>/dev/null || echo unparseable)" "$H/.1copilot" \
   "control: without the exclusion a Pi pick returns the Copilot account"
-lanes_control ctl-discover lanes '				copilot) markers=(settings.json config.json) ;;' ''
+lanes_control ctl-discover lanes '				copilot) markers=(config.json session-state) ;;' ''
 run_lanes list --harness copilot --local --json
 assert_eq "$(jq 'length' <<<"$OUT" 2>/dev/null || echo unparseable)" 0 "control: without its markers no Copilot account is discovered"
 lanes_control ctl-ambiguous lib/copilot-credits.sh '            elif ($v | length) > 1 then "token-ambiguous"' '            elif ($v | length) > 1 then "token\t" + $v[0]'
@@ -307,7 +323,7 @@ printf '// This file is managed automatically\n{"copilot_tokens":"gho_c"}\n' > "
 control_row 2copilot .status '"no_credentials"' "control: without the comment skip the CLI's own config.json is unreadable"
 lanes_control ctl-fallback lanes '			measure_copilot_pool "$alias" copilot "$dir" "copilot login unread: $COPILOT_CREDITS_REASON in $dir/config.json"' '			emit_lane "$alias" copilot "$dir" no_credentials "" "" "{}"'
 rm -f -- "${H:?}/.2copilot/config.json"
-printf '{}\n' > "$H/.2copilot/settings.json"
+mkdir -p "$H/.2copilot/session-state"
 ROW_ENV=(ORCH_LANE_COPILOT_POOL="$H/.2copilot=250/1000")
 control_row 2copilot .measured_through '"local"' "control: without the fallback an account with no login ignores its stated reading"
 ROW_ENV=()
