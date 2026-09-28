@@ -345,15 +345,20 @@ register_codex "$CODEXCTL/oversee"
 assert_eq "$RC|$(recorded home)" "0|$H/.codex" \
   "control: a register that takes the account for the home loses the private CODEX_HOME"
 
-# The successor-up wait: a session whose screen never shows a running turn is
-# up once its harness writes its SessionStart row, the pane read being the
-# fallback for a harness that writes none.
+# The successor-up wait asks for a working turn: a SessionStart row is written
+# at startup, before any turn runs, so a session whose screen never shows one
+# is refused whatever rows it wrote.
 tm kill-window -t "$(recorded window)"
 touch "$TMP_ROOT/idle" "$TMP_ROOT/row"
+run_oversee -- launch --wait-secs 3
+rm -f "$TMP_ROOT/idle" "$TMP_ROOT/row"
+assert_eq "$RC|$(keyed overseer-not-working "$OUT" | sed -n 1p | cut -d' ' -f1-2)|$(overseers)" \
+  "1|oversee: overseer-not-working|0" \
+  "a session whose SessionStart row stands and whose turn never runs is refused"
 run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(keyed overseer-launched "$OUT" | sed -n 1p | cut -d' ' -f1-2)|$(overseers)" \
   "0|oversee: overseer-launched|1" \
-  "a session whose SessionStart row stands is up, whatever its screen shows"
+  "a session whose turn runs is up"
 # The launch line runs under overseer-run: a harness that ends, here killed
 # before any hook of its own could run, leaves its exit status on the record.
 harness_ended() { # -> the recorded exit status, once overseer-run wrote one
@@ -369,15 +374,6 @@ harness_ended() { # -> the recorded exit status, once overseer-run wrote one
 assert_eq "$(harness_ended)|$(recorded exit.at | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T')" "143|1" \
   "a harness that ends leaves its exit status and time on the session record"
 tm kill-window -t "$(recorded window)"
-ROWWAITCTL="$(mutant_scripts rowwaitctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$ROWWAITCTL/lib/overseer-launch.sh" \
-  '    if [[ -n "$OL_ROWS" ]] && session_rows_start "$OL_ROWS" "$OL_STARTED"; then' \
-  '    if false; then'
-OVERSEE_BIN="$ROWWAITCTL/oversee" run_oversee -- launch --wait-secs 3
-rm -f "$TMP_ROOT/idle" "$TMP_ROOT/row"
-assert_eq "$RC|$(keyed overseer-not-working "$OUT" | sed -n 1p | cut -d' ' -f1-2)|$(overseers)" \
-  "1|oversee: overseer-not-working|0" \
-  "control: a wait that reads no row takes that session for one that never came up"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

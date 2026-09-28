@@ -63,6 +63,12 @@ rows_case() { # NAME PANE_STATE ROW...
   for row in "$@"; do printf '%s\n' "$row" >> "$(ROWS_FILE)"; done
 }
 captured() { [[ -s "$STUB_DIR/pane-$PANE.calls" ]] && echo yes || echo no; }
+# A rows wall stands unless the account judgement measures room: the stub's
+# default below-mark line is room, so a case that means the wall to stand
+# gives it a mark reached above zero, which is no room and no zero wall.
+FIVE_MARK="oversee-succeed: mark-reached kind=headroom value=5 mark=10 succession=on account=1claude resets=2026-09-28T03:00:00Z"
+ZERO_MARK="oversee-succeed: mark-reached kind=headroom value=0 mark=10 succession=on account=1claude resets=2026-09-28T03:00:00Z"
+no_room() { printf '%s\n' "$FIVE_MARK" > "$STUB_DIR/succeed.check"; }
 
 # One table: the rows a file holds and the pane beside it, and what two passes
 # make of them. `captured` says whether the watch read the pane's screen at
@@ -87,6 +93,7 @@ while IFS='|' read -r name pane rows expected_event expected_launch expected_cap
     esac
   done
   rows_case "$name" "$pane" ${row_args[@]+"${row_args[@]}"}
+  [[ "$name" != wall_rows ]] || no_room
   run TMUX_PANE="$PANE" -- --max-loops 2
   event="$(grep '^EVENT overseer-' <<<"$OUT" | head -n 1 || true)"
   note=none
@@ -108,19 +115,28 @@ codex_fallback|exited|codex|EVENT overseer-dead $PANE window=$WINDOW passes=2 su
 ROWS
 
 # A rows wall carries the harness's own words, the limit and its reset, under
-# its line, and asks no account judgement: the stub's default judgement reads
-# room, which would refute a screen wall.
+# its line, and `message=unrecorded` where its row holds none.
 rows_case wall_payload blank "$START" "$FAILURE"
+no_room
 run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "$(sed -n 2p <<<"$OUT")" "$WALL_MESSAGE" "the rows wall's message follows its event line" "$ERR"
-assert_eq "$(succeed_calls --check-marks)" "0" "and no account judgement was asked to confirm it" "$ERR"
+rows_case wall_no_message blank "$START" "$(row StopFailure claude error=rate_limit)"
+no_room
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "$(sed -n 2p <<<"$OUT")" "message=unrecorded" "a rows wall whose row holds no message says so under its line" "$ERR"
+
+# Only a finished turn writes the Stop that lifts a rows wall, so the turn
+# after the reset still has the StopFailure as its last row: an account the
+# judgement measures with room refutes the wall, and the overseer reads live.
+rows_case wall_after_reset blank "$START" "$FAILURE"
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "walled=$(grep -c '^EVENT overseer-walled' <<<"$OUT" || true) launched=$(succeed_calls --walled-pane) note=$(grep -c '^oversee-watch: overseer-wall-lifted ' "$ERR" || true)" \
+  "walled=0 launched=0 note=1" "a rows wall whose account measures room reads live, and says the wall lifted" "$ERR"
 
 # Succeeded in one pass: a wall the rows state, and an account the mark
 # judgement reads at zero headroom under a live session, each run the walled
 # succession in the first pass that reads them. A mark above zero is reported
 # as the mark and succeeds nothing.
-ZERO_MARK="oversee-succeed: mark-reached kind=headroom value=0 mark=10 succession=on account=1claude resets=2026-09-28T03:00:00Z"
-FIVE_MARK="oversee-succeed: mark-reached kind=headroom value=5 mark=10 succession=on account=1claude resets=2026-09-28T03:00:00Z"
 one_pass() { # NAME MARK_LINE ROW... [WATCH_BIN via env]
   local name="$1" mark="$2"
   shift 2
@@ -129,7 +145,7 @@ one_pass() { # NAME MARK_LINE ROW... [WATCH_BIN via env]
   run TMUX_PANE="$PANE" -- --max-loops 1
   ONE_PASS="rc=$RC walled=$(grep -c '^EVENT overseer-walled' <<<"$OUT" || true) marks=$(grep -c '^EVENT overseer-mark' <<<"$OUT" || true) launched=$(succeed_calls --walled-pane)"
 }
-one_pass wall_one_pass "" "$START" "$FAILURE"
+one_pass wall_one_pass "$FIVE_MARK" "$START" "$FAILURE"
 assert_eq "$ONE_PASS" "rc=3 walled=1 marks=0 launched=1" "a rows wall is succeeded in the first pass that reads it" "$ERR"
 one_pass zero_mark "$ZERO_MARK" "$START"
 assert_eq "$ONE_PASS" "rc=3 walled=1 marks=0 launched=1" "an account read at zero headroom is succeeded in the same pass" "$ERR"
@@ -140,22 +156,27 @@ one_pass five_mark "$FIVE_MARK" "$START"
 assert_eq "$ONE_PASS" "rc=0 walled=0 marks=1 launched=0" "a mark above zero is reported as the mark alone" "$ERR"
 
 # The exit status overseer-run writes into the record once the launch line
-# returns: over a blank pane with a live harness process and rows saying
-# live, the record's status is the death, `source=record`. With no status the
-# judgement falls through to the rows, which say live.
-exit_case() { # NAME [STATUS]
-  rows_case "$1" blank "$START"
-  if [[ -n "${2:-}" ]]; then
-    jq --argjson status "$2" '.overseer.exit = {status: $status, at: "2026-09-28T01:00:00Z"}' \
+# returns settles the session, `source=record`, over the bare shell that
+# return leaves. A harness started again in the same pane is that shell's
+# child and writes a later SessionStart row: the status is an earlier
+# session's and the rows judge, saying live. With no status the process and
+# the rows judge as before.
+exit_case() { # NAME PANE_STATE [STATUS]
+  rows_case "$1" "$2" "$START"
+  if [[ -n "${3:-}" ]]; then
+    jq --argjson status "$3" '.overseer.exit = {status: $status, at: "2026-09-28T01:00:00Z"}' \
       "$STUB_DIR/oversee-state.json" > "$STUB_DIR/state.tmp" && mv -- "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
   fi
   run TMUX_PANE="$PANE" -- --max-loops 2
   EXIT_CASE="event=$(grep '^EVENT overseer-dead' <<<"$OUT" || echo none) launched=$(succeed_calls --dead-pane)"
 }
-exit_case record_exit 137
+exit_case record_exit exited 137
 assert_eq "$EXIT_CASE" "event=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=record launched=1" \
-  "a recorded exit status is the death whatever the pane and the rows show" "$ERR"
-exit_case record_no_exit
+  "a recorded exit status over a bare shell is the death, from the record" "$ERR"
+exit_case record_resumed blank 137
+assert_eq "$EXIT_CASE" "event=none launched=0" \
+  "a recorded status under a harness started again in the pane is an earlier session's: the rows say live" "$ERR"
+exit_case record_no_exit blank
 assert_eq "$EXIT_CASE" "event=none launched=0" "with no status the rows judge, and they say live" "$ERR"
 
 # The record names another pane's rows: they are not this pane's, and the
@@ -178,14 +199,31 @@ WATCH_BIN="$MUTANT_SCRIPTS/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true)" "events=0" \
   "control: without the rows verdict a SessionEnd row over a blank pane is no death" "$ERR"
 
-# The recorded exit ignored: the same record reads live off its rows.
+# The recorded exit ignored: the bare shell reads dead from its process.
 EXIT_CTL="$(mutant_scripts exit-ctl/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/exit-ctl/github"
-mutate_file "$EXIT_CTL/oversee-watch" \
-  '  if [[ -n "$exit_status" ]]; then OV_STATE=exited; OV_SOURCE=record; return 0; fi' ':'
-WATCH_BIN="$EXIT_CTL/oversee-watch" exit_case record_exit_mutant 137
-assert_eq "$EXIT_CASE" "event=none launched=0" \
-  "control: without the recorded exit a harness gone before its SessionEnd reads live" "$ERR"
+mutate_file "$EXIT_CTL/oversee-watch" '      1) OV_STATE=exited; OV_SOURCE=record; return 0 ;;' '      1) ;;'
+WATCH_BIN="$EXIT_CTL/oversee-watch" exit_case record_exit_mutant exited 137
+assert_eq "$EXIT_CASE" "event=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=process launched=1" \
+  "control: without the recorded exit the death is the process rung's, not the record's" "$ERR"
+# The status taken whatever the pane runs: a harness started again reads dead.
+RESUME_CTL="$(mutant_scripts resume-ctl/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/resume-ctl/github"
+mutate_file "$RESUME_CTL/oversee-watch" '  if [[ -n "$exit_status" ]] && is_bare_shell "$cmd"; then' \
+  '  if [[ -n "$exit_status" ]] && { OV_STATE=exited; OV_SOURCE=record; return 0; }; then'
+WATCH_BIN="$RESUME_CTL/oversee-watch" exit_case record_resumed_mutant blank 137
+assert_eq "$EXIT_CASE" "event=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=record launched=1" \
+  "control: a status taken over a live harness succeeds the session started again in the pane" "$ERR"
+# The rows wall's refutation removed: an account with room still reads walled.
+LIFT_CTL="$(mutant_scripts lift-ctl/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/lift-ctl/github"
+mutate_file "$LIFT_CTL/oversee-watch" \
+  '        if ! overseer_marks_judge || [[ "$OVERSEER_MARK_KEY" != below-mark ]]; then OV_VERDICT=walled' \
+  '        if true; then OV_VERDICT=walled'
+rows_case wall_after_reset_mutant blank "$START" "$FAILURE"
+WATCH_BIN="$LIFT_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "launched=$(succeed_calls --walled-pane)" "launched=1" \
+  "control: without the account's refutation the turn after the reset is succeeded" "$ERR"
 
 # The zero mark left to the walled session: the pass only reports the mark.
 MARK_CTL="$(mutant_scripts mark-ctl/orch oversee-watch)" || exit 1

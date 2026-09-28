@@ -9,7 +9,9 @@
 # reader of that directory. The file is keyed by the `<tmux server pid> <pane
 # id>` the session runs in, the pair the fleet state keys the overseer on, so a
 # hook can name its own file before any record names the session, and the
-# oversee state's `overseer.session_rows` names it for every reader. Appends
+# oversee state's `overseer.session_rows` names it: oversee-watch reads the
+# path there, and every other reader and the writer compute it through
+# session_rows_overseer_file. Appends
 # take the mailbox's own lock and line rules (lib/mailbox-append.sh), so a
 # killed writer leaves a fragment no reader parses and no row glued to another.
 #
@@ -18,8 +20,8 @@
 # turn-end run for the overseer: SessionStart on every harness that fires it,
 # SessionEnd and StopFailure on Claude Code alone, and Stop only over a
 # standing StopFailure row, the one fact a turn end changes here. The readers
-# are oversee-watch's overseer judgement, `oversee register`, oversee-succeed's
-# caller identity and lib/overseer-launch.sh's successor wait.
+# are oversee-watch's overseer judgement, `oversee register` and
+# oversee-succeed's caller identity.
 #
 # The rows answer for Claude Code alone: Codex fires SessionStart but no
 # session end and no usage-limit event, and Pi a session start alone, so a
@@ -133,11 +135,10 @@ session_rows_start() { # FILE [SINCE]
 # build the row, and mailbox_append_locked's own 2 and 3 for the write and the
 # lock. The cause is on stderr.
 session_rows_write() { # DIR HARNESS [EVENT]
-  local key box file payload event account row
+  local key file payload event account row
   key="$(lane_context_caller_key)" || return 3
-  box="$(lane_context_overseer_box "$1")"
-  [ -d "$box" ] || return 0
-  file="$(session_rows_path "$box" "${key%% *}" "${key#* }")"
+  file="$(session_rows_overseer_file "$1" "${key%% *}" "${key#* }")"
+  [ -d "${file%/*}" ] || return 0
   payload="$(cat)" || return 1
   # A subagent's payload carries its agent_id: its failure is its own turn's,
   # never the session's.

@@ -51,7 +51,8 @@ The long pass's events, checked and reported in this order:
                              consecutive passes. `source` names what settled
                              it: `record`, the exit status `overseer-run`
                              wrote into the fleet state's overseer.exit once
-                             the launch line returned; `rows`, a SessionEnd
+                             the launch line returned, over a bare shell with
+                             nothing under it; `rows`, a SessionEnd
                              row its harness wrote to
                              the file the fleet state's overseer.session_rows
                              names; `process`, a pane whose process is a bare
@@ -78,8 +79,9 @@ The long pass's events, checked and reported in this order:
   EVENT overseer-walled <pane> window=<window> passes=<N> succession=<on|off>
         source=<rows|account|pane>
                              the same session read `walled`: from `rows`, a
-                             StopFailure row whose error is `rate_limit`, its
-                             message under the line; from `account`, a live
+                             StopFailure row whose error is `rate_limit`,
+                             standing unless its account measures room, its
+                             message, or message=unrecorded, under the line; from `account`, a live
                              session whose own account the mark judgement
                              reads at zero headroom, its account and reset
                              under the line; both on the first pass that
@@ -307,11 +309,12 @@ acknowledgement reports a note twice. The lane-mail hooks move it too, for
 a lead session in the checkout while no repeat watch holds the fleet state:
 with single passes, every lead session there, the overseer included. A line
 they take is not reported here.
-Before every mail pass the overseer's own pane is read once; while it reads
-exited, or walled with a wall its own account confirms, no mailbox is read,
-so a successor finds what was sent in the meantime. A wall
-the account refutes, or one no judgement could settle, reads live: its mail
-is read, and the long pass starts no successor for it. Off tmux there is no
+Before every mail pass the overseer's session is read once, as the long pass
+reads it; while it reads exited, or walled, no mailbox is read, so a
+successor finds what was sent in the meantime. A rows wall stands unless its
+own account measures room; a screen wall stands only where its own account
+confirms it, and one no judgement could settle reads live. A wall that reads
+live has its mail read, and the long pass starts no successor for it. Off tmux there is no
 such pane and the mail is read; a pane that cannot be read reads live too,
 except while a long pass is in flight, which may be closing it in a
 succession, and the mail waits for that pass to end.
@@ -594,14 +597,18 @@ Environment:
                               walled overseer. A missing one leaves the
                               overseer check to report and launch nothing,
                               said once
-  ORCH_OVERSEER_DEAD_PASSES   consecutive passes the overseer pane must read
+  ORCH_OVERSEER_DEAD_PASSES   consecutive passes the overseer must read
                               `exited` before overseer-dead goes out, and
-                              `walled` before overseer-walled does (default
-                              2). One pass is a poll that caught a live
-                              session between its harness and its shell. The
-                              walled case also needs its account judged at or
-                              below ORCH_OVERSEER_HEADROOM_PCT; passes alone
-                              never close a window whose harness is alive
+                              its pane `walled` before a screen wall's
+                              overseer-walled does (default 2). One pass is a
+                              poll that caught a live session between its
+                              harness and its shell. A screen wall also needs
+                              its account judged at or below
+                              ORCH_OVERSEER_HEADROOM_PCT; passes alone never
+                              close a window whose harness is alive. A rows
+                              wall, which stands unless its account measures
+                              room, and an account read at zero headroom go
+                              out on the first pass
   ORCH_OVERSEER_SUCCESSION    `off` leaves the overseer-dead and
                               overseer-walled notices and
                               launches no successor; `oversee-succeed` owns
@@ -671,6 +678,7 @@ ow_message() { # REASON FIELD=VALUE...
     overseer-mark-unjudged) text='The overseer own-mark judgement could not be made this pass, so its account marks settle nothing here. A standing mark is not cleared by a reading that failed; oversee-succeed owns the judgement and its own keyed line says why.' ;;
     overseer-wall-unjudged) text='The overseer pane read walled and the account judgement that would confirm it could not be made, so nothing is acted on: this pane carries the limit banners this watch relays about OTHER lanes, and the screen alone cannot tell those from the overseer own account running out. The reading is left to the next pass.' ;;
     overseer-wall-unconfirmed) text='The overseer pane read walled and its own account measures room, so the banner on that screen is one this watch relayed about another lane and the overseer is working. Nothing is launched and no window is closed. The fields name the judgement that refuted it.' ;;
+    overseer-wall-lifted) text='The overseer session rows last recorded a usage-limit failure and its own account now measures room, so the wall has lifted and the session is read as live. Only a finished turn writes the row that clears it.' ;;
     overseer-unwatched) text='The overseer pane is not being watched, so an overseer that dies is reported by nothing. The field names what is missing.' ;;
     overseer-unreadable) text='The overseer pane could not be read, so its state settles nothing this pass.' ;;
     overseer-fallback) text='The overseer session rows could not judge it, so this pass judges its pane, the named fallback, as the watch did before the rows existed. The cause names why: no rows file recorded for this pane (unrecorded), a fleet state that could not be read (state-unreadable), no row in the file yet (none), a row naming a harness that emits no session end or usage-limit event (unsupported), or a file that could not be read (unreadable).' ;;

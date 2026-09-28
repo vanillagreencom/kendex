@@ -407,7 +407,7 @@ ol_record_get() {
 # already read it under, and `session_rows` names the file that pane's own
 # event rows land in (lib/session-rows.sh), under the overseer mailbox of the
 # checkout the session starts in, IDENTITY's `cwd`, or this launcher's own
-# where that is unknown; OL_ROWS holds it for ol_session_verify. `pending` is
+# where that is unknown. `pending` is
 # dropped: the successor it named is the session written here, or a launch
 # that never opened. `exit` is dropped: it is a session's that ended. The
 # prior's `launch_line` goes with it where LINE is empty: `oversee register`
@@ -416,16 +416,15 @@ ol_record_get() {
 # it were its own, the prior's account and permission words included. Every
 # other field the prior carried stays. The generation written is in
 # OL_GENERATION. Returns 1 with the writer's words in DEP_ERR.
-OL_GENERATION="" OL_ROWS=""
+OL_GENERATION=""
 ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
-  local prior="${OL_PRIOR:-null}" record cwd
-  OL_ROWS=""
+  local prior="${OL_PRIOR:-null}" record cwd rows=""
   if [[ "$1" == tmux ]]; then
     cwd="$(jq -r '.cwd // empty' <<<"$5" 2>"$DEP_ERR")" || return 1
-    OL_ROWS="$(session_rows_overseer_file "${cwd:-$PWD}" "$4" "$2")"
+    rows="$(session_rows_overseer_file "${cwd:-$PWD}" "$4" "$2")"
   fi
   record="$(jq -cn --argjson prior "$prior" --argjson identity "$5" --arg runtime "$1" \
-    --arg session "$2" --arg window "$3" --arg server "$4" --arg line "${6:-}" --arg rows "$OL_ROWS" "$OL_JQ_DEFS"'
+    --arg session "$2" --arg window "$3" --arg server "$4" --arg line "${6:-}" --arg rows "$rows" "$OL_JQ_DEFS"'
       ($prior // {}) as $p
       | (($p.generation // 0) | if type == "number" then . else 0 end) as $g
       | (if ($p | ol_names($server; $session)) and $g > 0 then $g else $g + 1 end) as $next
@@ -478,12 +477,23 @@ ol_record_current() { # SERVER PANE
   IFS="$sep" read -r OL_CUR_HARNESS OL_CUR_ACCOUNT OL_CUR_HOME OL_CUR_MODEL OL_CUR_EFFORT OL_CUR_CWD <<<"$fields"
 }
 
+# ol_record_exit_clear SERVER PANE — the record's `exit` member dropped where
+# the record names that session on that server: `overseer-run` asks it before
+# its line runs, so a launch line run again in the same pane leaves no status
+# its predecessor earned. Returns 1 with the writer's words in DEP_ERR.
+ol_record_exit_clear() { # SERVER PANE
+  "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg pane "$2" "$OL_JQ_DEFS"'
+      if (.overseer | ol_names($server; $pane)) then .overseer |= del(.exit) else . end' \
+    >/dev/null 2>"$DEP_ERR"
+}
+
 # ol_record_exit SERVER PANE STATUS — the harness's exit status and the UTC
 # time it returned, as the record's `exit` member `{status, at}`, written by
 # `overseer-run` once the launch line it runs returns. Only a record naming
 # that session on that server takes it: a line that outlived its record, a
 # successor's having replaced it, says nothing about the session recorded now.
-# oversee-watch reads it as the session's death ahead of its pane process.
+# oversee-watch reads it as the session's death where the pane's process is a
+# bare shell with nothing under it, the state this return leaves.
 # Returns 1 with the writer's words in DEP_ERR.
 ol_record_exit() { # SERVER PANE STATUS
   local at
@@ -585,14 +595,11 @@ ol_account_verdict() { # SESSION LANE_VAR LANE_DIR FORM BOUND final|early
 }
 
 # ol_session_verify SESSION LANE_VAR LANE_DIR FORM WAIT_SECS — the early
-# account read, the wait for the session to come up, and the deciding read,
-# all inside WAIT_SECS. The session is up once its harness writes a
-# SessionStart row, stamped at or after this wait began, to OL_ROWS, the file
-# ol_record_write named for it (lib/session-rows.sh): the harness itself
-# saying it runs, which is past any exec a wrapper makes. Until one stands,
-# each probe asks the runtime's `inspect --launch` for a turn in flight, the
-# named fallback, which is also what sees a dialog nobody is there to answer:
-# a harness stopped at one writes no row.
+# account read, the wait for the session's first working turn through the
+# runtime's `inspect --launch`, and the deciding read, all inside WAIT_SECS.
+# A SessionStart row is no evidence here: the harness writes it at startup,
+# before its first turn runs, so it proves the process started and nothing
+# about a turn.
 # 0 once the session is working on the picked account. 1 with OL_REASON:
 #   wrong-lane      the session runs another account (OL_OBSERVED)
 #   result-unknown  an account verdict this library does not know (OL_RESULT)
@@ -623,9 +630,6 @@ ol_session_verify() { # SESSION LANE_VAR LANE_DIR FORM WAIT_SECS
   # or an option list the brief itself prints reads as asking, and the wait
   # would burn the budget on a session that had in fact launched.
   while :; do
-    if [[ -n "$OL_ROWS" ]] && session_rows_start "$OL_ROWS" "$OL_STARTED"; then
-      break
-    fi
     out="$("$SCRIPT_DIR/overseer-host" inspect --launch --session "$session" 2>"$DEP_ERR")" \
       || { OL_REASON=inspect-failed; OL_STEP=inspect; return 1; }
     keyed="${out%%$'\n'*}"

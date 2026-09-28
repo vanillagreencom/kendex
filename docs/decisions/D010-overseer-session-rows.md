@@ -20,7 +20,7 @@ A hook also writes its row at SessionStart, before any record names the session 
 
 1. Rows are JSON lines in `tmp/lane-mail/overseer/session-<tmux server pid>-<pane number>.jsonl`, one file per session key, in the overseer mailbox directory lane mail already uses.
 2. Appends take the mailbox's own lock and line rules (`lib/mailbox-append.sh`). The directory is the transport. The mail files stay mail.
-3. The oversee state's `overseer.session_rows` names the file. Every reader reads the path from the record, and the one function `session_rows_overseer_file` computes it for the writer and the record writers.
+3. The oversee state's `overseer.session_rows` names the file, and `oversee-watch` reads the path from the record. The one function `session_rows_overseer_file` computes it for the hook's writer, the record writers, `oversee register` and `oversee-succeed`.
 
 ## Rationale
 

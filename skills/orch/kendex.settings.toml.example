@@ -263,7 +263,8 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 
 # How many checks in a row must find the overseer gone, or out of account
 # allowance, before it is replaced. One check alone can catch a healthy
-# session between programs.
+# session between programs. A limit the overseer's own session reports, or
+# an account with no allowance left, replaces it on the first check.
 # ORCH_OVERSEER_DEAD_PASSES = "2"
 
 # The allowance left on an account at which the overseer hands over. No

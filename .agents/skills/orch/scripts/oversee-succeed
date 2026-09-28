@@ -42,10 +42,11 @@
 #   Every mode but `--dead-pane` reads the caller's LAUNCH RECORD first: the
 #   fleet state's `overseer` object (schemas/workflow-state.md § Oversee
 #   state), where it names the caller pane on this tmux server. The harness,
-#   account, model and directory it names are taken ahead of --harness, the
-#   pane command, the pane's context reading and the account variables, which
-#   answer only for a session nothing has recorded and for a fact its record
-#   leaves unknown; `--check-marks` reads the harness, account and model. A
+#   account, model and directory it names are taken ahead of the caller's
+#   SessionStart row (lib/session-rows.sh), then --harness, the pane command,
+#   the pane's context reading and the account variables, which answer only
+#   for a session neither the record nor the row names and for a fact both
+#   leave unknown; `--check-marks` reads the harness, account and model. A
 #   record naming a model gives the caller's successor that model and effort
 #   as one pair, in place of the pair the flags after -- spell; with no model,
 #   the flags keep theirs. The context mark still rests on --context alone.
@@ -295,8 +296,9 @@
 #   --harness H      The harness this overseer runs, claude or codex, where its
 #                    pane cannot say: a Codex pane reports node, which names
 #                    either, and the turn-end reading that would name it does
-#                    not exist before the first turn end. It answers ahead of
-#                    the pane and the reading; any other value is refused as
+#                    not exist before the first turn end. It answers after
+#                    the launch record and the session's SessionStart row and
+#                    ahead of the pane and the reading; any other value is refused as
 #                    invalid-harness, and --dead-pane, whose recorded line
 #                    names its harness, refuses it
 #   --context TOKENS:WINDOW

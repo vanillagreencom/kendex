@@ -60,19 +60,43 @@ assert_eq "rc=$RC exit=$(exit_of)" "rc=0 exit=0" "a clean exit is recorded as 0"
 run %9 --
 assert_eq "rc=$RC" "rc=2" "no command is a usage error"
 
+# A status an earlier session in this pane left is dropped before the command
+# runs: the command reads the record mid-run and exits 0 only where it is gone.
+state_exit() { # PANE STATUS
+  state "$1"
+  jq --argjson s "$2" '.overseer.exit = {status: $s, at: "2026-09-28T01:00:00Z"}' "$STATE" > "$STATE.tmp"
+  mv -- "$STATE.tmp" "$STATE"
+}
+CLEARED_CHECK="jq -e '.overseer.exit == null' '$STATE' >/dev/null"
+state_exit %9 9
+run %9 -- sh -c "$CLEARED_CHECK"
+assert_eq "rc=$RC exit=$(exit_of)" "rc=0 exit=0" "a prior status in this pane is dropped before the line runs"
+state_exit %3 9
+run %9 -- sh -c "$CLEARED_CHECK"
+assert_eq "rc=$RC exit=$(exit_of)" "rc=1 exit=9" "another pane's status is left where it stands"
+
 # A record that cannot be written is said under its key, and the status stands.
 printf 'not json' > "$STATE"
 run %9 -- sh -c 'exit 5'
-assert_eq "rc=$RC first=$(sed -n 1p "$ERR")" "rc=5 first=overseer-run: exit-unrecorded=5" \
-  "an unwritable record is reported and the command's status handed back" "$ERR"
+assert_eq "rc=$RC keys=$(grep -o '^overseer-run: [a-z-]*=[a-z0-9]*' "$ERR" | tr '\n' ',')" \
+  "rc=5 keys=overseer-run: exit-uncleared=pending,overseer-run: exit-unrecorded=5," \
+  "an unwritable record is reported at both writes and the command's status handed back" "$ERR"
 
 # --- control ----------------------------------------------------------------
 # The record's session test removed: another pane's record takes the status.
 MUTANT="$(mutant_scripts mutant lib/overseer-launch.sh)" || exit 1
-mutate_file "$MUTANT/lib/overseer-launch.sh" 'if (.overseer | ol_names($server; $pane)) then' 'if true then'
+mutate_file "$MUTANT/lib/overseer-launch.sh" 'if (.overseer | ol_names($server; $pane)) then .overseer.exit = {' 'if true then .overseer.exit = {'
 state %3
 RUN_BIN="$MUTANT/overseer-run" run %9 -- sh -c 'exit 7'
 assert_eq "exit=$(exit_of)" "exit=7" "control: without the session test another pane's record takes the status"
+
+# The clear removed from a copy of the wrapper: the prior status stands while
+# the line runs.
+CLEAR_CTL="$(mutant_scripts clear-ctl overseer-run)" || exit 1
+mutate_file "$CLEAR_CTL/overseer-run" '    elif ! ol_record_exit_clear "${KEY%% *}" "${KEY#* }"; then' '    elif false; then'
+state_exit %9 9
+RUN_BIN="$CLEAR_CTL/overseer-run" run %9 -- sh -c "$CLEARED_CHECK"
+assert_eq "rc=$RC" "rc=1" "control: without the clear the line runs under the earlier session's status"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
