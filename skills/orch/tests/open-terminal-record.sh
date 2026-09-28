@@ -171,9 +171,12 @@ run_ot() {
 }
 
 # record ITEM — the item's record as `field=value` words, null spelled null.
+# running_at is left out: it is the clock at the write, which running_at ITEM
+# reads on its own rows below.
 record() {
-  "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | to_entries | map("\(.key)=\(.value // "null")") | join(" ")'
+  "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | to_entries | map(select(.key != "running_at")) | map("\(.key)=\(.value // "null")") | join(" ")'
 }
+running_at() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .running_at // "null"' | tr -d '"'; }
 records() { "$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "'"$1"'")] | length'; }
 stamped() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] && echo iso || echo "$1"; }
 field() { sed -n "s/.* $2=\([^ ]*\).*/\1/p" <<<"$1"; }
@@ -190,6 +193,7 @@ assert_eq "$(sed "s/ launched_at=[^ ]*//" <<<"$REC")" \
   "item=CC-1 tracker=linear repo=null harness=claude window=null account=null host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=null status=running over_cap=null" \
   "the record carries the item, no window off tmux, the worktree as mail_root, the flags' model and status running"
 assert_eq "$(stamped "$(field "$REC" launched_at)")" "iso" "launched_at is a UTC timestamp"
+assert_eq "$(stamped "$(running_at CC-1)")" "iso" "a launch recording the lane running stamps running_at, the watch's start-stall anchor"
 LAUNCHED_AT="$(field "$REC" launched_at)"
 
 # The choice words sit INSIDE the --cmd command, which is the command this
@@ -335,8 +339,11 @@ echo "=== a relaunch rewrites the moved fields in place and keeps launched_at ==
 # would separate a kept value from a rewritten one only by the runner's speed.
 touch "$EXISTS_DIR/CC-1"
 LAUNCHED_AT=2026-01-01T00:00:00Z
-"$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.status = "done" | .launched_at = "'"$LAUNCHED_AT"'")' >/dev/null
+"$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.status = "done" | .launched_at = "'"$LAUNCHED_AT"'" | .running_at = "'"$LAUNCHED_AT"'")' >/dev/null
 run_ot --relaunch --ghostty --harness claude --lane "$LANE_DIR" --launch-flags "--model opus --effort high" CC-1
+RELAUNCH_RUNNING_AT="$(running_at CC-1)"
+assert_eq "$(stamped "$RELAUNCH_RUNNING_AT") renewed=$([[ "$RELAUNCH_RUNNING_AT" != "$LAUNCHED_AT" ]] && echo yes || echo no)" "iso renewed=yes" \
+  "a relaunch renews running_at, so the watch counts a fresh start-stall window from it"
 assert_eq "rc=$RC records=$(records CC-1) $(record CC-1)" \
   "rc=0 records=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null" \
   "a relaunch keeps one record: the resumed session id and the new account land, launched_at stands, and a done lane runs again"
@@ -347,6 +354,7 @@ run_ot --wake --harness claude CC-1
 assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-1 ' <<<"$OUT" || true) $(record CC-1)" \
   "rc=0 woken=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null" \
   "a wake sets the resumed session id and status running and leaves the launch's fields as they were"
+assert_eq "running_at=$(running_at CC-1)" "running_at=$RELAUNCH_RUNNING_AT" "a wake keeps running_at: the lane it rouses already started"
 
 echo "=== a wake is not judged on the fleet cap ==="
 # The fleet already runs more lanes than a cap of 1 allows; a wake rouses one of
@@ -586,6 +594,16 @@ mutate_file "$UNWRITTEN_OT" '    lane_record_write "$RECORD_MODE" "$wt_id" "$rec
 run_ot SCRIPT="$UNWRITTEN_OT" STATE_DIR="$TMP_ROOT/unwritten-state" --ghostty "${FLEET_CMD[@]}" CC-30
 assert_eq "rc=$RC records=$("$WS" --state-dir "$TMP_ROOT/unwritten-state" get oversee '(.lanes // []) | length')" "rc=0 records=0" \
   "control: without the write a launch leaves the created state with no record and reports success"
+# The running_at stamp's own control: dropped from a copy of the launcher, a
+# lane recorded running carries none, so the watch would fall back to a
+# launch time a relaunch keeps.
+UNSTAMPED_OT="$(mutant_scripts unstamped open-terminal)/open-terminal" || exit 1
+git -C "$TMP_ROOT/unstamped" init -q
+orch_fixture_shared_libs "$TMP_ROOT/unstamped"
+mutate_file "$UNSTAMPED_OT" '  [[ "$status" != running ]] || running_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1' '  :'
+run_ot SCRIPT="$UNSTAMPED_OT" STATE_DIR="$TMP_ROOT/unstamped-state" --ghostty "${FLEET_CMD[@]}" CC-31
+assert_eq "rc=$RC running_at=$("$WS" --state-dir "$TMP_ROOT/unstamped-state" get oversee '.lanes[0].running_at // "null"' | tr -d '"')" "rc=0 running_at=null" \
+  "control: without the stamp a lane recorded running carries no running_at"
 
 echo "=== a host still preparing the item hands the launch to a background job ==="
 # The provider accepts the item with state=preparing and holds wait shut until
@@ -644,10 +662,11 @@ hand_off CC-73 LANE_HOST_STUB_WAIT_GATE="$TMP_ROOT/gate-73"
 assert_eq "rc=$RC summary=$(grep -c '^open-terminal: summary launched=0 preparing=1 skipped=0 failed=0 ' <<<"$OUT" || true) handed=$(grep -c "^open-terminal: lane-preparing item=CC-73 log=$STATE/lane-prepare-CC-73.log$" <<<"$OUT" || true) record=$(prepared CC-73) pid=$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-73") | .prepare.pid | type') window=$(grep -c '^new-window =stub:1$' "$TMUX_LOG" || true) claims=$(claims_for CC-73) marker=$(marker_at cc-73)" \
   "rc=0 summary=1 handed=1 record=preparing prepare none pid=number window=1 claims=1 marker=none" \
   "a launch whose host is still preparing returns at once with its window and claim open, the lane recorded preparing under its job's pid, and nothing launched on the host"
+assert_eq "running_at=$(running_at CC-73)" "running_at=null" "a lane recorded preparing carries no running_at: its host's time is not the lane's"
 touch "$TMP_ROOT/gate-73"
-assert_eq "record=$(settled CC-73) marker=$(marker_at cc-73) window=$(field "$(record CC-73)" window) root=$(field "$(record CC-73)" mail_root)" \
-  "record=running prepare none marker=root window=stub:CC-73 root=/srv/lane" \
-  "once the host is ready the job launches the lane in its window and records it running"
+assert_eq "record=$(settled CC-73) marker=$(marker_at cc-73) window=$(field "$(record CC-73)" window) root=$(field "$(record CC-73)" mail_root) running_at=$(stamped "$(running_at CC-73)")" \
+  "record=running prepare none marker=root window=stub:CC-73 root=/srv/lane running_at=iso" \
+  "once the host is ready the job launches the lane in its window and records it running, stamping running_at then"
 # A later launch that is not handed off drops the preparation it replaces, or
 # the watch would read that stale record of a live lane.
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \

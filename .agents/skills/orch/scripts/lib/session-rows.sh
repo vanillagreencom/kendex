@@ -38,8 +38,9 @@
 # mailbox directory, `tmp/lane-mail/<item>/session-rows.jsonl` under its
 # worktree, the directory lane mail and `lanes context` already read from any
 # host: the same hook writes a Stop row at each turn end and a PreToolUse row
-# at the first tool call after one, which is all a reader needs to tell an
-# idle, working or walled Pi lane apart without its pane
+# at the first tool call of each turn, after a turn end or on an empty file,
+# which is all oversee-watch and `lanes state` need to tell an idle, working or
+# walled Pi lane apart without its pane
 # (session_rows_lane_write, session_rows_lane_verdict). Claude Code and Codex
 # lanes write none: their pane is still what lib/lane-state.sh reads.
 #

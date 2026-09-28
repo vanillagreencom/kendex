@@ -261,7 +261,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   lane-idle<TAB><lane><TAB><pane key>|<screen key>[|reported]
 #   handoff<TAB><item><TAB><record checksum>
 #   lane-prepare<TAB><item><TAB><preparation start epoch>|<ready|failed|stuck>
-#   start-stalled<TAB><item><TAB><launched_at epoch>|<passes since reported, or seen>
+#   start-stalled<TAB><item><TAB><running_at epoch>|<passes since reported, or seen>
 #   lane-failed<TAB><item><TAB><the last lane-local failure the long pass reported>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->
@@ -413,8 +413,9 @@ START_STALL_SECS="${ORCH_WATCH_START_STALL_SECS:-600}"
 [[ "$START_STALL_SECS" =~ ^[1-9][0-9]*$ ]] || die start-stall-secs-invalid "" "value=$START_STALL_SECS"
 # The state's records the pane never judges and the start-stall check reads,
 # rebuilt by every fleet read: `<window>=<item>` for each Pi lane, judged from
-# the rows its own hook writes (lib/session-rows.sh), and `<item>=<launched_at
-# epoch>` for each record naming a mail_root to look for its status file under.
+# the rows its own hook writes (lib/session-rows.sh), and `<item>=<epoch it went
+# running>` for each record naming a mail_root to look for its status file
+# under.
 PI_LANES=()
 LAUNCHES=()
 # What argv itself gave, kept before the first state read rebuilds the four
@@ -588,8 +589,9 @@ lane_skipped() { # WINDOW
 # The live fleet, read from the oversee workflow state open-terminal writes
 # (schemas/workflow-state.md § Oversee state): a first line counting the
 # records no pass carries, then one line per running lane record, item,
-# window, local|hosted, mail_root, harness and launched_at in epoch seconds
-# joined by the unit separator. `running`,
+# window, local|hosted, mail_root, harness and the time the record went
+# running in epoch seconds, its running_at or, on a record written before that
+# stamp, its launched_at, joined by the unit separator. `running`,
 # lib/lane-claims.sh's LANE_RUNNING_JQ, is the one answer to which records a
 # pass carries, so the count and the rows cannot describe two different fleets. A file that is not that state,
 # or a running record with no item, ends the watch: a lane read as absent is
@@ -601,7 +603,7 @@ LANE_ROWS_FILTER="$LANE_RUNNING_JQ"'
     (.[] | select(running)
   | if ((.item? | type) == "string" and (.item | length) > 0) then . else error("lane-field field=item value=\(.item | tojson)") end
   | [.item, (.window // ""), (if .host == null then "local" else "hosted" end), (.mail_root // ""),
-     (.harness // ""), (if .launched_at == null then "" else (.launched_at | fromdateiso8601 | tostring) end)]
+     (.harness // ""), ((.running_at // .launched_at) | if . == null then "" else (fromdateiso8601 | tostring) end)]
   | join("\u001f"))'
 
 # The preparation records of lanes open-terminal handed to a background job,
@@ -650,7 +652,7 @@ FLEET_CARRIED=""
 # The state text the last read parsed, which the heartbeat's owed items judge.
 FLEET_STATE=""
 fleet_merge() { # [quiet]
-  local state rows dropped line item window where root harness launched kept carried parked
+  local state rows dropped line item window where root harness running kept carried parked
   state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
   FLEET_STATE="$state"
   rows="$(jq -r "$LANE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$rows" "option=--state" "path=$STATE_FILE"
@@ -672,12 +674,12 @@ fleet_merge() { # [quiet]
   ROOTS=()
   PI_LANES=()
   LAUNCHES=()
-  while IFS=$'\x1f' read -r item window where root harness launched; do
+  while IFS=$'\x1f' read -r item window where root harness running; do
     [[ -n "$item" ]] || continue
     ITEMS+=("$item")
     [[ -z "$window" ]] || LANES+=("$window")
     [[ -z "$window" || "$harness" != pi ]] || PI_LANES+=("$window=$item")
-    [[ -z "$launched" || -z "$root" ]] || LAUNCHES+=("$item=$launched")
+    [[ -z "$running" || -z "$root" ]] || LAUNCHES+=("$item=$running")
     if [[ "$where" == hosted ]]; then HOSTED+=("$item=$root")
     elif [[ -n "$root" ]]; then ROOTS+=("$item=$root"); fi
   done <<<"$rows"
@@ -1500,26 +1502,28 @@ check_prepare() {
 }
 
 # A running lane record whose status file, tmp/lane-status-<item>.md under its
-# mail_root, is still missing START_STALL_SECS after its launched_at, on every
-# harness: a lane that never started its workflow writes none. Reported once,
-# then again every MARK_REPEAT passes while it stands, the rhythm overseer-mark
-# keeps. The row is keyed by the launch, so a launch recording a new time
-# starts over, and turns `seen` once the file has stood: a lane whose
+# mail_root, is still missing START_STALL_SECS after the record went running,
+# its running_at, on every harness: a lane that never started its workflow
+# writes none. A background preparation before that stamp is the host's time,
+# not the lane's. Reported once, then again every MARK_REPEAT passes while it
+# stands, the rhythm overseer-mark keeps. The row is keyed by that stamp, so a
+# relaunch, which renews it, starts a fresh window, and the row turns `seen`
+# once the file has stood: a lane whose
 # merge-pr close-out removed its worktree, file and all, never started late. A
 # local root that is no directory is that removal too, and so is a hosted item
 # this run's mail pass found with its worktree gone. A hosted file is read
 # through lane-host, and a read that failed settles nothing: the row stands
 # and the failure is noted.
 check_start_stall() {
-  local entry item launched age prior passes path rc rows="${PW_SEEN[0]}" items=()
+  local entry item running age prior passes path rc rows="${PW_SEEN[0]}" items=()
   for entry in ${LAUNCHES[@]+"${LAUNCHES[@]}"}; do
     item="${entry%%=*}"
-    launched="${entry#*=}"
+    running="${entry#*=}"
     items+=("$item")
     if ! prior="$(lane_row_get start-stalled "$rows" "$item")"; then
       die state-read-failed "" "item=$item" "row=start-stalled"
     fi
-    [[ "$prior" != "$launched|seen" ]] || continue
+    [[ "$prior" != "$running|seen" ]] || continue
     rc=0
     hosted_root "$item"
     if [[ -n "$HOSTED_ROOT" ]]; then
@@ -1533,17 +1537,17 @@ check_start_stall() {
       [[ -e "$path" ]] || rc=1
     fi
     case "$rc" in
-      0) rows="$(lane_row_set start-stalled "$rows" "$item" "$launched|seen")"; continue ;;
+      0) rows="$(lane_row_set start-stalled "$rows" "$item" "$running|seen")"; continue ;;
       1) ;;
       *) ow_message start-stall-unread "item=$item" "exit=$rc" >&2; continue ;;
     esac
-    age=$((PASS_NOW - launched))
+    age=$((PASS_NOW - running))
     if (( age < START_STALL_SECS )); then
       rows="$(lane_row_clear start-stalled "$rows" "$item")"
       continue
     fi
     passes=0
-    if [[ "$prior" == "$launched|"* ]]; then
+    if [[ "$prior" == "$running|"* ]]; then
       passes=$(( ${prior#*|} + 1 ))
       (( passes < MARK_REPEAT )) || passes=0
     fi
@@ -1551,7 +1555,7 @@ check_start_stall() {
       echo "EVENT start-stalled $item age=$age"
       PASS_EVENT=1
     fi
-    rows="$(lane_row_set start-stalled "$rows" "$item" "$launched|$passes")"
+    rows="$(lane_row_set start-stalled "$rows" "$item" "$running|$passes")"
   done
   rows="$(lane_row_prune start-stalled "$rows" ${items[@]+"${items[@]}"})"
   lane_row_commit "$rows"

@@ -608,9 +608,11 @@ lane_pane_observe() { # WINDOW
 #   ROWS     for a Pi lane, lib/session-rows.sh § session_rows_lane_verdict's
 #            word, `unreadable` where that read failed; "" for any other lane
 #
-# A PI LANE IS JUDGED FROM WHAT PI EMITS, NEVER FROM ITS PANE: the Stop and
-# PreToolUse rows the lane-mail-check hook writes under the pi-hooks carrier.
-# Past `gone` and `exited`, which are the window and the process and no screen,
+# A PI LANE IS JUDGED FROM WHAT PI EMITS, NEVER FROM ITS PANE, by every caller
+# that passes ROWS: the Stop and PreToolUse rows the lane-mail-check hook
+# writes under the pi-hooks carrier, which oversee-watch and `lanes state`
+# pass. lane-close's close guard passes none, so it still reads a Pi lane's
+# pane. Past `gone` and `exited`, which are the window and the process and no screen,
 # ROWS answers `idle`, `working` or `walled` alone, under the same ACCOUNT and
 # SESSION rules the pane rungs keep, and a lane with no row, or rows that could
 # not be read, is `unjudged`. Pi's carrier sends no dialog event, so a Pi lane

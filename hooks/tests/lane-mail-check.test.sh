@@ -977,6 +977,37 @@ install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 rm -f -- "${PI_ROWS:?}"
 stop_at "$PI_TURN" false
 assert_eq "rows=$(pi_rows)" "rows=-" "a Claude Code lane writes no row: its pane is what its readers judge"
+# A Pi lane launched on a pool account runs under PI_CODING_AGENT_DIR, and its
+# hook sits in that root's kendex/hooks: it is Pi's install all the same.
+new_handoff_lane pi_pool_rows KEN-97
+PI_POOL="$LANE/.pool/acct"
+mkdir -p "$PI_POOL"
+ln -s "$LANE/.claude/skills/orch" "$PI_POOL/skills"
+install_hook "$HOOK" "$PI_POOL/kendex/hooks/lane-mail-check.sh"
+PI_ROWS="$LANE/tmp/lane-mail/KEN-97/session-rows.jsonl"
+ARM_ARGS=(halt)
+run_payload '{"tool_name":"bash","tool_input":{"command":"ls"}}' "PI_CODING_AGENT_DIR=$PI_POOL"
+ARM_ARGS=()
+run_payload "$(jq -nc --arg p "$PI_TURN" '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:200000}')" \
+  "PI_CODING_AGENT_DIR=$PI_POOL"
+assert_eq "rows=$(pi_rows)" "rows=PreToolUse:: Stop:error:429 You have hit your usage limit for this period" \
+  "a Pi lane whose hook sits under the PI_CODING_AGENT_DIR root writes its rows"
+# An install naming no harness writes no row, and a launched lane's turn end
+# there says so under harness-unlisted rather than leaving its Pi reader
+# unjudged in silence.
+new_handoff_lane pi_unnamed_rows KEN-98
+mkdir -p "$LANE/.other"
+ln -s "$LANE/.claude/skills/orch" "$LANE/.other/skills"
+install_hook "$HOOK" "$LANE/.other/hooks/lane-mail-check.sh"
+PI_ROWS="$LANE/tmp/lane-mail/KEN-98/session-rows.jsonl"
+ARM_ARGS=(halt)
+run_payload '{"tool_name":"bash","tool_input":{"command":"ls"}}'
+ARM_ARGS=()
+assert_eq "RC=$RC said=$(grep -c '^lane-mail-check: harness-unlisted=' "$ERR_FILE" || true)" "RC=0 said=0" \
+  "a tool call on an install naming no harness writes nothing and says nothing"
+pi_stop
+assert_eq "said=$(grep -c "^lane-mail-check: harness-unlisted=$LANE/.other/hooks\$" "$ERR_FILE" || true) rows=$(pi_rows)" "said=1 rows=-" \
+  "a launched lane's turn end on an install naming no harness reports harness-unlisted and writes no row"
 
 # --- the question at a turn end ------------------------------------------
 # A lane that ends its turn on a question it never sent through lane mail
@@ -2734,6 +2765,19 @@ new_pi_lane control_pi_rows KEN-96 "$MUTANT_PATH"
 pi_tool
 pi_stop
 assert_eq "rows=$(pi_rows)" "rows=-" "control: without the lane row call a Pi lane writes no row"
+# Without the moved root a pool account's Pi install writes no row: the FLT-400
+# silence the moved root closes.
+mutant no-moved-pi-root -e 's@^  \[ -z "\$PI_HOOK_DIR" \] || \[ "\$PI_HOOK_DIR" != "\$THIS_HOOK_DIR" \] || HARNESS=pi$@  :@'
+new_handoff_lane control_pi_pool KEN-99
+PI_POOL="$LANE/.pool/acct"
+mkdir -p "$PI_POOL"
+ln -s "$LANE/.claude/skills/orch" "$PI_POOL/skills"
+install_hook "$MUTANT_PATH" "$PI_POOL/kendex/hooks/lane-mail-check.sh"
+PI_ROWS="$LANE/tmp/lane-mail/KEN-99/session-rows.jsonl"
+pi_stop '{}'
+run_payload "$(jq -nc --arg p "$PI_TURN" '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:200000}')" \
+  "PI_CODING_AGENT_DIR=$PI_POOL"
+assert_eq "rows=$(pi_rows)" "rows=-" "control: without the moved root a pool account's Pi install writes no row"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # oversee-watch's start-stalled report: a running lane record whose status
 # file, tmp/lane-status-<item>.md under its mail_root, is still missing
-# ORCH_WATCH_START_STALL_SECS after its launched_at, on every harness, a hosted
-# one read through `lane-host cat`. Reported once, then every
+# ORCH_WATCH_START_STALL_SECS after the record went running, its running_at, on
+# every harness, a hosted one read through `lane-host cat`. Reported once, then every
 # ORCH_OVERSEER_MARK_REPEAT passes while it stands.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -16,12 +16,18 @@ FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
 LAUNCHED=2026-08-15T10:00:00Z
 LAUNCHED_EPOCH="$(date -u -d "$LAUNCHED" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$LAUNCHED" +%s)"
 
-# launched ITEM ROOT [HARNESS] [HOST] — one running lane record with no window,
-# so the pass reads no pane for it, launched at LAUNCHED on ROOT.
+# launched ITEM ROOT [HARNESS] [HOST] [RUNNING_AFTER] — one running lane record
+# with no window, so the pass reads no pane for it, launched at LAUNCHED on
+# ROOT. RUNNING_AFTER, in seconds past LAUNCHED, stamps its running_at, the
+# time a prepared launch or a relaunch recorded it running; with none the
+# record carries no running_at, as one written before the stamp.
 launched() {
-  jq -cn --arg item "$1" --arg root "$2" --arg harness "${3:-claude}" --arg host "${4:-}" --arg at "$LAUNCHED" \
+  local running=""
+  [[ -z "${5:-}" ]] || running="$(date -u -d "@$((LAUNCHED_EPOCH + $5))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -r "$((LAUNCHED_EPOCH + $5))" +%Y-%m-%dT%H:%M:%SZ)"
+  jq -cn --arg item "$1" --arg root "$2" --arg harness "${3:-claude}" --arg host "${4:-}" --arg at "$LAUNCHED" --arg running "$running" \
     '{item: $item, window: null, host: (if $host == "" then null else $host end), mail_root: $root,
-      harness: $harness, launched_at: $at, status: "running"}'
+      harness: $harness, launched_at: $at, status: "running"} + (if $running == "" then {} else {running_at: $running} end)'
 }
 write_state() { # RECORD...
   printf '%s\n' "$@" | jq -s '{issue_id: "oversee", triaged: [], lanes: .}' > "$STUB_DIR/state.json"
@@ -67,6 +73,30 @@ for row in "700|EVENT start-stalled issue-1 age=700" "760|" "820|EVENT start-sta
   IFS='|' read -r age want <<<"$row"
   watch "$age" ORCH_OVERSEER_MARK_REPEAT=2
   assert_eq "events=$EVENTS" "events=$want" "at ORCH_OVERSEER_MARK_REPEAT=2 the pass ${age}s after launch reports '${want:-nothing}'" "$STUB_DIR/err"
+done
+
+echo "=== the window runs from when the record went running ==="
+# A prepared launch went running 1000 seconds after its launch: the host's
+# preparation is not the lane's start, so nothing is due until 600 seconds
+# after that.
+new_case start_stall_prepared
+ROOT_1="$(worktree issue-1)"
+write_state "$(launched issue-1 "$ROOT_1" pi "" 1000)"
+for row in "1599|" "1600|EVENT start-stalled issue-1 age=600"; do
+  IFS='|' read -r age want <<<"$row"
+  want="${row#*|}"
+  watch "$age"
+  assert_eq "events=$EVENTS" "events=$want" "a record that went running 1000s after launch reports '${want:-nothing}' ${age}s after launch" "$STUB_DIR/err"
+done
+# A relaunch renews running_at: the stall reported above does not carry over,
+# and a fresh window runs from the relaunch, so the next line is a second
+# stall.
+write_state "$(launched issue-1 "$ROOT_1" pi "" 2000)"
+for row in "2599|" "2600|EVENT start-stalled issue-1 age=600"; do
+  IFS='|' read -r age want <<<"$row"
+  want="${row#*|}"
+  watch "$age"
+  assert_eq "events=$EVENTS" "events=$want" "after a relaunch at 2000s the pass ${age}s after launch reports '${want:-nothing}'" "$STUB_DIR/err"
 done
 
 echo "=== a status file that once stood is never a late start ==="
@@ -123,6 +153,19 @@ write_state "$(launched issue-2 "$ROOT_2" claude)"
 WATCH_BIN="$MUTANT_WATCH" watch 700
 assert_eq "events=$EVENTS" "events=EVENT start-stalled issue-2 age=700" \
   "control: without the status-file test a lane that wrote its file is reported stalled" "$STUB_DIR/err"
+
+# The window anchored on launched_at again: a prepared lane's preparation is
+# counted as its own stall.
+ANCHOR_DIR="$TMP_ROOT/start-stall-anchor"
+ANCHOR_WATCH="$(mutant_scripts start-stall-anchor/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$ANCHOR_DIR/github"
+mutate_file "$ANCHOR_WATCH" '((.running_at // .launched_at) | if' '(.launched_at | if'
+new_case start_stall_anchor_mutant
+ROOT_1="$(worktree issue-1)"
+write_state "$(launched issue-1 "$ROOT_1" pi "" 1000)"
+WATCH_BIN="$ANCHOR_WATCH" watch 1599
+assert_eq "events=$EVENTS" "events=EVENT start-stalled issue-1 age=1599" \
+  "control: anchored on launched_at a lane that went running 599s ago is reported stalled" "$STUB_DIR/err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
