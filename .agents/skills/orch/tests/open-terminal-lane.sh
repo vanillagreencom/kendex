@@ -983,12 +983,12 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=
   "rc=0 creates=nolog launched=1 calls=accounts;create,--item,CC-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,CC-41,/srv/lane/.git;put,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;cat,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;put,--item,CC-41,/srv/lane/tmp/lane-mail/CC-41/context.json remote=1" \
   "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line"
 HOSTED_LINE="$(hosted_line CC-48)"
-# The unattended words a Pi command carries after its flags, the text read
-# from lib/lane-launch.sh, which renders and judges them.
-PI_UNATTENDED_TEXT="$( source "$SCRIPTS_DIR/lib/lane-launch.sh" && launch_choice_unattended pi && printf '%s' "${LAUNCH_CHOICE_UNATTENDED[1]}" )"
+# The unattended words a Pi continuation line closes on, the text read from
+# lib/lane-launch.sh, which renders and judges them.
+PI_UNATTENDED_TEXT="$( source "$SCRIPTS_DIR/lib/lane-launch.sh" && launch_choice_unattended pi )"
 [[ -n "$PI_UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no pi unattended text" >&2; exit 1; }
 run_ot "ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-48
-assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec pi $Q--exclude-tools$Q ${Q}question$Q $Q--model$Q ${Q}github-copilot/opus$Q $Q--thinking$Q ${Q}high$Q $Q--append-system-prompt$Q $Q$PI_UNATTENDED_TEXT$Q -c $Q$HOSTED_LINE$Q'")" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec pi $Q--exclude-tools$Q ${Q}question$Q $Q--model$Q ${Q}github-copilot/opus$Q $Q--thinking$Q ${Q}high$Q -c $Q$HOSTED_LINE $PI_UNATTENDED_TEXT$Q'")" \
   "rc=0 creates=nolog launched=1 remote=1" \
   "a hosted pi relaunch continues natively with the continuation line"
 # A hosted Pi launch on a pi-claude model is refused before any pick, judge or

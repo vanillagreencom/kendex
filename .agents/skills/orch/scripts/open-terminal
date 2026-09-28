@@ -509,15 +509,17 @@ if ! LAUNCH_QUESTION_OFF="$(launch_choice_question_off "$LAUNCH_HARNESS")" \
   exit 1
 fi
 
-# A harness with unattended words carries them the same way: start_cmd gives
-# every command it builds its row's, and a --cmd template carries them itself,
-# the flag and then its text as one quoted argument. The refusal names the
-# flag on its keyed line and prints the text under the English, whole.
-launch_choice_unattended "$LAUNCH_HARNESS"
-if [[ -n "$CMD_TEMPLATE" && ${#LAUNCH_CHOICE_UNATTENDED[@]} -gt 0 ]] \
-   && ! launch_choice_args_present "$CMD_TEMPLATE" "${LAUNCH_CHOICE_UNATTENDED[@]}"; then
-  ot_message launch-unattended-missing "harness=$LAUNCH_HARNESS" "flag=${LAUNCH_CHOICE_UNATTENDED[0]}" >&2
-  printf '%s\n' "${LAUNCH_CHOICE_UNATTENDED[@]:1}" >&2
+# A harness with unattended words is briefed with them: start_cmd puts them in
+# every brief it renders, and a --cmd launch carries them whole in one argument
+# of its template or in its brief file, which reaches the harness as one
+# argument. The refusal prints the text under the English, whole, and a
+# reading of it that fails is refused as its absence, never skipped.
+LAUNCH_UNATTENDED=""
+if ! LAUNCH_UNATTENDED="$(launch_choice_unattended "$LAUNCH_HARNESS")" \
+   || { [[ -n "$CMD_TEMPLATE" && -n "$LAUNCH_UNATTENDED" && "$BRIEF_TEXT" != *"$LAUNCH_UNATTENDED"* ]] \
+        && ! launch_choice_phrase_present "$LAUNCH_UNATTENDED" "$CMD_TEMPLATE"; }; then
+  ot_message launch-unattended-missing "harness=$LAUNCH_HARNESS" >&2
+  [[ -z "$LAUNCH_UNATTENDED" ]] || printf '%s\n' "$LAUNCH_UNATTENDED" >&2
   exit 1
 fi
 
@@ -1199,13 +1201,15 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   local -a model_arg=()
   [[ -z "$wake_dir" ]] || model_arg=(--model "$WAKE_MODEL")
   launch_choice_lead_settings --question-off ${model_arg[@]+"${model_arg[@]}"} "$HARNESS" ${flag_tokens[@]+"${flag_tokens[@]}"}
-  # The unattended words follow, whole: their text is one argument holding
-  # blanks and nothing else a quoting layer acts on.
-  launch_choice_unattended "$HARNESS"
-  for tok in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"} \
-             ${LAUNCH_CHOICE_UNATTENDED[@]+"${LAUNCH_CHOICE_UNATTENDED[@]}"}; do
+  for tok in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
     flags+="'$tok' "
   done
+  # The harness's unattended words close its brief and its continuation line,
+  # inside their quotes: the text holds blanks and nothing a quoting layer
+  # acts on.
+  local unattended
+  unattended="$(launch_choice_unattended "$HARNESS")" || return 1
+  [[ -z "$unattended" ]] || unattended=" $unattended"
   # Both delivered lines obey the same shell-inert rule as the codex arms above.
   # A wake runs its line in print mode and exits; a relaunch resumes an
   # interactive session that is already mid-workflow, so the resumed command
@@ -1226,7 +1230,7 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
       copilot) rearm=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --once --item $mail_id as a background command" ;;
       *) rearm="" ;;
     esac
-    line=" 'Resume the orch workflow for $mail_id from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item $mail_id first and act on every directive it prints$rearm.'"
+    line=" 'Resume the orch workflow for $mail_id from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item $mail_id first and act on every directive it prints$rearm.$unattended'"
   fi
   if [[ -n "$wake_dir" && "$HARNESS" == pi ]]; then printf 'pi-bridge send --cwd %q%s\n' "$wake_dir" "$line"; return; fi
   # claude and pi take the line as a trailing positional on their own resume
@@ -1271,12 +1275,12 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
     linear:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s'\n" "$flags" "$item" ;;
     linear:copilot)  printf "copilot %s-i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s'\n" "$flags" "$item" ;;
     linear:opencode) printf "opencode %s--prompt '/orch start %s'\n" "$flags" "$item" ;;
-    linear:pi)       printf "pi %s'/skill:orch start %s'\n" "$flags" "$item" ;;
+    linear:pi)       printf "pi %s'/skill:orch start %s%s'\n" "$flags" "$item" "$unattended" ;;
     github:claude)   printf "claude -n github-%q %s'/orch start github %s#%s'\n" "$item" "$flags" "$repo" "$item" ;;
     github:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s'\n" "$flags" "$repo" "$item" ;;
     github:copilot)  printf "copilot %s-i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s'\n" "$flags" "$repo" "$item" ;;
     github:opencode) printf "opencode %s--prompt '/orch start github %s#%s'\n" "$flags" "$repo" "$item" ;;
-    github:pi)       printf "pi %s'/skill:orch start github %s#%s'\n" "$flags" "$repo" "$item" ;;
+    github:pi)       printf "pi %s'/skill:orch start github %s#%s%s'\n" "$flags" "$repo" "$item" "$unattended" ;;
     *) ot_message harness-unsupported "harness=$HARNESS" >&2; exit 1 ;;
   esac
 }
