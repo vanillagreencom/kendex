@@ -1080,6 +1080,7 @@
   ".agents/skills/orch/tests/workflow-state-handoff-standing.sh",
   ".agents/skills/orch/tests/workflow-state-init-guard-lint.test.sh",
   ".agents/skills/orch/tests/workflow-state-init-shape.sh",
+  ".agents/skills/orch/tests/workflow-state-no-private-env.sh",
   ".agents/skills/orch/tests/workflow-state-progress-report-path.sh",
   ".agents/skills/orch/tests/workflow-state-prune.sh",
   ".agents/skills/orch/tests/workflow-state-remove.sh",

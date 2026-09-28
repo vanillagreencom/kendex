@@ -1383,7 +1383,7 @@ cmd_remove() {
 
 cmd_help() {
     cat << 'EOF'
-Usage: workflow-state [--state-dir <path>] <command> <issue_id> [args...]
+Usage: workflow-state [--state-dir <path>] [--no-private-env] <command> <issue_id> [args...]
 
 Global options (before the subcommand):
   --state-dir <path>            Override state directory for all subcommands.
@@ -1391,6 +1391,11 @@ Global options (before the subcommand):
                                 flag over the ORCH_STATE_DIR=… env prefix from
                                 worktree sessions: orch's shell rule takes no
                                 env prefix.
+  --no-private-env              Read the project's settings files and never
+                                source its private env file (.env.local, or
+                                the file KENDEX_ENV_FILE names): for a caller
+                                reading another checkout's state, which that
+                                checkout's shell must not run in.
 
 Commands:
   init <issue_id> [options]     Create new state file
@@ -1622,9 +1627,15 @@ EOF
 # unset must name the mistake, not write orch state where nobody asked.
 parse_global_opts() {
     STATE_DIR_FLAG=""
+    PRIVATE_ENV=1
     GLOBAL_OPTS=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --no-private-env)
+                PRIVATE_ENV=0
+                GLOBAL_OPTS=$((GLOBAL_OPTS + 1))
+                shift
+                ;;
             --state-dir)
                 if [[ $# -lt 2 || -z "$2" ]]; then
                     state_message state-dir-value "$@" >&2
@@ -1657,11 +1668,11 @@ parse_global_opts() {
 # `.env.local` is sourced as shell, so help is answered before the loader runs:
 # the dry run is the real parser in a subshell, so no value parsed from the
 # command line exists for the loader's generic [env] handling to clobber, and
-# 9 is the only status meaning it reached the end.
+# 9 and 8 are the only statuses meaning it reached the end, 8 where
+# --no-private-env keeps the loader off the private env file.
 parse_rc=0
-( parse_global_opts "$@"; exit 9 ) || parse_rc=$?
-[[ "$parse_rc" -eq 9 ]] || exit "$parse_rc"
-unset parse_rc
+( parse_global_opts "$@"; exit $((8 + PRIVATE_ENV)) ) || parse_rc=$?
+[[ "$parse_rc" -eq 9 || "$parse_rc" -eq 8 ]] || exit "$parse_rc"
 
 # shellcheck source=lib/date-ladder.sh
 source "$SCRIPT_DIR/lib/date-ladder.sh"
@@ -1671,7 +1682,16 @@ source "$SCRIPT_DIR/lib/file-lock.sh"
 source "$SCRIPT_DIR/lib/watch-pid.sh"
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
-kendex_load_project_env "$PROJECT_ROOT"
+# --no-private-env is for a caller reading another checkout's state: the
+# settings files are parsed as data, and the private env file, which is
+# sourced as shell, would run that checkout's code in the caller.
+if [[ "$parse_rc" -eq 9 ]]; then
+    kendex_load_project_env "$PROJECT_ROOT"
+else
+    kendex_load_settings_file "$PROJECT_ROOT/kendex.settings.toml"
+    kendex_load_settings_file "$PROJECT_ROOT/.kendex/settings.toml"
+fi
+unset parse_rc
 
 # Parsed only now, so the flag the caller passed outranks every project file.
 parse_global_opts "$@"

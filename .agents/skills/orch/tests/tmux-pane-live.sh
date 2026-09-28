@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # tmux_pane_live, lib/tmux-server.sh: whether a `<server pid> <pane id>` key
 # names a pane that still runs. A tmux stub on PATH answers `list-panes -a`
-# from a file a row writes, or fails where the row writes none; a running
-# server is this suite's own shell and a gone one a child that has exited.
+# from a file a row writes, or fails where the row writes none. A running
+# server is a copy of sleep named tmux, a pid reused by another program is
+# this suite's own shell, and a gone server a child that has exited.
 # The must-fail controls close the file, one per rule, each on a library copy.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+LIVE=""
+trap '[ -z "$LIVE" ] || kill "$LIVE" 2>/dev/null; rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
@@ -29,7 +31,12 @@ cat "$PANES"
 STUB
 chmod +x "$STUB_BIN/tmux"
 
-LIVE=$$
+# The server outlives every row; the trap stops it.
+mkdir -p "$TMP_ROOT/server"
+cp -- "$(command -v sleep)" "$TMP_ROOT/server/tmux"
+"$TMP_ROOT/server/tmux" 600 &
+LIVE=$!
+REUSED=$$
 sleep 0 &
 GONE=$!
 wait "$GONE" || :
@@ -56,6 +63,8 @@ done <<EOF
 0|$LIVE|%9|$LIVE %1\n$LIVE %9|the server this shell reaches lists the pane
 1|$LIVE|%4|$LIVE %1\n$LIVE %9|the server this shell reaches lists no such pane
 1|$GONE|%9|4242 %9|no process runs the server pid
+1|$REUSED|%9|4242 %9|the server pid runs a program that is not tmux
+1|$REUSED|%9|-|the server pid runs a program that is not tmux, and no pane list answers
 2|$LIVE|%9|4242 %9|the server runs and is not the one this shell reaches
 2|$LIVE|%9|-|the pane list cannot be read
 EOF
@@ -73,9 +82,13 @@ mutant_lib listed-reads-gone '    *"$nl$1 $2$nl"*) return 0 ;;' '    *"$nl$1 $2$
 assert_eq "$(live_rc "$MUTANT_LIB" "$LIVE" "%9" "$OWN")" "1" \
   "control: without the listing match a live pane reads gone"
 
-mutant_lib gone-reads-other '  kill -0 "$1" 2>/dev/null || return 1' '  :'
+mutant_lib gone-reads-other '  comm="$(ps -o comm= -p "$1" 2>/dev/null)" || return 1' '  comm=tmux'
 assert_eq "$(live_rc "$MUTANT_LIB" "$GONE" "%9" "$OTHER")" "2" \
   "control: without the process test a gone server reads as one this shell cannot ask"
+
+mutant_lib reused-reads-other '    *) return 1 ;;' '    *) ;;'
+assert_eq "$(live_rc "$MUTANT_LIB" "$REUSED" "%9" "$OTHER")" "2" \
+  "control: without the tmux name test a reused pid reads as a server this shell cannot ask"
 
 mutant_lib other-reads-gone '  [ "${panes%% *}" = "$1" ] || return 2' '  :'
 assert_eq "$(live_rc "$MUTANT_LIB" "$LIVE" "%9" "$OTHER")" "1" \

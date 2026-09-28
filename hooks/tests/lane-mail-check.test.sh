@@ -3104,6 +3104,19 @@ expect 2 "lane-mail-check: unread=1" "and reaches the named session at its turn 
 stop "${SESSION_ENV[@]}"
 expect 0 - "which is handed it once"
 
+# The record is read at the checkout's root, never in the call's own
+# directory: a Claude Code call made from another checkout, one holding no
+# fleet state, still names the session the root's record names.
+named_session peer_call_elsewhere
+peer_send 'Named at the root.'
+CALL_DIR="$PEER_SENDER"
+CALL_ENV=("CLAUDE_PROJECT_DIR=$LANE")
+stop "${SESSION_ENV[@]}"
+CALL_DIR=""
+CALL_ENV=()
+expect 2 "lane-mail-check: unread=1" \
+  "a turn end called from another checkout reads the record at the root CLAUDE_PROJECT_DIR names"
+
 # A checkout with no fleet record names no reader: no session there is handed
 # a note, inside tmux or out.
 new_plain_session peer_unnamed
@@ -3241,6 +3254,16 @@ peer_send 'Taken by another pane.'
 stop "${OTHER_ENV[@]}"
 expect 2 "lane-mail-check: unread=1" \
   "control: without the record test a session in another pane is handed the named session's note"
+
+mutant record-at-call-dir -e '/^overseer_identified() {/,/^}/ s@cd -- "\$ROOT" 2>/dev/null && @@'
+named_session control_peer_call_elsewhere "$MUTANT_PATH"
+peer_send 'Named at the call dir.'
+CALL_DIR="$PEER_SENDER"
+CALL_ENV=("CLAUDE_PROJECT_DIR=$LANE")
+stop "${SESSION_ENV[@]}"
+CALL_DIR=""
+CALL_ENV=()
+expect 0 - "control: a record read in the call's own directory names no session for the root's mailbox"
 
 mutant peer-halt-reads -e '/^    \[ "\$ARM" != halt \] || return 0$/d'
 named_session control_peer_halt "$MUTANT_PATH"
