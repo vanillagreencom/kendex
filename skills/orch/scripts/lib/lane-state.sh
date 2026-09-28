@@ -740,7 +740,9 @@ lane_state() {
 #   unreadable  anything else: the verb's own `unreadable`, a run that never
 #               reached the verb, a word it does not print, and a `stands`
 #               with no record under it, which the verb never prints whole
-# ERR_FILE holds the run's own words for the last. The watch that reports a
+# ERR_FILE holds the run's own words for the last; an empty ERR_FILE leaves
+# them on the caller's own stderr, never reopened by path, since a redirect to
+# /dev/stderr truncates a stderr that is a regular file. The watch that reports a
 # record and the relaunch that retires a session both ask here; the lane-mail
 # hook keeps a reader of its own, since it installs apart from these scripts.
 # ---------------------------------------------------------------------------
@@ -752,7 +754,8 @@ lane_handoff_standing() { # DIR ERR_FILE COMMAND...
   shift 2
   LANE_HANDOFF_STATE=unreadable
   LANE_HANDOFF_RECORD=""
-  answer="$(cd -- "$dir" && "$@" 2>"$err")" || rc=$?
+  if [[ -n "$err" ]]; then answer="$(cd -- "$dir" && "$@" 2>"$err")" || rc=$?
+  else answer="$(cd -- "$dir" && "$@")" || rc=$?; fi
   [[ "$rc" -eq 0 ]] || return 0
   case "$answer" in
     "$LANE_HANDOFF_VERDICT=none") LANE_HANDOFF_STATE=none ;;

@@ -224,6 +224,21 @@ launch retired-unreadable --relaunch --harness copilot --launch-flags "$FLAGS" C
 assert_eq "${CMD:-none} $(grep -c "^open-terminal: handoff-unreadable item=CC-738 state=$TMP_ROOT/state/workflow-state-CC-738.json\$" <<<"$ERR" || true)" "none 1" \
   "a state file the judge cannot read refuses the relaunch rather than resuming a session it may have retired"
 rm -f -- "${TMP_ROOT:?}/state/workflow-state-CC-738.json"
+# A relaunch whose stderr is a regular file keeps what that file already held:
+# the retirement read leaves the relaunch's own stderr as it found it.
+# stderr_kept SCRIPT — 1 where the line written before the relaunch survives
+# and the relaunch still renders its command, 0 otherwise.
+stderr_kept() {
+  printf 'earlier-line\n' > "$TMP_ROOT/stderr-kept.err"
+  rm -f -- "${TMP_ROOT:?}/stderr-kept.cap"
+  ( cd "$REPO" && env "${LAUNCH_ENV[@]}" OT_CAPTURE="$TMP_ROOT/stderr-kept.cap" ORCH_STATE_DIR="$TMP_ROOT/state" \
+      PATH="$BIN:$PROC_BIN:$PATH" WORKTREE_CLI="$STUB" "$1" --ghostty --relaunch --harness copilot --launch-flags "$FLAGS" CC-738 ) \
+    >/dev/null 2>>"$TMP_ROOT/stderr-kept.err" || :
+  for _ in $(seq 1 50); do [[ -s "$TMP_ROOT/stderr-kept.cap" ]] && break; sleep 0.1; done
+  if [[ "$(head -1 "$TMP_ROOT/stderr-kept.err")" == earlier-line && -s "$TMP_ROOT/stderr-kept.cap" ]]; then echo 1; else echo 0; fi
+}
+assert_eq "$(stderr_kept "$REPO/scripts/open-terminal")" "1" \
+  "a relaunch appending to a stderr file keeps the line written before it"
 # The lane ran on copilot and is relaunched on claude: nothing in claude's
 # store names the item, so claude starts it afresh on its own brief.
 launch switched --relaunch --harness claude --launch-flags '--model opus --effort high' CC-738
@@ -281,6 +296,18 @@ mutate_file "$TMP_ROOT/cwd-ctrl/scripts/lib/lane-relaunch.sh" 'index($0, "cwd: "
 OT="$TMP_ROOT/cwd-ctrl/scripts/open-terminal" launch cwd-ctrl --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
 assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-738'" \
   "control: without the record's directory the relaunch resumes nothing and starts afresh"
+# The retirement read handed /dev/stderr, which a relaunch whose stderr is a
+# regular file reopens and truncates, losing the line written before it.
+stage "$TMP_ROOT/stderr-ctrl"
+mutate_file "$TMP_ROOT/stderr-ctrl/scripts/open-terminal" 'lane_handoff_standing "$3" "" ' 'lane_handoff_standing "$3" /dev/stderr '
+assert_eq "$(stderr_kept "$TMP_ROOT/stderr-ctrl/scripts/open-terminal")" "0" \
+  "control: a retirement read through /dev/stderr truncates the relaunch's stderr file"
+# The helper's empty ERR_FILE arm cut: the run is sent to a file named by the
+# empty string, fails, and the relaunch refuses rather than launching.
+stage "$TMP_ROOT/stderr-arm-ctrl"
+mutate_file "$TMP_ROOT/stderr-arm-ctrl/scripts/lib/lane-state.sh" '  else answer="$(cd -- "$dir" && "$@")" || rc=$?; fi' '  else answer="$(cd -- "$dir" && "$@" 2>"$err")" || rc=$?; fi'
+assert_eq "$(stderr_kept "$TMP_ROOT/stderr-arm-ctrl/scripts/open-terminal")" "0" \
+  "control: without the helper's empty ERR_FILE arm the relaunch is refused"
 # The events test cut: the newest record in the worktree is resumed though it
 # holds no events, which copilot refuses to resume.
 stage "$TMP_ROOT/events-ctrl"

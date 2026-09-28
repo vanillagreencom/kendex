@@ -2171,7 +2171,7 @@ RELAUNCH_RETIRED=false
 relaunch_retired() { # ITEM STATE_ID WORKTREE
   local path
   RELAUNCH_RETIRED=false
-  lane_handoff_standing "$3" /dev/stderr "$WORKFLOW_STATE" handoff-standing "$2"
+  lane_handoff_standing "$3" "" "$WORKFLOW_STATE" handoff-standing "$2"
   case "$LANE_HANDOFF_STATE" in
     none) return 0 ;;
     stands) RELAUNCH_RETIRED=true; return 0 ;;

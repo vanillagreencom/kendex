@@ -369,8 +369,8 @@ assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=null" \
 RETIRED_MUTANT="$TMP_ROOT/retired-mutant/scripts"
 mkdir -p "$RETIRED_MUTANT"
 cp -R "$REPO/scripts/." "$RETIRED_MUTANT/"
-mutate_file "$RETIRED_MUTANT/open-terminal" 'lane_handoff_standing "$3" /dev/stderr "$WORKFLOW_STATE" handoff-standing "$2"' \
-  'lane_handoff_standing "$3" /dev/stderr "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} handoff-standing "$2"'
+mutate_file "$RETIRED_MUTANT/open-terminal" 'lane_handoff_standing "$3" "" "$WORKFLOW_STATE" handoff-standing "$2"' \
+  'lane_handoff_standing "$3" "" "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} handoff-standing "$2"'
 assert_eq "$(retired_under "$RETIRED_MUTANT/open-terminal")" "rc=0 retired=0 session=$CLAUDE222" \
   "control: asked under the fleet's --state-dir the relaunch misses the record and resumes the retired session"
 # Both are relaunches, each renewing running_at, so the wake row below reads
