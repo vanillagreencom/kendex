@@ -363,7 +363,9 @@ new_pi_caller() { # [norecord]
       harness: "pi", account: $account, home: $account, model: "pi-claude/claude-fable-5-1",
       effort: "high", cwd: $cwd, launch_line: "recorded"}}' > "$FLEET_STATE"
 }
-seat claude 10 99 99
+# The walled account's own Opus window has room, so the walled exclusion alone
+# keeps the pick off it, as for the claude recovery above.
+seat claude 10 99 10
 seat eclaude 10 99 10
 CALLER_FLAGS=(--model pi-claude/claude-fable-5-1 --thinking high)
 new_pi_caller
@@ -371,6 +373,7 @@ run_succeed piwalled 'pi:pi-claude/claude-opus-5-5:high' --walled-pane "$CALLER_
 assert_eq "$RC|$(caller_open)|$(launched pi)|$(grep -cx -e --thinking -e high "$TMP_ROOT/argv.pi")|$(tail -n 1 "$TMP_ROOT/argv.pi")" \
   "0|no|$H/.eclaude pi-claude/claude-opus-5-5|2|/skill:orch oversee after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md" \
   "a walled pi overseer is recovered onto a pi entry with a model, on a claude account with room for it"
+seat claude 10 99 99
 # Its control: a preference parse naming no pi refuses the entry.
 PIPARSECTL="$(mutant_scripts piparsectl lib/overseer-launch.sh)" || exit 1
 mutate_file "$PIPARSECTL/lib/overseer-launch.sh" \
@@ -385,6 +388,13 @@ run_succeed pinomodel 'pi:fable:high' --walled-pane "$CALLER_PANE" --harness pi
 assert_eq "$RC|$(keyed invalid-preference | awk '{print $2, $3}')|$(caller_open)|$(launched pi)" \
   "1|invalid-preference entry=pi:fable:high|yes|none" \
   "a pi entry with no provider/id model refuses invalid-preference"
+# A pi-claude model the claude ladder does not name is a setting to fix,
+# refused before any pick as a misspelled claude name is.
+new_pi_caller
+run_succeed pibogus 'pi:pi-claude/claude-bogus:high' --walled-pane "$CALLER_PANE" --harness pi
+assert_eq "$RC|$(keyed model-failed | awk '{print $2, $3}')|$(caller_open)|$(launched pi)" \
+  "1|model-failed entry=pi:pi-claude/claude-bogus:high|yes|none" \
+  "a pi-claude entry naming a model the claude ladder does not know refuses model-failed"
 
 # A pi-claude overseer nothing recorded, at its context mark with Fable room
 # on its own account: its --model word names the provider, so its successor

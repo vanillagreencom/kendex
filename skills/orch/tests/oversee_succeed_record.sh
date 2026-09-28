@@ -406,14 +406,28 @@ mutate_file "$PIFLAGCTL/oversee-succeed" '    [[ -z "$flag_model" ]] || caller_m
 pi_claude_row pi-claude/claude-opus-5 "$PIFLAGCTL/oversee-succeed"
 assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: pi-account-unknown model=none" \
   "control: a caller that reads no --model word leaves a record-less pi overseer's account unknown"
-# The same overseer judged at its turn end: its reading names the provider.
-new_caller
-mkdir -p "$MAILBOX_DIR"
-lane_context_record "$MAILBOX_DIR" pi 100000 1000000 pi-claude/claude-opus-5 "" "$SERVER_PID $CALLER_PANE"
-state none
-run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
-assert_eq "$RC|$(judged)" "0|mark-reached kind=headroom value=1" \
-  "--check-marks on a record-less pi-claude overseer judges its claude account on the reading's model" "$TMP_ROOT/err"
+# The same overseer judged at its turn end, with no --harness: its pane
+# reports pi, which the pane reader maps to no one harness, so its reading
+# names the harness, and the provider its model names the account.
+mkdir -p "$TMP_ROOT/pibin"
+cp "$(command -v sleep)" "$TMP_ROOT/pibin/pi"
+pi_reading_row() { # [SUCCEED_BIN]
+  tm kill-window -a -t fleet:0
+  CALLER_PANE="$(tm new-window -d -t fleet:1 -P -F '#{pane_id}' "exec '$TMP_ROOT/pibin/pi' 100000")"
+  mkdir -p "$MAILBOX_DIR"
+  lane_context_record "$MAILBOX_DIR" pi 100000 1000000 pi-claude/claude-opus-5 "" "$SERVER_PID $CALLER_PANE"
+  state none
+  SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
+}
+pi_reading_row
+assert_eq "$RC|$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_command}')|$(judged)" \
+  "0|pi|mark-reached kind=headroom value=1" \
+  "--check-marks on a record-less pi-claude overseer takes pi from its reading and judges its claude account" "$TMP_ROOT/err"
+PIPANECTL="$(mutant_scripts pipanectl oversee-succeed)" || exit 1
+mutate_file "$PIPANECTL/oversee-succeed" '      claude | codex | pi) CALLER_HARNESS="$reading_harness" ;;' '      claude | codex) CALLER_HARNESS="$reading_harness" ;;'
+pi_reading_row "$PIPANECTL/oversee-succeed"
+assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: harness-unnamed pane=$CALLER_PANE" \
+  "control: a reading harness naming no pi leaves a pi pane unnamed"
 PIREADCTL="$(mutant_scripts pireadctl oversee-succeed)" || exit 1
 mutate_file "$PIREADCTL/oversee-succeed" 'caller_model="${OL_KNOWN_MODEL:-$reading_model}"' 'caller_model="${OL_KNOWN_MODEL:-}"'
 SUCCEED_BIN="$PIREADCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
@@ -428,6 +442,21 @@ assert_eq "$RC|$(sed -n 1p <<<"$ERR")" \
   "1|oversee-succeed: pi-handoff-unmarked reason=compaction-on file=$PI_AGENT/settings.json" \
   "--print-launch-line refuses a pi line whose settings leave compaction on"
 jq -n '{compaction: {enabled: false}}' > "$PI_AGENT/settings.json"
+# A settings file pi cannot read leaves compaction unjudged, and a carrier
+# sending no window leaves the mark nothing to be read against: each refuses.
+printf '{"compaction": {' > "$PI_AGENT/settings.json"
+pi_print_row
+assert_eq "$RC|$(sed -n 1p <<<"$ERR")" \
+  "1|oversee-succeed: pi-handoff-unmarked reason=settings-unreadable file=$PI_AGENT/settings.json" \
+  "--print-launch-line refuses a pi line whose settings cannot be read"
+jq -n '{compaction: {enabled: false}}' > "$PI_AGENT/settings.json"
+PI_CARRIER="$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions/stop.ts"
+printf 'payload.stop = true;\n' > "$PI_CARRIER"
+pi_print_row
+assert_eq "$RC|$(sed -n 1p <<<"$ERR")" \
+  "1|oversee-succeed: pi-handoff-unmarked reason=no-window-read dir=$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')" \
+  "--print-launch-line refuses a pi line whose pi-hooks carrier sends no window"
+printf 'payload.context_window = usage.contextWindow;\n' > "$PI_CARRIER"
 
 # --- a dead-pane relaunch -------------------------------------------------
 # The relaunched session is identified by the record of the line it replays:
