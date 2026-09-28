@@ -1365,6 +1365,9 @@ load_context_lib() {
 # the whole of one at every turn end costs more than the rest of this hook
 # together. The full file answers only where that window holds no usage line —
 # a session on its first turns, or one whose recent lines are all tool results.
+# The tail's own words go to a file and are replayed under the refusal: an
+# adapter that stops reading leaves the tail a write error, which reaching
+# stderr ahead of the keyed line would take its place.
 context_read_and_record() { # BOX PANE_KEY
   TOKENS=""
   WINDOW=""
@@ -1377,9 +1380,9 @@ context_read_and_record() { # BOX PANE_KEY
     return 0
   fi
   { [ -f "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ]; } || refuse_handoff transcript unreadable
-  if ! READING=$(tail -c "$TRANSCRIPT_WINDOW" -- "$TRANSCRIPT" |
+  if ! READING=$(tail -c "$TRANSCRIPT_WINDOW" -- "$TRANSCRIPT" 2>"$WORK_DIR/tail.err" |
     lane_context_reading "$HARNESS" "$PAYLOAD_WINDOW" "$LANE_DIR" 2>"$WORK_DIR/transcript.err"); then
-    refuse_handoff transcript unread "$(cat -- "$WORK_DIR/transcript.err")"
+    refuse_handoff transcript unread "$(cat -- "$WORK_DIR/transcript.err" "$WORK_DIR/tail.err")"
   fi
   if [ -z "$READING" ] && ! READING=$(lane_context_reading "$HARNESS" "$PAYLOAD_WINDOW" "$LANE_DIR" <"$TRANSCRIPT" 2>"$WORK_DIR/transcript.err"); then
     refuse_handoff transcript unread "$(cat -- "$WORK_DIR/transcript.err")"

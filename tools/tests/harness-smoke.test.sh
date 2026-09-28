@@ -565,7 +565,9 @@ a hidden personal skill brought back by COPILOT_SKILLS_DIRS differs|skill-dirs:C
 a hook that received its trigger, refuses it on replay and held it back passes|hook:block-argv-kill|pass|was never written
 a bare cd received and refused on replay passes|hook:block-bare-cd|pass|refuses Copilot's payload for it when replayed
 a hook with no trigger passes on running|hook:command-safety|pass|reading the payload Copilot sent
-an excluded hook is excluded with the table's reason|hook:lane-mail-check|excluded|(hooks/README.md)
+an excluded hook is excluded with the table's reason|hook:reviewer-read-only|excluded|(hooks/README.md)
+the lane-mail row the table enforces is skipped, naming the missing session|lane-mail|skipped|skipped=this script runs no lane session on copilot, and
+and so is the lane-question row|lane-question|skipped|skipped=this script runs no lane session on copilot, and
 the recorded payload carries the command|helper:payload|pass|its keys: toolName,toolArgs
 a hook and a tool call in the project root pass|helper:cwd|pass|both run in the project root
 the launch environment reaching both passes|helper:env|pass|reaches a hook and a tool call"
@@ -632,7 +634,9 @@ fi
 # Controls on the stand-in copy: a listing turn with file tools, a marker read
 # that never looks, a trigger
 # check that takes any record, and a nested reading that ignores the root
-# listing, each pass what their rows do not.
+# listing, each pass what their rows do not; a no-session row that never reads
+# the enforced cell leaves the lane-mail row unanswerable where its row wants
+# skipped.
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 ln -s -- "$REPO/agents" "$STAND/agents"
 cp "$REPO"/hooks/*.sh "$STAND/hooks/"
@@ -647,6 +651,9 @@ package_case "control: a marker read that never looks passes a command that went
 plant "$STAND_SMOKE" 's/^    case "\$command" in \*"\$2"\*) printf/    case "$command" in *) printf/'
 package_run "$STAND_SMOKE" STANDIN_FEED=helper
 package_case "control: a trigger check that takes any record replays the helper payload for a hook the trigger never reached" hook:block-repo-copy fail "passes the payload Copilot sent"
+plant "$STAND_SMOKE" 's/^    \*:enforced) row "\$1" "\$2" skipped /    *:enforced-never) row "$1" "$2" skipped /'
+package_run "$STAND_SMOKE"
+package_case "control: a no-session row that ignores the enforced cell is unanswerable" lane-mail unanswerable "runs no lane session on copilot"
 plant "$STAND_SMOKE" 's/^  elif grep -qFx -- sub\/AGENTS.md <<<"\$root_sources"; then$/  elif false; then/'
 package_run "$STAND_SMOKE" STANDIN_NESTED_ROOT=1
 package_case "control: a nested reading that ignores the root listing differs where the root lists it" instruction:nested differs "for the working directory only"

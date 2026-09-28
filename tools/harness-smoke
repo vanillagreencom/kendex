@@ -18,7 +18,8 @@
 # mailbox monitor, on the harnesses whose background wake starts a turn.
 # Where the harness runs that hook, the lane-mail row runs a one-turn lane
 # session that makes two tool calls, sends the directive at the first of them,
-# and passes only where the lane read it and its cursor moved. Where the
+# and passes only where the lane read it and its cursor moved; on a harness
+# this script starts no lane session on, the row is skipped naming that. Where the
 # harness runs no hooks, the lane's own workflow reads the mailbox at a wait
 # point instead, so the row asks that harness's listing for the instruction
 # kendex rendered there and reports advisory, never pass.
@@ -35,7 +36,8 @@
 # `fail`, `advisory` (the harness runs no hooks; kendex installs text, and
 # the row checks the harness lists that text), `unanswerable` (this machine
 # or this harness cannot answer, with the reason), or `skipped` (left out by
-# --only, or by the frontmatter of the hook a row measures, with its reason).
+# --only, by the frontmatter of the hook a row measures, or by the lane
+# session this script does not start on that harness, with its reason).
 # Copilot also answers one row per package this checkout ships, under the
 # package table below, which adds `differs`, `excluded` and `pending`.
 # Silence is never a pass: a run that says nothing about the
@@ -835,6 +837,25 @@ question_row() { # HARNESS TOOL LABEL [CMD...]
   fi
 }
 
+# A lane-mail or lane-question row on a harness this script starts no lane
+# session on. Where the table says the hook does not run there, the row is the
+# one mail_row or question_row gives with that label. Where it says the hook
+# runs, the row is skipped naming the missing session: no machine answers a
+# run this script never makes, so unanswerable would hold every such run at
+# exit 3 for a reason no host can clear.
+no_session() { # HARNESS ROW — ROW is lane-mail or lane-question
+  local why="this script runs no lane session on $1" cell=""
+  case "$2" in
+    lane-mail) cell=$(mail_cell "$1") ;;
+    lane-question) cell=$(mail_cell "$1" lane-mail-halt) ;;
+  esac
+  case "$2:$cell" in
+    *:enforced) row "$1" "$2" skipped "harness=$1 skipped=$why, and $MAIL_TABLE reads $cell" ;;
+    lane-mail:*) mail_row "$1" "$why" '' ;;
+    lane-question:*) question_row "$1" - "$why" ;;
+  esac
+}
+
 # ---- the mail-wake row -----------------------------------------------------
 # A lane idle at its prompt runs no hook, so the lane-mail row above never
 # reaches it: its own mailbox monitor, `lane-mail watch` under the harness's
@@ -1069,7 +1090,7 @@ opencode_rows() {
   mail_row opencode 'opencode debug config' \
     '[.]opencode/instructions/kendex-hook-lane-mail-check[.]md' \
     opencode debug config
-  question_row opencode - 'this script runs no lane session on opencode'
+  no_session opencode lane-question
 }
 
 # Cursor: no listing surface for rules or skills, so the model is asked to
@@ -1119,7 +1140,7 @@ cursor_rows() {
   else
     mail_row cursor "$why" ''
   fi
-  question_row cursor - 'this script runs no lane session on cursor'
+  no_session cursor lane-question
 }
 
 # Pi: get_commands over RPC lists every skill as a skill: command and every
@@ -1187,8 +1208,8 @@ gemini_rows() {
   rm -f -- "$MARKER"
   run gemini-mcp gemini mcp list
   judge gemini mcp '✓ smoke-mcp: .*Connected' 'smoke-mcp: .*Disconnected' 'gemini mcp list' "McpStart $PROJECT"
-  mail_row gemini 'this script runs no lane session on gemini' ''
-  question_row gemini - 'this script runs no lane session on gemini'
+  no_session gemini lane-mail
+  no_session gemini lane-question
 }
 
 # Copilot: `skill list` names repository skills; --agent runs the session as
@@ -1212,8 +1233,8 @@ copilot_rows() {
   # A config reading, not a connection, so there is no marker to pin.
   run copilot-mcp env COPILOT_HOME="$home" copilot mcp list
   judge copilot mcp '^ +smoke-mcp \(local\)' '' 'copilot mcp list'
-  mail_row copilot 'this script runs no lane session on copilot' ''
-  question_row copilot - 'this script runs no lane session on copilot'
+  no_session copilot lane-mail
+  no_session copilot lane-question
   copilot_packages live "$home"
 }
 
@@ -1267,8 +1288,8 @@ antigravity_rows() {
   else
     row antigravity mcp fail "agy --add-dir -p never started the server (marker: $(marker_text))"
   fi
-  mail_row antigravity 'this script runs no lane session on antigravity' ''
-  question_row antigravity - 'this script runs no lane session on antigravity'
+  no_session antigravity lane-mail
+  no_session antigravity lane-question
 }
 
 # ---- the Copilot package table ---------------------------------------------
