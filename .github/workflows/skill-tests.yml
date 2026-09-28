@@ -17,7 +17,12 @@ name: Skill Tests
 # a `trivial` one changing a path tools/rust-reads names, runs that job, the
 # shell shards its packages select and each other lane as `tools/ci-job-set`
 # selects it; the invariant comment there is the one statement of what each
-# lane runs. The aggregators still report and accept only the skips the
+# lane runs. A merge group of one entry whose tree a passing pull request
+# run already tested reuses that run's proof: the action reads the record
+# that run left, `tools/ci-job-set` re-derives what it ran from it and
+# stands those lanes down, so such a group runs the macOS legs the pull
+# request did not run and nothing the pull request did. The aggregators
+# still report and accept only the skips the
 # selection authorized, and the last job, `CI`, is the one every other job
 # reports into, the three aggregators excepted. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
@@ -124,6 +129,11 @@ jobs:
     name: Classify the diff
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
+    # `actions: read` is what the action's proof reads this workflow's runs
+    # and their records with; the token grants nothing else.
+    permissions:
+      contents: read
+      actions: read
     # The render proof re-renders every installed item, so its cost grows with
     # this repository's catalog rather than with the diff. This ceiling sits
     # ahead of every lane below and is the whole budget a `render` pull
@@ -133,8 +143,7 @@ jobs:
       change_class: ${{ steps.classify.outputs.change_class }}
       docs_only: ${{ steps.classify.outputs.docs_only }}
       shell_shards: ${{ steps.select.outputs.shell_shards }}
-      macos_legs: ${{ steps.select.outputs.macos_legs }}
-      macos_pull_request: ${{ steps.select.outputs.macos_pull_request }}
+      shell_os: ${{ steps.select.outputs.shell_os }}
       ui: ${{ steps.select.outputs.ui }}
       bot_instructions: ${{ steps.select.outputs.bot_instructions }}
       cargo_linux: ${{ steps.select.outputs.cargo_linux }}
@@ -258,12 +267,16 @@ jobs:
       # below reads one of these lines rather than re-deriving the selection
       # from the class and the paths, so there is one place to read what a
       # class runs and one place to change it. It runs in the workspace root,
-      # the pull request's tree, whose crates/ tools/rust-reads reads.
+      # the pull request's tree, whose crates/ tools/rust-reads reads. The
+      # proof record is the passing run that already tested this tree, where
+      # the action found one; the script stands down what that run ran.
       - id: select
         env:
           CHANGE_CLASS: ${{ steps.classify.outputs.change_class }}
           DOCS_ONLY: ${{ steps.classify.outputs.docs_only }}
           CHANGED_PATHS: ${{ steps.classify.outputs.changed_paths }}
+          EVENT: ${{ env.EVENT }}
+          PROOF_RECORD: ${{ steps.classify.outputs.proof_record }}
         run: tools/ci-job-set
 
   # This repository is the package's source, so the candidate's own checker
@@ -383,13 +396,15 @@ jobs:
         # the BSD userland, over the same selected shards. A job-level `if:`
         # cannot reach `matrix`, so the leg is dropped from the matrix rather
         # than conditioned inside it, and a leg that never expands bills no
-        # macOS runner. It runs in the merge group, and on the pull request
-        # only where macos_pull_request says a lane source or another .github/
-        # path changed; a macOS-only failure then surfaces at queue time and
-        # returns to the lane. A dead classifier publishes nothing, so the
-        # result term ahead of the selection is what runs both legs rather
-        # than neither.
-        os: ${{ fromJSON((needs.changes.result != 'success' || (needs.changes.outputs.macos_legs == 'true' && (github.event_name != 'pull_request' || needs.changes.outputs.macos_pull_request == 'true'))) && '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
+        # macOS runner. Which runners run is tools/ci-job-set's `shell_os`
+        # list: the macOS leg in the merge group, and on the pull request
+        # only where a lane source or another .github/ path changed, so a
+        # macOS-only failure surfaces at queue time and returns to the lane;
+        # and a leg the pull request run already ran on this tree stands
+        # down in the merge group. A dead classifier publishes nothing, so
+        # the result term ahead of the selection is what runs both legs
+        # rather than neither.
+        os: ${{ fromJSON(needs.changes.result != 'success' && '["ubuntu-latest", "macos-latest"]' || needs.changes.outputs.shell_os) }}
         exclude:
           - os: macos-latest
             shard: node

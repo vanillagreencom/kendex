@@ -14,6 +14,17 @@
 #   DOCS_ONLY      true|false, the shipped `harness-only --mode docs` verdict
 #                  for the same diff
 #   CHANGED_PATHS  the changed paths, one per line
+#   EVENT          pull_request|merge_group, the event the selection is for:
+#                  the macOS legs of the shell shards run in the merge group,
+#                  and on a pull request only where a lane source changed
+#   PROOF_RECORD   the change-class action's `proof_record` output: the
+#                  record of the passing run that already tested this tree,
+#                  or empty where none did. Its `event`, `change_class`,
+#                  `docs_only` and `changed_path` lines are this script's
+#                  own inputs as that run had them, so what that run ran is
+#                  this selection over them, and a lane it ran stands down
+#                  here. A record this script cannot read stands nothing
+#                  down and says why on a `proof=ignored` line.
 #   GITHUB_OUTPUT  the step output file the selection is appended to
 #
 # THE INVARIANT, stated once, with no list of what any lane reads:
@@ -46,13 +57,20 @@
 #     changed, because it builds kendex-cli from the checkout for harness-ci's
 #     change-class rows. A diff that reaches no package selects no shard, and
 #     shell_shards is false exactly where the list is empty.
-#   - The platform lanes (macos_legs, cargo_macos, cargo_windows) stand down
-#     only on a diff whose every path is prose, whose content no platform
-#     reads differently, and run on any other diff; a `standard` diff that is
-#     not documentation alone runs them whatever its paths. macos_legs is the
-#     shell shards again on macOS, so it also stands down where no shard is
-#     selected, and the matrix runs it in the merge group alone unless
-#     macos_pull_request is true.
+#   - The platform lanes (the macOS legs of the shell shards, cargo_macos,
+#     cargo_windows) stand down only on a diff whose every path is prose,
+#     whose content no platform reads differently, and run on any other
+#     diff; a `standard` diff that is not documentation alone runs them
+#     whatever its paths. The macOS legs are the shell shards again on
+#     macOS, so they also stand down where no shard is selected, and they
+#     run in the merge group alone unless a path under .github/ changed, in
+#     which case they run on the pull request too.
+#   - A proof stands down what its run ran and nothing else. The run's
+#     selection is re-derived from its record with the rules above, at its
+#     event; each lane it ran stands down here, and the shell shards stand
+#     down per runner: a runner's legs where that run ran them over every
+#     shard this diff selects. A lane that run skipped, or a shard it did
+#     not run, runs here as the rules above select it.
 #   - The compile lanes (cargo_lint, cargo_windows_check) run no test, so
 #     they run only where a build input changed: a path other than prose
 #     under a tools/rust-reads `build` or `include` row.
@@ -63,9 +81,7 @@
 #     .github/actions/ or tools/ci-job-set, tools/ci-aggregate or
 #     tools/rust-reads, runs every lane, so a change to a lane or to its
 #     selection runs on the pull request that makes it. Any path under
-#     .github/ selects every shard, and macos_pull_request is true where one
-#     of those diffs runs macos_legs, so the macOS legs run on that pull
-#     request too.
+#     .github/ selects every shard.
 #   - A `render` or `trivial` diff runs bot_instructions alone, the one
 #     seconds-long verify job: its check, the document byte ceilings and the
 #     work-marker scan. The classifier proved a `render` diff by
@@ -81,14 +97,15 @@
 # The lanes:
 #
 #   shell_shards        the skill, hook and tool suites, in the shards the
-#                       `shards=` list names.
+#                       `shards=` list names, on the runners the `shell_os=`
+#                       list names: ubuntu-latest, and macos-latest for the
+#                       same suites again under Bash 3.2 and the BSD
+#                       userland. shell_shards is true exactly where both
+#                       lists are non-empty.
 #   bot_instructions    the rendered review-bot instruction files and the root
 #                       AGENTS.md region they own, the document byte
 #                       ceilings, and the index-wide work-marker scan.
 #   cargo_linux         the workspace tests on Linux.
-#   macos_legs          the shell suites again under Bash 3.2 and the BSD
-#                       userland, in the merge group.
-#   macos_pull_request  macos_legs on the pull request as well.
 #   cargo_macos         the workspace tests on the platform the app ships on.
 #   cargo_lint          clippy, fmt and doc over the workspace.
 #   cargo_windows       the Windows test run.
@@ -111,7 +128,7 @@ set -euo pipefail
 TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # One line per lane, in the order the rows below spell them.
-LANES="shell_shards macos_legs macos_pull_request ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows cargo_windows_check"
+LANES="shell_shards shell_os ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows cargo_windows_check"
 # The shell shards, in the order of the skill-tests.yml matrix list.
 SHARDS="review-gate orch-terminal orch-oversee orch-oversee-succeed orch-state orch-rest guards-scans guards-commit guards-tools linear worktree rest node pi-claude-bridge"
 
@@ -128,6 +145,10 @@ die() { # CAUSE MESSAGE
 case "${DOCS_ONLY:-}" in
   true | false) ;;
   *) die "invalid-docs-only value=${DOCS_ONLY:-}" "DOCS_ONLY is true or false" ;;
+esac
+case "${EVENT:-}" in
+  pull_request | merge_group) ;;
+  *) die "unsupported-event event=${EVENT:-}" "EVENT is pull_request or merge_group" ;;
 esac
 
 # Present-but-empty is a state of its own, and not the same as absent.
@@ -444,55 +465,138 @@ $path" ;;
   printf '[%s]' "${list#,}"
 }
 
-row="$CHANGE_CLASS"
-case "$CHANGE_CLASS" in
-  render) ;;
-  trivial)
-    read_lines="$(reads)"
-    case "$read_lines" in *named=1*) row=trivial-read ;; esac
-    ;;
-  micro | small | standard)
-    # A measured class is reached only after the classifier read a changed
-    # path, and so is a docs verdict of true, so an empty list here is a
-    # state no classifier emits. Reading it as "nothing matches" would
-    # stand the narrowing lanes down on no evidence.
-    [ -n "$paths" ] || die "class-without-paths class=$CHANGE_CLASS" \
-      "a measured class arrived with no changed path"
-    read_lines="$(reads)"
-    ;;
-  *)
-    die "unknown-class class=$CHANGE_CLASS" \
-      "no lane selection is declared for this class"
-    ;;
-esac
+# One selection: the lanes and shards CLASS, DOCS and PATHS select at
+# EVENT, left in the SEL_* variables. The readers above take the paths from
+# `paths`, so it is set here, and the shard search starts empty each time.
+select_row() { # CLASS DOCS PATHS EVENT
+  local class="$1" docs="$2" event="$4" row read_lines="" platform uitree build shards shell macos macos_pr
+  paths="$3"
+  want=" " reached=" " pending=""
+  row="$class"
+  case "$class" in
+    render) ;;
+    trivial)
+      read_lines="$(reads)"
+      case "$read_lines" in *named=1*) row=trivial-read ;; esac
+      ;;
+    micro | small | standard)
+      # A measured class is reached only after the classifier read a changed
+      # path, and so is a docs verdict of true, so an empty list here is a
+      # state no classifier emits. Reading it as "nothing matches" would
+      # stand the narrowing lanes down on no evidence.
+      [ -n "$paths" ] || die "class-without-paths class=$class" \
+        "a measured class arrived with no changed path"
+      read_lines="$(reads)"
+      ;;
+    *)
+      die "unknown-class class=$class" \
+        "no lane selection is declared for this class"
+      ;;
+  esac
+  case "$row" in
+    render | trivial)
+      SEL_linux=false SEL_macos=false SEL_ui=false SEL_bot_instructions=true
+      SEL_cargo_linux=false SEL_cargo_macos=false SEL_cargo_lint=false
+      SEL_cargo_windows=false SEL_cargo_windows_check=false SEL_shards='[]'
+      ;;
+    micro | small | standard | trivial-read)
+      platform=false
+      any_outside "$PROSE" && platform=true
+      [ "$class:$docs" != standard:false ] || platform=true
+      uitree=false
+      any '^ui/' && uitree=true
+      build=false
+      case "$read_lines" in *build=1*) build=true ;; esac
+      shards="$(select_shards "$build")" || exit 2
+      if any "$LANE_SOURCES"; then
+        platform=true
+        uitree=true
+        build=true
+      fi
+      shell=true
+      [ "$shards" != "[]" ] || shell=false
+      macos=false
+      [ "$shell:$platform" != true:true ] || macos=true
+      # The macOS legs run in the merge group, and on a pull request only
+      # where a path under .github/ changed, so a macOS-only failure
+      # surfaces at queue time and returns to the lane.
+      macos_pr=false
+      ! any "$ALL_SHARDS" || macos_pr=$macos
+      [ "$event" = merge_group ] || macos=$macos_pr
+      SEL_linux=$shell SEL_macos=$macos SEL_ui=$uitree SEL_bot_instructions=true
+      SEL_cargo_linux=true SEL_cargo_macos=$platform SEL_cargo_lint=$build
+      SEL_cargo_windows=$platform SEL_cargo_windows_check=$build SEL_shards=$shards
+      ;;
+  esac
+}
 
-case "$row" in
-  render | trivial)
-    emit shell_shards=false macos_legs=false macos_pull_request=false ui=false bot_instructions=true \
-      cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false 'shards=[]'
-    ;;
-  micro | small | standard | trivial-read)
-    platform=false
-    any_outside "$PROSE" && platform=true
-    [ "$CHANGE_CLASS:$DOCS_ONLY" != standard:false ] || platform=true
-    uitree=false
-    any '^ui/' && uitree=true
-    build=false
-    case "$read_lines" in *build=1*) build=true ;; esac
-    shards="$(select_shards "$build")" || exit 2
-    if any "$LANE_SOURCES"; then
-      platform=true
-      uitree=true
-      build=true
-    fi
-    shell=true
-    [ "$shards" != "[]" ] || shell=false
-    macos=false
-    [ "$shell:$platform" != true:true ] || macos=true
-    macos_pr=false
-    ! any "$ALL_SHARDS" || macos_pr=$macos
-    emit "shell_shards=$shell" "macos_legs=$macos" "macos_pull_request=$macos_pr" "ui=$uitree" \
-      bot_instructions=true cargo_linux=true "cargo_macos=$platform" "cargo_lint=$build" \
-      "cargo_windows=$platform" "cargo_windows_check=$build" "shards=$shards"
-    ;;
-esac
+# The proving run's selection, where a record arrived and reads as this
+# script's inputs. A record that does not is ignored, said so, and stands
+# nothing down. The diff's own paths are kept aside first: select_row reads
+# each selection's paths out of `paths`.
+now_paths="$paths"
+proof=false
+record="${PROOF_RECORD:-}"
+if [ -n "$record" ]; then
+  record_line() { printf '%s\n' "$record" | sed -n "s/^$1=//p"; }
+  r_event="$(record_line event)"
+  r_class="$(record_line change_class)"
+  r_docs="$(record_line docs_only)"
+  r_paths="$(record_line changed_path)"
+  cause=""
+  case "$r_event" in pull_request | merge_group) ;; *) cause="event=$r_event" ;; esac
+  case "$r_class" in render | trivial | micro | small | standard) ;; *) cause="class=$r_class" ;; esac
+  case "$r_docs" in true | false) ;; *) cause="docs_only=$r_docs" ;; esac
+  case "$r_class" in micro | small | standard) [ -n "$r_paths" ] || cause="class=$r_class without paths" ;; esac
+  if [ -n "$cause" ]; then
+    printf 'ci-job-set: proof=ignored cause=unreadable-record %s\n' "$cause" >&2
+  else
+    select_row "$r_class" "$r_docs" "$r_paths" "$r_event"
+    R_linux=$SEL_linux R_macos=$SEL_macos R_ui=$SEL_ui R_bot_instructions=$SEL_bot_instructions
+    R_cargo_linux=$SEL_cargo_linux R_cargo_macos=$SEL_cargo_macos R_cargo_lint=$SEL_cargo_lint
+    R_cargo_windows=$SEL_cargo_windows R_cargo_windows_check=$SEL_cargo_windows_check R_shards=$SEL_shards
+    proof=true
+    printf 'ci-job-set: proof=read event=%s class=%s docs_only=%s shards=%s linux=%s macos=%s\n' \
+      "$r_event" "$r_class" "$r_docs" "$R_shards" "$R_linux" "$R_macos" >&2
+  fi
+fi
+
+select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$now_paths" "$EVENT"
+
+# A lane the proving run ran stands down; one it skipped runs as selected.
+reused() { # LANE — 0 where the proving run ran LANE, so it stands down here
+  [ "$proof" = true ] || return 1
+  eval "[ \"\$R_$1\" = true ]" || return 1
+  printf 'ci-job-set: proof=reused lane=%s\n' "$1" >&2
+}
+stand_down() { # LANE — sets SEL_LANE false where the proving run ran it
+  eval "[ \"\$SEL_$1\" = true ]" || return 0
+  ! reused "$1" || eval "SEL_$1=false"
+}
+# A runner's legs stand down where the proving run ran them over every shard
+# this diff selects; a shard it did not run keeps every leg it selects.
+shards_covered() { # 0 where every shard of SEL_shards is in R_shards
+  local shard
+  for shard in $SHARDS; do
+    case "$SEL_shards" in *"\"$shard\""*) ;; *) continue ;; esac
+    case "$R_shards" in *"\"$shard\""*) ;; *) return 1 ;; esac
+  done
+}
+for lane in ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows cargo_windows_check; do
+  stand_down "$lane"
+done
+if [ "$proof" = true ] && shards_covered; then
+  stand_down linux
+  stand_down macos
+fi
+# The runners the shards run on: none where no shard is selected, since
+# select_row lights no leg then; shell_shards is true exactly where a leg is.
+legs=""
+[ "$SEL_linux" != true ] || legs='"ubuntu-latest"'
+[ "$SEL_macos" != true ] || legs="${legs:+$legs,}\"macos-latest\""
+shell=false
+[ -z "$legs" ] || shell=true
+
+emit "shell_shards=$shell" "shell_os=[$legs]" "ui=$SEL_ui" "bot_instructions=$SEL_bot_instructions" \
+  "cargo_linux=$SEL_cargo_linux" "cargo_macos=$SEL_cargo_macos" "cargo_lint=$SEL_cargo_lint" \
+  "cargo_windows=$SEL_cargo_windows" "cargo_windows_check=$SEL_cargo_windows_check" "shards=$SEL_shards"

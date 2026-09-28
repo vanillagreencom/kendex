@@ -18,6 +18,13 @@ description: >-
 # A change to the classifier script itself is proved by the harness-ci suite,
 # not by this repository's live classifying job.
 #
+# The classify step also asks `proof` whether a passing run of the same
+# workflow already tested this tree, and stands down what that run covered;
+# the step after it uploads this run's own record for the run after it. The
+# API read uses the job token, which the calling job grants `actions: read`;
+# a token without it is one refusal, printed on the step's `proof:` line, and
+# the lanes run.
+#
 # NO INPUT CARRIES A CLASS. Not a label, not a branch name, not a pull request
 # title, not the class itself: the author of the diff under judgement writes
 # every one of those, so an input that asserted a verdict would fail open on
@@ -78,8 +85,9 @@ outputs:
   lanes:
     description: >-
       true where the diff runs the workflow's lanes, false where it runs
-      none: a render or trivial class, or docs_only=true at any class. What
-      a lane condition and an aggregate's waiver read, with lane_verdicts as
+      none: a render or trivial class, docs_only=true at any class, or a
+      proof covering every lane the diff would run. What a lane condition
+      and an aggregate's waiver read, with lane_verdicts as
       skills/harness-ci/references/wiring.md § Per-lane verdicts sets out.
       A failed step publishes none, and a lane condition that runs the lanes
       when the classifying job did not succeed reads that as every lane
@@ -87,9 +95,35 @@ outputs:
     value: ${{ steps.classify.outputs.lanes }}
   lanes_cause:
     description: >-
-      Why lanes answered as it did: render, trivial or docs-only where lanes
-      is false, and the class where it is true.
+      Why lanes answered as it did: render, trivial, docs-only or
+      proof-reused where lanes is false, and the class where it is true.
     value: ${{ steps.classify.outputs.lanes_cause }}
+  proof_reuse:
+    description: >-
+      true where a passing run of this workflow tested this tree and left a
+      record of what it covered: on a merge group of one entry, that entry's
+      pull_request run; on the merge queue's push to the default branch, the
+      merge_group run of the pushed sha. false on every other event and on
+      every refusal, whose key proof_reason carries. The rules are
+      skills/harness-ci/references/wiring.md § Proof reuse.
+    value: ${{ steps.classify.outputs.proof_reuse }}
+  proof_reason:
+    description: exact-proof where proof_reuse is true, otherwise the refusal key.
+    value: ${{ steps.classify.outputs.proof_reason }}
+  proof_run:
+    description: The proving run's id where proof_reuse is true, else empty.
+    value: ${{ steps.classify.outputs.proof_run }}
+  proof_tree:
+    description: The tree this run tests, which names the record uploaded below.
+    value: ${{ steps.classify.outputs.proof_tree }}
+  proof_record:
+    description: >-
+      The proving run's record where proof_reuse is true, else empty: its
+      event, change_class, docs_only and one changed_path line per path,
+      for a workflow that selects its jobs itself to re-derive what that run
+      ran, and its covers and lane lines, which this action applies to
+      lanes and lane_verdicts.
+    value: ${{ steps.classify.outputs.proof_record }}
   lane_verdicts:
     description: >-
       One lane_<name>=true|false line per lane the declaration names: false
@@ -128,5 +162,23 @@ runs:
         HEAD: ${{ inputs.head }}
         REPO: ${{ inputs.repo }}
         LANES_FROM: ${{ inputs.lanes-from }}
+        GH_TOKEN: ${{ github.token }}
       run: |
         "$GITHUB_ACTION_PATH/classify"
+    # The record of what this run tests and covers, named by its tree, for a
+    # later run of the same tree to reuse. classify writes it on pull_request
+    # and merge_group alone, and publishes proof_tree only where it did. An
+    # upload that fails loses that later reuse and nothing else, so it never
+    # reddens the step; the run after it prints its own refusal and runs its
+    # lanes. A pull request that waits longer than the retention between its
+    # last push and its merge runs its lanes again.
+    - name: the record of this run, for the run after it
+      if: steps.classify.outputs.proof_tree != '' && (inputs.event == 'pull_request' || inputs.event == 'merge_group')
+      uses: actions/upload-artifact@v4
+      continue-on-error: true
+      with:
+        name: change-class-proof-${{ steps.classify.outputs.proof_tree }}
+        path: ${{ runner.temp }}/change-class-record
+        retention-days: 30
+        overwrite: true
+        if-no-files-found: error

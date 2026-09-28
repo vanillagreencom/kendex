@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# proof — whether a passing run of this workflow already tested the tree this
+# run is about to test, and the record that run left of what it covered.
+#
+# Two events can reuse a proof, and each names the run that proved it:
+#   push         to the default branch, by the merge queue and nothing else:
+#                the merge_group run whose head sha is the pushed sha. The
+#                rules are hyprtrade's tools/ci-merge-proof: a non-forced push
+#                whose actor and triggering actor are github-merge-queue[bot]
+#                and whose `after` is the judged sha, and one completed
+#                merge_group run of this workflow for that sha, successful,
+#                from a gh-readonly-queue branch of the default branch.
+#   merge_group  whose head is a merge of the base and one pull request head:
+#                a completed, successful pull_request run of this workflow for
+#                that head, whose record names this run's tree.
+# Every other event, and either event outside those rules, is refused before
+# any API call. The key is the tree: a pull request run tests the merge
+# commit GitHub built for it, whose tree is what its record names, and a
+# merge group of one entry rebuilds that same merge onto an unmoved base. A
+# tree carries the workflow file, so the same tree ran the same workflow.
+#
+# The record is the artifact `change-class-proof-<tree>` the classify step
+# of the proving run uploaded, a file named `record` whose lines classify's
+# header lists. Its content is read back through `unzip`.
+#
+# Environment:
+#   EVENT  BASE  HEAD  REPO      as classify reads them
+#   GITHUB_SHA                   the commit this run tests: the merge commit
+#                                on pull_request, the group head on
+#                                merge_group, `after` on push
+#   GITHUB_REPOSITORY  GITHUB_REF  GITHUB_ACTOR  GITHUB_TRIGGERING_ACTOR
+#   GITHUB_WORKFLOW_REF          owner/repo/.github/workflows/<file>@ref
+#   GITHUB_EVENT_PATH            the event payload: `forced`, `after` and
+#                                `repository.default_branch`
+#   GH_TOKEN                     the job token, read with actions: read
+#
+# Usage: proof WORKDIR — a directory the download may write in.
+#
+# Output, one `key=value` line each on stdout:
+#   tree     the tree GITHUB_SHA names, empty where the checkout lacks it
+#   reuse    true|false
+#   reason   `exact-proof` where reuse is true; otherwise one refusal key,
+#            distinct per rule, so a reader never collapses them to a bit:
+#            ineligible-event, ineligible-push, ineligible-merge-group,
+#            invalid-input, no-github-sha, tree-unreadable,
+#            event-unreadable, gh-unavailable, unzip-unavailable, no-token,
+#            workflow-api-error, malformed-workflow, runs-api-error,
+#            malformed-runs, missing-proof, ambiguous-proof,
+#            mismatched-proof, artifacts-api-error, malformed-artifacts,
+#            missing-record, expired-record, record-download-error,
+#            record-unreadable, record-mismatch
+#   detail   what the refusal saw, for the log
+#   run      the proving run's id where reuse is true
+#   record   the path of the downloaded record where reuse is true
+#
+# This script decides and never gates: every refusal exits 0 with
+# reuse=false, and the caller runs the lanes. Exit 2 is a call with no
+# WORKDIR, or a WORKDIR that cannot be written.
+set -euo pipefail
+export LC_ALL=C
+
+QUEUE_ACTOR='github-merge-queue[bot]'
+
+[ "$#" -eq 1 ] && [ -d "$1" ] && [ -w "$1" ] ||
+  { echo "proof: usage: proof WORKDIR" >&2; exit 2; }
+WORK="$1"
+
+tree=""
+answer() { # REASON DETAIL [RUN RECORD]
+  printf 'tree=%s\nreuse=%s\nreason=%s\ndetail=%s\nrun=%s\nrecord=%s\n' \
+    "$tree" "$([ "$1" = exact-proof ] && echo true || echo false)" "$1" "$2" \
+    "${3:-}" "${4:-}"
+  exit 0
+}
+
+# The tree this run tests, computed first: the record a pull request run
+# leaves needs it even where no proof is looked up.
+[ -n "${GITHUB_SHA:-}" ] || answer no-github-sha "GITHUB_SHA is unset"
+tree="$(git -C "${REPO:?}" rev-parse --verify --quiet "$GITHUB_SHA^{tree}" 2>/dev/null)" ||
+  answer tree-unreadable "sha=$GITHUB_SHA is not in the judged checkout"
+
+# Eligibility, from the event alone, before any API call.
+case "${EVENT:?}" in
+  push | merge_group) ;;
+  *) answer ineligible-event "event=$EVENT" ;;
+esac
+payload_field() { # JQ-PATH — the field as text, empty where absent or null
+  jq -r "$1 | if . == null then \"\" else tostring end" "${GITHUB_EVENT_PATH:?}" 2>/dev/null
+}
+[ -n "${GITHUB_EVENT_PATH:-}" ] && [ -f "$GITHUB_EVENT_PATH" ] ||
+  answer event-unreadable "GITHUB_EVENT_PATH=${GITHUB_EVENT_PATH:-} is no file"
+default_branch="$(payload_field .repository.default_branch)" || default_branch=""
+[ -n "$default_branch" ] ||
+  answer event-unreadable "the payload names no repository.default_branch"
+
+want_event=""
+key_sha=""
+if [ "$EVENT" = push ]; then
+  forced="$(payload_field .forced)" || forced=""
+  after="$(payload_field .after)" || after=""
+  detail="ref=${GITHUB_REF:-} actor=${GITHUB_ACTOR:-} triggering_actor=${GITHUB_TRIGGERING_ACTOR:-} forced=$forced after=$after"
+  [ "${GITHUB_REF:-}" = "refs/heads/$default_branch" ] &&
+    [ "${GITHUB_ACTOR:-}" = "$QUEUE_ACTOR" ] &&
+    [ "${GITHUB_TRIGGERING_ACTOR:-}" = "$QUEUE_ACTOR" ] &&
+    [ "$forced" = false ] && [ "$after" = "$GITHUB_SHA" ] ||
+    answer ineligible-push "$detail"
+  want_event=merge_group
+  key_sha="$GITHUB_SHA"
+else
+  # The group head is a merge of the base and one pull request's head; the
+  # second parent names the run that proved the tree. A head that is not
+  # that merge, or is not the commit this run tests, is refused.
+  parents="$(git -C "$REPO" rev-list --parents -n 1 "$GITHUB_SHA" 2>/dev/null)" ||
+    answer ineligible-merge-group "sha=$GITHUB_SHA has no readable parents"
+  set -- $parents
+  [ "${HEAD:-}" = "$GITHUB_SHA" ] && [ "$#" -eq 3 ] && [ "$2" = "${BASE:-}" ] ||
+    answer ineligible-merge-group "head=${HEAD:-} sha=$GITHUB_SHA base=${BASE:-} parents=$(($# - 1)) first=${2:-}"
+  want_event=pull_request
+  key_sha="$3"
+fi
+
+repo="${GITHUB_REPOSITORY:-}"
+workflow_path="${GITHUB_WORKFLOW_REF:-}"
+workflow_path="${workflow_path#"$repo/"}"
+workflow_path="${workflow_path%%@*}"
+repo_re='^[0-9A-Za-z_.-]+/[0-9A-Za-z_.-]+$'
+path_re='^\.github/workflows/[^/@]+$'
+[[ "$repo" =~ $repo_re ]] &&
+  [[ "$workflow_path" =~ $path_re ]] ||
+  answer invalid-input "repository=$repo workflow=$workflow_path"
+workflow_file="${workflow_path##*/}"
+
+command -v gh >/dev/null 2>&1 || answer gh-unavailable "no gh on PATH"
+command -v unzip >/dev/null 2>&1 || answer unzip-unavailable "no unzip on PATH"
+[ -n "${GH_TOKEN:-}" ] || answer no-token "GH_TOKEN is empty"
+
+api() { # PATH [-f key=value]...
+  gh api --method GET "$@"
+}
+
+# The workflow, so the runs read below are this workflow's and no other's.
+workflow_json="$(api "repos/$repo/actions/workflows/$workflow_file")" ||
+  answer workflow-api-error "GET actions/workflows/$workflow_file failed"
+jq -e --arg path "$workflow_path" '
+  ((.id | type) == "number") and (.id > 0) and (.path == $path) and (.state == "active")
+' >/dev/null 2>&1 <<<"$workflow_json" ||
+  answer malformed-workflow "the workflow read is not an active workflow at $workflow_path"
+workflow_id="$(jq -r .id <<<"$workflow_json")"
+
+runs_json="$(api "repos/$repo/actions/workflows/$workflow_id/runs" \
+  -f "event=$want_event" -f status=completed -f "head_sha=$key_sha" -f per_page=100)" ||
+  answer runs-api-error "GET workflow $workflow_id runs for $want_event head_sha=$key_sha failed"
+jq -e '
+  ((.total_count | type) == "number") and (.total_count >= 0) and
+  ((.workflow_runs | type) == "array") and (.total_count == (.workflow_runs | length))
+' >/dev/null 2>&1 <<<"$runs_json" ||
+  answer malformed-runs "the runs read is not a whole list"
+run_count="$(jq -r '.workflow_runs | length' <<<"$runs_json")"
+[ "$run_count" -gt 0 ] ||
+  answer missing-proof "no completed $want_event run of $workflow_file for $key_sha"
+# A push reuses one run: the queue made one group for the sha it pushed, and
+# two say the sha was tested under two states this script cannot tell apart.
+# A pull request head can carry several completed runs, one per reopen, each
+# of which tested the merge commit of its moment; the record names which.
+[ "$EVENT" = merge_group ] || [ "$run_count" -eq 1 ] ||
+  answer ambiguous-proof "$run_count completed merge_group runs for $key_sha"
+
+# The runs that qualify, newest first: this workflow, this event, completed
+# and successful, this sha, this repository at both ends, and, for a queue
+# run, a queue branch of the default branch. Every field a run must carry is
+# checked here, so a refusal is never a missing field read as a match.
+candidates="$(jq -r \
+  --arg repo "$repo" --arg sha "$key_sha" --arg path "$workflow_path" \
+  --arg event "$want_event" --arg branch_re "^gh-readonly-queue/$default_branch/[^[:space:]]+$" \
+  --argjson workflow_id "$workflow_id" '
+  .workflow_runs[]
+  | select(
+      ((.id | type) == "number") and (.id > 0) and
+      (.workflow_id == $workflow_id) and (.event == $event) and
+      (.status == "completed") and (.conclusion == "success") and
+      (.head_sha == $sha) and (.path == $path) and
+      ((.head_branch | type) == "string") and
+      ($event != "merge_group" or (.head_branch | test($branch_re))) and
+      (.repository.full_name == $repo) and (.head_repository.full_name == $repo))
+  | .id' <<<"$runs_json" 2>/dev/null)" ||
+  answer malformed-runs "a run in the list could not be read"
+[ -n "$candidates" ] ||
+  answer mismatched-proof "none of $run_count completed $want_event runs for $key_sha is a successful run of this workflow in this repository"
+
+artifact_name="change-class-proof-$tree"
+expired=""
+for run_id in $candidates; do
+  artifacts_json="$(api "repos/$repo/actions/runs/$run_id/artifacts" \
+    -f "name=$artifact_name" -f per_page=100)" ||
+    answer artifacts-api-error "GET run $run_id artifacts failed"
+  jq -e '(.artifacts | type) == "array"' >/dev/null 2>&1 <<<"$artifacts_json" ||
+    answer malformed-artifacts "the artifacts read of run $run_id is not a list"
+  live=""
+  if ! live="$(jq -r --arg name "$artifact_name" --argjson run "$run_id" '
+    [.artifacts[] | select(.name == $name and .workflow_run.id == $run)]
+    | map(select(.expired == false)) | .[0].id // empty' <<<"$artifacts_json" 2>/dev/null)"; then
+    answer malformed-artifacts "an artifact of run $run_id could not be read"
+  fi
+  if [ -n "$live" ]; then
+    gh api "repos/$repo/actions/artifacts/$live/zip" >"$WORK/record.zip" ||
+      answer record-download-error "GET artifact $live of run $run_id failed"
+    unzip -p "$WORK/record.zip" record >"$WORK/record" 2>/dev/null ||
+      answer record-unreadable "artifact $live of run $run_id holds no readable record"
+    recorded_tree="$(sed -n 's/^tree=//p' "$WORK/record")" || recorded_tree=""
+    recorded_workflow="$(sed -n 's/^workflow=//p' "$WORK/record")" || recorded_workflow=""
+    [ "$recorded_tree" = "$tree" ] && [ "$recorded_workflow" = "$workflow_path" ] ||
+      answer record-mismatch "run $run_id recorded tree=$recorded_tree workflow=$recorded_workflow"
+    answer exact-proof "run=$run_id event=$want_event sha=$key_sha" "$run_id" "$WORK/record"
+  fi
+  case "$(jq -r --arg name "$artifact_name" '[.artifacts[] | select(.name == $name and .expired == true)] | length' <<<"$artifacts_json")" in
+    0) ;;
+    *) expired="$run_id" ;;
+  esac
+done
+[ -z "$expired" ] || answer expired-record "run $expired's $artifact_name has expired"
+answer missing-record "no run of $candidates carries $artifact_name"

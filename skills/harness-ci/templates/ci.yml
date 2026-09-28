@@ -30,6 +30,12 @@ jobs:
     # The render proof re-renders every installed item, so its cost grows
     # with the install rather than with the diff.
     timeout-minutes: 20
+    # `actions: read` is what the action reads this workflow's earlier runs
+    # with, to stand down the lanes a passing run of the same tree already
+    # ran: .agents/skills/harness-ci/references/wiring.md § Proof reuse.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       # Whether the lanes run at all, as the action answered it: what every
       # lane condition and CI's waiver read. The classify step's `lanes:`

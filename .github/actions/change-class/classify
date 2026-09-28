@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # classify — the shipped classifier's verdict for a diff, whether the diff
 # runs a workflow's lanes, which of the lanes a declaration names it runs,
-# and the changed-path families a workflow selects its jobs with.
+# the changed-path families a workflow selects its jobs with, and whether a
+# passing run of this workflow already proved the tree this run tests.
 #
 # Nothing here decides a class or a docs verdict. `change-class` prints one
 # and writes it to the step's output file itself, and `harness-only --mode
@@ -12,7 +13,8 @@
 # same paths on its stderr in a shell-quoted form whose only decoder is `eval`,
 # and a path list out of the judged tree is not something to hand a shell.
 #
-# Environment, all required but BASE, CLASSIFIER and LANES_FROM:
+# Environment, from the action's inputs, all required but BASE, CLASSIFIER
+# and LANES_FROM:
 #   EVENT  github.event_name
 #   BASE   the base endpoint sha; empty where the event carries none
 #   HEAD   the head endpoint sha
@@ -22,7 +24,12 @@
 #   LANES_FROM  the checkout root whose .github/ci-lanes.conf declares the
 #          workflow's lanes: the default branch's checkout, never REPO.
 #          Empty means no lane is declared.
-#   GITHUB_OUTPUT  the step output file both writers append to
+#   GH_TOKEN  the job token, which `proof` reads workflow runs with
+# Environment, from the runner:
+#   GITHUB_OUTPUT  the step output file every writer appends to
+#   RUNNER_TEMP    where the record below is written; unset, no record is
+#                  written and the step says so
+#   GITHUB_SHA and the rest `proof` lists
 #
 # Outputs appended to GITHUB_OUTPUT:
 #   change_class       render|trivial|micro|small|standard, written by the
@@ -42,19 +49,32 @@
 #                      printed them. A family is a grouping of this list, so a
 #                      caller whose lanes answer to a tree no family names
 #                      groups it here rather than reading the diff again.
+#   proof_reuse        true|false: whether a passing run of this workflow
+#                      tested this tree and left a record of what it covered,
+#                      as `proof` beside this script decides it.
+#   proof_reason       `exact-proof`, or the refusal key `proof` printed.
+#   proof_run          the proving run's id where proof_reuse is true.
+#   proof_tree         the tree this run tests, empty where the checkout
+#                      lacks the commit GITHUB_SHA names.
+#   proof_record       the proving run's record, its lines as below, empty
+#                      where proof_reuse is false. A workflow that selects
+#                      its jobs itself reads the run's class, docs verdict,
+#                      event and paths out of it to re-derive what that run
+#                      ran, as kendex's tools/ci-job-set does.
 #   lanes              true|false: whether the diff runs a workflow's lanes.
-#                      false on `render`, on `trivial`, and on docs_only=true
-#                      whatever the class; true on every other diff.
-#   lanes_cause        why: render, trivial or docs-only where lanes=false,
-#                      and the class where lanes=true.
+#                      false on `render`, on `trivial`, on docs_only=true
+#                      whatever the class, and where a proof covers every
+#                      lane the diff would run; true on every other diff.
+#   lanes_cause        why: render, trivial, docs-only or proof-reused where
+#                      lanes=false, and the class where lanes=true.
 #   lane_verdicts      one `lane_<name>=true|false` line per lane the
 #                      declaration names, in the order it first names them;
 #                      empty where LANES_FROM is empty or the declaration is
 #                      absent or malformed.
 #
-# lanes is made from the two verdicts above, never from the paths. A workflow
-# forwards it rather than spelling a class, so a change to which diffs run the
-# lanes reaches every consumer with no workflow edit.
+# lanes is made from the two verdicts above and the proof, never from the
+# paths. A workflow forwards it rather than spelling a class, so a change to
+# which diffs run the lanes reaches every consumer with no workflow edit.
 #
 # A lane verdict is lanes narrowed by the paths the lane declares it reads:
 # false wherever lanes is false; otherwise true where a changed path matches
@@ -66,6 +86,28 @@
 # stand a lane down. An absent or malformed declaration is not a refusal:
 # the default branch holds it, so failing the step would redden every pull
 # request, the one that repairs it included.
+#
+# A proof stands down what the proving run covered and nothing else. Its
+# record says `covers=all`, `covers=none` or `covers=lanes` with one
+# `lane_<name>=true|false` line per lane that run's declaration named. A
+# lane whose classified verdict is true and which the record covers turns
+# false with the cause proof-reused; where every lane the diff would run is
+# covered, lanes itself answers false with lanes_cause=proof-reused. With no
+# declaration read, only `covers=all` stands the lanes down: a record of
+# named lanes cannot be mapped onto lanes this run does not name. A lane the
+# proving run skipped, or did not have, keeps its classified verdict.
+#
+# The record this run leaves, for the run after it, is written to
+# RUNNER_TEMP/change-class-record on pull_request and merge_group, and the
+# action's next step uploads it under the tree's name. Its lines:
+#   tree=<sha>  workflow=<path>  event=<event>  change_class=<class>
+#   docs_only=<bool>  covers=all|none|lanes  lane_<name>=true|false...
+#   changed_path=<path>...
+# covers is what has passed on this tree once this run passes: every lane,
+# where this run runs them all or a proof covered them all; the lanes whose
+# final verdict is true plus the ones the proof covered, where a declaration
+# was read; the proving run's own named lanes, carried forward, where this
+# run reads no declaration; none otherwise.
 #
 # lanes and lane_verdicts are written last: a refusal anywhere above leaves
 # neither output, and the failed step runs every lane.
@@ -95,6 +137,9 @@ scripts_root="${CLASSIFIER:-}"
 SCRIPTS="$(cd "$scripts_root/skills/harness-ci/scripts" 2>/dev/null && pwd)" ||
   die "classifier-unreadable root=$scripts_root" \
     "no skills/harness-ci/scripts under the classifier root"
+PROOF="$(dirname "$0")/proof"
+[ -x "$PROOF" ] || die "proof-missing path=$PROOF" \
+  "the proof script beside this one is absent or not executable"
 
 [ -n "${EVENT:-}" ] || die missing-event "the event input is required"
 [ -n "${HEAD:-}" ] || die missing-head "the head input is required"
@@ -331,29 +376,176 @@ if [ "$lane_state" = read ] && [ "$lanes" = true ]; then
   done <"${work:?}/paths"
 fi
 
-verdicts=""
+# Each lane's classified verdict and cause, at its index.
+lane_values=()
+lane_causes=()
 index=0
 while [ "$index" -lt "$lane_count" ]; do
   if [ "$lanes" = false ]; then
-    lane=false lane_cause="cause=lanes-false lanes_cause=$lanes_cause"
+    lane_values[$index]=false lane_causes[$index]="cause=lanes-false lanes_cause=$lanes_cause"
   elif [ -n "$every" ]; then
-    lane=true lane_cause="$every"
+    lane_values[$index]=true lane_causes[$index]="$every"
   elif [ -n "${lane_hits[$index]}" ]; then
-    lane=true lane_cause="${lane_hits[$index]}"
+    lane_values[$index]=true lane_causes[$index]="${lane_hits[$index]}"
   else
-    lane=false lane_cause="cause=unreached"
+    lane_values[$index]=false lane_causes[$index]="cause=unreached"
   fi
-  verdicts="${verdicts}lane_${lane_names[$index]}=$lane
-"
-  printf 'lane: name=%s verdict=%s %s\n' "${lane_names[$index]}" "$lane" \
-    "$lane_cause" >&2
   index=$((index + 1))
 done
 
-# Every lane_verdicts line starts `lane_`, so none can spell its delimiter.
+# The proof: whether a passing run of this workflow tested this tree, and
+# its record. `proof` decides and never gates, so its lines are read as they
+# stand and a refusal is one `proof:` line and the classified answers above.
+proof_out="$("$PROOF" "${work:?}")" || {
+  status=$?
+  die "proof-failed status=$status" "proof exited $status"
+}
+proof_line() { # KEY — the value of the proof's line KEY
+  printf '%s\n' "$proof_out" | sed -n "s/^$1=//p"
+}
+proof_reuse="$(proof_line reuse)"
+proof_reason="$(proof_line reason)"
+proof_run="$(proof_line run)"
+proof_tree="$(proof_line tree)"
+proof_record="$(proof_line record)"
+case "$proof_reuse" in
+  true | false) [ -n "$proof_reason" ] ;;
+  *) false ;;
+esac || die "proof-unreadable lines=$(printf '%s' "$proof_out" | tr '\n' ' ')" \
+  "proof printed no reuse and reason lines this action knows"
+printf 'proof: reuse=%s reason=%s run=%s %s\n' "$proof_reuse" "$proof_reason" \
+  "$proof_run" "$(proof_line detail)" >&2
+
+# What the proving run covered: `all`, `none`, or the named lanes, read from
+# its record. A record naming no covers line covers nothing.
+record_covers=none
+record_lanes=""
+if [ "$proof_reuse" = true ]; then
+  record_covers="$(sed -n 's/^covers=//p' "$proof_record")"
+  case "$record_covers" in
+    all | none) ;;
+    lanes) record_lanes="$(sed -n 's/^\(lane_[^=]*=[a-z]*\)$/\1/p' "$proof_record")" ;;
+    *) record_covers=none ;;
+  esac
+fi
+record_covers_lane() { # NAME — 0 where the proving run covered lane NAME
+  [ "$record_covers" = all ] && return 0
+  [ "$record_covers" = lanes ] || return 1
+  grep -qxF -- "lane_$1=true" <<<"$record_lanes"
+}
+
+# Apply the proof. A covered lane whose classified verdict is true turns
+# false; where every lane the diff would run is covered, lanes turns false
+# with it. `proven` is one `true`/`false` per lane, for the record below.
+proven=()
+applied=""
+index=0
+while [ "$index" -lt "$lane_count" ]; do
+  proven[$index]=false
+  ! record_covers_lane "${lane_names[$index]}" || proven[$index]=true
+  index=$((index + 1))
+done
+if [ "$proof_reuse" = true ] && [ "$lanes" = true ]; then
+  if [ "$lane_state" = read ]; then
+    uncovered=0 stood=0
+    index=0
+    while [ "$index" -lt "$lane_count" ]; do
+      if [ "${lane_values[$index]}" = true ]; then
+        if [ "${proven[$index]}" = true ]; then
+          lane_values[$index]=false lane_causes[$index]="cause=proof-reused run=$proof_run"
+          stood=$((stood + 1))
+        else
+          uncovered=$((uncovered + 1))
+        fi
+      fi
+      index=$((index + 1))
+    done
+    if [ "$uncovered" -eq 0 ] && [ "$stood" -gt 0 ]; then
+      lanes=false lanes_cause=proof-reused applied="every lane the diff runs"
+    elif [ "$stood" -gt 0 ]; then
+      applied="$stood of the lanes the diff runs, $uncovered uncovered"
+    else
+      applied="none: the proving run covered no lane the diff runs"
+    fi
+  elif [ "$record_covers" = all ]; then
+    lanes=false lanes_cause=proof-reused applied="every lane"
+  else
+    applied="none: no declaration read here and the record covers $record_covers"
+  fi
+  printf 'proof: applied=%s\n' "$applied" >&2
+fi
+
+verdicts=""
+index=0
+while [ "$index" -lt "$lane_count" ]; do
+  verdicts="${verdicts}lane_${lane_names[$index]}=${lane_values[$index]}
+"
+  printf 'lane: name=%s verdict=%s %s\n' "${lane_names[$index]}" \
+    "${lane_values[$index]}" "${lane_causes[$index]}" >&2
+  index=$((index + 1))
+done
+
+# Every lane_verdicts line starts `lane_`, and every record line is
+# `key=value` with a fixed key, so neither can spell its delimiter.
 {
+  printf 'proof_reuse=%s\nproof_reason=%s\nproof_run=%s\nproof_tree=%s\n' \
+    "$proof_reuse" "$proof_reason" "$proof_run" "$proof_tree"
+  printf 'proof_record<<__change_class_proof_record_end__\n'
+  [ -z "$proof_record" ] || cat -- "$proof_record"
+  printf '__change_class_proof_record_end__\n'
   printf 'lanes=%s\nlanes_cause=%s\n' "$lanes" "$lanes_cause"
   printf 'lane_verdicts<<__change_class_lane_verdicts_end__\n%s' "$verdicts"
   printf '__change_class_lane_verdicts_end__\n'
 } >>"$GITHUB_OUTPUT"
 printf 'lanes: lanes=%s cause=%s\n' "$lanes" "$lanes_cause" >&2
+
+# The record for the run after this one, on the two events a later run can
+# reuse: a merge group reuses a pull request's, a push a merge group's.
+case "$EVENT" in
+  pull_request | merge_group) ;;
+  *) exit 0 ;;
+esac
+if [ -z "$proof_tree" ]; then
+  printf 'record: skipped cause=tree-unreadable\n' >&2
+  exit 0
+fi
+if [ -z "${RUNNER_TEMP:-}" ]; then
+  printf 'record: skipped cause=no-runner-temp\n' >&2
+  exit 0
+fi
+workflow_path="${GITHUB_WORKFLOW_REF:-}"
+workflow_path="${workflow_path#"${GITHUB_REPOSITORY:-}/"}"
+workflow_path="${workflow_path%%@*}"
+if [ "$lanes" = true ] && [ "$lane_state" != read ]; then
+  covers=all
+elif [ "$record_covers" = all ]; then
+  covers=all
+elif [ "$lane_state" = read ]; then
+  covers=lanes
+elif [ "$record_covers" = lanes ]; then
+  covers=carried
+else
+  covers=none
+fi
+record="$RUNNER_TEMP/change-class-record"
+{
+  printf 'tree=%s\nworkflow=%s\nevent=%s\nchange_class=%s\ndocs_only=%s\n' \
+    "$proof_tree" "$workflow_path" "$EVENT" "$class" "${docs#docs_only=}"
+  case "$covers" in
+    carried)
+      printf 'covers=lanes\n%s\n' "$record_lanes" ;;
+    lanes)
+      printf 'covers=lanes\n'
+      index=0
+      while [ "$index" -lt "$lane_count" ]; do
+        covered=false
+        [ "${lane_values[$index]}" != true ] && [ "${proven[$index]}" != true ] || covered=true
+        printf 'lane_%s=%s\n' "${lane_names[$index]}" "$covered"
+        index=$((index + 1))
+      done ;;
+    *) printf 'covers=%s\n' "$covers" ;;
+  esac
+  sed 's/^/changed_path=/' "${work:?}/paths"
+} >"$record" || die "record-unwritable path=$record" "the record could not be written"
+printf 'record: path=%s tree=%s covers=%s\n' "$record" "$proof_tree" \
+  "$(sed -n 's/^covers=//p' "$record")" >&2

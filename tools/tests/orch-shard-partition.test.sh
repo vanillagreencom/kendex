@@ -559,7 +559,7 @@ unselected_owners() { # unselected_owners <ci-job-set> <owners file> ; `shard<ta
   local job_set="$1" shard path out="$TMP/owner-selection"
   while IFS=$'\t' read -r shard path; do
     : > "$out"
-    ( cd "$ROOT" && CHANGE_CLASS=micro DOCS_ONLY=false CHANGED_PATHS="$path" \
+    ( cd "$ROOT" && CHANGE_CLASS=micro DOCS_ONLY=false CHANGED_PATHS="$path" EVENT=pull_request \
       GITHUB_OUTPUT="$out" "$job_set" ) 2>/dev/null ||
       { printf '%s\t%s\tci-job-set-failed\n' "$shard" "$path"; continue; }
     grep -qF "\"$shard\"" "$out" || printf '%s\t%s\n' "$shard" "$path"
