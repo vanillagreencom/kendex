@@ -1693,6 +1693,48 @@ stage_raw_rate unlabeled-model \
   "$(unlabeled_usage 60 2026-08-02T06:00:00Z)"
 table "an unlabeled model bucket matches its prior raw null identity|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.usage_rate_state=measured claude.projected_wall_minutes=10"
 
+# An account bound by its Fable window, read twice ten minutes apart through
+# the overseer's own call. The endpoint does not hold the window's reset stamp
+# or its label spelling stable between two reads, so each row varies one of
+# them on the prior sample, and a reset between the readings still forms no
+# rate. Four controls, one per rule of same_window: the reset tolerance, the
+# window it must stay below, the label identity, and the equality fallback for
+# a stamp that does not parse.
+fable_usage() { # PERCENT RESET LABEL
+  jq -nc --argjson pct "$1" --arg reset "$2" --arg label "$3" '{
+    five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+    seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+    limits: [{kind: "weekly_scoped", percent: $pct, resets_at: $reset,
+              scope: {model: {display_name: $label}}}]}'
+}
+FABLE_RATE="pick --lane $H/.claude --harness claude --model claude-fable-5-1 --json"
+fable_env() { printf 'ORCH_LANE_DIRS=%s;OVERSEE_WATCH_STATE_DIR=%s' "$H/.claude" "$TMP_ROOT/model-identity-$1"; }
+stage_raw_rate fable-drift \
+  "$(fable_usage 45 2026-08-01T06:00:00.100000+00:00 'Fable 5.1')" \
+  "$(fable_usage 40 2026-08-01T05:59:59.900000+00:00 'Fable 5.1')"
+stage_raw_rate fable-reset \
+  "$(fable_usage 45 2026-08-01T06:00:00Z 'Fable 5.1')" \
+  "$(fable_usage 30 2026-07-25T06:00:00Z 'Fable 5.1')"
+stage_raw_rate fable-label \
+  "$(fable_usage 45 2026-08-01T06:00:00Z 'Fable 5.1')" \
+  "$(fable_usage 40 2026-08-01T06:00:00Z 'fable-5.1')"
+stage_raw_rate fable-unparsed \
+  "$(fable_usage 45 next-week 'Fable 5.1')" \
+  "$(fable_usage 40 next-week 'Fable 5.1')"
+table \
+  "a model window whose reset stamp crossed a second between the readings is still one window|$(fable_env fable-drift)|$FABLE_RATE|binding_bucket=model usage_rate_state=measured projected_wall_minutes=110" \
+  "a model window that reset between the readings forms no rate|$(fable_env fable-reset)|$FABLE_RATE|binding_bucket=model usage_rate_state=one-sample projected_wall_minutes=null" \
+  "a model window whose label is spelled another way on the prior sample is still one window|$(fable_env fable-label)|$FABLE_RATE|binding_bucket=model usage_rate_state=measured projected_wall_minutes=110" \
+  "a reset stamp that does not parse is matched by equality|$(fable_env fable-unparsed)|$FABLE_RATE|binding_bucket=model usage_rate_state=measured projected_wall_minutes=110"
+pool_control mutant-rate-exact-reset lib/lane-model.sh 'def reset_drift_s: 300;' 'def reset_drift_s: 0;' \
+  "control: with no tolerance the drifted stamp reads as a new window|$(fable_env fable-drift)|$FABLE_RATE|usage_rate_state=one-sample"
+pool_control mutant-rate-joins-windows lib/lane-model.sh 'def reset_drift_s: 300;' 'def reset_drift_s: 99999999;' \
+  "control: a tolerance wider than a window joins a reset onto the window before it|$(fable_env fable-reset)|$FABLE_RATE|usage_rate_state=measured"
+pool_control mutant-rate-raw-label lib/lane-model.sh 'def label_identity: if \. == null then null else lane_norm end;' 'def label_identity: .;' \
+  "control: a raw label comparison misses the respelled window|$(fable_env fable-label)|$FABLE_RATE|usage_rate_state=one-sample"
+pool_control mutant-rate-no-fallback lib/lane-model.sh 'else \.resets_at == \$binding\.resets_at end);' 'else false end);' \
+  "control: with no equality fallback an unparsed stamp never matches|$(fable_env fable-unparsed)|$FABLE_RATE|usage_rate_state=one-sample"
+
 echo "=== pick --model judges shared and scoped buckets together ==="
 # The account-wide 5-hour and weekly windows wall every model. A model launch
 # therefore uses the largest matching bucket, and the returned binding fields

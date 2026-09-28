@@ -155,6 +155,34 @@ def lane_binding($model; $binding_floor):
           | if $b == null then null else ([$w, $b] | max_binding) end)
     end;
 
+# same_window($binding) over one bucket of the prior sample: true where it is
+# the window $binding judges now, so the difference between the two readings
+# is usage spent inside one window and never a reset.
+#
+# Neither side of the comparison is held stable by the usage endpoint between
+# two reads, so both are compared as identities rather than as strings. The
+# label is compared in its lane_norm spelling, the one model_binding matches a
+# model on, and a null label only ever matches a null one. The reset stamps are
+# one window where both parse to epochs no more than reset_drift_s apart: a
+# stamp read either side of a second boundary is still the same reset, and an
+# equality test would read it as a new window on every pass, so the account
+# would never measure a rate while its figure moved. A real reset between the
+# two readings moves the stamp by a whole window, 5 hours at the shortest, so
+# the tolerance never joins two windows. A stamp that does not parse is
+# compared by equality, and a window with no stamp matches nothing, since
+# nothing then says the two readings share it.
+def reset_drift_s: 300;
+def reset_epoch: if type == "string" then (try fromdateiso8601 catch null) else null end;
+def label_identity: if . == null then null else lane_norm end;
+def same_window($binding):
+  (.resets_at | reset_epoch) as $was
+  | ($binding.resets_at | reset_epoch) as $now
+  | ((.label // null) | label_identity) == (($binding.label // null) | label_identity)
+    and .resets_at != null and $binding.resets_at != null
+    and (if $was != null and $now != null
+         then ($was - $now | if . < 0 then -. else . end) <= reset_drift_s
+         else .resets_at == $binding.resets_at end);
+
 def with_lane_binding($model; $binding_floor):
   lane_binding($model; $binding_floor) as $binding
   | (if $binding == null then [] elif $binding.bucket == "model" then (._rate_prior.model_buckets // [])
@@ -162,8 +190,7 @@ def with_lane_binding($model; $binding_floor):
             pct: (if $binding.bucket == "session" then ._rate_prior.session_5h_pct
                   elif $binding.bucket == "weekly" then ._rate_prior.weekly_pct else null end),
             resets_at: ._rate_prior.resets[$binding.bucket]}] end
-     | map(select((.label // null) == ($binding.label // null)
-                  and .resets_at != null and .resets_at == $binding.resets_at))
+     | map(select(same_window($binding)))
      | first.pct // null) as $prior
   | (if $binding == null or $prior == null then null
      else ($binding.pct - $prior) end) as $delta
@@ -231,8 +258,8 @@ def lane_public: del(._rate_prior, ._rate_elapsed_s, ._id);
 # Z, the form Codex resets are rendered in. The Claude usage endpoint writes
 # fractional seconds and +00:00, and a provider row carries whatever its
 # timestamp is; a reader parsing the stamp (the BSD `date` arm cannot read the
-# fraction) or comparing two of them by equality, as with_lane_binding does
-# with the prior sample, needs one form. emit_lane applies it to the current
+# fraction) or comparing two of them, as same_window does with the prior
+# sample, needs one form. emit_lane applies it to the current
 # windows and to the prior sample alike, so the comparison stays like with like.
 def utc_stamp: if type == "string" then sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") else . end;
 def utc_resets:
