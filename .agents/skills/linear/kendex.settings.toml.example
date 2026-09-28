@@ -9,8 +9,8 @@
 # guessing which team inside the workspace the key reaches.
 LINEAR_TEAM = "" # required
 
-# The letters in front of this team's issue numbers, as in PROJ-123. Help
-# text and examples use it.
+# The letters in front of this team's issue numbers, as in PROJ-123. No
+# script reads it today, so changing it changes no command's output.
 LINEAR_TEAM_PREFIX = "PROJ"
 
 # The labels that route an issue to an agent, separated by commas. With a
