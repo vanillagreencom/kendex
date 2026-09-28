@@ -498,10 +498,10 @@ fi
 #           to carry itself as it carries the question-tool words, on a model
 #           whose window the claude adapter names
 #   codex   the same words; its rollout names its own window
-#   pi      its settings file turning compaction off, read on this machine,
+#   pi      its settings file turning compaction off and an installed
+#           pi-hooks carrier that sends the window, both read on this machine,
 #           or for a hosted lane on its host once create has made it
-#           (host_pi_compaction), and an installed pi-hooks carrier that sends
-#           the window
+#           (host_pi_gate)
 # Every other harness, and a launch naming none, has no adapter. A wake is not
 # judged: it re-enters a session its own launch was admitted with, and names no
 # model of its own.
@@ -521,19 +521,18 @@ if [[ "$FLEET" == true && "$WAKE" != true ]]; then
       fi
       ;;
     pi)
-      pi_compaction_rc=1
       if [[ "$LANE_HOST" == local ]]; then
         pi_compaction_rc=0
         lane_adapter_pi_compaction_on "$CLAIM_ROOT" || pi_compaction_rc=$?
+        case "$pi_compaction_rc" in
+          1) ;;
+          0) ot_message compaction-on "harness=pi" "file=$LANE_ADAPTER_PI_FILE" >&2; exit 1 ;;
+          *) ot_message pi-settings-unreadable "file=$LANE_ADAPTER_PI_FILE" >&2
+             printf '%s\n' "$LANE_ADAPTER_PI_CAUSE" >&2; exit 1 ;;
+        esac
+        lane_adapter_pi_window_read "$CLAIM_ROOT" \
+          || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; exit 1; }
       fi
-      case "$pi_compaction_rc" in
-        1) ;;
-        0) ot_message compaction-on "harness=pi" "file=$LANE_ADAPTER_PI_FILE" >&2; exit 1 ;;
-        *) ot_message pi-settings-unreadable "file=$LANE_ADAPTER_PI_FILE" >&2
-           printf '%s\n' "$LANE_ADAPTER_PI_CAUSE" >&2; exit 1 ;;
-      esac
-      lane_adapter_pi_window_read "$CLAIM_ROOT" \
-        || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; exit 1; }
       ;;
     *) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; exit 1 ;;
   esac
@@ -1932,28 +1931,37 @@ open_wake() { # DIR TITLE CMD
   ot_message lane-woken "item=$2" "harness=$HARNESS" "log=$log"
 }
 
-# The fleet gate's Pi compaction rule for a hosted lane, judged on the host's
-# own files once its create, or the wait after it, stands and before the
-# harness starts: the settings under the Pi root create named as pi-root, else
-# under Pi's default root in the host home, and the project file in the lane's
-# tree. A file the host does not hold is one Pi does not read. Returns 1 with
-# its keyed line printed.
-host_pi_compaction() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
-  local dir i rc
-  local -a remote=("${3:-.pi/agent}/settings.json" "$4/.pi/settings.json")
+# The fleet gate's Pi rules for a hosted lane, judged on the host's own files
+# once its create, or the wait after it, stands and before the harness starts,
+# under the Pi root create named as pi-root, else Pi's default root in the host
+# home, and in the lane's tree: the user and project settings, and the first
+# pi-hooks carrier of the tree's and the root's that its package.json shows
+# installed. Of the carrier only extensions/vocab.ts is read, the file that
+# puts context_window on the Stop payload. A file the host does not hold is one
+# Pi does not read. Returns 1 with its keyed line printed.
+host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
+  local pi_item="$1" pi_wt="$2" dir i rc root="${3:-.pi/agent}" carrier=@vanillagreen/pi-hooks
+  local -a remote=("$root/settings.json" "$4/.pi/settings.json") packages=("$4/.pi/packages" "$root/packages")
   if ! dir="$(mktemp -d)"; then
     ot_message pi-settings-unreadable "file=${remote[0]}" >&2
     return 1
   fi
   trap 'rm -rf -- "${dir:?}"' EXIT
+  # host_read PATH DEST REASON STEP — 0 read, 1 not on the host, 2 refused
+  # with its keyed line printed.
+  host_read() {
+    local rc=0
+    lane_host_fetch host_transport "$pi_wt" "$1" "$2" "$dir/err" || rc=$?
+    case "$rc" in
+      0 | 1) return "$rc" ;;
+      4) ot_message lane-host-busy "item=$pi_item" "step=$4" >&2; return 2 ;;
+      *) ot_message "$3" "file=$1" >&2; cat -- "$dir/err" >&2; return 2 ;;
+    esac
+  }
   for i in 0 1; do
     rc=0
-    lane_host_fetch host_transport "$2" "${remote[i]}" "$dir/$i" "$dir/err" || rc=$?
-    case "$rc" in
-      0 | 1) ;;
-      4) ot_message lane-host-busy "item=$1" step=pi-settings >&2; return 1 ;;
-      *) ot_message pi-settings-unreadable "file=${remote[i]}" >&2; cat -- "$dir/err" >&2; return 1 ;;
-    esac
+    host_read "${remote[i]}" "$dir/$i" pi-settings-unreadable pi-settings || rc=$?
+    [[ "$rc" -ne 2 ]] || return 1
   done
   rc=0
   lane_adapter_pi_compaction_judge "$dir/0" "$dir/1" || rc=$?
@@ -1964,6 +1972,23 @@ host_pi_compaction() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
     *) ot_message pi-settings-unreadable "file=${remote[i]}" >&2
        printf '%s\n' "$LANE_ADAPTER_PI_CAUSE" >&2; return 1 ;;
   esac
+  for i in 0 1; do
+    rc=0
+    host_read "${packages[i]}/$carrier/package.json" "$dir/package.json" pi-carrier-unreadable pi-carrier || rc=$?
+    [[ "$rc" -ne 2 ]] || return 1
+    [[ "$rc" -eq 0 ]] || continue
+    if ! mkdir -p -- "$dir/packages$i/$carrier/extensions"; then
+      ot_message pi-carrier-unreadable "file=${packages[i]}/$carrier/extensions/vocab.ts" >&2
+      return 1
+    fi
+    rc=0
+    host_read "${packages[i]}/$carrier/extensions/vocab.ts" "$dir/packages$i/$carrier/extensions/vocab.ts" \
+      pi-carrier-unreadable pi-carrier || rc=$?
+    [[ "$rc" -ne 2 ]] || return 1
+    break
+  done
+  lane_adapter_pi_carrier_sends "$dir/packages0" "$dir/packages1" \
+    || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; return 1; }
 )
 
 # The launch from the lane marker to the lane record, for the item the loop
@@ -1974,7 +1999,7 @@ host_pi_compaction() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
 launch_finish() {
   local context_session
   if [[ "$LANE_HOST" != local && "$FLEET" == true && "$WAKE" != true && "$HARNESS" == pi ]]; then
-    host_pi_compaction "$item" "$wt_id" "$pi_root" "$remote_path" || return 1
+    host_pi_gate "$item" "$wt_id" "$pi_root" "$remote_path" || return 1
   fi
   session_file=""
   wake_args=()

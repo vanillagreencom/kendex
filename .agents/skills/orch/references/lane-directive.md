@@ -25,7 +25,10 @@ A fleet launch, one naming `--state-dir`, meets one more gate, which admits a ha
 - `launch-compaction-missing` (naming `harness` and one `word` per word): the `--cmd` command leaves that harness's own compaction on. Add the words, in order; [skill-rules.md § Coordination](skill-rules.md#coordination) lists them.
 - `launch-window-unknown` (naming the claude `model`): the claude adapter names no window for that model. Launch on a model its window table names.
 - `unsupported-for-oversee` (naming `harness`, `none` for a launch naming none): no adapter reads that harness, or, with `reason=no-window-read`, the Pi carrier installed sends no `context_window`. Launch on claude, codex, or a Pi with the current pi-hooks.
-- `compaction-on` and `pi-settings-unreadable` (naming the `file`): Pi would compact the lane, or its settings file could not be read. A hosted lane's files are its host's, read after `create`. Set Pi's `compaction.enabled` to `false`, or repair the file.
+- `compaction-on` and `pi-settings-unreadable` (naming the `file`): Pi would compact the lane, or its settings file could not be read. Set Pi's `compaction.enabled` to `false`, or repair the file.
+- `pi-carrier-unreadable` (naming the `file`): the host's pi-hooks carrier file could not be read.
+
+A hosted Pi lane's settings and carrier are its host's, read after `create`, so the host keeps the item a Pi refusal leaves: launch it again with `--relaunch` after the fix.
 
 An unreadable in-flight claim store is not a refusal here: this gate asks for a wall, which no claim count enters, so `lanes` reports the store on stderr as `pick-lane-claims` and answers the wall anyway. Fix the claims directory, or set `OVERSEE_WATCH_STATE_DIR`, so the next `lanes pick` across the fleet can still see what is running.
 

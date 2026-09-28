@@ -8,8 +8,7 @@
 # Pi has no launch word for compaction. Its switch is `compaction.enabled` in
 # its settings file, so open-terminal reads that value before a Pi launch
 # instead (lane_adapter_pi_compaction_on, or lane_adapter_pi_compaction_judge
-# on a hosted lane's files) and refuses one Pi would compact.
-#
+# on a hosted lane's files) and refuses one Pi would compact.#
 # Sourced by lib/lane-context.sh, never run.
 
 # One reading from a Pi session file on stdin: `<tokens>\t<window>\t<model>`
@@ -96,8 +95,15 @@ lane_adapter_pi_enabled() { # FILE
 # else the user's, names that field, 1 where none installed does. A carrier
 # that predates the field leaves every Pi reading without a window.
 lane_adapter_pi_window_read() { # DIR
+  lane_adapter_pi_carrier_sends "$1/.pi/packages" "$(lane_adapter_pi_agent_dir)/packages"
+}
+
+# The same answer over the package roots ROOT..., the first holding a carrier
+# deciding, wherever they were read from: open-terminal judges a hosted lane on
+# copies of its host's carrier.
+lane_adapter_pi_carrier_sends() { # ROOT...
   local root
-  for root in "$1/.pi/packages" "$(lane_adapter_pi_agent_dir)/packages"; do
+  for root in "$@"; do
     [ -d "$root/@vanillagreen/pi-hooks/extensions" ] || continue
     grep -rqF -- context_window "$root/@vanillagreen/pi-hooks/extensions" && return 0
     return 1

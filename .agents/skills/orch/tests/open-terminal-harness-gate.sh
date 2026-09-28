@@ -127,7 +127,7 @@ a project turning compaction back on is refused, naming the project file|sends|{
 a carrier that sends no window is refused|old|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
 no carrier installed is refused|none|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
 a settings file jq cannot read is named|sends|not json|-|${FLEET[*]} --harness pi|open-terminal: pi-settings-unreadable @FILE@
-a hosted Pi fleet lane is not judged on this machine's settings, which are its host's to hold|sends|{"compaction":{"enabled":true}}|-|${FLEET[*]} --harness pi --host $BIN/provider|passed
+a hosted Pi fleet lane is not judged on this machine's settings or carrier, which are its host's to hold|none|{"compaction":{"enabled":true}}|-|${FLEET[*]} --harness pi --host $BIN/provider|passed
 no fleet passes whatever its settings|none|-|-|--harness pi|passed
 ROWS
 rm -f -- "$PI_AGENT/settings.json" "$REPO/.pi/settings.json"
