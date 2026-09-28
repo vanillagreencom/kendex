@@ -14,6 +14,7 @@
 | 2026-09-27 | D010 | — | Overseer hook rows go to one file per session beside its mailbox | A row in the mail file reaches every mail reader as mail | KEN-1961 needs one reader for mail and rows, or a non-tmux overseer runtime | Active | [Full](D010-overseer-session-rows.md) |
 | 2026-09-28 | D011 | — | Copilot registrations of a hook script hand a preToolUse refusal's stderr back as the deny reason | Copilot shows the model the reason, never stderr; one owner covers every catalog hook | Copilot carries stderr into tool results, or documents another reason field | Active | [Full](D011-copilot-refusal-answer.md) |
 | 2026-09-28 | D011 | — | Admin-merge a green pull request; keep the queue for CI, ruleset and harness changes | Owner decision 1790616596; under half the merge-group runs succeed, median 30 minutes | The PR run runs every merge-group job for the touched paths | Active | [Full](D011-admin-merge-green-prs.md) |
+| 2026-09-28 | D011 | — | Admin-merge a green pull request; keep the queue for CI, ruleset and harness changes | Owner decision 1790616596, for speed; about four in ten merge-group runs fail or cancel, median about half an hour | The PR run runs every merge-group job for the touched paths | Active | [Full](D011-admin-merge-green-prs.md) |
 
 ---
 

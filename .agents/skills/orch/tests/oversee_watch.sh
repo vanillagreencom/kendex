@@ -1187,25 +1187,35 @@ assert_eq "merged=$(grep -c '^EVENT merged 2' <<<"$out" || true) closes=$(grep -
 
 # A parked record owing a further pull request, a split whose next part is cut
 # from the stopped sandbox's branch: its merge closes nothing, item-open names
-# the item as still open, and the record stays parked for a relaunch. The
-# control is the owes branch removed, where the same merge closes the sandbox
-# and the overseer's parked steps would complete the item.
+# the item as still open, and the record stays parked for a relaunch. Every
+# later heartbeat names it as owed further-pr from the merged row, so an
+# item-open line the overseer missed is not the item's last word. The
+# controls: the owes branch removed, where the same merge closes the sandbox
+# and the overseer's parked steps would complete the item; and the merged
+# row's reading removed, where the later heartbeat names nothing.
 parked_owes_case() { # NAME [WATCH_BIN]
   parked_fleet "$1"
   : > "$STUB_DIR/lane-close.args"
   jq '(.lanes[] | select(.item == "issue-2")).parked.owes_pr = true' "$STUB_DIR/state.json" > "$STUB_DIR/state.next" && mv -- "$STUB_DIR/state.next" "$STUB_DIR/state.json"
+  printf '[{"id": "issue-2", "state": "In Progress", "priority": 2, "created_at": "2026-09-01T00:00:00Z"}]\n' > "$STUB_DIR/tracker.out"
   printf '[{"number": 2, "headRefName": "issue-2", "mergedAt": "2026-09-20T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
   WATCH_BIN="${2:-}" parked_run --
   OWES_CLOSES="$(grep -c ' issue-2$' "$STUB_DIR/lane-close.args" || true)"
+}
+# The pass after it, no relaunch between: HEARTBEAT_OWED is its owed line.
+parked_owes_heartbeat() { # [WATCH_BIN]
+  out="$(WATCH_BIN="${1:-}" run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
+    -- --since 2026-09-19T00:00:00Z --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
+  HEARTBEAT_OWED="$(grep '^owed issue-2 ' <<<"$out" || echo -)"
 }
 parked_owes_case parked_owes_pr
 assert_eq "rc=$rc events=$EVENTS open=$(grep -c '^EVENT item-open issue-2 cause=further-pr$' <<<"$out" || true) host=$HOST_VERBS close=$OWES_CLOSES status=$(jq -r '.lanes[] | select(.item == "issue-2") | .status' "$STUB_DIR/state.json")" \
   "rc=0 events=merged 2,item-open issue-2 open=1 host= close=0 status=parked" \
   "a parked record owing a further pull request reports item-open on its merge, closes nothing and stays parked" "$err"
-out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
-  -- --since 2026-09-19T00:00:00Z --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
-assert_eq "events=$(grep -c '^EVENT ' <<<"$out" || true) close=$(grep -c ' issue-2$' "$STUB_DIR/lane-close.args" || true)" "events=1 close=0" \
-  "the next pass repeats neither the merge nor item-open, only its heartbeat, and still closes nothing" "$err"
+parked_owes_heartbeat
+assert_eq "events=$(grep -c '^EVENT ' <<<"$out" || true) close=$(grep -c ' issue-2$' "$STUB_DIR/lane-close.args" || true) $HEARTBEAT_OWED" \
+  "events=1 close=0 owed issue-2 state=in-progress priority=2 lane=parked verdict=further-pr pr=2" \
+  "the next pass repeats neither the merge nor item-open, still closes nothing, and its heartbeat names the item owed" "$err"
 OWES_MUTANT_DIR="$TMP_ROOT/owes-mutant"
 OWES_MUTANT="$(mutant_scripts owes-mutant/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$OWES_MUTANT_DIR/github"
@@ -1213,6 +1223,14 @@ mutate_file "$OWES_MUTANT" 'if [[ "$PARKED_OWES" == owes ]]; then' 'if false; th
 parked_owes_case parked_owes_pr_mutant "$OWES_MUTANT"
 assert_eq "events=$EVENTS close=$OWES_CLOSES" "events=merged 2,lane-closed issue-2 close=1" \
   "control: without the owes branch the merge closes the sandbox of an item that owes a further pull request" "$err"
+OWED_MUTANT_DIR="$TMP_ROOT/owes-row-mutant"
+OWED_MUTANT="$(mutant_scripts owes-row-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$OWED_MUTANT_DIR/github"
+mutate_file "$OWED_MUTANT" 'or any($delivered[$item.id] // [] | .[]; . == "\($rec.parked.repo | ascii_downcase)#\($rec.parked.pr)")' 'or false'
+parked_owes_case parked_owes_row_mutant "$OWED_MUTANT"
+parked_owes_heartbeat "$OWED_MUTANT"
+assert_eq "rc=$rc events=$(grep -c '^EVENT heartbeat ' <<<"$out" || true) $HEARTBEAT_OWED" "rc=0 events=1 -" \
+  "control: without the merged row's reading the heartbeat after an item-open names nothing" "$err"
 
 # The running lane's pane holds a question: the failing close leaves the pass
 # running, so the lane checks after the merged check still report it.

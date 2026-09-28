@@ -229,7 +229,9 @@ The long pass's events, checked and reported in this order:
                              file, so the item owes a pull request after the
                              merged one. Nothing is closed: the record stays
                              parked and its stopped sandbox keeps the branch
-                             for a relaunch. Reported once, as the merge is
+                             for a relaunch. Reported once, as the merge is;
+                             every heartbeat's owed items then name the item
+                             as further-pr until a relaunch rewrites the record
   EVENT handoff <item>       the --item's workflow state carries a `.handoff`
                              record with no `.resumed_at`; the record follows.
                              Emitted once per record, on every surface: it
@@ -309,17 +311,23 @@ The long pass's events, checked and reported in this order:
                              reading failed. Last, with --state, one line
                              `owed <item> state=<in-progress|in-review|open-pr>
                              priority=<N|-> lane=<none|status> verdict=<queue|
-                             merged pr=<N>|dated harness=<h> until=<reset|->|
-                             unjudged harness=<h>>` per item the tracker holds
-                             as work the fleet owes that launch_queue lacks:
+                             further-pr pr=<N>|merged pr=<N>|dated harness=<h>
+                             until=<reset|->|unjudged harness=<h>>` per item
+                             the tracker holds as work the fleet owes that
+                             launch_queue lacks:
                              with LINEAR_TEAM, the team's In Progress and In
                              Review items, one live read, a priority of 0 (none)
                              printed `-`; with none, every open PR of the first
                              --repo on an issue-N branch, from a listing of its
                              own that exits 2 as owed-list-truncated at 1000.
                              A record running, preparing or parked owes
-                             nothing. `merged` is a record carrying its merge's
-                             `cycle`. A record with no harness is `queue`.
+                             nothing, save a parked record whose owes_pr is
+                             true once the pull request it names has merged,
+                             read from the merged row or from a `cycle` of
+                             that pull request: it is `further-pr` with that
+                             pull request, the item-open item no relaunch has
+                             rewritten yet. `merged` is a record carrying its
+                             merge's `cycle`. A record with no harness is `queue`.
                              Every other verdict reads the accounts of the
                              record's host, its `host` or `local`, as
                              ORCH_LANE_HOST: a `lanes list` there that fails
