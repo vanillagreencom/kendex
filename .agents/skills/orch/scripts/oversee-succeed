@@ -13,8 +13,9 @@
 #                   [-- HARNESS_FLAGS...]
 #
 #   `oversee launch --predecessor` replaces a live overseer through the same
-#   walk, flag assembly and launch steps (lib/overseer-launch.sh) with no mark
-#   judged, no caller entry and no flags carried over; this script is the
+#   walk, flag assembly and launch steps (lib/overseer-launch.sh), and hands
+#   the fleet watch on through the same step 6 (lib/watch-handover.sh), with
+#   no mark judged, no caller entry and no flags carried over; this script is the
 #   succession that judges the marks, carries the caller's own flags, and
 #   recovers an overseer that died or walled.
 #
@@ -557,23 +558,10 @@ source "$SCRIPT_DIR/lib/overseer-launch.sh"
 source "$SCRIPT_DIR/lib/watch-pid.sh"
 # shellcheck source=lib/job-unit.sh
 source "$SCRIPT_DIR/lib/job-unit.sh"
-
-# COMMAND started through the orch job runner as NAME and the UTC second, with
-# stdout appended to OUT and stderr to ERR (one path may be both), from the
-# current directory: a unit sends its command's output nowhere a caller
-# reads, so the redirection is the job's own first step, and the exec leaves
-# COMMAND the job's main process, so the job ends when it does. The record is
-# the runner file beside STATE.
-watch_job_launch() { # NAME STATE OUT ERR COMMAND...
-  local name="$1" state="$2" out="$3" err="$4"
-  shift 4
-  if ! watch_pid_paths "$state"; then
-    JOB_UNIT_ERROR_KEY=state-path JOB_UNIT_ERROR="path=$state"
-    return 1
-  fi
-  job_unit_launch "$name-$(date -u +%Y%m%dT%H%M%SZ)" "$WATCH_RUNNER_FILE" \
-    -- sh -c 'out=$1 err=$2; shift 2; exec "$@" >>"$out" 2>>"$err"' sh "$out" "$err" "$@"
-}
+# The watch handover and the job launch the helper below restarts the watch
+# through, shared with `oversee launch --predecessor`.
+# shellcheck source=lib/watch-handover.sh
+source "$SCRIPT_DIR/lib/watch-handover.sh"
 
 # The internal `--watch-restart STATE CALLER_SESSION PANE LANE_VAR LANE_HOME
 # HARNESS [FLAG...]` run, step 6's helper, which the succession starts before its
@@ -1520,23 +1508,17 @@ ol_succession_hook() { # STEP
       # The deciding read could not observe the account: the launch stands,
       # and the notice says why the check refused nothing.
       [[ -z "$OL_UNOBSERVED" ]] || message successor-lane-unobserved "reason=$OL_UNOBSERVED" >&2
-      [[ "$MODE" != succeed ]] || watch_handover ;;
+      [[ "$MODE" != succeed ]] || hand_over_watch ;;
   esac
 }
-watch_handover() {
-  if ! watch_state="$("$SCRIPT_DIR/workflow-state" path oversee 2>"$DEP_ERR")"; then
-    message watch-restart-failed step=state-path >&2
-    [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
-  elif ! watch_pid_live "$watch_state"; then
-    message watch-absent "path=$watch_state"
+# Step 6 of the header: lib/watch-handover.sh's watch_handover, the one
+# `oversee launch --predecessor` runs, in this script's words.
+hand_over_watch() {
+  if watch_handover "$CALLER_PANE" "$SUCC_PANE" "$lane_var" "$launch_home" "$harness" ${SUCC_FLAGS[@]+"${SUCC_FLAGS[@]}"}; then
+    message "$WATCH_HANDOVER_KEY" "${WATCH_HANDOVER_FIELDS[@]}"
   else
-    old_watch="$WATCH_PID"
-    if watch_job_launch watch-handover "$watch_state" "$WATCH_ERR_FILE" "$WATCH_ERR_FILE" \
-        "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" --watch-restart "$watch_state" "$CALLER_PANE" "$SUCC_PANE" "$lane_var" "$launch_home" "$harness" ${SUCC_FLAGS[@]+"${SUCC_FLAGS[@]}"}; then
-      message watch-handover "pid=$old_watch" "pane=$SUCC_PANE" "log=$WATCH_ERR_FILE" "$JOB_UNIT_LINE"
-    else
-      message watch-restart-failed step=helper "pid=$old_watch" "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR" >&2
-    fi
+    message "$WATCH_HANDOVER_KEY" "${WATCH_HANDOVER_FIELDS[@]}" >&2
+    [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
   fi
 }
 # Every refusal closes the successor before the commit point, or at a stop

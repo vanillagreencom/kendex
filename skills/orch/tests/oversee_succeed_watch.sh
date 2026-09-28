@@ -265,7 +265,7 @@ assert_eq "$RC|$(grep -c '^oversee-succeed: watch-absent path=.*/tmp/workflow-st
 # handover, which closes the caller and leaves its watch reading the pane that
 # closed. The line is matched whole, so the mutation lands on that one site.
 UNPATCHED="$(mutant_scripts unpatched oversee-succeed)" || exit 1
-awk '$0 == "      [[ \"$MODE\" != succeed ]] || watch_handover ;;" { print "      ;;"; hits++; next } { print }
+awk '$0 == "      [[ \"$MODE\" != succeed ]] || hand_over_watch ;;" { print "      ;;"; hits++; next } { print }
      END { if (hits != 1) exit 1 }' "$SUCCEED" > "$UNPATCHED/oversee-succeed" \
   || { echo "fixture: the handover mutant found no single site" >&2; exit 1; }
 new_caller

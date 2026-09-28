@@ -1,17 +1,17 @@
 # Job units
 
-Load when starting, naming, finding or stopping an orch job through `scripts/lib/job-unit.sh`: run it with `--help` for its subcommands, or source it for the same functions. Its callers are `dev-validate-run`'s run, every job [waiter-launch.md](waiter-launch.md) launches (`approval-wait`, `ci-wait`, `queue-wait`, `lane-mail wait` and the repeat watch), and `oversee-succeed`'s watch handover helper and the watch it restarts. These launches use their own mechanism, not this one: `lane_run_detached` in `scripts/lib/lane-launch.sh`, which `open-terminal` uses for a terminal emulator and a woken lane turn, and the preparing-job stop in `lane-close` and `open-terminal`.
+Load when starting, naming, finding or stopping an orch job through `scripts/lib/job-unit.sh`: run it with `--help` for its subcommands, or source it for the same functions. Its callers are `dev-validate-run`'s run, every job [waiter-launch.md](waiter-launch.md) launches (`approval-wait`, `ci-wait`, `queue-wait`, `lane-mail wait` and the repeat watch), and the watch handover helper `scripts/lib/watch-handover.sh` starts for `oversee-succeed` and `oversee launch --predecessor`, and the watch that helper restarts. These launches use their own mechanism, not this one: `lane_run_detached` in `scripts/lib/lane-launch.sh`, which `open-terminal` uses for a terminal emulator and a woken lane turn, and the preparing-job stop in `lane-close` and `open-terminal`.
 
 The runner bounds a job's lifetime and, when asked, its memory, and nothing else; it sets no CPU or task limit and no slice. A launch with `--memory-max MIB` sets `MemoryMax=MIBM` on the unit; no process group holds a memory bound, so a launch that would run under `setsid` refuses it as `memory-max-unheld`, exit 5, with its runner line, and starts nothing. A launch without it sets no memory limit. Under a unit, the job and everything it forks end when the job ends or reaches its bound. Under `setsid` see [Runner line](#runner-line) for what escapes.
 
 ## Unit name
 
-A job runs as the transient systemd user unit `orch-NAME-PID.service` where a user manager answers. A launch with no `--cap`, a job that runs for the session (the waiters, the repeat watch and `oversee-succeed`'s helper and restart), also needs the manager to linger (`loginctl enable-linger`): one that does not is stopped when the user's last login session ends, an SSH disconnect included, and every unit in it with it, while tmux and the lanes in that session run on, so there such a job runs under `setsid`. A capped launch, `dev-validate-run`'s, is bounded anyway and keeps its unit whether the manager lingers or not.
+A job runs as the transient systemd user unit `orch-NAME-PID.service` where a user manager answers. A launch with no `--cap`, a job that runs for the session (the waiters, the repeat watch, and the watch handover's helper and restart), also needs the manager to linger (`loginctl enable-linger`): one that does not is stopped when the user's last login session ends, an SSH disconnect included, and every unit in it with it, while tmux and the lanes in that session run on, so there such a job runs under `setsid`. A capped launch, `dev-validate-run`'s, is bounded anyway and keeps its unit whether the manager lingers or not.
 
 | Component | Meaning | Example |
 |---|---|---|
 | `orch` | The runner that owns the unit | `orch` |
-| `NAME` | The job, as its caller names it; `dev-validate-run` names `validate-` and the worktree directory's name, which is a lane's item in lower case; a waiter launch names the run path's last word and `[RUN_ID]`; `oversee-succeed` names `watch-handover-` or `watch-restart-` and the UTC second | `validate-ken-1784`, `watch-Bj3g6I` |
+| `NAME` | The job, as its caller names it; `dev-validate-run` names `validate-` and the worktree directory's name, which is a lane's item in lower case; a waiter launch names the run path's last word and `[RUN_ID]`; the watch handover names `watch-handover-` and its helper `watch-restart-`, each with the UTC second | `validate-ken-1784`, `watch-Bj3g6I` |
 | `PID` | The launching process's own pid, so two runs of one job are two units | `180993` |
 
 Every character outside `A-Za-z0-9_.-` in the name becomes `_`. Example: `orch-validate-ken-1784-180993.service`. `job-unit.sh name NAME PID` prints a name.
@@ -30,7 +30,7 @@ Every character outside `A-Za-z0-9_.-` in the name becomes `_`. Example: `orch-v
 
 ## Runner line
 
-The launch prints the runner line and records it. `dev-validate-run` and a waiter launch write it as the first line of the job's log, and `oversee-succeed` puts it at the end of its `watch-handover` and `watch-restarted` lines.
+The launch prints the runner line and records it. `dev-validate-run` and a waiter launch write it as the first line of the job's log, `oversee-succeed` and `oversee launch --predecessor` put it at the end of their `watch-handover` lines, and the helper at the end of its `watch-restarted` line.
 
 | Line | Meaning |
 |---|---|
