@@ -245,19 +245,50 @@ function rustBody(file: string, opens: string): string {
 	return text.slice(at + opens.length, end);
 }
 
-/** The template of the `format!` call in `body`, as the shell it stands for. */
+/** The templates of the `format!` calls in `body`, in source order, each as
+ * the shell it stands for. */
+function rustFormats(body: string, what: string): string[] {
+	const templates: string[] = [];
+	for (let call = body.indexOf("format!("); call >= 0; call = body.indexOf("format!(", call + 1)) {
+		const literal = /"((?:[^"\\]|\\[\s\S])*)"/.exec(body.slice(call));
+		if (literal === null) throw new Error(`no format template in ${what}`);
+		templates.push(literal[1]!
+			// A trailing backslash continues a Rust literal onto the next line,
+			// swallowing that line's indentation with it.
+			.replace(/\\\n\s*/g, "")
+			.replaceAll('\\"', '"')
+			.replaceAll("{{", "\u0001")
+			.replaceAll("}}", "\u0002"));
+	}
+	if (templates.length === 0) throw new Error(`no format! call in ${what}`);
+	return templates;
+}
+
+/** The template of the one `format!` call in `body`. */
 function rustFormat(body: string, what: string): string {
-	const call = body.indexOf("format!(");
-	if (call < 0) throw new Error(`no format! call in ${what}`);
-	const literal = /"((?:[^"\\]|\\[\s\S])*)"/.exec(body.slice(call));
-	if (literal === null) throw new Error(`no format template in ${what}`);
-	return literal[1]!
-		// A trailing backslash continues a Rust literal onto the next line,
-		// swallowing that line's indentation with it.
-		.replace(/\\\n\s*/g, "")
-		.replaceAll('\\"', '"')
-		.replaceAll("{{", "\u0001")
-		.replaceAll("}}", "\u0002");
+	const templates = rustFormats(body, what);
+	if (templates.length !== 1) throw new Error(`${what} holds ${templates.length} format! calls, not one`);
+	return templates[0]!;
+}
+
+/**
+ * `template` with each `{}` taking the next of `positional` and each
+ * `{name}` taking `named[name]`. A placeholder with no value, a positional
+ * value left over, or any other placeholder spelling throws, so a template
+ * taking another argument on the Rust side cannot pass unread.
+ */
+function fill(template: string, what: string, positional: string[], named: Record<string, string> = {}): string {
+	let next = 0;
+	const filled = template.replace(/\{([^{}]*)\}/g, (slot, key: string) => {
+		if (key === "") {
+			if (next >= positional.length) throw new Error(`${what}'s template takes more than ${positional.length} positional arguments`);
+			return positional[next++]!;
+		}
+		if (!Object.hasOwn(named, key)) throw new Error(`${what}'s template holds ${slot}, which this rendering does not fill`);
+		return named[key]!;
+	});
+	if (next !== positional.length) throw new Error(`${what}'s template takes ${next} positional arguments, not ${positional.length}`);
+	return filled;
 }
 
 function braces(text: string): string {
@@ -297,41 +328,68 @@ function launchOf(env: Record<string, string>, bare: string): string {
 
 /**
  * The command `engine::targets::project_command` writes for `rel` and a hook
- * whose declaration sets `env`, rendered from that function rather than
- * spelled again here. Its template takes the quoted path, then the words that
- * start the script, the bare interpreter its fallback names for a hook that
- * declares no environment. A
- * rename, a respelling or a template taking another argument on the Rust side
- * throws, which is the whole point: a carrier that reads a command kendex no
- * longer writes is every project hook silently off.
+ * whose declaration sets `env`, rendered from the Rust rather than spelled
+ * again here: the two halves `project_parts` builds, joined by
+ * `project_command`'s own template. The walk's template takes the quoted
+ * path; the run's takes the words that start the script, the bare interpreter
+ * its fallback names for a hook that declares no environment. A rename, a
+ * respelling or a template taking another argument on the Rust side throws,
+ * which is the whole point: a carrier that reads a command kendex no longer
+ * writes is every project hook silently off.
  */
 export function projectCommand(rel: string, env: Record<string, string> = {}): string {
-	const body = rustBody("engine/targets.rs", "fn project_command(rel: &str, vars: Option<&BTreeMap<String, String>>) -> String {");
-	const command = rustFormat(body, "project_command");
-	const bare = /unwrap_or_else\(\|\| "([^"]*)"/.exec(body);
-	if (bare === null) throw new Error("project_command names no interpreter for a hook that declares no environment");
-	const slots = command.split("{}");
-	if (slots.length !== 3) throw new Error(`project_command's template takes ${slots.length - 1} arguments, not the path and the launch words`);
-	const [head, middle, tail] = slots as [string, string, string];
-	return braces(`${head}${quoted(rel)}${middle}${launchOf(env, bare[1]!)}${tail}`);
+	const parts = rustBody("engine/targets.rs", "fn project_parts(rel: &str, vars: Option<&BTreeMap<String, String>>) -> (String, String) {");
+	const templates = rustFormats(parts, "project_parts");
+	if (templates.length !== 2) throw new Error(`project_parts holds ${templates.length} format! calls, not the walk and the run`);
+	const [walk, run] = templates as [string, string];
+	const bare = /unwrap_or_else\(\|\| "([^"]*)"/.exec(parts);
+	if (bare === null) throw new Error("project_parts names no interpreter for a hook that declares no environment");
+	return joinedCommand("project_command", "fn project_command(rel: &str, vars: Option<&BTreeMap<String, String>>) -> String {", {
+		walk: fill(walk, "project_parts' walk", [quoted(rel)]),
+		run: fill(run, "project_parts' run", [launchOf(env, bare[1]!)]),
+	});
 }
 
 /**
  * The command `engine::targets::direct_command` writes for a global hook at
- * `path` whose declaration sets `env`, rendered from that function and from
- * `launch` rather than spelled again here: the no-environment arm for an
- * empty `env`, the binding arm with each entry assigned in key order for any
- * other. A value is quoted as `names::quoted` quotes it. A placeholder left
- * unfilled throws, so a template taking another argument cannot pass unread.
+ * `path` whose declaration sets `env`, rendered from the Rust rather than
+ * spelled again here: the halves one arm of `direct_parts` builds, joined by
+ * `direct_command`'s own template. The no-environment arm binds nothing and
+ * runs the path under a bare interpreter; the binding arm, for any other
+ * `env`, takes `launch`'s words with each entry assigned in key order. A value
+ * is quoted as `names::quoted` quotes it.
  */
 export function globalCommand(path: string, env: Record<string, string> = {}): string {
-	const body = rustBody("engine/targets.rs", "fn direct_command(path: &str, vars: Option<&BTreeMap<String, String>>) -> String {");
+	const parts = rustBody("engine/targets.rs", "fn direct_parts(path: &str, vars: Option<&BTreeMap<String, String>>) -> (String, String) {");
 	const set = assignmentsOf(env);
-	const template = rustFormat(set === "" ? body : body.slice(body.lastIndexOf("format!(")), "direct_command");
-	const command = template.replace("{path}", path).replace("{launch}", launchOf(env, ""));
-	const unfilled = /\{[a-z]*\}/.exec(command);
-	if (unfilled !== null) throw new Error(`direct_command's template holds ${unfilled[0]}, which this rendering does not fill`);
-	return braces(command);
+	const [bind, run] = directArm(parts, set === "" ? "None =>" : "Some(launch) =>");
+	const named = { path, launch: launchOf(env, "") };
+	return joinedCommand("direct_command", "fn direct_command(path: &str, vars: Option<&BTreeMap<String, String>>) -> String {", {
+		bind: bind === "" ? "" : fill(bind, "direct_parts' binding", [], named),
+		run: fill(run, "direct_parts' run", [], named),
+	});
+}
+
+/**
+ * The binding and run templates of the `direct_parts` arm `opens` starts, an
+ * empty binding where the arm's tuple opens with `String::new()`.
+ */
+function directArm(body: string, opens: string): [string, string] {
+	const arms = ["None =>", "Some(launch) =>"];
+	const at = body.indexOf(opens);
+	if (at < 0) throw new Error(`direct_parts has no ${opens} arm`);
+	const ends = arms.map((arm) => body.indexOf(arm, at + opens.length)).filter((end) => end >= 0);
+	const arm = body.slice(at + opens.length, ends.length === 0 ? undefined : Math.min(...ends));
+	const templates = rustFormats(arm, `direct_parts' ${opens} arm`);
+	const unbound = /^\s*\(String::new\(\),/.test(arm);
+	if (templates.length !== (unbound ? 1 : 2)) throw new Error(`direct_parts' ${opens} arm holds ${templates.length} format! calls, not its binding and its run`);
+	return unbound ? ["", templates[0]!] : (templates as [string, string]);
+}
+
+/** The command `name`, whose body `opens`, joins from `halves` through its one
+ * `format!` template. */
+function joinedCommand(name: string, opens: string, halves: Record<string, string>): string {
+	return braces(fill(rustFormat(rustBody("engine/targets.rs", opens), name), name, [], halves));
 }
 
 /** The registration kendex writes for a project-scope hook, command and all.
