@@ -84,8 +84,9 @@ fake_out() {
     error-inside-a-line) printf '%s' $'could not check:\n  source github.com/x/y unreachable since 2026-08-01: error: cannot lock ref' ;;
     Error-line) printf '%s' 'Error: loading lock file' ;;
     usage-error) printf '%s' $'error: unexpected argument \'--bogus\' found\n\nUsage: kendex check --quiet' ;;
-    # A kendex older than --report-only, in the spelling kendex prints.
-    too-old) printf '%s' $'Error: unexpected argument \'--report-only\' found\n\nUsage: kendex check [OPTIONS]' ;;
+    # A kendex older than --report-only: clap's refusal as a real one prints
+    # it, lowercase `error:`, exit 2.
+    too-old) printf '%s' $'error: unexpected argument \'--report-only\' found\n\nUsage: kendex check [OPTIONS]' ;;
     fatal) printf '%s' 'kendex: fatal' ;;
     # A report that spells a keyed line of its own. What the hook relays is
     # data, and data cannot forge the hook's contract: the keyed block is the
@@ -249,7 +250,7 @@ assert_eq "$(relayed_text)" "$(fake_out unevaluated)" "the final action line is 
 # The too-old notice runs nothing in the flag's place: one call, with the flag.
 run_row 2 too-old >/dev/null
 assert_eq "$(calls)" "check --quiet --report-only" "a kendex that refuses the flag is not asked again without it"
-assert_contains "$(relayed_text)" "Error: unexpected argument '--report-only' found" "kendex's refusal is relayed under the notice"
+assert_contains "$(relayed_text)" "error: unexpected argument '--report-only' found" "kendex's refusal is relayed under the notice"
 
 echo "session-drift-check: unreadable stdin"
 # Strict mode must not let a failed payload read abort the session start.

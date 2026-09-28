@@ -324,7 +324,9 @@ case "$RC" in
     # comes from before the check read anything, so nothing was checked
     # and it reads as could-not-run.
     case "$OUTPUT" in
-      "Error: unexpected argument '--report-only'"* | "error: unexpected argument '--report-only'"*)
+      # clap's own refusal of an argument it does not know, in the spelling
+      # clap prints.
+      "error: unexpected argument '--report-only'"*)
         install_route
         notice check kendex-too-old
         ;;
