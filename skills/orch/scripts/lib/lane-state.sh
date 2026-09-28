@@ -333,18 +333,19 @@ lane_process_table() {
 # lane_process_table TABLE, or is ROOT itself where INCLUDE_ROOT is 1. Prints
 # `found` or `none`. The walk up each parent chain is bounded by the table's
 # row count: no real chain is longer, and a table read mid-reparent that holds
-# a cycle cannot loop it.
-lane_process_below() { # TABLE ROOT NAME_RE INCLUDE_ROOT
+# a cycle cannot loop it. DEPTH, where given, bounds how far below ROOT the
+# match may sit: 1 is a child of ROOT, 2 a grandchild.
+lane_process_below() { # TABLE ROOT NAME_RE INCLUDE_ROOT [DEPTH]
   # The ERE crosses in the environment: awk -v would read its backslashes as
   # escape sequences and unescape the metacharacters the caller escaped.
-  LANE_BELOW_RE="$3" awk -v root="$2" -v self="$4" '
+  LANE_BELOW_RE="$3" awk -v root="$2" -v self="$4" -v depth="${5:-}" '
     BEGIN { re = ENVIRON["LANE_BELOW_RE"] }
     { n = $0; sub(/^[^ ]+ [^ ]+ /, "", n); parent[$1] = $2; name[$1] = n; pid[NR] = $1 }
     END {
       for (i = 1; i <= NR; i++) {
         if (name[pid[i]] !~ re) continue
         q = (self == 1) ? pid[i] : parent[pid[i]]
-        for (hops = 0; q != "" && hops < NR; hops++) {
+        for (hops = (self == 1) ? 0 : 1; q != "" && hops < NR + 1 && (depth == "" || hops <= depth + 0); hops++) {
           if (q == root) { print "found"; exit }
           q = parent[q]
         }

@@ -293,12 +293,13 @@
 #                    under any other posture the walk skips it. Print mode records this
 #                    session rather than a later preference.
 #                    Refused beside --dead-pane, whose line already holds them
-#   --harness H      The harness this overseer runs, claude or codex, where its
-#                    pane cannot say: a Codex pane reports node, which names
-#                    either, and the turn-end reading that would name it does
-#                    not exist before the first turn end. It answers after
-#                    the launch record and the session's SessionStart row and
-#                    ahead of the pane and the reading; any other value is refused as
+#   --harness H      The harness this overseer runs, claude, codex or copilot,
+#                    where its pane cannot say: a Codex or Copilot CLI pane
+#                    reports node, which names none of them, and the turn-end
+#                    reading that would name it does not exist before the
+#                    first turn end. It answers after the launch record and
+#                    the session's SessionStart row and ahead of the pane and
+#                    the reading; any other value is refused as
 #                    invalid-harness, and --dead-pane, whose recorded line
 #                    names its harness, refuses it
 #   --context TOKENS:WINDOW
@@ -434,8 +435,8 @@ message() { # KEY FIELD=VALUE...
     pane-unreadable) text='The caller pane could not be read.' ;;
     harness-unnamed) text='The caller pane runs no harness this script launches, and neither --harness nor a context reading of this pane names one.' ;;
     invalid-harness) text='--harness takes claude, codex or copilot.' ;;
-    copilot-unmeasured) text='This overseer runs Copilot CLI, and lanes measures no Copilot account until KEN-1935 adds that reading, so no mark, wall or lane pick can be judged for it. Nothing was launched. For a Copilot overseer this script builds the --print-launch-line line alone, and --dead-pane replays it.' ;;
-    copilot-account-unknown) text='This overseer runs Copilot CLI and its launch record names no account, and no reader of COPILOT_HOME answers for a session until KEN-1935 adds one. Nothing was printed. Record the account with oversee register --account DIR from this pane, then print the line again.' ;;
+    copilot-unmeasured) text='This overseer runs Copilot CLI, and lanes makes no reading of a Copilot account, so no mark, wall or lane pick can be judged for it. Nothing was launched. For a Copilot overseer this script builds the --print-launch-line line alone, and --dead-pane replays it.' ;;
+    copilot-account-unknown) text='This overseer runs Copilot CLI and its launch record names no account, and nothing here reads COPILOT_HOME for a session. Nothing was printed. Record the account with oversee register --account DIR from this pane, then print the line again.' ;;
     invalid-context) text='--context takes TOKENS:WINDOW, two whole numbers, the window empty where no adapter named one.' ;;
     context-unmeasured) text='No account mark is reached and the context mark was not judged: the --context reading names no window (window-unnamed), or this run was handed none (context-unread). Nothing was launched. At the context mark, run the succession the turn-end refusal names, which carries the reading. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
     context-below-mark) text='No mark is reached; nothing was launched. The shared context rule requires no handoff at this reading. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;

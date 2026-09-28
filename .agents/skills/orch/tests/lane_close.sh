@@ -608,6 +608,33 @@ if proc_table_readable; then
     'rc=1 timeout=1 lane=alive status=running' "control: under its harness name alone a copilot lane's MainThread is never signalled"
   kill "$LANE_PID" 2>/dev/null || true
 
+  # A record naming no harness over a pane that started the Copilot binary
+  # directly, whose command then reads copilot: the pane names the harness,
+  # and the stop ends the MainThread process in the worktree.
+  copilot_unnamed() { # SCRIPT
+    MAIL_ROOT="$LANE_ROOT" write_state running copilot ""
+    jq 'del(.lanes[0].harness)' "$STATE" >"$STATE.tmp" && mv -- "$STATE.tmp" "$STATE"
+    write_panes copilot; copilot_screen
+    start_local_harness copilot MainThread
+    PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$1"
+  }
+  copilot_unnamed "$SCRIPT"
+  assert_eq "rc=$RC lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=0 lane=gone status=done' "a record naming no harness takes copilot from a pane that reads copilot"
+  # Control: the pane command read without copilot leaves the harness unnamed.
+  # The copy replaces the mutant tree's link to lane-close by rename, so the
+  # shipped script is never written through it.
+  MUTANT="$(lib_mutant copilot-pane '' '')"
+  sed 's/^  claude|codex|pi|copilot) derive_identity harness "$pane_cmd" ;;$/  claude|codex|pi) derive_identity harness "$pane_cmd" ;;/' \
+    "$SCRIPTS/lane-close" >"$MUTANT.copy"
+  chmod +x "$MUTANT.copy"
+  mv -f -- "$MUTANT.copy" "$MUTANT"
+  assert_eq "$(grep -c '^  claude|codex|pi) derive_identity harness' "$MUTANT")" 1 "control: the mutant drops copilot from the pane read"
+  copilot_unnamed "$MUTANT"
+  assert_eq "rc=$RC refusal=$(grep -c '^lane-close: harness-unsupported item=KEN-1 harness=unknown$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID")" \
+    'rc=1 refusal=1 lane=alive' "control: without copilot in the pane read the record's missing harness refuses"
+  kill "$LANE_PID" 2>/dev/null || true
+
   # A host with no directory reader at all refuses under its own cause, never
   # as a failed process read.
   MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen

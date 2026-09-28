@@ -82,9 +82,9 @@
 #            pane's foreground process names, or copilot where the pane reads
 #            node or copilot and a Copilot process runs at most two levels
 #            under it (its account --account's alone), and the pane's
-#            directory, the model unknown. The home is a private CODEX_HOME where the session
-#            carries one, the account otherwise; effort is recorded as
-#            unknown. The generation is one past the record's,
+#            directory, the model unknown. The home is a private CODEX_HOME
+#            where the session carries one, the account otherwise; effort is
+#            recorded as unknown. The generation is one past the record's,
 #            or the record's own where it already names this pane, so
 #            registering twice launches nothing and counts nothing twice.
 #            Prints `registered` naming the session and generation.

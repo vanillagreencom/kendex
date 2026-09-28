@@ -72,13 +72,14 @@ REPO="$TMP_ROOT/repo"
 stage "$REPO"
 
 # launch NAME ARGS... — the command CC's launch composed, in CMD, or empty with
-# its stderr in ERR.
+# its stderr in ERR. ROW_ENV holds assignments a row adds to LAUNCH_ENV.
 CMD="" ERR=""
+ROW_ENV=()
 launch() { # NAME ARGS...
   local name="$1" i rc=0
   shift
   rm -f -- "$TMP_ROOT/$name.cap"
-  ( cd "$REPO" && env "${LAUNCH_ENV[@]}" OT_CAPTURE="$TMP_ROOT/$name.cap" ORCH_STATE_DIR="$TMP_ROOT/state" \
+  ( cd "$REPO" && env "${LAUNCH_ENV[@]}" ${ROW_ENV[@]+"${ROW_ENV[@]}"} OT_CAPTURE="$TMP_ROOT/$name.cap" ORCH_STATE_DIR="$TMP_ROOT/state" \
       PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "${OT:-$REPO/scripts/open-terminal}" --ghostty "$@" ) \
     >/dev/null 2>"$TMP_ROOT/$name.err" || rc=$?
   ERR="$(cat "$TMP_ROOT/$name.err")"
@@ -109,18 +110,19 @@ assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and 
   "github:copilot emits the same kickoff carrying repo#item"
 
 echo "=== a copilot relaunch resumes the session whose record names the lane's worktree ==="
-# session ID DIR AGE — a session record as Copilot CLI 1.0.88 writes it, whose
-# file is AGE minutes old.
-session() { # ID DIR AGE
-  local d="$FLEET_HOME/.copilot/session-state/$1"
+# session ID DIR STAMP [HOME] — a session record as Copilot CLI 1.0.88 writes
+# it, under the account HOME (the default copilot home by default), its file
+# dated STAMP in touch -t form, which BSD and GNU touch both take.
+session() { # ID DIR STAMP [HOME]
+  local d="${4:-$FLEET_HOME/.copilot}/session-state/$1"
   mkdir -p "$d"
   printf 'id: %s\ncwd: %s\ngit_root: %s\nbranch: cc-738\nclient_name: github/cli\nuser_named: false\n' "$1" "$2" "$2" > "$d/workspace.yaml"
-  touch -d "$3 minutes ago" "$d/workspace.yaml"
+  touch -t "$3" "$d/workspace.yaml"
 }
 WT="$TMP_ROOT/wt/CC-738"
-session 11111111-aaaa-4aaa-8aaa-111111111111 "$WT" 30
-session 22222222-bbbb-4bbb-8bbb-222222222222 "$WT" 10
-session 33333333-cccc-4ccc-8ccc-333333333333 "$TMP_ROOT/wt/CC-999" 1
+session 11111111-aaaa-4aaa-8aaa-111111111111 "$WT" 200001010000
+session 22222222-bbbb-4bbb-8bbb-222222222222 "$WT" 200001010100
+session 33333333-cccc-4ccc-8ccc-333333333333 "$TMP_ROOT/wt/CC-999" 200001010200
 RESUME_LINE="'Resume the orch workflow for CC-738 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-738 first and act on every directive it prints, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --once --item CC-738 as a background command.'"
 launch relaunch --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
 assert_contains "$CMD" "copilot $LEAD --resume=22222222-bbbb-4bbb-8bbb-222222222222 -i $RESUME_LINE" \
@@ -128,6 +130,19 @@ assert_contains "$CMD" "copilot $LEAD --resume=22222222-bbbb-4bbb-8bbb-222222222
 launch relaunch-none --relaunch --harness copilot --launch-flags "$FLAGS" CC-740
 assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-740'" \
   "a relaunch whose worktree no session record names renders the fresh brief"
+# The store is the account the launch runs on: a named lane's, then the
+# ambient COPILOT_HOME, and only then the default home. Each row's records sit
+# in that store alone.
+session 44444444-dddd-4ddd-8ddd-444444444444 "$TMP_ROOT/wt/CC-741" 200001010300 "$TMP_ROOT/.1copilot"
+launch relaunch-lane --relaunch --harness copilot --lane "$TMP_ROOT/.1copilot" --launch-flags "$FLAGS" CC-741
+assert_contains "$CMD" "--resume=44444444-dddd-4ddd-8ddd-444444444444 -i" \
+  "a relaunch under --lane resumes from that account's own session store"
+session 55555555-eeee-4eee-8eee-555555555555 "$TMP_ROOT/wt/CC-742" 200001010400 "$TMP_ROOT/.envcopilot"
+ROW_ENV=(COPILOT_HOME="$TMP_ROOT/.envcopilot")
+launch relaunch-env --relaunch --harness copilot --launch-flags "$FLAGS" CC-742
+ROW_ENV=()
+assert_contains "$CMD" "--resume=55555555-eeee-4eee-8eee-555555555555 -i" \
+  "a relaunch naming no lane resumes from the store the ambient COPILOT_HOME names"
 
 echo "=== a named copilot lane runs under COPILOT_HOME ==="
 (
@@ -158,6 +173,14 @@ mutate_file "$TMP_ROOT/cwd-ctrl/scripts/lib/lane-relaunch.sh" 'index($0, "cwd: "
 OT="$TMP_ROOT/cwd-ctrl/scripts/open-terminal" launch cwd-ctrl --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
 assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-738'" \
   "control: without the record's directory the relaunch resumes nothing and starts afresh"
+# The named lane's store cut from the lookup: the --lane relaunch scans the
+# default home, which holds no record of its worktree, and starts afresh.
+stage "$TMP_ROOT/lane-store-ctrl"
+mutate_file "$TMP_ROOT/lane-store-ctrl/scripts/lib/lane-relaunch.sh" \
+  '[[ "${LANE_ENV%%=*}" != COPILOT_HOME ]] || config="${LANE_ENV#*=}"' ':'
+OT="$TMP_ROOT/lane-store-ctrl/scripts/open-terminal" launch lane-store-ctrl --relaunch --harness copilot --lane "$TMP_ROOT/.1copilot" --launch-flags "$FLAGS" CC-741
+assert_contains "$CMD" "'--allow-all' -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-741'" \
+  "control: without the named lane's store a --lane relaunch resumes nothing"
 # The account rules, each cut from a private copy of the library: the copilot
 # variable, then copilot's admission to the launcher form.
 account_ctrl() { # NAME OLD NEW — the copy's answers in $TMP_ROOT/NAME.out

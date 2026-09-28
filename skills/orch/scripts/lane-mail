@@ -72,7 +72,9 @@ Lane side, rooted at the lane's own git worktree:
               at its start or removed while it runs. With --once it exits 0
               after its first announcement, withdrawing to-lane.watch, for a
               harness whose only background wake is a command's exit: the
-              lane re-arms it once it has read what it announced
+              lane re-arms it once it has read what it announced. Whether
+              that exit wakes a Copilot CLI lane is not yet measured; the
+              orch watch-delivery reference owns that premise
 
 Overseer side:
   send --item ITEM (--re MSGID | --directive | --halt) --file PATH
@@ -249,7 +251,8 @@ so a monitor is polling that mailbox and wakes its lane; it is `none`
 otherwise, and a Claude Code, Codex or Pi lane needs a wake while a lane on
 another harness takes none. A Copilot lane's `none` is a `watch --once` that
 announced and is not yet re-armed, and the re-armed watch announces what
-still stands unread. A `peer send` writes a peer's overseer mailbox, so
+still stands unread; the orch watch-delivery reference says what the
+overseer does where that watch's exit does not wake the lane. A `peer send` writes a peer's overseer mailbox, so
 its receipt always names item `overseer` rather than the repository it reached.
 Silence is not a success: a send that printed no receipt appended nothing.
 

@@ -247,14 +247,19 @@ liveness_rows
 # watch exits 0 at its first announcement, which is the wake, and the exit
 # withdraws its liveness record, so a send meanwhile reads no monitor until the
 # lane re-arms. The re-armed watch announces what still stands unread.
-once_row() { # [BIN] — ONCE holds how the watch ended
-  local tries=0 rc=0
+# The watch's exit is awaited up to TRIES polls of 0.2 s: 75 on the path that
+# expects it, so a loaded runner is not read as a watch that kept running,
+# and 15 for the control that expects it still running, which waits the
+# whole bound.
+once_row() { # TRIES [BIN] — ONCE holds how the watch ended
+  local tries=0 rc=0 bound="$1"
+  shift
   new_lane "once${1:+-mutant}"
   start_watch "${1:-$LANE_MAIL}" --item KEN-1 --once
   await_polls 1
   send_directive 'Wake up.'
   await_announced 1
-  while kill -0 "$WATCH_PID" 2>/dev/null && [ "$tries" -lt 15 ]; do sleep 0.2; tries=$((tries + 1)); done
+  while kill -0 "$WATCH_PID" 2>/dev/null && [ "$tries" -lt "$bound" ]; do sleep 0.2; tries=$((tries + 1)); done
   if kill -0 "$WATCH_PID" 2>/dev/null; then
     ONCE=running
     stop_watch
@@ -264,7 +269,7 @@ once_row() { # [BIN] — ONCE holds how the watch ended
     ONCE="exit=$rc"
   fi
 }
-once_row
+once_row 75
 assert_eq "$ONCE $(mail_lines | tr '\n' '|')" "exit=0 lane-mail: mail=KEN-1 new=1|" \
   "a --once watch exits 0 at its first announcement"
 assert_eq "$([ -e "$BOX/to-lane.watch" ] && echo kept || echo withdrawn)" "withdrawn" \
@@ -379,7 +384,7 @@ assert_eq "$([ "$(announced)" -gt 1 ] && echo repeated || echo once)" "repeated"
 stop_watch
 
 mutant once-keeps-running '        [ "$ONCE" -eq 0 ] || exit 0' '        :'
-once_row "$MUTANT"
+once_row 15 "$MUTANT"
 assert_eq "$ONCE" "running" \
   "control: without its exit a --once watch keeps polling after its announcement, and wakes nobody"
 
