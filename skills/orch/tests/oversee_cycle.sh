@@ -151,11 +151,11 @@ render|301|standard|300|miss|false
 render|300|standard|300|met|false
 trivial|301|standard|300|miss|false
 trivial|300|standard|300|met|false
-micro|901|standard|900|miss|false
-micro|900|micro|900|met|false
-small|1501|standard|1500|miss|false
-small|1500|micro|1500|met|true
-small|1500|small|1500|met|false
+micro|1201|standard|1200|miss|false
+micro|1200|micro|1200|met|false
+small|1801|standard|1800|miss|false
+small|1800|micro|1800|met|true
+small|1800|small|1800|met|false
 standard|5401|standard|5400|miss|false
 standard|5400|micro|5400|met|true
 standard|5400|small|5400|met|true
@@ -202,16 +202,16 @@ assert_eq "$(field class "$got")|$(grep -o -- '--head [^ ]*' "$CASE/class.calls"
 echo "=== the record carries its seven stamps, its class and its rounds ==="
 new_case stamps
 printf micro > "$CASE/class"
-timeline 1200 300 500
+timeline 1500 300 500
 # The lane's own state, where workflow-state puts a local lane's in this
 # checkout; each round figure has a value no other one shares.
 jq -n '{first_panel: {agents: ["a"]}, rereview_cycles: 2, cycles: 5, pr_comment_review: {iterations: 4},
         validate_rounds: [{mode: "full"}, {mode: "range"}, {mode: "full"}]}' > "$REPO/tmp/workflow-state-KEN-2.json"
 assert_eq "$(record KEN-2 micro)" \
-  "rc=0 cycle item=KEN-2 pr=7 class=micro tier=micro target=900 actual=1200 verdict=miss phase=merged phase_secs=780 missing=- review=3 fix=5 bot=4 full_validations=2 escaped=false refixed=true" \
+  "rc=0 cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 actual=1500 verdict=miss phase=merged phase_secs=1080 missing=- review=3 fix=5 bot=4 full_validations=2 escaped=false refixed=true" \
   "the printed line: a miss whose longest gap ends at the merge, and a push after the first gate pass"
 assert_eq "$(state '.lanes[] | select(.item == "KEN-2") | .cycle | [.class, .tier, .verdict, .stamps]')" \
-  "[\"micro\",\"micro\",\"miss\",{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":\"$(at 120)\",\"gate_green\":\"$(at 300)\",\"ci_green\":\"$(at 360)\",\"armed\":\"$(at 420)\",\"merged\":\"$(at 1200)\"}]" \
+  "[\"micro\",\"micro\",\"miss\",{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":\"$(at 120)\",\"gate_green\":\"$(at 300)\",\"ci_green\":\"$(at 360)\",\"armed\":\"$(at 420)\",\"merged\":\"$(at 1500)\"}]" \
   "the lane record reads back the class and the seven stamps"
 assert_eq "$(state '[.lanes[] | select(.item != "KEN-2") | has("cycle")] | any')" "false" "no other record is written"
 assert_eq "$(state '.fleet_log | map(.kind + ":" + .item) | join(",")')" '"cycle:KEN-2"' "one cycle row joins the fleet log"
@@ -301,7 +301,7 @@ jq -n --arg merge "$MERGE" --arg fc "$(at 900)" --arg cr "$(at 960)" --arg gate 
   '{pr: 7, merge_commit: $merge, stamps: {first_commit: $fc, created: $cr, last_push: $cr, first_gate_met: null,
     gate_met: $gate, ci_green: $ci, armed: null, queued: $gate, merged: $m}}' > "$CASE/timeline.json"
 assert_eq "$(record KEN-3 micro)" \
-  "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1500 actual=1100 verdict=met phase=first_commit phase_secs=900 missing=- review=- fix=- bot=- full_validations=- escaped=true refixed=-" \
+  "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1800 actual=1100 verdict=met phase=first_commit phase_secs=900 missing=- review=- fix=- bot=- full_validations=- escaped=true refixed=-" \
   "launch to first commit dominates, queued stands in for armed, a micro tier merged small escaped, and no gate pass leaves refixed unknown"
 
 echo "=== refusals ==="
@@ -390,7 +390,7 @@ assert_eq "rc=$rc out=$out files=$(ls -A "$CASE/state" | tr '\n' ' ')" "rc=0 out
 assert_eq "$(record KEN-1 micro) $(head -n 1 "$CASE/err")" "rc=1  oversee-cycle: state-missing=$CASE/state/workflow-state-oversee.json" "while a record refuses"
 
 echo "=== --help prints the targets the verdict reads ==="
-assert_eq "$("$BIN" --help | tail -n 1)" "Targets, seconds: render 300, trivial 300, micro 900, small 1500, standard 5400" \
+assert_eq "$("$BIN" --help | tail -n 1)" "Targets, seconds: render 300, trivial 300, micro 1200, small 1800, standard 5400" \
   "the last help line is the target table"
 
 # --- controls ----------------------------------------------------------------

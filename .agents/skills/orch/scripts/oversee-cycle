@@ -79,7 +79,7 @@ source "$SCRIPT_DIR/lib/lane-gitfile.sh"
 # shellcheck source=../../github/scripts/lib/gh-repo.sh
 source "$SCRIPT_DIR/../../github/scripts/lib/gh-repo.sh"
 
-TARGETS='{"render":300,"trivial":300,"micro":900,"small":1500,"standard":5400}'
+TARGETS='{"render":300,"trivial":300,"micro":1200,"small":1800,"standard":5400}'
 
 usage() {
   awk 'NR > 1 && /^set -euo/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"
