@@ -1456,7 +1456,7 @@ assert_eq "$(gap_record)" "null transcript-unnamed $OVERSEER_SERVER $OVERSEER_PA
 # Every other overseer turn end that takes no reading writes the record too,
 # with the reader's word for why, and a usage object the adapter does not read
 # is reported under its own key as a lane's is: one row per word.
-overseer_gap_word() { # NAME TRANSCRIPT_LINE [INSTALL_DIR]
+overseer_gap_word() { # NAME TRANSCRIPT_LINE|- [INSTALL_DIR]
   local cop_transcript="$TMP_ROOT/session-state/s1/events.jsonl"
   new_overseer "$1"
   printf '%s\n' "$2" > "$TRANSCRIPT"
@@ -1469,11 +1469,14 @@ overseer_gap_word() { # NAME TRANSCRIPT_LINE [INSTALL_DIR]
   if [ "${3:-}" = .github ]; then
     # Copilot's own agentStop, the lead's: its transcript sits in the
     # directory named for the session.
+    # A TRANSCRIPT_LINE of `-` is an agentStop naming no transcript at all.
     mkdir -p "${cop_transcript%/*}"
     printf '%s\n' "$2" > "$cop_transcript"
+    [ "$2" != - ] || cop_transcript=""
     # shellcheck disable=SC2046
     run_payload "$(jq -nc --arg p "$cop_transcript" \
-      '{sessionId:"s1", timestamp:1, cwd:"/w", transcriptPath:$p, stopReason:"end_turn", stop_hook_active:false}')" \
+      '{sessionId:"s1", timestamp:1, cwd:"/w", stopReason:"end_turn", stop_hook_active:false}
+        + (if $p == "" then {} else {transcriptPath:$p} end)')" \
       $(overseer_env)
   else
     # shellcheck disable=SC2046
@@ -1492,20 +1495,23 @@ assert_eq "$(overseer_gap_word overseer_usage_unread "$(usage_line unread 900000
 # An install whose harness no adapter reads, one naming none and Copilot's,
 # reports that under harness-unlisted and writes no gap: its context is never
 # read, so a gap would stand at every turn end for the session's life.
-while IFS='|' read -r install what; do
-  assert_eq "$(overseer_gap_word "overseer_unlisted_${install#.}" "$(usage_line claude 600000)" "$install")" \
-    "record=none unread=0 unlisted=1" \
-    "$what reports harness-unlisted and writes no gap record" "$ERR_FILE"
+# The harness is decided before the payload's transcript, so an agentStop
+# naming none writes no gap either, and says nothing: there is no transcript
+# to go unread.
+while IFS='|' read -r name install line expected what; do
+  assert_eq "$(overseer_gap_word "$name" "$line" "$install")" "$expected" \
+    "$what writes no gap record" "$ERR_FILE"
 done <<INSTALLS
-.other|an install naming no harness
-.github|a Copilot install
+overseer_unlisted_other|.other|$(usage_line claude 600000)|record=none unread=0 unlisted=1|an install naming no harness reports harness-unlisted and
+overseer_unlisted_github|.github|$(usage_line claude 600000)|record=none unread=0 unlisted=1|a Copilot install reports harness-unlisted and
+overseer_unlisted_untranscribed|.github|-|record=none unread=0 unlisted=0|a Copilot agentStop naming no transcript
 INSTALLS
-variant unlisted-gap -e 's/^    READ_GAP=""$/    READ_GAP=harness-unlisted/'
+variant unlisted-late -e '/^  if \[ -z "\$HARNESS" \] || \[ "\$HARNESS" = copilot \]; then$/,/^  fi$/d'
 HOOK_SAVED="$HOOK"
 HOOK="$VARIANT_PATH"
-assert_eq "$(overseer_gap_word control_unlisted_gap "$(usage_line claude 600000)" .github)" \
-  "record=null harness-unlisted $OVERSEER_SERVER $OVERSEER_PANE unread=0 unlisted=1" \
-  "control: a hook that names a gap for a harness it never reads writes one at every turn end"
+assert_eq "$(overseer_gap_word control_unlisted_late - .github)" \
+  "record=null transcript-unnamed $OVERSEER_SERVER $OVERSEER_PANE unread=0 unlisted=0" \
+  "control: a hook that decides the harness after the transcript names a gap for Copilot at every turn end"
 HOOK="$HOOK_SAVED"
 variant no-overseer-unread -e 's/^          "\$LANE_CONTEXT_UNREAD") message usage-unread "\$TRANSCRIPT" ;;$/          "$LANE_CONTEXT_UNREAD") ;;/'
 HOOK_SAVED="$HOOK"

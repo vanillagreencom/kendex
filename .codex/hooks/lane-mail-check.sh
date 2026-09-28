@@ -1402,18 +1402,20 @@ context_read_and_record() { # BOX PANE_KEY
   TOKENS=""
   WINDOW=""
   MODEL=""
-  READ_GAP=transcript-unnamed
-  [ -n "$TRANSCRIPT" ] || return 0
+  READ_GAP=""
   # No orch adapter reads a Copilot transcript, so a Copilot lane's context is
-  # reported unmeasured under the same key as a harness this hook cannot name.
-  # No gap is named for it either: this hook never reads that context, so a
-  # gap would stand at every turn end for the life of the session, and the
-  # record stays as it was, the mark documented as unjudged there.
+  # reported unmeasured under the same key as a harness this hook cannot name,
+  # where the payload names a transcript to go unread. No gap is named for it,
+  # whatever the payload carries: this hook never reads that context, so a gap
+  # would stand at every turn end for the life of the session, and the record
+  # stays as it was, the mark documented as unjudged there. Decided before
+  # anything else, so no path through such an install names one.
   if [ -z "$HARNESS" ] || [ "$HARNESS" = copilot ]; then
-    message harness-unlisted "$HOOK_DIR"
-    READ_GAP=""
+    [ -z "$TRANSCRIPT" ] || message harness-unlisted "$HOOK_DIR"
     return 0
   fi
+  READ_GAP=transcript-unnamed
+  [ -n "$TRANSCRIPT" ] || return 0
   { [ -f "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ]; } || refuse_handoff transcript unreadable
   if ! READING=$(tail -c "$TRANSCRIPT_WINDOW" -- "$TRANSCRIPT" 2>"$WORK_DIR/tail.err" |
     lane_context_reading "$HARNESS" "$PAYLOAD_WINDOW" "$LANE_DIR" 2>"$WORK_DIR/transcript.err"); then
