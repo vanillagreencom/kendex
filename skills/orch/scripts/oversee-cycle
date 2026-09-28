@@ -57,7 +57,9 @@
 #             it opened, bot_wait where there is neither
 #             pushes and bot reviews are pr-timeline's `push_times`, the
 #             head branch's push log, and `bot_review_times`. Null while any
-#             stamp is missing or where the timeline read no push log
+#             stamp is missing, or where pr-timeline's `push_times` is null:
+#             no head branch named, or no push in its log for the life the
+#             PR opened in
 #   cause     the largest gate wait, the earlier of bot_wait, thread_fix and
 #             paused winning a tie, where the phase is gate_green; null on any
 #             other phase

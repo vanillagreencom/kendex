@@ -309,12 +309,12 @@ echo "=== the gate_green phase is split into the waits it holds ==="
 # gate_timeline PUSHES REVIEWS MERGED: a PR whose gate_green gap, opened at
 # 120 to the gate at 3000, is the longest unless MERGED is late; CI 3060,
 # armed 3100. PUSHES and REVIEWS are space-separated seconds past T0, `-`
-# for none; PUSHES `unread` is a timeline that read no push log.
+# for none; PUSHES `null` is a timeline whose `push_times` is null.
 gate_timeline() {
   local lists
   lists="$(jq -n --argjson t0 "$T0" --arg p "$1" --arg r "$2" \
     'def times($s): [$s | split(" ")[] | select(. != "-" and . != "") | tonumber + $t0 | todate];
-     {push_times: (if $p == "unread" then null else times($p) end), bot_review_times: times($r)}')"
+     {push_times: (if $p == "null" then null else times($p) end), bot_review_times: times($r)}')"
   jq -n --arg merge "$MERGE" --arg fc "$(at 60)" --arg cr "$(at 120)" --arg gate "$(at 3000)" \
     --arg ci "$(at 3060)" --arg armed "$(at 3100)" --arg merged "$(at "$3")" --argjson lists "$lists" \
     '{pr: 7, merge_commit: $merge,
@@ -334,7 +334,7 @@ pauses() { # ITEM PAUSES PARKED
 # pause taken out of the wait it falls in, pauses overlapping one another and
 # a park still standing, the wait the gap opens in read from before it, a
 # push a later rebase rewrote, which the push log keeps, a phase other than
-# gate_green, and a timeline that read no push log.
+# gate_green, and a timeline whose `push_times` is null.
 #   label|pushes|reviews|pauses|parked|merged|waits
 while IFS='|' read -r label pushes reviews paused parked merged want; do
   [[ -n "$label" ]] || continue
@@ -352,7 +352,7 @@ a review before the gap opens it on the lane|1400|110 1500|-|-|3200|phase=gate_g
 no push and no review is all bot wait|-|-|-|-|3200|phase=gate_green cause=bot_wait bot_wait=2880 thread_fix=0 paused=0
 a fix pushed between two reviews and a rebase pushed after them are both bot waits|900 2500|400 2000|-|-|3200|phase=gate_green cause=bot_wait bot_wait=1880 thread_fix=1000 paused=0
 another phase names no cause and keeps the split|100 1400|400 1500 2000|-|-|9000|phase=merged cause=- bot_wait=380 thread_fix=2500 paused=0
-no push log splits nothing|unread|400 1500 2000|-|-|3200|phase=gate_green cause=- bot_wait=- thread_fix=- paused=-
+null push times split nothing|null|400 1500 2000|-|-|3200|phase=gate_green cause=- bot_wait=- thread_fix=- paused=-
 ROWS
 new_case split-record
 printf micro > "$CASE/class"
