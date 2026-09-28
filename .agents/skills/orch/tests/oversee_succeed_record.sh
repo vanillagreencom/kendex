@@ -54,7 +54,7 @@ BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN" "$TMP_ROOT/work/tmp"
 # A harness stub draws the hint a running turn shows, so a relaunched session
 # reads as working.
-for harness in claude codex; do
+for harness in claude codex pi; do
   printf '#!/bin/sh\necho "esc to interrupt"\nexec sleep 100000\n' > "$BIN/$harness"
 done
 cat > "$BIN/kendex" <<'STUB'
@@ -64,7 +64,7 @@ case "$1:$2:$3" in
   *) exit 1 ;;
 esac
 STUB
-chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex"
+chmod +x "$BIN/claude" "$BIN/codex" "$BIN/pi" "$BIN/kendex"
 # A caller whose foreground process names claude: a copy of sleep, since a
 # script or a shell named for the harness can reset the name tmux reads.
 cp "$(command -v sleep)" "$BIN/hclaude"
@@ -357,6 +357,31 @@ pool_succeed_row "$PIROOTCTL/oversee-succeed"
 assert_eq "$(grep -c '^oversee-succeed: pi-handoff-unmarked' <<<"$ERR" || true)|$(grep -o "lane=$PI_ROOT2" <<<"$OUT" | head -1)" \
   "0|lane=$PI_ROOT2" \
   "control: a gate reading the caller's Pi root lets the pool successor open on an unmarked root"
+
+# A pi overseer launched under pi's split spelling, `--provider pi-claude
+# --model <id>`, at its context mark with Fable room on its own account: its
+# successor's record names the model with its provider, so the next
+# generation's turn-end judgement reaches the same claude account.
+split_row() { # [SUCCEED_BIN]
+  new_caller claude
+  state "$(record "$CALLER_PANE" "$H/.claude" "" "$(jq -cn --arg cwd "$TMP_ROOT/work" '{harness: "pi", model: null, effort: null, cwd: $cwd}')")"
+  SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --context 950000:1000000 --wait-secs 20 \
+    -- --provider pi-claude --model claude-fable-5-1 --thinking high
+  SPLIT_RC="$RC"
+  CALLER_PANE="$(jq -r '.overseer.pane' "$FLEET_STATE")"
+  SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
+}
+split_row
+assert_eq "$SPLIT_RC|$(jq -r '.overseer | [.harness, .model] | join(" ")' "$FLEET_STATE")|$RC|$(judged)" \
+  "0|pi pi-claude/claude-fable-5-1|0|account-below-mark headroom=90" \
+  "a split --provider launch records the model with its provider, and the next generation is judged on its claude account" "$TMP_ROOT/err"
+SPLITCTL="$(mutant_scripts splitctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$SPLITCTL/lib/overseer-launch.sh" '  ol_identity "$harness" "$lane_dir" "$OL_LAUNCH_HOME" "$model" \' \
+  '  ol_identity "$harness" "$lane_dir" "$OL_LAUNCH_HOME" "$(launch_choice_value "$(launch_choice_model_spellings "$harness")" "$*")" \'
+split_row "$SPLITCTL/oversee-succeed"
+assert_eq "$(jq -r '.overseer.model' "$FLEET_STATE")|$(judged)" \
+  "claude-fable-5-1|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
+  "control: an identity that reads the bare model word leaves the next generation's account unjudged" "$TMP_ROOT/err"
 
 # The control for the model rule: a caller that ignores the record's model is
 # judged on the reading's.

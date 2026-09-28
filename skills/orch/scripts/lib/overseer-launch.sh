@@ -256,7 +256,8 @@ ol_pick_lane() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
 # harness reads, OL_LAUNCH_HOME the home the launch runs under and OL_FORM
 # the form the lane reaches the harness by (lib/lane-launch.sh). OL_IDENTITY
 # is the launch identity the command carries (ol_identity), the model and
-# effort read out of FLAG... by lib/lane-launch.sh's own readers, so the
+# effort read out of FLAG... by lib/lane-launch.sh's own readers, a pi model
+# with the provider a split `--provider` word names, so the
 # record a launch writes names what the line runs and nothing a caller
 # restated beside it. An identity jq could not build is left empty, which the
 # record writers refuse as their own step rather than record as unknown.
@@ -287,7 +288,7 @@ ol_pick_lane() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
 # the value of `-i`, which starts the interactive session and submits it.
 OL_CMD="" OL_LANE_VAR="" OL_LAUNCH_HOME="" OL_FORM="" OL_TRUST_REASON="" OL_TRUST_ROUTE=""
 ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
-  local harness="$1" handoff="$2" lane_dir="$3" launch_dir="$4" flag cmd brief brief_flag=""
+  local harness="$1" handoff="$2" lane_dir="$3" launch_dir="$4" flag cmd brief brief_flag="" model
   shift 4
   brief="Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $handoff"
   case "$harness" in
@@ -296,7 +297,8 @@ ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
     pi) cmd="pi" brief="/skill:orch oversee after reading the overseer handoff at $handoff" ;;
     *) cmd="codex" ;;
   esac
-  OL_LANE_VAR="$(lane_env_prefix "$harness" - "$(launch_choice_launch_model "$harness" "$*")")"
+  model="$(launch_choice_launch_model "$harness" "$*")"
+  OL_LANE_VAR="$(lane_env_prefix "$harness" - "$model")"
   OL_LANE_VAR="${OL_LANE_VAR%%=*}"
   for flag in "$@"; do
     cmd+=" $(printf %q "$flag")"
@@ -315,8 +317,7 @@ ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
   OL_FORM="$(lane_launch_form "$cmd" "$harness" "$OL_LAUNCH_HOME" "")"
   OL_CMD="$cmd"
   [[ -z "$OL_LAUNCH_HOME" ]] || OL_CMD="$(lane_launch_line "$cmd" "$harness" "$OL_LANE_VAR" "$OL_LAUNCH_HOME" "$OL_FORM")"
-  ol_identity "$harness" "$lane_dir" "$OL_LAUNCH_HOME" \
-    "$(launch_choice_value "$(launch_choice_model_spellings "$harness")" "$*")" \
+  ol_identity "$harness" "$lane_dir" "$OL_LAUNCH_HOME" "$model" \
     "$(launch_choice_effort "$harness" "$*")" "$launch_dir" || OL_IDENTITY=""
 }
 
