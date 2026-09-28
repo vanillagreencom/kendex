@@ -226,38 +226,40 @@ exec git "$@"
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(parse(landed.read_bytes()), expected or data)
 
-    def copilot_launch(self, script=None):
-        """A copilot create's prefix, run: the environment the lane's copilot starts under."""
-        if script is not None:
-            shutil.copy2(script, self.script)
+    def copilot_launch(self, policy=True):
+        """A copilot create's prefix running the command open-terminal hands it, on a host whose login profile exports tokens again."""
         result = self.create(harness="copilot")
         self.assertEqual(result.returncode, 0, result.stderr)
         fields = dict(word.split("=", 1) for word in result.stdout.decode().strip().split("\t"))
+        (self.root / ".bash_profile").write_text("export GH_TOKEN=profile-token COPILOT_GITHUB_TOKEN=profile-placeholder\n")
         probe = 'printf "%s|%s|%s|%s|%s" "${COPILOT_GITHUB_TOKEN-unset}" "${GH_TOKEN-unset}" "$COPILOT_HOME" "$COPILOT_SKILLS_DIRS" "$COPILOT_ALLOW_ALL"'
-        run = subprocess.run(["bash", "-c", fields["remote-prefix"] + " " + shlex.quote(probe)],
+        words = ""
+        if policy:
+            # The launch policy's one owner, as open-terminal's hosted arm calls it.
+            words = subprocess.run(["bash", "-c", '. "$1" && lane_copilot_env "$2"', "_",
+                                    str(PACKAGE / "scripts/lib/lane-launch.sh"), '"$HOME/.agents/skills"'],
+                                   check=True, capture_output=True).stdout.decode().strip() + " "
+        command = "cd / && exec " + words + "sh -c " + shlex.quote(probe)
+        run = subprocess.run(["bash", "-c", fields["remote-prefix"] + " " + shlex.quote(command)],
                              env={**self.env, "COPILOT_GITHUB_TOKEN": "placeholder", "GH_TOKEN": "app-token",
                                   "GITHUB_TOKEN": "app-token", "HOME": str(self.root)},
                              capture_output=True)
-        return result, fields, run
+        return fields, run
 
     def test_create_runs_copilot_on_its_stored_login(self):
-        """A copilot lane copies no credential and runs on the host account's stored login, every ambient token cleared."""
+        """A copilot lane copies no credential, its provider sets COPILOT_HOME alone, and the launch policy clears every token the host's profile exports."""
         before = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
-        _, _, run = self.copilot_launch()
+        fields, run = self.copilot_launch()
         after = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
         self.assertEqual(after, before)
+        self.assertEqual(fields["remote-prefix"], "exec env " + shlex.quote("COPILOT_HOME=" + self.row["account"]) + " bash -lc")
         self.assertEqual(run.stdout.decode(), "|".join(["unset", "unset", self.row["account"],
                                                         str(self.root / ".agents/skills"), "true"]), run.stderr)
 
-    def test_control_copilot_prefix_keeps_the_ambient_tokens(self):
-        """Control: a prefix that clears nothing inside the login shell hands the lane an ambient token."""
-        mutant = self.root / "mutant-lane-host-ssh"
-        text = (PACKAGE / "scripts/lane-host-ssh").read_text()
-        self.assertEqual(text.count('bash -lc "unset COPILOT_GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN && $2"'), 1)
-        mutant.write_text(text.replace('bash -lc "unset COPILOT_GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN && $2"', 'bash -lc "$2"'))
-        mutant.chmod(0o755)
-        _, _, run = self.copilot_launch(mutant)
-        self.assertEqual(run.stdout.decode().split("|")[0], "placeholder", run.stderr)
+    def test_control_copilot_command_without_its_policy(self):
+        """Control: the same prefix running the command with no launch policy leaves the profile's tokens on the lane."""
+        _, run = self.copilot_launch(policy=False)
+        self.assertEqual(run.stdout.decode().split("|")[:2], ["profile-placeholder", "profile-token"], run.stderr)
 
     def worktree_root(self):
         return Path(subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"] + "-worktree",

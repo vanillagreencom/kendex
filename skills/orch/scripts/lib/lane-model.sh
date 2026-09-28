@@ -116,16 +116,8 @@ def model_binding($model):
 #
 # A record whose usage could not be read answers null whatever its other fields
 # say: a window nobody read is not an empty one.
-#
-# A record the Copilot usage endpoint marked `unlimited` outright is the one
-# measured account with no bucket at all: it answers unlimited_wall, a wall of
-# zero under no bucket name, room at every threshold, whatever model is named.
-# Only that explicit flag, which `lanes` sets on a measured record alone,
-# reaches the arm.
-def unlimited_wall: {bucket: null, label: null, pct: 0, resets_at: null};
 def binding_bucket:
-  if lane_measured and .unlimited == true then unlimited_wall
-  elif ((lane_measured | not) or .headroom_pct == null
+  if ((lane_measured | not) or .headroom_pct == null
       or .binding_bucket == null) then null
   else {bucket: .binding_bucket,
         label: (if .binding_bucket == "model" then ([.model_buckets[]] | max_by(.pct).label // null) else null end),
@@ -135,7 +127,6 @@ def binding_bucket:
 
 def lane_binding($model):
   if (lane_measured | not) then null
-  elif .unlimited == true then unlimited_wall
   elif $model != "" then model_binding($model)
   else binding_bucket
   end;
@@ -196,8 +187,7 @@ def same_window($binding):
 
 def with_lane_binding($model; $binding_floor):
   lane_binding($model; $binding_floor) as $binding
-  | (if $binding == null or $binding.bucket == null then []
-     elif $binding.bucket == "model" then (._rate_prior.model_buckets // [])
+  | (if $binding == null then [] elif $binding.bucket == "model" then (._rate_prior.model_buckets // [])
      else [{label: null,
             pct: (if $binding.bucket == "session" then ._rate_prior.session_5h_pct
                   elif $binding.bucket == "weekly" then ._rate_prior.weekly_pct
@@ -238,7 +228,8 @@ def with_lane_binding($model; $binding_floor):
 # plan-wide one or a model-scoped one, holds the same hour of work as the
 # share 5 of its 168 hours is, so it is charged the default times 5/168:
 # charged whole, an account weekly-bound at 86 percent with two lanes would
-# project past 95 and be dropped with days of room left.
+# project past 95 and be dropped with days of room left. A monthly Copilot pool
+# holds it as 5 of the 720 hours of a month, charged the default times 5/720.
 # projected_headroom_pct is the judged headroom less the claims times that
 # burn, null where the wall is null, since nothing measured the account, or the
 # claims are null, since the claim store could not be read: an unknown count is
@@ -247,6 +238,7 @@ def with_lane_projection($burn_default):
   (if .usage_rate_state == "measured" and (.claims // 0) > 0
    then .usage_rate_pct_per_min * 60 / .claims
    elif .binding_bucket == "session" then $burn_default
+   elif .binding_bucket == "monthly" then $burn_default * 5 / 720
    else $burn_default * 5 / 168 end) as $burn
   | . + {burn_pct_per_lane_hour: (if .wall == null then null else $burn end),
          projected_headroom_pct:

@@ -51,16 +51,39 @@ lane_adapter_copilot_transcript_owned() { # PATH SESSION HOME
   esac
 }
 
-# Whether the account at HOME runs copilot-statusline as its status line, the
-# one producer of the record this adapter reads: 0 where HOME/settings.json
-# sets `statusLine` to a command whose first word is that script, by any path,
-# 1 where it does not, the file is not there or jq cannot read it. A session on
-# an account answering 1 writes no record, and its context is never measured.
+# Whether the account at HOME runs copilot-statusline as its status line, often
+# enough for its record to stay fresh: 0 where HOME/settings.json sets
+# `statusLine` to a command whose first word is that script, by any path, an
+# executable file there, with a `refreshInterval` in whole seconds above 0 and
+# below COPILOT_SESSION_MAX_AGE_S. 1 otherwise, with LANE_ADAPTER_COPILOT_STATUS_REASON
+# naming the first thing that failed: `settings-missing`, `settings-unreadable`
+# (jq cannot read the file), `no-status-line` (no command statusLine),
+# `other-command` (its command is not copilot-statusline), `command-missing`
+# (not an executable file), `refresh-interval` (absent, not a whole number, 0,
+# or at or above the bound). A session on an account answering 1 writes no record,
+# or one its readers take as stale, and its context is never measured.
+LANE_ADAPTER_COPILOT_STATUS_REASON=""
 lane_adapter_copilot_status_line() { # HOME
-  local command
-  [ -f "$1/settings.json" ] || return 1
-  command=$(jq -r 'if (.statusLine | type) == "object" and .statusLine.type == "command"
-    then (.statusLine.command | strings) // "" else "" end' "$1/settings.json" 2>/dev/null) || return 1
+  local fields command interval
+  LANE_ADAPTER_COPILOT_STATUS_REASON=""
+  [ -f "$1/settings.json" ] || { LANE_ADAPTER_COPILOT_STATUS_REASON=settings-missing; return 1; }
+  fields=$(jq -r 'if (.statusLine | type) == "object" and .statusLine.type == "command"
+    then [((.statusLine.command | strings) // ""),
+          (.statusLine.refreshInterval | if type == "number" and . == floor then tostring else "" end)]
+         | join("\t")
+    else "" end' "$1/settings.json" 2>/dev/null) || { LANE_ADAPTER_COPILOT_STATUS_REASON=settings-unreadable; return 1; }
+  [ -n "$fields" ] || { LANE_ADAPTER_COPILOT_STATUS_REASON=no-status-line; return 1; }
+  command="${fields%%	*}"
+  interval="${fields#*	}"
   command="${command%% *}"
-  [ "${command##*/}" = copilot-statusline ]
+  [ "${command##*/}" = copilot-statusline ] || { LANE_ADAPTER_COPILOT_STATUS_REASON=other-command; return 1; }
+  case "$command" in
+    */*) ;;
+    *) command="$(command -v -- "$command" 2>/dev/null)" || command="" ;;
+  esac
+  { [ -n "$command" ] && [ -f "$command" ] && [ -x "$command" ]; } \
+    || { LANE_ADAPTER_COPILOT_STATUS_REASON=command-missing; return 1; }
+  case "$interval" in '' | *[!0-9]*) LANE_ADAPTER_COPILOT_STATUS_REASON=refresh-interval; return 1 ;; esac
+  { [ "$interval" -gt 0 ] && [ "$interval" -lt "$COPILOT_SESSION_MAX_AGE_S" ]; } \
+    || { LANE_ADAPTER_COPILOT_STATUS_REASON=refresh-interval; return 1; }
 }

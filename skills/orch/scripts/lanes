@@ -199,8 +199,10 @@
 #         refused on.
 #   context  Print context use for each live work lane in this fleet, as its
 #         own turn-end hook recorded it: the tokens the last response left in the
-#         context, read from the transcript by the harness adapter
-#         (lib/lane-context.sh), and its effective compaction point. No pane is
+#         context, read by the harness adapter (lib/lane-context.sh) from the
+#         transcript, or for Copilot from the session record its status line
+#         writes (references/copilot-runtime.md), and its effective
+#         compaction point. No pane is
 #         read. A lane's reading is in its own mailbox, which the running
 #         lane record of the fleet state (`workflow-state get oversee`)
 #         places, read through the provider that record names. The
@@ -294,9 +296,9 @@
 #   --model NAME     pick: judge the bound against the bucket that walls a
 #                    launch on NAME — the 5-hour session window, the plan-wide
 #                    weekly window, the model-scoped weekly window whose
-#                    label names NAME, and the monthly Copilot pool a Pi
-#                    launch on a `github-copilot/` model spends — instead of
-#                    the binding bucket. A lane
+#                    label names NAME, and the monthly Copilot pool a Copilot
+#                    account or a Pi launch on a `github-copilot/` model
+#                    spends — instead of the binding bucket. A lane
 #                    whose windows answer nothing for NAME is never picked.
 #                    The scoped model window alone is not enough because either
 #                    shared window can wall every model on the account.
@@ -396,8 +398,8 @@
 #                      one live lane is expected to spend in an hour, charged
 #                      per claim where the account's rate is not measured or
 #                      nothing is claimed on it; a weekly window, plan-wide or
-#                      model-scoped, is charged 5/168 of it (default 5; 0
-#                      charges nothing). Refused, before any lane is measured,
+#                      model-scoped, is charged 5/168 of it and a monthly
+#                      Copilot pool 5/720 (default 5; 0 charges nothing). Refused, before any lane is measured,
 #                      when it is not an integer 0-100.
 #   ORCH_LANES_USAGE_TTL  Seconds a cached usage figure is reused (default 300;
 #                      0 fetches every run). Keep it at least the longest watch
@@ -963,9 +965,18 @@ configured_lane_dirs() {
 lane_dirs() {
 	local configured="" home="${LANES_HOME:-$HOME}" d
 	# A Pi account on the Copilot pool is one the owner states a reading for:
-	# nothing on this machine is discovered as one.
+	# nothing on this machine is discovered as one. The same setting also
+	# states a Copilot CLI account's fallback reading, and such an account is
+	# no Pi root: an entry the copilot inventory lists is left out, so a Pi
+	# launch never opens on a Copilot home holding no Pi login.
 	if [[ "$1" == pi ]]; then
+		local copilot_ids=$'\n' id
+		while IFS= read -r d; do
+			[[ -z "$d" ]] || copilot_ids+="$(lane_claims_canon "$d")"$'\n'
+		done < <(lane_dirs copilot)
 		copilot_pool_entries 2>/dev/null | cut -f1 | while IFS= read -r d; do
+			id="$(lane_claims_canon "$d")"
+			case "$copilot_ids" in *$'\n'"$id"$'\n'*) continue ;; esac
 			lane_excluded "$d" || printf '%s\n' "$d"
 		done
 		return
@@ -2031,10 +2042,8 @@ refresh_claude_token() {
 # longer window binds (monthly, then weekly, then model, then session): its
 # wall lasts longest.
 #
-# A Copilot record also carries `credits` and `unlimited` (the header's COPILOT
-# paragraph). Only `unlimited` true from the parse reads as a measured lane
-# with no bucket, at 100 percent headroom; any other record with no bucket is
-# `no_usage_data`.
+# A Copilot record also carries `credits` and `unlimited`, information beside
+# its `monthly` bucket (schemas/copilot-credits.md).
 emit_lane() {
 	# refreshable is true only for a lane this run found expired and made live,
 	# by its own renewal or by taking one a peer wrote under the lock: a lane
@@ -2057,9 +2066,8 @@ emit_lane() {
 		--arg through "$through" --argjson b "$buckets" \
 		--argjson pb "$prior" --argjson elapsed "$elapsed" "$LANE_MODEL_JQ"'
 		($b // {} | utc_resets) as $b
-		| ($b.unlimited == true) as $unlimited
 		| [$b.session_5h_pct, $b.weekly_pct, $b.model_pct, $b.monthly_pct] | map(select(. != null)) as $known
-		| (if ($status == "ok" and ($known | length) == 0 and ($unlimited | not)) then "no_usage_data" else $status end) as $st
+		| (if ($status == "ok" and ($known | length) == 0) then "no_usage_data" else $status end) as $st
 		| ({status: $st} | lane_measured) as $measured
 		| ([{k: "monthly", p: $b.monthly_pct}, {k: "weekly", p: $b.weekly_pct}, {k: "model", p: $b.model_pct}, {k: "session", p: $b.session_5h_pct}]
 		   | map(select(.p != null)) | sort_by(-.p) | first // null) as $bind
@@ -2079,10 +2087,9 @@ emit_lane() {
 		    monthly_pct: ($b.monthly_pct // null),
 		    credits: (if $b.credits == null then null
 		              else $b.credits + {measured_at: ((now - ($age // 0)) | floor | todate)} end),
-		    unlimited: ($measured and $unlimited),
+		    unlimited: ($b.unlimited == true),
 		    claims: $claims,
-		    headroom_pct: (if ($measured and ($known | length) > 0) then (100 - ($known | max))
-		                   elif ($measured and $unlimited) then 100 else null end),
+		    headroom_pct: (if ($measured and ($known | length) > 0) then (100 - ($known | max)) else null end),
 		    binding_bucket: (if ($measured and $bind != null) then $bind.k else null end),
 		    binding_resets_at: (if ($measured and $bind != null) then ($b.resets[$bind.k] // null) else null end),
 		    usage_age_s: $age,

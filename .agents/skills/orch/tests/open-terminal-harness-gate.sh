@@ -145,14 +145,28 @@ ROWS
 echo "=== a copilot fleet launch runs only where its account's status line writes the session record ==="
 # `label|settings.json|args|answer`: `-` is no file. The record the status line
 # writes is what the copilot adapter reads the lane's context from, so an
-# account whose status line is another command, or none, is refused, and a
-# hosted lane, whose account is its host's, always is.
+# account whose status line is another command, a script that is not there, or
+# one refreshed too seldom for its record to stay fresh is refused under the
+# cause the adapter names, and a hosted lane, whose account is its host's,
+# always is. @SL@ is an executable copilot-statusline, @OTHER@ an executable
+# script of another name, @GONE@ a copilot-statusline path holding nothing.
 CP_FILE="file=$CP_HOME/settings.json"
 CP_FLAGS="--launch-flags '--model claude-opus-5 --reasoning-effort high'"
+CP_SL="$TMP_ROOT/sl/copilot-statusline"
+CP_OTHER="$TMP_ROOT/sl/other-statusline"
+mkdir -p "$TMP_ROOT/sl"
+printf '#!/bin/sh\n' > "$CP_SL"
+printf '#!/bin/sh\n' > "$CP_OTHER"
+chmod +x "$CP_SL" "$CP_OTHER"
+CP_REFUSED="open-terminal: unsupported-for-oversee harness=copilot reason=status-line"
 # cp_settings JSON — the account's settings file, or none for `-`.
 cp_settings() {
+  local body="$1"
   rm -f -- "${CP_HOME:?}/settings.json"
-  [[ "$1" == - ]] || printf '%s\n' "$1" > "$CP_HOME/settings.json"
+  body="${body//@SL@/$CP_SL}"
+  body="${body//@OTHER@/$CP_OTHER}"
+  body="${body//@GONE@/$TMP_ROOT/gone/copilot-statusline}"
+  [[ "$body" == - ]] || printf '%s\n' "$body" > "$CP_HOME/settings.json"
 }
 while IFS='|' read -r label settings args want; do
   cp_settings "$settings"
@@ -160,14 +174,20 @@ while IFS='|' read -r label settings args want; do
   eval "set -- $args"
   assert_eq "$(launch copilot "$@")" "$want" "$label"
 done <<ROWS
-an account running copilot-statusline passes|{"statusLine":{"type":"command","command":"/x/.agents/skills/orch/scripts/copilot-statusline","refreshInterval":30}}|${FLEET[*]} --harness copilot $CP_FLAGS|passed
-an account with no settings file is refused|-|${FLEET[*]} --harness copilot $CP_FLAGS|open-terminal: unsupported-for-oversee harness=copilot reason=no-status-line @FILE@
-an account whose status line is another command is refused|{"statusLine":{"type":"command","command":"/x/other-statusline"}}|${FLEET[*]} --harness copilot $CP_FLAGS|open-terminal: unsupported-for-oversee harness=copilot reason=no-status-line @FILE@
-a settings file jq cannot read is refused|not json|${FLEET[*]} --harness copilot $CP_FLAGS|open-terminal: unsupported-for-oversee harness=copilot reason=no-status-line @FILE@
-a hosted copilot fleet lane is refused|{"statusLine":{"type":"command","command":"copilot-statusline"}}|${FLEET[*]} --harness copilot --host $BIN/provider $CP_FLAGS|open-terminal: unsupported-for-oversee harness=copilot reason=hosted
+an account running copilot-statusline every 30 seconds passes|{"statusLine":{"type":"command","command":"@SL@","refreshInterval":30}}|${FLEET[*]} --harness copilot $CP_FLAGS|passed
+an account with no settings file is refused|-|${FLEET[*]} --harness copilot $CP_FLAGS|$CP_REFUSED cause=settings-missing @FILE@
+a settings file jq cannot read is refused|not json|${FLEET[*]} --harness copilot $CP_FLAGS|$CP_REFUSED cause=settings-unreadable @FILE@
+a settings file with no command status line is refused|{"theme":"github"}|${FLEET[*]} --harness copilot $CP_FLAGS|$CP_REFUSED cause=no-status-line @FILE@
+an account whose status line is another command is refused|{"statusLine":{"type":"command","command":"@OTHER@","refreshInterval":30}}|${FLEET[*]} --harness copilot $CP_FLAGS|$CP_REFUSED cause=other-command @FILE@
+a status line naming a script that is not there is refused|{"statusLine":{"type":"command","command":"@GONE@","refreshInterval":30}}|${FLEET[*]} --harness copilot $CP_FLAGS|$CP_REFUSED cause=command-missing @FILE@
+a status line with no refresh interval is refused|{"statusLine":{"type":"command","command":"@SL@"}}|${FLEET[*]} --harness copilot $CP_FLAGS|$CP_REFUSED cause=refresh-interval @FILE@
+an interval at the record's freshness bound is refused|{"statusLine":{"type":"command","command":"@SL@","refreshInterval":120}}|${FLEET[*]} --harness copilot $CP_FLAGS|$CP_REFUSED cause=refresh-interval @FILE@
+an interval one second under the bound passes|{"statusLine":{"type":"command","command":"@SL@","refreshInterval":119}}|${FLEET[*]} --harness copilot $CP_FLAGS|passed
+a hosted copilot fleet lane is refused|{"statusLine":{"type":"command","command":"@SL@","refreshInterval":30}}|${FLEET[*]} --harness copilot --host $BIN/provider $CP_FLAGS|open-terminal: unsupported-for-oversee harness=copilot reason=hosted
 no fleet passes with no status line|-|--harness copilot $CP_FLAGS|passed
 ROWS
-# One control per rule: the gate's call, the command match and the hosted arm.
+# One control per rule: the gate's call, the command match, the file test, the
+# interval bound and the hosted arm.
 cp_control() { # NAME FILE OLD NEW SETTINGS ARGS WANT LABEL
   local ctl="$TMP_ROOT/$1" name="$1" want="$7" label="$8"
   stage "$ctl"
@@ -179,10 +199,16 @@ cp_control() { # NAME FILE OLD NEW SETTINGS ARGS WANT LABEL
 cp_control cp-call open-terminal 'copilot_fleet_gate || exit 1' ':' - "${FLEET[*]} --harness copilot $CP_FLAGS" passed \
   "control: without the gate's call an account with no status line launches into the fleet"
 cp_control cp-match lib/adapters/copilot.sh '[ "${command##*/}" = copilot-statusline ]' '[ -n "$command" ]' \
-  '{"statusLine":{"type":"command","command":"/x/other-statusline"}}' "${FLEET[*]} --harness copilot $CP_FLAGS" passed \
+  '{"statusLine":{"type":"command","command":"@OTHER@","refreshInterval":30}}' "${FLEET[*]} --harness copilot $CP_FLAGS" passed \
   "control: without the command match another status line passes"
+cp_control cp-exists lib/adapters/copilot.sh '{ [ -n "$command" ] && [ -f "$command" ] && [ -x "$command" ]; }' '{ [ -n "$command" ]; }' \
+  '{"statusLine":{"type":"command","command":"@GONE@","refreshInterval":30}}' "${FLEET[*]} --harness copilot $CP_FLAGS" passed \
+  "control: without the file test a status line naming nothing passes"
+cp_control cp-interval lib/adapters/copilot.sh '[ "$interval" -lt "$COPILOT_SESSION_MAX_AGE_S" ]' '[ "$interval" -le "$COPILOT_SESSION_MAX_AGE_S" ]' \
+  '{"statusLine":{"type":"command","command":"@SL@","refreshInterval":120}}' "${FLEET[*]} --harness copilot $CP_FLAGS" passed \
+  "control: with the bound inclusive an interval every record goes stale at passes"
 cp_control cp-hosted open-terminal 'copilot) [[ "$LANE_HOST" == local ]] ||' 'copilot) true ||' \
-  '{"statusLine":{"type":"command","command":"copilot-statusline"}}' "${FLEET[*]} --harness copilot --host $BIN/provider $CP_FLAGS" passed \
+  '{"statusLine":{"type":"command","command":"@SL@","refreshInterval":30}}' "${FLEET[*]} --harness copilot --host $BIN/provider $CP_FLAGS" passed \
   "control: without the hosted arm a hosted copilot fleet lane is not refused"
 cp_settings -
 

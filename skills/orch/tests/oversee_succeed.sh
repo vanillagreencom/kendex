@@ -52,9 +52,12 @@ mkdir -p "$BIN" "$TMP_ROOT/work"
 # of the config dir it runs under, it draws the dialog line and waits, which
 # is what a successor launched without the entry meets. The codex stub asks
 # none, its trust being the launch-home rows' subject.
-for harness in claude codex; do
-  lane_var=CLAUDE_CONFIG_DIR
-  [[ "$harness" == claude ]] || lane_var=CODEX_HOME
+for harness in claude codex copilot; do
+  case "$harness" in
+    claude) lane_var=CLAUDE_CONFIG_DIR ;;
+    codex) lane_var=CODEX_HOME ;;
+    copilot) lane_var=COPILOT_HOME ;;
+  esac
   trust_gate=""
   [[ "$harness" != claude ]] || trust_gate="jq -e --arg d \"\$(pwd -P)\" '.projects[\$d].hasTrustDialogAccepted == true' \"\${CLAUDE_CONFIG_DIR:-\$HOME/.claude}/.claude.json\" >/dev/null 2>&1 || { echo 'Do you trust the files in this folder?'; exec sleep 100000; }"
   cat > "$BIN/$harness" <<STUB
@@ -86,7 +89,7 @@ STUB
 # the process name tmux reads, so the shape rule never sees the harness word.
 cp "$(command -v sleep)" "$BIN/hclaude"
 cp "$(command -v sleep)" "$BIN/node"
-chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex" "$BIN/hclaude" "$BIN/node"
+chmod +x "$BIN/claude" "$BIN/codex" "$BIN/copilot" "$BIN/kendex" "$BIN/hclaude" "$BIN/node"
 
 # The trigger every headroom fixture below is derived from: a lane at exactly
 # TRIGGER percent headroom has no room and one at TRIGGER+1 does, so the rows
@@ -1579,6 +1582,58 @@ COPILOT_DIRS="$H/.claude:$H/.eclaude:$H/.codex:$H/.1copilot"
 LANE_DIRS="$COPILOT_DIRS" copilot_row checkcopilot '' --check-marks --harness copilot
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=20" \
   "a copilot overseer's marks are judged on its account's monthly pool"
+fleet_state
+
+# A Copilot overseer succeeds as the others do: at its headroom mark, and on a
+# wall, `lanes pick --harness copilot` names a second Copilot account, whose
+# status line writes the session record its successor's context is judged on.
+# @SL@ is that status line, an executable copilot-statusline.
+COP_SL="$TMP_ROOT/sl/copilot-statusline"
+mkdir -p "$TMP_ROOT/sl" "$H/.2copilot"
+printf '#!/bin/sh\n' > "$COP_SL"
+chmod +x "$COP_SL"
+printf '{"copilot_tokens":"gho_second"}\n' > "$H/.2copilot/config.json"
+printf '{"statusLine":{"type":"command","command":"%s","refreshInterval":30}}\n' "$COP_SL" > "$H/.2copilot/settings.json"
+printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":900}}}' > "$FIXTURE_DIR/.2copilot.json"
+# The caller's own pool at 97 percent used, at or under the headroom trigger.
+printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":30}}}' > "$FIXTURE_DIR/.1copilot.json"
+COPILOT_PAIR="$H/.claude:$H/.eclaude:$H/.codex:$H/.1copilot:$H/.2copilot"
+COP_SUCCESSOR="lane=$H/.2copilot;--autopilot;--max-autopilot-continues;3;--context;long_context;--no-auto-update;--allow-all;-i;$BRIEF;"
+LANE_DIRS="$COPILOT_PAIR" copilot_row copsucceed '' --harness copilot -- --allow-all
+assert_eq "$RC|$(layout)|$(caller_open)|$(recorded copilot)" "0|1 overseer;|no|$COP_SUCCESSOR" \
+  "a copilot overseer at its headroom mark succeeds onto the second copilot account"
+fleet_state
+new_caller "$UNDER_MARK"
+record_account "$CALLER_PANE" "$H/.1copilot"
+LANE_DIRS="$COPILOT_PAIR" run_succeed copwalled '' --walled-pane "$CALLER_PANE" --harness copilot -- --allow-all
+assert_eq "$RC|$(layout)|$(caller_open)|$(recorded copilot)" "0|1 overseer;|no|$COP_SUCCESSOR" \
+  "a walled copilot overseer is replaced on the second copilot account"
+fleet_state
+# The second account's status line gone: it writes no record, so it is no
+# successor, and the walk ends with no lane qualifying.
+printf '{}\n' > "$H/.2copilot/settings.json"
+LANE_DIRS="$COPILOT_PAIR" copilot_row copnostatus '' --harness copilot -- --allow-all
+assert_eq "$RC|$(grep -c "^oversee-succeed: successor-status-line lane=$H/.2copilot entry=caller cause=no-status-line" <<<"$OUT")|$(recorded copilot)" "3|1|none" \
+  "a copilot account whose status line writes no record is skipped as a successor"
+printf '{"statusLine":{"type":"command","command":"%s","refreshInterval":30}}\n' "$COP_SL" > "$H/.2copilot/settings.json"
+fleet_state
+# Control: the harness list ol_pick_record once kept, restored, reads a
+# copilot account as one lanes does not measure and the succession dies.
+COPILOTLIST="$(mutant_scripts copilotlist lib/overseer-launch.sh)" || exit 1
+mutate_file "$COPILOTLIST/lib/overseer-launch.sh" '  ol_account_measured "$harness" || return 4' '  case "$harness" in claude | codex | pi) ;; *) return 4 ;; esac'
+LANE_DIRS="$COPILOT_PAIR" copilot_row copsucceedctl "$COPILOTLIST/oversee-succeed" --harness copilot -- --allow-all
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "1|oversee-succeed: lanes-failed entry=caller exit=4" \
+  "control: with its own harness list the pick fails a copilot succession as a lanes read that never ran"
+# Control: the successor status-line check cut, the account writing no record
+# is picked.
+COPILOTSL="$(mutant_scripts copilotsl oversee-succeed)" || exit 1
+mutate_file "$COPILOTSL/oversee-succeed" '      if [[ "$harness" == copilot ]] && ! lane_adapter_copilot_status_line "$OL_PICKED_DIR"; then' '      if false; then'
+printf '{}\n' > "$H/.2copilot/settings.json"
+LANE_DIRS="$COPILOT_PAIR" copilot_row copnostatusctl "$COPILOTSL/oversee-succeed" --harness copilot -- --allow-all
+assert_eq "$RC|$(recorded copilot)" "0|$COP_SUCCESSOR" \
+  "control: without the check a successor opens on an account whose context nothing measures"
+printf '{"statusLine":{"type":"command","command":"%s","refreshInterval":30}}\n' "$COP_SL" > "$H/.2copilot/settings.json"
+printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":200}}}' > "$FIXTURE_DIR/.1copilot.json"
 fleet_state
 new_caller "$UNDER_MARK"
 run_succeed printcopilotnone '' --print-launch-line --harness copilot -- --allow-all

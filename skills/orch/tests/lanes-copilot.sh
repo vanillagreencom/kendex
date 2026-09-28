@@ -40,6 +40,12 @@ run_lanes() {
   local run="$TMP_ROOT/runs/$((++RUN_SEQ))"
   mkdir -p "$run/store"
   RC=0
+  # CLAIM_ON names an account one live lane is claimed on for this run: its
+  # tmux server is this suite's own process, so the claim counts.
+  if [[ -n "${CLAIM_ON:-}" ]]; then
+    mkdir -p "$run/store/claims"
+    printf '%s\t%%5\t%s\tcop\t2026-09-28T00:00:00Z\n' "$$" "$CLAIM_ON" > "$run/store/claims/cop.claim"
+  fi
   OUT="$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" \
     ORCH_LANES_FETCH_CMD="$FETCHER" FETCH_LOG="$run/fetch.log" OVERSEE_WATCH_STATE_DIR="$run/store" \
     ${ROW_ENV[@]+"${ROW_ENV[@]}"} "${LANES_BIN:-$SCRIPTS_DIR/lanes}" "$@" 2>"$run/stderr")" || RC=$?
@@ -89,7 +95,7 @@ a pool with room binds the monthly bucket, used share from remaining over entitl
 the plan is the endpoint's own|1copilot|.plan|"business"
 a pool at zero is spent whatever overage it permits|2copilot|[.monthly_pct, .headroom_pct, .credits.overage_permitted]|[100,0,true]
 one credit left rounds up to a spent share|3copilot|.monthly_pct|100
-an explicit unlimited seat is room with no bucket|4copilot|[.status, .unlimited, .headroom_pct, .binding_bucket, .credits.unit, .credits.unlimited]|["ok",true,100,null,"AIC",true]
+an explicit unlimited seat is a monthly pool at 0 percent used|4copilot|[.status, .unlimited, .monthly_pct, .headroom_pct, .binding_bucket, .credits.unit, .credits.unlimited]|["ok",true,0,100,"monthly","AIC",true]
 an unlimited that is not the boolean true measures nothing|5copilot|[.status, .unlimited, .headroom_pct]|["no_usage_data",false,null]
 an entitlement of zero measures nothing|6copilot|[.status, .headroom_pct, .credits]|["no_usage_data",null,null]
 an entitlement of another type measures nothing|7copilot|[.status, .headroom_pct]|["no_usage_data",null]
@@ -117,6 +123,23 @@ a named account with room clears the default bound|pick --lane $H/.1copilot --ha
 a named account whose answer measured nothing is unmeasured|pick --lane $H/.5copilot --harness copilot|rc=5 out=
 ROWS
 
+echo "=== a live lane on a Copilot account is charged its burn over the month ==="
+# 5 points of a 5-hour window an hour, held as 5 of the month's 720 hours: a
+# weekly charge would read 21 in the pinned figure, not 5.
+CLAIM_ON="$H/.1copilot" run_lanes pick --lane "$H/.1copilot" --harness copilot --json
+assert_eq "$(jq -c '[.claims, .binding_bucket, (.burn_pct_per_lane_hour * 144 | round), (.projected_headroom_pct * 1000 | round)]' <<<"$OUT" 2>/dev/null || echo unparseable)" \
+  '[1,"monthly",5,89965]' "one live claim is charged 5/720 of the default burn, so a pool with room is projected with room"
+
+echo "=== a Pi pick never returns a Copilot CLI account the stated pool names ==="
+# The stated pool names both a Pi root and a Copilot account; the Copilot one
+# has more room, so a Pi pick that counted it would return it.
+PI_POOL="ORCH_LANE_COPILOT_POOL=$H/.1copilot=5/100,$H/.pi1=10/100"
+ROW_ENV=("$PI_POOL")
+run_lanes pick --harness pi --model github-copilot/gpt-5 --json
+ROW_ENV=()
+assert_eq "rc=$RC dir=$(jq -r '.config_dir' <<<"$OUT" 2>/dev/null || echo unparseable)" "rc=0 dir=$H/.pi1" \
+  "the Copilot account is left out of the Pi candidates, and the Pi root is picked"
+
 echo "=== the stored login is read defensively, and the stated pool is its fallback ==="
 # `label|config.json|want status|want reason`: `-` is no file. The reason is
 # the one the record's detail names; nothing is fetched for any of these.
@@ -135,8 +158,10 @@ a login as a bare string reads|{"copilot_tokens":"gho_bare"}|ok|none
 no config.json is no login|-|no_credentials|login unread: config-missing
 a config.json that is not JSON is unreadable|{"copilot_tokens":|no_credentials|login unread: config-unreadable
 no copilot_tokens key is no login|{"logged_in_users":[]}|no_credentials|login unread: token-missing
-an object holding no string is no login|{"copilot_tokens":{"a":1}}|no_credentials|login unread: token-missing
-two logins in one account are refused, never one of them guessed|{"copilot_tokens":{"a":"x","b":"y"}}|no_credentials|login unread: token-ambiguous
+two GitHub.com logins in one account are refused, never one of them guessed|{"copilot_tokens":{"https://github.com:a":"x","https://github.com:b":"y"}}|no_credentials|login unread: token-ambiguous
+a login another host issued is never sent to GitHub.com|{"copilot_tokens":{"https://acme.ghe.com:a":"ghu_tenant"}}|no_credentials|login unread: token-foreign-host
+the GitHub.com login is read beside another host's|{"copilot_tokens":{"https://acme.ghe.com:a":"ghu_tenant","https://github.com:b":"gho_b"}}|ok|none
+an object holding only another type is no login|{"copilot_tokens":{"https://github.com:a":7}}|no_credentials|login unread: token-missing
 ROWS
 printf '// This file is managed automatically\n{"copilot_tokens":{"https://github.com:user":"gho_c"}}\n' > "$H/.1copilot/config.json"
 run_lanes list --harness copilot --local --json
@@ -223,16 +248,30 @@ lanes_control ctl-limit lib/copilot-credits.sh '($remaining != null and $granted
 control_row 6copilot '[.status, .monthly_pct]' '["ok",100]' "control: without the entitlement bound a zero grant reads as a measured pool"
 lanes_control ctl-bind lanes '[{k: "monthly", p: $b.monthly_pct}, ' '['
 control_row 2copilot .binding_bucket null "control: without the monthly bucket in the binding a Copilot pool binds nothing"
-lanes_control ctl-model lib/lane-model.sh '  elif .unlimited == true then unlimited_wall' '  elif false then unlimited_wall'
+lanes_control ctl-unlimited-zero lib/copilot-credits.sh '    | (if $unlimited then 0' '    | (if $unlimited then null'
 copilot_account 4copilot '{"quota_snapshots":{"premium_interactions":{"unlimited":true}}}'
 run_lanes pick --lane "$H/.4copilot" --harness copilot --model claude-opus-5
-assert_eq "rc=$RC" rc=5 "control: without the unlimited arm a named model on an unlimited seat is unmeasured"
+assert_eq "rc=$RC" rc=5 "control: an unlimited seat read with no share is unmeasured for a named model"
+lanes_control ctl-month-burn lib/lane-model.sh '   elif .binding_bucket == "monthly" then $burn_default * 5 / 720' '   elif false then 0'
+copilot_account 1copilot "$(pool 1000000 900000)"
+CLAIM_ON="$H/.1copilot" run_lanes pick --lane "$H/.1copilot" --harness copilot --json
+assert_eq "$(jq -c '(.burn_pct_per_lane_hour * 144 | round)' <<<"$OUT" 2>/dev/null || echo unparseable)" 21 \
+  "control: without the monthly arm a Copilot pool is charged the weekly burn"
+lanes_control ctl-pi-copilot lanes '			case "$copilot_ids" in *$'"'"'\n'"'"'"$id"$'"'"'\n'"'"'*) continue ;; esac' ':'
+ROW_ENV=("ORCH_LANE_COPILOT_POOL=$H/.1copilot=5/100,$H/.pi1=10/100")
+run_lanes pick --harness pi --model github-copilot/gpt-5 --json
+ROW_ENV=()
+assert_eq "$(jq -r '.config_dir' <<<"$OUT" 2>/dev/null || echo unparseable)" "$H/.1copilot" \
+  "control: without the exclusion a Pi pick returns the Copilot account"
 lanes_control ctl-discover lanes '				copilot) markers=(settings.json config.json) ;;' ''
 run_lanes list --harness copilot --local --json
 assert_eq "$(jq 'length' <<<"$OUT" 2>/dev/null || echo unparseable)" 0 "control: without its markers no Copilot account is discovered"
-lanes_control ctl-ambiguous lib/copilot-credits.sh '            else "token-ambiguous" end' '            else "token\t" + $v[0] end'
-printf '{"copilot_tokens":{"a":"x","b":"y"}}\n' > "$H/.2copilot/config.json"
+lanes_control ctl-ambiguous lib/copilot-credits.sh '            elif ($v | length) > 1 then "token-ambiguous"' '            elif ($v | length) > 1 then "token\t" + $v[0]'
+printf '{"copilot_tokens":{"https://github.com:a":"x","https://github.com:b":"y"}}\n' > "$H/.2copilot/config.json"
 control_row 2copilot .status '"ok"' "control: without the ambiguity refusal one of two logins is guessed and measured"
+lanes_control ctl-host lib/copilot-credits.sh 'select(.key | startswith("https://github.com:"))' 'select(true)'
+printf '{"copilot_tokens":{"https://acme.ghe.com:a":"ghu_tenant"}}\n' > "$H/.2copilot/config.json"
+control_row 2copilot .status '"ok"' "control: without the host test a tenant's token is sent to GitHub.com"
 lanes_control ctl-comment lib/copilot-credits.sh "sed '/^[[:space:]]*\/\//d' \"\$config\"" "cat \"\$config\""
 printf '// This file is managed automatically\n{"copilot_tokens":"gho_c"}\n' > "$H/.2copilot/config.json"
 control_row 2copilot .status '"no_credentials"' "control: without the comment skip the CLI's own config.json is unreadable"

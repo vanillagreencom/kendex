@@ -1005,16 +1005,18 @@ if [[ -n "$LANE" ]]; then
 fi
 # The copilot arm of the fleet gate above, run once the account is known: the
 # lane's where one was named or picked, else the one a launch with none runs on
-# (launch_finish). Its statusLine must run copilot-statusline, since that
-# command writes the session record the turn-end hook judges the lane's context
-# on; with no record every turn end reads the context unmeasured.
+# (launch_finish). Its statusLine must run copilot-statusline often enough for
+# its record to stay fresh (lib/adapters/copilot.sh §
+# lane_adapter_copilot_status_line, whose reason the refusal carries as
+# `cause=`), since that record is what the turn-end hook judges the lane's
+# context on; with none every turn end reads the context unmeasured.
 copilot_fleet_gate() {
   local home
   [[ "$FLEET" == true && "$WAKE" != true && "$LAUNCH_HARNESS" == copilot ]] || return 0
   home="${LANE_ENV#COPILOT_HOME=}"
   [[ -n "$LANE_ENV" ]] || home="$(lane_context_caller_cfg copilot)"
   lane_adapter_copilot_status_line "$home" \
-    || { ot_message unsupported-for-oversee "harness=copilot" "reason=no-status-line" "file=$home/settings.json" >&2; return 1; }
+    || { ot_message unsupported-for-oversee "harness=copilot" "reason=status-line" "cause=$LANE_ADAPTER_COPILOT_STATUS_REASON" "file=$home/settings.json" >&2; return 1; }
 }
 copilot_fleet_gate || exit 1
 # The hosted pane is driven by keystrokes, the provider's --account is the
@@ -2341,6 +2343,11 @@ launch_finish() {
       compaction_env=$(lane_launch_compaction_env "$cmd" "$HARNESS" "$compaction_verified") || return 1
       cmd="env $compaction_env $cmd"
     fi
+    # The Copilot launch policy rides in the command, as codex's compaction
+    # does, and runs inside the provider's login shell, after its profile: the
+    # provider sets COPILOT_HOME alone (schemas/lane-host.md).
+    # shellcheck disable=SC2016  # $HOME is the host's, expanded there.
+    [[ "$HARNESS" != copilot ]] || cmd="$(lane_copilot_env "$cmd" '"$HOME/.agents/skills"') $cmd"
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && exec $cmd")"
   elif [[ -n "$LANE_ENV" || "$HARNESS" == codex || "$HARNESS" == copilot ]]; then
     # Folder trust belongs to the DIRECTORY the harness opens into, not to the
@@ -2388,11 +2395,6 @@ launch_finish() {
     # check reads as skip, whatever prefix the line below carries.
     [[ -z "$LANE_ENV" ]] || LANE_FORM="$launch_form"
     cmd="$(lane_launch_line "$cmd" "$HARNESS" "$launch_var" "$launch_home" "$launch_form")" || return 1
-  elif [[ "$HARNESS" == copilot ]]; then
-    # No account named: the command, a --cmd template's included, still
-    # carries Copilot's launch environment, as one under --lane does, and
-    # opens on whatever COPILOT_HOME the pane inherits.
-    cmd="$(lane_launch_line "$cmd" "$HARNESS" "" "" unchecked)" || return 1
   fi
   if [[ "$WAKE" == true ]]; then
     open_wake "$wt" "$title" "$cmd" || return 1

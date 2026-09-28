@@ -11,10 +11,14 @@
 # a state file it writes itself and whose layout no document names. The layout
 # assumed here, and nowhere else: the file is JSON after any leading `//`
 # comment lines, and its top-level `copilot_tokens` holds the account's token
-# either as a string or as an object whose one string value is the token. A
-# file, a key or a token that does not read that way is a keyed reason, never a
-# guess: `config-missing`, `config-unreadable`, `token-missing`, and
-# `token-ambiguous` for an object holding more than one login. On a fleet host
+# either as a string or as an object keyed `<host>:<login>` whose one
+# GitHub.com entry, a key opening `https://github.com:`, is the token: the
+# endpoint below is GitHub.com's, and a token another host issued, a GitHub
+# Enterprise Cloud tenant on `*.ghe.com` among them, is never sent to it. A
+# file, a key or a token that does not read that way is a keyed reason, never
+# a guess: `config-missing`, `config-unreadable`, `token-missing`,
+# `token-ambiguous` for more than one GitHub.com login, and `token-foreign-host`
+# where every login names another host. On a fleet host
 # the value is a placeholder the host's proxy rewrites for api.github.com. The
 # token crosses to curl on stdin, never in argv.
 #
@@ -27,8 +31,9 @@
 # pool one credit short of its grant never reads as having more; a pool at or
 # past its grant is 100, walled at every threshold whatever overage it
 # permits, since no paid overage is authorised; one reporting more remaining
-# than it was granted is 0. Only a boolean `unlimited: true` is unlimited: a
-# zero, a failed read and a missing or mistyped field never are.
+# than it was granted is 0. Only a boolean `unlimited: true` is unlimited, a
+# pool at 0 percent used whatever the counts say; a zero, a failed read and a
+# missing or mistyped field never are.
 #
 # Sourced, never run.
 
@@ -47,17 +52,19 @@ copilot_credits_token() { # HOME
       .copilot_tokens as $t
       | if ($t | type) == "string" then "token\t" + $t
         elif ($t | type) == "object" then
-          ([$t[] | strings]) as $v
+          ([$t | to_entries[] | select(.value | type == "string")]) as $all
+          | ([$all[] | select(.key | startswith("https://github.com:")) | .value]) as $v
           | if ($v | length) == 1 then "token\t" + $v[0]
-            elif ($v | length) == 0 then "token-missing"
-            else "token-ambiguous" end
+            elif ($v | length) > 1 then "token-ambiguous"
+            elif ($all | length) > 0 then "token-foreign-host"
+            else "token-missing" end
         else "token-missing" end' 2>/dev/null)"; then
     COPILOT_CREDITS_REASON=config-unreadable
     return 1
   fi
   case "$answer" in
     "token	"?*) COPILOT_CREDITS_TOKEN="${answer#token	}" ;;
-    token-ambiguous) COPILOT_CREDITS_REASON=token-ambiguous; return 1 ;;
+    token-ambiguous | token-foreign-host) COPILOT_CREDITS_REASON="$answer"; return 1 ;;
     *) COPILOT_CREDITS_REASON=token-missing; return 1 ;;
   esac
 }
@@ -84,7 +91,8 @@ copilot_credits_parse() {
     | (($q.remaining | numbers) // null) as $remaining
     | (($q.entitlement | numbers) // null) as $granted
     | ($remaining != null and $granted != null and $granted > 0) as $counted
-    | (if $unlimited or ($counted | not) then null
+    | (if $unlimited then 0
+       elif ($counted | not) then null
        elif $remaining <= 0 then 100
        else ((($granted - $remaining) * 100 / $granted) | ceil | if . < 0 then 0 else . end)
        end) as $pct

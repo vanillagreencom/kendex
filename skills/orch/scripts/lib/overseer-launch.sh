@@ -132,10 +132,10 @@ ol_preference_entries() { # VALUE
 # ol_account HARNESS MODEL — the account a session of HARNESS on MODEL spends,
 # as `lanes` measures it: OL_ACCOUNT_HARNESS the harness `lanes pick` judges it
 # under, OL_ACCOUNT_MODEL the model it judges it on. lib/lane-launch.sh §
-# lane_pick_harness alone maps a provider to its account: claude and codex
-# spend their own accounts, a pi session on a `github-copilot/` model spends
-# the Copilot pool `lanes pick --harness pi` reads, and one on a `pi-claude/`
-# model spends a claude account. This function only normalizes that answer
+# lane_pick_harness alone maps a provider to its account: claude, codex and
+# copilot spend their own accounts, a pi session on a `github-copilot/` model
+# spends the Copilot pool `lanes pick --harness pi` reads, and one on a
+# `pi-claude/` model spends a claude account. This function only normalizes that answer
 # for a pi session: a claude account is judged on the claude model after
 # `pi-claude/` (pi-extensions/pi-claude-bridge), and `unmeasured` splits into
 # `none`, a model naming a provider `lanes` measures no account of, and
@@ -234,7 +234,7 @@ ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
   OL_PICK_RECORD=""
   ol_account "$1" "$2"
   harness="$OL_ACCOUNT_HARNESS" model="$OL_ACCOUNT_MODEL"
-  case "$harness" in claude | codex | pi) ;; *) return 4 ;; esac
+  ol_account_measured "$harness" || return 4
   [[ -n "$(lane_context_mark_model "$harness" "$model")" ]] || floor=(--binding-floor)
   [[ -z "${4:-}" ]] || exclude=(--exclude-lane "$4")
   OL_PICK_RECORD="$(ol_lanes pick --harness "$harness" --min-headroom-pct "$3" --for-overseer \
@@ -316,8 +316,12 @@ ol_account_id() { # DIR
 # walk never reached it.
 #
 # A named entry is launched under a permission posture its source allows
-# (ol_entry_permitted), and skipped before its pick where it cannot be. The
-# rules a succession adds, each off while its setting is empty or 0: each
+# (ol_entry_permitted), and skipped before its pick where it cannot be. A
+# Copilot entry's pick is skipped as successor-status-line where the account's
+# settings run no copilot-statusline (lib/adapters/copilot.sh §
+# lane_adapter_copilot_status_line): its context is measured only through the
+# record that status line writes, as a fleet lane on one is refused
+# (open-terminal). The rules a succession adds, each off while its setting is empty or 0: each
 # skip is a notice for the caller to print, one line of tab-separated key and
 # fields in OL_WALK_SKIPS.
 #   OL_WALK_REFUSE_ID       a pick naming this account (ol_account_id) is
@@ -370,6 +374,10 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
     esac
     if [[ -n "$OL_WALK_REFUSE_ID" && "$(ol_account_id "$OL_PICKED_DIR")" == "$OL_WALK_REFUSE_ID" ]]; then
       OL_WALK_SKIPS+=("successor-lane-spent${tab}lane=$exclude${tab}entry=$entry")
+      continue
+    fi
+    if [[ "$OL_HARNESS" == copilot ]] && ! lane_adapter_copilot_status_line "$OL_PICKED_DIR"; then
+      OL_WALK_SKIPS+=("successor-status-line${tab}lane=$OL_PICKED_DIR${tab}entry=$entry${tab}cause=$LANE_ADAPTER_COPILOT_STATUS_REASON")
       continue
     fi
     if (( OL_WALK_SUCCESSOR_BOUND > 0 )); then
@@ -1008,6 +1016,13 @@ ol_budget_bound() { # [DIVISOR]
 # operator reads cannot drift from the deadline that produced it.
 ol_waited() { printf '%s\n' "$(( $(date +%s) - OL_STARTED ))"; }
 
+# ol_account_measured ACCOUNT_HARNESS — whether an OL_ACCOUNT_HARNESS answer
+# names an account `lanes` measures: a harness lane_pick_harness answered,
+# never `none`, `unknown` or the empty answer for a launch nothing judges. The
+# one reading of that answer, so no caller keeps a harness list of its own.
+ol_account_measured() { # ACCOUNT_HARNESS
+  case "${1:-}" in '' | none | unknown) return 1 ;; esac
+}
 # ol_account_verdict SESSION LANE_VAR LANE_DIR FORM BOUND final|early — one
 # account read and its verdict: 0 where the session may keep running, 1 with
 # OL_REASON=wrong-lane and the account seen in OL_OBSERVED, or

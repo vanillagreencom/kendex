@@ -1284,29 +1284,24 @@ lane_launch_compaction_env() { # CMD HARNESS VERIFIED
 # A copilot command carries its whole account environment under both forms,
 # because a launcher that exports COPILOT_HOME for its own name exports
 # nothing else: the account variable here, and the words lane_copilot_env
-# below prints. A copilot launch that names no account passes an empty
-# LANE_VAR and LANE_DIR: its line is those words alone, the account being
-# whatever the pane's own COPILOT_HOME names.
+# below prints.
 lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
-  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" compaction="" verified=true account="" env_words
+  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" compaction="" verified=true env_words
   if [[ "$harness" == codex ]]; then
     [[ "$form" != unchecked ]] || verified=false
     compaction=$(lane_launch_compaction_env "$cmd" "$harness" "$verified") || return 1
   fi
-  [[ -z "$var" ]] || account="$var=$(lane_single_quote "$dir")"
   if [[ "$harness" != copilot ]]; then
     case "$form" in
       launcher:*) printf '%s%s %s\n' "${compaction:+env $compaction }" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
-      *) printf 'env %s%s%s\n' "${account:+$account }" "${compaction:+$compaction }" "$cmd" ;;
+      *) printf 'env %s=%s %s%s\n' "$var" "$(lane_single_quote "$dir")" "${compaction:+$compaction }" "$cmd" ;;
     esac
     return
   fi
-  # With no home there is nothing to name the shared skills by.
-  [[ -n "${LANES_HOME:-${HOME:-}}" ]] || return 1
   env_words="$(lane_copilot_env "$cmd" "$(lane_single_quote "${LANES_HOME:-$HOME}/.agents/skills")")"
   case "$form" in
     launcher:*) printf '%s %s %s\n' "$env_words" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
-    *) printf '%s %s%s\n' "$env_words" "${account:+$account }" "$cmd" ;;
+    *) printf '%s %s=%s %s\n' "$env_words" "$var" "$(lane_single_quote "$dir")" "$cmd" ;;
   esac
 }
 

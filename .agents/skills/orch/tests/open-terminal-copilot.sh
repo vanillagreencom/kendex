@@ -334,12 +334,12 @@ echo "=== every local copilot launch runs under its account's environment ==="
 # The account variable, every ambient token cleared so the account's stored
 # login is the identity, the shared skills named again and folder trust
 # granted, lane or none.
-ENV_ARM="env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_HOME='$FLEET_HOME/.copilot' COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL=true copilot $LEAD -i"
+ENV_ARM="env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL=true COPILOT_HOME='$FLEET_HOME/.copilot' copilot $LEAD -i"
 launch env-none --harness copilot --launch-flags "$FLAGS" cc-750
 assert_contains "$CMD" "&& $ENV_ARM" "a launch naming no lane runs on the default account under the whole environment"
 mkdir -p "$TMP_ROOT/.2copilot"
 launch env-lane --harness copilot --lane "$TMP_ROOT/.2copilot" --launch-flags "$FLAGS" cc-751
-assert_contains "$CMD" "&& env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_HOME='$TMP_ROOT/.2copilot' COPILOT_SKILLS_DIRS=" \
+assert_contains "$CMD" "COPILOT_ALLOW_ALL=true COPILOT_HOME='$TMP_ROOT/.2copilot' copilot " \
   "a named lane runs on its account under the same environment"
 # The rendered line, run: the child sees the account and no ambient token.
 printf '#!/bin/sh\nprintf "%%s|%%s|%%s|%%s\\n" "${COPILOT_GITHUB_TOKEN-unset}" "${GH_TOKEN-unset}" "$COPILOT_HOME" "$COPILOT_ALLOW_ALL"\n' > "$BIN/copilot"
@@ -486,7 +486,7 @@ assert_eq "$(cat "$TMP_ROOT/form-ctrl.out")" "COPILOT_HOME=$TMP_ROOT/.1copilot|u
 # The environment rules, each cut from a private copy: the ambient tokens
 # kept, and a launch naming no lane given no environment.
 stage "$TMP_ROOT/unset-ctrl"
-mutate_file "$TMP_ROOT/unset-ctrl/scripts/lib/lane-launch.sh" 'clear="-u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN"' 'clear="-u GH_TOKEN"'
+mutate_file "$TMP_ROOT/unset-ctrl/scripts/lib/lane-launch.sh" "printf 'env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS" "printf 'env -u GH_TOKEN COPILOT_SKILLS_DIRS"
 OT="$TMP_ROOT/unset-ctrl/scripts/open-terminal" launch unset-ctrl --harness copilot --launch-flags "$FLAGS" cc-752
 assert_contains "$CMD" "copilot $LEAD -i" "the control's launch renders its command"
 assert_not_contains "$CMD" "-u COPILOT_GITHUB_TOKEN" "control: without the clearing an ambient token reaches the launched copilot ahead of its stored login"
