@@ -764,6 +764,32 @@ grandchild_state() { # PROJ
   proc_state_after "$pid"
   kill -KILL "$pid" 2>/dev/null || true
 }
+
+# A grandchild that runs as grand.sh and records its own pid in grand.pid only
+# once its TERM trap, if it has one, is installed. A signal that reaches it
+# before the trap kills it before that write, so a recorded pid is a grandchild
+# that was ready when the group's SIGTERM came, and no timing on a slow host
+# can turn an unready one into a missed trap.
+write_grandchild() { # PROJ trap|no-trap
+  {
+    [[ "$2" == no-trap ]] || printf '%s\n' "trap 'echo got-term > term.flag; exit 0' TERM"
+    printf '%s\n' 'echo $$ > grand.pid.part' 'mv grand.pid.part grand.pid' 'while :; do sleep 1; done'
+  } > "$1/grand.sh"
+}
+# Whether the grandchild ran its TERM trap: got-term, no-term, or unready for
+# one that never recorded its pid. The run's verdict lands before its group
+# gets SIGTERM, so the flag is polled for up to five seconds rather than read
+# once.
+term_state() { # PROJ
+  local n=0
+  [[ -s "$1/grand.pid" ]] || { echo unready; return 0; }
+  while [[ ! -s "$1/term.flag" ]]; do
+    (( n < 50 )) || { echo no-term; return 0; }
+    sleep 0.1
+    n=$((n + 1))
+  done
+  cat "$1/term.flag"
+}
 # The runner line a run's log opens with, with its unit's launching pid folded
 # to PID so the rest of the name is pinned.
 runner_line() { # OUTPUT
@@ -851,14 +877,23 @@ assert_eq "$(grandchild_state "$proj_group")" "gone" \
   "and a grandchild left in its process group is gone once it completes" "$ERR"
 
 # The group's end is SIGTERM first, a kill grace before SIGKILL, as a unit's
-# stop is: a grandchild of a run killed at its bound runs its TERM trap.
-proj_term_group="$(make_proj proj-term-group 'bash grand.sh & echo $! > grand.pid; sleep 30' 2)"
-printf '%s\n' "trap 'echo got-term > term.flag; exit 0' TERM" 'while :; do sleep 1; done' > "$proj_term_group/grand.sh"
-run_script "$RUN" --worktree "$proj_term_group" --poll 1
-assert_eq "$(verdict_of "$OUT") $(cat "$proj_term_group/term.flag" 2>/dev/null || echo no-term)" \
-  "state=done guard-exit=124 validate=no-verdict got-term" \
-  "a setsid run's grandchild gets SIGTERM, and runs its trap, when the run ends at its bound" "$ERR"
-grandchild_state "$proj_term_group" >/dev/null
+# stop is: a grandchild of a run killed at its bound runs its TERM trap. The
+# grandchild with no trap is term_state's control: it is never reported as
+# trapped.
+# label|name|grandchild|what term_state reads
+TERM_ROWS=(
+  "a setsid run's grandchild gets SIGTERM, and runs its trap, when the run ends at its bound|proj-term-group|trap|got-term"
+  "a grandchild with no TERM trap is not reported as having run one|proj-term-untrapped|no-trap|no-term"
+)
+for row in "${TERM_ROWS[@]}"; do
+  IFS='|' read -r label name grandchild want_term <<<"$row"
+  proj="$(make_proj "$name" 'bash grand.sh & sleep 30' 2)"
+  write_grandchild "$proj" "$grandchild"
+  run_script "$RUN" --worktree "$proj" --poll 1
+  assert_eq "$(verdict_of "$OUT") $(term_state "$proj")" \
+    "state=done guard-exit=124 validate=no-verdict $want_term" "$label" "$ERR"
+  grandchild_state "$proj" >/dev/null
+done
 
 # Where systemd-run is installed and fails, the run is still made under setsid
 # and its log carries systemd-run's own first line. The stubs fail the probe
@@ -966,11 +1001,12 @@ end_long_run
 
 # --stop tears a setsid run down the way its own end does, SIGTERM first: a
 # grandchild of a run stopped mid-validation runs its TERM trap.
-proj_stop_term="$(make_proj proj-stop-term 'bash grand.sh & echo $! > grand.pid; sleep 300' 600)"
-printf '%s\n' "trap 'echo got-term > term.flag; exit 0' TERM" 'while :; do sleep 1; done' > "$proj_stop_term/grand.sh"
+# start_long_run's wait for grand.pid is the wait for the trap.
+proj_stop_term="$(make_proj proj-stop-term 'bash grand.sh & sleep 300' 600)"
+write_grandchild "$proj_stop_term" trap
 start_long_run "$proj_stop_term" "$RUN_PATH"
 run_script "$RUN" --stop --worktree "$proj_stop_term"
-assert_eq "$OUT $(cat "$proj_stop_term/term.flag" 2>/dev/null || echo no-term)" "state=stopped units=0 groups=1 got-term" \
+assert_eq "$OUT $(term_state "$proj_stop_term")" "state=stopped units=0 groups=1 got-term" \
   "--stop sends a setsid run's group SIGTERM, and a grandchild runs its trap" "$ERR"
 grandchild_state "$proj_stop_term" >/dev/null
 end_long_run
