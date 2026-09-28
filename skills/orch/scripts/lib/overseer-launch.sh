@@ -117,7 +117,7 @@ ol_preference_entries() { # VALUE
 # under, OL_ACCOUNT_MODEL the model it judges it on. lib/lane-launch.sh §
 # lane_pick_harness answers first: claude and codex spend their own accounts,
 # and a pi session on a `github-copilot/` model spends the Copilot pool `lanes
-# pick --harness pi` reads. Where it answers none for pi, a model on the
+# pick --harness pi` reads. Where it answers anything else for pi, a model on the
 # pi-claude provider runs the claude model after `pi-claude/` under
 # CLAUDE_CONFIG_DIR (pi-extensions/pi-claude-bridge), so it spends a claude
 # account on that model; a model on any other provider spends no account
@@ -130,6 +130,7 @@ ol_account() { # HARNESS MODEL
   local model="${2:-}"
   [[ "${1:-}" != pi ]] || model="${model%%:*}"
   OL_ACCOUNT_HARNESS="$(lane_pick_harness "${1:-}" "$model")" OL_ACCOUNT_MODEL="$model"
+  [[ "${1:-}" != pi || "$OL_ACCOUNT_HARNESS" == pi ]] || OL_ACCOUNT_HARNESS=""
   [[ "${1:-}" == pi && -z "$OL_ACCOUNT_HARNESS" ]] || return 0
   case "$model" in
     pi-claude/?*) OL_ACCOUNT_HARNESS=claude OL_ACCOUNT_MODEL="${model#pi-claude/}" ;;
