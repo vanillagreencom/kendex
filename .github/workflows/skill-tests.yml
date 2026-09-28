@@ -85,7 +85,10 @@ name: Skill Tests
 # the group runs them again: a base that moved or an entry queued ahead gives
 # the group a tree no pull request run tested, and a passing run the lookup
 # cannot find, a record it cannot read or match, or a record tools/ci-job-set
-# refuses stands nothing down. The macOS legs run once, in the queue.
+# refuses stands nothing down. The macOS legs run in the queue alone, save
+# where a lane source or another path under .github/ changed: there they
+# also run on the pull request and follow the Linux legs' rule, stood down
+# in the queue where the proof holds and run again where it does not.
 
 "on":
   pull_request:
