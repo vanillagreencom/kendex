@@ -65,12 +65,20 @@ cat > "$BIN/kendex" <<'STUB'
 #!/bin/sh
 case "$1:$2:$3" in
   tier-model:claude:1) echo fable ;;
+  tier-model:claude:3) echo sonnet ;;
   tier-model:codex:1) echo gpt-6-astra ;;
   tier-model:codex:2) echo gpt-5.6-sol ;;
   *) exit 1 ;;
 esac
 STUB
-chmod +x "$BIN/claude" "$BIN/kendex"
+# The codex harness, recording its home and argv as the claude stub does.
+cat > "$BIN/codex" <<STUB
+#!/bin/sh
+{ printf 'home=%s\n' "\${CODEX_HOME:-}"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.codex"
+echo 'esc to interrupt'
+exec sleep 100000
+STUB
+chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex"
 # A pane whose foreground process names claude, for `register` to read the
 # harness off: a copy of sleep, since a script or a shell named for the
 # harness can reset the process name tmux reads.
@@ -79,6 +87,7 @@ cp "$(command -v sleep)" "$BIN/hclaude"
 new_home fleet
 make_lane "$H" claude
 make_lane "$H" eclaude
+make_codex_lane "$H/.codex"
 FETCHER="$TMP_ROOT/fetch"
 make_fetcher "$FETCHER"
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -179,6 +188,7 @@ for row in \
   "ORCH_OVERSEER_PREFERENCE=|preference-empty setting=ORCH_OVERSEER_PREFERENCE|an empty preference" \
   "ORCH_OVERSEER_PREFERENCE=claude:Opus:high|invalid-preference entry=claude:Opus:high|an entry outside the shape" \
   "ORCH_OVERSEER_PREFERENCE=codex:gpt-5.6-sl:high|model-failed entry=codex:gpt-5.6-sl:high|a codex model name the tier ladder does not name" \
+  "ORCH_OVERSEER_PREFERENCE=claude:3:high|model-window-unknown entry=claude:3:high model=sonnet|a claude model the adapter names no window for" \
   "ORCH_TMUX_SESSION=|session-unresolved consulted=--session,ORCH_TMUX_SESSION|no session named" \
   "ORCH_TMUX_SESSION=fleetz|tmux-session-missing session=fleetz server=$SOCKET|a session tmux does not hold" \
   "ORCH_OVERSEER_HOST=$TMP_ROOT/other|runtime-unsupported host=$TMP_ROOT/other|a runtime other than tmux" \
@@ -502,6 +512,101 @@ run_oversee -- launch --session fleet --predecessor "$SUCC" --wait-secs 5
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "2|oversee: option-conflict command=launch session=fleet predecessor=$SUCC|0" \
   "--session beside --predecessor is refused, nothing opened"
+
+# The successor is the record's pending member before its window opens, read
+# here while its first turn never comes, and gone with the abandoned launch.
+run_oversee -- launch --wait-secs 20
+PRED="$(recorded pane)"
+PRIOR_RECORD="$(jq -cS .overseer "$FLEET_STATE")"
+PRIOR_LINE="$(recorded launch_line)"
+pending_seen() { # [OVERSEE_BIN] — the pending line a --predecessor launch writes
+  local pid seen=none
+  touch "$TMP_ROOT/idle"
+  OVERSEE_BIN="${1:-}" run_oversee -- launch --predecessor "$PRED" --wait-secs 4 &
+  pid=$!
+  # A real wait: the line lands while that launch waits for a first turn.
+  for _ in $(seq 1 60); do
+    seen="$(recorded pending.launch_line)"
+    [[ "$seen" == none ]] || break
+    sleep 0.1
+  done
+  wait "$pid" || true
+  rm -f "$TMP_ROOT/idle"
+  PENDING_SEEN="$seen"
+}
+pending_seen
+assert_eq "$PENDING_SEEN|$(jq -cS .overseer "$FLEET_STATE")|$(overseers)|$(listed "$PRED")" \
+  "$PRIOR_LINE|$PRIOR_RECORD|1|1" \
+  "a --predecessor launch records its successor as pending before it opens, and the abandoned launch puts the record back"
+PENDCTL="$(mutant_scripts pendctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$PENDCTL/lib/overseer-launch.sh" \
+  '  if [[ "$pending" == pending ]] && ! ol_record_pending "$line" "$identity"; then' '  if false; then'
+pending_seen "$PENDCTL/oversee"
+assert_eq "$PENDING_SEEN" "none" "control: a succession that skips the pending write leaves none to read"
+# A pending write the state refuses is a notice: the succession goes on.
+PENDFAIL="$(mutant_scripts pendfail workflow-state)" || exit 1
+cat > "$PENDFAIL/workflow-state" <<STUB
+#!/usr/bin/env bash
+[[ "\$1 \$2 \$3" != "set oversee overseer.pending" ]] || { echo 'fixture: pending write refused' >&2; exit 1; }
+exec "$SRC_DIR/workflow-state" "\$@"
+STUB
+PRED_GEN="$(recorded generation)"
+OVERSEE_BIN="$PENDFAIL/oversee" run_oversee -- launch --predecessor "$PRED" --wait-secs 20
+assert_eq "$RC|$(keyed line-unrecorded "$OUT" | sed -n 1p)|$(overseers)|$(listed "$PRED")|$(recorded generation)" \
+  "0|oversee: line-unrecorded field=overseer.pending|1|0|$((PRED_GEN + 1))" \
+  "a pending write the state refuses is a notice, and the succession stands"
+tm kill-window -t "$(recorded window)"
+
+# A record from an earlier tmux server naming a pane id this server reuses is
+# no live overseer: the launch opens the next generation over it, and a
+# --predecessor naming that pane is refused, the pane left running.
+STALE="$(tm new-window -d -t fleet -n stale -P -F '#{pane_id}' 'exec sleep 100000')"
+stale_record() {
+  jq --arg pane "$STALE" '.overseer.pane = $pane | .overseer.server = "1"' "$FLEET_STATE" > "$FLEET_STATE.tmp" \
+    && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
+}
+stale_record
+STALE_GEN="$(recorded generation)"
+run_oversee -- launch --predecessor "$STALE" --wait-secs 20
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(listed "$STALE")" \
+  "1|oversee: predecessor-not-live session=$STALE live=none server=$SOCKET|0|1" \
+  "a --predecessor naming a pane an earlier server's record names is refused and left running"
+# Its control: a liveness check reading the pane alone takes the stale record
+# for a live overseer.
+SERVERCTL="$(mutant_scripts serverctl oversee)" || exit 1
+mutate_file "$SERVERCTL/oversee" \
+  'if [[ "$OL_INSPECT_STATE" == gone || "$OL_INSPECT_SERVER" != "$live_server" ]]; then live_pane=""; fi' \
+  'if [[ "$OL_INSPECT_STATE" == gone ]]; then live_pane=""; fi'
+OVERSEE_BIN="$SERVERCTL/oversee" run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "1|oversee: overseer-live session=$STALE server=$SOCKET generation=$STALE_GEN|0" \
+  "control: a liveness check that ignores the server refuses over an earlier server's record"
+run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(recorded generation)|$(overseers)|$(listed "$STALE")" \
+  "0|$((STALE_GEN + 1))|1|1" \
+  "a launch over an earlier server's record opens the next generation"
+tm kill-window -t "$(recorded window)"
+tm kill-window -t "$STALE"
+
+# A first launch on a codex entry: the entry's model and effort, codex's
+# full-bypass words, its launch settings, its compaction words and its
+# question-tool words, under a folder-trust home built in the account.
+codex_usage() { # USED_PCT
+  jq -n --argjson u "$1" '{rate_limit: {primary_window: {used_percent: $u, reset_at: 1785000000, limit_window_seconds: 18000}, secondary_window: null}}' \
+    > "$FIXTURE_DIR/.codex.json"
+}
+codex_usage 20
+LAUNCH_PREF=codex:2:high run_oversee ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.codex" -- launch --wait-secs 20
+codex_words() { # the table's words for a codex launch, one per line
+  printf '%s\n' -m gpt-5.6-sol -c model_reasoning_effort=high
+  eval "printf '%s\n' $(launch_choice_permission_write codex)"
+  printf '%s\n' $(launch_choice_row codex | cut -d'|' -f8) $(launch_choice_compaction_off codex) \
+    $(launch_choice_question_off codex)
+}
+assert_eq "$RC|$(recorded harness)|$(recorded account)|$(sed -n 1p "$TMP_ROOT/argv.codex" | sed "s|^home=$H/.codex/.*|home=codex-account|")|$(sed 1d "$TMP_ROOT/argv.codex" | tr '\n' ';')" \
+  "0|codex|$H/.codex|home=codex-account|$(codex_words | tr '\n' ';')$BRIEF;" \
+  "a first launch on a codex entry carries the table's model, bypass, settings, compaction and question-tool words"
+tm kill-window -t "$(recorded window)"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

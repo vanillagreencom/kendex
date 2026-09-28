@@ -278,6 +278,37 @@ assert_eq "$RC|$(kill -0 "$OLD" 2>/dev/null && echo alive || echo gone)|$(starte
   "control: without the handover the watch keeps serving the closed pane"
 watch_stop "$OLD" "$FLEET_STATE" || true
 
+# The restart waits for the caller's window to close: the helper, run as the
+# handover runs it against a caller that stays open, restarts nothing until
+# that window closes.
+restart_waits() { # [SUCCEED_BIN]
+  new_caller
+  fresh_output
+  start_watch
+  SUCC_PANE="$(tm new-window -d -t fleet:2 -P -F '#{pane_id}' 'exec sleep 100000')"
+  ( cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$NO_MANAGER:$BIN:$PATH" TMUX="$TMUX_ADDR" \
+      "${1:-$SUCCEED}" --watch-restart "$FLEET_STATE" "$CALLER_PANE" "$SUCC_PANE" CLAUDE_CONFIG_DIR "$H/.claude" claude \
+      >>"$WATCH_ERR" 2>&1 </dev/null & )
+  # A real wait: the helper reads the caller every tenth of a second, so two
+  # seconds of a caller that stands is twenty readings of it.
+  sleep 2
+  EARLY="$(grep -c '^oversee-succeed: watch-restarted ' "$WATCH_ERR" 2>/dev/null || true)"
+  EARLY="${EARLY:-0}"
+  tm kill-window -t "$CALLER_WINDOW"
+  wait_restart
+}
+restart_waits
+assert_eq "$EARLY|${NEW:+restarted}" "0|restarted" \
+  "the restart waits for the caller's window to close, and follows it"
+watch_stop "$NEW" "$FLEET_STATE" || true
+# Its control: a helper that stops waiting at once restarts the watch while
+# the caller still stands.
+EAGER="$(mutant_scripts eager oversee-succeed)" || exit 1
+mutate_file "$EAGER/oversee-succeed" '    [[ "$OL_INSPECT_STATE" != gone ]] || break' '    break'
+restart_waits "$EAGER/oversee-succeed"
+assert_eq "$EARLY" "1" "control: a helper that does not wait restarts the watch beside a caller still open"
+watch_stop "$NEW" "$FLEET_STATE" || true
+
 # A harness that kills its tool call's whole process group once the close has
 # ended it: modelled by a tmux that, having run the close, kills the process
 # group of the run that called it, which is started as a group of its own. The

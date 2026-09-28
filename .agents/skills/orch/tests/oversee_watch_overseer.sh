@@ -806,14 +806,48 @@ probe_case() { # WATCH_BIN
   printf '3\n' > "$STUB_DIR/probe-fail-9009"
   WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" -- --max-loops 1
   PROBE_NOTE="$(grep -c "^oversee-watch: child-probe-failed lane=$PANE exit=3\$" "$ERR" || true)"
+  PROBE_NOTE="$PROBE_NOTE|$(grep -c "^oversee-watch: child-probe-failed lane=$PANE exit=0\$" "$ERR" || true)"
 }
 probe_case
-assert_eq "$PROBE_NOTE" "1" "an overseer child probe that cannot run is named with the adapter's status" "$ERR"
+assert_eq "$PROBE_NOTE" "1|0" "an overseer child probe that cannot run is named with the adapter's status" "$ERR"
 PROBE_MUTANT="$(mutant_scripts probe-mutant/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/probe-mutant/github"
 mutate_file "$PROBE_MUTANT/oversee-watch" 'note_probe_unusable "$pane" "$OL_INSPECT_PROBE"' 'note_probe_unusable "$pane"'
 probe_case "$PROBE_MUTANT/oversee-watch"
-assert_eq "$PROBE_NOTE" "0" "control: a note taking the watch's own probe status misnames the overseer's" "$ERR"
+assert_eq "$PROBE_NOTE" "0|1" "control: a note taking the watch's own probe status misnames the overseer's" "$ERR"
+
+# A pane the adapter answers gone settles nothing either, the reason named:
+# the stub's pane listing leaves out a pane with no foreground command.
+overseer_case gone_pane exited
+state_with "$LINE"
+rm -f -- "${STUB_DIR:?}/cmd-$PANE.txt"
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "rc=$RC launched=$(succeed_calls --dead-pane) noted=$(grep -c "^oversee-watch: overseer-unreadable pane=$PANE field=session state=gone\$" "$ERR" || true)" \
+  "rc=0 launched=0 noted=1" \
+  "an overseer pane the adapter answers gone launches nothing and names why once" "$ERR"
+
+# A usage-limit scan the adapter could not run leaves the fallback reading
+# unread: a provider behind a grep that fails on the limit pattern alone.
+LIMIT_BIN="$TMP_ROOT/limit-scan-bin"
+mkdir -p "$LIMIT_BIN"
+# shellcheck source=../scripts/lib/lane-state.sh
+LIMIT_RE="$(source "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" && printf '%s' "$USAGE_LIMIT_RE")"
+cat > "$LIMIT_BIN/grep" <<STUB
+#!/usr/bin/env bash
+for arg in "\$@"; do [[ "\$arg" != $(printf '%q' "$LIMIT_RE") ]] || exit 2; done
+exec $(command -v grep) "\$@"
+STUB
+cat > "$LIMIT_BIN/provider" <<STUB
+#!/bin/sh
+PATH="$LIMIT_BIN:\$PATH" exec "$REPO_ROOT/.agents/skills/orch/scripts/overseer-host-tmux" "\$@"
+STUB
+chmod +x "$LIMIT_BIN/grep" "$LIMIT_BIN/provider"
+overseer_case limit_scan idle
+state_with "$LINE"
+run ORCH_OVERSEER_HOST="$LIMIT_BIN/provider" TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "rc=$RC noted=$(grep -c "^oversee-watch: overseer-unreadable pane=$PANE scan=usage-limit\$" "$ERR" || true)" \
+  "rc=0 noted=1" \
+  "an overseer screen whose usage-limit scan could not run is named unreadable, never judged" "$ERR"
 
 # --- the settings this check reads ----------------------------------------
 overseer_case dead_passes_one exited
