@@ -8,6 +8,8 @@
 #           question-tool words, once, ahead of the caller's flags
 #   gate    a --cmd launch, whose template is the whole command, is refused as
 #           launch-question-tool-missing when it does not carry them itself
+# and the same two for the unattended words a Pi lane carries after them, whose
+# gate refuses as launch-unattended-missing.
 #
 # The fixture is open-terminal-codex-prompt.sh's: a copy of open-terminal in a
 # temp git repo, a stub worktree CLI, and a ghostty stub that captures the
@@ -98,6 +100,14 @@ launch() {
   [[ ! -d "$TMP_ROOT/wt/$(tr '[:lower:]' '[:upper:]' <<<"$item")" ]] || CREATED=yes
 }
 
+# Pi's unattended words as the rendered command quotes them, and the text
+# alone, read from lib/lane-launch.sh, the table open-terminal renders and
+# judges them from, so no suite holds a second copy of the text.
+PI_UNATTENDED_TEXT="$(bash -c 'source "$1" && launch_choice_unattended pi && printf "%s" "${LAUNCH_CHOICE_UNATTENDED[1]}"' \
+  _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
+[[ -n "$PI_UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no pi unattended text" >&2; exit 1; }
+PI_UNATTENDED="'--append-system-prompt' '$PI_UNATTENDED_TEXT'"
+
 echo "=== every command open-terminal builds takes the question tool away ==="
 # HARNESS|FLAGS|ITEM|RENDERED COMMAND|WHAT. FLAGS `-` passes no --launch-flags.
 # A caller's flags that already carry the words keep one copy, ahead of the rest.
@@ -108,9 +118,9 @@ for row in \
   "claude|--model=sonnet|CC-10|claude -n CC-10 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model=claude-sonnet-5' '/orch start CC-10'|the attached form of a claude alias is written as its model id too" \
   "claude|--model claude-sonnet-4-6|CC-7|claude -n CC-7 '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-4-6' '/orch start CC-7'|a claude model with no window keeps its compaction, and there is no mark to hand off at" \
   "codex|-|CC-2|codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-2'|codex disables the request_user_input feature after its update and compaction settings" \
-  "pi|-|CC-3|pi '--exclude-tools' 'question' '/skill:orch start CC-3'|pi excludes the pi-questions tool" \
+  "pi|-|CC-3|pi '--exclude-tools' 'question' $PI_UNATTENDED '/skill:orch start CC-3'|pi excludes the pi-questions tool and carries the unattended words after it" \
   "opencode|-|CC-4|opencode --prompt '/orch start CC-4'|an opencode lane keeps its question tool: no flag turns it off, so none is rendered" \
-  "pi|--model sonnet:high --exclude-tools question|CC-5|pi '--exclude-tools' 'question' '--model' 'sonnet:high' '/skill:orch start CC-5'|a caller's own copy of the words is carried once" \
+  "pi|--model sonnet:high --exclude-tools question|CC-5|pi '--exclude-tools' 'question' '--model' 'sonnet:high' $PI_UNATTENDED '/skill:orch start CC-5'|a caller's own copy of the words is carried once" \
   ; do
   IFS='|' read -r harness flags item want what <<<"$row"
   flag_args=()
@@ -131,7 +141,7 @@ for row in \
   "claude|true --disallowedTools=AskUserQuestion,EnterPlanMode|CC-15|0|-|yes|a claude template carrying the words launches" \
   "claude|true '--disallowedTools=AskUserQuestion,EnterPlanMode'|CC-16|0|-|yes|a word the template quotes is still the word" \
   "codex|true -c features.default_mode_request_user_input=false|CC-17|0|-|yes|a codex template carrying the words launches" \
-  "pi|true --exclude-tools question|CC-18|0|-|yes|a pi template carrying the words launches" \
+  "pi|true --exclude-tools question $PI_UNATTENDED|CC-18|0|-|yes|a pi template carrying the words launches" \
   "opencode|true|CC-19|0|-|yes|an opencode template is not asked for words it has none of" \
   "-|true|CC-20|0|-|yes|a template naming no harness is not asked for words" \
   ; do
@@ -141,6 +151,26 @@ for row in \
   launch "$item" ${harness_args[@]+"${harness_args[@]}"} --cmd "$template"
   refusal="$(awk '$2 == "launch-question-tool-missing" { print; exit }' <<<"$ERR")"
   assert_eq "rc=$RC created=$CREATED refusal=${refusal:--}" "rc=$want_rc created=$want_created refusal=$want_err" "gate: $what"
+done
+
+echo "=== a pi --cmd launch without the unattended words is refused ==="
+# HARNESS|TEMPLATE|ITEM|RC|REFUSAL LINE (`-` for none)|TEXT PRINTED|WHAT
+# Every template carries its harness's question-tool words, so the gate
+# judged is this one. The refusal prints the text on its last line, whole.
+PI_Q='--exclude-tools question'
+for row in \
+  "pi|true $PI_Q|CC-26|1|open-terminal: launch-unattended-missing harness=pi flag=--append-system-prompt|yes|a pi template without the words is refused, naming the flag and printing the text" \
+  "pi|true $PI_Q --append-system-prompt 'Ask when stuck.'|CC-27|1|open-terminal: launch-unattended-missing harness=pi flag=--append-system-prompt|yes|a pi template appending other text is refused" \
+  "pi|true $PI_Q '$PI_UNATTENDED_TEXT'|CC-23|1|open-terminal: launch-unattended-missing harness=pi flag=--append-system-prompt|yes|the text with no flag before it is not the words" \
+  "pi|true $PI_Q --append-system-prompt '$PI_UNATTENDED_TEXT' --append-system-prompt 'Ask when stuck.'|CC-24|0|-|no|the words beside another appended text launch" \
+  "claude|true --disallowedTools=AskUserQuestion,EnterPlanMode|CC-25|0|-|no|a claude template is not asked for words its harness has none of" \
+  ; do
+  IFS='|' read -r harness template item want_rc want_err want_text what <<<"$row"
+  launch "$item" --harness "$harness" --cmd "$template"
+  refusal="$(awk '$2 == "launch-unattended-missing" { print; exit }' <<<"$ERR")"
+  printed=no
+  [[ "$(tail -n 1 <<<"$ERR")" != "$PI_UNATTENDED_TEXT" ]] || printed=yes
+  assert_eq "rc=$RC refusal=${refusal:--} printed=$printed" "rc=$want_rc refusal=$want_err printed=$want_text" "gate: $what"
 done
 
 echo "=== must-fail controls ==="

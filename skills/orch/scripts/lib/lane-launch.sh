@@ -610,6 +610,26 @@ launch_choice_question_off() { # HARNESS
   [[ "$words" == - ]] || printf '%s\n' "$words"
 }
 
+# The unattended words a lane command on harness $1 carries, left in
+# LAUNCH_CHOICE_UNATTENDED one argument per element, empty where the harness
+# takes none. Pi's alone: a Pi lane with its question tool excluded can still
+# ask the person in chat and end its turn waiting on them, idle with nobody
+# at its pane, so every Pi lane command states the rule in the system prompt,
+# on `--append-system-prompt <text>`, which `pi --help` says appends the text
+# and may be given more than once. The turn-end half of the rule is the
+# lane-mail-check hook's, on every harness that runs it. The text crosses the
+# quoting layers a codex kickoff does, so it holds only letters, spaces,
+# commas, periods and hyphens.
+LAUNCH_UNATTENDED_TEXT='This is an unattended orch lane, and nobody reads this pane. Send every question for the overseer with lane-mail ask and block on lane-mail wait for its answer, never as a question in chat. Never end a turn waiting on the person. Where you would stop to ask, read lane-mail inbox and continue the workflow.'
+LAUNCH_CHOICE_UNATTENDED=()
+launch_choice_unattended() { # HARNESS
+  LAUNCH_CHOICE_UNATTENDED=()
+  case "$1" in
+    pi) LAUNCH_CHOICE_UNATTENDED=(--append-system-prompt "$LAUNCH_UNATTENDED_TEXT") ;;
+    *) ;;
+  esac
+}
+
 # ORCH_QUESTION_TOOL, decided once here for every launcher: `off`, the
 # default, gives a launched overseer its harness row's question-off words in
 # LAUNCH_CHOICE_FLAGS, where the row has any, as every lane launch carries
@@ -711,10 +731,17 @@ launch_choice_shell_words() { # TEXT
 # the claude compaction word's JSON quotes among them, is not the word.
 launch_choice_words_present() { # WORDS TEXT
   local -a want=()
-  local i j
   read -r -a want <<<"$1"
-  (( ${#want[@]} > 0 )) || return 1
-  launch_choice_shell_words "$2"
+  launch_choice_args_present "$2" ${want[@]+"${want[@]}"}
+}
+
+# The same question for arguments that hold blanks, handed one per ARG.
+launch_choice_args_present() { # TEXT ARG...
+  local text="$1" i j
+  shift
+  (( $# > 0 )) || return 1
+  local -a want=("$@")
+  launch_choice_shell_words "$text"
   for ((i = 0; i + ${#want[@]} <= ${#LAUNCH_CHOICE_ARGV[@]}; i++)); do
     for ((j = 0; j < ${#want[@]}; j++)); do
       [[ "${LAUNCH_CHOICE_ARGV[i + j]}" == "${want[j]}" ]] || continue 2

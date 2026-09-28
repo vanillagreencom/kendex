@@ -1067,9 +1067,11 @@ assert_eq "said=$(grep -c "^lane-mail-check: harness-unlisted=$LANE/.other/hooks
   "a launched lane's turn end on an install naming no harness reports harness-unlisted and writes no row"
 
 # --- the question at a turn end ------------------------------------------
-# A lane that ends its turn on a question it never sent through lane mail
-# asked nobody: the overseer reads the mailbox, never the pane. The turn end
-# is refused while the mailbox holds no ask of the lane still owed an answer.
+# A lane that ends its turn on a question to the person, with no ask or notice
+# sent through lane mail that turn, asked nobody: the overseer reads the
+# mailbox, never the pane. The turn end is refused once with the continuation
+# that reads the lane's mail; ending on the person again straight after is
+# reported to the overseer as a lane notice, never refused a second time.
 
 # One assistant record carrying TEXT, in the spelling that harness writes its
 # transcript in, and under the context mark so the rows judge the question
@@ -1091,55 +1093,103 @@ text_line() { # SPELLING TEXT
   esac
 }
 
+# The prompt record that opens a turn at EPOCH, in that harness's spelling:
+# Claude Code's `user` record with string content, and Pi's `message` record
+# whose role is user (`UserMessage`, @earendil-works/pi-ai). A turn's sent
+# test counts an ask or notice stamped at or after it.
+prompt_line() { # SPELLING EPOCH
+  case "$1" in
+    claude) jq -nc --argjson t "$2" '{type:"user",timestamp:($t | todate),message:{role:"user",content:"go"}}' ;;
+    pi)
+      jq -nc --argjson t "$2" \
+        '{type:"message",id:"e1",parentId:null,timestamp:($t | todate),
+          message:{role:"user",content:[{type:"text",text:"go"}],timestamp:($t * 1000)}}'
+      ;;
+    *) printf 'prompt_line: no such spelling: %s\n' "$1" >&2; return 1 ;;
+  esac
+}
+NOW=$(date -u +%s)
+OPENED=$((NOW - 60))
+printf 'Which base?\n' > "$TMP_ROOT/ask.txt"
+# The notices the lane's outbound file holds, one text per line.
+notices() { # ITEM
+  [ -f "$LANE/tmp/lane-mail/$1/to-overseer.jsonl" ] || { echo none; return 0; }
+  jq -r 'select(.kind == "notice") | .text' "$LANE/tmp/lane-mail/$1/to-overseer.jsonl"
+}
+
 new_handoff_lane question_turn KEN-65
-text_line claude 'Two bases fit. Which one should I rebase onto?' > "$TRANSCRIPT"
+{ prompt_line claude "$OPENED"; text_line claude 'Two bases fit. Which one should I rebase onto?'; } > "$TRANSCRIPT"
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
-  "a turn ending in a question with nothing asked through lane mail is refused"
-# The route names the lane's root, as the halt's read does, so a lane whose
-# shell is in another checkout still writes the mailbox this hook judges.
+  "a turn ending in a question with nothing sent through lane mail is refused"
+# The continuation and the route name the lane's root, as the halt's read
+# does, so a lane whose shell is in another checkout still reads and writes
+# the mailbox this hook judges.
+printf -v INBOX_ROUTE 'inbox --item %q --root %q' KEN-65 "$LANE"
 printf -v ASK_ROUTE 'ask --item %q --root %q --file [PATH]' KEN-65 "$LANE"
 printf -v WAIT_ROUTE 'wait --item %q --root %q --id [MSGID]' KEN-65 "$LANE"
-assert_eq "$(grep -cF -- "$ASK_ROUTE" "$ERR_FILE") $(grep -cF -- "$WAIT_ROUTE" "$ERR_FILE")" "1 1" \
-  "the refusal names the ask send and the wait on its id, each rooted at the lane, once each"
+assert_eq "$(grep -cF -- "$INBOX_ROUTE" "$ERR_FILE") $(grep -cF -- "$ASK_ROUTE" "$ERR_FILE") $(grep -cF -- "$WAIT_ROUTE" "$ERR_FILE")" "1 1 1" \
+  "the refusal names the inbox read to continue with, the ask send and the wait on its id, each rooted at the lane, once each"
+assert_eq "$(notices KEN-65)" none "the first refusal sends the overseer nothing"
 stop_at "$TRANSCRIPT" true
-expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
-  "the refusal repeats on the continued turn: sending the ask is what clears it"
-printf 'Which base?\n' > "$TMP_ROOT/ask.txt"
-(cd "$LANE" && "$LANE_MAIL" ask --item KEN-65 --file "$TMP_ROOT/ask.txt" >/dev/null)
+expect 0 "lane-mail-check: question-notice=$TRANSCRIPT" \
+  "the continued turn ending on the person again is not refused twice"
+assert_eq "$(notices KEN-65 | grep -cxF 'Two bases fit. Which one should I rebase onto?')" 1 \
+  "the overseer is sent one lane notice carrying the lane's last line"
 stop_at "$TRANSCRIPT" false
-expect 0 "$GAP" "a lane whose ask is still waiting for its answer ends its turn"
-send KEN-65 'main' --re "$(jq -r .id "$LANE/tmp/lane-mail/KEN-65/to-overseer.jsonl")"
-stop_at "$TRANSCRIPT" false
-expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
-  "once the ask is answered, a turn still ending in a question needs a new ask"
+expect 0 "$GAP" "a turn in which the lane sent a notice ends"
 run_payload "$(jq -nc --arg p "$TRANSCRIPT" \
   '{session_id:"s1",stop_hook_active:false,agent_id:"a1",transcript_path:$p}')"
 expect 0 - "a subagent's turn end is not judged on the question"
 stop
 expect 0 "$GAP" "a payload naming no transcript leaves the question unjudged"
 
-# `lane-mail pending` lists the overseer's unread directives beside the lane's
-# asks, and only an ask is a question sent. A continued turn skips the mailbox
-# check, so a directive the overseer sent during it is still unread here.
-new_handoff_lane question_directive KEN-99
-text_line claude 'Which base?' > "$TRANSCRIPT"
-send KEN-99 'Rebase onto main.'
-stop_at "$TRANSCRIPT" true
+# The sent test reads the turn: an ask stamped at or after the turn's prompt
+# carries its question, and one sent before the turn opened carries none.
+new_handoff_lane question_ask KEN-64
+{ prompt_line claude "$OPENED"; text_line claude 'Which base?'; } > "$TRANSCRIPT"
+(cd "$LANE" && "$LANE_MAIL" ask --item KEN-64 --file "$TMP_ROOT/ask.txt" >/dev/null)
+stop_at "$TRANSCRIPT" false
+expect 0 "$GAP" "a turn in which the lane sent its ask ends"
+{ prompt_line claude "$((NOW + 60))"; text_line claude 'Which base?'; } > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
-  "an unread directive is no ask: a continued turn ending in a question is still refused"
+  "an ask sent before this turn opened does not carry this turn's question"
+# A turn opened before the window holds no prompt, and the window's first
+# stamp stands in for it.
+{ jq -nc --argjson t "$((NOW + 60))" \
+    '{type:"assistant",timestamp:($t | todate),message:{role:"assistant",content:[{type:"tool_use",name:"Bash",input:{}}]}}'
+  text_line claude 'Which base?'; } > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
+  "with no prompt in the window, an ask stamped before its first record does not count"
+
+# Only an ask or a notice is sent: a directive the overseer wrote this turn,
+# read and acknowledged, is no ask of the lane's.
+new_handoff_lane question_directive KEN-99
+{ prompt_line claude "$OPENED"; text_line claude 'Which base?'; } > "$TRANSCRIPT"
+send KEN-99 'Rebase onto main.' >/dev/null
+(cd "$LANE" && "$LANE_MAIL" inbox --item KEN-99 --root "$LANE" >/dev/null)
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
+  "a directive the overseer sent this turn is no ask of the lane's"
 
 # The question test is the last non-empty line of the final assistant text,
-# trailing whitespace dropped, ending with `?`; a record after it carrying no
-# text leaves that text final. One row per shape, in Claude Code's spelling;
-# Pi's record is read the same way.
+# trailing whitespace dropped: one ending with `?`, or one holding a phrasing
+# that hands the next step to the reader. A record after it carrying no text
+# leaves that text final. One row per shape, in Claude Code's spelling; Pi's
+# record is read the same way.
 new_handoff_lane question_shapes KEN-68
 for row in \
   'a question followed by trailing whitespace|2|Which base?  \t' \
   'a question above a closing statement is not the last line|0|Which base?\nI will pick main.' \
   'a statement is not a question|0|Picked main.' \
   'a question mark inside the last line is not one at its end|0|The ? in the name is literal.' \
-  'a last line of whitespace does not hide the question above it|2|Which base?\n   '; do
+  'a last line of whitespace does not hide the question above it|2|Which base?\n   ' \
+  'a line handing the next step to the reader asks it with no question mark|2|Say if you want me to continue FLT-400' \
+  'a line asking the reader to tell the lane asks it|2|Let me know which base to use.' \
+  'a line opening on should I asks it|2|Should I rebase onto main.' \
+  'a line naming someone else to tell is addressed to nobody at the pane|0|I will let the overseer know.'; do
   IFS='|' read -r label rc_want text <<<"$row"
   text_line claude "$(printf '%b' "$text")" > "$TRANSCRIPT"
   stop_at "$TRANSCRIPT" false
@@ -1150,21 +1200,68 @@ jq -nc '{type:"assistant",message:{role:"assistant",content:[{type:"tool_use",na
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
   "a later record carrying only a tool call leaves the question as the final text"
-text_line pi 'Which base?' > "$TRANSCRIPT"
-stop_at "$TRANSCRIPT" false
-expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" "a Pi lane's question is read from its own record"
 unmark_lanes
 stop_at "$TRANSCRIPT" false
 expect 0 - "a mailbox with no launch marker is no lane, and its question is not judged"
 
-# A pending listing that fails leaves the question unjudged, reported and
-# passed: nothing a lane does at its turn end repairs its mailbox. A cursor
-# lock beside no cursor is a read the reader refuses as missed.
-new_handoff_lane question_pending_failed KEN-69
+# A Pi lane, read from its own records by the hook under Pi's own hook
+# directory, handed the window the pi-hooks carrier puts on its Stop payload:
+# a turn ending on a line a Pi lane wrote to the person is refused and
+# continued once, a turn in which the lane sent its ask ends, and a turn
+# ending on no question passes untouched.
+new_pi_lane() { # NAME ITEM
+  new_handoff_lane "$1" "$2"
+  install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
+}
+stop_pi_at() { # TRANSCRIPT ACTIVE
+  run_payload "$(jq -nc --arg p "$1" --argjson a "$2" \
+    '{session_id:"s1",stop_hook_active:$a,transcript_path:$p,context_window:200000}')"
+}
+new_pi_lane question_pi KEN-63
+{ prompt_line pi "$OPENED"; text_line pi 'Say if you want me to continue FLT-400'; } > "$TRANSCRIPT"
+stop_pi_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" "a Pi lane ending on a question to the person is refused"
+printf -v INBOX_ROUTE 'inbox --item %q --root %q' KEN-63 "$LANE"
+assert_eq "$(grep -cF -- "$INBOX_ROUTE" "$ERR_FILE")" 1 "and continued with the read of its own mail"
+stop_pi_at "$TRANSCRIPT" true
+expect 0 "lane-mail-check: question-notice=$TRANSCRIPT" "the turn Pi's carrier continued is reported, not refused again"
+new_pi_lane question_pi_ask KEN-62
+{ prompt_line pi "$OPENED"; text_line pi 'Which base?'; } > "$TRANSCRIPT"
+(cd "$LANE" && "$LANE_MAIL" ask --item KEN-62 --file "$TMP_ROOT/ask.txt" >/dev/null)
+stop_pi_at "$TRANSCRIPT" false
+expect 0 "$GAP" "a Pi turn in which the lane sent its ask ends"
+new_pi_lane question_pi_none KEN-61
+{ prompt_line pi "$OPENED"; text_line pi 'Pushed the fix; CI is running.'; } > "$TRANSCRIPT"
+stop_pi_at "$TRANSCRIPT" false
+expect 0 "$GAP" "a Pi turn ending on no question passes"
+assert_eq "$(notices KEN-61)" none "and writes nothing to the mailbox"
+
+# An events listing that fails leaves the question unjudged, reported and
+# passed: nothing a lane does at its turn end repairs its mailbox. An outbound
+# file that is a directory is one the reader refuses as unsafe.
+new_handoff_lane question_events_failed KEN-69
 text_line claude 'Which base?' > "$TRANSCRIPT"
-: > "$LANE/tmp/lane-mail/KEN-69/to-lane.cursor.lock"
+mkdir -p "$LANE/tmp/lane-mail/KEN-69/to-overseer.jsonl"
 stop_at "$TRANSCRIPT" false
-expect 0 "lane-mail-check: pending=2" "a pending listing the reader refuses is reported and the turn ends"
+expect 0 "lane-mail-check: events=2" "an events listing the reader refuses is reported and the turn ends"
+assert_eq "$(cause_below)" "present" "with the reader's own words under it"
+# A notice that cannot be sent is reported and passed too: the lane has had
+# its one continuation, and refusing again is the loop. This case's reader
+# refuses its `notice` verb and runs every other one.
+new_handoff_lane question_notice_unsent KEN-60
+rm -f -- "${LANE:?}/.agents/skills/orch/scripts"
+mkdir -p "$LANE/.agents/skills/orch/scripts"
+for entry in "$REPO_ROOT/skills/orch/scripts/"*; do
+  ln -s -- "$entry" "$LANE/.agents/skills/orch/scripts/${entry##*/}"
+done
+rm -f -- "${LANE:?}/.agents/skills/orch/scripts/lane-mail"
+printf '#!/usr/bin/env bash\n[ "${1:-}" != notice ] || { echo "planted: notice refused" >&2; exit 3; }\nexec %q "$@"\n' \
+  "$LANE_MAIL" > "$LANE/.agents/skills/orch/scripts/lane-mail"
+chmod +x "$LANE/.agents/skills/orch/scripts/lane-mail"
+text_line claude 'Which base?' > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" true
+expect 0 "lane-mail-check: question-notice-unsent=3" \
+  "a notice the reader refuses is reported under its exit status and the turn ends"
 assert_eq "$(cause_below)" "present" "with the reader's own words under it"
 
 # --- the overseer's own turn end ------------------------------------------
@@ -2679,36 +2776,63 @@ text_line claude 'Which base?' > "$TRANSCRIPT"
 stop_at "$TRANSCRIPT" false
 expect 0 "$GAP" "control: without its refusal a turn ending in an unsent question passes"
 
-# The pending read ignored: a lane whose ask is waiting is refused again, and
+# The sent test ignored: a lane whose ask went out this turn is refused, and
 # told to send a question it already sent.
-mutant question-ignores-pending -e 's@^  \[ -z "\$ASKS" \] || return 0$@  :@'
-new_handoff_lane control_question_pending KEN-67
+mutant question-ignores-sent -e 's@^  \[ "\$SENT" != true \] || return 0$@  :@'
+new_handoff_lane control_question_sent KEN-67
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-text_line claude 'Which base?' > "$TRANSCRIPT"
+{ prompt_line claude "$OPENED"; text_line claude 'Which base?'; } > "$TRANSCRIPT"
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-67 --file "$TMP_ROOT/ask.txt" >/dev/null)
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
-  "control: without the pending read a lane whose ask is waiting is refused again"
+  "control: without the sent test a lane whose ask went out this turn is refused again"
 
-# The ask filter dropped: an unread directive in the pending listing then
-# passes for a question sent.
-mutant question-any-pending -e "s@jq -c 'select(.kind == \"ask\")'@jq -c '.'@"
+# The kind filter dropped: a directive the overseer sent this turn then
+# passes for a question the lane sent.
+mutant question-any-kind -e 's@ and (\.kind == "ask" or \.kind == "notice")$@@'
 new_handoff_lane control_question_directive KEN-99
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-text_line claude 'Which base?' > "$TRANSCRIPT"
-send KEN-99 'Rebase onto main.'
-stop_at "$TRANSCRIPT" true
-expect 0 "$GAP" "control: without the ask filter an unread directive lets a continued turn's question through"
+{ prompt_line claude "$OPENED"; text_line claude 'Which base?'; } > "$TRANSCRIPT"
+send KEN-99 'Rebase onto main.' >/dev/null
+(cd "$LANE" && "$LANE_MAIL" inbox --item KEN-99 --root "$LANE" >/dev/null)
+stop_at "$TRANSCRIPT" false
+expect 0 "$GAP" "control: without the kind filter a directive lets the question through"
 
-# The question test dropped: every final line is then a question, and a lane
-# that answered is held.
-mutant question-any-line -e "s@^    \*'?') ;;\$@    *) ;;@"
+# The turn bound dropped: an ask from an earlier turn then carries this
+# turn's question.
+mutant question-any-turn -e 's@) >= \$opened))@) >= 0))@'
+new_handoff_lane control_question_turn_start KEN-59
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+(cd "$LANE" && "$LANE_MAIL" ask --item KEN-59 --file "$TMP_ROOT/ask.txt" >/dev/null)
+{ prompt_line claude "$((NOW + 60))"; text_line claude 'Which base?'; } > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+expect 0 "$GAP" "control: without the turn bound an ask sent before the turn carries its question"
+
+# The question-mark test widened to every line: a lane that answered is held.
+mutant question-any-line -e "s@^    \*'?') return 0 ;;\$@    *) return 0 ;;@"
 new_handoff_lane control_question_line KEN-70
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 text_line claude 'Picked main.' > "$TRANSCRIPT"
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
   "control: without the question test a closing statement is refused as a question"
+
+# The phrasing rows dropped: a line a lane wrote to the person then passes.
+mutant question-no-phrasing -e "/^    \*'say if you'\*/,/^    \*'do you want me to'\*/d"
+new_handoff_lane control_question_phrasing KEN-58
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+text_line claude 'Say if you want me to continue FLT-400' > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+expect 0 "$GAP" "control: without the phrasing rows a lane handing its next step to the pane passes"
+
+# The continued-turn arm dropped: the refusal repeats, which is the loop.
+mutant question-refused-twice -e 's@^  if \[ "\$CONTINUED" = true \]; then$@  if false; then@'
+new_handoff_lane control_question_twice KEN-57
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+text_line claude 'Which base?' > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" true
+expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
+  "control: without the continued-turn arm a lane is refused the same question twice in a row"
 
 # --- the checkout's overseer mailbox --------------------------------------
 # `lane-mail peer send --repo` writes the overseer mailbox of another

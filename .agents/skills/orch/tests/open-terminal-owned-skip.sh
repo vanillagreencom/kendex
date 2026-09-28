@@ -355,6 +355,12 @@ CODEX_COMPACTION="'-c' 'model_auto_compact_token_limit=9223372036854775807' '-c'
 CLAUDE_QUESTION_OFF="'--disallowedTools=AskUserQuestion,EnterPlanMode'"
 CODEX_QUESTION_OFF="'-c' 'features.default_mode_request_user_input=false'"
 PI_QUESTION_OFF="'--exclude-tools' 'question'"
+# A Pi command then carries its unattended words, the text read from
+# lib/lane-launch.sh, which renders and judges them.
+PI_UNATTENDED_TEXT="$(bash -c 'source "$1" && launch_choice_unattended pi && printf "%s" "${LAUNCH_CHOICE_UNATTENDED[1]}"' \
+  _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
+[[ -n "$PI_UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no pi unattended text" >&2; exit 1; }
+PI_QUESTION_OFF="$PI_QUESTION_OFF '--append-system-prompt' '$PI_UNATTENDED_TEXT'"
 # occurrences TEXT NEEDLE — how many times NEEDLE stands in TEXT.
 occurrences() { local rest="${1//"$2"/}"; printf '%s\n' "$(( (${#1} - ${#rest}) / ${#2} ))"; }
 # A claude or pi lane re-arms its mailbox monitor; a codex lane arms none,

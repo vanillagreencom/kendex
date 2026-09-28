@@ -509,6 +509,18 @@ if ! LAUNCH_QUESTION_OFF="$(launch_choice_question_off "$LAUNCH_HARNESS")" \
   exit 1
 fi
 
+# A harness with unattended words carries them the same way: start_cmd gives
+# every command it builds its row's, and a --cmd template carries them itself,
+# the flag and then its text as one quoted argument. The refusal names the
+# flag on its keyed line and prints the text under the English, whole.
+launch_choice_unattended "$LAUNCH_HARNESS"
+if [[ -n "$CMD_TEMPLATE" && ${#LAUNCH_CHOICE_UNATTENDED[@]} -gt 0 ]] \
+   && ! launch_choice_args_present "$CMD_TEMPLATE" "${LAUNCH_CHOICE_UNATTENDED[@]}"; then
+  ot_message launch-unattended-missing "harness=$LAUNCH_HARNESS" "flag=${LAUNCH_CHOICE_UNATTENDED[0]}" >&2
+  printf '%s\n' "${LAUNCH_CHOICE_UNATTENDED[@]:1}" >&2
+  exit 1
+fi
+
 # A fleet lane hands off at a share of its own window, which a harness adapter
 # in lib/lane-context.sh reads, and runs with its harness's own compaction off,
 # so the handoff comes first. Judged on the harness the launch RUNS, as the
@@ -1187,7 +1199,11 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   local -a model_arg=()
   [[ -z "$wake_dir" ]] || model_arg=(--model "$WAKE_MODEL")
   launch_choice_lead_settings --question-off ${model_arg[@]+"${model_arg[@]}"} "$HARNESS" ${flag_tokens[@]+"${flag_tokens[@]}"}
-  for tok in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
+  # The unattended words follow, whole: their text is one argument holding
+  # blanks and nothing else a quoting layer acts on.
+  launch_choice_unattended "$HARNESS"
+  for tok in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"} \
+             ${LAUNCH_CHOICE_UNATTENDED[@]+"${LAUNCH_CHOICE_UNATTENDED[@]}"}; do
     flags+="'$tok' "
   done
   # Both delivered lines obey the same shell-inert rule as the codex arms above.

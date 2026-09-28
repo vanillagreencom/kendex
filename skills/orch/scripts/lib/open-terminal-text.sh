@@ -51,6 +51,7 @@ ot_message() { # REASON FIELD=VALUE...
     launch-flags-unreachable) text='These launch flags reach nothing. A --cmd launch runs its template as the whole command and no flag is appended to it, so a model, an effort or a permission word left here would be judged and recorded while the harness ran its own default. Nothing was launched. Name them inside the --cmd command, or drop --cmd and let this launcher build the harness command from --launch-flags.' ;;
     launch-model-missing) text='This lane launch names no model, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the model in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes.' ;;
     launch-question-tool-missing) text='This lane launch leaves the harness question tool on, and a lane that calls it stops at a dialog nobody at the pane answers. Nothing was launched. Put the words this line names, in that order, inside the --cmd command; a launch without --cmd is given them by this launcher. A lane asks its overseer through lane-mail ask.' ;;
+    launch-unattended-missing) text='This Pi lane launch leaves out the unattended words, and a Pi lane with its question tool excluded can still ask the person in chat and end its turn waiting, idle with nobody at the pane. Nothing was launched. Put the flag this line names inside the --cmd command, followed by the text under this line as one quoted argument; a launch without --cmd is given them by this launcher.' ;;
     launch-effort-missing) text='This lane launch names no reasoning effort, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the effort in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes, one ending in = being a whole token with its value attached.' ;;
     lane-selected) text='The launch account is selected.' ;;
     launch-trusted) text='The launch directory is trusted in the config this launch will read, so the harness starts into it rather than onto the folder-trust question. route=preapproved is the account config already carrying the entry; route=launch-home is a CODEX_HOME built for this launch under the account, holding the account files by link and a config of its own, because the account config is a link the account shim repoints at every launch; route=account-config is the entry written into the claude config dir .claude.json, the file that harness keeps its own answer in.' ;;
@@ -421,6 +422,13 @@ Options:
                     --cmd launch on a harness with words carries them in its
                     command, --lane or not, or is refused as
                     launch-question-tool-missing, one word= field per word.
+                    Every pi command built here also carries the unattended
+                    words after them: --append-system-prompt and the text
+                    lib/lane-launch.sh holds, which routes every question
+                    through lane-mail and ends no turn waiting on the person.
+                    A pi --cmd launch carries both, the text as one quoted
+                    argument, or is refused as launch-unattended-missing,
+                    naming the flag and printing the text.
   --relaunch        Replace a dead session on items that may already have a
                     worktree: an existing tree is reused instead of being read
                     as another session's claim. The newest matching Claude,
