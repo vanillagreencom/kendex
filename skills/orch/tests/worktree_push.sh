@@ -26,8 +26,10 @@ source "$TEST_DIR/lib/growth-state.sh"
 
 # Physical: on macOS the temp root sits under /var -> /private/var, and the
 # scripts print the resolved path.
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "worktree_push: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "worktree_push: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "worktree_push: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # The mode a fix round runs is read from the project's settings, and orch-env
 # reads the process environment first: a developer's own range command would
 # otherwise decide the fix receipts' acceptance.

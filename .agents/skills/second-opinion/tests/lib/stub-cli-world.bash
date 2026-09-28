@@ -43,7 +43,9 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 SECOND_OPINION="$SKILL_DIR/scripts/second-opinion"
 # shellcheck source=path-farm.bash
 . "$TEST_DIR/lib/path-farm.bash"
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "stub-cli-world: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "stub-cli-world: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "stub-cli-world: scratch=resolve-failed" >&2; exit 1; }
 # Rows leave directories that deny writes; make the tree removable first.
 trap 'chmod -R u+rwX "$TMP_ROOT" 2>/dev/null || true; rm -rf -- "${TMP_ROOT:?}" || true' EXIT
 

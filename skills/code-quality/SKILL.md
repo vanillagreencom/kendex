@@ -83,7 +83,17 @@ A new or modified production gate or guard ships with one must-fail control per 
 ## Language Discipline
 
 - **Rust**: exhaustive matches (no `_ =>` over enums you own); enums over strings/sentinels/booleans-with-meaning. A test that hands a temporary path to code that may resolve symlinks binds its canonical root at creation and passes that binding, never the raw path; platform-only test APIs carry a `cfg` and, when the property is portable, a portable twin.
-- **Bash**: check the result of every effectful substitution, in test position too; `--` before path arguments sourced from configuration, argv, or the environment (not paths the script built itself, e.g. `mktemp -d`); no `[A-Za-z]`-class assumptions under arbitrary locales. A test suite resolves its `mktemp -d` root at creation, `TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"`, before any path derived from it is compared or printed: macOS answers `mktemp -d` under `/var`, a symlink to `/private/var`, so a path the code under test resolved never equals one built on the raw root.
+- **Bash**: check the result of every effectful substitution, in test position too; `--` before path arguments sourced from configuration, argv, or the environment (not paths the script built itself, e.g. `mktemp -d`); no `[A-Za-z]`-class assumptions under arbitrary locales. A test suite makes its `mktemp -d` root with these lines, `NAME` the suite's own name, and resolves it before any path derived from it is compared or printed: macOS answers `mktemp -d` under `/var`, a symlink to `/private/var`, so a path the code under test resolved never equals one built on the raw root.
+
+  ```bash
+  TMP_ROOT="$(mktemp -d)" || { echo "NAME: scratch=mktemp-failed" >&2; exit 1; }
+  [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "NAME: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+  TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "NAME: scratch=resolve-failed" >&2; exit 1; }
+  trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+  ```
+
+  `mktemp -d` is assigned and checked alone, never nested inside the `cd`: there its failure hands `cd` an empty argument, which bash before 5.3 accepts as the current directory, so the root names the caller's directory and the EXIT trap removes it.
+
 - In any `pipefail` script, never pipe a shell writer into an early-closing reader (`head`, `grep -q`, `grep -m N`), which stops reading while its producer still writes: the 141 SIGPIPE status aborts the run where `errexit` fires, and in condition position reads as a plain false that drops the result with no error. Capture whole and window in-shell, or give the reader a here-string.
 - **TypeScript/JS**: discriminated unions switched with a `never` default over strings and booleans-with-meaning; distinguish missing from present-but-falsy (`""`, `0`) at every guard; no `any` at module boundaries.
 

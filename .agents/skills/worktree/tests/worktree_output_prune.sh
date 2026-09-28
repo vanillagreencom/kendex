@@ -28,7 +28,9 @@ SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$SCRIPTS_DIR/worktree}"
 SESSION_GUARD="$SCRIPTS_DIR/worktree-session-guard"
 
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "worktree_output_prune: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "worktree_output_prune: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "worktree_output_prune: scratch=resolve-failed" >&2; exit 1; }
 ROW_PIDS=()
 # Every row's background holder dies with the suite, whichever way it ends: a
 # surviving flock or a surviving cwd would silently refuse every later row.
@@ -40,7 +42,7 @@ cleanup_row_pids() {
   done
   ROW_PIDS=()
 }
-trap 'cleanup_row_pids; rm -rf "$TMP_ROOT"' EXIT
+trap 'cleanup_row_pids; rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 PASS=0
 FAIL=0

@@ -48,11 +48,13 @@ source "$TEST_DIR/lib/assertions.sh"
 # mutant_scripts and mutate_file, the two halves of the control below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-claude-handoff: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "open-terminal-claude-handoff: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "open-terminal-claude-handoff: scratch=resolve-failed" >&2; exit 1; }
 # The fleet home every launch here runs under; see run() below.
 FLEET_HOME="$TMP_ROOT/fleet-home"
 mkdir -p "$FLEET_HOME"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # The composer's prompt marker is `❯` followed by a NON-BREAKING space; a
 # SUBMITTED message is echoed into the transcript as `❯` followed by an

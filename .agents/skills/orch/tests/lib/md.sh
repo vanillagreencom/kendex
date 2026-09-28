@@ -92,8 +92,10 @@ TESTS_DIR="$(cd "$MD_LIB_DIR/.." && pwd)"
 SKILL_DIR="$(cd "$TESTS_DIR/.." && pwd)"
 SKILLS_ROOT="$(cd "$SKILL_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$SKILLS_ROOT/.." && pwd)"
-MD_TMP="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$MD_TMP"' EXIT
+MD_TMP="$(mktemp -d)" || { echo "md: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $MD_TMP && ! -L $MD_TMP ]] || { echo "md: scratch=not-a-directory value=[$MD_TMP]" >&2; exit 1; }
+MD_TMP="$(cd -- "$MD_TMP" && pwd -P)" || { echo "md: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${MD_TMP:?}"' EXIT
 
 # shellcheck source=assertions.sh
 source "$MD_LIB_DIR/assertions.sh"

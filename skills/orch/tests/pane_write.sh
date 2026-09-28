@@ -12,7 +12,9 @@ SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 REAL_TMUX="$(command -v tmux)" || { echo "pane_write: tmux-missing" >&2; exit 1; }
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "pane_write: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "pane_write: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "pane_write: scratch=resolve-failed" >&2; exit 1; }
 SOCK_DIR="$TMP_ROOT/sock"
 mkdir -p "$SOCK_DIR"
 

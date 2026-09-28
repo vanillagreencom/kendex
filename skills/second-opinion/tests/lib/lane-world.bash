@@ -34,7 +34,9 @@ unset SECOND_OPINION_MODELS SECOND_OPINION_COUNT SECOND_OPINION_TARGET \
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 SECOND_OPINION="$SKILL_DIR/scripts/second-opinion"
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "lane-world: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lane-world: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lane-world: scratch=resolve-failed" >&2; exit 1; }
 # Rows leave directories that deny writes; make the tree removable first.
 trap 'chmod -R u+rwX "$TMP_ROOT" 2>/dev/null || true; rm -rf -- "${TMP_ROOT:?}" || true' EXIT
 

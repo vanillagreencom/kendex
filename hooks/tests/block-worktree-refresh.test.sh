@@ -33,8 +33,10 @@ PASS=0
 FAIL=0
 # The hook prints physical paths, so the fixture root is held as one: under a
 # symlinked TMPDIR mktemp's spelling and pwd -P's differ.
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "block-worktree-refresh: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "block-worktree-refresh: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "block-worktree-refresh: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
 BASH_BIN="$(command -v bash)"
 export HOME="$TMP_ROOT/home"
