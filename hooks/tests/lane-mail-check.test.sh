@@ -1100,7 +1100,7 @@ STAMP='def stamp: todate | sub("Z$"; ".215Z");'
 # The prompt record that opens a turn at EPOCH, in that harness's spelling:
 # Claude Code's `user` record with string content, and Pi's `message` record
 # whose role is user (`UserMessage`, @earendil-works/pi-ai). A turn's sent
-# test counts an ask or notice stamped at or after it.
+# test counts an ask or notice stamped in a later second.
 prompt_line() { # SPELLING EPOCH
   case "$1" in
     claude) jq -nc --argjson t "$2" "$STAMP"'{type:"user",timestamp:($t | stamp),message:{role:"user",content:"go"}}' ;;
@@ -1154,7 +1154,7 @@ expect 0 - "a subagent's turn end is not judged on the question"
 stop
 expect 0 "$GAP" "a payload naming no transcript leaves the question unjudged"
 
-# The sent test reads the turn: an ask stamped at or after the turn's prompt
+# The sent test reads the turn: an ask stamped after the turn's prompt second
 # carries its question, and one sent before the turn opened carries none.
 new_handoff_lane question_ask KEN-64
 { prompt_line claude "$OPENED"; text_line claude 'Which base?'; } > "$TRANSCRIPT"
@@ -1168,6 +1168,12 @@ expect 0 "$GAP" "a turn in which the lane sent its ask ends"
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
   "an ask sent in an earlier turn of the window does not carry this turn's question"
+# Both stamps are read to the second, so a new prompt in the same second as
+# the earlier turn's ask leaves the ask unsent for this turn.
+{ prompt_line claude "$OPENED"; prompt_line claude "$(after_sent KEN-64 0)"; text_line claude 'Which base?'; } > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
+  "an ask in the new prompt's own second does not carry this turn's question"
 # A tool's result opens no turn: stamped after the ask, it leaves the ask in
 # the turn that asks the question.
 { prompt_line claude "$OPENED"
@@ -2958,7 +2964,7 @@ expect 0 "$GAP" "control: without the kind filter a directive lets the question 
 
 # The turn bound dropped: an ask from an earlier turn then carries this
 # turn's question.
-mutant question-any-turn -e 's@) >= \$opened))@) >= 0))@'
+mutant question-any-turn -e 's@) > \$opened))@) > 0))@'
 new_handoff_lane control_question_turn_start KEN-59
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-59 --file "$TMP_ROOT/ask.txt" >/dev/null)
