@@ -79,9 +79,13 @@ name: Skill Tests
 # Linux `rest` leg that builds kendex-cli from the checkout first, and 15 on
 # every other Linux leg. The per-shard figures behind each budget are in the
 # comment above it.
-# Every pull request pays its selected Linux shards twice, once on the pull
-# request and once in the merge queue, so the slowest of them is charged twice
-# per merge; the macOS legs run once, in the queue.
+# Every pull request pays its selected Linux shards on the pull request, and
+# the merge queue stands them down where the proof above holds, so the
+# slowest of them is charged once per merge there. It is charged twice where
+# the group runs them again: a base that moved or an entry queued ahead gives
+# the group a tree no pull request run tested, and a passing run the lookup
+# cannot find, a record it cannot read or match, or a record tools/ci-job-set
+# refuses stands nothing down. The macOS legs run once, in the queue.
 
 "on":
   pull_request:
