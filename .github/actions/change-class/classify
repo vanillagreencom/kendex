@@ -13,8 +13,8 @@
 # same paths on its stderr in a shell-quoted form whose only decoder is `eval`,
 # and a path list out of the judged tree is not something to hand a shell.
 #
-# Environment, from the action's inputs, all required but BASE, CLASSIFIER
-# and LANES_FROM:
+# Environment, from the action's inputs, all required but BASE, CLASSIFIER,
+# LANES_FROM and COVERS_ALL_LANES:
 #   EVENT  github.event_name
 #   BASE   the base endpoint sha; empty where the event carries none
 #   HEAD   the head endpoint sha
@@ -24,11 +24,17 @@
 #   LANES_FROM  the checkout root whose .github/ci-lanes.conf declares the
 #          workflow's lanes: the default branch's checkout, never REPO.
 #          Empty means no lane is declared.
+#   COVERS_ALL_LANES  `true` where the calling workflow runs every lane
+#          whenever lanes is true, as the harness-ci template's does; any
+#          other value, empty included, says it does not. Only it lets a run
+#          that reads no declaration record covers=all.
 #   GH_TOKEN  the job token, which `proof` reads workflow runs with
 # Environment, from the runner:
 #   GITHUB_OUTPUT  the step output file every writer appends to
 #   RUNNER_TEMP    where the record below is written; unset, no record is
 #                  written and the step says so
+#   GITHUB_WORKFLOW_REF and GITHUB_REPOSITORY, which `proof` reads this
+#                  run's workflow file from
 #   GITHUB_SHA and the rest `proof` lists
 #
 # Outputs appended to GITHUB_OUTPUT:
@@ -71,6 +77,11 @@
 #                      declaration names, in the order it first names them;
 #                      empty where LANES_FROM is empty or the declaration is
 #                      absent or malformed.
+#   record_dir         the directory holding the record below, whose one
+#                      file is `record`, where this run wrote one; empty
+#                      where it did not. The action uploads that directory,
+#                      so the artifact's member is `record`, the name
+#                      `proof` reads.
 #
 # lanes is made from the two verdicts above and the proof, never from the
 # paths. A workflow forwards it rather than spelling a class, so a change to
@@ -98,19 +109,27 @@
 # proving run skipped, or did not have, keeps its classified verdict.
 #
 # The record this run leaves, for the run after it, is written to
-# RUNNER_TEMP/change-class-record on pull_request and merge_group, and the
-# action's next step uploads it under the tree's name. Its lines:
+# RUNNER_TEMP/change-class-record/record on pull_request and merge_group,
+# and the action's next step uploads that directory under the tree's name.
+# Its lines:
 #   tree=<sha>  workflow=<path>  event=<event>  change_class=<class>
 #   docs_only=<bool>  covers=all|none|lanes  lane_<name>=true|false...
 #   changed_path=<path>...
-# covers is what has passed on this tree once this run passes: every lane,
-# where this run runs them all or a proof covered them all; the lanes whose
-# final verdict is true plus the ones the proof covered, where a declaration
-# was read; the proving run's own named lanes, carried forward, where this
-# run reads no declaration; none otherwise.
+# covers is the action's view of what has passed on this tree once this run
+# passes, in the lanes a declaration names, not a list of the jobs the
+# workflow ran:
+#   all    where COVERS_ALL_LANES is true, no declaration was read and
+#          lanes is true; or where a proof covered every lane.
+#   lanes  with one line per declared lane, true for the lanes whose final
+#          verdict is true and the ones the proof covered, where a
+#          declaration was read; or the proving run's own lane lines,
+#          carried forward, where no declaration was read here.
+#   none   otherwise: a workflow that selects its jobs itself leaves
+#          COVERS_ALL_LANES unset, and its records say none.
 #
-# lanes and lane_verdicts are written last: a refusal anywhere above leaves
-# neither output, and the failed step runs every lane.
+# lanes and lane_verdicts are written after every other verdict, and
+# record_dir after them: a refusal anywhere above leaves neither lanes
+# output, and the failed step runs every lane.
 #
 # A segment is what the path holds, not what the caller hopes: `skills/AGENTS.md`
 # puts `AGENTS.md` in changed_skills. Over-inclusion is the safe direction —
@@ -407,6 +426,7 @@ proof_reuse="$(proof_line reuse)"
 proof_reason="$(proof_line reason)"
 proof_run="$(proof_line run)"
 proof_tree="$(proof_line tree)"
+proof_workflow="$(proof_line workflow)"
 proof_record="$(proof_line record)"
 case "$proof_reuse" in
   true | false) [ -n "$proof_reason" ] ;;
@@ -501,22 +521,26 @@ printf 'lanes: lanes=%s cause=%s\n' "$lanes" "$lanes_cause" >&2
 
 # The record for the run after this one, on the two events a later run can
 # reuse: a merge group reuses a pull request's, a push a merge group's.
+# record_dir is written on every path out of this block, so the upload step
+# reads whether a record exists from this script alone.
+record_dir=""
+record_skipped() { # CAUSE
+  printf 'record: skipped cause=%s\n' "$1" >&2
+}
 case "$EVENT" in
-  pull_request | merge_group) ;;
-  *) exit 0 ;;
+  pull_request | merge_group)
+    if [ -z "$proof_tree" ]; then
+      record_skipped tree-unreadable
+    elif [ -z "$proof_workflow" ]; then
+      record_skipped workflow-unreadable
+    elif [ -z "${RUNNER_TEMP:-}" ]; then
+      record_skipped no-runner-temp
+    else
+      record_dir="$RUNNER_TEMP/change-class-record"
+    fi ;;
+  *) record_skipped "unrecorded-event event=$EVENT" ;;
 esac
-if [ -z "$proof_tree" ]; then
-  printf 'record: skipped cause=tree-unreadable\n' >&2
-  exit 0
-fi
-if [ -z "${RUNNER_TEMP:-}" ]; then
-  printf 'record: skipped cause=no-runner-temp\n' >&2
-  exit 0
-fi
-workflow_path="${GITHUB_WORKFLOW_REF:-}"
-workflow_path="${workflow_path#"${GITHUB_REPOSITORY:-}/"}"
-workflow_path="${workflow_path%%@*}"
-if [ "$lanes" = true ] && [ "$lane_state" != read ]; then
+if [ "$lanes" = true ] && [ "$lane_state" != read ] && [ "${COVERS_ALL_LANES:-}" = true ]; then
   covers=all
 elif [ "$record_covers" = all ]; then
   covers=all
@@ -527,25 +551,30 @@ elif [ "$record_covers" = lanes ]; then
 else
   covers=none
 fi
-record="$RUNNER_TEMP/change-class-record"
-{
-  printf 'tree=%s\nworkflow=%s\nevent=%s\nchange_class=%s\ndocs_only=%s\n' \
-    "$proof_tree" "$workflow_path" "$EVENT" "$class" "${docs#docs_only=}"
-  case "$covers" in
-    carried)
-      printf 'covers=lanes\n%s\n' "$record_lanes" ;;
-    lanes)
-      printf 'covers=lanes\n'
-      index=0
-      while [ "$index" -lt "$lane_count" ]; do
-        covered=false
-        [ "${lane_values[$index]}" != true ] && [ "${proven[$index]}" != true ] || covered=true
-        printf 'lane_%s=%s\n' "${lane_names[$index]}" "$covered"
-        index=$((index + 1))
-      done ;;
-    *) printf 'covers=%s\n' "$covers" ;;
-  esac
-  sed 's/^/changed_path=/' "${work:?}/paths"
-} >"$record" || die "record-unwritable path=$record" "the record could not be written"
-printf 'record: path=%s tree=%s covers=%s\n' "$record" "$proof_tree" \
-  "$(sed -n 's/^covers=//p' "$record")" >&2
+if [ -n "$record_dir" ]; then
+  record="$record_dir/record"
+  mkdir -p -- "$record_dir" ||
+    die "record-unwritable path=$record_dir" "the record's directory could not be made"
+  {
+    printf 'tree=%s\nworkflow=%s\nevent=%s\nchange_class=%s\ndocs_only=%s\n' \
+      "$proof_tree" "$proof_workflow" "$EVENT" "$class" "${docs#docs_only=}"
+    case "$covers" in
+      carried)
+        printf 'covers=lanes\n%s\n' "$record_lanes" ;;
+      lanes)
+        printf 'covers=lanes\n'
+        index=0
+        while [ "$index" -lt "$lane_count" ]; do
+          covered=false
+          [ "${lane_values[$index]}" != true ] && [ "${proven[$index]}" != true ] || covered=true
+          printf 'lane_%s=%s\n' "${lane_names[$index]}" "$covered"
+          index=$((index + 1))
+        done ;;
+      *) printf 'covers=%s\n' "$covers" ;;
+    esac
+    sed 's/^/changed_path=/' "${work:?}/paths"
+  } >"$record" || die "record-unwritable path=$record" "the record could not be written"
+  printf 'record: path=%s tree=%s covers=%s\n' "$record" "$proof_tree" \
+    "$(sed -n 's/^covers=//p' "$record")" >&2
+fi
+printf 'record_dir=%s\n' "$record_dir" >>"$GITHUB_OUTPUT"

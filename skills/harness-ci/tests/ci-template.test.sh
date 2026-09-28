@@ -326,6 +326,15 @@ awk '$0 == "      actions: read" { n++; next } { print } END { if (n != 1) exit 
 assert_eq "must-fail: a changes job without actions: read is named" "contents: read" \
   "$(job_permissions "$SANDBOX/no-actions-read.yml" changes)"
 
+# The template's lanes run wherever lanes is true, which is the one thing
+# that lets a run reading no declaration record covers=all for the run after
+# it; a template without the input records covers=none and nothing reuses.
+assert_eq "the classify step says every lane runs wherever lanes is true" "true" \
+  "$(step_key "$TEMPLATE" classify covers-all-lanes)"
+plant "$TEMPLATE" "covers-all-lanes: true" "covers-all-lanes: false" "$SANDBOX/no-covers-all.yml"
+assert_eq "must-fail: a template not saying so is named" "false" \
+  "$(step_key "$SANDBOX/no-covers-all.yml" classify covers-all-lanes)"
+
 # --- 5. The steps the classifier can live without -------------------------
 
 # Whether the changes job's step with id ID carries `continue-on-error: true`.

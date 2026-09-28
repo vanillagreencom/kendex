@@ -20,7 +20,8 @@ description: >-
 #
 # The classify step also asks `proof` whether a passing run of the same
 # workflow already tested this tree, and stands down what that run covered;
-# the step after it uploads this run's own record for the run after it. The
+# the step after it uploads the record classify wrote of this run, for the
+# run after it. The
 # API read uses the job token, which the calling job grants `actions: read`;
 # a token without it is one refusal, printed on the step's `proof:` line, and
 # the lanes run.
@@ -67,6 +68,15 @@ inputs:
       declares no lane and leaves lane_verdicts empty.
     required: false
     default: ''
+  covers-all-lanes:
+    description: >-
+      true where this workflow runs every lane whenever lanes is true, as
+      the harness-ci template does. Only then does a run that reads no lane
+      declaration record that it covered every lane, so a later run of the
+      same tree stands lanes down. A workflow that selects its jobs itself
+      leaves it unset, and its record says covers=none.
+    required: false
+    default: ''
 
 outputs:
   change_class:
@@ -101,10 +111,12 @@ outputs:
   proof_reuse:
     description: >-
       true where a passing run of this workflow tested this tree and left a
-      record of what it covered: on a merge group of one entry, that entry's
-      pull_request run; on the merge queue's push to the default branch, the
-      merge_group run of the pushed sha. false on every other event and on
-      every refusal, whose key proof_reason carries. The rules are
+      record of what it covered: on a merge group, the pull_request run of
+      the pull request its queue branch names, at that pull request's head,
+      where that run's record names the group's tree; on the merge queue's
+      push to the default branch, the merge_group run of the pushed sha.
+      false on every other event and on every refusal, whose key
+      proof_reason carries. The rules are
       skills/harness-ci/references/wiring.md § Proof reuse.
     value: ${{ steps.classify.outputs.proof_reuse }}
   proof_reason:
@@ -114,7 +126,7 @@ outputs:
     description: The proving run's id where proof_reuse is true, else empty.
     value: ${{ steps.classify.outputs.proof_run }}
   proof_tree:
-    description: The tree this run tests, which names the record uploaded below.
+    description: The tree this run tests, on every event, which names the record uploaded below.
     value: ${{ steps.classify.outputs.proof_tree }}
   proof_record:
     description: >-
@@ -133,6 +145,13 @@ outputs:
       and false everywhere else. Empty where no declaration was read. A workflow republishes the lines as step outputs of its
       own, since a composite action publishes only the outputs it declares.
     value: ${{ steps.classify.outputs.lane_verdicts }}
+  record_dir:
+    description: >-
+      The directory holding the record of this run, whose one file is
+      `record`, where classify wrote one: on pull_request and merge_group,
+      where the tree and workflow read. Empty everywhere else. The step
+      below uploads it.
+    value: ${{ steps.classify.outputs.record_dir }}
   changed_skills:
     description: Blank-separated first path segments under skills/ the diff touched.
     value: ${{ steps.classify.outputs.changed_skills }}
@@ -162,23 +181,26 @@ runs:
         HEAD: ${{ inputs.head }}
         REPO: ${{ inputs.repo }}
         LANES_FROM: ${{ inputs.lanes-from }}
+        COVERS_ALL_LANES: ${{ inputs.covers-all-lanes }}
         GH_TOKEN: ${{ github.token }}
       run: |
         "$GITHUB_ACTION_PATH/classify"
     # The record of what this run tests and covers, named by its tree, for a
-    # later run of the same tree to reuse. classify writes it on pull_request
-    # and merge_group alone, and publishes proof_tree only where it did. An
-    # upload that fails loses that later reuse and nothing else, so it never
-    # reddens the step; the run after it prints its own refusal and runs its
-    # lanes. A pull request that waits longer than the retention between its
-    # last push and its merge runs its lanes again.
+    # later run of the same tree to reuse. classify decides whether a record
+    # exists and says so in record_dir, the directory holding it; proof_tree
+    # is published on every event. The directory is uploaded, not the file,
+    # so the artifact's member is the file's own name, `record`, which proof
+    # reads. An upload that fails loses that later reuse and nothing else, so
+    # it never reddens the step; the run after it prints its own refusal and
+    # runs its lanes. A pull request that waits longer than the retention
+    # between its last push and its merge runs its lanes again.
     - name: the record of this run, for the run after it
-      if: steps.classify.outputs.proof_tree != '' && (inputs.event == 'pull_request' || inputs.event == 'merge_group')
+      if: steps.classify.outputs.record_dir != ''
       uses: actions/upload-artifact@v4
       continue-on-error: true
       with:
         name: change-class-proof-${{ steps.classify.outputs.proof_tree }}
-        path: ${{ runner.temp }}/change-class-record
+        path: ${{ steps.classify.outputs.record_dir }}
         retention-days: 30
         overwrite: true
         if-no-files-found: error

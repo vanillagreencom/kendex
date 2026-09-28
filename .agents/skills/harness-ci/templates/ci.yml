@@ -120,6 +120,11 @@ jobs:
           # The lane declaration is the default branch's: the pull request's
           # own copy could stand its lanes down.
           lanes-from: classifier
+          # Every lane here runs wherever lanes is true, so a run that reads
+          # no declaration records that it covered them all, and a later run
+          # of the same tree stands them down. A workflow that selects its
+          # jobs by anything else leaves this out.
+          covers-all-lanes: true
           event: ${{ env.EVENT }}
           base: ${{ env.BASE }}
           head: ${{ env.HEAD }}

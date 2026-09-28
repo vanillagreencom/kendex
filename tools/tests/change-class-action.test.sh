@@ -48,8 +48,10 @@
 #      to. One mutant copy per rule must fail the row the rule decides.
 #   6. the proof: what a proof's record stands down, with and without a
 #      declaration, per what it covers; the record this run writes for the
-#      next, its covers line per case, on the two events a later run reads
-#      and on no other; and one mutant copy per rule.
+#      next, its covers line per case, and record_dir naming it on the two
+#      events a later run reads and empty on every other; the record's file
+#      name bound to the member proof unzips and to the directory the
+#      action uploads; and one mutant copy per rule.
 set -euo pipefail
 
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -111,8 +113,9 @@ printf '%s\n' "$line"
 STUB
 chmod +x "$STUBS/skills/harness-ci/scripts/change-class" \
   "$STUBS/skills/harness-ci/scripts/harness-only"
-# The proof stub answers what STUB_REUSE, STUB_RUN and STUB_TREE say, with
-# STUB_REASON in place of the reason each answer carries, and where it reuses, writes STUB_RECORD as the record in the work
+# The proof stub answers what STUB_REUSE, STUB_RUN, STUB_TREE and
+# STUB_WORKFLOW say, with STUB_REASON in place of the reason each answer
+# carries, and where it reuses, writes STUB_RECORD as the record in the work
 # directory it was given, as the real one does.
 STUB_PROOF="$TMP/stub-proof"
 cat >"$STUB_PROOF" <<'STUB'
@@ -127,8 +130,9 @@ if [ "${STUB_REUSE:-false}" = true ]; then
 fi
 reason=ineligible-event
 [ "${STUB_REUSE:-false}" != true ] || reason=exact-proof
-printf 'tree=%s\nreuse=%s\nreason=%s\ndetail=stub\nrun=%s\nrecord=%s\n' \
-  "${STUB_TREE:-}" "${STUB_REUSE:-false}" "${STUB_REASON:-$reason}" "${STUB_RUN:-}" "$record"
+printf 'tree=%s\nworkflow=%s\nreuse=%s\nreason=%s\ndetail=stub\nrun=%s\nrecord=%s\n' \
+  "${STUB_TREE:-}" "${STUB_WORKFLOW-.github/workflows/ci.yml}" "${STUB_REUSE:-false}" \
+  "${STUB_REASON:-$reason}" "${STUB_RUN:-}" "$record"
 STUB
 chmod +x "$STUB_PROOF"
 
@@ -232,13 +236,13 @@ refusal() { # the first refusal line's cause, or nothing
 NO_PROOF="proof_reuse=false proof_reason=ineligible-event proof_run= proof_tree= proof_record="
 class_rows() {
   cat <<ROWS
-render|render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|change_class=render docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=.agents/skills/orch/SKILL.md,.claude/skills/orch/SKILL.md $NO_PROOF lanes=false lanes_cause=render lane_verdicts=
-trivial|trivial|true|docs/guide.md|change_class=trivial docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md $NO_PROOF lanes=false lanes_cause=trivial lane_verdicts=
-trivial-allowlisted|trivial|false|runtime/notes.txt|change_class=trivial docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=runtime/notes.txt $NO_PROOF lanes=false lanes_cause=trivial lane_verdicts=
-micro|micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|change_class=micro docs_only=false changed_skills=orch changed_crates= changed_workflows= changed_paths=skills/orch/SKILL.md,.agents/skills/orch/SKILL.md $NO_PROOF lanes=true lanes_cause=micro lane_verdicts=
-small|small|false|crates/cli/src/main.rs crates/core/src/lib.rs|change_class=small docs_only=false changed_skills= changed_crates=cli core changed_workflows= changed_paths=crates/cli/src/main.rs,crates/core/src/lib.rs $NO_PROOF lanes=true lanes_cause=small lane_verdicts=
-standard|standard|false|.github/workflows/ci.yml skills/github/SKILL.md crates/app/src/lib.rs|change_class=standard docs_only=false changed_skills=github changed_crates=app changed_workflows=ci.yml changed_paths=.github/workflows/ci.yml,skills/github/SKILL.md,crates/app/src/lib.rs $NO_PROOF lanes=true lanes_cause=standard lane_verdicts=
-docs-only-standard|standard|true|docs/guide.md changelog.d/fixed/x.md README.md|change_class=standard docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md,changelog.d/fixed/x.md,README.md $NO_PROOF lanes=false lanes_cause=docs-only lane_verdicts=
+render|render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|change_class=render docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=.agents/skills/orch/SKILL.md,.claude/skills/orch/SKILL.md $NO_PROOF lanes=false lanes_cause=render lane_verdicts= record_dir=
+trivial|trivial|true|docs/guide.md|change_class=trivial docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md $NO_PROOF lanes=false lanes_cause=trivial lane_verdicts= record_dir=
+trivial-allowlisted|trivial|false|runtime/notes.txt|change_class=trivial docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=runtime/notes.txt $NO_PROOF lanes=false lanes_cause=trivial lane_verdicts= record_dir=
+micro|micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|change_class=micro docs_only=false changed_skills=orch changed_crates= changed_workflows= changed_paths=skills/orch/SKILL.md,.agents/skills/orch/SKILL.md $NO_PROOF lanes=true lanes_cause=micro lane_verdicts= record_dir=
+small|small|false|crates/cli/src/main.rs crates/core/src/lib.rs|change_class=small docs_only=false changed_skills= changed_crates=cli core changed_workflows= changed_paths=crates/cli/src/main.rs,crates/core/src/lib.rs $NO_PROOF lanes=true lanes_cause=small lane_verdicts= record_dir=
+standard|standard|false|.github/workflows/ci.yml skills/github/SKILL.md crates/app/src/lib.rs|change_class=standard docs_only=false changed_skills=github changed_crates=app changed_workflows=ci.yml changed_paths=.github/workflows/ci.yml,skills/github/SKILL.md,crates/app/src/lib.rs $NO_PROOF lanes=true lanes_cause=standard lane_verdicts= record_dir=
+docs-only-standard|standard|true|docs/guide.md changelog.d/fixed/x.md README.md|change_class=standard docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md,changelog.d/fixed/x.md,README.md $NO_PROOF lanes=false lanes_cause=docs-only lane_verdicts= record_dir=
 ROWS
 }
 
@@ -376,7 +380,7 @@ lanes-from-judged-tree root=$TMP/subject|LANES_FROM=$TMP/subject
 repo-unreadable repo=$TMP/nowhere|LANES_FROM=$TMP/decl/good REPO=$TMP/nowhere
 outside-list-unreadable status=2|LANES_FROM=$TMP/decl/good STUB_PATHS=Makefile STUB_NO_OUTSIDE=1
 proof-failed status=2|STUB_PROOF_EXIT=2
-proof-unreadable lines=tree= reuse=maybe reason=ineligible-event detail=stub run= record=|STUB_REUSE=maybe
+proof-unreadable lines=tree= workflow=.github/workflows/ci.yml reuse=maybe reason=ineligible-event detail=stub run= record=|STUB_REUSE=maybe
 ROWS
 [ "$refusal_rows" -eq 18 ] ||
   { echo "the refusal table read $refusal_rows rows" >&2; exit 1; }
@@ -696,56 +700,133 @@ check "the step says what the proof answered" "proof: reuse=true reason=exact-pr
   "$(grep '^proof: reuse=' "$TMP/err")"
 
 # The record this run leaves, on the two events a later run reads.
-# ROW|EVENT|DECL|CLASS|DOCS|PATHS|OUTSIDE|REUSE|RECORD|EXPECTED (the file's lines joined with commas, or `absent`)
+# ROW|EVENT|DECL|CLASS|DOCS|PATHS|OUTSIDE|REUSE|RECORD|ENV|EXPECTED (the
+# file's lines joined with commas, or `absent`). ENV is blank-separated
+# NAME=VALUE words. The pr-all row is the template's case, a workflow that
+# runs every lane on lanes=true; pr-selecting is kendex's own, a workflow
+# selecting its jobs itself, which sets no covers-all-lanes.
 RUNNER="$TMP/runner"
 mkdir -p "$RUNNER"
-RECORD_FILE="${RUNNER:?}/change-class-record"
+RECORD_DIR="${RUNNER:?}/change-class-record"
+COVERS_ALL=COVERS_ALL_LANES=true
 record_rows() {
-  cat <<'ROWS'
-pr-all|pull_request|-|standard|false|src/main.rs|src/main.rs|false||tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=all,changed_path=src/main.rs
-pr-none|pull_request|-|standard|true|docs/guide.md||false||tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=true,covers=none,changed_path=docs/guide.md
-pr-absent-decl|pull_request|absent|small|false|src/main.rs|src/main.rs|false||tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=small,docs_only=false,covers=all,changed_path=src/main.rs
-mg-reused-all|merge_group|-|standard|false|src/main.rs|src/main.rs|true|covers=all|tree=t1,workflow=.github/workflows/ci.yml,event=merge_group,change_class=standard,docs_only=false,covers=all,changed_path=src/main.rs
-pr-carried|pull_request|-|standard|true|docs/guide.md||true|covers=lanes,lane_check=true|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=true,covers=lanes,lane_check=true,changed_path=docs/guide.md
-pr-decl|pull_request|good|standard|false|src/main.rs tmux/tmux.conf|src/main.rs tmux/tmux.conf|true|covers=lanes,lane_check=true,lane_tmux=false|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=true,lane_docs-build=false,changed_path=src/main.rs,changed_path=tmux/tmux.conf
-pr-decl-no-proof|pull_request|good|standard|false|src/main.rs|src/main.rs|false||tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=false,lane_docs-build=false,changed_path=src/main.rs
-mg-decl-all|merge_group|good|standard|false|src/main.rs|src/main.rs|true|covers=all|tree=t1,workflow=.github/workflows/ci.yml,event=merge_group,change_class=standard,docs_only=false,covers=all,changed_path=src/main.rs
-push|push|-|standard|false|src/main.rs|src/main.rs|false||absent
+  cat <<ROWS
+pr-all|pull_request|-|standard|false|src/main.rs|src/main.rs|false||$COVERS_ALL|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=all,changed_path=src/main.rs
+pr-selecting|pull_request|-|standard|false|src/main.rs|src/main.rs|false|||tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=none,changed_path=src/main.rs
+pr-none|pull_request|-|standard|true|docs/guide.md||false||$COVERS_ALL|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=true,covers=none,changed_path=docs/guide.md
+pr-absent-decl|pull_request|absent|small|false|src/main.rs|src/main.rs|false||$COVERS_ALL|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=small,docs_only=false,covers=all,changed_path=src/main.rs
+mg-reused-all|merge_group|-|standard|false|src/main.rs|src/main.rs|true|covers=all||tree=t1,workflow=.github/workflows/ci.yml,event=merge_group,change_class=standard,docs_only=false,covers=all,changed_path=src/main.rs
+pr-carried|pull_request|-|standard|true|docs/guide.md||true|covers=lanes,lane_check=true||tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=true,covers=lanes,lane_check=true,changed_path=docs/guide.md
+pr-decl|pull_request|good|standard|false|src/main.rs tmux/tmux.conf|src/main.rs tmux/tmux.conf|true|covers=lanes,lane_check=true,lane_tmux=false||tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=true,lane_docs-build=false,changed_path=src/main.rs,changed_path=tmux/tmux.conf
+pr-decl-no-proof|pull_request|good|standard|false|src/main.rs|src/main.rs|false||$COVERS_ALL|tree=t1,workflow=.github/workflows/ci.yml,event=pull_request,change_class=standard,docs_only=false,covers=lanes,lane_check=true,lane_tmux=false,lane_docs-build=false,changed_path=src/main.rs
+mg-decl-all|merge_group|good|standard|false|src/main.rs|src/main.rs|true|covers=all||tree=t1,workflow=.github/workflows/ci.yml,event=merge_group,change_class=standard,docs_only=false,covers=all,changed_path=src/main.rs
+push|push|-|standard|false|src/main.rs|src/main.rs|false||$COVERS_ALL|absent
 ROWS
 }
-record_answer() { # SCRIPT ROW — the record's lines, `absent`, or `crashed`
-  local line name event decl class docs paths outside reuse record expected lanes_from=""
+# The record's lines as record_dir names them: `absent` where record_dir is
+# empty and nothing was written, `stray` where a record sits there all the
+# same, what the directory holds where it is not the one file `record`, or
+# `crashed`.
+record_answer() { # SCRIPT ROW
+  local line name event decl class docs paths outside reuse record env expected lanes_from="" dir
   line="$(record_rows | grep -m1 "^$2|")" || { echo "no record row named $2" >&2; exit 1; }
-  IFS='|' read -r name event decl class docs paths outside reuse record expected <<<"$line"
+  IFS='|' read -r name event decl class docs paths outside reuse record env expected <<<"$line"
   [ "$decl" = - ] || lanes_from="$TMP/decl/$decl"
-  rm -f -- "$RECORD_FILE"
+  rm -rf -- "${RUNNER:?}/change-class-record"
+  # shellcheck disable=SC2086 # ENV is blank-separated NAME=VALUE words
   if [ "$(run "$1" EVENT="$event" LANES_FROM="$lanes_from" STUB_CLASS="$class" STUB_DOCS="$docs" \
     STUB_PATHS="$paths" STUB_OUTSIDE="$outside" STUB_REUSE="$reuse" STUB_RUN=42 STUB_TREE=t1 \
-    STUB_RECORD="$(printf '%s' "$record" | tr ',' '\n')" RUNNER_TEMP="$RUNNER" \
-    GITHUB_REPOSITORY=o/r GITHUB_WORKFLOW_REF=o/r/.github/workflows/ci.yml@refs/heads/main)" != 0 ]; then
+    STUB_RECORD="$(printf '%s' "$record" | tr ',' '\n')" RUNNER_TEMP="$RUNNER" $env)" != 0 ]; then
     echo crashed
     return 0
   fi
-  if [ -f "$RECORD_FILE" ]; then
-    tr '\n' ',' <"$RECORD_FILE" | sed 's/,$//'
+  dir="$(sed -n 's/^record_dir=//p' "$OUT")"
+  if [ -z "$dir" ]; then
+    [ -e "$RECORD_DIR" ] && echo stray || echo absent
+  elif [ "$dir" != "$RECORD_DIR" ] || [ "$(ls -A "$dir")" != record ]; then
+    echo "record_dir=$dir holds $(ls -A "$dir" | tr '\n' ' ')"
   else
-    echo absent
+    tr '\n' ',' <"$dir/record" | sed 's/,$//'
   fi
 }
 rows=0
-while IFS='|' read -r name event decl class docs paths outside reuse record expected; do
+while IFS='|' read -r name event decl class docs paths outside reuse record env expected; do
   rows=$((rows + 1))
   check "record row $name" "$expected" "$(record_answer "$CLASSIFY" "$name")"
 done < <(record_rows)
-[ "$rows" -eq 9 ] || { echo "the record table read $rows rows" >&2; exit 1; }
-check "the step names the record it wrote" "record: path=$RECORD_FILE tree=t1 covers=all" \
+[ "$rows" -eq 10 ] || { echo "the record table read $rows rows" >&2; exit 1; }
+check "the step names the record it wrote" "record: path=$RECORD_DIR/record tree=t1 covers=all" \
   "$(record_answer "$CLASSIFY" pr-all >/dev/null; grep '^record: ' "$TMP/err")"
-rm -f -- "$RECORD_FILE"
-run "$CLASSIFY" STUB_PATHS=src/main.rs RUNNER_TEMP="$RUNNER" >/dev/null
-check "no tree, no record" "record: skipped cause=tree-unreadable absent" \
-  "$(grep '^record: ' "$TMP/err") $([ -f "$RECORD_FILE" ] && echo present || echo absent)"
-run "$CLASSIFY" STUB_PATHS=src/main.rs STUB_TREE=t1 >/dev/null
-check "no RUNNER_TEMP, no record" "record: skipped cause=no-runner-temp" "$(grep '^record: ' "$TMP/err")"
+check "a push says why it leaves no record" "record: skipped cause=unrecorded-event event=push" \
+  "$(record_answer "$CLASSIFY" push >/dev/null; grep '^record: ' "$TMP/err")"
+
+# CAUSE|ASSIGNMENTS: a pull request whose tree, workflow or runner directory
+# did not read leaves no record, writes record_dir empty and says which.
+skip_answer() { # SCRIPT ASSIGNMENTS
+  rm -rf -- "${RUNNER:?}/change-class-record"
+  # shellcheck disable=SC2086 # the assignments are blank-separated words
+  run "$1" STUB_PATHS=src/main.rs $2 >/dev/null
+  printf '%s %s %s' "$(grep '^record: ' "$TMP/err")" "$(grep '^record_dir=' "$OUT")" \
+    "$([ -e "$RECORD_DIR" ] && echo present || echo absent)"
+}
+while IFS='|' read -r cause assignments; do
+  check "no $cause, no record" "record: skipped cause=$cause record_dir= absent" \
+    "$(skip_answer "$CLASSIFY" "$assignments")"
+done <<ROWS
+tree-unreadable|RUNNER_TEMP=$RUNNER
+workflow-unreadable|STUB_TREE=t1 STUB_WORKFLOW= RUNNER_TEMP=$RUNNER
+no-runner-temp|STUB_TREE=t1
+ROWS
+needle='    elif [ -z "$proof_workflow" ]; then'
+[ "$(grep -cxF -- "$needle" "$CLASSIFY")" -eq 1 ] ||
+  { echo "the workflow skip is no longer one line in $CLASSIFY" >&2; exit 1; }
+awk -v needle="$needle" '$0 == needle { print "    elif false; then"; next } { print }' "$CLASSIFY" >"$mutant"
+case "$(skip_answer "$mutant" "STUB_TREE=t1 STUB_WORKFLOW= RUNNER_TEMP=$RUNNER")" in
+  *"record_dir=$RECORD_DIR present") ok "must-fail: a classify recording an unread workflow writes the record" ;;
+  *) bad "must-fail: a classify recording an unread workflow writes the record" ;;
+esac
+
+# The record's name, bound at both ends: the one file in record_dir is the
+# member proof unzips, and the upload step uploads record_dir itself, so the
+# artifact's root is that directory and its member the file's own name. A
+# file uploaded on its own lands at the artifact root under its basename.
+proof_member() { # PROOF — the member its unzip reads
+  sed -n 's/^.*unzip -p "\$WORK\/record\.zip" \([^ ]*\) >.*$/\1/p' "$1"
+}
+upload_path() { # ACTION_YML — the upload step's `path:`
+  awk '
+    /^    - / { upload = 0 }
+    /^      uses: actions\/upload-artifact@/ { upload = 1 }
+    upload && /^        path: / { sub(/^        path: /, ""); print }
+  ' "$1"
+}
+binding() { # PROOF ACTION_YML — `bound`, or what disagrees
+  local member written
+  member="$(proof_member "$1")"
+  [ -n "$member" ] || { echo "no unzip member read from $1, so the reader is broken"; return 0; }
+  record_answer "$CLASSIFY" pr-all >/dev/null
+  written="$(ls -A "$(sed -n 's/^record_dir=//p' "$OUT")")"
+  if [ "$written" != "$member" ]; then
+    echo "classify writes $written, proof reads $member"
+  elif [ "$(upload_path "$2")" != '${{ steps.classify.outputs.record_dir }}' ]; then
+    echo "the upload step uploads $(upload_path "$2"), not record_dir"
+  else
+    echo bound
+  fi
+}
+PROOF_SCRIPT="$ROOT/.github/actions/change-class/proof"
+check "the record classify writes is the member proof reads, in the directory the action uploads" \
+  bound "$(binding "$PROOF_SCRIPT" "$ACTION")"
+sed 's/unzip -p "$WORK\/record.zip" record >/unzip -p "$WORK\/record.zip" change-class-record >/' \
+  "$PROOF_SCRIPT" >"$TMP/proof-member"
+! cmp -s "$PROOF_SCRIPT" "$TMP/proof-member" || { echo "the member mutant changed nothing" >&2; exit 1; }
+check "must-fail: a proof reading another member breaks the binding" \
+  "classify writes record, proof reads change-class-record" "$(binding "$TMP/proof-member" "$ACTION")"
+awk '$0 == "        path: ${{ steps.classify.outputs.record_dir }}" { print "        path: ${{ runner.temp }}/change-class-record/record"; n++; next } { print } END { exit n != 1 }' \
+  "$ACTION" >"$TMP/action-upload.yml" || { echo "the upload path is no longer one line in $ACTION" >&2; exit 1; }
+check "must-fail: an action uploading the record file itself breaks the binding" \
+  'the upload step uploads ${{ runner.temp }}/change-class-record/record, not record_dir' \
+  "$(binding "$PROOF_SCRIPT" "$TMP/action-upload.yml")"
 
 # One copy per proof rule, the rule planted wrong and every other line kept.
 # NEEDLE@REPLACEMENT@TABLE:ROW, split on `@` because a rule spells `||`.
@@ -763,7 +844,7 @@ while IFS='@' read -r needle replacement target; do
   row="${target#*:}"
   case "${target%%:*}" in
     proof) expected="$(proof_rows | grep -m1 "^$row|" | awk -F '|' '{ print $8 }')"; got="$(proof_answer "$mutant" "$row")" ;;
-    record) expected="$(record_rows | grep -m1 "^$row|" | awk -F '|' '{ print $10 }')"; got="$(record_answer "$mutant" "$row")" ;;
+    record) expected="$(record_rows | grep -m1 "^$row|" | awk -F '|' '{ print $11 }')"; got="$(record_answer "$mutant" "$row")" ;;
   esac
   case "$got" in
     crashed) bad "must-fail: '$needle' planted as '$replacement' crashed the $row row" ;;
@@ -777,12 +858,13 @@ done <<'ROWS'
   elif [ "$record_covers" = all ]; then@  elif true; then@proof:lanes-no-decl
 if [ "$proof_reuse" = true ] && [ "$lanes" = true ]; then@if [ "$proof_reuse" = true ]; then@proof:render-no-decl
     *) record_covers=none ;;@    *) record_covers=all ;;@proof:no-covers-no-decl
-if [ "$lanes" = true ] && [ "$lane_state" != read ]; then@if false; then@record:pr-all
+if [ "$lanes" = true ] && [ "$lane_state" != read ] && [ "${COVERS_ALL_LANES:-}" = true ]; then@if false; then@record:pr-all
+ && [ "${COVERS_ALL_LANES:-}" = true ]; then@; then@record:pr-selecting
         [ "${lane_values[$index]}" != true ] && [ "${proven[$index]}" != true ] || covered=true@        [ "${lane_values[$index]}" != true ] || covered=true@record:pr-decl
 elif [ "$record_covers" = lanes ]; then@elif false; then@record:pr-carried
-  pull_request | merge_group) ;;@  pull_request | merge_group | push) ;;@record:push
+  pull_request | merge_group)@  pull_request | merge_group | push)@record:push
 ROWS
-[ "$mutants" -eq 10 ] || { echo "the proof mutant table read $mutants rows" >&2; exit 1; }
+[ "$mutants" -eq 11 ] || { echo "the proof mutant table read $mutants rows" >&2; exit 1; }
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

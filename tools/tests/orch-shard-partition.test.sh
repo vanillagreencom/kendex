@@ -39,6 +39,9 @@
 #      that suite alone selects that shard through tools/ci-job-set, and every
 #      shard the matrix declares runs some suite. The must-fail arm sends one
 #      package to another shard.
+#   4c. the macOS exclusions — the shards tools/ci-job-set lights no macOS
+#      leg for are exactly the ones the shell matrix's `exclude:` prunes on
+#      macOS. The must-fail arm drops one exclude row.
 #   5. the cargo legs' partition — the macOS kendex-cli lane splits by
 #      `--test` target, the legs are the combinations the matrix expands
 #      rather than its raw list, every test target `cargo metadata` reports
@@ -585,6 +588,50 @@ case "$(unselected_owners "$TMP/owner-tools/ci-job-set" "$OWNERS")" in
   worktree$'\t'skills/worktree/tests/*) ok "must-fail: a table sending worktree elsewhere names the worktree suites" ;;
   *) bad "must-fail: a table sending worktree elsewhere named nothing, so the selection check proves nothing" ;;
 esac
+
+# --- 4c. The shards the macOS legs never run ------------------------------
+# tools/ci-job-set lights a macOS leg only where a selected shard is one the
+# shell matrix runs on macOS, and the matrix's `exclude:` rows are what it
+# prunes there. A shard excluded here and not named there expands a macOS leg
+# over nothing, a job GitHub starts with an empty runs-on and fails; one
+# named there and not excluded here stands down a leg the matrix would run.
+
+# The shards the skill-suites-shard matrix excludes on macos-latest, read as
+# YAML sequence items the way cargo_excluded_legs reads them.
+macos_excluded_shards() { # macos_excluded_shards <workflow>
+  awk '
+    function flush() { if (os == "macos-latest" && shard != "") print shard; os = ""; shard = "" }
+    /^  skill-suites-shard:/ { job = 1; next }
+    job && /^  [A-Za-z0-9_-]+:/ { job = 0 }
+    !job || NF == 0 || $1 == "#" { next }
+    { n = 0; while (substr($0, n + 1, 1) == " ") n++ }
+    inx == 1 && n < 10 { flush(); inx = 0 }
+    inx == 0 && n == 8 && $1 == "exclude:" { inx = 1; next }
+    inx == 0 { next }
+    $1 == "-" { flush(); key = $2; val = $3 }
+    $1 != "-" { key = $1; val = $2 }
+    key == "os:" { os = val }
+    key == "shard:" { shard = val }
+    END { if (inx == 1) flush() }
+  ' "$1" | sort -u
+}
+linux_only_shards() { # linux_only_shards <ci-job-set>
+  sed -n 's/^LINUX_ONLY_SHARDS="\(.*\)"$/\1/p' "$1" | tr ' ' '\n' | grep . | sort -u
+}
+excluded="$(macos_excluded_shards "$WORKFLOW")"
+grep -qx node <<< "$excluded" ||
+  bad "no node exclude read from $WORKFLOW, so the exclude reader is broken"
+check "ci-job-set's Linux-only shards are the ones the matrix excludes on macOS" \
+  "$excluded" "$(linux_only_shards "$JOB_SET")"
+awk '$0 == "            shard: pi-claude-bridge" && prev == "          - os: macos-latest" { n++; skip = 1 }
+     { if (!skip && NR > 1) print prev; skip = 0; prev = $0 }
+     END { print prev; exit n != 1 }' "$WORKFLOW" > "$TMP/one-exclude.yml" ||
+  bad "must-fail: the pi-claude-bridge exclude is no longer one row in $WORKFLOW"
+if [[ "$(macos_excluded_shards "$TMP/one-exclude.yml")" != "$(linux_only_shards "$JOB_SET")" ]]; then
+  ok "must-fail: a matrix dropping one macOS exclude disagrees with ci-job-set"
+else
+  bad "must-fail: a matrix dropping one macOS exclude disagrees with ci-job-set"
+fi
 
 # --- 5. The cargo legs' partition over the CLI's test targets --------------
 # A cargo leg is a roster of `--test` names, and the seam it cuts is inside

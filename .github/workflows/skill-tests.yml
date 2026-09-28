@@ -17,11 +17,11 @@ name: Skill Tests
 # a `trivial` one changing a path tools/rust-reads names, runs that job, the
 # shell shards its packages select and each other lane as `tools/ci-job-set`
 # selects it; the invariant comment there is the one statement of what each
-# lane runs. A merge group of one entry whose tree a passing pull request
-# run already tested reuses that run's proof: the action reads the record
-# that run left, `tools/ci-job-set` re-derives what it ran from it and
-# stands those lanes down, so such a group runs the macOS legs the pull
-# request did not run and nothing the pull request did. The aggregators
+# lane runs. A merge group whose tree its pull request's passing run
+# already tested reuses that run's proof: the action reads the record that
+# run left, `tools/ci-job-set` re-derives what it ran from it and stands
+# those lanes down, so such a group runs the macOS legs the pull request did
+# not run and nothing the pull request did. The aggregators
 # still report and accept only the skips the
 # selection authorized, and the last job, `CI`, is the one every other job
 # reports into, the three aggregators excepted. The push to main
@@ -405,6 +405,10 @@ jobs:
         # the result term ahead of the selection is what runs both legs
         # rather than neither.
         os: ${{ fromJSON(needs.changes.result != 'success' && '["ubuntu-latest", "macos-latest"]' || needs.changes.outputs.shell_os) }}
+        # tools/ci-job-set's LINUX_ONLY_SHARDS names the shards excluded
+        # here and lights no macOS leg for a selection of them alone, which
+        # would expand to no combination; tools/tests/orch-shard-partition.test.sh
+        # holds the two lists together.
         exclude:
           - os: macos-latest
             shard: node

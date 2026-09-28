@@ -296,14 +296,14 @@ ROWS
 # A row that forgets a lane is refused before any lane reads it. shell_os is
 # the lane no aggregate holds, so this refusal is what keeps a forgotten
 # runner list from collapsing the matrix in silence. The copy drops one lane
-# from the emitted row.
+# from the render row.
 mkdir -p "$TMP/forgot/tools"
 forgot="$TMP/forgot/tools/ci-job-set"
-[ "$(grep -c '"cargo_windows_check=\$SEL_cargo_windows_check" "shards=\$SEL_shards"$' "$JOB_SET")" -eq 1 ] ||
-  { echo "the emitted row is no longer one line in $JOB_SET" >&2; exit 1; }
+[ "$(grep -c '^      printf .%s. "linux=false macos=false .* cargo_windows_check=false shards=\[\]"$' "$JOB_SET")" -eq 1 ] ||
+  { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
 awk '
-  /"cargo_windows_check=\$SEL_cargo_windows_check" "shards=\$SEL_shards"$/ {
-    sub(/ "cargo_windows_check=\$SEL_cargo_windows_check"/, "")
+  /^      printf .%s. "linux=false macos=false .* cargo_windows_check=false shards=\[\]"$/ {
+    sub(/ cargo_windows_check=false/, "")
   }
   { print }
 ' "$JOB_SET" >"$forgot"
@@ -506,7 +506,8 @@ s/\[ "\$build" = false \] || want_shard rest/:/@crates/demo/src/unnamed.rs
 s/! any "\$ALL_SHARDS" || want_shard \$SHARDS/:/@.github/instructions/code-review.md
 s/! any "\$ALL_SHARDS" || macos_pr=\$macos/:/@.github/AGENTS.md skills/price-handling/scripts/x
 s/\[ "\$shards" != "\[\]" \] || shell=false/:/@install.sh
-s/\[ "\$shell:\$platform" != true:true \] || macos=true/macos=$platform/@install.sh@merge_group
+s/^      macos=\$platform$/      macos=true/@skills/price-handling/SKILL.md@merge_group
+s/^      macos_shard "\$shards" || macos=false$/      :/@pi-extensions/pi-demo/src/x.ts@merge_group
 s/\[ "\$event" = merge_group \] || macos=\$macos_pr/:/@skills/orch/scripts/lib/branch-growth.sh
 CONTROLS
 
@@ -563,6 +564,8 @@ record() { # EVENT CLASS DOCS PATH... — a proving run's record, its lines join
   for path in "$@"; do printf ',changed_path=%s' "$path"; done
 }
 PRICE=skills/price-handling/scripts/x
+# A Pi package's source, whose one shard, node, the matrix never runs on macOS.
+PI=pi-extensions/pi-demo/src/x.ts
 PRICE_SHARDS='["guards-scans","guards-tools","rest"]'
 # The whole merge-group selection of the price-handling path, and that
 # selection less what a pull request run of the same diff ran: its Linux
@@ -580,6 +583,7 @@ the pull request's own diff leaves the macOS legs|$(record pull_request micro fa
 a run whose shards cover this diff's leaves the macOS legs|$(record pull_request micro false skills/github/scripts/lib/gh-auth.sh)|micro|false|$PRICE|$PRICE_MACOS_ONLY
 a run whose shards do not cover this diff's keeps the Linux legs|$(record pull_request micro false skills/preflight/scripts/preflight)|micro|false|$PRICE|shell_shards=true shell_os=$BOTH ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=$PRICE_SHARDS
 a trivial run stands down the verify job alone|$(record pull_request trivial true README.md)|micro|false|$PRICE|shell_shards=true shell_os=$BOTH ui=false bot_instructions=false cargo_linux=true cargo_macos=true cargo_lint=false cargo_windows=true cargo_windows_check=false shards=$PRICE_SHARDS
+a pull request run of a diff no macOS leg runs leaves no leg|$(record pull_request micro false "$PI")|micro|false|$PI|shell_shards=false shell_os=[] ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=["node"]
 a merge-group run of a lane source stands down every leg|$(record merge_group micro false .github/AGENTS.md "$PRICE")|micro|false|$PRICE|shell_shards=false shell_os=[] ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=$PRICE_SHARDS
 a record of an event this script does not select for is ignored|$(record push micro false "$PRICE")|micro|false|$PRICE|$PRICE_GROUP
 a record of a measured class with no path is ignored|$(record pull_request micro false)|micro|false|$PRICE|$PRICE_GROUP
@@ -591,12 +595,12 @@ while IFS='|' read -r label rec class docs paths expected; do
   proof_rows=$((proof_rows + 1))
   check "proof: $label" "$expected" "$(proof_selection "$rec" "$class" "$docs" "$paths")"
 done < <(proof_table)
-[ "$proof_rows" -eq 8 ] || { echo "the proof table read $proof_rows rows" >&2; exit 1; }
+[ "$proof_rows" -eq 9 ] || { echo "the proof table read $proof_rows rows" >&2; exit 1; }
 proof_selection "$(record push micro false "$PRICE")" micro false "$PRICE" >/dev/null
-check "an ignored record says why" "ci-job-set: proof=ignored cause=unreadable-record event=push" \
+check "an ignored record says why" "ci-job-set: proof=ignored cause=unsupported-event event=push" \
   "$(grep '^ci-job-set: proof=ignored' "$TMP/selection-err")"
 proof_selection "$(record pull_request micro false "$PRICE")" micro false "$PRICE" >/dev/null
-check "a stood-down lane is named" "bot_instructions cargo_linux cargo_macos cargo_windows linux" \
+check "a stood-down lane is named" "linux bot_instructions cargo_linux cargo_macos cargo_windows" \
   "$(sed -n 's/^ci-job-set: proof=reused lane=//p' "$TMP/selection-err" | tr '\n' ' ' | sed 's/ $//')"
 # EDIT@LABEL: a copy with that rule removed answers the row named LABEL other
 # than the script does.
@@ -613,11 +617,11 @@ while IFS='@' read -r edit label; do
   [ "$got" != "$expected" ] && ok "control: $edit reddens the proof row '$label'" ||
     bad "control: $edit reddens the proof row '$label' (still '$got')"
 done <<'CONTROLS'
-s/^  ! reused "\$1" || eval "SEL_\$1=false"$/  :/@the pull request's own diff leaves the macOS legs
-s/^if \[ "\$proof" = true \] \&\& shards_covered; then$/if [ "$proof" = true ]; then/@a run whose shards do not cover this diff's keeps the Linux legs
-s/^    case "\$R_shards" in \*"\\"\$shard\\""\*) ;; \*) return 1 ;; esac$/    :/@a run whose shards do not cover this diff's keeps the Linux legs
-s/^  case "\$r_event" in pull_request | merge_group) ;; \*) cause="event=\$r_event" ;; esac$/  :/@a record of an event this script does not select for is ignored
-s/^  case "\$r_class" in micro | small | standard) \[ -n "\$r_paths" \] || cause="class=\$r_class without paths" ;; esac$/  :/@a record of a measured class with no path is ignored
+s/^  if \[ "\$value:\$ran" = true:true \]; then$/  if false; then/@the pull request's own diff leaves the macOS legs
+s/^  case "\$lane" in linux | macos) \[ "\$covered" = true \] || ran=false ;; esac$/  :/@a run whose shards do not cover this diff's keeps the Linux legs
+s/^    case "\$was_shards" in \*"\\"\$shard\\""\*) ;; \*) covered=false ;; esac$/    :/@a run whose shards do not cover this diff's keeps the Linux legs
+s/^    \*) die "unsupported-event event=\$event" "EVENT is pull_request or merge_group" ;;$/    *) ;;/@a record of an event this script does not select for is ignored
+s/^      \[ -n "\$paths" \] || die "class-without-paths class=\$class" \\$/      true || die "class-without-paths class=$class" \\/@a record of a measured class with no path is ignored
 CONTROLS
 
 # The two proof selections over this tree the workflow is evaluated against:
