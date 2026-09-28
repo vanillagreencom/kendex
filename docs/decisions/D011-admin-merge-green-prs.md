@@ -8,7 +8,7 @@
 
 **Research**: —
 
-**Supersedes**: the zero-bypass part of [D003](D003-one-merge-path.md) (one merge path)
+**Supersedes**: —
 
 **Approval**: owner decision 1790616596, 2026-09-28, relayed by the kendex overseer (lane mail 1790616843-3086369-26438); owner correction 1790623442, 2026-09-28, relayed by the kendex overseer (lane mail 1790623545-924328-13182); owner note 1790633650, 2026-09-28, relayed by the kendex overseer (lane mail 1790633853-3815502-10519)
 

@@ -522,14 +522,12 @@ check_root_entries() { # KIND ENTRY...
 }
 
 # Whether the item is a parked record's, for the merged check's close, with
-# PARKED_KEY the `<repo>#<number>` of the pull request its park judged and
-# PARKED_OWES `owes` where its record owes a pull request after that one.
+# PARKED_KEY the `<repo>#<number>` of the pull request its park judged.
 PARKED_KEY=""
-PARKED_OWES=""
 item_parked() { # ITEM
   local i
   for i in ${PARKED_ITEMS[@]+"${!PARKED_ITEMS[@]}"}; do
-    [[ "${PARKED_ITEMS[$i]}" != "$1" ]] || { PARKED_KEY="${PARKED_KEYS[$i]}"; PARKED_OWES="${PARKED_OWED[$i]}"; return 0; }
+    [[ "${PARKED_ITEMS[$i]}" != "$1" ]] || { PARKED_KEY="${PARKED_KEYS[$i]}"; return 0; }
   done
   return 1
 }
@@ -620,12 +618,10 @@ PREPARE_ROWS_FILTER='
   | [.item, $outcome, (.prepare.since | fromdateiso8601 | tostring), .prepare.log, (.prepare.reason // "")] | join("\u001f")'
 PREPARE_ROWS=""
 
-# The parked records, one per line as item, `<repo>#<number>` and `owes` or
-# nothing: a lane lane-close --park stopped with its disk kept, the pull
-# request its park judged, whose merge alone the merged check acts on, and
-# whether its record's owes_pr says the item owes a pull request after that
-# one. Nothing else reads it: its pane is gone and its mailbox is on a stopped
-# disk. The repository
+# The parked records, one per line as item and `<repo>#<number>`: a lane
+# lane-close --park stopped with its disk kept, and the pull request its park
+# judged, whose merge alone the merged check closes it on. Nothing else reads
+# it: its pane is gone and its mailbox is on a stopped disk. The repository
 # is lowercased here, the one spelling check_repo_set gives every --repo, so
 # the key meets the merged side's whatever case the record's writer used:
 # GitHub reads owner and repository names case-insensitively, and a record
@@ -634,10 +630,9 @@ PARKED_ROWS_FILTER='
   (.lanes // [])[] | select(type == "object" and .status == "parked")
   | if ((.item? | type) != "string" or (.item | length) == 0) then error("lane-field field=item value=\(.item | tojson)")
     elif ((.parked.pr? | type) != "number" or (.parked.repo? | type) != "string") then error("lane-field field=parked value=\(.parked | tojson)")
-    else "\(.item)\u001f\(.parked.repo | ascii_downcase)#\(.parked.pr)\u001f\(if .parked.owes_pr == true then "owes" else "" end)" end'
+    else "\(.item)\u001f\(.parked.repo | ascii_downcase)#\(.parked.pr)" end'
 PARKED_ITEMS=()
 PARKED_KEYS=()
-PARKED_OWED=()
 
 # The one reader of the state, asked by the repeat wrapper before every pass
 # and by the pass itself before every loop: the live set changes on every
@@ -657,7 +652,7 @@ FLEET_CARRIED=""
 # The state text the last read parsed, which the heartbeat's owed items judge.
 FLEET_STATE=""
 fleet_merge() { # [quiet]
-  local state rows dropped line item window where root harness running kept carried parked owes
+  local state rows dropped line item window where root harness running kept carried parked
   state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
   FLEET_STATE="$state"
   rows="$(jq -r "$LANE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$rows" "option=--state" "path=$STATE_FILE"
@@ -665,12 +660,10 @@ fleet_merge() { # [quiet]
   parked="$(jq -r "$PARKED_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$parked" "option=--state" "path=$STATE_FILE"
   PARKED_ITEMS=()
   PARKED_KEYS=()
-  PARKED_OWED=()
-  while IFS=$'\x1f' read -r item kept owes; do
+  while IFS=$'\x1f' read -r item kept; do
     [[ -n "$item" ]] || continue
     PARKED_ITEMS+=("$item")
     PARKED_KEYS+=("$kept")
-    PARKED_OWED+=("$owes")
   done <<<"$parked"
   # The count is the first line; a fleet of no running lane has no second.
   dropped="${rows%%$'\n'*}"
@@ -1306,12 +1299,7 @@ MAIL_STATE_FILE="$(pw_state_file "${REPOS[0]}").mail"
 # before the next item's reads can end the pass, so the next pass reports
 # that merge again and retries, and this pass fails as a whole at its end
 # while its remaining checks still run. A refused close, exit 3, keeps
-# its row: the user settles that checkout, and nothing retries it. A parked
-# record that owes a pull request after the merged one is not closed: its
-# sandbox holds the branch that further pull request is cut from, so the pass
-# reports item-open cause=further-pr, the record stays parked for a relaunch,
-# and the committed row keeps the line from repeating; the heartbeat's owed
-# items name the item as further-pr from that row until the relaunch.
+# its row: the user settles that checkout, and nothing retries it.
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
   local errf="$WORK_DIR/merged.err" item branch repo list hit hits prior keys fresh key line retry state="${PW_SEEN[0]}"
@@ -1352,10 +1340,6 @@ check_merged() {
       continue
     fi
     lane_row_commit "$state"
-    if [[ "$PARKED_OWES" == owes ]]; then
-      echo "EVENT item-open $item cause=further-pr"
-      continue
-    fi
     if ! close_hosted_lane "$item"; then
       retry=" $keys "; retry="${retry/ $PARKED_KEY / }"; retry="${retry# }"; retry="${retry% }"
       if [[ -n "$retry" ]]; then state="$(lane_row_set merged "$state" "$item" "$retry")"
@@ -3268,23 +3252,13 @@ check_report() {
 # read; with none, every open pull request in the item repository, the first
 # --repo, whose head is a GitHub item's branch, issue-N, read whole by a
 # listing of its own. A listing that reaches OWED_PR_LIMIT refuses rather than
-# pass a short set as the whole one. Either way a parked record owing a
-# further PR is a candidate too, `state=parked` where the tracker rows lack
-# it: its merge closed the open PR a GitHub listing reads. An item is owed nothing while a record
+# pass a short set as the whole one. An item is owed nothing while a record
 # holds it (running or preparing, LANE_RUNNING_JQ's `held`) or while it is
-# parked, since the merged check carries a parked lane's pull request, save a
-# parked record whose owes_pr is true once the pull request its park judged
-# has merged: the merged check reported that merge's item-open once and closes
-# nothing more for it, so the record stands parked over a merged pull request
-# until a relaunch rewrites it, and every heartbeat names it until then. That
-# merge reads from the merged row the long pass committed, BASELINE, which
-# holds the parked key while the merge stays inside --since, or from the
-# `cycle` the overseer's record wrote for the same pull request. The
+# parked, since the merged check carries a parked lane's pull request. The
 # queue and the records are the turn's own fleet_merge read, FLEET_STATE, so
 # the heartbeat judges the fleet the pass carried and reads no file again.
 #
-# The verdict, in this order: `further-pr` for that parked record, naming the
-# merged pull request; `merged` where the record carries the `cycle`
+# The verdict, in this order: `merged` where the record carries the `cycle`
 # oversee-cycle writes at a merge, which a later launch keeps, so the tracker
 # holding the item says either the close-out never moved it or the item went
 # back to work; `queue` where the record names no harness, since its launch
@@ -3307,11 +3281,11 @@ OWED_ACCOUNTS=""
 OWED_ANSWERS=""
 OWED_LISTING=""
 OWED_VERDICT=""
-owed_read() { # BASELINE
+owed_read() {
   OWED_LINES=""
   [[ -n "$STATE_FILE" ]] || return 0
-  local errf="$WORK_DIR/owed.err" out items rows delivered rc=0 n
-  local id state priority lane host harness model pr further key verdict line asked answer
+  local errf="$WORK_DIR/owed.err" out items rows rc=0 n
+  local id state priority lane host harness model pr key verdict line asked answer
   OWED_ACCOUNTS=""
   OWED_ANSWERS=""
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
@@ -3338,16 +3312,10 @@ owed_read() { # BASELINE
       | jq -Rnc '[inputs | {id: ., state: "open-pr", priority: "-"}]' 2>"$errf")" \
       || die pr-list-invalid "$(cat "$errf")" "repo=${REPOS[0]}"
   fi
-  # Each item's merged row, its `<repo>#<number>` keys, as one object.
-  delivered="$(awk -F'\t' 'NF == 3 && $1 == "merged" { print $2 "\t" $3 }' <<<"$1" \
-    | jq -Rnc '[inputs | split("\t") | {key: .[0], value: (.[1] | split(" "))}] | from_entries' 2>"$errf")" \
-    || die state-read-failed "$(cat "$errf")" "path=$(pw_state_file "${REPOS[0]}")" "row=merged"
   # One row per owed item on the unit separator, since a model id is the
   # launcher's to spell: id, state, priority, lane, then the host, harness and
-  # model a wall is judged for, the merged pull request its cycle names and
-  # the merged pull request a parked record owing a further one judged, `-`
-  # where none.
-  rows="$(jq -r --argjson items "$items" --argjson delivered "$delivered" "$LANE_RUNNING_JQ"'
+  # model a wall is judged for and the merged pull request, `-` where none.
+  rows="$(jq -r --argjson items "$items" "$LANE_RUNNING_JQ"'
     def token($field): if type == "string" and test("^[A-Za-z0-9._-]+$") then .
       else error("lane-field field=\($field) value=\(tojson)") end;
     if type != "object" then error("state-type expected=object actual=\(type)") else . end
@@ -3355,31 +3323,24 @@ owed_read() { # BASELINE
     | if ($queue | type) != "array" or any($queue[]; type != "string")
       then error("state-field field=launch_queue value=\($queue | tojson)") else . end
     | (.lanes // []) as $lanes
-    | $items + [$lanes[] | objects | select(.status == "parked" and .parked.owes_pr == true)
-        | {id: (.item | token("item")), state: "parked", priority: "-"}] | unique_by(.id)[]
+    | $items | unique_by(.id)[]
     | . as $item
     | select(any($queue[]; . == $item.id) | not)
     | ([$lanes[] | objects | select(.item == $item.id)] | last) as $rec
-    | ($rec != null and $rec.status == "parked" and $rec.parked.owes_pr == true
-       and ($rec.cycle.pr == $rec.parked.pr
-         or any($delivered[$item.id] // [] | .[]; . == "\($rec.parked.repo | ascii_downcase)#\($rec.parked.pr)"))) as $further
-    | select($rec == null or ((($rec | held) or ($rec.status == "parked" and ($further | not))) | not))
+    | select($rec == null or ((($rec | held) or $rec.status == "parked") | not))
     | [$item.id, $item.state, ($item.priority | tostring),
        (if $rec == null then "none" else ($rec.status | token("status")) end),
        ($rec.host // null | if . == null or . == "" then "local" elif type == "string" then . else error("lane-field field=host value=\(tojson)") end),
        ($rec.harness // null | if . == null then "-" else token("harness") end),
        ($rec.model // null | if . == null or . == "" then "-" elif type == "string" then . else error("lane-field field=model value=\(tojson)") end),
        (if $rec.cycle == null then "-"
-        else ($rec.cycle.pr | if type == "number" then tostring else error("lane-field field=cycle value=\($rec.cycle | tojson)") end) end),
-       (if $further then ($rec.parked.pr | tostring) else "-" end)]
+        else ($rec.cycle.pr | if type == "number" then tostring else error("lane-field field=cycle value=\($rec.cycle | tojson)") end) end)]
     | join("\u001f")' <<<"$FLEET_STATE" 2>"$errf")" \
     || die state-invalid "$(cat "$errf")" "option=--state" "path=$STATE_FILE"
-  while IFS=$'\037' read -r id state priority lane host harness model pr further; do
+  while IFS=$'\037' read -r id state priority lane host harness model pr; do
     [[ -n "$id" ]] || continue
     line="owed $id state=$state priority=$priority lane=$lane"
-    if [[ "$further" != - ]]; then
-      verdict="verdict=further-pr pr=$further"
-    elif [[ "$pr" != - ]]; then
+    if [[ "$pr" != - ]]; then
       verdict="verdict=merged pr=$pr"
     elif [[ "$harness" == - ]]; then
       verdict="verdict=queue"
@@ -3486,7 +3447,7 @@ heartbeat() {
       || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=open"
     [[ -z "$open" ]] || open_all+="$(pw_prefix "$repo" "$open")"$'\n'
   done
-  owed_read "$baseline"
+  owed_read
   # The current fleet's alone: a row clears on the item's next good read,
   # and an item that left the fleet is read no more.
   if ! failing="$(ow_items="$(printf '%s\n' overseer ${ITEMS[@]+"${ITEMS[@]}"})" awk -F'\t' '

@@ -13,7 +13,6 @@ LINEAR="$SCRIPT_DIR/../../linear/scripts/linear.sh"
 LANES="$SCRIPT_DIR/lanes"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 source "$SCRIPT_DIR/lib/lane-host-slots.sh"
-source "$SCRIPT_DIR/lib/lane-gitfile.sh"
 source "$SCRIPT_DIR/lib/date-ladder.sh"
 source "$SCRIPT_DIR/lib/usage-reset.sh"
 
@@ -89,16 +88,14 @@ message() { # REASON FIELD=VALUE...
         '  merge-state       the pull request is armed and not queued, and GitHub reports the state named: only CLEAN, every required check green on the head and nothing else blocking, admits a park there. A push after the arm, a running check or a red one all read otherwise. A queued pull request is admitted on the queue'"'"'s own judgement and this state is not read for it.' \
         '  reducer-missing   the review-gate reducer pr-watch.sh is not installed beside this skill, and the gate and thread reading is its alone.' \
         '  attention         the reducer prints attention for this pull request, kinds= naming what: an open thread, a stale gate, a standing objection. The lane is still needed.' \
-        '  reducer-failed    the reducer could not evaluate the pull request; its own words are on the lines above this one.' \
-        '  status-missing    the lane'"'"'s status file, tmp/lane-status-ITEM.md under its mail_root, is not on its host, so nothing says whether the item owes a pull request after this one.' \
-        '  status-read-failed  lane-host cat could not read that status file; its own words are on the lines above this one.' ;;
+        '  reducer-failed    the reducer could not evaluate the pull request; its own words are on the lines above this one.' ;;
     park-failed)
       printf '%s\n' \
         'The harness was ended and its window closed, but the sandbox could not be stopped, so the record reads stopped, the kept sandbox still billing. cause names the step:' \
         '  provider          the lane host stop-sandbox verb exited with status; its own words are on the lines above this one. A provider without the verb answers 2.' \
         '  answer-unparsed   the verb succeeded without its sandbox-stopped item=ID line, so nothing here confirms the sandbox is down.' \
         'A stopped record is what --keep-sandbox leaves: a relaunch recovers it, and lane-close --park --pr N on it retries the stop from the record alone.' ;;
-    parked) printf '%s\n' 'The lane window closed, its harness ended and its sandbox stopped with its disk kept. The record reads parked and names the pull request and head it was judged on; the watch keeps its merged check. owes-pr=yes is a lane whose status file names a pull request owed after this one: its merge keeps the sandbox for a relaunch and completes nothing.' ;;
+    parked) printf '%s\n' 'The lane window closed, its harness ended and its sandbox stopped with its disk kept. The record reads parked and names the pull request and head it was judged on; the watch keeps its merged check.' ;;
     stopped) printf '%s\n' 'The lane window closed and its sandbox was kept.' ;;
     closed) printf '%s\n' 'The lane, sandbox and fleet record closed.' ;;
   esac
@@ -176,21 +173,13 @@ null for the whole wait; the merge state is read for the armed, unqueued case
 alone. A lane still inside a CI or gate wait after a push is neither queued
 nor CLEAN, or gets an attention line, and is never parked. The reducer is the
 one OVERSEE_WATCH_PR_WATCH names, as it is for oversee-watch, and the
-review-gate skill beside this one otherwise. Last, the lane's status file,
-tmp/lane-status-ITEM.md under the record's mail_root, is read through
-lane-host cat: a line beginning owes-pr: is the lane naming a pull request
-the item owes after this one, a split's next part, and is recorded as
-owes_pr true, so the merge of this one keeps the sandbox for a relaunch and
-completes nothing. A status file the host does not have refuses as
-status-missing, since nothing then says the merge ends the item, and a read
-that fails as status-read-failed. Admitted, the park ends the
+review-gate skill beside this one otherwise. Admitted, the park ends the
 harness by signal as a close does,
 whatever the lane is doing, waits for its pane to read exited, closes the
 window, then stops the sandbox through lane-host stop-sandbox and requires its
 sandbox-stopped item=ID line. The record then reads parked and carries
-{pr, head, repo, at, owes_pr}, the pull request and head it was judged on,
-and the parked line carries owes-pr=yes where the status file named one. A
-stop the provider refuses, or answers without that line, leaves the record stopped,
+{pr, head, repo, at}, the pull request and head it was judged on. A stop the
+provider refuses, or answers without that line, leaves the record stopped,
 what --keep-sandbox leaves, and refuses as park-failed: the harness is gone
 and the sandbox still up, which that status says. --park on a stopped record
 judges the pull request again and stops the sandbox from the record alone; on
@@ -471,7 +460,7 @@ tracker_terminal() {
 }
 
 # The park guard: the one reading that admits a merge-wait park, made before
-# anything is signalled. It delegates to the judges that already own the
+# anything is signalled. It delegates to the three judges that already own the
 # questions: the provider, asked without effect whether it can stop a sandbox
 # it will later be asked to start, which a provider without the pair refuses
 # with the protocol's absent-verb status; GitHub's merge queue and auto-merge,
@@ -480,11 +469,9 @@ tracker_terminal() {
 # since nothing enters it otherwise, and mergeStateStatus CLEAN saying the
 # same for an armed pull request outside the queue; and the review-gate
 # reducer, whose silence for a pull request is its healthy state: gate met, no
-# unresolved thread, armed or queued; and the lane itself, whose status file
-# says whether the item owes a pull request after this one. Nothing here counts
-# a check or a thread itself. Each refusal names the condition it stopped on
-# and changes nothing. PARK_HEAD, PARK_REPO and PARK_OWES_PR carry what the
-# record will hold.
+# unresolved thread, armed or queued. Nothing here counts a check or a thread
+# itself. Each refusal names the condition it stopped on and changes nothing.
+# PARK_HEAD and PARK_REPO carry what the record will hold.
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SCRIPT_DIR/../../review-gate/scripts/pr-watch.sh}"
 PARK_QUEUE_QUERY='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { isInMergeQueue mergeQueueEntry { position } } } }'
 # The queue answer as a word: a payload without the boolean is unparsed.
@@ -549,34 +536,6 @@ park_judge() {
     *) message park-refused "item=$ITEM" "reason=reducer-failed" "pr=$PARK_PR" "exit=$rc" >&2; exit 1 ;;
   esac
   PARK_HEAD="$pr_head"
-  park_owes_read
-}
-
-# Whether the item owes a pull request after the one being parked, read from
-# the one place a lane records a split: the owes-pr: line its status file
-# carries while a further part is owed (oversee.md § 3 Lane directive). A
-# status file the host does not have refuses rather than reading as nothing
-# owed: a wrong park completes an item that still owes work, and a refused one
-# costs only the wait's sandbox minutes. PARK_OWES_PR is the record's owes_pr.
-PARK_OWES_PR=false
-park_owes_read() {
-  local status_file="$mail_root/tmp/lane-status-$ITEM.md" scratch rc=0 found=0
-  scratch="$(mktemp -d)" || { message park-refused "item=$ITEM" "reason=status-read-failed" "cause=scratch-unmade" >&2; exit 1; }
-  ORCH_LANE_HOST="$host" lane_host_fetch "$LANE_HOST" "$ITEM" "$status_file" "$scratch/status" "$scratch/err" || rc=$?
-  case "$rc" in
-    0) grep -q '^owes-pr:' -- "$scratch/status" || found=$? ;;
-    1) ;;
-    *) cat -- "$scratch/err" >&2 ;;
-  esac
-  rm -rf -- "${scratch:?}"
-  case "$rc/$found" in
-    0/0) PARK_OWES_PR=true ;;
-    0/1) ;;
-    0/*) message park-refused "item=$ITEM" "reason=status-read-failed" "path=$status_file" "cause=grep" "exit=$found" >&2; exit 1 ;;
-    1/*) message park-refused "item=$ITEM" "reason=status-missing" "path=$status_file" >&2; exit 1 ;;
-    4/*) message lane-host-busy "item=$ITEM" "pr=$PARK_PR" step=status-read >&2; exit "$LANE_HOST_BUSY_EXIT" ;;
-    *) message park-refused "item=$ITEM" "reason=status-read-failed" "path=$status_file" >&2; exit 1 ;;
-  esac
 }
 
 # The sandbox stop and the record it earns, from a lane whose harness is gone
@@ -600,12 +559,10 @@ park_sandbox() {
   fi
   at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   "$WORKFLOW_STATE" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} update oversee \
-    --arg item "$ITEM" --arg pr "$PARK_PR" --arg head "$PARK_HEAD" --arg repo "$PARK_REPO" --arg at "$at" --arg owes "$PARK_OWES_PR" \
-    'if any(.lanes[]; .item == $item) then (.lanes[] | select(.item == $item)) |= (.status = "parked" | .parked = {pr: ($pr | tonumber), head: $head, repo: $repo, at: $at, owes_pr: ($owes == "true")}) else error("lane record disappeared") end' \
+    --arg item "$ITEM" --arg pr "$PARK_PR" --arg head "$PARK_HEAD" --arg repo "$PARK_REPO" --arg at "$at" \
+    'if any(.lanes[]; .item == $item) then (.lanes[] | select(.item == $item)) |= (.status = "parked" | .parked = {pr: ($pr | tonumber), head: $head, repo: $repo, at: $at}) else error("lane record disappeared") end' \
     >/dev/null || { message state-write-failed "item=$ITEM" "status=parked" >&2; exit 1; }
-  fields+=("head=$PARK_HEAD")
-  [[ "$PARK_OWES_PR" == false ]] || fields+=("owes-pr=yes")
-  message parked "${fields[@]}" "status=parked"
+  message parked "${fields[@]}" "head=$PARK_HEAD" "status=parked"
   exit 0
 }
 
@@ -703,9 +660,7 @@ fi
 # made then. The provider's close completes on a stopped sandbox by protocol.
 if [[ "$status" == parked ]]; then
   if [[ "$PARK" == true || "$KEEP_SANDBOX" == true ]]; then
-    fields=("item=$ITEM" "pr=$(jq -r '.parked.pr // empty' <<<"$record")" "head=$(jq -r '.parked.head // empty' <<<"$record")")
-    [[ "$(jq -r '.parked.owes_pr == true' <<<"$record")" == false ]] || fields+=("owes-pr=yes")
-    message parked "${fields[@]}" "status=parked"
+    message parked "item=$ITEM" "pr=$(jq -r '.parked.pr // empty' <<<"$record")" "head=$(jq -r '.parked.head // empty' <<<"$record")" "status=parked"
     exit 0
   fi
   finish_close

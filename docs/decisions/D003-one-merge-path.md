@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-25
 
-**Status**: Active (zero bypass → D011)
+**Status**: Active
 
 **Research**: —
 
@@ -24,8 +24,6 @@ A merge reached `main` by more than one route, and kendex renders reached consum
 - PR 2860 lost about 40 minutes to a base-stale refusal: a pull request behind `main` had to restack before a direct merge.
 
 ## Decision
-
-The zero-bypass parts of steps 1 and 3 are superseded by [D011](D011-admin-merge-green-prs.md): a green pull request is admin-merged through the lanes app's bypass, and the queue is kept for the pull requests D011 names.
 
 This is the target state, and each current route stays in place until the change that retires it lands. The admin merge and the `ORCH_MERGE_BYPASS` fast path stay until KEN-1777, the consumer train until KEN-1779, and each per-repository ruleset until the organization rulesets stand, the owner action KEN-1778 sequences.
 

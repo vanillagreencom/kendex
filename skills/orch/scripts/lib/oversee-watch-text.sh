@@ -153,10 +153,9 @@ The long pass's events, checked and reported in this order:
                              --repo. A parked record's item is an --item for
                              this check alone, and the merge of the pull
                              request its record names, in that repository,
-                             runs the close below at once, or item-open for a
-                             record owing a further pull request: nothing
-                             wakes a parked sandbox. Another pull request on
-                             the branch's name is reported and closes nothing,
+                             runs the close below at once: nothing wakes a
+                             parked sandbox. Another pull request on the
+                             branch's name is reported and closes nothing,
                              under a parked-merge-unmatched note on stderr
                              naming the recorded key and the keys seen; the
                              repository is matched in lower case, GitHub's
@@ -222,16 +221,6 @@ The long pass's events, checked and reported in this order:
                              provider's `close-refused path=PATH` line, or
                              `path=unknown` without one; the sandbox stays.
                              Never retried, never --force
-  EVENT item-open <item> cause=further-pr
-                             in place of that close, under the merged event of
-                             a parked record whose owes_pr is true: lane-close
-                             --park read an owes-pr: line in the lane's status
-                             file, so the item owes a pull request after the
-                             merged one. Nothing is closed: the record stays
-                             parked and its stopped sandbox keeps the branch
-                             for a relaunch. Reported once, as the merge is;
-                             every heartbeat's owed items then name the item
-                             as further-pr until a relaunch rewrites the record
   EVENT handoff <item>       the --item's workflow state carries a `.handoff`
                              record with no `.resumed_at`; the record follows.
                              Emitted once per record, on every surface: it
@@ -309,26 +298,19 @@ The long pass's events, checked and reported in this order:
                              to `change=`, from the last long pass's reading.
                              `account-roster unread` replaces them when that
                              reading failed. Last, with --state, one line
-                             `owed <item> state=<in-progress|in-review|open-pr|parked>
+                             `owed <item> state=<in-progress|in-review|open-pr>
                              priority=<N|-> lane=<none|status> verdict=<queue|
-                             further-pr pr=<N>|merged pr=<N>|dated harness=<h>
-                             until=<reset|->|unjudged harness=<h>>` per item
-                             the tracker holds as work the fleet owes that
-                             launch_queue lacks:
+                             merged pr=<N>|dated harness=<h> until=<reset|->|
+                             unjudged harness=<h>>` per item the tracker holds
+                             as work the fleet owes that launch_queue lacks:
                              with LINEAR_TEAM, the team's In Progress and In
                              Review items, one live read, a priority of 0 (none)
                              printed `-`; with none, every open PR of the first
                              --repo on an issue-N branch, from a listing of its
                              own that exits 2 as owed-list-truncated at 1000.
                              A record running, preparing or parked owes
-                             nothing, save a parked record whose owes_pr is
-                             true once the pull request it names has merged,
-                             read from the merged row or from a `cycle` of
-                             that pull request: it is `further-pr` with that
-                             pull request, the item-open item no relaunch has
-                             rewritten yet, `state=parked` where neither
-                             source above holds it. `merged` is a record carrying its
-                             merge's `cycle`. A record with no harness is `queue`.
+                             nothing. `merged` is a record carrying its merge's
+                             `cycle`. A record with no harness is `queue`.
                              Every other verdict reads the accounts of the
                              record's host, its `host` or `local`, as
                              ORCH_LANE_HOST: a `lanes list` there that fails
