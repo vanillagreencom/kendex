@@ -1010,6 +1010,8 @@ fi
 # lane_adapter_copilot_status_line, whose reason the refusal carries as
 # `cause=`), since that record is what the turn-end hook judges the lane's
 # context on; with none every turn end reads the context unmeasured.
+# Called for the lane resolved up front and again for each one a batch
+# re-picks. Returns 1 with the refusal printed.
 copilot_fleet_gate() {
   local home
   [[ "$FLEET" == true && "$WAKE" != true && "$LAUNCH_HARNESS" == copilot ]] || return 0
@@ -2534,7 +2536,7 @@ lane_rejudge() { # ITEM
     next="$(pick_auto_lane)" || rc=$?
     [[ "$rc" -eq 0 ]] || { auto_pick_refusal "$rc" "item=$1" "launched=$launched"; return 1; }
     ! lane_value_error "$next" || return 1
-    [[ "$next" == "$LANE_ENV" ]] || { LANE_ENV="$next"; ot_message lane-selected "lane=$LANE_ENV"; pi_lane_root_apply || return 1; }
+    [[ "$next" == "$LANE_ENV" ]] || { LANE_ENV="$next"; ot_message lane-selected "lane=$LANE_ENV"; pi_lane_root_apply && copilot_fleet_gate || return 1; }
   elif [[ "$LANE_GATE" == true ]]; then
     named_lane_judge
   fi

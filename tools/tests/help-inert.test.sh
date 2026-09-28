@@ -165,12 +165,12 @@ orch	scripts/approval-wait	Usage: approval-wait	--help
 orch	scripts/approval-wait	Usage: approval-wait	-h
 orch	scripts/approval-wait	Usage: approval-wait	help
 orch	scripts/approval-wait	Usage: approval-wait	123 --mode review -h
-orch	scripts/lanes	lanes list [--harness claude|codex|all]	-
-orch	scripts/lanes	lanes list [--harness claude|codex|all]	--help
-orch	scripts/lanes	lanes list [--harness claude|codex|all]	-h
-orch	scripts/lanes	lanes list [--harness claude|codex|all]	help
-orch	scripts/lanes	lanes list [--harness claude|codex|all]	list --help
-orch	scripts/lanes	lanes list [--harness claude|codex|all]	pick --harness claude -h
+orch	scripts/lanes	lanes list [--harness claude|codex|copilot|all]	-
+orch	scripts/lanes	lanes list [--harness claude|codex|copilot|all]	--help
+orch	scripts/lanes	lanes list [--harness claude|codex|copilot|all]	-h
+orch	scripts/lanes	lanes list [--harness claude|codex|copilot|all]	help
+orch	scripts/lanes	lanes list [--harness claude|codex|copilot|all]	list --help
+orch	scripts/lanes	lanes list [--harness claude|codex|copilot|all]	pick --harness claude -h
 orch	scripts/open-terminal	Usage: open-terminal	--help
 orch	scripts/open-terminal	Usage: open-terminal	-h
 orch	scripts/open-terminal	Usage: open-terminal	help

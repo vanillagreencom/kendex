@@ -248,11 +248,14 @@ counted() {
 #   cmd_lane      the lane the launched command's env prefix names, read from
 #                 the tmux log, single-quoted as the launch shell needs it
 #   pi_root       the same for a PI_CODING_AGENT_DIR prefix, or none
+#   copilot_home  the same for the COPILOT_HOME the launch line sets, or none
 #   pickrefusal   every field of the first refusal of an `auto` pick, a
 #                 copilot-pool-*, lane-provider-unmeasured or lane-unavailable
 #                 line, key first, or none
 #   hostseat      every field of the host-pi-claude-seat line, or none
 #   compactionon  the file field of the first compaction-on line, or none
+#   statusline    the cause and file fields of the first status-line refusal,
+#                 or none
 #   claim_lanes   the distinct lanes those claims name, sorted
 #   claim_window  the window the single claim names; claim_pane its pane id
 #   out_lanes     the lanes the launch output names, in order
@@ -299,8 +302,13 @@ observe() {
       claims) value="$([[ -d "$RUN/state/claims" ]] && ls -1 "$RUN/state/claims" | wc -l | tr -d '[:space:]' || echo nolog)" ;;
       cmd_lane) value="$(grep -oE "env CLAUDE_CONFIG_DIR='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^env CLAUDE_CONFIG_DIR='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
       pi_root) value="$(grep -oE "env PI_CODING_AGENT_DIR='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^env PI_CODING_AGENT_DIR='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
+      copilot_home) value="$(grep -oE "COPILOT_HOME='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^COPILOT_HOME='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
       compactionon)
         value="$(awk '$1 == "open-terminal:" && $2 == "compaction-on" { print $4; exit }' <<<"$OUT")"
+        value="${value:-none}"
+        ;;
+      statusline)
+        value="$(awk '$1 == "open-terminal:" && $2 == "unsupported-for-oversee" && $4 == "reason=status-line" { print $5 "," $6; exit }' <<<"$OUT")"
         value="${value:-none}"
         ;;
       pickrefusal)
@@ -647,11 +655,31 @@ run_ot "$PI_BATCH" --harness pi --lane auto --state-dir "$TMP_ROOT/pi-fleet-1" C
 assert_eq "$(observe "launched=1 pi_root=pi1 compactionon=file=$H/.pi2/settings.json")" \
   "launched=1 pi_root=pi1 compactionon=file=$H/.pi2/settings.json" \
   "a fleet batch's re-pick onto a second pool account is gated on that account's own settings"
-pi_control ctl-pi-repick open-terminal 'ot_message lane-selected "lane=$LANE_ENV"; pi_lane_root_apply || return 1; }' \
-  'ot_message lane-selected "lane=$LANE_ENV"; }' "$PI_BATCH" --harness pi --lane auto --state-dir "$TMP_ROOT/pi-fleet-2" CC-1670 CC-1671
+pi_control ctl-pi-repick open-terminal 'ot_message lane-selected "lane=$LANE_ENV"; pi_lane_root_apply && copilot_fleet_gate || return 1; }' \
+  'ot_message lane-selected "lane=$LANE_ENV"; copilot_fleet_gate || return 1; }' "$PI_BATCH" --harness pi --lane auto --state-dir "$TMP_ROOT/pi-fleet-2" CC-1670 CC-1671
 assert_eq "$(observe "launched=2 pi_root=pi1,pi2 compactionon=none")" "launched=2 pi_root=pi1,pi2 compactionon=none" \
   "control: a re-pick that keeps the first root launches the second item on an account nobody gated"
 rm -f -- "${H:?}/.pi1/settings.json" "${H:?}/.pi2/settings.json"
+
+# The same re-pick on the Copilot pool is gated on the second account's status
+# line: copilot1 (10) takes the first item, its claim moves the second onto
+# copilot2 (20), which has no settings file, so the second is refused. Its
+# control drops the re-pick's gate, and the second item launches with no status
+# line to write its session record.
+mkdir -p "$H/.copilot1" "$H/.copilot2"
+printf '{}\n' > "$H/.copilot1/config.json"
+printf '{}\n' > "$H/.copilot2/config.json"
+printf '{"statusLine":{"type":"command","command":"%s","refreshInterval":30}}\n' "$SCRIPTS_DIR/copilot-statusline" > "$H/.copilot1/settings.json"
+CP_BATCH="ORCH_LANE_COPILOT_POOL=$H/.copilot1=100000/1000000,$H/.copilot2=200000/1000000;cmd=true --model claude-sonnet-5 --reasoning-effort high"
+run_ot "$CP_BATCH" --harness copilot --lane auto --state-dir "$TMP_ROOT/cp-fleet-1" CC-1680 CC-1681
+assert_eq "$(observe "launched=1 copilot_home=copilot1 statusline=cause=settings-missing,file=$H/.copilot2/settings.json")" \
+  "launched=1 copilot_home=copilot1 statusline=cause=settings-missing,file=$H/.copilot2/settings.json" \
+  "a Copilot batch's re-pick onto a second pool account is gated on that account's own status line"
+pi_control ctl-copilot-repick open-terminal 'pi_lane_root_apply && copilot_fleet_gate || return 1; }' \
+  'pi_lane_root_apply || return 1; }' "$CP_BATCH" --harness copilot --lane auto --state-dir "$TMP_ROOT/cp-fleet-2" CC-1680 CC-1681
+assert_eq "$(observe "launched=2 copilot_home=copilot1,copilot2 statusline=none")" "launched=2 copilot_home=copilot1,copilot2 statusline=none" \
+  "control: a re-pick with no Copilot gate launches the second item on an account whose status line nobody read"
+rm -rf -- "${H:?}/.copilot1" "${H:?}/.copilot2"
 
 echo "=== a Pi launch on a pi-claude model is judged on the Claude seat it spends ==="
 # pi-claude-bridge runs Claude Code on the Claude seat CLAUDE_CONFIG_DIR names,
