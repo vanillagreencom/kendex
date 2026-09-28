@@ -54,6 +54,9 @@ pub enum State {
     Ok,
     /// Not as kendex would write it; the row's detail says how.
     Failed,
+    /// A finding that leaves the run clean unless it was asked to fail on
+    /// warnings; the row's detail says what was found.
+    Warning,
     /// Declared by the scope and held by no record entry, so nothing was
     /// checked: the positions are where a render would land.
     Unrecorded,

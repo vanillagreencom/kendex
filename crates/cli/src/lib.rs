@@ -99,6 +99,9 @@ enum Command {
         scope: Option<String>,
         #[command(flatten)]
         output: commands::verify::Output,
+        /// Also fail on warnings: a path an installed agent declares as tracked output that the project ignores
+        #[arg(long)]
+        strict: bool,
     },
     /// Make installed packages match your saved setup
     Apply(commands::apply_cmd::ApplyArgs),
@@ -505,9 +508,16 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             global,
             scope,
             output,
+            strict,
         } => {
             let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::All)?;
-            return commands::verify::run(&env, names, filter, output);
+            return commands::verify::run(
+                &env,
+                names,
+                filter,
+                output,
+                commands::verify::Warnings::strict(strict),
+            );
         }
         Command::Apply(args) => commands::apply_cmd::run(&env, args)?,
         Command::Adopt {

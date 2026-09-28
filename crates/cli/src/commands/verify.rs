@@ -20,6 +20,26 @@ use super::{resolve_scopes, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui::{self, Span, Status, Style};
 
+/// What a warning row does to the run: `--strict` fails it like any other
+/// failed row. The one warning today is a declared tracked output the
+/// project's repository ignores, a choice the project may make on purpose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Warnings {
+    /// Said and counted apart; the run stays clean.
+    Warn,
+    /// Failed and counted with the other failed rows.
+    Fail,
+}
+
+impl Warnings {
+    pub fn strict(strict: bool) -> Warnings {
+        match strict {
+            true => Warnings::Fail,
+            false => Warnings::Warn,
+        }
+    }
+}
+
 /// What the run renders against and what the machine-readable mode asks
 /// for: the document, and the revision each shared file's foreign part is
 /// compared against.
@@ -122,9 +142,12 @@ struct Tally {
     shims_failed: usize,
     setup_failed: usize,
     bookkeeping_failed: usize,
-    /// Declared tracked outputs the project ignores, and projects whose
-    /// ignore rules git could not be asked about.
+    /// Declared tracked outputs the project ignores under `--strict`, and
+    /// projects whose ignore rules git could not be asked about.
     outputs_failed: usize,
+    /// Declared tracked outputs the project ignores, without `--strict`:
+    /// counted on the closing line apart from every failure.
+    warned: usize,
     rows: Vec<Row>,
 }
 
@@ -163,10 +186,13 @@ impl Tally {
 /// ignores. Each of the last six is printed as a row of its own where it
 /// fails, counted after the lock entries on the closing line, and a
 /// failing one closes the run non-zero like a failing lock row. The
-/// arming check and the ignore check fail closed: a recorded arming whose
-/// check could not be taken is a row nothing measured, never a clean one,
-/// and a git that cannot say whether it ignores a declared path fails the
-/// run.
+/// ignored tracked output is the one exception: a project may keep an
+/// agent's output local on purpose, so its row is a warning, counted apart
+/// on the closing line and leaving the run clean, unless `warnings` is
+/// [`Warnings::Fail`]. The arming check and the ignore check fail closed: a
+/// recorded arming whose check could not be taken is a row nothing
+/// measured, never a clean one, and a git that cannot say whether it
+/// ignores a declared path fails the run.
 ///
 /// A recorded entry nothing in the scope declares fails its row, and a
 /// declared installation the record does not hold is a gap, for every
@@ -202,6 +228,7 @@ pub fn run(
     names: Vec<String>,
     filter: ScopeFilter,
     output: Output,
+    warnings: Warnings,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let style = ui::style();
     let scopes = resolve_scopes(env, filter)?;
@@ -217,7 +244,7 @@ pub fn run(
     );
     let mut tally = Tally::default();
     for scope in scopes {
-        check_scope(env, scope, &names, &output, &mut tally, &style)?;
+        check_scope(env, scope, &names, &output, warnings, &mut tally, &style)?;
     }
     print_unmanaged(&tally.unmanaged);
     print_left_out(&style, &tally.left_out);
@@ -230,6 +257,7 @@ pub fn run(
             tally.failed,
             !tally.gaps.is_empty(),
             tally.beside_failed(),
+            tally.warned,
         ),
     ));
     if output.json {
@@ -254,6 +282,7 @@ fn check_scope(
     scope: Scope,
     names: &[String],
     output: &Output,
+    warnings: Warnings,
     tally: &mut Tally,
     style: &Style,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -351,7 +380,7 @@ fn check_scope(
     }
     tally.setup_failed += super::repo_effects::say_lapsed(env, &scope, names);
     if let Scope::Project { root } = &scope {
-        tracked_output_rows(root, &report, &placer, &named, tally, style);
+        tracked_output_rows(root, &report, &placer, &named, warnings, tally, style);
     }
     let record = match fallback {
         true => None,
@@ -434,15 +463,17 @@ fn bookkeeping_rows(
 }
 
 /// Each path an agent the project declares names as tracked output that
-/// the project's repository ignores, as a failed row: a plan or report the
-/// agent writes there reaches no other checkout and no review. A path left
-/// tracked is the ordinary state and makes no row. The global scope has no
-/// repository to ask, so only a project comes here.
+/// the project's repository ignores, as a warning row, or a failed one
+/// under [`Warnings::Fail`]: a plan or report the agent writes there
+/// reaches no other checkout and no review, which the project may intend.
+/// A path left tracked is the ordinary state and makes no row. The global
+/// scope has no repository to ask, so only a project comes here.
 fn tracked_output_rows(
     root: &Path,
     report: &kendex_core::engine::EngineReport,
     placer: &Placer,
     named: &dyn Fn(&str) -> bool,
+    warnings: Warnings,
     tally: &mut Tally,
     style: &Style,
 ) {
@@ -474,13 +505,24 @@ fn tracked_output_rows(
             "tracked output {} is ignored ({rule}); a file the agent writes there reaches no other checkout",
             standing.path
         );
-        ui::stderr(&style.report_verdict(&format!("agent {}", standing.agent), Some(&problem)));
-        tally.outputs_failed += 1;
+        let label = format!("agent {}", standing.agent);
+        let state = match warnings {
+            Warnings::Warn => {
+                ui::stderr(&style.report_warning(&format!("{label}: {problem}")));
+                tally.warned += 1;
+                State::Warning
+            }
+            Warnings::Fail => {
+                ui::stderr(&style.report_verdict(&label, Some(&problem)));
+                tally.outputs_failed += 1;
+                State::Failed
+            }
+        };
         tally.rows.push(placer.row(
             "tracked-output",
             &standing.agent,
             None,
-            State::Failed,
+            state,
             Some(problem),
             &[],
         ));
@@ -667,8 +709,9 @@ impl<'a> Placer<'a> {
 /// nothing installed on it, and saying so would close the run on the one
 /// reading the reader came for. A count that closes on `0 failed` while a
 /// row beside it failed reads as a pass to the one reading only the last
-/// line, so those rows are counted here too.
-fn head(checked: usize, failed: usize, named: bool, beside: usize) -> String {
+/// line, so those rows are counted here too. Warnings close the line,
+/// counted apart from every failure.
+fn head(checked: usize, failed: usize, named: bool, beside: usize, warned: usize) -> String {
     let count = match (checked, named) {
         (0, true) => "nothing checked".to_owned(),
         (0, false) => "nothing installed".to_owned(),
@@ -677,10 +720,15 @@ fn head(checked: usize, failed: usize, named: bool, beside: usize) -> String {
             checked - failed
         ),
     };
-    match beside {
+    let count = match beside {
         0 => count,
         1 => format!("{count}; 1 other row failed"),
         _ => format!("{count}; {beside} other rows failed"),
+    };
+    match warned {
+        0 => count,
+        1 => format!("{count}; 1 warning"),
+        _ => format!("{count}; {warned} warnings"),
     }
 }
 
