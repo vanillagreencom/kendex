@@ -1297,10 +1297,11 @@ subsystem_class() { # CLASSIFIER PATH:LINES... -> the class: line for the diff
     --base "$base" --head HEAD 2>&1 >/dev/null)" || true
   printf '%s\n' "$err" | sed -n '/^class: /p'
 }
-skip_line="$(cat <<'LINE'
+# Read outside a command substitution: Bash 3.2 cannot find the end of one
+# around a heredoc holding this line's unbalanced `)`.
+IFS= read -r skip_line <<'LINE'
   case "$test_files" in *$'\n'"$path"$'\n'*) continue ;; esac
 LINE
-)"
 unskipped_class="$(plant_package "$SANDBOX/unskipped" link)"
 # The line reaches awk through the environment: a -v value has its
 # backslashes read as escapes.
