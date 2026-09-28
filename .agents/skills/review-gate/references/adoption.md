@@ -86,6 +86,8 @@ kendex verify --scope project
 git add .github/workflows/kendex-refresh.yml .kendex-generated.json
 ```
 
+A repository with no review gate adopts the refresh workflow with no writer. It sets `REVIEW_GATE_WRITER = "optional"` and `REVIEW_GATE_MODE = "off"` in its committed `kendex.settings.toml`, copies no writer, and runs `adopt-refresh.sh` and `kendex verify` as above. Adoption then records only the refresh copy and retires any earlier writer record. Either setting alone still refuses a missing writer, and a writer that is present is still checked and updated. Orch's own review wait reads `PR_REVIEW_GATE` separately.
+
 Commit the workflow copies and inventory with the installed skill. Adoption records each byte-identical copy's template path and SHA-256 hash. `kendex refresh` updates the template and its expected hash. Adoption then updates an unedited copy. Verification and the shared change classifier compare the copy with the declared package template. Verification rejects a registered copy that differs from its template. A writer with local path or trigger changes is not an exact copy and is not registered as a render by this command.
 
 Schedule and manual refresh work in a consumer with the app installation and environment above. Instant refresh also needs organization dispatch wiring. The catalog's `.github/workflows/kendex-dispatch.yml` signals every non-archived consumer repository visible to its app installation after a push to `main`. Adoption and dispatch exclude `vanillagreencom/kendex`, whose build-bound lock workflow owns its refresh under D007. It attempts all destinations and fails the run if any dispatch fails.
@@ -148,6 +150,7 @@ Concrete per-consumer values are tracked on the org adoption issue, not here. Ev
 | `REVIEW_GATE_DOCS_ONLY` | Leave it unassigned under the default class policy. The lane applies only after a recorded opt-out from the class policy. After an opt-out, `bot` keeps review evidence mandatory, and `none` lets the shared CI docs classifier replace missing bot evidence while objections, suppressed findings, unresolved threads, and excluded paths still block. |
 | `REVIEW_GATE_RENDER_PATHS` | Leave it unassigned under the default class policy. The lane applies only after a recorded opt-out from the class policy. After an opt-out, it names render trees that may merge on CI alone. Empty disables the lane. |
 | `REVIEW_GATE_MODE` | `enforce`. `off` disables an inactive or `current` class policy and attests rather than evaluates. A `bot` class still requires review. |
+| `REVIEW_GATE_WRITER` | `required`. `optional`, with `REVIEW_GATE_MODE = "off"`, only in a repository that runs the automatic refresh and no review gate. |
 
 ## Repair by verdict line
 
@@ -157,7 +160,8 @@ Concrete per-consumer values are tracked on the org adoption issue, not here. Ev
 | `settings-values` | Read the indented engine diagnostic. Its first record identifies the setting error; the following lines explain the accepted values. A nested `predicate-pattern` record means the path pattern uses an unsupported anchor or metacharacter. |
 | `carry-unmatched` | Fix the glob, or declare it in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC` when it guards paths that do not exist yet. |
 | `carry-declaration-matched` or `carry-declaration-missing` | Reconcile the ledger — every declaration names an active exclusion that still matches nothing. |
-| `workflow-count` | Adopt (§ What an adoption PR contains), or `git add` the workflow: Actions runs only what is committed. |
+| `workflow-count` | Adopt (§ What an adoption PR contains), or `git add` the workflow: Actions runs only what is committed. A repository with no review gate sets `REVIEW_GATE_WRITER = "optional"` and `REVIEW_GATE_MODE = "off"` instead. |
+| `workflow-absent-mode` | The writer is optional but the gate is enforced. Set `REVIEW_GATE_MODE = "off"`, or adopt the writer. |
 | `workflow-equality` | Run `validate-workflow.sh --adopt` (§ Updating an already-adopted copy) and commit its write. The `note check=workflow-template` line under the verdict names the template blob the copy was compared against. |
 | `workflow-edited` | A person edited the copy. Re-copy `templates/review-gate-writer.yml` over it; the line named under the verdict says where it diverges. Keep only the `check_run` opt-in's two trigger lines if that opt-in is on. |
 | `class-policy-undecided` | Delete the `REVIEW_GATE_CLASS_POLICY` assignment so the default applies. A departure from the default needs a decision record named in `REVIEW_GATE_CLASS_POLICY_DECISION`. |

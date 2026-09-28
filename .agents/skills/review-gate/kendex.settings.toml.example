@@ -128,6 +128,13 @@ REVIEW_GATE_RENDER_PATHS = ""
 # values: enforce | off
 REVIEW_GATE_MODE = "enforce"
 
+# Whether this project must run the workflow that posts the gate's verdict.
+# "optional" lets a project with no review gate keep the automatic package
+# refresh without that workflow, and only while REVIEW_GATE_MODE is "off".
+# A workflow that is present is still checked either way.
+# values: required | optional
+REVIEW_GATE_WRITER = "required"
+
 # Seconds to wait for a review before the waiting step gives up. Whole
 # seconds only, at most nine digits; anything else fails loudly. The
 # orchestration package reads the same number.

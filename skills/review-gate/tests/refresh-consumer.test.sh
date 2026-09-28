@@ -32,7 +32,7 @@ case "$1" in
     printf '%s\n' "$TEST_CONTENT" >rendered.txt
     if [ -n "${TEST_HOSTILE:-}" ]; then
       cp "$TEST_FRESH_TEMPLATES/"*.yml .agents/skills/review-gate/templates/
-      for path in adopt-refresh.sh validate-standard.sh validate-workflow.sh lib/diagnostics.sh lib/standard.sh; do
+      for path in adopt-refresh.sh validate-standard.sh validate-workflow.sh lib/diagnostics.sh lib/settings.sh lib/standard.sh; do
         printf '#!/usr/bin/env bash\nprintf "executed=%%s\\n" "$0" >>"$TEST_STATE/hostile"\nexit 89\n' >".agents/skills/review-gate/scripts/$path"
       done
     fi
@@ -178,5 +178,36 @@ run_refresh refreshed pass render
 if [ "$RC" -eq 89 ] && [ -s "$TMP/state/hostile" ]; then
   ok 'control: refreshed adoption code executes when the trusted path is removed'
 else bad 'trusted adoption control' "$OUT"; fi
+# A repository with no review gate runs the whole refresh with no writer: the
+# trusted adoption records only the refresh copy and the pull request opens.
+# HOSTILE stays set, so the refreshed scripts must still never execute.
+sandbox
+repo="$DIR"
+git -C "$repo" branch -M main
+rm -- "${repo:?}/.github/workflows/review-gate-writer.yml"
+settings "$repo" REVIEW_GATE_WRITER optional
+settings "$repo" REVIEW_GATE_MODE off
+printf '[]\n' >"$repo/.kendex-generated.json"
+printf 'current\n' >"$repo/rendered.txt"
+cp "$TMP/case.1/.agents/skills/harness-ci/scripts/change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n' >"$repo/.agents/skills/review-gate/scripts/refresh-reviews.sh"
+commit "$repo"
+git init --bare -q "$TMP/no-writer-remote"
+git --git-dir="$TMP/no-writer-remote" config gc.auto 0
+git --git-dir="$TMP/no-writer-remote" config maintenance.auto false
+git -C "$repo" remote add origin "$TMP/no-writer-remote"
+git -C "$repo" push -q origin main
+git -C "$repo" worktree add --detach "$TMP/no-writer-trusted" HEAD
+runner="$TMP/no-writer-trusted/.agents/skills/review-gate/scripts/refresh-consumer.sh"
+: >"$TMP/state/pr"
+: >"$TMP/state/creates"
+rm -f -- "${TMP:?}/state/hostile"
+run_refresh refreshed pass render
+if [ "$RC" -eq 0 ] && [ ! -e "$TMP/state/hostile" ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -eq 1 ] &&
+    [ ! -e "$repo/.github/workflows/review-gate-writer.yml" ] &&
+    cmp -s "$repo/.github/workflows/kendex-refresh.yml" "$TMP/fresh-templates/kendex-refresh.yml" &&
+    jq -e '[.[] | objects | .path] == [".github/workflows/kendex-refresh.yml"]' "$repo/.kendex-generated.json" >/dev/null; then
+  ok 'no-writer refresh adopts the refresh workflow and opens its pull request'
+else bad 'no-writer refresh' "$OUT"; fi
 printf 'pass=%s fail=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

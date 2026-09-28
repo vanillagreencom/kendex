@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Copies the refresh workflow and records exact template copies for kendex
 # verification. Existing refresh copies are writable only while their bytes
-# still match the hash recorded by their previous adoption.
+# still match the hash recorded by their previous adoption. The writer is
+# validated by validate-workflow.sh, which alone decides whether its absence
+# is allowed.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "${1:-}" = --help ] && [ "$#" -eq 1 ]; then
-  printf '%s\n' 'Usage: adopt-refresh.sh [--templates-dir DIR]' 'Reads the provisioned kendex environment, adopts the refresh workflow, and records byte-identical writer and refresh copies in .kendex-generated.json.'
+  printf '%s\n' 'Usage: adopt-refresh.sh [--templates-dir DIR]' 'Reads the provisioned kendex environment, adopts the refresh workflow, and records byte-identical writer and refresh copies in .kendex-generated.json.' 'A repository with REVIEW_GATE_WRITER=optional and REVIEW_GATE_MODE=off may have no writer; only the refresh copy is then recorded.'
   exit 0
 fi
 templates="$SCRIPT_DIR/../templates"
@@ -61,11 +63,14 @@ if refresh.exists() and refresh.read_bytes() != template.read_bytes():
         raise SystemExit("refresh-error=workflow-edited value=" + str(refresh))
 refresh.parent.mkdir(parents=True, exist_ok=True)
 refresh.write_bytes(template.read_bytes())
-writer = root / Path(sys.argv[2]).read_text()
+# An empty selection is a writer absent by setting; its record is retired.
+selected = Path(sys.argv[2]).read_text()
+writer = root / selected if selected else None
 for copied, shipped in ((writer, templates / "review-gate-writer.yml"), (refresh, template)):
-    relative, owner = copied.relative_to(root).as_posix(), shipped.relative_to(root).as_posix()
+    relative = None if copied is None else copied.relative_to(root).as_posix()
+    owner = shipped.relative_to(root).as_posix()
     entries = [e for e in entries if not isinstance(e, dict) or e["template"] != owner]
-    if copied.is_file() and not copied.is_symlink() and copied.read_bytes() == shipped.read_bytes():
+    if copied is not None and copied.is_file() and not copied.is_symlink() and copied.read_bytes() == shipped.read_bytes():
         entries.append({"path": relative, "template": owner, "templateHash": digest(shipped)})
 inventory.write_text("[\n" + ",\n".join("  " + json.dumps(e, ensure_ascii=False, separators=(",", ":")) for e in sorted(entries, key=path_of)) + "\n]\n")
 PY

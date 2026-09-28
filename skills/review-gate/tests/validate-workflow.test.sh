@@ -71,6 +71,57 @@ untracked-copy|clean|||
 ROWS
 [ "$rows" -gt 0 ] && [ "$((PASS + FAIL - before))" -eq "$rows" ] || { printf 'fixture-error=discovery-table value=%q\n' "$rows" >&2; exit 2; }
 
+# A writer may be absent only in a repository that runs no review gate, and a
+# present writer is checked in full whatever the writer setting says. An empty
+# setting column leaves the key unassigned.
+writer_case() { # WRITER MODE WRITER_SHAPE
+  sandbox
+  [ -z "$1" ] || settings "$DIR" REVIEW_GATE_WRITER "$1"
+  [ -z "$2" ] || settings "$DIR" REVIEW_GATE_MODE "$2"
+  case "$3" in
+    absent) rm "$DIR/$WF" ;;
+    edited) file_edit "$DIR" "$WF" 1 '^    timeout-minutes: 15$' 's/^    timeout-minutes: 15$/    timeout-minutes: 16/' ;;
+    *) printf 'fixture-error=writer-shape value=%q\n' "$3" >&2; exit 2 ;;
+  esac
+  commit "$DIR"
+  run_validate "$DIR"
+}
+rows=0; before=$((PASS + FAIL))
+while IFS='|' read -r name writer mode shape want_rc record; do
+  rows=$((rows + 1))
+  writer_case "$writer" "$mode" "$shape"
+  if [ "$RC" -eq "$want_rc" ] && grep -qxF -- "$record" <<<"$OUT"; then ok "$name"; else bad "$name (rc=$RC, expected $record)" "$OUT"; fi
+done <<'ROWS'
+optional writer absent with the gate off|optional|off|absent|0|ok check=workflow-absent value=optional
+required writer absent with the gate off|required|off|absent|1|FAIL check=workflow-count value=0
+unassigned writer setting absent with the gate off||off|absent|1|FAIL check=workflow-count value=0
+optional writer absent with the gate enforced|optional|enforce|absent|1|FAIL check=workflow-absent-mode value=enforce
+optional writer absent with the mode unassigned|optional||absent|1|FAIL check=workflow-absent-mode value=enforce
+optional writer present and edited|optional|off|edited|1|FAIL check=workflow-equality value=.github/workflows/review-gate-writer.yml
+invalid writer setting|absent|off|absent|2|review-gate-error=writer-setting value=absent
+invalid mode setting|optional|of|absent|2|review-gate-error=mode-setting value=of
+ROWS
+[ "$rows" -gt 0 ] && [ "$((PASS + FAIL - before))" -eq "$rows" ] || { printf 'fixture-error=writer-table value=%q\n' "$rows" >&2; exit 2; }
+
+# One control per rule, each on the sandbox copy: absence needs the optional
+# setting, and optional absence needs the gate off.
+writer_case required off absent
+file_edit "$DIR" "$WORKFLOW_REL" 1 '^  if \[ "\$WRITER_SETTING" = optional \]; then$' \
+  's/^  if \[ "\$WRITER_SETTING" = optional \]; then$/  if [ "$WRITER_SETTING" = optional ] || true; then/'
+chmod +x "$DIR/$WORKFLOW_REL"
+run_validate "$DIR"
+if [ "$RC" -eq 0 ] && grep -qxF 'ok check=workflow-absent value=required' <<<"$OUT"; then
+  ok 'control: an unconditional absence branch passes a required writer'
+else bad "control: absence rule (rc=$RC)" "$OUT"; fi
+writer_case optional enforce absent
+file_edit "$DIR" "$WORKFLOW_REL" 1 '^    gate_mode="\$\(rg_setting REVIEW_GATE_MODE enforce\)" \|\| exit 2$' \
+  's/^    gate_mode="\$(rg_setting REVIEW_GATE_MODE enforce)" || exit 2$/&; gate_mode=off/'
+chmod +x "$DIR/$WORKFLOW_REL"
+run_validate "$DIR"
+if [ "$RC" -eq 0 ] && grep -qxF 'ok check=workflow-absent value=optional' <<<"$OUT"; then
+  ok 'control: ignoring the mode passes optional absence under an enforced gate'
+else bad "control: mode rule (rc=$RC)" "$OUT"; fi
+
 
 rows=0; before=$((PASS + FAIL))
 while IFS='|' read -r shape want_rc code; do

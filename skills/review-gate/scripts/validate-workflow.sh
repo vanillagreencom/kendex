@@ -31,6 +31,11 @@ fi
   printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$SCRIPT_DIR/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
   exit 2
 }
+if [ ! -r "$SCRIPT_DIR/lib/settings.sh" ]; then
+  rg_message error settings-load "$SCRIPT_DIR/lib/settings.sh" 'Could not load the settings library.' >&2
+  exit 2
+fi
+. "$SCRIPT_DIR/lib/settings.sh" || exit 2
 
 print_usage() {
   cat <<'USAGE'
@@ -38,6 +43,13 @@ Usage: validate-workflow.sh [--adopt] [--templates-dir DIR] [--adopted-path-file
 
 Checks that THIS repository's adopted review-gate writer workflow is still
 the shipped template.
+
+A repository with no writer passes only when it runs no review gate:
+REVIEW_GATE_WRITER=optional together with REVIEW_GATE_MODE=off prints one
+`ok check=workflow-absent` line. REVIEW_GATE_WRITER=optional under an
+enforced mode is one `FAIL check=workflow-absent-mode` line, and the default
+REVIEW_GATE_WRITER=required keeps `FAIL check=workflow-count`. A writer that
+is present is checked in full whatever REVIEW_GATE_WRITER says.
 
 --adopt re-installs the template over an adopted copy that still equals a
 version of the template this repository's history shipped, so a refresh that
@@ -81,8 +93,9 @@ clean exits 0 with that prerequisite unverified.
 libraries stay with this script. Default: the templates beside this script.
 
 --adopted-path-file writes the selected repository-relative writer path to FILE
-only after all checks pass. The path has no added newline. Adoption consumes
-this file so workflow discovery has one owner.
+only after all checks pass. The path has no added newline, and a writer absent
+by setting writes an empty FILE. Adoption consumes this file so workflow
+discovery has one owner.
 
 Output: one verdict line per check: STATUS check=KEY value=VALUE.
 STATUS is ok, FAIL or note. VALUE uses Bash printf %q escaping.
@@ -93,7 +106,9 @@ Exit codes:
      `ok check=workflow-readopted` line names)
   1  at least one FAIL line
   2  the check could not run at all (bad arguments, not a git repository, no
-     shipped template to compare against, a history or write failure)
+     shipped template to compare against, a history or write failure, or,
+     with no writer found, an unreadable or invalid REVIEW_GATE_WRITER or
+     REVIEW_GATE_MODE)
 USAGE
 }
 
@@ -199,6 +214,20 @@ code_lines() { # FILE — YAML comment-only lines dropped outside block scalars
   ' "$1"
 }
 
+# Ends every run that reached a verdict. The selected path is empty when the
+# writer is absent by setting.
+adopted=""
+finish() {
+  printf '\n'
+  if [ "$FAILED" -gt 0 ]; then
+    exit 1
+  fi
+  if [ -n "$ADOPTED_PATH_FILE" ]; then
+    printf '%s' "$adopted" >"$ADOPTED_PATH_FILE" || die adopted-path-write "$ADOPTED_PATH_FILE" "could not write the selected workflow path"
+  fi
+  exit 0
+}
+
 # ========================= find the adopted copy ===========================
 
 # TRACKED files only: Actions runs what is committed, so an untracked
@@ -233,7 +262,6 @@ while IFS= read -r -d '' wf; do
   printf '%s\0' "$wf" >>"$TMP/workflows"
 done <"$TMP/listing"
 
-adopted=""
 adopted_count=0
 while IFS= read -r -d '' wf; do
   [ -n "$wf" ] || continue
@@ -258,12 +286,31 @@ while IFS= read -r -d '' wf; do
 done <"$TMP/workflows"
 
 if [ "$adopted_count" -eq 0 ]; then
-  bad workflow-count "$adopted_count" "no tracked workflow under .github/workflows/ EXECUTES review-writer.sh — nothing writes this repo's gate status; copy templates/review-gate-writer.yml in (references/adoption.md)"
+  # An absent writer is a repository with no review gate only when the
+  # engine's own switch says so. Under an enforced mode every consumer of the
+  # gate status would wait on a status nothing posts. Both keys are read here
+  # alone: a present writer is checked in full whatever they say, so a
+  # settings fault stays validate.sh's settings finding rather than stopping
+  # this check. Settings resolve against the repository root, where CI runs.
+  WRITER_SETTING="$(rg_setting REVIEW_GATE_WRITER required)" || exit 2
+  case "$WRITER_SETTING" in
+    required | optional) ;;
+    *) die writer-setting "$WRITER_SETTING" "REVIEW_GATE_WRITER must be 'required' or 'optional'" ;;
+  esac
+  if [ "$WRITER_SETTING" = optional ]; then
+    gate_mode="$(rg_setting REVIEW_GATE_MODE enforce)" || exit 2
+    case "$gate_mode" in
+      off) ok workflow-absent "$WRITER_SETTING" "no tracked workflow executes review-writer.sh, and REVIEW_GATE_WRITER=optional with REVIEW_GATE_MODE=off says this repository runs no review gate" ;;
+      enforce) bad workflow-absent-mode "$gate_mode" "no tracked workflow executes review-writer.sh, and REVIEW_GATE_WRITER=optional permits that only while REVIEW_GATE_MODE=off — with the gate enforced, every pull request waits on a gate status nothing posts. Set REVIEW_GATE_MODE = \"off\" in kendex.settings.toml, or copy templates/review-gate-writer.yml in (references/adoption.md)" ;;
+      *) die mode-setting "$gate_mode" "REVIEW_GATE_MODE must be 'enforce' or 'off'" ;;
+    esac
+  else
+    bad workflow-count "$adopted_count" "no tracked workflow under .github/workflows/ EXECUTES review-writer.sh — nothing writes this repo's gate status; copy templates/review-gate-writer.yml in (references/adoption.md), or, for a repository with no review gate, set REVIEW_GATE_WRITER = \"optional\" and REVIEW_GATE_MODE = \"off\""
+  fi
   if [ -n "$nested_engine" ]; then
     rg_report note workflow-nested "$nested_engine" "a NESTED file does execute the engine ($nested_engine), and GitHub runs only direct children of .github/workflows/ — move it up one level"
   fi
-  printf '\n'
-  exit 1
+  finish
 fi
 if [ "$adopted_count" -gt 1 ]; then
   bad workflow-count "$adopted_count" "$adopted_count tracked workflows execute review-writer.sh — the gate has exactly one writer by design; delete the copies that are not the adopted one"
@@ -470,11 +517,4 @@ if [ "$CHECK_RUN_ENABLED" -eq 1 ]; then
   rg_report note workflow-check-name "REVIEW_GATE_CHECK_RUN_NAME" "the check_run opt-in is enabled, so the repository variable REVIEW_GATE_CHECK_RUN_NAME must carry the reviewer's check name (Settings → Secrets and variables → Actions), or the trigger relays nothing. NOT CHECKED HERE — this tool reads files, and that value is not in one; confirm it yourself"
 fi
 
-printf '\n'
-if [ "$FAILED" -gt 0 ]; then
-  exit 1
-fi
-if [ -n "$ADOPTED_PATH_FILE" ]; then
-  printf '%s' "$adopted" >"$ADOPTED_PATH_FILE" || die adopted-path-write "$ADOPTED_PATH_FILE" "could not write the selected workflow path"
-fi
-exit 0
+finish
