@@ -54,7 +54,7 @@ post      one message to the bound channel, or --channel for another; --mention
           secret-value pattern
 compact   drop journal lines resolved or ignored longer ago than
           SLACK_THREAD_DAYS; open questions and positions stay. The relay runs
-          it once a day
+          it once a day; a root whose relay is running is refused
 install   write the systemd user unit for `listen` over the roots given, then
           daemon-reload and enable it; --print writes the unit to stdout only
 

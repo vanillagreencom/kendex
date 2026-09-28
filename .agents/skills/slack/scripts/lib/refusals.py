@@ -100,7 +100,8 @@ EXPLAIN = {
     "relay-running": (
         "Another relay holds this checkout's lock; the value names its pid."
         " One relay serves one checkout. A channel moved between hosts is a"
-        " stop there and a setup here."
+        " stop there and a setup here. `compact` is refused the same way; the"
+        " running relay compacts its own journal once a day."
     ),
     "lock-failed": (
         "The lock file could not be locked, for a reason other than another"

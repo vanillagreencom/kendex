@@ -131,7 +131,7 @@ class State:
             thread_ts = str(line["thread"])
             if thread_ts not in self.threads:
                 self.threads[thread_ts] = Thread(ts=thread_ts, envelope=str(line["id"]), kind=line["kind"])
-                self.by_envelope[str(line["id"])] = thread_ts
+            self.by_envelope[str(line["id"])] = thread_ts
         elif kind == "out":
             env_id = str(line["id"])
             state = line["state"]
@@ -206,10 +206,11 @@ class Journal:
 
 
 def compact(root: Path, cutoff_ts: float) -> int:
-    """Drop resolved and ignored lines older than the cutoff and every
-    history position but the last; keep every open thread. Returns the
-    lines dropped. An `out` line is judged by its envelope's `at`, the age
-    `post_events` never posts past, so its envelope can never post again."""
+    """Drop resolved and ignored lines older than the cutoff, every report
+    upload older than it, and every history position but the last; keep
+    every open thread. Returns the lines dropped. An `out` line is judged by
+    its envelope's `at`, the age `post_events` never posts past, so its
+    envelope can never post again."""
     path = root_dir(root) / JOURNAL
     state = read_journal(root)
     if not path.is_file():
@@ -223,13 +224,16 @@ def compact(root: Path, cutoff_ts: float) -> int:
     for index, (raw, line) in enumerate(zip(raws, lines)):
         kind = line.get("t")
         old = "ts" in line and _ts_float(str(line["ts"])) < cutoff_ts
+        aged = kind == "out" and parse_at(str(line["at"])) < cutoff_ts
         drop = False
         if kind == "seen":
             drop = index != last_seen
         elif kind == "in" and old:
             thread = state.threads.get(str(line.get("thread", "")))
             drop = line["kind"] == "ignored" or thread is None or not thread.open
-        elif kind == "out" and line["state"] in ("open", "resolved") and parse_at(str(line["at"])) < cutoff_ts:
+        elif aged and line["state"] == "file":
+            drop = True
+        elif aged and line["state"] in ("open", "resolved"):
             thread = state.threads.get(str(line["thread"]))
             drop = thread is None or not thread.open
         elif kind == "resolved":

@@ -17,7 +17,7 @@ from relay import mention, resolve_owner_ids
 from secret import check as secret_check
 from secret import checked_file
 from settings import Settings, load
-from store import Binding, compact, journal_exists, read_binding, read_status, write_binding
+from store import Binding, RelayLock, compact, journal_exists, read_binding, read_status, write_binding
 
 UNIT = "slack-listen.service"
 # Seconds between `enable --now` and the read of the unit's state: long
@@ -138,8 +138,14 @@ def post(
 
 
 def compact_roots(roots: List[Path]) -> int:
+    """Every root's relay lock is held from before its read until the verb
+    exits, so a running relay refuses it and no append of the relay's lands
+    on a replaced file. The relay compacts under its own lock."""
     settings = load(need_token=False, need_owners=False)
     cutoff = settings.horizon(time.time())
+    locks = [RelayLock(root) for root in roots]
+    for lock in locks:
+        lock.acquire()
     for root in roots:
         dropped = compact(root, cutoff)
         notice("compacted", f"{root} dropped={dropped}")

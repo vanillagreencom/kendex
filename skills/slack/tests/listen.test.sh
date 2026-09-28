@@ -4,6 +4,7 @@
 # rows: a directive with its delivery id, an ask posted with the mention and
 # answered once in its thread, the second reply as a directive, a chat answer
 # and a deadline default shown in the thread, a notice threaded on its ref,
+# a notice on an owner's reply threaded under that reply's parent,
 # a report uploaded and its thread bound from the share, a non-owner and a
 # file alone answered once and not routed, catch-up over pages, the crash
 # between the mailbox append and the journal mark, the second relay refused
@@ -106,6 +107,12 @@ sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text n2 'Round done
 sk_poll "$ROOT"
 assert_has "$(posts C001)" "$TS1 | Shipping." "a notice answering an owner note lands in that note's thread"
 assert_has "$(posts C001)" "top | Round done." "a notice with no ref lands top-level"
+R0="$(sk_inject C001 U001 'and the docs' "$TS1")"
+sk_polls "$ROOT" 10
+D0="$(jq -r "select(.delivery_id == \"C001:$R0\") | .id" "$(sk_box "$ROOT")/to-lane.jsonl")"
+sk_lm "$ROOT" notice --item overseer --to owner --ref "$D0" --file "$(sk_text n0 'Docs too.')" >/dev/null
+sk_poll "$ROOT"
+assert_has "$(posts C001)" "$TS1 | Docs too." "a notice answering an owner's reply in a thread lands in that thread"
 
 # --- a report: uploaded with the notice as its comment, thread bound from the share
 mkdir -p "$ROOT/tmp/progress-reports"
@@ -427,7 +434,7 @@ assert_eq "$(directives "$THETA" | wc -l | tr -d ' ')" "$(sk_state '[.messages.C
   "control: the history seed at zero, every earlier owner message in the channel is delivered"
 sk_bin_reset
 
-sk_mutant out-age store.py 'parse_at\(str\(line\["at"\]\)\) < cutoff_ts' '_ts_float(str(line["thread"])) < cutoff_ts'
+sk_mutant out-age store.py 'parse_at\(str\(line\["at"\]\)\) < cutoff_ts' '_ts_float(str(line.get("thread", ""))) < cutoff_ts'
 ZETA_OLD="$(jq -r 'select(.kind == "directive" and .text == "old") | .id' "$(sk_box "$ZETA")/to-lane.jsonl")"
 sk_lm "$ZETA" notice --item overseer --to owner --ref "$ZETA_OLD" --file "$(sk_text n12 'Late ruling.')" >/dev/null
 sk_poll "$ZETA"
