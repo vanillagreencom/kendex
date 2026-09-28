@@ -8,6 +8,37 @@ change came from an outside contributor.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-28
+
+### Added
+
+- harness-ci: change-class reuses a passing run of the same tree, pull request to merge group to push, for all lanes under `covers-all-lanes` with no lane list, or each lane marked `:event-uniform`.
+- orch: the lane-mail hooks run on Copilot CLI: a lane reads its overseer's mail at session start, each prompt and its turn end, is shown it after each tool call, and stops at a halt.
+- `kendex verify` fails a project ignoring a `tracked-outputs:` path of an agent it installs, naming the rule; catalog checks warn. The planner declares its plan and research files in `docs/plans/`.
+- lane mail: a lead session in a checkout where no repeat fleet watch runs gets the notes `lane-mail peer send --repo` writes there, at its turn end and after each tool call.
+- orch: `oversee-watch` reads a Claude Code overseer's exit and usage limit from rows its hooks write, not its pane, and succeeds a walled overseer in the same pass.
+- orch: `open-terminal` starts and resumes Copilot CLI lanes in autopilot, the watch and `lane-close` handle them, and `lane-mail watch --once` exits at its first mail notice; fleets refuse Copilot.
+- `kendex check --report-only` leaves the project's install record as it is and reports each missing row with its path and hashes, or its settings file; every session drift hook runs it.
+- A hook can run on Claude Code's `StopFailure` event, which fires when a turn ends on an API error such as a usage limit.
+
+### Changed
+
+- The overseer reads its turn-end context only from the transcript its own session owns, matched to the reported session id and recorded launch home; an unowned transcript leaves context unmeasured.
+- The review-gate consumer refresh and writer templates pin the kendex v1.1.0 release instead of a main build.
+- orch: on a merge-queue base, push and the freshness gate take a cleanly merging branch without a rebase, and a PR arms auto-merge on opening where its base requires the review gate.
+
+### Fixed
+
+- A Claude overseer successor is given folder trust for its directory in its config dir before it starts, so it no longer parks on the trust dialog.
+- An overseer watch whose session record cannot be built or written says so as a notice and still judges the pane, relaunching a death only from a line the fleet state binds to that pane.
+- A `repo-effects` declaration carrying a key this kendex does not read, from a newer catalog or a typo, now reads and its disclosure names the key; `kendex refresh` no longer fails over it.
+- A path the size check counts as a test, by its built-in rule or `ORCH_SIZE_TEST_PATHS`, is no longer its own subsystem, so a script beside such a fixture keeps `micro` or `small`.
+- The review-gate consumer refresh and writer templates pin kendex main-build-299, whose repo-effects reader accepts the current catalog; main-build-261 refused every consumer refresh.
+- The overseer heartbeat now names each In Progress or In Review item with no live lane that the launch queue lacks, so a closed or stopped lane's item is no longer dropped.
+- `kendex check` no longer writes `.kendex-lock.json` off the default branch; a matching render there is reported as not in the install record.
+- `kendex verify` counts failed shim, arming, record, inventory and adopted workflow rows on its closing line; a stale copy's row names both hashes and the adoption step.
+- The review-gate writer and refresh templates fetch the kendex installer at the commit the release tag names, so a moved tag cannot run another installer before their credentialed steps.
+
 ## [1.1.0] - 2026-09-27
 
 ### Added
@@ -1050,7 +1081,8 @@ change came from an outside contributor.
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.2.0
 [1.1.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.1.0
 [1.0.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.0.1
 [1.0.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.0.0

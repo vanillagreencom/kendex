@@ -1,1 +1,0 @@
-- `kendex check --report-only` leaves the project's install record as it is and reports each missing row with its path and hashes, or its settings file; every session drift hook runs it.

@@ -1,1 +1,0 @@
-- The review-gate consumer refresh and writer templates pin the kendex v1.1.0 release instead of a main build.
