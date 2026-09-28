@@ -323,13 +323,8 @@ jobs:
         if: always()
         working-directory: candidate
         env:
-          EVENT: ${{ github.event_name }}
-        run: |
-          if [ "$EVENT" = pull_request ]; then
-            skills/doc-limits/scripts/doc-limits --against HEAD^1
-          else
-            skills/doc-limits/scripts/doc-limits
-          fi
+          AGAINST: ${{ github.event_name == 'pull_request' && 'HEAD^1' || '' }}
+        run: skills/doc-limits/scripts/doc-limits ${AGAINST:+--against "$AGAINST"}
       # The commit lane runs todo-ban --staged and judges what a commit adds;
       # this scan takes the rest, in every blob git reads as text.
       - name: todo-ban (index-wide work-marker scan)

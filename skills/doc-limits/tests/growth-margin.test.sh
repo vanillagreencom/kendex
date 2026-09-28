@@ -48,7 +48,8 @@ check() { # LABEL WANT-RC WANT-FIRST-LINE RC OUT
 
 # Commits doc.md at PRIOR bytes ("-" for absent), then writes and stages NOW
 # bytes, as a pull request tree tracks it. Runs COMMAND in MODE with PCT as
-# DOC_LIMITS_MARGIN_PCT ("-" for unset). Sets RC and OUT.
+# DOC_LIMITS_MARGIN_PCT ("-" for unset, "empty" for the empty string). Sets
+# RC and OUT.
 scenario() { # COMMAND PRIOR NOW PCT MODE
   local cmd="$1" prior="$2" now="$3" pct="$4" mode="$5" base
   rm -f -- "$R/doc.md"
@@ -64,8 +65,10 @@ scenario() { # COMMAND PRIOR NOW PCT MODE
     against) set -- --against "$base" ;;
     staged) set -- --staged --against "$base" ;;
     bad-ref) set -- --against no-such-ref ;;
+    empty-ref) set -- --against "" ;;
     *) printf 'harness: unknown mode %s\n' "$mode" >&2; exit 2 ;;
   esac
+  [ "$pct" != empty ] || pct=""
   RC=0
   if [ "$pct" = - ]; then
     OUT="$(cd "$R" && "$cmd" "$@" 2>&1)" || RC=$?
@@ -104,12 +107,55 @@ a margin of 10 percent widens the band|900|923|10|against|1|NEAR
 a margin setting is read only under --against|900|1023|abc|ceiling|0|OK
 a non-numeric margin is refused|900|1023|abc|against|2|error=margin-pct-invalid value=abc
 a margin of 100 is refused|900|1023|100|against|2|error=margin-pct-invalid value=100
+a zero-padded margin is refused|900|1023|08|against|2|error=margin-pct-invalid value=08
+an empty margin is refused|900|1023|empty|against|2|error=margin-pct-invalid value=''
 a ref that names no commit is refused|900|1023|-|bad-ref|2|error=against-ref-invalid ref=no-such-ref
+an empty ref is refused|900|1023|-|empty-ref|2|error=against-ref-empty ref=''
 ROWS
-if [ "$ROWS" -lt 15 ]; then
-  printf 'FAIL: ROWS executed %s rows, fewer than its 15\n' "$ROWS" >&2
+if [ "$ROWS" -lt 18 ]; then
+  printf 'FAIL: ROWS executed %s rows, fewer than its 18\n' "$ROWS" >&2
   exit 1
 fi
+
+has_line() { # LABEL LINE: some line of OUT after its first equals LINE
+  case "
+${OUT#*$'\n'}
+" in
+    *"
+$2
+"*) PASS=$((PASS + 1)); printf '  ok: %s\n' "$1" ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL: %s: no line <%s> after the first\n%s\n' "$1" "$2" "$OUT" ;;
+  esac
+}
+lacks_text() { # LABEL TEXT: no part of OUT holds TEXT
+  case "$OUT" in
+    *"$2"*) FAIL=$((FAIL + 1)); printf '  FAIL: %s: output holds <%s>\n%s\n' "$1" "$2" "$OUT" ;;
+    *) PASS=$((PASS + 1)); printf '  ok: %s\n' "$1" ;;
+  esac
+}
+
+# A near-limit finding names the docs-writing rule for its class, as an
+# over-limit one does.
+scenario "$SOURCE_COMMAND" 900 1023 - against
+check 'a near-limit finding leads the output' 1 "$NEAR" "$RC" "$OUT"
+has_line 'a near-limit finding names its docs-writing rule' 'notice=document-rule rule=docs-writing/SKILL.md#per-file-type'
+
+# Each document is judged against its own size in the ref: of a.md grown into
+# the margin and b.md left inside it, a.md alone is named.
+rm -f -- "$R/doc.md"
+head -c 900 /dev/zero | tr '\0' x >"$R/a.md"
+head -c 1023 /dev/zero | tr '\0' x >"$R/b.md"
+git -C "$R" add -A
+git -C "$R" commit -q -m base
+PAIR_BASE="$(git -C "$R" rev-parse HEAD)"
+head -c 1023 /dev/zero | tr '\0' x >"$R/a.md"
+git -C "$R" add a.md
+RC=0
+OUT="$(cd "$R" && "$SOURCE_COMMAND" --against "$PAIR_BASE" 2>&1)" || RC=$?
+check 'of two documents inside the margin, the grown one is named' 1 'notice=document-near-limit path=a.md' "$RC" "$OUT"
+has_line 'of two documents inside the margin, one is counted' 'notice=documents-over-limit count=1'
+lacks_text 'of two documents inside the margin, the unchanged one is not named' 'path=b.md'
+rm -f -- "$R/a.md" "$R/b.md"
 
 # One control per rule the margin adds: a copy of the command with OLD
 # replaced by NEW keeps the matched text and loses that rule, and the row
@@ -147,6 +193,12 @@ control 'must-fail: without the margin rule, growth to one byte under the limit 
 
 mutant no-growth-test '[ "$n" -gt "$prior" ] &&' '{ [ "$n" -gt "$prior" ] || true; } &&'
 control 'must-fail: without the growth test, an unchanged document inside the margin fails' 1023 1023 - against 0 "$OK"
+
+mutant absent-not-grown '"commit "*) prior=0 ;;' '"commit "*) prior="$n" ;;'
+control 'must-fail: without the absent-document rule, a new document inside the margin passes' - 1010 - against 1 "$NEAR"
+
+mutant margin-always-read $'MARGIN_PCT=0\nif [ -n "$AGAINST_OID" ]; then' $'MARGIN_PCT=0\nif true || [ -n "$AGAINST_OID" ]; then'
+control 'must-fail: with the margin read on every run, a bad margin refuses a run without --against' 900 1023 abc ceiling 0 "$OK"
 
 mutant no-margin-refusal 'config_error margin-pct-invalid' ': config_error margin-pct-invalid'
 control 'must-fail: without the margin refusal, a margin of 100 runs' 900 1023 100 against 2 'error=margin-pct-invalid value=100'

@@ -52,7 +52,7 @@ kendex.settings.toml [env] > default):
   DOC_LIMITS_EXCLUDES         reasoned exclusion-list path
                                (default tools/doc-limits-excludes)
   DOC_LIMITS_MARGIN_PCT       --against margin, percent of each limit,
-                               0-99 (default 2)
+                               0-99, no leading zeros (default 2)
   DOC_LIMITS_SETTINGS_FILE    alternate settings file; /dev/null for defaults
 The k suffix means 1024 bytes. Bare line thresholds are not supported.
 --excludes overrides the configured path. Each exclusion is pattern<TAB>reason.
@@ -195,7 +195,7 @@ MARGIN_PCT=0
 if [ -n "$AGAINST_OID" ]; then
   MARGIN_PCT="$(sr_setting DOC_LIMITS_MARGIN_PCT 2)" || exit 2
   case "$MARGIN_PCT" in
-    "" | *[!0-9]* | 0?* | ???*) config_error margin-pct-invalid value "$MARGIN_PCT" "DOC_LIMITS_MARGIN_PCT must be an integer percent from 0 to 99, got '$MARGIN_PCT'" ;;
+    "" | *[!0-9]* | 0?* | ???*) config_error margin-pct-invalid value "$MARGIN_PCT" "DOC_LIMITS_MARGIN_PCT must be a decimal integer percent from 0 to 99 without leading zeros, got '$MARGIN_PCT'" ;;
   esac
 fi
 if [ "$EXCLUDES_SET" = "1" ]; then

@@ -22,7 +22,7 @@
 ## Growth margin
 
 - `--against REF` adds one rule to the class limit. A document larger than in REF's own tree fails when its size is more than its limit minus the margin.
-- `DOC_LIMITS_MARGIN_PCT` sets the margin as an integer percent of each limit, 0 to 99. Its default is `2`. The margin in bytes rounds down. `0` leaves the limit alone. Any other value refuses with exit `2`, and only a run with `--against` reads it.
+- `DOC_LIMITS_MARGIN_PCT` sets the margin as a percent of each limit: a decimal integer from 0 to 99 without leading zeros. Its default is `2`. The margin in bytes rounds down. `0` leaves the limit alone. Any other value refuses with exit `2`, and only a run with `--against` reads it.
 - A document REF does not hold at its path counts as grown from 0 bytes, a renamed document included.
 - A document the change leaves unchanged or shrinks is judged on its limit alone.
 - A pull request run passes `--against` with the branch it merges into. Two pull requests that each pass against the same base then put one document over its limit in a merge group only when each grows it by more than the margin. A merge group run passes no `--against`, so a group that fits its limits merges.
@@ -31,6 +31,6 @@
 
 | Exit | Meaning |
 | --- | --- |
-| `0` | Every measured document is within its class limit. |
+| `0` | Every measured document is within its class limit and, under `--against`, none grew into its margin. |
 | `1` | At least one document exceeds its class limit, or under `--against` grew into its margin. The output names each document with `notice=document-over-limit` or `notice=document-near-limit`, its size and limit. A `notice=document-rule rule=docs-writing/SKILL.md#ANCHOR` line follows each one and names the docs-writing rule for its class. A class the shipped rows do not declare names `#per-file-type`. |
 | `2` | Usage, configuration or collection failed. The check cannot report a complete size result. |
