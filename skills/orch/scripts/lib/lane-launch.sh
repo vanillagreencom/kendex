@@ -1287,13 +1287,8 @@ lane_launch_compaction_env() { # CMD HARNESS VERIFIED
 # below prints. A copilot launch that names no account passes an empty
 # LANE_VAR and LANE_DIR: its line is those words alone, the account being
 # whatever the pane's own COPILOT_HOME names.
-#
-# Where the account holds the file lane_copilot_token_file names, the line
-# reads it into COPILOT_GITHUB_TOKEN through a `bash -c` that opens the file
-# itself, so the token never enters the launch line, the pane or `ps`.
-# Without the file the login the account's keyring holds is the identity.
 lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
-  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" compaction="" verified=true account="" env_words line token
+  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" compaction="" verified=true account="" env_words
   if [[ "$harness" == codex ]]; then
     [[ "$form" != unchecked ]] || verified=false
     compaction=$(lane_launch_compaction_env "$cmd" "$harness" "$verified") || return 1
@@ -1306,31 +1301,32 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
     esac
     return
   fi
+  # With no home there is nothing to name the shared skills by.
   [[ -n "${LANES_HOME:-${HOME:-}}" ]] || return 1
   env_words="$(lane_copilot_env "$cmd" "$(lane_single_quote "${LANES_HOME:-$HOME}/.agents/skills")")"
   case "$form" in
-    launcher:*) line="$env_words $(lane_single_quote "${form#launcher:}") ${cmd#"$harness" }" ;;
-    *) line="$env_words ${account:+$account }$cmd" ;;
+    launcher:*) printf '%s %s %s\n' "$env_words" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
+    *) printf '%s %s%s\n' "$env_words" "${account:+$account }" "$cmd" ;;
   esac
-  token=""
-  [[ -z "$dir" ]] || token="$(lane_copilot_token_file "$dir")"
-  if [[ -n "$token" && -f "$token" ]]; then
-    # The pane's shell splits the line into argv, so `"${@:2}"` is the env
-    # command and everything after it; only the file's path crosses argv.
-    line="bash -c 'COPILOT_GITHUB_TOKEN=\$(< \"\$1\") && export COPILOT_GITHUB_TOKEN && exec \"\${@:2}\"' lane-launch $(lane_single_quote "$token") $line"
-  fi
-  printf '%s\n' "$line"
 }
 
 # The Copilot launch policy for a command CMD, fresh or resumed, a lane's or
-# an overseer's: the `env` words that go in front of `copilot`, SKILLS the
-# shell word naming the shared skills tree.
-#   -u GH_TOKEN -u GITHUB_TOKEN   Copilot reads COPILOT_GITHUB_TOKEN, then
-#                                 GH_TOKEN, then GITHUB_TOKEN, then the stored
-#                                 login. A fleet host holds the GitHub App
-#                                 token in GH_TOKEN for every lane, so both are
-#                                 cleared and the identity is the account's own
-#                                 token or login, never the ambient one.
+# an overseer's, one owner for the local launch line above and the hosted
+# command open-terminal hands a provider: the `env` words that go in front of
+# `copilot`, SKILLS the shell word naming the shared skills tree, a quoted path
+# locally and "$HOME/.agents/skills" unexpanded for a host, whose own login
+# shell expands it. Run after that login shell's profile, so a token the
+# profile exports is cleared too.
+#   -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN
+#                                 Copilot reads COPILOT_GITHUB_TOKEN, then
+#                                 GH_TOKEN, then GITHUB_TOKEN, then the login
+#                                 stored in the account's config.json. A fleet
+#                                 host holds the GitHub App token in GH_TOKEN
+#                                 for every lane, and Copilot 1.0.88 refuses a
+#                                 placeholder handed in COPILOT_GITHUB_TOKEN,
+#                                 so all three are cleared and the identity is
+#                                 the account's stored login, never an ambient
+#                                 token.
 #   COPILOT_SKILLS_DIRS           any COPILOT_HOME value turns the shared
 #                                 `~/.agents/skills` tree off; naming it puts
 #                                 the shared skills back (measured by
@@ -1356,7 +1352,7 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
 lane_copilot_env() { # CMD SKILLS
   local allow="COPILOT_ALLOW_ALL="
   ! lane_copilot_allows_all "$1" || allow="COPILOT_ALLOW_ALL=true"
-  printf 'env -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS=%s %s\n' "$2" "$allow"
+  printf 'env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS=%s %s\n' "$2" "$allow"
 }
 
 # Whether CMD carries one of the copilot row's transferable permission
@@ -1371,15 +1367,6 @@ lane_copilot_allows_all() { # CMD
     (( LAUNCH_CHOICE_PERMISSION_SPAN == 0 )) || return 0
   done
   return 1
-}
-
-# The file a Copilot account directory keeps its GitHub token in, the bare
-# token on its first line: read into COPILOT_GITHUB_TOKEN by lane_launch_line
-# above and by the hosted provider's prefix, and measured through by `lanes`.
-# One spelling for every reader; ../../schemas/lane-host.md states it for
-# providers.
-lane_copilot_token_file() { # DIR
-  printf '%s/copilot-token\n' "$1"
 }
 
 # The lane variable's value in the DEEPEST process under pane pid $1 that

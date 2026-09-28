@@ -1,1 +1,1 @@
-- orch: `lanes` measures Copilot CLI accounts' monthly AI credit pool, and a Copilot lane's context is read from the record `copilot-statusline` writes, for its handoff.
+- orch: `lanes` measures a Copilot CLI account's monthly AI credits from GitHub's usage endpoint with its stored login, and a Copilot lane's context comes from `copilot-statusline`.

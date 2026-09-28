@@ -230,36 +230,34 @@ exec git "$@"
         """A copilot create's prefix, run: the environment the lane's copilot starts under."""
         if script is not None:
             shutil.copy2(script, self.script)
-        (self.account / "copilot-token").write_text("ghu_copilot_fixture\n")
         result = self.create(harness="copilot")
         self.assertEqual(result.returncode, 0, result.stderr)
         fields = dict(word.split("=", 1) for word in result.stdout.decode().strip().split("\t"))
-        probe = 'printf "%s|%s|%s|%s|%s" "$COPILOT_GITHUB_TOKEN" "${GH_TOKEN-unset}" "$COPILOT_HOME" "$COPILOT_SKILLS_DIRS" "$COPILOT_ALLOW_ALL"'
+        probe = 'printf "%s|%s|%s|%s|%s" "${COPILOT_GITHUB_TOKEN-unset}" "${GH_TOKEN-unset}" "$COPILOT_HOME" "$COPILOT_SKILLS_DIRS" "$COPILOT_ALLOW_ALL"'
         run = subprocess.run(["bash", "-c", fields["remote-prefix"] + " " + shlex.quote(probe)],
-                             env={**self.env, "GH_TOKEN": "app-token", "GITHUB_TOKEN": "app-token", "HOME": str(self.root)},
+                             env={**self.env, "COPILOT_GITHUB_TOKEN": "placeholder", "GH_TOKEN": "app-token",
+                                  "GITHUB_TOKEN": "app-token", "HOME": str(self.root)},
                              capture_output=True)
         return result, fields, run
 
-    def test_create_runs_copilot_under_its_account_environment(self):
-        """The account's copilot-token becomes COPILOT_GITHUB_TOKEN on the host and never crosses argv."""
-        result, fields, run = self.copilot_launch()
-        self.assertEqual((Path(self.row["account"]) / "copilot-token").read_text(), "ghu_copilot_fixture\n")
-        self.assertNotIn(b"ghu_copilot_fixture", result.stdout)
-        self.assertNotIn("ghu_copilot_fixture", (self.root / "calls").read_text())
-        self.assertEqual(run.stdout.decode(), "|".join(["ghu_copilot_fixture", "unset", self.row["account"],
+    def test_create_runs_copilot_on_its_stored_login(self):
+        """A copilot lane copies no credential and runs on the host account's stored login, every ambient token cleared."""
+        before = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
+        _, _, run = self.copilot_launch()
+        after = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
+        self.assertEqual(after, before)
+        self.assertEqual(run.stdout.decode(), "|".join(["unset", "unset", self.row["account"],
                                                         str(self.root / ".agents/skills"), "true"]), run.stderr)
 
-    def test_control_copilot_prefix_keeps_the_app_token(self):
-        """Control: a prefix that clears the App token outside the login shell hands the lane one."""
+    def test_control_copilot_prefix_keeps_the_ambient_tokens(self):
+        """Control: a prefix that clears nothing inside the login shell hands the lane an ambient token."""
         mutant = self.root / "mutant-lane-host-ssh"
         text = (PACKAGE / "scripts/lane-host-ssh").read_text()
-        self.assertEqual(text.count('bash -lc "unset GH_TOKEN GITHUB_TOKEN && $3"'), 1)
-        mutant.write_text(text.replace('bash -lc "unset GH_TOKEN GITHUB_TOKEN && $3"', 'bash -lc "$3"'))
+        self.assertEqual(text.count('bash -lc "unset COPILOT_GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN && $2"'), 1)
+        mutant.write_text(text.replace('bash -lc "unset COPILOT_GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN && $2"', 'bash -lc "$2"'))
         mutant.chmod(0o755)
         _, _, run = self.copilot_launch(mutant)
-        # The App token the call carried, or the one the host's login profile
-        # exports again: either way the lane holds one.
-        self.assertNotEqual(run.stdout.decode().split("|")[1], "unset", run.stderr)
+        self.assertEqual(run.stdout.decode().split("|")[0], "placeholder", run.stderr)
 
     def worktree_root(self):
         return Path(subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"] + "-worktree",

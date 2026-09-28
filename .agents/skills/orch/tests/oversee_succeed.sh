@@ -1558,7 +1558,7 @@ fleet_state
 # launch's environment. Its marks are judged on the account's monthly pool,
 # which lanes measures; a record naming no account refuses the line rather
 # than print one on an account nothing named.
-COPILOT_ENV="env -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS='$H/.agents/skills' COPILOT_ALLOW_ALL=true"
+COPILOT_ENV="env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS='$H/.agents/skills' COPILOT_ALLOW_ALL=true"
 COPILOT_LINE="$COPILOT_ENV COPILOT_HOME='$H/.1copilot' copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --allow-all -i '$BRIEF'"
 copilot_row() { # NAME [SUCCEED_BIN] ARGS... — the run on a pane whose record names $H/.1copilot
   local name="$1" bin="$2"
@@ -1570,9 +1570,10 @@ copilot_row() { # NAME [SUCCEED_BIN] ARGS... — the run on a pane whose record 
 copilot_row printcopilot '' --print-launch-line --harness copilot -- --allow-all
 assert_eq "$RC|$OUT|$(overseers)" "0|$COPILOT_LINE|0" \
   "a copilot overseer's printed line runs copilot on its recorded account with the brief on -i"
-# The account its record names holds a token and an 80 percent spent pool.
+# The account its record names holds a stored login and an 80 percent spent
+# pool.
 mkdir -p "$H/.1copilot"
-printf 'ghu_fixture\n' > "$H/.1copilot/copilot-token"
+printf '{"copilot_tokens":"gho_fixture"}\n' > "$H/.1copilot/config.json"
 printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":200}}}' > "$FIXTURE_DIR/.1copilot.json"
 COPILOT_DIRS="$H/.claude:$H/.eclaude:$H/.codex:$H/.1copilot"
 LANE_DIRS="$COPILOT_DIRS" copilot_row checkcopilot '' --check-marks --harness copilot

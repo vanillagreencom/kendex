@@ -526,7 +526,7 @@ assert_eq "$RC|$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_command
   "0|pi|mark-reached kind=headroom value=1" \
   "--check-marks on a record-less pi-claude overseer takes pi from its reading and judges its claude account" "$TMP_ROOT/err"
 PIPANECTL="$(mutant_scripts pipanectl oversee-succeed)" || exit 1
-mutate_file "$PIPANECTL/oversee-succeed" '      claude | codex | pi) CALLER_HARNESS="$reading_harness" ;;' '      claude | codex) CALLER_HARNESS="$reading_harness" ;;'
+mutate_file "$PIPANECTL/oversee-succeed" '      claude | codex | copilot | pi) CALLER_HARNESS="$reading_harness" ;;' '      claude | codex | copilot) CALLER_HARNESS="$reading_harness" ;;'
 pi_reading_row "$PIPANECTL/oversee-succeed"
 assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: harness-unnamed pane=$CALLER_PANE" \
   "control: a reading harness naming no pi leaves a pi pane unnamed"

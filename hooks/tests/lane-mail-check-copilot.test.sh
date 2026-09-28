@@ -465,8 +465,8 @@ cop_record() { # TOKENS WINDOW [TRANSCRIPT]
 cop_recorded() { # the reading the hook recorded in the lane's mailbox
   jq -c '[.harness, .tokens, .window, .model]' "$LANE/tmp/lane-mail/KEN-204/context.json" 2>/dev/null || echo none
 }
-# COPILOT_HOME names the account, which `lanes` lists and reads no token in:
-# the account is unmeasured until the token row below.
+# COPILOT_HOME names the account, which `lanes` lists and reads no stored login in:
+# the account is unmeasured until the login row below.
 cop_record 100000 1000000
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC keyed=$(cop_keys) recorded=$(cop_recorded)" \
@@ -495,7 +495,7 @@ assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=session-record=stale;account=un
 # The account mark on Copilot: the account the session runs on is measured
 # through `lanes`, and a pool at zero holds the turn end at the headroom mark.
 cop_record 100000 1000000
-printf 'ghu_test\n' > "$COP_ACCOUNT/copilot-token"
+printf '{"copilot_tokens":"gho_test"}\n' > "$COP_ACCOUNT/config.json"
 COP_FETCH="$TMP_ROOT/cop-fetch"
 printf '#!/bin/sh\nprintf "200 \\n"\nprintf "%%s\\n" "$COP_POOL"\n' > "$COP_FETCH"
 chmod +x "$COP_FETCH"
@@ -508,7 +508,7 @@ assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT" "ORCH_LANES_FETCH_CMD=$COP_FETCH" "COP_POOL=$COP_ROOM" "ORCH_LANES_USAGE_TTL=0"
 assert_eq "RC=$RC keyed=$(cop_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keyed= stdout=" \
   "a Copilot account with room and a fresh record end the turn with nothing to report"
-rm -f -- "${COP_ACCOUNT:?}/copilot-token"
+rm -f -- "${COP_ACCOUNT:?}/config.json"
 
 # --- the checkout's overseer mailbox --------------------------------------
 # The overseer mailbox has one reader, the session the checkout's fleet record
@@ -895,11 +895,11 @@ new_copilot_lane control_cop_account ken-219 "$MUTANT_PATH"
 mkdir -p "$LANE/tmp/lane-mail/KEN-219"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-219 >/dev/null)
 cop_record 100000 1000000
-printf 'ghu_test\n' > "$COP_ACCOUNT/copilot-token"
+printf '{"copilot_tokens":"gho_test"}\n' > "$COP_ACCOUNT/config.json"
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT" "ORCH_LANES_FETCH_CMD=$COP_FETCH" "COP_POOL=$COP_SPENT" "ORCH_LANES_USAGE_TTL=0"
 assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: account=unlisted" \
   "control: without copilot in the account arm a spent pool is reported unlisted and the turn ends"
-rm -f -- "${COP_ACCOUNT:?}/copilot-token"
+rm -f -- "${COP_ACCOUNT:?}/config.json"
 
 # The halt arm judging the marks: an account read then runs before a tool
 # call, outside the deadline the halt decision has to land in.

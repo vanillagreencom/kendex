@@ -1026,12 +1026,12 @@ run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model github-copilot/claude-sonne
 assert_eq "$(observe "rc=1 unanswered=1")" "rc=1 unanswered=1" \
   "control: a Pi relaunch that asks the provider reports its accounts verb as unanswered"
 OPEN_TERMINAL="$PI_OT_SHIPPED"
-# A hosted copilot launch: the account holds its token and a pool with room,
+# A hosted copilot launch: the account holds its login and a pool with room,
 # the provider is handed --harness copilot, and the remote line runs copilot
 # with its launch settings and no local account environment, the provider's
 # prefix carrying that.
 mkdir -p "$H/.1copilot"
-printf 'ghu_fixture\n' > "$H/.1copilot/copilot-token"
+printf '{"copilot_tokens":"gho_fixture"}\n' > "$H/.1copilot/config.json"
 printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":900}}}' > "$FIXTURE_DIR/.1copilot.json"
 COPILOT_HOSTED="flags=--model claude-opus-5 --reasoning-effort high --allow-all"
 run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copilot" --repo o/r CC-1935

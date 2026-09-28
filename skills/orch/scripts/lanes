@@ -350,34 +350,23 @@
 # every `~/.*copilot*` directory plus $COPILOT_HOME when it is set; a
 # discovered directory with no config marker (claude `.claude.json` or
 # `.credentials.json`, codex `auth.json` or `config.toml`, copilot
-# `settings.json` or `copilot-token`) is skipped. A setting names a lane by its
+# `settings.json` or `config.json`) is skipped. A setting names a lane by its
 # directory name, with or without the leading dot, or by its alias; a name
 # carrying `/` or `~` is a path, names no lane, and is refused.
 #
-# COPILOT: the credential is the GitHub token in `<dir>/copilot-token`, the
-# file the launch line reads into COPILOT_GITHUB_TOKEN (lib/lane-launch.sh §
-# lane_copilot_token_file); a directory without it reads `no_credentials`,
-# since a keyring login is not a token this script can post. The reading is GET
-# api.github.com/copilot_internal/user, an INTERNAL endpoint whose shape can
-# change: `quota_snapshots.premium_interactions` is read for its credit counts,
-# `entitlement`, `remaining`, `overage_permitted`, `overage_count` and
-# `unlimited`, and `quota_reset_date_utc` for the reset. Each is checked for its
-# type, and an answer lacking `remaining` or `entitlement` as numbers, or with
-# an entitlement of zero, measures nothing and reads `no_usage_data`. The pool
-# is a MONTHLY bucket, `monthly_pct` used, computed from remaining over
-# entitlement and never from the endpoint's truncated percent_remaining, with
-# `resets.monthly`; the record carries the counts beside it as `credits`,
-# `{unit: "AIC", used, limit, over, overage_permitted}`, or `{unit: "AIC",
-# unlimited: true}`. A pool at zero remaining is walled at every threshold,
-# `overage_permitted` true included: no paid overage is authorised. Only an
-# explicit boolean `unlimited: true` reads as room with no bucket, and then
-# `unlimited` is true on the record; a zero, a failed read and a missing field
-# never do.
+# COPILOT: the account's monthly AI credit pool, read from GitHub's usage
+# endpoint with the login stored in `<dir>/config.json` through
+# lib/copilot-credits.sh, which owns the endpoint, the login layout it assumes
+# and the rules for zero, overage and unlimited; the record is
+# schemas/copilot-credits.md. The pool is a MONTHLY bucket, `monthly_pct`,
+# with the counts beside it as `credits`. An account whose login does not read
+# takes its ORCH_LANE_COPILOT_POOL reading where the setting states one, and
+# reads `no_credentials` under the login's keyed reason where it does not.
 #   ORCH_LANE_ALIASES  Comma-separated `<config-dir-name>=<alias>` pairs giving
 #                      lanes meaningful names (`eclaude=work,mclaude=overflow`).
 #                      A directory with no mapping keeps its discovered name.
 #   ORCH_LANE_DIRS     Colon-separated config dirs, for a layout discovery does
-#                      not reach. An entry holding copilot-token and no
+#                      not reach. An entry holding config.json and no
 #                      .credentials.json is a Copilot lane, one holding
 #                      auth.json and no .credentials.json is a Codex lane, and
 #                      any other entry is a Claude lane. A harness's entries replace its discovery;
@@ -449,7 +438,10 @@
 #                      No provider or endpoint is asked: the reading is what
 #                      the setting says, and an account it names none for is
 #                      unmeasured. A malformed entry, or a second one for an
-#                      account already stated, refuses that pick.
+#                      account already stated, refuses that pick. A Copilot
+#                      account dir may be stated too: its reading stands only
+#                      where the account's stored login does not read, the
+#                      measured pool answering otherwise.
 #   ORCH_LANES_CLAUDE_CLIENT_ID  The OAuth client id the renewal posts with.
 #                      Required for it: with this unset every Claude account
 #                      whose access token has expired reads `error` with the
@@ -935,8 +927,8 @@ lane_admissible() {
 # harness is configured is decided before exclusion drops an entry, or excluding
 # every entry would turn its discovery back on. An excluded or retired entry is
 # never probed; its name decides, as discovery's glob does. Any other entry is
-# copilot when it holds copilot-token and no .credentials.json, and codex when
-# it holds auth.json and no .credentials.json.
+# copilot when it holds config.json and no .credentials.json, and codex when it
+# holds auth.json and no .credentials.json.
 configured_lane_dirs() {
 	local rest="$ORCH_LANE_DIRS:" entry kind
 	while [[ -n "$rest" ]]; do
@@ -949,7 +941,7 @@ configured_lane_dirs() {
 				*codex*) kind=codex ;;
 				*copilot*) kind=copilot ;;
 			esac
-		elif [[ -f "$entry/copilot-token" && ! -f "$entry/.credentials.json" ]]; then
+		elif [[ -f "$entry/config.json" && ! -f "$entry/.credentials.json" ]]; then
 			kind=copilot
 		elif [[ -f "$entry/auth.json" && ! -f "$entry/.credentials.json" ]]; then
 			kind=codex
@@ -986,7 +978,7 @@ lane_dirs() {
 			local markers=(.claude.json .credentials.json)
 			case "$1" in
 				codex) markers=(auth.json config.toml) ;;
-				copilot) markers=(settings.json copilot-token) ;;
+				copilot) markers=(settings.json config.json) ;;
 			esac
 			for d in "$home/.$1" "$home"/.*"$1"*; do
 				[[ -d "$d" ]] || continue
@@ -1105,11 +1097,7 @@ fetch_usage() {
 		CURLCFG
 		) || return 1
 	elif [[ "$harness" == "copilot" ]]; then
-		resp=$(curl -s --max-time 10 -D - -w '\n%{http_code}' "$COPILOT_USAGE_URL" \
-			-H "Accept: application/json" -K - <<-CURLCFG
-			header = "Authorization: token ${token}"
-		CURLCFG
-		) || return 1
+		resp=$(copilot_credits_request "$token") || return 1
 	else
 		local args=(-s --max-time 10 -D - -w $'\n%{http_code}' "$CODEX_USAGE_URL")
 		[[ -n "$account_id" ]] && args+=(-H "chatgpt-account-id: $account_id")
@@ -1224,51 +1212,13 @@ parse_codex_usage() {
 	'
 }
 
-# Copilot: GET api.github.com/copilot_internal/user, whose
-# `quota_snapshots.premium_interactions` is the account's monthly pool of AI
-# credits. The rules are the header's COPILOT paragraph; this is their one
-# reader. The used share is rounded UP, as the stated pool reading's is, so a
-# pool one credit short of its grant is never read as having more; a pool at or
-# past it is 100, and one reporting more remaining than it was granted is 0.
-# The reset is `quota_reset_date_utc`: a calendar date is
-# read as its 00:00:00Z, a timestamp as written, and anything else as no reset.
-parse_copilot_usage() {
-	jq -c '
-		((.quota_snapshots.premium_interactions | objects) // {}) as $q
-		| ($q.unlimited == true) as $unlimited
-		| (($q.remaining | numbers) // null) as $remaining
-		| (($q.entitlement | numbers) // null) as $limit
-		| ($remaining != null and $limit != null and $limit > 0) as $counted
-		| (if $unlimited or ($counted | not) then null
-		   elif $remaining <= 0 then 100
-		   else ((($limit - $remaining) * 100 / $limit) | ceil | if . < 0 then 0 else . end)
-		   end) as $pct
-		| ((.quota_reset_date_utc | strings
-		    | if test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$") then . + "T00:00:00Z"
-		      elif test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T") then . else null end) // null) as $reset
-		| {
-		    monthly_pct: $pct,
-		    unlimited: $unlimited,
-		    credits: (if $unlimited then {unit: "AIC", unlimited: true}
-		              elif $counted then {unit: "AIC",
-		                                  used: (($q.credits_used | numbers) // null),
-		                                  limit: $limit,
-		                                  over: (($q.overage_count | numbers) // null),
-		                                  overage_permitted: ($q.overage_permitted == true)}
-		              else null end),
-		    plan: ((.copilot_plan | strings) // null),
-		    resets: {monthly: (if $pct == null then null else $reset end)}
-		  }
-	'
-}
-
 # The buckets one usage body answers, by the harness that measured it: the one
 # dispatch, so the current sample and the prior it is compared with parse
 # through the same reader.
 parse_usage_body() { # HARNESS
 	case "$1" in
 		claude) parse_claude_usage ;;
-		copilot) parse_copilot_usage ;;
+		copilot) copilot_credits_parse ;;
 		*) parse_codex_usage "$SESSION_WINDOW_S" ;;
 	esac
 }
@@ -1328,22 +1278,32 @@ copilot_pool_entries() {
 	done < <(setting_items "${ORCH_LANE_COPILOT_POOL:-}")
 }
 
-# The Copilot pool record for the Pi account at DIR: the stated reading as a
-# `monthly` bucket, judged by lib/lane-model.sh like every other window, or
-# `no_usage_data` where the setting states none for DIR, which that judge reads
-# as unmeasured and never as room. `measured_through` is `stated`: neither this
-# machine nor a provider read it.
-measure_copilot_pool() { # ALIAS DIR
+# The Copilot pool record where no measured reading can be made: the stated
+# ORCH_LANE_COPILOT_POOL reading for DIR as a `monthly` bucket, judged by
+# lib/lane-model.sh like every other window, its counts as `credits`, and
+# `measured_through` `stated`: neither this machine nor a provider read it. A
+# Pi root, whose Copilot login nothing here reads, always lands here, and so
+# does a Copilot account whose stored login does not read, WHY naming that
+# cause. Where the setting states nothing for DIR the account is unmeasured,
+# never room: a Pi root `no_usage_data`, a Copilot account `no_credentials`
+# under WHY.
+measure_copilot_pool() { # ALIAS HARNESS DIR WHY
 	local entries target d pct used limit
 	entries="$(copilot_pool_entries)" || return 1
-	target="$(lane_claims_canon "$2")"
+	target="$(lane_claims_canon "$3")"
 	while IFS=$'\t' read -r d pct used limit; do
 		[[ -n "$d" && "$(lane_claims_canon "$d")" == "$target" ]] || continue
-		emit_lane "$1" pi "$2" ok "Copilot pool: $used of $limit credits used, as ORCH_LANE_COPILOT_POOL states" "" \
-			"{\"monthly_pct\":$pct}" null false stated
+		emit_lane "$1" "$2" "$3" ok "Copilot pool: $used of $limit credits used, as ORCH_LANE_COPILOT_POOL states; $4" "" \
+			"$(jq -nc --argjson p "$pct" --argjson u "$used" --argjson g "$limit" \
+				'{monthly_pct: $p, credits: {unit: "AIC", unlimited: false, used: $u, granted: $g,
+				  remaining: ([$g - $u, 0] | max)}}')" null false stated
 		return
 	done <<<"$entries"
-	emit_lane "$1" pi "$2" no_usage_data "ORCH_LANE_COPILOT_POOL states no Copilot pool reading for this account" "" '{}' null false stated
+	if [[ "$2" == pi ]]; then
+		emit_lane "$1" pi "$3" no_usage_data "ORCH_LANE_COPILOT_POOL states no Copilot pool reading for this account" "" '{}' null false stated
+	else
+		emit_lane "$1" "$2" "$3" no_credentials "$4, and ORCH_LANE_COPILOT_POOL states no reading for this account" "" '{}'
+	fi
 }
 
 measure_lane() {
@@ -1361,36 +1321,35 @@ measure_lane() {
 		return
 	fi
 	if [[ "$harness" == pi ]]; then
-		measure_copilot_pool "$alias" "$dir"
+		measure_copilot_pool "$alias" pi "$dir" "no Copilot login is read for a Pi root"
 		return
 	fi
-
-	case "$harness" in
-		claude) creds="$dir/.credentials.json" ;;
-		copilot) creds="$(lane_copilot_token_file "$dir")" ;;
-		*) creds="$dir/auth.json" ;;
-	esac
-
-	if [[ ! -f "$creds" ]]; then
-		emit_lane "$alias" "$harness" "$dir" "no_credentials" "no credential file at $creds" "" '{}'
-		return
-	fi
-	# The Copilot token file is the bare token on its first line, never JSON.
-	if [[ "$harness" != copilot ]] && ! jq -e . "$creds" >/dev/null 2>&1; then
-		emit_lane "$alias" "$harness" "$dir" "error" "credential file is not valid JSON" "" '{}'
-		return
-	fi
-
 	if [[ "$harness" == copilot ]]; then
-		IFS= read -r token <"$creds" || true
-		token="$(trim "$token")"
-	elif [[ "$harness" == "claude" ]]; then
+		if ! copilot_credits_token "$dir"; then
+			measure_copilot_pool "$alias" copilot "$dir" "copilot login unread: $COPILOT_CREDITS_REASON in $dir/config.json"
+			return
+		fi
+		token="$COPILOT_CREDITS_TOKEN"
+	else
+		if [[ "$harness" == "claude" ]]; then creds="$dir/.credentials.json"; else creds="$dir/auth.json"; fi
+
+		if [[ ! -f "$creds" ]]; then
+			emit_lane "$alias" "$harness" "$dir" "no_credentials" "no credential file at $creds" "" '{}'
+			return
+		fi
+		if ! jq -e . "$creds" >/dev/null 2>&1; then
+			emit_lane "$alias" "$harness" "$dir" "error" "credential file is not valid JSON" "" '{}'
+			return
+		fi
+	fi
+
+	if [[ "$harness" == "claude" ]]; then
 		token=$(jq -r 'try (.claudeAiOauth.accessToken // empty) catch empty' "$creds")
 		plan=$(jq -r 'try (.claudeAiOauth.subscriptionType // empty) catch empty' "$creds")
 		expires_ms=$(jq -r 'try (.claudeAiOauth.expiresAt // 0) catch 0' "$creds")
 		expires_ms="${expires_ms%%.*}"
 		[[ "$expires_ms" =~ ^[0-9]+$ ]] || expires_ms=0
-	else
+	elif [[ "$harness" == codex ]]; then
 		token=$(jq -r 'try (.tokens.access_token // .OPENAI_API_KEY // empty) catch empty' "$creds")
 		account_id=$(jq -r 'try (.tokens.account_id // empty) catch empty' "$creds")
 	fi
@@ -2118,7 +2077,8 @@ emit_lane() {
 		    model_label: ($b.model_label // null),
 		    model_buckets: ($b.model_buckets // []),
 		    monthly_pct: ($b.monthly_pct // null),
-		    credits: ($b.credits // null),
+		    credits: (if $b.credits == null then null
+		              else $b.credits + {measured_at: ((now - ($age // 0)) | floor | todate)} end),
 		    unlimited: ($measured and $unlimited),
 		    claims: $claims,
 		    headroom_pct: (if ($measured and ($known | length) > 0) then (100 - ($known | max))
@@ -3135,6 +3095,8 @@ need_jq
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export PROJECT_ROOT
+# shellcheck source=lib/copilot-credits.sh
+source "$SCRIPT_DIR/lib/copilot-credits.sh"
 # shellcheck source=lib/file-lock.sh
 source "$SCRIPT_DIR/lib/file-lock.sh"
 # shellcheck source=lib/kendex-env.sh
@@ -3180,7 +3142,6 @@ CLAUDE_USAGE_URL="${ORCH_LANES_CLAUDE_USAGE_URL:-https://api.anthropic.com/api/o
 CLAUDE_TOKEN_URL="${ORCH_LANES_CLAUDE_TOKEN_URL:-https://platform.claude.com/v1/oauth/token}"
 CLAUDE_OAUTH_BETA="oauth-2025-04-20"
 CODEX_USAGE_URL="${ORCH_LANES_CODEX_USAGE_URL:-https://chatgpt.com/backend-api/wham/usage}"
-COPILOT_USAGE_URL="https://api.github.com/copilot_internal/user"
 
 # ~5h, with tolerance — Codex reports window durations that vary by account.
 SESSION_WINDOW_S=18000

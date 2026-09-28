@@ -417,11 +417,10 @@ Options:
                     pane, at most three times, and --context long_context
                     --no-auto-update, the 1M window and no self-update under
                     a running lane. A local copilot launch, lane or none,
-                    runs under its account's environment: COPILOT_HOME, the
-                    account's copilot-token read into COPILOT_GITHUB_TOKEN
-                    without entering the command line, GH_TOKEN and
-                    GITHUB_TOKEN cleared, COPILOT_SKILLS_DIRS at the shared
-                    skills and COPILOT_ALLOW_ALL=true.
+                    runs under its account's environment: COPILOT_HOME, its
+                    stored login the identity with COPILOT_GITHUB_TOKEN,
+                    GH_TOKEN and GITHUB_TOKEN cleared, COPILOT_SKILLS_DIRS at
+                    the shared skills and COPILOT_ALLOW_ALL=true.
                     EVERY COMMAND BUILT HERE TAKES THE HARNESS QUESTION TOOL
                     AWAY WHERE A ROW BELOW NAMES WORDS, ahead of these flags;
                     a lane asks through lane-mail.
