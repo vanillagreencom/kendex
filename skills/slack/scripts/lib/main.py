@@ -58,7 +58,8 @@ compact   drop journal lines resolved or ignored longer ago than
           SLACK_THREAD_DAYS; open questions and positions stay. The relay runs
           it once a day; a root whose relay is running is refused
 install   write the systemd user unit for `listen` over the roots given, then
-          daemon-reload and enable it; --print writes the unit to stdout only
+          daemon-reload, enable and restart it, so a running relay takes the
+          new roots; --print writes the unit to stdout only
 
 Settings, read from the process environment after the checkout's private env
 file and settings files: SLACK_BOT_TOKEN, SLACK_OWNERS (default

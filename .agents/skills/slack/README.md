@@ -74,7 +74,7 @@ The app must be a member of every channel it posts to. `setup` creates the chann
 1. Set `KENDEX_USER_EMAIL` in the private env file if it is not set; `SLACK_OWNERS` defaults to it.
 2. Put `SLACK_BOT_TOKEN` in the private env file.
 3. Run `slack setup` in the checkout. It prints `slack: bound=CHANNEL_ID root=... name=... owners=N`.
-4. Run `slack install --root <checkout>` on a host with systemd, or `slack listen --root <checkout>` in a terminal.
+4. Run `slack install --root <checkout>` on a host with systemd, or `slack listen --root <checkout>` in a terminal. To add a checkout later, run `slack install` again with every `--root`; it restarts the running relay on the new list.
 5. Write in the channel. The overseer's reply lands in the thread.
 
 ## The local run

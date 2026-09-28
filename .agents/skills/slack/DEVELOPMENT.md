@@ -34,7 +34,7 @@ Each suite starts `tests/lib/fake_slack.py`, a fake Slack Web API with a control
 | `post.test.sh` | Text, `--mention`, `--thread`, `--update`, `--file` with the comment, and the secret-value refusals |
 | `compact.test.sh` | Old resolved and ignored lines, old report uploads and superseded positions leave; open asks stay; the relay reads the compacted file; a running relay's lock refuses the verb |
 | `status.test.sh` | The doctor row's states and fields, and the budget figure |
-| `install.test.sh` | The unit written or printed, the systemctl calls, `setup` restarting the unit, and the refusals |
+| `install.test.sh` | The unit written or printed, the systemctl calls, a reinstall restarting the running unit on its new roots, `setup` restarting the unit, and the refusals |
 
 The suites run on the `rest` shard of `.github/workflows/skill-tests.yml`, on Linux and macOS.
 

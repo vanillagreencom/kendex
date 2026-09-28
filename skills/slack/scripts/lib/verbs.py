@@ -20,7 +20,7 @@ from settings import Settings, load
 from store import Binding, RelayLock, compact, journal_exists, read_binding, read_status, write_binding
 
 UNIT = "slack-listen.service"
-# Seconds between `enable --now` and the read of the unit's state: long
+# Seconds between the restart and the read of the unit's state: long
 # enough for a relay refusing its settings or its binding to have exited.
 START_WAIT_SECONDS = 2
 UNIT_TEMPLATE = Path(__file__).resolve().parents[2] / "systemd" / UNIT
@@ -176,13 +176,19 @@ def install(roots: List[Path], print_only: bool) -> int:
         raise Refusal("unit-unwritable", f"{target} ({err.strerror})") from err
     notice("installed", str(target))
     if shutil.which("systemctl") is None:
-        raise Refusal("systemctl-missing", f"run: systemctl --user daemon-reload && systemctl --user enable --now {UNIT}")
-    for args in (["daemon-reload"], ["enable", "--now", UNIT]):
+        raise Refusal(
+            "systemctl-missing",
+            f"run: systemctl --user daemon-reload && systemctl --user enable {UNIT} && systemctl --user restart {UNIT}",
+        )
+    # `restart` starts a stopped unit and replaces a running one, so a
+    # reinstall that adds a root is served by a relay on the new ExecStart;
+    # `enable --now` would leave a running relay on the old one.
+    for args in (["daemon-reload"], ["enable", UNIT], ["restart", UNIT]):
         proc = subprocess.run(["systemctl", "--user", *args], check=False)
         if proc.returncode != 0:
             raise Refusal("systemctl-failed", f"systemctl --user {' '.join(args)} exit={proc.returncode}")
     notice("enabled", UNIT)
-    # `enable --now` returns once the start job is queued, so a relay that
+    # A simple unit's restart returns once the relay is forked, so a relay that
     # refuses at start is seen only by asking again after it had time to exit.
     time.sleep(START_WAIT_SECONDS)
     proc = subprocess.run(["systemctl", "--user", "is-active", UNIT], stdout=subprocess.PIPE, text=True, check=False)

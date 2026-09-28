@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # `slack install`: the unit printed with --print and written under the
 # systemd user directory otherwise, its ExecStart naming every root, the
-# daemon-reload and enable that follow and the state read after them, the
+# daemon-reload, enable and restart that follow and the state read after
+# them, a reinstall over a running unit restarting it on the new roots, the
 # refusals for a missing or failing systemctl, a unit that did not stay
 # active, an unbound root and no root, and `setup` restarting the unit that
 # stands. Two controls, one per rule: a mutant whose ExecStart names no root,
@@ -36,8 +37,13 @@ slack: enabled=slack-listen.service
 slack: active=slack-listen.service" "install prints the unit path, the enabled unit and its active state"
 assert_eq "$(sed -n 's/^ExecStart=//p' "$UNIT")" "$SK_SLACK listen --root $ROOT" "the written unit runs listen over the root"
 assert_eq "$(cat "$LOG")" "--user daemon-reload
---user enable --now slack-listen.service
---user is-active slack-listen.service" "install reloads the user manager, enables and starts the unit, then reads its state"
+--user enable slack-listen.service
+--user restart slack-listen.service
+--user is-active slack-listen.service" "install reloads the user manager, enables and restarts the unit, then reads its state"
+: > "$LOG"
+sk_run XDG_CONFIG_HOME="$CFG" PATH="$BIN:$PATH" -- install --root "$ROOT" --root "$BETA"
+assert_eq "$RC=$(sed -n 's/^ExecStart=//p' "$UNIT")=$(grep -c '^--user restart slack-listen.service$' "$LOG")" \
+  "0=$SK_SLACK listen --root $ROOT --root $BETA=1" "a reinstall adding a root over the active unit restarts it on the new ExecStart"
 sk_run XDG_CONFIG_HOME="$CFG" PATH="$BIN:$PATH" FAKE_SYSTEMCTL_ACTIVE=activating -- install --root "$ROOT"
 assert_eq "$RC=$ERR1" "2=slack: unit-inactive=slack-listen.service state=activating fix=journalctl --user -u slack-listen.service" \
   "a unit not active after the start wait is refused with the log to read"
@@ -59,7 +65,7 @@ assert_eq "$(printf '%s' "$OUT" | sed -n '1p' | cut -d= -f1)=$(printf '%s' "$OUT
 # --- refusals, one row per rule ------------------------------------------------------------
 NOSYS="$(sk_path_without systemctl)"
 sk_run XDG_CONFIG_HOME="$SK_TMP/cfg2" PATH="$NOSYS" -- install --root "$ROOT"
-assert_eq "$RC=$ERR1" "2=slack: systemctl-missing=run: systemctl --user daemon-reload && systemctl --user enable --now slack-listen.service" \
+assert_eq "$RC=$ERR1" "2=slack: systemctl-missing=run: systemctl --user daemon-reload && systemctl --user enable slack-listen.service && systemctl --user restart slack-listen.service" \
   "without systemctl the refusal names the commands to run"
 assert_eq "$([ -f "$SK_TMP/cfg2/systemd/user/slack-listen.service" ] && echo present || echo absent)" "present" \
   "the unit is written before systemctl is looked for"
