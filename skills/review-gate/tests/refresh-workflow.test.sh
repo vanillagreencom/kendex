@@ -59,7 +59,7 @@ def check(w):
  # The consumer runs the kendex build whose manifest reader accepts the
  # current catalog; an older pin fails every refresh on that reader.
  install=next(s for s in steps if s.get('name')=='Install pinned kendex')
- assert install['env']['KENDEX_VERSION']=='main-build-299-1-cdc4f0ccc7ae152d1ed8a5f7c6e8df4deafcab40'
+ assert install['env']['KENDEX_VERSION']=='v1.1.0'
  assert install['env']['KENDEX_INSTALLER_REPO']=='vanillagreencom/kendex'
  assert install['env']['GH_TOKEN']=='""'
  assert 'raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/${KENDEX_VERSION##*-}/install.sh" | sh -s -- --version "$KENDEX_VERSION"' in install['run']
