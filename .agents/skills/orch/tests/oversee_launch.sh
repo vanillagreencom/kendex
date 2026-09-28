@@ -65,7 +65,7 @@ cat > "$BIN/kendex" <<'STUB'
 #!/bin/sh
 case "$1:$2:$3" in
   tier-model:claude:1) echo fable ;;
-  tier-model:claude:3) echo sonnet ;;
+  tier-model:claude:3) echo claude-sonnet-4-6 ;;
   tier-model:codex:1) echo gpt-6-astra ;;
   tier-model:codex:2) echo gpt-5.6-sol ;;
   *) exit 1 ;;
@@ -188,7 +188,7 @@ for row in \
   "ORCH_OVERSEER_PREFERENCE=|preference-empty setting=ORCH_OVERSEER_PREFERENCE|an empty preference" \
   "ORCH_OVERSEER_PREFERENCE=claude:Opus:high|invalid-preference entry=claude:Opus:high|an entry outside the shape" \
   "ORCH_OVERSEER_PREFERENCE=codex:gpt-5.6-sl:high|model-failed entry=codex:gpt-5.6-sl:high|a codex model name the tier ladder does not name" \
-  "ORCH_OVERSEER_PREFERENCE=claude:3:high|model-window-unknown entry=claude:3:high model=sonnet|a claude model the adapter names no window for" \
+  "ORCH_OVERSEER_PREFERENCE=claude:3:high|model-window-unknown entry=claude:3:high model=claude-sonnet-4-6|a claude model the adapter names no window for" \
   "ORCH_TMUX_SESSION=|session-unresolved consulted=--session,ORCH_TMUX_SESSION|no session named" \
   "ORCH_TMUX_SESSION=fleetz|tmux-session-missing session=fleetz server=$SOCKET|a session tmux does not hold" \
   "ORCH_OVERSEER_HOST=$TMP_ROOT/other|runtime-unsupported host=$TMP_ROOT/other|a runtime other than tmux" \

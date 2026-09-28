@@ -1477,9 +1477,15 @@ esac
 SLOWCAPACITY
   chmod +x "$LANE/.claude/skills/orch/scripts/lanes"
   REAL_TMUX_BIN="$TMP_ROOT/real-tmux-bin"; mkdir -p "$REAL_TMUX_BIN"
+  # The caller pane is $TMUX_PANE, read through overseer-host-tmux inspect:
+  # the listing, window, server, capture and liveness reads, the pane pid
+  # unprobed while the command is no bare shell.
   cat > "$REAL_TMUX_BIN/tmux" <<'REALTMUX'
 #!/bin/sh
 case " $* " in
+  *" list-panes "*) printf '%s\n' "$TMUX_PANE" ;;
+  *" capture-pane "*) ;;
+  *"#{pane_pid} #{pane_current_command}"*) printf '9000 %s\n' "${FIXTURE_TMUX_COMMAND:-claude}" ;;
   *"#{pid}"*) printf '%s\n' "$FIXTURE_TMUX_SERVER" ;;
   *"#{window_id}"*) printf '%s\n' '@7' ;;
   *"#{pane_current_path}"*) printf '%s\n' "$FIXTURE_TMUX_PATH" ;;
