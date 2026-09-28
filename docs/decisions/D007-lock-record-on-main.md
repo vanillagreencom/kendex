@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-26
 
-**Status**: Active
+**Status**: Revisited
 
 **Research**: —
 
@@ -58,3 +58,12 @@ The record is a function of the merged tree. A copy written on a branch is stale
 **Verification**: `crates/cli/tests/lock_record.rs`: two branches that each change one script of one package, merged in sequence with `tools/lock-record` recording after each, produce no conflict on the second and a record a fresh clone of `main` verifies clean. `tools/tests/ci-class-job-set.test.sh` holds the shard selection without the install-record rule.
 
 **References**: KEN-1877, KEN-1862, KEN-1779, [D001](D001-portable-lock.md), [D003](D003-one-merge-path.md)
+
+## Revisit Outcome (2026-09-28)
+
+The decision stands, and decision 3 now covers `kendex check` as well as the pull request. KEN-1983 found the gap: in a checkout on a branch that adds packages to its install manifest, the session-drift-check hook ran `kendex check` at every session and subagent start, and the check recorded each new render it proved against its source into `.kendex-lock.json`. That is the behaviour D001 gives a clone that carries renders and no record. On that branch it rewrote the lock by more than a thousand lines, and every reviewer artifact written while the change stood was refused as a moving tree.
+
+- **The branch D007 records on.** It is the repository's default branch: the branch the `origin` remote's HEAD names (`refs/remotes/origin/HEAD`), else `main` where the clone records no remote HEAD. The rule keys on the branch the checkout has checked out, not on whether the checkout is a linked worktree, so a standalone clone on a branch is covered. A detached HEAD is not on that branch.
+- **D001's settle does not run on a branch checkout.** In a checkout of a Git repository whose HEAD is not the default branch, `kendex check` writes nothing to the project's committed install record. A render that matches its source and has no record is reported as unrecorded, with no fix to run on the branch: the post-merge record on `main` records it. A render that differs is still reported as stale. The machine half under `.cache/kendex/` and kendex's own cache may still be written, so the memo keeps the next check fast.
+- **Where D001 still holds.** On the default branch, and in a project outside Git, `kendex check` settles an unrecorded clone as D001 states. The global scope's record is not committed and is unchanged.
+- **Verification.** A test holds that a session start in a branch checkout whose manifest adds a package leaves `git status --porcelain` empty.
