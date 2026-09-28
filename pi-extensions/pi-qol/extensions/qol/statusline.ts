@@ -39,6 +39,34 @@ function formatModelName(ctx: ExtensionContext): string {
 	return name;
 }
 
+const PROVIDER_NAMES: Record<string, string> = {
+	"github-copilot": "Copilot",
+	"openai": "OpenAI",
+	"openai-codex": "Codex",
+	"anthropic": "Anthropic",
+	"pi-claude": "Claude",
+	"google": "Google",
+	"google-gemini-cli": "Gemini CLI",
+	"google-antigravity": "Antigravity",
+	"google-vertex": "Vertex AI",
+	"amazon-bedrock": "Bedrock",
+	"azure-openai-responses": "Azure OpenAI",
+	"openrouter": "OpenRouter",
+	"vercel-ai-gateway": "Vercel AI Gateway",
+	"xai": "xAI",
+	"groq": "Groq",
+	"cerebras": "Cerebras",
+	"mistral": "Mistral",
+	"deepseek": "DeepSeek",
+	"zai": "Z.AI",
+	"ollama": "Ollama",
+};
+
+function formatProviderName(provider: string): string {
+	const name = stripAnsi(provider).replace(/[\x00-\x1f\x7f]/g, " ").trim();
+	return Object.hasOwn(PROVIDER_NAMES, name) ? PROVIDER_NAMES[name] : name.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()).replace(/\s+/g, " ").trim();
+}
+
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 type ThinkingThemeToken = "thinkingOff" | "thinkingMinimal" | "thinkingLow" | "thinkingMedium" | "thinkingHigh" | "thinkingXhigh" | "thinkingMax";
 const THINKING_TOKEN: Record<ThinkingLevel, ThinkingThemeToken> = {
@@ -204,24 +232,23 @@ function cavemanIconTone(mode: string, active: boolean): "muted" | "text" | "suc
 	}
 }
 
-export function renderStatusLine(width: number, ctx: ExtensionContext, git: GitState, pi: ExtensionAPI, theme: Pick<Theme, "fg">): string {
+export function renderStatusLine(width: number, ctx: ExtensionContext, git: GitState, pi: ExtensionAPI, theme: Pick<Theme, "fg">, workingIndicator = ""): string {
 	const { label: contextLabel, percent } = statuslineContextInfo(ctx);
-	const projectChunk = `${git.projectName}${gitBadge(git, settingBoolean("showDirtyMarker", true, ctx.cwd))} ${formatModelName(ctx)}`;
+	const provider = settingBoolean("statusline.showProvider", false, ctx.cwd) && ctx.model ? formatProviderName(ctx.model.provider) : "";
+	const projectChunk = `${git.projectName}${gitBadge(git, settingBoolean("showDirtyMarker", true, ctx.cwd))} ${provider ? `${provider} / ` : ""}${formatModelName(ctx)}`;
+	const workingPrefix = workingIndicator ? `${workingIndicator} ` : "";
 	const statusSeparator = " / ";
 	const thinkingLevel = normalizeThinkingLevel(pi.getThinkingLevel());
 	const thinkingChunk = thinkingLevel;
 	const contextChunk = ` ${contextLabel}`;
 	const account = accountLabel(ctx);
-	const accountSegment = account ? `${statusSeparator}${account}` : "";
 	const cavemanBridge = readCavemanBridge();
 	const cavemanVisible = !!cavemanBridge && (cavemanBridge.isStatusBadgeEnabled?.(ctx.cwd) ?? true);
 	const caveman = cavemanVisible ? cavemanBridge : undefined;
 	const cavemanActive = caveman?.isActive() ?? false;
 	const cavemanGlyph = caveman ? (cavemanActive ? CAVEMAN_ICON_ACTIVE : CAVEMAN_ICON_INACTIVE) : "";
 	const cavemanTone = cavemanIconTone(caveman?.getMode() ?? "off", cavemanActive);
-	const cavemanSegment = caveman ? `${statusSeparator}${cavemanGlyph}` : "";
 	const contextSeparator = caveman ? ` ${statusSeparator}` : "";
-	const leftPlain = `${projectChunk}${statusSeparator}${thinkingChunk}${cavemanSegment}${contextSeparator}${contextChunk.trimStart()}${accountSegment}`;
 	const percentPlain = percent === null ? `${glyphs(ctx.cwd).ellipsis}%` : `${percent}%`;
 	const subagentMarker = subagentStatuslineMarker(ctx.cwd);
 	const rightPlain = subagentMarker ? `${percentPlain} ${subagentMarker.plain}` : percentPlain;
@@ -234,9 +261,9 @@ export function renderStatusLine(width: number, ctx: ExtensionContext, git: GitS
 		: `${theme.fg("accent", projectChunk)}${separatorColored}${theme.fg(thinkingToken, thinkingChunk)}${theme.fg("accent", contextChunk)}${accountColored}`;
 	const right = subagentMarker ? `${theme.fg(percentColor, percentPlain)} ${subagentMarker.styled}` : theme.fg(percentColor, percentPlain);
 	const minimumGap = 1;
-	const gapWidth = Math.max(minimumGap, width - visibleWidth(leftPlain) - visibleWidth(rightPlain) - 2);
+	const gapWidth = Math.max(minimumGap, width - visibleWidth(workingPrefix + leftColored) - visibleWidth(rightPlain) - 2);
 	const filled = percent === null ? 0 : Math.round(gapWidth * (percent / 100));
 	const empty = Math.max(0, gapWidth - filled);
 	const bar = " ".repeat(empty) + theme.fg("warning", glyphs(ctx.cwd).line.repeat(filled));
-	return truncateToWidth(`${leftColored} ${bar} ${right}`, width, "");
+	return truncateToWidth(`${workingPrefix}${leftColored} ${bar} ${right}`, width, "");
 }

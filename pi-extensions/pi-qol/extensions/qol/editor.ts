@@ -101,7 +101,25 @@ function syncQolEditorStatus(
 	}
 }
 
-export class QolEditor extends CustomEditor {
+type WorkingStatusIndicator = Parameters<CustomEditor["setWorkingStatusIndicator"]>[0];
+
+// Pi owns the indicator's animation and lifetime. Opt into its embedded-status
+// delivery, but draw in the statusline widget rather than the editor border.
+class QolStatusEditor extends CustomEditor {
+	private statuslineIndicator: WorkingStatusIndicator;
+
+	override setWorkingStatusIndicator(indicator: WorkingStatusIndicator): void {
+		this.statuslineIndicator = indicator;
+	}
+
+	renderWorkingStatus(width: number): string {
+		const indicator = this.statuslineIndicator;
+		if (!indicator || !this.embedWorkingStatus) return "";
+		return indicator.kind === "working" ? indicator.renderSpinnerInBorder(width) : indicator.renderInBorder(width);
+	}
+}
+
+export class QolEditor extends QolStatusEditor {
 	private readonly statusCache: { last?: string } = {};
 	private readonly ctx: ExtensionContext;
 
@@ -111,7 +129,7 @@ export class QolEditor extends CustomEditor {
 		keybindings: KeybindingsManager,
 		ctx: ExtensionContext,
 	) {
-		super(tui, editorTheme, keybindings);
+		super(tui, editorTheme, keybindings, { embedWorkingStatus: settingBoolean("statusline.enabled", true, ctx.cwd) });
 		this.ctx = ctx;
 	}
 
@@ -130,7 +148,7 @@ function isEditorBorderLine(line: string): boolean {
 	return visible.length > 0 && /^[─━╭╮╰╯┌┐└┘]+$/.test(visible);
 }
 
-export class QolCompactPromptEditor extends CustomEditor {
+export class QolCompactPromptEditor extends QolStatusEditor {
 	private readonly statusCache: { last?: string } = {};
 	private readonly inputBottomPaddingLines: number;
 	private readonly ctx: ExtensionContext;
@@ -142,7 +160,7 @@ export class QolCompactPromptEditor extends CustomEditor {
 		inputBottomPaddingLines: number,
 		ctx: ExtensionContext,
 	) {
-		super(tui, editorTheme, keybindings, { paddingX: 0 });
+		super(tui, editorTheme, keybindings, { paddingX: 0, embedWorkingStatus: settingBoolean("statusline.enabled", true, ctx.cwd) });
 		this.inputBottomPaddingLines = inputBottomPaddingLines;
 		this.ctx = ctx;
 	}

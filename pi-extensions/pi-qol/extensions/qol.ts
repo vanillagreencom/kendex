@@ -121,6 +121,7 @@ export default function qol(pi: ExtensionAPI): void {
 	let autoRenameInProgress = false;
 	let autoRenameGeneration = 0;
 	let latestSystemPromptOptions: unknown;
+	let statusEditor: QolEditor | QolCompactPromptEditor | undefined;
 
 	const resetAutoRename = () => {
 		autoRenameAttempted = false;
@@ -217,15 +218,9 @@ export default function qol(pi: ExtensionAPI): void {
 		thinkingTimerStore.enabled = !!ctx?.hasUI && settingBoolean("thinkingTimer.enabled", true, ctx?.cwd);
 	};
 
-	// Working indicator mode.
-	// The built-in pi-tui Loader ticks every 80ms during streaming. Each tick
-	// mutates a line in statusContainer; once total rendered content exceeds the
-	// terminal viewport (overlay content like /tree, or chat overflow), every tick
-	// trips pi-tui's firstChanged < prevViewportTop branch and triggers a full
-	// screen + scrollback clear (visible flash). This setting lets the user trade
-	// the spinner animation away for a stable display in overflow scenarios.
-	// Implementation note: Loader.restartAnimation() bails out when frames.length
-	// is <= 1, so a single-frame indicator does NOT start the setInterval at all.
+	// Pi's Loader starts no animation timer for a single-frame indicator.
+	// Keep static mode available for terminals where frequent redraws flash,
+	// whether the indicator is embedded in QOL or in Pi's standalone row.
 	const applyWorkingIndicatorMode = (ctx: ExtensionContext): void => {
 		if (!ctx.hasUI) return;
 		const mode = settingString("workingIndicator.mode", "animated", ctx.cwd);
@@ -547,6 +542,7 @@ export default function qol(pi: ExtensionAPI): void {
 		ctx.ui.setHeader(undefined);
 		ctx.ui.setFooter(undefined);
 		activeTui = undefined;
+		statusEditor = undefined;
 	};
 
 	const maybeNotifyTaskCompletion = (_ctx: ExtensionContext, state: any) => {
@@ -615,9 +611,10 @@ export default function qol(pi: ExtensionAPI): void {
 			installSessionTitleSync(ctx);
 			ctx.ui.setEditorComponent((tui, theme, keybindings) => {
 				activeTui = tui;
-				return settingBoolean("compactPrompt", true, ctx.cwd)
+				statusEditor = settingBoolean("compactPrompt", true, ctx.cwd)
 					? new QolCompactPromptEditor(tui, theme, keybindings, Math.max(0, Math.floor(settingNumber("inputBottomPaddingLines", DEFAULT_INPUT_BOTTOM_PADDING_LINES, ctx.cwd))), ctx)
 					: new QolEditor(tui, theme, keybindings, ctx);
+				return statusEditor;
 			});
 			if (showStatusline || scheduleEnabled || rateLimitAutoResumeEnabled) {
 				const statusWidgetTimer = setTimeout(() => {
@@ -629,7 +626,7 @@ export default function qol(pi: ExtensionAPI): void {
 								const lines = rateLimitAutoResumeController.enabled(ctx) ? rateLimitAutoResumeController.renderPreviewLines(width) : [];
 								if (scheduleEnabled) lines.push(...scheduleController.renderPreviewLines(width));
 								if (budgetGuardStatus) lines.push(truncateToWidth(ansiGreen(`┃ ${budgetGuardStatus}`), width, ""));
-								if (showStatusline) lines.push(renderStatusLine(width, ctx, gitState ?? makeFallbackGitState(ctx.cwd), pi, theme));
+								if (showStatusline) lines.push(renderStatusLine(width, ctx, gitState ?? makeFallbackGitState(ctx.cwd), pi, theme, statusEditor?.renderWorkingStatus(width)));
 								return lines;
 							},
 						};

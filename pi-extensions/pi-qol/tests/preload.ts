@@ -17,7 +17,13 @@ mock.module("@earendil-works/pi-coding-agent", () => ({
 			super();
 		}
 	},
-	CustomEditor: class extends StubBase {},
+	CustomEditor: class extends StubBase {
+		readonly embedWorkingStatus: boolean;
+		constructor(_tui: unknown, _theme: unknown, _keybindings: unknown, options?: { embedWorkingStatus?: boolean }) {
+			super();
+			this.embedWorkingStatus = options?.embedWorkingStatus ?? false;
+		}
+	},
 	SessionManager: class extends StubBase {},
 	Theme: class extends StubBase {},
 	convertToLlm: (messages: unknown) => (Array.isArray(messages) ? messages : []),

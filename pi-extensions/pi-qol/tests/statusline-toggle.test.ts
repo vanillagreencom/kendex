@@ -175,6 +175,41 @@ for (const row of installationRows) {
 	});
 }
 
+for (const compact of [true, false]) {
+	for (const enabled of [true, false]) {
+		for (const mode of ["animated", "static"]) {
+			test(`working indicator routing: compact=${compact}, statusline=${enabled}, mode=${mode}`, () => {
+				const { fake, ctx } = world({ "compactPrompt": compact, "statusline.enabled": enabled, "workingIndicator.mode": mode });
+				install(fake, ctx);
+				const tui = { requestRender: mock(() => {}) };
+				const editor = ctx.ui.setEditorComponent.mock.calls.at(-1)?.[0]?.(tui, makeTheme(), {});
+				expect(editor.embedWorkingStatus).toBe(enabled);
+				expect(ctx.ui.setWorkingVisible.mock.calls.at(-1)).toEqual([true]);
+				expect(ctx.ui.setWorkingIndicator.mock.calls.at(-1)).toEqual([mode === "static" ? { frames: ["●"] } : undefined]);
+				const widgetFactory = ctx.ui.setWidget.mock.calls.find((call) => call[0] === "statusline")?.[1];
+				const widget = widgetFactory?.(tui, makeTheme());
+				const render = () => widget?.render(120).join("\n") ?? "";
+				// Pi delivers and clears its live indicator through this editor API;
+				// the extension must borrow it, not own another animation timer.
+				let frame = "◐";
+				editor.setWorkingStatusIndicator({ kind: "working", renderSpinnerInBorder: () => frame });
+				expect(render().includes(`◐ ${workdir.split("/").at(-1)}`)).toBe(enabled);
+				frame = "◓";
+				expect(render().includes("◓ ")).toBe(enabled);
+				editor.setWorkingStatusIndicator({ kind: "retry", renderInBorder: () => "Retrying in 2s" });
+				expect(render().includes("Retrying in 2s ")).toBe(enabled);
+				editor.setWorkingStatusIndicator(undefined);
+				expect(render()).not.toContain("Retrying");
+				expect(render()).not.toContain("◓");
+				fake.handlers.session_shutdown({ reason: "reload" }, ctx);
+				expect(ctx.ui.setEditorComponent.mock.calls.at(-1)).toEqual([undefined]);
+				expect(render()).not.toContain("◓");
+				activeWorld = undefined;
+			});
+		}
+	}
+}
+
 const titleRows = [
 	{
 		name: "session_info_changed refreshes the UI title",

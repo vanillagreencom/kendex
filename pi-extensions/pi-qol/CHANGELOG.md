@@ -2,6 +2,11 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Add an optional provider label before the model, using readable names such as `Copilot / GPT 6 Astra`.
+- Move the working spinner before the project name when the QOL statusline is enabled. Static mode remains available; retry and compaction messages follow the indicator into the statusline. Requires Pi 0.85.0 or newer.
+
 ### 2.1.1
 
 - The budget guard and the idle compaction trigger honour Pi's own `compaction.enabled`: while it is `false`, neither starts a compaction, so that one key turns off every automatic compaction in Pi. Before this, the budget guard still compacted at 85 percent of the window with Pi's compaction off. `/qol` now shows a `Budget guard` line, and both it and `Idle compaction` read "disabled by Pi compaction.enabled=false" when that key is the reason. With the key `true` or absent, both behave as before. A manual `/compact` is unaffected.
