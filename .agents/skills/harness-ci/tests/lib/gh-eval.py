@@ -2,7 +2,7 @@
 
 Shared by the suites that read a workflow and ask which of its jobs a context
 runs: this package's ci-template suite and kendex's own
-tools/tests/ci-class-job-set.test.sh. Sourced by path, never installed.
+tools/tests/ci-aggregate.test.sh. Sourced by path, never installed.
 
     gh-eval.py value CONTEXT_JSON EXPR   print the value EXPR evaluates to, as JSON
     gh-eval.py jobs CONTEXT_JSON         read JOB<TAB>NEEDS<TAB>EXPR lines on stdin,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Line readers for a GitHub Actions workflow file, shared by the suites that
 # ask which of a workflow's jobs run: this package's ci-template suite and
-# kendex's own tools/tests/ci-class-job-set.test.sh. gh-eval.py beside this
+# kendex's own tools/tests/ci-aggregate.test.sh. gh-eval.py beside this
 # file evaluates what they read.
 #
 # Sourced, never run. Each reader takes the workflow path and reads only the
