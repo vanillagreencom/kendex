@@ -127,27 +127,22 @@ The long pass's events, checked and reported in this order:
                              a reading that could not be taken leaves the
                              standing mark where it was and says so on stderr
   EVENT overseer-context-unmeasured <pane> gap=<reason>
-                             the overseer's context record, context.json in
+                             this overseer's context record, context.json in
                              the overseer mailbox, carries no reading: its
-                             turn-end hook read nothing and wrote the reason
-                             as the gap, a transcript-unowned reason
-                             (home-unnamed, binding-missing, session-mismatch,
-                             home-mismatch) or pane-unrecorded, a fleet record
-                             naming another pane. The context mark is judged
-                             at that turn end alone, so it is not being
-                             judged. Repair the record the gap names, with
-                             oversee register from the overseer's own pane,
-                             or run oversee-succeed by hand. Emitted every
-                             long pass the gap stands
+                             lane-mail-check turn-end hook read nothing and
+                             wrote why as the gap, a word that hook's
+                             description lists. Its context mark is judged at
+                             that turn end alone, so it is not being judged.
+                             The route per gap is references/oversee-events.md
+                             § Event kinds. Emitted every long pass it stands
   EVENT overseer-context-stale <pane> age=<seconds>
-                             the overseer's context record was written more
-                             than an hour ago while this session took a turn
-                             since, a StopFailure or Stop row after it or a
-                             screen read as a turn in flight, so its turn
-                             ends are recording nothing and its context mark
-                             is judged by nothing. Repair the turn-end hook or
-                             the record, or run oversee-succeed by hand.
-                             Emitted every long pass it stands
+                             this overseer's context record is more than an
+                             hour old and a turn end its hook dated with a
+                             Stop row came after it, so its turn ends record
+                             nothing and its context mark is judged by
+                             nothing; a session with no Stop row after the
+                             record gets no such judgement. Emitted every long
+                             pass it stands
   EVENT pr-watch rc=N        new review-gate attention; reducer output follows
   EVENT merged <PR> <branch> <repo>
                              an --item PR merged at or after --since, in any

@@ -134,22 +134,33 @@ run stop-failure-row "$WALL"
 assert_eq "$(last_row '.message')|$(last_row '.at | type')" "You've hit your limit · resets 9:50am|number" \
   "a StopFailure row keeps the harness's own message, and every row its time"
 
-# What writes nothing, silently: a subagent's failure, a Stop with no wall
-# standing, a checkout the fleet never made a mailbox directory in, a session
-# outside tmux, and a lane's own session.
+# What writes nothing, silently: a subagent's failure, a checkout the fleet
+# never made a mailbox directory in, a session outside tmux, and a lane's own
+# session.
 new_checkout subagent
 run stop-failure-row "$SUB_WALL"
 assert_eq "RC=$RC first=$(first_line) rows=$(row_count)" "RC=0 first=- rows=0" \
   "a subagent's failure is no row of the session's"
+# A Stop is written at every turn end, compact, its time, event, harness and
+# session alone, so the file takes one per turn; over a standing StopFailure it
+# is written whole, and lifts it.
 new_checkout stop_alone
 run session-start-row "$START"
 run session-start-row "$STOP"
-assert_eq "RC=$RC rows=$(row_count) last=$(last_row .event)" "RC=0 rows=1 last=SessionStart" \
-  "a Stop with no StopFailure standing writes nothing"
+assert_eq "RC=$RC rows=$(row_count) row=$(last_row '[keys[]] | join(",")')" "RC=0 rows=2 row=at,event,harness,session_id" \
+  "a Stop with no StopFailure standing writes a compact Stop row"
 run stop-failure-row "$WALL"
 run session-start-row "$STOP"
-assert_eq "RC=$RC rows=$(row_count) last=$(last_row .event)" "RC=0 rows=3 last=Stop" \
-  "a Stop over a StopFailure row lifts it"
+assert_eq "RC=$RC rows=$(row_count) last=$(last_row .event) path=$(last_row .transcript_path)" "RC=0 rows=4 last=Stop path=/t/5f0c.jsonl" \
+  "a Stop over a StopFailure row is written whole and lifts it"
+# A start many turns back is still the session's start: its readers look for
+# the last row of an event among the rows naming it, not in the last lines.
+for _ in $(seq 70); do run session-start-row "$STOP"; done
+start_found() { # LIBRARY
+  bash -c 'set -euo pipefail; . "$1"; session_rows_start "$2" && printf "%s\n" "$SR_MODEL"' _ "$1" "$ROWS" 2>/dev/null || echo none
+}
+assert_eq "$(start_found "$REPO_ROOT/skills/orch/scripts/lib/session-rows.sh")" "claude-fable-5-1" \
+  "a SessionStart seventy Stop rows back is still read"
 new_checkout no_fleet
 rm -rf -- "${CHECKOUT:?}/tmp"
 run session-start-row "$START"
@@ -235,18 +246,27 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   assert_eq "$(grep -c '^  FAIL  start$' <<<"$CONTROL_OUT")" "1" \
     "control: without the row arm's write the start row is not written"
 fi
-# The library's Stop rule removed from a copy of the orch scripts: a Stop with
-# no wall standing then lands as a row.
+# The library's compact Stop rule removed from a copy of the orch scripts: a
+# Stop with no wall standing then lands whole.
 new_checkout stop_control
 rm -f -- "$CHECKOUT/.agents/skills/orch/scripts"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
 LIB="$CHECKOUT/.agents/skills/orch/scripts/lib/session-rows.sh"
-STOP_RULE='= StopFailure ] || return 0'
+STOP_RULE='!= StopFailure ]; then'
 assert_eq "$(grep -c -F -- "$STOP_RULE" "$LIB")" "1" "control finds the Stop rule"
-sed -i.bak 's/= StopFailure \] || return 0/= StopFailure ] || :/' "$LIB"
+sed -i.bak 's/!= StopFailure \]; then/= Never ]; then/' "$LIB"
 assert_eq "$(grep -c -F -- "$STOP_RULE" "$LIB")" "0" "control removed it"
 run session-start-row "$STOP"
-assert_eq "rows=$(row_count)" "rows=1" "control: without the Stop rule a Stop with no wall standing is a row"
+assert_eq "path=$(last_row .transcript_path)" "path=/t/5f0c.jsonl" "control: without the compact Stop rule a turn's Stop lands whole"
+# The event list removed from the reader: a start seventy Stops back is lost.
+READ_RULE='    lines="$(grep -F -- "\"event\":\"$2\"" "$1")" || rc=$?'
+assert_eq "$(grep -c -F -- "$READ_RULE" "$LIB")" "1" "control finds the event list"
+READ_RULE="$READ_RULE" perl -i -pe 's/\Q$ENV{READ_RULE}\E/    lines="\$(cat -- "\$1")" || rc=\$?/' "$LIB"
+assert_eq "$(grep -c -F -- "$READ_RULE" "$LIB")" "0" "control removed the event list"
+new_checkout start_span_control
+run session-start-row "$START"
+for _ in $(seq 70); do run session-start-row "$STOP"; done
+assert_eq "$(start_found "$LIB")" "none" "control: a reader taking the last lines alone loses a start seventy Stops back"
 # The top-level gate removed from the same copy: a nested harness writes.
 mutate_lib() { # OLD NEW
   assert_eq "$(grep -c -F -- "$1" "$LIB")" "1" "control finds: $1"

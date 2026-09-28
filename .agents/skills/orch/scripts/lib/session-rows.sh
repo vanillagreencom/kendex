@@ -19,8 +19,9 @@
 # The writer is the lane-mail-check hook, run with the argument `row` by the
 # session-start-row, session-end-row and stop-failure-row hooks, and in its own
 # turn-end run for the overseer: SessionStart on every harness that fires it,
-# SessionEnd and StopFailure on Claude Code alone, and Stop only over a
-# standing StopFailure row, the one fact a turn end changes here. The readers
+# SessionEnd and StopFailure on Claude Code alone, and Stop at every overseer
+# turn end, which lifts a standing StopFailure row and dates the turn end
+# oversee-watch holds the overseer's context record against. The readers
 # are oversee-watch's overseer judgement, `oversee register` and
 # oversee-succeed's caller identity.
 #
@@ -53,9 +54,9 @@
 
 # Seconds an append waits for the file's lock before it gives up.
 SESSION_ROWS_WAIT=5
-# The rows a reader looks back over for a session's start: a session appends a
-# start, an end, and a failure and its clearing Stop per wall, so this is many
-# sessions' worth.
+# The rows a reader looks back over for the last row of an event: a session
+# appends a start, an end, a failure per wall and a Stop per turn, so the rows
+# are taken from those naming the event first and the span bounds that list.
 SESSION_ROWS_SPAN=64
 
 # session_rows_path BOX SERVER PANE — the rows file of the session in PANE on
@@ -75,16 +76,23 @@ session_rows_overseer_file() { # DIR SERVER PANE
 
 # session_rows_last FILE [EVENT] — the last row of FILE into SESSION_ROW, or
 # the last whose event is EVENT, looked for over the last SESSION_ROWS_SPAN
-# lines; empty where the file is missing or holds none. A line that is not
-# JSON is a fragment a killed writer left, which the next append closes, and
-# is passed over as the mailbox reader passes one. Exit 2 where the file is
-# there and could not be read.
+# lines, or over the last that many lines spelling EVENT the way jq -c writes
+# it, so a start many turns back is still found; empty where the file is
+# missing or holds none. A line that is not JSON is a fragment a killed writer
+# left, which the next append closes, and is passed over as the mailbox reader
+# passes one. Exit 2 where the file is there and could not be read.
 SESSION_ROW=""
 session_rows_last() { # FILE [EVENT]
-  local lines
+  local lines rc=0
   SESSION_ROW=""
   [ -e "$1" ] || return 0
-  lines="$(tail -n "$SESSION_ROWS_SPAN" -- "$1")" || return 2
+  if [ -n "${2:-}" ]; then
+    lines="$(grep -F -- "\"event\":\"$2\"" "$1")" || rc=$?
+    [ "$rc" -le 1 ] || return 2
+    lines="$(tail -n "$SESSION_ROWS_SPAN" <<<"$lines")" || return 2
+  else
+    lines="$(tail -n "$SESSION_ROWS_SPAN" -- "$1")" || return 2
+  fi
   SESSION_ROW="$(jq -cR --arg event "${2:-}" 'fromjson? | objects
     | select($event == "" or .event == $event)' <<<"$lines" | tail -n 1)" || return 2
 }
@@ -175,10 +183,10 @@ session_rows_top_level() { # PANE_PID
 #
 # Nothing is written, with exit 0, where that directory is not there, since no
 # fleet made it and no reader will look, for a session that is not its pane's
-# top-level harness (session_rows_top_level), for a subagent's payload, and for a
-# Stop payload unless the
-# file's last row is a StopFailure: a turn that ended is what lifts a wall,
-# and nothing else a turn end says is read. Exit 3 where the session sits on
+# top-level harness (session_rows_top_level), and for a subagent's payload. A
+# Stop row is compact, its event, time, harness and session alone, except over
+# a standing StopFailure, which it lifts and where it keeps the turn's last
+# message: the file takes one per turn. Exit 3 where the session sits on
 # no pane this can key, 1 where the payload names no event or jq could not
 # build the row, and mailbox_append_locked's own 2 and 3 for the write and the
 # lock. The cause is on stderr.
@@ -199,7 +207,13 @@ session_rows_write() { # DIR HARNESS [EVENT]
   [ -n "$event" ] || { printf 'the payload names no hook_event_name\n' >&2; return 1; }
   if [ "$event" = Stop ]; then
     session_rows_last "$file" || return 2
-    [ "$(jq -r '.event // ""' <<<"${SESSION_ROW:-null}")" = StopFailure ] || return 0
+    if [ "$(jq -r '.event // ""' <<<"${SESSION_ROW:-null}")" != StopFailure ]; then
+      row="$(jq -c --arg harness "$2" --argjson at "$(date +%s)" '
+        {at: $at, event: "Stop", harness: $harness}
+        + ({session_id} | with_entries(select(.value | type == "string" and . != "")))' <<<"$payload")" || return 1
+      printf '%s\n' "$row" | mailbox_append_locked "$file" "$SESSION_ROWS_WAIT"
+      return
+    fi
   fi
   account="$(lane_context_caller_cfg "$2")"
   row="$(jq -c --arg event "$event" --arg harness "$2" --arg account "$account" --argjson at "$(date +%s)" '

@@ -112,11 +112,13 @@ overseer_command_record() {
   # successor goes either way: the line this start records is the current
   # session's, as a start always replaced the pending line it met, so a
   # succession that died before its launch leaves nothing a later death would
-  # replay. A kept claude identity naming an account and no home takes the
-  # account as its home, the folder a claude session's home always is
-  # (ol_identity): the turn-end hook binds the overseer's transcript to that
-  # home and reads no context without one, and a record an earlier `oversee
-  # register` wrote carries the account alone.
+  # replay. A kept record naming an account, no home and no harness takes the
+  # account as its home: `oversee register` and `oversee launch` wrote that
+  # shape before they recorded a launch identity, and the turn-end hook binds
+  # the overseer's transcript to the home and reads no context without one.
+  # The account is a claude session's home (ol_identity), so a record naming
+  # claude takes it too; a codex home is its own directory and is never read
+  # off the account.
   detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
     update oversee --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" \
       --arg rows "$rows" "$OL_JQ_DEFS"'
@@ -124,7 +126,7 @@ overseer_command_record() {
         | if ol_names($server; $pane) then . else {} end)
         + {server: $server, pane: $pane, window: $window, launch_line: $line, session_rows: $rows})
         | del(.pending, .exit)
-        | if .harness == "claude" and (.account // "") != "" and (.home // "") == ""
+        | if (.harness // "claude") == "claude" and (.account // "") != "" and (.home // "") == ""
           then .home = .account else . end)' 2>&1)" \
     || overseer_record_notice "$detail" "$held" overseer-unrecorded "pane=$pane" "step=write"
   return 0
