@@ -524,8 +524,10 @@ pending_seen() { # [OVERSEE_BIN] — the pending line a --predecessor launch wri
   touch "$TMP_ROOT/idle"
   OVERSEE_BIN="${1:-}" run_oversee -- launch --predecessor "$PRED" --wait-secs 4 &
   pid=$!
-  # A real wait: the line lands while that launch waits for a first turn.
-  for _ in $(seq 1 60); do
+  # A real wait, bounded by the launch itself, which --wait-secs ends: the
+  # line lands while that launch waits for a first turn, however long its
+  # walk took to get there.
+  while kill -0 "$pid" 2>/dev/null; do
     seen="$(recorded pending.launch_line)"
     [[ "$seen" == none ]] || break
     sleep 0.1
