@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The world the lane-mail suites share: the temp root, the assertions, a lane
 # repository with the hook installed where kendex renders it, the payload
-# runner and the real `lane-mail` sender. lane-mail-check.test.sh and
+# runner, the real `lane-mail` sender, a peer repository sending into the
+# lane's overseer mailbox, and the tmux pane the fleet record names. lane-mail-check.test.sh and
 # lane-mail-check-copilot.test.sh source it after `set -euo pipefail`; each
 # counts into the PASS and FAIL set here and reports them itself.
 # shellcheck disable=SC2034
@@ -277,6 +278,63 @@ send() { # ITEM TEXT [--re MSGID]
   printf '%s\n' "$2" > "$TMP_ROOT/msg.txt"
   shift 2
   (cd "$LANE" && "$LANE_MAIL" send --item "$ITEM" --root "$LANE" "${@:---directive}" --file "$TMP_ROOT/msg.txt")
+}
+
+# --- the overseer's identity -----------------------------------------------
+# What establishes an overseer is the pane: `oversee-watch` records the
+# overseer's tmux server and pane in the fleet state, and a session whose own
+# pane key is that pair is that overseer. The tmux stub below is the one read
+# that asks — the server a pane belongs to, which the orch library pairs with
+# $TMUX_PANE.
+TMUX_BIN="$TMP_ROOT/tmux-bin"
+mkdir -p "$TMUX_BIN"
+cat > "$TMUX_BIN/tmux" <<'TMUXSTUB'
+#!/bin/sh
+# `display-message -p -t <pane> '#{pid}'` and nothing else: TMUX_SERVER_ID is
+# what this fixture's server answers, and no value at all is a pane tmux cannot
+# resolve, which is every session outside a live server.
+[ -n "${TMUX_SERVER_ID:-}" ] || { echo "can't find pane" >&2; exit 1; }
+printf '%s\n' "$TMUX_SERVER_ID"
+TMUXSTUB
+chmod +x "$TMUX_BIN/tmux"
+
+OVERSEER_PANE=%9
+OVERSEER_SERVER=7000
+
+# The launch home the fleet record's `.overseer.home` names for the overseer
+# session, which the transcript ownership gate holds the payload's transcript to.
+# OVERSEER_HOME_DIR by default, a claude config dir whose projects tree the
+# owned transcript below sits under; a row naming a codex home passes its own.
+OVERSEER_HOME_DIR="$TMP_ROOT/overseer-home"
+record_overseer() { # PANE SERVER [HOME]
+  local record home="${3:-$OVERSEER_HOME_DIR}"
+  record="$(jq -nc --arg s "$2" --arg p "$1" --arg h "$home" \
+    '{server: $s, pane: $p, window: "@7", home: $h, launch_line: "claude -n overseer"}')"
+  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" \
+    set oversee overseer "$record" >/dev/null)
+}
+
+# The environment a session inside the overseer's own pane carries.
+overseer_env() { # [PANE]
+  printf '%s\n' "PATH=$TMUX_BIN:$PATH" "TMUX=fake" "TMUX_PANE=${1:-$OVERSEER_PANE}" \
+    "TMUX_SERVER_ID=$OVERSEER_SERVER"
+}
+
+# `lane-mail peer send --repo` from another repository's checkout into the
+# overseer mailbox of the checkout LANE names; the reader notice the send
+# writes on stderr lands in peer.err.
+PEER_SENDER="$TMP_ROOT/peer-sender"
+mkdir -p "$PEER_SENDER"
+git -C "$PEER_SENDER" init -q
+git -C "$PEER_SENDER" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
+peer_send() { # TEXT
+  printf '%s\n' "$1" > "$TMP_ROOT/peer.txt"
+  (cd "$PEER_SENDER" && "$LANE_MAIL" peer send --repo "$LANE" --file "$TMP_ROOT/peer.txt" >/dev/null 2>"$TMP_ROOT/peer.err")
+}
+# The overseer mailbox's unread lines carrying TEXT, read without moving the
+# cursor: what the hook left for another reader.
+overseer_unread() { # TEXT
+  (cd "$LANE" && "$LANE_MAIL" inbox --item overseer --root "$LANE" --peek) | grep -cF -- "$1" || :
 }
 
 mutant() { # NAME SED-ARGUMENT... — MUTANT_SOURCE names a file other than the hook

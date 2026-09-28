@@ -50,3 +50,22 @@ tmux_session_present() {
   esac
   return 1
 }
+
+# tmux_pane_live SERVER PANE — whether the pane PANE on the tmux server whose
+# process id is SERVER still runs: the `<server pid> <pane id>` key the fleet
+# record names its overseer by, since a pane id alone repeats on every server.
+# Returns 0 where the server this process reaches is SERVER and lists PANE, 1
+# where no process SERVER runs or that server lists no PANE, and 2 where
+# SERVER runs and is not the server this process reaches, or the pane list
+# could not be read: nothing here can judge a pane on a server it cannot ask.
+tmux_pane_live() { # SERVER PANE
+  local panes nl='
+'
+  kill -0 "$1" 2>/dev/null || return 1
+  panes="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>/dev/null)" || return 2
+  case "$nl$panes$nl" in
+    *"$nl$1 $2$nl"*) return 0 ;;
+  esac
+  [ "${panes%% *}" = "$1" ] || return 2
+  return 1
+}

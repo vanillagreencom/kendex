@@ -452,6 +452,46 @@ assert_eq "RC=$RC keyed=$(cop_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keye
   "a Copilot transcript is never read for a figure, so a usage line past the mark does not hold the turn end"
 : > "$COP_TRANSCRIPT"
 
+# --- the checkout's overseer mailbox --------------------------------------
+# The overseer mailbox has one reader, the session the checkout's fleet record
+# names by tmux server and pane. A second Copilot session in the checkout, in
+# another pane of the same server, is handed nothing at its session start, its
+# prompt, after a tool call or at its turn end; the named session is handed
+# the note once. The named session's turn end is lane-mail-check.test.sh's:
+# it is the overseer's, whose marks a judge rules on.
+new_copilot_named() { # NAME [JUDGE]
+  new_copilot_lane "$1" main "${2:-$HOOK}"
+  unmark_lanes
+  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
+  record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
+}
+# shellcheck disable=SC2207
+COP_OTHER_ENV=($(overseer_env %3))
+# shellcheck disable=SC2207
+COP_NAMED_ENV=($(overseer_env))
+new_copilot_named copilot_overseer
+peer_send 'For the named session.'
+CALL_ENV=("${COP_OTHER_ENV[@]}")
+for arm in start prompt deliver stop; do
+  case "$arm" in
+    start | prompt) copilot_context "$arm" ;;
+    deliver) copilot_tool deliver ;;
+    stop) copilot_stop "$COP_TRANSCRIPT" ;;
+  esac
+  assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") stderr=$(first_line)" "RC=0 stdout= stderr=-" \
+    "$arm: a second Copilot session in another pane is handed nothing from the overseer mailbox"
+done
+CALL_ENV=()
+assert_eq "$(overseer_unread 'For the named session.')" "1" "and the note stays unread for the named session"
+CALL_ENV=("${COP_NAMED_ENV[@]}")
+copilot_context start
+assert_eq "RC=$RC context=$(stdout_field '.additionalContext' | head -n 1) carried=$(stdout_field '.additionalContext' | grep -cF 'For the named session.')" \
+  "RC=0 context=lane-mail-check: unread=1 carried=1" "the named Copilot session is handed the note at its session start"
+copilot_context prompt
+CALL_ENV=()
+assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") unread=$(overseer_unread 'For the named session.')" "RC=0 stdout= unread=0" \
+  "and marks it read, so its next prompt is handed nothing"
+
 # --- a Copilot call reaching the Claude copy ------------------------------
 # Copilot runs a Claude copy registered in `.claude/settings.json` by hand or
 # by kendex before the Copilot skip, where no refresh has rewritten it,
@@ -535,6 +575,18 @@ CASE_HOOK="$LANE/.github/hooks/lane-mail-check.sh"
 expect 2 "lane-mail-check: unread=1" "a Claude turn end through the same copy is refused as before"
 
 # --- copilot controls ----------------------------------------------------
+# With the record test gone, every lead session in a checkout no live watch
+# holds is handed the overseer mailbox.
+mutant any-lead-reads -e '/^mail_check() {/,/^}/ { /^    overseer_identified || return 0$/d; }'
+new_copilot_named control_copilot_other "$MUTANT_PATH"
+peer_send 'Taken by another pane.'
+CALL_ENV=("${COP_OTHER_ENV[@]}")
+copilot_context prompt
+# shellcheck disable=SC2034 # run_payload in lib/lane-mail-world.sh reads it
+CALL_ENV=()
+assert_eq "RC=$RC context=$(stdout_field '.additionalContext' | head -n 1)" "RC=0 context=lane-mail-check: unread=1" \
+  "control: without the record test a second Copilot session is handed the named session's note at its prompt"
+
 # The caller rule removed: a subagent's stop then consumes the lead's mail.
 mutant copilot-any-caller -e 's@^          CALLER=subagent$@          :@'
 new_copilot_lane control_cop_caller ken-211 "$MUTANT_PATH"

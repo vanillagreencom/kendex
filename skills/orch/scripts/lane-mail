@@ -176,7 +176,16 @@ Peer side, one other repository's overseer mailbox per call:
               append to REPO's overseer to-lane.jsonl the answer to MSGID, or
               a directive that answers no ask; prints the same receipt `send`
               prints, whose item is the `overseer` mailbox it wrote and never
-              the repository that holds it
+              the repository that holds it. That mailbox has one reader, the
+              session REPO's fleet record names by tmux server and pane, the
+              pair `oversee launch`, an `oversee-watch` start and `oversee
+              register` write. Where the record names none, or a pane that no
+              longer runs, stderr opens `lane-mail: no-reader=<REPO root>
+              cause=unnamed|pane-gone` with a `fix=` line naming `oversee
+              register`; where that cannot be judged from here,
+              `lane-mail: reader-unjudged=<REPO root>
+              cause=hosted|state|server`. Either is a notice after the
+              receipt, at exit 0: the note landed
 
 Options:
   --item ITEM   one path segment of ASCII letters, digits, `.`, `_` and `-`,
@@ -362,6 +371,9 @@ lm_message() { # KEY VALUE
     repo-unresolved) text='The peer repository is not a checkout on this disk. Pass the path of one, or a bare name of a checkout beside this one.' ;;
     repo-self) text='A peer is another repository, and that value resolves to this one. Both sides of an exchange would land in one mailbox, where this repository is reported as its own peer. To write a note to this overseer, use `send --item overseer`.' ;;
     lane-foreign) text='That mailbox belongs to another repository. A send reaches only this repository: its lanes, and its own overseer mailbox. Reach a peer overseer with `lane-mail peer`.' ;;
+    no-reader) text='The note landed, and no session reads that checkout'\''s overseer mailbox: its fleet record names no tmux pane (cause=unnamed), or names one that no longer runs (cause=pane-gone). The lane-mail hooks hand that mailbox only to the session the record names, so the note waits unread until one is named.
+fix=run `oversee register` from the orch skill in the session that should read that checkout'\''s mail, or start its fleet with `oversee launch`' ;;
+    reader-unjudged) text='The note landed, and whether a session reads that checkout'\''s overseer mailbox is unknown: a hosted peer keeps its fleet record and tmux server on its own host (cause=hosted), the record could not be read (cause=state, its reader'\''s words below), or the pane it names is on a tmux server this shell does not reach (cause=server).' ;;
     mailbox-unsafe) text='A mailbox directory, file, cursor or lock is a symlink or not the kind of file it names, so nothing is read or written through it. Remove it; the next write recreates it.' ;;
     item-case-variant) text='A mailbox for this item already exists under another spelling of the same name, so a lane and an overseer would read separate folders on a case-sensitive disk. Use that spelling, or drain it and remove it.' ;;
     cursor-invalid) text='The cursor file does not hold a line count. Remove it to restart the lane read.' ;;
@@ -562,6 +574,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$SCRIPT_DIR/lib/mailbox-append.sh"
 # shellcheck source=lib/lane-host-slots.sh
 . "$SCRIPT_DIR/lib/lane-host-slots.sh"
+# shellcheck source=lib/tmux-server.sh
+. "$SCRIPT_DIR/lib/tmux-server.sh"
 
 # The template names TMPDIR outright, as lib/review-artifact-gates.sh does: a
 # bare `mktemp` reads it only on GNU, and BSD mktemp, the one macOS ships,
@@ -943,6 +957,65 @@ lm_monitor() {
 # monitor stands on the mailbox.
 lm_sent() {
   printf 'lane-mail: sent item=%s id=%s bytes=%s monitor=%s\n' "$ITEM" "$SENT_ID" "$SENT_BYTES" "$SENT_MONITOR"
+}
+
+# Whether the peer checkout's overseer mailbox has a reader, said on stderr
+# once a `peer send` has landed and printed its receipt, so it never refuses.
+# The reader is the one session the checkout's fleet record names under
+# `.overseer` by tmux server and pane: the lane-mail-check hooks hand the
+# mailbox to that session alone, and a live watch there reads it itself. No
+# record, or one naming no server pid and `%N` pane, names nobody, and a pane
+# that no longer runs reads nothing. The record is read by `workflow-state`
+# run at the peer's root, so the peer's own settings place it. A hosted
+# peer's record and tmux server sit on its own host, out of this shell's
+# reach.
+lm_peer_reader() {
+  local path record server pane rc=0
+  if [ "$HOST" -eq 1 ]; then
+    lm_notice reader-unjudged "$ROOT" cause=hosted
+    return 0
+  fi
+  # No state file is no record, and so is an empty one: the pair test below
+  # names nobody for either.
+  path="$(cd -- "$ROOT" 2>"$WORK_DIR/reader.err" && "$SCRIPT_DIR/workflow-state" path oversee 2>"$WORK_DIR/reader.err")" || rc=$?
+  [ -n "$path" ] || [ "$rc" -ne 0 ] || rc=1
+  record=""
+  [ "$rc" -ne 0 ] || [ ! -e "$path" ] || record="$(cd -- "$ROOT" 2>"$WORK_DIR/reader.err" && "$SCRIPT_DIR/workflow-state" get oversee \
+    '(.overseer.server // "" | tostring) + " " + (.overseer.pane // "" | tostring)' 2>"$WORK_DIR/reader.err")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    lm_notice reader-unjudged "$ROOT" cause=state "$(cat -- "$WORK_DIR/reader.err")"
+    return 0
+  fi
+  server="${record%% *}"
+  pane="${record#* }"
+  case "$server" in
+    '' | *[!0-9]*) server="" ;;
+  esac
+  case "$pane" in
+    % | %*[!0-9]*) pane="" ;;
+    %*) ;;
+    *) pane="" ;;
+  esac
+  if [ -z "$server" ] || [ -z "$pane" ]; then
+    lm_notice no-reader "$ROOT" cause=unnamed
+    return 0
+  fi
+  tmux_pane_live "$server" "$pane" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) lm_notice no-reader "$ROOT" cause=pane-gone ;;
+    *) lm_notice reader-unjudged "$ROOT" cause=server ;;
+  esac
+  return 0
+}
+
+# A notice on stderr that ends nothing: the keyed line closed by FIELD, the
+# English, then the words of the command that could not answer, where any.
+lm_notice() { # KEY VALUE FIELD [CAUSE]
+  REFUSE_EXTRA="$3"
+  lm_message "$1" "$2" >&2
+  REFUSE_EXTRA=""
+  [ -z "${4:-}" ] || printf '%s\n' "$4" >&2
 }
 
 # The `at` stamp as epoch seconds, null where it does not parse: the one
@@ -1353,6 +1426,7 @@ case "$VERB" in
     fi
     if [ "$PEER_VERB" = send ]; then
       lm_sent
+      lm_peer_reader
     fi
     # The caller's own record follows the delivery. Both files are append-only
     # and nothing removes a line, so a record written before a delivery that

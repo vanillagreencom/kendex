@@ -31,7 +31,7 @@ The [oversee.md § 5](../workflows/oversee.md#5-stop) handoff names the mechanis
 
 ## Single passes
 
-Run the oversee.md § 4 command without `--repeat`, as the harness's background command: no detach, no `[RUN_DIR]`, no follow, no process read. Its exit is the wake. Handle every line it printed, then start the next pass, with `--skip-lane [WINDOW]` per window reported `window-gone` until tmux lists it again. An exit the § 4 stop rules name ends the passes. Nothing reports `overseer-dead`, since no watch outlives the session. At § 5 Stop, start no further pass and stop a running one through the harness's own background-task control. The handoff's Watch row reads `single passes` alone, and a successor starts its own passes.
+Run the oversee.md § 4 command without `--repeat`, as the harness's background command: no detach, no `[RUN_DIR]`, no follow, no process read. Its exit is the wake. No watch record stands between passes, so the lane-mail hooks hand the overseer mailbox to the session the fleet record names, this overseer and no other session in the checkout ([peer-mail.md § Who reads a note](peer-mail.md#who-reads-a-note)), and a pass does not report a note the hooks already handed over. Handle every line it printed, then start the next pass, with `--skip-lane [WINDOW]` per window reported `window-gone` until tmux lists it again. An exit the § 4 stop rules name ends the passes. Nothing reports `overseer-dead`, since no watch outlives the session. At § 5 Stop, start no further pass and stop a running one through the harness's own background-task control. The handoff's Watch row reads `single passes` alone, and a successor starts its own passes.
 
 ## Lane mailbox monitor
 

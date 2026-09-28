@@ -379,9 +379,9 @@ start's `lane-mail inbox --item overseer` moves too, acknowledged only once
 its notes are printed, whatever state directory, --since or checkout this
 watch runs with. A session start's read between the peek and the
 acknowledgement reports a note twice. The lane-mail hooks move it too, for
-a lead session in the checkout while no repeat watch holds the fleet state:
-with single passes, every lead session there, the overseer included. A line
-they take is not reported here.
+the session the fleet record names while no repeat watch holds the fleet
+state: with single passes, the overseer itself. A line they take is not
+reported here.
 Before every mail pass the overseer's session is read once, as the long pass
 reads it; while it reads exited, or walled, no mailbox is read, so a
 successor finds what was sent in the meantime. A rows wall stands unless its
