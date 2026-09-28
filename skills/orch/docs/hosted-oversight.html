@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- Covers: skills/orch/workflows/oversee.md skills/orch/references/oversee-events.md skills/orch/references/lane-directive.md skills/orch/references/lane-reach.md skills/orch/references/peer-mail.md skills/orch/scripts/lane-mail skills/orch/scripts/lanes skills/orch/scripts/oversee-watch skills/orch/scripts/oversee-succeed skills/orch/schemas/lane-host.md -->
+<!-- Covers: skills/orch/workflows/oversee.md skills/orch/references/oversee-events.md skills/orch/references/oversee-lanes.md skills/orch/references/lane-directive.md skills/orch/references/lane-reach.md skills/orch/references/peer-mail.md skills/orch/scripts/lane-mail skills/orch/scripts/lanes skills/orch/scripts/oversee-watch skills/orch/scripts/oversee-succeed skills/orch/schemas/lane-host.md -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -20,7 +20,7 @@
 <li>A <abbr title="One work item: a tmux window, a git worktree and one agent CLI session.">lane</abbr> talks to its overseer through a mailbox, two files under its worktree. Nothing else carries the lane's words out; the overseer also reads the lane's pane, and pastes into it only when mail cannot reach the lane.</li>
 <li>On a hosted fleet the lane's worktree and CLI live in a <abbr title="A Daytona machine created for one work item and closed when the item is done.">sandbox</abbr>. The overseer's window on the <abbr title="The one persistent machine that runs every overseer and their tmux sessions.">control VM</abbr> is an SSH shell into it, so the pane reads the same as a local lane.</li>
 <li>Every read of a hosted file goes through one <abbr title="lane-host: the script that resolves a provider and passes it the create, wait, cat, put, append, touch, stop, stop-sandbox, start, close, list and accounts verbs.">provider</abbr> verb. The overseer never reads a lane's transcript.</li>
-<li>A hosted lane whose pull request is armed or queued with the gate met is parked: its harness stops, its sandbox stops with its disk kept, and the watch closes it the pass its pull request merges (oversee.md § Parking a merge wait).</li>
+<li>A hosted lane whose pull request is armed or queued with the gate met is parked: its harness stops, its sandbox stops with its disk kept, and the watch closes it the pass its pull request merges (oversee-lanes.md § Parking a merge wait).</li>
 <li>A lane hands off when the shared context rule requires it, and the item continues in a fresh session. The overseer succeeds itself the same way.</li>
 </ul>
 

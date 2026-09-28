@@ -106,7 +106,7 @@ ot_message() { # REASON FIELD=VALUE...
     worktree-failed) text='The worktree helper failed to create this item.' ;;
     worktree-reuse-merged) text='The item pull request merged, so its tree is kept as it stands and no rebase is attempted.' ;;
     worktree-links-failed) text='The kept tree has configured symlinks the repair could not restore, so the lane could not reach its own .agents scripts. The item was not launched.' ;;
-    resume-lineless) text='The hosted codex resume carries no continuation line, because codex resume refuses a prompt beside --last. The lane is up and idle: paste its continuation line into the pane per oversee.md section Talking to a lane, Pane paste.' ;;
+    resume-lineless) text='The hosted codex resume carries no continuation line, because codex resume refuses a prompt beside --last. The lane is up and idle: paste its continuation line into the pane per oversee-lanes.md section Talking to a lane, Pane paste.' ;;
     host-resolve-failed) text='The lane-host helper could not resolve the host.' ;;
     host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex or pi. Nothing was created.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
@@ -296,7 +296,7 @@ Options:
                     positional beside --last is the session id. A hosted codex
                     lane therefore resumes with no line, reported as
                     resume-lineless; paste its line into the pane per
-                    oversee.md § Talking to a lane, Pane paste.
+                    oversee-lanes.md § Talking to a lane, Pane paste.
                     WHICH CREDENTIAL RUNS THE LANE: the copy the provider
                     installed on the host. `create` receives the lane's config
                     dir as --account on every call, a relaunch included, and
