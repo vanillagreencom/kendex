@@ -378,7 +378,7 @@ expect 2 "lane-mail-check: context=600000" "a transcript path holding a space is
 ADAPTER_ROWS='.claude/hooks|claude|399999||GAP|claude 399999 1000000
 .claude/hooks|claude|400000||context=400000|claude 400000 1000000
 .claude/hooks|claude|500000||context=500000|claude 500000 1000000
-.claude/hooks|sonnet|399999||window-unread=claude-sonnet-5|claude 399999 null
+.claude/hooks|sonnet|399999||window-unread=claude-sonnet-4-6|claude 399999 null
 .claude/hooks|sonnet|400000||context=400000|claude 400000 null
 .codex/hooks|codex|232560||GAP|codex 232560 258400
 .codex/hooks|codex|232561||context=232561|codex 232561 258400

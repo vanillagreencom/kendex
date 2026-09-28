@@ -187,8 +187,8 @@ stop_at() { # TRANSCRIPT ACTIVE [ENV=VAL...]
 #
 #   claude  Claude Code's own line: input_tokens beside its two cache counts
 #           and output_tokens, on a model whose tier runs a 1M window.
-#   sonnet  the same line on a model whose window the claude adapter leaves
-#           unnamed.
+#   sonnet  the same line on claude-sonnet-4-6, a model whose window the claude
+#           adapter leaves unnamed.
 #   pi      Pi's session entry, `appendMessage` in @earendil-works/pi-coding-agent,
 #           carrying the `Usage` of @earendil-works/pi-ai: input, output,
 #           cacheRead, cacheWrite, totalTokens and cost, none of them spelled
@@ -202,7 +202,7 @@ stop_at() { # TRANSCRIPT ACTIVE [ENV=VAL...]
 usage_line() { # SPELLING TOKENS
   case "$1" in
     claude | sonnet)
-      jq -nc --argjson t "$2" --arg m "$([ "$1" = claude ] && echo claude-opus-5-5 || echo claude-sonnet-5)" \
+      jq -nc --argjson t "$2" --arg m "$([ "$1" = claude ] && echo claude-opus-5-5 || echo claude-sonnet-4-6)" \
         '{type:"assistant",message:{model:$m,usage:{input_tokens:1,cache_read_input_tokens:($t - 8),cache_creation_input_tokens:0,output_tokens:7}}}'
       ;;
     codex)
