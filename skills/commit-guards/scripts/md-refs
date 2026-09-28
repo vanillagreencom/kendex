@@ -283,7 +283,10 @@ source_file() { # PATH BLOBFILE
   fi
   [ "$fam" != hash-toml ] || want=strings
   if ! gg_comment_text "$fam" "$blob" "$f" "$want" >"$GG_TMP/text"; then
-    gg_message extraction "$f:$GG_COMMENT_ERROR" "The comment extractor failed: $GG_COMMENT_ERROR_DETAIL"
+    gg_message extraction "$f:$GG_COMMENT_ERROR" "$GG_COMMENT_ERROR_DETAIL
+The reader could not separate this file's comment text from its code, so
+no citation in it was judged and the citation is not the cause. Leave the
+citation as written and change the construct named above."
     gg_note_skip "$f" extraction "The comment text could not be extracted."
     SRC_EXTRACT_ERRORS=$((SRC_EXTRACT_ERRORS + 1))
     return 1

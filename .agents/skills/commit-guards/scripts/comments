@@ -219,7 +219,7 @@ family_or_skip() { # PATH BLOBFILE — sets FAM; returns 1 when the path is name
 judge_blob() { # FAMILY PATH BLOBFILE ALLOW
   local fam="$1" f="$2" blob="$3" allow="$4" rec ln shape text
   if ! gg_comment_text "$fam" "$blob" "$f" >"$GG_TMP/text"; then
-    gg_message extraction "$f:$GG_COMMENT_ERROR" "The comment extractor failed: $GG_COMMENT_ERROR_DETAIL"
+    gg_message extraction "$f:$GG_COMMENT_ERROR" "$GG_COMMENT_ERROR_DETAIL"
     gg_note_skip "$f" extraction "The comment text could not be extracted."
     GG_COMMENT_EXTRACT_ERRORS=$((GG_COMMENT_EXTRACT_ERRORS + 1))
     MATCHED=$((MATCHED - 1))

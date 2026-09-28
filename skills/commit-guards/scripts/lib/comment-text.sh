@@ -72,6 +72,34 @@ gg_comment_family() { # PATH BLOBFILE — family token on stdout, empty when non
   esac
 }
 
+# What a lane prints under its extraction refusal: the reader's own
+# `comment-reader:KIND line=N` cause, then which construct it could not
+# follow, so an author edits the quote or the opener and not the comment.
+gg_comment_error_detail() { # REASON STATUS — sets GG_COMMENT_ERROR_DETAIL
+  local reason="$1" kind rest line word
+  kind="${reason%%:*}"
+  rest="${reason#*:}"
+  line="${rest%%:*}"
+  word="${rest#*:}"
+  case "$kind" in
+    unclosed-string) GG_COMMENT_ERROR_DETAIL="comment-reader:$kind line=$line
+The comment reader found no close for the quote it read as opening on line $line,
+so it cannot tell comment text from string text after it. Either the file
+leaves that string open, or the quoting is a shape the reader does not model:
+CHECKS.md § comments lists both." ;;
+    unclosed-block) GG_COMMENT_ERROR_DETAIL="comment-reader:$kind line=$line
+The block comment opened on line $line never closes." ;;
+    unclosed-heredoc) GG_COMMENT_ERROR_DETAIL="comment-reader:$kind line=$line
+The heredoc opened on line $line never reaches its terminator line: $word" ;;
+    unclosed-substitution) GG_COMMENT_ERROR_DETAIL="comment-reader:$kind line=$line
+The quoted command substitution opened on line $line never closes." ;;
+    unknown-family) GG_COMMENT_ERROR_DETAIL="comment-reader:$reason
+The comment reader has no grammar for this family." ;;
+    *) GG_COMMENT_ERROR_DETAIL="comment-reader:awk-exit status=$2
+The comment reader exited with status $2.${reason:+ $reason}" ;;
+  esac
+}
+
 # comments and md-refs parse stdout as line<TAB>text. An extraction refusal
 # uses stderr enum:line[:terminator], retained in GG_COMMENT_ERROR.
 # The comment text of one file under one grammar, as "line<TAB>text"
@@ -184,7 +212,10 @@ gg_comment_text() { # FAMILY FILE PATH [WANT] — records on stdout
         i = n + 1; break
       }
       if (shell && subn > 0 && c == "(") { subdepth[subn]++; i++; continue }
-      if (shell && subn > 0 && c == "\\") { i += 2; continue }
+      # Outside a string a shell backslash quotes the next character, so an
+      # escaped quote between two closed strings, or in a case pattern or a
+      # `[[ =~ ]]` regex, opens nothing.
+      if (shell && c == "\\") { i += 2; continue }
       if (shell && subn > 0 && c == ")") {
         subdepth[subn]--
         if (subdepth[subn] == 0) {
@@ -282,11 +313,11 @@ gg_comment_text() { # FAMILY FILE PATH [WANT] — records on stdout
     # not-a-path: the extractor diagnostic is text, not a file name.
     reason="$(cat -- "$GG_TMP/extract.err")" \
       || gg_fail diagnostic-read "$GG_TMP/extract.err" "Could not read extractor diagnostics."
-    GG_COMMENT_ERROR_DETAIL="${reason:-The extractor exited with status $status.}"
     case "$reason" in
       unclosed-* | unknown-family:*) GG_COMMENT_ERROR="$reason" ;;
       *) GG_COMMENT_ERROR="awk-exit:$status" ;;
     esac
+    gg_comment_error_detail "$reason" "$status"
     return "$status"
   fi
 }

@@ -173,7 +173,7 @@ Comment text is extracted per family, by extension or, for a path with none, by 
 |---|---|---|---|
 | C | `rs` `go` `c` `h` `cc` `cpp` `hpp` `java` `kt` `kts` `swift` `wgsl` `js` `mjs` `cjs` `jsx` `ts` `tsx` `scss` `less` | `//` `///` `//!` to end of line; `/* */` across lines | `"…"` and `'…'` with backslash escapes; a backtick template literal across lines (`go`, `js`, `ts` and their variants); Rust `r"…"`, `r#"…"#`, a string spanning lines, a char literal, and a lifetime quote that opens nothing |
 | CSS | `css` | `/* */` only | `"…"` `'…'` |
-| Hash | `sh` `bash` `zsh` `py` `rb` `toml` `yml` `yaml` `mk` `Makefile` `Dockerfile`; no extension with a `#!` naming an interpreter ending in `sh`, or python or ruby (`node`, `deno`, `bun` take the C family) | `#` at the start of a word (line start or after whitespace) to end of line; line 1 `#!` is not a comment | `"…"` with escapes; `'…'` without escapes in shell, TOML and YAML, with escapes in Python and Ruby; shell `$'…'` with escapes; a shell string across lines; quotes, comments and heredocs inside a double-quoted `$(…)`; Python and TOML triple quotes across lines; a shell heredoc body (`<<WORD`, `<<-WORD`; the word runs to a blank or one of `;|&<>`, its quotes stripped; `<<` inside `((…))` is a shift) up to its terminator line |
+| Hash | `sh` `bash` `zsh` `py` `rb` `toml` `yml` `yaml` `mk` `Makefile` `Dockerfile`; no extension with a `#!` naming an interpreter ending in `sh`, or python or ruby (`node`, `deno`, `bun` take the C family) | `#` at the start of a word (line start or after whitespace) to end of line; line 1 `#!` is not a comment | `"…"` with escapes; `'…'` without escapes in shell, TOML and YAML, with escapes in Python and Ruby; shell `$'…'` with escapes; a shell backslash outside a string quoting the next character, so the escaped quote in `'it'\''s'`, a `\'` case pattern or a `\"` in a `[[ =~ ]]` regex opens nothing; a shell string across lines; quotes, comments and heredocs inside a double-quoted `$(…)`; Python and TOML triple quotes across lines; a shell heredoc body (`<<WORD`, `<<-WORD`; the word runs to a blank or one of `;|&<>`, its quotes stripped; `<<` inside `((…))` is a shift) up to its terminator line |
 | Dash | `sql` `lua` | `--` to end of line; SQL `/* */` and Lua `--[[ ]]` across lines | `"…"` `'…'` with escapes |
 | Markup | `html` `htm` `xml` `svg` `vue` `svelte` | `<!-- -->` across lines | none |
 
@@ -182,10 +182,11 @@ The scanner is a character walk, not a parser. Its limits, each pinned by a cont
 - A `//` inside a JavaScript regex literal, a `#` glued to a Python or TOML value (`x = 1#c`), and a `--` inside a Lua long string `[[…]]` are read by the rules above, not the language's.
 - A JavaScript template literal is one string to its closing backtick; a nested template inside `${…}` is not tracked.
 - A Rust nested block comment closes at the first `*/`; a Lua `--[==[` level is not tracked.
+- A `)` ending an unparenthesised `case` pattern inside a double-quoted `$(…)` closes the substitution, so a comment after that pattern is read as string text; a `(a)` pattern is tracked.
 - A shell line opening two heredocs honours the first; a Ruby heredoc, a YAML block scalar (`key: |`) and a Makefile recipe's shell are read as code, so a `#` inside them is a comment.
 - A Vue or Svelte file is judged for `<!-- -->` only; the `//` inside its script block is not read.
 - A C or JavaScript string ends at its line (a trailing backslash continuation is not tracked); a Rust string does not.
-- A file that ends inside a block comment, a heredoc body or a string spanning lines is unmeasured and names the opener's line. The remaining files are scanned before the lane exits 2. A JavaScript regex literal holding an odd number of backticks or quotes leaves the file in that state.
+- A file that ends inside a block comment, a heredoc body or a string spanning lines is unmeasured, and the refusal names the reader as the cause, `comment-reader:unclosed-string line=N` for a quote, with the opener's line. The remaining files are scanned before the lane exits 2. A JavaScript regex literal holding an odd number of backticks or quotes leaves the file in that state.
 
 ## commit-msg
 
