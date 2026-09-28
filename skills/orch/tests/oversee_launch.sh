@@ -543,18 +543,36 @@ mutate_file "$PENDCTL/lib/overseer-launch.sh" \
   '  if [[ "$pending" == pending ]] && ! ol_record_pending "$line" "$identity"; then' '  if false; then'
 pending_seen "$PENDCTL/oversee"
 assert_eq "$PENDING_SEEN" "none" "control: a succession that skips the pending write leaves none to read"
-# A pending write the state refuses is a notice: the succession goes on.
-PENDFAIL="$(mutant_scripts pendfail workflow-state)" || exit 1
-cat > "$PENDFAIL/workflow-state" <<STUB
+# A pending write the state refuses stops the succession before anything
+# opens: the predecessor keeps running and stays the recorded overseer.
+pendfail_stub() { # SCRIPTS_DIR — a workflow-state there that refuses the pending write
+  rm -f -- "${1:?}/workflow-state"
+  cat > "$1/workflow-state" <<STUB
 #!/usr/bin/env bash
 [[ "\$1 \$2 \$3" != "set oversee overseer.pending" ]] || { echo 'fixture: pending write refused' >&2; exit 1; }
 exec "$SRC_DIR/workflow-state" "\$@"
 STUB
-PRED_GEN="$(recorded generation)"
-OVERSEE_BIN="$PENDFAIL/oversee" run_oversee -- launch --predecessor "$PRED" --wait-secs 20
-assert_eq "$RC|$(keyed line-unrecorded "$OUT" | sed -n 1p)|$(overseers)|$(listed "$PRED")|$(recorded generation)" \
-  "0|oversee: line-unrecorded field=overseer.pending|1|0|$((PRED_GEN + 1))" \
-  "a pending write the state refuses is a notice, and the succession stands"
+  chmod +x "$1/workflow-state"
+}
+pending_refused() { # OVERSEE_BIN
+  PRED_GEN="$(recorded generation)"
+  OVERSEE_BIN="$1" run_oversee -- launch --predecessor "$PRED" --wait-secs 20
+}
+PENDFAIL="$(mutant_scripts pendfail workflow-state)" || exit 1
+pendfail_stub "$PENDFAIL"
+pending_refused "$PENDFAIL/oversee"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(listed "$PRED")|$(recorded pane)|$(recorded generation)" \
+  "1|oversee: record-unwritten field=overseer step=pending|1|1|$PRED|$PRED_GEN" \
+  "a pending write the state refuses stops the succession, the predecessor running and recorded"
+# Its control: a caller hook that lets the failed write pass stops the
+# predecessor with nothing recording its successor.
+HOOKCTL="$(mutant_scripts hookctl oversee)" || exit 1
+mutate_file "$HOOKCTL/oversee" '    pending-unrecorded | record-unwritten) return 1 ;;' \
+  '    pending-unrecorded | record-unwritten) return 0 ;;'
+pendfail_stub "$HOOKCTL"
+pending_refused "$HOOKCTL/oversee"
+assert_eq "$RC|$(listed "$PRED")" "0|0" \
+  "control: a hook that lets a failed pending write pass stops the predecessor anyway"
 tm kill-window -t "$(recorded window)"
 
 # A record from an earlier tmux server naming a pane id this server reuses is

@@ -74,20 +74,20 @@
 #     6. Open the session through the adapter's `create`, at the end of the
 #        tmux session, or with --predecessor right after the predecessor's
 #        window once the command and its identity are written as the
-#        record's `pending` successor (a write that fails is the notice
-#        `line-unrecorded`), print
+#        record's `pending` successor (a write that fails refuses
+#        `record-unwritten step=pending` with nothing opened), print
 #        `overseer-launch` naming the form, lane, session and window, and
 #        write the session record before the first turn: runtime tmux, the
 #        server, the pane, its window, the launch identity (harness, account,
 #        home, model, effort and directory, as the command built in step 5
 #        carries them), the launch line and generation 1, or one past the
-#        record a stopped fleet left. On a first launch a record
+#        record a stopped fleet left. A record
 #        that cannot be written closes the session and refuses
-#        `record-unwritten`: a first launch nothing records is one the hooks
-#        and the watch cannot tell from any other session. A succession
-#        takes the policy lib/overseer-launch.sh § ol_succession states, the
-#        one `oversee-succeed` takes: that write is the notice
-#        `record-unwritten` and the succession goes on.
+#        `record-unwritten`, with --predecessor before the predecessor is
+#        stopped: an overseer nothing records is one the hooks and the watch
+#        cannot tell from any other session, and a live-overseer check that
+#        read the stopped predecessor's record would open a second overseer
+#        beside it.
 #     7. Verify the session inside --wait-secs, as a succession does: read its
 #        account, wait for a running turn through `inspect --launch`, read the
 #        account again. `overseer-wrong-lane`, `overseer-dialog` and
@@ -189,8 +189,7 @@ message() { # KEY FIELD=VALUE...
     model-window-unknown) text='The claude adapter names no context window for the model this entry resolves to, and an overseer runs with its compaction off, so it would reach its wall with no handoff mark. Nothing was launched. Name a model, or a rank whose model, the window table in lib/adapters/claude.sh names.' ;;
     launch-trust-missing) text='The folder-trust entry for the launch directory could not be made in the config this session would read, so nothing was launched; the reason field is lib/lane-launch.sh'\''s.' ;;
     launch-failed) text='The session could not be opened or read; the step field names the call that failed.' ;;
-    record-unwritten) text='The session record could not be written to the fleet state. A first launch closes its session again, since an overseer nothing records is one the hooks and the watch cannot tell from any other session; a succession stands, and this is a notice.' ;;
-    line-unrecorded) text='The successor launch line could not be written to the fleet state as its pending member, so a death before the record names the successor has no line of it to send. The succession itself stands.' ;;
+    record-unwritten) text='The session record could not be written to the fleet state, so the session was closed again, or at step=pending never opened, and a predecessor keeps running: an overseer nothing records is one the hooks and the watch cannot tell from any other session.' ;;
     overseer-launch) text='The command is built and the session opened; the form names how the picked lane reaches the harness.' ;;
     overseer-dialog) text='The session stopped at a dialog nobody is there to answer; it was closed and the record put back. The pane line follows.' ;;
     overseer-not-working) text='The session never showed a running turn inside the wait; it was closed and the record put back.' ;;
@@ -489,19 +488,16 @@ trap 'interrupted HUP' HUP
 
 # This script's words at each step of a launch: the ones
 # lib/overseer-launch.sh's ol_succession asks for, which the first launch
-# below says at the same points of its own steps.
+# below says at the same points of its own steps. A record write that fails
+# refuses the succession before its commit point, as it refuses a first
+# launch.
 ol_succession_hook() { # STEP
   case "$1" in
-    pending-unrecorded)
-      message line-unrecorded field=overseer.pending >&2
-      [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2 ;;
+    pending-unrecorded | record-unwritten) return 1 ;;
     opened)
       SESSION="$OL_SESSION"
       message overseer-launch "form=$OL_FORM" "lane=$lane_dir" "trust=$OL_TRUST_ROUTE" \
         "session=$SESSION" "window=$OL_WINDOW" "server=$SERVER_SOCKET" ;;
-    record-unwritten)
-      message record-unwritten field=overseer step=write >&2
-      [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2 ;;
     verified) [[ -z "$OL_UNOBSERVED" ]] || message overseer-lane-unobserved "reason=$OL_UNOBSERVED" >&2 ;;
   esac
 }
@@ -523,11 +519,11 @@ if [[ -n "$PREDECESSOR" ]]; then
   # A succession is lib/overseer-launch.sh's ol_succession, the one
   # `oversee-succeed` runs: the pending record, the session opened right after
   # the predecessor's window, the record, the verification and the stop that
-  # swaps the successor into the predecessor's slot, the commit point. A
-  # record write that fails is a notice there, as that function says why.
+  # swaps the successor into the predecessor's slot, the commit point.
   if ! ol_succession "$PREDECESSOR" "$CWD" "$OL_CMD" "$OL_IDENTITY" pending \
       "$OL_LANE_VAR" "$lane_dir" "$OL_FORM" "$WAIT_SECS"; then
     case "$OL_REASON" in
+      record-unwritten) abandon record-unwritten field=overseer "step=$OL_STEP" ;;
       create-failed) abandon launch-failed "step=$OL_REASON" ;;
       stop-failed) abandon close-failed "predecessor=$PREDECESSOR" ;;
       *) refuse_unverified ;;
@@ -546,4 +542,4 @@ else
 fi
 trap - HUP TERM INT
 message overseer-launched "session=$SESSION" "window=$OL_WINDOW" "server=$SERVER_SOCKET" \
-  "generation=${OL_GENERATION:-none}" "lane=$lane_dir" ${PREDECESSOR:+"predecessor=$PREDECESSOR"}
+  "generation=$OL_GENERATION" "lane=$lane_dir" ${PREDECESSOR:+"predecessor=$PREDECESSOR"}

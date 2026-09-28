@@ -614,10 +614,10 @@ ol_session_from_out() {
   done
 }
 
-# ol_session_inspect SESSION [--launch] — the runtime's `inspect`, the read
-# the launch's live-overseer check, the succession's read of its caller and
-# its wait for the caller to close, and the watch's per-pass overseer read
-# take: the keyed line's state, server, window, cause and probe into
+# ol_session_inspect SESSION [--launch] — the runtime's `inspect`, the read of
+# the recorded overseer session's state; a session's own `<server pid> <pane
+# id>` key, and every read of a fact the record does not hold, are still tmux
+# reads. The keyed line's state, server, window, cause and probe go into
 # OL_INSPECT_STATE, OL_INSPECT_SERVER, OL_INSPECT_WINDOW, OL_INSPECT_CAUSE and
 # OL_INSPECT_PROBE, each empty where the line names none, and window and
 # server the word `none` for a session the runtime no longer lists; the line
@@ -684,7 +684,8 @@ ol_session_abandon() {
 # ol_succession PREDECESSOR CWD LINE IDENTITY PENDING LANE_VAR LANE_DIR FORM
 # WAIT_SECS — one succession, from the successor's first record write to the
 # commit point, whichever launcher runs it: `oversee launch --predecessor` and
-# `oversee-succeed` in every mode. In order:
+# `oversee-succeed` in every mode that launches (succeed, walled and dead). In
+# order:
 #   1. With PENDING `pending`, LINE and IDENTITY become the record's pending
 #      successor (ol_record_pending); `replay`, a relaunch of the line the
 #      record already holds, writes none.
@@ -695,29 +696,29 @@ ol_session_abandon() {
 #   5. The predecessor is stopped with the successor taking its slot: the
 #      commit point, so HUP, INT and TERM are ignored from here on, and a
 #      caller running in the predecessor's own window ends with it.
-# A record write that fails at step 1 or 3 does not stop the succession: the
-# fleet state is where the record lives, a run with none still has a fleet to
-# hand over, and a predecessor kept for want of a record is an overseer the
-# fleet is about to lose anyway. The caller defines
-# ol_succession_hook STEP, called at each point it speaks: `pending-unrecorded`
-# and `record-unwritten` with the writer's words in DEP_ERR, `opened` once
-# OL_SESSION and OL_WINDOW name the successor, and `verified` just before the
+# The step order is this function's; what a failed record write at step 1 or
+# 3 means is the caller's policy. The caller defines ol_succession_hook STEP,
+# called at each point it speaks: `pending-unrecorded` and `record-unwritten`
+# with the writer's words in DEP_ERR, where a nonzero return refuses the
+# succession before its commit point and 0 lets it go on; `opened` once
+# OL_SESSION and OL_WINDOW name the successor; and `verified` just before the
 # commit point, for its notices and whatever it arranges before its window may
-# end. Returns 0 once committed, and 1 with OL_REASON create-failed at step 2,
+# end. Returns 0 once committed, and 1 with OL_REASON record-unwritten and
+# OL_STEP pending or write where the hook refused, create-failed at step 2,
 # ol_session_verify's reasons at step 4 and stop-failed at step 5, the
-# provider's words in DEP_ERR, the successor left for the caller's
+# provider's words in DEP_ERR, any successor left for the caller's
 # ol_session_abandon.
 ol_succession() { # PREDECESSOR CWD LINE IDENTITY PENDING LANE_VAR LANE_DIR FORM WAIT_SECS
   local predecessor="$1" cwd="$2" line="$3" identity="$4" pending="$5"
   shift 5
   if [[ "$pending" == pending ]] && ! ol_record_pending "$line" "$identity"; then
-    ol_succession_hook pending-unrecorded
+    ol_succession_hook pending-unrecorded || { OL_REASON=record-unwritten OL_STEP=pending; return 1; }
   fi
   ol_session_open "$cwd" overseer "$line" --after "$predecessor" || return 1
   ol_succession_hook opened
   if [[ -n "$OL_PRIOR" ]] \
      && ! ol_record_write "$OL_RUNTIME" "$OL_SESSION" "$OL_WINDOW" "$OL_SERVER" "$identity" "$line"; then
-    ol_succession_hook record-unwritten
+    ol_succession_hook record-unwritten || { OL_REASON=record-unwritten OL_STEP=write; return 1; }
   fi
   ol_session_verify "$OL_SESSION" "$@" || return 1
   ol_succession_hook verified
@@ -779,10 +780,12 @@ ol_record_get() {
 # a line kept from the prior would be replayed for this session's death as if
 # it were its own, the prior's account and permission words included. Every
 # other field the prior carried stays. The generation written is in
-# OL_GENERATION. Returns 1 with the writer's words in DEP_ERR.
+# OL_GENERATION, empty where the write failed. Returns 1 with the writer's
+# words in DEP_ERR.
 OL_GENERATION=""
 ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
-  local prior="${OL_PRIOR:-null}" record cwd rows=""
+  local prior="${OL_PRIOR:-null}" record cwd rows="" generation
+  OL_GENERATION=""
   if [[ "$1" == tmux ]]; then
     cwd="$(jq -r '.cwd // empty' <<<"$5" 2>"$DEP_ERR")" || return 1
     rows="$(session_rows_overseer_file "${cwd:-$PWD}" "$4" "$2")"
@@ -797,8 +800,9 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
       + (if $runtime == "tmux" then {pane: $session, session_rows: $rows} else {session: $session} end)
       + (if $line == "" then {} else {launch_line: $line} end)' 2>"$DEP_ERR")" \
     || return 1
-  OL_GENERATION="$(jq -r '.generation' <<<"$record" 2>"$DEP_ERR")" || return 1
-  "$SCRIPT_DIR/workflow-state" set oversee overseer "$record" >/dev/null 2>"$DEP_ERR"
+  generation="$(jq -r '.generation' <<<"$record" 2>"$DEP_ERR")" || return 1
+  "$SCRIPT_DIR/workflow-state" set oversee overseer "$record" >/dev/null 2>"$DEP_ERR" || return 1
+  OL_GENERATION="$generation"
 }
 
 # ol_record_pending LINE IDENTITY — the successor a succession is about to

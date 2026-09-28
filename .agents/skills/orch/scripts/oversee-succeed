@@ -1505,13 +1505,17 @@ trap 'interrupted HUP' HUP
 # those ignores.
 ol_succession_hook() { # STEP
   case "$1" in
+    # A record write that fails is a notice, and 0 lets the succession go on
+    # (header, Output).
     pending-unrecorded)
       message line-unrecorded "field=overseer.pending" >&2
-      [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2 ;;
+      [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+      return 0 ;;
     opened) SUCC_PANE="$OL_SESSION" SUCC_WINDOW="$OL_WINDOW" ;;
     record-unwritten)
       message record-unwritten field=overseer step=write >&2
-      [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2 ;;
+      [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+      return 0 ;;
     verified)
       # The deciding read could not observe the account: the launch stands,
       # and the notice says why the check refused nothing.

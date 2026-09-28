@@ -153,34 +153,63 @@ run_tmux inspect --session %999
 assert_eq "$RC|$(tr '\n' ';' <<<"$OUT")" \
   "0|session=%999 window=none server=none state=gone;" \
   "inspect on a session the server does not list answers gone with no screen"
-# A pane that closes between the listing and the capture is gone, never an
-# unreadable session: a tmux on PATH that closes the pane just before its
-# capture, the window a succession's stop closes while its caller's wait reads.
+# A pane that closes during any read after the listing is gone, never an
+# unreadable session: the window a succession's stop closes while its caller's
+# wait reads. A tmux on PATH closes the pane at one read: just before the
+# capture, which then fails; at the process read, which a closing pane can
+# answer empty at exit 0; or just after the capture, which answered, the last
+# read `--launch` makes.
 RACE_BIN="$TMP_ROOT/race-bin"
 mkdir -p "$RACE_BIN"
-race_pane() { # INDEX — a pane the tmux on RACE_BIN closes just before its capture
+race_pane() { # INDEX before|empty|after — a pane the tmux on RACE_BIN closes at that read
+  local real
+  real="$(command -v tmux)"
   RACE="$(new_pane "$1" 'exec sleep 100000')"
-  cat > "$RACE_BIN/tmux" <<STUB
-#!/bin/sh
-[ "\$1" != capture-pane ] || "$(command -v tmux)" kill-pane -t "$RACE" 2>/dev/null
-exec "$(command -v tmux)" "\$@"
-STUB
+  case "$2" in
+    before) printf '#!/bin/sh\n[ "$1" != capture-pane ] || %s kill-pane -t %s 2>/dev/null\nexec %s "$@"\n' \
+              "$real" "$RACE" "$real" ;;
+    empty) printf '#!/bin/sh\ncase "$*" in *"#{pane_pid} "*) %s kill-pane -t %s 2>/dev/null; echo; exit 0 ;; esac\nexec %s "$@"\n' \
+              "$real" "$RACE" "$real" ;;
+    after) printf '#!/bin/sh\n[ "$1" = capture-pane ] || exec %s "$@"\n%s "$@"; rc=$?\n%s kill-pane -t %s 2>/dev/null\nexit $rc\n' \
+              "$real" "$real" "$real" "$RACE" ;;
+  esac > "$RACE_BIN/tmux"
   chmod +x "$RACE_BIN/tmux"
 }
-race_pane 11
-RUN_PATH="$RACE_BIN:$PATH" run_tmux inspect --session "$RACE"
-assert_eq "$RC|$(tr '\n' ';' <<<"$OUT")" \
-  "0|session=$RACE window=none server=none state=gone;" \
-  "inspect on a session that closes during the read answers gone"
+for read in before empty after; do
+  race_pane 11 "$read"
+  launch=()
+  [[ "$read" != after ]] || launch=(--launch)
+  RUN_PATH="$RACE_BIN:$PATH" run_tmux inspect ${launch[@]+"${launch[@]}"} --session "$RACE"
+  assert_eq "$RC|$(tr '\n' ';' <<<"$OUT")" \
+    "0|session=$RACE window=none server=none state=gone;" \
+    "inspect on a session that closes at its read ($read) answers gone"
+done
 # Its control: a provider that refuses every failed read as unreadable.
 RACECTL="$(mutant_scripts racectl overseer-host-tmux)" || exit 1
 mutate_file "$RACECTL/overseer-host-tmux" '  detail="$(cat -- "$DEP_ERR")" || detail=""' \
   '  die session-unreadable "session=$SESSION" "$@"'
-race_pane 12
+race_pane 12 before
 PROVIDER_BIN="$RACECTL/overseer-host-tmux" RUN_PATH="$RACE_BIN:$PATH" run_tmux inspect --session "$RACE"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "1|overseer-host-tmux: session-unreadable session=$RACE field=capture" \
   "control: without the second listing a pane closed during the read is unreadable"
+# The empty answer's control: a read held to its shape with no second listing.
+SHAPECTL="$(mutant_scripts shapectl overseer-host-tmux)" || exit 1
+mutate_file "$SHAPECTL/overseer-host-tmux" '    inspect_unread "field=$2" "value=${out:-none}"' \
+  '    die session-unreadable "session=$SESSION" "field=$2" "value=${out:-none}"'
+race_pane 13 empty
+PROVIDER_BIN="$SHAPECTL/overseer-host-tmux" RUN_PATH="$RACE_BIN:$PATH" run_tmux inspect --session "$RACE"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "1|overseer-host-tmux: session-unreadable session=$RACE field=pane_pid value=none" \
+  "control: an empty answer with no second listing is unreadable"
+# The answered read's control: no listing once the judgement is made.
+SETTLECTL="$(mutant_scripts settlectl overseer-host-tmux)" || exit 1
+mutate_file "$SETTLECTL/overseer-host-tmux" 'inspect_settled() { pane_listed "$SESSION" || inspect_gone; }' \
+  'inspect_settled() { :; }'
+race_pane 14 after
+PROVIDER_BIN="$SETTLECTL/overseer-host-tmux" RUN_PATH="$RACE_BIN:$PATH" run_tmux inspect --launch --session "$RACE"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT" | grep -c ' server=none state=gone$' || true)" "0|0" \
+  "control: with no listing after the judgement a pane closed after its capture is judged as if live"
 # A child probe that cannot run is named with its own exit status: a pgrep
 # on PATH that fails as a broken probe does, under a bare shell.
 PROBE_BIN="$TMP_ROOT/probe-bin"
