@@ -331,7 +331,6 @@ table \
   "no stated pool is exit 5 by the setting's name||pick --harness pi $COPILOT|rc=5 key=copilot-pool-unstated,model=github-copilot/claude-sonnet-5,setting=ORCH_LANE_COPILOT_POOL" \
   "a stated pool every entry of which is excluded is a pick with no candidate, not an unstated one|$POOL=1/10;ORCH_LANE_EXCLUDE=pi1|pick --harness pi $COPILOT|rc=3 key=no-candidate,harness=pi,max-pct=95,model=github-copilot/claude-sonnet-5,walled=0,unmeasured=0,seats=0" \
   "a named account the setting states nothing for is unmeasured, never unlisted|$POOL=1/10|pick --lane $H/.eclaude --harness pi $COPILOT --json|rc=5 status=no_usage_data" \
-  "a Pi launch on a model outside the Copilot pool has no reading to pick on|$POOL=1/10|pick --harness pi --model sonnet|rc=1 key=invalid-pick-harness,option=--harness" \
   "a listing of every harness leaves the stated pool out|$POOL=1/10|list --json|aliases=claude,eclaude,nclaude,openclaude"
 # An entry nothing can read refuses the pick, one row per shape, and the named
 # form refuses it too.
@@ -353,8 +352,7 @@ table \
 # grant test gone reads 0/0 as a spent pool; the chooser's and the named form's
 # refusal on an unreadable entry gone read it as no entry; the credits anchors
 # gone read 12.5/300 as 5/300; the duplicate check gone lets the first of two
-# readings for one account win; and a Pi pick admitted on any model picks one
-# outside the pool.
+# readings for one account win.
 pool_control() { # NAME FILE PATTERN REPLACEMENT|- ROW
   if [[ "$4" == - ]]; then lanes_mutant "$1" "$2" "$3"; else lanes_mutant "$1" "$2" "$3" "$4"; fi
   LANES="$TMP_ROOT/$1/scripts/lanes"
@@ -381,8 +379,6 @@ pool_control mutant-pool-anchors lanes '=~ \^(\[0-9]{1,12})' '=~ ([0-9]{1,12})' 
   "control: with the credits anchors gone 12.5/300 is read as its tail|$POOL=12.5/300|pick --harness pi $COPILOT|rc=0"
 pool_control mutant-pool-duplicate lanes 'case "\$seen" in' - \
   "control: with no duplicate check the first of two readings for one account wins|$POOL=1/10,$H/.pi1=10/10|pick --harness pi $COPILOT --json|rc=0 monthly_pct=10 qualifying_count=2"
-pool_control mutant-pool-any-model lib/lane-launch.sh '\[\[ "\$2" != github-copilot.* || printf' 'printf' \
-  "control: a Pi pick admitted on any model is judged on the pool it does not spend|$POOL=1/10|pick --harness pi --model sonnet|rc=0"
 
 # The pool reading is the owner's statement, so a Pi pick asks no lane
 # provider, in either form, even with one configured: the stub logs every verb
@@ -410,6 +406,29 @@ lanes_mutant mutant-pool-host lanes 'if \[\[ "\$1" == pi \]\]; then printf'
 LANES="$TMP_ROOT/mutant-pool-host/scripts/lanes"
 pi_host_rows accounts "control: a Pi pick that asks the provider calls its accounts verb:"
 LANES="$SCRIPTS_DIR/lanes"
+
+echo "=== pick: a Pi launch is judged on the account its model's provider bills ==="
+# A pi-claude model runs Claude Code on a Claude seat, so its pick is a claude
+# pick on that model, room and wall alike, handed back as the Claude variable;
+# a provider nothing measures, or a Pi model naming none, is unmeasured in both
+# forms, never room, and a harness no judge names is refused.
+PI_CLAUDE='--model pi-claude/claude-opus-5-5'
+table \
+  "a pi-claude model picks the Claude seat with room, as the Claude variable||pick --harness pi $PI_CLAUDE|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
+  "a pi-claude model is refused as a claude pick where every Claude seat is walled||pick --harness pi $PI_CLAUDE --max-pct 15|rc=3 key=no-candidate,harness=claude,max-pct=15,model=pi-claude/claude-opus-5-5,walled=3,unmeasured=1" \
+  "a named Claude seat with room is judged for a pi-claude model||pick --lane $H/.claude --harness pi $PI_CLAUDE|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
+  "a named walled Claude seat is refused for a pi-claude model on its own window||pick --lane $H/.nclaude --harness pi $PI_CLAUDE --json|rc=3 wall=95 binding_bucket=weekly" \
+  "a provider nothing measures is unmeasured, never room|$POOL=1/10|pick --harness pi --model sonnet|rc=5 key=pick-provider-unmeasured,harness=pi,model=sonnet" \
+  "the named form refuses it as unmeasured too||pick --lane $H/.claude --harness pi --model openai/gpt-6|rc=5 key=pick-provider-unmeasured,harness=pi,model=openai/gpt-6" \
+  "a Pi pick naming no model is unmeasured||pick --harness pi|rc=5 key=pick-provider-unmeasured,harness=pi,model=none" \
+  "a harness no judge names is refused||pick --harness opencode|rc=1 key=invalid-pick-harness,option=--harness"
+# Controls, one per arm of the rule: pi-claude dropped to unmeasured refuses
+# the seat with room, and any other provider read as the pool is judged on a
+# pool it does not spend.
+pool_control mutant-provider-claude lib/lane-launch.sh 'pi-claude\/\*) printf' - \
+  "control: a pi-claude model with no arm of its own is refused the Claude seat it spends||pick --harness pi $PI_CLAUDE|rc=5"
+pool_control mutant-provider-any lib/lane-launch.sh ' unmeasured ;;$' ' pi ;;' \
+  "control: a provider nothing measures read as the pool is judged on a pool it does not spend|$POOL=1/10|pick --harness pi --model sonnet|rc=0"
 
 echo "=== unmeasurable lanes are never idle ==="
 # An expired login, an authenticated lane whose usage body carries none of the

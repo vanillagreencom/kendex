@@ -192,7 +192,8 @@ stop_at() { # TRANSCRIPT ACTIVE [ENV=VAL...]
 #   pi      Pi's session entry, `appendMessage` in @earendil-works/pi-coding-agent,
 #           carrying the `Usage` of @earendil-works/pi-ai: input, output,
 #           cacheRead, cacheWrite, totalTokens and cost, none of them spelled
-#           the way Claude Code spells them.
+#           the way Claude Code spells them, on model m of the pi-claude
+#           provider, whose account is a Claude seat.
 #   codex   Codex's rollout: the turn context naming the model, then the
 #           token count naming the tokens the last response left in a 258400
 #           window.
@@ -213,7 +214,7 @@ usage_line() { # SPELLING TOKENS
     pi)
       jq -nc --argjson t "$2" \
         '{type:"message",id:"e1",parentId:null,timestamp:"2026-09-19T00:00:00Z",
-          message:{role:"assistant",model:"m",stopReason:"stop",
+          message:{role:"assistant",provider:"pi-claude",model:"m",stopReason:"stop",
                    usage:{input:1,output:7,cacheRead:($t - 8),cacheWrite:0,
                           totalTokens:$t,cost:{total:0}}}}'
       ;;

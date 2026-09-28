@@ -47,11 +47,13 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/adapters/claude.sh"
 # (lane_pick_harness below) takes Pi's own variable, PI_CODING_AGENT_DIR, the
 # directory whose Pi login spends that pool, as lane-host-ssh gives a hosted Pi
 # lane. Every other harness takes the Claude variable, which is what a local
-# `--lane` launch on a further harness has always done, a Pi launch on any
-# other model included, so a Pi lane named on a Claude config dir is never
-# handed that dir as its Pi root. `lanes` measures no Copilot CLI account, so a
-# copilot value reaches here from a lane the caller named and never from a
-# pick. A harness added to this repository adds its arm HERE.
+# `--lane` launch on a further harness has always done. A Pi launch on a
+# `pi-claude/` model is one of them: pi-claude-bridge runs Claude Code on the
+# credential CLAUDE_CONFIG_DIR names, so that variable IS the Claude seat it
+# spends, and a Pi lane named on a Claude config dir is never handed that dir as
+# its Pi root. `lanes` measures no Copilot CLI account, so a copilot value
+# reaches here from a lane the caller named and never from a pick. A harness
+# added to this repository adds its arm HERE.
 #
 # COPILOT_HOME is Copilot's one account variable: it moves the whole config
 # root, settings, state and login list alike, so the directory IS the account
@@ -66,19 +68,31 @@ lane_env_prefix() { # HARNESS DIR [MODEL]
   printf '%s=%s\n' "$var" "$2"
 }
 
-# The harness `lanes pick` judges a launch of HARNESS on MODEL under, empty where
-# `lanes` holds no reading of what that launch spends. Claude and codex spend
-# their own accounts' windows, whatever the model. A Pi launch on a
-# `github-copilot/` model spends the Copilot pool, which `lanes pick --harness
-# pi` reads; a Pi launch on any other model has no reading here. One answer for
-# the launcher deciding whether a named lane is judged, for `lanes` refusing a
-# pick it cannot judge and for the variable lane_env_prefix names, so the three
-# cannot disagree about which launches a reading covers. MODEL is the one
-# launch_choice_launch_model reads, provider included.
+# The harness whose accounts `lanes pick` judges a launch of HARNESS on MODEL
+# under, which is the account that launch spends. Claude and codex spend their
+# own accounts' windows, whatever the model. A Pi launch spends the account its
+# model's provider bills: `pi-claude/` is pi-claude-bridge on a Claude seat,
+# judged as claude on MODEL; `github-copilot/` is the Copilot pool, which
+# `lanes pick --harness pi` reads. Every other Pi provider, and a Pi model naming
+# none, answers `unmeasured`: nothing reads what it spends, which is never room.
+# Empty is a harness `lanes` judges no launch of at all.
+#
+# One answer for the launcher deciding whether a named lane is judged and
+# which refusal an `auto` pick gets, for `lanes` choosing the accounts it judges
+# a pick on, for the turn-end hook naming the account a Pi lane spends, and for
+# the variable lane_env_prefix names, so none of them can disagree about which
+# account a launch spends. MODEL is the one launch_choice_launch_model reads,
+# and the Pi adapter records, provider included.
 lane_pick_harness() { # HARNESS MODEL
   case "$1" in
     claude | codex) printf '%s\n' "$1" ;;
-    pi) [[ "$2" != github-copilot/* ]] || printf '%s\n' pi ;;
+    pi)
+      case "$2" in
+        pi-claude/*) printf '%s\n' claude ;;
+        github-copilot/*) printf '%s\n' pi ;;
+        *) printf '%s\n' unmeasured ;;
+      esac
+      ;;
   esac
 }
 

@@ -255,18 +255,25 @@
 #
 # Options:
 #   --harness NAME   claude, codex, or all (default: all for list, claude for pick).
-#                    pick also takes pi with a `github-copilot/` --model: such
-#                    a launch spends the Copilot pool rather than any Claude or
-#                    Codex window, and is judged on that pool alone, as
-#                    ORCH_LANE_COPILOT_POOL states it. Its candidates are the
-#                    accounts that setting names; with no entry at all the
-#                    pick exits 5 as `copilot-pool-unstated`, a setting to
-#                    state rather than a window to wait out, and under --lane
-#                    a directory it names no reading for is unmeasured (exit
-#                    5), never unlisted. A walled pool stays walled until the
-#                    owner states a new reading. Its records say
-#                    `measured_through: "stated"`, its printed prefix is
-#                    PI_CODING_AGENT_DIR, and `list` does not show them.
+#                    pick also takes pi, judged on the account its --model's
+#                    provider bills (lib/lane-launch.sh lane_pick_harness). A
+#                    `pi-claude/` model runs Claude Code on a Claude seat
+#                    through pi-claude-bridge, so the pick is a claude pick on
+#                    that model in every respect, its prefix CLAUDE_CONFIG_DIR.
+#                    A `github-copilot/` model spends the Copilot pool rather
+#                    than any Claude or Codex window, and is judged on that
+#                    pool alone, as ORCH_LANE_COPILOT_POOL states it. Its
+#                    candidates are the accounts that setting names; with no
+#                    entry at all the pick exits 5 as `copilot-pool-unstated`,
+#                    a setting to state rather than a window to wait out, and
+#                    under --lane a directory it names no reading for is
+#                    unmeasured (exit 5), never unlisted. A walled pool stays
+#                    walled until the owner states a new reading. Its records
+#                    say `measured_through: "stated"`, its printed prefix is
+#                    PI_CODING_AGENT_DIR, and `list` does not show them. Any
+#                    other provider, and a Pi pick naming no model, exits 5 as
+#                    `pick-provider-unmeasured` in both forms, before any lane
+#                    is read: nothing measures what it spends.
 #   --max-pct N      pick: refuse a lane whose binding bucket is at or above N
 #                    percent used (default: 95, or $ORCH_LANE_MAX_PCT). The
 #                    setting is read through the kendex settings ladder below,
@@ -644,7 +651,11 @@ message() {
       ;;
     invalid-pick-harness)
       printf 'lanes: invalid-pick-harness option=%s\n' "--harness"
-      printf '%s\n' "pick --harness must be claude or codex, or pi with a github-copilot/ --model, whose Copilot pool ORCH_LANE_COPILOT_POOL states"
+      printf '%s\n' "pick --harness must be claude, codex or pi"
+      ;;
+    pick-provider-unmeasured)
+      printf 'lanes: pick-provider-unmeasured harness=%s model=%s\n' "$1" "$2"
+      printf '%s\n' "a Pi launch spends the account its model's provider bills, a Claude seat for pi-claude/ and the Copilot pool for github-copilot/; nothing here measures what this model spends, so the launch is unmeasured, and an unmeasured account is not one with room"
       ;;
     copilot-pool-unstated)
       printf 'lanes: copilot-pool-unstated model=%s setting=%s\n' "$1" "ORCH_LANE_COPILOT_POOL"
@@ -2686,9 +2697,8 @@ cmd_pick_lane() {
 		room)
 			if [[ "$as_json" == "true" ]]; then printf '%s\n' "$record"; return 0; fi
 			# The mapping is lib/lane-launch.sh's, shared with the launchers
-			# that render this prefix into a command; `pick --harness` is
-			# validated through lane_pick_harness, so the harness here is one
-			# it names.
+			# that render this prefix into a command; the harness here is the
+			# one lane_pick_harness named for the launch.
 			lane_env_prefix "$harness" "$found" "$model"
 			return
 			;;
@@ -3228,15 +3238,22 @@ case "$SUB" in
 		;;
 	pick)
 		HARNESS="${HARNESS:-claude}"
-		[[ "$(lane_pick_harness "$HARNESS" "$MODEL")" == "$HARNESS" ]] || die invalid-pick-harness "$@"
+		# The accounts this launch spends, which both forms judge it on: a Pi
+		# launch on a Claude seat is a claude pick in every respect.
+		PICK_HARNESS="$(lane_pick_harness "$HARNESS" "$MODEL")"
+		[[ -n "$PICK_HARNESS" ]] || die invalid-pick-harness "$@"
 		validate_lane_settings
+		if [[ "$PICK_HARNESS" == unmeasured ]]; then
+			message pick-provider-unmeasured "$HARNESS" "${MODEL:-none}" >&2
+			exit 5
+		fi
 		if [[ -n "$LANE_ARG" ]]; then
 			[[ -z "$EXCLUDE_LANE" ]] || die unknown-option --exclude-lane
 			[[ "$FOR_OVERSEER" != true ]] || die unknown-option --for-overseer
-			cmd_pick_lane "$LANE_ARG" "$HARNESS" "$MAX_PCT" "$MODEL" "$AS_JSON" "$BINDING_FLOOR" "$BURN_PCT" "$PROJECTED"
+			cmd_pick_lane "$LANE_ARG" "$PICK_HARNESS" "$MAX_PCT" "$MODEL" "$AS_JSON" "$BINDING_FLOOR" "$BURN_PCT" "$PROJECTED"
 		else
 			[[ "$PROJECTED" != true ]] || die unknown-option --projected
-			cmd_pick "$HARNESS" "$MAX_PCT" "$AS_JSON" "$MODEL" "$BINDING_FLOOR" "$EXCLUDE_LANE" "$FOR_OVERSEER" "$BURN_PCT"
+			cmd_pick "$PICK_HARNESS" "$MAX_PCT" "$AS_JSON" "$MODEL" "$BINDING_FLOOR" "$EXCLUDE_LANE" "$FOR_OVERSEER" "$BURN_PCT"
 		fi
 		;;
 	check)

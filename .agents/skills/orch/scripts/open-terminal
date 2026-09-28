@@ -573,7 +573,7 @@ if [[ "$FLEET" == true && "$WAKE" != true ]]; then
       ;;
     pi)
       if [[ "$LANE_HOST" == local ]]; then
-        if [[ -n "$LANE" && -n "$(lane_pick_harness pi "$LAUNCH_MODEL")" ]]; then
+        if [[ -n "$LANE" && "$(lane_pick_harness pi "$LAUNCH_MODEL")" == pi ]]; then
           PI_GATE_DEFERRED=true
         else
           pi_local_gate || exit 1
@@ -683,23 +683,20 @@ pi_lane_root_apply() {
   [[ "$PI_GATE_DEFERRED" != true ]] || pi_local_gate
 }
 # The refusal for an `auto` pick `lanes` answered with RC, the fields after it
-# appended. Every one stops the launch, and each names what answers it: 3 is
-# every candidate at or above the threshold, which for the Copilot pool is the
-# owner's stated reading and moves only when the owner restates it, never a
-# window a reset reopens; 5 is a Pi pick with no pool stated at all, a setting
-# to state; anything else is lanes failing.
+# appended, by the account lane_pick_harness says the launch spends. Every one
+# stops the launch, and each names what answers it: 3 is every candidate at or
+# above the threshold, which for the Copilot pool is the owner's stated reading
+# and moves only when the owner restates it, never a window a reset reopens; 5
+# is a Pi pick with no pool stated at all, a setting to state, or one on a
+# provider nothing measures; anything else is lanes failing.
 auto_pick_refusal() { # RC [FIELD...]
   local rc="$1"
   shift
-  case "$rc" in
-    3)
-      if [[ "$LANE_HARNESS" == pi ]]; then
-        ot_message copilot-pool-walled "setting=ORCH_LANE_COPILOT_POOL" "$@"
-      else
-        ot_message lane-unavailable "harness=$LANE_HARNESS" "$@"
-      fi
-      ;;
-    5) ot_message copilot-pool-unstated "setting=ORCH_LANE_COPILOT_POOL" "$@" ;;
+  case "$rc:$(lane_pick_harness "$LANE_HARNESS" "$LAUNCH_MODEL")" in
+    3:pi) ot_message copilot-pool-walled "setting=ORCH_LANE_COPILOT_POOL" "$@" ;;
+    3:*) ot_message lane-unavailable "harness=$LANE_HARNESS" "$@" ;;
+    5:pi) ot_message copilot-pool-unstated "setting=ORCH_LANE_COPILOT_POOL" "$@" ;;
+    5:unmeasured) ot_message lane-provider-unmeasured "harness=$LANE_HARNESS" "model=${LAUNCH_MODEL:-none}" "$@" ;;
     *) ot_message lane-resolution-failed "exit=$rc" "$@" ;;
   esac >&2
 }
@@ -820,10 +817,10 @@ named_lane_judge() {
       # second reading of the conditions the branches below judge on — asking
       # only for the shapes that act on the answer would state each of those
       # conditions twice, and a rule stated twice is a rule that can be
-      # changed in one place. Pi is not asked: its reading is the Copilot pool
-      # the owner states, which no copy of a credential measures, and the
-      # accounts protocol names no Pi account, so an unstated pool refuses
-      # below on every host.
+      # changed in one place. Pi is not asked: the accounts protocol names no
+      # Pi account, the Copilot pool is the reading the owner states, which no
+      # copy of a credential measures, and a Pi launch on a Claude seat or on
+      # a provider nothing measures is refused below on every host.
       [[ "$LANE_HOST" == local || "$LAUNCH_HARNESS" == pi ]] || host_account_read "${LANE_ENV#*=}" "$LAUNCH_HARNESS"
       if [[ "$HOST_RELAUNCH" == true && "$HOST_ACCOUNT" == held ]]; then
         ot_message host-relaunch-credential "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
@@ -913,10 +910,13 @@ if [[ -n "$LANE" ]]; then
   # The judged wall is the window of the model the launch passes, which the gate
   # above has already established it names.
   #
-  # Asked where lane_pick_harness names the harness `lanes` judges this launch
-  # under: claude and codex on their own accounts' windows, and Pi on a
-  # `github-copilot/` model on the Copilot pool that model spends. A launch
-  # that names none has no window `lanes` reads and keeps launching as it did.
+  # Asked where lane_pick_harness names the account this launch spends:
+  # claude and codex on their own accounts' windows, and Pi on the account its
+  # model's provider bills, a `pi-claude/` model on the Claude seat and a
+  # `github-copilot/` one on the Copilot pool. A Pi launch on any other
+  # provider is asked too, and `lanes` refuses it as unmeasured. A launch of a
+  # harness it names nothing for has no window `lanes` reads and keeps
+  # launching as it did.
   #
   # EVERY named lane is judged here, hosted relaunch included. A usage window
   # belongs to the account, not to the copy of the credential that reads it, so a

@@ -384,7 +384,7 @@ ADAPTER_ROWS='.claude/hooks|claude|399999||GAP|claude 399999 1000000
 .codex/hooks|codex|232561||context=232561|codex 232561 258400
 .pi/kendex/hooks|pi|180000|200000|GAP|pi 180000 200000
 .pi/kendex/hooks|pi|180001|200000|context=180001|pi 180001 200000
-.pi/kendex/hooks|pi|399999||window-unread=m|pi 399999 null
+.pi/kendex/hooks|pi|399999||window-unread=pi-claude/m|pi 399999 null
 .pi/kendex/hooks|pi|400000||context=400000|pi 400000 null'
 new_handoff_lane handoff_adapters KEN-90
 while IFS='|' read -r ROW_DIR ROW_SPELLING ROW_TOKENS ROW_WINDOW ROW_FIRST ROW_RECORDED; do
@@ -627,29 +627,51 @@ for status in 1 2; do
     "a lanes exiting $status leaves the account unmeasured with its own words, never refusing on a status its verb never gives"
 done
 
-# A harness `lanes` keeps no inventory for has no account to read at all: Pi,
-# installed globally here. The context mark is still judged; the account gap is
-# reported and the turn ends, so a consumer on such a harness is never held by
-# a mark it cannot reach.
-new_handoff_lane handoff_unnamed_harness KEN-79
-rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
-global_home home-handoff
-install_hook "$HOOK" "$GLOBAL_HOME/.pi/agent/kendex/hooks/lane-mail-check.sh"
-# A Pi turn end: its session file, and the window its Stop payload names.
-stop_pi() { # TRANSCRIPT [ENV=VAL...]
-  local path="$1"
-  shift
-  run_payload "$(jq -nc --arg p "$path" \
-    '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:1000000}')" "$@"
+# A Pi lane spends the account its model's provider bills, named in its
+# session file: a pi-claude model the Claude seat CLAUDE_CONFIG_DIR names,
+# judged there on that model, and a github-copilot model the Copilot pool on
+# Pi's own root, as ORCH_LANE_COPILOT_POOL states it. Any other provider is
+# left unjudged, never read as room, and the turn ends. The context mark is
+# judged there as everywhere.
+#
+#   PROVIDER|ACCOUNT DIR|POOL READING|RC|FIRST LINE
+PI_ACCOUNT_ROWS='pi-claude|.claude||0|-
+pi-claude|.nclaude||2|lane-mail-check: headroom=3
+github-copilot|.nclaude|97/100|2|lane-mail-check: headroom=3
+github-copilot|.nclaude|50/100|0|-
+openai|.claude||0|lane-mail-check: account=unmeasured'
+new_handoff_lane handoff_pi_account KEN-79
+install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
+PI_ROOT="$TMP_ROOT/pi-account-root"
+mkdir -p "$PI_ROOT"
+printf '%s\n' '{"compaction":{"enabled":false}}' > "$PI_ROOT/settings.json"
+# A Pi turn end: its session file on PROVIDER, and the window its Stop payload
+# names.
+stop_pi() { # PROVIDER TOKENS [ENV=VAL...]
+  local provider="$1" tokens="$2"
+  shift 2
+  usage_line pi "$tokens" | jq -c --arg p "$provider" '.message.provider = $p' > "$TRANSCRIPT"
+  run_payload "$(jq -nc --arg p "$TRANSCRIPT" \
+    '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:1000000}')" \
+    "PI_CODING_AGENT_DIR=$PI_ROOT" "$@"
 }
-usage_line pi 1000 > "$TRANSCRIPT"
-stop_pi "$TRANSCRIPT" "HOME=$GLOBAL_HOME"
-assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "$GLOBAL_HOME/.pi/agent/kendex/hooks is no harness" "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: account=unlisted named=1" \
-  "a harness this install does not name leaves the account unjudged, named, and the turn ends"
-usage_line pi 600000 > "$TRANSCRIPT"
-stop_pi "$TRANSCRIPT" "HOME=$GLOBAL_HOME"
-expect 2 "lane-mail-check: context=600000" "and the context mark is judged there as everywhere"
+while IFS='|' read -r PI_PROVIDER PI_DIR PI_POOL PI_RC PI_FIRST; do
+  # shellcheck disable=SC2046
+  stop_pi "$PI_PROVIDER" 1000 $(account_env "$PI_DIR") "ORCH_LANE_COPILOT_POOL=${PI_POOL:+$PI_ROOT=$PI_POOL}"
+  expect "$PI_RC" "$PI_FIRST" "a Pi lane on $PI_PROVIDER with ${PI_POOL:-the seat $PI_DIR}: $PI_FIRST"
+done <<<"$PI_ACCOUNT_ROWS"
+# shellcheck disable=SC2046
+stop_pi pi-claude 600000 $(account_env .claude)
+expect 2 "lane-mail-check: context=600000" "and the context mark is judged on a Pi lane as everywhere"
+# The control drops the Pi arm, which reads every Pi account as one lanes
+# keeps no inventory for, so a Pi lane on a spent seat ends its turn.
+variant no-pi-account -e '/^    pi) pi_account || return 0 ;;$/d'
+install_hook "$VARIANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
+# shellcheck disable=SC2046
+stop_pi pi-claude 1000 $(account_env .nclaude)
+assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: account=unlisted" \
+  "control: with no Pi arm a Pi lane on a spent Claude seat ends its turn unjudged"
+install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 
 # A setting out of range dies inside `lanes` as invalid-percent, whose exit the
 # hook cannot tell from an unmeasurable account, so the bound is judged here.
