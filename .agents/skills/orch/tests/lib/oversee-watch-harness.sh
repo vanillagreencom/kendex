@@ -53,7 +53,7 @@ CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
 #                 merged.<SLUG>.json answers that --repo alone, <SLUG> being
 #                 the repo with everything outside [A-Za-z0-9._-] as `_`
 #   open.txt      lines for `pr list --state open` (default: empty), with
-#                 open.<SLUG>.txt per repo the same way
+#                 open.<SLUG>.txt per repo the same way; --limit caps them
 #   repoview.txt  what `repo view` reports — the repository the watch resolves
 #                 when no --repo is given (default: owner/repo)
 #   auth-fail     present → keyring `auth status` fails
@@ -108,8 +108,11 @@ case "${1:-} ${2:-}" in
                 | (.headRepositoryOwner //= {login: $owner}) ] | .[:$limit]' "$src" 2>/dev/null || echo '[]'
       exit 0
     fi
-    if [[ -f "$STUB_DIR/open.$slug.txt" ]]; then cat "$STUB_DIR/open.$slug.txt"
-    elif [[ -f "$STUB_DIR/open.txt" ]]; then cat "$STUB_DIR/open.txt"; fi
+    # --limit caps the page, as gh does; the fixture is newest first already.
+    src=""
+    if [[ -f "$STUB_DIR/open.$slug.txt" ]]; then src="$STUB_DIR/open.$slug.txt"
+    elif [[ -f "$STUB_DIR/open.txt" ]]; then src="$STUB_DIR/open.txt"; fi
+    [[ -z "$src" ]] || awk -v n="${limit:-0}" 'n == 0 || NR <= n' "$src"
     exit 0 ;;
 esac
 printf 'unexpected gh call: %s\n' "$*" >&2
@@ -464,10 +467,31 @@ EOF
 # reads the accounts of the machine running it. lanes.rc is the exit status,
 # lanes.sleep the seconds to wait before answering, every call's argv lands in
 # lanes.args and the usage age it was handed in lanes.max-age.
+# `lanes pick --harness H [--model M]` is answered apart and counts no list
+# call: pick-<H>-<M>.rc and .json (M `-` with no --model), default exit 0 and
+# `{}`, and a harness but claude or codex refused exit 1 as the real one does.
 cat > "$TMP_ROOT/bin/lanes-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 printf '%s\n' "$*" >> "$STUB_DIR/lanes.args"
+if [[ "${1:-}" == pick ]]; then
+  harness="" model=-
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --harness) harness="$2"; shift ;;
+      --model) model="$2"; shift ;;
+    esac
+    shift
+  done
+  case "$harness" in
+    claude | codex) ;;
+    *) printf 'lanes: invalid-pick-harness option=--harness\n' >&2; exit 1 ;;
+  esac
+  base="$STUB_DIR/pick-$harness-$model"
+  if [[ -f "$base.json" ]]; then cat "$base.json"; else printf '{}\n'; fi
+  rc=0; [[ -f "$base.rc" ]] && rc="$(cat "$base.rc")"
+  exit "$rc"
+fi
 printf '%s\n' "${ORCH_LANES_USAGE_MAX_AGE:-unset}" >> "$STUB_DIR/lanes.max-age"
 [[ ! -f "$STUB_DIR/lanes.sleep" ]] || sleep "$(cat "$STUB_DIR/lanes.sleep")"
 n=0; [[ -f "$STUB_DIR/lanes.calls" ]] && n="$(cat "$STUB_DIR/lanes.calls")"

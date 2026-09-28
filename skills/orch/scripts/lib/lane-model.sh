@@ -5,11 +5,13 @@
 # no allowance left for, and the launch's first turn is a usage banner instead
 # of a session.
 #
-# The jq program below is the whole answer, and `lanes` is its only consumer:
+# The jq program below is the whole answer, and `lanes` is its only judge:
 # both of its pick forms — the fleet chooser and the single named lane — read
 # `lane_binding` and the `wall_verdict` that classifies it from here, so the two
 # cannot come to different conclusions about one account on one usage reading,
 # nor can one of them know a verdict the other has no arm for.
+# oversee-watch reads `lane_binding` too, for the reset a walled launch waits
+# on, once `lanes pick` has judged the wall; it judges no wall of its own.
 #
 # Sourced, never run.
 

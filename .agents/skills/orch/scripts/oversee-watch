@@ -188,6 +188,8 @@ source "$SCRIPT_DIR/lib/date-ladder.sh"
 source "$SCRIPT_DIR/lib/usage-reset.sh"
 # shellcheck source=lib/lane-claims.sh
 source "$SCRIPT_DIR/lib/lane-claims.sh"
+# shellcheck source=lib/lane-model.sh
+source "$SCRIPT_DIR/lib/lane-model.sh"
 # shellcheck source=lib/pr-watch-pass.sh
 source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
 # shellcheck source=lib/lane-state.sh
@@ -950,22 +952,21 @@ TRIAGE_ENABLED=0
 # With a team, triage fails CLOSED: ../references/oversee-events.md § Event kinds
 # owes a verdict to every emitted team item, so a broken install that silently
 # dropped triage would drop every unseen item with it, and each missing
-# dependency names its remedy.
+# dependency names its remedy. The tracker CLI is read by triage under
+# --since and by the heartbeat's owed items under --state, so one gate asks
+# for it wherever a team and either reader stand.
+if [[ -n "${LINEAR_TEAM:-}" && ( -n "$SINCE" || -n "$STATE_FILE" ) ]]; then
+  [[ -x "$TRACKER" ]] \
+    || die helper-missing "" "path=$TRACKER" "setting=OVERSEE_WATCH_TRACKER"
+fi
 if [[ -n "$SINCE" ]]; then
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
-    [[ -x "$TRACKER" ]] \
-      || die helper-missing "" "path=$TRACKER" "setting=OVERSEE_WATCH_TRACKER"
     [[ -x "$WORKFLOW_STATE" ]] \
       || die helper-missing "" "path=$WORKFLOW_STATE" "setting=OVERSEE_WATCH_WORKFLOW_STATE"
     TRIAGE_ENABLED=1
   else
     ow_message triage-disabled "setting=LINEAR_TEAM" "value=${LINEAR_TEAM:-}" >&2
   fi
-fi
-# The heartbeat's owed items read the team's tracker wherever a fleet state
-# names a queue to compare, --since or not, and fail closed as triage does.
-if [[ -n "$STATE_FILE" && -n "${LINEAR_TEAM:-}" && ! -x "$TRACKER" ]]; then
-  die helper-missing "" "path=$TRACKER" "setting=OVERSEE_WATCH_TRACKER"
 fi
 
 check_item_set
@@ -2147,7 +2148,8 @@ overseer_marks_reset() {
 # pass: COMMAND runs under READ_CEILING with the usage age LANES_MAX_AGE names,
 # its stdout lands in BOUNDED_OUT and its stderr in ERR_FILE, which the caller
 # weighs. A failure or an overrun is noted once under REASON, naming the reader
-# and its exit or the seconds it was given, and returns that status.
+# and its exit or the seconds it was given, and returns that status; with
+# REASON empty nothing is noted, for a reader whose non-zero exit is an answer.
 # Stock macOS ships no `timeout`, and without it the read runs unbounded: the
 # pass then delays every other event it carries, which is the outcome this
 # ceiling exists to bound and not one it can prevent there. The ceiling sends
@@ -2161,6 +2163,8 @@ bounded_account_read() {
   ! command -v timeout >/dev/null 2>&1 || BOUND_BY=(timeout "$READ_CEILING")
   BOUNDED_OUT="$(ORCH_LANES_USAGE_MAX_AGE="$LANES_MAX_AGE" ${BOUND_BY[@]+"${BOUND_BY[@]}"} "$@" 2>"$errf")" || rc=$?
   (( rc != 0 )) || return 0
+  # An empty REASON is a caller weighing every status itself.
+  [[ -n "$reason" ]] || return "$rc"
   if [[ "$rc" -eq 124 ]]; then
     overseer_note "$reason" "path=$1" "seconds=$READ_CEILING"
   else
@@ -2970,10 +2974,14 @@ check_lanes() {
 # printing no accounts.
 ACCOUNT_ROSTER=""
 ACCOUNT_ROSTER_RC=1
+# The same reading's records whole, which the heartbeat's owed items take the
+# reset of a walled launch from; set with ACCOUNT_ROSTER and only then.
+ACCOUNT_LIST=""
 account_roster_read() {
   local errf="$WORK_DIR/accounts.err" rc=0 out
   ACCOUNT_ROSTER=""
   ACCOUNT_ROSTER_RC=1
+  ACCOUNT_LIST=""
   bounded_account_read account-unread "$errf" "$LANES_CLI" list --json || rc=$?
   # `lanes` writes its own keyed notices on a listing it still answered, a
   # provider it could not ask among them; those qualify this roster and pass
@@ -3000,6 +3008,7 @@ account_roster_read() {
     return 1
   }
   ACCOUNT_ROSTER="$out"
+  ACCOUNT_LIST="$BOUNDED_OUT"
   ACCOUNT_ROSTER_RC=0
 }
 
@@ -3072,46 +3081,61 @@ check_report() {
 # as OWED_LINES. The tracker is the membership and launch_queue only the
 # order: with LINEAR_TEAM, every team item In Progress or In Review, one live
 # read; with none, every open pull request in the item repository, the first
-# --repo, whose head is a GitHub item's branch, issue-N, which ITEM_OPEN holds
-# from the heartbeat's own listing. An item is owed nothing while a record
-# holds it (running or preparing, LANE_RUNNING_JQ's `held`), while it is
-# parked, since the merged check carries a parked lane's pull request, or once
-# its record carries the `cycle` oversee-cycle writes at its merge. The verdict
-# is `dated` where every account of the record's harness reads walled in the
-# roster, until the earliest reset among them; `unjudged` where the roster was
-# not read; `queue` otherwise, an item with no record or no harness included,
-# since its launch picks both. Without --state there is no queue to compare.
-# The queue and the records are the turn's own fleet_merge read, FLEET_STATE,
-# so the heartbeat judges the fleet the pass carried and reads no file again.
+# --repo, whose head is a GitHub item's branch, issue-N, read whole by a
+# listing of its own. A listing that reaches OWED_PR_LIMIT refuses rather than
+# pass a short set as the whole one. An item is owed nothing while a record
+# holds it (running or preparing, LANE_RUNNING_JQ's `held`) or while it is
+# parked, since the merged check carries a parked lane's pull request. The
+# queue and the records are the turn's own fleet_merge read, FLEET_STATE, so
+# the heartbeat judges the fleet the pass carried and reads no file again.
+#
+# The verdict, in this order: `merged` where the record carries the `cycle`
+# oversee-cycle writes at a merge, which a later launch keeps, so the tracker
+# holding the item says either the close-out never moved it or the item went
+# back to work; `queue` where the record names no harness, since its launch
+# picks one, or where the roster holds no account of that harness; `unjudged`
+# where the roster was not read; otherwise `lanes pick` for the record's
+# harness and model decides, the launcher's own judge: room is `queue`, a wall
+# is `dated` until the earliest reset lib/lane-model.sh's lane_binding gives
+# that model among the harness's accounts, and anything else is `unjudged`.
+# One pick is asked per harness and model. Without --state there is no queue
+# to compare.
+OWED_PR_LIMIT=1000
 OWED_LINES=""
-owed_read() { # ITEM_OPEN
+owed_read() {
   OWED_LINES=""
   [[ -n "$STATE_FILE" ]] || return 0
-  local errf="$WORK_DIR/owed.err" out items roster=null rc=0
+  local errf="$WORK_DIR/owed.err" out items rows roster=null rc=0 n
+  local id state priority lane harness model pr key verdict answers="" asked answer line
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
     out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --state "In Progress,In Review" --max --format=safe 2>"$errf")" || rc=$?
     [[ "$rc" -eq 0 ]] \
       || die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "exit=$rc"
+    # Linear's priority 0 is No priority, which ranks after Low: it prints `-`.
     items="$(jq -c '
       if type != "array" then error("tracker-type expected=array actual=\(type)") else . end
       | map(
           if ((.id? | type) == "string" and (.id | test("^[A-Za-z0-9._-]+$"))) then .
           else error("tracker-field field=id value=\(.id | tojson)") end
-          | {id, priority: (.priority // "-"),
+          | {id, priority: (if .priority == null or .priority == 0 then "-" else .priority end),
              state: ({"In Progress": "in-progress", "In Review": "in-review"}[.state? | strings]
                // error("tracker-field field=state value=\(.state | tojson)"))})' <<<"$out" 2>"$errf")" \
       || die tracker-list-invalid "$(cat "$errf")" "team=$LINEAR_TEAM"
   else
-    items="$(awk -F'\t' '$2 ~ /^issue-[0-9]+$/ { print $2 }' <<<"$1" \
+    out="$(gh pr list --repo "${REPOS[0]}" --state open --limit "$OWED_PR_LIMIT" --json number,headRefName,title \
+      --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>"$errf")" \
+      || die pr-list-failed "$(cat "$errf")" "repo=${REPOS[0]}" "state=open"
+    n="$(grep -c . <<<"$out" || true)"
+    [[ "$n" -lt "$OWED_PR_LIMIT" ]] || die owed-list-truncated "" "repo=${REPOS[0]}" "limit=$OWED_PR_LIMIT"
+    items="$(awk -F'\t' '$2 ~ /^issue-[0-9]+$/ { print $2 }' <<<"$out" \
       | jq -Rnc '[inputs | {id: ., state: "open-pr", priority: "-"}]' 2>"$errf")" \
       || die pr-list-invalid "$(cat "$errf")" "repo=${REPOS[0]}"
   fi
-  if [[ "$ACCOUNT_ROSTER_RC" -eq 0 ]]; then
-    roster="$(jq -Rnc '[inputs | select(length > 0) | split("\t")
-      | {harness: (.[0] | split("|")[0]), verdict: (.[1] | split("|")[1]), resets: (.[1] | split("|")[2])}]' \
-      <<<"$ACCOUNT_ROSTER" 2>"$errf")" || die owed-roster-invalid "$(cat "$errf")"
-  fi
-  OWED_LINES="$(jq -r --argjson items "$items" --argjson roster "$roster" "$LANE_RUNNING_JQ"'
+  [[ "$ACCOUNT_ROSTER_RC" -ne 0 ]] || roster="$ACCOUNT_LIST"
+  # One row per owed item on the unit separator, since a model id is the
+  # launcher's to spell: id, state, priority, lane, then the harness and model
+  # a wall is judged for and the merged pull request, `-` where none.
+  rows="$(jq -r --argjson items "$items" "$LANE_RUNNING_JQ"'
     def token($field): if type == "string" and test("^[A-Za-z0-9._-]+$") then .
       else error("lane-field field=\($field) value=\(tojson)") end;
     if type != "object" then error("state-type expected=object actual=\(type)") else . end
@@ -3123,18 +3147,72 @@ owed_read() { # ITEM_OPEN
     | . as $item
     | select(any($queue[]; . == $item.id) | not)
     | ([$lanes[] | objects | select(.item == $item.id)] | last) as $rec
-    | select($rec == null or ((($rec | held) or $rec.status == "parked" or $rec.cycle != null) | not))
-    | (if $rec == null then "none" else ($rec.status | token("status")) end) as $lane
-    | ($rec.harness // null | if . == null then . else token("harness") end) as $harness
-    | "owed \($item.id) state=\($item.state) priority=\($item.priority) lane=\($lane) "
-      + (if $harness == null then "verdict=queue"
-         elif $roster == null then "verdict=unjudged harness=\($harness)"
-         else [$roster[] | select(.harness == $harness)] as $accounts
-           | if ($accounts | length) > 0 and all($accounts[]; .verdict == "walled")
-             then "verdict=dated harness=\($harness) until=\([$accounts[].resets | select(. != "-")] | min // "-")"
-             else "verdict=queue" end
-         end)' <<<"$FLEET_STATE" 2>"$errf")" \
+    | select($rec == null or ((($rec | held) or $rec.status == "parked") | not))
+    | [$item.id, $item.state, ($item.priority | tostring),
+       (if $rec == null then "none" else ($rec.status | token("status")) end),
+       ($rec.harness // null | if . == null then "-" else token("harness") end),
+       ($rec.model // null | if . == null or . == "" then "-" elif type == "string" then . else error("lane-field field=model value=\(tojson)") end),
+       (if $rec.cycle == null then "-"
+        else ($rec.cycle.pr | if type == "number" then tostring else error("lane-field field=cycle value=\($rec.cycle | tojson)") end) end)]
+    | join("\u001f")' <<<"$FLEET_STATE" 2>"$errf")" \
     || die state-invalid "$(cat "$errf")" "option=--state" "path=$STATE_FILE"
+  while IFS=$'\037' read -r id state priority lane harness model pr; do
+    [[ -n "$id" ]] || continue
+    line="owed $id state=$state priority=$priority lane=$lane"
+    if [[ "$pr" != - ]]; then
+      verdict="verdict=merged pr=$pr"
+    elif [[ "$harness" == - ]]; then
+      verdict="verdict=queue"
+    elif [[ "$roster" == null ]]; then
+      verdict="verdict=unjudged harness=$harness"
+    elif ! jq -e --arg h "$harness" 'any(.[]; .harness == $h)' <<<"$roster" >/dev/null 2>"$errf"; then
+      [[ ! -s "$errf" ]] || die owed-roster-invalid "$(cat "$errf")"
+      verdict="verdict=queue"
+    else
+      key="$harness"$'\037'"$model"
+      verdict=""
+      while IFS=$'\t' read -r asked answer; do
+        [[ "$asked" != "$key" ]] || { verdict="$answer"; break; }
+      done <<<"$answers"
+      if [[ -z "$verdict" ]]; then
+        verdict="$(owed_wall "$harness" "$model" "$roster")" || exit $?
+        answers+="$key"$'\t'"$verdict"$'\n'
+      fi
+    fi
+    OWED_LINES+="$line $verdict"$'\n'
+  done <<<"$rows"
+  OWED_LINES="${OWED_LINES%$'\n'}"
+}
+
+# The wall verdict of one harness and model, printed: `lanes pick` judges it
+# exactly as a launch on them is judged. Exit 0 is room; exit 3 with walled
+# accounts is a wall, dated by lane_binding over the roster's records of that
+# harness; exit 3 with none walled is every account unmeasured, and any other
+# exit a judgement that failed, named on stderr: both are `unjudged`.
+owed_wall() { # HARNESS MODEL ROSTER_JSON
+  local harness="$1" model="$2" errf="$WORK_DIR/owed-pick.err" rc=0 walled until
+  local args=(pick --harness "$harness" --json)
+  [[ "$model" == - ]] || args+=(--model "$model")
+  bounded_account_read "" "$errf" "$LANES_CLI" "${args[@]}" || rc=$?
+  case "$rc" in
+    0) echo "verdict=queue"; return 0 ;;
+    3)
+      walled="$(jq -r '.walled | if type == "number" then . else error("walled missing") end' <<<"$BOUNDED_OUT" 2>/dev/null)" \
+        || { ow_message owed-wall-unjudged "harness=$harness" "model=$model" "exit=3" >&2; cat -- "$errf" >&2
+             echo "verdict=unjudged harness=$harness"; return 0; }
+      if [[ "$walled" -gt 0 ]]; then
+        [[ "$model" != - ]] || model=""
+        until="$(jq -r --arg h "$harness" --arg m "$model" "$LANE_MODEL_JQ"'
+          [.[] | select(.harness == $h) | lane_binding($m) | .resets_at? // empty | strings] | min // "-"' \
+          <<<"$3" 2>"$errf")" || die owed-roster-invalid "$(cat "$errf")"
+        echo "verdict=dated harness=$harness until=$until"
+        return 0
+      fi ;;
+    *)
+      ow_message owed-wall-unjudged "harness=$harness" "model=$model" "exit=$rc" >&2
+      cat -- "$errf" >&2 ;;
+  esac
+  echo "verdict=unjudged harness=$harness"
 }
 
 # Every --repo's open PRs, each line prefixed with its repo as the reducer's
@@ -3143,7 +3221,7 @@ owed_read() { # ITEM_OPEN
 # account roster follows, as the last long pass read it, then the owed items,
 # read before the event line for the same reason.
 heartbeat() {
-  local errf="$WORK_DIR/open.err" repo open open_all="" item_open="" failing baseline="" file
+  local errf="$WORK_DIR/open.err" repo open open_all="" failing baseline="" file
   github_ready
   # The standing lane failures, each reported once and quiet since: a quiet
   # run still names every channel that stays broken. The long pass's are in
@@ -3154,10 +3232,9 @@ heartbeat() {
     open="$(gh pr list --repo "$repo" --state open --limit 50 --json number,headRefName,title \
       --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>"$errf")" \
       || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=open"
-    [[ "$repo" != "${REPOS[0]}" ]] || item_open="$open"
     [[ -z "$open" ]] || open_all+="$(pw_prefix "$repo" "$open")"$'\n'
   done
-  owed_read "$item_open"
+  owed_read
   # The current fleet's alone: a row clears on the item's next good read,
   # and an item that left the fleet is read no more.
   if ! failing="$(ow_items="$(printf '%s\n' overseer ${ITEMS[@]+"${ITEMS[@]}"})" awk -F'\t' '
@@ -3191,7 +3268,7 @@ heartbeat() {
 # next long pass reads, never this process's copy of them.
 LONG_PASSES=0
 LONG_RETURNS=(LONG_EVENT LONG_FAILED OVERSEER_SUCCEEDED OVERSEER_STOP PW_PASSES PW_RC PW_EVENT
-  PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC)
+  PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC ACCOUNT_LIST)
 long_pass() {
   local i state_file
   PASS_EVENT=0

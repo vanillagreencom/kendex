@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # oversee-watch's owed items: under a heartbeat, one `owed` line per item the
 # tracker holds as work the fleet owes and the fleet state's launch_queue
-# lacks, with the verdict the account roster gives it. Every run is one pass
-# (--max-loops 1) over a fleet state passed with --state.
+# lacks, with its verdict. Every run is one pass (--max-loops 1) over a fleet
+# state passed with --state. The wall itself is `lanes pick`'s judgement,
+# tested in lanes.sh; these rows hold the watch to asking it for the record's
+# harness and model and to reading its answer.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
-# mutant_scripts and mutate_file, the two halves of the control below.
+# mutant_scripts and mutate_file, the two halves of the controls below.
 # shellcheck source=lib/growth-state.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 
@@ -28,17 +30,26 @@ fleet() {
   jq -n --argjson queue "$queue" --argjson lanes "$(printf '%s\n' "$@" | jq -sc .)" \
     '{issue_id: "oversee", triaged: [], launch_queue: $queue, lanes: $lanes}' > "$STUB_DIR/state.json"
 }
-# account ALIAS HARNESS VERDICT RESETS — one `lanes list --json` record.
+# account ALIAS HARNESS VERDICT RESETS — one `lanes list --json` record, its
+# binding bucket the weekly window resetting at RESETS, and an Opus-scoped
+# window at 100% resetting a day later than 2026-10-03.
 account() {
   jq -nc --arg a "$1" --arg h "$2" --arg v "$3" --arg r "$4" '{
     alias: $a, harness: $h, config_dir: ("/home/u/." + $a), measured_through: "local",
-    status: "ok", verdict: $v, headroom_pct: 0, binding_bucket: "weekly", binding_resets_at: $r}'
+    status: "ok", verdict: $v, headroom_pct: 0, binding_bucket: "weekly", binding_resets_at: $r,
+    session_5h_pct: 10, weekly_pct: 20, resets: {session: "2026-09-28T05:00:00Z", weekly: $r},
+    model_buckets: [{label: "Opus", pct: 100, resets_at: "2026-10-04T00:00:00Z"}]}'
 }
 # issue ID STATE PRIORITY — one safe-format tracker item.
 issue() { jq -nc --arg id "$1" --arg s "$2" --argjson p "$3" '{id: $id, state: $s, priority: $p}'; }
+# pick HARNESS MODEL RC [JSON] — what `lanes pick` answers for that pair.
+pick() {
+  printf '%s\n' "$3" > "$STUB_DIR/pick-$1-$2.rc"
+  [[ -z "${4:-}" ]] || printf '%s\n' "$4" > "$STUB_DIR/pick-$1-$2.json"
+}
 
-# watch_pass [ENV=VAL...] [-- ARGS...] — one run over the case's state; OUT,
-# RC and ERR (a file) are what the assertions read.
+# watch_pass [ENV=VAL...] [-- ARGS...] — one run; OUT, RC and ERR (a file) are
+# what the assertions read.
 RUN_SEQ=0
 watch_pass() {
   local env_args=()
@@ -55,27 +66,52 @@ owed() {
 }
 
 # The shared world: one fleet whose records and tracker items each reach one
-# rule. KEN-1 runs, KEN-2 is stopped on a harness with room, KEN-3 stopped on
-# a harness whose every account is walled, KEN-4 parked, KEN-5 closed out with
-# its merge's cycle, KEN-6 in review with no record and an open PR, KEN-7
-# already queued, KEN-8 done.
+# rule. KEN-1 runs; KEN-2 is stopped on a Sonnet model its harness has room
+# for; KEN-3 stopped on a harness walled for every model; KEN-4 parked; KEN-5
+# closed out with its merge's cycle; KEN-6 in review with no record and an
+# open PR; KEN-7 already queued; KEN-8 done; KEN-9 stopped on a harness no
+# roster account belongs to, with no priority; KEN-10 stopped after a relaunch
+# that kept an earlier merge's cycle; KEN-11 stopped on the Opus model its
+# harness is walled for. The claude roster mixes a walled account with one
+# that has room, which is pick's to weigh.
 world() {
   new_case "$1"
   fleet '["KEN-7"]' \
     "$(record KEN-1 running claude)" \
-    "$(record KEN-2 stopped claude)" \
+    "$(record KEN-2 stopped claude '{"model":"claude-sonnet-5"}')" \
     "$(record KEN-3 stopped codex)" \
     "$(record KEN-4 parked claude '{"parked":{"pr":14,"head":"abc","repo":"owner/repo","at":"2026-09-27T00:00:00Z"}}')" \
-    "$(record KEN-5 done claude '{"cycle":{"pr":15}}')"
+    "$(record KEN-5 done claude '{"cycle":{"pr":15}}')" \
+    "$(record KEN-9 stopped pi)" \
+    "$(record KEN-10 stopped claude '{"cycle":{"pr":21}}')" \
+    "$(record KEN-11 stopped claude '{"model":"claude-opus-5"}')"
   printf '%s\n' "$(issue KEN-1 'In Progress' 1)" "$(issue KEN-2 'In Progress' 2)" \
     "$(issue KEN-3 'In Progress' 1)" "$(issue KEN-4 'In Review' 2)" "$(issue KEN-5 'In Review' 2)" \
     "$(issue KEN-6 'In Review' 3)" "$(issue KEN-7 'In Progress' 2)" "$(issue KEN-8 Done 2)" \
+    "$(issue KEN-9 'In Progress' 0)" "$(issue KEN-10 'In Progress' 2)" "$(issue KEN-11 'In Progress' 1)" \
     | jq -sc . > "$STUB_DIR/tracker.out"
   printf '16\tken-6\tthe review item\n' > "$STUB_DIR/open.txt"
   printf '%s\n' "$(account claude claude room 2026-10-01T00:00:00Z)" \
+    "$(account claude2 claude walled 2026-10-02T00:00:00Z)" \
     "$(account codex codex walled 2026-10-05T00:00:00Z)" "$(account codex2 codex walled 2026-10-03T00:00:00Z)" \
     | jq -sc . > "$STUB_DIR/lanes.json"
+  pick claude claude-sonnet-5 0 '{"config_dir":"/home/u/.claude"}'
+  pick codex - 3 '{"walled":2,"unmeasured":0}'
+  pick claude claude-opus-5 3 '{"walled":2,"unmeasured":0}'
 }
+
+# Rows: item | its owed line in the shared world, `-` for none.
+WORLD_ROWS='KEN-1|-
+KEN-2|owed KEN-2 state=in-progress priority=2 lane=stopped verdict=queue
+KEN-3|owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z
+KEN-4|-
+KEN-5|owed KEN-5 state=in-review priority=2 lane=done verdict=merged pr=15
+KEN-6|owed KEN-6 state=in-review priority=3 lane=none verdict=queue
+KEN-7|-
+KEN-8|-
+KEN-9|owed KEN-9 state=in-progress priority=- lane=stopped verdict=queue
+KEN-10|owed KEN-10 state=in-progress priority=2 lane=stopped verdict=merged pr=21
+KEN-11|owed KEN-11 state=in-progress priority=1 lane=stopped verdict=dated harness=claude until=2026-10-04T00:00:00Z'
 
 echo "=== oversee-watch owed items ==="
 
@@ -84,40 +120,67 @@ watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC first=$(head -1 <<<"$OUT")" "rc=0 first=$HEARTBEAT" "the fleet reaches the heartbeat" "$ERR"
 assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --state In Progress,In Review --max --format=safe" \
   "the owed items are one live read of the team's In Progress and In Review items" "$ERR"
-# Rows: item | its owed line, `-` for none.
 while IFS='|' read -r item want; do
   assert_eq "$(owed "$item")" "$want" "owed $item" "$ERR"
-done <<'ROWS'
-KEN-1|-
-KEN-2|owed KEN-2 state=in-progress priority=2 lane=stopped verdict=queue
-KEN-3|owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z
-KEN-4|-
-KEN-5|-
-KEN-6|owed KEN-6 state=in-review priority=3 lane=none verdict=queue
-KEN-7|-
-KEN-8|-
-ROWS
+done <<<"$WORLD_ROWS"
+assert_eq "$(grep '^pick ' "$STUB_DIR/lanes.args" | sort)" \
+  "$(printf '%s\n' 'pick --harness claude --json --model claude-opus-5' 'pick --harness claude --json --model claude-sonnet-5' 'pick --harness codex --json' | sort)" \
+  "the wall is asked of lanes pick once per harness and model, with the record's model" "$ERR"
 assert_eq "$(grep -n '^owed ' <<<"$OUT" | head -1 | cut -d: -f1)" "$(($(grep -n '^account ' <<<"$OUT" | tail -1 | cut -d: -f1) + 1))" \
   "the owed lines follow the account roster" "$ERR"
 
 # A roster that was not read judges no wall: every item with a harness is
-# unjudged, and one with no record is still queued.
+# unjudged, a merged one is still merged, and one with no record is queued.
 world owed_unjudged
 printf '1\n' > "$STUB_DIR/lanes.rc"
 watch_pass -- --state "$STUB_DIR/state.json"
-assert_eq "$(owed KEN-3)|$(owed KEN-2)|$(owed KEN-6)" \
-  "owed KEN-3 state=in-progress priority=1 lane=stopped verdict=unjudged harness=codex|owed KEN-2 state=in-progress priority=2 lane=stopped verdict=unjudged harness=claude|owed KEN-6 state=in-review priority=3 lane=none verdict=queue" \
+assert_eq "$(owed KEN-3)|$(owed KEN-9)|$(owed KEN-5)|$(owed KEN-6)" \
+  "owed KEN-3 state=in-progress priority=1 lane=stopped verdict=unjudged harness=codex|owed KEN-9 state=in-progress priority=- lane=stopped verdict=unjudged harness=pi|owed KEN-5 state=in-review priority=2 lane=done verdict=merged pr=15|owed KEN-6 state=in-review priority=3 lane=none verdict=queue" \
   "an unread roster leaves every harness unjudged" "$ERR"
 
+# Rows: case | pick's exit and reply for codex. Every account unmeasured and a
+# pick that fails are both unjudged; the failure is named.
+while IFS='|' read -r name rc reply notes; do
+  world "owed_pick_$name"
+  pick codex - "$rc" "$reply"
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "rc=$RC $(owed KEN-3) notes=$(grep -c '^oversee-watch: owed-wall-unjudged harness=codex model=- exit=' "$ERR" || true)" \
+    "rc=0 owed KEN-3 state=in-progress priority=1 lane=stopped verdict=unjudged harness=codex notes=$notes" \
+    "a pick answering $name leaves the item unjudged" "$ERR"
+done <<'ROWS'
+unmeasured|3|{"walled":0,"unmeasured":2}|0
+failure|1||1
+ROWS
+
 # A fleet with no tracker team owes the item repository's open PRs on a GitHub
-# item's branch, and reads no tracker.
+# item's branch, and no other repository's, and reads no tracker.
 new_case owed_github
 fleet '[]'
-printf '12\tissue-12\tan issue\n13\tken-9\tnot an issue branch\n' > "$STUB_DIR/open.txt"
-watch_pass LINEAR_TEAM -- --state "$STUB_DIR/state.json"
+printf '12\tissue-12\tan issue\n13\tken-9\tnot an issue branch\n' > "$STUB_DIR/open.owner_repo.txt"
+printf '77\tissue-77\ta consumer-side PR\n' > "$STUB_DIR/open.other_repo.txt"
+watch_pass LINEAR_TEAM -- --state "$STUB_DIR/state.json" --repo owner/repo --repo other/repo
 assert_eq "rc=$RC tracker=$([[ -e "$STUB_DIR/tracker.args" ]] && echo read || echo unread) lines=$(grep -c '^owed ' <<<"$OUT" || true) $(owed issue-12)" \
   "rc=0 tracker=unread lines=1 owed issue-12 state=open-pr priority=- lane=none verdict=queue" \
-  "an open PR on issue-N is owed on a fleet with no team" "$ERR"
+  "an open PR on issue-N in the item repository is owed on a fleet with no team" "$ERR"
+
+# The owed read lists the item repository past the heartbeat's 50-line
+# display: the oldest of 51 open PRs is owed, and a listing that reaches the
+# owed read's own limit refuses rather than pass as whole.
+new_case owed_github_deep
+fleet '[]'
+# Newest first, as gh lists: the issue-N PR is the oldest, the 51st line.
+{ for n in $(seq 50 -1 1); do printf '%s\tken-%s\tpr %s\n' "$n" "$n" "$n"; done; printf '9\tissue-999\tthe oldest\n'; } \
+  > "$STUB_DIR/open.txt"
+watch_pass LINEAR_TEAM -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC display=$(grep -c "^owner/repo$(printf '\t')" <<<"$OUT" || true) $(owed issue-999)" \
+  "rc=0 display=50 owed issue-999 state=open-pr priority=- lane=none verdict=queue" \
+  "the 51st open PR is owed though the heartbeat displays 50" "$ERR"
+new_case owed_github_truncated
+fleet '[]'
+for n in $(seq 1 1000); do printf '%s\tissue-%s\tpr %s\n' "$n" "$n" "$n"; done > "$STUB_DIR/open.txt"
+watch_pass LINEAR_TEAM -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC heartbeat=$(grep -c '^EVENT heartbeat' <<<"$OUT" || true) key=$(grep -c '^oversee-watch: owed-list-truncated repo=owner/repo limit=1000$' "$ERR" || true)" \
+  "rc=2 heartbeat=0 key=1" "a listing at its limit exits 2 with no heartbeat" "$ERR"
 
 # No fleet state, no queue to compare: no owed line and no tracker read.
 world owed_stateless
@@ -145,16 +208,26 @@ object|{"id":"KEN-2","state":"In Progress"}
 bad_id|[{"id":"KEN 2","state":"In Progress","priority":2}]
 ROWS
 
-echo "=== must-fail control ==="
-# The watch without the held exclusion: the running lane's item is owed.
-MUTANT_DIR="$TMP_ROOT/owed-mutant"
-MUTANT_WATCH="$(mutant_scripts owed-mutant/orch oversee-watch)/oversee-watch" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-mutate_file "$MUTANT_WATCH" '($rec | held)' 'false'
-world owed_mutant
-WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
-assert_eq "$(owed KEN-1)" "owed KEN-1 state=in-progress priority=1 lane=running verdict=queue" \
-  "control: without the held exclusion an item with a running lane is owed" "$ERR"
+echo "=== must-fail controls ==="
+# Rows, on `@` since the replaced text carries `|`: name @ text the mutant
+# replaces @ its replacement @ item @ the line the mutant prints for it. Each
+# removes one rule of owed_read and leaves the rest standing.
+MUTANT_N=0
+while IFS='@' read -r name old new item want; do
+  MUTANT_N=$((MUTANT_N + 1))
+  MUTANT_DIR="$TMP_ROOT/owed-mutant-$MUTANT_N"
+  MUTANT_WATCH="$(mutant_scripts "owed-mutant-$MUTANT_N/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+  mutate_file "$MUTANT_WATCH" "$old" "$new"
+  world "owed_mutant_$name"
+  WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "$(owed "$item")" "$want" "control: $name" "$ERR"
+done <<'ROWS'
+without the held exclusion an item with a running lane is owed@($rec | held)@false@KEN-1@owed KEN-1 state=in-progress priority=1 lane=running verdict=queue
+without the merged verdict a cycle record is judged for a wall@if [[ "$pr" != - ]]; then@if false; then@KEN-5@owed KEN-5 state=in-review priority=2 lane=done verdict=queue
+without the roster membership test a harness with no account is asked of pick@any(.[]; .harness == $h)@true@KEN-9@owed KEN-9 state=in-progress priority=- lane=stopped verdict=unjudged harness=pi
+without the record's model the pick judges the binding bucket@[[ "$model" == - ]] || args+=(--model "$model")@:@KEN-11@owed KEN-11 state=in-progress priority=1 lane=stopped verdict=queue
+ROWS
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

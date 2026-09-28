@@ -259,17 +259,26 @@ The long pass's events, checked and reported in this order:
                              reading failed. Last, with --state, one line
                              `owed <item> state=<in-progress|in-review|open-pr>
                              priority=<N|-> lane=<none|status> verdict=<queue|
-                             dated harness=<h> until=<reset|->|unjudged
-                             harness=<h>>` per item the tracker holds as work
-                             the fleet owes that launch_queue lacks: with
-                             LINEAR_TEAM, the team's In Progress and In Review
-                             items, one live read; with none, the first
-                             --repo's open PRs on an issue-N branch. A record
-                             running, preparing or parked, or carrying its
-                             merge's `cycle`, owes nothing. `dated` is every
-                             roster account of the record's harness walled,
-                             until the earliest reset; `unjudged` is a roster
-                             that was not read
+                             merged pr=<N>|dated harness=<h> until=<reset|->|
+                             unjudged harness=<h>>` per item the tracker holds
+                             as work the fleet owes that launch_queue lacks:
+                             with LINEAR_TEAM, the team's In Progress and In
+                             Review items, one live read, a priority of 0 (none)
+                             printed `-`; with none, every open PR of the first
+                             --repo on an issue-N branch, from a listing of its
+                             own that exits 2 as owed-list-truncated at 1000.
+                             A record running, preparing or parked owes
+                             nothing. `merged` is a record carrying its merge's
+                             `cycle`. A record with no harness, or whose
+                             harness the roster holds no account of, is
+                             `queue`; `unjudged` is a roster that was not read;
+                             otherwise `lanes pick --harness <h> [--model <m>]`
+                             with the record's harness and model decides:
+                             room is `queue`, a wall `dated` until the earliest
+                             reset of that model's binding bucket among the
+                             harness's accounts, and every account unmeasured
+                             or a failed pick `unjudged`, the failure named as
+                             owed-wall-unjudged
 
 The mail pass's events, in this order, lane by lane and the overseer's own
 mailbox last:
@@ -734,6 +743,8 @@ ow_message() { # REASON FIELD=VALUE...
     tracker-list-failed) text='The tracker list command failed.' ;;
     tracker-list-invalid) text='The tracker list output could not be parsed.' ;;
     owed-roster-invalid) text='The account roster this run read could not be put to the owed items, so the heartbeat names none.' ;;
+    owed-list-truncated) text='The item repository open pull request listing reached its limit, so an owed issue-N pull request past it would be missing. The heartbeat names no owed item from a partial list.' ;;
+    owed-wall-unjudged) text='lanes pick could not judge the wall for this harness and model, so the owed items on them read unjudged this heartbeat. Its own words follow.' ;;
     handoff-read-failed) text='The handoff record could not be read.' ;;
     lane-close-failed) text='lane-close failed before it completed the close. The next run reports the exit again and retries.' ;;
     parked-merge-unmatched) text='A pull request merged on the parked item'"'"'s branch name, reported above as merged, is not the one its record names, so the parked sandbox stays stopped: recorded= is the record'"'"'s <repo>#<number> in lower case and seen= the merged keys this pass found. The lane closes when the recorded pull request merges in that repository.' ;;

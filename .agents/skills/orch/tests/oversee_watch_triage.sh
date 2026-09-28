@@ -7,17 +7,27 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
+# mutant_scripts and mutate_file, the two halves of the control at the end.
+# shellcheck source=lib/growth-state.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 
 SINCE=2026-08-15T09:00:00Z
 HEARTBEAT1="EVENT+heartbeat+loops=1+interval=0s+since=$SINCE"
 STATE_FILE_NAME="owner_repo__2026-08-15T09_00_00Z"
 
 # run [ENV=VAL ...] -- ARGS... — one watch run; OUT, RC and ERR (a file) are
-# what `watch` reads. `--since` is supplied unless ARGS carry their own.
+# what `watch` reads. `--since` is supplied unless ARGS carry their own, or
+# carry `--no-since`, which asks for none and is dropped before the run.
 RUN_SEQ=0
 run() {
-  local args=("$@") a since=yes
-  for a in "$@"; do [[ "$a" == --since* ]] && since=no; done
+  local args=() a since=yes
+  for a in "$@"; do
+    case "$a" in
+      --no-since) since=no ;;
+      --since*) since=no; args+=("$a") ;;
+      *) args+=("$a") ;;
+    esac
+  done
   [[ "$since" == no ]] || args+=(--since "$SINCE")
   ERR="$TMP_ROOT/run-$((++RUN_SEQ)).err"
   OUT="$(run_watch "${args[@]}" 2>"$ERR")" && RC=0 || RC=$?
@@ -163,6 +173,7 @@ done
 # stub directory or `dir=<name>` under the state directory.
 for row in \
   "a missing tracker CLI is named with its remedy|OVERSEE_WATCH_TRACKER=%B/absent-tracker|tracker.out=[{\"id\":\"KEN-1200\",\"created_at\":\"2026-08-15T10:00:00.000Z\"}]||rc=2 stdout=empty stderr~oversee-watch:+helper-missing+path%e%B/absent-tracker=true stderr~OVERSEE_WATCH_TRACKER=true" \
+  "a --state watch with no --since still needs the tracker CLI its owed items read|OVERSEE_WATCH_TRACKER=%B/absent-tracker|state.json={\"lanes\":[]}|--no-since --state %S/state.json|rc=2 stdout=empty stderr~oversee-watch:+helper-missing+path%e%B/absent-tracker=true stderr~OVERSEE_WATCH_TRACKER=true" \
   "a missing workflow-state CLI is named with its remedy|OVERSEE_WATCH_WORKFLOW_STATE=%B/absent-workflow-state|tracker.out=[{\"id\":\"KEN-1200\",\"created_at\":\"2026-08-15T10:00:00.000Z\"}]||rc=2 stdout=empty stderr~oversee-watch:+helper-missing+path%e%B/absent-workflow-state=true stderr~OVERSEE_WATCH_WORKFLOW_STATE=true" \
   "a missing account reader is named with its remedy|OVERSEE_WATCH_LANES=%B/absent-lanes|||rc=2 stdout=empty stderr~oversee-watch:+helper-missing+path%e%B/absent-lanes=true stderr~OVERSEE_WATCH_LANES=true" \
   "a tracker list failure keeps its real cause||tracker.rc=2;tracker.err=E_TRACKER_UNAVAILABLE||rc=2 stdout=empty stderr~oversee-watch:+tracker-list-failed+team%ekendex+exit%e2=true stderr~E_TRACKER_UNAVAILABLE=true" \
@@ -181,6 +192,7 @@ for row in \
     done
   fi
   env="${env//%B/$TMP_ROOT/bin}"
+  args="${args//%S/$STUB_DIR}"
   # shellcheck disable=SC2086
   if [[ -n "$env" ]]; then run "$env" -- $args; else run -- $args; fi
   check "$label" "$expect"
@@ -198,6 +210,18 @@ run -- --max-loops 1
 check "triage reconciliation preserves the reducer key beside the verdict key" "state~12%tthreads-open=true state~triage%tKEN-1200=true"
 run -- --max-loops 1
 check "unchanged reducer attention stays baselined after triage" "first=$HEARTBEAT1"
+
+# Must-fail control: the tracker gate asked under --since alone lets a --state
+# watch start with no tracker CLI, which then fails only at its heartbeat.
+MUTANT_DIR="$TMP_ROOT/gate-mutant"
+MUTANT_WATCH="$(mutant_scripts gate-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+mutate_file "$MUTANT_WATCH" '&& ( -n "$SINCE" || -n "$STATE_FILE" ) ]]' '&& -n "$SINCE" ]]'
+new_case triage_gate_mutant
+printf '{"lanes":[]}\n' > "$STUB_DIR/state.json"
+WATCH_BIN="$MUTANT_WATCH" run OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/absent-tracker" -- --no-since --state "$STUB_DIR/state.json"
+check "control: without the --state arm the missing tracker CLI passes the start" \
+  "stderr~oversee-watch:+helper-missing+path%e%B/absent-tracker=false"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
