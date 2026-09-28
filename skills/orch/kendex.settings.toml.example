@@ -309,7 +309,8 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # ORCH_SIZE_RENDER_ROOTS = ".agents .claude .codex .pi"
 
 # Extra test-file patterns added to the built-in ones, separated by spaces.
-# A pattern matches the whole path from the project root. Empty leaves the
+# A pattern matches the whole path from the project root or, for a file
+# under a generated-copy folder, the path past that folder. Empty leaves the
 # built-in rule alone.
 # ORCH_SIZE_TEST_PATHS = "scripts/check-*.py"
 

@@ -226,9 +226,10 @@ BRANCH_SIZE_BASELINE=""
 # against, replacing the base-branch lookup, and $2 is then unused and empty.
 #
 # $4 is the blank-separated list of extra test-path globs a repository adds to
-# the built-in test rule. A pattern matches the whole repository-relative path,
-# with `*` any run of characters including `/`, `?` any single character, and
-# everything else literal. The list only adds: empty, or matching nothing, it
+# the built-in test rule. A pattern matches the whole repository-relative path
+# or, for a path under a render root, the path past that root, with `*` any
+# run of characters including `/`, `?` any single character, and everything
+# else literal. The list only adds: empty, or matching nothing, it
 # leaves every line where the built-in rule put it, which for a path that rule
 # does not name is production and the stricter allowance.
 #

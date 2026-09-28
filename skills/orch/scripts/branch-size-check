@@ -27,8 +27,9 @@
 # source file counts with its file.
 #
 # ORCH_SIZE_TEST_PATHS only adds to that rule, never takes from it. A glob
-# matches the whole repository-relative path, with `*` any run of characters
-# including `/`, `?` any single character, and everything else literal. Left
+# matches the whole repository-relative path or, for a path under a render
+# root, the path past that root, with `*` any run of characters including
+# `/`, `?` any single character, and everything else literal. Left
 # empty, or matching nothing, every line stays where the built-in rule put it,
 # which for a path that rule does not name is production and the stricter
 # allowance.
