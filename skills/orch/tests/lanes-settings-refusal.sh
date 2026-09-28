@@ -86,7 +86,8 @@ echo "=== lanes refuses a lane setting it cannot read ==="
 # a lane pickable past its day; an exclusion or retirement key written as a
 # path names no lane, so the account it meant to cover would be read; and a
 # TTL that does not parse has no reuse window to apply. A usage threshold that
-# does not parse has no bound to judge against, and falling back to a number of
+# does not parse has no bound to judge against, nor an expected burn a charge,
+# and falling back to a number of
 # the script's own is the silent disagreement reading the setting exists to end.
 # Each is
 # refused before any lane is enumerated; the inverse row is a well-formed pair
@@ -95,7 +96,7 @@ echo "=== lanes refuses a lane setting it cannot read ==="
 while IFS='|' read -r setting value want; do
   [[ -n "$setting" ]] || continue
   rc=0; sub=list; [[ "$setting" != ORCH_HANDOFF_HEADROOM_PCT ]] || sub=context
-  out="$(cd "$TMP_ROOT/home" && env -u ORCH_LANE_DIRS -u CODEX_HOME -u ORCH_LANE_EXCLUDE -u ORCH_LANE_RETIRE -u ORCH_LANES_USAGE_TTL -u ORCH_HANDOFF_HEADROOM_PCT -u ORCH_LANE_MAX_PCT \
+  out="$(cd "$TMP_ROOT/home" && env -u ORCH_LANE_DIRS -u CODEX_HOME -u ORCH_LANE_EXCLUDE -u ORCH_LANE_RETIRE -u ORCH_LANES_USAGE_TTL -u ORCH_HANDOFF_HEADROOM_PCT -u ORCH_LANE_MAX_PCT -u ORCH_LANE_BURN_PCT_PER_HOUR \
     LANES_HOME="$TMP_ROOT/home" ORCH_LANES_FETCH_CMD=false OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
     "$setting=$value" "$LANES" "$sub" --json 2>&1 >/dev/null)" || rc=$?
   if [[ -z "$want" ]]; then
@@ -115,6 +116,9 @@ ORCH_HANDOFF_HEADROOM_PCT|101|lanes: invalid-handoff-headroom value=101
 ORCH_LANE_MAX_PCT|101|lanes: invalid-lane-max-pct value=101
 ORCH_LANE_MAX_PCT|soon|lanes: invalid-lane-max-pct value=soon
 ORCH_LANE_MAX_PCT|95|
+ORCH_LANE_BURN_PCT_PER_HOUR|101|lanes: invalid-lane-burn value=101
+ORCH_LANE_BURN_PCT_PER_HOUR|often|lanes: invalid-lane-burn value=often
+ORCH_LANE_BURN_PCT_PER_HOUR|0|
 ORCH_LANE_RETIRE|nclaude=2026-13-01|lanes: invalid-retire entry=nclaude=2026-13-01
 ORCH_LANE_RETIRE|nclaude=2027-02-29|lanes: invalid-retire entry=nclaude=2027-02-29
 ORCH_LANE_RETIRE|nclaude=2028-02-29|

@@ -41,7 +41,7 @@ case "${1:-}" in
   list) echo "[]" ;;
   pick)
     if [[ " $* " == *" --lane "* ]]; then
-      [[ ! -e "$STUB_WALL" ]] || { echo '{"wall":97,"binding_bucket":"five_hour"}'; exit 3; }
+      [[ ! -e "$STUB_WALL" ]] || { echo '{"wall":97,"binding_bucket":"five_hour","projected_headroom_pct":3}'; exit 3; }
     else
       cat -- "$STUB_PICK"
     fi ;;
@@ -580,7 +580,7 @@ await_line one '^open-terminal: slot-waiting'
 "$WS" --state-dir "$STATE" update oversee '.lanes |= map(.status = "done")' >/dev/null
 await_exit "$WAITER"
 assert_eq "rc=$(rc one) $(key one | tail -n 1) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
-  "rc=1 open-terminal: lane-model-walled lane=$LANE_A model=opus pct=97 bucket=five_hour opened=no" \
+  "rc=1 open-terminal: lane-model-walled lane=$LANE_A model=opus pct=97 bucket=five_hour projected-headroom=3 opened=no" \
   "a named lane whose window walled during the wait is refused rather than launched"
 row wait-repick
 printf 'CLAUDE_CONFIG_DIR=%s\n' "$LANE_A" > "$ROW/pick"

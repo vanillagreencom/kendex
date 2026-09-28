@@ -151,13 +151,14 @@ ol_lanes() { # ARGS...
 # exit, since exit 3 prints its counts too, and `lanes pick`'s own status
 # returned. The pick ol_pick_lane makes and every count a caller holds a
 # launch to ask this one question, so no two of them judge an account two
-# ways.
+# ways. It passes --for-overseer: the pick seats an overseer, so the accounts
+# fleets record for their overseers, which a lane pick omits, stay candidates.
 OL_PICK_RECORD=""
 ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
   local floor=() exclude=() rc=0 LC_ALL=C
   [[ -n "$(lane_context_mark_model "$1" "$2")" ]] || floor=(--binding-floor)
   [[ -z "${4:-}" ]] || exclude=(--exclude-lane "$4")
-  OL_PICK_RECORD="$(ol_lanes pick --harness "$1" --min-headroom-pct "$3" \
+  OL_PICK_RECORD="$(ol_lanes pick --harness "$1" --min-headroom-pct "$3" --for-overseer \
     ${floor[@]+"${floor[@]}"} ${exclude[@]+"${exclude[@]}"} ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?
   return "$rc"
 }

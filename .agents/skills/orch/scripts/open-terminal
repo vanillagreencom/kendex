@@ -707,7 +707,7 @@ host_account_read() { # CONFIG_DIR HARNESS
 # the model the launch passes. Returns 1 with its refusal printed. The block
 # that calls it below says why each answer is what it is.
 named_lane_judge() {
-  local lane_rc=0 lane_record lane_wall lane_bucket lane_status
+  local lane_rc=0 lane_record lane_wall lane_bucket lane_projected lane_status
   # `held`, `missing` or `unanswered`, and empty until something asks. Only the
   # unmeasured arm below reads it, so that arm is the one place that asks.
   HOST_ACCOUNT=""
@@ -732,8 +732,13 @@ named_lane_judge() {
         ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-bucket" >&2
         return 1
       }
+      # `none` where `lanes` could not read the claims and judged the wall alone.
+      lane_projected="$(jq -r '.projected_headroom_pct // "none"' <<<"$lane_record")" || {
+        ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-projection" >&2
+        return 1
+      }
       ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
-        "pct=$lane_wall" "bucket=$lane_bucket" >&2
+        "pct=$lane_wall" "bucket=$lane_bucket" "projected-headroom=$lane_projected" >&2
       return 1
       ;;
     # NOTHING MEASURED THE ACCOUNT. Three answers, and the provider decides
@@ -789,9 +794,9 @@ named_lane_judge() {
         return 1
       fi
       ;;
-    # An unreadable claim store is not among these: this gate asks for a wall,
-    # which no claim count enters, so `lanes` reports the store on stderr as a
-    # notice and answers the wall anyway. The same policy as the claim write
+    # An unreadable claim store is not among these: with no claim count there
+    # is no burn to charge, so `lanes` reports the store on stderr as a notice
+    # and judges the wall reading alone. The same policy as the claim write
     # below, which is never fatal either.
     #
     # Anything else is the judge itself failing, including the threshold it

@@ -1709,7 +1709,7 @@ jq -n '{
             scope: {model: {display_name: "Opus"}}}]
 }' > "$FIXTURE_DIR/.claude.json"
 table \
-  "a shared 5-hour wall outranks the named model bucket and names itself||$SHARED_PICK|rc=3 binding_bucket=session binding_resets_at=2026-07-27T06:00:00Z wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=session,max-pct=80"
+  "a shared 5-hour wall outranks the named model bucket and names itself||$SHARED_PICK|rc=3 binding_bucket=session binding_resets_at=2026-07-27T06:00:00Z wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=session,max-pct=80,projected-headroom=15"
 
 jq -n '{
   five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
@@ -1720,7 +1720,7 @@ jq -n '{
             scope: {model: {display_name: "Opus"}}}]
 }' > "$FIXTURE_DIR/.claude.json"
 table \
-  "the named model wall outranks both shared buckets and names itself||$SHARED_PICK|rc=3 binding_bucket=model binding_resets_at=2026-08-02T06:00:00Z wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=model,max-pct=80"
+  "the named model wall outranks both shared buckets and names itself||$SHARED_PICK|rc=3 binding_bucket=model binding_resets_at=2026-08-02T06:00:00Z wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=model,max-pct=80,projected-headroom=15"
 
 jq -n '{
   five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
@@ -1798,7 +1798,7 @@ table \
   "room prints the env prefix and nothing else||$ONE --model opus|rc=0 out=CLAUDE_CONFIG_DIR=$H/.eclaude key=none" \
   "room under --json prints the lane record instead||$ONE --model opus --json|rc=0 alias=eclaude key=none" \
   "the record carries the wall it was judged on, so a caller names the percentage it refused||pick --lane $H/.claude --harness claude --model fable --json|rc=3 wall=95" \
-  "a walled lane refuses 3 and names the wall on the keyed line||pick --lane $H/.claude --harness claude --model fable|rc=3 out= key=pick-lane-walled,lane=$H/.claude,wall=95,bucket=model,max-pct=95" \
+  "a walled lane refuses 3 and names the wall on the keyed line||pick --lane $H/.claude --harness claude --model fable|rc=3 out= key=pick-lane-walled,lane=$H/.claude,wall=95,bucket=model,max-pct=95,projected-headroom=5" \
   "a lane no window measures for this model refuses 5, never 3||pick --lane $H/.uclaude --harness claude --model sonnet|rc=5 key=pick-lane-unmeasured,lane=$H/.uclaude,model=sonnet" \
   "the record comes back on 5 too, whose status says the account read fine and its one window names another model||pick --lane $H/.uclaude --harness claude --model sonnet --json|rc=5 status=ok model_label=Opus wall=null" \
   "a directory no lane record covers refuses 4, which a launcher reads as nothing to judge||pick --lane $TMP_ROOT/not-a-lane --harness claude --model opus|rc=4 key=pick-lane-unlisted,lane=$TMP_ROOT/not-a-lane,harness=claude" \
@@ -2078,7 +2078,7 @@ table \
   "a host row with no reading of its own leaves this machine's reading of the account in place|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token-bare.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.tclaude=local"
 # Control: a pick that never asks for the host rows reads the token-only folder
 # as this machine's no_credentials, and nothing is picked.
-lanes_mutant mutant-pick-local-only lanes 'lanes="\$(collect_lanes "\$harness" "\$exclude" "\$hosted")"' 'lanes="$(collect_lanes "$harness" "$exclude")"'
+lanes_mutant mutant-pick-local-only lanes '"\$seats" "\$hosted")"' '"$seats")"'
 LANES_PATCHED="$LANES"
 LANES="$TMP_ROOT/mutant-pick-local-only/scripts/lanes"
 table \

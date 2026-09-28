@@ -180,6 +180,39 @@ def with_lane_binding($model; $binding_floor):
             then (((100 - $binding.pct) * ._rate_elapsed_s / ($delta * 60)) | ceil)
             else null end)};
 
+# with_lane_projection($burn_default) over one record with_lane_binding has
+# judged: the room the account has left an hour from now if every live lane
+# on it keeps burning, which is what a launch onto it inherits. A wall reading
+# lags the launches in flight by minutes, so an account read as having the
+# most room fills until it walls; the projection charges each live claim its
+# expected burn before any verdict is taken.
+#
+# burn_pct_per_lane_hour is the judged window measured rate shared out across
+# the live claims where both exist, and $burn_default, ORCH_LANE_BURN_PCT_PER_HOUR,
+# where they do not: a rate taken with nothing claimed says nothing about what
+# one lane costs, and an unmeasured rate says nothing at all.
+# projected_headroom_pct is the judged headroom less the claims times that
+# burn, null where the wall is null, since nothing measured the account, or the
+# claims are null, since the claim store could not be read: an unknown count is
+# never charged as zero lanes.
+def with_lane_projection($burn_default):
+  (if .usage_rate_state == "measured" and (.claims // 0) > 0
+   then .usage_rate_pct_per_min * 60 / .claims else $burn_default end) as $burn
+  | . + {burn_pct_per_lane_hour: (if .wall == null then null else $burn end),
+         projected_headroom_pct:
+           (if .wall == null or .claims == null then null
+            else 100 - .wall - .claims * $burn end)};
+
+# judged_wall over one record with_lane_projection has read: the percentage
+# wall_verdict judges, the projected use where a projection exists and the
+# wall reading where the claims are unknown. Both pick forms classify through
+# it, so a named lane is refused on the rule the chooser drops it on.
+def judged_wall:
+  if .wall == null then null
+  elif .projected_headroom_pct == null then .wall
+  else 100 - .projected_headroom_pct
+  end;
+
 def lane_public: del(._rate_prior, ._rate_elapsed_s, ._id);
 
 # One spelling for every reset a lane record carries: whole-second UTC with a

@@ -48,7 +48,7 @@ ot_message() { # REASON FIELD=VALUE...
     lane-selected) text='The launch account is selected.' ;;
     launch-trusted) text='The launch directory is trusted in the config this launch will read, so the harness starts into it rather than onto the folder-trust question. route=preapproved is the account config already carrying the entry; route=launch-home is a CODEX_HOME built for this launch under the account, holding the account files by link and a config of its own, because the account config is a link the account shim repoints at every launch; route=account-config is the entry written into the claude config dir .claude.json, the file that harness keeps its own answer in.' ;;
     launch-trust-missing) text='The folder-trust entry for this launch directory could not be made in the config this launch would read. Nothing was launched: the harness would open on the folder-trust question and wait there for an answer nobody at the pane gives. Remedy by reason: trust-refused is an answer already recorded for this directory that is not trust, which this will not overwrite, so change it where it was written or launch somewhere else; config-unreadable is the account config present and unreadable or unparseable, a dangling shim link being the usual codex cause, so relink or repair it, and for a claude config dir .claude.json the parser'"'"'s own words are printed under this line, the position to repair the file at; account-store is the account transcript directory that could not be made; home-create is the private CODEX_HOME under the account, or the claude config dir, that could not be made, and home-path, home-link and home-entry are that CODEX_HOME that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; config-write is that home config.toml, or a claude config dir .claude.json, that could not be written, the claude writer'"'"'s own words printed under this line the same way, and config-install the rename over it that failed; entry-unreadable is the entry written and not read back. The lane host provider makes this entry for a sandboxed lane instead.' ;;
-    lane-model-walled) text='The account has no usage window left for the model this launch passes; bucket names the shared or model window that decided, and pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead. The threshold that judged is on the keyed lanes: line above.' ;;
+    lane-model-walled) text='The account has no usage window left for the model this launch passes, once the lanes already on it spend what they are expected to; bucket names the shared or model window that decided, pct names how much of it is used, and projected-headroom the room left after that expected burn, or none where the claims could not be read. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead. The threshold that judged is on the keyed lanes: line above.' ;;
     lane-model-unreadable) text='The lane could not be read for the model this launch passes. Nothing was launched: an unread window is not an empty one.' ;;
     host-credential-dead) text='The account read expired, and the lane host reports holding that same account. Nothing was launched. The expired copy is the credential this machine holds, which could not be renewed, or the copy the provider holds where its accounts row reports the account expired: lanes list names which in its THROUGH column. Remedy for THROUGH local: log in again on this machine for that config directory; a provider that re-seeds the host from that directory at every create, as the reference provider does, sends this dead copy again. For THROUGH host, renew the credential the provider holds. A RELAUNCH onto this same account proceeds instead, on the copy the provider installed; a window read for the account walls either shape.' ;;
     host-relaunch-credential) text='Nothing here measured this account, and the lane host reports holding it, so the relaunch proceeds on the copy the provider installed. Nothing checked that copy is live. The resumed session reports its own usage banner, which the watch reads as usage-limit. A window this machine CAN read still walls a relaunch: an account at or above --lane-max-pct is refused as lane-model-walled, hosted or not.' ;;
@@ -178,7 +178,9 @@ Options:
                     recording a model the harness never runs.
   --lane <spec>     Launch under a chosen harness account. `auto` picks the
                     qualifying account with the fewest launches in flight for
-                    --harness; `auto:<h>` picks for harness <h>; a config dir
+                    --harness, never an account a fleet records as its
+                    overseer's (`lanes --help`, pick); `auto:<h>` picks for
+                    harness <h>; a config dir
                     is used literally; any other value is looked up as a lane
                     alias. A named lane (alias or config dir) that
                     ORCH_LANE_EXCLUDE or ORCH_LANE_RETIRE covers is refused,
@@ -208,7 +210,9 @@ Options:
                     copilot-pool-walled where every stated one is spent; such
                     a lane runs under PI_CODING_AGENT_DIR, its settings and
                     carrier read there for a fleet launch:
-                    refused when it is at or above --lane-max-pct, and
+                    refused when it is at or above --lane-max-pct once the
+                    lanes already on it are charged their expected burn, the
+                    projection `auto` judges on, and
                     refused as unreadable when nothing measures it. A config
                     dir that neither a lane record nor a provider reading
                     covers is used as given, there being nothing to judge it
