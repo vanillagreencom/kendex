@@ -724,18 +724,26 @@ assert_eq "generation=$(recorded generation)" "generation=none" \
 # relaunch replays, and only where the fleet state holds none. A refusal here
 # would leave the overseer unwatched with every lane still working, over a
 # pane whose harness the builder could not name.
+# The builder sits at a path of at least 120 bytes, as an install under a deep
+# home or organisation directory does: the stderr line names it, and the
+# fleet log row, held to ORCH_FLEET_LOG_ROW_BYTES, carries the reason and
+# pane without it and still lands.
+LONG_SUCCEED_DIR="$TMP_ROOT/deep"
+while (( ${#LONG_SUCCEED_DIR} < 104 )); do LONG_SUCCEED_DIR+="/install-dir"; done
+LONG_SUCCEED="$LONG_SUCCEED_DIR/oversee-succeed"
+mkdir -p "$LONG_SUCCEED_DIR" && cp "$TMP_ROOT/bin/succeed-stub.sh" "$LONG_SUCCEED"
 overseer_case record_derivation_failure idle
 state_with "$BYPASS_LINE"
 touch "$STUB_DIR/succeed.print-fail"
-run TMUX_PANE="$PANE" -- --max-loops 2 -- --model fable
+run TMUX_PANE="$PANE" OVERSEE_WATCH_SUCCEED="$LONG_SUCCEED" -- --max-loops 2 -- --model fable
 assert_eq "rc=$RC events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true) launched=$(succeed_calls --dead-pane)" \
   "rc=0 events=0 launched=0" "a line the builder cannot build does not stop the watch" "$ERR"
-assert_eq "$(grep -c -x -F -- "oversee-watch: overseer-line-missing pane=$PANE path=$TMP_ROOT/bin/succeed-stub.sh held=$BYPASS_LINE" "$ERR")" "1" \
-  "and is noted once on stderr, naming the line a death would replay" "$ERR"
+assert_eq "$(grep -c -x -F -- "oversee-watch: overseer-line-missing pane=$PANE path=$LONG_SUCCEED held=$BYPASS_LINE" "$ERR")" "1" \
+  "and is noted once on stderr, naming the builder's path and the line a death would replay" "$ERR"
 assert_eq "$(grep -c "^oversee-succeed: harness-unnamed pane=" "$ERR")" "1" \
   "with the builder's own refusal under it" "$ERR"
-assert_eq "$(fleet_log_kind)|$(fleet_log_text | cut -d: -f1)" "close|overseer-line-missing pane=$PANE path=$TMP_ROOT/bin/succeed-stub.sh" \
-  "and in the fleet log, keyed as the stderr line is" "$ERR"
+assert_eq "$(fleet_log_kind)|$(fleet_log_text | cut -d: -f1)|$(grep -c '^oversee-watch: overseer-notice-failed' "$ERR")" "close|overseer-line-missing pane=$PANE|0" \
+  "and in the fleet log under the same reason and pane, the path left out so a deep install still fits the row" "$ERR"
 assert_eq "$(recorded launch_line)" "$BYPASS_LINE" \
   "the line the fleet state already held is left where it was" "$ERR"
 assert_contains "$(fleet_log_text)" "A line is held for this pane, at overseer.pending.launch_line if set, else overseer.launch_line." \
@@ -784,9 +792,10 @@ for row in "7000|%4|another pane" "7001|$PANE|this pane id on another server"; d
   assert_contains "$(jq -r '.fleet_log[] | select(.item == "overseer") | .text' "$STUB_DIR/oversee-state.json")" "No line is held for this pane." \
     "and the start's fleet log row, ahead of the death's, says no line is held for this pane" "$ERR"
 done
-# The first watch of a fleet, or one whose state file was removed, started on
-# a pane that already reads exited: no record at all, so the death names none
-# and no successor is launched.
+# The first watch of a fleet, whose state holds no overseer record since no
+# launch, succession, watch start or `oversee register` wrote one yet, started
+# on a pane that already reads exited: the death names no record and no
+# successor is launched.
 overseer_case record_failure_dead_none exited
 printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
 jq -n '{issue_id: "oversee", triaged: [], lanes: []}' > "$STUB_DIR/state.json"

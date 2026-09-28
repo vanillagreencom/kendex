@@ -700,14 +700,16 @@ overseer_fleet_log() { # NOTICE_FILE RECORD_FILE ERR_FILE
 # A session record the start could not write, said on stderr and in the fleet
 # log and then left behind: the watch goes on to judge the pane, which is
 # read from tmux and not from the record. The reason and its fields are the
-# keyed line's, and the fleet log row repeats them so the successor that
-# reads the log at takeover sees what this watch could not record. HELD is
-# the line a death would replay as the record stands, `none` or `unread`: the
-# keyed line carries it whole as `held=`, and the fleet-log row, bounded by
-# ORCH_FLEET_LOG_ROW_BYTES, says whether one is held and where it is read,
-# since the row and the line sit in the same state file. Runs before
-# WORK_DIR exists, so its files are its own and removed here.
-overseer_record_notice() { # DETAIL HELD REASON FIELD=VALUE...
+# keyed line's, and the fleet log row repeats the reason and the pane so the
+# successor that reads the log at takeover sees what this watch could not
+# record; the other fields stay on stderr, since a path= is as long as the
+# install's path and the row is not. HELD is the line a death would replay
+# as the record stands, `none` or `unread`: the keyed line carries it whole
+# as `held=`, and the fleet-log row, bounded by ORCH_FLEET_LOG_ROW_BYTES,
+# says whether one is held and where it is read, since the row and the line
+# sit in the same state file. Runs before WORK_DIR exists, so its files are
+# its own and removed here.
+overseer_record_notice() { # DETAIL HELD REASON PANE_FIELD FIELD=VALUE...
   local detail="$1" held="$2" notice record errf held_text
   shift 2
   ow_message "$@" "held=$held" >&2
@@ -721,7 +723,7 @@ overseer_record_notice() { # DETAIL HELD REASON FIELD=VALUE...
     unread) held_text='Whether a line is held was not read.' ;;
     *) held_text='A line is held for this pane, at overseer.pending.launch_line if set, else overseer.launch_line.' ;;
   esac
-  if printf '%s: the start could not record this session; the pane is still watched. %s %s\n' "$*" "$OW_REPLAY_RULE" "$held_text" > "$notice"
+  if printf '%s: the start could not record this session; the pane is still watched. %s %s\n' "$1 $2" "$OW_REPLAY_RULE" "$held_text" > "$notice"
   then
     if ! overseer_fleet_log "$notice" "$record" "$errf"; then
       ow_message overseer-notice-failed "channel=fleet-log" >&2
