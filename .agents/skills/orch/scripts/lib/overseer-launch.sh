@@ -5,8 +5,8 @@
 # successor in a predecessor's place. One launcher, so a first launch and a
 # succession cannot come to open, verify or record a session differently.
 # What differs between them is policy and stays with the caller: which marks
-# fire, how a predecessor's flags carry over, which entries the account walk
-# tries. `oversee-watch` sources it too, through lib/watch-overseer-record.sh,
+# fire and which entries the account walk tries; the walk and the flag
+# assembly apply that policy the same way for both. `oversee-watch` sources it too, through lib/watch-overseer-record.sh,
 # for OL_JQ_DEFS, ol_preference and ol_session_inspect. What is shared is here:
 #
 #   ol_preference          the ORCH_OVERSEER_PREFERENCE value, its default
@@ -20,6 +20,15 @@
 #                          own counts
 #   ol_pick_lane           one `lanes pick` for one entry, with the counts a
 #                          refusal reports
+#   ol_account_id          an account directory as its comparable identity
+#   ol_walk                the account walk: the entries in order, the first
+#                          whose lane qualifies, a predecessor's own entry and
+#                          the rules a succession skips an entry on included
+#   ol_entry_permitted     whether an entry's harness takes the posture its
+#                          source allows
+#   ol_launch_flags        the flag words of the entry the walk chose, a
+#                          predecessor's words carried over as its harness
+#                          and the entry's allow
 #   ol_command_line        the harness command for a picked lane, brief
 #                          included, made trusted and put under the lane form
 #   ol_identity            the launch identity the next record write stores
@@ -265,6 +274,199 @@ ol_pick_lane() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
   (( rc == 0 )) || return "$rc"
   OL_PICKED_DIR="$(jq -r '.config_dir // empty' <<<"$record" 2>"$DEP_ERR")" || return 1
   [[ -n "$OL_PICKED_DIR" ]] || return 1
+}
+
+# ol_account_id DIR — one account directory as its comparable identity, empty
+# for an empty input. The pairing is lib/lane-launch.sh's own, the one
+# lane_account_check compares an observed account against a picked one with:
+# lane_launch_home_account turns a private codex launch home back into the
+# account it was built under, and lane_claims_canon resolves the path, so an
+# account spelled two ways is one account.
+ol_account_id() { # DIR
+  [[ -n "$1" ]] || return 0
+  lane_claims_canon "$(lane_launch_home_account "$1")"
+}
+
+# ol_walk TRIGGER EXCLUDE_DIR ENTRY... — the account walk every overseer
+# launch takes, a first launch and a succession alike: ENTRY... in order, the
+# first that names a lane into OL_CHOSEN, with OL_HARNESS, OL_MODEL,
+# OL_EFFORT and OL_LANE_DIR beside it and OL_PICK_MODEL the model its pick was
+# judged on. A named entry's model is resolved before its lane
+# (ol_entry_model), so the pick is judged on the bucket that walls the model
+# the entry passes; ol_pick_lane picks at TRIGGER, leaving EXCLUDE_DIR out,
+# and its exit 3 skips the entry. An entry spending no account `lanes`
+# measures takes no pick and no lane (ol_pick_lane).
+#
+# The entry `caller` is a predecessor's own, as OL_WALK_CALLER_* describe it:
+# its harness, its lane, the model and effort its record pairs, empty where
+# the record names no model, and the model its pick is judged on, the one the
+# predecessor already runs. It keeps its own lane unpicked where
+# OL_WALK_CALLER_KEEP is 1. A pi predecessor whose model names no provider
+# spends an account nothing names (ol_account), so its entry refuses
+# pi-account-unknown rather than launch a successor no pick holds off a spent
+# account. OL_FALLBACK_WALKED names the harness it swept, or `none` where the
+# walk never reached it.
+#
+# A named entry is launched under a permission posture its source allows
+# (ol_entry_permitted), and skipped before its pick where it cannot be. The
+# rules a succession adds, each off while its setting is empty or 0: each
+# skip is a notice for the caller to print, one line of tab-separated key and
+# fields in OL_WALK_SKIPS.
+#   OL_WALK_REFUSE_ID       a pick naming this account (ol_account_id) is
+#                           skipped as successor-lane-spent: the backstop for
+#                           an inventory that still names EXCLUDE_DIR
+#   OL_WALK_SUCCESSOR_BOUND a pick is skipped where the successor opened on it
+#                           would read other accounts above TRIGGER, the lane
+#                           picked counted in, and that count stays at or
+#                           below the bound; a successor on no measured
+#                           account reads no count and settles nothing
+#
+# Returns 0 with an entry chosen, 3 where none qualifies, the counts in
+# OL_WALKED_WALLED and OL_WALKED_UNMEASURED, and 1 with OL_REASON
+# model-failed, lanes-failed or pi-account-unknown and its fields in
+# OL_FIELDS, the dependency's words in DEP_ERR.
+OL_WALK_CALLER_HARNESS="" OL_WALK_CALLER_LANE="" OL_WALK_CALLER_MODEL="" OL_WALK_CALLER_EFFORT=""
+OL_WALK_CALLER_PICK_MODEL="" OL_WALK_CALLER_KEEP=0
+OL_WALK_SOURCE_HARNESS="" OL_WALK_SOURCE_FLAGS="" OL_WALK_SOURCE_ROWS=0 OL_WALK_REFUSE_ID="" OL_WALK_SUCCESSOR_BOUND=0
+OL_CHOSEN="" OL_HARNESS="" OL_MODEL="" OL_EFFORT="" OL_PICK_MODEL="" OL_LANE_DIR="" OL_FALLBACK_WALKED=none
+OL_WALK_SKIPS=() OL_FIELDS=()
+ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
+  local trigger="$1" exclude="$2" entry rc count tab=$'\t'
+  shift 2
+  OL_CHOSEN="" OL_LANE_DIR="" OL_FALLBACK_WALKED=none OL_WALK_SKIPS=() OL_FIELDS=()
+  for entry in "$@"; do
+    if [[ "$entry" == caller ]]; then
+      OL_HARNESS="$OL_WALK_CALLER_HARNESS" OL_MODEL="$OL_WALK_CALLER_MODEL" OL_EFFORT="$OL_WALK_CALLER_EFFORT"
+      OL_PICK_MODEL="$OL_WALK_CALLER_PICK_MODEL" OL_FALLBACK_WALKED="${OL_WALK_CALLER_HARNESS:-none}"
+      ol_account "$OL_HARNESS" "$OL_PICK_MODEL"
+      if [[ "$OL_ACCOUNT_HARNESS" == unknown ]]; then
+        OL_REASON=pi-account-unknown OL_FIELDS=("model=${OL_PICK_MODEL:-none}")
+        return 1
+      fi
+      if (( OL_WALK_CALLER_KEEP )); then
+        OL_LANE_DIR="$OL_WALK_CALLER_LANE" OL_CHOSEN=caller
+        return 0
+      fi
+    else
+      ol_entry_model "$entry" || { OL_REASON=model-failed OL_FIELDS=("entry=$entry"); return 1; }
+      OL_HARNESS="$OL_ENTRY_HARNESS" OL_MODEL="$OL_ENTRY_MODEL" OL_EFFORT="$OL_ENTRY_EFFORT"
+      OL_PICK_MODEL="$OL_ENTRY_MODEL"
+      ol_entry_permitted "$entry" || continue
+    fi
+    rc=0
+    ol_pick_lane "$OL_HARNESS" "$OL_PICK_MODEL" "$trigger" "$exclude" || rc=$?
+    case "$rc" in
+      0) ;;
+      3) continue ;;
+      *) OL_REASON=lanes-failed OL_FIELDS=("entry=$entry" "exit=$rc"); return 1 ;;
+    esac
+    if [[ -n "$OL_WALK_REFUSE_ID" && "$(ol_account_id "$OL_PICKED_DIR")" == "$OL_WALK_REFUSE_ID" ]]; then
+      OL_WALK_SKIPS+=("successor-lane-spent${tab}lane=$exclude${tab}entry=$entry")
+      continue
+    fi
+    if (( OL_WALK_SUCCESSOR_BOUND > 0 )); then
+      [[ -n "$OL_PICKED_DIR" ]] || continue
+      rc=0
+      ol_pick_record "$OL_HARNESS" "$OL_PICK_MODEL" "$trigger" "$OL_PICKED_DIR" || rc=$?
+      case "$rc" in
+        0|3) ;;
+        *) OL_REASON=lanes-failed OL_FIELDS=("entry=$entry" "exit=$rc" step=successor-count); return 1 ;;
+      esac
+      count="$(jq -r '.qualifying_count // empty' <<<"$OL_PICK_RECORD" 2>"$DEP_ERR")" || count=""
+      case "$count" in
+        '' | *[!0-9]*) OL_REASON=lanes-failed OL_FIELDS=("entry=$entry" step=successor-count); return 1 ;;
+      esac
+      if (( count > 0 && count + 1 <= OL_WALK_SUCCESSOR_BOUND )); then continue; fi
+    fi
+    OL_LANE_DIR="$OL_PICKED_DIR" OL_CHOSEN="$entry"
+    return 0
+  done
+  return 3
+}
+
+# ol_entry_permitted ENTRY — whether ol_walk may launch ENTRY, of harness
+# OL_HARNESS, under the posture its source allows, a skip notice queued in
+# OL_WALK_SKIPS where it may not. A first launch, OL_WALK_SOURCE_HARNESS empty,
+# needs the full-bypass word the harness row writes, and a row naming none,
+# pi's, has no unattended launch to open: entry-permission-unwritable. An
+# entry of another harness than its source needs that word too, and the
+# source's posture to cross to it: OL_WALK_SOURCE_FLAGS held to exactly one
+# transferable posture (lib/lane-launch.sh §
+# launch_choice_permission_transferable), entry-permission-untransferable
+# where not; with OL_WALK_SOURCE_ROWS 1, a judgement handed no permission
+# words, the source row naming a transferable posture, and a skip says
+# nothing. So no posture crosses to or from pi, whose row names none.
+ol_entry_permitted() { # ENTRY
+  local tab=$'\t'
+  if [[ -z "$OL_WALK_SOURCE_HARNESS" ]]; then
+    launch_choice_permission_write "$OL_HARNESS" >/dev/null && return 0
+    OL_WALK_SKIPS+=("entry-permission-unwritable${tab}entry=$1${tab}harness=$OL_HARNESS")
+    return 1
+  fi
+  [[ "$OL_HARNESS" != "$OL_WALK_SOURCE_HARNESS" ]] || return 0
+  if launch_choice_permission_write "$OL_HARNESS" >/dev/null; then
+    if (( OL_WALK_SOURCE_ROWS )); then
+      [[ -z "$(launch_choice_transfer_permission_spellings "$OL_WALK_SOURCE_HARNESS")" ]] || return 0
+    elif launch_choice_permission_transferable "$OL_WALK_SOURCE_HARNESS" "$OL_WALK_SOURCE_FLAGS"; then
+      return 0
+    fi
+  fi
+  (( OL_WALK_SOURCE_ROWS )) \
+    || OL_WALK_SKIPS+=("entry-permission-untransferable${tab}entry=$1${tab}source=$OL_WALK_SOURCE_HARNESS${tab}target=$OL_HARNESS")
+  return 1
+}
+
+# ol_launch_flags [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE
+# [FLAG...] — the flag words of one overseer launch, as argv into OL_FLAGS,
+# for ol_command_line to write, whether it is a first launch or a successor:
+# MODEL and EFFORT written from HARNESS's row of lib/lane-launch.sh's table,
+# then SOURCE's words FLAG... as HARNESS may take them, the predecessor's
+# harness and flags, both empty on a first launch. An entry with no MODEL is
+# a predecessor's own, and keeps every word. One of the same harness strips
+# the predecessor's model and effort and keeps its permission words exactly.
+# One of another harness, a first launch among them, writes HARNESS's
+# full-bypass permission words and keeps none of the predecessor's, whose
+# posture must transfer (launch_choice_permission_transferable). The words
+# kept are led by the harness's launch settings, the compaction words for the
+# model the launch runs (MODEL, else the one the kept words name, else
+# PICK_MODEL) and, with --question-off, its question-tool words
+# (launch_choice_lead_settings). Returns 1 with OL_REASON
+# launch-choice-failed, or model-window-unknown where a claude model has no
+# window named, and its fields in OL_FIELDS.
+OL_FLAGS=()
+ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [FLAG...]
+  local question=() words lead_model
+  if [[ "$1" == --question-off ]]; then question=(--question-off); shift; fi
+  local harness="$1" model="$2" effort="$3" pick_model="$4" source="$5"
+  shift 5
+  OL_FLAGS=() OL_FIELDS=()
+  OL_REASON=launch-choice-failed
+  words="$(launch_choice_write "$harness" "$model" "$effort")" || { OL_FIELDS=("harness=$harness"); return 1; }
+  [[ -z "$words" ]] || eval "OL_FLAGS=($words)"
+  if [[ -z "$model" ]]; then
+    LAUNCH_CHOICE_KEPT=("$@")
+  elif [[ "$harness" == "$source" ]]; then
+    launch_choice_strip "$source" "$@" || { OL_FIELDS=("harness=$source"); return 1; }
+  else
+    OL_FIELDS=(reason=permission-transfer "source=${source:-none}" "target=$harness")
+    [[ -z "$source" ]] || launch_choice_permission_transferable "$source" "$*" || return 1
+    words="$(launch_choice_permission_write "$harness")" || return 1
+    eval "OL_FLAGS+=($words)"
+    LAUNCH_CHOICE_KEPT=()
+    [[ -z "$source" ]] || launch_choice_strip "$source" --permissions "$@" || { OL_FIELDS=("harness=$source"); return 1; }
+    OL_FIELDS=()
+  fi
+  lead_model="$model"
+  [[ -n "$lead_model" ]] || lead_model="$(launch_choice_value "$(launch_choice_model_spellings "$harness")" \
+    "${LAUNCH_CHOICE_KEPT[*]+${LAUNCH_CHOICE_KEPT[*]}}")"
+  [[ -n "$lead_model" ]] || lead_model="$pick_model"
+  launch_choice_lead_settings ${question[@]+"${question[@]}"} ${lead_model:+--model "$lead_model"} \
+    "$harness" ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}
+  if [[ "$LAUNCH_CHOICE_COMPACTION" == no-window ]]; then
+    OL_REASON=model-window-unknown OL_FIELDS=("model=$lead_model")
+    return 1
+  fi
+  OL_FLAGS+=(${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"})
 }
 
 # ol_command_line HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG... — the whole

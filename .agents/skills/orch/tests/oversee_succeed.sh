@@ -1255,9 +1255,9 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "control: a judgement that ignores the walk fires on a count no successor settles"
 # The successor count's control: never judged, so the walk opens the successor
 # onto the other account.
-REFIRECTL="$(mutant_scripts refirectl oversee-succeed)" || exit 1
-mutate_file "$REFIRECTL/oversee-succeed" \
-  'if (( successor_count > 0 && successor_count + 1 <= SUCCESSOR_ACCOUNTS )); then' 'if false; then'
+REFIRECTL="$(mutant_scripts refirectl lib/overseer-launch.sh)" || exit 1
+mutate_file "$REFIRECTL/lib/overseer-launch.sh" \
+  'if (( count > 0 && count + 1 <= OL_WALK_SUCCESSOR_BOUND )); then continue; fi' ':'
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES" SUCCEED_BIN="$REFIRECTL/oversee-succeed" \
   run_succeed refirectl ''
@@ -2466,11 +2466,11 @@ for row in \
     "$row_label: refused, nothing launched"
 done
 
-# --walled-pane's one control: the pick gate naming `succeed` alone. The
-# caller entry then keeps the account the walled session was spending, and the
-# successor opens straight back into the wall.
+# --walled-pane's one control: the caller entry kept unpicked in `walled` as
+# in `print`. It then keeps the account the walled session was spending, and
+# the successor opens straight back into the wall.
 WALLCTL="$(mutant_scripts wallctl oversee-succeed)" || exit 1
-mutate_file "$WALLCTL/oversee-succeed" '"$MODE" == succeed || "$MODE" == walled || "$MODE" == check' '"$MODE" == succeed || "$MODE" == check'
+mutate_file "$WALLCTL/oversee-succeed" '    print:*) OL_WALK_CALLER_KEEP=1 ;;' '    print:* | walled:*) OL_WALK_CALLER_KEEP=1 ;;'
 new_caller "$MARK"
 SUCCEED_BIN="$WALLCTL/oversee-succeed" run_succeed wallctl '' --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(recorded claude)" \
