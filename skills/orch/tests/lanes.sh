@@ -1876,6 +1876,10 @@ printf 'account=%s\tharness=claude\tstatus=unreachable\tdetail=http-429-rate_lim
   "$H/.claude" "$H/.eclaude" > "$TMP_ROOT/accounts-refusals.tsv"
 printf 'account=%s\tharness=claude\tstatus=unreachable\tdetail=http-429-rate_limit_error\n' \
   "$H/.claude" > "$TMP_ROOT/accounts-429.tsv"
+# A refused account, then a measured one naming no detail: the second row must
+# not inherit the first row's refusal.
+printf 'account=%s\tharness=claude\tstatus=refused\tdetail=http-403-permission_error\naccount=%s\tharness=claude\tsession-5h-pct=4\tweekly-pct=9\n' \
+  "$H/.claude" "$H/.eclaude" > "$TMP_ROOT/accounts-refused-then-ok.tsv"
 table \
   "with no provider the local config dirs are the whole listing|ORCH_LANE_HOST=local|list --harness claude --json|through=claude:local length=1 key=none" \
   "the provider's own reading of the same account is listed beside this machine's|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|through=claude:local,claude:host length=2" \
@@ -1892,13 +1896,19 @@ table \
   "the default listing carries the host row, so the harness a caller did not name is every harness|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --json|rc=0 through=claude:local,claude:host length=2 key=none" \
   "the refusal the provider names is each host record's detail, so a 429 and a 403 stay apart|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-refusals.tsv|host-accounts --harness claude --json|rc=0 length=2 claude.status=unreachable claude.cause=http-429-rate_limit_error eclaude.status=refused eclaude.cause=http-403-permission_error" \
   "a host row's 429 stays apart from the local copy's expired login in one listing|$HOST_ENV;ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-429.tsv|list --harness claude --json|through=claude:local,claude:host first.status=expired last.status=unreachable last.detail=http-429-rate_limit_error last.headroom_pct=null" \
-  "a host row naming no detail keeps a null one|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-dead.tsv|host-accounts --harness claude --json|rc=0 length=1 first.status=expired first.detail=null"
+  "a host row naming no detail keeps a null one, even after a row that names one|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-refused-then-ok.tsv|host-accounts --harness claude --json|rc=0 length=2 claude.cause=http-403-permission_error eclaude.status=ok eclaude.detail=null"
 # Control: a parser that drops the field reports every refusal with no detail.
 lanes_mutant mutant-host-detail-dropped lanes 'detail) detail='
 LANES_PATCHED="$LANES"
 LANES="$TMP_ROOT/mutant-host-detail-dropped/scripts/lanes"
 table \
   "control: without the field the 429 and the 403 carry no detail|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-refusals.tsv|host-accounts --harness claude --json|rc=0 claude.cause=null eclaude.cause=null"
+LANES="$LANES_PATCHED"
+# Control: a parser that never clears the field hands one row's refusal to the next.
+lanes_mutant mutant-host-detail-leaks lanes 'status="ok"; detail=""; ' 'status="ok"; '
+LANES="$TMP_ROOT/mutant-host-detail-leaks/scripts/lanes"
+table \
+  "control: without the per-row reset the measured account carries the refused one's 403|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-refused-then-ok.tsv|host-accounts --harness claude --json|rc=0 eclaude.status=ok eclaude.detail=http-403-permission_error"
 LANES="$LANES_PATCHED"
 
 # The verb is OPTIONAL: a provider without it gives no answer, which is not a
