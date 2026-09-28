@@ -15,4 +15,5 @@ Run each suite with Bash. The repository's skill-test CI job runs every suite un
 - `tests/shipped-defaults.test.sh`: each document class at its limit and one byte over with its docs-writing rule anchor, the anchor for a project class, reasoned exclusions, a disabled-comparison control, and a shipped class row without its rule.
 - `tests/staged-scope.test.sh`: staged document content and policy remain independent of unstaged edits and deletions.
 - `tests/settings-and-config.test.sh`: settings precedence, class ordering, malformed policy, carve-back rows, and failed or incomplete Git collection.
+- `tests/growth-margin.test.sh`: `--against` at the margin's edge and one byte inside it, unchanged, shrunk, new, over-limit and staged documents, margin settings, refused margins and refs, and one mutant per rule.
 - `tests/generated-paths.test.sh`: adopted documents, exact generated paths, inventory state, refusal and disabled-exclusion controls.

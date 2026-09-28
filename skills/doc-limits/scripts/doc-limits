@@ -2,8 +2,9 @@
 # Diagnostic protocol: command refusals start error=KEY FIELD=VALUE; settings
 # refusals start doc-limits-error=KEY value=VALUE; notices start
 # notice=KEY FIELD=VALUE. English detail follows on the next line. Each
-# notice=document-over-limit is followed, after its remedy, by one
-# notice=document-rule rule=docs-writing/SKILL.md#ANCHOR for its class.
+# notice=document-over-limit or notice=document-near-limit is followed, after
+# its remedy, by one notice=document-rule rule=docs-writing/SKILL.md#ANCHOR
+# for its class.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/settings.sh
@@ -33,11 +34,16 @@ docs/*.html=64k	documentation-html
 STAGED=0
 usage() {
   cat <<'EOF'
-usage: doc-limits [--staged] [--excludes FILE]
+usage: doc-limits [--staged] [--against REF] [--excludes FILE]
 Check byte ceilings for tracked Markdown and docs/*.html documents. The first
 matching class sets the limit. Other files are outside this check.
 --staged reads document sizes and tracked policy from the index.
 The default reads worktree files, falling back to the index for missing files.
+--against REF also fails a document larger than in REF's own tree whose size
+is within the margin under its limit; a document absent from REF counts as
+grown. A pull request run passes the branch it merges into; two changes
+passing against the same base then put one document over its limit in a
+merge group only when each grows it by more than the margin.
 No mode writes files or changes the index.
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -45,13 +51,16 @@ kendex.settings.toml [env] > default):
   DOC_LIMITS_DEFAULT_CLASSES  shipped classes, same syntax
   DOC_LIMITS_EXCLUDES         reasoned exclusion-list path
                                (default tools/doc-limits-excludes)
+  DOC_LIMITS_MARGIN_PCT       --against margin, percent of each limit,
+                               0-99 (default 2)
   DOC_LIMITS_SETTINGS_FILE    alternate settings file; /dev/null for defaults
 The k suffix means 1024 bytes. Bare line thresholds are not supported.
 --excludes overrides the configured path. Each exclusion is pattern<TAB>reason.
 Generated files are excluded by exact path from .kendex-generated.json.
 The inventory is required; --staged reads its tracked index copy.
 Class selection and exclusions: references/policy.md.
-Exit codes: 0 clean; 1 over-limit documents; 2 usage/config/collection error.
+Exit codes: 0 clean; 1 over-limit or grown near-limit documents;
+2 usage/config/collection error.
 EOF
 }
 diagnostic() {
@@ -95,6 +104,8 @@ EOF
 }
 EXCLUDES_OPT=""
 EXCLUDES_SET=0
+AGAINST_REF=""
+AGAINST_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --excludes)
@@ -104,6 +115,13 @@ while [ $# -gt 0 ]; do
       EXCLUDES_SET=1
       ;;
     --excludes=*) EXCLUDES_OPT="${1#--excludes=}"; EXCLUDES_SET=1 ;;
+    --against)
+      [ $# -ge 2 ] || config_error argument-value-missing option --against "--against requires a ref"
+      shift
+      AGAINST_REF="$1"
+      AGAINST_SET=1
+      ;;
+    --against=*) AGAINST_REF="${1#--against=}"; AGAINST_SET=1 ;;
     -h | --help) usage; exit 0 ;;
     --staged) STAGED=1 ;;
     *) config_error argument-unknown argument "$1" "unknown argument '$1' (see --help)" ;;
@@ -114,6 +132,12 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || config_error reposit
 cd "$REPO_ROOT" 2>/dev/null || config_error repository-root-unreadable path "$REPO_ROOT" "could not enter the repository root $REPO_ROOT"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/doc-limits.XXXXXX" 2>/dev/null)" || config_error temp-create-failed path "${TMPDIR:-/tmp}" "could not create a temporary directory"
 trap 'rm -rf -- "${TMP:?}"' EXIT
+AGAINST_OID=""
+if [ "$AGAINST_SET" = "1" ]; then
+  [ -n "$AGAINST_REF" ] || config_error against-ref-empty ref "$AGAINST_REF" "--against was given an empty ref"
+  AGAINST_OID="$(git rev-parse --verify --quiet "$AGAINST_REF^{commit}" 2>/dev/null)" \
+    || config_error against-ref-invalid ref "$AGAINST_REF" "--against ref '$AGAINST_REF' does not name a commit (a shallow checkout may lack it)"
+fi
 if [ "$STAGED" -eq 1 ]; then
   SR_SETTINGS_FROM_INDEX=1
   SR_SETTINGS_INDEX_DIR="$TMP"
@@ -167,6 +191,13 @@ CLASSES="$(sr_setting DOC_LIMITS_CLASSES "")" || exit 2
 parse_classes DOC_LIMITS_CLASSES "$CLASSES"
 DEFAULT_CLASSES="$(sr_setting DOC_LIMITS_DEFAULT_CLASSES "$SHIPPED_CLASSES")" || exit 2
 parse_classes DOC_LIMITS_DEFAULT_CLASSES "$DEFAULT_CLASSES"
+MARGIN_PCT=0
+if [ -n "$AGAINST_OID" ]; then
+  MARGIN_PCT="$(sr_setting DOC_LIMITS_MARGIN_PCT 2)" || exit 2
+  case "$MARGIN_PCT" in
+    "" | *[!0-9]* | 0?* | ???*) config_error margin-pct-invalid value "$MARGIN_PCT" "DOC_LIMITS_MARGIN_PCT must be an integer percent from 0 to 99, got '$MARGIN_PCT'" ;;
+  esac
+fi
 if [ "$EXCLUDES_SET" = "1" ]; then
   [ -n "$EXCLUDES_OPT" ] || config_error excludes-path-empty path "$EXCLUDES_OPT" "--excludes was given an empty path; pass a real path or omit the flag to use the configured default"
   EXCLUDES_FILE="$EXCLUDES_OPT"
@@ -367,6 +398,19 @@ while IFS= read -r -d '' rec; do
 done <"$TMP/files.z"
 cut -f1 "$TMP/documents.tsv" 2>/dev/null | git cat-file --batch-check >"$TMP/sizes" 2>/dev/null \
   || collection_error blob-sizes-read-failed exit "$?" "could not read document blob sizes"
+: >"$TMP/against-sizes"
+if [ -n "$AGAINST_OID" ]; then
+  while IFS="$TAB" read -r _ f _ _; do
+    printf '%s:%s\n' "$AGAINST_OID" "$f"
+  done <"$TMP/documents.tsv" >"$TMP/against-names"
+  git cat-file --batch-check='%(objecttype) %(objectsize)' <"$TMP/against-names" >"$TMP/against-sizes" 2>/dev/null \
+    || collection_error against-sizes-read-failed exit "$?" "could not read document sizes in $AGAINST_REF"
+fi
+remedy() { # CLASS: the remedy, then the docs-writing rule for CLASS
+  printf '  remedy: split the document at a natural seam, move detail to a linked reference, or delete content the code or another document already states; a document that must stay whole gets a row in %s with its reason\n' "$EXCLUDES_FILE"
+  class_rule "$1"
+  notice document-rule rule "docs-writing/SKILL.md#$CR" "  the docs-writing rule at that anchor decides which of these remedies the document admits"
+}
 checked=0 violations=0
 while IFS="$TAB" read -r oid f limit class; do
   IFS=' ' read -r actual_oid kind n <&3 || collection_error blob-size-response-incomplete path "$f" "document size response is incomplete: $f"
@@ -377,17 +421,33 @@ while IFS="$TAB" read -r oid f limit class; do
     n="${n#"${n%%[![:space:]]*}"}"
   fi
   case "$n" in "" | *[!0-9]*) collection_error document-byte-count-invalid path "$f" "invalid byte count for tracked document: $f" ;; esac
+  prior=0
+  if [ -n "$AGAINST_OID" ]; then
+    IFS= read -r against_rec <&4 || collection_error against-size-response-incomplete path "$f" "document size response for $AGAINST_REF is incomplete: $f"
+    # REF holding no document at the path makes every byte growth, a rename
+    # included: the check pairs documents by path alone.
+    case "$against_rec" in
+      "blob "*) prior="${against_rec#blob }" ;;
+      "$AGAINST_OID:$f missing" | "tree "* | "commit "*) prior=0 ;;
+      *) collection_error against-size-invalid path "$f" "unexpected size response for $f in $AGAINST_REF: $against_rec" ;;
+    esac
+    case "$prior" in "" | *[!0-9]*) collection_error against-byte-count-invalid path "$f" "invalid byte count for $f in $AGAINST_REF" ;; esac
+  fi
+  margin=$((limit * MARGIN_PCT / 100))
   if [ "$n" -gt "$limit" ]; then
     notice document-over-limit path "$f" "doc-limits FAIL: $f: $n bytes > $limit bytes (class $class)"
-    printf '  remedy: split the document at a natural seam, move detail to a linked reference, or delete content the code or another document already states; a document that must stay whole gets a row in %s with its reason\n' "$EXCLUDES_FILE"
-    class_rule "$class"
-    notice document-rule rule "docs-writing/SKILL.md#$CR" "  the docs-writing rule at that anchor decides which of these remedies the document admits"
+    remedy "$class"
+    violations=$((violations + 1))
+  elif [ -n "$AGAINST_OID" ] && [ "$n" -gt "$prior" ] && [ "$n" -gt "$((limit - margin))" ]; then
+    notice document-near-limit path "$f" "doc-limits FAIL: $f: grown from $prior to $n bytes, within the $margin-byte margin under $limit bytes (class $class)"
+    printf '  another change growing this document could carry it past the limit in a merge group where each change passes alone\n'
+    remedy "$class"
     violations=$((violations + 1))
   fi
   checked=$((checked + 1))
-done <"$TMP/documents.tsv" 3<"$TMP/sizes"
+done <"$TMP/documents.tsv" 3<"$TMP/sizes" 4<"$TMP/against-sizes"
 if [ "$violations" -gt 0 ]; then
-  notice documents-over-limit count "$violations" "doc-limits: $violations over-limit document(s), $checked checked"
+  notice documents-over-limit count "$violations" "doc-limits: $violations over-limit or grown near-limit document(s), $checked checked"
   exit 1
 fi
 notice documents-checked count "$checked" "doc-limits: OK: $checked document(s) checked"

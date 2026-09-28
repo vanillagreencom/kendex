@@ -176,6 +176,7 @@
   ".agents/skills/doc-limits/scripts/lib/diagnostics.sh",
   ".agents/skills/doc-limits/scripts/lib/settings.sh",
   ".agents/skills/doc-limits/tests/generated-paths.test.sh",
+  ".agents/skills/doc-limits/tests/growth-margin.test.sh",
   ".agents/skills/doc-limits/tests/push-scope.test.sh",
   ".agents/skills/doc-limits/tests/settings-and-config.test.sh",
   ".agents/skills/doc-limits/tests/shipped-defaults.test.sh",
