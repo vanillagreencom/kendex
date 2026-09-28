@@ -266,8 +266,8 @@ if [[ "$COMMAND" == register ]]; then
   # The launch identity a hand-opened session can state: the harness its
   # foreground process names, the account, the home its own variable carries
   # where that is a private codex home and the account otherwise, and its
-  # directory. Nothing here launched it, so no model or effort is known, and
-  # the judgement reads the model off the session's own context reading.
+  # directory. Nothing here launched it, so no model or effort is known; any
+  # model is the pane's context.json (schemas/workflow-state.md).
   harness="" home="$ACCOUNT"
   case "$shape" in
     claude) harness=claude ;;

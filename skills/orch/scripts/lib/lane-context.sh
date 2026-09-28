@@ -197,20 +197,22 @@ lane_context_reading() { # HARNESS [WINDOW] [DIR]
 # lane path reads its payload's transcript unbound. 0 where PATH is that file;
 # 1 with the word for what failed in LANE_CONTEXT_OWNED_REASON, `binding-missing`
 # where PATH or SESSION is empty, `home-unnamed` where HOME is, and the
-# adapter's own `session-mismatch` or `home-mismatch`; 3 with `harness-unlisted`
-# for a harness no adapter states a shape for. Whether the bound file can be
-# read is the reader's question, answered where the file is opened.
+# adapter's own `session-mismatch` or `home-mismatch`; 3 with `harness-unlisted`,
+# ahead of every other answer, for a harness no adapter states a shape for, an
+# empty one included; the hook passes that answer on, so the list of harnesses
+# with a shape lives here alone. Whether the bound file can be read is the
+# reader's question, answered where the file is opened.
 LANE_CONTEXT_OWNED_REASON=""
 lane_context_transcript_owned() { # HARNESS PATH SESSION HOME
   LANE_CONTEXT_OWNED_REASON=""
-  if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then
-    LANE_CONTEXT_OWNED_REASON=binding-missing
-    return 1
-  fi
   case "${1:-}" in
     claude | codex) ;;
     *) LANE_CONTEXT_OWNED_REASON=harness-unlisted; return 3 ;;
   esac
+  if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then
+    LANE_CONTEXT_OWNED_REASON=binding-missing
+    return 1
+  fi
   if [ -z "${4:-}" ]; then
     LANE_CONTEXT_OWNED_REASON=home-unnamed
     return 1

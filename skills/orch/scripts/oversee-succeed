@@ -808,8 +808,8 @@ CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}' 
 #
 # Where no record answers, --harness precedes the pane command, and a context
 # reading for this pane supplies its model and, for ambiguous commands, its
-# harness. No stored count is judged. A reused pane can retain its
-# predecessor's model until its first turn end.
+# harness. No stored count is judged; which reading stands is the
+# context.json row of schemas/workflow-state.md.
 #
 # A dead pane is judged by nothing and its line is handed in whole, so it
 # reads no current-session identity, only the identity the record holds for

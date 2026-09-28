@@ -253,7 +253,7 @@ mkdir -p "$(dirname "$CLAUDE_SUBAGENT")"
 # `harness|path|session|home|want`
 while IFS='|' read -r harness path session home want; do
   assert_eq "$(owned "$harness" "$path" "$session" "$home")" "$want" \
-    "$harness $(basename -- "${path:-none}") for $session under $(basename -- "${home:-none}"): $want"
+    "$harness $(basename -- "${path:-none}") for ${session:-none} under $(basename -- "${home:-none}"): $want"
 done <<ROWS
 claude|$CLAUDE_OWNED|s1|$CHOME|0 owned
 claude|$CLAUDE_S2|s1|$CHOME|1 session-mismatch
@@ -266,6 +266,7 @@ codex|$CODEX_OWNED|s1|$KHOME|0 owned
 codex|$CODEX_S2|s1|$KHOME|1 session-mismatch
 codex|$CODEX_OWNED|s1|$YHOME|1 home-mismatch
 opencode|$CLAUDE_OWNED|s1|$CHOME|3 harness-unlisted
+opencode|$CLAUDE_OWNED||$CHOME|3 harness-unlisted
 ROWS
 
 if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
@@ -321,6 +322,9 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'claude s1.jsonl for s1 under none: 1 home-unnamed'
   control owned-harness-unlisted lane-context.sh '*) LANE_CONTEXT_OWNED_REASON=harness-unlisted; return 3 ;;' '*) ;;' \
     'opencode s1.jsonl for s1 under claude-home: 3 harness-unlisted'
+  control owned-unlisted-first lane-context.sh '*) LANE_CONTEXT_OWNED_REASON=harness-unlisted; return 3 ;;' \
+    '*) [ -n "${3:-}" ] || { LANE_CONTEXT_OWNED_REASON=binding-missing; return 1; }; LANE_CONTEXT_OWNED_REASON=harness-unlisted; return 3 ;;' \
+    'opencode s1.jsonl for none under claude-home: 3 harness-unlisted'
 fi
 
 echo

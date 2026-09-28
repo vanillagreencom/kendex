@@ -1548,6 +1548,16 @@ assert_eq "argv=$(judge_argv | tail -n 1) unowned=$(grep -c '^lane-mail-check: t
   "argv=--check-marks --context 180000:200000 unowned=0" \
   "a Pi overseer reads the payload's own window, bound to no transcript shape" "$ERR_FILE"
 install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
+# A payload naming no transcript has nothing to bind: the read leaves the
+# context unread in silence and the judge is handed the account triggers
+# alone, with no `transcript-unowned` line for an empty path.
+new_overseer overseer_no_transcript
+judge_says "$HEADROOM_MARK_LINE"
+# shellcheck disable=SC2046
+stop $(overseer_env)
+assert_eq "argv=$(judge_argv | tail -n 1) unowned=$(grep -c '^lane-mail-check: transcript-unowned' "$ERR_FILE")" \
+  "argv=--check-marks unowned=0" \
+  "an overseer payload naming no transcript is read as unread, not reported unowned" "$ERR_FILE"
 # Control: with the ownership gate gone the predecessor's foreign file is read
 # and its reading handed to the judge, the very thing the gate prevents.
 new_overseer overseer_binding_control
@@ -2442,6 +2452,31 @@ write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
 assert_eq "$(template_fields | tr ',' '\n' | grep -cx written_at || true)" "1" \
   "control: with written_at back in the template the lane is asked for the record's time"
+
+# Control: a gate that asks the library about an empty path reports it as an
+# unbound transcript and withholds the context argument for nothing.
+mutant owned-empty-path -e '/^overseer_transcript_owned() {$/,/^}$/{/^  \[ -n "\$TRANSCRIPT" \] || return 0$/d;}'
+new_overseer control_owned_empty_path
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+judge_says "$HEADROOM_MARK_LINE"
+# shellcheck disable=SC2046
+stop $(overseer_env)
+assert_eq "argv=$(judge_argv | tail -n 1) unowned=$(grep -c '^lane-mail-check: transcript-unowned' "$ERR_FILE")" \
+  "argv=--check-marks --harness claude unowned=1" \
+  "control: without its empty-path test the gate reports a payload naming no transcript as unowned"
+# Control: a gate that reports the library's harness-unlisted answer holds a Pi
+# overseer, whose install states no transcript shape, to a binding it cannot make.
+mutant owned-unlisted-reported -e 's/^    0 | 3) return 0 ;;$/    0) return 0 ;;/'
+new_overseer control_owned_unlisted
+mkdir -p "$LANE/.pi/skills"
+ln -s "$LANE/.claude/skills/orch" "$LANE/.pi/skills/orch"
+install_hook "$MUTANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
+judge_says "$HEADROOM_MARK_LINE"
+# shellcheck disable=SC2046
+run_payload "$(jq -nc --arg p "$PI_TRANSCRIPT" \
+  '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:200000}')" $(overseer_env)
+assert_eq "unowned=$(grep -c '^lane-mail-check: transcript-unowned' "$ERR_FILE")" "unowned=1" \
+  "control: a gate reporting the harness-unlisted answer holds a Pi overseer to a transcript shape"
 
 # The overseer identification's control: the pane comparison removed, so any
 # session with no lane is taken for the overseer. An ordinary session in a
