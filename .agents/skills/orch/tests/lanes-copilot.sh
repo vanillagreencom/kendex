@@ -110,6 +110,17 @@ assert_eq "$(record 1copilot '.credits.measured_at | test("^[0-9]{4}-[0-9]{2}-[0
   "the counts carry the time they were measured"
 assert_eq "$(record 0copilot .status)" '"no_credentials"' "an account holding no login reads no_credentials"
 
+run_lanes list --harness copilot --local
+# The cell under MONTH on the 1copilot row, found by the header's own column.
+month_cell() {
+  awk '$1 == "LANE" { for (i = 1; i <= NF; i++) if ($i == "MONTH") c = i } $1 == "1copilot" && c { print $c }' <<<"$OUT"
+}
+assert_eq "$(month_cell)" "10%" "the table shows the monthly pool used in its MONTH column"
+CTL_TABLE="$(mutant_scripts ctl-table lanes)" || exit 1
+mutate_file "$CTL_TABLE/lanes" 'num(.model_pct), num(.monthly_pct),' 'num(.model_pct), num(.model_pct),'
+LANES_BIN="$CTL_TABLE/lanes" run_lanes list --harness copilot --local
+assert_eq "$(month_cell)" "-" "control: a table that fills MONTH from another field shows no pool"
+
 echo "=== pick judges a Copilot account on its pool ==="
 while IFS='|' read -r label args want; do
   eval "set -- $args"
@@ -174,19 +185,38 @@ assert_eq "$(jq -c '[.status, .measured_through, .monthly_pct, (.credits | del(.
   '["ok","stated",25,{"unit":"AIC","unlimited":false,"used":250,"granted":1000,"remaining":750}]' \
   "an account whose login does not read takes its stated reading as the fallback"
 
-echo "=== the request hands the login to curl on stdin, never in argv ==="
+echo "=== lanes asks the Copilot endpoint with the account's stored login ==="
+# End to end, with no fetch stub: `lanes` reads the login copilot_account
+# wrote, hands it to curl in its config on stdin, and parses what the shim
+# answers. The shim records its argv and stdin and answers a 10 percent pool.
 SHIM="$TMP_ROOT/curl-shim"
 mkdir -p "$SHIM"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" > "$CURL_ARGV"\ncat > "$CURL_STDIN"\nprintf "HTTP/2 200\\r\\n\\r\\n{}\\n200"\n' > "$SHIM/curl"
+cat > "$SHIM/curl" <<'SHIMEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$CURL_ARGV"
+cat > "$CURL_STDIN"
+printf 'HTTP/2 200\r\n\r\n%s\n200' "$CURL_BODY"
+SHIMEOF
 chmod +x "$SHIM/curl"
-( . "$SCRIPTS_DIR/lib/copilot-credits.sh"
-  CURL_ARGV="$TMP_ROOT/argv" CURL_STDIN="$TMP_ROOT/stdin" PATH="$SHIM:$PATH" copilot_credits_request gho_secret_login >/dev/null )
-assert_eq "$(grep -c gho_secret_login "$TMP_ROOT/argv")|$(grep -c 'api.github.com/copilot_internal/user' "$TMP_ROOT/argv")|$(cat "$TMP_ROOT/stdin")" \
-  '0|1|header = "Authorization: token gho_secret_login"' \
-  "the endpoint is asked with the login in curl's config on stdin, and the login is nowhere in argv"
-run_lanes list --harness copilot --local
-assert_eq "$(head -n 1 <<<"$OUT" | tr -s ' ')" "LANE HARNESS THROUGH STATUS PLAN 5H WEEK MODEL MONTH HEADROOM CLAIMS AGE DETAIL" \
-  "the table shows the monthly pool in a column of its own"
+# curl_row NAME [LANES] — `lanes list` on the 1copilot account through the
+# shim; OUT, RC.
+curl_row() {
+  new_home "curl-$1"
+  copilot_account 1copilot "$(pool 1000 900)"
+  ROW_ENV=(ORCH_LANES_FETCH_CMD= PATH="$SHIM:$PATH" CURL_ARGV="$TMP_ROOT/$1.argv" CURL_STDIN="$TMP_ROOT/$1.stdin"
+    CURL_BODY="$(pool 1000 900)")
+  LANES_BIN="${2:-}" run_lanes list --harness copilot --local --json
+  ROW_ENV=()
+}
+curl_seen() { # NAME — what the shim was handed: stdin, then argv's two tests
+  printf '%s|%s|%s' "$(cat "$TMP_ROOT/$1.stdin" 2>/dev/null)" \
+    "$(grep -c 'api.github.com/copilot_internal/user' "$TMP_ROOT/$1.argv" 2>/dev/null || true)" \
+    "$(grep -c gho_1copilot "$TMP_ROOT/$1.argv" 2>/dev/null || true)"
+}
+curl_row e2e
+assert_eq "$(curl_seen e2e)|$(record 1copilot .monthly_pct)" \
+  'header = "Authorization: token gho_1copilot"|1|0|10' \
+  "the endpoint is asked with the stored login in curl's config, never in argv, and its answer is the pool"
 
 echo "=== discovery finds a Copilot account by its marker, its variable or its setting ==="
 new_home discover
@@ -280,6 +310,42 @@ rm -f -- "${H:?}/.2copilot/config.json"
 printf '{}\n' > "$H/.2copilot/settings.json"
 ROW_ENV=(ORCH_LANE_COPILOT_POOL="$H/.2copilot=250/1000")
 control_row 2copilot .measured_through '"local"' "control: without the fallback an account with no login ignores its stated reading"
+ROW_ENV=()
+# The two request rules, each cut from a private copy: the Copilot arm of the
+# fetch, and the login taken whole rather than past its tag.
+CTL_FETCH="$(mutant_scripts ctl-fetch lanes)" || exit 1
+mutate_file "$CTL_FETCH/lanes" '	elif [[ "$harness" == "copilot" ]]; then' '	elif false; then'
+curl_row ctl-fetch "$CTL_FETCH/lanes"
+assert_eq "$(curl_seen ctl-fetch)" 'header = "Authorization: Bearer gho_1copilot"|0|0' \
+  "control: without the Copilot arm the login goes to another endpoint as a Bearer token"
+CTL_TOKEN="$(mutant_scripts ctl-token lib/copilot-credits.sh)" || exit 1
+mutate_file "$CTL_TOKEN/lib/copilot-credits.sh" 'COPILOT_CREDITS_TOKEN="${answer#token	}"' 'COPILOT_CREDITS_TOKEN="$answer"'
+curl_row ctl-token "$CTL_TOKEN/lanes"
+assert_eq "$(curl_seen ctl-token | cut -d'|' -f1)" "$(printf 'header = "Authorization: token token\tgho_1copilot"')" \
+  "control: without the tag stripped the login is sent with it"
+
+echo "=== two spaced samples of a Copilot pool expose its rate ==="
+# The same reset on both, the used share rising 20 points over ten minutes:
+# the monthly bucket's prior is compared as the others' are, 2 points a minute.
+new_home rate
+RATE_STATE="$TMP_ROOT/rate-state"
+copilot_account 1copilot "$(pool 1000 800)"
+ROW_ENV=(OVERSEE_WATCH_STATE_DIR="$RATE_STATE")
+run_lanes list --harness copilot --local --json --no-cache
+for f in "$RATE_STATE"/usage/*.json; do
+  jq --argjson at "$(( $(date +%s) - 600 ))" '.fetched_at = $at' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+done
+printf '%s\n' "$(pool 1000 600)" > "$FIXTURE_DIR/.1copilot.json"
+run_lanes list --harness copilot --local --json --no-cache
+rate_row() { # [LANES] — the rate fields of the 1copilot record, read from the cache
+  LANES_BIN="${1:-}" run_lanes list --harness copilot --local --json
+  record 1copilot '[.binding_bucket, .usage_rate_state, (.usage_rate_pct_per_min | if . == null then null else round end)]'
+}
+assert_eq "$(rate_row)" '["monthly","measured",2]' "a Copilot pool measured twice ten minutes apart reads a two-point rate"
+CTL_RATE="$(mutant_scripts ctl-rate lib/lane-model.sh)" || exit 1
+mutate_file "$CTL_RATE/lib/lane-model.sh" '                  elif $binding.bucket == "monthly" then ._rate_prior.monthly_pct else null end),' '                  else null end),'
+assert_eq "$(rate_row "$CTL_RATE/lanes")" '["monthly","one-sample",null]' \
+  "control: without the monthly prior every Copilot pool reads one sample"
 ROW_ENV=()
 LANES_BIN=""
 

@@ -301,13 +301,19 @@ for row in 'none|022' '600|022' '644|002'; do
 done
 # The dispatcher: one arm per harness, and none for a harness that asks no
 # such question. HARNESS|ROUTE, each on a lane of its own.
-for row in 'claude|account-config' 'codex|launch-home' 'pi|none'; do
+for row in 'claude|account-config' 'codex|launch-home' 'pi|none' 'copilot|allow-all-env'; do
   harness="${row%%|*}"; want="${row#*|}"
   mkdir -p "$TMP_ROOT/dispatch-$harness/.1$harness" "$TMP_ROOT/dispatch-$harness/wt"
   [ "$harness" != codex ] || printf 'token\n' > "$TMP_ROOT/dispatch-$harness/.1codex/auth.json"
   lane_trust_prepare "$harness" "$TMP_ROOT/dispatch-$harness/.1$harness" "$TMP_ROOT/dispatch-$harness/wt"
   assert_eq "route=$LANE_TRUST_ROUTE" "route=$want" "dispatch: $harness takes its own arm"
 done
+# Control: the copilot arm folded into the catch-all reports no route.
+MUTANT_ROUTE_LIB="$(mutant_scripts lane-launch-mutant-route lib/lane-launch.sh)/lib/lane-launch.sh" || exit 1
+mutate_file "$MUTANT_ROUTE_LIB" "    copilot) LANE_TRUST_ROUTE=allow-all-env; return 0 ;;" ""
+assert_eq "$(bash -c 'set +u; . "$1" && lane_trust_prepare copilot "$2" "$3" && printf %s "$LANE_TRUST_ROUTE"' _ "$MUTANT_ROUTE_LIB" \
+  "$TMP_ROOT/dispatch-copilot/.1copilot" "$TMP_ROOT/dispatch-copilot/wt")" none \
+  "control: without its arm copilot falls to the catch-all and names no folder trust route"
 
 # --- § form -----------------------------------------------------------------
 #

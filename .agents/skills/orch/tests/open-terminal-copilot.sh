@@ -331,23 +331,39 @@ assert_eq "$(cat "$TMP_ROOT/account.out")" "COPILOT_HOME=$TMP_ROOT/.1copilot|lau
   "the account variable is COPILOT_HOME, and a launcher named for the account's directory is the whole selector"
 
 echo "=== every local copilot launch runs under its account's environment ==="
-# The account variable, every ambient token cleared so the account's stored
-# login is the identity, the shared skills named again and folder trust
-# granted, lane or none.
-ENV_ARM="env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL=true COPILOT_HOME='$FLEET_HOME/.copilot' copilot $LEAD -i"
-launch env-none --harness copilot --launch-flags "$FLAGS" cc-750
-assert_contains "$CMD" "&& $ENV_ARM" "a launch naming no lane runs on the default account under the whole environment"
+# Every ambient token cleared so the account's stored login is the identity,
+# the shared skills named again and folder trust granted, under both forms:
+# the account variable in front of `copilot` for a launch naming no lane or a
+# lane with no launcher, and the launcher named for the account's directory,
+# `1copilot` for `.1copilot`, which sets COPILOT_HOME itself. `label|--lane
+# value, or - for none|the words the line runs`. Each line is then run with a
+# probe standing in for what it starts, under every ambient token.
+POLICY="env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL=true"
 mkdir -p "$TMP_ROOT/.2copilot"
-launch env-lane --harness copilot --lane "$TMP_ROOT/.2copilot" --launch-flags "$FLAGS" cc-751
-assert_contains "$CMD" "COPILOT_ALLOW_ALL=true COPILOT_HOME='$TMP_ROOT/.2copilot' copilot " \
-  "a named lane runs on its account under the same environment"
-# The rendered line, run: the child sees the account and no ambient token.
-printf '#!/bin/sh\nprintf "%%s|%%s|%%s|%%s\\n" "${COPILOT_GITHUB_TOKEN-unset}" "${GH_TOKEN-unset}" "$COPILOT_HOME" "$COPILOT_ALLOW_ALL"\n' > "$BIN/copilot"
-chmod +x "$BIN/copilot"
-RUN_LINE="${CMD#*&& }"
-assert_eq "$(cd "$TMP_ROOT" && COPILOT_GITHUB_TOKEN=placeholder GH_TOKEN=app-token PATH="$BIN:$PATH" bash -c "$RUN_LINE")" "unset|unset|$TMP_ROOT/.2copilot|true" \
-  "the launched copilot runs on the account's stored login, every ambient token gone"
+PROBE='#!/bin/sh\nprintf "%%s|%%s|%%s\\n" "${COPILOT_GITHUB_TOKEN-unset}" "${GH_TOKEN-unset}" "$COPILOT_ALLOW_ALL"\n'
+# shellcheck disable=SC2059  # the probe's own format, written as a script.
+printf "$PROBE" > "$BIN/copilot"
+# shellcheck disable=SC2059
+printf "$PROBE" > "$BIN/1copilot"
+chmod +x "$BIN/copilot" "$BIN/1copilot"
+N=750
+while IFS='|' read -r label lane words; do
+  N=$((N + 1))
+  if [[ "$lane" == - ]]; then
+    launch "env-$N" --harness copilot --launch-flags "$FLAGS" "cc-$N"
+  else
+    launch "env-$N" --harness copilot --lane "$lane" --launch-flags "$FLAGS" "cc-$N"
+  fi
+  assert_contains "$CMD" "&& $words $LEAD -i" "$label"
+  assert_eq "$(cd "$TMP_ROOT" && COPILOT_GITHUB_TOKEN=placeholder GH_TOKEN=app-token GITHUB_TOKEN=app-token PATH="$BIN:$PATH" bash -c "${CMD#*&& }")" \
+    "unset|unset|true" "$label: the launched copilot sees no ambient token and trusts the folder"
+done <<ROWS
+a launch naming no lane runs on the default account|-|$POLICY COPILOT_HOME='$FLEET_HOME/.copilot' copilot
+a named lane with no launcher runs under its account variable|$TMP_ROOT/.2copilot|$POLICY COPILOT_HOME='$TMP_ROOT/.2copilot' copilot
+a named lane with a launcher runs that launcher under the same policy|$TMP_ROOT/.1copilot|$POLICY '$BIN/1copilot'
+ROWS
 rm -f -- "$BIN/copilot"
+printf '#!/bin/sh\n' > "$BIN/1copilot"
 
 echo "=== must-fail controls ==="
 # The start arm renamed: the harness no longer has a command to start.
@@ -490,6 +506,11 @@ mutate_file "$TMP_ROOT/unset-ctrl/scripts/lib/lane-launch.sh" "printf 'env -u CO
 OT="$TMP_ROOT/unset-ctrl/scripts/open-terminal" launch unset-ctrl --harness copilot --launch-flags "$FLAGS" cc-752
 assert_contains "$CMD" "copilot $LEAD -i" "the control's launch renders its command"
 assert_not_contains "$CMD" "-u COPILOT_GITHUB_TOKEN" "control: without the clearing an ambient token reaches the launched copilot ahead of its stored login"
+stage "$TMP_ROOT/launcher-ctrl"
+mutate_file "$TMP_ROOT/launcher-ctrl/scripts/lib/lane-launch.sh" "launcher:*) printf '%s %s %s\\n' \"\$env_words\"" "launcher:*) printf 'env %s %s\\n'"
+OT="$TMP_ROOT/launcher-ctrl/scripts/open-terminal" launch launcher-ctrl --harness copilot --lane "$TMP_ROOT/.1copilot" --launch-flags "$FLAGS" cc-755
+assert_contains "$CMD" "'$BIN/1copilot' $LEAD -i" "the control's launch renders its command"
+assert_not_contains "$CMD" "-u COPILOT_GITHUB_TOKEN" "control: without the policy in its arm a launcher runs with every ambient token"
 stage "$TMP_ROOT/nolane-ctrl"
 mutate_file "$TMP_ROOT/nolane-ctrl/scripts/open-terminal" '|| "$HARNESS" == codex || "$HARNESS" == copilot ]]; then' '|| "$HARNESS" == codex ]]; then'
 OT="$TMP_ROOT/nolane-ctrl/scripts/open-terminal" launch nolane-ctrl --harness copilot --launch-flags "$FLAGS" cc-754
