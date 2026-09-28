@@ -19,7 +19,8 @@
 # and reset beside the percentage so a refusal can name what made the decision.
 #
 # The 5-hour session and the plan-wide weekly window wall every model, so both
-# always count. A model-scoped weekly window walls only the model its own label
+# always count, and so does a monthly pool: the Copilot credits a Pi launch on
+# a `github-copilot/` model spends are one pool for every model it names. A model-scoped weekly window walls only the model its own label
 # names, so a launch on another model does not draw on it and it is left out —
 # the difference between refusing an account that is free for this launch and
 # launching one into a wall the binding bucket never showed.
@@ -75,7 +76,8 @@ def lane_norm: ascii_downcase | gsub("[^a-z0-9]"; "");
 def lane_measured: (.status == "ok" or .status == "rate_limited");
 
 def wall_rank:
-  if .bucket == "weekly" then 2
+  if .bucket == "monthly" then 3
+  elif .bucket == "weekly" then 2
   elif .bucket == "model" then 1
   else 0
   end;
@@ -88,7 +90,9 @@ def shared_bindings:
   [{bucket: "session", pct: .session_5h_pct,
     resets_at: (.resets.session // null)},
    {bucket: "weekly", pct: .weekly_pct,
-    resets_at: (.resets.weekly // null)}];
+    resets_at: (.resets.weekly // null)},
+   {bucket: "monthly", pct: (.monthly_pct // null),
+    resets_at: (.resets.monthly // null)}];
 
 def model_binding($model):
   ($model | lane_norm) as $m

@@ -197,7 +197,10 @@ Options:
                     a --cmd launch on a named config dir or alias, with no
                     --harness — has no row there and reaches no such gate, its
                     argv being the caller's own. A NAMED lane is then judged
-                    on the window for that model, claude and codex only:
+                    on the window for that model, claude and codex only, and
+                    pi on a github-copilot/ model on the Copilot pool
+                    ORCH_LANE_COPILOT_POOL states (`lanes --help`), which
+                    `auto` with --harness pi picks on too:
                     refused when it is at or above --lane-max-pct, and
                     refused as unreadable when nothing measures it. A config
                     dir that neither a lane record nor a provider reading

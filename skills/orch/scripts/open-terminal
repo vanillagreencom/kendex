@@ -725,8 +725,11 @@ named_lane_judge() {
       # second reading of the conditions the branches below judge on — asking
       # only for the shapes that act on the answer would state each of those
       # conditions twice, and a rule stated twice is a rule that can be
-      # changed in one place.
-      [[ "$LANE_HOST" == local ]] || host_account_read "${LANE_ENV#*=}" "$LAUNCH_HARNESS"
+      # changed in one place. Pi is not asked: its reading is the Copilot pool
+      # the owner states, which no copy of a credential measures, and the
+      # accounts protocol names no Pi account, so an unstated pool refuses
+      # below on every host.
+      [[ "$LANE_HOST" == local || "$LAUNCH_HARNESS" == pi ]] || host_account_read "${LANE_ENV#*=}" "$LAUNCH_HARNESS"
       if [[ "$HOST_RELAUNCH" == true && "$HOST_ACCOUNT" == held ]]; then
         ot_message host-relaunch-credential "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
       elif [[ "$HOST_ACCOUNT" == held && "$lane_status" == expired ]]; then
@@ -825,9 +828,10 @@ if [[ -n "$LANE" ]]; then
   # The judged wall is the window of the model the launch passes, which the gate
   # above has already established it names.
   #
-  # Claude and codex only: `lanes` measures those two accounts and no others, so
-  # a lane on any further harness has no window to read and keeps launching as
-  # it did.
+  # Asked where lane_pick_harness names the harness `lanes` judges this launch
+  # under: claude and codex on their own accounts' windows, and Pi on a
+  # `github-copilot/` model on the Copilot pool that model spends. A launch
+  # that names none has no window `lanes` reads and keeps launching as it did.
   #
   # EVERY named lane is judged here, hosted relaunch included. A usage window
   # belongs to the account, not to the copy of the credential that reads it, so a
@@ -847,13 +851,13 @@ if [[ -n "$LANE" ]]; then
   # it is not an empty one either — only the provider saying it holds the account
   # makes it a window this machine was never going to read.
   #
-  # Asked for claude and codex, and only where the CALLER named the lane:
+  # Asked only where the CALLER named the lane:
   # `--lane auto` asked the same question inside its own pick, so a second
   # judgment here would report on a choice already made.
   #
   # A --wait-slot launch asks again once its wait ends, the window having had
   # that long to move.
-  [[ "$LANE_AUTO" == true || ! "$LAUNCH_HARNESS" =~ ^(claude|codex)$ ]] || LANE_GATE=true
+  [[ "$LANE_AUTO" == true || -z "$(lane_pick_harness "$LAUNCH_HARNESS" "$LAUNCH_MODEL")" ]] || LANE_GATE=true
   [[ "$LANE_GATE" != true ]] || named_lane_judge || exit 1
   ot_message lane-selected "lane=$LANE_ENV"
 fi

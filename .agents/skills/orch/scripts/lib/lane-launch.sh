@@ -44,13 +44,28 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/adapters/claude.sh"
 # on whatever account that harness defaults to with nothing on screen saying so.
 #
 # Codex is named and every other harness takes the Claude variable, which is
-# what a local `--lane` launch on a further harness has always done; `lanes`
-# measures claude and codex only and produces no third value here. A harness
-# added to this repository adds its arm HERE.
+# what a local `--lane` launch on a further harness has always done, a Pi lane
+# `lanes` picks on the Copilot pool included. A harness added to this
+# repository adds its arm HERE.
 lane_env_prefix() { # HARNESS DIR
   local var=CLAUDE_CONFIG_DIR
   [[ "$1" != codex ]] || var=CODEX_HOME
   printf '%s=%s\n' "$var" "$2"
+}
+
+# The harness `lanes pick` judges a launch of HARNESS on MODEL under, empty where
+# `lanes` holds no reading of what that launch spends. Claude and codex spend
+# their own accounts' windows, whatever the model. A Pi launch on a
+# `github-copilot/` model spends the Copilot pool, which `lanes pick --harness
+# pi` reads; a Pi launch on any other model has no reading here. One answer for
+# the launcher deciding whether a named lane is judged and for `lanes` refusing
+# a pick it cannot judge, so the two cannot disagree about which launches a
+# reading covers.
+lane_pick_harness() { # HARNESS MODEL
+  case "$1" in
+    claude | codex) printf '%s\n' "$1" ;;
+    pi) [[ "$2" != github-copilot/* ]] || printf '%s\n' pi ;;
+  esac
 }
 
 # How each harness spells the two choices a lane launch must make, for every

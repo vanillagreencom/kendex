@@ -14,10 +14,10 @@
 #
 # Usage:
 #   lanes list [--harness claude|codex|all] [--local] [--no-cache] [--json]
-#   lanes pick [--harness claude|codex] [--max-pct N | --min-headroom-pct N]
+#   lanes pick [--harness claude|codex|pi] [--max-pct N | --min-headroom-pct N]
 #              [--model NAME] [--binding-floor] [--exclude-lane DIR]
 #              [--no-cache] [--json]
-#   lanes pick --lane <config-dir> [--harness claude|codex]
+#   lanes pick --lane <config-dir> [--harness claude|codex|pi]
 #              [--max-pct N | --min-headroom-pct N] [--model NAME]
 #              [--binding-floor] [--no-cache] [--json]
 #   lanes host-accounts [--harness claude|codex|all] [--no-cache] [--json]
@@ -93,7 +93,8 @@
 #         --max-pct, the one with the fewest launches already in flight, the
 #         room under that same threshold breaking the tie. --json prints that
 #         lane's whole record, which carries headroom_pct, binding_bucket
-#         (session, weekly or model), the matching binding_resets_at, and
+#         (session, weekly, model, or monthly for the Copilot pool), the
+#         matching binding_resets_at, and
 #         qualifying_count from that same judgement. With
 #         --model those fields name the most-consumed
 #         bucket among the shared 5-hour window, the all-model weekly window,
@@ -206,7 +207,14 @@
 #         read. `open-terminal` asks it for every named --lane.
 #
 # Options:
-#   --harness NAME   claude, codex, or all (default: all for list, claude for pick)
+#   --harness NAME   claude, codex, or all (default: all for list, claude for pick).
+#                    pick also takes pi with a `github-copilot/` --model: such
+#                    a launch spends the Copilot pool rather than any Claude or
+#                    Codex window, and is judged on that pool alone, as
+#                    ORCH_LANE_COPILOT_POOL states it. Its candidates are the
+#                    accounts that setting names; under --lane, a directory it
+#                    names no reading for is unmeasured (exit 5), never
+#                    unlisted. Its records say `measured_through: "stated"`.
 #   --max-pct N      pick: refuse a lane whose binding bucket is at or above N
 #                    percent used (default: 95, or $ORCH_LANE_MAX_PCT). The
 #                    setting is read through the kendex settings ladder below,
@@ -327,6 +335,17 @@
 #                      read is refused as `host-accounts-unbounded` rather than
 #                      waiting: the cache covers a listing or a pick, not a
 #                      read that asked to ask the provider now.
+#   ORCH_LANE_COPILOT_POOL  Comma-separated `<account dir>=<used>/<granted>`
+#                      entries: the owner's reading of the Copilot credits
+#                      each Pi account's pool has used of its monthly grant,
+#                      the account dir an absolute path to the directory a Pi
+#                      lane on that pool is launched on. `pick --harness pi`
+#                      judges it as a `monthly` bucket at the used share,
+#                      rounded up, against --max-pct; a pool at or past its
+#                      grant is walled, whatever overage the account permits.
+#                      No provider or endpoint is asked: the reading is what
+#                      the setting says, and an account it names none for is
+#                      unmeasured. A malformed entry refuses that pick.
 #   ORCH_LANES_CLAUDE_CLIENT_ID  The OAuth client id the renewal posts with.
 #                      Required for it: with this unset every Claude account
 #                      whose access token has expired reads `error` with the
@@ -551,7 +570,15 @@ message() {
       ;;
     invalid-pick-harness)
       printf 'lanes: invalid-pick-harness option=%s\n' "--harness"
-      printf '%s\n' "pick --harness must be claude or codex"
+      printf '%s\n' "pick --harness must be claude or codex, or pi with a github-copilot/ --model, whose Copilot pool ORCH_LANE_COPILOT_POOL states"
+      ;;
+    copilot-pool-unstated)
+      printf 'lanes: copilot-pool-unstated model=%s setting=%s\n' "$1" "ORCH_LANE_COPILOT_POOL"
+      printf '%s\n' "no Pi account has a stated Copilot pool reading, so nothing measures what this launch spends, and an unmeasured pool is not an empty one"
+      ;;
+    invalid-copilot-pool)
+      printf 'lanes: invalid-copilot-pool entry=%s\n' "$1"
+      printf '%s\n' "ORCH_LANE_COPILOT_POOL entries must be <absolute account dir>=<credits used>/<credits granted>, the grant above 0; a pool reading nobody can parse is not judged as room"
       ;;
     invalid-retire)
       printf 'lanes: invalid-retire entry=%s\n' "$1"
@@ -807,6 +834,14 @@ configured_lane_dirs() {
 # account is counted and claimed twice.
 lane_dirs() {
 	local configured="" home="${LANES_HOME:-$HOME}" d
+	# A Pi account on the Copilot pool is one the owner states a reading for:
+	# nothing on this machine is discovered as one.
+	if [[ "$1" == pi ]]; then
+		copilot_pool_entries | cut -f1 | while IFS= read -r d; do
+			lane_excluded "$d" || printf '%s\n' "$d"
+		done
+		return
+	fi
 	[[ -z "${ORCH_LANE_DIRS:-}" ]] || configured="$(configured_lane_dirs "$1")"
 	{
 		if [[ -n "$configured" ]]; then
@@ -1060,6 +1095,54 @@ emit_refusal() { # ALIAS HARNESS DIR PLAN RECORD
 # Emit one lane record. Never fails the whole run for one bad lane: an
 # unreadable or unauthenticated lane is reported with a status and skipped by
 # `pick`, because a fleet launch must still see the lanes that DO work.
+# ORCH_LANE_COPILOT_POOL, one `DIR<tab>PCT<tab>USED<tab>LIMIT` line per
+# entry: the account DIR a Pi launch on a `github-copilot/` model opens on, and
+# the credits of its Copilot pool the owner states used and granted. PCT is the
+# share used, rounded UP, so a pool with one credit short of its grant left is
+# never read as having more, and a pool at or past its grant is 100: spent,
+# whatever overage the account permits, since no paid overage is authorised.
+# Returns 1 with the refusal on stderr at the first entry it cannot read: a
+# reading nobody can parse is not judged as room. `pick` runs this once in its
+# own shell before any lane is judged, so the readers under it, which run in
+# subshells a refusal could not leave, only ever see a setting that parses.
+copilot_pool_entries() {
+	local item dir value used limit
+	while IFS= read -r item; do
+		dir="$(trim "${item%=*}")"
+		value="$(trim "${item##*=}")"
+		if [[ "$item" != *=* || "$dir" != /* || ! "$value" =~ ^([0-9]{1,12})/([0-9]{1,12})$ ]]; then
+			message invalid-copilot-pool "$item" >&2
+			return 1
+		fi
+		used=$((10#${BASH_REMATCH[1]}))
+		limit=$((10#${BASH_REMATCH[2]}))
+		(( limit > 0 )) || { message invalid-copilot-pool "$item" >&2; return 1; }
+		if (( used >= limit )); then
+			printf '%s\t100\t%s\t%s\n' "$dir" "$used" "$limit"
+		else
+			printf '%s\t%s\t%s\t%s\n' "$dir" $(( (used * 100 + limit - 1) / limit )) "$used" "$limit"
+		fi
+	done < <(setting_items "${ORCH_LANE_COPILOT_POOL:-}")
+}
+
+# The Copilot pool record for the Pi account at DIR: the stated reading as a
+# `monthly` bucket, judged by lib/lane-model.sh like every other window, or
+# `no_usage_data` where the setting states none for DIR, which that judge reads
+# as unmeasured and never as room. `measured_through` is `stated`: neither this
+# machine nor a provider read it.
+measure_copilot_pool() { # ALIAS DIR
+	local entries target d pct used limit
+	entries="$(copilot_pool_entries)" || return 1
+	target="$(lane_claims_canon "$2")"
+	while IFS=$'\t' read -r d pct used limit; do
+		[[ -n "$d" && "$(lane_claims_canon "$d")" == "$target" ]] || continue
+		emit_lane "$1" pi "$2" ok "Copilot pool: $used of $limit credits used, as ORCH_LANE_COPILOT_POOL states" "" \
+			"{\"monthly_pct\":$pct}" null false stated
+		return
+	done <<<"$entries"
+	emit_lane "$1" pi "$2" no_usage_data "ORCH_LANE_COPILOT_POOL states no Copilot pool reading for this account" "" '{}' null false stated
+}
+
 measure_lane() {
 	local harness="$1" dir="$2"
 	local alias creds status="ok" detail="" plan="" token="" account_id="" expires_ms=0 now_s
@@ -1072,6 +1155,10 @@ measure_lane() {
 	local retire
 	if retire="$(lane_retired "$dir")"; then
 		emit_lane "$alias" "$harness" "$dir" "retired" "retired on $retire (ORCH_LANE_RETIRE)" "" '{}'
+		return
+	fi
+	if [[ "$harness" == pi ]]; then
+		measure_copilot_pool "$alias" "$dir"
 		return
 	fi
 
@@ -1800,10 +1887,10 @@ emit_lane() {
 		--arg through "$through" --argjson b "$buckets" \
 		--argjson pb "$prior" --argjson elapsed "$elapsed" "$LANE_MODEL_JQ"'
 		($b // {} | utc_resets) as $b
-		| [$b.session_5h_pct, $b.weekly_pct, $b.model_pct] | map(select(. != null)) as $known
+		| [$b.session_5h_pct, $b.weekly_pct, $b.model_pct, $b.monthly_pct] | map(select(. != null)) as $known
 		| (if ($status == "ok" and ($known | length) == 0) then "no_usage_data" else $status end) as $st
 		| ({status: $st} | lane_measured) as $measured
-		| ([{k: "weekly", p: $b.weekly_pct}, {k: "model", p: $b.model_pct}, {k: "session", p: $b.session_5h_pct}]
+		| ([{k: "monthly", p: $b.monthly_pct}, {k: "weekly", p: $b.weekly_pct}, {k: "model", p: $b.model_pct}, {k: "session", p: $b.session_5h_pct}]
 		   | map(select(.p != null)) | sort_by(-.p) | first // null) as $bind
 		| {
 		    alias: $alias,
@@ -1818,6 +1905,7 @@ emit_lane() {
 		    model_pct: ($b.model_pct // null),
 		    model_label: ($b.model_label // null),
 		    model_buckets: ($b.model_buckets // []),
+		    monthly_pct: ($b.monthly_pct // null),
 		    claims: $claims,
 		    headroom_pct: (if ($measured and ($known | length) > 0) then (100 - ($known | max)) else null end),
 		    binding_bucket: (if ($measured and $bind != null) then $bind.k else null end),
@@ -1856,8 +1944,10 @@ collect_lanes() {
 	[[ -z "$exclude" ]] || exclude_id="$(lane_claims_canon "$exclude")"
 	[[ "$hosted" == "[]" ]] || held="$(jq -r '.[]._id' <<<"$hosted")" || return 1
 	{
-		for h in claude codex; do
-			[[ "$harness_filter" == "all" || "$harness_filter" == "$h" ]] || continue
+		# `all` is the two harnesses whose accounts this machine measures; the
+		# Copilot pool a Pi launch spends is asked for by name alone.
+		for h in claude codex pi; do
+			[[ "$harness_filter" == "$h" || ( "$harness_filter" == "all" && "$h" != pi ) ]] || continue
 			while IFS= read -r d; do
 				[[ -n "$d" ]] || continue
 				if [[ -n "$exclude_id" || -n "$held" ]]; then
@@ -2388,6 +2478,10 @@ cmd_pick_lane() {
 	elif [[ -n "$record" ]]; then
 		record="$(host_row_or_local "$harness" "$found" "$record")" || { message pick-lane-failed "$dir" local-reading >&2; return 1; }
 	fi
+	# Every directory is a Pi account the Copilot pool reading can be asked
+	# about: one the setting states nothing for is unmeasured, never unlisted,
+	# which a launcher reads as nothing to judge and launches.
+	[[ -n "$found" || "$harness" != pi ]] || found="$dir"
 	if [[ -z "$found" ]]; then
 		message pick-lane-unlisted "$dir" "$harness" >&2
 		return 4
@@ -2408,7 +2502,8 @@ cmd_pick_lane() {
 			if [[ "$as_json" == "true" ]]; then printf '%s\n' "$record"; return 0; fi
 			# The mapping is lib/lane-launch.sh's, shared with the launchers
 			# that render this prefix into a command; `pick --harness` is
-			# validated to claude or codex, so the harness here is one it names.
+			# validated through lane_pick_harness, so the harness here is one
+			# it names.
 			lane_env_prefix "$harness" "$found"
 			return
 			;;
@@ -2481,7 +2576,11 @@ cmd_pick() {
 			# allowance is spent and will reset, the other was never read, and
 			# the table underneath shows an unmeasured lane as ok with headroom.
 			# Every candidate unmeasured gets the named form's own wording.
-			if [[ "${walled:-0}" -eq 0 && "${unmeasured:-0}" -gt 0 ]]; then
+			# A Pi account on the Copilot pool is one the setting names, so a
+			# pick with none names the setting rather than an empty table.
+			if [[ "$harness" == pi && "$(jq -r length <<<"$lanes" 2>/dev/null)" == 0 ]]; then
+				message copilot-pool-unstated "${model:-none}"
+			elif [[ "${walled:-0}" -eq 0 && "${unmeasured:-0}" -gt 0 ]]; then
 				message no-candidate-unmeasured "$harness" "${model:-none}" "$unmeasured"
 			else
 				message no-candidate "$harness" "$max_pct" "${model:-none}" "${walled:-0}" "${unmeasured:-0}"
@@ -2851,8 +2950,11 @@ case "$SUB" in
 		;;
 	pick)
 		HARNESS="${HARNESS:-claude}"
-		[[ "$HARNESS" =~ ^(claude|codex)$ ]] || die invalid-pick-harness "$@"
+		[[ "$(lane_pick_harness "$HARNESS" "$MODEL")" == "$HARNESS" ]] || die invalid-pick-harness "$@"
 		validate_lane_settings
+		# Here, in this shell, so a stated reading nobody can parse refuses the
+		# pick; the readers under collect_lanes run where a refusal is lost.
+		[[ "$HARNESS" != pi ]] || copilot_pool_entries >/dev/null || exit 1
 		if [[ -n "$LANE_ARG" ]]; then
 			[[ -z "$EXCLUDE_LANE" ]] || die unknown-option --exclude-lane
 			cmd_pick_lane "$LANE_ARG" "$HARNESS" "$MAX_PCT" "$MODEL" "$AS_JSON" "$BINDING_FLOOR"

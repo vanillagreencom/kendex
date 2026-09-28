@@ -302,6 +302,45 @@ table \
   "excluding the caller leaves the one other qualifying account|ORCH_LANE_DIRS=$H/.claude:$H/.eclaude:$H/.nclaude|pick --harness claude --exclude-lane $H/.claude --json|alias=eclaude qualifying_count=1" \
   "pick exits 3 when no lane is under the threshold||pick --harness claude --max-pct 15|rc=3"
 
+echo "=== pick: a Pi launch on a Copilot model is judged on the stated Copilot pool ==="
+# Such a launch spends Copilot credits and no Claude or Codex window, so the
+# owner's ORCH_LANE_COPILOT_POOL reading is its whole judgement: a monthly
+# bucket at the used share rounded up, one named account unstated is
+# unmeasured rather than unlisted (which a launcher would launch on), and no
+# setting at all refuses by name. `list` stays the measured harnesses.
+mkdir -p "$H/.pi1"
+POOL="ORCH_LANE_COPILOT_POOL=$H/.pi1"
+COPILOT='--model github-copilot/claude-sonnet-5'
+table \
+  "a stated pool with room is picked as a monthly bucket, measured through the statement|$POOL=100000/1000000|pick --harness pi $COPILOT --json|rc=0 alias=pi1 binding_bucket=monthly headroom_pct=90 measured_through=stated" \
+  "the picked Pi account comes back as the launch env prefix|$POOL=100000/1000000|pick --harness pi $COPILOT|rc=0 out=CLAUDE_CONFIG_DIR=$H/.pi1" \
+  "a pool at its grant is walled even under a bound of 100|$POOL=1000000/1000000|pick --harness pi $COPILOT --max-pct 100|rc=3 key=no-candidate,harness=pi,max-pct=100,model=github-copilot/claude-sonnet-5,walled=1,unmeasured=0" \
+  "one credit short of the grant rounds up to a spent pool|$POOL=999999/1000000|pick --lane $H/.pi1 --harness pi $COPILOT --max-pct 100 --json|rc=3 wall=100 binding_bucket=monthly" \
+  "no stated pool refuses by the setting's name||pick --harness pi $COPILOT|rc=3 key=copilot-pool-unstated,model=github-copilot/claude-sonnet-5,setting=ORCH_LANE_COPILOT_POOL" \
+  "a named account the setting states nothing for is unmeasured, never unlisted|$POOL=1/10|pick --lane $H/.eclaude --harness pi $COPILOT --json|rc=5 status=no_usage_data" \
+  "a Pi launch on a model outside the Copilot pool has no reading to pick on|$POOL=1/10|pick --harness pi --model sonnet|rc=1 key=invalid-pick-harness,option=--harness" \
+  "a listing of every harness leaves the stated pool out|$POOL=1/10|list --json|aliases=claude,eclaude,nclaude,openclaude"
+# An entry nothing can read refuses the pick, one row per shape.
+table \
+  "a relative account dir is refused|ORCH_LANE_COPILOT_POOL=pi1=1/10|pick --harness pi $COPILOT|rc=1 key=invalid-copilot-pool,entry=pi1=1/10" \
+  "an entry with no reading is refused|ORCH_LANE_COPILOT_POOL=$H/.pi1|pick --harness pi $COPILOT|rc=1 key=invalid-copilot-pool,entry=$H/.pi1" \
+  "a grant of 0 is refused|$POOL=0/0|pick --harness pi $COPILOT|rc=1 key=invalid-copilot-pool,entry=$H/.pi1=0/0" \
+  "a percentage in place of the credits is refused|$POOL=10%|pick --harness pi $COPILOT|rc=1 key=invalid-copilot-pool,entry=$H/.pi1=10%"
+# Controls, one per rule: the share rounded down reads one credit short as
+# room; a named account the setting skips read as unlisted, exit 4; and the
+# monthly bucket dropped from the shared windows leaves a --model pick with no
+# reading at all.
+lanes_mutant mutant-pool-floor lanes '(used \* 100 + limit - 1)' '(used * 100)'
+LANES="$TMP_ROOT/mutant-pool-floor/scripts/lanes"
+table "control: rounded down, one credit short of the grant reads as room|$POOL=999999/1000000|pick --lane $H/.pi1 --harness pi $COPILOT --max-pct 100 --json|rc=0"
+lanes_mutant mutant-pool-unlisted lanes '\[\[ -n "\$found" || "\$harness" != pi \]\] || found="\$dir"'
+LANES="$TMP_ROOT/mutant-pool-unlisted/scripts/lanes"
+table "control: an unstated account read as unlisted exits 4, which a launcher launches on|$POOL=1/10|pick --lane $H/.eclaude --harness pi $COPILOT --json|rc=4"
+lanes_mutant mutant-pool-bucket lib/lane-model.sh 'pct: (.monthly_pct' 'pct: (null'
+LANES="$TMP_ROOT/mutant-pool-bucket/scripts/lanes"
+table "control: with the monthly bucket out of the shared windows the stated pool measures nothing|$POOL=100000/1000000|pick --harness pi $COPILOT|rc=3"
+LANES="$SCRIPTS_DIR/lanes"
+
 echo "=== unmeasurable lanes are never idle ==="
 # An expired login, an authenticated lane whose usage body carries none of the
 # consumer windows (a real enterprise plan), and an unreachable API each report
