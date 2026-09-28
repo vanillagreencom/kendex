@@ -246,7 +246,7 @@ RECORD_MODE=launch
 # A wake only ever resumes a session the harness already holds: a custom
 # command or a relaunch could start a fresh one, and a hosted lane's sessions
 # are on its host, not in the local store a wake scans.
-if [[ "$WAKE" == true && ( -n "$CMD_TEMPLATE" || "$RELAUNCH" == true || "$LANE_HOST" != local || ! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then
+if [[ "$WAKE" == true && ( -n "$CMD_TEMPLATE" || "$RELAUNCH" == true || "$LANE_HOST" != local || ! "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ) ]]; then
   ot_message wake-invalid "option=--wake" "harness=$HARNESS" "relaunch=$RELAUNCH" >&2
   exit 1
 fi
@@ -1241,7 +1241,11 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
     case "$HARNESS" in claude) printf 'claude -n %q %s--resume %q%s%s\n' "$item" "$flags" "$session_id" "$print" "$line" ;;
       codex) printf 'codex %sresume %s%q%s\n' "$exec" "$flags" "$session_id" "$line" ;;
       pi) printf 'pi %s--session %q%s\n' "$flags" "$session_id" "$line" ;;
-      copilot) printf 'copilot %s--resume=%q -i%s\n' "$flags" "$session_id" "$line" ;; esac; return
+      copilot)
+        # A wake's line is the value of -p, print mode, where a relaunch's is
+        # the value of -i, an interactive turn.
+        if [[ -n "$wake_dir" ]]; then printf 'copilot %s--resume=%q -p%s\n' "$flags" "$session_id" "$line"
+        else printf 'copilot %s--resume=%q -i%s\n' "$flags" "$session_id" "$line"; fi ;; esac; return
   fi
   # The copilot arms take the brief as the value of `-i`, which starts the
   # interactive session and submits it, and are prose built from the same
@@ -1647,15 +1651,16 @@ launchable_dir() { # DIR TITLE
   return 1
 }
 
-# A Claude or Codex wake resumes the session in a second process, so a session
-# still working in the worktree would be doubled. Busy: a live harness process
-# whose cwd is the worktree has a shell descendant, which every tool call and
-# background task runs through, or, for Claude, its session file does not read
-# idle. Language and MCP servers are non-shell children an idle session keeps,
-# so only shells count. Codex gives no idle signal, so a live codex session
-# with no shell under it is unjudged, never idle. The environment is read
-# through /proc, which has no other reader, so on a host without /proc any
-# process named for the harness leaves the lane unjudged, wherever it runs.
+# A Claude, Codex or Copilot wake resumes the session in a second process, so
+# a session still working in the worktree would be doubled. Busy: a live
+# harness process whose cwd is the worktree has a shell descendant, which every
+# tool call and background task runs through, or, for Claude, its session file
+# does not read idle. Language and MCP servers are non-shell children an idle
+# session keeps, so only shells count. Codex and Copilot give no idle signal,
+# so a live session of either with no shell under it is unjudged, never idle.
+# The environment is read through /proc, which has no other reader, so on a
+# host without /proc any process named for the harness leaves the lane
+# unjudged, wherever it runs.
 lane_session_state() { # DIR — prints busy, idle or unjudged
   local table pid state config
   lane_owned_processes "$1" "$HARNESS" || { printf unjudged; return 0; }
@@ -2144,6 +2149,28 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
     || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; return 1; }
 )
 
+# Whether a relaunch finds the item's session retired: its handoff record
+# stands, by the one judge `workflow-state handoff-standing` owns, which the
+# watch that reports the record and the turn-end hook that asks for it read
+# too. A lane that wrote its record handed its work to the record and ended its
+# session, and only a fresh start carries the record on, since start.md § 0
+# reads it and a resumed session never runs that step. So such a relaunch
+# looks for no session and renders the start brief, whatever the harness.
+# Sets RELAUNCH_RETIRED; a verdict it cannot read refuses as
+# handoff-unreadable, never read as no record, which would resume the session
+# the lane retired. Read where the watch reads the item's state: the fleet's
+# --state-dir, or this checkout's own state directory.
+RELAUNCH_RETIRED=false
+relaunch_retired() { # ITEM STATE_ID
+  local answer rc=0 verdict='workflow-state: handoff-standing'
+  RELAUNCH_RETIRED=false
+  answer="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} handoff-standing "$2")" || rc=$?
+  if [[ "$rc" -eq 0 && "$answer" == "$verdict=none" ]]; then return 0; fi
+  if [[ "$rc" -eq 0 && "$answer" == "$verdict=stands"$'\n'* ]]; then RELAUNCH_RETIRED=true; return 0; fi
+  ot_message handoff-unreadable "item=$1" "state=$2" "exit=$rc" >&2
+  return 1
+}
+
 # The launch from the lane marker to the lane record, for the item the loop
 # below has resolved: its worktree, command and host fields are the loop's own
 # variables. Returns 1 on any failure, its keyed line already printed. Every
@@ -2157,8 +2184,13 @@ launch_finish() {
   session_file=""
   wake_args=()
   if [[ "$WAKE" == true ]]; then wake_args=("$wt"); fi
+  RELAUNCH_RETIRED=false
+  if [[ "$RELAUNCH" == true && "$HOST_RELAUNCH" == false && -z "$CMD_TEMPLATE" ]]; then
+    relaunch_retired "$item" "$wt_id" || return 1
+    [[ "$RELAUNCH_RETIRED" == false ]] || ot_message session-retired "item=$item" "harness=$HARNESS"
+  fi
   # A Pi wake goes to the live session through pi-bridge and reads no store.
-  if [[ "$RELAUNCH" == true && "$HOST_RELAUNCH" == false && -z "$CMD_TEMPLATE" && "$HARNESS" =~ ^(claude|codex|pi|copilot)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
+  if [[ "$RELAUNCH" == true && "$HOST_RELAUNCH" == false && -z "$CMD_TEMPLATE" && "$RELAUNCH_RETIRED" == false && "$HARNESS" =~ ^(claude|codex|pi|copilot)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
     resume_rc=0
     session_file="$(find_relaunch_session "$HARNESS" "$item" "$wt")" || resume_rc=$?
     [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1; }
@@ -2185,8 +2217,10 @@ launch_finish() {
   # settings the first one was launched with. Its compaction follows the model
   # the transcript's last reading names, so a session whose window is named
   # stays uncompacted and one whose transcript names no model keeps it.
+  # A copilot row names no compaction words and no adapter reads its session,
+  # so its wake reads no model.
   WAKE_MODEL="" wake_reading=""
-  if [[ "$WAKE" == true && -n "$session_file" ]]; then
+  if [[ "$WAKE" == true && -n "$session_file" && "$HARNESS" != copilot ]]; then
     if ! wake_reading="$(lane_context_reading "$HARNESS" < "$session_file")"; then
       ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1
     fi
@@ -2249,6 +2283,10 @@ launch_finish() {
     # check reads as skip, whatever prefix the line below carries.
     [[ -z "$LANE_ENV" ]] || LANE_FORM="$launch_form"
     cmd="$(lane_launch_line "$cmd" "$HARNESS" "$launch_var" "$launch_home" "$launch_form")" || return 1
+  elif [[ "$HARNESS" == copilot && -z "$CMD_TEMPLATE" ]]; then
+    # No account named: the command still carries Copilot's launch
+    # environment, and opens on whatever COPILOT_HOME the pane inherits.
+    cmd="$(lane_launch_line "$cmd" "$HARNESS" "" "" unchecked)" || return 1
   fi
   if [[ "$WAKE" == true ]]; then
     open_wake "$wt" "$title" "$cmd" || return 1
@@ -2629,8 +2667,8 @@ for raw in "${ITEMS[@]}"; do
     failed=$((failed + 1))
     continue
   fi
-  # A Pi wake enters the live session through pi-bridge. A Claude or Codex wake
-  # starts a second process on the session, so a working one is refused.
+  # A Pi wake enters the live session through pi-bridge. Any other wake starts
+  # a second process on the session, so a working one is refused.
   if [[ "$WAKE" == true && "$HARNESS" != pi ]]; then
     if ! session_state="$(lane_session_state "$wt")"; then session_state=unjudged; fi
     lane_pane_observe "$title"

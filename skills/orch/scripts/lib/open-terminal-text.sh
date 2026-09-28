@@ -129,7 +129,9 @@ ot_message() { # REASON FIELD=VALUE...
     marker-failed) text='The lane launch marker could not be written, or did not read back holding the root the lane opens in, so the lane mail hook would never hand this lane its messages. The item was not launched.' ;;
     session-scan-failed) text='The harness session store could not be read.' ;;
     session-resumed) text='The harness resumed the matching session.' ;;
-    wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd, --relaunch or lane host.' ;;
+    session-retired) text='The item'"'"'s handoff record stands, so its lane handed its work to that record and ended the session. The relaunch resumes no session: it starts the lane afresh, and the start workflow continues from the record.' ;;
+    handoff-unreadable) text='workflow-state handoff-standing gave no verdict for the item, so nothing says whether its lane handed off and retired its session. Nothing was launched. Its own words are above; repair the state file it names, then relaunch.' ;;
+    wake-invalid) text='The wake option takes --harness claude, codex, pi or copilot, and no --cmd, --relaunch or lane host.' ;;
     session-missing) text='No session of this harness names the item. Nothing was started.' ;;
     wake-failed) text='The delivering command exited non-zero before the wake window closed. The lane was not woken; the log says why.' ;;
     wake-refused) text='The lane is not idle: the reason names the state the shared judge read from its pane and its harness process, and a resume would run a second session beside a live one. Nothing was started. A refusal is a state and not a remedy: the refusal table in the orch lane-reach reference, under Wake refusals, says how mail still reaches the lane for each reason.' ;;
@@ -424,8 +426,9 @@ Options:
                     as another session's claim. The newest matching Claude,
                     Codex, Pi or Copilot session resumes natively, a Copilot
                     one being the newest whose session record names the lane's
-                    worktree, and the resumed command carries one continuation
-                    line telling the lane to resume its orch workflow and read
+                    worktree and holds events, and the resumed command carries
+                    one continuation line telling the lane to resume its orch
+                    workflow and read
                     `lane-mail inbox`, and a claude or pi lane to re-arm its
                     mailbox monitor (`lane-mail watch`), a copilot lane its
                     `lane-mail watch --once`, so no follow-up is pasted into
@@ -434,7 +437,13 @@ Options:
                     the exception: it resumes with no line, reported as
                     resume-lineless, and its line is pasted into the pane
                     afterwards — see --host. With no match the normal brief
-                    starts fresh. Before the worktree step an existing tree is asked whether its pull
+                    starts fresh, and so does a local relaunch of an item
+                    whose handoff record stands (`workflow-state
+                    handoff-standing`), reported as session-retired: its lane
+                    ended that session and the start workflow continues from
+                    the record. A verdict that cannot be read refuses as
+                    handoff-unreadable and launches nothing. Before the
+                    worktree step an existing tree is asked whether its pull
                     request merged (`worktree merged`). A merged item keeps its
                     tree as it stands and is reported as worktree-reuse-merged
                     with the merge commit; its links are re-asserted with
@@ -466,7 +475,8 @@ Options:
                     refused as cap-reached until a lane closes, or admitted
                     with --wait-slot or --over-cap.
   --wake            Wake an idle lane in its existing worktree: resume its
-                    newest matching Claude or Codex session in print mode, or
+                    newest matching Claude, Codex or Copilot session in print
+                    mode, a Copilot one as the value of -p, or
                     send to its live Pi session through pi-bridge, with one
                     line telling it to read `lane-mail inbox`. A Pi wake goes
                     to the live session and is never put to the lane judge,
@@ -475,8 +485,8 @@ Options:
                     match is a refusal, never a fresh start. The turn runs
                     detached; its output goes to tmp/lane-wake-ITEM.log in
                     the worktree. A delivery that exits non-zero within its
-                    first 5 seconds is refused as wake-failed. A Claude or
-                    Codex lane wakes only when the one lane judge
+                    first 5 seconds is refused as wake-failed. A Claude, Codex
+                    or Copilot lane wakes only when the one lane judge
                     (lib/lane-state.sh), which oversee-watch also asks, calls
                     it idle. The judge asks the lane's tmux pane first for
                     every state but idle, so a lane whose harness runs on
@@ -485,11 +495,12 @@ Options:
                     one caller that hands the judge a process read, and an
                     `idle` pane stands only while that read is idle too: a
                     read that says busy answers working, and one that could
-                    not tell answers unjudged. Codex publishes no idle
-                    signal, so a local codex lane is never judged idle from
-                    its process: while a codex process runs in that worktree
-                    the wake refuses the lane, as working where that process
-                    has a shell under it and as unjudged in every other case.
+                    not tell answers unjudged. Codex and Copilot publish no
+                    idle signal, so a local codex or copilot lane is never
+                    judged idle from its process: while its process runs in
+                    that worktree the wake refuses the lane, as working where
+                    that process has a shell under it and as unjudged in every
+                    other case.
                     A harness process another user owns, root among them,
                     likewise refuses the whole lane as unjudged for as long
                     as it runs. On a host with no /proc the read answers

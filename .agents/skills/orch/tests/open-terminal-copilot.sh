@@ -18,6 +18,8 @@ export ORCH_LANE_HOST=local
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 # shellcheck source=lib/growth-state.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
+# shellcheck source=lib/process-table.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
@@ -30,7 +32,9 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # account is never scanned.
 FLEET_HOME="$TMP_ROOT/fleet-home"
 mkdir -p "$FLEET_HOME"
-LAUNCH_ENV=(LANES_HOME="$FLEET_HOME" COPILOT_HOME=)
+# HOME is the fleet home too, since every copilot command names the shared
+# skills under it.
+LAUNCH_ENV=(LANES_HOME="$FLEET_HOME" HOME="$FLEET_HOME" COPILOT_HOME=)
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
@@ -43,15 +47,34 @@ printf '%s\n' "${!#}" > "$OT_CAPTURE"
 exit 0
 EOF
 printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
-chmod +x "$BIN/ghostty" "$BIN/gh"
+# The harness a wake runs detached, in place of a terminal: its argv lands in
+# the capture the same way.
+cat > "$BIN/copilot" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "copilot $*" > "$OT_CAPTURE"
+exit 0
+EOF
+chmod +x "$BIN/ghostty" "$BIN/gh" "$BIN/copilot"
 export TERMINAL=ghostty
+# The process table a wake reads, empty unless a row writes one: no process on
+# the host running under another user can answer for these lanes.
+PROC_BIN="$TMP_ROOT/proc-bin"
+proc_table_install "$PROC_BIN"
+PROC_TABLE="$TMP_ROOT/proc-table.txt"
+PROC_CWD_FILE="$TMP_ROOT/proc-cwd.txt"
+PROC_HIDDEN_PIDS=""
+export PROC_TABLE PROC_CWD_FILE PROC_HIDDEN_PIDS
+proc_table_write "$PROC_TABLE"
+proc_cwd_write "$PROC_CWD_FILE"
 
 # Stub worktree CLI: `create <item>` makes and prints a temp dir; `exists`
-# answers nothing, so a relaunch takes the bare create.
+# answers nothing, so a relaunch takes the bare create; `path` names the dir
+# create makes, which a wake reads its worktree from.
 STUB="$TMP_ROOT/worktree-stub"
 cat > "$STUB" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+[[ "\${1:-}" != "path" ]] || { printf '%s\n' "$TMP_ROOT/wt/\${2:-unknown}"; exit 0; }
 if [[ "\${1:-}" == "create" ]]; then
   d="$TMP_ROOT/wt/\${2:-unknown}"
   mkdir -p "\$d"
@@ -82,7 +105,7 @@ launch() { # NAME ARGS...
   shift
   rm -f -- "$TMP_ROOT/$name.cap"
   ( cd "$REPO" && env "${LAUNCH_ENV[@]}" ${ROW_ENV[@]+"${ROW_ENV[@]}"} OT_CAPTURE="$TMP_ROOT/$name.cap" ORCH_STATE_DIR="$TMP_ROOT/state" \
-      PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "${OT:-$REPO/scripts/open-terminal}" --ghostty "$@" ) \
+      PATH="$BIN:$PROC_BIN:$PATH" WORKTREE_CLI="$STUB" "${OT:-$REPO/scripts/open-terminal}" --ghostty "$@" ) \
     >/dev/null 2>"$TMP_ROOT/$name.err" || rc=$?
   ERR="$(cat "$TMP_ROOT/$name.err")"
   CMD=""
@@ -98,27 +121,32 @@ launch() { # NAME ARGS...
 
 FLAGS='--model claude-opus-5 --reasoning-effort high --allow-all'
 # The words every copilot command leads with, quoted per token as start_cmd
-# quotes each flag: the autopilot launch settings, then the question-off word,
-# then the caller's flags.
-LEAD="'--autopilot' '--max-autopilot-continues' '3' '--no-ask-user' '--model' 'claude-opus-5' '--reasoning-effort' 'high' '--allow-all'"
+# quotes each flag: the launch settings, then the question-off word, then the
+# caller's flags.
+LEAD="'--autopilot' '--max-autopilot-continues' '3' '--context' 'long_context' '--no-auto-update' '--no-ask-user' '--model' 'claude-opus-5' '--reasoning-effort' 'high' '--allow-all'"
+# The environment every copilot command carries ahead of the account.
+COP_ENV="env -u GH_TOKEN -u GITHUB_TOKEN COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills'"
 
 echo "=== a copilot lane starts with its brief as the value of -i ==="
 launch linear --harness copilot --launch-flags "$FLAGS" cc-737
-assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-737'" \
-  "linear:copilot emits the prose kickoff after its launch settings, question-off word and flags"
+assert_contains "$CMD" "&& $COP_ENV copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-737'" \
+  "linear:copilot emits the prose kickoff after its launch settings, question-off word and flags, under its launch environment and the pane's own account"
 assert_not_contains "$CMD" '$' "the linear:copilot command contains no \$"
 launch github --tracker github --repo acme/widgets --harness copilot --launch-flags "$FLAGS" 42
 assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github acme/widgets#42'" \
   "github:copilot emits the same kickoff carrying repo#item"
 
 echo "=== a copilot relaunch resumes the session whose record names the lane's worktree ==="
-# session ID DIR STAMP [HOME] — a session record as Copilot CLI 1.0.88 writes
-# it, under the account HOME (the default copilot home by default), its file
-# dated STAMP in touch -t form, which BSD and GNU touch both take.
-session() { # ID DIR STAMP [HOME]
+# session ID DIR STAMP [HOME [EVENTS]] — a session record as Copilot CLI
+# 1.0.88 writes it, under the account HOME (the default copilot home by
+# default), its file dated STAMP in touch -t form, which BSD and GNU touch both
+# take. EVENTS `none` leaves out the events.jsonl a session that ran a turn
+# holds, as one whose sign-in failed before its first event does.
+session() { # ID DIR STAMP [HOME [EVENTS]]
   local d="${4:-$FLEET_HOME/.copilot}/session-state/$1"
   mkdir -p "$d"
   printf 'id: %s\ncwd: %s\ngit_root: %s\nbranch: cc-738\nclient_name: github/cli\nuser_named: false\n' "$1" "$2" "$2" > "$d/workspace.yaml"
+  [[ "${5:-}" == none ]] || printf '%s\n' '{"type":"session.start"}' > "$d/events.jsonl"
   touch -t "$3" "$d/workspace.yaml"
 }
 WT="$TMP_ROOT/wt/CC-738"
@@ -129,6 +157,16 @@ RESUME_LINE="'Resume the orch workflow for CC-738 from where this session stoppe
 launch relaunch --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
 assert_contains "$CMD" "copilot $LEAD --resume=22222222-bbbb-4bbb-8bbb-222222222222 -i $RESUME_LINE" \
   "the newest session in the lane's own worktree is resumed, its continuation line re-arming the --once monitor"
+# A killed lane's relaunch that died before its first event left a newer
+# record with none: the lookup passes it for the session that ran.
+session 66666666-ffff-4fff-8fff-666666666666 "$WT" 200001010500 "" none
+launch relaunch-eventless --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
+assert_contains "$CMD" "copilot $LEAD --resume=22222222-bbbb-4bbb-8bbb-222222222222 -i $RESUME_LINE" \
+  "a newer record with no events is passed over for the newest session that ran"
+session 77777777-aaaa-4aaa-8aaa-777777777777 "$TMP_ROOT/wt/CC-743" 200001010600 "" none
+launch relaunch-only-eventless --relaunch --harness copilot --launch-flags "$FLAGS" CC-743
+assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-743'" \
+  "a worktree whose only record holds no events starts afresh rather than resuming what copilot cannot"
 launch relaunch-none --relaunch --harness copilot --launch-flags "$FLAGS" CC-740
 assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-740'" \
   "a relaunch whose worktree no session record names renders the fresh brief"
@@ -139,12 +177,57 @@ session 44444444-dddd-4ddd-8ddd-444444444444 "$TMP_ROOT/wt/CC-741" 200001010300 
 launch relaunch-lane --relaunch --harness copilot --lane "$TMP_ROOT/.1copilot" --launch-flags "$FLAGS" CC-741
 assert_contains "$CMD" "--resume=44444444-dddd-4ddd-8ddd-444444444444 -i" \
   "a relaunch under --lane resumes from that account's own session store"
+assert_contains "$CMD" "&& $COP_ENV COPILOT_HOME='$TMP_ROOT/.1copilot' copilot $LEAD --resume=" \
+  "the resume runs under the launch environment and the named account, env's options ahead of its assignments"
 session 55555555-eeee-4eee-8eee-555555555555 "$TMP_ROOT/wt/CC-742" 200001010400 "$TMP_ROOT/.envcopilot"
 ROW_ENV=(COPILOT_HOME="$TMP_ROOT/.envcopilot")
 launch relaunch-env --relaunch --harness copilot --launch-flags "$FLAGS" CC-742
 ROW_ENV=()
 assert_contains "$CMD" "--resume=55555555-eeee-4eee-8eee-555555555555 -i" \
   "a relaunch naming no lane resumes from the store the ambient COPILOT_HOME names"
+
+echo "=== a relaunch of a retired session, or onto another harness, starts afresh ==="
+# handoff ITEM JSON — the item's workflow state, where every launch here reads
+# it: the `handoff` record a lane writes before it ends its session.
+handoff() { mkdir -p "$TMP_ROOT/state"; printf '%s\n' "$2" > "$TMP_ROOT/state/workflow-state-$1.json"; }
+handoff CC-738 '{"handoff":{"merged":[],"remaining":["open the PR"],"written_at":"2000-01-01T06:00:00Z"}}'
+launch retired --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
+assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-738'" \
+  "a standing handoff record retires the lane's session: the relaunch renders the start brief, which continues from the record"
+handoff CC-738 '{"handoff":{"merged":[],"remaining":["open the PR"],"written_at":"2000-01-01T06:00:00Z","resumed_at":946713600}}'
+launch retired-resumed --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
+assert_contains "$CMD" "--resume=22222222-bbbb-4bbb-8bbb-222222222222 -i" \
+  "a record a relaunched lane already resumed from retires nothing: the session it started resumes"
+handoff CC-738 '{"handoff":'
+launch retired-unreadable --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
+assert_eq "${CMD:-none} $(grep -c '^open-terminal: handoff-unreadable item=CC-738 state=CC-738 ' <<<"$ERR" || true)" "none 1" \
+  "a state file the judge cannot read refuses the relaunch rather than resuming a session it may have retired"
+rm -f -- "${TMP_ROOT:?}/state/workflow-state-CC-738.json"
+# The lane ran on copilot and is relaunched on claude: nothing in claude's
+# store names the item, so claude starts it afresh on its own brief.
+launch switched --relaunch --harness claude --launch-flags '--model opus --effort high' CC-738
+assert_contains "$CMD" "'/orch start CC-738'" \
+  "a relaunch onto another harness finds none of the copilot session and starts afresh"
+assert_not_contains "$CMD" "--resume" "the switched relaunch resumes nothing"
+
+echo "=== a copilot wake resumes the lane's session in print mode, and only an idle one ==="
+launch wake --wake --harness copilot --launch-flags "$FLAGS" CC-738
+assert_eq "$CMD" "copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --no-ask-user --model claude-opus-5 --reasoning-effort high --allow-all --resume=22222222-bbbb-4bbb-8bbb-222222222222 -p Run .agents/skills/orch/scripts/lane-mail inbox --item CC-738 and act on every directive it prints." \
+  "the wake resumes the newest session that ran, by its id, its inbox line the value of -p"
+launch wake-none --wake --harness copilot --launch-flags "$FLAGS" CC-743
+assert_eq "${CMD:-none} $(grep -c '^open-terminal: session-missing item=CC-743 harness=copilot' <<<"$ERR" || true)" "none 1" \
+  "a worktree whose only record holds no events has no session to wake, and nothing starts"
+# A copilot process in the lane's worktree: the binary names itself
+# MainThread, and with no idle signal a live one is never judged idle.
+sleep 300 & LIVE_PID=$!
+proc_table_write "$PROC_TABLE" "$LIVE_PID 1 MainThread"
+proc_cwd_write "$PROC_CWD_FILE" "$LIVE_PID=$WT"
+launch wake-live --wake --harness copilot --launch-flags "$FLAGS" CC-738
+kill "$LIVE_PID" 2>/dev/null || :
+proc_table_write "$PROC_TABLE"
+proc_cwd_write "$PROC_CWD_FILE"
+assert_eq "${CMD:-none} $(grep -c '^open-terminal: wake-refused item=CC-738 reason=unjudged' <<<"$ERR" || true)" "none 1" \
+  "a live copilot session is refused as unjudged, never doubled by a second process"
 
 echo "=== a named copilot lane runs under COPILOT_HOME ==="
 (
@@ -175,6 +258,48 @@ mutate_file "$TMP_ROOT/cwd-ctrl/scripts/lib/lane-relaunch.sh" 'index($0, "cwd: "
 OT="$TMP_ROOT/cwd-ctrl/scripts/open-terminal" launch cwd-ctrl --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
 assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-738'" \
   "control: without the record's directory the relaunch resumes nothing and starts afresh"
+# The events test cut: the newest record in the worktree is resumed though it
+# holds no events, which copilot refuses to resume.
+stage "$TMP_ROOT/events-ctrl"
+mutate_file "$TMP_ROOT/events-ctrl/scripts/lib/lane-relaunch.sh" ' && -s "${file%/*}/events.jsonl" ]]' ' ]]'
+OT="$TMP_ROOT/events-ctrl/scripts/open-terminal" launch events-ctrl --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
+assert_contains "$CMD" "--resume=66666666-ffff-4fff-8fff-666666666666 -i" \
+  "control: without the events test the relaunch resumes a record copilot cannot load"
+# The retirement cut from the lookup's gate: a standing record no longer stops
+# the relaunch from resuming the session its lane ended.
+stage "$TMP_ROOT/retired-ctrl"
+mutate_file "$TMP_ROOT/retired-ctrl/scripts/open-terminal" ' && "$RELAUNCH_RETIRED" == false && ' ' && '
+handoff CC-738 '{"handoff":{"merged":[],"remaining":["open the PR"],"written_at":"2000-01-01T06:00:00Z"}}'
+OT="$TMP_ROOT/retired-ctrl/scripts/open-terminal" launch retired-ctrl --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
+rm -f -- "${TMP_ROOT:?}/state/workflow-state-CC-738.json"
+assert_contains "$CMD" "--resume=22222222-bbbb-4bbb-8bbb-222222222222 -i" \
+  "control: without the retirement gate a relaunch resumes the session its lane handed off"
+# Copilot cut from the wake's harness gate: the wake is refused before any
+# session is read.
+stage "$TMP_ROOT/wake-gate-ctrl"
+mutate_file "$TMP_ROOT/wake-gate-ctrl/scripts/open-terminal" '! "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ) ]]; then' '! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then'
+OT="$TMP_ROOT/wake-gate-ctrl/scripts/open-terminal" launch wake-gate-ctrl --wake --harness copilot --launch-flags "$FLAGS" CC-738
+assert_eq "${CMD:-none} $(grep -c '^open-terminal: wake-invalid option=--wake harness=copilot' <<<"$ERR" || true)" "none 1" \
+  "control: without copilot in the wake gate a copilot wake is wake-invalid"
+# The wake's print mode cut: its line reaches copilot as an interactive turn,
+# which a detached process with no terminal cannot run.
+stage "$TMP_ROOT/wake-print-ctrl"
+mutate_file "$TMP_ROOT/wake-print-ctrl/scripts/open-terminal" "%s--resume=%q -p%s" "%s--resume=%q -i%s"
+OT="$TMP_ROOT/wake-print-ctrl/scripts/open-terminal" launch wake-print-ctrl --wake --harness copilot --launch-flags "$FLAGS" CC-738
+assert_contains "$CMD" "--resume=22222222-bbbb-4bbb-8bbb-222222222222 -i Run" \
+  "control: without the print-mode arm the wake line is an interactive turn"
+# The launch environment cut from the builder, then the route that hands a
+# launch naming no account to it: either way the command runs bare.
+stage "$TMP_ROOT/env-ctrl"
+mutate_file "$TMP_ROOT/env-ctrl/scripts/lib/lane-launch.sh" '    copilot) extra="$(lane_copilot_env)" || return 1 ;;' '    copilot) ;;'
+OT="$TMP_ROOT/env-ctrl/scripts/open-terminal" launch env-ctrl --harness copilot --launch-flags "$FLAGS" cc-737
+assert_eq "$(grep -c 'COPILOT_ALLOW_ALL=true' <<<"$CMD" || true)" "0" \
+  "control: without the builder's copilot words the command carries no launch environment"
+stage "$TMP_ROOT/route-ctrl"
+mutate_file "$TMP_ROOT/route-ctrl/scripts/open-terminal" '  elif [[ "$HARNESS" == copilot && -z "$CMD_TEMPLATE" ]]; then' '  elif false; then'
+OT="$TMP_ROOT/route-ctrl/scripts/open-terminal" launch route-ctrl --harness copilot --launch-flags "$FLAGS" cc-737
+assert_contains "$CMD" "&& copilot $LEAD -i" \
+  "control: without the no-account route a launch naming no account runs copilot bare"
 # The named lane's store cut from the lookup: the --lane relaunch scans the
 # default home, which holds no record of its worktree, and starts afresh.
 stage "$TMP_ROOT/lane-store-ctrl"

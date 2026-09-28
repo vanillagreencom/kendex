@@ -76,7 +76,12 @@ copilot_session_cwd() { # WORKSPACE_YAML
 # events.jsonl records a kickoff is not measured. So a copilot session is the
 # newest record whose directory is the lane's worktree, one item's alone. A
 # record quoting its path names no directory here and matches nothing, which
-# renders the fresh brief.
+# renders the fresh brief. So does a record with no events beside it: a
+# session that ended before its first event, such as one whose sign-in failed,
+# leaves workspace.yaml and no events.jsonl, and `copilot --resume=<id>` on it
+# exits 1 with "No session, task, or name matched", in `-p` and at a pane alike
+# (1.0.88, the log naming "Cannot create session from empty events array"). An
+# older resumable record in the same worktree is resumed in its place.
 find_relaunch_session() { # HARNESS ITEM WORKTREE
   local harness="$1" item="$2" cwd="$3" home="${LANES_HOME:-$HOME}" config roots root inventory id_match match_filter="" files file best="" best_root="" rc relative target recorded
   command -v jq >/dev/null 2>&1 || return 2
@@ -122,7 +127,7 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
       [[ -n "$file" ]] || continue
       if [[ "$harness" == copilot ]]; then
         recorded="$(copilot_session_cwd "$file")" || return 2
-        [[ "$recorded" == "$cwd" ]] || continue
+        [[ "$recorded" == "$cwd" && -s "${file%/*}/events.jsonl" ]] || continue
         [[ -n "$best" && ! "$file" -nt "$best" ]] || { best="$file"; best_root="$root"; }
       elif jq -Rne --arg i "$item" "$match_filter" "$file" >/dev/null 2>&1; then
         [[ -n "$best" && ! "$file" -nt "$best" ]] || { best="$file"; best_root="$root"; }
