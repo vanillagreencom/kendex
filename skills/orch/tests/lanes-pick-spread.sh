@@ -66,6 +66,7 @@ ALL_DIRS="ORCH_LANE_DIRS=$H/.aclaude:$H/.bclaude:$H/.cclaude"
 #   own:LANE              this checkout's fleet state records LANE as its overseer
 #   peer:LANE             a peer fleet's state records LANE as its overseer
 #   own:broken            this checkout's fleet state is not JSON
+#   store:file            the claims path is a plain file, a store nobody can read
 # Any other token is a typo and stops the suite.
 PANE_SEQ=0
 stage() {
@@ -78,6 +79,7 @@ stage() {
   for item in "${items[@]}"; do
     case "$item" in
       own:broken) printf 'not json\n' > "$FLEET/workflow-state-oversee.json" ;;
+      store:file) rmdir -- "${STORE:?}/claims" && : > "$STORE/claims" ;;
       own:*) jq -n --arg a "$H/.${item#own:}claude" '{overseer: {account: $a}}' > "$FLEET/workflow-state-oversee.json" ;;
       peer:*) jq -n --arg a "$H/.${item#peer:}claude" '{overseer: {account: $a}}' > "$RUN/peer/workflow-state-oversee.json" ;;
       claim:*)
@@ -218,6 +220,18 @@ CTRL="$(mutant_scripts mutant-weekly-whole lib/lane-model.sh)" || exit 1
 mutate_file "$CTRL/lib/lane-model.sh" 'else $burn_default * 5 / 168 end' 'else $burn_default end'
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: charged whole, the weekly-bound account is dropped|ORCH_LANE_DIRS=$H/.wclaude|claim:w:2||$PICK|rc=3 walled=1"
+
+echo "=== an unread claim store is a notice for the reading and a refusal for the projection ==="
+table \
+  "a named lane read without --projected notices the unread store and answers the wall|ORCH_LANE_DIRS=$H/.aclaude|store:file||pick --lane $H/.aclaude --harness claude --json|rc=0 claims=null projected_headroom_pct=null key=pick-lane-claims,claims=null" \
+  "a named lane judged --projected refuses an unread store with 6 before judging|ORCH_LANE_DIRS=$H/.aclaude|store:file||pick --lane $H/.aclaude --harness claude --projected --json|rc=6 out= key=pick-lane-claims-refused,lane=$H/.aclaude"
+
+# Control: without the refusal the projection nobody could make is judged,
+# and only the unmeasured null keeps it from reading as no lanes in flight.
+CTRL="$(mutant_scripts mutant-store-notice lanes)" || exit 1
+mutate_file "$CTRL/lanes" 'return 6' ':'
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: without the refusal the unread store reaches the judge|ORCH_LANE_DIRS=$H/.aclaude|store:file||pick --lane $H/.aclaude --harness claude --projected --json|rc=5"
 
 echo "=== among the fewest claims, the most projected room wins ==="
 # a and b carry one claim each. a reads more room, 80 to b's 70, but its

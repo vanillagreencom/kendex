@@ -211,13 +211,15 @@ def with_lane_projection($burn_default):
            (if .wall == null or .claims == null then null
             else 100 - .wall - .claims * $burn end)};
 
-# judged_wall over one record with_lane_projection has read: the percentage
-# wall_verdict judges, the projected use where a projection exists and the
-# wall reading where the claims are unknown. Both pick forms classify through
-# it, so a named lane is refused on the rule the chooser drops it on.
+# judged_wall over one record with_lane_projection has read: the projected
+# use wall_verdict judges, for the chooser and `pick --lane --projected`, so a
+# named lane is refused on the rule the chooser drops it on. Null, which
+# wall_verdict reads as unmeasured, where no projection was made: a wall
+# nobody read, or claims nobody could count. Both callers refuse an unread
+# claim store before judging, and this arm keeps one that reached it from
+# reading as zero lanes in flight.
 def judged_wall:
-  if .wall == null then null
-  elif .projected_headroom_pct == null then .wall
+  if .projected_headroom_pct == null then null
   else 100 - .projected_headroom_pct
   end;
 

@@ -53,6 +53,7 @@ ot_message() { # REASON FIELD=VALUE...
     host-credential-dead) text='The account read expired, and the lane host reports holding that same account. Nothing was launched. The expired copy is the credential this machine holds, which could not be renewed, or the copy the provider holds where its accounts row reports the account expired: lanes list names which in its THROUGH column. Remedy for THROUGH local: log in again on this machine for that config directory; a provider that re-seeds the host from that directory at every create, as the reference provider does, sends this dead copy again. For THROUGH host, renew the credential the provider holds. A RELAUNCH onto this same account proceeds instead, on the copy the provider installed; a window read for the account walls either shape.' ;;
     host-relaunch-credential) text='Nothing here measured this account, and the lane host reports holding it, so the relaunch proceeds on the copy the provider installed. Nothing checked that copy is live. The resumed session reports its own usage banner, which the watch reads as usage-limit. A window this machine CAN read still walls a relaunch: an account at or above --lane-max-pct is refused as lane-model-walled, hosted or not.' ;;
     host-accounts-unanswered) text='The lane host could not say which accounts it holds, so this launch is judged on the usage windows this machine reads, exactly as an unhosted one is. Where a keyed lanes: line sits above this one, it names the provider failure; where none does, the read of that answer failed here. A provider that does not implement the optional accounts verb is not reported at all.' ;;
+    lane-claims-unreadable) text='The in-flight lane claims could not be read, so the lanes already on this account cannot be charged against its window. Nothing was launched. The keyed lanes: line above names the store; fix it, or set OVERSEE_WATCH_STATE_DIR.' ;;
     lane-judge-failed) text='The lane judge refused before it answered for this lane. Nothing was launched. The keyed lanes: line above names the cause.' ;;
     lane-premise-unmet) text='The pane never drew either harness at its own screen inside the verification timeout, so nothing places the account read after the harness started. The launch stands and that read is reported as unobserved rather than as a verified account.' ;;
     lane-verified) text='The pane runs the account that was picked.' ;;
@@ -212,7 +213,9 @@ Options:
                     carrier read there for a fleet launch:
                     refused when it is at or above --lane-max-pct once the
                     lanes already on it are charged their expected burn, the
-                    projection `auto` judges on, and
+                    projection `auto` judges on, refused as
+                    lane-claims-unreadable when the claim store that
+                    projection counts cannot be read, and
                     refused as unreadable when nothing measures it. A config
                     dir that neither a lane record nor a provider reading
                     covers is used as given, there being nothing to judge it

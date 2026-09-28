@@ -184,7 +184,10 @@
 #         puts its keyed line on stderr. A claim store that could not be read is
 #         a NOTICE on stderr and no exit of its own: the record's `claims` and
 #         `projected_headroom_pct` are null and the wall reading alone is
-#         judged, --projected or not. The record printed on 3 under --json carries `wall`, the
+#         judged. Under --projected it is exit 6 instead, keyed
+#         `pick-lane-claims-refused`, before anything is measured: that verdict
+#         charges the claims, and none counted is not none in flight. The
+#         record printed on 3 under --json carries `wall`, the
 #         reading, and `projected_headroom_pct`, so a caller names what it
 #         refused on.
 #   context  Print context use for each live work lane in this fleet, as its
@@ -586,6 +589,10 @@ message() {
     pick-lane-claims)
       printf 'lanes: pick-lane-claims claims=%s\n' "null"
       printf '%s\n' "in-flight lane claims could not be read; this lane's claims and projection are null and it is judged on its wall reading alone (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
+      ;;
+    pick-lane-claims-refused)
+      printf 'lanes: pick-lane-claims-refused lane=%s\n' "$1"
+      printf '%s\n' "in-flight lane claims could not be read, so the lanes already on that account cannot be charged; refusing rather than judge it as running none (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
       ;;
     missing-value)
       printf 'lanes: missing-value arg1=%s\n' "$1"
@@ -2559,14 +2566,20 @@ cmd_pick_lane() {
 	# one value emit_lane says that field must never invent. emit_lane leaves it
 	# null when the store could not be read.
 	load_lane_claims
-	# A NOTICE, never a refusal. With the claims null the projection is null and
-	# the verdict is the wall reading alone, --projected or not. The chooser is
-	# the other case — it SORTS on
-	# `claims`, so an unreadable store there can stack a second session onto an
-	# account already running one, and it dies. Same policy as the claim write
-	# in open-terminal, which is never fatal: a launch that worked is not a
-	# failure because its bookkeeping did not.
-	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || message pick-lane-claims >&2
+	# Under --projected, a REFUSAL, exit 6, before anything is measured: the
+	# verdict charges the claims, and an unread store judged as none is the
+	# launch the chooser dies rather than make. Otherwise a NOTICE: the verdict
+	# is the wall reading, which no claim count enters, and the record's claims
+	# and projection are null. Same policy as the claim write in open-terminal,
+	# which is never fatal: a read that worked is not a failure because its
+	# bookkeeping did not.
+	if [[ "$LANE_CLAIMS_RC" -ne 0 ]]; then
+		if [[ "$projected_verdict" == true ]]; then
+			message pick-lane-claims-refused "$dir" >&2
+			return 6
+		fi
+		message pick-lane-claims >&2
+	fi
 	target="$(lane_claims_canon "$dir")"
 	# Both sides through the one normaliser, so a dir given with a trailing
 	# slash or through a symlink reaches the record discovered for it.

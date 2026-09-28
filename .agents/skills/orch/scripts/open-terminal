@@ -802,11 +802,10 @@ named_lane_judge() {
         return 1
       fi
       ;;
-    # An unreadable claim store is not among these: with no claim count there
-    # is no burn to charge, so `lanes` reports the store on stderr as a notice
-    # and judges the wall reading alone. The same policy as the claim write
-    # below, which is never fatal either.
-    #
+    # 6 is a claim store `lanes` could not read: this gate charges the lanes on
+    # the account, and none counted is not none in flight, so the launch is
+    # refused as `--lane auto` refuses it.
+    6) ot_message lane-claims-unreadable "lane=${LANE_ENV#*=}" >&2; return 1 ;;
     # Anything else is the judge itself failing, including the threshold it
     # refused as malformed. Its own keyed `lanes:` line is already on stderr
     # above this one and names which, so this line names none.

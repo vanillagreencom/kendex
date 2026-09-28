@@ -1001,14 +1001,13 @@ assert_eq "$(observe "rc=1 launched=nolog judgefailed=lane=$H/.claude,model=fabl
   "rc=1 launched=nolog judgefailed=lane=$H/.claude,model=fable,exit=1 unreadable=none" \
   "a malformed --lane-max-pct on a named lane refuses the launch, named as the judge failing and not as an unread window"
 
-# A claims path that is not a directory does NOT refuse the named lane: this
-# gate asks for a wall, which no claim count enters, so the store is reported as
-# a notice on stderr and the window opens. The claim write fails too and is not
-# fatal either, which is the policy this gate now matches.
+# A claims path that is not a directory refuses the named lane as it refuses
+# `--lane auto`: this gate charges the lanes already on the account, and a
+# store nobody could read is not an account running none.
 run_ot "prep=claims_file;$CHOICE_CMD" --harness claude --lane "$H/.claude" CC-74
-assert_eq "$(observe "rc=0 launched=1 claimsnotice=1 walled=none judgefailed=none")" \
-  "rc=0 launched=1 claimsnotice=1 walled=none judgefailed=none" \
-  "an unreadable claim store notices and launches the named lane rather than refusing it"
+assert_eq "$(observe "rc=1 launched=nolog claimsnotice=0 walled=none judgefailed=none") refused=$(grep -c "^open-terminal: lane-claims-unreadable lane=$H/.claude\$" <<<"$OUT" || true)" \
+  "rc=1 launched=nolog claimsnotice=0 walled=none judgefailed=none refused=1" \
+  "an unreadable claim store refuses the named lane, naming the store as the cause"
 
 rm -rf -- "${H:?}/.uclaude" "${FIXTURE_DIR:?}/.uclaude.json"
 
