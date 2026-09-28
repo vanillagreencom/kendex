@@ -73,6 +73,8 @@ hooks = [
   "session-start-row",
   "session-end-row",
   "stop-failure-row",
+  "lane-mail-start",
+  "lane-mail-prompt",
 ]
 
 [bundles.orchestration]
@@ -94,6 +96,8 @@ hooks = [
   "session-start-row",
   "session-end-row",
   "stop-failure-row",
+  "lane-mail-start",
+  "lane-mail-prompt",
 ]
 
 [bundles.code-review]
