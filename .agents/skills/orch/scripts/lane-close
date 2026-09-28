@@ -144,8 +144,10 @@ mail_root, holds with no verdict, through dev-validate-run --stop; a hosted
 lane's runs end with its sandbox. A close that is not --keep-sandbox, of an
 item whose tracker answers terminal, removes the item's files from the state
 directory through workflow-state remove before the host close, printing its
-removed path= lines; a removal that fails refuses as item-files-failed with
-the host, window and record unchanged. An exited, stopped or preparing lane's
+removed path= lines and its removed kept= line, which names the archive
+workflow-state wrote of those files before removing them; a removal or an
+archive that fails refuses as item-files-failed with the host, window and
+record unchanged. An exited, stopped or preparing lane's
 tracker is read for that alone: an item it holds open, or a read that does not
 answer, keeps the files and prints item-files-kept with the cause, and the
 close goes on.
@@ -578,7 +580,8 @@ stop_validations() {
 }
 
 # The item's close-out under tmp/: every file the state directory holds named
-# for it, through workflow-state remove, the one owner of that removal. Only a
+# for it, through workflow-state remove, the one owner of that removal and of
+# the archive it writes of those files first. Only a
 # full close of a finished item reaches it, one whose tracker answers terminal,
 # whether the idle check already read it or the read happens here: a lane
 # closed before its work ended, or under a --keep-sandbox close, is relaunched
