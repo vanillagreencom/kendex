@@ -630,8 +630,8 @@ jobs:
           # release tag names; the tag only names the version installed. A
           # tag can be moved, and a moved one would run another installer
           # here. Both values are written together from one tag.
-          KENDEX_VERSION: v1.1.0
-          KENDEX_INSTALLER_SHA: 56b844692779c5cc75a05dba34a925be3d5b7b63
+          KENDEX_VERSION: v1.2.0
+          KENDEX_INSTALLER_SHA: c773eb8f4422bdff22679adcec379eb1b99099dc
           KENDEX_INSTALLER_REPO: vanillagreencom/kendex
         run: |
           set -euo pipefail

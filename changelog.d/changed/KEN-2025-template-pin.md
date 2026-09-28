@@ -1,0 +1,1 @@
+- The review-gate consumer refresh and writer templates pin the kendex v1.2.0 release and fetch its installer at the commit v1.2.0 names.
