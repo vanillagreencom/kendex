@@ -1625,13 +1625,14 @@ session_row() {
 # hook's own install, because which directory is the account follows from its
 # answer: a Claude seat is the config dir pi-claude-bridge runs Claude Code on,
 # lane_context_caller_cfg's claude answer, and the Copilot pool is Pi's own
-# root. So is the account of a provider nothing measures, which `lanes` then
-# refuses as unmeasured, never as room. MODEL is the reading's
+# root, its pi answer. A provider nothing measures is reported unmeasured here,
+# never read as room, and `lanes` is not asked for the answer the rule already
+# gave. MODEL is the reading's
 # `<provider>/<model>`, the model alone where Pi's message named no provider,
 # and empty where no reading was taken: no transcript named, no usage line
 # yet, or a usage object the adapter does not read. Returns 1 with the
-# account reported unmeasured where no reading named the model or the rule
-# could not be asked, since neither is a provider to blame.
+# account reported unmeasured where no reading named the model, the rule
+# could not be asked, or it names a provider nothing measures.
 pi_account() {
   local judged
   if [ -z "$MODEL" ]; then
@@ -1644,8 +1645,11 @@ pi_account() {
     return 1
   fi
   case "$judged" in
-    claude) CFG=$(lane_context_caller_cfg claude) ;;
-    pi | unmeasured) CFG=$(lane_adapter_pi_agent_dir) ;;
+    claude | pi) CFG=$(lane_context_caller_cfg "$judged") ;;
+    unmeasured)
+      message account unmeasured "the provider of $MODEL bills no account lanes measures"
+      return 1
+      ;;
     *)
       message account unmeasured "lane_pick_harness answered '$judged' for a Pi model, a word naming no account"
       return 1

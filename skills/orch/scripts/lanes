@@ -417,7 +417,8 @@
 #                      each Pi account's pool has used of its monthly grant,
 #                      the account dir an absolute path to the Pi root a lane
 #                      on that pool is launched on, as its PI_CODING_AGENT_DIR. `pick --harness pi`
-#                      judges it as a `monthly` bucket at the used share,
+#                      on a `github-copilot/` model judges it as a `monthly`
+#                      bucket at the used share,
 #                      rounded up, against --max-pct; a pool at or past its
 #                      grant is walled, whatever overage the account permits.
 #                      No provider or endpoint is asked: the reading is what
