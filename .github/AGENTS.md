@@ -12,3 +12,5 @@ This repository's own continuous integration and the instruction files its revie
 - `review-gate-writer.yml` is a relay whose body must equal the review-gate package's template, which [`../skills/review-gate/scripts/validate-workflow.sh`](../skills/review-gate/scripts/validate-workflow.sh) checks.
 - `release.yml` is [`../docs/RELEASING.md`](../docs/RELEASING.md).
 - `publish-aur.yml` and `publish-homebrew.yml` carry `packaging/` to the AUR and the Homebrew tap; triggers, the dry-run dispatch and the secrets each needs are [`../packaging/README.md`](../packaging/README.md) § Publishing. Neither is called by `release.yml`: a release is published as a draft and the recipe bump follows it.
+
+<!-- KEN-1946 macOS proof run: this draft PR only triggers the macOS skill legs; never merge -->
