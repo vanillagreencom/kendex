@@ -154,8 +154,10 @@ while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || {{ r=${{r%
     )
 }
 
-/// The words every Claude Code hook command opens with: in a Copilot CLI hook
-/// process the command exits 0 before its script runs.
+/// The words every Claude Code command that runs an installed hook script
+/// opens with: in a Copilot CLI hook process the command exits 0 before its
+/// script runs. A custom hook declared as a command is registered as written,
+/// without them, and Copilot still runs it.
 ///
 /// Copilot CLI reads the `hooks` of `.claude/settings.json` and
 /// `.claude/settings.local.json` at the root of the repository it runs in and
@@ -169,12 +171,15 @@ while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || {{ r=${{r%
 /// Claude Code session started from a Copilot tool call, which inherits that
 /// call's environment, still runs its hooks, and a Copilot session started
 /// from a Claude Code tool call skips these commands. Claude Code sets no such
-/// variable. Copilot documents none of this; the `mixed-hook` rows of
-/// `tools/harness-smoke` measure it against the Copilot CLI installed where
-/// they run. Floor: Copilot CLI 1.0.88, the release measured; a release that
-/// sets no such variable runs the script as it did before this prefix. The
-/// prefix goes once Copilot stops running these registrations or offers a
-/// setting that leaves `.claude/settings*.json` hooks out alone.
+/// variable. Copilot documents none of this. Against the Copilot CLI installed
+/// where it runs, `tools/harness-smoke` fails its Copilot `helper:env` row
+/// where a tool call carries `COPILOT_PROJECT_DIR`, and its `mixed-hook` rows
+/// check that Copilot skips the `.claude/hooks` copies and runs its own while
+/// Claude Code runs both; the nested sessions are as measured, and no row
+/// re-checks them. Floor: Copilot CLI 1.0.88, the release measured; a
+/// release that sets no such variable runs the script as it did before this
+/// prefix. The prefix goes once Copilot stops running these registrations or
+/// offers a setting that leaves `.claude/settings*.json` hooks out alone.
 ///
 /// The prefix names no path, so [`crate::hook::command_stem`] still names the
 /// hook by its script. A registry entry is identified with or without it

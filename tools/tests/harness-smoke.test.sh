@@ -390,8 +390,9 @@ verdict_case "control: an unanchored NO-QUESTION-TOOL read takes the echoed prom
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 
 # The Claude Code control of the mixed install: the stand-in's one tool call
-# runs the .claude/hooks copies STANDIN_RAN names, `both` or `shared` alone.
-# Only a run of both passes, since each is a registration Copilot now skips.
+# runs the .claude/hooks copies STANDIN_RAN names, `both`, `shared` alone or
+# `claude-only` alone.
+# Only a run of both passes, since Copilot skips each of those registrations.
 echo "=== the Claude Code mixed-hook row passes only where both of its copies ran ==="
 cat >"$ROWS_BIN/claude" <<'STANDIN'
 #!/usr/bin/env bash
@@ -400,17 +401,24 @@ for prompt; do :; done
 case "$STANDIN_RAN" in
   both) printf 'PreToolUse %s/.claude/hooks/smoke-tool.sh\nPreToolUse %s/.claude/hooks/smoke-claude-only.sh\n' "$PWD" "$PWD" >>smoke-fired ;;
   shared) printf 'PreToolUse %s/.claude/hooks/smoke-tool.sh\n' "$PWD" >>smoke-fired ;;
+  claude-only) printf 'PreToolUse %s/.claude/hooks/smoke-claude-only.sh\n' "$PWD" >>smoke-fired ;;
 esac
 printf 'ok\n'
 STANDIN
 chmod +x "$ROWS_BIN/claude"
+CLAUDE_MIXED_PASS="claude -p ran .claude/hooks/smoke-tool.sh"
 verdict_case "a Claude Code run of both copies passes" \
-  mixed-hook "$SMOKE" STANDIN_RAN=both pass "in the project installed for Copilot too"
+  mixed-hook "$SMOKE" STANDIN_RAN=both pass "$CLAUDE_MIXED_PASS"
 verdict_case "a Claude Code run of the shared copy alone fails" \
   mixed-hook "$SMOKE" STANDIN_RAN=shared fail "smoke-claude-only 0 time(s)"
+verdict_case "a Claude Code run of the excluded copy alone fails" \
+  mixed-hook "$SMOKE" STANDIN_RAN=claude-only fail "ran smoke-tool 0 time(s)"
 plant "$STAND_SMOKE" 's/^  if \[ "\$shared" -gt 0 \] && \[ "\$excluded" -gt 0 \]; then$/  if [ "$shared" -gt 0 ]; then/'
 verdict_case "control: a Claude Code row that ignores the excluded copy passes the shared copy alone" \
-  mixed-hook "$STAND_SMOKE" STANDIN_RAN=shared pass "in the project installed for Copilot too"
+  mixed-hook "$STAND_SMOKE" STANDIN_RAN=shared pass "$CLAUDE_MIXED_PASS"
+plant "$STAND_SMOKE" 's/^  if \[ "\$shared" -gt 0 \] && \[ "\$excluded" -gt 0 \]; then$/  if [ "$excluded" -gt 0 ]; then/'
+verdict_case "control: a Claude Code row that ignores the shared copy passes the excluded copy alone" \
+  mixed-hook "$STAND_SMOKE" STANDIN_RAN=claude-only pass "$CLAUDE_MIXED_PASS"
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 
 # The Copilot package table lists what its readers find under the checkout, so
@@ -453,7 +461,8 @@ rm -f -- "$STAND/hooks/zz-unlisted.sh" "$STAND/agents"
 # command `cmd`, STANDIN_HOOK_CWD runs the hooks there, STANDIN_DROP_ENV=1
 # drops HARNESS_SMOKE_ENV, STANDIN_SKIP_HOOK runs one hook never,
 # STANDIN_HOOKS=0 runs none), and then the command runs unless STANDIN_REFUSE=1
-# holds it back as a refused call would be. STANDIN_FIXTURE=path or nopath
+# holds it back as a refused call would be, with COPILOT_PROJECT_DIR set where
+# STANDIN_TOOL_PROJECT_DIR=1. STANDIN_FIXTURE=path or nopath
 # writes the fixture hook's line with or without the recorder on its PATH.
 echo "=== the Copilot package rows ==="
 PKG_BIN="$TMP/pkg-bin"
@@ -471,6 +480,7 @@ case "$1 ${2:-}" in
   "skill list")
     [ "$STANDIN_SETTINGS" != bad ] ||
       printf "Repository settings file '.claude/settings.json' could not be loaded:\nSettings config error: hooks.preToolUse[0].matcher: matcher cannot be empty\n"
+    [ "$STANDIN_SETTINGS" != exit ] || { printf 'Error: settings are invalid\n'; exit 1; }
     if [ -z "${COPILOT_HOME:-}" ] || [ -n "${COPILOT_SKILLS_DIRS:-}" ]; then
       [ ! -d "$HOME/.agents/skills/smoke-personal" ] || printf 'Personal skills:\n  smoke-personal - p\n'
     fi
@@ -531,8 +541,10 @@ case "$prompt" in
         done
       fi
       case "$cmd" in *smoke-helper*) ;; *) [ "$STANDIN_REFUSE" != 1 ] || continue ;; esac
-      # shellcheck disable=SC2086 # drop is empty or `-u NAME`
-      env $drop bash -c "$cmd" >/dev/null 2>&1 || :
+      set_dir=""
+      [ "$STANDIN_TOOL_PROJECT_DIR" != 1 ] || set_dir="COPILOT_PROJECT_DIR=$PWD"
+      # shellcheck disable=SC2086 # drop is empty or `-u NAME`, set_dir empty or one assignment
+      env $drop $set_dir bash -c "$cmd" >/dev/null 2>&1 || :
     done <<<"$prompt"
     printf 'ok\n' ;;
 esac
@@ -553,7 +565,7 @@ package_run() { # SMOKE ENV=VAL... — the run's output in $TMP/pkg-out, its sta
   (cd "$ROWS_REPO" && env PATH="$PKG_BIN:$PATH" STANDIN_SKILLS="$PKG_SKILLS_ALL" STANDIN_AGENTS="$PKG_AGENTS_ALL" \
     STANDIN_TASK_AGENTS="$PKG_AGENTS_ALL" STANDIN_HOOK_NAMES="$PKG_HOOKS" STANDIN_NESTED_ROOT=0 STANDIN_DUP=1 STANDIN_SUB=SMOKE-RULES-REACHED-VIA-AGENT \
     STANDIN_REFUSE=1 STANDIN_HOOKS=1 STANDIN_FEED=all STANDIN_SHAPE=good STANDIN_HOOK_CWD= STANDIN_DROP_ENV=0 \
-    STANDIN_SKIP_HOOK= STANDIN_FIXTURE= STANDIN_OMIT= STANDIN_INSTR= STANDIN_SETTINGS= STANDIN_MIXED=1 STANDIN_CROSS=0 "$@" \
+    STANDIN_SKIP_HOOK= STANDIN_FIXTURE= STANDIN_OMIT= STANDIN_INSTR= STANDIN_SETTINGS= STANDIN_MIXED=1 STANDIN_CROSS=0 STANDIN_TOOL_PROJECT_DIR=0 "$@" \
     "$BASH" "$smoke" --only copilot --dir "$TMP/pkg-dir" >"$TMP/pkg-out" 2>&1) || PKG_RC=$?
 }
 package_row() { # ROW — that copilot row's result and evidence
@@ -638,10 +650,14 @@ package_table "a payload with the command under another name fails|helper:payloa
 a hook run outside the project root differs|helper:cwd|differs|a hook runs in /
 a launch environment that does not reach the hook fails|helper:env|fail|is missing from the hook's or the tool call's environment
 a hook that never ran while others did fails|hook:block-unsafe-rm|fail|never ran at PreToolUse, while other hooks read their payloads"
+package_run "$SMOKE" STANDIN_TOOL_PROJECT_DIR=1
+package_case "a tool call carrying COPILOT_PROJECT_DIR fails the environment row" helper:env fail "a Copilot tool call carries COPILOT_PROJECT_DIR"
 package_run "$SMOKE" STANDIN_CROSS=1
 package_case "a Copilot that also ran the .claude/hooks copies fails the mixed install" mixed-hook fail "ran the Claude Code copies, smoke-tool 1 time(s) and smoke-claude-only 1 time(s)"
 package_run "$SMOKE" STANDIN_SETTINGS=bad
 package_case "a Copilot that could not load .claude/settings.json fails the mixed install" mixed-hook fail "could not be loaded"
+package_run "$SMOKE" STANDIN_SETTINGS=exit
+package_case "a skill listing that exits non-zero leaves the mixed install unanswerable" mixed-hook unanswerable "copilot skill list exited 1: Error: settings are invalid"
 package_run "$SMOKE" STANDIN_MIXED=0
 package_case "a Copilot that ran no copy fails the mixed install" mixed-hook fail "ran no copy of smoke-tool"
 package_run "$SMOKE" STANDIN_HOOKS=0
@@ -705,12 +721,18 @@ if [ "$PKG_RC" = 0 ]; then
 else
   bad "control: and that run exits 0" "rc=$PKG_RC, rows not passing: $(awk '$1 == "copilot" && ($3 == "fail" || $3 == "unanswerable" || $3 == "pending") { printf "%s ", $0 }' "$TMP/pkg-out")"
 fi
-plant "$STAND_SMOKE" 's/^  elif \[ "\$shared" -gt 0 \] || \[ "\$excluded" -gt 0 \]; then$/  elif false; then/'
+plant "$STAND_SMOKE" 's/^  elif grep -qFx COPILOT_PROJECT_DIR <<<"\$tool_env"; then$/  elif false; then/'
+package_run "$STAND_SMOKE" STANDIN_TOOL_PROJECT_DIR=1
+package_case "control: an environment row that never reads COPILOT_PROJECT_DIR passes a tool call carrying it" helper:env pass "reaches a hook and a tool call"
+plant "$STAND_SMOKE" 's/^  if \[ "\$shared" -gt 0 \] || \[ "\$excluded" -gt 0 \]; then$/  if false; then/'
 package_run "$STAND_SMOKE" STANDIN_CROSS=1
 package_case "control: a mixed-hook row that never counts the .claude/hooks copies passes a Copilot that ran them" mixed-hook pass "and neither .claude/hooks copy"
-plant "$STAND_SMOKE" 's/^  if \[ -n "\$startup" \]; then$/  if false; then/'
+plant "$STAND_SMOKE" 's/^  if startup=\$(grep -m 1 -F .could not be loaded. <<<"\$OUT"); then$/  if false; then/'
 package_run "$STAND_SMOKE" STANDIN_SETTINGS=bad
 package_case "control: a mixed-hook row that never reads the startup passes a settings file Copilot could not load" mixed-hook pass "reports no settings file it could not load"
+plant "$STAND_SMOKE" '/run copilot-mixed-startup /,/run copilot-mixed /s/^  if \[ "\$STATUS" -ne 0 \]; then$/  if false; then/'
+package_run "$STAND_SMOKE" STANDIN_SETTINGS=exit
+package_case "control: a mixed-hook row that never reads the listing's exit passes a listing that failed" mixed-hook pass "reports no settings file it could not load"
 plant "$STAND_SMOKE" 's/^  elif \[ "\$own" -gt 0 \]; then$/  elif true; then/'
 package_run "$STAND_SMOKE" STANDIN_MIXED=0
 package_case "control: a mixed-hook row that never counts Copilot's own copy passes a run of none" mixed-hook pass "ran .github/hooks/smoke-tool.sh 0 time(s)"

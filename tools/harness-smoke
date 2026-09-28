@@ -329,9 +329,9 @@ EOF
   hook_body PreToolUse
 } >"$CATALOG/hooks/smoke-tool.sh"
 # The mixed-hook rows' excluded hook: its harnesses line names Claude Code
-# alone and its matcher is empty, as the lane-mail hooks' is, so a Copilot
-# session in a project installed for both meets an excluded hook and an empty
-# matcher in .claude/settings.json.
+# alone, and it declares an empty matcher, as the lane-mail hooks do, which
+# kendex registers with no matcher key, so the startup check covers the
+# spelling Copilot once refused.
 {
   cat <<'EOF'
 #!/usr/bin/env bash
@@ -1000,9 +1000,9 @@ copied_home() { # NAME SOURCE-DIR FILE — prints the isolated dir
 # it holds smoke-tool, which both harnesses install, and smoke-claude-only,
 # which names Claude Code alone. Every hook fixture appends its own rendered
 # path, so the marker tells each copy apart. The Copilot row passes where
-# `copilot skill list` names no settings file it could not load, one tool call
-# ran the .github/hooks copy of smoke-tool, and neither .claude/hooks script
-# ran. The Claude Code row is the control: its tool call ran both of its own
+# `copilot skill list` exits 0 naming no settings file it could not load, one
+# tool call ran the .github/hooks copy of smoke-tool, and neither .claude/hooks
+# script ran. The Claude Code row is the control: its tool call ran both of its own
 # copies, so the registrations Copilot skips still run in Claude Code.
 MIXED="$DIR/mixed/project"
 MIXED_READY=0
@@ -1031,7 +1031,14 @@ mixed_copilot_row() { # HOME — the isolated COPILOT_HOME; COPILOT_ALLOW_ALL=tr
   mixed_world
   local PROJECT="$MIXED" MARKER="$MIXED/smoke-fired" startup own shared excluded
   run copilot-mixed-startup env COPILOT_HOME="$1" COPILOT_ALLOW_ALL=true copilot skill list
-  startup=$(grep -m 1 -F 'could not be loaded' <<<"$OUT") || startup=""
+  if startup=$(grep -m 1 -F 'could not be loaded' <<<"$OUT"); then
+    row copilot mixed-hook fail "copilot skill list reports a settings file it could not load: $(clip "$startup")"
+    return 0
+  fi
+  if [ "$STATUS" -ne 0 ]; then
+    row copilot mixed-hook unanswerable "copilot skill list exited $STATUS: $(clip "$(last_line)")"
+    return 0
+  fi
   rm -f -- "$MARKER"
   run copilot-mixed env COPILOT_HOME="$1" COPILOT_ALLOW_ALL=true copilot -p "$MIXED_TASK" --allow-all-tools -s
   if ! own=$(fired_count .github/hooks/smoke-tool.sh) || ! shared=$(fired_count .claude/hooks/smoke-tool.sh) ||
@@ -1039,9 +1046,7 @@ mixed_copilot_row() { # HOME — the isolated COPILOT_HOME; COPILOT_ALLOW_ALL=tr
     row copilot mixed-hook unanswerable "the marker $MARKER could not be read"
     return 0
   fi
-  if [ -n "$startup" ]; then
-    row copilot mixed-hook fail "copilot skill list reports a settings file it could not load: $(clip "$startup")"
-  elif [ "$shared" -gt 0 ] || [ "$excluded" -gt 0 ]; then
+  if [ "$shared" -gt 0 ] || [ "$excluded" -gt 0 ]; then
     row copilot mixed-hook fail "copilot -p ran the Claude Code copies, smoke-tool $shared time(s) and smoke-claude-only $excluded time(s), beside its own smoke-tool $own time(s)"
   elif [ "$own" -gt 0 ]; then
     row copilot mixed-hook pass "copilot skill list reports no settings file it could not load, and copilot -p ran .github/hooks/smoke-tool.sh $own time(s) and neither .claude/hooks copy"
@@ -1808,9 +1813,14 @@ pkg_helper_rows() {
   else
     pkg_set helper:cwd differs "the project root is $PKG; a hook runs in $hook_cwd, a tool call in $tool_cwd"
   fi
+  # The Claude Code hook commands exit 0 where COPILOT_PROJECT_DIR is set
+  # (CLAUDE_OUTSIDE_COPILOT, crates/core/src/engine/targets.rs): a tool call
+  # carrying it would start Claude Code sessions whose hooks never run.
   names=$(grep -E '^(COPILOT_|GITHUB_COPILOT|CLAUDE)' <<<"$tool_env" | paste -s -d , -) || names=""
   if [ -z "$hook_env" ] || [ -z "$tool_env" ]; then
     pkg_set helper:env unanswerable "a record is missing: the hook's environment ($(grep -c . <<<"$hook_env") names), the tool call's ($(grep -c . <<<"$tool_env") names)"
+  elif grep -qFx COPILOT_PROJECT_DIR <<<"$tool_env"; then
+    pkg_set helper:env fail "a Copilot tool call carries COPILOT_PROJECT_DIR, so a Claude Code session it starts skips every hook script kendex installs for it; harness names a tool call sees: $names"
   elif grep -qFx HARNESS_SMOKE_ENV <<<"$hook_env" && grep -qFx HARNESS_SMOKE_ENV <<<"$tool_env"; then
     pkg_set helper:env pass "the launch environment reaches a hook and a tool call; harness names a tool call sees: ${names:-none}"
   else
