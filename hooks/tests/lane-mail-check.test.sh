@@ -1302,6 +1302,30 @@ stop_pi_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
   "after the notice, a later wake's turn ending on the person is refused again"
 
+# Nothing landing inside a run opens a turn, and neither does a stop hook's
+# continuation: the pi-hooks carrier's `kendex-hook` message after a finished
+# run, and a steer such as `kendex-clippy` after a tool's result, leave the
+# ask the lane sent earlier in the turn carrying its question.
+pi_custom_line() { # EPOCH CUSTOM-TYPE
+  jq -nc --argjson t "$1" --arg k "$2" \
+    "$STAMP"'{type:"custom_message",customType:$k,content:"refused",display:false,id:"e5",parentId:"e4",timestamp:($t | stamp)}'
+}
+new_pi_lane question_pi_carrier KEN-50
+(cd "$LANE" && "$LANE_MAIL" ask --item KEN-50 --file "$TMP_ROOT/ask.txt" >/dev/null)
+{ prompt_line pi "$OPENED"; text_line pi 'Which base?'; pi_custom_line "$(after_sent KEN-50 1)" kendex-hook
+  text_line pi 'Which base?'; } > "$TRANSCRIPT"
+stop_pi_at "$TRANSCRIPT" true
+expect 0 "$GAP" "a continued Pi turn opened by the carrier's own refusal still carries the ask"
+assert_eq "$(notices KEN-50)" "" "and sends the overseer no notice"
+{ prompt_line pi "$OPENED"
+  jq -nc "$STAMP"'{type:"message",id:"e2",parentId:"e1",timestamp:(0 | stamp),
+    message:{role:"assistant",stopReason:"toolUse",content:[{type:"toolCall",id:"t1",name:"bash",arguments:{}}]}}'
+  jq -nc "$STAMP"'{type:"message",id:"e3",parentId:"e2",timestamp:(0 | stamp),
+    message:{role:"toolResult",toolCallId:"t1",toolName:"bash",content:[{type:"text",text:"ok"}],isError:false}}'
+  pi_custom_line "$(after_sent KEN-50 1)" kendex-clippy; text_line pi 'Which base?'; } > "$TRANSCRIPT"
+stop_pi_at "$TRANSCRIPT" false
+expect 0 "$GAP" "a steer after a tool's result lands inside the run and opens no turn"
+
 # What Claude Code injects inside a turn carries `isMeta: true`, a skill's
 # body and a stop hook's feedback among it, and opens no turn: an ask sent
 # after the prompt still carries the question when one follows it.
@@ -1323,7 +1347,7 @@ expect 0 "$GAP" "and the continued turn is not reported as having sent nothing"
 new_handoff_lane question_turn_start_failed KEN-54
 JQ_STUB="$TMP_ROOT/jq-turn-start"
 mkdir -p "$JQ_STUB"
-printf '#!/usr/bin/env bash\ncase "$*" in *"def opener"*) echo "planted: jq refused" >&2; exit 5 ;; esac\nexec %q "$@"\n' \
+printf '#!/usr/bin/env bash\ncase "$*" in *"def calls_tool"*) echo "planted: jq refused" >&2; exit 5 ;; esac\nexec %q "$@"\n' \
   "$(command -v jq)" > "$JQ_STUB/jq"
 chmod +x "$JQ_STUB/jq"
 text_line claude 'Which base?' > "$TRANSCRIPT"
@@ -2924,7 +2948,7 @@ expect 0 "$GAP" "control: without the phrasing rows a lane handing its next step
 
 # Pi's wakes dropped from the turn openers: an ask sent before a wake then
 # carries the question of the turn it opened.
-mutant question-no-wake -e 's@^        or \.type == "custom_message";$@        or false;@'
+mutant question-no-wake -e 's@^      or (\.type == "custom_message" and \.customType != "kendex-hook");$@      or false;@'
 new_pi_lane control_question_wake KEN-53
 install_hook "$MUTANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-53 --file "$TMP_ROOT/ask.txt" >/dev/null)
@@ -2934,7 +2958,7 @@ expect 0 "$GAP" "control: without Pi's wakes as openers an ask before a wake let
 
 # The meta filter dropped: a skill body injected after the ask then opens a
 # turn, and the ask no longer carries the question.
-mutant question-meta-opens -e 's@(\.type == "user" and \.isMeta != true and @(.type == "user" and @'
+mutant question-meta-opens -e 's@(\.type == "user" and \.isMeta != true$@(.type == "user"@'
 new_handoff_lane control_question_meta KEN-52
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 (cd "$LANE" && "$LANE_MAIL" ask --item KEN-52 --file "$TMP_ROOT/ask.txt" >/dev/null)
@@ -2943,6 +2967,32 @@ install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
   "control: without the meta filter a skill body after the ask refuses a turn that sent it"
+
+# The carrier's continuation counted as a wake: a continued Pi turn then
+# loses the ask it sent, and the overseer is told it sent nothing.
+mutant question-carrier-opens -e 's@ and \.customType != "kendex-hook")@)@'
+new_pi_lane control_question_carrier KEN-49
+install_hook "$MUTANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
+(cd "$LANE" && "$LANE_MAIL" ask --item KEN-49 --file "$TMP_ROOT/ask.txt" >/dev/null)
+{ prompt_line pi "$OPENED"; text_line pi 'Which base?'; pi_custom_line "$(after_sent KEN-49 1)" kendex-hook
+  text_line pi 'Which base?'; } > "$TRANSCRIPT"
+stop_pi_at "$TRANSCRIPT" true
+expect 0 "lane-mail-check: question-notice=$TRANSCRIPT" \
+  "control: with the carrier's continuation opening a turn, a lane that asked is reported as sending nothing"
+
+# The run rule dropped, every input opening a turn: a steer after a tool's
+# result then moves the turn past the ask.
+mutant question-any-input -e 's@^        then \.ended = (\$r | calls_tool | not)$@        then .ended = true@'
+new_pi_lane control_question_run KEN-48
+install_hook "$MUTANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
+(cd "$LANE" && "$LANE_MAIL" ask --item KEN-48 --file "$TMP_ROOT/ask.txt" >/dev/null)
+{ prompt_line pi "$OPENED"
+  jq -nc "$STAMP"'{type:"message",id:"e2",parentId:"e1",timestamp:(0 | stamp),
+    message:{role:"assistant",stopReason:"toolUse",content:[{type:"toolCall",id:"t1",name:"bash",arguments:{}}]}}'
+  pi_custom_line "$(after_sent KEN-48 1)" kendex-clippy; text_line pi 'Which base?'; } > "$TRANSCRIPT"
+stop_pi_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
+  "control: without the run rule a steer inside the run refuses a turn that sent its ask"
 
 # The continued-turn arm dropped: the refusal repeats, which is the loop.
 mutant question-refused-twice -e 's@^  if \[ "\$CONTINUED" = true \]; then$@  if false; then@'
