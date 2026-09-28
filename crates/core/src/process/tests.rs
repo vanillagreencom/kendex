@@ -504,8 +504,11 @@ fn an_inherited_ssh_command_keeps_its_options() {
 /// grandchild's whole run, with no deadline anywhere near it. Every
 /// script but the first writes a marker after a second the timeout does
 /// not allow, so a marker on disk afterwards is a process that outlived
-/// the kill. The error and the marker hold the bound, not a clock: a run
-/// that waited its tree out returns the child's own status instead.
+/// the kill. The error proves the run gave up at its deadline, where one
+/// that waited its tree out returns the child's own status, and the marker
+/// proves the kill reached every process. How soon the run returns after
+/// the kill is not asserted: no counter can measure a stall, and a
+/// wall-clock bound fails on any runner slower than the bound.
 #[cfg(unix)]
 #[test]
 fn a_run_that_outlives_its_timeout_is_ended_with_everything_it_spawned() {
