@@ -325,7 +325,7 @@ assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched claude)|$(lau
 # Its control: a walk that chooses the claude entry anyway refuses after it,
 # launching nothing.
 SKIPCTL="$(mutant_scripts skipctl oversee-succeed)" || exit 1
-mutate_file "$SKIPCTL/oversee-succeed" '      if [[ "$MODE" != check && "$harness" != "$CALLER_HARNESS" ]] \' '      if false \'
+mutate_file "$SKIPCTL/oversee-succeed" '      if [[ "$harness" != "$CALLER_HARNESS" ]] && ! entry_transferable "$harness"; then' '      if false; then'
 new_caller codex
 CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$SKIPCTL/oversee-succeed" run_succeed skipctl unset
 assert_eq "$RC|$(first_key)|$(launched claude)|$(launched codex)" \
@@ -432,7 +432,7 @@ assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched pi)|$(launche
 # Its control: a walk that asks the source row alone chooses the pi entry and
 # then refuses, launching nothing.
 PISKIPCTL="$(mutant_scripts piskipctl oversee-succeed)" || exit 1
-mutate_file "$PISKIPCTL/oversee-succeed" '                && launch_choice_permission_write "$harness" >/dev/null; }; then' '                ; }; then'
+mutate_file "$PISKIPCTL/oversee-succeed" '  launch_choice_permission_write "$1" >/dev/null || return 1' ''
 pi_skip_row "$PISKIPCTL/oversee-succeed"
 assert_eq "$RC|$(first_key)|$(launched pi)|$(launched claude)" "1|launch-choice-failed|none|none" \
   "control: a walk that asks the source row alone chooses the pi entry and refuses"

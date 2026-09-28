@@ -1184,6 +1184,60 @@ for pref_row in \
   assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "$pref_rc|$pref_want" \
     "a qualifying judgement walks the preference $pref_value"
 done
+# A cross-harness entry no permission posture can cross, which a succession
+# skips, is skipped by the judgement too, though it is handed no flags: pi's
+# row writes no permission word and names none to transfer. A claude caller's
+# pi-claude entry on Fable would settle the count, the caller's account, whose
+# record names Sonnet, being walled for Fable alone; a pi caller's codex entry
+# would settle it as the claude caller's does above. Neither fires the mark.
+qualifying_cross_row() { # ROW PREFERENCE [SUCCEED_BIN]
+  SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES:$H/.codex" SUCCEED_BIN="${3:-}" \
+    run_succeed "$1" "$2" --check-marks
+}
+# caller_record HARNESS MODEL — this pane's launch record on .claude.
+caller_record() {
+  jq --arg server "$SERVER_PID" --arg pane "$CALLER_PANE" --arg account "$H/.claude" \
+    --arg harness "$1" --arg model "$2" \
+    '.overseer = {runtime: "tmux", generation: 1, server: $server, pane: $pane, harness: $harness,
+      account: $account, home: $account, model: $model, effort: "high"}' \
+    "$FLEET_STATE" > "$FLEET_STATE.tmp" && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
+}
+cp -p -- "$FLEET_STATE" "$FLEET_STATE.held"
+claude_usage 60 20 99 "Fable 5.1" > "$FIXTURE_DIR/.claude.json"
+new_caller "$UNDER_MARK"
+caller_record claude claude-sonnet-5
+qualifying_cross_row qualifyingpi 'pi:pi-claude/claude-fable-5-1:high'
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=40" \
+  "a claude caller's judgement skips a pi entry no permission posture crosses to"
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+new_caller "$UNDER_MARK"
+caller_record pi pi-claude/claude-fable-5-1
+qualifying_cross_row qualifyingpicaller 'codex:1:high'
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=40" \
+  "a pi caller's judgement skips a codex entry no permission posture crosses from pi to"
+# Their control: a judgement that leaves the transfer test to the succession
+# fires the mark on each entry that succession would skip.
+CROSSCTL="$(mutant_scripts crossctl oversee-succeed)" || exit 1
+mutate_file "$CROSSCTL/oversee-succeed" \
+  '      if [[ "$harness" != "$CALLER_HARNESS" ]] && ! entry_transferable "$harness"; then' \
+  '      if [[ "$MODE" != check && "$harness" != "$CALLER_HARNESS" ]] && ! entry_transferable "$harness"; then'
+claude_usage 60 20 99 "Fable 5.1" > "$FIXTURE_DIR/.claude.json"
+new_caller "$UNDER_MARK"
+caller_record claude claude-sonnet-5
+qualifying_cross_row crossctlpi 'pi:pi-claude/claude-fable-5-1:high' "$CROSSCTL/oversee-succeed"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
+  "control: a judgement without the transfer test fires on the claude caller's pi entry"
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+new_caller "$UNDER_MARK"
+caller_record pi pi-claude/claude-fable-5-1
+qualifying_cross_row crossctlpicaller 'codex:1:high' "$CROSSCTL/oversee-succeed"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
+  "control: a judgement without the transfer test fires on the pi caller's codex entry"
+mv -- "$FLEET_STATE.held" "$FLEET_STATE"
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES" run_succeed qualifyingrefires ''
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \

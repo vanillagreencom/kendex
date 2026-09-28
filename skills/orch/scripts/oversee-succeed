@@ -178,6 +178,9 @@
 #        that both rows define, then writes the target row's spelling; under
 #        any other posture it is skipped before its pick, with
 #        `entry-permission-untransferable` on stderr, and the walk goes on.
+#        A qualifying judgement, handed no permission words, skips an entry
+#        whose rows define no such posture, so it never chooses one a
+#        succession would skip.
 #        The walk ALWAYS ends in one further entry, the caller's own
 #        harness and lane ($CLAUDE_CONFIG_DIR or $CODEX_HOME) with no model or
 #        effort flag of its own: the overseer passes its model and effort
@@ -1094,6 +1097,23 @@ pick_lane_dir() { # HARNESS [MODEL]
   ol_pick_lane "$1" "${2:-}" "$HEADROOM_TRIGGER" "$exclude"
 }
 
+# entry_transferable TARGET — whether the caller's permission posture can
+# cross to an entry of harness TARGET: TARGET's row writes a full-bypass word,
+# and the caller's row names one that transfers, which is all `check` can ask,
+# handed no permission words; every other mode holds the caller's own flags
+# to exactly one transferable posture (lib/lane-launch.sh §
+# launch_choice_permission_transferable). Pi's row names neither, so no
+# posture crosses to or from pi. One test for every mode, so a judgement never
+# chooses an entry the succession it starts would skip.
+entry_transferable() { # TARGET
+  launch_choice_permission_write "$1" >/dev/null || return 1
+  if [[ "$MODE" == check ]]; then
+    [[ -n "$(launch_choice_transfer_permission_spellings "$CALLER_HARNESS")" ]]
+  else
+    launch_choice_permission_transferable "$CALLER_HARNESS" "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}"
+  fi
+}
+
 # The walk itself: ENTRIES in order, the first that names a lane into
 # `chosen`, with its harness, model, effort and lane_dir beside it. It launches
 # nothing, so `check` walks it too, to learn whether a qualifying mark has a
@@ -1167,16 +1187,13 @@ walk_entries() {
       harness="$OL_ENTRY_HARNESS" model="$OL_ENTRY_MODEL" effort="$OL_ENTRY_EFFORT"
       pick_model="$model"
       # An entry of another harness takes the caller's permission posture only
-      # where lib/lane-launch.sh's transfer judge admits it. Where it does not,
-      # the entry is skipped rather than chosen and refused after the walk, so
-      # the walk still reaches the entries after it and the caller's own.
-      # The target row has to write the posture too: pi's names no permission
-      # word, so no posture crosses to or from it.
-      # `check` is handed no permission words, so it judges room alone.
-      if [[ "$MODE" != check && "$harness" != "$CALLER_HARNESS" ]] \
-         && ! { launch_choice_permission_transferable "$CALLER_HARNESS" "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}" \
-                && launch_choice_permission_write "$harness" >/dev/null; }; then
-        message entry-permission-untransferable "entry=$entry" "source=$CALLER_HARNESS" "target=$harness" >&2
+      # where entry_transferable admits it. Where it does not, the entry is
+      # skipped rather than chosen and refused after the walk, so the walk
+      # still reaches the entries after it and the caller's own. `check`
+      # skips it too, saying nothing: it judges no launch of its own.
+      if [[ "$harness" != "$CALLER_HARNESS" ]] && ! entry_transferable "$harness"; then
+        [[ "$MODE" == check ]] \
+          || message entry-permission-untransferable "entry=$entry" "source=$CALLER_HARNESS" "target=$harness" >&2
         continue
       fi
     fi
