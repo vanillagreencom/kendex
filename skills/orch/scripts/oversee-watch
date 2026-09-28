@@ -2246,7 +2246,7 @@ overseer_wall_confirmed() { # PANE
 # evidence that the mark lifted.
 OVERSEER_MARK_ROWS=""
 overseer_mark_check() { # ROWS IDENTITY PANE
-  local rows="$1" identity="$2" pane="$3" prior passes
+  local rows="$1" identity="$2" pane="$3" prior passes preference
   local kind value mark succession
   # One overseer at a time, so a pane that was the overseer and is not any more
   # — a succession, a fleet restarted in another window — leaves no row behind
@@ -2295,7 +2295,8 @@ overseer_mark_check() { # ROWS IDENTITY PANE
     if [[ "$succession" == off ]]; then
       echo "ORCH_OVERSEER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session."
     else
-      echo "Run $SUCCEED -- [FLAGS] at the next safe point, with ORCH_OVERSEER_PREFERENCE=${ORCH_OVERSEER_PREFERENCE:-empty} choosing the successor lane."
+      preference="$(ol_preference)"
+      echo "Run $SUCCEED -- [FLAGS] at the next safe point, with ORCH_OVERSEER_PREFERENCE=${preference:-empty} choosing the successor lane."
     fi
     PASS_EVENT=1
   fi

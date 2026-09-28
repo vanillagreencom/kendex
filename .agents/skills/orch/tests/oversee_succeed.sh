@@ -1079,13 +1079,13 @@ SUCCESSOR_ACCOUNTS=bad run_succeed badsuccessors '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "1|oversee-succeed: invalid-successor-accounts ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=bad" \
   "a malformed successor-account setting is refused before judgement"
-# A preference entry outside harness:rank:effort is refused before any pick,
+# A preference entry outside harness:model:effort is refused before any pick,
 # by lib/overseer-launch.sh's parser, the one `oversee launch` reads the same
 # setting with.
 new_caller "$MARK"
-run_succeed badpreference 'claude:one:high' --wait-secs 5
+run_succeed badpreference 'claude:Opus:high' --wait-secs 5
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "1|oversee-succeed: invalid-preference entry=claude:one:high|0" \
+  "1|oversee-succeed: invalid-preference entry=claude:Opus:high|0" \
   "a preference entry outside the shape is refused before any pick, nothing opened"
 # A runtime other than tmux is refused before anything is printed, written or
 # opened, by the library rule `oversee launch` reads: this script verifies the

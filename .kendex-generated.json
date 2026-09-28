@@ -1005,6 +1005,7 @@
   ".agents/skills/orch/tests/oversee_launch.sh",
   ".agents/skills/orch/tests/oversee_report.sh",
   ".agents/skills/orch/tests/oversee_succeed.sh",
+  ".agents/skills/orch/tests/oversee_succeed_ladder.sh",
   ".agents/skills/orch/tests/oversee_succeed_record.sh",
   ".agents/skills/orch/tests/oversee_succeed_watch.sh",
   ".agents/skills/orch/tests/oversee_watch.sh",

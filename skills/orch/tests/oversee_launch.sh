@@ -161,7 +161,7 @@ assert_eq "$RC|$(keyed overseer-not-working "$OUT" | sed -n 1p | sed 's/session=
 # The refusals before anything opens.
 for row in \
   "ORCH_OVERSEER_PREFERENCE=|preference-empty setting=ORCH_OVERSEER_PREFERENCE|an empty preference" \
-  "ORCH_OVERSEER_PREFERENCE=claude:one:high|invalid-preference entry=claude:one:high|an entry outside the shape" \
+  "ORCH_OVERSEER_PREFERENCE=claude:Opus:high|invalid-preference entry=claude:Opus:high|an entry outside the shape" \
   "ORCH_TMUX_SESSION=|session-unresolved consulted=--session,ORCH_TMUX_SESSION|no session named" \
   "ORCH_TMUX_SESSION=fleetz|tmux-session-missing session=fleetz server=$SOCKET|a session tmux does not hold" \
   "ORCH_OVERSEER_HOST=$TMP_ROOT/other|runtime-unsupported host=$TMP_ROOT/other|a runtime other than tmux" \

@@ -9,7 +9,10 @@
 # tries. `oversee-watch` sources it too, through lib/watch-overseer-record.sh,
 # for OL_JQ_DEFS alone. What is shared is here:
 #
+#   ol_preference          the ORCH_OVERSEER_PREFERENCE value, its default
+#                          ladder where the setting is unset
 #   ol_preference_entries  the ORCH_OVERSEER_PREFERENCE parse
+#   ol_entry_model         one entry's harness, model and effort
 #   ol_lanes               `lanes` on this machine's copy of each account
 #   ol_pick_record         one `lanes pick --json` record, for a caller's
 #                          own counts
@@ -64,10 +67,22 @@ ol_runtime_supported() {
   [[ "$OL_RUNTIME" == tmux ]] || { OL_REASON=runtime-unsupported; return 1; }
 }
 
+# The ladder a fleet walks where no settings file names
+# ORCH_OVERSEER_PREFERENCE: Fable, then Opus 5.5, then GPT-5.6 Sol on codex,
+# each at high effort, so a Fable wall moves the overseer onto another model
+# rather than leaving it with no successor. Set to empty, the setting names no
+# entries, which is a caller's own rule to read.
+OL_DEFAULT_PREFERENCE="claude:fable:high,claude:claude-opus-5-5:high,codex:gpt-5.6-sol:high"
+ol_preference() {
+  printf '%s\n' "${ORCH_OVERSEER_PREFERENCE-$OL_DEFAULT_PREFERENCE}"
+}
+
 # ol_preference_entries VALUE — VALUE, ORCH_OVERSEER_PREFERENCE's
-# comma-separated `harness:rank:effort` entries, into OL_ENTRIES, with
-# OL_NAMED the count. An entry outside the shape returns 1 with it in
-# OL_BAD_ENTRY. An empty VALUE is no entries and no refusal.
+# comma-separated `harness:model:effort` entries, into OL_ENTRIES, with
+# OL_NAMED the count. `model` is a model name or a kendex tier ladder rank,
+# which is digits alone and which no model name is. An entry outside the
+# shape returns 1 with it in OL_BAD_ENTRY. An empty VALUE is no entries and
+# no refusal.
 OL_ENTRIES=()
 OL_NAMED=0
 OL_BAD_ENTRY=""
@@ -80,10 +95,22 @@ ol_preference_entries() { # VALUE
   while [[ -n "$rest" ]]; do
     entry="${rest%%,*}"
     rest="${rest#*,}"
-    [[ "$entry" =~ ^(claude|codex):[1-9][0-9]*:[a-z]+$ ]] || { OL_BAD_ENTRY="$entry"; return 1; }
+    [[ "$entry" =~ ^(claude|codex):([1-9][0-9]*|[a-z][a-z0-9.-]*):[a-z]+$ ]] || { OL_BAD_ENTRY="$entry"; return 1; }
     OL_ENTRIES+=("$entry")
     OL_NAMED=$((OL_NAMED + 1))
   done
+}
+
+# ol_entry_model ENTRY — one entry ol_preference_entries admitted, split into
+# OL_ENTRY_HARNESS, OL_ENTRY_MODEL and OL_ENTRY_EFFORT: a model name as
+# written, a rank as `kendex tier-model` names it. Returns 1 where the tier
+# ladder names no model for the rank, which the walk refuses rather than
+# skips: a preference naming a rank that does not exist is a setting to fix.
+OL_ENTRY_HARNESS="" OL_ENTRY_MODEL="" OL_ENTRY_EFFORT=""
+ol_entry_model() { # ENTRY
+  IFS=: read -r OL_ENTRY_HARNESS OL_ENTRY_MODEL OL_ENTRY_EFFORT <<<"$1"
+  [[ "$OL_ENTRY_MODEL" =~ ^[0-9]+$ ]] || return 0
+  OL_ENTRY_MODEL="$(kendex tier-model "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" 2>"$DEP_ERR")" && [[ -n "$OL_ENTRY_MODEL" ]]
 }
 
 # ol_lanes ARGS... — `lanes` as every overseer read of an account asks it,

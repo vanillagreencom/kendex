@@ -32,14 +32,16 @@
 #        and a second one is never opened beside it: `overseer-live` names
 #        it and its generation. Two overseers never act at once; a live one
 #        is replaced through `oversee-succeed`, never launched over.
-#     4. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:rank:effort`
+#     4. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:model:effort`
 #        entries, in order, and open on the first whose harness has a lane
-#        above ORCH_OVERSEER_HEADROOM_PCT: `kendex tier-model` names the
-#        entry's model, `lanes pick` the lane, judged on the bucket that
+#        above ORCH_OVERSEER_HEADROOM_PCT: the entry names its model, or a
+#        rank `kendex tier-model` names it for, and unset the setting is
+#        lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE; `lanes pick` names
+#        the lane, judged on the bucket that
 #        walls that model and held to the reading the session will take of
 #        itself (lib/overseer-launch.sh § ol_pick_lane). A rank the tier
 #        ladder cannot answer refuses `model-failed`; an entry with no
-#        qualifying lane is skipped; an empty preference refuses
+#        qualifying lane is skipped; a preference set to empty refuses
 #        `preference-empty`, because a first launch has no caller whose own
 #        harness and lane could stand in; a walk that ends empty refuses
 #        `no-lane-qualifies` at exit 3 with the counts each sweep found.
@@ -125,7 +127,7 @@ message() { # KEY FIELD=VALUE...
     tmux-failed) text='The tmux call the operation field names failed on the server the server field names, for another reason than an absent session: no server may be running at that socket. Nothing was opened; tmux says why below.' ;;
     state-unwritable) text='The oversee workflow state could not be created or read, so no session record can be kept. Nothing was launched.' ;;
     overseer-live) text='The fleet state names an overseer session this tmux server still lists, so a second one is not opened beside it. Two overseers never act at once: replace a live one through oversee-succeed, or stop it and clear the record.' ;;
-    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:rank:effort with harness claude or codex.' ;;
+    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude or codex and model a model name or a tier ladder rank.' ;;
     preference-empty) text='A first launch has no caller whose own harness and lane could stand in, so ORCH_OVERSEER_PREFERENCE must name at least one entry.' ;;
     invalid-headroom-trigger) text='ORCH_OVERSEER_HEADROOM_PCT takes a whole number of percent from 0 to 100.' ;;
     invalid-question-tool) text='ORCH_QUESTION_TOOL takes off or overseer.' ;;
@@ -328,14 +330,13 @@ if ! question_policy="$(launch_overseer_question_tool)"; then
   die invalid-question-tool "ORCH_QUESTION_TOOL=${ORCH_QUESTION_TOOL:-}"
 fi
 [[ "$question_policy" != off ]] || QUESTION_OFF=(--question-off)
-ol_preference_entries "${ORCH_OVERSEER_PREFERENCE:-}" || die invalid-preference "entry=$OL_BAD_ENTRY"
+ol_preference_entries "$(ol_preference)" || die invalid-preference "entry=$OL_BAD_ENTRY"
 (( OL_NAMED > 0 )) || die preference-empty setting=ORCH_OVERSEER_PREFERENCE
 
 chosen="" harness="" model="" effort="" lane_dir=""
 for entry in "${OL_ENTRIES[@]}"; do
-  IFS=: read -r harness rank effort <<<"$entry"
-  model="$(kendex tier-model "$harness" "$rank" 2>"$DEP_ERR")" && [[ -n "$model" ]] \
-    || die model-failed "entry=$entry"
+  ol_entry_model "$entry" || die model-failed "entry=$entry"
+  harness="$OL_ENTRY_HARNESS" model="$OL_ENTRY_MODEL" effort="$OL_ENTRY_EFFORT"
   rc=0
   ol_pick_lane "$harness" "$model" "$HEADROOM_TRIGGER" || rc=$?
   case "$rc" in
