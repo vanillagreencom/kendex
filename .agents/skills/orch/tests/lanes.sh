@@ -369,6 +369,33 @@ pool_control mutant-pool-anchors lanes '=~ \^(\[0-9]{1,12})' '=~ ([0-9]{1,12})' 
 pool_control mutant-pool-any-model lib/lane-launch.sh '\[\[ "\$2" != github-copilot.* || printf' 'printf' \
   "control: a Pi pick admitted on any model is judged on the pool it does not spend|$POOL=1/10|pick --harness pi --model sonnet|rc=0"
 
+# The pool reading is the owner's statement, so a Pi pick asks no lane
+# provider, in either form, even with one configured: the stub logs every verb
+# it is asked. The control makes Pi picks ask again, and both rows read the
+# accounts call.
+PI_HOST_LOG="$TMP_ROOT/pi-host.log"
+PI_HOST="ORCH_LANE_HOST=$TEST_DIR/fixtures/lane-host;LANE_HOST_STUB_LOG=$PI_HOST_LOG;$POOL=1/10"
+# Run in this shell, never a command substitution: run_lanes numbers its run
+# directory, and a subshell's number is lost, so a second pick would reuse the
+# first one's usage cache and its cached provider answer.
+pi_host_calls() { # ARGS... — sets PI_CALLS to rc and the provider verbs asked
+  : > "$PI_HOST_LOG"
+  run_lanes "$PI_HOST" "$@"
+  PI_CALLS="$(awk '{ print $1 }' "$PI_HOST_LOG" | paste -sd, - || true)"
+  PI_CALLS="rc=$RC calls=${PI_CALLS:-none}"
+}
+pi_host_rows() { # EXPECT_CALLS LABEL_PREFIX
+  pi_host_calls pick --harness pi $COPILOT
+  assert_eq "$PI_CALLS" "rc=0 calls=$1" "$2 the chooser"
+  pi_host_calls pick --lane "$H/.pi1" --harness pi $COPILOT
+  assert_eq "$PI_CALLS" "rc=0 calls=$1" "$2 the named form"
+}
+pi_host_rows none "a Pi pick under a configured provider asks it nothing:"
+lanes_mutant mutant-pool-host lanes 'if \[\[ "\$1" == pi \]\]; then printf'
+LANES="$TMP_ROOT/mutant-pool-host/scripts/lanes"
+pi_host_rows accounts "control: a Pi pick that asks the provider calls its accounts verb:"
+LANES="$SCRIPTS_DIR/lanes"
+
 echo "=== unmeasurable lanes are never idle ==="
 # An expired login, an authenticated lane whose usage body carries none of the
 # consumer windows (a real enterprise plan), and an unreachable API each report

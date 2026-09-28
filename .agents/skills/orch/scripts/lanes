@@ -2447,6 +2447,14 @@ render_table() {
 # tell a window naming no model from a credential this machine cannot renew:
 # only the second has a remedy, and only that one leaves an account whose
 # copy on another host may still be live.
+# The provider rows both pick forms judge HARNESS on, host_lane_rows' readings.
+# A Pi pick is judged on the Copilot pool the owner states, which no provider
+# copy measures, so it asks no provider and gets none.
+pick_host_rows() { # HARNESS
+	if [[ "$1" == pi ]]; then printf '[]\n'; return 0; fi
+	host_lane_rows "$1" readings
+}
+
 cmd_pick_lane() {
 	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6"
 	local target found="" d record="" wall bucket verdict hosted
@@ -2478,7 +2486,7 @@ cmd_pick_lane() {
 	# `lanes: pick-local-reading` line. A dir the provider holds and discovery
 	# does not reach is judged on the provider's row alone, which is then no
 	# longer a lane with no record.
-	hosted="$(host_lane_rows "$harness" readings)"
+	hosted="$(pick_host_rows "$harness")"
 	record="$(jq -c --arg t "$target" 'map(select(._id == $t)) | first // empty' <<<"$hosted")" || { message pick-lane-failed "$dir" host >&2; return 1; }
 	if [[ -n "$record" && -z "$found" ]]; then
 		found="$(jq -r '.config_dir' <<<"$record")" || { message pick-lane-failed "$dir" host >&2; return 1; }
@@ -2564,7 +2572,7 @@ cmd_pick() {
 	fi
 	load_lane_claims
 	# After the claim load: emit_lane counts claims on every host row it writes.
-	hosted="$(host_lane_rows "$harness" readings)"
+	hosted="$(pick_host_rows "$harness")"
 	lanes="$(collect_lanes "$harness" "$exclude" "$hosted")"
 	# An unreadable claim store reads as "no launches in flight", which is the
 	# one thing it must not read as: picking on it can stack a second session
