@@ -18,16 +18,9 @@ On re-delegation to a pane agent, use `steer_subagent` only for true mid-run cor
 
 Use `get_subagent_result` only as a recovery/status reader for missed or truncated pane completions; it does not affect ownership or delivery. If it returns `needs_completion`, the child finished a turn without the durable `complete_subagent` record — do not count it as a return; use the verbose diagnostics/outbox path to send one recovery instruction asking the same pane to call `complete_subagent` for the stored `taskId`. Treat Pi custom completion notifications as agent returns only when the task ID matches stored workflow state; repeated display is not a second return.
 
-## Lane mailbox monitor (Pi)
+## Lane mailbox wake (Pi)
 
-A Pi lane arms its mailbox monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)) through the `pi-background-tasks` output wake that [§ Standing watch (Pi)](#standing-watch-pi) also uses.
-
-| Step | Call |
-|------|------|
-| Arm | `bg_task action: "spawn"` on `lane-mail watch --item [ISSUE_ID]`, with `notifyOnOutput: true`, `notifyMode: "always"` and `notifyOnExit: true`. Keep the pid the spawn returns. |
-| Wake | Run the `lane-mail inbox` command the announcement prints, and act on every directive it prints. The inbox is the read; the wake's inline tail only says mail landed. |
-| Re-arm | At the "wake budget exhausted" notice, stop the monitor with `bg_status action: "stop"` on the kept pid, then spawn a new one. |
-| Exit | An exit with code 2 is a refused watch: follow the refusal rule of [watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor) and spawn nothing. At every other exit wake, `bg_status action: "list"`, and spawn a new monitor only when the list does not show the kept pid as running. |
+A Pi lane arms no mailbox monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)). The `pi-hooks` package watches the mailbox its launch created, and when mail other than an answer lands while the session is idle, it starts one turn with a message opening `lane-mail-wake: mail=[ISSUE_ID] new=[N]` and ending in the `lane-mail inbox --item [ISSUE_ID]` command. The woken turn runs that command and acts on every directive it prints. A message opening `lane-mail-wake: peek-failed=` is the same wake after the read that judges the mail failed: run the command it names all the same. What the package does is its [README](https://github.com/vanillagreencom/kendex/blob/main/pi-extensions/pi-hooks/README.md) § Lane mail wake.
 
 ## Standing watch (Pi)
 

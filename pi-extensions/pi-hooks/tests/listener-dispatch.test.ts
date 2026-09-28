@@ -192,13 +192,15 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 	});
 
 	/**
-	 * Pi runs the agent a steer starts without awaiting it, and print mode
-	 * disposes the runtime once the settle it awaited returns. So the dispatch
-	 * that steers returns only after the settle its steer caused, or that
-	 * follow-on reads a ctx that throws and the answer is never printed. A
-	 * steer whose send threw starts no run, and nothing waits for one.
+	 * Pi defers the run a steer asks for until the settle dispatch has
+	 * returned, and finishes it, its own settle included, before print mode
+	 * disposes the runtime. So the dispatch that steers returns at once: one
+	 * that waited for the settle its steer caused would hold the settle open
+	 * for good, and every later prompt and triggered message with it, which
+	 * this case reads as a dispatch that never returns. A steer whose send
+	 * threw starts no run.
 	 */
-	test("the dispatch that steers returns after the settle its steer caused, and before disposal", async () => {
+	test("the dispatch that steers returns before the run it asked for, and that run settles before disposal", async () => {
 		const project = initCleanRustRepo("pi-hooks-turn-end-print-");
 		const log = join(project, "print.log");
 		try {
@@ -216,28 +218,6 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 			const unsent = installCarrier(() => { throw new Error("session-bound pi is stale"); });
 			await unsent.handler(SETTLED_LISTENER)({}, trusted(project));
 			expect(unsent.sent).toHaveLength(1);
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	/**
-	 * Settles overlap: another extension's triggered run can settle while a
-	 * speaking hook is still running. Both dispatches steer before the run
-	 * either steer joined settles, and that one settle has to release both, or
-	 * the dispatch left waiting holds Pi's prompt open for good.
-	 */
-	test("two overlapping dispatches that both steer are both released by the settle that follows", async () => {
-		const project = initCleanRustRepo("pi-hooks-turn-end-overlap-");
-		try {
-			registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, customCommand(join(project, "overlap.log"), "audit=overlap", 2));
-			let bothSteered!: () => void;
-			const held = new Promise<void>((resolve) => { bothSteered = resolve; });
-			let sends = 0;
-			const carrier = installCarrier(() => { if (++sends === 2) bothSteered(); }, () => held);
-			const onSettled = carrier.handler(SETTLED_LISTENER);
-			await Promise.all([onSettled({}, trusted(project)), onSettled({}, trusted(project))]);
-			expect(carrier.sent.map((call) => call.options)).toEqual([{ triggerTurn: true }, { triggerTurn: true }, { triggerTurn: false }]);
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lane-mail watch: the lane's standing mailbox monitor. A harness background
-# wake (Claude Code Monitor, Pi bg_task) runs it and starts a turn for each
+# wake (Claude Code Monitor) runs it and starts a turn for each
 # announcement it prints, or, under --once, a Copilot background command whose
 # exit at its first announcement is the wake; that turn runs the `inbox`
 # command the announcement names. Each case starts the real script in the background over a

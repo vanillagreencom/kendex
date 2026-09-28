@@ -913,11 +913,14 @@ no_session() { # HARNESS ROW — ROW is lane-mail or lane-question
 # directive over at the turn's end instead, and on an item of its own, so
 # neither row reads the other's cursor. Codex has no row to run: Codex starts
 # no turn for output that arrives after a turn ended, and a Codex lane is
-# reached by `open-terminal --wake`.
+# reached by `open-terminal --wake`. Nor has Pi: a Pi lane arms no monitor,
+# the pi-hooks package starts its turn, and print mode ends with its turn, so
+# pi-hooks' own suite runs a whole Pi session through that wake instead.
 WAKE_ITEM=SMOKE-2
 WAKE_DELAY=30
 WAKE_READER="$SELF/skills/orch/scripts/lane-mail"
 WAKE_SKIPPED='Codex starts no turn for output that arrives after a turn ended; a Codex lane is reached by open-terminal --wake'
+WAKE_PI_SKIPPED='a Pi lane arms no monitor: the pi-hooks mailbox wake starts its turn, and pi-extensions/pi-hooks/tests/lane-mail-wake.test.ts runs a Pi session through it'
 WAKE_ANNOUNCED="lane-mail: mail=$WAKE_ITEM new=1"
 WAKE_ARMED='smoke-wake: monitor-armed'
 printf 'Reply with exactly two lines and nothing else: %s, then the first line of the monitor event that woke you.\n' \
@@ -982,6 +985,7 @@ every_row() { # HARNESS RESULT EVIDENCE — one row per question this harness an
     # none of which anything about this machine changes.
     case "$1:$q:$cell:$halt_cell" in
       codex:mail-wake:*) row "$1" "$q" skipped "$WAKE_SKIPPED" ;;
+      pi:mail-wake:*) row "$1" "$q" skipped "$WAKE_PI_SKIPPED" ;;
       *:lane-mail:enforced:* | *:lane-mail:advisory:*) row "$1" "$q" "$2" "$3" ;;
       *:lane-mail:*) mail_skipped "$1" "$cell" ;;
       *:lane-question:*:enforced) row "$1" "$q" "$2" "$3" ;;
@@ -1292,8 +1296,7 @@ pi_rows() {
   run pi-hook pi -p --approve --no-session \
     'Run the shell command true with your bash tool, then reply with exactly: ok'
   fired pi PreToolUse .pi/kendex/hooks/smoke-tool.sh 'pi -p (one tool call)'
-  wake_row pi 'pi -p (arms bg_task, ends its turn)' \
-    pi -p --approve --no-session "$(wake_task 'Spawn a background task with your bg_task tool, notifyOnOutput true, notifyMode always,')"
+  row pi mail-wake skipped "$WAKE_PI_SKIPPED"
   mail_row pi 'pi -p (two tool calls, then the turn ends)' '' \
     pi -p --approve --no-session "$MAIL_TASK"
   question_row pi question 'pi -p (one question tool call, model-relayed refusal)' \

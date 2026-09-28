@@ -361,13 +361,14 @@ PI_UNATTENDED_TEXT="$(bash -c 'source "$1" && launch_choice_unattended pi' _ "$S
 [[ -n "$PI_UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no pi unattended text" >&2; exit 1; }
 # occurrences TEXT NEEDLE — how many times NEEDLE stands in TEXT.
 occurrences() { local rest="${1//"$2"/}"; printf '%s\n' "$(( (${#1} - ${#rest}) / ${#2} ))"; }
-# A claude or pi lane re-arms its mailbox monitor; a codex lane arms none,
-# since Codex starts no turn for a monitor's output.
+# A claude lane re-arms its mailbox monitor; a codex lane arms none, since
+# Codex starts no turn for a monitor's output, and a pi lane none, since
+# pi-hooks wakes it.
 RELAUNCH_LINE="Resume the orch workflow for CC-1 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 first and act on every directive it prints"
 REARM=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item CC-1 through your harness background wake"
 CONTEXT_FILE="$TMP_ROOT/wt/CC-1/tmp/lane-mail/CC-1/context.json"
 mkdir -p "${CONTEXT_FILE%/*}"
-for row in "claude|claude -n CC-1 $CLAUDE_QUESTION_OFF --resume $CLAUDE222|$REARM|$CLAUDE222|" "codex|codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $CODEX444||$CODEX444|" "pi|pi $PI_QUESTION_OFF --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl|$REARM|$PI_SESSION_ID| $PI_UNATTENDED_TEXT"; do
+for row in "claude|claude -n CC-1 $CLAUDE_QUESTION_OFF --resume $CLAUDE222|$REARM|$CLAUDE222|" "codex|codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $CODEX444||$CODEX444|" "pi|pi $PI_QUESTION_OFF --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl||$PI_SESSION_ID| $PI_UNATTENDED_TEXT"; do
   IFS='|' read -r harness expected rearm context_session unattended <<<"$row"
   context_record="$(jq -nc --arg h "$harness" --arg s "$context_session" '{harness:$h,session_id:$s,tokens:400000,window:1000000}')"
   printf '%s\n' "$context_record" > "$CONTEXT_FILE"

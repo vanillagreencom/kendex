@@ -1,7 +1,7 @@
 {
   "name": "@vanillagreen/pi-hooks",
   "version": "0.13.0",
-  "description": "The carrier that runs kendex's hooks under Pi: it dispatches the rendered kendex/hooks.json registry on every listener kendex maps a hook event onto, so a PreToolUse, PostToolUse, Stop, TaskCompleted or SessionStart hook fires, the bash guards kendex renders and a custom hook of your own alike, and it adds end-of-turn lint and a session-start kendex drift report. Per-hook toggles via pi-extension-manager.",
+  "description": "The carrier that runs kendex's hooks under Pi: it dispatches the rendered kendex/hooks.json registry on every listener kendex maps a hook event onto, so a PreToolUse, PostToolUse, Stop, TaskCompleted or SessionStart hook fires, the bash guards kendex renders and a custom hook of your own alike, and it adds end-of-turn lint, a session-start kendex drift report, and a turn for an idle orch lane when its overseer's mail lands. Per-hook toggles via pi-extension-manager.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -13,7 +13,8 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions/hooks.ts"
+      "./extensions/hooks.ts",
+      "./extensions/lane-mail-wake.ts"
     ]
   },
   "scripts": {
@@ -99,7 +100,7 @@
     }
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": ">=0.87.0"
   },
   "files": [
     "extensions/",

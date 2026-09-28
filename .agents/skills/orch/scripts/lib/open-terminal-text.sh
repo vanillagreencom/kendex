@@ -437,11 +437,12 @@ Options:
                     worktree and holds events, and the resumed command carries
                     one continuation line telling the lane to resume its orch
                     workflow and read
-                    `lane-mail inbox`, and a claude or pi lane to re-arm its
+                    `lane-mail inbox`, and a claude lane to re-arm its
                     mailbox monitor (`lane-mail watch`), a copilot lane its
                     `lane-mail watch --once`, so no follow-up is pasted into
                     the pane. A codex lane arms no monitor: Codex starts no turn
-                    for its output. A hosted codex lane is
+                    for its output. Nor does a pi lane: pi-hooks wakes it when
+                    mail lands. A hosted codex lane is
                     the exception: it resumes with no line, reported as
                     resume-lineless, and its line is pasted into the pane
                     afterwards — see --host. With no match the normal brief
