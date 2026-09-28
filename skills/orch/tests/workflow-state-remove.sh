@@ -169,7 +169,9 @@ worktree_run() { # NAME SCRIPT
   rm -rf -- "${wt:?}"
   archive="$(sed -n 's/^removed kept=//p' <<<"$out")"
   mkdir -p "$sd.back"
-  tar -xzf "$archive" -C "$sd.back" 2>/dev/null || back=unreadable
+  # BSD tar reads an empty -f as stdin, so an archive the close-out never
+  # named is unreadable before tar sees it.
+  [[ -f "$archive" ]] && tar -xzf "$archive" -C "$sd.back" 2>/dev/null || back=unreadable
   while IFS= read -r path; do
     [[ "$(cat -- "$sd.back/${wt#/}/tmp/$path" 2>/dev/null)" == "$path" ]] || back+=" $path"
   done <<<"$EVIDENCE"
