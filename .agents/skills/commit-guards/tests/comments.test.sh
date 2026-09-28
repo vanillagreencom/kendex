@@ -236,8 +236,9 @@ run_files \
 # A row cannot carry a `|`; the contents that do are fixtures here.
 fx_pipe_heredoc() { file pipe-heredoc a.sh "cat <<\"END-OF\" | sort\n# $W\nEND-OF\n# $W\n"; }
 fx_pipe_yaml() { file pipe-yaml a.yml "key: |\n  # $W\n"; }
-# Escaped quotes outside a string, as a shell mask's case arm and a refusal
-# scan's `=~` regex spell them, each followed by a comment.
+# An escaped quote in a case pattern and an escaped double quote in a
+# `[[ =~ ]]` regex, each followed by a comment that must be judged; the lines
+# are taken from a consumer's bin/check-scans.sh.
 fx_escaped_case() {
   repo escaped-case
   cat >"$R/a.sh" <<'SH'
@@ -336,6 +337,14 @@ run_files \
   "a first line naming a shell without #! is not a shebang|run|# start with bash\n# $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=0 comments: unmeasured-count=$(unread 1)" \
   "the same file with no shebang is counted as unmeasured, and nothing measurable was scanned|run|# $W\necho hi\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=0 comments: unmeasured-count=$(unread 1)" \
   "an extension the table does not carry is counted, not guessed at|notes.txt|# $W\n|COMMIT_GUARDS_COMMENT_PATHS=*.txt||rc=0 comments: unmeasured-count=$(unread 1)"
+# The refusal's explanation opens with the reader's cause, which names the
+# opener's line; an opener past line 1 proves the number is the opener's.
+repo reader-cause
+put a.sh "true\necho 'open\n# $W\n"
+stage
+CAUSE="$(cd "$R" && "$CM" 2>&1)" || true
+assert_eq "an unclosed quote's refusal names the reader's cause and the opener's line" \
+  "  comment-reader:unclosed-string line=2" "$(printf '%s\n' "$CAUSE" | LC_ALL=C awk '/^  comment-reader:/')"
 run_rows \
   "a regex literal holding a backtick opens a template literal that never closes (stated limit), and the later file's finding is kept|fx_unclosed_ts|||rc=2 $(extraction a.ts unclosed-string:1);$(hit "$ID" b.rs 1 " $W");$(incomplete 1 1 1)$(unread 1)" \
   "a shebang read failure puts the stable record before head's cause|fx_shim_head|PATH=$TMP/shim-head/shim:$PATH,COMMIT_GUARDS_COMMENT_PATHS=run||rc=2 ${ERR}shebang-read=run;dependency-order-control: shebang-read" \

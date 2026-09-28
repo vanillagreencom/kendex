@@ -72,9 +72,12 @@ gg_comment_family() { # PATH BLOBFILE — family token on stdout, empty when non
   esac
 }
 
-# What a lane prints under its extraction refusal: the reader's own
-# `comment-reader:KIND line=N` cause, then which construct it could not
-# follow, so an author edits the quote or the opener and not the comment.
+# What a lane prints under its extraction refusal: the reader's own cause,
+# `comment-reader:KIND line=N` for a construct left open (a quote, a block
+# comment, a heredoc, a quoted substitution), `comment-reader:unknown-family:FAM`
+# or `comment-reader:awk-exit status=N` otherwise, then which construct it
+# could not follow, so an author edits the quote or the opener and not the
+# comment. The first line is pinned in the comments and md-refs suites.
 gg_comment_error_detail() { # REASON STATUS — sets GG_COMMENT_ERROR_DETAIL
   local reason="$1" kind rest line word
   kind="${reason%%:*}"

@@ -310,6 +310,8 @@ fx_symlink_cited() { fx_symlink_tree symlink-cited; put AGENTS.md '# A\n\n## Rul
 # A decision record tracked as a symlink, at a document path, cited by ID.
 fx_dec_symlink() { repo dec-symlink; put docs/decisions/real.md '# D008\n'; ln -s real.md "$R/docs/decisions/D008-scope.md"; put AGENTS.md '# A\n\nSee D008.\n'; }
 fx_newline_src() { world_src newline-src; put "one"$'\n'"two.sh" "$SH"'# AGENTS.md \302\247 Gone\ntrue\n'; }
+# A shell carrier whose quote never closes, the opener past line 1.
+fx_unclosed_quote() { world_src unclosed-quote; put bin/q.sh "$SH"'# AGENTS.md \302\247 Rules\necho '"'"'open\n'; }
 UNCLOSED="md-refs: extraction=src/broken.c:unclosed-block:1;md-refs: incomplete=files=1 skipped=$(unmeasured 1 extraction=1)"
 run_rows \
   "a citation in comment text resolves|fx_comment_ok comment-ok||--all|rc=0 $(clean 1 2 1)" \
@@ -339,6 +341,15 @@ run_rows \
   "--verbose names a skipped path a reference lands on once|fx_symlink_linked symlink-linked-verbose||--all --verbose|rc=0 $(skip a.sh symlink);$(skip b.sh symlink);$(skip c.sh symlink);$(clean 1 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
   "a decision ID landing on a skipped record names it|fx_dec_symlink|COMMIT_GUARDS_MD_REFS_PATHS=AGENTS.md docs/decisions/*.md|--all|rc=0 $(skip docs/decisions/D008-scope.md symlink);$(clean 1 2 0 "$DEC_YES" "$(unmeasured 1 symlink=1)")" \
   "an empty source path list is refused|fx_comment_ok empty-list|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=|--all|rc=2 ${ERR}glob-empty=COMMIT_GUARDS_MD_REFS_SOURCE_PATHS"
+# The refusal's explanation opens with the reader's cause at the opener's
+# line and says no citation in the file was judged, so the citation is not
+# what an author edits.
+R=""
+fx_unclosed_quote
+CAUSE="$(cd "$R" && "$MDR" --all 2>&1)" || true
+assert_eq "an unclosed quote's refusal names the reader's cause and marks its citations unjudged" \
+  "md-refs: extraction=bin/q.sh:unclosed-string:3;  comment-reader:unclosed-string line=3;  citations=unjudged" \
+  "$(printf '%s\n' "$CAUSE" | LC_ALL=C awk '/^md-refs: extraction=|^  comment-reader:|^  citations=/' | LC_ALL=C paste -sd ';' -)"
 
 echo "=== scopes: touched, --staged, --all ==="
 seeded() { repo "$1"; put ok.md '# OK\n'; put AGENTS.md '[dead](nope.md)\n'; commit seed; } # NAME — a committed dead link, nothing staged
