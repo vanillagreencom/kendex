@@ -1509,9 +1509,9 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "1|oversee-succeed: copilot-account-unkno
 # Controls, one per rule: the builder's copilot arm, the refusal of every
 # judging mode, and the refusal of a line with no account.
 COPILOTARM="$(mutant_scripts copilotarm lib/overseer-launch.sh)" || exit 1
-mutate_file "$COPILOTARM/lib/overseer-launch.sh" '    copilot) OL_LANE_VAR=COPILOT_HOME; cmd="copilot"; brief_flag=" -i" ;;' '    copilot-x) ;;'
+mutate_file "$COPILOTARM/lib/overseer-launch.sh" '    copilot) cmd="copilot" brief_flag=" -i" ;;' '    copilot-x) ;;'
 copilot_row printcopilotctl "$COPILOTARM/oversee-succeed" --print-launch-line --harness copilot -- --allow-all
-assert_eq "$RC|$(grep -c "^env CODEX_HOME='$H/.1copilot' codex " <<<"$OUT")" "0|1" \
+assert_eq "$RC|$(grep -c "^env COPILOT_HOME='$H/.1copilot' codex " <<<"$OUT")" "0|1" \
   "control: without its arm the copilot line is built as codex's"
 COPILOTMODE="$(mutant_scripts copilotmode oversee-succeed)" || exit 1
 mutate_file "$COPILOTMODE/oversee-succeed" '[[ "$CALLER_HARNESS" != copilot || "$MODE" == print ]]' '[[ "$CALLER_HARNESS" != copilot || "$MODE" != print ]]'
@@ -1519,12 +1519,12 @@ copilot_row checkcopilotctl "$COPILOTMODE/oversee-succeed" --check-marks --harne
 assert_eq "$RC|$(grep -c '^oversee-succeed: copilot-unmeasured ' <<<"$OUT")" "0|0" \
   "control: without the refusal a copilot overseer's marks are judged on a reading lanes cannot make"
 COPILOTACCT="$(mutant_scripts copilotacct oversee-succeed)" || exit 1
-mutate_file "$COPILOTACCT/oversee-succeed" '[[ -n "$CALLER_CFG" ]] || die copilot-account-unknown' ': || die copilot-account-unknown'
+mutate_file "$COPILOTACCT/oversee-succeed" '[[ "$CALLER_HARNESS" != copilot || -n "$CALLER_CFG" ]] || die copilot-account-unknown' ': || die copilot-account-unknown'
 fleet_state
 new_caller "$UNDER_MARK"
 SUCCEED_BIN="$COPILOTACCT/oversee-succeed" run_succeed printcopilotnonectl '' --print-launch-line --harness copilot -- --allow-all
-assert_eq "$RC|$(grep -c "^env COPILOT_HOME='' copilot " <<<"$OUT")" "0|1" \
-  "control: without the refusal the line opens copilot on an empty COPILOT_HOME"
+assert_eq "$RC|$(grep -c "^copilot " <<<"$OUT")" "0|1" \
+  "control: without the refusal the line opens copilot on no account"
 fleet_state
 
 # The printed line is replayed verbatim into a DEAD pane, and nobody is at that

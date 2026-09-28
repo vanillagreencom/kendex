@@ -448,7 +448,7 @@ pi_print_row "" github-copilot/gpt-5
 assert_eq "$RC|$OUT" "0|env PI_CODING_AGENT_DIR='$PI_AGENT' pi --exclude-tools question --model github-copilot/gpt-5 --thinking high $PI_BRIEF" \
   "--print-launch-line on a pi overseer on the Copilot pool opens on its Pi root" "$TMP_ROOT/err"
 PIHARNESSCTL="$(mutant_scripts piharnessctl oversee-succeed)" || exit 1
-mutate_file "$PIHARNESSCTL/oversee-succeed" '| codex | pi) ;;' '| codex) ;;'
+mutate_file "$PIHARNESSCTL/oversee-succeed" '| copilot | pi) ;;' '| copilot) ;;'
 pi_print_row "$PIHARNESSCTL/oversee-succeed"
 assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: invalid-harness value=pi" \
   "control: a --harness check naming no pi refuses the pi overseer's line"
