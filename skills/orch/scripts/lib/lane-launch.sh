@@ -43,13 +43,17 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/adapters/claude.sh"
 # cannot go on being prefixed with the other harness's variable, which starts it
 # on whatever account that harness defaults to with nothing on screen saying so.
 #
-# Codex is named and every other harness takes the Claude variable, which is
-# what a local `--lane` launch on a further harness has always done, a Pi lane
-# `lanes` picks on the Copilot pool included. A harness added to this
-# repository adds its arm HERE.
-lane_env_prefix() { # HARNESS DIR
+# Codex is named. A Pi launch on the Copilot pool (lane_pick_harness below)
+# takes Pi's own variable, PI_CODING_AGENT_DIR, the directory whose Pi login
+# spends that pool, as lane-host-ssh gives a hosted Pi lane. Every other
+# harness takes the Claude variable, which is what a local `--lane` launch on a
+# further harness has always done, a Pi launch on any other model included, so
+# a Pi lane named on a Claude config dir is never handed that dir as its Pi
+# root. A harness added to this repository adds its arm HERE.
+lane_env_prefix() { # HARNESS DIR [MODEL]
   local var=CLAUDE_CONFIG_DIR
   [[ "$1" != codex ]] || var=CODEX_HOME
+  [[ "$(lane_pick_harness "$1" "${3:-}")" != pi ]] || var=PI_CODING_AGENT_DIR
   printf '%s=%s\n' "$var" "$2"
 }
 
@@ -58,9 +62,10 @@ lane_env_prefix() { # HARNESS DIR
 # their own accounts' windows, whatever the model. A Pi launch on a
 # `github-copilot/` model spends the Copilot pool, which `lanes pick --harness
 # pi` reads; a Pi launch on any other model has no reading here. One answer for
-# the launcher deciding whether a named lane is judged and for `lanes` refusing
-# a pick it cannot judge, so the two cannot disagree about which launches a
-# reading covers.
+# the launcher deciding whether a named lane is judged, for `lanes` refusing a
+# pick it cannot judge and for the variable lane_env_prefix names, so the three
+# cannot disagree about which launches a reading covers. MODEL is the one
+# launch_choice_launch_model reads, provider included.
 lane_pick_harness() { # HARNESS MODEL
   case "$1" in
     claude | codex) printf '%s\n' "$1" ;;
@@ -367,6 +372,23 @@ launch_choice_value() { # SPELLINGS TEXT...
   # `i=$((i + 1))` above for the same reason: `(( i++ ))` answers 1 on the
   # first token and errexit would end the run inside this substitution.
   return 0
+}
+
+# The MODEL one launch of HARNESS names, empty where it names none, read with
+# that harness's model spellings (the whole table's where HARNESS is empty).
+# Pi also takes the provider on a flag of its own, `pi --help`: `--provider
+# <name>` beside a bare `--model <id>` names the model `<name>/<id>` does, so
+# the value carries the provider exactly as the one-token spelling would, and a
+# judge reading `github-copilot/` sees a Copilot launch whichever way it was
+# typed. A model already naming a provider keeps its own.
+launch_choice_launch_model() { # HARNESS TEXT
+  local model provider
+  model="$(launch_choice_value "$(launch_choice_model_spellings "$1")" "$2")"
+  if [[ "$1" == pi && -n "$model" && "$model" != */* ]]; then
+    provider="$(launch_choice_value --provider "$2")"
+    [[ -z "$provider" ]] || model="$provider/$model"
+  fi
+  printf '%s\n' "$model"
 }
 
 # The EFFORT one launch names, empty where it names none or where the harness has

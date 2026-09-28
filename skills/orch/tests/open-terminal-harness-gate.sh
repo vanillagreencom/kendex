@@ -66,14 +66,15 @@ pi_carrier() { # sends|old|none
 # refused before the gate cannot read as one the gate passed.
 GATE_KEYS='unsupported-for-oversee|compaction-on|launch-window-unknown|launch-compaction-missing|pi-settings-unreadable|launch-question-tool-missing|launch-model-missing|launch-effort-missing'
 # launch NAME ARGS... — the gate's line open-terminal wrote, or `passed` where it
-# wrote none, for a GUI launch of CC-1 under ARGS; OT names another copy.
+# wrote none, for a GUI launch of CC-1 under ARGS; OT names another copy. Its
+# stdout is kept in $TMP_ROOT/NAME.out.
 launch() { # NAME ARGS...
   local name="$1" rc=0 line
   shift
   ( cd "$REPO" && PATH="$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="$BIN/worktree-stub" \
     OT_TERM_LOG="$TMP_ROOT/$name.term" TERMINAL=term TMUX= PI_CODING_AGENT_DIR="$PI_AGENT" \
     "${OT:-$REPO/scripts/open-terminal}" --ghostty "$@" CC-1 ) \
-    >/dev/null 2>"$TMP_ROOT/$name.err" || rc=$?
+    >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err" || rc=$?
   line="$(grep -E "^open-terminal: ($GATE_KEYS) " "$TMP_ROOT/$name.err" || true)"
   printf '%s' "${line:-passed}"
 }
@@ -134,6 +135,31 @@ rm -f -- "$PI_AGENT/settings.json" "$REPO/.pi/settings.json"
 assert_eq "$(grep -c 'jq: error\|parse error' "$TMP_ROOT/pi.err" || true)" "0" \
   "the last row's run carries no jq words; the unreadable row's did, under its key"
 
+echo "=== a Pi fleet launch on the Copilot pool is judged on the Pi root its lane names ==="
+# That launch runs under PI_CODING_AGENT_DIR set to the account `lanes pick`
+# chose from ORCH_LANE_COPILOT_POOL, so its settings and carrier are read there
+# and not under the root this launcher inherited (PI_AGENT, compaction on in
+# one row and off in the other). pool_launch prints the gate line and whether
+# the lane was selected on Pi's own variable.
+POOL_ROOT="$TMP_ROOT/pool-root"
+mkdir -p "$POOL_ROOT/packages/@vanillagreen/pi-hooks/extensions"
+printf 'export const f = { context_window: 1 };\n' > "$POOL_ROOT/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
+pi_carrier sends
+POOL_FLAGS='--model github-copilot/claude-sonnet-5 --thinking high'
+pool_launch() { # NAME POOL_SETTINGS AGENT_SETTINGS
+  local gate
+  printf '%s\n' "$2" > "$POOL_ROOT/settings.json"
+  printf '%s\n' "$3" > "$PI_AGENT/settings.json"
+  gate="$(ORCH_LANE_COPILOT_POOL="$POOL_ROOT=1/10" launch "$1" "${FLEET[@]}" --harness pi --lane auto --launch-flags "$POOL_FLAGS")"
+  printf '%s selected=%s' "$gate" "$(grep -c "^open-terminal: lane-selected lane=PI_CODING_AGENT_DIR=$POOL_ROOT\$" "$TMP_ROOT/$1.out" || true)"
+}
+assert_eq "$(pool_launch pool-off '{"compaction":{"enabled":false}}' '{"compaction":{"enabled":true}}')" "passed selected=1" \
+  "the pool account's own settings turning compaction off pass, whatever the inherited root says"
+assert_eq "$(pool_launch pool-on '{"compaction":{"enabled":true}}' '{"compaction":{"enabled":false}}')" \
+  "open-terminal: compaction-on harness=pi file=$POOL_ROOT/settings.json selected=1" \
+  "the pool account's own settings turning compaction on are refused, naming that file"
+rm -f -- "${PI_AGENT:?}/settings.json"
+
 echo "=== must-fail controls ==="
 # Each rule's refusal replaced by a pass: the row it holds reads as passed.
 # control NAME OLD NEW — a staged copy with OLD replaced by NEW, in CTRL_OT.
@@ -162,16 +188,21 @@ assert_eq "$(OT="$TMP_ROOT/strip-ctrl/scripts/open-terminal" launch strip-ctrl "
   "control: compared unquoted, a word whose JSON the shell strips passes the gate"
 printf '{"compaction":{"enabled":false}}\n' > "$PI_AGENT/settings.json"
 pi_carrier old
-control window-read-ctrl 'ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; exit 1;' ': ;'
+control window-read-ctrl '"$CLAIM_ROOT" || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; return 1; }' '"$CLAIM_ROOT" || :'
 assert_eq "$(OT="$CTRL_OT" launch window-read-ctrl "${FLEET[@]}" --harness pi)" passed \
   "control: without its refusal a Pi fleet lane whose carrier sends no window passes"
 rm -f -- "$PI_AGENT/settings.json"
 pi_carrier sends
 printf '{"compaction":{"enabled":true}}\n' > "$PI_AGENT/settings.json"
-control hosted-pi-ctrl '      if [[ "$LANE_HOST" == local ]]; then' '      if true; then'
+control hosted-pi-ctrl 'if [[ "$LANE_HOST" == local && ( -z "$LANE"' 'if [[ true && ( -z "$LANE"'
 assert_eq "$(OT="$CTRL_OT" launch hosted-pi-ctrl "${FLEET[@]}" --harness pi --host "$BIN/provider")" "open-terminal: compaction-on harness=pi $PI_FILE" \
   "control: judged on this machine's files, a hosted Pi fleet lane is refused on settings that are not its own"
 rm -f -- "$PI_AGENT/settings.json"
+control pool-root-ctrl '  PI_CODING_AGENT_DIR="${LANE_ENV#*=}"' '  :'
+assert_eq "$(OT="$CTRL_OT" pool_launch pool-root-ctrl '{"compaction":{"enabled":false}}' '{"compaction":{"enabled":true}}')" \
+  "open-terminal: compaction-on harness=pi file=$PI_AGENT/settings.json selected=1" \
+  "control: judged on the inherited root, a Pi fleet lane on the Copilot pool is refused on settings that are not its own"
+rm -f -- "${PI_AGENT:?}/settings.json"
 control compaction-ctrl '0) ot_message compaction-on "harness=pi" "file=$LANE_ADAPTER_PI_FILE"' '0) : ot_message compaction-on "harness=pi" "file=$LANE_ADAPTER_PI_FILE"'
 assert_eq "$(OT="$CTRL_OT" launch compaction-ctrl "${FLEET[@]}" --harness pi)" passed \
   "control: without its refusal a Pi fleet lane Pi would compact passes the gate"

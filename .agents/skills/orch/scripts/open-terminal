@@ -429,7 +429,7 @@ LAUNCH_MODEL=""
 LAUNCH_EFFORT=""
 if LAUNCH_MODEL_SPELLINGS="$(launch_choice_model_spellings "$LAUNCH_HARNESS")" &&
   [[ -n "$LAUNCH_MODEL_SPELLINGS" ]]; then
-  LAUNCH_MODEL="$(launch_choice_value "$LAUNCH_MODEL_SPELLINGS" "$LAUNCH_TEXT")"
+  LAUNCH_MODEL="$(launch_choice_launch_model "$LAUNCH_HARNESS" "$LAUNCH_TEXT")"
 fi
 # Every way this harness spells its effort is the library's, the colon form pi
 # puts on the model value included. What stays here is the refusal below.
@@ -499,12 +499,28 @@ fi
 #           whose window the claude adapter names
 #   codex   the same words; its rollout names its own window
 #   pi      its settings file turning compaction off and an installed
-#           pi-hooks carrier that sends the window, both read on this machine,
-#           or for a hosted lane on its host once create has made it
-#           (host_pi_gate)
+#           pi-hooks carrier that sends the window, both read on this machine
+#           under the Pi root the lane runs on (pi_local_gate), or for a hosted
+#           lane on its host once create has made it (host_pi_gate)
 # Every other harness, and a launch naming none, has no adapter. A wake is not
 # judged: it re-enters a session its own launch was admitted with, and names no
 # model of its own.
+#
+# pi_local_gate reads the root lib/adapters/pi.sh names, PI_CODING_AGENT_DIR or
+# the home default. A lane launch on the Copilot pool runs on the root its lane
+# names instead (lane_env_prefix), which is resolved further down, so that
+# launch is judged there by pi_lane_root_apply, once per root it is given.
+pi_local_gate() {
+  local pi_compaction_rc=0
+  lane_adapter_pi_compaction_on "$CLAIM_ROOT" || pi_compaction_rc=$?
+  case "$pi_compaction_rc" in
+    1) ;;
+    0) ot_message compaction-on "harness=pi" "file=$LANE_ADAPTER_PI_FILE" >&2; return 1 ;;
+    *) ot_message pi-settings-unreadable "file=$LANE_ADAPTER_PI_FILE" >&2
+       printf '%s\n' "$LANE_ADAPTER_PI_CAUSE" >&2; return 1 ;;
+  esac
+  lane_adapter_pi_window_read "$CLAIM_ROOT" || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; return 1; }
+}
 if [[ "$FLEET" == true && "$WAKE" != true ]]; then
   case "$LAUNCH_HARNESS" in
     claude | codex)
@@ -521,17 +537,8 @@ if [[ "$FLEET" == true && "$WAKE" != true ]]; then
       fi
       ;;
     pi)
-      if [[ "$LANE_HOST" == local ]]; then
-        pi_compaction_rc=0
-        lane_adapter_pi_compaction_on "$CLAIM_ROOT" || pi_compaction_rc=$?
-        case "$pi_compaction_rc" in
-          1) ;;
-          0) ot_message compaction-on "harness=pi" "file=$LANE_ADAPTER_PI_FILE" >&2; exit 1 ;;
-          *) ot_message pi-settings-unreadable "file=$LANE_ADAPTER_PI_FILE" >&2
-             printf '%s\n' "$LANE_ADAPTER_PI_CAUSE" >&2; exit 1 ;;
-        esac
-        lane_adapter_pi_window_read "$CLAIM_ROOT" \
-          || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; exit 1; }
+      if [[ "$LANE_HOST" == local && ( -z "$LANE" || -z "$(lane_pick_harness pi "$LAUNCH_MODEL")" ) ]]; then
+        pi_local_gate || exit 1
       fi
       ;;
     *) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; exit 1 ;;
@@ -614,6 +621,39 @@ pick_auto_lane() {
   [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
   ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --harness "$LANE_HARNESS" ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} \
     ${model_args[@]+"${model_args[@]}"}
+}
+# A local Pi launch on the Copilot pool runs under PI_CODING_AGENT_DIR set to
+# its lane (lane_env_prefix), so every reader here of Pi's root, the fleet
+# gate's settings and carrier reads and the relaunch transcript lookup, is
+# pointed at that directory, and the fleet gate is asked of it. Called for the
+# lane resolved up front and again for each one a batch re-picks. Returns 1 with
+# the gate's refusal printed. A hosted lane's root is its host's, and
+# host_pi_gate reads it there.
+pi_lane_root_apply() {
+  [[ "$LANE_HOST" == local && "${LANE_ENV%%=*}" == PI_CODING_AGENT_DIR ]] || return 0
+  PI_CODING_AGENT_DIR="${LANE_ENV#*=}"
+  [[ "$FLEET" != true || "$WAKE" == true ]] || pi_local_gate
+}
+# The refusal for an `auto` pick `lanes` answered with RC, the fields after it
+# appended. Every one stops the launch, and each names what answers it: 3 is
+# every candidate at or above the threshold, which for the Copilot pool is the
+# owner's stated reading and moves only when the owner restates it, never a
+# window a reset reopens; 5 is a Pi pick with no pool stated at all, a setting
+# to state; anything else is lanes failing.
+auto_pick_refusal() { # RC [FIELD...]
+  local rc="$1"
+  shift
+  case "$rc" in
+    3)
+      if [[ "$LANE_HARNESS" == pi ]]; then
+        ot_message copilot-pool-walled "setting=ORCH_LANE_COPILOT_POOL" "$@"
+      else
+        ot_message lane-unavailable "harness=$LANE_HARNESS" "$@"
+      fi
+      ;;
+    5) ot_message copilot-pool-unstated "setting=ORCH_LANE_COPILOT_POOL" "$@" ;;
+    *) ot_message lane-resolution-failed "exit=$rc" "$@" ;;
+  esac >&2
 }
 # Sets HOST_ACCOUNT to what the lane host says about this account, for this
 # harness: `held`, `missing` (the provider answered and named no such account of
@@ -764,16 +804,7 @@ if [[ -n "$LANE" ]]; then
       LANE_HARNESS="$lane_harness"
       lane_rc=0
       LANE_ENV="$(pick_auto_lane)" || lane_rc=$?
-      if [[ "$lane_rc" -ne 0 ]]; then
-        # lanes exits 3 for "every lane is over the threshold" and 1 for a real
-        # failure. Both stop the launch; only the first is the operator's call.
-        if [[ "$lane_rc" -eq 3 ]]; then
-          ot_message lane-unavailable "harness=$lane_harness" >&2
-        else
-          ot_message lane-resolution-failed "exit=$lane_rc" >&2
-        fi
-        exit 1
-      fi
+      [[ "$lane_rc" -eq 0 ]] || { auto_pick_refusal "$lane_rc"; exit 1; }
       ;;
     *)
       lane_dir="$LANE"
@@ -809,7 +840,7 @@ if [[ -n "$LANE" ]]; then
       # The harness-to-variable mapping is lib/lane-launch.sh's, the same one
       # `lanes` hands a picked lane back through, so a harness added there is
       # not left prefixing its launches with the other harness's variable.
-      LANE_ENV="$(lane_env_prefix "$HARNESS" "$lane_dir")"
+      LANE_ENV="$(lane_env_prefix "$HARNESS" "$lane_dir" "$LAUNCH_MODEL")"
       ;;
   esac
   # Refused here, before any worktree is created: resolve the lane
@@ -860,6 +891,7 @@ if [[ -n "$LANE" ]]; then
   [[ "$LANE_AUTO" == true || -z "$(lane_pick_harness "$LAUNCH_HARNESS" "$LAUNCH_MODEL")" ]] || LANE_GATE=true
   [[ "$LANE_GATE" != true ]] || named_lane_judge || exit 1
   ot_message lane-selected "lane=$LANE_ENV"
+  pi_lane_root_apply || exit 1
 fi
 # The hosted pane is driven by keystrokes, the provider's --account is the
 # lane's config dir and the host protocol names three harnesses, so each gap is
@@ -2247,13 +2279,9 @@ lane_rejudge() { # ITEM
   local next rc=0
   if [[ "$LANE_AUTO" == true ]]; then
     next="$(pick_auto_lane)" || rc=$?
-    if [[ "$rc" -eq 3 ]]; then
-      ot_message lane-unavailable "harness=$LANE_HARNESS" "item=$1" "launched=$launched" >&2; return 1
-    elif [[ "$rc" -ne 0 ]]; then
-      ot_message lane-resolution-failed "exit=$rc" "item=$1" "launched=$launched" >&2; return 1
-    fi
+    [[ "$rc" -eq 0 ]] || { auto_pick_refusal "$rc" "item=$1" "launched=$launched"; return 1; }
     ! lane_value_error "$next" || return 1
-    [[ "$next" == "$LANE_ENV" ]] || { LANE_ENV="$next"; ot_message lane-selected "lane=$LANE_ENV"; }
+    [[ "$next" == "$LANE_ENV" ]] || { LANE_ENV="$next"; ot_message lane-selected "lane=$LANE_ENV"; pi_lane_root_apply || return 1; }
   elif [[ "$LANE_GATE" == true ]]; then
     named_lane_judge
   fi

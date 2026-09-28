@@ -20,9 +20,10 @@
 #
 # The 5-hour session and the plan-wide weekly window wall every model, so both
 # always count, and so does a monthly pool: the Copilot credits a Pi launch on
-# a `github-copilot/` model spends are one pool for every model it names. A model-scoped weekly window walls only the model its own label
-# names, so a launch on another model does not draw on it and it is left out —
-# the difference between refusing an account that is free for this launch and
+# a `github-copilot/` model spends are one pool for every model it names. A
+# model-scoped weekly window walls only the model its own label names, so a
+# launch on another model does not draw on it and it is left out — the
+# difference between refusing an account that is free for this launch and
 # launching one into a wall the binding bucket never showed.
 #
 # The label match is containment in either direction over the NORMALIZED
@@ -76,8 +77,7 @@ def lane_norm: ascii_downcase | gsub("[^a-z0-9]"; "");
 def lane_measured: (.status == "ok" or .status == "rate_limited");
 
 def wall_rank:
-  if .bucket == "monthly" then 3
-  elif .bucket == "weekly" then 2
+  if .bucket == "weekly" then 2
   elif .bucket == "model" then 1
   else 0
   end;

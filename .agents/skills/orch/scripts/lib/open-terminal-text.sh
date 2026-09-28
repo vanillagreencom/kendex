@@ -36,6 +36,8 @@ ot_message() { # REASON FIELD=VALUE...
     lane-harness-missing) text='Select a harness for automatic lane selection.' ;;
     lane-unavailable) text='No lane meets the usage threshold. Wait for a reset, raise the threshold or select a lane. The keyed lanes: line above names what each lane was and, where a threshold applied, the threshold.' ;;
     lane-resolution-failed) text='The lanes helper failed to select an account.' ;;
+    copilot-pool-walled) text='Every Pi account this launch could spend is at or above the usage threshold on its Copilot pool, as ORCH_LANE_COPILOT_POOL states it. Nothing was launched. The reading is the owner'"'"'s statement and moves only when the owner restates it; waiting for a reset changes nothing here. The keyed lanes: line above names the pool and the threshold.' ;;
+    copilot-pool-unstated) text='This Pi launch spends the Copilot pool, and ORCH_LANE_COPILOT_POOL states no reading for any account, so nothing measures what it would spend. Nothing was launched. State the owner'"'"'s reading in that setting (lanes --help); waiting changes nothing.' ;;
     lane-directory-missing) text='The specified lane directory does not exist.' ;;
     lane-unknown) text='The lane is neither a known alias nor a directory.' ;;
     lane-refused) text='A lane setting excludes or retires this lane. No window was opened.' ;;
@@ -198,9 +200,14 @@ Options:
                     --harness — has no row there and reaches no such gate, its
                     argv being the caller's own. A NAMED lane is then judged
                     on the window for that model, claude and codex only, and
-                    pi on a github-copilot/ model on the Copilot pool
+                    pi on a github-copilot/ model (--provider github-copilot
+                    beside a bare --model counts) on the Copilot pool
                     ORCH_LANE_COPILOT_POOL states (`lanes --help`), which
-                    `auto` with --harness pi picks on too:
+                    `auto` with --harness pi picks on too, refusing as
+                    copilot-pool-unstated where no pool is stated and
+                    copilot-pool-walled where every stated one is spent; such
+                    a lane runs under PI_CODING_AGENT_DIR, its settings and
+                    carrier read there for a fleet launch:
                     refused when it is at or above --lane-max-pct, and
                     refused as unreadable when nothing measures it. A config
                     dir that neither a lane record nor a provider reading
