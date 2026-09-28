@@ -96,7 +96,7 @@ more remaining than granted reads as no use, never a negative share|10copilot|[.
 an account holding no token reads no_credentials|0copilot|.status|"no_credentials"
 ROWS
 run_lanes list --harness copilot --local
-assert_eq "$(head -n 1 <<<"$OUT" | tr -s ' ')" "LANE HARNESS THROUGH STATUS PLAN 5H WEEK MODEL MONTH HEADROOM CLAIMS AGE" \
+assert_eq "$(head -n 1 <<<"$OUT" | tr -s ' ')" "LANE HARNESS THROUGH STATUS PLAN 5H WEEK MODEL MONTH HEADROOM CLAIMS AGE DETAIL" \
   "the table shows the monthly pool in a column of its own"
 
 echo "=== pick judges a Copilot account on its pool ==="
