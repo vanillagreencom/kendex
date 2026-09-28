@@ -402,7 +402,7 @@ pi_claude_row claude-opus-5
 assert_eq "$RC|$(sed -n 1p <<<"$ERR")|$OUT" "1|oversee-succeed: pi-account-unknown model=claude-opus-5|" \
   "--print-launch-line refuses a pi overseer whose model names no provider"
 PIFLAGCTL="$(mutant_scripts piflagctl oversee-succeed)" || exit 1
-mutate_file "$PIFLAGCTL/oversee-succeed" '    [[ -z "$flag_model" ]] || caller_model="$flag_model"' '    true'
+mutate_file "$PIFLAGCTL/oversee-succeed" '      caller_model="$flag_model"' '      :'
 pi_claude_row pi-claude/claude-opus-5 "$PIFLAGCTL/oversee-succeed"
 assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: pi-account-unknown model=none" \
   "control: a caller that reads no --model word leaves a record-less pi overseer's account unknown"
@@ -433,6 +433,28 @@ mutate_file "$PIREADCTL/oversee-succeed" 'caller_model="${OL_KNOWN_MODEL:-$readi
 SUCCEED_BIN="$PIREADCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
 assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
   "control: a caller that ignores the pi reading's model leaves the account unjudged" "$TMP_ROOT/err"
+
+# A bare --model word beside a reading naming pi-claude/<id>: the reading
+# names the account, so the turn-end judgement and the succession it asks for
+# both reach the headroom mark on the claude account, whose Opus window is
+# spent, and no successor has a seat.
+pi_reading_row
+assert_eq "$RC|$(judged)" "0|mark-reached kind=headroom value=1" \
+  "--check-marks on a pi reading naming pi-claude reaches the headroom mark" "$TMP_ROOT/err"
+pi_bare_flag_row() { # [SUCCEED_BIN]
+  SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --harness pi -- --model claude-opus-5 --thinking high
+}
+pi_bare_flag_row
+assert_eq "$RC|$(sed -n 1p <<<"$ERR" | awk '{print $2}')|$(grep -o 'mark=[a-z]*' <<<"$(sed -n 1p <<<"$ERR")")" \
+  "3|no-lane-qualifies|mark=headroom" \
+  "the succession beside a bare --model word reads the reading's claude account"
+PIBARECTL="$(mutant_scripts pibarectl oversee-succeed)" || exit 1
+mutate_file "$PIBARECTL/oversee-succeed" \
+  '    if [[ "$flag_model" == ?*/?* || ( -n "$flag_model" && "$caller_model" != ?*/?* ) ]]; then' \
+  '    if [[ -n "$flag_model" ]]; then'
+pi_bare_flag_row "$PIBARECTL/oversee-succeed"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT" | awk '{print $2}')" "0|context-unmeasured" \
+  "control: a bare --model word taken over the reading leaves the succession's account unmeasured"
 
 # The settings a pi successor would compact under refuse its line, as they
 # refuse a pi lane's launch.

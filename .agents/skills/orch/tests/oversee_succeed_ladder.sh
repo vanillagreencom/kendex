@@ -410,7 +410,7 @@ assert_eq "$RC|$(caller_open)|$(launched pi)" "0|no|$H/.claude pi-claude/claude-
 # Its control: a caller that reads no --model word cannot name the account
 # and refuses, launching nothing.
 PICTXCTL="$(mutant_scripts pictxctl oversee-succeed)" || exit 1
-mutate_file "$PICTXCTL/oversee-succeed" '    [[ -z "$flag_model" ]] || caller_model="$flag_model"' '    true'
+mutate_file "$PICTXCTL/oversee-succeed" '      caller_model="$flag_model"' '      :'
 pi_context_row "$PICTXCTL/oversee-succeed"
 assert_eq "$RC|$(keyed pi-account-unknown | awk '{print $2}')|$(caller_open)|$(launched pi)" \
   "1|pi-account-unknown|yes|none" \

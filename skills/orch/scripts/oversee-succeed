@@ -887,13 +887,19 @@ if [[ "$MODE" != dead ]]; then
   # A pi session's account follows the provider its model names, and a pi
   # overseer passes its `--model` word after --, so where no record names its
   # model that word, the one a relaunch of it runs, answers ahead of the
-  # reading.
+  # reading where it names a provider. Pi takes a bare pattern too, and a
+  # bare word beside a reading's `provider/id` leaves the reading answering,
+  # so a turn-end judgement, handed no flags, and the succession it asks for
+  # read one account. A bare word answers only where the reading names no
+  # provider either, which the caller entry refuses as unknown.
   caller_model="${OL_KNOWN_MODEL:-$reading_model}"
   if [[ "$CALLER_HARNESS" == pi && -z "$OL_KNOWN_MODEL" ]]; then
     if ! flag_model="$(launch_choice_value "$(launch_choice_model_spellings pi)" "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}")"; then
       die launch-choice-failed harness=pi step=model-read
     fi
-    [[ -z "$flag_model" ]] || caller_model="$flag_model"
+    if [[ "$flag_model" == ?*/?* || ( -n "$flag_model" && "$caller_model" != ?*/?* ) ]]; then
+      caller_model="$flag_model"
+    fi
   fi
   CALLER_MODEL="$(lane_context_mark_model "$CALLER_HARNESS" "$caller_model")"
   # The harness and model `lanes` measures this session's account as
