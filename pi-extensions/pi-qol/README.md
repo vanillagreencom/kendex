@@ -47,6 +47,6 @@ Open `/extensions:settings`; settings appear under the **QOL** tab. Project sett
   - Pi's own `compaction.enabled` (the top-level `compaction` object in the same settings files, not a QOL key) turns off every automatic compaction: when it is `false`, neither the budget guard nor the idle trigger starts one, and `/qol` reports both as disabled by that key. A manual `/compact` still runs. While it is `true` or absent, both keep the defaults and thresholds above: the budget guard on at `compaction.budgetPercent` 85, the idle trigger off until `compaction.idleEnabled` is set.
 - Thinking: `thinkingLabel.text`, `thinkingTimer.enabled`, `workingIndicator.mode` (`static` if the animated indicator flashes).
 
-Enable **Show model provider** to display a readable provider name before the model, such as `Copilot / GPT 6 Astra`. It is off by default and applies on the next render without reloading. Disabling the QOL statusline leaves Pi's standalone working indicator in place.
+**Show model provider** displays a readable provider name before the model, such as `Copilot / GPT 6 Astra`. It is on by default; changes apply on the next render without reloading. Disabling the QOL statusline leaves Pi's standalone working indicator in place.
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).

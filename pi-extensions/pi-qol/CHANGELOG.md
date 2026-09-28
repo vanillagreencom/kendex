@@ -4,7 +4,7 @@
 
 ### Unreleased
 
-- Add an optional provider label before the model, using readable names such as `Copilot / GPT 6 Astra`.
+- Show a provider label before the model by default, using readable names such as `Copilot / GPT 6 Astra`. Disable it with `statusline.showProvider`.
 - Move the working spinner before the project name when the QOL statusline is enabled. Static mode remains available; retry and compaction messages follow the indicator into the statusline. Requires Pi 0.85.0 or newer.
 
 ### 2.1.1

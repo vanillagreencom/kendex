@@ -234,7 +234,7 @@ function cavemanIconTone(mode: string, active: boolean): "muted" | "text" | "suc
 
 export function renderStatusLine(width: number, ctx: ExtensionContext, git: GitState, pi: ExtensionAPI, theme: Pick<Theme, "fg">, workingIndicator = ""): string {
 	const { label: contextLabel, percent } = statuslineContextInfo(ctx);
-	const provider = settingBoolean("statusline.showProvider", false, ctx.cwd) && ctx.model ? formatProviderName(ctx.model.provider) : "";
+	const provider = settingBoolean("statusline.showProvider", true, ctx.cwd) && ctx.model ? formatProviderName(ctx.model.provider) : "";
 	const projectChunk = `${git.projectName}${gitBadge(git, settingBoolean("showDirtyMarker", true, ctx.cwd))} ${provider ? `${provider} / ` : ""}${formatModelName(ctx)}`;
 	const workingPrefix = workingIndicator ? `${workingIndicator} ` : "";
 	const statusSeparator = " / ";

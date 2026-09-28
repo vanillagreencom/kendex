@@ -61,7 +61,7 @@
           "label": "Show model provider",
           "description": "Show a readable provider name before the model, for example Copilot / GPT 6 Astra.",
           "type": "boolean",
-          "default": false,
+          "default": true,
           "category": "Statusline",
           "apply": "live"
         },

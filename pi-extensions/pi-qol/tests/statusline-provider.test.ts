@@ -53,7 +53,7 @@ for (const [provider, label] of rows) {
 for (const enabled of [undefined, false, true]) {
 	test(`persisted provider toggle: ${enabled}`, () => {
 		config(enabled);
-		const expected = enabled ? "Copilot / " : "";
+		const expected = enabled !== false ? "Copilot / " : "";
 		expect(renderStatusLine(120, context("github-copilot"), git, pi, theme).startsWith(`kendex ${expected}GPT 6 Astra`)).toBe(true);
 	});
 }
