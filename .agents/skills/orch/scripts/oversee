@@ -19,15 +19,16 @@
 #        off its tmux pane, so a runtime other than tmux refuses
 #        `runtime-unsupported` here.
 #     2. Resolve the tmux session the window opens in: --session, else
-#        ORCH_TMUX_SESSION; with --predecessor none is resolved, since the
-#        window opens beside the predecessor's, and --session beside it
-#        refuses `option-conflict`. Neither refuses `session-unresolved`, a name
+#        ORCH_TMUX_SESSION. With neither set the launch refuses
+#        `session-unresolved`, a name
 #        tmux does not hold refuses `tmux-session-missing`, and a has-session
 #        call failing for any other reason, no server at the socket among
 #        them, refuses `tmux-failed` naming the socket. The verb needs no
 #        $TMUX: from outside tmux it reaches the person's own server, the
 #        socket tmux derives from their uid (lib/tmux-server.sh), which every
-#        line below names as `server=`.
+#        line below names as `server=`. With --predecessor no session is
+#        resolved, since the window opens beside the predecessor's, and
+#        --session beside it refuses `option-conflict`.
 #     3. Read the fleet state's `overseer` record (schemas/workflow-state.md),
 #        creating the oversee state where a fresh fleet has none. The state,
 #        like the settings, is --cwd's repository's: the launch moves there
@@ -39,7 +40,8 @@
 #        it and its generation. Two overseers never act at once; a live one
 #        is replaced as the --predecessor this launch names, or through
 #        `oversee-succeed`, never launched over. --predecessor naming any
-#        session but that live one refuses `predecessor-not-live`: a
+#        session but that live one refuses `predecessor-not-live`, its `live`
+#        field the live overseer or `none` where none is recorded: a
 #        succession stops the recorded overseer and no other pane.
 #     4. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:model:effort`
 #        entries, in order, and open on the first whose harness has a lane
@@ -72,17 +74,20 @@
 #     6. Open the session through the adapter's `create`, at the end of the
 #        tmux session, or with --predecessor right after the predecessor's
 #        window once the command and its identity are written as the
-#        record's `pending` successor (a write that fails refuses
-#        `record-unwritten step=pending` with nothing opened), print
+#        record's `pending` successor (a write that fails is the notice
+#        `line-unrecorded`), print
 #        `overseer-launch` naming the form, lane, session and window, and
 #        write the session record before the first turn: runtime tmux, the
 #        server, the pane, its window, the launch identity (harness, account,
 #        home, model, effort and directory, as the command built in step 5
 #        carries them), the launch line and generation 1, or one past the
-#        record a stopped fleet left. A record
+#        record a stopped fleet left. On a first launch a record
 #        that cannot be written closes the session and refuses
 #        `record-unwritten`: a first launch nothing records is one the hooks
-#        and the watch cannot tell from any other session.
+#        and the watch cannot tell from any other session. A succession
+#        takes the policy lib/overseer-launch.sh § ol_succession states, the
+#        one `oversee-succeed` takes: that write is the notice
+#        `record-unwritten` and the succession goes on.
 #     7. Verify the session inside --wait-secs, as a succession does: read its
 #        account, wait for a running turn through `inspect --launch`, read the
 #        account again. `overseer-wrong-lane`, `overseer-dialog` and
@@ -169,7 +174,7 @@ message() { # KEY FIELD=VALUE...
     tmux-failed) text='The tmux call the operation field names failed on the server the server field names, for another reason than an absent session: no server may be running at that socket. Nothing was opened; tmux says why below.' ;;
     state-unwritable) text='The oversee workflow state could not be created or read, so no session record can be kept. Nothing was launched.' ;;
     overseer-live) text='The fleet state names an overseer session this tmux server still lists, so a second one is not opened beside it. Two overseers never act at once: replace a live one through oversee launch --predecessor naming it, or oversee-succeed, or stop it and clear the record.' ;;
-    predecessor-not-live) text='The session --predecessor names is not the live overseer the fleet state records on this server, which the live field names, none where it records no live one. A succession only ever stops the recorded overseer; nothing was opened.' ;;
+    predecessor-not-live) text='The session --predecessor names is not the live overseer the fleet state records on this server. The live field names that overseer, or none where no live one is recorded. A succession only ever stops the recorded overseer; nothing was opened.' ;;
     option-conflict) text='--predecessor is a launch option, and a successor opens beside its predecessor rather than in the tmux session --session names, so the two are never given together.' ;;
     close-failed) text='The predecessor could not be stopped, so the successor was closed and the record put back; the predecessor keeps running.' ;;
     invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex or pi and model a model name or a tier ladder rank, or on pi a lowercase provider/id. A first launch skips pi entries.' ;;
@@ -184,7 +189,8 @@ message() { # KEY FIELD=VALUE...
     model-window-unknown) text='The claude adapter names no context window for the model this entry resolves to, and an overseer runs with its compaction off, so it would reach its wall with no handoff mark. Nothing was launched. Name a model, or a rank whose model, the window table in lib/adapters/claude.sh names.' ;;
     launch-trust-missing) text='The folder-trust entry for the launch directory could not be made in the config this session would read, so nothing was launched; the reason field is lib/lane-launch.sh'\''s.' ;;
     launch-failed) text='The session could not be opened or read; the step field names the call that failed.' ;;
-    record-unwritten) text='The session record could not be written to the fleet state, so the session was closed again, or at step=pending never opened: an overseer nothing records is one the hooks and the watch cannot tell from any other session.' ;;
+    record-unwritten) text='The session record could not be written to the fleet state. A first launch closes its session again, since an overseer nothing records is one the hooks and the watch cannot tell from any other session; a succession stands, and this is a notice.' ;;
+    line-unrecorded) text='The successor launch line could not be written to the fleet state as its pending member, so a death before the record names the successor has no line of it to send. The succession itself stands.' ;;
     overseer-launch) text='The command is built and the session opened; the form names how the picked lane reaches the harness.' ;;
     overseer-dialog) text='The session stopped at a dialog nobody is there to answer; it was closed and the record put back. The pane line follows.' ;;
     overseer-not-working) text='The session never showed a running turn inside the wait; it was closed and the record put back.' ;;
@@ -424,10 +430,10 @@ if [[ -n "$live" ]]; then
   ol_session_inspect "$live_pane" || die launch-failed step=inspect
   if [[ "$OL_INSPECT_STATE" == gone || "$OL_INSPECT_SERVER" != "$live_server" ]]; then live_pane=""; fi
 fi
-[[ -z "$live_pane" || "$live_pane" == "$PREDECESSOR" ]] \
-  || die overseer-live "session=$live_pane" "server=$SERVER_SOCKET" "generation=$live_generation"
 [[ -z "$PREDECESSOR" || "$live_pane" == "$PREDECESSOR" ]] \
   || die predecessor-not-live "session=$PREDECESSOR" "live=${live_pane:-none}" "server=$SERVER_SOCKET"
+[[ -z "$live_pane" || -n "$PREDECESSOR" ]] \
+  || die overseer-live "session=$live_pane" "server=$SERVER_SOCKET" "generation=$live_generation"
 
 HEADROOM_TRIGGER="${ORCH_OVERSEER_HEADROOM_PCT:-10}"
 matches "$HEADROOM_TRIGGER" '^[0-9]{1,3}$' && (( 10#$HEADROOM_TRIGGER <= 100 )) \
@@ -481,23 +487,27 @@ trap 'interrupted TERM' TERM
 trap 'interrupted INT' INT
 trap 'interrupted HUP' HUP
 
-# A succession opens beside its predecessor, the command and its identity
-# written first as the record's `pending` successor, which a death before the
-# record names the successor replays (lib/overseer-launch.sh §
-# ol_record_pending); a first launch opens at the end of the tmux session.
-placement=(--session "$SESSION_NAME")
-if [[ -n "$PREDECESSOR" ]]; then
-  placement=(--after "$PREDECESSOR")
-  ol_record_pending "$OL_CMD" "$OL_IDENTITY" || die record-unwritten field=overseer step=pending
-fi
-ol_session_open "$CWD" overseer "$OL_CMD" "${placement[@]}" || abandon launch-failed "step=$OL_REASON"
-SESSION="$OL_SESSION"
-message overseer-launch "form=$OL_FORM" "lane=$lane_dir" "trust=$OL_TRUST_ROUTE" \
-  "session=$SESSION" "window=$OL_WINDOW" "server=$SERVER_SOCKET"
-ol_record_write "$OL_RUNTIME" "$SESSION" "$OL_WINDOW" "$OL_SERVER" "$OL_IDENTITY" "$OL_CMD" \
-  || abandon record-unwritten field=overseer step=write
-
-if ! ol_session_verify "$SESSION" "$OL_LANE_VAR" "$lane_dir" "$OL_FORM" "$WAIT_SECS"; then
+# This script's words at each step of a launch: the ones
+# lib/overseer-launch.sh's ol_succession asks for, which the first launch
+# below says at the same points of its own steps.
+ol_succession_hook() { # STEP
+  case "$1" in
+    pending-unrecorded)
+      message line-unrecorded field=overseer.pending >&2
+      [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2 ;;
+    opened)
+      SESSION="$OL_SESSION"
+      message overseer-launch "form=$OL_FORM" "lane=$lane_dir" "trust=$OL_TRUST_ROUTE" \
+        "session=$SESSION" "window=$OL_WINDOW" "server=$SERVER_SOCKET" ;;
+    record-unwritten)
+      message record-unwritten field=overseer step=write >&2
+      [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2 ;;
+    verified) [[ -z "$OL_UNOBSERVED" ]] || message overseer-lane-unobserved "reason=$OL_UNOBSERVED" >&2 ;;
+  esac
+}
+# ol_session_verify's refusals, each closing the session and putting the
+# record back.
+refuse_unverified() {
   case "$OL_REASON" in
     wrong-lane) abandon overseer-wrong-lane "picked=$lane_dir" "observed=$OL_OBSERVED" ;;
     result-unknown) abandon overseer-lane-unknown "result=$OL_RESULT" ;;
@@ -506,16 +516,34 @@ if ! ol_session_verify "$SESSION" "$OL_LANE_VAR" "$lane_dir" "$OL_FORM" "$WAIT_S
     inspect-failed) abandon launch-failed "step=$OL_STEP" ;;
     *) abandon launch-failed step=verify "reason=$OL_REASON" ;;
   esac
-fi
-[[ -z "$OL_UNOBSERVED" ]] || message overseer-lane-unobserved "reason=$OL_UNOBSERVED" >&2
-# The predecessor's stop is the commit point: the successor takes its window
-# slot, and where this runs in the predecessor's own window the stop ends it,
-# so no signal may undo that. A stop that fails leaves the predecessor
-# running and closes the successor.
+}
+
+SESSION=""
 if [[ -n "$PREDECESSOR" ]]; then
-  trap '' HUP TERM INT
-  ol_session_stop "$PREDECESSOR" "$SESSION" || abandon close-failed "predecessor=$PREDECESSOR"
+  # A succession is lib/overseer-launch.sh's ol_succession, the one
+  # `oversee-succeed` runs: the pending record, the session opened right after
+  # the predecessor's window, the record, the verification and the stop that
+  # swaps the successor into the predecessor's slot, the commit point. A
+  # record write that fails is a notice there, as that function says why.
+  if ! ol_succession "$PREDECESSOR" "$CWD" "$OL_CMD" "$OL_IDENTITY" pending \
+      "$OL_LANE_VAR" "$lane_dir" "$OL_FORM" "$WAIT_SECS"; then
+    case "$OL_REASON" in
+      create-failed) abandon launch-failed "step=$OL_REASON" ;;
+      stop-failed) abandon close-failed "predecessor=$PREDECESSOR" ;;
+      *) refuse_unverified ;;
+    esac
+  fi
+else
+  # A first launch opens at the end of the tmux session, and a record it
+  # cannot write closes it again: nothing else would tell it from any other
+  # session.
+  ol_session_open "$CWD" overseer "$OL_CMD" --session "$SESSION_NAME" || abandon launch-failed "step=$OL_REASON"
+  ol_succession_hook opened
+  ol_record_write "$OL_RUNTIME" "$SESSION" "$OL_WINDOW" "$OL_SERVER" "$OL_IDENTITY" "$OL_CMD" \
+    || abandon record-unwritten field=overseer step=write
+  ol_session_verify "$SESSION" "$OL_LANE_VAR" "$lane_dir" "$OL_FORM" "$WAIT_SECS" || refuse_unverified
+  ol_succession_hook verified
 fi
 trap - HUP TERM INT
 message overseer-launched "session=$SESSION" "window=$OL_WINDOW" "server=$SERVER_SOCKET" \
-  "generation=$OL_GENERATION" "lane=$lane_dir" ${PREDECESSOR:+"predecessor=$PREDECESSOR"}
+  "generation=${OL_GENERATION:-none}" "lane=$lane_dir" ${PREDECESSOR:+"predecessor=$PREDECESSOR"}

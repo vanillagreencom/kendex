@@ -6,8 +6,9 @@
 # succession cannot come to open, verify or record a session differently.
 # What differs between them is policy and stays with the caller: which marks
 # fire and which entries the account walk tries; the walk and the flag
-# assembly apply that policy the same way for both. `oversee-watch` sources it too, through lib/watch-overseer-record.sh,
-# for OL_JQ_DEFS, ol_preference and ol_session_inspect. What is shared is here:
+# assembly apply that policy the same way for both. `oversee-watch` sources
+# it too, through lib/watch-overseer-record.sh, for OL_JQ_DEFS, ol_preference
+# and ol_session_inspect. What is shared is here:
 #
 #   ol_preference          the ORCH_OVERSEER_PREFERENCE value, its default
 #                          ladder where the setting is unset
@@ -42,8 +43,10 @@
 #                          current session's launch identity read back
 #   ol_session_verify      the account read, the first working turn and the
 #                          confirming read, inside one deadline
-#   ol_session_inspect     the runtime's `inspect`, the one read of a session
-#                          its liveness, its window and its state come from
+#   ol_session_inspect     the runtime's `inspect` of a recorded session: its
+#                          liveness, window, server and state
+#   ol_succession          one succession from the pending record to the
+#                          committing stop, the caller's words at each step
 #   ol_session_stop        the runtime's `stop`
 #   ol_session_abandon     the close-out every refusal after `create` takes:
 #                          the session stopped, the prior record put back
@@ -611,17 +614,22 @@ ol_session_from_out() {
   done
 }
 
-# ol_session_inspect SESSION [--launch] — the runtime's `inspect`, the one
-# read every reader of an overseer session takes of it: the keyed line's
-# state, server, window and cause into OL_INSPECT_STATE, OL_INSPECT_SERVER,
-# OL_INSPECT_WINDOW and OL_INSPECT_CAUSE, each empty where the line names
-# none, the line itself into OL_INSPECT_LINE and the snapshot under it into
-# OL_DETAIL. Returns 1 with
-# OL_REASON=inspect-failed; the provider's own line is in DEP_ERR.
-OL_INSPECT_STATE="" OL_INSPECT_SERVER="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_LINE=""
+# ol_session_inspect SESSION [--launch] — the runtime's `inspect`, the read
+# the launch's live-overseer check, the succession's read of its caller and
+# its wait for the caller to close, and the watch's per-pass overseer read
+# take: the keyed line's state, server, window, cause and probe into
+# OL_INSPECT_STATE, OL_INSPECT_SERVER, OL_INSPECT_WINDOW, OL_INSPECT_CAUSE and
+# OL_INSPECT_PROBE, each empty where the line names none, and window and
+# server the word `none` for a session the runtime no longer lists; the line
+# itself into OL_INSPECT_LINE and the snapshot under it into OL_DETAIL.
+# OL_INSPECT_CAUSE is the comma-separated scans the judge could not run, and
+# OL_INSPECT_PROBE the child probe's exit status where one of them is
+# `process-probe`. Returns 1 with OL_REASON=inspect-failed; the provider's own
+# line is in DEP_ERR.
+OL_INSPECT_STATE="" OL_INSPECT_SERVER="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_PROBE="" OL_INSPECT_LINE=""
 ol_session_inspect() { # SESSION [--launch]
   local out word
-  OL_INSPECT_STATE="" OL_INSPECT_SERVER="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_DETAIL=""
+  OL_INSPECT_STATE="" OL_INSPECT_SERVER="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_PROBE="" OL_DETAIL=""
   out="$("$SCRIPT_DIR/overseer-host" inspect --session "$1" ${2:+"$2"} 2>"$DEP_ERR")" \
     || { OL_REASON=inspect-failed; return 1; }
   OL_INSPECT_LINE="${out%%$'\n'*}"
@@ -631,6 +639,7 @@ ol_session_inspect() { # SESSION [--launch]
       server=*) OL_INSPECT_SERVER="${word#server=}" ;;
       window=*) OL_INSPECT_WINDOW="${word#window=}" ;;
       cause=*) OL_INSPECT_CAUSE="${word#cause=}" ;;
+      probe=*) OL_INSPECT_PROBE="${word#probe=}" ;;
     esac
   done
   [[ "$out" != *$'\n'* ]] || OL_DETAIL="${out#*$'\n'}"
@@ -670,6 +679,50 @@ ol_session_abandon() {
   fi
   if [[ -n "$detail" ]]; then printf '%s\n' "$detail" > "$DEP_ERR"; else : > "$DEP_ERR"; fi
   return "$rc"
+}
+
+# ol_succession PREDECESSOR CWD LINE IDENTITY PENDING LANE_VAR LANE_DIR FORM
+# WAIT_SECS — one succession, from the successor's first record write to the
+# commit point, whichever launcher runs it: `oversee launch --predecessor` and
+# `oversee-succeed` in every mode. In order:
+#   1. With PENDING `pending`, LINE and IDENTITY become the record's pending
+#      successor (ol_record_pending); `replay`, a relaunch of the line the
+#      record already holds, writes none.
+#   2. The runtime's `create` opens LINE in CWD right after PREDECESSOR.
+#   3. The record names the successor (ol_record_write over OL_PRIOR), where
+#      the caller's ol_record_read could read one.
+#   4. The session is verified (ol_session_verify, LANE_VAR to WAIT_SECS).
+#   5. The predecessor is stopped with the successor taking its slot: the
+#      commit point, so HUP, INT and TERM are ignored from here on, and a
+#      caller running in the predecessor's own window ends with it.
+# A record write that fails at step 1 or 3 does not stop the succession: the
+# fleet state is where the record lives, a run with none still has a fleet to
+# hand over, and a predecessor kept for want of a record is an overseer the
+# fleet is about to lose anyway. The caller defines
+# ol_succession_hook STEP, called at each point it speaks: `pending-unrecorded`
+# and `record-unwritten` with the writer's words in DEP_ERR, `opened` once
+# OL_SESSION and OL_WINDOW name the successor, and `verified` just before the
+# commit point, for its notices and whatever it arranges before its window may
+# end. Returns 0 once committed, and 1 with OL_REASON create-failed at step 2,
+# ol_session_verify's reasons at step 4 and stop-failed at step 5, the
+# provider's words in DEP_ERR, the successor left for the caller's
+# ol_session_abandon.
+ol_succession() { # PREDECESSOR CWD LINE IDENTITY PENDING LANE_VAR LANE_DIR FORM WAIT_SECS
+  local predecessor="$1" cwd="$2" line="$3" identity="$4" pending="$5"
+  shift 5
+  if [[ "$pending" == pending ]] && ! ol_record_pending "$line" "$identity"; then
+    ol_succession_hook pending-unrecorded
+  fi
+  ol_session_open "$cwd" overseer "$line" --after "$predecessor" || return 1
+  ol_succession_hook opened
+  if [[ -n "$OL_PRIOR" ]] \
+     && ! ol_record_write "$OL_RUNTIME" "$OL_SESSION" "$OL_WINDOW" "$OL_SERVER" "$identity" "$line"; then
+    ol_succession_hook record-unwritten
+  fi
+  ol_session_verify "$OL_SESSION" "$@" || return 1
+  ol_succession_hook verified
+  trap '' HUP TERM INT
+  ol_session_stop "$predecessor" "$OL_SESSION" || { OL_REASON=stop-failed; return 1; }
 }
 
 # ---------------------------------------------------------------------------

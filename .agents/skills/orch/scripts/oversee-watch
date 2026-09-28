@@ -1929,11 +1929,13 @@ report_tail() { # BLOCK
 }
 
 # Said once per run, not per pass: the answer does not change under the watch.
+# EXIT is the probe's status where another process ran it, as the overseer's
+# `inspect` does; this run's own probe left it in LANE_PROBE_RC otherwise.
 LANE_PROBE_NOTED=0
-note_probe_unusable() {
+note_probe_unusable() { # LANE [EXIT]
   [[ "$LANE_PROBE_NOTED" -eq 0 ]] || return 0
   LANE_PROBE_NOTED=1
-  ow_message child-probe-failed "lane=$1" "exit=$LANE_PROBE_RC" >&2
+  ow_message child-probe-failed "lane=$1" "exit=${2:-$LANE_PROBE_RC}" >&2
 }
 
 # Drop KIND rows naming a lane this run does not watch. A row answers only for
@@ -2500,7 +2502,7 @@ overseer_pane_read() { # PANE
   server="$OL_INSPECT_SERVER"
   OV_IDENTITY="$server $pane"
   [[ "$OL_INSPECT_STATE" != exited ]] || bare=1
-  [[ "$OL_INSPECT_CAUSE" != process-probe ]] || note_probe_unusable "$pane"
+  [[ ",$OL_INSPECT_CAUSE," != *,process-probe,* ]] || note_probe_unusable "$pane" "$OL_INSPECT_PROBE"
   # The rows file and the exit status the record holds for THIS pane on THIS
   # server, and neither for a record naming another session: that one's are
   # not this pane's. An exit status is `overseer-run`'s, written once the
@@ -2540,7 +2542,7 @@ overseer_pane_read() { # PANE
   # the pane; its sixth argument is empty for the reason check_lanes gives:
   # this watch's vantage point is the pane, and a screen the pane rungs cannot
   # settle is `unjudged`, never `exited`.
-  [[ "$OL_INSPECT_CAUSE" != limit-scan ]] \
+  [[ ",$OL_INSPECT_CAUSE," != *,limit-scan,* ]] \
     || { overseer_note overseer-unreadable "pane=$pane" "scan=usage-limit"; return 1; }
   OV_STATE="$OL_INSPECT_STATE"
   OV_SCREEN="$OL_DETAIL"

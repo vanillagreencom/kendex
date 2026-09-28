@@ -227,7 +227,8 @@
 #        launched there with a brief naming the handoff file. The steps from
 #        here to the close are
 #        lib/overseer-launch.sh's, the one launcher `oversee launch` runs a
-#        first launch through. The command is built by lib/lane-launch.sh,
+#        first launch or a --predecessor succession through, the succession
+#        itself its ol_succession. The command is built by lib/lane-launch.sh,
 #        the builder open-terminal uses, so a machine whose harness command is
 #        an account shim is launched through that shim rather than under an
 #        environment prefix it overwrites. Before the successor's first turn
@@ -1437,17 +1438,14 @@ if ! ol_record_read; then
   message record-unwritten field=overseer step=read >&2
   [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
 fi
-# Recorded BEFORE the window opens, not after the close: the close kills this
-# script's own window and a write placed after it may never run. The line and
-# the successor's launch identity are the record's `pending` member, apart from
-# the caller's own fields (lib/overseer-launch.sh § ol_record_pending), from
-# here until the session record names the successor, and a launch that is
-# abandoned once its window opened puts the caller's record back as it was
-# read above. The state is the fleet's, so a run outside a fleet has none: that
-# is a notice, never a reason to leave the fleet unattended. `walled` records
-# too: its successor runs a command this run built, and a later death that read
-# the walled session's line would relaunch onto the account this recovery just
-# left.
+# The successor is recorded BEFORE its window opens, not after the close: the
+# close kills this script's own window and a write placed after it may never
+# run. Its line and launch identity are the record's `pending` member until
+# the session record names it (lib/overseer-launch.sh § ol_succession), and a
+# write that fails is a notice, never a reason to leave the fleet unattended.
+# `walled` records too: its successor runs a command this run built, and a
+# later death that read the walled session's line would relaunch onto the
+# account this recovery just left. `dead` replays the line the record holds.
 # The launch identity the record writes below carries: the one the command was
 # built with, and in `dead`, which built none, the one the record holds for
 # the line it replays (lib/overseer-launch.sh § ol_record_line_identity), so a
@@ -1464,12 +1462,8 @@ if [[ "$MODE" == dead ]]; then
   replay_cwd="$(jq -r '.cwd // empty' <<<"${OL_IDENTITY:-null}" 2>/dev/null)" || replay_cwd=""
   [[ -z "$replay_cwd" ]] || CALLER_PATH="$replay_cwd"
 fi
-if [[ "$MODE" == succeed || "$MODE" == walled ]]; then
-  if ! ol_record_pending "$cmd" "$OL_IDENTITY"; then
-    message line-unrecorded "field=overseer.pending" >&2
-    [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
-  fi
-fi
+PENDING=pending
+[[ "$MODE" != dead ]] || PENDING=replay
 # Which form the lane reached the harness by, before the window exists: on a
 # host where the two disagree about the account, this line is what says which
 # selector was used and a refusal below is read against it. The trust field
@@ -1499,48 +1493,33 @@ trap 'interrupted TERM' TERM
 trap 'interrupted INT' INT
 trap 'interrupted HUP' HUP
 
-# The runtime's create, through overseer-host (../schemas/overseer-host.md):
-# on tmux a window named overseer right after the caller's, the command typed
-# into it.
-ol_session_open "$CALLER_PATH" overseer "$cmd" --after "$CALLER_PANE" || abandon launch-failed "step=$OL_REASON"
-SUCC_PANE="$OL_SESSION" SUCC_WINDOW="$OL_WINDOW"
-
-# The session record, written before the successor's first turn: the runtime,
-# the server, the session, the launch identity chosen above, its own launch
-# line and one generation past the record it replaces, over the caller's record read
-# above, so the hooks and the watch can tell this session from the one it
-# succeeds. A state the read above could not open is not written to.
-if [[ -n "$OL_PRIOR" ]] && ! ol_record_write "$OL_RUNTIME" "$SUCC_PANE" "$SUCC_WINDOW" "$OL_SERVER" "$OL_IDENTITY" "$cmd"; then
-  message record-unwritten field=overseer step=write >&2
-  [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
-fi
-
-# The account the session is really on, its first working turn and the
-# confirming read, inside the one --wait-secs bound: lib/overseer-launch.sh's
-# ol_session_verify, whose header says why the account is asked twice and
-# why only the second read answers. Every refusal it returns closes the
-# successor before the commit point, so a disagreement costs nothing but the
-# successor.
-if ! ol_session_verify "$SUCC_PANE" "$lane_var" "$lane_dir" "$LANE_FORM" "$WAIT_SECS"; then
-  case "$OL_REASON" in
-    wrong-lane) abandon successor-wrong-lane "picked=$lane_dir" "observed=$OL_OBSERVED" ;;
-    result-unknown) abandon successor-lane-unknown "result=$OL_RESULT" ;;
-    # The pane line and the last screen are in DEP_ERR, where the library
-    # put them: on the line after the keyed one, as dependency detail goes.
-    dialog) abandon successor-dialog "window=$SUCC_WINDOW" "waited=$OL_WAITED" ;;
-    not-working) abandon successor-not-working "window=$SUCC_WINDOW" "waited=$OL_WAITED" ;;
-    inspect-failed) abandon launch-failed "step=$OL_STEP" ;;
-    *) abandon launch-failed "step=verify" "reason=$OL_REASON" ;;
+# The succession itself is lib/overseer-launch.sh's ol_succession, the one
+# `oversee launch --predecessor` runs: the pending record, the runtime's
+# create right after the caller's window, the session record, the account and
+# first-turn verification inside the one --wait-secs bound (ol_session_verify
+# says why the account is asked twice), and the stop that swaps the successor
+# into the caller's slot, the commit point. These are this script's words at
+# each step it reports. `verified` arranges step 6 of the header before the
+# close, because nothing after it can be counted on to run; the helper is
+# started before the commit point ignores any signal, so it inherits none of
+# those ignores.
+ol_succession_hook() { # STEP
+  case "$1" in
+    pending-unrecorded)
+      message line-unrecorded "field=overseer.pending" >&2
+      [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2 ;;
+    opened) SUCC_PANE="$OL_SESSION" SUCC_WINDOW="$OL_WINDOW" ;;
+    record-unwritten)
+      message record-unwritten field=overseer step=write >&2
+      [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2 ;;
+    verified)
+      # The deciding read could not observe the account: the launch stands,
+      # and the notice says why the check refused nothing.
+      [[ -z "$OL_UNOBSERVED" ]] || message successor-lane-unobserved "reason=$OL_UNOBSERVED" >&2
+      [[ "$MODE" != succeed ]] || watch_handover ;;
   esac
-fi
-# The deciding read could not observe the account: the launch stands, and the
-# notice says why the check refused nothing.
-[[ -z "$OL_UNOBSERVED" ]] || message successor-lane-unobserved "reason=$OL_UNOBSERVED" >&2
-
-# Step 6 (header), arranged here, before the close, because nothing after it
-# can be counted on to run. The helper is started before the commit point
-# ignores any signal, so it inherits none of those ignores.
-if [[ "$MODE" == succeed ]]; then
+}
+watch_handover() {
   if ! watch_state="$("$SCRIPT_DIR/workflow-state" path oversee 2>"$DEP_ERR")"; then
     message watch-restart-failed step=state-path >&2
     [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
@@ -1555,11 +1534,22 @@ if [[ "$MODE" == succeed ]]; then
       message watch-restart-failed step=helper "pid=$old_watch" "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR" >&2
     fi
   fi
+}
+# Every refusal closes the successor before the commit point, or at a stop
+# that failed, so a disagreement costs nothing but the successor.
+if ! ol_succession "$CALLER_PANE" "$CALLER_PATH" "$cmd" "$OL_IDENTITY" "$PENDING" \
+    "$lane_var" "$lane_dir" "$LANE_FORM" "$WAIT_SECS"; then
+  case "$OL_REASON" in
+    create-failed) abandon launch-failed "step=$OL_REASON" ;;
+    stop-failed) abandon close-failed "window=$CALLER_WINDOW" ;;
+    wrong-lane) abandon successor-wrong-lane "picked=$lane_dir" "observed=$OL_OBSERVED" ;;
+    result-unknown) abandon successor-lane-unknown "result=$OL_RESULT" ;;
+    # The pane line and the last screen are in DEP_ERR, where the library
+    # put them: on the line after the keyed one, as dependency detail goes.
+    dialog) abandon successor-dialog "window=$SUCC_WINDOW" "waited=$OL_WAITED" ;;
+    not-working) abandon successor-not-working "window=$SUCC_WINDOW" "waited=$OL_WAITED" ;;
+    inspect-failed) abandon launch-failed "step=$OL_STEP" ;;
+    *) abandon launch-failed "step=verify" "reason=$OL_REASON" ;;
+  esac
 fi
-
-# The close is the commit point and HUPs this window: no signal may undo it.
-# The runtime's stop with the successor named: on tmux the successor takes
-# the caller's slot and the caller's window closes, in one client call.
-trap '' HUP TERM INT
-ol_session_stop "$CALLER_PANE" "$SUCC_PANE" || abandon close-failed "window=$CALLER_WINDOW"
 message successor-working "window=$SUCC_WINDOW" "pane=$SUCC_PANE"

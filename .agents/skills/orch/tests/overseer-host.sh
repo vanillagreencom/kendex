@@ -87,7 +87,7 @@ TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 SERVER_PID="$(tm display-message -p '#{pid}')"
 run_tmux() { # ARGS...
   RC=0
-  OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$TMP_ROOT" PATH="$PATH" TMUX="$TMUX_ADDR" "${PROVIDER_BIN:-$HOST}" "$@" 2>&1 </dev/null)" || RC=$?
+  OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$TMP_ROOT" PATH="${RUN_PATH:-$PATH}" TMUX="$TMUX_ADDR" "${PROVIDER_BIN:-$HOST}" "$@" 2>&1 </dev/null)" || RC=$?
 }
 layout() { tm list-windows -t fleet -F '#{window_index} #{window_name}' | awk '$1 > 0' | tr '\n' ';'; }
 field() { awk -v k="$2=" 'NR == 1 { for (i = 1; i <= NF; i++) if (index($i, k) == 1) { print substr($i, length(k) + 1); exit } }' <<<"$1"; }
@@ -153,6 +153,49 @@ run_tmux inspect --session %999
 assert_eq "$RC|$(tr '\n' ';' <<<"$OUT")" \
   "0|session=%999 window=none server=none state=gone;" \
   "inspect on a session the server does not list answers gone with no screen"
+# A pane that closes between the listing and the capture is gone, never an
+# unreadable session: a tmux on PATH that closes the pane just before its
+# capture, the window a succession's stop closes while its caller's wait reads.
+RACE_BIN="$TMP_ROOT/race-bin"
+mkdir -p "$RACE_BIN"
+race_pane() { # INDEX — a pane the tmux on RACE_BIN closes just before its capture
+  RACE="$(new_pane "$1" 'exec sleep 100000')"
+  cat > "$RACE_BIN/tmux" <<STUB
+#!/bin/sh
+[ "\$1" != capture-pane ] || "$(command -v tmux)" kill-pane -t "$RACE" 2>/dev/null
+exec "$(command -v tmux)" "\$@"
+STUB
+  chmod +x "$RACE_BIN/tmux"
+}
+race_pane 11
+RUN_PATH="$RACE_BIN:$PATH" run_tmux inspect --session "$RACE"
+assert_eq "$RC|$(tr '\n' ';' <<<"$OUT")" \
+  "0|session=$RACE window=none server=none state=gone;" \
+  "inspect on a session that closes during the read answers gone"
+# Its control: a provider that refuses every failed read as unreadable.
+RACECTL="$(mutant_scripts racectl overseer-host-tmux)" || exit 1
+mutate_file "$RACECTL/overseer-host-tmux" '  detail="$(cat -- "$DEP_ERR")" || detail=""' \
+  '  die session-unreadable "session=$SESSION" "$@"'
+race_pane 12
+PROVIDER_BIN="$RACECTL/overseer-host-tmux" RUN_PATH="$RACE_BIN:$PATH" run_tmux inspect --session "$RACE"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "1|overseer-host-tmux: session-unreadable session=$RACE field=capture" \
+  "control: without the second listing a pane closed during the read is unreadable"
+# A child probe that cannot run is named with its own exit status: a pgrep
+# on PATH that fails as a broken probe does, under a bare shell.
+PROBE_BIN="$TMP_ROOT/probe-bin"
+mkdir -p "$PROBE_BIN"
+printf '#!/bin/sh\nexit 3\n' > "$PROBE_BIN/pgrep"
+chmod +x "$PROBE_BIN/pgrep"
+RUN_PATH="$PROBE_BIN:$PATH" run_tmux inspect --session "$SHELL_PANE"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT" | grep -o ' cause=.*')" \
+  "0| cause=process-probe probe=3" \
+  "inspect names a child probe that could not run and its exit status"
+PROBECTL="$(mutant_scripts probectl overseer-host-tmux)" || exit 1
+mutate_file "$PROBECTL/overseer-host-tmux" 'cause="$cause,process-probe probe=$LANE_PROBE_RC"' 'cause="$cause,process-probe"'
+PROVIDER_BIN="$PROBECTL/overseer-host-tmux" RUN_PATH="$PROBE_BIN:$PATH" run_tmux inspect --session "$SHELL_PANE"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT" | grep -o ' cause=.*')" "0| cause=process-probe" \
+  "control: a provider that drops the probe status names the cause alone"
 run_tmux inspect --session fleet:3
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "2|overseer-host-tmux: invalid-session value=fleet:3" \

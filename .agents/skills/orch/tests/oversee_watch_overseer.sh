@@ -798,6 +798,23 @@ assert_eq "rc=$RC launched=$(succeed_calls --dead-pane)" "rc=0 launched=0" \
 assert_eq "$(grep -c "oversee-watch: overseer-unreadable pane=$PANE field=inspect" "$ERR")" "1" \
   "and the reason is named once" "$ERR"
 
+# A child probe the adapter's `inspect` could not run is named with the
+# status the adapter reported, never one this watch's own lane probes left.
+probe_case() { # WATCH_BIN
+  overseer_case probe_unusable exited
+  state_with "$LINE"
+  printf '3\n' > "$STUB_DIR/probe-fail-9009"
+  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" -- --max-loops 1
+  PROBE_NOTE="$(grep -c "^oversee-watch: child-probe-failed lane=$PANE exit=3\$" "$ERR" || true)"
+}
+probe_case
+assert_eq "$PROBE_NOTE" "1" "an overseer child probe that cannot run is named with the adapter's status" "$ERR"
+PROBE_MUTANT="$(mutant_scripts probe-mutant/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/probe-mutant/github"
+mutate_file "$PROBE_MUTANT/oversee-watch" 'note_probe_unusable "$pane" "$OL_INSPECT_PROBE"' 'note_probe_unusable "$pane"'
+probe_case "$PROBE_MUTANT/oversee-watch"
+assert_eq "$PROBE_NOTE" "0" "control: a note taking the watch's own probe status misnames the overseer's" "$ERR"
+
 # --- the settings this check reads ----------------------------------------
 overseer_case dead_passes_one exited
 state_with "$LINE"

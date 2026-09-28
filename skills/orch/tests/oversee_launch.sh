@@ -151,7 +151,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
 # The must-fail control: a launcher that skips the liveness check opens a
 # second overseer beside the first.
 LIVECTL="$(mutant_scripts livectl oversee)" || exit 1
-mutate_file "$LIVECTL/oversee" '[[ -z "$live_pane" || "$live_pane" == "$PREDECESSOR" ]] \' 'true \'
+mutate_file "$LIVECTL/oversee" '[[ -z "$live_pane" || -n "$PREDECESSOR" ]] \' 'true \'
 OVERSEE_BIN="$LIVECTL/oversee" run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(overseers)|$(recorded generation)" \
   "0|2|2" \
@@ -479,12 +479,12 @@ assert_eq "$RC|$(sed 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=%N/
   "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=$((PRED_GEN + 1)) lane=$H/.claude predecessor=$PRED|1|$SUCC|$((PRED_GEN + 1))|none|$PRED_INDEX|0" \
   "a launch naming the live overseer as predecessor opens its successor in its slot, stops it and records the next generation"
 # A predecessor other than the live recorded overseer is refused before
-# anything opens: with one live, as that overseer; with none, as a pane the
-# fleet never recorded, which the succession would otherwise stop.
+# anything opens, naming the live one, or none where none is recorded: a pane
+# the fleet never recorded, which the succession would otherwise stop.
 OTHER="$(tm new-window -d -t fleet -n other -P -F '#{pane_id}' 'exec sleep 100000')"
 run_oversee -- launch --predecessor "$OTHER" --wait-secs 20
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "1|oversee: overseer-live session=$SUCC server=$SOCKET generation=$((PRED_GEN + 1))|1" \
+  "1|oversee: predecessor-not-live session=$OTHER live=$SUCC server=$SOCKET|1" \
   "a predecessor beside a live recorded overseer is refused naming the live one"
 tm kill-window -t "$(recorded window)"
 run_oversee -- launch --predecessor "$OTHER" --wait-secs 20
