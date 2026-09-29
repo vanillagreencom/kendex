@@ -25,7 +25,8 @@ PATH_ERR=""
 # What the missing-kendex notice names: the manifest file this project's
 # declarations would be in and what became of reading it, how many packages
 # that read found, the route that installs the command on this platform, and
-# the trees nothing may hand-edit. Each is settled at its own site below.
+# the trees nothing may hand-edit. Each is settled at its own site below. The
+# too-old notice names the same install route, in its fallback sentence.
 MANIFEST_FILE=""
 MANIFEST_STATE=""
 PKG_COUNT=""
@@ -218,13 +219,20 @@ notice() { # KEY VALUE
       # a tracked file, so a kendex that refuses it is named for what it is,
       # with the route that replaces it; running the check without the flag
       # would be the write the flag exists to stop. That route is the
-      # command's own updater: a kendex command is on PATH to have refused
-      # the flag, and `kendex update` asks the package manager who owns it
-      # (crates/core/src/install_channel.rs) and names that manager's route
-      # for a copy it does not own. The installer would put a second copy
-      # beside a package-managed one.
+      # command's own updater, because a kendex command is on PATH to have
+      # refused the flag. `kendex update` judges who owns the copy
+      # (crates/core/src/install_channel.rs::for_cli): a copy a package
+      # manager owns gets that manager's command, a copy inside the desktop
+      # app is sent to the app's Update now, a copy it owns is replaced, and
+      # a copy it cannot place is refused with no route. The installer would
+      # put a second copy beside a package-managed one, so it is no keyed
+      # route; it is named only in the sentence for that refusal, which
+      # install.sh answers by picking the same directory on PATH again. The
+      # hook does not judge the owner itself: `kendex update` is that judge.
       printf 'session-drift-check: install=kendex update\n'
-      printf 'This kendex predates the check --report-only flag this hook runs, so drift status is unknown. Update kendex with the command above, then start a new session. What kendex said:\n%s\n' "$OUTPUT"
+      printf 'This kendex predates the check --report-only flag this hook runs, so drift status is unknown. Update kendex with the command above, then start a new session.\n'
+      printf 'If kendex update answers that it cannot tell how this copy was installed, run the kendex installer for this platform again, which replaces that same copy in place: %s\n' "$INSTALL_ROUTE"
+      printf 'What kendex said:\n%s\n' "$OUTPUT"
       ;;
     check=incomplete)
       printf 'session-drift-check: exit=%s\n' "$RC"
@@ -332,6 +340,7 @@ case "$RC" in
       # clap's own refusal of an argument it does not know, in the spelling
       # clap prints.
       "error: unexpected argument '--report-only'"*)
+        install_route
         notice check kendex-too-old
         ;;
       "" | Error:* | error:*) notice check could-not-run ;;

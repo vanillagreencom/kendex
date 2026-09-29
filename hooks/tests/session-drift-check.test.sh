@@ -252,6 +252,40 @@ run_row 2 too-old >/dev/null
 assert_eq "$(calls)" "check --quiet --report-only" "a kendex that refuses the flag is not asked again without it"
 assert_contains "$(relayed_text)" "error: unexpected argument '--report-only' found" "kendex's refusal is relayed under the notice"
 
+# The install routes the hook names on each platform, spelled here rather than
+# read off the hook, so a route that moves reddens the rows that pin it.
+CURL_ROUTE="curl -fsSL https://kendex.ai/install.sh | sh"
+DOWNLOAD_ROUTE="https://kendex.ai/download"
+
+echo "session-drift-check: the too-old notice names the installer only as kendex update's fallback"
+# `kendex update` is the one keyed route: it judges who owns the copy, and
+# the installer would put a second copy beside a package-managed one. A copy
+# it cannot place it refuses with no route, so the installer stands in one
+# plain line that names that refusal, never as a keyed line. Each row is
+# `ostype|route`, the route standing last because it may hold a pipe.
+while IFS='|' read -r ostype route; do
+  : >"$ARGS_LOG"
+  rc=0
+  env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
+    PATH="$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
+    FAKE_RC=2 FAKE_OUT="$(fake_out too-old)" OSTYPE="$ostype" \
+    bash "$HOOK" <<<'{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' \
+    >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr" || rc=$?
+  holders="$(grep -F -- "$route" "$TMP_ROOT/stdout" || true)"
+  holder_count=0
+  [[ "$holders" == "" ]] || holder_count="$(printf '%s\n' "$holders" | wc -l | tr -d '[:space:]')"
+  holder_keyed=no
+  [[ "$holders" != session-drift-check:* ]] || holder_keyed=yes
+  holder_names_update=no
+  [[ "$holders" != *"kendex update"* ]] || holder_names_update=yes
+  assert_eq "rc=$rc keyed=$(keyed_of) route-lines=$holder_count route-keyed=$holder_keyed route-names-update=$holder_names_update" \
+    "rc=0 keyed=check=kendex-too-old;install=kendex update route-lines=1 route-keyed=no route-names-update=yes" \
+    "OSTYPE=$ostype: install=kendex update is the keyed route, the installer one plain line for its refusal"
+done <<EOF
+linux-gnu|$CURL_ROUTE
+msys|$DOWNLOAD_ROUTE
+EOF
+
 echo "session-drift-check: unreadable stdin"
 # Strict mode must not let a failed payload read abort the session start.
 # A `cat` stub that fails stands in for a harness that hands the hook no
@@ -605,9 +639,6 @@ NEVER_EDIT_WANT=".agents/,.claude/,.codex/,.pi/,.gemini/,.opencode/,.cursor/"
 # hand edit survives. None of those has a keyed line, so this count is the
 # only thing that reddens when one of them is deleted.
 GUIDANCE_LINES=6
-
-CURL_ROUTE="curl -fsSL https://kendex.ai/install.sh | sh"
-DOWNLOAD_ROUTE="https://kendex.ai/download"
 
 # A row is `label|project|ostype|keyed`. `keyed` stands last, so the install
 # route may hold the pipe that installs the command. `manifest=` carries what
