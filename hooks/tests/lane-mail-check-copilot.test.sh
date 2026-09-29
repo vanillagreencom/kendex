@@ -890,7 +890,7 @@ assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=" \
   "control: without the record read a Copilot lane at the cap ends its turn"
 # The account arm cut: a Copilot account at zero is reported unlisted and the
 # turn ends.
-mutant copilot-no-account -e 's@^    claude | codex | copilot) ;;$@    claude | codex) ;;@'
+mutant copilot-no-account -e 's@^    claude | codex | copilot) CFG=@    claude | codex) CFG=@'
 new_copilot_lane control_cop_account ken-219 "$MUTANT_PATH"
 mkdir -p "$LANE/tmp/lane-mail/KEN-219"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-219 >/dev/null)

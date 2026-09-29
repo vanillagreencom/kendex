@@ -1626,8 +1626,8 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "1|oversee-succeed: lanes-failed entry=ca
   "control: with its own harness list the pick fails a copilot succession as a lanes read that never ran"
 # Control: the successor status-line check cut, the account writing no record
 # is picked.
-COPILOTSL="$(mutant_scripts copilotsl oversee-succeed)" || exit 1
-mutate_file "$COPILOTSL/oversee-succeed" '      if [[ "$harness" == copilot ]] && ! lane_adapter_copilot_status_line "$OL_PICKED_DIR"; then' '      if false; then'
+COPILOTSL="$(mutant_scripts copilotsl lib/overseer-launch.sh)" || exit 1
+mutate_file "$COPILOTSL/lib/overseer-launch.sh" '    if [[ "$OL_HARNESS" == copilot ]] && ! lane_adapter_copilot_status_line "$OL_PICKED_DIR"; then' '    if false; then'
 printf '{}\n' > "$H/.2copilot/settings.json"
 LANE_DIRS="$COPILOT_PAIR" copilot_row copnostatusctl "$COPILOTSL/oversee-succeed" --harness copilot -- --allow-all
 assert_eq "$RC|$(recorded copilot)" "0|$COP_SUCCESSOR" \

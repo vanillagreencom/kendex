@@ -135,10 +135,10 @@ ol_preference_entries() { # VALUE
 # lane_pick_harness alone maps a provider to its account: claude, codex and
 # copilot spend their own accounts, a pi session on a `github-copilot/` model
 # spends the Copilot pool `lanes pick --harness pi` reads, and one on a
-# `pi-claude/` model spends a claude account. This function only normalizes that answer
-# for a pi session: a claude account is judged on the claude model after
-# `pi-claude/` (pi-extensions/pi-claude-bridge), and `unmeasured` splits into
-# `none`, a model naming a provider `lanes` measures no account of, and
+# `pi-claude/` model spends a claude account. This function only normalizes
+# that answer for a pi session: a claude account is judged on the claude model
+# after `pi-claude/` (pi-extensions/pi-claude-bridge), and `unmeasured` splits
+# into `none`, a model naming a provider `lanes` measures no account of, and
 # `unknown`, one naming no provider or no model at all, pi resolving a bare
 # model to a provider itself. A pi model's `:<thinking>` suffix is pi's level,
 # never the model. The model is empty for `none` and `unknown`.
@@ -321,9 +321,9 @@ ol_account_id() { # DIR
 # settings run no copilot-statusline (lib/adapters/copilot.sh §
 # lane_adapter_copilot_status_line): its context is measured only through the
 # record that status line writes, as a fleet lane on one is refused
-# (open-terminal). The rules a succession adds, each off while its setting is empty or 0: each
-# skip is a notice for the caller to print, one line of tab-separated key and
-# fields in OL_WALK_SKIPS.
+# (open-terminal). The rules a succession adds, each off while its setting is
+# empty or 0: each skip is a notice for the caller to print, one line of
+# tab-separated key and fields in OL_WALK_SKIPS.
 #   OL_WALK_REFUSE_ID       a pick naming this account (ol_account_id) is
 #                           skipped as successor-lane-spent: the backstop for
 #                           an inventory that still names EXCLUDE_DIR
