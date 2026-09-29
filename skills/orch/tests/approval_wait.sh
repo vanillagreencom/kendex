@@ -714,7 +714,9 @@ control() {
   assert_eq "$(observe "$expect")" "$expect" "control $name: the unmutated copy answers the row" "$RUN/stderr"
   count="$(grep -Fxc -- "$from" "$PRISTINE" || true)"
   assert_eq "$count" "1" "control $name: the substitution matches one line"
-  awk -v from="$from" -v to="$to" '$0 == from { print to; next } { print }' "$PRISTINE" >"$MUTANT_SCRIPT"
+  # ENVIRON, not -v: awk -v escape-processes its value, and awks disagree on
+  # the trailing backslash the changes-over-approval lines end in.
+  MUT_FROM="$from" MUT_TO="$to" awk '$0 == ENVIRON["MUT_FROM"] { print ENVIRON["MUT_TO"]; next } { print }' "$PRISTINE" >"$MUTANT_SCRIPT"
   if cmp -s "$MUTANT_SCRIPT" "$PRISTINE"; then
     fail "control $name: the mutant must differ from the script"
   fi
