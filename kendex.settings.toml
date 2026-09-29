@@ -176,7 +176,9 @@ ORCH_ROUND_PRUNE_DISK_PCT = "75"
 # pi-copilot reviews through Pi on the Copilot pool while the Codex seats are
 # walled; codex is taken again once its seat reads room. The room checks
 # assume the orch fleet's accounts, which lanes pick measures; a contributor
-# off the fleet overrides SECOND_OPINION_MODELS in .env.local.
+# off the fleet overrides SECOND_OPINION_MODELS in .env.local. Each check runs
+# under ORCH_LANE_HOST=local: the reviewer runs on this machine's login, and a
+# lane-host provider's reading of an account would judge a copy it never spends.
 SECOND_OPINION_MODELS = "claude codex pi-copilot"
 
 # Opinions a review collects; 2+ unions distinct models on one diff.
@@ -189,7 +191,7 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reas
 
 # A Codex review runs on the seat lanes pick finds room on, as a codex lane
 # would; a walled seat passes the review to pi-copilot.
-SECOND_OPINION_CODEX_ROOM_CMD = ".agents/skills/orch/scripts/lanes pick --harness codex --model gpt-6-astra --binding-floor"
+SECOND_OPINION_CODEX_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness codex --model gpt-6-astra --binding-floor"
 
 # The same model on the Copilot pool, read-only tools only, on the Pi account
 # ORCH_LANE_COPILOT_POOL states room for; unstated, it is skipped. That
@@ -198,7 +200,7 @@ SECOND_OPINION_CODEX_ROOM_CMD = ".agents/skills/orch/scripts/lanes pick --harnes
 # the check's refusal. With no shell, it is sent the diff inline.
 SECOND_OPINION_PI_COPILOT_CMD = "pi -p --no-session --no-extensions --model github-copilot/gpt-6-astra --thinking xhigh --tools read,grep,find,ls"
 SECOND_OPINION_PI_COPILOT_MODEL = "gpt-6-astra"
-SECOND_OPINION_PI_COPILOT_ROOM_CMD = ".agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/gpt-6-astra"
+SECOND_OPINION_PI_COPILOT_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/gpt-6-astra"
 SECOND_OPINION_PI_COPILOT_INLINE_DIFF = "1"
 
 # Seconds to wait for the external CLI.
