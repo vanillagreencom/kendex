@@ -14,8 +14,8 @@
 # sets WANT_APP (REVIEW_GATE_STANDARD_APP); SCOPE `environment` leaves it
 # unread. With no jq on PATH, a missing, unreadable or malformed manifest, an
 # unreadable setting, a key the scope reads unset or empty, or a secret name
-# outside GitHub's secret-name grammar in uppercase, it prints the refusal to
-# stderr and returns 1; the caller exits with its could-not-run status.
+# that is not uppercase letters, digits and underscores starting with no
+# digit, it prints the refusal to stderr and returns 1; the caller exits with its could-not-run status.
 rg_standard_load() { # MANIFEST SCOPE
   local secrets invalid missing="" rc=0
   case "$2" in
@@ -67,9 +67,10 @@ rg_standard_load() { # MANIFEST SCOPE
     rg_message error standard-setting-missing "$missing" "this repository declares no value for these review-gate settings; set each in the [env] table of kendex.settings.toml (references/settings.md names them)" >&2
     return 1
   fi
-  # GitHub's secret-name rule, in the uppercase form GitHub stores every
-  # name in: the name lists rg_standard_held and rg_standard_missing read
-  # are that stored form, so a lowercase letter is refused too. An accepted
+  # A name is uppercase letters, digits and underscores, and does not start
+  # with a digit. GitHub stores every secret name uppercase, and the name
+  # lists rg_standard_held and rg_standard_missing read are that stored
+  # form, so a lowercase letter is refused: it would never match. An accepted
   # name is the stored name, and two names differing only in case cannot
   # both be declared.
   invalid="$(LC_ALL=C grep -vxE -- '[A-Z_][A-Z0-9_]*' <<<"$WANT_SECRETS")" || rc=$?

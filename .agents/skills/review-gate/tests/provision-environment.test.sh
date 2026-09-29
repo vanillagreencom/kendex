@@ -65,9 +65,9 @@ printf '{"branch_policies": [{"id": 1, "name": "main", "type": "branch"}]}\n' >"
 printf '{"secrets": [{"name": "APP_ID"}, {"name": "APP_KEY"}, {"name": "OTHER"}]}\n' >"$DONE/environment-secrets-kendex.json"
 printf '{"environments": []}\n' >"$BASE/repos/acme/fresh/environments.json"
 
-KEY='-----BEGIN RSA PRIVATE KEY-----
-line two
------END RSA PRIVATE KEY-----'
+# The trailing newline is part of the value: the create block pins that
+# the script and the shim carry it through byte-exact.
+KEY=$'-----BEGIN RSA PRIVATE KEY-----\nline two\n-----END RSA PRIVATE KEY-----\n'
 # Copies BASE to DIR and applies each jq EDIT to the FILE beside it, FILES
 # comma-separated under DIR/PREFIX and EDITS `^`-separated in the same order.
 world() { # DIR PREFIX FILES EDITS
@@ -235,20 +235,24 @@ NOJQ="$TMP/nojq"
 mkdir -p "$NOJQ"
 ln -s "$(command -v bash)" "$NOJQ/bash"
 ln -s "$(command -v dirname)" "$NOJQ/dirname"
-# name ~ shim failure ~ fixture files ~ jq edits ~ secret values (yes or
-# no) ~ PATH ~ arguments (space-separated) ~ first error line ~ consumer
-# (empty: full) ~ its value (empty: not compared)
+# name ~ shim failure ~ fixture files ~ jq edits ~ secret values (yes, no,
+# or empty-id: APP_ID exported empty) ~ PATH ~ arguments (space-separated) ~
+# first error line ~ consumer (empty: full) ~ its value (empty: not compared)
 while IFS='~' read -r name fail files edits values path args key consumer value; do
   [ -n "$name" ] || continue
   dir="$TMP/refuse-$name"
   world "$dir" "" "$files" "$edits"
-  secrets=""
-  [ "$values" != yes ] || secrets=1
+  case "$values" in
+    yes) secrets=1 app_id=4242 ;;
+    empty-id) secrets=1 app_id="" ;;
+    no) secrets="" app_id="" ;;
+    *) echo "provision-environment.test: row=$name values=$values" >&2; exit 1 ;;
+  esac
   RC=0
   rm -f -- "$dir/.writes.log"
   # shellcheck disable=SC2086
   RAW="$(cd "$TMP/consumer-${consumer:-full}" && env -i PATH="${path:-$BIN:/usr/bin:/bin}" HOME="$TMP" GH_SHIM_FIXTURES="$dir" GH_SHIM_FAIL="$fail" \
-    ${secrets:+APP_ID=4242} ${secrets:+"APP_KEY=$KEY"} "$SKILL/scripts/provision-environment.sh" $args 2>&1)" || RC=$?
+    ${secrets:+"APP_ID=$app_id"} ${secrets:+"APP_KEY=$KEY"} "$SKILL/scripts/provision-environment.sh" $args 2>&1)" || RC=$?
   first="${RAW%%
 *}"
   if [ "$RC" -eq 2 ] && [ "${first%% value=*}" = "$key" ] && { [ -z "$value" ] || [ "${first#* value=}" = "$value" ]; } &&
@@ -261,6 +265,7 @@ done <<ROWS
 no organization~~~~yes~~--dry-run~review-gate-error=org-missing
 an unknown argument~~~~yes~~--org acme --repo acme/done~review-gate-error=unknown-argument
 a secret value unset~~~~no~~--org acme~review-gate-error=secret-value-missing
+a secret value exported empty~~~~empty-id~~--org acme~review-gate-error=secret-value-missing~~APP_ID
 a secret named for a shell variable the environment lacks~~~~yes~~--org acme~review-gate-error=secret-value-missing~shell~BASH_VERSION
 an owner checkout that declares nothing~~~~yes~~--org acme --dry-run~review-gate-error=standard-setting-missing~none~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
 no jq~~~~yes~$NOJQ~--org acme --dry-run~review-gate-error=jq-missing
