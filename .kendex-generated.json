@@ -560,6 +560,7 @@
   ".agents/skills/orch/references/secret-value.ere",
   ".agents/skills/orch/references/skill-rules.md",
   ".agents/skills/orch/references/suppressed-findings.md",
+  ".agents/skills/orch/references/thread-read.md",
   ".agents/skills/orch/references/waiter-launch.md",
   ".agents/skills/orch/references/watch-delivery.md",
   ".agents/skills/orch/schemas/copilot-credits.md",

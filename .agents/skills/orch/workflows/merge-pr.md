@@ -108,11 +108,11 @@ A `--check` exit `1` with no JSON whose first stderr line is `pr-merge: retired-
 
 `CHECK.state` decides first: `MERGED` → set `[ALREADY_MERGED]=true`, run § 4 EXCEPT § 4.1, then enter § 5 step 1, which skips the thread read, the arm and the wait and goes straight to post-merge work; `CLOSED` → records `pr-closed-unmerged`.
 
-`can_merge: true` → § 4 once `suppressed-findings` and `not_approved` below are met, showing any warnings. `can_merge: false` with `transient: true`, once § 3.1 has run and recorded no stop, takes the same route only where `unknown:` is the only issue left: GitHub computes the mergeable state itself while it holds an armed PR, and § 5 step 1's `--auto` arm lets it hold the merge until it has. On that `unknown:` path an `arm: no-merge-gate` answer records `merge-readiness-unresolved` instead of taking the direct attempt, which would refuse on the same issue. Any other `false`, a `ci_pending:` or `ci_fetch_failed:` issue left after § 3.1 included, → show the issues with their suggested fixes: GitHub holds an armed PR only on the base's required status checks, so the arm never stands in for a CI state the lane could not read. `auto-recommended` logs `Fix and retry` and takes that route once; the same blocker after the retry records `merge-check-blocked`. `ask` presents `Skip` | `Fix and retry`, with `Fix and retry` recommended.
+`can_merge: true` → § 4 once the three gates below are met, showing any warnings. `can_merge: false` with `transient: true`, once § 3.1 has run and recorded no stop, takes the same route only where `unknown:` is the only issue left: GitHub computes the mergeable state itself while it holds an armed PR, and § 5 step 1's `--auto` arm lets it hold the merge until it has. On that `unknown:` path an `arm: no-merge-gate` answer records `merge-readiness-unresolved` instead of taking the direct attempt, which would refuse on the same issue. Any other `false`, a `ci_pending:` or `ci_fetch_failed:` issue left after § 3.1 included, → show the issues with their suggested fixes: GitHub holds an armed PR only on the base's required status checks, so this route never arms over a CI state the lane could not read. `auto-recommended` logs `Fix and retry` and takes that route once; the same blocker after the retry records `merge-check-blocked`. `ask` presents `Skip` | `Fix and retry`, with `Fix and retry` recommended.
 
 Three conditions are merge gates, not advice:
 
-- **Open review threads** — not a `CHECK` field, and not read here: § 5 step 1's thread read, ahead of every merge call, owns this gate, so every entry to that step passes it, a [micro.md](micro.md) § 4 entry included.
+- **Open review threads** — not a `CHECK` field: run § 3.3 before the `not_approved` wait.
 - **`suppressed-findings`** — not a `CHECK` warning, and a merge gate. `pr-merge --check` reduces the red gate to `ci_failed`, `ci-classify-refusal` prints a `fail:` line naming the `Review gate` check, and that check's status description opens `N suppressed finding(s) in a review body`. Those entries are findings a reviewer wrote into its review body, so no thread carries them: `unresolved_count` reads zero and `review-pr-comments` reaches none of them. Answer them by [references/suppressed-findings.md](../references/suppressed-findings.md), which owns the whole route.
 - **`not_approved`** — bind this pull request's endpoints as `[BASE_SHA]` and `[HEAD_SHA]`:
 
@@ -132,13 +132,19 @@ Three conditions are merge gates, not advice:
   - `review` — `not_approved` is expected. Poll `approval-wait [PR_NUMBER] 30 --json --mode review --item [STATE_KEY]` and treat `reviewed` as the met gate.
   - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: poll `approval-wait [PR_NUMBER] 30 --json --mode approval --item [STATE_KEY]`; after its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
 
-  With `PR_REVIEW_ON_TIMEOUT=proceed`, a deadline reached with zero unresolved threads and no reviewer evidence returns `proceeded` (exit 0) instead of `timeout` in both modes — treat it as a met gate and record it in the § 6 report. An open thread still blocks the merge, at § 5 step 1's thread read; a `changes_requested` blocked earlier, at § 3.2's readiness check. The proceed is a LOCAL verdict — orch posts no status.
+  A `comments` answer (exit 1) in either mode is an open thread: run § 3.3, then this wait again.
+
+  With `PR_REVIEW_ON_TIMEOUT=proceed`, a deadline reached with zero unresolved threads and no reviewer evidence returns `proceeded` (exit 0) instead of `timeout` in both modes — treat it as a met gate and record it in the § 6 report. An open thread answers `comments` instead; a `changes_requested` blocked earlier, at § 3.2's readiness check. The proceed is a LOCAL verdict — orch posts no status.
 
   An `unreviewable` status is never a met gate: no automatic reviewer targets this PR's base, so the silence is structural. Follow [references/gates.md](../references/gates.md) § Stacked pull requests, then re-run the wait. If it repeats, `auto-recommended` records `review-gate-unreviewable`, while `ask` presents the wait or stop choice.
 
   Stop waiting for a missing gate verdict while workflow state carries `pr_approval.forced`, which `submit-pr.md` § 4's `Force merge` sets for the item and no push clears; the prepared head then takes § 5's `--auto` arm.
 
 Bot-specific signals — emoji reactions, sticky-comment prose, checklist text — are never parsed as merge gates. Only GitHub-native review state and the thread-resolution count count.
+
+### 3.3 Thread Read
+
+Read the open review threads by [references/thread-read.md](../references/thread-read.md), which owns the read, its triage route and the list of what else reads a thread. § 3.2 runs it before its `not_approved` wait, and § 5 step 1 before every merge call. Zero returns to the step that ran it; a head its triage pushed returns to § 3.
 
 ## 4. Prepare
 
@@ -212,15 +218,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    `[ALREADY_MERGED]=true` skips to step 2 HERE, ahead of every read below: the squash orphans a merged head, a resumed lane may not hold it, and a refusal for want of it must not block that merge's cleanup.
 
-   **Thread read.** Read the open review threads before any merge call, under every gate mode. Every entry to this step and every return to it from the cycles below starts here, a [micro.md](micro.md) § 4 entry included, so neither the `--auto` arm nor the direct attempt runs past an unread thread. `pr-merge` reads no thread:
-
-   ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-threads [PR_NUMBER] --unresolved
-   ```
-
-   A non-zero exit, or output with no numeric `unresolved_count`, is no answer and never zero: report it and record `review-threads-unreadable`. A nonzero `unresolved_count` takes `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 5 step 1` with managed context, to reply and resolve every thread, then this read again. `auto-recommended` keeps triaging within `REVIEW_MAX_EXTERNAL_ROUNDS`, then records `review-threads-open`. A thread posted after this read is `queue-wait`'s late-findings guard's, below. What GitHub itself holds on an open thread is `pr-merge --help` § Approvals and review threads.
-
-   Then read the endpoints:
+   **Thread read.** Run § 3.3 first, on every entry to this step and every return from the cycles below. Then read the endpoints:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefOid,headRefOid --jq '[.baseRefOid,.headRefOid]|@tsv'
@@ -305,15 +303,16 @@ Use the output as `MAIN_REPO_ROOT`.
       env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE] --item [STATE_KEY]
       ```
 
-   3. Return to step 1 at its thread read, then its exact-head arm, and wait.
+      A `comments` answer takes § 3.3, then this wait again.
 
-   **Restack cycle** — the base, not CI, is the blocker. Follow `workflows/merge-pr-restack.md`, then return to step 1 at its thread read, then its exact-head sequence. Never route a conflict into ci-fix.
+   3. Return to step 1 and wait.
+
+   **Restack cycle** — the base, not CI, is the blocker. Follow `workflows/merge-pr-restack.md`, then return to step 1. Never route a conflict into ci-fix.
 
    **Late-findings triage** — the findings, not CI, are the blocker:
 
    1. On `cause: late_findings_dequeue_failed`, first apply the disarm-then-dequeue order and PR-node-id lookup from `merge-pr-restack.md`; the PR must be out of the queue before triage pushes.
-   2. `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 5 step 1` with managed context — every new thread replied to and resolved.
-   3. Triage may have pushed a new head. Return to step 1 at its thread read, then its exact-head arm, and wait.
+   2. Run § 3.3. With the head unmoved, return to step 1 and wait.
 
 2. **Sync the tracker and close a finished container** — **Linear only**. Skip the WHOLE step for GitHub work items: resolve the tracker first; an `issue-N` key in any casing is a GitHub item.
 
