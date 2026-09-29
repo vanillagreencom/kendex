@@ -164,10 +164,10 @@ observe() {
       files) value="$(ls -1 "$STORE/claims" 2>/dev/null | sed 's/\.claim$//' | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
       fetched) value="$(fetched_lanes "$RUN/fetch.log")" ;;
       tokencalls) value="$(grep -c . "$RUN/token.log" 2>/dev/null || true)"; value="${value:-0}" ;;
-      # Every run of the codex stub, as `<config dir name>:<request methods>`,
-      # comma-joined per run and `;` between runs, or none.
+      # Every run of the codex stub, as `<config dir name>:<working dir>:<request
+      # methods>`, a dir under the home by its name, `;` between runs, or none.
       codexrenew)
-        value="$(sed "s#^$H/\\.##; s# #:#" "$RUN/codex.log" 2>/dev/null | paste -sd';' - || true)"
+        value="$(sed "s#$H/\\.##g; s# #:#g" "$RUN/codex.log" 2>/dev/null | paste -sd';' - || true)"
         value="${value:-none}"
         ;;
       # Every jq argument vector of the run, searched for the fixture's own
@@ -893,33 +893,41 @@ CODEX_BIN="$TMP_ROOT/codex-bin"; mkdir -p "$CODEX_BIN"
 cat > "$CODEX_BIN/codex" <<'STUB'
 #!/usr/bin/env bash
 # With CODEX_RENEWED_AUTH set the stub renews: it writes that file over the
-# config dir's auth.json before answering account/read, as the CLI does. Unset,
-# it answers and leaves auth.json alone, which is a refresh the CLI could not
-# make. It logs `<CODEX_HOME> <methods>` once its stdin closes.
-[[ "$*" == app-server ]] || { printf '%s argv=%s\n' "$CODEX_HOME" "$*" >> "$CODEX_LOG"; exit 2; }
+# config dir's auth.json before answering account/read, as the CLI does,
+# CODEX_RENEW_DELAY seconds after reading it. Unset, it leaves auth.json alone,
+# a refresh the CLI could not make: CODEX_SAYS is then the CLI's own `Failed
+# to refresh token:` message on stderr, and CODEX_ANSWER its answer to request
+# 1. With CODEX_EXITS set it exits at once, answering nothing, as a codex with
+# no app-server does. It logs `<CODEX_HOME> <working dir> <methods>`.
+[[ "$*" == app-server ]] || { printf '%s %s argv=%s\n' "$CODEX_HOME" "$(pwd)" "$*" >> "$CODEX_LOG"; exit 2; }
+[[ -z "${CODEX_EXITS:-}" ]] || { printf '%s %s exited\n' "$CODEX_HOME" "$(pwd)" >> "$CODEX_LOG"; exit 2; }
+answer='{"id":1,"result":{"account":null,"requiresOpenaiAuth":true}}'
 methods=""
 while IFS= read -r line; do
   m="${line#*\"method\":\"}"; m="${m%%\"*}"
   methods="$methods${methods:+,}$m"
   case "$line" in
     *'"method":"account/read"'*'"refreshToken":true'*)
+      sleep "${CODEX_RENEW_DELAY:-0}"
       [[ -z "${CODEX_RENEWED_AUTH:-}" ]] || cp -- "$CODEX_RENEWED_AUTH" "$CODEX_HOME/auth.json"
-      printf '{"id":1,"result":{"account":null,"requiresOpenaiAuth":true}}\n'
+      [[ -z "${CODEX_SAYS:-}" ]] ||
+        printf '\033[31mERROR\033[0m \033[2mcodex_login::auth::manager\033[0m\033[2m:\033[0m Failed to refresh token: %s\n' "$CODEX_SAYS" >&2
+      printf '%s\n' "${CODEX_ANSWER:-$answer}"
       ;;
   esac
 done
-printf '%s %s\n' "$CODEX_HOME" "$methods" >> "$CODEX_LOG"
+printf '%s %s %s\n' "$CODEX_HOME" "$(pwd)" "$methods" >> "$CODEX_LOG"
 STUB
 chmod +x "$CODEX_BIN/codex"
-# PATH with every directory holding a real codex dropped, so no row reaches
-# the operator's own CLI and the absent-CLI row finds none.
-NOCODEX_PATH=""
-IFS=: read -ra PATH_DIRS <<<"$PATH"
-for d in "${PATH_DIRS[@]}"; do
-  [[ -x "$d/codex" ]] || NOCODEX_PATH="$NOCODEX_PATH${NOCODEX_PATH:+:}$d"
-done
+# This PATH less its codex, so no row reaches the operator's own CLI and the
+# absent-CLI row finds none, while every other tool a row needs stays.
+NOCODEX_PATH="$TMP_ROOT/path-without-codex"
+path_without "$NOCODEX_PATH" codex
+assert_eq "$(PATH="$NOCODEX_PATH" command -v codex > /dev/null 2>&1 && echo found || echo none)" "none" \
+  "the absent-CLI PATH resolves no codex"
 RENEWED_AUTH="$TMP_ROOT/codex-renewed.json"
-jq -n --arg at "$(codex_jwt 36000)" \
+RENEWED_AT="$(codex_jwt 36000)" || exit 1
+jq -n --arg at "$RENEWED_AT" \
   '{tokens: {access_token: $at, refresh_token: "rotated-refresh", account_id: "acct-1"}}' > "$RENEWED_AUTH"
 CODEX_STUB_PATH="PATH=$CODEX_BIN:$CLAIM_BIN:$NOCODEX_PATH"
 CODEX_LIST='list --harness codex --json'
@@ -929,24 +937,59 @@ codex_expired_home() { # REFRESH_TOKEN
   jq -n '{rate_limit: {primary_window: {used_percent: 30, reset_at: 1785000000, limit_window_seconds: 18000}}}' \
     > "$FIXTURE_DIR/.codex.json"
 }
+CODEX_CAUSE="access_token_expired_and_could_not_be_renewed:_codex"
 CODEX_REMEDY="run_codex_once_with_CODEX_HOME=$TMP_ROOT/codex-expired/.codex"
-codex_expired_home refresh-codex
-table \
-  "renewal succeeds: the CLI is asked through app-server in that config dir and the renewed lane is measured, marked refreshable|$CODEX_STUB_PATH;CODEX_RENEWED_AUTH=$RENEWED_AUTH|$CODEX_LIST|codex.status=ok codex.refreshable=true codex.headroom_pct=70 codexrenew=codex:initialize,initialized,account/read fetched=codex"
-codex_expired_home refresh-codex
-table \
-  "renewal refused: a token the CLI left expired reads expired, naming the codex command that renews it, and posts no usage query|$CODEX_STUB_PATH|$CODEX_LIST|codex.status=expired codex.refreshable=false codex.headroom_pct=null codex.cause=access_token_expired_and_could_not_be_renewed:_codex_did_not_renew_it;_$CODEX_REMEDY codexrenew=codex:initialize,initialized,account/read fetched=none" \
+CODEX_REVOKED="Your access token could not be refreshed. Please log out and sign in again."
+CODEX_OFFLINE="error sending request for url (https://auth.openai.com/oauth/token)"
+CODEX_ERROR_ANSWER='{"error":{"code":-32603,"message":"workspace routing discovery failed"},"id":1}'
+CODEX_RENEWAL_ROWS=(
+  "renewal refused: a token the CLI left expired reads expired, naming the codex command that renews it, and posts no usage query|$CODEX_STUB_PATH|$CODEX_LIST|codex.status=expired codex.refreshable=false codex.headroom_pct=null codex.cause=${CODEX_CAUSE}_did_not_renew_it;_$CODEX_REMEDY codexrenew=codex:codex:initialize,initialized,account/read fetched=none"
+  "a refresh token the endpoint refused reads expired, naming codex login|$CODEX_STUB_PATH;CODEX_SAYS=$CODEX_REVOKED|$CODEX_LIST|codex.status=expired codex.cause=${CODEX_CAUSE}_could_not_renew_it:_${CODEX_REVOKED// /_};_log_in_again_with_CODEX_HOME=$TMP_ROOT/codex-expired/.codex_codex_login fetched=none"
+  "a refresh that never reached the endpoint reads unreachable, with the CLI's message|$CODEX_STUB_PATH;CODEX_SAYS=$CODEX_OFFLINE;CODEX_ANSWER=$CODEX_ERROR_ANSWER|$CODEX_LIST|codex.status=unreachable codex.cause=${CODEX_CAUSE}_could_not_reach_the_token_endpoint:_${CODEX_OFFLINE// /_} fetched=none"
+  "an error answer to the renewal reads unreachable, with the CLI's message|$CODEX_STUB_PATH;CODEX_ANSWER=$CODEX_ERROR_ANSWER|$CODEX_LIST|codex.status=unreachable codex.cause=${CODEX_CAUSE}_answered_the_renewal_with_an_error:_workspace_routing_discovery_failed fetched=none"
   "no codex on PATH reads expired too, naming the CLI to install|PATH=$CLAIM_BIN:$NOCODEX_PATH|$CODEX_LIST|codex.status=expired codex.cause=access_token_expired_and_could_not_be_renewed:_no_codex_command_is_on_PATH_to_renew_it;_install_the_Codex_CLI_and_$CODEX_REMEDY fetched=none"
+)
+codex_expired_home refresh-codex
+table \
+  "renewal succeeds: the CLI is asked through app-server in that config dir and the renewed lane is measured, marked refreshable|$CODEX_STUB_PATH;CODEX_RENEWED_AUTH=$RENEWED_AUTH|$CODEX_LIST|codex.status=ok codex.refreshable=true codex.headroom_pct=70 codexrenew=codex:codex:initialize,initialized,account/read fetched=codex"
+codex_expired_home refresh-codex
+table "${CODEX_RENEWAL_ROWS[@]}"
+# A codex that exits without answering ends the renewal when it exits, not
+# when the stdin bound passes. The wall clock is the pin, since the bound is
+# the cost: every run would otherwise hold the lane for it.
+codex_exits_row() { # LABEL
+  local started="$SECONDS"
+  run_lanes "$CODEX_STUB_PATH;CODEX_EXITS=1" $CODEX_LIST
+  assert_eq "$(observe "codex.status=expired codexrenew=codex:codex:exited") within=$( (( SECONDS - started < 5 )) && echo 5s || echo "$((SECONDS - started))s")" \
+    "codex.status=expired codexrenew=codex:codex:exited within=5s" "$1" "$ERR"
+}
+codex_exits_row "a codex that exits at once without answering reads expired within seconds, not at the stdin bound"
 codex_expired_home ''
 table \
-  "401 without a refresh token: the lane reads expired, naming codex login, and the CLI is never started|$CODEX_STUB_PATH;CODEX_RENEWED_AUTH=$RENEWED_AUTH|$CODEX_LIST|codex.status=expired codex.cause=access_token_expired_and_could_not_be_renewed:_there_is_no_refresh_token_in_$H/.codex/auth.json_to_renew_with;_log_in_again_with_CODEX_HOME=$H/.codex_codex_login codexrenew=none fetched=none"
-# The control: with the Codex expiry unread, the expired token goes to the
+  "an expired token without a refresh token reads expired, naming codex login, and the CLI is never started|$CODEX_STUB_PATH;CODEX_RENEWED_AUTH=$RENEWED_AUTH|$CODEX_LIST|codex.status=expired codex.cause=access_token_expired_and_could_not_be_renewed:_there_is_no_refresh_token_in_$H/.codex/auth.json_to_renew_with;_log_in_again_with_CODEX_HOME=$H/.codex_codex_login codexrenew=none fetched=none"
+# The controls. With the Codex expiry unread, the expired token goes to the
 # usage query and the renewal row is red.
-lanes_mutant mutant-codex-expiry lanes 'expires_ms="\$(codex_token_expiry_ms "\$creds")"'
+lanes_mutant mutant-codex-expiry lanes 'expires_ms="\$(token_expiry_ms "\$harness" "\$creds")"'
 LANES="$TMP_ROOT/mutant-codex-expiry/scripts/lanes"
 codex_expired_home refresh-codex
 table \
   "control: with the expiry unread the CLI is never asked and the lane is not refreshable|$CODEX_STUB_PATH;CODEX_RENEWED_AUTH=$RENEWED_AUTH|$CODEX_LIST|codex.refreshable=false codexrenew=none"
+# With an unreached endpoint read as a failed run, that row reads expired.
+lanes_mutant mutant-codex-offline lanes "token_refusal unreachable '' '' \"codex could not reach" "token_refusal expired '' '' \"codex could not reach"
+LANES="$TMP_ROOT/mutant-codex-offline/scripts/lanes"
+table \
+  "control: with the unreached endpoint read as a dead login the lane reads expired|$CODEX_STUB_PATH;CODEX_SAYS=$CODEX_OFFLINE;CODEX_ANSWER=$CODEX_ERROR_ANSWER|$CODEX_LIST|codex.status=expired"
+# With the writer blind to the CLI's exit, the exits-at-once row waits out the
+# bound, cut here to 8 seconds so the control costs no more.
+CODEX_EXIT_MUTANT="$(mutant_scripts mutant-codex-exit lanes)" || exit 1
+mutate_file "$CODEX_EXIT_MUTANT/lanes" '[[ -e "$run/exited" || ' '[[ '
+mutate_file "$CODEX_EXIT_MUTANT/lanes" 'CODEX_RENEW_WAIT_TENTHS=250' 'CODEX_RENEW_WAIT_TENTHS=80'
+LANES="$CODEX_EXIT_MUTANT/lanes"
+codex_expired_home refresh-codex
+started="$SECONDS"
+run_lanes "$CODEX_STUB_PATH;CODEX_EXITS=1" $CODEX_LIST
+assert_eq "$( (( SECONDS - started >= 5 )) && echo waited || echo "$((SECONDS - started))s")" "waited" \
+  "control: a writer blind to the CLI's exit holds the lane past 5 seconds"
 LANES="$SCRIPTS_DIR/lanes"
 
 echo "=== in-flight lane claims ==="
@@ -1516,15 +1559,7 @@ assert_eq "$(concurrent_fetches "$TMP_ROOT/lockshare-pick" pick --lane "$H/.clau
 # NOFLOCK is this PATH with flock taken out, so a run takes the mkdir mutex
 # file-lock.sh falls back to where flock is absent.
 NOFLOCK="$TMP_ROOT/path-without-flock"
-mkdir -p "$NOFLOCK"
-(
-  IFS=:
-  for d in $PATH; do
-    [[ -d "$d" ]] || continue
-    ln -s "$d"/* "$NOFLOCK"/ 2>/dev/null || true
-  done
-)
-rm -f -- "$NOFLOCK/flock"
+path_without "$NOFLOCK" flock
 assert_eq "$(PATH="$NOFLOCK" command -v flock > /dev/null 2>&1 && echo found || echo none)" "none" \
   "the probe PATH resolves no flock, so the mkdir mutex is the one taken"
 # One run takes the lock once per lane it refreshes. With flock, closing the
@@ -2431,11 +2466,12 @@ table \
 LANES="$LANES_PATCHED"
 
 echo "=== a renewal a ceiling lands on finishes, keeps the rotated token and releases the mutex ==="
-# `refresh_claude_token` takes that mutex inside a command substitution, which
-# a ceiling signals along with the shell that called it: `timeout` signals the
-# whole process group. Once the POST is out the endpoint may already have
-# rotated the refresh token, so the renewal ignores the ceiling's TERM until
-# the rename and a credentials file never keeps a retired token. Left behind, the mutex
+# `renew_token` takes that mutex inside a command substitution, which a
+# ceiling signals along with the shell that called it: `timeout` signals the
+# whole process group. Once a renewal step reached its endpoint, the endpoint
+# may already have rotated the refresh token, so the renewal ignores the
+# ceiling's TERM across the step, every process it starts included, and a
+# credentials file never keeps a retired token. Left behind, the mutex
 # makes every later renewal on that account wait out its whole timeout and
 # fail with "another tool holds the credentials lock". Only the mkdir mutex
 # can outlive its holder — under flock the kernel releases it — so the probe
@@ -2467,7 +2503,7 @@ echo "=== a renewal a ceiling lands on finishes, keeps the rotated token and rel
 # whole file reds on a neighbour that never touched this rule. The body is read
 # out of the shipped script rather than named by line number.
 RENEWAL_BODY="$(awk '
-  $0 == "refresh_claude_token() {" { inside = 1; next }
+  /^renew_token\(\) \{/ { inside = 1; next }
   inside && $0 == "}" { exit }
   inside
 ' "$SCRIPTS_DIR/lanes")"
@@ -2477,7 +2513,7 @@ RENEWAL_BODY="$(awk '
 assert_eq "$([[ -n "$RENEWAL_BODY" ]] && echo found || echo none)" "found" \
   "the extractor reads the renewal's own body out of the shipped script"
 assert_eq "$(grep -c -F 'orch_arm_lock_signals' <<<"$RENEWAL_BODY")" "1" \
-  "the renewal restores the lock's own signal handlers after the rename"
+  "the renewal restores the lock's own signal handlers after the step"
 assert_eq "$(grep -c -E '^[[:space:]]*trap - INT TERM' <<<"$RENEWAL_BODY")" "0" \
   "and clears them nowhere inside that renewal, which is what would leave a held mutex at the default disposition"
 
@@ -2505,6 +2541,25 @@ if command -v timeout > /dev/null 2>&1; then
   assert_eq "$(jq -r '.claudeAiOauth.refreshToken + " " + .claudeAiOauth.accessToken' "$H/.claude/.credentials.json" 2>/dev/null || echo UNREADABLE)" \
     "rotated-refresh renewed-token" \
     "and the credentials file holds the rotated refresh token the endpoint answered with"
+  # The Codex step is the CLI's own run: the ceiling lands while the codex
+  # stub is renewing, and the ignore it inherits lets it write auth.json.
+  codex_ceiling() { # LANES
+    local rc=0
+    new_home codex-ceiling
+    make_codex_token_lane "$H/.codex" -60 refresh-codex
+    PATH="$CODEX_BIN:$NOFLOCK" LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
+      OVERSEE_WATCH_STATE_DIR="$H/state" CODEX_LOG="$H/codex.log" \
+      CODEX_RENEWED_AUTH="$RENEWED_AUTH" CODEX_RENEW_DELAY=3 \
+      timeout 2 "$1" pick --lane "$H/.codex" --harness codex --json > /dev/null 2>&1 || rc=$?
+    printf 'rc=%s mutex=%s auth=%s' "$rc" "$(settled_mutex "$H/.codex/.lanes-refresh.lock.d")" \
+      "$(cmp -s -- "$RENEWED_AUTH" "$H/.codex/auth.json" && echo renewed || echo unrenewed)"
+  }
+  assert_eq "$(codex_ceiling "$LANES")" "rc=124 mutex=released auth=renewed" \
+    "a codex renewal the ceiling lands on still writes auth.json and leaves no mutex"
+  # The control: without the ignore, the ceiling's TERM ends the CLI mid-renewal.
+  lanes_mutant mutant-renew-signals lanes "trap '' INT TERM"
+  assert_eq "$(codex_ceiling "$TMP_ROOT/mutant-renew-signals/scripts/lanes")" "rc=124 mutex=released auth=unrenewed" \
+    "control: without the ignore the ceiling ends the codex renewal before it writes auth.json"
 else
   printf '  skip  a renewal a ceiling lands on: this host has no timeout to bound one with\n'
 fi

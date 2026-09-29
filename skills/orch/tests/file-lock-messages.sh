@@ -29,8 +29,8 @@ eval "$REMEDY"
 assert_eq "$([[ -d "$SCRATCH/held.lock.d" ]] && echo held || echo released)" "released" \
   "the printed remedy removes the held mutex"
 
-# A held mutex and the signals a ceiling sends. `refresh_claude_token` replaces
-# these handlers while it renames the credentials file, and what it puts back
+# A held mutex and the signals a ceiling sends. `renew_token` in `lanes` replaces
+# these handlers while a renewal step runs, and what it puts back
 # decides whether the mutex survives the ceiling: `trap -` restores the DEFAULT
 # disposition, which kills the shell with no trap at all, the EXIT trap
 # included. The holder is reached the way `lanes` reaches it, one command
