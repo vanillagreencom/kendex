@@ -22,8 +22,8 @@
 #      against a selection and an event, with GitHub's implicit success() where a
 #      condition carries no status function. A merge group runs the class
 #      job set its pull request ran, less the two jobs held to the
-#      pull-request event. The macOS legs run on a pull request only where
-#      the selection says a lane source changed. A dead classifier runs every
+#      pull-request event. The macOS legs run on either event where the
+#      selection lists them. A dead classifier runs every
 #      gated job, both platform legs and the whole shard roster. A pull
 #      request's run is cancelled by its next push; no other run is. The `CI` job needs every job but the aggregators and
 #      runs on both gated events whatever its needs did. Must-fail arms plant
@@ -298,7 +298,7 @@ pull_request|$ORCH_CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests
 merge_group|$ORCH_CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
 pull_request|$standard_code|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows markdown preflight skill-suites-shard
 merge_group|$standard_code|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
-merge_group|$ORCH_PROOF_ROW|skill-suites-shard
+merge_group|$ORCH_PROOF_ROW|cargo-macos cargo-tests-windows skill-suites-shard
 merge_group|$SOURCE_PROOF_ROW|
 ROWS
 [ "$job_rows" -ge 14 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
@@ -324,8 +324,8 @@ check "a dead classifier runs every gated job" "$EVERY_GATED" \
   "$(running "$WORKFLOW" "$ALL_OFF" failure)"
 
 # EVENT|RESULT|SELECTION|LEGS. The matrix expands the runner list the
-# selection published, the merge group's where ci-job-set selected for one,
-# and both legs where nothing was published.
+# selection published, on either event, and both legs where nothing was
+# published.
 leg_rows=0
 while IFS='|' read -r event result sel expected; do
   leg_rows=$((leg_rows + 1))
@@ -334,8 +334,8 @@ while IFS='|' read -r event result sel expected; do
 done <<ROWS
 pull_request|success|$ALL_ON|["ubuntu-latest","macos-latest"]
 merge_group|success|$ALL_ON|["ubuntu-latest","macos-latest"]
-pull_request|success|$ORCH_CODE_ROW|["ubuntu-latest"]
-merge_group|success|$ORCH_CODE_GROUP|["ubuntu-latest","macos-latest"]
+pull_request|success|$ORCH_CODE_ROW|["ubuntu-latest","macos-latest"]
+merge_group|success|$ORCH_CODE_ROW|["ubuntu-latest","macos-latest"]
 merge_group|success|$ORCH_PROOF_ROW|["macos-latest"]
 pull_request|success|$one_skill|["ubuntu-latest"]
 merge_group|success|$one_skill|["ubuntu-latest"]

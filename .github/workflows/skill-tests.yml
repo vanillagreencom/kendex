@@ -21,8 +21,12 @@ name: Skill Tests
 # lane runs. A merge group whose tree its pull request's passing run
 # already tested reuses that run's proof: the action reads the record that
 # run left, `tools/ci-job-set` re-derives what it ran from it and stands
-# those lanes down, so such a group runs the macOS legs the pull request did
-# not run and nothing the pull request did. The aggregators
+# those lanes down, so such a group runs nothing the pull request did. The
+# pull request selects every lane, shard and runner the merge group selects
+# for the same paths, the macOS legs included, and `tools/ci-job-set`
+# refuses a selection that differs by event; so the pull request's required
+# checks hold the whole merge-group job set, and an admin merge lands only
+# on a green run of that set. The aggregators
 # still report and accept only the skips the
 # selection authorized, and the last job, `CI`, is the one every other job
 # reports into, the three aggregators excepted. The push to main
@@ -86,16 +90,13 @@ name: Skill Tests
 # and on the Linux `rest` leg that builds kendex-cli from the checkout first,
 # and 15 on every other Linux leg. The per-shard figures behind each budget
 # are in the comment above it.
-# Every pull request pays its selected Linux shards on the pull request, and
-# the merge queue stands them down where the proof above holds, so the
-# slowest of them is charged once per merge there. It is charged twice where
-# the group runs them again: a base that moved or an entry queued ahead gives
-# the group a tree no pull request run tested, and a passing run the lookup
-# cannot find, a record it cannot read or match, or a record tools/ci-job-set
-# refuses stands nothing down. The macOS legs run in the queue alone, save
-# where a lane source or another path under .github/ changed: there they
-# also run on the pull request and follow the Linux legs' rule, stood down
-# in the queue where the proof holds and run again where it does not.
+# Every pull request pays its selected shards on the pull request, the Linux
+# and macOS legs alike, and the merge queue stands them down where the proof
+# above holds, so the slowest of them is charged once per merge there. It is
+# charged twice where the group runs them again: a base that moved or an
+# entry queued ahead gives the group a tree no pull request run tested, and
+# a passing run the lookup cannot find, a record it cannot read or match, or
+# a record tools/ci-job-set refuses stands nothing down.
 
 "on":
   pull_request:
@@ -430,11 +431,10 @@ jobs:
         # cannot reach `matrix`, so the leg is dropped from the matrix rather
         # than conditioned inside it, and a leg that never expands bills no
         # macOS runner. Which runners run is tools/ci-job-set's `shell_os`
-        # list: the macOS leg in the merge group, and on the pull request
-        # only where a lane source or another .github/ path changed, so a
-        # macOS-only failure surfaces at queue time and returns to the lane;
-        # and a leg the pull request run already ran on this tree stands
-        # down in the merge group. A dead classifier publishes nothing, so
+        # list, the same on the pull request and in the merge group, so a
+        # macOS-only failure surfaces on the pull request; a leg the pull
+        # request run already ran on this tree stands down in the merge
+        # group. A dead classifier publishes nothing, so
         # the result term ahead of the selection is what runs both legs
         # rather than neither.
         os: ${{ fromJSON(needs.changes.result != 'success' && '["ubuntu-latest", "macos-latest"]' || needs.changes.outputs.shell_os) }}

@@ -14,10 +14,10 @@
 #   DOCS_ONLY      true|false, the shipped `harness-only --mode docs` verdict
 #                  for the same diff
 #   CHANGED_PATHS  the changed paths, one per line
-#   EVENT          pull_request|merge_group, the event the selection is for:
-#                  the macOS legs of the shell shards run in the merge group,
-#                  and on a pull request only where a lane source or another
-#                  path under .github/ changed
+#   EVENT          pull_request|merge_group, the event the selection is for.
+#                  Both select the same lanes and shards for the same
+#                  class, docs verdict and paths; the script derives the
+#                  selection at each and refuses where they differ
 #   PROOF_RECORD   the change-class action's `proof_record` output: the
 #                  record of the passing run that already tested this tree,
 #                  or empty where none did. Its `event`, `change_class`,
@@ -65,18 +65,21 @@
 #     diff; a `standard` diff that is not documentation alone runs them
 #     whatever its paths. The macOS legs are the shell shards again on
 #     macOS, so they also stand down where no selected shard is one the
-#     workflow's matrix runs on macOS, and they run in the merge group
-#     alone unless a lane source or another path under .github/ changed, in
-#     which case they run on the pull request too.
+#     workflow's matrix runs on macOS.
+#   - The event selects nothing: a pull request runs every lane, shard and
+#     runner the merge group runs for the same class, docs verdict and
+#     paths. So the pull request's required checks hold the whole
+#     merge-group job set, and an admin merge, which lands on those checks
+#     alone, lands only on a green run of that set. The script derives the
+#     selection at both events and refuses `event-parity` where they differ.
 #   - A proof stands down what its run ran and nothing else. The run's
 #     selection is re-derived from its record with the rules above, at its
 #     event; each lane it ran stands down here, and the shell shards stand
 #     down per runner: a runner's legs where that run ran them over every
 #     shard this diff selects. A lane that run skipped, or a shard it did
 #     not run, runs here as the rules above select it. So a merge group
-#     whose pull request ran the Linux legs runs the macOS legs that pull
-#     request did not run, and nothing where no selected shard runs on
-#     macOS.
+#     whose pull request ran over the same paths runs nothing, and one
+#     whose tree no pull request run tested runs its whole selection.
 #   - The compile lanes (cargo_lint, cargo_windows_check) run no test, so
 #     they run only where a build input changed: a path other than prose
 #     under a tools/rust-reads `build` or `include` row.
@@ -141,6 +144,8 @@ TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)"
 LEGS="linux macos"
 JOBS="ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows cargo_windows_check"
 LANES="shell_shards shell_os $JOBS"
+# The events a selection is made for; each selects the same lanes.
+EVENTS="pull_request merge_group"
 # The shell shards, in the order of the skill-tests.yml matrix list.
 SHARDS="review-gate orch-terminal orch-oversee orch-oversee-succeed orch-state orch-rest guards-scans guards-commit guards-hooks guards-tools guards-tools-tail linear worktree rest node pi-claude-bridge"
 # The shards the matrix never runs on macOS, nothing in them being bash: its
@@ -504,17 +509,17 @@ macos_shard() { # SHARDS
 # as the diff's own. Run it in a subshell: the readers above take the paths
 # from `paths`, which it sets, and the shard search starts empty each time.
 select_row() { # CLASS DOCS PATHS EVENT
-  local class="$1" docs="$2" event="$4" row read_lines="" platform uitree build shards shell macos macos_pr
+  local class="$1" docs="$2" event="$4" row read_lines="" platform uitree build shards shell macos known=false each
   paths="$3"
   want=" " reached=" " pending=""
   case "$docs" in
     true | false) ;;
     *) die "invalid-docs-only value=$docs" "DOCS_ONLY is true or false" ;;
   esac
-  case "$event" in
-    pull_request | merge_group) ;;
-    *) die "unsupported-event event=$event" "EVENT is pull_request or merge_group" ;;
-  esac
+  for each in $EVENTS; do
+    [ "$each" != "$event" ] || known=true
+  done
+  [ "$known" = true ] || die "unsupported-event event=$event" "EVENT is one of: $EVENTS"
   row="$class"
   case "$class" in
     render) ;;
@@ -560,12 +565,6 @@ select_row() { # CLASS DOCS PATHS EVENT
       # A macOS leg over no shard the matrix runs there, no shard at all
       # included, would expand to nothing.
       macos_shard "$shards" || macos=false
-      # The macOS legs run in the merge group, and on a pull request only
-      # where a lane source or another path under .github/ changed, so a
-      # macOS-only failure surfaces at queue time and returns to the lane.
-      macos_pr=false
-      ! any "$ALL_SHARDS" || macos_pr=$macos
-      [ "$event" = merge_group ] || macos=$macos_pr
       printf '%s' "linux=$shell macos=$macos ui=$uitree bot_instructions=true cargo_linux=true cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build shards=$shards"
       ;;
   esac
@@ -599,6 +598,18 @@ if [ -n "$record" ]; then
 fi
 
 now="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "$EVENT")" || exit 2
+
+# Event parity: the pull request selects every lane and shard the merge group
+# selects for the same class, docs verdict and paths, the macOS legs
+# included, so its required checks hold the whole merge-group job set and an
+# admin merge lands only on a green run of that set. A rule that reads the
+# event breaks that and is refused here, before any proof stands a lane down.
+for event in $EVENTS; do
+  [ "$event" != "$EVENT" ] || continue
+  other="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "$event")" || exit 2
+  [ "$other" = "$now" ] || die "event-parity event=$event" \
+    "$EVENT selects '$now' and $event selects '$other' for the same class, docs verdict and paths"
+done
 
 # A lane the proving run ran stands down; one it skipped runs as selected.
 # The shell shards' legs stand down per runner, and only where that run ran
