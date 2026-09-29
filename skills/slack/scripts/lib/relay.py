@@ -182,7 +182,8 @@ class RootRelay:
             events = self.mail.events()
             if self.state.held:
                 self.resume(events, touched)
-            self.post_events(events)
+            else:
+                self.post_events(events)
         if self.post_failed is not None:
             raise self.post_failed
         self.last_ok = self.clock()
@@ -279,11 +280,11 @@ class RootRelay:
             raise Refusal("master-file-unreadable", f"{path} ({err.strerror})") from err
 
     def resume(self, events: List[Dict], touched: Optional[float]) -> None:
-        """The end of a hold, journaled as the window no notice posts from:
-        past the hold's start, up to when the hold ended. A stale file ended
-        it SLACK_MASTER_MAX_AGE after its last touch, an absent one at the
-        last poll that found it fresh. `asks` names the open asks this
-        resume posts."""
+        """The end of a hold: the mailbox posted with the window no notice
+        posts from, past the hold's start up to when the hold ended, then
+        that window journaled with `asks`, the open asks whose post landed.
+        A stale file ended it SLACK_MASTER_MAX_AGE after its last touch, an
+        absent one at the last poll that found it fresh."""
         if touched is not None:
             at = format_at(touched + self.settings.master_max_age)
         elif self.master_seen is not None:
@@ -292,15 +293,23 @@ class RootRelay:
             # A crash between the `hold` line and status.json loses
             # master_seen: the hold's own start, an empty window, drops none.
             at = self.state.hold_at
-        asks = [str(e["id"]) for e, route in self.routes(events) if route == "ask"]
-        self.journal.append(t="resume", from_at=self.state.hold_at, at=at, asks=asks)
+        window = Window(self.state.hold_at, at)
+        asks: List[str] = []
+        # A dead token raises past the posts: the window and the asks that
+        # landed before it are journaled all the same.
+        try:
+            self.post_events(events, window, asks)
+        finally:
+            self.journal.append(t="resume", from_at=window.from_at, at=window.at, asks=asks)
 
-    def routes(self, events: List[Dict]) -> List[Tuple[Dict, str]]:
+    def routes(self, events: List[Dict], closing: Optional[Window] = None) -> List[Tuple[Dict, str]]:
         """Each envelope not yet carried and what it takes: `ask`, `notice`,
-        `answer`, or `skip` for one that never posts."""
+        `answer`, or `skip` for one that never posts. `closing` is the hold
+        a resume ends, not yet journaled."""
         answered = {e.get("re") for e in events if e.get("kind") == "answer"}
         horizon = self.settings.horizon(self.clock())
         state = self.state
+        holds = state.holds + ([closing] if closing is not None else [])
         routed = []
         for envelope in events:
             env_id = str(envelope["id"])
@@ -319,7 +328,7 @@ class RootRelay:
             elif before(state.start_at, state.start_ids, at, env_id):
                 route = "skip"
             elif owner and kind == "notice":
-                route = "skip" if any(within(w, at) for w in state.holds) else "notice"
+                route = "skip" if any(within(w, at) for w in holds) else "notice"
             elif box == "to-lane" and kind == "answer":
                 route = "answer"
             else:
@@ -327,10 +336,13 @@ class RootRelay:
             routed.append((envelope, route))
         return routed
 
-    def post_events(self, events: List[Dict]) -> None:
-        for envelope, route in self.routes(events):
+    def post_events(self, events: List[Dict], closing: Optional[Window] = None, landed: Optional[List[str]] = None) -> None:
+        """Posts what `routes` gives each envelope; `landed`, when given,
+        collects the ids of the asks whose post landed."""
+        for envelope, route in self.routes(events, closing):
             if route == "ask":
-                self.post_ask(envelope)
+                if self.post_ask(envelope) and landed is not None:
+                    landed.append(str(envelope["id"]))
             elif route == "notice":
                 self.post_notice(envelope)
             elif route == "answer":
@@ -382,7 +394,8 @@ class RootRelay:
             self.post_refused(err, envelope, kind)
             return None
 
-    def post_ask(self, envelope: Dict) -> None:
+    def post_ask(self, envelope: Dict) -> bool:
+        """Whether the ask landed and its `open` line was journaled."""
         options = ", ".join(envelope.get("options") or [])
         lines = [f"{mention(self.binding)} Question from {envelope.get('from', 'overseer')}:", envelope.get("text", "")]
         tail = []
@@ -395,8 +408,10 @@ class RootRelay:
         if tail:
             lines.append(" ".join(tail))
         ts = self._send(envelope, "ask", "\n".join(lines), None)
-        if ts is not None:
-            self._out(envelope, "ask", "open", thread=ts)
+        if ts is None:
+            return False
+        self._out(envelope, "ask", "open", thread=ts)
+        return True
 
     def post_notice(self, envelope: Dict) -> None:
         ref = envelope.get("ref")

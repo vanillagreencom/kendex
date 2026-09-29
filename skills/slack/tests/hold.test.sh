@@ -5,7 +5,7 @@
 # file is stale the resume posts the open ask, the answer to an ask the
 # channel shows open, a notice Slack refused before the hold and one written
 # after the file went stale, never a held notice, and journals which asks
-# it posted; a removed file ends the hold at the last poll that found it
+# landed, never one Slack refused; a removed file ends the hold at the last poll that found it
 # fresh. A notice written before the touch posts on the resume though the
 # relay first saw the hold a poll later or failed to read the channel in
 # between. An absent file or an empty setting posts as before,
@@ -168,6 +168,30 @@ XI="$(sk_new_root xi)"
 before_touch "$XI" fault
 assert_eq "$(count "$(sk_channel "$XI")" 'Before the touch in xi.')" "1" "a notice written before the touch posts though the channel read failed in between"
 
+# --- a held ask Slack refuses on the resume is not journaled as posted --------------
+# refused_resume ROOT — a bound root holding an open ask, the resume's post of
+# it refused once; prints the ask's id.
+refused_resume() {
+  local id
+  sk_bind "$1"
+  sk_poll "$1" "$HOLD"
+  fresh
+  id="$(ask "$1" "r-$(basename "$1")" "Refused on resume in $(basename "$1")?")"
+  sk_poll "$1" "$HOLD"
+  stale
+  refuse_next_post
+  sk_poll "$1" "$HOLD"
+  printf '%s' "$id"
+}
+resumed_asks() { jq -r 'select(.t == "resume") | .asks | join(",")' "$(sk_journal "$1")"; } # ROOT
+OMICRON="$(sk_new_root omicron)"
+refused_resume "$OMICRON" >/dev/null
+assert_eq "$RC=$(count "$(sk_channel "$OMICRON")" 'Refused on resume in omicron?')=$(resumed_asks "$OMICRON")" "1=0=" \
+  "a held ask Slack refuses on the resume is not named by the resume line"
+sk_poll "$OMICRON" "$HOLD"
+assert_eq "$RC=$(count "$(sk_channel "$OMICRON")" 'Refused on resume in omicron?')=$(holds "$OMICRON")" "0=1=hold resume " \
+  "the next poll posts the refused ask and journals no second resume"
+
 # --- controls, one mutant per rule --------------------------------------------------
 # held ROOT — a bound root with a notice written under a fresh file and polled.
 # A control that needs that notice inside the hold moves it five seconds
@@ -192,7 +216,7 @@ held "$GAMMA"
 assert_eq "$(holds "$GAMMA")" "hold hold " "control: the transition rule gone, every held poll journals a hold"
 sk_bin_reset
 
-sk_mutant window relay.py 'route = "skip" if any\(within\(w, at\) for w in state\.holds\) else "notice"' 'route = "notice"'
+sk_mutant window relay.py 'route = "skip" if any\(within\(w, at\) for w in holds\) else "notice"' 'route = "notice"'
 DELTA="$(sk_new_root delta)"
 held "$DELTA"
 sk_age_envelope "$DELTA" "$(last_id "$DELTA")" 5
@@ -244,6 +268,12 @@ stale
 notice "$ETA" ne2 'After stale in eta.'
 sk_poll "$ETA" "$HOLD"
 assert_eq "$(count "$(sk_channel "$ETA")" 'After stale in eta.')" "0" "control: the stale file's end taken from the poll, not the touch, a notice after it is held"
+sk_bin_reset
+
+sk_mutant landed relay.py 'if self\.post_ask\(envelope\) and landed' 'if (self.post_ask(envelope) or True) and landed'
+PI="$(sk_new_root pi)"
+PI_ASK="$(refused_resume "$PI")"
+assert_eq "$(resumed_asks "$PI")" "$PI_ASK" "control: every routed ask journaled, the resume names one Slack refused"
 sk_bin_reset
 
 sk_mutant seen relay.py 'elif self\.master_seen is not None:' 'elif False:'
