@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Pi 0.86.0 parity: the replacement `read`, `bash`, `edit` and `write` tools carry Pi's `constrainedSampling` setting from the wrapped tool, so their requests keep Pi's strict-prefer JSON-schema sampling with the renderer active. Every replacement tool now forwards the same set of request fields from Pi's own tool: description, parameters, `constrainedSampling` and `prepareArguments`.
+
 ### 2.0.4
 
 - Long sessions no longer hold Pi's main thread at full CPU under the renderer. Extension settings are read from disk at most once per second for each package and working directory, and, while tool chrome is on, each tool block keeps its drawn lines until its content, width, chrome mode or rule changes. A hand edit to `settings.json` now applies within one second; changes made through the extension manager and project trust changes still apply on the next render (#2837).

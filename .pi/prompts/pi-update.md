@@ -58,7 +58,8 @@ State lives in `pi-extensions/pi-update.state.json` (committed source; not a dis
    - `ai` — provider/model SDK (constrained sampling, capability flags, catalogs). Mostly Non-impact unless we override a provider — grep the affected provider id first (see Notes).
    - `agent` — agent loop/primitives → `pi-agents-tmux`, `pi-session-bridge`.
    - `server` — RPC/server events → `pi-session-bridge` (RPC surface), `pi-web-tools`.
-   - `storage` — session persistence → `pi-session-manager`, `pi-session-bridge`, `pi-prompt-stash`.
+   - `session-backends/sqlite-node` — session persistence → `pi-session-manager`, `pi-session-bridge`, `pi-prompt-stash`.
+   - `codemode`, `durable`, `mcp` — standalone packages; Non-impact unless an extension imports one (grep first).
    - `tui` — terminal UI, rendering, popups → `pi-tool-renderer`, `pi-qol`, `pi-extension-manager`, `pi-skills-manager`.
 3. **Classify each entry** into exactly one bucket:
    - **Required parity fix** — Pi core changed a behavior we override, mirror, or duplicate (e.g. a tool renderer we replace, a hook event shape, a `settings.json` field we read/write). Off-by-one bugs in helpers we copied count here.
@@ -67,6 +68,7 @@ State lives in `pi-extensions/pi-update.state.json` (committed source; not a dis
 4. **For each Required and Optional item:**
    - Grep our extensions for the affected symbol/field/regex/file pattern. Cite the exact `path:line`.
    - If a referenced Pi-side field name is unclear, fetch the relevant Pi source file from <https://github.com/earendil-works/pi> to confirm before editing.
+   - For a changed event, lifecycle or provider-input contract, feed our code what the installed Pi produces: load the extension into a real `createAgentSession` with a faux provider, as `pi-extensions/pi-hooks/tests/lane-mail-wake.test.ts` does, or pass it Pi's own normalized value. Package suites run on fake hosts and older pinned Pi versions, so they pass across such a change.
    - Decide: ship now, defer, or skip. Record reasoning.
 5. **For Non-impact items:** one-line justification each — enough that re-reading the audit later confirms it was considered.
 

@@ -1,74 +1,103 @@
-# Pi package update audit: 0.84.3 to 0.85.1
+# Pi package update audit: 0.86.0 to 0.87.1
 
-Marker `0.84.2` → `0.85.1`. Audited against base `8d056a7f`. Sources fetched: every `*/CHANGELOG.md` in the Pi tree at `v0.85.1` (`agent`, `ai`, `client`, `coding-agent`, `protocol`, `server`, `session-backends/sqlite-node`, `telemetry`, `tui`), plus the curated release notes. The previous marker's `storage` key was an alias for the sqlite-node backend path; the marker now carries the path-derived key `session-backends/sqlite-node`, and `client`, `protocol` and `telemetry` are newly enumerated. `Unreleased` blocks scanned for heads-up only and excluded from the marker.
+Marker `0.85.1` → `0.87.1`. Audited against base `8b86d5ce`. Sources fetched: every `*/CHANGELOG.md` in the Pi tree on `main` (`agent`, `ai`, `client`, `codemode`, `coding-agent`, `durable`, `mcp`, `protocol`, `server`, `session-backends/sqlite-node`, `telemetry`, `tui`), plus the curated release notes. `codemode`, `durable` and `mcp` are newly enumerated; `codemode` and `mcp` carry only an `Unreleased` block. `Unreleased` blocks scanned for heads-up only and excluded from the marker.
 
-In scope since the previous marker: four releases, `0.84.3` (2026-08-24), `0.84.4` (2026-08-28), `0.85.0` (2026-09-04), `0.85.1` (2026-09-05). `client`, `protocol`, `server`, `session-backends/sqlite-node` and `telemetry` sections are empty across the range. The `coding-agent` changelog restates `ai`, `agent` and `tui` entries as `inherited`; those restatements are not counted as separate items.
+In scope since the previous marker: four releases, `0.86.0` (2026-09-19), `0.86.1` (2026-09-20), `0.87.0` (2026-09-21), `0.87.1` (2026-09-22). `client`, `protocol`, `server`, `session-backends/sqlite-node` and `telemetry` sections are empty across the range; `durable` has one entry, the initial Pico record contracts, which no extension imports. The `coding-agent` changelog restates `ai`, `agent` and `tui` entries as `inherited`; those restatements are not counted as separate items.
+
+Behaviour was read from the installed Pi 0.87.1 (`dist/core/agent-session.js`, `dist/core/provider-composer.js`, `dist/core/model-runtime.js`, `dist/core/tools/*.js`) and from fixtures that load extension source into a real `createAgentSession` with a faux provider.
 
 ## Counts
 
 | Bucket | Count |
 |---|---:|
-| Required parity fix | 3 |
-| Optional improvement (adopted) | 1 |
-| Optional improvement (deferred) | 3 |
+| Required parity fix (shipped) | 2 |
+| Required parity fix (open) | 1 |
+| Optional improvement (deferred) | 5 |
 | Non-impact | grouped below, not tallied |
+
+## Settled-handler deferral (0.87.0)
+
+Pi 0.87.0 defers a run requested from an `agent_settled` handler until every settled handler has returned. `AgentSession.prompt()`, which `sendUserMessage` reaches, and `sendCustomMessage(..., { triggerTurn: true })` queue their run and return at once while the settle is dispatching; the queue runs after the last handler returns. Handlers still read `ctx.isIdle() === true`. A handler that awaits the run it asked for therefore waits on itself, and every later prompt, wake and typed input waits with it until Pi restarts.
+
+Every `agent_settled` handler in `pi-extensions` was checked:
+
+| Handler | What it awaits | Verdict |
+|---|---|---|
+| `pi-hooks/extensions/hooks.ts`, `consultStop` | The run its `Stop` steer starts, when the session reads busy after the send | Froze every Pi lane on a speaking `Stop` hook. Fixed in KEN-2010 (`8b86d5ce`): the wait is armed only when the session is no longer idle after the send, which on 0.87 it never is. |
+| `pi-hooks/extensions/lane-mail-wake.ts`, `check` | The lane-mail judge script; its `sendUserMessage` is not awaited | Safe. The wake's turn runs after the settle. |
+| `pi-qol/extensions/qol.ts`, `fireStagedBudgetGuard` | The budget-guard compaction it starts through `ctx.compact` | Safe. `AgentSession.compact()` aborts, summarizes, appends the compaction entry and emits `session_compact` and `compaction_end`; it starts no agent run. Prompts the interactive mode flushes on `compaction_end` are deferred and run after the settle. The cost is latency: a deferred wake or typed prompt waits for the compaction to finish. |
+| `pi-agents-tmux/extensions/subagent/index.ts`, `handleChildSettled` | Task-registry file I/O; its `pi.sendMessage` carries no `triggerTurn` | Safe. |
+
+Fixture evidence, Pi 0.87.1, real `pi-qol` extension with a 1-token budget, a second settled handler loaded after it:
+
+| Second handler | Session idle within 8 s | Compactions | Wake turn ran |
+|---|---|---:|---|
+| None | yes | 1 | no |
+| Sends `triggerTurn: true`, returns | yes | 2 | yes, after the QOL compaction settle |
+| Sends `triggerTurn: true`, awaits its `agent_start` (control) | no | 1 | no |
+
+The control shows the fixture detects a handler that waits on its own run; the QOL handler does not. The second compaction in the middle row is the wake turn crossing the 1-token budget again.
+
+Residual: the `pi-agents-tmux` child inbox poller gates on `ctx.isIdle()`, which reads true during a settle. A task it picks up inside a settle has its prompt deferred, and a dispatch that fails after the deferral throws out of Pi's settle instead of reaching the poller's `recordTaskDispatchFailure` path. It needs a poll inside a settle window and a failing dispatch together.
 
 ## Shipped
 
-Three fixes, each with a test at the function that changed and a red-first control.
-
 | Item | Extension | Fix |
 |---|---|---|
-| Compaction and branch summaries reject token-capped generations (0.84.3, [#7048](https://github.com/earendil-works/pi/issues/7048)) | `pi-qol` | `singleShotSummary` in `extensions/qol/compaction.ts` now throws on `stopReason: "length"`, matching Pi's `getSummarizationFailure`. The single function feeds the direct, chunk/reduce and branch-summary consumers, so all three reject an incomplete summary before it can become the continuation checkpoint. Reachable with `compaction.customEnabled` off through the budget-guard sentinel. Test: `tests/compaction-length-stop.test.ts`. |
-| OpenAI Codex SSE parsing processes a terminal event not followed by a blank line (0.85.0, [#9047](https://github.com/earendil-works/pi/issues/9047)) | `pi-codex-minimal-tools` | `parseSSE` in `src/provider-shim.ts` flushes the decoder at EOF and treats EOF as the end of the residual frame, mirroring Pi's `openai-codex-responses.ts`. Before the fix a completed response whose last frame lacked the trailing blank line reported `Stream closed before response.completed` on the SSE transport, which is shipped both as an explicit setting and as the fallback after a pre-start WebSocket failure. CRLF normalization and the ignore-malformed-frame policy are unchanged. Test: `tests/provider-shim-http-status.test.ts`, one row per line-ending shape plus a malformed-residual control. |
-| Single-object `edit` inputs accepted as one-edit arrays (0.84.3, [#7835](https://github.com/earendil-works/pi/issues/7835)) | `pi-tool-renderer` | `registerEdit` in `extensions/tool-renderer/tools.ts` re-registers Pi's edit tool and copied only `description` and `parameters`, dropping `prepareArguments`. Pi's agent loop runs that hook before schema validation, so with `renderMutationTools` on, the shapes Pi's own tool normalizes (single edit object, JSON-string edits, legacy `oldText`/`newText`) failed validation before `execute` could delegate. The registered definition now forwards the original hook; nothing is duplicated locally. The 0.84.2 audit's "no extension ships an edits-array tool" was wrong for this source. Test: `extensions/__tests__/edit-prepare-arguments.test.ts`. |
+| Strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `edit`, `write` (0.86.0) | `pi-tool-renderer` | The replacement tools in `extensions/tool-renderer/tools.ts` copied `description` and `parameters` (and `prepareArguments` on `edit`) and dropped Pi's `constrainedSampling`, so with the renderer installed `read` and `bash` always, and `edit` and `write` with `renderMutationTools` on, lost strict-prefer sampling. `piToolContract` now carries description, parameters, `constrainedSampling` and `prepareArguments` from Pi's own tool onto every replacement. Test: `extensions/__tests__/tool-execution-context.test.ts`, one row per replacement; removing the forwarded field turns all seven rows red. |
 
-Not live-tested inside Pi; each fix is proven at its unit surface against the installed peer packages.
+Not live-tested inside Pi; the fix is proven at the registration surface, and against the installed Pi 0.87.1 each of the four replacements now carries `{ type: "json_schema", strict: "prefer" }`.
 
-## Adopted (Optional)
+## Open: Codex provider shim and the transcript contract (0.86.0)
 
-QOL adopts Pi's embedded indicator ([#8799](https://github.com/earendil-works/pi/pull/8799)) when `statusline.enabled` is on. `QolStatusEditor.renderWorkingStatus` draws it in the statusline widget; Pi owns animation and cleanup. QOL requires Pi 0.86.0 for working, retry, compaction and branch-summary indicator delivery. With the statusline off, Pi keeps the standalone row.
+Pi 0.86.0 passes a provider's `streamSimple` a normalized `TranscriptContext`: the system prompt and tool declarations live in transcript system messages, and `context.systemPrompt` and `context.tools` are absent. `pi-codex-minimal-tools` registers `openai-codex` with its own `streamSimple` when `enabled` and `nativeProviderTools` are on, the defaults. Its `buildRequestBody` in `src/provider-shim.ts` still reads `context.systemPrompt` into `instructions` and `context.tools` into `tools`, and its vendored `convertResponsesMessages` has no branch for a `system` message. Fed the normalized context Pi 0.87.1 builds, the request carries no `instructions` and no tools; fed the raw context, it carries both.
+
+Impact: every `openai-codex` request through the shim on Pi 0.86.0 or later reaches the model without the system prompt and with no tools. Likelihood: certain for any session on the Codex provider with the package installed and its defaults.
+
+Not fixed in this audit. Pi's own `openai-codex-responses` now resolves the transcript per model (`resolveTranscript`, `resolveTranscriptTools`, mid-conversation system messages, additive tools and tool search) and the shim vendors an older converter; porting it is its own change, as the `pi-claude-bridge` move to the same contract was (KEN-1634). The port also takes the shim's other drift in range: Pi sends the model's Off reasoning effort instead of omitting it (0.86.0, [#9191](https://github.com/earendil-works/pi/issues/9191)), which the shim still omits.
 
 ## Deferred (Optional)
 
 | Item | Reasoning |
 |---|---|
-| `ui_prompt_start` / `ui_prompt_end` and `session_compact_failed` extension events (0.84.3, 0.85.0) | `pi-session-bridge` republishes an explicit event allowlist (`extensions/session-bridge.ts:49-65`) and publishes `ctx.isIdle()`; a waiting-for-input distinction would help orchestration but the bridge never promised these events. `pi-qol` already has completion and error callbacks on the compactions it starts. Adopt with a bridge design, not in a parity round. |
-| RPC `clear_queue` (0.84.4) | Pi stdio RPC, not a method of kendex's socket bridge. Adding it is a bridge feature. |
-| `SessionManager.inMemory()` restorable sessions, summary routing ids, `detectSupportedImageMimeTypeFromFile` (0.85.0) | Additive SDK. The file-backed session manager and local image format detection stay correct; no net simplification without a redesign. |
-
-The 0.84.2 deferral of `sendUserMessage(..., { expandPromptTemplates: true })` stands unchanged; see the previous audit's reasoning (skill-hash reminder cache, live peer test).
+| Transcript-backed system prompt changes; `before_agent_start` prompt sections (0.86.0, [#9548](https://github.com/earendil-works/pi/pull/9548)) | `pi-task-panel`, `pi-agents-tmux` and `pi-caveman` return a whole `systemPrompt` from `before_agent_start`. Since 0.86.0 that replaces the prompt for the run and is sent as the leading system prompt, so it stays correct but forgoes the cached-prefix transcript delta Pi keeps when prompt sections change instead. `pi-task-panel`'s reminder changes with the open task count. Adopt with a per-package design. |
+| `ctx.modelRegistry.stream()` / `streamSimple()` (0.86.0, [#8964](https://github.com/earendil-works/pi/issues/8964)) | `pi-qol` summaries resolve auth with `getApiKeyAndHeaders` and call pi-ai `complete`. Correct today; routing through the registry would drop that step. |
+| `pi.on()` returns an unsubscribe function (0.86.0, [#8967](https://github.com/earendil-works/pi/issues/8967)) | No extension drops a handler. |
+| Context edits, retain-none compaction, actionable `turn_end` / `agent_before_settle`, `context_with_system` (0.87.0) | New extension capabilities. No extension needs them for correctness; `pi-hooks` could move its `Stop` delivery onto `agent_before_settle` with `continue: true`, which would remove the settle steer, but that is a carrier redesign. |
+| Exported extension hook event and result types (0.86.0, [#9642](https://github.com/earendil-works/pi/pull/9642)) | Handlers type their events loosely today; tightening them is a type-only change. |
 
 ## Non-impact
 
 Already protected or inherited beneath us:
 
-- **Built-in tools honor `ctx.cwd` (0.85.0, [#8627](https://github.com/earendil-works/pi/pull/8627))**: `pi-tool-renderer` caches built-in tools per normalized cwd and picks the execution context's cwd before delegating (`tools.ts:56-83`, `batch.ts:261-263`).
-- **Write tool byte-count removal (0.85.0, [#8979](https://github.com/earendil-works/pi/issues/8979))**: our write renderer reports line totals and diffs, never the UTF-16 count; raw output delegates to Pi.
-- **`NO_PROXY` root and subdomain matching (0.85.0, [#8737](https://github.com/earendil-works/pi/pull/8737))**: `provider-shim.ts` `noProxyMatches` already strips a leading dot and matches exact host or `.domain` suffix; `tests/provider-shim-proxy.test.ts` covers it.
-- **Record-only `sendMessage` ordering (0.84.4)**: benefits our `triggerTurn: false` sites; the hooks' end-of-turn report keeps `triggerTurn: true` on purpose.
-- **Session newline repair, fork compaction boundary, import collisions, concurrent share writes (0.85.0)**: `pi-session-manager` goes through `SessionManager.open` and SDK append on the normal path. Its exception-path `appendSessionInfoFallback` does no newline repair; that combination was not established as a shipped producer path.
-- **Truncated-response recovery no longer labeled context overflow (0.84.3, [#8130](https://github.com/earendil-works/pi/issues/8130))**: `pi-agents-tmux` matches explicit context-length errors, not the generic truncated text; no regex change.
-- **Skill discovery fixes, BOM tolerance, root Markdown in skill dirs**: `pi-skills-manager` resolves through Pi's package resolver and `parseFrontmatter`, then drops entries without name/description.
-- **Branch summary token cap raised to 4096, reasoning-consumed cap fix ([#8845](https://github.com/earendil-works/pi/issues/8845))**: QOL's default is 8192 (`constants.ts`); the length-stop rejection above is the part that mattered.
+- **`context` handlers no longer see system messages; Pi restores prompt and tools after them (0.87.0, [#9789](https://github.com/earendil-works/pi/issues/9789))**: `pi-task-panel`'s `context` handler drops only its own stale reminder messages; the fix removes the risk rather than adding one.
+- **`ContextEditEntry` in the `SessionEntry` union (0.87.0)**: every extension reads entries by an explicit `entry.type` test, none by an exhaustive switch; `pi-qol` reads model context through `buildSessionContext`, which applies context edits.
+- **`SessionManager` canonical for provider context (0.87.0)**: no extension assigns `agent.state.messages`.
+- **`TurnEndEvent` expanded, `ExtensionRunner.emit()` refuses `turn_end` (0.87.0)**: the `pi-hooks` `turn_end` handler returns `undefined`; `pi-session-bridge` republishes the event and constructs none.
+- **`shouldStopAfterTurn` removed (0.87.0)**: no extension sets it.
+- **`user_bash` fails closed (0.86.0, [#9068](https://github.com/earendil-works/pi/issues/9068))**: `pi-background-tasks` returns `undefined` or `{ result }`, both valid.
+- **Extension tools without parameter schemas rejected (0.86.0, [#9300](https://github.com/earendil-works/pi/issues/9300))**: every `registerTool` definition in the tree carries `parameters`, the factory-built ones in `pi-codex-minimal-tools` and `pi-web-tools` included.
+- **`ToolCall.arguments` and `ToolResultMessage.details` restricted to JSON values (0.86.0)**: type-level; our tool details are plain data.
+- **Provider stream input is `TranscriptContext` (0.86.0)**: `pi-claude-bridge` moved to it in KEN-1634; `pi-codex-minimal-tools` is the open item above.
+- **Compaction, branch-summary and retry spinners embedded in the editor border (0.86.0)**: `pi-qol` adopted the embedded indicator for 0.86.0 (KEN-1978).
+- **Split-turn compaction summaries refused by Claude Fable 5.1 (0.87.1, [#9908](https://github.com/earendil-works/pi/pull/9908))**: Pi's default summarizer prompt. `pi-qol`'s own summary prompt already wraps the transcript in `<conversation>` tags and asks for a continuation summary.
+- **Missing or invalid `--mode` now exits nonzero (0.87.1, [#9045](https://github.com/earendil-works/pi/issues/9045))**: `pi-agents-tmux` launches with `--mode json`.
+- **Direct RPC `steer`/`follow_up` now pass extension `input` handlers (0.86.0, [#8718](https://github.com/earendil-works/pi/issues/8718))**: Pi stdio RPC; `pi-session-bridge` delivers through `pi.sendUserMessage`.
 
 Provider and model catalog (our overrides are `openai-codex` in `pi-codex-minimal-tools` and the Claude native provider in `pi-claude-bridge`):
 
-- **GPT-6 Astra (0.85.1)**: the Codex shim already recognizes `gpt-6-astra` (`provider-shim.ts:499`).
-- **Responses `prompt_cache_options.ttl` (0.85.1)**: the shim sends `prompt_cache_key` and neither `prompt_cache_retention` nor `prompt_cache_options`; it never emitted the obsolete field.
-- **Persistent Claude thinking effort, signed-thinking recovery, refusal fallback (0.84.3, 0.85.0)**: Anthropic Messages transport. The bridge drives the Claude Agent SDK and maps thinking levels itself (`query-options.ts`); parity with Pi's per-turn effort markers is not claimed and needs its own verification if wanted.
-- **Copilot Fable transport, Gemini/Vertex, Bedrock, xAI Responses, ZAI, DeepSeek, Qwen, Baseten, Fireworks, Mistral, Cerebras, Cloudflare, Kimi, Xiaomi, vLLM and llama.cpp catalog and adapter fixes; `vllmPriority`, `supportsMaxOutputTokens`; provider-neutral `toolChoice`; `GoogleThinkingLevel` rename; `createGatewayBindingFetch`; default `User-Agent`; CONNECT tunneling for proxied plain-HTTP**: built-in transports we neither register nor override. The QOL summary call passes no tools, so `toolChoice` does not apply to it.
+- **GPT-6 Sol and GPT-6 Luna for Codex (0.87.1), GPT-5.4 removed from the Codex catalog (0.86.0)**: the shim takes models from Pi's catalog. Its OpenAI-model probe accepts any listed id, and `gpt-6-astra` is still in Pi 0.87.1's Codex catalog, so a missing `gpt-5.4` changes no probe result.
+- **Claude Opus 5.5 and Sonnet 5.5, Anthropic OAuth Claude Code version (0.87.x)**: `pi-claude-bridge` offers Opus 5.5 since KEN-1706 and drives the Claude Agent SDK, not Pi's Anthropic transport.
+- **Meta Muse, Grok 4.7, Copilot Responses adapter, DeepSeek, Mistral, GLM, Fireworks, OpenRouter, OpenCode, Baseten, Bedrock, Vertex, Vercel, z.ai and Cerebras fixes; strict tool schemas for unknown Chat Completions endpoints; retry classification for Cloudflare 520 and Azure capacity errors; image-input resize metadata; prompt-cache lifetime metadata**: built-in transports and catalogs we neither register nor override.
 
 Host, SDK and platform:
 
-- **`prepareNextTurn` between-turn compaction, withdrawn `AgentHarness` controls (0.84.4)**: `pi-claude-bridge` does consume the between-turn compaction indirectly: it can emit `session_compact` while a bridge SDK query is still waiting for a Pi tool result, which left that query on the replaced history ([kendex#2679](https://github.com/vanillagreencom/kendex/issues/2679)). The bridge now restarts such a query from Pi's compacted context (`pi-claude-bridge/src/index.ts`, `onPiHistoryReplaced` and the provider's tool-result branch). QOL handles `agent_end`, `agent_settled` and `session_compact`.
-- **0.85.0 published experimental `client`/`experimental/plugin` subpaths; 0.85.1 made them source-only and repaired SDK imports ([#9132](https://github.com/earendil-works/pi/issues/9132))**: no import of either subpath in our extensions; the supported SDK and stdio RPC are unchanged.
-- **`pi update` registry-version comparison ([#8226](https://github.com/earendil-works/pi/issues/8226))**: reconciles `git:`/`npm:` entries only; kendex path packages stay out of scope.
-- **Agent CLI `--` task delimiter**: `pi-agents-tmux` prefixes tasks with `Task: ` (`runner.ts:672`), so a dash-prefixed task never reached the parser.
-- **Managed `fd`/ripgrep downloads, SEA extension loading, lazy runtime, package globs, update staging, clipboard packaging, auth-file ACLs, EXIF orientation, selector save keybindings, RPC `abort` cancelling manual compaction, skills with Bash-only tools, optional PowerShell tool**: Pi host behavior. PowerShell receives no kendex renderer or hook policy; adding Windows policy coverage is a separate choice.
-- **TUI: fullscreen transcript search caching, jump-to-latest label, Alt wheel acceleration, hover selection fix, drag selection, seccomp `SIGWINCH`, Zed image detection, LaTeX join symbols, `PI_DEBUG_REDRAW` → `PI_TUI_DEBUG_REDRAW`, renderer constructor defaults ([#8699](https://github.com/earendil-works/pi/pull/8699))**: no `new TUI`/`new TuiAltScreen` or `PI_DEBUG_REDRAW` in our extensions; our popups and renderers build on Pi's components. Standing caveat: popups were not live-tested in fullscreen this run either.
+- **Prompt-cache warming and `cache_warming_decision`, `/bug` reports, Radius catalog, per-model compaction budgets, per-model image input limits, Node compile cache, `--resume`/`--continue` speedups, deferred extension compiler, bundled native clipboard readers, OSC 52 fallback, Bash/PowerShell duration format, signal-terminated shell commands no longer reported as success, capped agent retry backoff, cancellation races around compaction, session tree navigation during compaction, fullscreen footer row, Kitty image fixes, LaTeX and autocomplete fixes, fuzzy search speedup**: Pi host behaviour. The Bash tool the renderer wraps is Pi's own, so the exit-status fix is inherited; no extension imports the clipboard or fuzzy helpers.
 
 ## Heads-up (`Unreleased`, not processed)
 
-- **Strict-prefer JSON-schema sampling becomes the default for built-in `read`, `bash`, `powershell`, `edit`, `write`; extensions may set `constrainedSampling: false`**: `pi-tool-renderer` re-registers those tools and does not forward `constrainedSampling` today. Decide on forwarding when this releases.
-- Login waits for catalog discovery before declaring models missing; Radius defaults changed. Host only.
+- **Built-in extensions (`mcp`, `llama.cpp`, `codemode`, `tool-search`) named `builtin:<name>`; `--no-extensions` also disables them; `defaultTools` accepts `+name`/`-name`**: check `pi-extension-manager`'s listing when this releases.
+- **Tool calls without a custom call renderer show their arguments**: `pi-tool-renderer` renders every tool it replaces; the rest gain the default.
+- **Managed git packages no longer install Pi peers; a warning for host modules in `dependencies`**: no package lists a Pi host module in `dependencies`.
+- **OpenAI Responses streams with unfinished tool calls end with an error**: the Codex shim vendors its own stream processor; fold into the transcript port.
+- **`provider_stream_event` extension event**: additive; no extension needs it.

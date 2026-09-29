@@ -42,6 +42,27 @@ for (const [name, register] of registrations) {
 		expect(received).toEqual(["call", input, signal, onUpdate, context]);
 		expect(received[4]).toBe(context);
 	});
+
+	test(`${name} carries Pi's own request contract onto the replacement`, () => {
+		let definition: ToolDefinition | undefined;
+		const original = {
+			description: "fixture",
+			parameters: { type: "object", properties: {} },
+			constrainedSampling: { type: "json_schema", strict: "prefer" },
+			prepareArguments: (args: unknown) => args,
+			execute: async () => ({ content: [] }),
+		};
+		const host = {
+			createReadTool: () => original, createBashTool: () => original,
+			createEditTool: () => original, createWriteTool: () => original,
+			createGrepTool: () => original, createFindTool: () => original, createLsTool: () => original,
+		};
+		register({ registerTool: (tool: ToolDefinition) => { definition = tool; } } as ExtensionAPI, host, world().cwd);
+		const carried = definition as unknown as Record<string, unknown>;
+		for (const field of ["description", "parameters", "constrainedSampling", "prepareArguments"] as const) {
+			expect(carried[field]).toBe(original[field]);
+		}
+	});
 }
 
 test("tool_batch forwards the unchanged context to every child tool", async () => {
