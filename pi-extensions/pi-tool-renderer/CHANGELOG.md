@@ -4,7 +4,7 @@
 
 ### 2.0.4
 
-- Long sessions no longer hold Pi's main thread at full CPU under the renderer. Extension settings are read from disk at most once per second for each package and working directory, and each tool block keeps its drawn lines until its content, width, chrome mode or rule changes. A hand edit to `settings.json` now applies within one second; changes made through the extension manager and project trust changes still apply on the next render (#2837).
+- Long sessions no longer hold Pi's main thread at full CPU under the renderer. Extension settings are read from disk at most once per second for each package and working directory, and, while tool chrome is on, each tool block keeps its drawn lines until its content, width, chrome mode or rule changes. A hand edit to `settings.json` now applies within one second; changes made through the extension manager and project trust changes still apply on the next render (#2837).
 
 ### 2.0.3
 
