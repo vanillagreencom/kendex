@@ -13,7 +13,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd -P)"
-TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
+# mktemp alone, so set -e stops the suite on its failure: nested in the cd,
+# a failed mktemp would resolve to this directory and the trap would remove it.
+TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
@@ -27,6 +30,8 @@ echo "=== workflow-state --no-private-env ==="
 PEER="$TMP_ROOT/peer"
 SENTINEL="$TMP_ROOT/sourced"
 git init -q "$PEER"
+git -C "$PEER" config gc.auto 0
+git -C "$PEER" config maintenance.auto false
 printf '[env]\nORCH_STATE_DIR = "fleet"\n' > "$PEER/kendex.settings.toml"
 printf 'touch %q\n' "$SENTINEL" > "$PEER/.env.local"
 
@@ -61,6 +66,8 @@ ARMED="$TMP_ROOT/armed"
 RAN="$TMP_ROOT/ran"
 SEEN="$TMP_ROOT/seen"
 git init -q "$ARMED"
+git -C "$ARMED" config gc.auto 0
+git -C "$ARMED" config maintenance.auto false
 mkdir -p "$ARMED/bin" "$ARMED/.kendex" "$ARMED/fleet" "$ARMED/fleet2" "$TMP_ROOT/sender"
 for tool in jq head; do
   printf '#!/bin/sh\n: > %q\nexec %q "$@"\n' "$RAN" "$(command -v "$tool")" > "$ARMED/bin/$tool"

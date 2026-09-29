@@ -17,7 +17,10 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd -P)"
 LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
 WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
-TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
+# mktemp alone, so set -e stops the suite on its failure: nested in the cd,
+# a failed mktemp would resolve to this directory and the trap would remove it.
+TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)"
 LIVE=""
 trap '[ -z "$LIVE" ] || kill "$LIVE" 2>/dev/null; rm -rf -- "${TMP_ROOT:?}"' EXIT
 

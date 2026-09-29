@@ -78,6 +78,8 @@ new_lane() { # NAME BRANCH
   LANE="$TMP_ROOT/$1"
   mkdir -p "$LANE"
   git -C "$LANE" init -q
+  git -C "$LANE" config gc.auto 0
+  git -C "$LANE" config maintenance.auto false
   git -C "$LANE" checkout -q -b "$2"
   git -C "$LANE" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
   lay_out_lane "$2"
@@ -91,6 +93,8 @@ new_worktree_lane() { # NAME BRANCH
   LANE="$TMP_ROOT/$1"
   mkdir -p "$MAIN"
   git -C "$MAIN" init -q
+  git -C "$MAIN" config gc.auto 0
+  git -C "$MAIN" config maintenance.auto false
   git -C "$MAIN" checkout -q -b main
   git -C "$MAIN" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
   git -C "$MAIN" worktree add -q -b "$2" "$LANE"
@@ -337,6 +341,8 @@ overseer_env() { # [PANE]
 PEER_SENDER="$TMP_ROOT/peer-sender"
 mkdir -p "$PEER_SENDER"
 git -C "$PEER_SENDER" init -q
+git -C "$PEER_SENDER" config gc.auto 0
+git -C "$PEER_SENDER" config maintenance.auto false
 git -C "$PEER_SENDER" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
 peer_send() { # TEXT
   printf '%s\n' "$1" > "$TMP_ROOT/peer.txt"

@@ -12,7 +12,10 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
+# mktemp alone, so set -e stops the suite on its failure: nested in the cd,
+# a failed mktemp would resolve to this directory and the trap would remove it.
+TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)"
 LIVE=""
 trap '[ -z "$LIVE" ] || kill "$LIVE" 2>/dev/null; rm -rf -- "${TMP_ROOT:?}"' EXIT
 
