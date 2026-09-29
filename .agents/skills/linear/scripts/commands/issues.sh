@@ -923,6 +923,7 @@ get_issue() {
                 trashed
                 parent { id identifier title }
                 children { nodes { id identifier title state { name } } }
+                syncedWith { metadata { ... on ExternalEntityInfoGithubMetadata { owner repo number } } }
 '"$ISSUE_RELATION_FIELDS"'
             }
         }'

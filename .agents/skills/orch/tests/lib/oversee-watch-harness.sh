@@ -60,10 +60,12 @@ CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
 #   auth-fail     present → keyring `auth status` fails
 #   list-fail     present → every `pr list` fails
 #   noisy         present → every successful `pr list` also writes to stderr
-#   issues.json   the page `api --paginate repos/<repo>/issues` answers
-#                 (default: []), issues.<SLUG>.json per repo the same way,
-#                 run through the call's own --jq filter as gh runs it;
-#                 issues-fail present → that call fails
+#   pulls.json, issues.json
+#                 the page `api --paginate repos/<repo>/pulls` or
+#                 `repos/<repo>/issues` answers (default: []),
+#                 pulls.<SLUG>.json and issues.<SLUG>.json per repo the same
+#                 way, run through the call's own --jq filter as gh runs it;
+#                 pulls-fail or issues-fail present → that call fails
 # Every `auth status`, `pr list` and `api --paginate` call is logged to gh.calls.
 # `api user` (env-token preflight) succeeds for any token except one
 # starting with ghp_stale.
@@ -83,13 +85,14 @@ case "${1:-} ${2:-}" in
     echo "owner/repo"; exit 0 ;;
   "api --paginate")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
-    [[ -f "$STUB_DIR/issues-fail" ]] && { echo "HTTP 502: bad gateway" >&2; exit 1; }
     path="$3"; filter=""
     [[ "${4:-}" == --jq ]] && filter="$5"
-    repo="${path#repos/}"; repo="${repo%/issues\?*}"
+    list="${path%%\?*}"; list="${list##*/}"
+    [[ -f "$STUB_DIR/$list-fail" ]] && { echo "HTTP 502: bad gateway" >&2; exit 1; }
+    repo="${path#repos/}"; repo="${repo%/"$list"\?*}"
     slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
-    src="$STUB_DIR/issues.$slug.json"
-    [[ -f "$src" ]] || src="$STUB_DIR/issues.json"
+    src="$STUB_DIR/$list.$slug.json"
+    [[ -f "$src" ]] || src="$STUB_DIR/$list.json"
     if [[ -f "$src" ]]; then jq -r "${filter:-.}" "$src"; else jq -rn "[] | ${filter:-.}"; fi
     exit ;;
   "pr list")

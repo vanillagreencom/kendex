@@ -89,7 +89,11 @@ format_issues_list() {
 
 # Format single issue to safe structure
 # Input: Raw GraphQL response with .issue
-# Output: Flat object (not wrapped in {issue: ...})
+# Output: Flat object (not wrapped in {issue: ...}). A response carrying
+# syncedWith, which the live `issues get` asks for and the cache never holds,
+# adds github_sync: the GitHub issues Linear's GitHub sync links the issue to,
+# each as OWNER/REPO#N. A read without it, the cache's, has no github_sync
+# rather than an empty one it cannot vouch for.
 format_issue_single() {
     local raw="$1"
     echo "$raw" | jq "$ISSUE_RELATION_JQ"'{
@@ -119,7 +123,10 @@ format_issue_single() {
         blocked_by_open: issue_blocked_by_open_ids(.issue.inverseRelations.nodes),
         related: [(.issue.relations.nodes // [])[] | select(.type == "related") | .relatedIssue.identifier],
         url: (.issue.url // "")
-    }'
+    } + (if (.issue | has("syncedWith")) then {
+        github_sync: [(.issue.syncedWith // [])[] | (.metadata // {})
+            | select(.owner and .repo and .number) | "\(.owner)/\(.repo)#\(.number)"]
+    } else {} end)'
 }
 
 # Format single issue with bundle info (recursive children + pending count)

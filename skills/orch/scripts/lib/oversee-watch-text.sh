@@ -173,15 +173,18 @@ The long pass's events, checked and reported in this order:
                              relaunch rewriting the record stopped ends it
   EVENT triage <item>        an item created at or after --since that is absent
                              from the first repository's persisted baseline
-  EVENT outside-contribution <repo>#<N> kind=<pr|issue> author=<login>
+  EVENT outside-contribution <repo>#<N> kind=<pr|issue> author=<login> [head=<sha>]
                              an open pull request in any --repo, or an open
                              issue in the first, whose author is outside the
                              fleet: not an app or bot account, and not a
                              login GitHub associates with the repository as
-                             OWNER, MEMBER or COLLABORATOR. Reported once
-                             while it stays open; a first-repository baseline
-                             row keeps it quiet, and closing it clears the
-                             row. ORCH_EXTERNAL_TRIAGE=off lists nothing
+                             OWNER, MEMBER or COLLABORATOR. A pull request
+                             carries head=, its head commit on the list.
+                             Reported once while it stays open, and a pull
+                             request again once per new head; a
+                             first-repository baseline row keeps it quiet,
+                             and closing it clears the row.
+                             ORCH_EXTERNAL_TRIAGE=off lists nothing
   EVENT lane-ready <item>    a lane open-terminal handed to a background job
                              while its host prepared it is launched: its
                              record reads running, and the watch carries it
@@ -658,8 +661,8 @@ Environment:
                               workflow-state exits 2 rather than dropping it
   ORCH_EXTERNAL_TRIAGE        `on` (default) runs the outside-contribution
                               check on every long pass, reading each --repo's
-                              open issues and pull requests; `off` lists
-                              nothing. Any other value exits 2
+                              open pull requests and the first's open issues;
+                              `off` lists nothing. Any other value exits 2
   ORCH_STATE_DIR              workflow-state directory; relative paths join
                               the project root; absolute paths stay unchanged
   ORCH_WATCH_TAIL_LINES       most lines any one event's pane payload prints,
@@ -814,7 +817,7 @@ ow_message() { # REASON FIELD=VALUE...
     pr-list-failed) text='The GitHub PR list command failed.' ;;
     pr-list-invalid) text='The GitHub PR list output could not be parsed.' ;;
     outside-list-failed) text='The GitHub list of open issues and pull requests the outside-contribution check reads failed.' ;;
-    outside-list-invalid) text='The GitHub list of open issues and pull requests carried a line the outside-contribution check cannot read: a number, a pr or issue kind, and a login.' ;;
+    outside-list-invalid) text='The GitHub list of open issues and pull requests carried a line the outside-contribution check cannot read: a number, a pr or issue kind, a login, and a pull request head commit.' ;;
     external-triage-invalid) text='ORCH_EXTERNAL_TRIAGE takes on or off.' ;;
     triage-state-failed) text='The fleet triage verdict log could not be read.' ;;
     triage-item-invalid) text='The fleet triage log contains an invalid issue identifier.' ;;
