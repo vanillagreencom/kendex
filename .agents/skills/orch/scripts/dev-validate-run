@@ -37,13 +37,26 @@
 # process group ends with it, and references/job-units.md § Runner line names
 # what escapes. That file is also the name shape and the stop rule. The unit's
 # RuntimeMaxSec is the cap, a backstop above the bound that still leaves the
-# bound to produce the verdict. The log's first line is the runner line.
+# bound to produce the verdict. Under --attached it starts the child as the
+# caller's own, leading its own process group, and ends that group as under
+# setsid. The log's first line is the runner line.
 #
 # Usage:
-#   dev-validate-run --worktree PATH [--poll SECS] [--validate-mode full|range] [--base REF]
+#   dev-validate-run --worktree PATH [--poll SECS] [--validate-mode full|range] [--base REF] [--attached]
 #       Start the run detached, then block until it ends. Prints the run
 #       directory first and the verdict last. Codex and Pi call this in the
 #       foreground; Claude Code runs it as a background command.
+#       --attached runs the same child in the caller's foreground instead,
+#       through lib/job-unit.sh attach: a child of this process that leads its
+#       own process group in the caller's session, under the same bound, class
+#       and run directory, and with the same sentinel and record. A host whose
+#       agent warden kills detached jobs needs it. The started line comes
+#       before the run rather than after the launch, and the log's runner line
+#       is runner=attached. A harness that cuts the call off leaves the run to
+#       finish, and --wait resumes it; a child killed before its verdict is a
+#       lost run. What the command leaves in the child's group ends with the
+#       run, and a process that starts its own session escapes, as under
+#       setsid. --stop ends an attached run by its group.
 #   dev-validate-run --wait --run-dir PATH [--budget SECS]
 #       Poll a run the start path already launched. Claude Code's foreground
 #       poll, repeated while it exits 3.
@@ -312,6 +325,7 @@ poll_given=false
 budget_given=false
 validate_mode_given=false
 base_given=false
+attached=false
 
 set_mode() { # FLAG NEW
   [[ -z "$mode" ]] || die mode-conflict "option=$1" "mode=$mode"
@@ -335,6 +349,7 @@ while (( $# > 0 )); do
     --budget)   need "$1" $# "${2:-}"; once "$1" "$budget_given"; budget_given=true; budget="$2"; shift 2 ;;
     --validate-mode) need "$1" $# "${2:-}"; once "$1" "$validate_mode_given"; validate_mode_given=true; validate_mode="$2"; shift 2 ;;
     --base)     need "$1" $# "${2:-}"; once "$1" "$base_given"; base_given=true; base="$2"; shift 2 ;;
+    --attached) once "$1" "$attached"; attached=true; shift ;;
     -h|--help)  usage; exit 0 ;;
     *)          die unknown-argument "argument=$1" ;;
   esac
@@ -346,6 +361,7 @@ done
 
 # Every option belongs to one mode. A flag the mode cannot use is refused rather
 # than dropped, so no caller believes it set a bound this script then ignores.
+[[ "$attached" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--attached" "mode=$mode"
 case "$mode" in
   start|stop|resolve)
     [[ "$run_dir_given" == false ]] || die option-unused "option=--run-dir" "mode=$mode"
@@ -489,11 +505,23 @@ if [[ "$mode" == start ]]; then
     printf 'head=%s\n' "$head_sha"
   } > "$run_dir/start"
 
-  # The run has to outlive the shell that launched it, because that shell is
-  # what a harness kills; a job unit does.
+  started_line() {
+    printf 'state=started run-dir=%s log=%s sentinel=%s timeout-secs=%s poll-secs=%s cap-secs=%s class=%s docs-only=%s%s\n' \
+      "$run_dir" "$run_dir/log" "$run_dir/exit" "$timeout_secs" "$poll" "$cap_secs" \
+      "$class" "$docs_only" "${class_fallback:+ class-fallback=$class_fallback}"
+  }
   launch_rc=0
-  job_unit_launch "validate-${worktree##*/}" "$run_dir/runner" --cap "$cap_secs" \
-    -- "$SCRIPT_PATH" --child --run-dir "$run_dir" || launch_rc=$?
+  if [[ "$attached" == true ]]; then
+    # Printed first, since the call below returns only once the run has ended:
+    # a harness that cuts the call off has already been told the directory.
+    started_line
+    job_unit_attach "$run_dir/runner" -- "$SCRIPT_PATH" --child --run-dir "$run_dir" || launch_rc=$?
+  else
+    # The run has to outlive the shell that launched it, because that shell is
+    # what a harness kills; a job unit does.
+    job_unit_launch "validate-${worktree##*/}" "$run_dir/runner" --cap "$cap_secs" \
+      -- "$SCRIPT_PATH" --child --run-dir "$run_dir" || launch_rc=$?
+  fi
   case "$launch_rc" in
     0) ;;
     1) die runner-unrecorded "path=$run_dir/runner" ;;
@@ -501,10 +529,7 @@ if [[ "$mode" == start ]]; then
     4) die launch-failed "$JOB_UNIT_ERROR" ;;
     *) die launch-failed "status=$launch_rc" ;;
   esac
-
-  printf 'state=started run-dir=%s log=%s sentinel=%s timeout-secs=%s poll-secs=%s cap-secs=%s class=%s docs-only=%s%s\n' \
-    "$run_dir" "$run_dir/log" "$run_dir/exit" "$timeout_secs" "$poll" "$cap_secs" \
-    "$class" "$docs_only" "${class_fallback:+ class-fallback=$class_fallback}"
+  [[ "$attached" == true ]] || started_line
   # Blocking form: the same poll --wait runs, with no per-call budget, so a
   # foreground caller returns only with the verdict.
   mode=wait

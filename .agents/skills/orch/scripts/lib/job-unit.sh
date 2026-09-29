@@ -4,8 +4,8 @@
 # its launch recorded. It bounds a job's lifetime, its memory when asked, and
 # under a unit the tasks and memory its launching process's own cgroup caps; it
 # sets no CPU limit. It holds the manager probe, the unit name, the
-# systemd-run launch, the setsid fallback, the unit stop and the process-group
-# kill for the jobs that use it: dev-validate-run, every job
+# systemd-run launch, the setsid fallback, the attached run, the unit stop and
+# the process-group kill for the jobs that use it: dev-validate-run, every job
 # references/waiter-launch.md starts (the repeat watch among them), and
 # oversee-succeed's watch restart.
 # A job with no --cap, one that runs for the session, is a unit only where the
@@ -53,10 +53,23 @@
 #       the job was not started (launch-failed: setsid's exit status, or a
 #       unit the manager would not describe); 5 --memory-max where the job
 #       would run under setsid (memory-max-unheld, with the runner line).
+#   job-unit.sh attach RECORD -- ARGV...
+#       Run ARGV attached: a child of this process, in its session, working
+#       directory and environment, that leads a process group of its own,
+#       with stdin from /dev/null and stdout discarded, and wait for it. For a
+#       host whose agent warden kills detached jobs: the job stays inside the
+#       calling agent's own process tree. RECORD is written whole before the
+#       start, as launch writes it:
+#         runner=attached
+#         line=runner=attached
+#       Nothing bounds the job but its own bound, and a job the caller's
+#       harness kills before `end` leaves its group as a setsid job does.
+#       Exit 0 the job ran and ended, whatever its own status; 1 RECORD could
+#       not be written (record-unwritable), and nothing started; 3 usage.
 #   job-unit.sh end RECORD LEADER_PID
-#       The job's own last call. Under setsid, tear down the process group
-#       LEADER_PID leads, the caller being a member; under a unit, nothing,
-#       since the unit's end does the same. Exit 0 done; 2 RECORD could not be
+#       The job's own last call. Under setsid or attached, tear down the
+#       process group LEADER_PID leads, the caller being a member; under a
+#       unit, nothing, since the unit's end does the same. Exit 0 done; 2 RECORD could not be
 #       read (record-unreadable) or the group could not be killed.
 #   job-unit.sh stop UNIT
 #       Stop the unit UNIT. Exit 0 it was running and is stopped; 1 the
@@ -73,7 +86,7 @@
 # same SIGTERM and grace.
 #   job-unit.sh stop-job RECORD PID ARGV_GLOB
 #       Stop the job RECORD describes: its unit by the exact recorded name, or
-#       under setsid its group as kill-group does. Exits as those two do, and 2
+#       under setsid or attached its group as kill-group does. Exits as those two do, and 2
 #       where RECORD could not be read (record-unreadable).
 #
 # Every failure prints one line, `job-unit: KEY FIELD=VALUE...`, on stderr; a
@@ -183,7 +196,7 @@ job_unit_read() { # RECORD
   done < "$1"
   case "$JOB_UNIT_RUNNER" in
     systemd) [[ -n "$JOB_UNIT_NAME" ]] ;;
-    setsid) ;;
+    setsid|attached) ;;
     *) return 1 ;;
   esac
 }
@@ -297,6 +310,28 @@ job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
   setsid -f "$@" </dev/null >/dev/null 2>&1 || job_unit_fail launch-failed "status=$?" 4
 }
 
+# Monitor mode is what gives a job started with & a process group of its own,
+# and with it the job keeps the caller's INT and QUIT dispositions rather than
+# the ignore a non-interactive shell gives an async job. It is on for that one
+# start and restored at once.
+job_unit_attach() { # RECORD -- ARGV...
+  local record="${1:-}" pid monitor=off
+  JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
+  [[ -n "$record" && $# -ge 3 && "$2" == -- ]] \
+    || { job_unit_fail usage subcommand=attach 3; return; }
+  shift 2
+  JOB_UNIT_RUNNER=attached
+  JOB_UNIT_NAME=""
+  JOB_UNIT_LINE="runner=attached"
+  job_unit_record "$record" || { job_unit_fail record-unwritable "path=$record" 1; return; }
+  [[ "$-" != *m* ]] || monitor=on
+  set -m
+  "$@" </dev/null >/dev/null &
+  pid=$!
+  [[ "$monitor" == on ]] || set +m
+  wait "$pid" || :
+}
+
 job_unit_stop() { # UNIT
   local out load
   JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
@@ -331,7 +366,7 @@ job_unit_stop_job() { # RECORD PID ARGV_GLOB
   job_unit_read "$1" || { job_unit_fail record-unreadable "path=$1"; return; }
   case "$JOB_UNIT_RUNNER" in
     systemd) job_unit_stop "$JOB_UNIT_NAME" ;;
-    setsid) job_unit_kill_group "$2" "$3" ;;
+    setsid|attached) job_unit_kill_group "$2" "$3" ;;
   esac
 }
 
@@ -376,7 +411,7 @@ job_unit_end() { # RECORD LEADER_PID
   job_unit_read "$1" || { job_unit_fail record-unreadable "path=$1"; return; }
   case "$JOB_UNIT_RUNNER" in
     systemd) return 0 ;;
-    setsid) job_unit_teardown "$2" member ;;
+    setsid|attached) job_unit_teardown "$2" member ;;
   esac
 }
 
@@ -389,6 +424,7 @@ job_unit_main() {
       return 0 ;;
     name) [[ $# -eq 2 ]] || rc=3 ;;
     launch) [[ $# -ge 4 ]] || rc=3 ;;
+    attach) [[ $# -ge 3 ]] || rc=3 ;;
     end) [[ $# -eq 2 ]] || rc=3 ;;
     stop) [[ $# -eq 1 ]] || rc=3 ;;
     kill-group) [[ $# -eq 2 ]] || rc=3 ;;
