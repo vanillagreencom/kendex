@@ -16,6 +16,7 @@
 #                                pi/opencode/cursor/copilot have none and are skipped until it is set)
 #   SECOND_OPINION_<NAME>_CMD    Full command for target <NAME> (claude/codex have defaults)
 #   SECOND_OPINION_<NAME>_ROOM_CMD  Room check for target <NAME>'s account (default: none)
+#   SECOND_OPINION_<NAME>_INLINE_DIFF  Set to 1 to embed the review diff for target <NAME>
 #   SECOND_OPINION_TARGET        Force one target (still subject to self-exclusion)
 #   SECOND_OPINION_TIMEOUT       Timeout in seconds (default: 1080)
 #   SECOND_OPINION_FOREGROUND_CAP  Set to 1 instead of passing --foreground
@@ -156,6 +157,13 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              the next entry, so a walled target is passed over
                              for one whose account has room and is taken
                              again once its check reads room
+  SECOND_OPINION_<NAME>_INLINE_DIFF
+                             Set to 1 for a target that cannot run git, such
+                             as a reviewer on read-only file tools: review
+                             mode then embeds the full git diff of the pinned
+                             range in that target's scope block, the prompt
+                             otherwise unchanged (default: unset, the target
+                             runs the diff command itself)
   SECOND_OPINION_TARGET      Force one target; still subject to self-exclusion
   SECOND_OPINION_TIMEOUT     Timeout in seconds (default: 1080), per
                              invocation: review/audit's one retry on a
@@ -202,7 +210,8 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
 Review scope (review mode only):
   The wrapper derives the review scope from the worktree before invoking the
   external CLI — current branch, diff range (--range or origin/BASE...HEAD),
-  diffstat, and the changed-file list are embedded in the prompt. audit
+  diffstat, and the changed-file list are embedded in the prompt, and the
+  full diff too for a target set to SECOND_OPINION_<NAME>_INLINE_DIFF=1. audit
   derives no scope: it reads only its supplied --prompt file and ignores
   --range. review stamps qa_metadata.reviewed_head — the reviewed range's
   endpoint commit, captured when the scope is derived (before the model
@@ -1016,8 +1025,9 @@ target_available() {
 # room, and the stdout lines are the NAME=value env prefix naming the account
 # the command judged, which ROOM_ENV carries to the target command: `lanes pick`
 # prints exactly that, and `lanes pick --json` prints a record, which is
-# refused rather than exported. Any other exit is no room, walled and
-# unmeasured alike; the command's own stderr, passed through, says which. Run
+# refused rather than exported. Any other exit is the check refusing, for a
+# wall to wait out, a setting or read to fix, or a check that could not run;
+# the command's own stderr, passed through, says which. Run
 # from the project root, where a relative path in its settings file resolves,
 # with stdin closed: the roster walk reads its remaining entries from stdin, and
 # under a forced target it is the caller's, where a prompt may still wait.
@@ -1031,7 +1041,7 @@ target_room() {
   # shellcheck disable=SC2086
   out="$(cd -- "${PROJECT_ROOT:-.}" && $cmd </dev/null)" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
-    skip_target "$t" "no room — $var exited $rc; its own reason is on stderr above"
+    skip_target "$t" "room check refused — $var exited $rc; its own reason is on stderr above"
     return 1
   fi
   while IFS= read -r line; do
@@ -1625,6 +1635,26 @@ REVIEW_RANGE=""
 REVIEW_CHANGED_FILES=""
 REVIEW_DIFFSTAT=""
 REVIEW_HEAD_SHA=""
+# The full diff of the pinned range, for a target whose
+# SECOND_OPINION_<NAME>_INLINE_DIFF is 1: a reviewer with read-only file tools
+# and no shell cannot run the diff command the prompt names, and would
+# otherwise review only the file list. Empty for every other target.
+REVIEW_DIFF=""
+
+derive_review_diff() {
+  local cwd="$1" var git_err
+  var="$(target_var "$TARGET_CLI" INLINE_DIFF)"
+  [[ "${!var:-}" == 1 ]] || return 0
+  git_err=$(so_tmpfile)
+  # shellcheck disable=SC2086
+  if ! REVIEW_DIFF=$(git -C "$cwd" -c core.quotePath=false diff --no-color --no-ext-diff $REVIEW_RANGE 2>"$git_err"); then
+    jq -n --arg range "$REVIEW_RANGE" --arg cwd "$cwd" --arg detail "$(head -5 "$git_err")" \
+      '{error: "Cannot derive review scope: git diff failed for range \($range)", cwd: $cwd, detail: $detail}' >&2
+    rm -f -- "$git_err"
+    exit "$EXIT_NO_SCOPE"
+  fi
+  rm -f -- "$git_err"
+}
 
 derive_review_scope() {
   local cwd="$1"
@@ -1848,7 +1878,12 @@ $REVIEW_CHANGED_FILES
 
 Run this command to see the changes:
   $diff_cmd
-
+${REVIEW_DIFF:+
+Its full output, embedded for a reviewer that cannot run it:
+--- begin diff ---
+$REVIEW_DIFF
+--- end diff ---
+}
 Then read changed files that need more context to understand the diff.
 
 Review the diff through ALL of these lenses — every lens is in scope and none may be skipped:
@@ -2349,6 +2384,7 @@ case "$MODE" in
     # Derive scope at top level (not in the $() subshell) so its exit
     # EXIT_NO_SCOPE aborts the run instead of being captured.
     derive_review_scope "$CWD" "$RANGE"
+    derive_review_diff "$CWD"
     PROMPT=$(build_review_prompt)
     ;;
   challenge) PROMPT=$(read_prompt) ;;

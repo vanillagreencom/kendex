@@ -31,4 +31,5 @@ Set shared values in `kendex.settings.toml` under `[env]` and personal overrides
 - `SECOND_OPINION_TIMEOUT`: seconds per CLI invocation, default `1080`.
 - `SECOND_OPINION_COPILOT_CMD` and `SECOND_OPINION_COPILOT_MODEL`: a `copilot` entry's command and the model it runs. Copilot CLI documents no read-only headless mode, so there is no built-in command, and it fronts several vendors, so the entry is skipped until the model is named.
 - `SECOND_OPINION_<NAME>_ROOM_CMD`: a command judging whether the account an entry spends has room, such as orch's `lanes pick`. A walled entry is skipped for the next one, so a Copilot entry can stand in while the Codex seats are walled, and the entry runs on the account the check names.
+- `SECOND_OPINION_<NAME>_INLINE_DIFF`: set to `1` for an entry that cannot run git, such as Pi on read-only file tools; its review prompt then carries the full diff.
 - `SECOND_OPINION_CURRENT_MODEL`: the session model, required in Pi, OpenCode, Cursor, Copilot or an undetected shell; never store it in a project file.

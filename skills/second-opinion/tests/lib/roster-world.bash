@@ -32,6 +32,8 @@ unset SECOND_OPINION_MODELS SECOND_OPINION_COUNT SECOND_OPINION_TARGET \
       SECOND_OPINION_FOREGROUND_CAP SECOND_OPINION_REVIEW_INSTRUCTIONS \
       SECOND_OPINION_CLAUDE_ROOM_CMD SECOND_OPINION_CODEX_ROOM_CMD \
       SECOND_OPINION_COPILOT_ROOM_CMD SECOND_OPINION_MY_MODEL_ROOM_CMD \
+      SECOND_OPINION_CLAUDE_INLINE_DIFF SECOND_OPINION_CODEX_INLINE_DIFF \
+      SECOND_OPINION_COPILOT_INLINE_DIFF SECOND_OPINION_MY_MODEL_INLINE_DIFF \
       SO_TEST_SEAT
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -418,9 +420,9 @@ err_word() {
     selected:*) printf '→ skipping %s: model %s already selected' "$a" "$b" ;;
     nocli:*) printf '→ skipping %s: CLI not found — install it or configure SECOND_OPINION_%s_CMD' "$a" "$b" ;;
     nocmd:*) printf '→ skipping %s: no command — %s has no built-in command; set SECOND_OPINION_%s_CMD to the command it runs, one you have checked cannot write' "$a" "$a" "$b" ;;
-    # noroom:<name>:<NAME>:<exit>, roomsaid:<name>:<kind>, room:<name>:<NAME>:<seat | ->,
+    # roomrefused:<name>:<NAME>:<exit>, roomsaid:<name>:<kind>, room:<name>:<NAME>:<seat | ->,
     # noassign:<name>:<NAME>
-    noroom:*) printf '→ skipping %s: no room — SECOND_OPINION_%s_ROOM_CMD exited %s; its own reason is on stderr above' "$a" "$b" "$c" ;;
+    roomrefused:*) printf '→ skipping %s: room check refused — SECOND_OPINION_%s_ROOM_CMD exited %s; its own reason is on stderr above' "$a" "$b" "$c" ;;
     roomsaid:*) printf 'room-check %s: %s' "$a" "$b" ;;
     room:*) printf '→ room: %s has room by SECOND_OPINION_%s_ROOM_CMD%s' "$a" "$b" "$([[ "$c" == - ]] || printf '; runs under SO_TEST_SEAT=%s' "$c")" ;;
     noassign:*) printf '→ skipping %s: room check printed a line that is no NAME=value assignment: {"config_dir":"/seat"} — SECOND_OPINION_%s_ROOM_CMD prints the env prefix of the account it judged and nothing else' "$a" "$b" ;;

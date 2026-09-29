@@ -295,7 +295,11 @@ word() {
     # applied once the output path is known
     plant:*|prepare:*) W_PLANTS+=("$1") ;;
     models:*) a="${1#models:}"; W_ENV+=("SECOND_OPINION_MODELS=${a//+/ }") ;;
-    lane:*) W_ENV+=("$(printf 'SECOND_OPINION_%s_CMD' "$(printf '%s' "${1#lane:}" | tr '[:lower:]-' '[:upper:]_')")=$STUB") ;;
+    # a roster entry running the stub, its room check and inline diff cleared
+    lane:*)
+      a="SECOND_OPINION_$(printf '%s' "${1#lane:}" | tr '[:lower:]-' '[:upper:]_')"
+      W_ENV+=("${a}_CMD=$STUB" "${a}_ROOM_CMD=" "${a}_INLINE_DIFF=")
+      ;;
     count:*) W_ENV+=("SECOND_OPINION_COUNT=${1#count:}") ;;
     current:*) W_ENV+=("SECOND_OPINION_CURRENT_MODEL=${1#current:}") ;;
     # SECOND_OPINION_TARGET: claude unless the row says target:- (unset)
@@ -533,8 +537,12 @@ run() {
   local -a argv env_args
   [[ -z "$W_DASHTMP" ]] || mkdir -p "$ROW/dashrun/-dashtmp"
   while IFS= read -r line; do argv+=("$line"); done < <(argv_for "$1")
-  # LC_ALL=C: the script's own errors quote coreutils messages
+  # LC_ALL=C: the script's own errors quote coreutils messages. The script
+  # runs in place, so this repository's settings and the caller's reach it:
+  # the stub target's per-target keys are cleared, set but empty, which
+  # outranks both.
   env_args=(LC_ALL=C PATH="$path" TMPDIR="$tmpdir" STUB_COUNTER="$ROW/counter" SECOND_OPINION_CURRENT_MODEL=none SECOND_OPINION_CLAUDE_CMD="$STUB"
+    SECOND_OPINION_CLAUDE_ROOM_CMD= SECOND_OPINION_CLAUDE_INLINE_DIFF=
     STUB_RC="$W_RC" STUB_STDOUT="$(stdout_of "$W_STDOUT")" STUB_STDERR="$W_STDERR" STUB_SLEEP="$W_SLEEP")
   [[ -z "$W_TARGET" ]] || env_args+=(SECOND_OPINION_TARGET="$W_TARGET")
   [[ -z "$W_STDOUT2" ]] || env_args+=(STUB_STDOUT2="$(stdout_of "$W_STDOUT2")")

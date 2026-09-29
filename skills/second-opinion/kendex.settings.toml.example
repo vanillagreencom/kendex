@@ -42,11 +42,18 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reas
 # skips the reviewer for the next one. With the orch skill installed, its
 # lanes pick is that check: this pair reviews through Pi on the Copilot pool
 # while the Codex seats are walled, and codex again once its seat has room.
+# The Copilot check reads ORCH_LANE_COPILOT_POOL from the settings in the
+# lane's own tree; a hosted lane states it in .env.local until its provider
+# forwards it, and one without it records the check's refusal.
 # SECOND_OPINION_MODELS = "claude codex pi-copilot"
 # SECOND_OPINION_CODEX_ROOM_CMD = ".agents/skills/orch/scripts/lanes pick --harness codex --model gpt-6-astra --binding-floor"
 # SECOND_OPINION_PI_COPILOT_CMD = "pi -p --no-session --no-extensions --model github-copilot/gpt-6-astra --thinking xhigh --tools read,grep,find,ls"
 # SECOND_OPINION_PI_COPILOT_MODEL = "gpt-6-astra"
 # SECOND_OPINION_PI_COPILOT_ROOM_CMD = ".agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/gpt-6-astra"
+
+# A reviewer that cannot run git, such as Pi on read-only file tools, is sent
+# the change itself: set to 1, its review prompt carries the full diff.
+# SECOND_OPINION_PI_COPILOT_INLINE_DIFF = "1"
 
 # Seconds to wait for a reviewer to answer before giving up on it.
 SECOND_OPINION_TIMEOUT = "1080"
