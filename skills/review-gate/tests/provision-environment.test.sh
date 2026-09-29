@@ -316,5 +316,17 @@ else
 fi
 cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
 
+# The contexts key's scope guard: a copy that resolves it in the provision
+# scope refuses the dry run the unreadable .env.local value above leaves as
+# it is. The environment scope's control is in validate-standard.test.sh.
+file_edit "$SKILL" scripts/lib/standard.sh 1 '^  if \[ "\$2" = full \]; then$' 's/^  if \[ "\$2" = full \]; then$/  if [ "$2" != environment ]; then/'
+CONSUMER=contexts run "$BASE" "" no --org acme --dry-run
+if [ "$RC" -eq 2 ] && [ -z "$REPORT" ] && [ -z "$WRITES" ]; then
+  ok 'control: a contexts key resolved in the provision scope refuses the dry run'
+else
+  bad "control: contexts scope (rc=$RC)" "$RAW"
+fi
+cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

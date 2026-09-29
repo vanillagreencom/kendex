@@ -59,8 +59,8 @@ One verdict line per row, VALUE being what was observed:
                                     from an organization ruleset, and every
                                     effective default-branch rule comes from
                                     one, except required_status_checks and
-                                    merge_queue, which a repository ruleset
-                                    may hold. VALUE is the source types the
+                                    merge_queue, which come from a repository
+                                    ruleset only. VALUE is the source types the
                                     rules come from; a FAIL value lists each
                                     departure, SOURCE:ID:TYPE for a rule from
                                     a source its type may not use and
@@ -248,16 +248,17 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
 
   # The organization ruleset holds the review, deletion and force-push rules
   # every repository shares. A repository keeps its own required checks and
-  # merge queue in its own rulesets. Any other source for a rule is a
-  # departure, and so is a shared rule no organization ruleset holds.
+  # merge queue in its own rulesets and nowhere else, an organization ruleset
+  # included. Any other source for a rule is a departure, and so is a shared
+  # rule no organization ruleset holds.
   departures="$(rules 'if length == 0 then "none" else (
-    [.[] | select(.ruleset_source_type != "Organization" and ((.ruleset_source_type == "Repository" and (.type == "required_status_checks" or .type == "merge_queue")) | not)) | "\(.ruleset_source_type):\(.ruleset_id):\(.type)"]
+    [.[] | select(if .type == "required_status_checks" or .type == "merge_queue" then .ruleset_source_type != "Repository" else .ruleset_source_type != "Organization" end) | "\(.ruleset_source_type):\(.ruleset_id):\(.type)"]
     + (["pull_request", "copilot_code_review", "deletion", "non_fast_forward"] - [.[] | select(.ruleset_source_type == "Organization") | .type] | map("missing:\(.)"))
     | unique | join(",")) end')"
   case "$departures" in
     "") ok standard-ruleset-source "$(rules '[.[].ruleset_source_type] | unique | join(",")')" "$BRANCH takes its shared rules from an organization ruleset, and only its required checks and merge queue from a repository ruleset" ;;
     none) bad standard-ruleset-source none "no ruleset applies to $BRANCH" ;;
-    *) bad standard-ruleset-source "$departures" "these rules on $BRANCH depart from the standard's sources: pull_request, copilot_code_review, deletion and non_fast_forward come from an organization ruleset, and a repository ruleset holds only required_status_checks and merge_queue" ;;
+    *) bad standard-ruleset-source "$departures" "these rules on $BRANCH depart from the standard's sources: pull_request, copilot_code_review, deletion and non_fast_forward come from an organization ruleset, and required_status_checks and merge_queue from a repository ruleset only, which holds nothing else" ;;
   esac
 
   if [ "$(rules 'any(.[]; .type == "merge_queue")')" = true ]; then

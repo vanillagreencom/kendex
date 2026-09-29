@@ -195,6 +195,8 @@ a pull-request rule from a repository ruleset~~rules.json~.[2].ruleset_source_ty
 no deletion rule~~rules.json~del(.[0])~standard-ruleset-source=missing:deletion
 no force-push rule~~rules.json~del(.[1])~standard-ruleset-source=missing:non_fast_forward
 required checks from an enterprise ruleset~~rules.json~.[5].ruleset_source_type = "Enterprise"~standard-ruleset-source=Enterprise:4:required_status_checks^standard-bypass-actors=unreadable:4
+required checks from an organization ruleset~~rules.json~.[5] |= (.ruleset_source_type = "Organization" | .ruleset_id = 2)~standard-ruleset-source=Organization:2:required_status_checks
+a merge queue from an organization ruleset~~rules.json~.[4] |= (.ruleset_source_type = "Organization" | .ruleset_id = 2)~standard-ruleset-source=Organization:2:merge_queue
 no ruleset at all~~rules.json~[]~standard-ruleset-source=none^standard-merge-queue=absent^standard-required-contexts=''^standard-required-approvals=absent^standard-stale-dismissal=absent^standard-conversation-resolution=false^standard-copilot-review=absent
 no merge queue~~rules.json~del(.[4])~standard-merge-queue=absent
 an extra required context~~rules.json~.[5].parameters.required_status_checks += [{"context": "Other"}]~standard-required-contexts=CI\;Cargo\ \(workspace\ tests\)\;Other
@@ -492,6 +494,59 @@ if ! grep -q '^review-gate-error=standard-setting-missing ' <<<"$RAW"; then
   ok 'control: a skipped missing-setting refusal lets a consumer that declares nothing through'
 else
   bad "control: missing-setting refusal (rc=$RC)" "$RAW"
+fi
+cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
+
+# The default-branch rules' controls, one per rule. Each plants one defect in
+# the copy that keeps the rule's text and drops its behavior, runs the case
+# that reaches the rule, and passes when the rule's row is still printed but
+# no longer as the real script prints it.
+# name ~ match ~ sed edit of scripts/validate-standard.sh ~ consumer ~ jq
+# edit of rules.json ~ the real script's verdict line for the case
+controls=0
+while IFS='~' read -r name match edit consumer rules_edit real; do
+  [ -n "$name" ] || continue
+  controls=$((controls + 1))
+  file_edit "$SKILL" scripts/validate-standard.sh 1 "$match" "$edit"
+  chmod +x "$SKILL/scripts/validate-standard.sh"
+  dir="$TMP/control-rule-$controls"
+  cp -R "$BASE" "$dir"
+  [ -z "$rules_edit" ] || { jq "$rules_edit" "$dir/rules.json" >"$dir/r" && mv "$dir/r" "$dir/rules.json"; }
+  CONSUMER="$TMP/consumer-$consumer"
+  run "$dir" ""
+  CONSUMER="$TMP/consumer-full"
+  check="${real#* check=}"
+  check="${check%% value=*}"
+  if [ "$RC" -le 1 ] && grep -qE "^(ok|FAIL) check=$check " <<<"$OUT" && ! grep -qxF -- "$real" <<<"$OUT"; then
+    ok "control: $name"
+  else
+    bad "control: $name (rc=$RC)" "$RAW"
+  fi
+  cp "$TMP/standard-script.keep" "$SKILL/scripts/validate-standard.sh"
+done <<'ROWS'
+required checks and a merge queue that may not come from a repository ruleset fail the matching layout~!= "Repository" else~s/!= "Repository" else/!= "Repository" or true else/~full~~ok check=standard-ruleset-source value=Organization\,Repository
+required checks that may come from an organization ruleset pass~!= "Repository" else~s/!= "Repository" else/!= "Repository" and .ruleset_source_type != "Organization" else/~full~.[5] |= (.ruleset_source_type = "Organization" | .ruleset_id = 2)~FAIL check=standard-ruleset-source value=Organization:2:required_status_checks
+a shared-rule list without deletion passes a branch with no deletion rule~"copilot_code_review", "deletion", "non_fast_forward"\] -~s/"deletion", "non_fast_forward"\] -/"non_fast_forward"] -/~full~del(.[0])~FAIL check=standard-ruleset-source value=missing:deletion
+an unchecked context list passes an extra required context~elif \[ "\$contexts" = "\$WANT_CONTEXTS" \]; then~s/elif \[ "\$contexts" = "\$WANT_CONTEXTS" \]; then/elif [ "$contexts" = "$WANT_CONTEXTS" ] || true; then/~full~.[5].parameters.required_status_checks += [{"context": "Other"}]~FAIL check=standard-required-contexts value=CI\;Cargo\ \(workspace\ tests\)\;Other
+a skipped gate exclusion passes a required gate context the repository declares~elif \[ "\$gated" = true \]; then~s/elif \[ "\$gated" = true \]; then/elif [ "$gated" = true ] \&\& false; then/~gated~.[5].parameters.required_status_checks += [{"context": "Review gate"}]~FAIL check=standard-required-contexts value=gate-required:CI\;Cargo\ \(workspace\ tests\)\;Review\ gate
+a skipped undeclared-list failure reports no undeclared list~if \[ -z "\$WANT_CONTEXTS" \]; then~s/if \[ -z "\$WANT_CONTEXTS" \]; then/if [ -z "$WANT_CONTEXTS" ] \&\& false; then/~no-contexts~~FAIL check=standard-required-contexts value=undeclared:CI\;Cargo\ \(workspace\ tests\)
+a threshold that takes 0 passes a rule requiring no approval~"" \| \*\[!0-9\]\* \| 0\)~s/ | 0)/)/~full~.[2].parameters.required_approving_review_count = 0~FAIL check=standard-required-approvals value=0
+an unchecked dismissal passes stale approvals kept on push~\[ "\$stale" = true \]; then~s/\[ "\$stale" = true \]; then/[ "$stale" = true ] || true; then/~full~.[2].parameters.dismiss_stale_reviews_on_push = false~FAIL check=standard-stale-dismissal value=false
+ROWS
+[ "$controls" -gt 0 ] || bad "the rule-control table ran no row" ""
+
+# The contexts key's scope guard: a copy that resolves it in the
+# environment scope refuses the environment-only run the unreadable
+# .env.local value above passes. The provision scope's control is in
+# provision-environment.test.sh.
+file_edit "$SKILL" scripts/lib/standard.sh 1 '^  if \[ "\$2" = full \]; then$' 's/^  if \[ "\$2" = full \]; then$/  if [ "$2" != provision ]; then/'
+CONSUMER="$TMP/consumer-env-contexts"
+run "$ENV_BASE" '' --environment-only
+CONSUMER="$TMP/consumer-full"
+if [ "$RC" -eq 2 ] && [ -z "$OUT" ]; then
+  ok 'control: a contexts key resolved in the environment scope refuses environment-only'
+else
+  bad "control: contexts scope (rc=$RC)" "$RAW"
 fi
 cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
 

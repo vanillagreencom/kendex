@@ -50,7 +50,7 @@ Value rules come from the engine, not from a copy of it: the settings half calls
 
 An organization ruleset carries the shared rules for every repository: the pull-request rule, the Copilot review, and the deletion and force-push rules. Each repository keeps two rulesets of its own, one for its required checks and one for its merge queue, and no other. `scripts/validate-standard.sh` reports which source each rule type comes from, not which ruleset holds it: it neither counts nor names the repository rulesets, so their number and their split are the owner's to hold.
 
-`validate-standard.sh` and `provision-environment.sh` read the organization's own values from settings, since the package ships none. Before either runs, declare in the `[env]` table of the repository's `kendex.settings.toml` ([settings.md](settings.md)):
+`validate-standard.sh` and `provision-environment.sh` read the organization's own values from settings, since the package ships none. Declare them in the `[env]` table of the repository's `kendex.settings.toml`; which script reads which key is [settings.md](settings.md):
 
 1. `REVIEW_GATE_STANDARD_APP`: the slug of the GitHub App the organization installs on every repository.
 2. `REVIEW_GATE_STANDARD_ENVIRONMENT`: the environment that holds that app's secrets.
@@ -61,7 +61,7 @@ Each script exits 2 with one `standard-setting-missing` record naming every key 
 
 A repository reaches this shape in one order. The workflow change that reports `CI` on `pull_request` and `merge_group`, both under `on:`, and the change to the required-checks ruleset apply back to back. Where the workflow change renames an existing aggregate, the ruleset changes first and the rename merges through the queue at once. After the first merge through the queue, `scripts/validate-standard.sh` runs: its `standard-ci-context` ok confirms the workflow change on both legs, and its `standard-required-contexts` and `standard-merge-queue` oks confirm the ruleset change.
 
-- **Rule sources**: the pull-request, Copilot review, deletion and force-push rules come from an organization ruleset. A repository ruleset holds only the required checks or the merge queue. `standard-ruleset-source` reports any other source.
+- **Rule sources**: the pull-request, Copilot review, deletion and force-push rules come from an organization ruleset. The required checks and the merge queue come from a repository ruleset only, never an organization one, and a repository ruleset holds nothing else. `standard-ruleset-source` reports any other source.
 - **Required contexts**: the required-checks ruleset requires exactly the contexts `REVIEW_GATE_STANDARD_CONTEXTS` declares (`standard-required-contexts`), and never the `gate_context` of the skill's `standard.json`, `Review gate`: the approval rule replaces it. The list need not hold `CI`. Every repository reports the aggregate `CI` context on both the `pull_request` and the `merge_group` leg (`standard-ci-context`), whatever its list holds; [harness-ci wiring.md § The CI context](../../harness-ci/references/wiring.md#the-ci-context) says how.
 - **Merge queue**: required on the default branch. The writer's `merge_group` leg posts the gate context on queue shas unconditionally.
 - **Approvals**: the organization ruleset's pull-request rule requires at least 1 approval (`standard-required-approvals`) and dismisses a stale approval on push (`standard-stale-dismissal`).
