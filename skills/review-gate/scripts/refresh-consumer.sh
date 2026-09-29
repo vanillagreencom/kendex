@@ -55,7 +55,6 @@ if git diff --cached --quiet; then
   if [ -n "$pr" ]; then
     gh pr close "$pr" --repo "$GH_REPO"
   fi
-  "$SCRIPT_DIR/refresh-reviews.sh"
   printf 'refresh-state=current pr=none\n'
   exit 0
 fi
@@ -88,6 +87,5 @@ fi
 if [ -z "$pr" ]; then
   pr="$(gh api --method POST "repos/$GH_REPO/pulls" -f head=kendex/refresh -f base="$default" -f title='chore: refresh kendex renders' -f body='Generated kendex updates. The shared classifier verifies render equality before this pull request is opened.' --jq .number)"
 fi
-"$SCRIPT_DIR/refresh-reviews.sh"
 gh pr merge "$pr" --repo "$GH_REPO" --auto --squash --match-head-commit "$head"
 printf 'refresh-state=%s pr=%s\n' "$state" "$pr"

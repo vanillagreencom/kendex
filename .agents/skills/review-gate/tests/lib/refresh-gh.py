@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persistent GitHub fixture for the refresh-review writer's process tests."""
+"""Persistent GitHub and change-class fixture for the refresh-review writer's process tests."""
 import json
 import os
 from pathlib import Path
@@ -7,18 +7,19 @@ import sys
 
 path = Path(os.environ['GH_FIXTURE'])
 world = json.loads(path.read_text())
-if sys.argv[1:] == ['predicate']:
+if sys.argv[1:2] == ['classify']:
+    # Neither credential reaches the classifier.
     assert 'KENDEX_ISSUES_TOKEN' not in os.environ
-    number = int(os.environ['PR_NUMBER'])
-    pr = next(p for p in world['prs'] if p['number'] == number)
-    assert os.environ['HEAD_SHA'] == pr['head']['sha']
-    assert os.environ['PR_BASE_SHA'] == pr['base']['sha']
-    assert os.environ['PR_AUTHOR'] == pr['user']['login']
-    world.setdefault('proofs', []).append(number)
+    assert 'GH_TOKEN' not in os.environ
+    flags = dict(zip(sys.argv[2::2], sys.argv[3::2]))
+    assert flags['--event'] == 'pull_request' and flags['--repo'] == os.environ['EXPECT_REPO']
+    pr = next(p for p in world['prs'] if p['head']['sha'] == flags['--head'])
+    assert flags['--base'] == pr['base']['sha']
+    world.setdefault('proofs', []).append(pr['number'])
     path.write_text(json.dumps(world))
-    if pr.get('policy') == 'error':
+    if pr.get('class') == 'error':
         sys.exit(2)
-    print(pr.get('policy', 'verdict=approved detail=change class render requires no review evidence or thread wait'))
+    print(pr.get('class', 'change_class=render'))
     sys.exit(0)
 
 args = sys.argv[1:]
@@ -61,14 +62,12 @@ elif endpoint.startswith('repos/acme/repo/'):
     pr = next(p for p in world['prs'] if p['number'] == int(parts[4]))
     if len(parts) == 5:
         kind = 'pull'
-    elif parts[3] == 'issues':
-        kind = 'disposition' if method == 'POST' else 'issue-comments'
     elif parts[-1] == 'replies':
         kind = 'reply'
-    elif 'reviews?' in parts[-1]:
-        kind = 'reviews'
-    else:
+    elif parts[3] == 'pulls' and parts[5].startswith('comments?'):
         kind = 'review-comments'
+    else:
+        raise AssertionError(endpoint)
 else:
     raise AssertionError(endpoint)
 
@@ -92,12 +91,8 @@ elif kind == 'pull':
     if failure.get('mode') == 'moved':
         result['head']['sha'] = 'd' * 40
     print(json.dumps(result))
-elif kind == 'reviews':
-    print(json.dumps(pr['reviews']))
 elif kind == 'review-comments':
     print(json.dumps(pr['comments']))
-elif kind == 'issue-comments':
-    print(json.dumps(pr['issue_comments']))
 elif kind == 'threads':
     nodes = [{'id': t['id'], 'isResolved': t['resolved'], 'comments': {'nodes': [{'databaseId': t['root']}]}} for t in pr['threads']]
     pages = [nodes[:1], nodes[1:]] if len(nodes) > 1 else [nodes]
@@ -118,10 +113,6 @@ else:
         thread = next(t for t in pr['threads'] if t['id'] == fields['id'])
         thread['resolved'] = True
         result = {'data': {'resolveReviewThread': {'thread': {'id': thread['id'], 'isResolved': True}}}}
-    elif kind == 'disposition':
-        comment = {'id': 1000 + len(world['writes']), 'user': pr['user'], 'body': fields['body']}
-        pr['issue_comments'].append(comment)
-        result = comment
     else:
         raise AssertionError(kind)
     path.write_text(json.dumps(world))

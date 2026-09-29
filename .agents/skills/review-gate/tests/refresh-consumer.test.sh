@@ -62,11 +62,9 @@ set -euo pipefail
 printf '%s\n' "$*" >>"$TEST_STATE/classifier"
 printf 'change_class=%s\n' "$TEST_CLASS"
 SH
-for dependency in adopt-refresh refresh-reviews; do
-  printf '#!/usr/bin/env bash\nset -euo pipefail\n' >"$repo/.agents/skills/review-gate/scripts/$dependency.sh"
-done
+printf '#!/usr/bin/env bash\nset -euo pipefail\n' >"$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
 chmod +x "$repo/.agents/skills/harness-ci/scripts/change-class"
-chmod +x "$repo/.agents/skills/review-gate/scripts/"{adopt-refresh,refresh-reviews}.sh
+chmod +x "$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
 printf 'current\n' >"$repo/rendered.txt"
 commit "$repo"
 git init --bare -q "$TMP/remote"
@@ -132,7 +130,6 @@ git -C "$repo" mv .github/workflows/review-gate-writer.yml .github/workflows/gat
 printf '[]\n' >"$repo/.kendex-generated.json"
 printf 'current\n' >"$repo/rendered.txt"
 cp "$TMP/case.1/.agents/skills/harness-ci/scripts/change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
-printf '#!/usr/bin/env bash\nset -euo pipefail\n' >"$repo/.agents/skills/review-gate/scripts/refresh-reviews.sh"
 commit "$repo"
 git init --bare -q "$TMP/secure-remote"
 git --git-dir="$TMP/secure-remote" config gc.auto 0
@@ -190,7 +187,6 @@ settings "$repo" REVIEW_GATE_MODE off
 printf '[]\n' >"$repo/.kendex-generated.json"
 printf 'current\n' >"$repo/rendered.txt"
 cp "$TMP/case.1/.agents/skills/harness-ci/scripts/change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
-printf '#!/usr/bin/env bash\nset -euo pipefail\n' >"$repo/.agents/skills/review-gate/scripts/refresh-reviews.sh"
 commit "$repo"
 git init --bare -q "$TMP/no-writer-remote"
 git --git-dir="$TMP/no-writer-remote" config gc.auto 0

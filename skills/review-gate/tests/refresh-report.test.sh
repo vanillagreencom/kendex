@@ -69,47 +69,54 @@ env={'PATH':str(root/'bin')+':/usr/bin:/bin','HOME':str(root),'GH_TOKEN':'consum
  'name':'review-gate','kind':'skill','harness':'codex','source':'kendex',
  'sourceRepo':'vanillagreencom/kendex','sourceHash':'x','enabled':True}}}))
 (root/'historical-lock.json').write_bytes((root/'.kendex-lock.json').read_bytes())
-findings=[{'path':'.agents/skills/review-gate/scripts/test.sh','body':'The shipped command fails.\n$(touch should-not-exist)',
+findings=[{'root':10,'path':'.agents/skills/review-gate/scripts/test.sh','body':'The shipped command fails.\n$(touch should-not-exist)',
            'url':'https://github.com/acme/repo/pull/1#discussion_r10'}]
-findings[0]['claim']=findings[0]['body']
+# The stdout protocol refresh-reviews reads: one {root, issue, note} per row.
+results=[]
 def reset(**extra):
  world.write_text(json.dumps(dict(issues=[],writes=[],**extra))); summary.write_text('')
 def run(driver=skill/'scripts/refresh-report.py', rows=findings, overrides=None):
  result=subprocess.run(['python3',str(driver),'a'*40,'1'],input=json.dumps(rows),text=True,
                        capture_output=True,env=dict(env,**(overrides or {})),cwd=root)
  assert result.returncode==0,result.stderr
+ results[:]=json.loads(result.stdout)
  return json.loads(world.read_text())
 reset(); first=run()
 assert len(first['writes'])==1
 issue=first['issues'][0]
+assert results==[{'root':10,'issue':issue['html_url'],'note':'Filed for upstream confirmation'}]
 assert issue['labels']==['bug','ci-infra','agent:generalist']
 assert issue['title'].startswith('[kendex-render:')
 assert 'Reached by:' in issue['body'] and env['GITHUB_RUN_ID'] in issue['body']
 assert findings[0]['path'] in issue['body'] and findings[0]['url'] in issue['body']
 assert not (root/'should-not-exist').exists()
 assert len(run()['writes'])==1
+assert results[0]['issue']==issue['html_url']
+# A later run's evidence comment leaves the finding filed under the issue.
 assert len(run(overrides={'GITHUB_RUN_ID':'43'})['writes'])==2
-# Identical text from fresh inline comments or shifted suppressed locations
-# must reuse one issue. Different claim text must keep its own issue.
+assert results[0]['issue']==issue['html_url'] and results[0]['note']=='Existing open report'
+# Identical text from a fresh inline comment must reuse one issue. Different
+# text must keep its own issue.
 inline_pair=[dict(findings[0],url='https://github.com/acme/repo/pull/1#discussion_r10'),
-             dict(findings[0],url='https://github.com/acme/repo/pull/2#discussion_r20')]
-suppressed_pair=[dict(findings[0],body=f"### Suppressed comments (1)\n**{findings[0]['path']}:{line}**\nDefect",
-                      claim=f"### Suppressed comments (1)\n**{findings[0]['path']}**\nDefect") for line in (1,20)]
-for original, repeated in (inline_pair, suppressed_pair):
- reset(); run(rows=[original]); reused=run(rows=[repeated],overrides={'GITHUB_RUN_ID':'43'})
- assert len(reused['issues'])==1 and '\n'.join('> '+line for line in original['body'].splitlines()) in reused['issues'][0]['body']
- assert '\n'.join('> '+line for line in repeated['body'].splitlines()) in reused['writes'][-1]['body']
- distinct=dict(repeated,body=repeated['body']+'\nAnother defect.',claim=repeated['claim']+'\nAnother defect.')
- assert len(run(rows=[distinct])['issues'])==2
+             dict(findings[0],root=20,url='https://github.com/acme/repo/pull/2#discussion_r20')]
+original, repeated = inline_pair
+reset(); run(rows=[original]); reused=run(rows=[repeated],overrides={'GITHUB_RUN_ID':'43'})
+assert len(reused['issues'])==1 and '\n'.join('> '+line for line in original['body'].splitlines()) in reused['issues'][0]['body']
+assert '\n'.join('> '+line for line in repeated['body'].splitlines()) in reused['writes'][-1]['body']
+assert results==[{'root':20,'issue':reused['issues'][0]['html_url'],'note':'Existing open report'}]
+distinct=dict(repeated,body=repeated['body']+'\nAnother defect.')
+assert len(run(rows=[distinct])['issues'])==2
 # A closed report is absent from GitHub's open-only listing and permits a new issue.
 reset(); assert len(run()['issues'])==1
 for overrides, extra in [({'KENDEX_ISSUES_TOKEN':''},{}), ({},{'deny':True})]:
  reset(**extra); result=run(overrides=overrides)
  assert result['writes']==[] and 'issues/new?' in summary.read_text()
+ assert results[0]['root']==10 and results[0]['issue'] is None
  assert findings[0]['url'] in summary.read_text()
 # Permission recovery runs the same candidates even after earlier policy replies.
 reset(); run(overrides={'KENDEX_ISSUES_TOKEN':''}); assert len(run()['issues'])==1
 reset(); assert run(rows=[dict(findings[0],path='src/private.py')])['writes']==[]
+assert results==[{'root':10,'issue':None,'note':'Not a rendered file'}]
 # A late merged-PR report must keep the recorded package route after removal
 # or replacement through the consumer's supported package commands.
 for drift in ('removed', 'replaced'):
@@ -133,8 +140,7 @@ source=(skill/'scripts/refresh-report.py').read_text()
 for needle,replacement,rows,expect in [
  ('if path not in records:', 'if True or path not in records:', findings, 'path'),
  ('if existing:', 'if False and existing:', findings, 'dedup'),
- ('finding["claim"]', 'finding["claim"] if False else finding["body"]', suppressed_pair, 'claim'),
- ('[repo, path, finding["claim"]]', '[repo, path, finding["claim"], finding["url"]]', inline_pair, 'instance'),
+ ('[repo, path, finding["body"]]', '[repo, path, finding["body"], finding["url"]]', inline_pair, 'instance'),
  ('            ).stderr', '            ).stdout', findings, 'stream'),
 ]:
  assert source.count(needle)==1
@@ -142,10 +148,22 @@ for needle,replacement,rows,expect in [
  reset()
  if expect=='dedup':
   run(mutant); assert len(run(mutant)['issues'])==2
- elif expect in ('claim','instance'):
+ elif expect=='instance':
   run(mutant,rows=[rows[0]]); assert len(run(mutant,rows=[rows[1]])['issues'])==2
  else:
   assert run(mutant,rows=rows)['writes']==[]
+# The filed issue is the rule refresh-reviews resolves on. An unfiled finding
+# reported with its filing link, and a finding reported under the evidence
+# comment rather than the issue, each turn a case above red.
+for needle,replacement,overrides,runs in [
+ ('        filed = None\n', '        filed = fallback\n', {'KENDEX_ISSUES_TOKEN':''}, [{}]),
+ ('url = result["html_url"]', 'url = filed = result["html_url"]', {}, [{}, {'GITHUB_RUN_ID':'43'}]),
+]:
+ assert source.count(needle)==1
+ mutant=root/'filed.py'; mutant.write_text(source.replace(needle,replacement))
+ reset()
+ for extra in runs: run(mutant,overrides=dict(overrides,**extra))
+ assert results[0]['issue'] is not None and not results[0]['issue'].endswith('/issues/1')
 PY
 then ok 'reporter token isolation, render binding, labels, evidence, duplicate handling and permission fallback'; else bad 'reporter behavior and controls'; fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

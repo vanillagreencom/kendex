@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # Shared review identities and suppressed-body grammar. The predicate owns
-# their meaning; refresh-reviews consumes the same definitions for replies.
+# their meaning; refresh-reviews reads automatic_author alone.
 AUTOMATIC_AUTHOR_DEF='def automatic_author: (.__typename // .type // "User") == "Bot";'
 
 ACCEPTED_ROWS_DEF='def not_errored_attestation($mk):

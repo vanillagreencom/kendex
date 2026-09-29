@@ -50,9 +50,9 @@ def check(w):
   assert token['with']['app-id']=='${{ secrets.FLEET_GH_APP_ID }}'
   assert token['with']['private-key']=='${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}'
   assert not token['with'].get('skip-token-revoke',False)
- # The upstream token reaches exactly the trusted reporter, after refresh.
+ # The upstream token reaches exactly the trusted review answerer, after refresh.
  users=[s for s in steps if 'steps.issues-token.outputs.token' in json.dumps(s)]
- assert len(users)==1 and '--report-only' in users[0]['run']
+ assert len(users)==1
  assert users[0]['env']['GH_TOKEN']=='${{ steps.token.outputs.token }}'
  assert users[0]['env']['KENDEX_ISSUES_TOKEN']=='${{ steps.issues-token.outputs.token }}'
  assert '$RUNNER_TEMP/refresh-skills/.agents/skills/review-gate/scripts/refresh-reviews.sh' in users[0]['run']

@@ -83,11 +83,13 @@ jobs:
           owner: vanillagreencom
           repositories: kendex
           permission-issues: write
-      - name: Report rendered-file findings upstream
+      # A finding is resolved only once it is filed upstream. Without this
+      # token every finding stays an open thread.
+      - name: File rendered-file findings upstream and resolve them
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           KENDEX_ISSUES_TOKEN: ${{ steps.issues-token.outputs.token }}
         run: |
           set -euo pipefail
-          exec "$RUNNER_TEMP/refresh-skills/.agents/skills/review-gate/scripts/refresh-reviews.sh" --report-only
+          exec "$RUNNER_TEMP/refresh-skills/.agents/skills/review-gate/scripts/refresh-reviews.sh"
