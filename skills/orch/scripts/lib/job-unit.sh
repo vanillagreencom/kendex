@@ -28,8 +28,8 @@
 #   job-unit.sh launch NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
 #       Start ARGV detached, as the unit orch-NAME-PID where a manager
 #       answers (and, with no --cap, lingers), PID being this launch's own
-#       process, in this launch's own working directory and environment, and
-#       print its runner line. RECORD
+#       process, in this launch's own working directory, environment and
+#       user-manager slice, and print its runner line. RECORD
 #       is written whole before each launch attempt, so the job can read how it
 #       runs the moment it starts:
 #         runner=systemd|setsid
@@ -76,7 +76,8 @@
 # unit that had ended and a process left alone are exit 1 and no failure.
 # Sourced, each subcommand is the function job_unit_<name with _ for ->, and
 # job_unit_read RECORD loads a record into JOB_UNIT_RUNNER, JOB_UNIT_NAME and
-# JOB_UNIT_LINE, which launch also sets. A failure leaves its KEY in
+# JOB_UNIT_LINE, which launch also sets, and job_unit_slice CGROUP_FILE prints
+# the user-manager slice launch names for the unit. A failure leaves its KEY in
 # JOB_UNIT_ERROR_KEY and its fields in JOB_UNIT_ERROR.
 
 # The seconds between SIGTERM and SIGKILL, both for what a unit still holds
@@ -104,6 +105,25 @@ job_unit_name() { # NAME PID
 # command line, and $$ is its spelling of one literal $.
 job_unit_arg() { # VALUE
   printf '%s' "${1//\$/\$\$}"
+}
+
+# The user-manager slice a process runs in, read from its cgroup file: the
+# innermost `.slice` in the cgroup v2 path below this user's user@UID.service.
+# Nothing where the process runs outside that manager (a login session scope,
+# a system service) or the file holds no cgroup v2 line or cannot be read.
+job_unit_slice() { # CGROUP_FILE
+  local line path part slice="" parts=()
+  [[ -r "$1" ]] || return 0
+  while IFS= read -r line; do
+    [[ "$line" == 0::* ]] || continue
+    path="${line#0::}"
+    [[ "$path" == */user@"$UID".service/* ]] || return 0
+    IFS=/ read -r -a parts <<<"${path#*/user@"$UID".service/}"
+    for part in ${parts[@]+"${parts[@]}"}; do
+      [[ "$part" != *.slice ]] || slice="$part"
+    done
+  done < "$1"
+  printf '%s' "$slice"
 }
 
 # An open-file limit as systemd spells it.
@@ -143,7 +163,7 @@ job_unit_read() { # RECORD
 }
 
 job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
-  local job="${1:-}" record="${2:-}" probe_err="" launch_err="" linger capped="" memory_max="" load nofile name arg
+  local job="${1:-}" record="${2:-}" probe_err="" launch_err="" linger capped="" memory_max="" load nofile name arg slice
   local unit_props=() unit_env=() unit_argv=()
   JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
   [[ $# -lt 2 ]] || shift 2
@@ -195,7 +215,15 @@ job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
     # caller's directory is named, and so are the caller's own open-file
     # limits, which a build and test battery exhausts first; the manager caps a
     # value above its own ceiling at that ceiling. They are the caller's
-    # numbers, never the runner's.
+    # numbers, never the runner's. A unit also starts in the manager's default
+    # slice, not the caller's: one started from an agent's slice would run
+    # outside that slice's limits, where a warden that confines agent work to
+    # it reads the job as escaped work
+    # (../../references/job-units.md § Agent warden). So the caller's own
+    # slice is named too.
+    if slice="$(job_unit_slice /proc/self/cgroup)" && [[ -n "$slice" ]]; then
+      unit_props+=(--slice="$slice")
+    fi
     for name in $(compgen -e); do unit_env+=("--setenv=$name"); done
     for arg in "$@"; do unit_argv+=("$(job_unit_arg "$arg")"); done
     nofile="$(job_unit_nofile -S):$(job_unit_nofile -H)"

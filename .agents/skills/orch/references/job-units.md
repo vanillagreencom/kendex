@@ -2,7 +2,7 @@
 
 Load when starting, naming, finding or stopping an orch job through `scripts/lib/job-unit.sh`: run it with `--help` for its subcommands, or source it for the same functions. Its callers are `dev-validate-run`'s run, every job [waiter-launch.md](waiter-launch.md) launches (`approval-wait`, `ci-wait`, `queue-wait`, `lane-mail wait` and the repeat watch), and the watch handover helper `scripts/lib/watch-handover.sh` starts for `oversee-succeed` and `oversee launch --predecessor`, and the watch that helper restarts. These launches use their own mechanism, not this one: `lane_run_detached` in `scripts/lib/lane-launch.sh`, which `open-terminal` uses for a terminal emulator and a woken lane turn, and the preparing-job stop in `lane-close` and `open-terminal`.
 
-The runner bounds a job's lifetime and, when asked, its memory, and nothing else; it sets no CPU or task limit and no slice. A launch with `--memory-max MIB` sets `MemoryMax=MIBM` on the unit; no process group holds a memory bound, so a launch that would run under `setsid` refuses it as `memory-max-unheld`, exit 5, with its runner line, and starts nothing. A launch without it sets no memory limit. Under a unit, the job and everything it forks end when the job ends or reaches its bound. Under `setsid` see [Runner line](#runner-line) for what escapes.
+The runner bounds a job's lifetime and, when asked, its memory, and nothing else; it sets no CPU or task limit. The unit starts in the launching process's own slice, as [Agent warden](#agent-warden) explains. A launch with `--memory-max MIB` sets `MemoryMax=MIBM` on the unit; no process group holds a memory bound, so a launch that would run under `setsid` refuses it as `memory-max-unheld`, exit 5, with its runner line, and starts nothing. A launch without it sets no memory limit. Under a unit, the job and everything it forks end when the job ends or reaches its bound. Under `setsid` see [Runner line](#runner-line) for what escapes.
 
 ## Unit name
 
@@ -27,6 +27,7 @@ Every character outside `A-Za-z0-9_.-` in the name becomes `_`. Example: `orch-v
 | `LimitNOFILE` | The launching process's own soft and hard open-file limits (`unlimited` as `infinity`) |
 | Environment | Every variable the launching process exports, `TMUX`, `TMUX_PANE` and a lane's account variable among them |
 | `WorkingDirectory` | The launching process's own directory |
+| `Slice` | The innermost slice in the launching process's cgroup v2 path under this user's manager (`job-unit.sh`'s `job_unit_slice`): `agents.slice` for a lane the agent warden placed. None, so the manager's default slice, where the launching process runs outside the user manager (a login session scope) or has no cgroup v2 path (macOS). |
 
 ## Runner line
 
@@ -46,3 +47,15 @@ A unit holds every process the job starts, and systemd kills what remains when t
 ## Stopping
 
 A job unit is stopped by the exact name its launch recorded, never by a pattern: two repositories' lanes for one item share every prefix, so a glob stops the other repository's units. A unit the manager reports `not-found` has already ended. A manager that cannot be reached is a failure, never a unit found stopped. A `setsid` job is stopped by its process group, only while its pid still runs the argv its caller expects. Every `setsid` teardown, `end` and `stop-job` alike, sends the group SIGTERM, waits up to the kill grace (`JOB_UNIT_KILL_GRACE`) for its members to exit, and sends SIGKILL only if one still runs, as a unit's stop does over `TimeoutStopSec`.
+
+## Agent warden
+
+The agent warden is a systemd user timer that [vsys](https://github.com/vanillagreencom/vsys) ships (`warden/agent-warden`). It keeps agent work inside `agents.slice`:
+
+- It moves a process that runs outside `agents.slice` and carries `AGENT_CONFINE=1` in its environment, with its build and shell descendants, into a scope of its own, `agent-warden-PID-START.scope`. On a host with the warden, every lane pane starts through its launcher, which sets that variable, and a job unit receives it with the rest of the launching process's environment.
+- It stops an `agents.slice` scope as an orphan when every process in it has lost its launcher and the scope stays heavy past a grace period. The thresholds are in the warden source.
+- It leaves in place a unit that matches `AGENT_WARDEN_JOB_UNITS` (default `orch-*.service`), and treats a process already inside `agents.slice` as confined, never as escaped.
+
+A job unit started in the manager's default slice is outside `agents.slice`. If the warden did not leave it in place, it would move the whole job into a scope, and later stop that scope as an orphan. On a `vgs` lane (VGS-560) the journal read `reaped orphan scope agent-warden-3290878-24796610.scope: stopped 16 process(es)`, and `dev-validate-run` reported `state=lost validate=FAILING` at 390 s. The warden version that host ran is not on record. A unit started in the launching lane's slice is inside `agents.slice` whatever `AGENT_WARDEN_JOB_UNITS` says, and the reaper stops only scopes, never a service. The unit also stays under that slice's memory and task limits, as the lane that started it does.
+
+A run lost with no host or low-memory kill on record: read `journalctl --user -u agent-warden` for a `reaped orphan scope` line at the time the run ended.

@@ -90,6 +90,33 @@ mutant no-sanitize "| LC_ALL=C tr -c 'A-Za-z0-9_.-' '_'" ''
 run "$MUTANT" name 'watch a b/c' 7
 assert_eq "$OUT" "orch-watch a b/c-7" "control: unsanitized, the name's spaces and slash reach the unit name"
 
+# --- The slice a launch names for its unit ----------------------------------------
+# The cgroup file each row plants is one the kernel writes: a pane under the
+# agent warden's placement, a lane in a nested slice, a tmux service, a login
+# session outside the user manager, a root shell in the user's slice (sudo),
+# a cgroup v1 host, and macOS, which has no /proc.
+# cgroup file lines (\n between them), or `none` for no file|slice|label
+while IFS='|' read -r lines want label; do
+  file="$TMP_ROOT/cgroup.$RANDOM"
+  [[ "$lines" == none ]] || printf '%b\n' "${lines//UID/$UID}" > "$file"
+  # shellcheck source=/dev/null # the library under test, sourced for one function
+  assert_eq "$(source "$JOB_UNIT"; job_unit_slice "$file")" "$want" "$label"
+done <<ROWS
+0::/user.slice/user-UID.slice/user@UID.service/agents.slice/agent-confine-1-a.scope|agents.slice|a process in an agents.slice scope names agents.slice
+0::/user.slice/user-UID.slice/user@UID.service/agents.slice/agents-lane.slice/x.scope|agents-lane.slice|a process in a nested slice names the innermost one
+0::/user.slice/user-UID.slice/user@UID.service/app.slice/tmux.service|app.slice|a process in a service names that service's slice
+0::/user.slice/user-UID.slice/session-4.scope||a login session scope, outside the user manager, names no slice
+0::/user.slice/user-UID.slice/user@9UID.service/agents.slice/x.scope||a process under another user's manager names no slice
+1:name=systemd:/user.slice/user-UID.slice/user@UID.service/agents.slice/x.scope||a cgroup v1 line names no slice
+12:pids:/user.slice\n0::/user.slice/user-UID.slice/user@UID.service/agents.slice/x.scope|agents.slice|a hybrid file names the slice on its cgroup v2 line
+none||no cgroup file names no slice
+ROWS
+printf '0::/user.slice/user-%s.slice/session-4.scope\n' "$UID" > "$TMP_ROOT/session.cgroup"
+mutant no-manager-check '[[ "$path" == */user@"$UID".service/* ]] || return 0' ':'
+# shellcheck source=/dev/null # the control's copy of that library
+assert_eq "$(source "$MUTANT"; job_unit_slice "$TMP_ROOT/session.cgroup")" "user-$UID.slice" \
+  "control: without the manager check a login session names the system's user slice"
+
 # --- A launch where no systemd-run is installed ------------------------------------
 # A PATH holding what the setsid launch and its job call, and no systemd-run.
 FARM="$TMP_ROOT/farm"
@@ -301,6 +328,30 @@ ROWS
 --memory-max 512|0 536870912|a launch with --memory-max 512 sets MemoryMax=536870912
 |0 infinity|a launch with no --memory-max sets no MemoryMax
 ROWS
+
+  # A unit starts in the user-manager slice its launch runs in, so a job an
+  # agent starts stays under that agent's slice. The launch runs from a scope
+  # in a slice this row plants; the control's unit lands anywhere else.
+  PLANTED_SLICE="jobunittest$$.slice"
+  launched_slice() { # SCRIPT — planted, other, or none: where SCRIPT's unit starts
+    local rec="$TMP_ROOT/slice.record" u got
+    rm -f -- "${rec:?}"
+    systemd-run --user --scope --quiet --slice="$PLANTED_SLICE" \
+      -- "$1" launch validate-slice "$rec" --cap 60 -- sleep 30 >/dev/null 2>&1 || true
+    u="$(sed -n 's/^unit=//p' "$rec" 2>/dev/null)"
+    got="$(systemctl --user show -p Slice --value -- "${u:-none}.service" 2>/dev/null || true)"
+    case "$got" in
+      "$PLANTED_SLICE") printf planted ;;
+      "") printf none ;;
+      *) printf other ;;
+    esac
+    [[ -z "$u" ]] || "$JOB_UNIT" stop "$u" >/dev/null 2>&1 || true
+  }
+  assert_eq "$(launched_slice "$JOB_UNIT")" "planted" "a unit starts in the slice its launch runs in"
+  mutant no-slice 'unit_props+=(--slice="$slice")' ':'
+  assert_eq "$(launched_slice "$MUTANT")" "other" \
+    "control: without the slice pass-through the unit starts in another slice"
+  systemctl --user stop -- "$PLANTED_SLICE" >/dev/null 2>&1 || true
 
   # A service ignores SIGPIPE by default; a unit job takes it at its default,
   # as a job the caller starts does. SigIgn bit 13 is SIGPIPE.

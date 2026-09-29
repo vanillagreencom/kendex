@@ -131,7 +131,9 @@
 # its own is a failing command.
 #
 # state=lost is the detached child gone with no verdict recorded: a host or
-# low-memory kill, or a launch that never ran. It is a failed validation, and it
+# low-memory kill, an agent warden's reap
+# (references/job-units.md § Agent warden), or a launch that never ran. It is
+# a failed validation, and it
 # is reported as soon as the child's process id is gone rather than at the cap,
 # so a lost run costs a poll interval and not the whole hour. log= is printed
 # only where that file exists, so no reader is sent to a path nothing created.
