@@ -1079,6 +1079,21 @@ main() {
     local method
     method=$(merge_method "$pr_num" "$token" ${accepted[@]+"${accepted[@]}"}) || exit 1
 
+    # The route is read-only. The arm at creation, the one --auto that passes
+    # --unless-admin, reads it too: an arm there would queue a PR the
+    # immediate merge takes past the queue, and GitHub enqueues an armed PR
+    # the moment its checks pass. It runs ahead of the warnings, since
+    # callers route on that arm's refusal's first line.
+    local route=plain
+    if [ "$dry_run" != true ] && { [ "$auto" != true ] || [ "$unless_admin" = true ]; }; then
+        merge_route "$pr_num" "$token"
+        route="$MERGE_ROUTE"
+    fi
+    if [ "$auto" = true ] && [ "$route" = admin ]; then
+        echo "  Nothing armed: the immediate merge takes this PR past the queue once its gates pass, and an arm now would queue it first." >&2
+        exit 1
+    fi
+
     local warnings
     warnings=$(echo "$check_result" | jq -r '.warnings | length')
     if [ "$warnings" -gt 0 ]; then
@@ -1107,21 +1122,6 @@ main() {
         echo "BLOCKED PR #$pr_num — prepared head changed before merge attempt (expected=$expected_head, actual=$current_head)" >&2; exit 1
     fi
 
-    # The route is read-only and the last step before the mutation: every
-    # refusal above has had its say, and the head is the one the merge is
-    # pinned to. The arm at creation, the one --auto that passes
-    # --unless-admin, reads it too: an arm there would queue a PR the
-    # immediate merge takes past the queue, and GitHub enqueues an armed PR
-    # the moment its checks pass.
-    local route=plain
-    if [ "$auto" != true ] || [ "$unless_admin" = true ]; then
-        merge_route "$pr_num" "$token"
-        route="$MERGE_ROUTE"
-    fi
-    if [ "$auto" = true ] && [ "$route" = admin ]; then
-        echo "  Nothing armed: the immediate merge takes this PR past the queue once its gates pass, and an arm now would queue it first." >&2
-        exit 1
-    fi
 
     local -a cmd=(pr merge "$pr_num" "--$method" --match-head-commit "$expected_head")
     [ "$auto" = true ] && cmd+=(--auto)
