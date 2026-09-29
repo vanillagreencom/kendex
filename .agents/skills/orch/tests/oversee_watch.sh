@@ -46,7 +46,9 @@
 #       close restored, the heartbeat names it again while the record still
 #       reads parked, its control being that repeat removed, a failed read
 #       of its merged row there exits 2 naming the row, its control being
-#       the read's return removed, and another
+#       the read's return removed, two parked records both merged are each
+#       handed on at the merge and at the heartbeat, their controls being
+#       each loop cut to its first record, and another
 #       merge on its branch, or none yet, hands nothing on at the merge or
 #       the heartbeat, its control being the heartbeat's membership test
 #       removed
@@ -1234,6 +1236,39 @@ printf '[{"number": 2, "headRefName": "issue-2", "mergedAt": "2026-09-20T00:00:0
 WATCH_BIN="$PARKED_MUTANT" parked_run --
 assert_eq "events=$EVENTS closes=${CLOSES:-0}" "events=merged 2,lane-closed issue-2 closes=1" \
   "control: with the close restored the parked merge runs lane-close and prints no parked-merged" "$err"
+
+# Two parked records whose recorded pull requests both merged: each is handed
+# on at the merge and again at the heartbeat, not the first record alone.
+parked_pair_case() { # NAME [ENV=VAL...]
+  local name="$1" pair
+  shift
+  parked_fleet "$name"
+  pair="$(parked_record issue-4 /srv/provider /srv/lane/issue-4 4)" || exit 1
+  jq --argjson rec "$pair" '.lanes += [$rec]' "$STUB_DIR/state.json" > "$STUB_DIR/state.next" && mv -- "$STUB_DIR/state.next" "$STUB_DIR/state.json"
+  printf '[{"number": 2, "headRefName": "issue-2", "mergedAt": "2026-09-20T00:00:00Z"}, {"number": 4, "headRefName": "issue-4", "mergedAt": "2026-09-20T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+  parked_run "$@" --
+}
+pair_hands() { awk '/^EVENT parked-merged / { printf "%s%s", sep, $0; sep = "," }' <<<"$out"; }
+PAIR_BOTH="EVENT parked-merged issue-2 pr=2 repo=owner/repo,EVENT parked-merged issue-4 pr=4 repo=owner/repo"
+parked_pair_case parked_merged_pair
+assert_eq "rc=$rc events=$EVENTS hands=$(pair_hands)" "rc=0 events=merged 2,parked-merged issue-2,merged 4,parked-merged issue-4 hands=$PAIR_BOTH" \
+  "two parked records whose pull requests both merged are each handed on at the merge" "$err"
+parked_run --
+assert_eq "events=$EVENTS hands=$(pair_hands)" "events=parked-merged issue-2,parked-merged issue-4,heartbeat loops=2 hands=$PAIR_BOTH" \
+  "two records still parked over their handed merges are each named again at the heartbeat" "$err"
+# The must-fail controls: each loop cut to the first parked record.
+FIRST_MUTANT="$(mutant_scripts parked-first-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/parked-first-mutant/github"
+mutate_file "$FIRST_MUTANT" '    [[ "${PARKED_ITEMS[$i]}" != "$1" ]] || { PARKED_KEY="${PARKED_KEYS[$i]}"; return 0; }' \
+  '    [[ "${PARKED_ITEMS[0]}" != "$1" ]] || { PARKED_KEY="${PARKED_KEYS[0]}"; return 0; }'
+WATCH_BIN="$FIRST_MUTANT" parked_pair_case parked_merged_pair_first
+assert_eq "events=$EVENTS" "events=merged 2,parked-merged issue-2,merged 4" \
+  "control: with the parked lookup cut to the first record the second record's merge hands nothing on" "$err"
+owed_read_mutant parked-owed-first '    row="$(lane_row_get merged "$1" "${PARKED_ITEMS[0]}")" || return 1'
+parked_pair_case parked_merged_pair_owed_first
+WATCH_BIN="$OWED_READ_BIN" parked_run --
+assert_eq "events=$EVENTS" "events=parked-merged issue-2,heartbeat loops=2" \
+  "control: with the heartbeat's row read cut to the first record the second record is not named again" "$err"
 
 # --item naming a lane the state records as parked: the record wins, as a
 # running record does, so the item is carried once, for the merged check alone.
