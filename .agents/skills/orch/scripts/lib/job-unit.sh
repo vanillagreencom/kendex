@@ -333,8 +333,10 @@ job_unit_attach() { # RECORD -- ARGV...
   shift 2
   case "$self" in */*) ;; *) self="./$self" ;; esac
   lib="${self%/*}/../../../github/scripts/lib/group-leader.sh"
+  # Bash 3.2 exits a non-interactive shell when source cannot find its file,
+  # so the refusal checks for the file before sourcing it.
   # shellcheck source=../../../github/scripts/lib/group-leader.sh
-  source "$lib" 2>/dev/null || { job_unit_fail group-leader-missing "path=$lib" 2; return; }
+  { [[ -f "$lib" && -r "$lib" ]] && source "$lib"; } || { job_unit_fail group-leader-missing "path=$lib" 2; return; }
   # The prefix runs perl; without it the fork would fail after the record
   # names a started job, and the caller would wait on a job that never ran.
   command -v perl >/dev/null 2>&1 || { job_unit_fail missing-command commands=perl 2; return; }
