@@ -370,7 +370,7 @@ pool_control mutant-pool-relative lanes '"\$dir" != .\* || ' '' \
   "control: with no absolute-path test a relative account dir is picked|ORCH_LANE_COPILOT_POOL=pi1=1/10|pick --harness pi $COPILOT|rc=0"
 pool_control mutant-pool-grant lanes '(( limit > 0 ))' '(( limit >= 0 ))' \
   "control: with no grant test 0/0 is judged, as a spent pool|$POOL=0/0|pick --harness pi $COPILOT|rc=3"
-pool_control mutant-pool-status lanes 'pool_entries="\$(copilot_pool_entries)" || return 1$' 'pool_entries="$(copilot_pool_entries)"' \
+pool_control mutant-pool-status lanes '^[[:space:]]*copilot_pool_entries >.dev.null || return 1$' '		copilot_pool_entries' \
   "control: the chooser ignoring the refusal reads an unreadable entry as no entry|$POOL=12.5/300|pick --harness pi $COPILOT|rc=5"
 # The named Pi form's refusal is held twice, by cmd_pick_lane before any read
 # and by measure_copilot_pool, so no one edit reddens its row above; each

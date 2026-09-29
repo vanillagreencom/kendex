@@ -112,7 +112,7 @@ lane_copilot_pool_fix() { # HOST READ [DIR [STATUS [DETAIL]]]
   case "$2" in
     local) printf 'fix=no Copilot pool reading for %s: ORCH_LANE_HOST=local asks no lane host, and ORCH_LANE_COPILOT_POOL states none; %s, or launch through a lane host whose accounts verb carries a harness=pi row for that root\n' "$root" "$override" ;;
     absent) printf 'fix=no Copilot pool reading for %s: lane host %s implements no accounts verb, so only ORCH_LANE_COPILOT_POOL can measure the pool, and it states none; %s\n' "$root" "$1" "$override" ;;
-    answered) printf 'fix=no Copilot pool reading for %s: the accounts verb of lane host %s carried no harness=pi row with monthly-pct for it, and ORCH_LANE_COPILOT_POOL states none; store the Copilot seat on that provider so its accounts row reads the pool (lanes host-accounts --harness pi --no-cache prints what it answers), or %s\n' "$root" "$1" "$override" ;;
+    answered) printf 'fix=no Copilot pool reading for %s: the accounts verb of lane host %s carried no harness=pi row with monthly-pct for it that ORCH_LANE_EXCLUDE and ORCH_LANE_RETIRE leave in, and ORCH_LANE_COPILOT_POOL states none; store the Copilot seat on that provider so its accounts row reads the pool (lanes host-accounts --harness pi --no-cache prints what it answers), take the root out of those two settings, or %s\n' "$root" "$1" "$override" ;;
     row) printf 'fix=no Copilot pool reading for %s: the accounts row of lane host %s for it read no pool, status=%s detail=%s, and ORCH_LANE_COPILOT_POOL states none; repair the provider'"'"'s read of that Copilot seat as its detail says, or %s\n' "$root" "$1" "${4:-none}" "${5:-none}" "$override" ;;
     *) printf 'lane_copilot_pool_fix: unknown read %s\n' "$2" >&2; return 1 ;;
   esac

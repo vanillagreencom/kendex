@@ -284,7 +284,8 @@
 #                    each prints a `fix=` line naming the read that failed,
 #                    a provider row's own status and detail among them, and
 #                    its repair. An accounts read that failed or was busy,
-#                    with no override, exits 1 as `copilot-pool-unread`,
+#                    with no override entry for a Pi root (one for a Copilot
+#                    CLI home names none), exits 1 as `copilot-pool-unread`,
 #                    which asking again can answer. A provider row says
 #                    `measured_through: "host"` and a stated reading "stated";
 #                    a stated pool that is walled stays walled until the owner
@@ -990,7 +991,8 @@ lane_dirs() {
 	# harness=pi rows join the pick as host rows. The same setting also
 	# states a Copilot CLI account's fallback reading, and such an account is
 	# no Pi root: an entry the copilot inventory lists is left out, so a Pi
-	# launch never opens on a Copilot home holding no Pi login.
+	# launch never opens on a Copilot home holding no Pi login. `all` keeps
+	# the roots ORCH_LANE_EXCLUDE names, for a pick asking what the owner stated.
 	if [[ "$1" == pi ]]; then
 		local copilot_ids=$'\n' id
 		while IFS= read -r d; do
@@ -999,7 +1001,7 @@ lane_dirs() {
 		copilot_pool_entries 2>/dev/null | cut -f1 | while IFS= read -r d; do
 			id="$(lane_claims_canon "$d")"
 			case "$copilot_ids" in *$'\n'"$id"$'\n'*) continue ;; esac
-			lane_excluded "$d" || printf '%s\n' "$d"
+			[[ "${2:-}" != all ]] && lane_excluded "$d" || printf '%s\n' "$d"
 		done
 		return
 	fi
@@ -2949,10 +2951,12 @@ cmd_pick() {
 	local lanes hosted judged chosen walled unmeasured omitted="" seats=0 seat
 	# A Pi account on the Copilot pool is a Pi root the provider reports a
 	# harness=pi row for or the override names. The override is refused here
-	# when nobody can parse it, before anything is read.
-	local pool_entries=""
+	# when nobody can parse it, before anything is read; its Copilot CLI
+	# entries are no Pi root, so pool_roots holds only its Pi roots.
+	local pool_roots=""
 	if [[ "$harness" == pi ]]; then
-		pool_entries="$(copilot_pool_entries)" || return 1
+		copilot_pool_entries >/dev/null || return 1
+		pool_roots="$(lane_dirs pi all)"
 	fi
 	load_lane_claims fleet
 	# An unreadable claim store reads as "no launches in flight", which is the
@@ -2971,10 +2975,10 @@ cmd_pick() {
 	# answer, and otherwise exit 5, a read to repair and never a window to wait
 	# out. Entries that exclusion removed are a pick with no candidate, answered
 	# as one below.
-	if [[ "$harness" == pi && -z "$pool_entries" && "$HOSTED_READ" == failed ]]; then
+	if [[ "$harness" == pi && -z "$pool_roots" && "$HOSTED_READ" == failed ]]; then
 		message copilot-pool-unread "$ORCH_LANE_HOST" "${model:-none}" >&2
 		return 1
-	elif [[ "$harness" == pi && -z "$pool_entries" && "$hosted" == "[]" ]]; then
+	elif [[ "$harness" == pi && -z "$pool_roots" && "$hosted" == "[]" ]]; then
 		{ message copilot-pool-unstated "${model:-none}" "$HOSTED_READ"; lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" "$HOSTED_READ"; } >&2
 		return 5
 	fi
