@@ -208,5 +208,17 @@ assert_eq "a failed rename fails the resolve loudly and hands out no cache path"
   "rc=3 probe: settings-materialize=kendex.settings.toml" \
   "$(call "$SETTINGS" "PATH=$ROOT/nomv:\$PATH; $RESOLVE")"
 
+# The staged copy is malformed and the worktree copy is not, so the refusal
+# can only come from the cache file, and it must still name the source.
+new_repo settings-label
+printf '[env]\nCOMMIT_GUARDS_TP = "v"\n' >"$R/kendex.settings.toml"
+commit_all base
+printf '[env]\nCOMMIT_GUARDS_TP = "v"\nUNRELATED = "a"b"\n' >"$R/kendex.settings.toml"
+git -C "$R" add kendex.settings.toml
+printf '[env]\nCOMMIT_GUARDS_TP = "v"\n' >"$R/kendex.settings.toml"
+assert_eq "a staged malformed value is named by the settings file, never the cache copy" \
+  "rc=1 probe: settings-string=kendex.settings.toml:3:UNRELATED" \
+  "$(call "$SETTINGS" 'gg_settings_index_mode; gg_setting COMMIT_GUARDS_TP dflt')"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

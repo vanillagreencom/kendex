@@ -260,9 +260,11 @@ gg_settings_source() { # FILE — the path to actually read; nonzero + ::error o
 # to any reader here, so a BOM-prefixed first line silently misfiles the
 # header or assignment it hides. Refuse the source whole, same discipline
 # as the header rule. Read via stdin so the path is never an operand.
-gg_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
+# LABEL is the path the refusal names: the configured source, never the
+# staged copy gg_settings_source materialized into a cache deleted on exit.
+gg_bom_guard() { # FILE [LABEL] — 0 = no leading BOM; 1 + ::error otherwise
   if [ "$(head -c 3 < "$1" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
-    gg_message settings-bom "$1" "file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
+    gg_message settings-bom "${2:-$1}" "file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
     return 1
   fi
 }
@@ -271,11 +273,11 @@ gg_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
 # measurements, anything else is an unreadable source and fails loud —
 # falling through to a lower-precedence layer would silently change the
 # resolved value.
-gg_settings_grep() { # REGEX FILE — matching lines on stdout; 1 = no match
+gg_settings_grep() { # REGEX FILE [LABEL] — matching lines on stdout; 1 = no match
   local status=0
   grep -E -- "$1" "$2" || status=$?
   if [ "$status" -gt 1 ]; then
-    gg_message settings-grep "$2:$status" "unreadable while resolving a setting (grep exit $status)" >&2
+    gg_message settings-grep "${3:-$2}:$status" "unreadable while resolving a setting (grep exit $status)" >&2
     return 2
   fi
   return "$status"
@@ -291,11 +293,12 @@ gg_settings_grep() { # REGEX FILE — matching lines on stdout; 1 = no match
 # containing `=` as a variable assignment and would read no input while the
 # resolver silently returns defaults. awk failing to read the source is an
 # unreadable source and fails loud, same discipline as gg_settings_grep.
-gg_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
+# Every refusal names LABEL, as gg_bom_guard does.
+gg_env_table() { # FILE [LABEL] — [env]-table lines on stdout; 1 + ::error on a
                  # malformed header or leading BOM; 2 + ::error when unreadable
   local status=0
-  gg_bom_guard "$1" || return 1
-  awk -v src="$1" -v check="${GG_CHECK:-commit-guards}" '
+  gg_bom_guard "$1" "${2:-$1}" || return 1
+  awk -v src="${2:-$1}" -v check="${GG_CHECK:-commit-guards}" '
     /^[[:space:]]*\[/ && !/^[[:space:]]*\[[A-Za-z0-9_.-]+\][[:space:]]*$/ {
       printf "%s: settings-header=%s:%d\n  unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)\n", check, src, NR > "/dev/stderr"
       exit 3
@@ -340,7 +343,7 @@ gg_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
   ' < "$1" || status=$?
   [ "$status" -ne 3 ] || return 1
   if [ "$status" -ne 0 ]; then
-    gg_message settings-awk "$1:$status" "unreadable while resolving a setting (awk exit $status)" >&2
+    gg_message settings-awk "${2:-$1}:$status" "unreadable while resolving a setting (awk exit $status)" >&2
     return 2
   fi
 }
@@ -354,8 +357,8 @@ gg_dotenv_layer() { # FILE NAME
   src="$(gg_settings_source "$file")" || return 2
   gg_settings_usable "$src" || return 2
   [ -f "$src" ] || return 1
-  gg_bom_guard "$src" || return 2
-  matches="$(gg_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" "$src")" || status=$?
+  gg_bom_guard "$src" "$file" || return 2
+  matches="$(gg_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" "$src" "$file")" || status=$?
   [ "$status" -le 1 ] || return 2
   line="$(printf '%s\n' "$matches" | tail -n 1)"
   [ -n "$line" ] || return 1
@@ -368,7 +371,7 @@ gg_dotenv_layer() { # FILE NAME
 
 gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
                # a present-but-unparseable assignment (callers must propagate)
-  local name="$1" default="$2" line val file table status matches
+  local name="$1" default="$2" line val file src table status matches
   # The name is interpolated into ERE patterns below; constrain it to the
   # identifier shape every real key has, so a metacharacter can neither
   # misgrep nor inject pattern syntax.
@@ -393,22 +396,22 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       set -- ".kendex/settings.toml" "kendex.settings.toml"
     fi
     for file in "$@"; do
-      file="$(gg_settings_source "$file")" || return 1
-      gg_settings_usable "$file" || return 1
-      if [ -f "$file" ]; then
-        gg_env_table "$file" >/dev/null || return 1
+      src="$(gg_settings_source "$file")" || return 1
+      gg_settings_usable "$src" || return 1
+      if [ -f "$src" ]; then
+        gg_env_table "$src" "$file" >/dev/null || return 1
       fi
     done
     # The dotenv layer is probed for usability too: an exported key must
     # not mask a broken .env.local (directory, dangling symlink, BOM,
     # unreadable bytes) — every PRESENT source fails loud, the clause the
     # generic loader honors before re-asserting process values.
-    file="$(gg_settings_source ".env.local")" || return 1
-    gg_settings_usable "$file" || return 1
-    if [ -f "$file" ]; then
-      gg_bom_guard "$file" || return 1
-      if [ ! -r "$file" ]; then
-        gg_message settings-permission "$file" "unreadable while resolving a setting (permission denied)" >&2
+    src="$(gg_settings_source ".env.local")" || return 1
+    gg_settings_usable "$src" || return 1
+    if [ -f "$src" ]; then
+      gg_bom_guard "$src" .env.local || return 1
+      if [ ! -r "$src" ]; then
+        gg_message settings-permission .env.local "unreadable while resolving a setting (permission denied)" >&2
         return 1
       fi
     fi
@@ -440,10 +443,10 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # order); the positional list was built — and every present file already
   # validated whole — before any source answered, above.
   for file in "$@"; do
-  file="$(gg_settings_source "$file")" || return 1
-  gg_settings_usable "$file" || return 1
-  if [ -f "$file" ]; then
-    table="$(gg_env_table "$file")" || return 1
+  src="$(gg_settings_source "$file")" || return 1
+  gg_settings_usable "$src" || return 1
+  if [ -f "$src" ]; then
+    table="$(gg_env_table "$src" "$file")" || return 1
     # Key PRESENCE decides, not value non-emptiness: `NAME = ""` is a real
     # assignment and must override the built-in default, exactly like a
     # set-but-empty env var does above. Leading whitespace before a key is
