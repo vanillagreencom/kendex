@@ -3,7 +3,7 @@ import { getCapabilities, Image, Text, type Component } from "@earendil-works/pi
 import { hasOpenAiModelsLoaded } from "./activation.js";
 import { registerBackgroundImageGenerationCommand } from "./background-image-generation.js";
 import { computeNextActiveTools, computeToolCapabilities, modelKey, PACKAGE_TOOL_NAMES, type ModelLike } from "./capabilities.js";
-import { registerOpenAICodexCustomProvider, type CodexShimRegistration } from "./provider-shim.js";
+import { registerOpenAICodexCustomProvider } from "./provider-shim.js";
 import { rewriteNativeOpenAiTools } from "./provider-native-tools.js";
 import { loadSettings, recordProjectTrust, settingsDiagnostics } from "./settings.js";
 import { createApplyPatchToolDefinition } from "./tools/apply-patch.js";
@@ -87,7 +87,7 @@ function syncActiveTools(pi: ExtensionAPI, ctx: ExtensionContext, toolsRegistere
 	if (next.activeTools.join("\0") !== active.join("\0")) pi.setActiveTools(next.activeTools);
 }
 
-function statusLines(pi: ExtensionAPI, ctx: ExtensionContext, shim: CodexShimRegistration | undefined): string[] {
+function statusLines(pi: ExtensionAPI, ctx: ExtensionContext): string[] {
 	const settings = loadSettings(ctx.cwd);
 	const model = contextModel(ctx);
 	const capabilities = computeToolCapabilities(model, settings);
@@ -99,18 +99,16 @@ function statusLines(pi: ExtensionAPI, ctx: ExtensionContext, shim: CodexShimReg
 		`enabled: ${settings.enabled}`,
 		`autoEnable: ${settings.autoEnable}`,
 		`nativeProviderTools: ${settings.nativeProviderTools}`,
-		...(shim?.kind === "unsupported"
-			? ["native provider shim: unsupported", ...shim.reason.split("\n").map((line) => `- ${line}`)]
-			: [`native provider shim: ${settings.enabled && settings.nativeProviderTools ? "registered" : "disabled"}`]),
+		`native provider shim: ${settings.enabled && settings.nativeProviderTools ? "registered" : "disabled"}`,
 		"tools:",
 		...Object.entries(capabilities).map(([name, capability]) => `- ${name}: ${capability.enabled ? "supported" : "disabled"}${active.has(name) ? ", active" : ""} — ${capability.reason}`),
 	];
 }
 
-function registerDiagnosticCommand(pi: ExtensionAPI, shim: CodexShimRegistration | undefined): void {
+function registerDiagnosticCommand(pi: ExtensionAPI): void {
 	const showDoctor = (ctx: ExtensionCommandContext) => {
 		const settings = loadSettings(ctx.cwd);
-		const lines = statusLines(pi, ctx as ExtensionContext, shim);
+		const lines = statusLines(pi, ctx as ExtensionContext);
 		lines.push(`image output dir: ${settings.imageOutputDir}`);
 		lines.push(`OPENAI_API_KEY: ${process.env.OPENAI_API_KEY ? "present" : "not set"}`);
 		const diagnostics = settingsDiagnostics(ctx.cwd);
@@ -138,10 +136,10 @@ function registerDiagnosticCommand(pi: ExtensionAPI, shim: CodexShimRegistration
 			}
 			if (!subcommand) {
 				if (await tryOpenExtensionManagerSettings(ctx)) return;
-				ctx.ui.notify(statusLines(pi, ctx as ExtensionContext, shim).join("\n"), "info");
+				ctx.ui.notify(statusLines(pi, ctx as ExtensionContext).join("\n"), "info");
 				return;
 			}
-			ctx.ui.notify(statusLines(pi, ctx as ExtensionContext, shim).join("\n"), "info");
+			ctx.ui.notify(statusLines(pi, ctx as ExtensionContext).join("\n"), "info");
 		},
 	});
 	pi.registerCommand("codex-minimal-tools:doctor", {
@@ -196,21 +194,15 @@ export default function codexMinimalTools(pi: ExtensionAPI): void {
 	};
 
 	const initialSettings = loadSettings(currentCwd);
-	let shim: CodexShimRegistration | undefined;
 	if (initialSettings.enabled && initialSettings.nativeProviderTools) {
-		shim = registerOpenAICodexCustomProvider(pi, { getCurrentCwd: () => currentCwd });
+		registerOpenAICodexCustomProvider(pi, { getCurrentCwd: () => currentCwd });
 		registerBackgroundImageGenerationCommand(pi);
 	}
-	let shimWarningShown = false;
 
-	registerDiagnosticCommand(pi, shim);
+	registerDiagnosticCommand(pi);
 
 	pi.on("session_start", async (_event, ctx) => {
 		recordProjectTrust(ctx);
-		if (shim?.kind === "unsupported" && !shimWarningShown) {
-			shimWarningShown = true;
-			ctx.ui.notify(shim.reason, "warning");
-		}
 		syncActiveTools(pi, ctx, ensureToolsRegistered(ctx));
 	});
 	pi.on("model_select", async (_event, ctx) => {

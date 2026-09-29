@@ -59,6 +59,19 @@ interface ConvertResponsesToolsOptions {
 }
 
 
+/**
+ * The system prompt and tool set of the context Pi hands a provider. Pi 0.86.0
+ * and later hand a normalized transcript: its system messages carry both, its
+ * `systemPrompt` and `tools` fields are absent, and pi-ai's replay helpers read
+ * them. An older Pi hands the fields, no system message, and no replay helper.
+ * The field branch serves Pi below 0.86.0; delete it once no supported Pi host
+ * is below that release.
+ */
+export function promptAndTools(context: Context): Pick<Context, "systemPrompt" | "tools"> {
+	if (!context.messages.some((message) => message.role === "system")) return { systemPrompt: context.systemPrompt, tools: context.tools };
+	return { systemPrompt: piAi.getCurrentSystemPrompt(context.messages), tools: piAi.getCurrentTools(context.messages) };
+}
+
 function shortHash(str: string): string {
 	let h1 = 0xdeadbeef;
 	let h2 = 0x41c6ce57;
@@ -299,7 +312,7 @@ export function convertResponsesMessages<TApi extends Api>(
 	const conversation = context.messages.filter((msg) => msg.role !== "system");
 	const transformedMessages = transformMessages(conversation, model as Model<Api>, normalizeToolCallId as never);
 	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
-	const systemPrompt = includeSystemPrompt ? piAi.getCurrentSystemPrompt(context.messages) : "";
+	const systemPrompt = includeSystemPrompt ? promptAndTools(context).systemPrompt : undefined;
 	if (systemPrompt) {
 		messages.push({ role: model.reasoning ? "developer" : "system", content: sanitizeSurrogates(systemPrompt) });
 	}

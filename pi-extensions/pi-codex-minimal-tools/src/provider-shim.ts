@@ -29,6 +29,7 @@ import {
 	convertResponsesMessages,
 	convertResponsesTools,
 	processResponsesStream,
+	promptAndTools,
 	splitDeferredTools,
 } from "./providers/openai-responses-shared.js";
 
@@ -525,7 +526,7 @@ export function buildRequestBody<TApi extends Api>(model: Model<TApi>, context: 
 	const supportsStrictMode = (model.compat as { supportsStrictMode?: boolean } | undefined)?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = (model.compat as { supportsOpenAIGrammarTools?: boolean } | undefined)?.supportsOpenAIGrammarTools ?? false;
 	const supportsToolSearch = (model.compat as { supportsToolSearch?: boolean } | undefined)?.supportsToolSearch ?? false;
-	const tools = piAi.getCurrentTools(context.messages);
+	const { systemPrompt, tools } = promptAndTools(context);
 	const grammarToolInputProperties = createGrammarToolInputProperties(tools, supportsOpenAIGrammarTools);
 	const toolPlacement = splitDeferredTools({ messages: context.messages, tools }, supportsToolSearch);
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
@@ -540,7 +541,7 @@ export function buildRequestBody<TApi extends Api>(model: Model<TApi>, context: 
 		model: model.id,
 		store: false,
 		stream: true,
-		instructions: piAi.getCurrentSystemPrompt(context.messages),
+		instructions: systemPrompt,
 		input: messages,
 		text: { verbosity: ((options as { textVerbosity?: string } | undefined)?.textVerbosity ?? "low") as string },
 		include: ["reasoning.encrypted_content"],
@@ -1659,7 +1660,7 @@ function createCodexStream<TApi extends Api>(
 
 		try {
 			grammarToolInputProperties = createGrammarToolInputProperties(
-				piAi.getCurrentTools(context.messages),
+				promptAndTools(context).tools,
 				(model.compat as { supportsOpenAIGrammarTools?: boolean } | undefined)?.supportsOpenAIGrammarTools ?? false,
 			);
 			const apiKey = options?.apiKey || await getEnvApiKeyCompat(model.provider) || "";
@@ -1825,34 +1826,7 @@ function createCodexStream<TApi extends Api>(
 	return stream;
 }
 
-/** The first Pi release whose pi-ai exports the transcript replay helpers the shim reads. */
-export const CODEX_SHIM_MIN_PI = "0.86.0";
-
-/** The host pi-ai exports the shim needs; absent on a host below {@link CODEX_SHIM_MIN_PI}. */
-export type TranscriptReplayHost = Partial<Pick<typeof piAi, "getCurrentSystemPrompt" | "getCurrentTools">>;
-
-export type CodexShimRegistration = { kind: "registered" } | { kind: "unsupported"; reason: string };
-
-/**
- * Since Pi 0.86 a provider receives the system prompt and the tools only in the
- * transcript's system messages, read through pi-ai's getCurrentSystemPrompt and
- * getCurrentTools. kendex installs this package as a path package whatever the
- * host's version, so the peer floor cannot keep it off an older host: there the
- * shim stays unregistered and Pi's built-in openai-codex provider serves Codex
- * requests. Delete this probe once no supported Pi host is below 0.86.0.
- */
-function codexShimUnsupportedReason(host: TranscriptReplayHost): string | undefined {
-	const missing = (["getCurrentSystemPrompt", "getCurrentTools"] as const).filter((name) => typeof host[name] !== "function");
-	if (missing.length === 0) return undefined;
-	return `native_provider_shim=unregistered missing=${missing.join(",")}\nThe Codex provider shim needs Pi ${CODEX_SHIM_MIN_PI} or later; Pi's built-in openai-codex provider serves Codex requests.`;
-}
-
-export function registerOpenAICodexCustomProvider(
-	pi: ExtensionAPI,
-	options: { getCurrentCwd: () => string; root?: TranscriptReplayHost },
-): CodexShimRegistration {
-	const unsupportedReason = codexShimUnsupportedReason(options.root ?? piAi);
-	if (unsupportedReason !== undefined) return { kind: "unsupported", reason: unsupportedReason };
+export function registerOpenAICodexCustomProvider(pi: ExtensionAPI, options: { getCurrentCwd: () => string }): void {
 	const pendingActivities: PendingActivity[] = [];
 	const imagePreviewCache = new Map<string, CachedImagePreview>();
 	let pendingFlushTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1963,5 +1937,4 @@ export function registerOpenAICodexCustomProvider(
 		}
 		return box;
 	});
-	return { kind: "registered" };
 }
