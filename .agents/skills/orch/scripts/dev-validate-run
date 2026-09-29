@@ -243,7 +243,10 @@ start_field() { # FILE KEY
 # stands: dev-implement validates before it commits, so HEAD alone would be a
 # diff missing the round's own edit. Its contents are written to one
 # unreferenced commit through a copy of the index, so HEAD, the index and the
-# tree are left as they were. Every object that commit needs is written to the
+# tree are left as they were. The copy keeps the index's modification time:
+# git re-reads only an entry whose file is not older than its index, so a copy
+# stamped now reads a same-second, same-size rewrite of a staged file as
+# unchanged. Every object that commit needs is written to the
 # scratch directory, the repository's own store serving as an alternate for
 # what it already holds: an untracked or unstaged file never becomes a loose
 # object in the shared store, where the umask, not the file's own mode, would
@@ -267,7 +270,7 @@ classify() {
     && objects="$(git -C "$worktree" rev-parse --path-format=absolute --git-path objects 2>/dev/null)" \
     && mkdir -- "$class_scratch/objects" \
     || { class_fallback=worktree-unrecorded; return 0; }
-  [[ ! -f "$index" ]] || cp -- "$index" "$class_scratch/index" \
+  [[ ! -f "$index" ]] || cp -p -- "$index" "$class_scratch/index" \
     || { class_fallback=worktree-unrecorded; return 0; }
   export GIT_OBJECT_DIRECTORY="$class_scratch/objects" GIT_ALTERNATE_OBJECT_DIRECTORIES="$objects"
   classify_snapshot "$base"

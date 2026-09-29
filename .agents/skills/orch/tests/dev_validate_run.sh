@@ -606,6 +606,7 @@ repo="$(sed -n '/^--repo$/{n;p;}' "$STUB_ARGS")"
   git -C "$repo" show --name-only --format= "$head"
   git -C "$repo" rev-parse "$head^"
 } > "$STUB_SEEN" 2>&1
+git -C "$repo" ls-tree -r "$head" > "$STUB_SEEN.tree" 2>&1
 case "$STUB_ANSWER" in
   exit-2) echo "wiring-error: cause=stub" >&2; exit 2 ;;
   *) printf '%s\n' "$STUB_ANSWER" ;;
@@ -670,6 +671,39 @@ assert_eq "$(git -C "$proj_class" status --porcelain)" "?? draft.md" \
 assert_eq "$(loose_objects)" "$objects_before" \
   "and the repository's object store gains no object from the snapshot" "$ERR"
 rm -f "$proj_class/draft.md"
+
+# A staged file rewritten in the second its index was written, at its staged
+# size, is in the head judged: git trusts an entry's stat data once the index
+# is newer than its file, so an index copy stamped at copy time hides the
+# rewrite. The control copies the index plainly and the staged text stays.
+mtime_of() { perl -e 'print((stat shift)[9])' "$1"; }
+racy_blob() { # SCRIPT — the blob the head judged holds for racy.txt, in RACY_BLOB
+  local file="$proj_class/racy.txt" first _
+  for _ in 1 2 3 4 5; do
+    printf 'aaaa\n' > "$file"
+    first="$(mtime_of "$file")"
+    git -C "$proj_class" add racy.txt
+    printf 'bbbb\n' > "$file"
+    [[ "$(mtime_of "$file")" != "$first" ]] || break
+  done
+  assert_eq "$(mtime_of "$file")" "$first" "the fixture stages and rewrites racy.txt in one second"
+  # A real wait: only a copy stamped in a later second trusts the stale entry.
+  sleep 1
+  run_script "$1" --worktree "$proj_class" --poll 1
+  RACY_BLOB="$(awk '$4 == "racy.txt" { print $3 }' "$STUB_SEEN.tree")"
+  git -C "$proj_class" rm -q --cached -f racy.txt
+}
+racy_blob "$LAYOUT/orch/scripts/dev-validate-run"
+assert_eq "$RACY_BLOB" "$(git -C "$proj_class" hash-object racy.txt)" \
+  "a same-second, same-size rewrite of a staged file is in the head judged" "$ERR"
+cp -p -- "$LAYOUT/orch/scripts/dev-validate-run" "$TMP_ROOT/dev-validate-run.kept"
+# shellcheck disable=SC2016 # the script's own text, not an expansion
+mutate_file "$LAYOUT/orch/scripts/dev-validate-run" 'cp -p -- "$index"' 'cp -- "$index"'
+racy_blob "$LAYOUT/orch/scripts/dev-validate-run"
+assert_eq "$RACY_BLOB" "$(printf 'aaaa\n' | git hash-object --stdin)" \
+  "control: a plain index copy keeps the staged text" "$ERR"
+cp -p -- "$TMP_ROOT/dev-validate-run.kept" "$LAYOUT/orch/scripts/dev-validate-run"
+rm -f "$proj_class/racy.txt"
 
 # With no classifier installed the class is standard, and says why.
 mv "$LAYOUT/harness-ci" "$LAYOUT/harness-ci.off"
