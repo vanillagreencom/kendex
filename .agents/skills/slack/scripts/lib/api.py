@@ -135,7 +135,9 @@ class Slack:
         Content-Length, with http.client's error on a chunked body cut
         short, or with the sign-in page Slack sends in place of the file: an
         HTML answer of any length but `size`, so an HTML file the owner sent
-        is saved whatever its type, and one of unknown size is not."""
+        is saved whatever its type, and one of unknown size is not. The key
+        has no EXPLAIN entry: `Relay.fetch_files` writes its value into the
+        message and never prints it."""
 
         def copy(resp) -> None:
             declared = resp.headers.get("Content-Length")

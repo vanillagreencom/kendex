@@ -127,13 +127,6 @@ EXPLAIN = {
         " line; the relay sends nothing until it does."
     ),
     "file-unreadable": "The file to send could not be read.",
-    "file-not-fetched": (
-        "A file of an owner's message was not downloaded; the value names"
-        " the HTTP status, the sign-in page Slack sends when the app lacks"
-        " files:read, or a download that ended short of its length. The"
-        " relay delivers the message with this line in place of the file's"
-        " path."
-    ),
     "master-file-unreadable": (
         "SLACK_MASTER_FILE names a path whose age cannot be read, for a"
         " reason other than its absence; the value names the path and the"
