@@ -873,6 +873,7 @@ fn no_lane_triple_is_hardcoded_into_build_or_staging() {
     }
 }
 
+mod bundle_retry;
 mod channel;
 mod channel_point;
 mod signing;

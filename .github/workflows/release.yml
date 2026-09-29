@@ -146,8 +146,27 @@ jobs:
           cp "target/${{ matrix.target }}/release/kendex${ext}" "$staged"
           echo "KENDEX_BUNDLE_OVERLAY=release/$(echo '${{ runner.os }}' | tr '[:upper:]' '[:lower:]').json" >> "$GITHUB_ENV"
         shell: bash
+      # Tauri's bundle_dmg.sh drives hdiutil, which fails intermittently on
+      # GitHub's macOS runners after the app is built, signed and
+      # notarized; one lost lane skips the main-channel publish. A failure
+      # whose log names bundle_dmg.sh bundles once more, and any other
+      # failure, or a second one, fails the step. The first attempt's
+      # output stays in the job log. Its bundle directory is removed first:
+      # a failed bundle_dmg.sh leaves its rw.<pid>.*.dmg scratch image
+      # there, and staging would publish it beside the real DMG.
       - name: Bundle the desktop app
-        run: cd crates/app && ../../ui/node_modules/.bin/tauri build --target ${{ matrix.target }} --config "$KENDEX_BUNDLE_OVERLAY"
+        run: |
+          log="$RUNNER_TEMP/tauri-build.log"
+          for attempt in 1 2; do
+            status=0
+            (cd crates/app && ../../ui/node_modules/.bin/tauri build --target ${{ matrix.target }} --config "$KENDEX_BUNDLE_OVERLAY") 2>&1 | tee "$log" || status=$?
+            [ "$status" -eq 0 ] && exit 0
+            if [ "$attempt" -eq 2 ] || ! grep -q 'error running bundle_dmg.sh' "$log"; then
+              exit "$status"
+            fi
+            echo "::warning::bundle_dmg.sh failed; bundling once more."
+            rm -rf "target/${{ matrix.target }}/release/bundle"
+          done
         shell: bash
         env:
           # Required: every lane bundles an updater-enabled target, so
