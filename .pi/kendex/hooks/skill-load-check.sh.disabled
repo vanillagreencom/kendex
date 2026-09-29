@@ -66,7 +66,7 @@ message() { # KEY VALUE [CAUSE]
   printf 'skill-load-check: %s=%s\n' "$1" "$2"
   case "$1=$2" in
     missing-tools=*)
-      echo "the commands ${2//,/, } are required to read the hook payload, place the target path and read the record of loaded skills and are not on PATH; refusing rather than skipping the guard"
+      echo "the commands ${2//,/, } are required to read the hook payload, place the target path and read the transcript or record of loaded skills and are not on PATH; refusing rather than skipping the guard"
       ;;
     malformed-rule=*)
       echo "KENDEX_SKILL_LOAD_RULES holds an entry that is not <glob>=<skill> or bash:<regex>=<skill>, with a non-empty glob, a regex that compiles and a skill named in letters, digits, '.', '_', ':' and '-'; refusing rather than dropping the rule"
@@ -347,7 +347,7 @@ if [ "$CALL" = copilot ]; then
   ARGS='(.toolArgs | if type == "string" then fromjson else . end | if type == "object" then . else {} end)'
   COMMAND_AT="$ARGS | .command"
   TARGETS_AT='if .toolName == "apply_patch" then .toolArgs
-      | if type == "string" then (try fromjson catch .) else . end
+      | if type == "string" then (. as $raw | try fromjson catch $raw) else . end
       | if type == "object" then (.input // .patch) else . end
       | strings | split("\n")[] | rtrimstr("\r")
       | capture("^[*]{3} (?:(?:Add|Update|Delete) File|Move to): (?<p>.+)$") | .p

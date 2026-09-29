@@ -287,11 +287,12 @@ a patch is judged by every file, not its last|apply_patch|$(patch_of "*** Update
 *** Add File: @REPO@/tmp/s.rs" | jq -R -s -c .)|rc=2 first=skill-load-check: unloaded=code-quality
 a file outside every work tree clears no other file|apply_patch|$(patch_of "*** Add File: $TMP_ROOT/outside/n.rs
 *** Update File: @REPO@/src/lib.rs" | jq -R -s -c .)|rc=2 first=skill-load-check: unloaded=code-quality
+a patch given as the toolArgs string is read as written, its last line a path too|apply_patch|$(printf '*** Begin Patch\n*** Update File: @REPO@/docs/guide.md' | jq -R -s -c .)|rc=2 first=skill-load-check: unloaded=docs-writing
 a patch touching only the tree's tmp/ needs no skill|apply_patch|$(patch_of "*** Add File: @REPO@/tmp/scratch.rs" | jq -R -s -c .)|rc=0 first=-
 a patch naming no file is refused, its target unknown|apply_patch|$(patch_of "no header" | jq -R -s -c .)|rc=2 first=skill-load-check: payload=no-file-path
 an apply_patch whose toolArgs hold no patch is refused the same|apply_patch|{"input":7}|rc=2 first=skill-load-check: payload=no-file-path
 ROWS
-[ "$N" -eq 11 ] || { echo "tool rows asserted: $N" >&2; exit 2; }
+[ "$N" -eq 12 ] || { echo "tool rows asserted: $N" >&2; exit 2; }
 
 echo "an identity or a record it cannot read refuses"
 # label|session JSON value
@@ -335,7 +336,7 @@ echo "without the tools a record run needs"
 tools_row() { # TOOL
   local tool="$1" bin="$TMP_ROOT/without-$1" other real
   mkdir -p "$bin"
-  for other in jq cat mkdir find dirname; do
+  for other in jq cat mkdir find; do
     [ "$other" != "$tool" ] || continue
     real="$(type -P "$other")" || { echo "tools: $other is not on PATH" >&2; exit 2; }
     ln -sf "$real" "$bin/$other"

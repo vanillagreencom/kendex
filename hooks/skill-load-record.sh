@@ -17,9 +17,14 @@ set -euo pipefail
 # reader and writer of the record. A finished tool call is never refused, so
 # a judge that is not there is reported, on stderr and to the model as
 # Copilot's postToolUse `additionalContext` where jq can write it, and passed;
-# a jq that fails ends the run at exit 2, which Copilot shows the user.
+# a jq that fails ends the run at exit 2, which Copilot shows the user. The
+# directory is read by parameter expansion, as the judge reads its own, so no
+# command outside the shell stands between this hook and the judge's check of
+# the tools it needs.
 JUDGE=""
-if HOOK_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P); then
+HOOK_DIR=${BASH_SOURCE[0]%/*}
+[ "$HOOK_DIR" != "${BASH_SOURCE[0]}" ] || HOOK_DIR=.
+if HOOK_DIR=$(cd -- "$HOOK_DIR" && pwd -P); then
   JUDGE="$HOOK_DIR/skill-load-check.sh"
 fi
 if [ -z "$JUDGE" ] || [ ! -f "$JUDGE" ]; then
