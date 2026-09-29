@@ -59,7 +59,10 @@
 #          $AUTOLESS_PR_MERGE, the copy whose needs-auto check is cut) |
 #          force | admin | admin-credential (the retired flags) | check-classified |
 #          auto-classified | immediate-classified | expected-classified:<sha> |
-#          dry-classified | admin-classified (--admin)
+#          dry-classified | admin-classified (--admin) | admin-classless
+#          (--admin from that suite's mirror with no harness-ci sibling,
+#          $CLASSLESS_PR_MERGE, on $CLASSLESS_PATH, which holds no
+#          change-class)
 #          (run from the mirror tree whose harness-ci sibling is the classifier
 #          stub, which pr-merge-thread-waiver.test.sh builds as $MIRROR) |
 #          check-no-rule | immediate-no-rule (run from that suite's mirror
@@ -313,6 +316,7 @@ argv_for() {
     expected-classified:*) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --keep-branch --expected-head "${1#expected-classified:}" ;;
     dry-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --dry-run --keep-branch ;;
     admin-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --admin --keep-branch ;;
+    admin-classless) printf '%s\n' env "PATH=$CLASSLESS_PATH" "$CLASSLESS_PR_MERGE" 123 --admin --keep-branch ;;
     # The mirror whose review gate has no waiver rule beside its owner.
     check-no-rule) printf '%s\n' "$NO_RULE_PR_MERGE" 123 --check ;;
     immediate-no-rule) printf '%s\n' "$NO_RULE_PR_MERGE" 123 --keep-branch ;;

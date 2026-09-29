@@ -7,7 +7,8 @@
 #
 # The selection: one row per class and path shape over this tree,
 #   asserting the whole lane line and the shards its case is about, and
-#   the refusals beside them; then a `trivial` diff of a path the Rust
+#   the refusals beside them; each lane source read queue-only by harness-ci's
+#   change-class; then a `trivial` diff of a path the Rust
 #   source reads, and the shard selection whole, in fixture checkouts,
 #   with a control per selection rule and a row per refusal; then the
 #   proof: a merge group handed its pull request run's record stands
@@ -176,6 +177,13 @@ pins() { echo "$(echo $(lane_sources "$1"))|$(echo $(build_names "$2"))"; } # JO
 check "the declared lists are the pinned sets" "$SOURCES|$NAMES" "$(pins "$JOB_SET" "$ROOT/tools/rust-reads")"
 sources="$(lane_sources "$JOB_SET")" names="$(build_names "$ROOT/tools/rust-reads")"
 while IFS= read -r p; do check "lane source $p runs every lane" "$ALL_ON" "$(selection standard false "$p")"; done <<<"$sources"
+# A lane source decides which lanes `CI` waits on, so a change to one runs in
+# a merge group: harness-ci's change-class answers it queue-only, off the
+# `queue` group of orch's narrow-change.conf.
+while IFS= read -r p; do
+  check "lane source $p is queue-only" "queue_only=true cause=queue-path path=$p" \
+    "$(queue_only_of "$p" | sed 's/ glob=.*//')"
+done <<<"$sources"
 mkdir -p "$TMP/member/tools"
 sed 's/(\(ci-job-set.\)ci-aggregate/(\1nothing/' "$JOB_SET" >"$TMP/member/tools/ci-job-set"
 sed 's/ \.cargo \\$/ \\/' "$ROOT/tools/rust-reads" >"$TMP/member/tools/rust-reads"

@@ -78,6 +78,19 @@ cp -- "$MIRROR/skills/harness-ci/scripts/change-class" "$NO_RULE/skills/harness-
 NO_RULE_PR_MERGE="$NO_RULE/skills/github/scripts/commands/pr-merge.sh"
 [[ -f "$NO_RULE_PR_MERGE" && ! -e "$NO_RULE/skills/review-gate/scripts/lib/waiver.sh" ]] || { echo "the no-rule mirror is malformed" >&2; exit 2; }
 
+# A github skill installed without harness-ci, run on this PATH less every
+# directory holding a change-class, with the world's stub bin ahead of it:
+# no classifier is found beside the scripts tree or on PATH.
+CLASSLESS="$TMPDIR/classless-tree"
+mirror_tree "$CLASSLESS" github
+CLASSLESS_PR_MERGE="$CLASSLESS/skills/github/scripts/commands/pr-merge.sh"
+[[ -f "$CLASSLESS_PR_MERGE" && ! -e "$CLASSLESS/skills/harness-ci" ]] || { echo "the classless mirror is malformed" >&2; exit 2; }
+CLASSLESS_PATH="$TMPDIR/bin"
+IFS=: read -r -a path_dirs <<<"$PATH"
+for path_dir in "${path_dirs[@]}"; do
+  [[ -x "$path_dir/change-class" ]] || CLASSLESS_PATH+=":$path_dir"
+done
+
 
 # The out field's fixed texts; the err field spells the same ones as macros.
 WAIVED="unresolved_threads_waived: 1 review-bot thread(s) open, waived by the review gate's class policy for this change, and the merge route resolves them before it arms"
@@ -151,9 +164,10 @@ a failed resolve blocks with nothing armed, and names the thread|checks:ci-requi
 run_table "the admin request" "\
 a queue-only PR refuses --admin, naming the class and the path that made it|route:true|admin-classified|1|-|pr-merge: admin-refused class=queue-only pr=123;$QUEUE_TRUE;{admin-queue}|calls=view:policy-range auth=<unset>
 any other PR meets the retired admin route, its class named|route:false|admin-classified|1|-|pr-merge: admin-retired class=not-queue-only pr=123;$QUEUE_FALSE;{admin-retired}|calls=view:policy-range auth=<unset>
-a classifier that prints no queue-only line reads queue-only|route:-|admin-classified|1|-|pr-merge: admin-refused class=queue-only pr=123;cause=classifier-unreadable;{admin-queue}|calls=view:policy-range auth=<unset>
+a classifier that prints no queue-only line reads queue-only, its stderr replayed|route:-|admin-classified|1|-|pr-merge: admin-refused class=queue-only pr=123;cause=classifier-unreadable;class: class=standard measured=true cause=stub;{admin-queue}|calls=view:policy-range auth=<unset>
 a classifier that fails reads queue-only|route:fail|admin-classified|1|-|pr-merge: admin-refused class=queue-only pr=123;cause=classifier-exit-1;{admin-queue}|calls=view:policy-range auth=<unset>
-an unreadable pull request range reads queue-only|route:range-fail|admin-classified|1|-|pr-merge: admin-refused class=queue-only pr=123;cause=range-unreadable;{admin-queue}|calls=view:policy-range auth=<unset>
+an unreadable pull request range reads queue-only, gh's words replayed|route:range-fail|admin-classified|1|-|pr-merge: admin-refused class=queue-only pr=123;cause=range-unreadable;could not read the pull request endpoints;{admin-queue}|calls=view:policy-range auth=<unset>
+no classifier beside the scripts tree or on PATH reads queue-only, before any gh call|-|admin-classless|1|-|pr-merge: admin-refused class=queue-only pr=123;cause=classifier-absent;{admin-queue}|calls=- auth=-
 "
 
 echo

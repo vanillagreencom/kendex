@@ -94,6 +94,7 @@ apply_edit() { # EDIT
     listed-product)
       write_lines src/hidden.rs 4
       edit_inventory '. + ["src/hidden.rs"]' ;;
+    inventory-invalid) printf '{unparsed\n' >"$repo/$INVENTORY" ;;
     *=*) write_lines "${1%=*}" "${1##*=}" ;;
     *) echo "unknown edit $1" >&2; exit 1 ;;
   esac
@@ -145,7 +146,7 @@ a hook body is excluded|class=standard measured=true cause=excluded-path|hooks/g
 a hook body a harness renders is excluded|class=standard measured=true cause=excluded-path|.claude/hooks/guard.sh=2
 a gate script is excluded|class=standard measured=true cause=excluded-path|skills/review-gate/scripts/gate.sh=2
 a gate writer template is excluded|class=standard measured=true cause=excluded-path|skills/review-gate/templates/writer.yml=2
-the default review policy is excluded|class=standard measured=true cause=excluded-path|skills/review-gate/standard.json=2
+the organization standard is excluded|class=standard measured=true cause=excluded-path|skills/review-gate/standard.json=2
 the Pi extension that runs every hook is excluded|class=standard measured=true cause=excluded-path|pi-extensions/pi-hooks/extensions/dispatch.ts=2
 a preflight script is excluded|class=standard measured=true cause=excluded-path|skills/preflight/scripts/run.sh=2
 a doc-limits script is excluded|class=standard measured=true cause=excluded-path|skills/doc-limits/scripts/check.sh=2
@@ -278,11 +279,16 @@ a CI workflow is queue-only|queue_only=true cause=queue-path path=.github/workfl
 a CI action is queue-only|queue_only=true cause=queue-path path=.github/actions/change-class/classify glob=.github/actions/*|.github/actions/change-class/classify=2
 the gate writer's engine is queue-only|queue_only=true cause=queue-path path=skills/review-gate/scripts/review-predicate.sh glob=*skills/review-gate/scripts/*|skills/review-gate/scripts/review-predicate.sh=2
 the gate writer template's render is queue-only|queue_only=true cause=queue-path path=.agents/skills/review-gate/templates/review-gate-writer.yml glob=*skills/review-gate/templates/*|.agents/skills/review-gate/templates/review-gate-writer.yml=2
-the default review policy is queue-only|queue_only=true cause=queue-path path=skills/review-gate/standard.json glob=*skills/review-gate/standard.json|skills/review-gate/standard.json=2
+the organization standard is queue-only|queue_only=true cause=queue-path path=skills/review-gate/standard.json glob=*skills/review-gate/standard.json|skills/review-gate/standard.json=2
 the settings naming the gate's context are queue-only|queue_only=true cause=queue-path path=kendex.settings.toml glob=kendex.settings.toml|kendex.settings.toml=2
-the classifier is queue-only|queue_only=true cause=queue-path path=skills/harness-ci/scripts/aggregate-needs glob=*skills/harness-ci/scripts/*|skills/harness-ci/scripts/aggregate-needs=2
+the classifier is queue-only|queue_only=true cause=queue-path path=skills/harness-ci/scripts/change-class glob=*skills/harness-ci/scripts/*|skills/harness-ci/scripts/change-class=2
 the classifier's list is queue-only|queue_only=true cause=queue-path path=skills/orch/references/narrow-change.conf glob=*skills/orch/references/narrow-change.conf|skills/orch/references/narrow-change.conf=2
+the branch measurement is queue-only|queue_only=true cause=queue-path path=skills/orch/scripts/branch-size-check glob=*skills/orch/scripts/branch-size-check|skills/orch/scripts/branch-size-check=2
+the branch measurement's library is queue-only|queue_only=true cause=queue-path path=.agents/skills/orch/scripts/lib/branch-growth.sh glob=*skills/orch/scripts/lib/branch-growth.sh|.agents/skills/orch/scripts/lib/branch-growth.sh=2
+the measurement's settings reader is queue-only|queue_only=true cause=queue-path path=skills/orch/scripts/lib/kendex-env.sh glob=*skills/orch/scripts/lib/kendex-env.sh|skills/orch/scripts/lib/kendex-env.sh=2
+the measurement's base resolver is queue-only|queue_only=true cause=queue-path path=skills/orch/scripts/resolve-base-branch glob=*skills/orch/scripts/resolve-base-branch|skills/orch/scripts/resolve-base-branch=2
 the job selection is queue-only|queue_only=true cause=queue-path path=tools/ci-job-set glob=tools/ci-job-set|tools/ci-job-set=2
+the Rust reads the job selection takes are queue-only|queue_only=true cause=queue-path path=tools/rust-reads glob=tools/rust-reads|tools/rust-reads=2
 a skill's test library is queue-only|queue_only=true cause=queue-path path=skills/orch/tests/lib/git-env.sh glob=*skills/*/tests/lib/*|skills/orch/tests/lib/git-env.sh=2
 a tools suite is queue-only|queue_only=true cause=queue-path path=tools/tests/ci-aggregate.test.sh glob=tools/tests/*|tools/tests/ci-aggregate.test.sh=2
 the CI test aggregator is queue-only|queue_only=true cause=queue-path path=tools/ci-aggregate glob=tools/ci-aggregate|tools/ci-aggregate=2
@@ -294,6 +300,7 @@ the Copilot instruction file is queue-only|queue_only=true cause=queue-path path
 a review-bot instruction file is queue-only|queue_only=true cause=queue-path path=.github/instructions/code-review.md glob=.github/instructions/*|.github/instructions/code-review.md=2
 a queue path beside a product file is queue-only|queue_only=true cause=queue-path path=tools/ci-aggregate glob=tools/ci-aggregate|runtime/product.ts=2 tools/ci-aggregate=2
 a diff no entry names is not queue-only|queue_only=false cause=no-queue-path|docs/guide.md=2 runtime/product.ts=2 skills/orch/tests/added.test.sh=30
+a refusal raised after the paths were read carries their class|queue_only=false cause=no-queue-path|inventory-invalid runtime/product.ts=2
 ROWS
 require_rows queue-only "$queue_rows"
 
@@ -320,6 +327,30 @@ unread_err="$("$CHANGE_CLASS" --repo "$repo" --event pull_request \
 assert_eq "a diff whose paths were not read is queue-only" \
   "queue_only=true cause=paths-unread" "$(queue_of "$unread_err")"
 
+# An empty diff is read, and names no path: queue-only, under its own cause.
+empty_err="$("$CHANGE_CLASS" --repo "$repo" --event pull_request \
+  --base "$base" --head "$base" 2>&1 >/dev/null)" || true
+assert_eq "an empty diff is queue-only under its own cause" \
+  "queue_only=true cause=no-changed-paths" "$(queue_of "$empty_err")"
+
+# Every row of the boundary group names a file whose edit changes the class
+# the classifier answers, so each is queue-only. The rows are read off the
+# shipped list, each a literal path behind a leading `*`; the floor and the
+# one required row say the reader found the group.
+boundary_rows="$(boundary_globs "$ORCH_PACKAGE/references/narrow-change.conf")"
+assert_eq "the boundary group is read" 1 \
+  "$(grep -cxF '*skills/orch/scripts/branch-size-check' <<<"$boundary_rows" || true)"
+while IFS= read -r glob; do
+  [ -n "$glob" ] || continue
+  path="${glob#\*}"
+  case "$path" in
+    *[][*?!\(\)]*) assert_eq "the boundary row $glob is a literal path" literal "$glob"; continue ;;
+  esac
+  row_queue="$(queue_of "$(run_row "$CHANGE_CLASS" "$path=2")")"
+  assert_eq "the boundary row $glob is queue-only" "queue_only=true cause=queue-path path=$path" \
+    "${row_queue% glob=*}"
+done <<<"$boundary_rows"
+
 # A list with no `queue` group is one from before it, and reads queue-only.
 queueless="$SANDBOX/queueless"
 mkdir -p "$queueless/harness-ci/scripts"
@@ -332,10 +363,24 @@ assert_eq "a list with no queue group reads queue-only" \
   "queue_only=true cause=queue-list-missing" \
   "$(queue_of "$(run_row "$queueless/harness-ci/scripts/change-class" docs/guide.md=2)")"
 
+# An orch beside the package that carries no list reads queue-only.
+listless="$SANDBOX/listless"
+mkdir -p "$listless/harness-ci/scripts"
+cp -R "$ORCH_PACKAGE" "$listless/orch"
+rm -- "${listless:?}/orch/references/narrow-change.conf"
+cp "$(dirname "$CHANGE_CLASS")/harness-only" "$(dirname "$CHANGE_CLASS")/change-class" \
+  "$listless/harness-ci/scripts/"
+assert_eq "an orch with no list reads queue-only" \
+  "queue_only=true cause=queue-list-unreadable" \
+  "$(queue_of "$(run_row "$listless/harness-ci/scripts/change-class" docs/guide.md=2)")"
+
 # One must-fail control per queue rule. A classifier that never matches the
 # group answers not queue-only on a CI workflow; one whose default before the
 # paths are read is false answers not queue-only on an unread diff; one that
-# reads an empty group as a list answers not queue-only on the queueless list.
+# reads an empty group as a list answers not queue-only on the queueless list;
+# one that reads a missing list as not queue-only answers so on the listless
+# orch; one that judges the class after harness-only's refusals, as it once
+# did, answers paths-unread on a refusal raised after the paths were read.
 CONTROL_READ=queue_of
 control "a classifier that never matches the queue group lets a workflow through" \
   "queue_only=false cause=no-queue-path" .github/workflows/ci.yml=2 \
@@ -350,6 +395,19 @@ cp "$missing_mutant" "$queueless/harness-ci/scripts/change-class"
 assert_eq "a classifier that reads an empty queue group lets the queueless list through" \
   "queue_only=false cause=no-queue-path" \
   "$(queue_of "$(run_row "$queueless/harness-ci/scripts/change-class" docs/guide.md=2)")"
+unreadable_mutant="$(mutant queue-unreadable change-class \
+  '    QUEUE_CAUSE="cause=queue-list-unreadable"' \
+  '    QUEUE_ONLY=false QUEUE_CAUSE="cause=queue-list-unreadable"')"
+cp "$unreadable_mutant" "$listless/harness-ci/scripts/change-class"
+assert_eq "a classifier that reads a missing list as not queue-only lets the listless orch through" \
+  "queue_only=false cause=queue-list-unreadable" \
+  "$(queue_of "$(run_row "$listless/harness-ci/scripts/change-class" docs/guide.md=2)")"
+order_mutant="$(mutant queue-order change-class '  queue_only_of_paths' '  :' \
+  'if [ ! -s "$paths_file" ]; then' \
+  '[ ! -s "$paths_file" ] || queue_only_of_paths; if [ ! -s "$paths_file" ]; then')"
+assert_eq "a classifier that judges the class after the refusals loses it on a refusal" \
+  "queue_only=true cause=paths-unread" \
+  "$(queue_of "$(run_row "$order_mutant" inventory-invalid runtime/product.ts=2)")"
 CONTROL_READ=verdict_of
 
 report narrow-change

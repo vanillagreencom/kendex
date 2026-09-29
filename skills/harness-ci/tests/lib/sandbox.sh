@@ -60,6 +60,13 @@ classify() { # ARGS... -> the harness_only= line
   "$HARNESS_ONLY" "$@" 2>/dev/null
 }
 
+# The globs of the boundary group of orch's narrow-change.conf, which the
+# narrow-boundary and narrow-change suites both read: the `path` lines after
+# its `# [boundary]` line, up to the first blank line.
+boundary_globs() { # CONF
+  awk '/^# \[boundary\]/ { group = 1; next } group && /^$/ { exit } group && /^path / { print substr($0, 6) }' "$1"
+}
+
 assert_eq() { # LABEL EXPECTED ACTUAL
   if [ "$2" = "$3" ]; then
     printf '  PASS: %s\n' "$1"

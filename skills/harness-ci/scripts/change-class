@@ -25,10 +25,11 @@
 # one `queue-only: queue_only=true|false cause=<name> [path=<p> glob=<g>]`
 # line on stderr, ahead of the `class:` line: true where a changed path
 # matches a `queue` line of orch's narrow-change.conf, which is the list of
-# paths a change must run in a merge group for, and where the paths were not
-# read (cause=paths-unread) or the list was not (cause=queue-list-unreadable,
-# cause=queue-list-missing). It is judged on every changed path, before any
-# rule below sets a path aside, and no class changes it. A wiring error
+# paths a change must run in a merge group for, where the diff is empty
+# (cause=no-changed-paths), and where the paths were not read
+# (cause=paths-unread) or the list was not (cause=queue-list-unreadable,
+# cause=queue-list-missing). It is judged on every changed path harness-only
+# read, before any refusal or rule below, and no class changes it. A wiring error
 # prints no such line, and a reader takes its absence as queue_only=true.
 # The render proof runs `kendex verify --scope
 # project --json` in that private checkout, with `--base` set to the base-rev:
@@ -293,35 +294,6 @@ if ! inventory_change="$(sed -n 's/^inventory-change: //p' "$harness_err" | tail
   inventory_change=""
 fi
 
-# The committed inventory is the file every rule below is judged by: generated
-# ownership is read from it, so the render branch and the size rules both
-# stand on that read. A `false` verdict from harness-only means "run every
-# lane", never "this is a product diff whose size may be measured". Only two
-# of its causes are raised AFTER it has read every changed path against an
-# inventory it could read: a path that inventory does not carry, and an
-# ownership gain. Those two are the readable product diffs, and the list below
-# is what may be measured — they keep the `harness-note:` line they have always
-# had and the class then comes from the size rules. Every other cause is a
-# refusal to read something: the inventory at an endpoint, the inventory's
-# shape, a changed path, a path lookup, the diff, the endpoints, the event.
-# A refusal is not a product diff, so it answers standard here with the cause
-# as it stands, ahead of every path and size rule. A cause harness-only adds
-# later is refused by that default rather than measured until someone names
-# it, which is the way round that cannot hand a narrow class to a diff whose
-# ownership was never read.
-case "$harness_note" in
-  '') ;;
-  cause=product-source-or-unreadable-ownership | \
-    cause=product-source-or-unreadable-ownership\ * | \
-    cause=generated-ownership-gain | cause=generated-ownership-gain\ *) ;;
-  *) answer standard "$harness_note" ;;
-esac
-
-if [ ! -s "$paths_file" ]; then
-  answer standard "${harness_note:-cause=no-changed-paths}"
-fi
-changed="$(cat -- "$paths_file")"
-
 # Splitting a blank-separated list leaves each word open to pathname
 # expansion, and a glob naming a real directory would be replaced by the files
 # under the caller's working directory. Expansion is off for the split alone.
@@ -390,7 +362,48 @@ queue_only_of_paths() {
   QUEUE_ONLY=false
   QUEUE_CAUSE="cause=no-queue-path"
 }
-queue_only_of_paths
+
+# The changed paths harness-only read, and the queue-only class judged on
+# them, ahead of every refusal below: a refusal raised after the paths were
+# read carries the class those paths earn. An empty diff is its own cause and
+# stays queue-only; any other empty set is a refusal that read no path, and
+# keeps cause=paths-unread.
+if [ -s "$paths_file" ]; then
+  changed="$(cat -- "$paths_file")"
+  queue_only_of_paths
+else
+  case "$harness_note" in
+    '' | cause=empty-diff | cause=empty-diff\ *) QUEUE_CAUSE="cause=no-changed-paths" ;;
+  esac
+fi
+
+# The committed inventory is the file every rule below is judged by: generated
+# ownership is read from it, so the render branch and the size rules both
+# stand on that read. A `false` verdict from harness-only means "run every
+# lane", never "this is a product diff whose size may be measured". Only two
+# of its causes are raised AFTER it has read every changed path against an
+# inventory it could read: a path that inventory does not carry, and an
+# ownership gain. Those two are the readable product diffs, and the list below
+# is what may be measured — they keep the `harness-note:` line they have always
+# had and the class then comes from the size rules. Every other cause is a
+# refusal to read something: the inventory at an endpoint, the inventory's
+# shape, a changed path, a path lookup, the diff, the endpoints, the event.
+# A refusal is not a product diff, so it answers standard here with the cause
+# as it stands, ahead of every path and size rule. A cause harness-only adds
+# later is refused by that default rather than measured until someone names
+# it, which is the way round that cannot hand a narrow class to a diff whose
+# ownership was never read.
+case "$harness_note" in
+  '') ;;
+  cause=product-source-or-unreadable-ownership | \
+    cause=product-source-or-unreadable-ownership\ * | \
+    cause=generated-ownership-gain | cause=generated-ownership-gain\ *) ;;
+  *) answer standard "$harness_note" ;;
+esac
+
+if [ ! -s "$paths_file" ]; then
+  answer standard "${harness_note:-cause=no-changed-paths}"
+fi
 
 # Two groups, refused at two places. First, ahead of everything, kendex's own
 # configuration, with .gemini/settings.json beside it: the shim row kendex

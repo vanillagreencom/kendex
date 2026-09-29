@@ -38,12 +38,6 @@ boundary_declared() { # CATALOG
   done <<<"$(measurement_scripts "$1")"
 }
 
-# The globs of the conf's boundary group: the `path` lines after its
-# `# [boundary]` line, up to the first blank line.
-boundary_globs() { # CONF
-  awk '/^# \[boundary\]/ { group = 1; next } group && /^$/ { exit } group && /^path / { print substr($0, 6) }' "$1"
-}
-
 # Every `source` or `.` in command position is resolved to one catalog path,
 # whatever the spelling of its word: quoted, split-quoted, unquoted, braced,
 # relative or absolute. The word is read as the shell reads it, quotes

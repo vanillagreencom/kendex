@@ -20,6 +20,8 @@
 #   ALL_ON, ALL_OFF, VERIFY_ROW, PROSE_ROW, CODE_ROW, UI_ROW,
 #   ORCH_CODE_ROW, ORCH_CODE_GROUP, ORCH_PROOF_ROW, SOURCE_PROOF_ROW
 #                            the rows, each described where it is set
+#   queue_only_of PATH       the queue-only line harness-ci's change-class
+#                            prints for a diff touching PATH alone
 #   ok / bad / check         the tally in PASS and FAIL
 set -euo pipefail
 
@@ -54,6 +56,25 @@ selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or th
     return 0
   fi
   tr '\n' ' ' <"$out" | sed 's/ $//'
+}
+
+# The classifier this checkout ships, run over a fixture repository whose one
+# commit past an empty base touches PATH alone. Prints the value of its
+# `queue-only:` line; prints nothing where the fixture or the run failed.
+queue_only_of() { # PATH
+  local repo base
+  repo="$(mktemp -d "$TMP/queue.XXXXXX")" || return 1
+  git -C "$repo" init -q -b main || return 1
+  git -C "$repo" -c user.email=ci-job-set@example.invalid -c user.name=ci-job-set \
+    commit -q --allow-empty -m base || return 1
+  base="$(git -C "$repo" rev-parse HEAD)" || return 1
+  mkdir -p -- "$repo/$(dirname -- "$1")" && printf 'x\n' >"$repo/$1" || return 1
+  git -C "$repo" add -A || return 1
+  git -C "$repo" -c user.email=ci-job-set@example.invalid -c user.name=ci-job-set \
+    commit -q -m head || return 1
+  "$ROOT/skills/harness-ci/scripts/change-class" --repo "$repo" --event pull_request \
+    --base "$base" --head HEAD 2>"$repo.err" >/dev/null || return 1
+  sed -n 's/^queue-only: //p' "$repo.err"
 }
 
 # The record is the change-class action's: the run's event, class, docs
