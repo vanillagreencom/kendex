@@ -44,7 +44,9 @@
 #       on its branch is news; a parked record's own merge prints
 #       parked-merged and closes nothing, its must-fail control being the
 #       close restored, the heartbeat names it again while the record still
-#       reads parked, its control being that repeat removed, and another
+#       reads parked, its control being that repeat removed, a failed read
+#       of its merged row there exits 2 naming the row, its control being
+#       the read's return removed, and another
 #       merge on its branch, or none yet, hands nothing on at the merge or
 #       the heartbeat, its control being the heartbeat's membership test
 #       removed
@@ -1201,6 +1203,22 @@ mutate_file "$HAND_MUTANT" "  [[ -z \"\$hands\" ]] || printf '%s\\n' \"\$hands\"
 WATCH_BIN="$HAND_MUTANT" parked_run --
 assert_eq "events=$EVENTS" "events=heartbeat loops=2" \
   "control: with the heartbeat's hand removed the record left parked over its merge is silent" "$err"
+# A row read that fails at the heartbeat ends the run naming the merged row,
+# never a heartbeat with the hand dropped. The plant fails the read; its
+# must-fail control is the same plant with the read's own return removed.
+owed_read_mutant() { # NAME NEW, sets OWED_READ_BIN
+  OWED_READ_BIN="$(mutant_scripts "$1/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/$1/github"
+  mutate_file "$OWED_READ_BIN" '    row="$(lane_row_get merged "$1" "${PARKED_ITEMS[$i]}")" || return 1' "$2"
+}
+owed_read_mutant parked-owed-read-fail '    row="$(exit 1)" || return 1'
+WATCH_BIN="$OWED_READ_BIN" parked_run --
+assert_eq "rc=$rc events=$EVENTS note=$(grep -c "^oversee-watch: state-read-failed path=.* row=merged\$" "$err" || true)" "rc=2 events= note=1" \
+  "a failed merged-row read at the heartbeat exits 2 naming the row, with no parked-merged line" "$err"
+owed_read_mutant parked-owed-read-open '    row="$(exit 1)"'
+WATCH_BIN="$OWED_READ_BIN" parked_run --
+assert_eq "rc=$rc events=$EVENTS" "rc=0 events=heartbeat loops=2" \
+  "control: with the read's return removed the failed read drops the hand and the heartbeat exits 0" "$err"
 # The relaunch rewrites the record stopped and drops `parked`: the repeat ends.
 jq '(.lanes[] | select(.item == "issue-2")) |= (.status = "stopped" | del(.parked))' "$STUB_DIR/state.json" > "$STUB_DIR/state.next" && mv -- "$STUB_DIR/state.next" "$STUB_DIR/state.json"
 parked_run --

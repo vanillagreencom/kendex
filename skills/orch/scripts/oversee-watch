@@ -1355,11 +1355,12 @@ parked_merged_line() { # ITEM KEY
 # the committed baseline the merged check writes, is handed on again. Nothing
 # here ends the repeat; the relaunch rewriting the record stopped does, so a
 # relaunch refused, or an overseer that compacted or handed off after the
-# first hand, still has the merge named at the next heartbeat.
+# first hand, still has the merge named at the next heartbeat. Errexit is off
+# under the caller's `||`, so the row read returns its own failure.
 parked_merged_owed() { # STATE
   local i row
   for i in ${PARKED_ITEMS[@]+"${!PARKED_ITEMS[@]}"}; do
-    row="$(lane_row_get merged "$1" "${PARKED_ITEMS[$i]}")"
+    row="$(lane_row_get merged "$1" "${PARKED_ITEMS[$i]}")" || return 1
     [[ " $row " == *" ${PARKED_KEYS[$i]} "* ]] || continue
     parked_merged_line "${PARKED_ITEMS[$i]}" "${PARKED_KEYS[$i]}"
   done
