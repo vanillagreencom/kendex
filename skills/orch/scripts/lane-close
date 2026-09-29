@@ -153,12 +153,16 @@ record unchanged. An exited, stopped or preparing lane's
 tracker is read for that alone: an item it holds open, or a read that does not
 answer, keeps the files and prints item-files-kept with the cause, and the
 close goes on.
-That hosted close of a finished item passes --merged to lane-host close where
+That hosted close of a completed item passes --merged to lane-host close where
 the item's pull request merged: the record carries the cycle oversee-cycle
 writes at a merge, or worktree merged ITEM, asked from this checkout, exits 0.
-The flag lets the provider cut the item's archive to one evidence file, or to
-none, so it is never passed for an item the tracker holds open: a record keeps
-its cycle across a relaunch, and the lane's later work may not have merged.
+Completed is a Linear state_type of completed, or a GitHub issue closed with
+the reason COMPLETED. The flag lets the provider cut the item's archive to one
+evidence file, or to none, so it is never passed for an item the tracker holds
+open or canceled: a record keeps its cycle across a relaunch, and the lane's
+later work may not have merged. A canceled item, a Linear state_type of
+canceled or a GitHub issue closed with any other reason or none, still has its
+files removed, and its host close keeps the whole archive.
 worktree merged answers only where this checkout holds the item's branch; an
 exit other than 0 or 1 prints merged-unjudged and the close goes on without the
 flag, which keeps the whole archive.
@@ -403,7 +407,7 @@ refuse_unanswered_ask() {
   exit 1
 }
 
-# Whether the item's pull request merged, which a full close of a finished
+# Whether the item's pull request merged, which a full close of a completed
 # item tells the provider through close --merged. Two readings, in order: the
 # record's cycle, which oversee-cycle writes at the merge and which is the
 # usual evidence for a hosted lane, whose branch this checkout does not hold;
@@ -431,7 +435,7 @@ close_host() {
   local rc=0 out err args=(close --item "$ITEM")
   [[ -n "$host" ]] || return 0
   [[ -x "$LANE_HOST" ]] || { message record-invalid "item=$ITEM" "field=lane-host" >&2; return 1; }
-  if [[ "$ITEM_FINISHED" == true ]] && item_merged; then args+=(--merged); fi
+  if [[ "$ITEM_END" == completed ]] && item_merged; then args+=(--merged); fi
   out="$(mktemp)" || return 1
   err="$(mktemp)" || { rm -f -- "$out"; return 1; }
   ORCH_LANE_HOST="$host" "$LANE_HOST" "${args[@]}" >"$out" 2>"$err" || rc=$?
@@ -460,10 +464,11 @@ tracker_read() { # OUT_VAR COMMAND...
 # Whether the work item is finished and, where that is not an answer, WHY. The
 # several ways this read fails to answer are one status to the caller and
 # distinct words to the operator, so the refusal names the cause rather than
-# asserting one of them. TRACKER_CAUSE carries it on every status 2.
+# asserting one of them. TRACKER_CAUSE carries it on every status 2, and
+# ITEM_END the terminal state on status 0.
 TRACKER_CAUSE=""
 tracker_terminal() {
-  local value number
+  local value number state reason
   TRACKER_CAUSE=""
   case "$tracker" in
     linear)
@@ -477,16 +482,24 @@ tracker_terminal() {
       # still running.
       value="$(jq -r '.state_type // empty' <<<"$value")" || { TRACKER_CAUSE=payload-unparsed; return 2; }
       [[ -n "$value" ]] || { TRACKER_CAUSE=no-state-type; return 2; }
-      [[ "$value" == completed || "$value" == canceled ]] ;;
+      case "$value" in
+        completed | canceled) ITEM_END="$value" ;;
+        *) return 1 ;;
+      esac ;;
     github)
       # The key is read before the repository: an item whose key is not issue-N
       # carries no issue number at all, which no repository supplies.
       [[ "$ITEM" == issue-* ]] || { TRACKER_CAUSE=key-not-issue; return 2; }
       [[ -n "$repo" ]] || { TRACKER_CAUSE=repo-missing; return 2; }
       number="${ITEM#issue-}"
-      tracker_read value gh issue view "$number" --repo "$repo" --json state --jq .state \
+      tracker_read value gh issue view "$number" --repo "$repo" --json state,stateReason \
+        --jq '.state + " " + (.stateReason // "")' \
         || { TRACKER_CAUSE=read-failed; return 2; }
-      [[ "$value" == CLOSED ]] ;;
+      read -r state reason <<<"$value"
+      [[ "$state" == CLOSED ]] || return 1
+      # Only COMPLETED says the work shipped. NOT_PLANNED, DUPLICATE and an
+      # issue closed before GitHub recorded a reason all end it unshipped.
+      if [[ "$reason" == COMPLETED ]]; then ITEM_END=completed; else ITEM_END=canceled; fi ;;
     # An empty tracker under an issue-N key is the derivation declining, not an
     # unrecognised value: both trackers spell a key that way, so the caller is
     # asked which one rather than told the tracker is unknown.
@@ -627,15 +640,17 @@ stop_validations() {
 # before the host close, so a close that fails before the host close retries
 # whole, the removal included, which an idempotent remove allows. One that
 # fails after the host close does not: the ssh provider's close takes the item
-# marker, and a second close is refused as unowned. A terminal answer read here
-# sets ITEM_FINISHED, which the host close's --merged judgement reads.
-ITEM_FINISHED=false
+# marker, and a second close is refused as unowned.
+# ITEM_END is the terminal state the tracker answered, empty until a read
+# answers terminal: completed for shipped work, canceled for any other end.
+# Both remove the files; only completed lets the host close pass --merged.
+ITEM_END=""
 remove_item_files() {
   local rc=0
-  if [[ "$ITEM_FINISHED" == false ]]; then
+  if [[ -z "$ITEM_END" ]]; then
     tracker_terminal || rc=$?
     case "$rc" in
-      0) ITEM_FINISHED=true ;;
+      0) ;;
       1) message item-files-kept "item=$ITEM" "cause=open"; return 0 ;;
       *) message item-files-kept "item=$ITEM" "cause=$TRACKER_CAUSE"; return 0 ;;
     esac
@@ -848,7 +863,7 @@ case "$state" in
     tracker_rc=0
     tracker_terminal || tracker_rc=$?
     case "$tracker_rc" in
-      0) ITEM_FINISHED=true ;;
+      0) ;;
       1) message lane-live "item=$ITEM" "state=idle" "pane=$pane_id" >&2; exit 1 ;;
       *) message tracker-read-failed "item=$ITEM" "tracker=$tracker" "source=$tracker_source" "cause=$TRACKER_CAUSE" >&2; exit 1 ;;
     esac ;;
