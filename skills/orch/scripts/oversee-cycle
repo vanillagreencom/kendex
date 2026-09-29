@@ -28,17 +28,18 @@
 #
 # It writes the record's `cycle` object, appends one `cycle` row to the fleet
 # log, and prints the same line:
-#   cycle item=ITEM pr=N class=C tier=T target=S actual=S verdict=V phase=P
-#     phase_secs=S cause=W bot_wait=S thread_fix=S paused=S missing=A,B
+#   cycle item=ITEM pr=N class=C tier=T target=S actual=S open=S verdict=V
+#     phase=P phase_secs=S cause=W bot_wait=S thread_fix=S paused=S missing=A,B
 #     review=N fix=N bot=N full_validations=N pr_rounds=N escaped=B refixed=B
 # (one line). A value it could not read prints `-`.
 #   stamps    launched (the record's launched_at), first_commit, pr_opened,
 #             gate_green, ci_green, armed (armed, else queued), merged
 #   missing   the stamps that are null
-#   target    seconds, launch to merge, by class, from the table `--help`
-#             prints last
-#   actual    merged minus launched
-#   verdict   met, miss (actual over target), unmeasured (launched or merged
+#   target    seconds, pull request open to merge, by class, from the table
+#             `--help` prints last: the owner's open-to-merge figures
+#   actual    merged minus launched, lane launch to merge; the rollup reads it
+#   open      merged minus pr_opened, pull request open to merge
+#   verdict   met, miss (open over target), unmeasured (pr_opened or merged
 #             missing), or unclassified (the classifier gave no class)
 #   phase     the longest gap between two consecutive stamps in time order,
 #             named by the stamp that ends it; the earliest wins a tie. Null
@@ -121,7 +122,7 @@ ROUND_SECS_TARGET=600
 
 usage() {
   awk 'NR > 1 && /^set -euo/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"
-  jq -r '"Targets, seconds: " + (to_entries | map("\(.key) \(.value)") | join(", "))' <<<"$TARGETS"
+  jq -r '"Targets, open-to-merge seconds: " + (to_entries | map("\(.key) \(.value)") | join(", "))' <<<"$TARGETS"
   jq -r --arg secs "$ROUND_SECS_TARGET" \
     '"Review rounds per pull request: " + (to_entries | map("\(.key) \(.value)") | join(", "))
      + "; seconds per round: " + $secs' <<<"$ROUND_TARGETS"
@@ -321,6 +322,8 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
   | (if $class == null then null else $targets[$class] end) as $target
   | (if $stamps.launched == null or $stamps.merged == null then null
      else ($stamps.merged | fromdate) - ($stamps.launched | fromdate) end) as $actual
+  | (if $stamps.pr_opened == null or $stamps.merged == null then null
+     else ($stamps.merged | fromdate) - ($stamps.pr_opened | fromdate) end) as $open
   | [$stamps | to_entries[] | select(.value == null) | .key] as $missing
   | ([$stamps | to_entries[] | select(.value != null) | {name: .key, at: (.value | fromdate)}]
      | sort_by(.at)) as $seq
@@ -331,9 +334,9 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
   | (if ($missing | length) > 0 or $gate == 0 or $t.push_times == null then null
      else gate_waits($seq[$gate - 1].at; $seq[$gate].at) end) as $waits
   | {pr: $t.pr, class: $class, class_cause: (if $cause == "" then null else $cause end),
-     tier: $tier, stamps: $stamps, target: $target, actual: $actual,
-     verdict: (if $class == null then "unclassified" elif $actual == null then "unmeasured"
-               elif $actual > $target then "miss" else "met" end),
+     tier: $tier, stamps: $stamps, target: $target, actual: $actual, open: $open,
+     verdict: (if $class == null then "unclassified" elif $open == null then "unmeasured"
+               elif $open > $target then "miss" else "met" end),
      phase: $dominant.phase, phase_secs: $dominant.secs, gate_waits: $waits,
      cause: (if $dominant.phase != "gate_green" or $waits == null then null
              else $waits | to_entries | sort_by(- .value) | first.key end),
@@ -352,7 +355,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
 
 line="$(jq -r --arg item "$ITEM" 'def n: if . == null then "-" else tostring end;
   "cycle item=\($item) pr=\(.pr) class=\(.class | n) tier=\(.tier) target=\(.target | n)"
-  + " actual=\(.actual | n) verdict=\(.verdict) phase=\(.phase | n) phase_secs=\(.phase_secs | n)"
+  + " actual=\(.actual | n) open=\(.open | n) verdict=\(.verdict) phase=\(.phase | n) phase_secs=\(.phase_secs | n)"
   + " cause=\(.cause | n) bot_wait=\(.gate_waits.bot_wait | n) thread_fix=\(.gate_waits.thread_fix | n)"
   + " paused=\(.gate_waits.paused | n)"
   + " missing=\(if .missing == [] then "-" else .missing | join(",") end)"
