@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+# Publishes one pi-extensions package to npm, named by its release tag
+# `<unscoped-name>-v<version>`, from the tree that tag names.
+# .github/workflows/publish-npm.yml runs it from its own checkout with every
+# branch and tag fetched. The package is read from the tag, never from the
+# checkout, so a dispatch from the default branch can publish a tag cut
+# before this script existed.
+#
+# npm trusted publishing is the credential: npm accepts the publish because
+# the job's GitHub identity names that workflow file, so this script reads
+# no token and writes no .npmrc.
+#
+# Usage: tools/publish-npm [--dry-run] TAG
+#   --dry-run  run every check, then stop before `npm ci` and `npm publish`
+#
+# Environment:
+#   MAIN_REF                   the default branch as fetched (default
+#                              origin/main); only a commit on it is published
+#   PUBLISH_NPM_VIEW_ATTEMPTS  reads of the served version after the publish
+#                              (default 18)
+#   PUBLISH_NPM_VIEW_INTERVAL  seconds between those reads (default 10); the
+#                              registry can take a minute to serve a version
+#
+# Every line this script writes opens `publish-npm: <key>=<value>`:
+#   option=<arg>               unknown option or no tag (exit 2)
+#   tag=<tag>                  not `<unscoped-name>-v<major.minor.patch...>` (exit 1)
+#   absent=<tag>               this checkout holds no such tag (exit 1)
+#   off-main=<sha>             the tag's commit is not on MAIN_REF (exit 1)
+#   package=<dir>              pi-extensions/<dir>/package.json is missing at
+#                              the tag or not a JSON object (exit 1)
+#   name=<name>                its name is not @vanillagreen/<dir> (exit 1)
+#   version=<version>          its version is not the tag's (exit 1)
+#   npm=<version>              npm is older than 11.5.1, the trusted-publishing floor (exit 1)
+#   lookup=<name@version>      npm view failed other than with E404 (exit 1)
+#   served=<name@version>      npm already serves it; nothing is published (exit 0)
+#   dry-run=<name@version>     every check passed; nothing is published (exit 0)
+#   publish=<name@version>     extracting the tag, npm ci or npm publish failed (exit 1)
+#   unconfirmed=<name@version> npm never served the published version (exit 1)
+#   published=<name@version>   npm serves the published version (exit 0)
+set -euo pipefail
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+main_ref="${MAIN_REF:-origin/main}"
+attempts="${PUBLISH_NPM_VIEW_ATTEMPTS:-18}"
+interval="${PUBLISH_NPM_VIEW_INTERVAL:-10}"
+npm_floor=11.5.1
+scope=@vanillagreen
+
+say() { # KEY VALUE [LINE...] — the keyed line, then each explanation line
+  printf 'publish-npm: %s=%s\n' "$1" "$2"
+  shift 2
+  for line in "$@"; do printf '%s\n' "$line"; done
+}
+
+usage='usage: tools/publish-npm [--dry-run] TAG'
+dry_run=0
+tag=""
+for argument in "$@"; do
+  case "$argument" in
+    --dry-run) dry_run=1 ;;
+    -h|--help) sed -n '2,39p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -*) say option "$argument" "$usage" >&2; exit 2 ;;
+    *)
+      if [[ -n "$tag" ]]; then say option "$argument" "$usage" >&2; exit 2; fi
+      tag="$argument"
+      ;;
+  esac
+done
+if [[ -z "$tag" ]]; then
+  say option "no-tag" "$usage" >&2
+  exit 2
+fi
+
+# numeric_at_least HAVE FLOOR — both `major.minor.patch`, a pre-release or
+# build suffix on HAVE ignored.
+numeric_at_least() {
+  local have="${1%%[-+]*}" floor="$2" h f i
+  for i in 1 2 3; do
+    h="$(printf '%s' "$have" | cut -d. -f"$i")"
+    f="$(printf '%s' "$floor" | cut -d. -f"$i")"
+    [[ "$h" =~ ^[0-9]+$ ]] || return 1
+    if ((10#$h > 10#$f)); then return 0; fi
+    if ((10#$h < 10#$f)); then return 1; fi
+  done
+  return 0
+}
+
+tag_shape='^([a-z0-9][a-z0-9._-]*)-v([0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?)$'
+dir=""
+version=""
+if [[ "$tag" =~ $tag_shape ]]; then
+  dir="${BASH_REMATCH[1]}"
+  version="${BASH_REMATCH[2]}"
+fi
+# guard tag: begin
+if [[ -z "$dir" ]]; then
+  say tag "$tag" "a release tag is <unscoped-name>-v<version>, for example pi-qol-v2.1.0; nothing was published" >&2
+  exit 1
+fi
+# guard tag: end
+name="$scope/$dir"
+id="$name@$version"
+path="pi-extensions/$dir"
+
+tagged="$(git -C "$root" rev-parse --verify --quiet "refs/tags/$tag^{commit}")" || tagged=""
+# guard absent: begin
+if [[ -z "$tagged" ]]; then
+  say absent "$tag" "no tag $tag in this checkout; push the tag, or fetch every tag, then run again" >&2
+  exit 1
+fi
+# guard absent: end
+
+# guard off-main: begin
+if ! git -C "$root" merge-base --is-ancestor "$tagged" "$main_ref"; then
+  say off-main "$tagged" "$tag names a commit that is not on $main_ref; npm-deploy tags only a commit the default branch holds, so nothing was published" >&2
+  exit 1
+fi
+# guard off-main: end
+
+manifest="$(git -C "$root" show "$tagged:$path/package.json" 2>/dev/null)" || manifest=""
+if [[ -z "$manifest" ]] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$manifest"; then
+  say package "$dir" "$path/package.json at $tag is missing or not a JSON object" >&2
+  exit 1
+fi
+declared_name="$(jq -r '.name // ""' <<<"$manifest")"
+declared_version="$(jq -r '.version // ""' <<<"$manifest")"
+prepack="$(jq -r '.scripts.prepack // ""' <<<"$manifest")"
+
+# guard name: begin
+if [[ "$declared_name" != "$name" ]]; then
+  say name "$declared_name" "$path/package.json names $declared_name, the tag names $name" >&2
+  exit 1
+fi
+# guard name: end
+
+# guard version: begin
+if [[ "$declared_version" != "$version" ]]; then
+  say version "$declared_version" "$path/package.json declares $declared_version at $tag, the tag names $version; nothing was published" >&2
+  exit 1
+fi
+# guard version: end
+
+npm_version="$(npm --version)" || npm_version=""
+# guard npm: begin
+if ! numeric_at_least "$npm_version" "$npm_floor"; then
+  say npm "$npm_version" "npm trusted publishing needs npm $npm_floor or later" >&2
+  exit 1
+fi
+# guard npm: end
+
+scratch="$(mktemp -d)" || { echo "publish-npm: mktemp -d failed" >&2; exit 1; }
+trap 'rm -rf -- "${scratch:?}"' EXIT
+view_err="$scratch/view.err"
+
+# served ID — 0 npm serves ID, 1 it answers E404, 2 the lookup failed; the
+# lookup's own output is in $view_err.
+served() {
+  local out rc=0
+  out="$(npm view "$1" version 2>"$view_err")" || rc=$?
+  if [[ "$rc" -eq 0 && "$out" == "${1##*@}" ]]; then return 0; fi
+  if [[ "$rc" -ne 0 ]] && grep -q 'code E404' "$view_err"; then return 1; fi
+  printf 'npm view exited %s and printed [%s]\n' "$rc" "$out" >>"$view_err"
+  return 2
+}
+
+status=0
+served "$id" || status=$?
+# guard served: begin
+if [[ "$status" -eq 0 ]]; then
+  say served "$id" "npm already serves $id; nothing was published"
+  exit 0
+fi
+# guard served: end
+case "$status" in
+  0|1) ;;
+  2) say lookup "$id" "cannot tell whether npm serves $id:" >&2; cat -- "$view_err" >&2; exit 1 ;;
+  *) echo "publish-npm: served() returned $status, outside 0-2" >&2; exit 1 ;;
+esac
+
+if [[ "$dry_run" -eq 1 ]]; then
+  say dry-run "$id"
+  exit 0
+fi
+
+# The tag's tree, not the checkout: git archive keeps the path prefix.
+mkdir -- "$scratch/tree"
+if ! git -C "$root" archive "$tagged" -- "$path" | tar -x -C "$scratch/tree"; then
+  say publish "$id" "cannot extract $path from $tag; nothing was published" >&2
+  exit 1
+fi
+package_dir="$scratch/tree/$path"
+# A prepack build needs the package's dev dependencies; --ignore-scripts
+# keeps their install hooks from running with this job's identity.
+if [[ -n "$prepack" ]] && ! (cd -- "$package_dir" && npm ci --ignore-scripts); then
+  say publish "$id" "npm ci failed in $path; nothing was published" >&2
+  exit 1
+fi
+if ! (cd -- "$package_dir" && npm publish --provenance); then
+  say publish "$id" "npm publish failed; run the workflow again once the cause is fixed" >&2
+  exit 1
+fi
+
+attempt=1
+while :; do
+  status=0
+  served "$id" || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    say published "$id"
+    exit 0
+  fi
+  if ((attempt >= attempts)); then
+    say unconfirmed "$id" "npm publish succeeded, but npm view did not serve $id after $attempts reads; its last answer:" >&2
+    cat -- "$view_err" >&2
+    exit 1
+  fi
+  attempt=$((attempt + 1))
+  # The registry serves a new version up to a minute after the publish.
+  sleep "$interval"
+done

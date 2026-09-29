@@ -1,0 +1,80 @@
+name: publish-npm
+
+# Publishes one pi-extensions package to npm with npm trusted publishing:
+# npm trusts this workflow file by name, per package, and the job's GitHub
+# identity is the only credential, so no npm token exists anywhere. The
+# npm-deploy skill pushes the per-package release tag that starts a run;
+# tools/publish-npm holds every check. .github/AGENTS.md says what renaming
+# this file breaks.
+
+on:
+  push:
+    # Per-package release tags, `<unscoped-name>-v<version>` (pi-qol-v2.1.0).
+    # release.yml takes `v*`, which none of these match.
+    tags:
+      - "*-v[0-9]*"
+  # Reruns a failed publish of a tag that already exists.
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Unscoped package name, the directory under pi-extensions/ (pi-qol)
+        type: string
+        required: true
+      version:
+        description: The version its tag names (2.1.0)
+        type: string
+        required: true
+      dry_run:
+        description: Run every check and publish nothing
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # Two runs for one tag would race to publish the same version.
+  group: publish-npm-${{ github.event_name == 'workflow_dispatch' && format('{0}-v{1}', inputs.package, inputs.version) || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    permissions:
+      contents: read
+      # The OIDC token npm exchanges for a one-publish credential.
+      id-token: write
+    # npm trusted publishing accepts GitHub-hosted runners only.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && format('{0}-v{1}', inputs.package, inputs.version) || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The workflow's own commit, for tools/publish-npm, which reads the
+          # package from the tag: a dispatch from main can then publish a
+          # tag cut before this workflow existed. Every branch and tag is
+          # fetched, because the script refuses a tag whose commit
+          # origin/main does not hold.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # setup-node resolves "24" to the newest Node 24 release, whose npm is
+      # above 11.5.1, the trusted-publishing floor tools/publish-npm checks.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          # No registry-url: that writes an .npmrc naming a token, and this
+          # job has none.
+          package-manager-cache: false
+
+      - name: Publish
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            tools/publish-npm --dry-run "$TAG"
+          else
+            tools/publish-npm "$TAG"
+          fi
