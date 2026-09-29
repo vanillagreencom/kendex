@@ -29,8 +29,10 @@
 //! same way; with the stand-down's arm made without the read, the stand-down
 //! behind a lagging head fails the same way; with a read gh fails taken as
 //! a lagging head, that row exits 0 unarmed; with the reads cut to two, the
-//! never-matches row counts two reads, not five; with the wait between
-//! reads cut to one second, the `sleep` stub's log reddens the rows; and
+//! never-matches row counts two reads, not five; with a refused arm on the
+//! matched head passed over, the refused-arm row exits 0 armed; with the
+//! wait between reads cut to one second, the `sleep` stub's log reddens
+//! the rows; and
 //! with the unarmed warning annotation dropped, or printed only under
 //! `GITHUB_ACTIONS`, that row finds none. The update's title and body: left
 //! alone, or titled with no short head, the push over the pull request
@@ -152,7 +154,10 @@ const STALE_HEAD: &str = "0000000000000000000000000000000000000000";
 /// arm matched against a head it does not show yet, and otherwise writes
 /// `state/armed`; `api graphql` answers the arming and queue read from `state/armed` and
 /// `state/queued` and removes each for its mutation. `GH_FAIL` names the
-/// one call that fails: `list`, `state`, `view` or `edit` exit 1, and `disarm` or `dequeue`
+/// one call that fails: `list`, `state`, `view`, `edit` or `merge` exit 1,
+/// `merge` on a head that matched, as GitHub refuses an arm for a reason of
+/// its own (auto-merge off on the repository, a rule the branch breaks),
+/// and `disarm` or `dequeue`
 /// answer their mutation with an `errors` body and exit 0, as GitHub
 /// reports a mutation it refused. The repository reads answer what the
 /// github skill's filters would print: `repo view` names `acme/widgets`,
@@ -196,6 +201,7 @@ case \"$1 $2\" in
     git ls-remote --exit-code origin refs/heads/kendex/lock > \"$GH_STATE/head\" || exit 98
     cut -f1 \"$GH_STATE/head\"; exit 0 ;;
   'pr merge')
+    [ \"$GH_FAIL\" != merge ] || { echo 'gh stub: merge refused' >&2; exit 1; }
     lag=$(cat \"$GH_STATE/lag\" 2>/dev/null || echo 0)
     if [ \"$lag\" -gt 0 ]; then
       echo 'GraphQL: Failed to add PR: expected head oid does not match the current head oid (enablePullRequestAutoMerge)' >&2; exit 1
@@ -1038,6 +1044,8 @@ enum Arm {
     Unarmed,
     /// Left unarmed, gh having failed to read the head.
     ReadFailed,
+    /// Left unarmed, GitHub having refused the arm on the matched head.
+    Refused,
 }
 
 /// One push the arm follows: how many reads GitHub stays behind on the
@@ -1065,6 +1073,11 @@ const HEAD_READS: &[HeadRead] = &[
         gh_fail: "view",
         arm: Arm::ReadFailed,
     },
+    HeadRead {
+        lag: 0,
+        gh_fail: "merge",
+        arm: Arm::Refused,
+    },
 ];
 
 /// GitHub shows a force push on the pull request's head a moment after it
@@ -1073,7 +1086,8 @@ const HEAD_READS: &[HeadRead] = &[
 /// two seconds apart and five reads at most, and where it never is, the
 /// record still lands, the pull request is left unarmed with both
 /// revisions named and a warning annotation for the Actions run, and the
-/// run exits 0; a read gh fails leaves it unarmed and exits 1.
+/// run exits 0; a read gh fails, or an arm GitHub refuses on the matched
+/// head, leaves it unarmed and exits 1.
 #[test]
 fn the_arm_after_a_push_waits_for_github_to_show_the_pushed_head() {
     assert!(!HEAD_READS.is_empty(), "the head-read table is empty");
@@ -1094,7 +1108,7 @@ fn assert_head_read(row: &HeadRead) {
     let lag = row.lag;
     let code = match row.arm {
         Arm::Armed | Arm::Unarmed => 0,
-        Arm::ReadFailed => 1,
+        Arm::ReadFailed | Arm::Refused => 1,
     };
     assert_eq!(run.status.code(), Some(code), "lag {lag}: {output}");
     assert!(
@@ -1159,6 +1173,23 @@ fn assert_head_read(row: &HeadRead) {
                 "lag {lag}: {output}"
             );
             assert!(!log.contains("pr merge"), "lag {lag}: {log}");
+            assert!(!armed, "lag {lag}: {output}");
+            assert!(warnings.is_empty(), "lag {lag}: {output}");
+        }
+        Arm::Refused => {
+            assert_eq!(reads, 1, "lag {lag}: {log}");
+            at(
+                &log,
+                &format!("pr merge 41 --squash --auto --match-head-commit {rolling}\n"),
+            );
+            assert!(
+                stderr.contains("gh stub: merge refused\n"),
+                "lag {lag}: {output}"
+            );
+            assert!(
+                !output.contains("lock-record: armed="),
+                "lag {lag}: {output}"
+            );
             assert!(!armed, "lag {lag}: {output}");
             assert!(warnings.is_empty(), "lag {lag}: {output}");
         }
@@ -1242,7 +1273,9 @@ fn assert_edit_failed(row: &EditFailure) {
             );
             assert!(!armed, "lag {lag}: {output}");
         }
-        Arm::ReadFailed => panic!("a failed head read ends the run before the edit"),
+        Arm::ReadFailed | Arm::Refused => {
+            panic!("a failed head read or a refused arm ends the run before the edit")
+        }
     }
 }
 
