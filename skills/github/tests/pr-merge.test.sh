@@ -142,7 +142,7 @@ a token whose user lookup fails any other way is named unverified, and the merge
 # is read and no mode passes --admin: GitHub enrolls the PR, so the only
 # merge these rows can cause is the queue's own. The must-fail inverse is an
 # unconditional --admin on the command: each row's trace then names
-# merge:admin and reds. The retired merge settings are read by no mode: a set
+# merge:squash:admin and reds. The retired merge settings are read by no mode: a set
 # key changes nothing.
 run_table "the merge queue and the retired settings" "\
 on a queue base the immediate merge enrolls the PR and passes no --admin|checks:ci-required post-queue|immediate|75|-|{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$PRE,merge:squash,graphql:queue auth=<unset>
