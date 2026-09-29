@@ -6,12 +6,12 @@
 # thread, since the predicate is reached only where the class policy answered
 # other than none. Sourced, never run; it defines and runs nothing else.
 #
-# A waiver resolution stands while it is the thread's last word: the
-# resolver's newest comment in the thread is a waiver reply, so a reply in
-# its words from anyone else neither keeps a waiver standing nor ends one. A
-# thread someone answered and resolved again is theirs. Readers of isResolved
-# alone (pr-watch's threads-open, github pr-threads' unresolved_count, orch
-# queue-wait's late-findings guard) see it as resolved.
+# A waiver resolution stands while the thread stays resolved and the waiver
+# reply is still the resolver's newest comment in it. Comments from other
+# authors, a reply in the waiver's words included, neither keep it standing
+# nor end it. A thread someone answered and resolved again is theirs.
+# Readers of isResolved alone (pr-watch's threads-open, github pr-threads'
+# unresolved_count, orch queue-wait's late-findings guard) see it as resolved.
 
 # The waiver reply's opening, which names the class and the head the class
 # was measured at. Anchored, and the head is a whole commit SHA, so a quote of
@@ -22,7 +22,8 @@ RG_WAIVER_REPLY_RE='^Resolved by the merge route: change class [a-z]+ at [0-9a-f
 #   {is_resolved, resolved_by, comments: [{author, body}]}
 # rg_waiver_view maps a raw GraphQL reviewThreads node (isResolved,
 # resolvedBy{login}, comments{nodes{body author{login}}}) onto it.
-#   rg_waiver_stands             resolved, and the waiver is the last word
+#   rg_waiver_stands             resolved, and the waiver reply is still the
+#                                resolver's newest comment in the thread
 # A resolver login carries GitHub's `[bot]` suffix where a comment author's
 # does not, so it is compared with the suffix dropped.
 # shellcheck disable=SC2034  # read by the scripts that source this file
