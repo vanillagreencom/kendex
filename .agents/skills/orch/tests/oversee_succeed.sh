@@ -1561,7 +1561,7 @@ fleet_state
 # launch's environment. Its marks are judged on the account's monthly pool,
 # which lanes measures; a record naming no account refuses the line rather
 # than print one on an account nothing named.
-COPILOT_ENV="env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS='$H/.agents/skills' COPILOT_ALLOW_ALL=true"
+COPILOT_ENV="env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS='$H/.agents/skills' COPILOT_ALLOW_ALL=true"
 COPILOT_LINE="$COPILOT_ENV COPILOT_HOME='$H/.1copilot' copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --allow-all -i '$BRIEF'"
 copilot_row() { # NAME [SUCCEED_BIN] ARGS... — the run on a pane whose record names $H/.1copilot
   local name="$1" bin="$2"

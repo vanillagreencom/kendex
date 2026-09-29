@@ -418,10 +418,13 @@ Options:
                     --no-auto-update, the 1M window and no self-update under
                     a running lane. A local copilot launch, lane or none,
                     runs under its account's environment: COPILOT_HOME, its
-                    stored login the identity with COPILOT_GITHUB_TOKEN,
-                    GH_TOKEN and GITHUB_TOKEN cleared, COPILOT_SKILLS_DIRS at
-                    the shared skills, and COPILOT_ALLOW_ALL=true where the
-                    command carries --allow-all or --yolo, empty otherwise.
+                    stored login the identity with COPILOT_GITHUB_TOKEN
+                    cleared, COPILOT_SKILLS_DIRS at the shared skills, and
+                    COPILOT_ALLOW_ALL=true where the command carries
+                    --allow-all or --yolo, empty otherwise. GH_TOKEN and
+                    GITHUB_TOKEN stay for the lane's gh calls: copilot
+                    ignores a GitHub App token (ghs_) there, and a user
+                    token (gho_ or a PAT) signs it in as that user.
                     EVERY COMMAND BUILT HERE TAKES THE HARNESS QUESTION TOOL
                     AWAY WHERE A ROW BELOW NAMES WORDS, ahead of these flags;
                     a lane asks through lane-mail.

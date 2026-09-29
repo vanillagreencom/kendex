@@ -252,14 +252,14 @@ exec git "$@"
                               capture_output=True)
 
     def test_create_runs_copilot_on_its_stored_login(self):
-        """A copilot lane copies no credential, its provider sets COPILOT_HOME alone, and the launch policy clears every token the host's profile exports."""
+        """A copilot lane copies no credential, its provider sets COPILOT_HOME alone, and the launch policy clears the COPILOT_GITHUB_TOKEN the host's profile exports while GH_TOKEN and GITHUB_TOKEN reach the lane."""
         before = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
         fields = self.copilot_create()
         run = self.copilot_run(fields, PACKAGE / "scripts/lib/lane-launch.sh")
         after = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
         self.assertEqual(after, before)
         self.assertEqual(fields["remote-prefix"], "exec env " + shlex.quote("COPILOT_HOME=" + self.row["account"]) + " bash -lc")
-        self.assertEqual(run.stdout.decode(), "|".join(["unset", "unset", "unset", self.row["account"],
+        self.assertEqual(run.stdout.decode(), "|".join(["unset", "profile-token", "profile-actions-token", self.row["account"],
                                                         str(self.root / ".agents/skills"), "true"]), run.stderr)
 
     def test_control_copilot_command_without_its_policy(self):
@@ -268,23 +268,21 @@ exec git "$@"
         self.assertEqual(run.stdout.decode().split("|")[:3],
                          ["profile-placeholder", "profile-token", "profile-actions-token"], run.stderr)
 
-    def test_control_copilot_policy_without_each_clearing(self):
-        """Control: each clearing cut alone from a copy of the policy leaves that one profile token on the lane."""
+    def test_control_copilot_policy_without_its_clearing(self):
+        """Control: the clearing cut from a copy of the policy leaves the profile's COPILOT_GITHUB_TOKEN on the lane."""
         fields = self.copilot_create()
-        clearing = "printf 'env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS"
-        for name, leaked in (("COPILOT_GITHUB_TOKEN", ["profile-placeholder", "unset", "unset"]),
-                             ("GH_TOKEN", ["unset", "profile-token", "unset"]),
-                             ("GITHUB_TOKEN", ["unset", "unset", "profile-actions-token"])):
-            with self.subTest(variable=name):
-                lib = self.root / ("policy-" + name)
-                shutil.copytree(PACKAGE / "scripts/lib", lib)
-                library = lib / "lane-launch.sh"
-                original = library.read_text()
-                self.assertEqual(original.count(clearing), 1)
-                library.write_text(original.replace(clearing, clearing.replace(" -u " + name + " ", " ")))
-                self.assertNotIn(clearing, library.read_text())
-                run = self.copilot_run(fields, library)
-                self.assertEqual(run.stdout.decode().split("|")[:3], leaked, run.stderr)
+        clearing = "printf 'env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS"
+        lib = self.root / "policy-copy"
+        shutil.copytree(PACKAGE / "scripts/lib", lib)
+        library = lib / "lane-launch.sh"
+        original = library.read_text()
+        self.assertEqual(original.count(clearing), 1)
+        library.write_text(original.replace(clearing, "printf 'env COPILOT_SKILLS_DIRS"))
+        self.assertNotIn(clearing, library.read_text())
+        run = self.copilot_run(fields, library)
+        self.assertEqual(run.stdout.decode(), "|".join(["profile-placeholder", "profile-token", "profile-actions-token",
+                                                        self.row["account"], str(self.root / ".agents/skills"), "true"]),
+                         run.stderr)
 
     def worktree_root(self):
         return Path(subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"] + "-worktree",

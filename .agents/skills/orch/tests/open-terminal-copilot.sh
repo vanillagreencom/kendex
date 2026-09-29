@@ -33,8 +33,9 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 FLEET_HOME="$TMP_ROOT/fleet-home"
 mkdir -p "$FLEET_HOME"
 # HOME is the fleet home too, since every copilot command names the shared
-# skills under it, and GH_TOKEN a fixture every launched command clears.
-LAUNCH_ENV=(LANES_HOME="$FLEET_HOME" HOME="$FLEET_HOME" COPILOT_HOME= GH_TOKEN=gh-fixture)
+# skills under it, COPILOT_GITHUB_TOKEN a fixture every launched command
+# clears, and GH_TOKEN one every launched command keeps.
+LAUNCH_ENV=(LANES_HOME="$FLEET_HOME" HOME="$FLEET_HOME" COPILOT_HOME= COPILOT_GITHUB_TOKEN=copilot-fixture GH_TOKEN=gh-fixture)
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
@@ -52,8 +53,8 @@ printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
 # written first, so a row that waits for the capture finds it whole.
 cat > "$BIN/copilot" <<'EOF'
 #!/usr/bin/env bash
-printf 'COPILOT_ALLOW_ALL=%s COPILOT_SKILLS_DIRS=%s GH_TOKEN=%s\n' "${COPILOT_ALLOW_ALL-unset}" \
-  "${COPILOT_SKILLS_DIRS-unset}" "${GH_TOKEN-unset}" > "$OT_CAPTURE.env"
+printf 'COPILOT_ALLOW_ALL=%s COPILOT_SKILLS_DIRS=%s COPILOT_GITHUB_TOKEN=%s GH_TOKEN=%s\n' "${COPILOT_ALLOW_ALL-unset}" \
+  "${COPILOT_SKILLS_DIRS-unset}" "${COPILOT_GITHUB_TOKEN-unset}" "${GH_TOKEN-unset}" > "$OT_CAPTURE.env"
 printf '%s\n' "copilot $*" > "$OT_CAPTURE"
 exit 0
 EOF
@@ -131,7 +132,7 @@ FLAGS='--model claude-opus-5 --reasoning-effort high --allow-all'
 LEAD="'--autopilot' '--max-autopilot-continues' '3' '--context' 'long_context' '--no-auto-update' '--no-ask-user' '--model' 'claude-opus-5' '--reasoning-effort' 'high' '--allow-all'"
 # The environment every copilot command carries, ahead of the account, and
 # the account a launch naming no lane runs on: the default copilot home.
-COP_ENV="env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL=true"
+COP_ENV="env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL=true"
 COP_AMBIENT="COPILOT_HOME='$FLEET_HOME/.copilot'"
 
 echo "=== a copilot lane starts with its brief as the value of -i ==="
@@ -164,7 +165,7 @@ assert_contains "$CMD" "&& $COP_ENV COPILOT_HOME='$TMP_ROOT/.1copilot' copilot -
 # Folder trust rides the caller's own allow-all posture: COPILOT_ALLOW_ALL
 # approves every tool, so a command naming neither --allow-all nor --yolo sets
 # it empty beside the shared skills and keeps its permission prompts.
-SKILLS_ONLY="env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL= $COP_AMBIENT"
+SKILLS_ONLY="env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL= $COP_AMBIENT"
 launch no-allow --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high" cc-752
 assert_contains "$CMD" "&& $SKILLS_ONLY copilot " \
   "a launch naming no allow-all spelling carries an empty COPILOT_ALLOW_ALL"
@@ -292,8 +293,8 @@ echo "=== a copilot wake resumes the lane's session in print mode, and only an i
 launch wake --wake --harness copilot --launch-flags "$FLAGS" CC-738
 assert_eq "$CMD" "copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --no-ask-user --model claude-opus-5 --reasoning-effort high --allow-all --resume=22222222-bbbb-4bbb-8bbb-222222222222 -p Run .agents/skills/orch/scripts/lane-mail inbox --item CC-738 and act on every directive it prints." \
   "the wake resumes the newest session that ran, by its id, its inbox line the value of -p"
-assert_eq "$(cat "$TMP_ROOT/wake.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS=$FLEET_HOME/.agents/skills GH_TOKEN=unset" \
-  "the woken copilot runs under the launch environment, the host's GitHub token cleared"
+assert_eq "$(cat "$TMP_ROOT/wake.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS=$FLEET_HOME/.agents/skills COPILOT_GITHUB_TOKEN=unset GH_TOKEN=gh-fixture" \
+  "the woken copilot runs under the launch environment, COPILOT_GITHUB_TOKEN cleared and GH_TOKEN kept"
 # A COPILOT_ALLOW_ALL the launching shell exports never widens a restrictive
 # launch: the woken copilot reads it empty, not true and not unset.
 # restrictive_wake NAME — a wake naming no allow-all spelling, run by the
@@ -304,7 +305,7 @@ restrictive_wake() {
   ROW_ENV=()
 }
 restrictive_wake wake-restrictive
-assert_eq "$(cat "$TMP_ROOT/wake-restrictive.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL= COPILOT_SKILLS_DIRS=$FLEET_HOME/.agents/skills GH_TOKEN=unset" \
+assert_eq "$(cat "$TMP_ROOT/wake-restrictive.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL= COPILOT_SKILLS_DIRS=$FLEET_HOME/.agents/skills COPILOT_GITHUB_TOKEN=unset GH_TOKEN=gh-fixture" \
   "a restrictive wake under an exported COPILOT_ALLOW_ALL=true runs copilot with it empty"
 launch wake-none --wake --harness copilot --launch-flags "$FLAGS" CC-743
 assert_eq "${CMD:-none} $(grep -c '^open-terminal: session-missing item=CC-743 harness=copilot' <<<"$ERR" || true)" "none 1" \
@@ -337,14 +338,15 @@ assert_eq "$(cat "$TMP_ROOT/account.out")" "COPILOT_HOME=$TMP_ROOT/.1copilot|lau
   "the account variable is COPILOT_HOME, and a launcher named for the account's directory is the whole selector"
 
 echo "=== every local copilot launch runs under its account's environment ==="
-# Every ambient token cleared so the account's stored login is the identity,
-# the shared skills named again and folder trust granted, under both forms:
+# COPILOT_GITHUB_TOKEN cleared so the account's stored login is the identity,
+# GH_TOKEN and GITHUB_TOKEN kept for the lane's own gh calls, the shared
+# skills named again and folder trust granted, under both forms:
 # the account variable in front of `copilot` for a launch naming no lane or a
 # lane with no launcher, and the launcher named for the account's directory,
 # `1copilot` for `.1copilot`, which sets COPILOT_HOME itself. `label|--lane
 # value, or - for none|the words the line runs`. Each line is then run with a
-# probe standing in for what it starts, under every ambient token.
-POLICY="env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL=true"
+# probe standing in for what it starts, under an ambient value for each token.
+POLICY="env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL=true"
 mkdir -p "$TMP_ROOT/.2copilot"
 cp -- "$BIN/copilot" "$TMP_ROOT/copilot-capture"
 PROBE='#!/bin/sh\nprintf "%%s|%%s|%%s|%%s\\n" "${COPILOT_GITHUB_TOKEN-unset}" "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" "$COPILOT_ALLOW_ALL"\n'
@@ -367,29 +369,22 @@ while IFS='|' read -r label lane words; do
     launch "env-$N" --harness copilot --lane "$lane" --launch-flags "$FLAGS" "cc-$N"
   fi
   assert_contains "$CMD" "&& $words $LEAD -i" "$label"
-  assert_eq "$(probe_launch)" "unset|unset|unset|true" "$label: the launched copilot sees no ambient token and trusts the folder"
+  assert_eq "$(probe_launch)" "unset|app-token|actions-token|true" \
+    "$label: the launched copilot sees no COPILOT_GITHUB_TOKEN, GH_TOKEN and GITHUB_TOKEN reach it, and it trusts the folder"
 done <<ROWS
 a launch naming no lane runs on the default account|-|$POLICY COPILOT_HOME='$FLEET_HOME/.copilot' copilot
 a named lane with no launcher runs under its account variable|$TMP_ROOT/.2copilot|$POLICY COPILOT_HOME='$TMP_ROOT/.2copilot' copilot
 a named lane with a launcher runs that launcher under the same policy|$TMP_ROOT/.1copilot|$POLICY '$BIN/1copilot'
 ROWS
-# Must-fail controls: each clearing cut alone from a private copy of the
-# policy, and the probe sees that one ambient token. `variable|what the probe
-# prints`.
-CLEARING="printf 'env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS"
-N=760
-while IFS='|' read -r name leaked; do
-  N=$((N + 1))
-  stage "$TMP_ROOT/unset-$name-ctrl"
-  mutate_file "$TMP_ROOT/unset-$name-ctrl/scripts/lib/lane-launch.sh" "$CLEARING" "${CLEARING/ -u $name / }"
-  OT="$TMP_ROOT/unset-$name-ctrl/scripts/open-terminal" launch "unset-$name-ctrl" --harness copilot --launch-flags "$FLAGS" "cc-$N"
-  assert_contains "$CMD" "copilot $LEAD -i" "the control's launch renders its command"
-  assert_eq "$(probe_launch)" "$leaked" "control: without -u $name its ambient token reaches the launched copilot ahead of its stored login"
-done <<ROWS
-COPILOT_GITHUB_TOKEN|placeholder|unset|unset|true
-GH_TOKEN|unset|app-token|unset|true
-GITHUB_TOKEN|unset|unset|actions-token|true
-ROWS
+# Must-fail control: the clearing cut from a private copy of the policy, and
+# the probe sees the ambient COPILOT_GITHUB_TOKEN.
+CLEARING="printf 'env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS"
+stage "$TMP_ROOT/unset-ctrl"
+mutate_file "$TMP_ROOT/unset-ctrl/scripts/lib/lane-launch.sh" "$CLEARING" "printf 'env COPILOT_SKILLS_DIRS"
+OT="$TMP_ROOT/unset-ctrl/scripts/open-terminal" launch unset-ctrl --harness copilot --launch-flags "$FLAGS" cc-761
+assert_contains "$CMD" "copilot $LEAD -i" "the control's launch renders its command"
+assert_eq "$(probe_launch)" "placeholder|app-token|actions-token|true" \
+  "control: without -u COPILOT_GITHUB_TOKEN its ambient token reaches the launched copilot ahead of its stored login"
 mv -- "$TMP_ROOT/copilot-capture" "$BIN/copilot"
 printf '#!/bin/sh\n' > "$BIN/1copilot"
 
@@ -534,7 +529,7 @@ stage "$TMP_ROOT/launcher-ctrl"
 mutate_file "$TMP_ROOT/launcher-ctrl/scripts/lib/lane-launch.sh" "launcher:*) printf '%s %s %s\\n' \"\$env_words\"" "launcher:*) printf 'env %s %s\\n'"
 OT="$TMP_ROOT/launcher-ctrl/scripts/open-terminal" launch launcher-ctrl --harness copilot --lane "$TMP_ROOT/.1copilot" --launch-flags "$FLAGS" cc-755
 assert_contains "$CMD" "'$BIN/1copilot' $LEAD -i" "the control's launch renders its command"
-assert_not_contains "$CMD" "-u COPILOT_GITHUB_TOKEN" "control: without the policy in its arm a launcher runs with every ambient token"
+assert_not_contains "$CMD" "-u COPILOT_GITHUB_TOKEN" "control: without the policy in its arm a launcher runs with the ambient COPILOT_GITHUB_TOKEN"
 stage "$TMP_ROOT/nolane-ctrl"
 mutate_file "$TMP_ROOT/nolane-ctrl/scripts/open-terminal" '|| "$HARNESS" == codex || "$HARNESS" == copilot ]]; then' '|| "$HARNESS" == codex ]]; then'
 OT="$TMP_ROOT/nolane-ctrl/scripts/open-terminal" launch nolane-ctrl --harness copilot --launch-flags "$FLAGS" cc-754

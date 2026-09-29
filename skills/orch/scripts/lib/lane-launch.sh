@@ -1311,18 +1311,21 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
 # command open-terminal hands a provider: the `env` words that go in front of
 # `copilot`, SKILLS the shell word naming the shared skills tree, a quoted path
 # locally and "$HOME/.agents/skills" unexpanded for a host, whose own login
-# shell expands it. Run after that login shell's profile, so a token the
-# profile exports is cleared too.
-#   -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN
-#                                 Copilot reads COPILOT_GITHUB_TOKEN, then
+# shell expands it. Run after that login shell's profile, so a
+# COPILOT_GITHUB_TOKEN the profile exports is cleared too.
+#   -u COPILOT_GITHUB_TOKEN       Copilot reads COPILOT_GITHUB_TOKEN, then
 #                                 GH_TOKEN, then GITHUB_TOKEN, then the login
-#                                 stored in the account's config.json. A fleet
-#                                 host holds the GitHub App token in GH_TOKEN
-#                                 for every lane, and Copilot 1.0.88 refuses a
-#                                 placeholder handed in COPILOT_GITHUB_TOKEN,
-#                                 so all three are cleared and the identity is
-#                                 the account's stored login, never an ambient
-#                                 token.
+#                                 stored in the account's config.json, and
+#                                 1.0.88 refuses a placeholder handed in
+#                                 COPILOT_GITHUB_TOKEN, so that one is cleared.
+#                                 GH_TOKEN and GITHUB_TOKEN stay: a fleet host
+#                                 holds the GitHub App token (ghs_) there,
+#                                 which 1.0.88 skips with "Unsupported token
+#                                 type, ignoring", so the stored login stays
+#                                 the identity and a lane's own gh calls keep
+#                                 signing in with GH_TOKEN. A user token, gho_
+#                                 or a PAT, in either one signs Copilot in as
+#                                 that user instead.
 #   COPILOT_SKILLS_DIRS           any COPILOT_HOME value turns the shared
 #                                 `~/.agents/skills` tree off; naming it puts
 #                                 the shared skills back (measured by
@@ -1348,7 +1351,7 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
 lane_copilot_env() { # CMD SKILLS
   local allow="COPILOT_ALLOW_ALL="
   ! lane_copilot_allows_all "$1" || allow="COPILOT_ALLOW_ALL=true"
-  printf 'env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS=%s %s\n' "$2" "$allow"
+  printf 'env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS=%s %s\n' "$2" "$allow"
 }
 
 # Whether CMD carries one of the copilot row's transferable permission

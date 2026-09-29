@@ -1064,7 +1064,7 @@ printf '{"copilot_tokens":"gho_fixture"}\n' > "$H/.1copilot/config.json"
 printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":900}}}' > "$FIXTURE_DIR/.1copilot.json"
 COPILOT_HOSTED="flags=--model claude-opus-5 --reasoning-effort high --allow-all"
 run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copilot" --repo o/r CC-1935
-COPILOT_REMOTE="exec bash -lc 'cd /srv/lane && exec env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS=\"\$HOME/.agents/skills\" COPILOT_ALLOW_ALL=true copilot $Q--autopilot$Q"
+COPILOT_REMOTE="exec bash -lc 'cd /srv/lane && exec env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS=\"\$HOME/.agents/skills\" COPILOT_ALLOW_ALL=true copilot $Q--autopilot$Q"
 assert_eq "$(observe "rc=0 launched=1") create=$(host_call | tr ';' '\n' | grep -c '^create,--item,CC-1935,--repo,o/r,--harness,copilot,--account,1copilot$') remote=$(typed "$COPILOT_REMOTE") local=$(typed COPILOT_HOME=)" \
   "rc=0 launched=1 create=1 remote=1 local=0" \
   "a hosted copilot launch creates with --harness copilot and runs copilot under the launch policy, the provider setting COPILOT_HOME"
@@ -1081,7 +1081,7 @@ orch_fixture_shared_libs "$TMP_ROOT/ctl-copilot-policy/orch"
 mutate_file "$OPEN_TERMINAL" '[[ "$HARNESS" != copilot ]] || cmd="$(lane_copilot_env' '[[ "$HARNESS" == copilot ]] || cmd="$(lane_copilot_env'
 run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copilot" --repo o/r CC-1936
 assert_eq "$(observe "rc=0 launched=1") policy=$(typed "COPILOT_ALLOW_ALL=true copilot")" "rc=0 launched=1 policy=0" \
-  "control: without the hosted policy a hosted copilot lane keeps every token its host exports"
+  "control: without the hosted policy a hosted copilot lane keeps the COPILOT_GITHUB_TOKEN its host exports"
 OPEN_TERMINAL="$COPILOT_OT_SHIPPED"
 run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=-m gpt-6-astra -c model_reasoning_effort=high" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
 assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec env ORCH_COMPACTION_OVERRIDES=$Q{\"harness\":\"codex\",\"settings\":{\"model_auto_compact_token_limit\":\"9223372036854775807\",\"model_auto_compact_token_limit_scope\":\"body_after_prefix\",\"model_post_turn_compact_threshold_percent\":\"0\"}}$Q codex $Q-c$Q ${Q}check_for_update_on_startup=false$Q $Q-c$Q ${Q}model_auto_compact_token_limit=9223372036854775807$Q $Q-c$Q ${Q}model_auto_compact_token_limit_scope=body_after_prefix$Q $Q-c$Q ${Q}model_post_turn_compact_threshold_percent=0$Q $Q-c$Q ${Q}features.default_mode_request_user_input=false$Q $Q-m$Q ${Q}gpt-6-astra$Q $Q-c$Q ${Q}model_reasoning_effort=high$Q resume --last'") line=$(typed "Resume the orch workflow for CC-49")" \

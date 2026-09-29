@@ -2361,8 +2361,8 @@ launch_finish() {
     # own config; one with no lane keeps the launch verification's dialog
     # nudge below as its answer. Every local copilot launch takes this branch
     # too, lane or none: its launch line carries the account environment
-    # (lib/lane-launch.sh § lane_launch_line), the App token cleared and the
-    # folder trust granted among it, and a launch with no lane runs on the
+    # (lib/lane-launch.sh § lane_launch_line), COPILOT_GITHUB_TOKEN cleared
+    # and the folder trust granted among it, and a launch with no lane runs on the
     # account the relaunch store reads (lib/lane-relaunch.sh), the one
     # lane_context_caller_cfg names for copilot.
     #

@@ -14,7 +14,7 @@ name = "orch"
 
 [[package.file]]
 path = "scripts/lib/lane-launch.sh"
-hash = "eb0e3d154f69b117c29be4a0028e0f415d7c484792ea5862beb6760782fb8638"
+hash = "ccaf9321bbaf4bce2c07db5911dbacef6405d4b7452c87c5fd32c9984d04dacd"
 
 [[package.file.finding]]
 rule = "safety-bypass"
