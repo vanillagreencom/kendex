@@ -660,13 +660,33 @@ while IFS='|' read -r PI_PROVIDER PI_DIR PI_POOL PI_RC PI_FIRST; do
   stop_pi "$PI_PROVIDER" 1000 $(account_env "$PI_DIR") "ORCH_LANE_COPILOT_POOL=${PI_POOL:+$PI_ROOT=$PI_POOL}"
   expect "$PI_RC" "$PI_FIRST" "a Pi lane on $PI_PROVIDER with ${PI_POOL:-the seat $PI_DIR}: $PI_FIRST"
 done <<<"$PI_ACCOUNT_ROWS"
-# A provider nothing measures is answered by the rule alone: `lanes` is never
-# asked for the refusal the rule already gave.
+# A provider nothing measures is answered by the rule alone, and a turn end
+# whose transcript names no model has read no provider, so the account is left
+# unjudged for want of a reading: `lanes` is never asked in either. Both run on
+# an install whose `lanes` touches LANES_ASKED, every other script the real
+# one, so a call is seen whatever it prints; the reader walk from
+# .pi/kendex/hooks finds .pi/kendex/skills before the lane's .agents copy, and
+# the install is removed after, so the rows below run on the real scripts.
+PI_INSTALL="$LANE/.pi/kendex/skills/orch/scripts"
+LANES_ASKED="$TMP_ROOT/pi-lanes-asked"
+mkdir -p "$PI_INSTALL"
+ln -s -f -n "$REPO_ROOT/skills/orch/scripts/lane-mail" "$PI_INSTALL/lane-mail"
+plant_siblings "$PI_INSTALL" lanes
+printf '#!/bin/sh\ntouch %s\nexit 1\n' "$LANES_ASKED" > "$PI_INSTALL/lanes"
+chmod +x "$PI_INSTALL/lanes"
+asked() { [ -e "$LANES_ASKED" ] && echo 1 || echo 0; }
 # shellcheck disable=SC2046
 stop_pi openai 1000 $(account_env .claude)
-assert_eq "RC=$RC first=$(first_line) asked=$(grep -c '^lanes: ' "$ERR_FILE")" \
+assert_eq "RC=$RC first=$(first_line) asked=$(asked)" \
   "RC=0 first=lane-mail-check: account=unmeasured asked=0" \
   "a Pi lane on a provider nothing measures is unmeasured by the rule, lanes never asked"
+rm -f "$LANES_ASKED"
+# shellcheck disable=SC2046
+run_payload '{"session_id":"s1","stop_hook_active":false}' "PI_CODING_AGENT_DIR=$PI_ROOT" $(account_env .nclaude)
+assert_eq "RC=$RC first=$(first_line) asked=$(asked)" \
+  "RC=0 first=lane-mail-check: account=unmeasured asked=0" \
+  "a Pi lane whose model no reading named is unmeasured for that reason, never blamed on a provider"
+rm -rf -- "${LANE:?}/.pi/kendex/skills"
 # shellcheck disable=SC2046
 stop_pi pi-claude 600000 $(account_env .claude)
 expect 2 "lane-mail-check: context=600000" "and the context mark is judged on a Pi lane as everywhere"
@@ -679,13 +699,6 @@ stop_pi pi-claude 1000 $(account_env .nclaude)
 assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: account=unlisted" \
   "control: with no Pi arm a Pi lane on a spent Claude seat ends its turn unjudged"
 install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
-# A Pi turn end whose transcript names no model has read no provider, so the
-# account is left unjudged for want of a reading, `lanes` never asked.
-# shellcheck disable=SC2046
-run_payload '{"session_id":"s1","stop_hook_active":false}' "PI_CODING_AGENT_DIR=$PI_ROOT" $(account_env .nclaude)
-assert_eq "RC=$RC first=$(first_line) asked=$(grep -c '^lanes: ' "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: account=unmeasured asked=0" \
-  "a Pi lane whose model no reading named is unmeasured for that reason, never blamed on a provider"
 
 # An install directory naming no harness has no account to read at all: the
 # gap is reported, naming the directory, and the turn ends.
