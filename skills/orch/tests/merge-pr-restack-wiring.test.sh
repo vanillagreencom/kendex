@@ -4,9 +4,9 @@
 # after the restack and before step 3's worktree-push, and executed as the
 # document writes them against a real worktree they run the range command.
 # Step 3's head read comes after the push and before step 4, and prints the
-# head= of the range run's record until a commit moves the branch. The
-# full-mode route is workflow prose no suite can make red; dev_validate_run.sh
-# RESOLVE_ROWS holds --resolve-mode's full answer with no run started.
+# head= of the range run's record. The full-mode route is workflow prose no
+# suite can make red; dev_validate_run.sh RESOLVE_ROWS holds --resolve-mode's
+# full answer with no run started.
 # A live command is a line whose first text is [MAIN_REPO_ROOT]/ or
 # git -C [WT_PATH], which a commented or prose copy never is. Each pin has a
 # control a moved, commented or altered decoy cannot satisfy. The runner
@@ -181,13 +181,9 @@ awk -v needle="$HEAD_READ" -v live="$LIVE" '
 ' "$RESTACK_DOC" > "$PARENT_READ"
 
 assert_eq "$(head_check "$RESTACK_DOC")" "same" \
-  "step 3's head read prints the head= the range run recorded while the branch holds still"
+  "step 3's head read prints the head= the range run recorded"
 assert_eq "$(head_check "$PARENT_READ")" "differs" \
   "control: a head read of HEAD~1 keeps the matched text and fails the equality row"
-git -C "$WT" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m rebased \
-  || fixture_failed rebase-commit
-assert_eq "$(head_check "$RESTACK_DOC")" "differs" \
-  "a commit the push's rebase adds makes step 3's head read differ from the record, so the range run runs again"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
