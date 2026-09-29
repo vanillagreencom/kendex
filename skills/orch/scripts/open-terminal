@@ -1114,7 +1114,10 @@ UNPARK_JQ='def unpark($at): (if .parked.at == null then .
 # every field of an entry that already names the item; a relaunch rewrites
 # what a relaunch can change (a lane moved to another account, host or window)
 # and keeps launched_at, the fleet start the watch is given as --since, and
-# over_cap, the exception its launch was admitted on; a wake
+# over_cap, the exception its launch was admitted on. A relaunch that records
+# the lane preparing or stopped has not taken, so it also keeps harness, model,
+# account and session_id as the last launch that took wrote them: the next
+# relaunch's route is judged on them. A wake
 # rewrites the session it resumed and nothing else, and an item no entry names
 # is refused with status 2, since a lane this launcher never launched has no
 # record to rewrite. A launch created the state on the first item, before its
@@ -1160,7 +1163,8 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   # that names no entry leaves the state as it was and reports so.
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
     "$UNPARK_JQ"'(.lanes // []) as $l
-     | ($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at, .over_cap) else . end) as $patch
+     | ($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at, .over_cap)
+       | if .status == "running" then . else del(.harness, .model, .account, .session_id) end else . end) as $patch
      | if any($l[]; .item == $rec.item)
        then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) | unpark($rec.launched_at) end) + $patch else . end))), report: "rewritten"}
        elif $mode == "wake" then {state: ., report: "unrecorded"}
@@ -2564,13 +2568,11 @@ launch_handoff() {
 # window opened, UNTAKEN_PANE. The window closes first, which retires its claim
 # and ends whatever the pane runs, and the record is written stopped only once
 # that close succeeded: a close that failed returns 1 with the record as it
-# read, tmux-failed naming the cause. The write changes the status alone, so
-# the harness, model, account and session stay those of the last launch that
-# took, which the next relaunch's route is judged on.
+# read, tmux-failed naming the cause. lane_record_write keeps the fields the
+# next relaunch's route is judged on.
 launch_stop() {
   tmux_window_close "$UNTAKEN_PANE" "$title" || return 1
-  "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update oversee \
-    --arg item "$wt_id" '(.lanes[]? | objects | select(.item == $item) | .status) = "stopped"' >/dev/null && return 0
+  lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$remote_path" "" "$launched_at" stopped && return 0
   ot_message record-stop-failed "item=$item" "state=oversee" >&2
   return 1
 }

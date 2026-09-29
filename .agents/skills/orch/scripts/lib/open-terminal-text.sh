@@ -133,8 +133,8 @@ ot_message() { # REASON FIELD=VALUE...
     session-resumed) text='The harness resumed the matching session.' ;;
     session-retired) text='The item'"'"'s handoff record stands, so its lane handed its work to that record and ended the session. The relaunch resumes no session: it starts the lane afresh, and the start workflow continues from the record.' ;;
     harness-switched) text='The lane record names another harness as the last one to run the lane, so no session this harness holds carries that work. The relaunch resumes no session: it starts the lane afresh on the start brief.' ;;
-    harness-screen-missing) text='The hosted relaunch showed no harness screen the launcher recognizes within seconds. The resume and the start brief behind it may both have exited, or the harness may be slow to start or show a screen the launcher does not know. The lane is not launched. Under a fleet its window is closed and only then does its record read stopped; a close that fails leaves the record as it read, tmux-failed naming the cause. Relaunch; if this recurs, run the harness in the sandbox by hand to read its own words.' ;;
-    record-stop-failed) text='The hosted relaunch did not take and its window is closed, but its record could not be rewritten stopped, so it still reads as it did before the relaunch. workflow-state names why above: fix it, then relaunch.' ;;
+    harness-screen-missing) text='The hosted relaunch showed no harness screen the launcher recognizes within seconds. The resume and the start brief behind it may both have exited, or the harness may be slow to start or show a screen the launcher does not know. The lane is not launched. Under a fleet its window is closed and its record reads stopped, still naming the harness, model and account of the last launch that took. A launch run in the foreground writes stopped only once the close succeeds: a close that fails leaves the record as it read, tmux-failed naming the cause. A launch the background job ran writes stopped whatever the close answered. Relaunch; if this recurs, run the harness in the sandbox by hand to read its own words.' ;;
+    record-stop-failed) text='The hosted relaunch did not take and its window is closed, but its record could not be rewritten stopped, so the record keeps whatever status the launch last wrote. workflow-state names why above: fix it, then relaunch.' ;;
     handoff-unreadable) text='workflow-state handoff-standing, asked from the lane'"'"'s worktree, answered unreadable or gave no verdict, so nothing says whether the lane handed off and retired its session. Nothing was launched. Its own words are above. state is the item'"'"'s state file, or the item where even the path could not be read: repair it, then relaunch.' ;;
     wake-invalid) text='The wake option takes --harness claude, codex, pi or copilot, and no --cmd, --relaunch or lane host.' ;;
     session-missing) text='No session of this harness names the item. Nothing was started.' ;;
@@ -325,10 +325,13 @@ Options:
                     draws a harness screen within twice
                     ORCH_TMUX_VERIFY_SECS, one bound for each claude start; a
                     pane that draws none is harness-screen-missing, and under
-                    --state-dir its window is closed and, once the close
-                    succeeds, the lane's fleet record reads stopped; the
-                    record's other fields stay as the last launch that took
-                    wrote them.
+                    --state-dir its window is closed and the lane's fleet
+                    record reads stopped. A launch run in the foreground
+                    writes stopped only once the close succeeds; one the
+                    background job ran writes it whatever the close answered.
+                    A relaunch whose record reads preparing or stopped keeps
+                    the harness, model, account and session of the last
+                    launch that took, which the next relaunch is judged on.
                     WHICH CREDENTIAL RUNS THE LANE: the copy the provider
                     installed on the host. `create` receives the lane's config
                     dir as --account on every call, a relaunch included, and

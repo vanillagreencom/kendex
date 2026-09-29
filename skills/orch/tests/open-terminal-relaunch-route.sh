@@ -8,7 +8,8 @@
 # relaunch whose harness differs from the one the fleet record names renders the
 # start brief alone, whose brief check stands in for the harness-screen wait. A
 # pane that shows no harness screen is no launched lane: its window closes and
-# only then does its fleet record read stopped, its status alone rewritten.
+# only then does its fleet record read stopped. A relaunch that has not taken,
+# recorded preparing or stopped, leaves the harness the record names.
 #
 # tmux, worktree and gh are the shared open-terminal stubs, and the host is the
 # lane-host fixture. The rendered remote command is also run for real, against
@@ -100,6 +101,32 @@ said() { grep -c -- "$1" <<<"$OUT" || true; }
 launched() { sed -n 's/.*summary launched=\([0-9]*\).*/\1/p' <<<"$OUT"; }
 closed() { grep -c '^kill-window ' "$RUN/tmux.log" || true; }
 status() { "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '[.lanes[]? | objects | select(.item == "CC-1") | .status] | first // "none"'; }
+recorded() { "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '[.lanes[]? | objects | select(.item == "CC-1") | "\(.status) \(.harness)"] | first // "none"'; }
+# settled — recorded once the background job has left preparing. The job runs
+# after open-terminal returns, so this polls, 20 seconds at most.
+settled() {
+  local now=""
+  for _ in $(seq 80); do
+    now="$(recorded)"
+    [[ "$now" == preparing* ]] || break
+    sleep 0.25
+  done
+  printf '%s' "$now"
+}
+# prepared_fail RECORDED HARNESS — a relaunch of CC-1 on HARNESS over a record
+# naming RECORDED whose host answers state=preparing and whose wait then fails.
+# Sets HELD, the record while the job waits at its gate, and SETTLED, the
+# record once the job wrote its outcome.
+PREPARING_LINE=$'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc\tstate=preparing'
+prepared_fail() {
+  local gate="$TMP_ROOT/gate-$((RUN_SEQ + 1))"
+  RUN_ENV=(LANE_HOST_STUB_CREATE_LINE="$PREPARING_LINE" LANE_HOST_STUB_WAIT_GATE="$gate" LANE_HOST_STUB_WAIT_STATUS=1)
+  run_ot "$1" - "$2"
+  RUN_ENV=()
+  HELD="$(recorded)"
+  touch "$gate"
+  SETTLED="$(settled)"
+}
 # replay RC — runs the typed remote command against the stub claude, its
 # `--continue` exiting RC, in a sandbox of its own, and prints each claude run
 # it made as `continue` or `fresh`, joined by `,`.
@@ -170,6 +197,11 @@ assert_eq "rc=$RC launched=$(launched) stuck=$(said '^open-terminal: composer-st
 run_ot - "$HARNESS_SCREEN" codex
 assert_eq "switched=$(said 'harness-switched') resume=$(remote | grep -c 'resume --last')" "switched=0 resume=1" \
   "a codex relaunch after a failed claude relaunch over a codex record resumes codex"
+# The same failure on a host still preparing: the background job's preparing
+# and stopped records both still name codex.
+prepared_fail codex claude
+assert_eq "rc=$RC held=$HELD settled=$SETTLED" "rc=0 held=preparing codex settled=stopped codex" \
+  "a claude relaunch handed to the background job whose host wait fails leaves the record naming codex"
 # The same switch the other way reaches codex's start brief, never its
 # promptless resume or the note that resume owes a pasted line.
 run_ot claude "$HARNESS_SCREEN" codex
@@ -213,11 +245,13 @@ control stopped 'UNTAKEN_PANE" ]] || launch_stop || true' 'UNTAKEN_PANE" ]] || t
 run_ot claude - claude
 assert_eq "closed=$(closed) status=$(status)" "closed=0 status=running" \
   "control: without the stop the window stays open and the record stays running behind the dead pane"
-control fields '| .status) = "stopped"' '| .status, .harness) = "stopped"'
+control fields 'if .status == "running" then . else del(' 'if .status != "never" then . else del('
 run_ot codex - claude
 run_ot - "$HARNESS_SCREEN" codex
-assert_eq "switched=$(said 'harness-switched')" "switched=1" \
-  "control: a stop that rewrites the harness turns the next codex relaunch into a harness switch"
+switched="$(said 'harness-switched')"
+prepared_fail codex claude
+assert_eq "switched=$switched held=$HELD settled=$SETTLED" "switched=1 held=preparing claude settled=stopped claude" \
+  "control: a relaunch record that rewrites the harness before it takes names claude and turns the next codex relaunch into a harness switch"
 control close 'tmux_window_close "$UNTAKEN_PANE" "$title" || return 1' 'tmux_window_close "$UNTAKEN_PANE" "$title" || true'
 RUN_ENV=(OT_TMUX_FAIL=kill-window)
 run_ot claude - claude
