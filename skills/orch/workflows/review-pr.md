@@ -34,7 +34,7 @@ A non-empty `status --porcelain` stops the review. Managed with a `dev_agent`: r
 .agents/skills/orch/scripts/item-tier --base origin/[BASE_BRANCH] --head HEAD --repo [WORKTREE_PATH]
 ```
 
-An answer whose cause is `cause=classifier class=trivial` goes straight to § 9 with verdict `pass`: the classifier measured the branch trivial. Any other answer, a failure included, runs the review.
+An answer ending `cause=classifier class=trivial`, a measured trivial branch, goes straight to § 9 with verdict `pass`. Any other answer, a failure included, runs the review.
 
 ### 1.1 Decision Context
 
