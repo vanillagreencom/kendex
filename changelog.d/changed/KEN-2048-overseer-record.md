@@ -1,0 +1,1 @@
+- oversee: an overseer record written before the tmux server start was recorded names no overseer until the next `oversee-watch` start, `oversee launch` or `oversee register`.

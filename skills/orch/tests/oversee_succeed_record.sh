@@ -99,6 +99,7 @@ tm set-option -g default-shell /bin/sh
 tm set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 SERVER_PID="$(tm display-message -p '#{pid}')"
+SERVER_START="$(tm display-message -p '#{start_time}')"
 
 BRIEF='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
 
@@ -131,12 +132,13 @@ state() {
   jq -n --argjson o "$1" '{issue_id: "oversee", overseer: $o}' > "$FLEET_STATE"
 }
 # record PANE ACCOUNT MODEL [EXTRA_JSON] — a current launch record for PANE on
-# this server, as a launcher writes it, with EXTRA_JSON merged over it.
+# this server, bound to its start, as a launcher writes it, with EXTRA_JSON
+# merged over it.
 record() {
   local extra="${4:-}"
   [[ -n "$extra" ]] || extra='{}'
-  jq -cn --arg server "$SERVER_PID" --arg pane "$1" --arg account "$2" --arg model "$3" \
-    --argjson extra "$extra" '{runtime: "tmux", generation: 2, server: $server, pane: $pane,
+  jq -cn --arg server "$SERVER_PID" --argjson start "$SERVER_START" --arg pane "$1" --arg account "$2" --arg model "$3" \
+    --argjson extra "$extra" '{runtime: "tmux", generation: 2, server: $server, server_start: $start, pane: $pane,
       window: "@1", harness: "claude", account: $account, home: $account, model: $model,
       effort: "high", cwd: null, launch_line: "recorded"} + $extra'
 }

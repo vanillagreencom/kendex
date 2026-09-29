@@ -554,15 +554,15 @@ ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
 # `ol_names($server; $start; $session)` is whether a record names that
 # session on that server, the pane on tmux and the session elsewhere. $start
 # is the start ol_session_start printed for that session's server, empty
-# where it could not be read: a record carrying a `server_start` names the
-# session only on the server started then, since after a tmux restart a new
-# server may be handed the recorded pid and numbers its panes from %0 again,
-# and a record carrying none is judged on the pair alone.
+# where it could not be read: a record names the session only on the server
+# started at its `server_start`, since after a tmux restart a new server may be
+# handed the recorded pid and numbers its panes from %0 again, and a record
+# carrying none names no session.
 # lib/watch-overseer-record.sh takes `ol_names` for the watch start.
 OL_JQ_DEFS='def ol_identity: {harness, account, home, model, effort, cwd};
   def ol_names($server; $start; $session): type == "object" and (.server // "") == $server
     and ((.pane // .session // "") == $session)
-    and (.server_start == null or (.server_start | tostring) == $start);'
+    and (.server_start | tostring) == $start;'
 
 # ol_session_start SERVER SESSION — the start ol_names judges SESSION on
 # SERVER by: tmux_server_start's for a pane. Returns 1, printing nothing, where
@@ -795,8 +795,7 @@ ol_record_get() {
 # where that is unknown, and `server_start` is the server's start time read
 # off that pane (lib/tmux-server.sh § tmux_server_start), so no start of
 # another server's survives. A start that cannot be read writes nothing: a
-# record with no start is judged on the pair alone, so a later server handed
-# the same pid and pane id would read as this session. `pending` is
+# record with no start names no session. `pending` is
 # dropped: the successor it named is the session written here, or a launch
 # that never opened. `exit` is dropped: it is a session's that ended. The
 # prior's `launch_line` goes with it where LINE is empty: `oversee register`

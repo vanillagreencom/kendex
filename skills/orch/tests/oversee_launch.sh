@@ -305,15 +305,16 @@ mutate_file "$REGCTL/oversee" '    claude) harness=claude ;;' '    claude) ;;'
 OVERSEE_BIN="$REGCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
 assert_eq "$RC|$(recorded harness)" "0|none" \
   "control: a register that reads no harness records none"
-# The start's control: a writer that records no server start leaves the
-# registered server told from no later one handed the same pid.
+# The start's control: a writer that drops the server start records none.
 STARTCTL="$(mutant_scripts startctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$STARTCTL/lib/overseer-launch.sh" 'server_start: ($start | tonumber)}' 'server_start: null}'
+cp -- "$FLEET_STATE" "$TMP_ROOT/state.bound"
 OVERSEE_BIN="$STARTCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
 assert_eq "$RC|$(recorded server_start)" "0|none" \
   "control: a register whose writer drops the server start records none"
+mv -- "$TMP_ROOT/state.bound" "$FLEET_STATE"
 # A server start that cannot be read writes nothing: a record with no start
-# would name this pane on any later server handed the same pid.
+# would name no session.
 run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
 BOUND_RECORD="$(jq -c .overseer "$FLEET_STATE")"
 printf '%s\n' "$HAND" > "$TMP_ROOT/nostart-pane"
@@ -331,7 +332,7 @@ mutate_file "$UNREADCTL/lib/overseer-launch.sh" \
 cp -- "$FLEET_STATE" "$TMP_ROOT/state.bound"
 OVERSEE_BIN="$UNREADCTL/oversee" run_oversee PATH="$NOSTART_PATH" TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
 assert_eq "$RC|$(recorded server_start)" "0|none" \
-  "control: a register that takes an unread start as none records the pane unbound"
+  "control: a register that takes an unread start as none records the pane with no start"
 mv -- "$TMP_ROOT/state.bound" "$FLEET_STATE"
 # register from the session's own SessionStart row (lib/session-rows.sh), in
 # the shape Claude Code 2.1.283's hook emits it: the harness, account and
@@ -722,12 +723,12 @@ tm kill-window -t "$(tm list-windows -t fleet -F '#{window_id} #{window_name}' |
 # same pid.
 STALE="$(tm new-window -d -t fleet -n stale -P -F '#{pane_id}' 'exec sleep 100000')"
 EARLIER_START=$((SERVER_START - 3600))
-stale_record() { # SERVER [START]
-  jq --arg pane "$STALE" --arg server "$1" --arg start "${2:-}" '.overseer.pane = $pane | .overseer.server = $server
-    | .overseer.server_start = (if $start == "" then null else ($start | tonumber) end)' "$FLEET_STATE" > "$FLEET_STATE.tmp" \
+stale_record() { # SERVER START
+  jq --arg pane "$STALE" --arg server "$1" --arg start "$2" '.overseer.pane = $pane | .overseer.server = $server
+    | .overseer.server_start = ($start | tonumber)' "$FLEET_STATE" > "$FLEET_STATE.tmp" \
     && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
 }
-for row in "1||another server pid" "$SERVER_PID|$EARLIER_START|this server pid bound to an earlier start"; do
+for row in "1|$SERVER_START|another server pid" "$SERVER_PID|$EARLIER_START|this server pid bound to an earlier start"; do
   IFS='|' read -r row_server row_start row_what <<<"$row"
   stale_record "$row_server" "$row_start"
   STALE_GEN="$(recorded generation)"
@@ -757,9 +758,9 @@ stale_control() { # NAME OLD NEW SERVER START WHAT
 }
 stale_control serverctl \
   '  def ol_names($server; $start; $session): type == "object" and (.server // "") == $server' \
-  '  def ol_names($server; $start; $session): type == "object"' 1 "" "server pid"
+  '  def ol_names($server; $start; $session): type == "object"' 1 "$SERVER_START" "server pid"
 stale_control startctl-live \
-  '    and (.server_start == null or (.server_start | tostring) == $start);' '    and true;' \
+  '    and (.server_start | tostring) == $start;' '    and true;' \
   "$SERVER_PID" "$EARLIER_START" "server start"
 tm kill-window -t "$STALE"
 

@@ -317,14 +317,14 @@ OVERSEER_SERVER_START=1790000000
 # session, which the transcript ownership gate holds the payload's transcript to.
 # OVERSEER_HOME_DIR by default, a claude config dir whose projects tree the
 # owned transcript below sits under; a row naming a codex home passes its own.
-# START, where given, is the `server_start` the record binds its server by;
-# with none the record carries no start and is judged on the pair alone.
+# START is the `server_start` the record binds its server by, this fixture's
+# server's by default, and `none` for a record carrying no start.
 OVERSEER_HOME_DIR="$TMP_ROOT/overseer-home"
 record_overseer() { # PANE SERVER [HOME] [START]
   local record home="${3:-$OVERSEER_HOME_DIR}"
-  record="$(jq -nc --arg s "$2" --arg p "$1" --arg h "$home" --arg start "${4:-}" \
+  record="$(jq -nc --arg s "$2" --arg p "$1" --arg h "$home" --arg start "${4:-$OVERSEER_SERVER_START}" \
     '{server: $s, pane: $p, window: "@7", home: $h, launch_line: "claude -n overseer"}
-     + (if $start == "" then {} else {server_start: ($start | tonumber)} end)')"
+     + (if $start == "none" then {} else {server_start: ($start | tonumber)} end)')"
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" \
     set oversee overseer "$record" >/dev/null)
 }

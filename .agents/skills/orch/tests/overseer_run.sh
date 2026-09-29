@@ -53,14 +53,14 @@ run() {
 
 echo "=== overseer-run ==="
 
-# A record carrying no start is judged on the pane and server pid alone.
+# A record carrying no start names no session.
 while IFS='|' read -r label recorded start pane want_rc want_exit; do
   state "$recorded" "$start"
   run "$pane" -- sh -c 'exit 7'
   assert_eq "rc=$RC exit=$(exit_of) err=$(wc -c < "$ERR" | tr -d ' ')" "rc=$want_rc exit=$want_exit err=0" "$label" "$ERR"
 done <<'ROWS'
 the record names this pane on this server's start: its status is written and handed back|%9|1790000000|%9|7|7
-the record names this pane and carries no start: its status is written|%9|none|%9|7|7
+the record names this pane and carries no start: nothing is written|%9|none|%9|7|none
 the record names this pane id on an earlier server handed the same pid: nothing is written|%9|1789996400|%9|7|none
 the record names another pane: nothing is written|%3||%9|7|none
 outside tmux: nothing is written|%9|||7|none
@@ -102,7 +102,7 @@ assert_eq "rc=$RC keys=$(grep -o '^overseer-run: [a-z-]*=[a-z0-9]*' "$ERR" | tr 
 # pane id takes the status.
 START_CTL="$(mutant_scripts start-ctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$START_CTL/lib/overseer-launch.sh" \
-  '    and (.server_start == null or (.server_start | tostring) == $start);' '    and true;'
+  '    and (.server_start | tostring) == $start;' '    and true;'
 state %9 1789996400
 RUN_BIN="$START_CTL/overseer-run" run %9 -- sh -c 'exit 7'
 assert_eq "exit=$(exit_of)" "exit=7" "control: without the start test an earlier server's record takes the status"

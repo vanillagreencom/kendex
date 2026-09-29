@@ -69,8 +69,7 @@ overseer_command_record() {
   # The start of the server holding the pane: what the record is bound to
   # below, and what ol_names judges it by. Unread, it writes nothing: judged as
   # no start, this pane's own bound record reads as another session's and
-  # loses its launch identity, and a record written with none names this pane
-  # on any later server handed the same pid.
+  # loses its launch identity.
   if ! start="$(ol_session_start "$server" "$pane")"; then
     overseer_record_notice "" "$held" overseer-unrecorded "pane=$pane" "step=server-start"
     return 0

@@ -38,7 +38,8 @@ assert_eq() { # GOT WANT LABEL
 
 # `display-message -p -t <pane> FORMAT`, the two tmux reads a row takes:
 # `#{pid}`, the server's pid TMUX_SERVER_ID names, and `#{pane_pid}`, the
-# pane's shell, which TMUX_PANE_PID names.
+# pane's shell, which TMUX_PANE_PID names; and `#{pid} #{start_time}`, the
+# server's start the turn-end hook binds the fleet record by, 1790000000.
 TMUX_BIN="$TMP_ROOT/tmux-bin"
 mkdir -p "$TMUX_BIN"
 cat > "$TMUX_BIN/tmux" <<'TMUXSTUB'
@@ -47,6 +48,7 @@ cat > "$TMUX_BIN/tmux" <<'TMUXSTUB'
 for format in "$@"; do :; done
 case "$format" in
   '#{pane_pid}') printf '%s\n' "${TMUX_PANE_PID:-}" ;;
+  '#{pid} #{start_time}') printf '%s 1790000000\n' "$TMUX_SERVER_ID" ;;
   *) printf '%s\n' "$TMUX_SERVER_ID" ;;
 esac
 TMUXSTUB
@@ -225,7 +227,7 @@ cp -R "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
 printf '#!/bin/sh\necho "oversee-succeed: context-below-mark tokens=1 mark=500000 headroom=80"\n' \
   > "$CHECKOUT/.agents/skills/orch/scripts/oversee-succeed"
 (cd "$CHECKOUT" && .agents/skills/orch/scripts/workflow-state init oversee >/dev/null \
-  && .agents/skills/orch/scripts/workflow-state set oversee overseer '{"server":"7000","pane":"%9"}' >/dev/null)
+  && .agents/skills/orch/scripts/workflow-state set oversee overseer '{"server":"7000","server_start":1790000000,"pane":"%9"}' >/dev/null)
 run stop-failure-row "$WALL"
 RC=0
 printf '%s' '{"session_id":"5f0c","stop_hook_active":false}' |

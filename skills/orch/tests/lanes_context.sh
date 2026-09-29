@@ -426,8 +426,8 @@ echo "=== a launched overseer's pane names no harness; its record names its acco
 # variables are set that shape names no account. The launch record names
 # both, and the caller's row stands on it where the record names this pane on
 # this server: bound to the stub server's start, 1790000000, as every writer
-# binds it; carrying no start, judged on the pair alone; and not where it is
-# bound to an earlier server handed the same pid.
+# binds it; and not where it carries no start, or is bound to an earlier
+# server handed the same pid.
 printf '%s %%48 bash\n' "$LIVE_PID" >> "$PANES"
 launched_record() { # START — the launch record for %48, `none` carrying no start
   "$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer "$(jq -nc --arg s "$LIVE_PID" --arg a "$H/.claude" --arg start "$1" \
@@ -444,7 +444,7 @@ while IFS='|' read -r start want label; do
   assert_eq "$(launched_caller)" "$want" "$label"
 done <<ROWS
 1790000000|%48 $H/.claude|a launched overseer under overseer-run keeps its caller row, on its recorded account
-none|%48 $H/.claude|a record carrying no start names the launched overseer on the pair alone
+none|%48 null|a record carrying no start names no account for this pane
 1789996400|%48 null|a record bound to an earlier server handed the same pid names no account for this pane
 ROWS
 launched_record 1790000000

@@ -214,7 +214,7 @@ assert_contains "$(cat -- "$ERR")" "oversee-watch: overseer-fallback pane=$PANE 
 # The record names this pane id on this pid, bound to an earlier server's
 # start (the stub's server started at 1790000000): a later server handed the
 # same pid and pane id, and neither that record's rows nor its exit status is
-# this pane's. Its control is ol_names judging the pair alone, which reads the
+# this pane's. Its control is ol_names without the start test, which reads the
 # earlier server's exit status as this session's death.
 earlier_server_case() { # NAME [WATCH_BIN]
   exit_case_state "$1" 137
@@ -228,18 +228,18 @@ assert_eq "$(grep '^EVENT overseer-dead' <<<"$OUT" | grep -o 'source=[a-z]*')|$(
 EARLIER_CTL="$(mutant_scripts earlier-ctl/orch lib/overseer-launch.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/earlier-ctl/github"
 mutate_file "$EARLIER_CTL/lib/overseer-launch.sh" \
-  '    and (.server_start == null or (.server_start | tostring) == $start);' '    and true;'
+  '    and (.server_start | tostring) == $start;' '    and true;'
 earlier_server_case earlier_server_mutant "$EARLIER_CTL/oversee-watch"
 assert_eq "$(grep '^EVENT overseer-dead' <<<"$OUT" | grep -o 'source=[a-z]*')" "source=record" \
   "control: without the start test the earlier server's exit status is read as this session's death" "$ERR"
-# The same record carrying no start is judged on the pane and server pid
-# alone: its rows are this pane's.
-rows_case unbound_rows exited "$START" "$END_EXIT"
+# The same record carrying no start names no session: its rows are not this
+# pane's, and the pane judges.
+rows_case startless_rows exited "$START" "$END_EXIT"
 jq 'del(.overseer.server_start)' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/state.tmp" \
   && mv -- "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
 run TMUX_PANE="$PANE" -- --max-loops 2
-assert_eq "$(grep '^EVENT overseer-dead' <<<"$OUT" | grep -o 'source=[a-z]*')" "source=rows" \
-  "a record carrying no start names this pane on the pair alone, and its rows judge the session" "$ERR"
+assert_eq "$(grep '^EVENT overseer-dead' <<<"$OUT" | grep -o 'source=[a-z]*')|$(grep -c "^oversee-watch: overseer-fallback pane=$PANE cause=unrecorded" "$ERR")" \
+  "source=pane|1" "a record carrying no start names no session: the pane judges, not its rows" "$ERR"
 # The pane read's own start emptied: this pane's bound record reads as
 # another session's, and the pane judges in place of its rows.
 PANESTART_CTL="$(mutant_scripts panestart-ctl/orch oversee-watch)" || exit 1

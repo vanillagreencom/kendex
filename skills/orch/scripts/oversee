@@ -139,8 +139,7 @@
 #            or the record's own where it already names this pane, so
 #            registering twice launches nothing and counts nothing twice.
 #            A server start that cannot be read refuses `record-unwritten`
-#            and writes nothing: a record with no start would name this
-#            pane on any later server handed the same pid.
+#            and writes nothing.
 #            Prints `registered` naming the session and generation.
 #
 # Options:
