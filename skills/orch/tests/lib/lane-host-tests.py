@@ -160,10 +160,12 @@ class LaneHostCallersTests(unittest.TestCase):
     # A provider verb, or the caller's own argv forwarded whole, which is how
     # open-terminal's host_transport hands its verbs on.
     VERB = re.compile(r"(?:create|wait|cat|put|append|touch|stop|stop-sandbox|start|close|list|accounts|\$@)")
-    # Keywords, `!`, environment assignments and an optional argv prefix, then
-    # the command word and the word after it.
+    # Keywords, `!`, environment assignments and optional argv prefixes, then
+    # the command word and the word after it. A prefix is an array expanded
+    # whole, `${X[@]+"${X[@]}"}` or `"${X[@]}"`, such as the github skill's
+    # KENDEX_GROUP_LEADER: the command it runs is the word after it.
     COMMAND = re.compile(r'^(?:\s|!|(?:if|then|elif|do|while|until)\b|[A-Za-z_]\w*=(?:"[^"]*"|[^\s"]*(?=\s))'
-                         r'|\$\{\w+\[@\]\+"\$\{\w+\[@\]\}"\})*("\$[^"]*")\s+("[^"]*"|[^\s;|&)]+)')
+                         r'|\$\{\w+\[@\]\+"\$\{\w+\[@\]\}"\}|"\$\{\w+\[@\]\}"(?=\s))*("\$[^"]*")\s+("[^"]*"|[^\s;|&)]+)')
     FUNCTION = re.compile(r"^([A-Za-z_]\w*)\(\) *\{")
     SCRIPT = re.compile(r'^(?:\$\{\w+:-)?\$(?:SCRIPT_DIR|SKILLS_DIR)/([\w./-]+?)\}?$')
 
@@ -238,12 +240,15 @@ class LaneHostCallersTests(unittest.TestCase):
             self.assertIn(member, wrapper, "the site extractor no longer reaches a known wrapper call")
 
     def test_a_direct_provider_call_is_named(self):
+        # A row naming None plants a line that is no provider call.
         rows = [("lane-mail", '  "$ORCH_LANE_HOST" cat --item "$ITEM" /remote\n', "lane-mail"),
                 ("open-terminal", '  "$LANE_HOST" touch --item "$1"\n', "open-terminal"),
                 ("lanes", '  "$SCRIPT_DIR/lane-host-ssh" cat --item "$ITEM" /remote\n', "lanes"),
-                ("oversee-watch", '  lane_host_fetch "$ORCH_LANE_HOST" "$1" /remote "$WORK_DIR/x" "$WORK_DIR/e"\n', "lib/lane-gitfile.sh")]
+                ("oversee-watch", '  lane_host_fetch "$ORCH_LANE_HOST" "$1" /remote "$WORK_DIR/x" "$WORK_DIR/e"\n', "lib/lane-gitfile.sh"),
+                ("lane-mail", '  "${KENDEX_GROUP_LEADER[@]}" "$ORCH_LANE_HOST" cat --item "$ITEM" /remote\n', "lane-mail"),
+                ("lane-mail", '  "${KENDEX_GROUP_LEADER[@]}" "$@" </dev/null >/dev/null &\n', None)]
         for path, planted, named in rows:
-            with self.subTest(path=path):
+            with self.subTest(path=path, planted=planted.strip()):
                 scratch = Path.cwd() / "tmp"
                 scratch.mkdir(exist_ok=True)
                 with tempfile.TemporaryDirectory(dir=scratch) as temp:
@@ -251,7 +256,7 @@ class LaneHostCallersTests(unittest.TestCase):
                     shutil.copytree(PACKAGE / "scripts", scripts)
                     with open(scripts / path, "a") as script:
                         script.write(planted)
-                    self.assertEqual({site[0] for site in self.unbounded(scripts)}, {named}, planted)
+                    self.assertEqual({site[0] for site in self.unbounded(scripts)}, {named} - {None}, planted)
 
 if __name__ == "__main__":
     unittest.main()
