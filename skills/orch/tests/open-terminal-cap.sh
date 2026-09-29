@@ -632,6 +632,34 @@ launch one 5 --lane "$LANE_A" CC-1
 assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
   "rc=1 open-terminal: cap-lock-unopenable item=CC-1 lock=$STATE/workflow-state-oversee.json.launch.lock opened=no" \
   "a launch lock that cannot be opened refuses the launch rather than counting unlocked"
+# A flock that fails at once is a holder past the bound with no clock: both
+# takes fail with no wait. The state exists first, since its init locks too.
+row lock-failed
+"$WS" --state-dir "$STATE" init oversee >/dev/null
+mkdir -p "$ROW/bin"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$ROW/bin/flock"
+chmod +x "$ROW/bin/flock"
+PATH="$ROW/bin:$PATH" launch one 5 --lane "$LANE_A" CC-1
+assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no) lock-waits=$(lock_waits one)" \
+  "rc=1 open-terminal: cap-lock-failed item=CC-1 lock=$STATE/workflow-state-oversee.json.launch.lock opened=no lock-waits=1" \
+  "a launch lock not taken within its wait refuses the launch, naming the lock, after one wait notice"
+# workflow-state answers every verb but `path oversee`, so the fleet state
+# exists and only its path cannot be had. No lock file stands: the refusal
+# came ahead of the lock, not from the count under it.
+row state-path-failed
+"$WS" --state-dir "$STATE" init oversee >/dev/null
+mv -- "$WS" "$WS.real"
+cat > "$WS" <<'EOF'
+#!/usr/bin/env bash
+[[ " $* " != *" path oversee "* ]] || exit 1
+exec "$0.real" "$@"
+EOF
+chmod +x "$WS"
+launch one 5 --lane "$LANE_A" CC-1
+mv -- "$WS.real" "$WS"
+assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no) lock=$([[ -e "$STATE/workflow-state-oversee.json.launch.lock" ]] && echo yes || echo no)" \
+  "rc=1 open-terminal: cap-unreadable item=CC-1 source=state opened=no lock=no" \
+  "a fleet state whose path cannot be had refuses the launch before its lock is opened"
 
 echo "=== refusals ahead of any count ==="
 row options
