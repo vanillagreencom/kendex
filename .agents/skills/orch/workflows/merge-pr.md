@@ -117,13 +117,13 @@ Three conditions are merge gates, not advice:
 - **`not_approved`** — resolve the gate mode the pull request's base sets ([references/gates.md](../references/gates.md)). A non-zero exit is no mode: report it and stop.
 
   ```bash
-  .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
+  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
   ```
 
   Route on the printed `GATE_MODE`:
 
   - `off` — informational; never gate or wait.
-  - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: poll `approval-wait [PR_NUMBER] 30 --json --mode approval --item [STATE_KEY]`; after its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
+  - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: poll `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval --item [STATE_KEY]`; after its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
 
   A `comments` answer (exit 1) is an open thread: run § 3.3, then this wait again.
 

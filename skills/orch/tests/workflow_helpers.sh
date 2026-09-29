@@ -325,6 +325,34 @@ for wf in submit-pr merge-pr ci-fix; do
   assert_file_contains "$doc" 'approval-wait [PR_NUMBER] --resolve-mode' "$wf resolves the gate mode through approval-wait"
 done
 
+# approval-wait takes its repository from GH_REPO first (scripts/lib/gh-repo.sh).
+# A lane that inherited GH_REPO naming another repository would read that
+# repository's pull request and base, and a wrong `off` skips a required gate.
+# So every approval-wait run on a pull request, mode read and wait alike,
+# clears the override right before the command.
+approval_wait_clears_gh_repo() { # DOC...
+  awk '
+    {
+      line = $0; runs = gsub(/[^ `(]*approval-wait \[PR_NUMBER\]/, "", line)
+      line = $0; cleared = gsub(/env -u GH_REPO -u GITHUB_REPOSITORY [^ `(]*approval-wait \[PR_NUMBER\]/, "", line)
+      if (runs > cleared) { print FILENAME ":" FNR ": " $0 > "/dev/stderr"; bad = 1 }
+    }
+    END { exit bad }' "$@"
+}
+if approval_wait_clears_gh_repo "$SKILL_DIR"/workflows/*.md "$SKILL_DIR"/references/*.md; then
+  pass "every approval-wait run in workflows and references clears an inherited GH_REPO"
+else
+  fail "an approval-wait run in workflows or references reads an inherited GH_REPO"
+fi
+assert_doc_mutant_fails approval_wait_clears_gh_repo "$ci_fix_workflow" \
+  'env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode' \
+  '.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode' \
+  "a gate mode read through an inherited GH_REPO"
+assert_doc_mutant_fails approval_wait_clears_gh_repo "$merge_workflow" \
+  '`env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval' \
+  '`approval-wait [PR_NUMBER] 30 --json --mode approval' \
+  "an inline approval poll through an inherited GH_REPO"
+
 # The merged short-circuit is only a short-circuit while it precedes the reads
 # it skips: below them, a micro classification that refuses for want of an
 # orphaned head stands between a completed merge and its cleanup.
@@ -348,7 +376,7 @@ micro_head_is_pinned() { # merge-doc
   continue_at="$(grep -m1 -n -F -- "$micro_continue" "$1" | cut -d: -f1 || true)"
   [[ -n "$classify_at" && -n "$continue_at" ]] &&
     awk -v from="$classify_at" -v to="$continue_at" \
-      'NR > from && NR < to && index($0, "env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode") { found = 1 }
+      'NR > from && NR < to && index($0, ".agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode") { found = 1 }
        END { exit !found }' "$1" &&
     grep -Fq 'Any other answer arms nothing and escapes by micro.md condition 9' "$1"
 }
@@ -364,13 +392,9 @@ assert_doc_mutant_fails micro_head_is_pinned "$merge_workflow" \
   'A `[MICRO_ENTRY]` run continues' \
   "a micro entry continued on a stale answer"
 assert_doc_mutant_fails micro_head_is_pinned "$merge_workflow" \
-  'env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode' \
-  '.agents/skills/orch/scripts/item-tier --help' \
+  '   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode' \
+  '   .agents/skills/orch/scripts/item-tier --help' \
   "a micro entry continued with no fresh gate mode"
-assert_doc_mutant_fails micro_head_is_pinned "$merge_workflow" \
-  'env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode' \
-  '.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode' \
-  "a micro entry gate mode read through an inherited GH_REPO"
 
 micro_workflow="$SKILL_DIR/workflows/micro.md"
 micro_class_is_closed() { # micro-doc
@@ -378,7 +402,7 @@ micro_class_is_closed() { # micro-doc
     grep -Fq 'orch/scripts/item-tier --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]' "$1" &&
     grep -Fq 'The accepted answer is `tier=micro`' "$1" &&
     grep -Fq 'Every other answer escapes (§ Escape condition 7): a command failure, a class above this tier (`small`, `standard`), or a class the classifier did not measure.' "$1" &&
-    grep -Fq 'env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode' "$1" &&
+    grep -Fq '[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode' "$1" &&
     grep -Fq 'Continue only on `approval`.' "$1" &&
     grep -Fq '`off` or a non-zero exit escapes (§ Escape condition 7)' "$1" &&
     grep -Fq '7. § 4 cannot prove all three parts of its precheck. Either the `item-tier` answer is not `tier=micro`, or `approval-wait --resolve-mode` does not print `approval`, or' "$1" &&
@@ -401,10 +425,6 @@ assert_doc_mutant_fails micro_class_is_closed "$micro_workflow" \
   'Continue only on `approval`.' \
   'Continue on any gate mode.' \
   "a micro run admitted on a base that requires no approval"
-assert_doc_mutant_fails micro_class_is_closed "$micro_workflow" \
-  'env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode' \
-  '[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode' \
-  "a micro gate mode read through an inherited GH_REPO"
 
 micro_dirty_transfer_is_owned() { # micro-doc
   local route=""

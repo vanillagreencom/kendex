@@ -225,7 +225,7 @@ The review gate runs **before** CI verification, universally, with no repo detec
 Resolve the gate mode the pull request's base sets:
 
 ```bash
-.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
+env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
 ```
 
 The printed value is `GATE_MODE`, `approval` or `off`: GitHub's approval requirement on the base decides it, read from the base's rulesets through `rules/branches` and from the pull request's `reviewDecision`, which also reflects classic branch protection (full semantics: [references/gates.md](../references/gates.md)); never re-derive it here. A non-zero exit is no mode: report it and do not guess one. This gate reads only GitHub-native review state, from any reviewer, human or bot; bot-specific signals are never parsed.
@@ -243,7 +243,7 @@ A retarget changes the base without touching the head, so every path below that 
 1. **Wait.** Poll for the verdict and new comments together:
 
    ```bash
-   .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode [GATE_MODE] --item [ISSUE_ID]
+   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode [GATE_MODE] --item [ISSUE_ID]
    ```
 
    No `max_wait` positional: the budget resolves through `PR_REVIEW_WAIT_SECS`. approval-wait emits a JSON result on every exit but `5`.
@@ -370,7 +370,7 @@ Empty `json_paths` means no internal review is recorded: report the unmet gate a
 `unresolved_count > 0` runs ONE triage pass (`⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 6.1 gate 3`, managed, bounded by the same `REVIEW_MAX_EXTERNAL_ROUNDS` cap on `pr_comment_review.iterations`). If that pass pushed commits, re-resolve `GATE_MODE` by § 4's command and record it, then re-confirm the § 4 gate through its Restart check with a short wait (no wait when that mode is `off`), then re-run § 5:
 
 ```bash
-.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE] --item [ISSUE_ID]
+env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE] --item [ISSUE_ID]
 ```
 
 Re-run the gate-3 command once. If threads remain and the external-round cap is below, `auto-recommended` logs `Triage again` and runs one more pass; at the cap it records `review-threads-open`. Under `ask`, present `Triage again` | `Stop here`, with `Triage again` recommended.
