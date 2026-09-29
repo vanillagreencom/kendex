@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# templates/ci.yml is the workflow every repository copies for its one
-# required `CI` context, so what it runs is evaluated rather than trusted:
+# templates/ci.yml is the workflow every repository copies for its aggregate
+# `CI` context, so what it runs is evaluated rather than trusted:
 # the step that republishes the action's lane verdicts is run, the job
 # outputs and conditions are read out of the file and evaluated per event
 # and per action answer, and the aggregate step's arguments are handed to

@@ -2,10 +2,11 @@
 # .github/workflows/ci.yml. .agents/skills/harness-ci/references/wiring.md
 # § The CI template says what to keep and what to change.
 #
-# `CI` is the one required context the organization ruleset asks of every
-# repository beside `Review gate`, so the job carrying it keeps that name and
-# every lane the repository runs reports into it: a lane in another workflow
-# is a lane no required context holds. The classifier judges the diff on
+# Every repository under the standard reports the aggregate `CI` context on
+# pull_request and merge_group, which standard-ci-context checks, so its job
+# keeps that name and every lane reports into it. What the required-checks
+# ruleset holds is .agents/skills/harness-ci/references/wiring.md
+# § The CI context. The classifier judges the diff on
 # pull_request and merge_group alike, and every lane reads the same answers
 # on both, so each event runs the lanes its own diff calls for, less the
 # ones a passing run of the same tree already ran: a merge group whose tree

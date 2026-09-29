@@ -372,9 +372,10 @@ fi
 
 # ---------------------------------------------------------- CI context ---
 
-# The ruleset requires the CI context by name on the pull request and again
-# on the merge group, so a repository whose jobs carry other names, or whose
-# CI never runs for a merge group, never merges. An Actions job reports its
+# Every repository under the standard reports the aggregate CI context on
+# the pull_request and merge_group legs. What its ruleset requires is
+# .agents/skills/review-gate/references/adoption.md
+# § Repo-side wiring. An Actions job reports its
 # name as a check context on the commit it ran for. The pull request the
 # default branch's head merged holds the head where the pull_request leg ran.
 # The merge_group leg ran on the head itself, which the merge queue merged;
