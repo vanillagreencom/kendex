@@ -100,7 +100,7 @@ A `--check` exit `1` with no JSON whose first stderr line is `pr-merge: retired-
 
 | Prefix | Wait |
 |--------|------|
-| `unknown:` (GitHub still computing mergeable status) | `github.sh await-mergeable [PR_NUMBER]`, then re-check. Exit 124 on timeout → `auto-recommended` records `merge-readiness-unresolved`; `ask` surfaces the timeout |
+| `unknown:` (GitHub still computing mergeable status) | No wait of its own: GitHub computes the state before an armed PR merges. Re-check once; if `unknown:` is still the only issue, § 3.2 treats it as `can_merge: true`, and § 5 step 1's `--auto` arm holds the merge until GitHub resolves it |
 | `ci_pending:` | `.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 180 600 --item [STATE_KEY]`, then re-check. On a non-zero exit other than `5`, or a timeout, re-check once for fresh state; if still pending, `auto-recommended` records `merge-ci-pending`, while `ask` surfaces the result. Never another automatic wait |
 | `ci_fetch_failed:`, `ci_unconfigured:` | Re-check, at most three checks total, then continue with the latest `CHECK` |
 
@@ -108,12 +108,12 @@ A `--check` exit `1` with no JSON whose first stderr line is `pr-merge: retired-
 
 `CHECK.state` decides first: `MERGED` → set `[ALREADY_MERGED]=true`, run § 4 EXCEPT § 4.1, then enter § 5 step 1, which skips the arm and the wait and goes straight to post-merge work; `CLOSED` → records `pr-closed-unmerged`.
 
-`can_merge: true` → § 4, showing any warnings. `false` → show the issues with their suggested fixes. `auto-recommended` logs `Fix and retry` and takes that route once; the same blocker after the retry records `merge-check-blocked`. `ask` presents `Skip` | `Fix and retry`, with `Fix and retry` recommended.
+`can_merge: true` → § 4 once the three conditions below are met, showing any warnings. `false` → show the issues with their suggested fixes. `auto-recommended` logs `Fix and retry` and takes that route once; the same blocker after the retry records `merge-check-blocked`. `ask` presents `Skip` | `Fix and retry`, with `Fix and retry` recommended.
 
-Three warnings are merge gates, not advice:
+Three conditions are merge gates, not advice:
 
-- **`unresolved_threads`** — zero unresolved review threads is required at merge time. Where the class policy waives the thread term, `unresolved_threads` counts every open thread but the review bots' own, and its sibling `unresolved_threads_waived` counts those, is not a gate, and needs no action: § 5's arm resolves them itself. `unresolved_threads` also counts each resolved thread that `thread_reopen` names, a waiver resolution that lapsed; `--check` never reopens one, so reopen each with `unresolve-thread` before the route. Route to `review-pr-comments` to reply and resolve first. `auto-recommended` keeps triaging within `REVIEW_MAX_EXTERNAL_ROUNDS`, then records `review-threads-open`. No answer merges past them: § 5's arm refuses an unresolved thread.
-- **`suppressed-findings`** — not a `CHECK` warning, and a merge gate. `pr-merge --check` reduces the red gate to `ci_failed`, `ci-classify-refusal` prints a `fail:` line naming the `Review gate` check, and that check's status description opens `N suppressed finding(s) in a review body`. Those entries are findings a reviewer wrote into its review body, so no thread carries them: `unresolved_threads` reads zero and `review-pr-comments` reaches none of them. Answer them by [references/suppressed-findings.md](../references/suppressed-findings.md), which owns the whole route.
+- **Open review threads** — not a `CHECK` field: `pr-merge` reads no thread. Where the base branch's ruleset requires thread resolution, GitHub holds the merge, and an armed PR, on every unresolved thread, a review bot's included, under every gate mode. The lane resolves them before § 4 either way. Read them with `.agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved`; a nonzero `unresolved_count` routes to `review-pr-comments` to reply and resolve first. `auto-recommended` keeps triaging within `REVIEW_MAX_EXTERNAL_ROUNDS`, then records `review-threads-open`. No answer takes § 4 past an open thread.
+- **`suppressed-findings`** — not a `CHECK` warning, and a merge gate. `pr-merge --check` reduces the red gate to `ci_failed`, `ci-classify-refusal` prints a `fail:` line naming the `Review gate` check, and that check's status description opens `N suppressed finding(s) in a review body`. Those entries are findings a reviewer wrote into its review body, so no thread carries them: `unresolved_count` reads zero and `review-pr-comments` reaches none of them. Answer them by [references/suppressed-findings.md](../references/suppressed-findings.md), which owns the whole route.
 - **`not_approved`** — bind this pull request's endpoints as `[BASE_SHA]` and `[HEAD_SHA]`:
 
   ```bash
@@ -250,7 +250,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Exit `0` merged the prepared head immediately — continue to step 2. Exit `1` with first line `arm: no-merge-gate=<condition>` means the arm armed nothing and names why: take the direct attempt above, whose exit `75` routes a base that still queues the PR, and never fall back to a raw `gh pr merge --auto`. Exit `1` with first line `pr-merge: retired-setting key=<NAME>` takes § 3's route for that refusal. Any other exit but `0` or `75` is an exact-head arm failure: surface it and return to § 3.2.
 
-   Exit `75` means queued or armed. Run the command below through [Waiter launch](../references/waiter-launch.md), appending `--no-guard` under `exempt`. Keep the lane active while polling the completion file, then route the recorded exit and result. A changes-requested review blocked at § 3.2's readiness check, before this arm; past it no mode reads review state, and `exempt` waives the thread guard alone. Under `exempt` the arm has already replied on and resolved each review-bot thread the class policy waived, and refused every other open thread.
+   Exit `75` means queued or armed. Run the command below through [Waiter launch](../references/waiter-launch.md), appending `--no-guard` under `exempt`. Keep the lane active while polling the completion file, then route the recorded exit and result. A changes-requested review blocked at § 3.2's readiness check, before this arm; past it no mode reads review state, and `exempt` waives the thread guard alone. Under `exempt` GitHub still holds the queued merge on any open thread, which § 3.2 resolved before this arm.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] 180 540 --json --item [STATE_KEY]

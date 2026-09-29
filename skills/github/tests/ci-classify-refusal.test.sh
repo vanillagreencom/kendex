@@ -6,8 +6,8 @@
 #
 # A row is `label|world|argv|rc|out|checks`:
 #   world  words for lib/check-stub.sh: `checks:<fixture>` (see checks_of),
-#          `checks-exit:<n>` gh's exit for it, `threads:<actionable|fetch-fail>`,
-#          `state:<MERGED|CLOSED>`, `merged-at`, `pr:missing`,
+#          `checks-exit:<n>` gh's exit for it, `state:<MERGED|CLOSED>`,
+#          `merged-at`, `pr:missing`,
 #          `state-err:silent4` (the state lookup exits 4 with no message),
 #          `mergeable:<CONFLICTING|UNKNOWN>` GitHub's mergeable answer,
 #          `required:<context>` a base-branch ruleset requiring that one
@@ -75,13 +75,6 @@ checks_of() {
   esac
 }
 
-threads_of() {
-  case "$1" in
-    actionable) printf '[{"id":"PRRT_actionable","isResolved":false,"isOutdated":false,"path":"src/lib.rs","line":12,"comments":{"nodes":[{"author":{"login":"reviewer"},"body":"Fix this"}]}}]' ;;
-    *) echo "UNKNOWN-THREADS: $1" >&2; exit 2 ;;
-  esac
-}
-
 # --- the world ------------------------------------------------------------------
 W_ENV=()
 RUN_DIR=""
@@ -91,8 +84,6 @@ word() {
   case "$1" in
     checks:*) W_ENV+=("STUB_CHECKS=$(checks_of "$v")") ;;
     checks-exit:*) W_ENV+=("STUB_CHECKS_EXIT=$v") ;;
-    threads:fetch-fail) W_ENV+=("STUB_THREADS_FETCH_FAIL=true") ;;
-    threads:*) W_ENV+=("STUB_THREADS_JSON=$(threads_of "$v")") ;;
     state:*) W_ENV+=("STUB_STATE=$v") ;;
     merged-at) W_ENV+=("STUB_MERGED_AT=2026-07-21T00:00:00Z") ;;
     pr:missing) W_ENV+=("STUB_PR_MISSING=true") ;;
@@ -170,9 +161,6 @@ run_table() {
 
 run_table "the cause and its detail" "\
 a passing head is cause none, with the advice|checks:ci-required|123|0|cause=none;note|1
-unresolved actionable threads are cause threads, the raw issue kept|checks:ci-required threads:actionable|123|0|cause=threads;issue=unresolved_threads: 1 actionable thread(s) need attention|1
-threads headline over a red check, both issues kept|checks:lint-fail checks-exit:8 threads:actionable|123|0|cause=threads;issue=ci_failed: Lint (FAILURE);issue=unresolved_threads: 1 actionable thread(s) need attention|1
-a failed thread lookup is fetch_error over ci_failed|checks:lint-fail checks-exit:8 threads:fetch-fail|123|0|cause=fetch_error;issue=ci_failed: Lint (FAILURE);issue=review_threads_fetch_failed: Failed to fetch actionable review threads from GitHub|1
 a missing PR is fetch_error|checks:none pr:missing|123|0|cause=fetch_error;issue=not_found: PR #123 not found|0
 a silent state lookup failure is fetch_error|checks:none state-err:silent4|123|0|cause=fetch_error;issue=gh_error: gh pr view exited 4 with no diagnostic|0
 a current-run failure is ci_failed, correlated to its run, the old run superseded|checks:current-fail checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: Integration (FAILURE);head-run=29099680623;fail=Integration state=FAILURE workflow=CI run=29099680623;superseded=workflow=CI run=29098545030|1
@@ -186,7 +174,7 @@ a status failure's run stands beside the workflow's, the older same-name status 
 a run the stale-status rewrite retired is superseded under both its records|checks:retired-status checks-exit:8|123|0|cause=ci_failed;issue=ci_pending: CI Required (EXPECTED);issue=ci_failed: Docs Build (FAILURE);head-run=29099700200,29099700300;fail=Docs Build state=FAILURE workflow=Docs run=29099700300;superseded=status=CI Required run=29099700100;superseded=workflow=CI run=29099700100|1
 a newline, return or tab in a check name never forges a line|checks:hostile-name checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: Lint forged: cause: none cr tab (FAILURE);head-run=29099680623;fail=Lint forged: cause: none cr tab state=FAILURE workflow=CI run=29099680623|1
 a conflicting PR is cause merge_conflict|checks:ci-required mergeable:CONFLICTING|123|0|cause=merge_conflict;issue=conflicts: PR has merge conflicts. Resolve by rebasing onto your default branch and force-pushing|1
-a still-computing mergeable state is cause computing|checks:ci-required mergeable:UNKNOWN|123|0|cause=computing;issue=unknown: GitHub still computing mergeable status, await-mergeable then retry|1
+a still-computing mergeable state is cause computing|checks:ci-required mergeable:UNKNOWN|123|0|cause=computing;issue=unknown: GitHub still computing mergeable status; retry, or arm with --auto|1
 a merged PR is cause merged before any check|checks:none state:MERGED merged-at|123|0|cause=merged|0
 a closed PR is cause closed|checks:none state:CLOSED|123|0|cause=closed|0
 "

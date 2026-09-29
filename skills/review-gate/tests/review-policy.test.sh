@@ -157,7 +157,7 @@ LATE="$TMP/late"
 package "$LATE" review-gate harness-ci orch
 LATE_POLICY="$LATE/review-gate/scripts/review-policy"
 LATE_START='if [ "${1:-}" = "--lock-kendex" ]; then'
-LATE_BEFORE='if [ "${1:-}" = "--review-bots" ]; then'
+LATE_BEFORE='if [ "${1:-}" = "--check-choice" ]; then'
 assert_eq "$(grep -Fxc -- "$LATE_START" "$LATE_POLICY" || true):$(grep -Fxc -- "$LATE_BEFORE" "$LATE_POLICY" || true)" \
   "1:1" "control: the --lock-kendex dispatch and the line after the parse are there once"
 if [ -L "$LATE_POLICY" ]; then
@@ -311,36 +311,6 @@ run "$MUTE/review-gate/scripts/review-policy" "$TMP/mute-repo"
 assert_eq "$RC" "2" "a settings library that cannot initialize refuses"
 assert_eq "$(diagnostic_key)" "diagnostics-load" \
   "must-fail: and the library's own diagnostic reaches stderr"
-
-echo "=== review-policy names the review bots a none row waives threads from ==="
-
-# `threads|trusted-logins|want`: REVIEW_GATE_THREADS (`-` leaves it unset),
-# the trusted list as a repository sets it, and the first line
-# --review-bots prints, after `exit N` when it refuses. Only a `[bot]` entry
-# is a bot, both separators split, and the suffix is dropped because
-# GitHub's GraphQL login lacks it. With the thread term off nothing can count
-# a lapsed waiver, so no bot is named and nothing is waived.
-bot_rows=0
-while IFS='|' read -r threads trusted want; do
-  bot_rows=$((bot_rows + 1))
-  threads_env=(REVIEW_GATE_THREADS="$threads")
-  [ "$threads" != - ] || threads_env=(-u REVIEW_GATE_THREADS)
-  rc=0
-  got="$(cd "$TMP" && env "${threads_env[@]}" REVIEW_GATE_SETTINGS_FILE=/dev/null \
-    REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="$trusted" \
-    "$SKILL_DIR/scripts/review-policy" --review-bots 2>&1)" || rc=$?
-  got="${got%%$'\n'*}"
-  [ "$rc" -eq 0 ] || got="exit $rc $got"
-  assert_eq "$got" "$want" "review bots of [$trusted] with threads $threads"
-done <<'ROWS'
--|copilot-pull-request-reviewer[bot]; coderabbitai[bot],bmethod|review-bots=copilot-pull-request-reviewer,coderabbitai
-enforce|copilot-pull-request-reviewer[bot]|review-bots=copilot-pull-request-reviewer
-off|copilot-pull-request-reviewer[bot]|review-bots=
-sometimes|copilot-pull-request-reviewer[bot]|exit 2 review-gate-error=policy-threads-mode value=sometimes
--|bmethod|review-bots=
--||review-bots=
-ROWS
-assert_eq "$bot_rows" "6" "the review-bot table ran every row"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -125,7 +125,6 @@
   ".agents/skills/github/README.md",
   ".agents/skills/github/SKILL.md",
   ".agents/skills/github/kendex.settings.toml.example",
-  ".agents/skills/github/scripts/commands/await-mergeable.sh",
   ".agents/skills/github/scripts/commands/bot-token.sh",
   ".agents/skills/github/scripts/commands/ci-classify-refusal.sh",
   ".agents/skills/github/scripts/commands/ci-logs.sh",
