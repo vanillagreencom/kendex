@@ -212,7 +212,7 @@ enum Command {
     /// List the project paths each harness reads, as JSON
     #[command(name = "harness-paths")]
     HarnessPaths,
-    /// Name the Copilot settings file that switches every hook off, as JSON
+    /// Name the Copilot file that turns all hooks off, as JSON
     #[command(name = "hooks-off")]
     HooksOff(commands::hooks_off::HooksOffArgs),
     /// Find the AI model for a harness and performance tier

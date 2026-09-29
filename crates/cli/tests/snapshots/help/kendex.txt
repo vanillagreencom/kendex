@@ -34,6 +34,7 @@ Commands:
   update           Install a newer version of kendex
   version-compare  Compare two version numbers
   harness-paths    List the project paths each harness reads, as JSON
+  hooks-off        Name the Copilot file that turns all hooks off, as JSON
   tier-model       Find the AI model for a harness and performance tier
   update-pi        Update Pi extension packages
   help             Print this message or the help of the given subcommand(s)
