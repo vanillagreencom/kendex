@@ -1,4 +1,10 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+	AgentBeforeSettleEvent,
+	AgentBeforeSettleEventResult,
+	CustomMessageEntryDraft,
+	ExtensionAPI,
+	ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { isAbsolute, resolve } from "node:path";
 
 import { getBool, getNumber, projectRoot, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
@@ -60,43 +66,22 @@ export default function piHooks(pi: ExtensionAPI): void {
 	});
 
 	/**
-	 * How many times the `Stop` registrations have been consulted about the
-	 * response now ending, and whether this carrier is the reason another one
-	 * followed.
+	 * Whether the last `agent_before_settle` dispatch asked Pi for its one
+	 * continuation. Pi runs that continuation inside the same run and asks
+	 * again before the run settles, and that next dispatch reads this, clears
+	 * it and says `stop_hook_active: true`.
 	 *
-	 * A message sent with `triggerTurn: true` makes the agent answer, and that
-	 * answer settles in its turn — so a dispatch that steers is a dispatch that
-	 * asks to be run again, against on-disk state nothing has changed. Left
-	 * unbounded, one hook that keeps speaking drives an unattended run through
-	 * LLM calls and subprocess spawns for as long as it has to say it, and two
-	 * shapes need no author error at all: a registry that will not parse and a
-	 * registration whose rendered script is absent both say their piece every
-	 * time and can never stop saying it.
-	 *
-	 * So the steer is spent once per consultation. The words go into the run on
-	 * the first dispatch and are recorded without steering on the dispatch that
-	 * steer caused, which ends the chain at two dispatches and one extra run.
-	 * `settles` therefore rides across a continuation and resets on any settle
-	 * this carrier did not cause — not on `agent_start` or `turn_start`, since
-	 * a steered turn is a new turn and a steered run a new run, but the same
-	 * consultation.
+	 * A continuation makes the agent answer against on-disk state nothing has
+	 * changed, so one that is asked for every time drives an unattended run
+	 * through model requests and hook spawns for as long as a hook speaks, and
+	 * two shapes need no author error at all: a registry that will not parse
+	 * and a registration whose rendered script is absent both say their piece
+	 * every time. The dispatch that reads this set therefore records what it
+	 * is told and asks for nothing, which ends a response at two dispatches and
+	 * one extra model request. A run Pi ends before that second dispatch, an
+	 * abort inside the continuation, clears it at `agent_settled`.
 	 */
-	let settles = 0;
-	let steeredThisRun = false;
-
-	/**
-	 * Releases the dispatches that wait on their steer, once a settle their
-	 * steers caused has been dispatched. Only a Pi that started the steered run
-	 * before `sendMessage` returned is waited on: there print mode disposes the
-	 * runtime as soon as the `agent_settled` emit it awaits returns, and a
-	 * dispatch returning before its follow-on leaves that dispatch a ctx whose
-	 * getters throw and the agent's answer unprinted.
-	 *
-	 * A set, because settles can overlap and each may steer. A settle releases
-	 * every waiter armed before it began; one armed after it began is left to
-	 * the next settle, which that waiter's own steer causes.
-	 */
-	const steerers = new Set<() => void>();
+	let continued = false;
 
 	/** The person's channel: a UI notification, where there is a UI to take it. */
 	const notify = (ctx: ExtensionContext, level: "info" | "warning") => (content: string) => {
@@ -106,8 +91,9 @@ export default function piHooks(pi: ExtensionAPI): void {
 	/**
 	 * Everything one registered hook said on a listener Pi gives no verdict to.
 	 * `toAgent` is the listener's own way of putting words in front of the
-	 * model — a patched tool result, a steered message, a session's opening
-	 * context — and stderr beside a clean exit goes to the person instead.
+	 * model — a patched tool result, an entry the settle boundary appends, a
+	 * session's opening context — and stderr beside a clean exit goes to the
+	 * person instead.
 	 *
 	 * Each delivery goes through `deliver`, so one channel that is gone — the
 	 * session replaced under a `session_start` report that is still in flight —
@@ -273,17 +259,18 @@ export default function piHooks(pi: ExtensionAPI): void {
 	});
 
 	// `Stop` and `TaskCompleted` fire when Claude Code's agent has finished
-	// responding, and Pi's word for that is `agent_settled` — documented as the
-	// point Pi "will not continue running automatically". `turn_end` sits
-	// inside the tool loop — Pi's extension reference draws it inside the
-	// block marked "turn (repeats while LLM calls tools)" — so reading the
-	// registry there would run every `Stop`
-	// registration once per LLM turn — a subprocess per round for the checks
-	// people put on `Stop`, and a request taking K tool-calling rounds paying
-	// K+1 of them. kendex still renders those registrations under the
-	// `turn_end` key (`caps.rs::pi_listener`); this is the listener that reads
-	// that key, and the clippy lane below is what `turn_end` is still for.
-	const consultStop = async (ctx: ExtensionContext): Promise<undefined> => {
+	// responding, and Pi's word for that is `agent_before_settle`: the final
+	// boundary of a run, once no retry, recovery or queued message is left,
+	// where a handler can append entries and ask for one more model request.
+	// `turn_end` fires once per LLM turn inside the tool loop, so reading the
+	// registry there would run every `Stop` registration once per tool-calling
+	// round. kendex still renders those registrations under the `turn_end` key
+	// (`caps.rs::pi_listener`); this is the listener that reads that key, and
+	// the clippy lane below is what `turn_end` is still for.
+	const consultStop = async (
+		event: AgentBeforeSettleEvent,
+		ctx: ExtensionContext,
+	): Promise<AgentBeforeSettleEventResult | undefined> => {
 		const project = ctx.cwd ? projectRoot(ctx.cwd) : undefined;
 		recordProjectTrust(ctx, project);
 		const cfg = readConfig(ctx.cwd, project);
@@ -294,51 +281,28 @@ export default function piHooks(pi: ExtensionAPI): void {
 		// here, which judge the lead session, are not consulted for it.
 		if (piSubagentName() !== undefined) return undefined;
 
-		// A settle this carrier's own steer caused continues one consultation;
-		// any other settle opens a new one.
-		if (!steeredThisRun) settles = 0;
-		steeredThisRun = false;
-		const stopHookActive = settles > 0;
-		settles += 1;
+		const stopHookActive = continued;
+		continued = false;
 
-		// Pi discards this handler's return value and blocks nothing here, so
-		// a hook's refusal is delivered rather than obeyed. Since pi#8022 a
-		// `triggerTurn: false` message is recorded without steering, which a
-		// headless run that is ending never reads, so `triggerTurn: true` is
-		// the only delivery that reaches the agent in every mode — and it is
-		// spent on the first dispatch of a consultation, because steering
-		// again is what makes the loop.
-		//
-		// `display: false` leaves interactive rendering to the notification
-		// beside it, which a headless session never sees.
-		//
-		// Whether to wait for the run a steer starts is read from the session
-		// right after the send. Pi from 0.80.4, where `agent_settled` arrived,
-		// through 0.86 starts that run before the send returns, so the session
-		// is no longer idle and the dispatch waits for the run's own settle.
-		// Pi 0.87.0 defers the run until every settled handler has returned and
-		// finishes it before the session reads idle; a dispatch that waited
-		// there would hold the settle open for good, and every later prompt and
-		// triggered message with it. The probe goes when the peer floor
-		// reaches 0.87.0.
-		let steered: Promise<void> | undefined;
+		// Pi refuses nothing here, so a hook's refusal is delivered rather than
+		// obeyed: each line becomes a session entry the next model request
+		// reads, and a `display: false` one leaves interactive rendering to the
+		// notification beside it, which a headless session never sees.
+		const said: CustomMessageEntryDraft[] = [];
 		const say = (content: string) => {
-			if (!stopHookActive) steeredThisRun = true;
-			pi.sendMessage({ customType: "kendex-hook", content, display: false }, { triggerTurn: !stopHookActive });
-			// Armed only once the steer went out: a send that threw starts
-			// no run, and a wait on a settle that never comes hangs Pi.
-			if (!stopHookActive && !ctx.isIdle()) steered ??= new Promise<void>((resolve) => steerers.add(resolve));
+			said.push({ type: "custom_message", customType: "kendex-hook", content, display: false });
 			if (ctx.hasUI) ctx.ui.notify(content, "warning");
 		};
 
 		// `Stop` and `TaskCompleted` take no matcher on Claude Code either, so
 		// every registration on this listener covers the response. The payload
 		// is Claude Code's, `stop_hook_active` included, and it is true exactly
-		// when this dispatch is running because the last one steered — which is
-		// what the field is for: a hook reading it knows it is already the
-		// reason the agent kept going, and can stand down the way it does on
-		// Claude Code. It also carries the model's `context_window`, which Pi
-		// alone has to hand over: its session file never names one.
+		// when this dispatch is running because the last one asked for the
+		// continuation, which is what the field is for: a hook reading it knows
+		// it is already the reason the agent kept going, and can stand down the
+		// way it does on Claude Code. It also carries the model's
+		// `context_window`, which Pi alone has to hand over: its session file
+		// never names one.
 		const run = await runListener(
 			TURN_END_LISTENER,
 			undefined,
@@ -350,20 +314,20 @@ export default function piHooks(pi: ExtensionAPI): void {
 		);
 		if (run.unreadable !== undefined) deliver(say, unreadableLine(TURN_END_LISTENER, run.unreadable));
 		report(run.results, ctx, say);
-		await steered;
-		return undefined;
+		if (said.length === 0) return undefined;
+		// Chained after what earlier handlers proposed, and `continue` is
+		// returned only as `true`: a `false` here would cancel another
+		// handler's continuation.
+		const entries = [...event.entries, ...said];
+		if (stopHookActive) return { entries };
+		continued = true;
+		return { entries, continue: true };
 	};
 
-	pi.on("agent_settled", async (_event, ctx: ExtensionContext) => {
-		// Released on every exit of this dispatch, the early return and a throw
-		// included, since the dispatches whose steers caused it may be waiting.
-		const causes = [...steerers];
-		steerers.clear();
-		try {
-			return await consultStop(ctx);
-		} finally {
-			for (const release of causes) release();
-		}
+	pi.on("agent_before_settle", consultStop);
+
+	pi.on("agent_settled", () => {
+		continued = false;
 	});
 
 	pi.on("turn_end", async (_event, ctx: ExtensionContext) => {

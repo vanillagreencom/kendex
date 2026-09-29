@@ -78,10 +78,10 @@ function deliveredContext(stdout: string): string {
  * appears the mailbox watch replaces it and the mail is judged at once, since the
  * `lane-mail send` that made it may have appended before that watch stood.
  * A busy session is left to the
- * lane-mail hooks at its next tool call and turn end. The package lists this
- * entry after `hooks.ts`, and Pi runs handlers in load order, so the settle
- * check runs once the `Stop` registrations have handed over what they will.
- * The package's `enabled` switch is read at each judgement.
+ * lane-mail hooks at its next tool call and turn end. The `Stop`
+ * registrations run at `agent_before_settle`, which Pi fires before
+ * `agent_settled`, so the settle check runs once they have handed over what
+ * they will. The package's `enabled` switch is read at each judgement.
  */
 export default function laneMailWake(pi: ExtensionAPI): void {
 	let ctxRef: ExtensionContext | undefined;

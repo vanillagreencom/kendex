@@ -4,10 +4,8 @@ import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
-import { createAgentSession, DefaultResourceLoader, type ExtensionAPI, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
-
 import { CONFIG_ID, projectCommand, registerRendered, runGit, useIsolatedGitEnv } from "./harness.ts";
+import { startSession } from "./pi-session.ts";
 
 /**
  * An overseer's mail reaches a Pi lane through the lane's own Pi session, run
@@ -18,9 +16,8 @@ import { CONFIG_ID, projectCommand, registerRendered, runGit, useIsolatedGitEnv 
  * names one, and answers everything else at once.
  *
  * The turn before the mail ends on a `Stop` hook that speaks, the ending the
- * lanes that never woke had in common. Its run is deferred until the settle is
- * over, and a carrier that waited for it inside the settle held the session
- * in that settle for good, so no wake of any kind started a turn.
+ * lanes that never woke had in common: a carrier that held the session inside
+ * its settle left no wake of any kind able to start a turn.
  */
 
 useIsolatedGitEnv();
@@ -126,26 +123,6 @@ function entryPaths(entries: Row["entries"], name: string): string[] {
 	return [join(copy, "hooks.ts"), wake];
 }
 
-/** The lane's model: it runs the command an opening `RUN: ` prompt names, and ends every other turn at once. */
-function scriptedModel(pi: ExtensionAPI, prompts: string[]): void {
-	const core = createFauxCore({ api: "lane-wake-faux", provider: "lane-wake-faux", models: [{ id: "lane", contextWindow: 200_000, maxTokens: 1_000 }] });
-	const answer = (context: { messages: { role: string; content: unknown }[] }) => {
-		const last = context.messages[context.messages.length - 1]!;
-		const text = typeof last.content === "string" ? last.content : (last.content as { type: string; text?: string }[]).map((part) => part.text ?? "").join("\n");
-		prompts.push(`${last.role}: ${text}`);
-		if (last.role === "user" && text.startsWith("RUN: ")) return fauxAssistantMessage([fauxToolCall("bash", { command: text.slice(5) })], { stopReason: "toolUse" });
-		return fauxAssistantMessage([fauxText("done")]);
-	};
-	core.setResponses(Array.from({ length: 30 }, () => answer));
-	pi.registerProvider("lane-wake-faux", {
-		api: core.api as never,
-		baseUrl: "http://lane-wake.invalid",
-		apiKey: "unused",
-		streamSimple: core.streamSimple as never,
-		models: [{ id: "lane", name: "lane", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200_000, maxTokens: 1_000 }],
-	});
-}
-
 /** The nearest directory to a lane's mailbox that stands when its session starts. */
 type Stands = "mailbox" | "tmp" | "root";
 
@@ -206,32 +183,8 @@ for (const row of rows) {
 		const saved = { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PI_SUBAGENT_CHILD_AGENT: process.env.PI_SUBAGENT_CHILD_AGENT };
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		if (row.subagent) process.env.PI_SUBAGENT_CHILD_AGENT = "reviewer-correctness";
-		const paths = entryPaths(row.entries, name);
-		const resourceLoader = new DefaultResourceLoader({
-			cwd: lane,
-			agentDir,
-			noExtensions: true,
-			noSkills: true,
-			noPromptTemplates: true,
-			noThemes: true,
-			noContextFiles: true,
-			additionalExtensionPaths: paths,
-			extensionFactories: [(pi) => scriptedModel(pi, prompts)],
-		});
-		await resourceLoader.reload();
-		const { session } = await createAgentSession({
-			cwd: lane,
-			agentDir,
-			resourceLoader,
-			sessionManager: SessionManager.inMemory(lane),
-			settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }),
-			tools: ["bash"],
-		});
+		const session = await startSession({ cwd: lane, agentDir, paths: entryPaths(row.entries, name), prompts });
 		try {
-			// What every Pi mode does before its first prompt: it emits
-			// session_start, where extensions start what they hold open.
-			await session.bindExtensions({});
-			await session.setModel(session.modelRuntime.getModel("lane-wake-faux", "lane")!);
 			// The busy row's one tool call appends the directive, then runs
 			// on for longer than the judge takes, so a wake that did not wait
 			// for the session to be idle would hand the mail over first.
@@ -282,13 +235,3 @@ for (const row of rows) {
 		}
 	}, MAIL_INTERVAL_MS * 4);
 }
-
-/**
- * Pi runs handlers in load order, and the settle check has to read the mailbox
- * after the `Stop` registrations have handed over what they will, or a lane
- * whose turn-end hook already handed it its mail is woken for it again.
- */
-test("the mailbox wake loads after the carrier", () => {
-	const manifest = JSON.parse(readFileSync(join(PACKAGE, "package.json"), "utf8")) as { pi: { extensions: string[] } };
-	expect(manifest.pi.extensions).toEqual(["./extensions/hooks.ts", "./extensions/lane-mail-wake.ts"]);
-});

@@ -13,11 +13,24 @@ const settle = useSettledSessions();
 /**
  * The Pi event the carrier reads the `turn_end` registry key on. `Stop` and
  * `TaskCompleted` are Claude Code's end of a response, and Pi's `turn_end` is
- * inside the tool loop — one per LLM turn — so the registry is dispatched from
- * `agent_settled`, the point Pi documents as "will not continue running
- * automatically". The key kendex renders under is unchanged.
+ * inside the tool loop, one per LLM turn, so the registry is dispatched from
+ * `agent_before_settle`, the final boundary of a run, where a handler can ask
+ * for one more model request. The key kendex renders under is unchanged.
  */
-const SETTLED_LISTENER = "agent_settled";
+const SETTLE_LISTENER = "agent_before_settle";
+
+/** An `agent_before_settle` event as Pi hands it to a handler: what earlier
+ * handlers proposed, nothing by default. */
+function boundary(entries: unknown[] = [], proceed = false): Record<string, unknown> {
+	return { type: SETTLE_LISTENER, entries, continue: proceed, outcome: "completed" };
+}
+
+/** The entry the carrier appends for one line a `Stop` hook said. */
+function stopEntry(content: string): Record<string, unknown> {
+	return { type: "custom_message", customType: "kendex-hook", content, display: false };
+}
+
+type BoundaryAnswer = { entries: { content: string }[]; continue?: boolean } | undefined;
 
 /** A committed git repository, so a rendered guard's own registration resolves
  * the way it does in a real project. */
@@ -33,7 +46,7 @@ function customCommand(log: string, stderr: string, exitCode: number): string {
 	return `cat >> ${JSON.stringify(log)}; echo ${JSON.stringify(stderr)} >&2; exit ${exitCode}`;
 }
 
-/** The `Stop` payload one `agent_settled` dispatch writes to a hook's stdin. */
+/** The `Stop` payload one `agent_before_settle` dispatch writes to a hook's stdin. */
 function stopPayload(stopHookActive: boolean): string {
 	return JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive, session_id: SESSION_ID });
 }
@@ -91,25 +104,20 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 	/** `Stop` and `TaskCompleted` take no matcher on Claude Code, so a matcher
 	 * on this listener covers the turn rather than deciding a hook does not
 	 * run — the registration below carries one no turn could ever equal. */
-	test("a registered Stop hook runs whatever its matcher says, and steers what it said", async () => {
+	test("a registered Stop hook runs whatever its matcher says, and asks for one continuation with what it said", async () => {
 		const project = initCleanRustRepo("pi-hooks-turn-end-");
 		const log = join(project, "stop.log");
 		try {
 			const carrier = installCarrier();
-			const onSettled = carrier.handler(SETTLED_LISTENER);
+			const onSettle = carrier.handler(SETTLE_LISTENER);
 
-			await onSettled({}, trusted(project));
-			expect(carrier.sent).toHaveLength(0);
+			expect(await onSettle(boundary(), trusted(project))).toBeUndefined();
 			expect(readLog(log)).toBe("");
 
 			registerRendered(join(project, ".pi"), TURN_END_LISTENER, "Bash", customCommand(log, "audit=unpushed", 2));
-			await onSettled({}, trusted(project));
-			expect(carrier.sent).toHaveLength(2);
-			expect(carrier.sent[0]!.message.content).toBe("audit=unpushed");
-			// Since pi#8022 only `triggerTurn: true` reaches a headless run
-			// that is ending, which is the whole delivery available here.
-			expect(carrier.sent[0]!.options).toEqual({ triggerTurn: true });
-			expect(readLog(log)).toBe(stopPayload(false) + stopPayload(true));
+			expect(await onSettle(boundary(), trusted(project))).toEqual({ entries: [stopEntry("audit=unpushed")], continue: true });
+			expect(carrier.sent).toHaveLength(0);
+			expect(readLog(log)).toBe(stopPayload(false));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
@@ -130,7 +138,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 			];
 			for (const row of rows) {
 				rmSync(log, { force: true });
-				await installCarrier().handler(SETTLED_LISTENER)({}, trusted(project, { getContextUsage: () => row.usage }));
+				await installCarrier().handler(SETTLE_LISTENER)(boundary(), trusted(project, { getContextUsage: () => row.usage }));
 				expect(JSON.parse(readLog(log))).toEqual({ hook_event_name: "Stop", stop_hook_active: false, session_id: SESSION_ID, ...row.fields });
 			}
 		} finally {
@@ -147,10 +155,10 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 		try {
 			registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, `cat >> ${JSON.stringify(log)}; exit 0`);
 			process.env.PI_SUBAGENT_CHILD_AGENT = "reviewer-correctness";
-			await installCarrier().handler(SETTLED_LISTENER)({}, trusted(project));
+			await installCarrier().handler(SETTLE_LISTENER)(boundary(), trusted(project));
 			expect(readLog(log)).toBe("");
 			delete process.env.PI_SUBAGENT_CHILD_AGENT;
-			await installCarrier().handler(SETTLED_LISTENER)({}, trusted(project));
+			await installCarrier().handler(SETTLE_LISTENER)(boundary(), trusted(project));
 			expect(readLog(log)).toBe(stopPayload(false));
 		} finally {
 			delete process.env.PI_SUBAGENT_CHILD_AGENT;
@@ -159,89 +167,41 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 	});
 
 	/**
-	 * Steering makes the agent answer, and that answer settles — so a dispatch
-	 * that steers asks to be run again over on-disk state nothing changed. The
-	 * steer is therefore spent once per consultation, and the dispatch it
-	 * caused says `stop_hook_active: true`, which is the field a `Stop` hook
-	 * reads to know it is already the reason the agent kept going. Without
-	 * both, a hook that never bails — or a registry that will not parse, which
-	 * needs no hook at all — drives an unattended run forever.
+	 * A continuation makes the agent answer over on-disk state nothing
+	 * changed, so the carrier asks for one per response: the dispatch before
+	 * the run it asked for settles says `stop_hook_active: true`, which is the
+	 * field a `Stop` hook reads to know it is already the reason the agent
+	 * kept going, and records what it is told without asking again. Without
+	 * both, a hook that never bails, or a registry that will not parse, which
+	 * needs no hook at all, drives an unattended run forever. Each dispatch
+	 * keeps what an earlier handler proposed and never cancels its
+	 * continuation, and a settle ends the response whether or not the
+	 * continuation ran to its own boundary.
 	 */
-	test("the settle a steer caused does not steer again, and tells the hook it is the reason", async () => {
+	test("the dispatch a continuation caused asks for none, and tells the hook it is the reason", async () => {
 		const project = initCleanRustRepo("pi-hooks-turn-end-bound-");
 		const log = join(project, "bound.log");
 		try {
 			const carrier = installCarrier();
-			const onSettled = carrier.handler(SETTLED_LISTENER);
+			const onSettle = carrier.handler(SETTLE_LISTENER);
+			const onSettled = carrier.handler("agent_settled");
 			registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, customCommand(log, "audit=dirty", 2));
+			const prior = { type: "custom", customType: "other-extension" };
 
-			await onSettled({}, trusted(project));
-			expect(carrier.sent).toHaveLength(2);
-			expect(carrier.sent[0]!.options).toEqual({ triggerTurn: true });
-			expect(carrier.sent[1]!.options).toEqual({ triggerTurn: false });
+			expect(await onSettle(boundary(), trusted(project))).toEqual({ entries: [stopEntry("audit=dirty")], continue: true });
+			const second = await onSettle(boundary([prior], true), trusted(project)) as BoundaryAnswer;
+			expect(second).toEqual({ entries: [prior, stopEntry("audit=dirty")] });
+			expect(second).not.toHaveProperty("continue");
 			expect(readLog(log)).toBe(stopPayload(false) + stopPayload(true));
+			onSettled({ type: "agent_settled" }, trusted(project));
 
-			// And a settle this carrier did not cause is a new consultation:
-			// the second dispatch steered nothing, so nothing followed from it.
-			await onSettled({}, trusted(project));
-			expect(carrier.sent).toHaveLength(4);
-			expect(carrier.sent[2]!.options).toEqual({ triggerTurn: true });
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	/**
-	 * Print mode disposes the runtime once the prompt it awaited returns, so
-	 * the steered run and the settle it ends in have to be over by then, on
-	 * both shapes of Pi. Before 0.87 the run starts before the send returns
-	 * and nobody awaits it, so the dispatch that steered waits for that settle,
-	 * or the follow-on reads a ctx that throws. From 0.87 Pi runs it after the
-	 * dispatch returns, so a dispatch that waited would never return. A steer
-	 * whose send threw starts no run, and nothing waits for one.
-	 */
-	for (const shape of ["immediate", "deferred"] as const) {
-		test(`the steered run settles before disposal, and the dispatch returns (${shape} Pi)`, async () => {
-			const project = initCleanRustRepo("pi-hooks-turn-end-print-");
-			const log = join(project, "print.log");
-			try {
-				registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, customCommand(log, "audit=stop-hook-words", 2));
-				const carrier = installCarrier(undefined, undefined, shape);
-				await carrier.handler(SETTLED_LISTENER)({}, trusted(project));
-				carrier.invalidate();
-				expect(carrier.sent.map((call) => [call.message.content, call.options])).toEqual([
-					["audit=stop-hook-words", { triggerTurn: true }],
-					["audit=stop-hook-words", { triggerTurn: false }],
-				]);
-				expect(readLog(log)).toBe(stopPayload(false) + stopPayload(true));
-				expect(carrier.errors).toEqual([]);
-
-				const unsent = installCarrier(() => { throw new Error("session-bound pi is stale"); }, undefined, shape);
-				await unsent.handler(SETTLED_LISTENER)({}, trusted(project));
-				expect(unsent.sent).toHaveLength(1);
-			} finally {
-				rmSync(project, { recursive: true, force: true });
-			}
-		});
-	}
-
-	/**
-	 * Settles overlap before 0.87: another extension's triggered run can settle
-	 * while a speaking hook is still running. Both dispatches steer before the
-	 * run either steer joined settles, and that one settle has to release both,
-	 * or the dispatch left waiting holds Pi's prompt open for good.
-	 */
-	test("two overlapping dispatches that both steer are both released by the settle that follows", async () => {
-		const project = initCleanRustRepo("pi-hooks-turn-end-overlap-");
-		try {
-			registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, customCommand(join(project, "overlap.log"), "audit=overlap", 2));
-			let bothSteered!: () => void;
-			const held = new Promise<void>((resolve) => { bothSteered = resolve; });
-			let sends = 0;
-			const carrier = installCarrier(() => { if (++sends === 2) bothSteered(); }, () => held, "immediate");
-			const onSettled = carrier.handler(SETTLED_LISTENER);
-			await Promise.all([onSettled({}, trusted(project)), onSettled({}, trusted(project))]);
-			expect(carrier.sent.map((call) => call.options)).toEqual([{ triggerTurn: true }, { triggerTurn: true }, { triggerTurn: false }]);
+			// A response whose continuation Pi ended before its boundary, an
+			// abort, settles all the same, and the next response is its own.
+			rmSync(log, { force: true });
+			expect(await onSettle(boundary(), trusted(project))).toEqual({ entries: [stopEntry("audit=dirty")], continue: true });
+			onSettled({ type: "agent_settled" }, trusted(project));
+			expect(await onSettle(boundary(), trusted(project))).toEqual({ entries: [stopEntry("audit=dirty")], continue: true });
+			expect(readLog(log)).toBe(stopPayload(false) + stopPayload(false));
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
@@ -337,21 +297,19 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 		writePiConfig(project, { sessionDriftCheck: false });
 		try {
 			const carrier = installCarrier();
-			const onSettled = carrier.handler(SETTLED_LISTENER);
+			const onSettle = carrier.handler(SETTLE_LISTENER);
 			const onToolResult = carrier.handler(TOOL_RESULT_LISTENER);
 			const onSessionStart = carrier.handler(SESSION_START_LISTENER);
 			registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, "exit 0");
 
 			// The control: the same fixture, readable.
-			await onSettled({}, trusted(project));
-			expect(carrier.sent).toHaveLength(0);
+			expect(await onSettle(boundary(), trusted(project))).toBeUndefined();
 			expect(await onToolResult(toolResultEvent("bash", { command: "ls" }, "ok"), trusted(project))).toBeUndefined();
 
 			writeFileSync(join(project, ".pi", "kendex", "hooks.json"), '{"hooks": {"turn_end": [');
-			await onSettled({}, trusted(project));
-			expect(carrier.sent).toHaveLength(2);
-			expect(carrier.sent[0]!.message.content.split("\n")[0]).toBe(`hook-registry-unreadable=${TURN_END_LISTENER}`);
-			expect(carrier.sent[0]!.message.content).toContain(TURN_END_LISTENER);
+			const settled = await onSettle(boundary(), trusted(project)) as BoundaryAnswer;
+			expect(settled?.continue).toBe(true);
+			expect(settled?.entries[0]?.content.split("\n")[0]).toBe(`hook-registry-unreadable=${TURN_END_LISTENER}`);
 
 			// The same rule on its two sibling call sites, which have their own
 			// channel: the tool result the model reads, and the session's
@@ -364,9 +322,8 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 
 			onSessionStart({ type: "session_start", reason: "startup" }, trusted(project));
 			await settle();
-			expect(carrier.sent).toHaveLength(3);
-			expect(carrier.sent[2]!.message.content.split("\n")[0]).toBe(`hook-registry-unreadable=${SESSION_START_LISTENER}`);
-			expect(carrier.sent[2]!.message.content).toContain(SESSION_START_LISTENER);
+			expect(carrier.sent).toHaveLength(1);
+			expect(carrier.sent[0]!.message.content.split("\n")[0]).toBe(`hook-registry-unreadable=${SESSION_START_LISTENER}`);
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
@@ -460,7 +417,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 						carrier.handler(SESSION_START_LISTENER)({ type: "session_start", reason: "resume" }, trusted(project));
 						await settle();
 					} else {
-						await carrier.handler(SETTLED_LISTENER)({}, trusted(project));
+						await carrier.handler(SETTLE_LISTENER)(boundary(), trusted(project));
 					}
 					if (on) expect(JSON.parse(readLog(log))).toEqual(listener === SESSION_START_LISTENER
 						? { hook_event_name: "SessionStart", source: "resume", session_id: SESSION_ID }
@@ -482,7 +439,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 	 */
 	for (const row of [
 		{ listener: TOOL_RESULT_LISTENER, event: toolResultEvent("bash", { command: "ls" }, "ok"), logged: JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command: "ls" }, tool_response: "ok", session_id: SESSION_ID }) },
-		{ listener: TURN_END_LISTENER, event: {}, logged: stopPayload(false) + stopPayload(true) },
+		{ listener: TURN_END_LISTENER, event: boundary(), logged: stopPayload(false) },
 		{ listener: SESSION_START_LISTENER, event: { reason: "resume" }, logged: JSON.stringify({ hook_event_name: "SessionStart", source: "resume", session_id: SESSION_ID }) },
 	]) {
 		test(`untrusted project stays silent on ${row.listener}, global hook answers`, async () => {
@@ -494,16 +451,17 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 				registerRendered(join(project, ".pi"), row.listener, undefined, customCommand(log, "project-hook=ran", 2));
 				registerRendered(agentDir, row.listener, undefined, customCommand(globalLog, "global-hook=ran", 2));
 				const carrier = installCarrier();
-				const handler = row.listener === TURN_END_LISTENER ? SETTLED_LISTENER : row.listener;
+				const handler = row.listener === TURN_END_LISTENER ? SETTLE_LISTENER : row.listener;
 				const result = await carrier.handler(handler)(row.event, { cwd: project, isProjectTrusted: () => false, sessionManager }) as { content: { text: string }[] } | undefined;
 				await settle();
 				expect(readLog(log)).toBe("");
 				expect(readLog(globalLog)).toBe(row.logged);
 				if (row.listener === TOOL_RESULT_LISTENER) expect(result?.content.at(-1)?.text).toBe("global-hook=ran");
-				else expect(carrier.sent).toEqual((row.listener === TURN_END_LISTENER ? [true, false] : [false]).map((triggerTurn) => ({
-					message: { customType: "kendex-hook", content: "global-hook=ran", display: row.listener === SESSION_START_LISTENER },
-					options: { triggerTurn },
-				})));
+				else if (row.listener === TURN_END_LISTENER) expect(result).toEqual({ entries: [stopEntry("global-hook=ran")], continue: true });
+				else expect(carrier.sent).toEqual([{
+					message: { customType: "kendex-hook", content: "global-hook=ran", display: true },
+					options: { triggerTurn: false },
+				}]);
 			} finally {
 				rmSync(join(agentDir, "kendex"), { recursive: true, force: true });
 				rmSync(globalLog, { force: true });

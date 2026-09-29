@@ -2,6 +2,11 @@
 
 ## Consumer-impacting changes
 
+### 0.15.0
+
+- **Requires Pi 0.87.0 or later.** The declared Pi peer range names 0.87.0 as its floor. On an older Pi, a registered `Stop` or `TaskCompleted` hook does not run.
+- A `Stop` or `TaskCompleted` hook that speaks now reaches the agent through Pi's own settle boundary, `agent_before_settle`. Its words are added to the session and Pi runs one more model request inside the same run. The hooks run again at the end of that request with `stop_hook_active: true`, and what they say then is recorded without another request. Before, the carrier sent a message that started a second run after the first had settled, so one prompt settled twice. The hook payload is unchanged.
+
 ### 0.14.0
 
 - A session started below the home directory no longer takes a marked folder above home for its project, so it reads project hooks and settings from the same place kendex renders them. The walk up stops at home; a `.kendex-lock.json` at home still makes home the project.

@@ -250,8 +250,9 @@ pub fn installable(harness: HarnessId) -> bool {
 ///
 /// The carrier dispatches every key here, and a key on one side alone is a
 /// hook kendex labels enforced with nothing to run it (KEN-941, KEN-1189).
-/// Only `tool_call` gates, and `turn_end` is read on `agent_settled`, which
-/// fires per response rather than per turn: `docs/adapters/pi.md` has both.
+/// Only `tool_call` gates, and `turn_end` is read on `agent_before_settle`,
+/// which fires per response rather than per turn: `docs/adapters/pi.md` has
+/// both.
 pub fn pi_listener(event: &str) -> Option<&'static str> {
     match event {
         "PreToolUse" => Some("tool_call"),
