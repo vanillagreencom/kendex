@@ -65,9 +65,10 @@ function realpathOrResolve(path: string): string {
  * The project this session is in, or `undefined` where it is in none —
  * `crates/core/src/discover.rs::project_root_from`: the walk stops at home,
  * a `.kendex-lock.json` wins, home's own included, otherwise the nearest
- * ancestor below home carrying a marker directory. Home itself is not a
- * project however else it is marked, since home carries `.pi/` for nearly
- * everyone, and nothing above it answers for a start below it.
+ * ancestor carrying a marker directory. Home itself is not a project however
+ * else it is marked, since home carries `.pi/` for nearly everyone, and
+ * nothing above it answers for a start below it; a start outside home walks
+ * to the filesystem root.
  */
 export function projectRoot(cwd: string): string | undefined {
 	const home = realpathOrResolve(homedir());

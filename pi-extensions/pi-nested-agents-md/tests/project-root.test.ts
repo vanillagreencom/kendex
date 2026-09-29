@@ -17,8 +17,9 @@ process.stdout.write(JSON.stringify(projectRoot(process.argv[1]) ?? null));
 }
 
 // The directory above home carries markers, the way a real home does when
-// TMPDIR sits inside it. The walk stops at home, so it never answers; a lock
-// at home still does, as the renderer's own walk has it.
+// TMPDIR sits inside it. The walk stops at home, so neither those markers nor
+// a lock beside them answers; a lock at home does, as the renderer's own walk
+// has it.
 test("the walk stops at home, and a home lock answers", () => {
 	const outer = realpathSync(mkdtempSync(join(tmpdir(), "nested-agents-md-home-")));
 	try {
@@ -29,6 +30,9 @@ test("the walk stops at home, and a home lock answers", () => {
 		mkdirSync(join(home, "notes"));
 		expect(projectRootUnder(home, join(home, "notes"))).toBeNull();
 		expect(projectRootUnder(home, home)).toBeNull();
+
+		writeFileSync(join(outer, PROJECT_LOCK_FILE), "{}\n");
+		expect(projectRootUnder(home, join(home, "notes"))).toBeNull();
 
 		writeFileSync(join(home, PROJECT_LOCK_FILE), "{}\n");
 		expect(projectRootUnder(home, join(home, "notes"))).toBe(home);

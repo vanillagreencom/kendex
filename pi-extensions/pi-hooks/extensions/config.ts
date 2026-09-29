@@ -94,10 +94,11 @@ function realpathOrResolve(path: string): string {
  * The project this session is in, or `undefined` where it is in none —
  * `crates/core/src/discover.rs::project_root_from`, which is what kendex asks
  * before it renders anything: the walk stops at home, a `.kendex-lock.json`
- * wins, home's own included, otherwise the nearest ancestor below home carrying
- * a marker directory. Home itself is not a project however else it is marked,
- * and nothing above it answers for a start below it. Home carries `.pi/` for
- * nearly everyone, and Pi's own global root lives inside it.
+ * wins, home's own included, otherwise the nearest ancestor carrying a marker
+ * directory. Home itself is not a project however else it is marked, and
+ * nothing above it answers for a start below it; a start outside home walks to
+ * the filesystem root. Home carries `.pi/` for nearly everyone, and Pi's own
+ * global root lives inside it.
  *
  * Walking rather than taking `cwd` is what makes a session started in a
  * subdirectory read the same settings and run the same guards as one at the

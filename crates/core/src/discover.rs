@@ -71,8 +71,8 @@ pub fn may_be_a_project_root(dir: &Path, home: &Path) -> bool {
 ///
 /// Home is the boundary for the reason [`may_be_a_project_root`] refuses
 /// it: a project above home holds home, and with it the personal scope's
-/// own directories. So a marker above home never answers for a start
-/// below it. A start outside home walks to the filesystem root.
+/// own directories. So nothing above home, marker or lock, answers for a
+/// start below it. A start outside home walks to the filesystem root.
 ///
 /// The walk and the `home` test run in `std::fs::canonicalize`'s spelling,
 /// and `paths::reduced` speaks only for the answer. Reducing each end
@@ -362,7 +362,8 @@ mod tests {
     /// above home carries `.claude` and `.agents`, the way a real home
     /// does when `TMPDIR` sits inside it: a walk from below home that
     /// climbed past it would answer with that directory, and only the
-    /// start outside home does.
+    /// start outside home does. A lock at the fixture root, above home,
+    /// is held to the same stop.
     #[test]
     fn project_root_walks_up_to_home_and_lock_file_wins_at_home() {
         let app = "home/dev/app";
@@ -378,6 +379,7 @@ mod tests {
                 &["../../.kendex-lock.json"][..],
                 Some("home"),
             ),
+            ("home/dev", "sub", &["../../../.kendex-lock.json"][..], None),
             ("home/dev/app/sub", "sub", &markers[..], Some(app)),
             ("home/dev/app/sub", "sub", &markers[1..], Some("home/dev")),
         ] {
