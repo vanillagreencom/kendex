@@ -36,14 +36,16 @@
 #             gate_green, ci_green, armed (armed, else queued), merged
 #   missing   the stamps that are null
 #   target    seconds, pull request open to merge, by class, from the table
-#             `--help` prints last: the owner's open-to-merge figures
+#             `--help` prints last
 #   actual    merged minus launched, lane launch to merge; the rollup reads it
 #   open      merged minus pr_opened, pull request open to merge
 #   verdict   met, miss (open over target), unmeasured (pr_opened or merged
 #             missing), or unclassified (the classifier gave no class)
-#   phase     the longest gap between two consecutive stamps in time order,
-#             named by the stamp that ends it; the earliest wins a tie. Null
-#             while any stamp is missing, since a missing stamp joins two gaps
+#   phase     the longest gap between two consecutive stamps in time order
+#             among pr_opened and the stamps after it, the span the verdict
+#             judges, named by the stamp that ends it; the earliest wins a
+#             tie. Null while any of those stamps is missing, since a missing
+#             stamp joins two gaps
 #   gate waits  the gap that ends at gate_green, split into the waits it
 #             holds, which sum to it:
 #               paused      the lane was parked or walled: the lane record's
@@ -325,12 +327,13 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
   | (if $stamps.pr_opened == null or $stamps.merged == null then null
      else ($stamps.merged | fromdate) - ($stamps.pr_opened | fromdate) end) as $open
   | [$stamps | to_entries[] | select(.value == null) | .key] as $missing
-  | ([$stamps | to_entries[] | select(.value != null) | {name: .key, at: (.value | fromdate)}]
-     | sort_by(.at)) as $seq
-  | (if ($missing | length) > 0 then {phase: null, secs: null} else
+  | [$stamps | to_entries[] | select(.key | IN("launched", "first_commit") | not)] as $judged
+  | (if any($judged[]; .value == null) then null
+     else [$judged[] | {name: .key, at: (.value | fromdate)}] | sort_by(.at) end) as $seq
+  | (if $seq == null then {phase: null, secs: null} else
        [range(1; $seq | length) as $i | {phase: $seq[$i].name, secs: ($seq[$i].at - $seq[$i - 1].at)}]
        | sort_by(- .secs) | first end) as $dominant
-  | ($seq | map(.name) | index("gate_green")) as $gate
+  | (if $seq == null then null else $seq | map(.name) | index("gate_green") end) as $gate
   | (if ($missing | length) > 0 or $gate == 0 or $t.push_times == null then null
      else gate_waits($seq[$gate - 1].at; $seq[$gate].at) end) as $waits
   | {pr: $t.pr, class: $class, class_cause: (if $cause == "" then null else $cause end),

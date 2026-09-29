@@ -308,8 +308,9 @@ printf small > "$CASE/class"
 timeline 1100
 edit_json "$CASE/state/workflow-state-oversee.json" '(.lanes[] | select(.item == "KEN-1")).launched_at = null'
 got="$(record KEN-1 standard)"
-assert_eq "$(field verdict "$got") $(field actual "$got") $(field open "$got") $(field missing "$got")" "verdict=met actual=- open=980 missing=launched" \
-  "a lane with no launch stamp has no actual, and its open span is still judged"
+assert_eq "$(field verdict "$got") $(field actual "$got") $(field open "$got") $(field phase "$got") $(field missing "$got")" \
+  "verdict=met actual=- open=980 phase=merged missing=launched" \
+  "a lane with no launch stamp has no actual, and its open span is still judged and names its phase"
 
 new_case no-open
 printf small > "$CASE/class"
@@ -319,15 +320,15 @@ got="$(record KEN-1 standard)"
 assert_eq "$(field verdict "$got") $(field open "$got") $(field missing "$got")" "verdict=unmeasured open=- missing=pr_opened" \
   "a PR with no open stamp is unmeasured, never met"
 
-echo "=== which phase dominates is read from the stamps ==="
+echo "=== which phase dominates is read from the PR's open span ==="
 new_case phase
 printf small > "$CASE/class"
 jq -n --arg merge "$MERGE" --arg fc "$(at 900)" --arg cr "$(at 960)" --arg gate "$(at 1000)" --arg ci "$(at 1010)" --arg m "$(at 1100)" \
   '{pr: 7, merge_commit: $merge, stamps: {first_commit: $fc, created: $cr, last_push: $cr, first_gate_met: null,
     gate_met: $gate, ci_green: $ci, armed: null, queued: $gate, merged: $m}, push_times: [], bot_review_times: []}' > "$CASE/timeline.json"
 assert_eq "$(record KEN-3 micro)" \
-  "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1800 actual=1100 open=140 verdict=met phase=first_commit phase_secs=900 cause=- bot_wait=40 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true refixed=-" \
-  "launch to first commit dominates, queued stands in for armed, a micro tier merged small escaped, and no gate pass leaves refixed unknown, a timeline with no rounds no pr_rounds"
+  "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1800 actual=1100 open=140 verdict=met phase=merged phase_secs=90 cause=- bot_wait=40 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true refixed=-" \
+  "launch to first commit, the lane's longest gap, is outside the open span and names no phase; queued stands in for armed, a micro tier merged small escaped, and no gate pass leaves refixed unknown, a timeline with no rounds no pr_rounds"
 
 echo "=== the gate_green phase is split into the waits it holds ==="
 # gate_timeline PUSHES REVIEWS MERGED: a PR whose gate_green gap, opened at
@@ -416,21 +417,24 @@ assert_eq "$(state '[.lanes[] | has("cycle")] | any')" "false" "and no refusal w
 # conjunct has a row it alone decides, and a control below that plants its
 # removal against that row.
 #   m   a miss at 5000 s, its longest gap ending at merged
-#   f   a miss whose first commit at 4000 s makes that gap the phase
+#   p   a miss whose first commit at 2400 s is the lane's longest gap, before
+#       the PR opens at 2460 s; the longest gap after it ends at gate_green
 #   n   a miss with CI green absent, so no phase is named
 #   ok  a met record at 800 s, its phase merged too
 #   g   a miss on gate_green whose longest wait is the thread fix
 #   w   the same miss with a wall over that wait
 echo "=== the repeat-miss bar ==="
 repeat_row() { # CASE SEQUENCE — prints the bar lines the last record printed
-  local step kind item got="" armed
+  local step kind item got=""
   new_case "$1"
   printf micro > "$CASE/class"
   for step in $2; do
     kind="${step%%:*}" item="KEN-${step#*:}"
     case "$kind" in
       m) timeline 5000 ;;
-      f) timeline 5000; edit_json "$CASE/timeline.json" ".stamps.first_commit = \"$(at 4000)\"" ;;
+      p) timeline 4360
+         edit_json "$CASE/timeline.json" ".stamps |= (.first_commit = \"$(at 2400)\" | .created = \"$(at 2460)\"
+           | .gate_met = \"$(at 3400)\" | .ci_green = \"$(at 3700)\" | .armed = \"$(at 3800)\")" ;;
       n) timeline 5000; edit_json "$CASE/timeline.json" '.stamps.ci_green = null' ;;
       ok) timeline 800 ;;
       g) gate_timeline "100 1400" "400 1500 2000" 3200 ;;
@@ -444,7 +448,8 @@ repeat_row() { # CASE SEQUENCE — prints the bar lines the last record printed
 REPEAT_ROWS='third|m:1 m:2 m:3|repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3 causes=-,-,-
 met-record|m:1 m:2 m:3 ok:4|
 met-not-counted|ok:1 m:2 m:3|
-other-phase|m:1 m:2 f:3|
+other-phase|m:1 m:2 p:3|
+pre-open|p:1 p:2 p:3|repeat-miss phase=gate_green items=KEN-1,KEN-2,KEN-3 causes=bot_wait,bot_wait,bot_wait
 unnamed-phase|n:1 n:2 n:3|
 recorded-again|m:1 m:2 m:3 m:3|
 fourth|m:1 m:2 m:3 m:4|
@@ -495,9 +500,10 @@ Review rounds per pull request: micro 1, small 1, standard 2; seconds per round:
   "the last two help lines are the merge-time and review-stage target tables"
 
 # --- controls ----------------------------------------------------------------
-# One planted defect per surface: the record and rollup verbs of oversee-cycle
-# and the lane_item_state it reads rounds through, each in a private copy of
-# that one file among links to the shipped scripts, beside the same stubs.
+# Planted defects in the record verb's target comparison, the span its verdict
+# judges and the stamps its phase reads, the rollup verb, and the
+# lane_item_state it reads rounds through, each in a private copy of that one
+# file among links to the shipped scripts, beside the same stubs.
 control() { # NAME FILE ANCHOR REPLACEMENT — sets RUN_BIN to the mutant's oversee-cycle
   local dir
   dir="$(mutant_scripts "skills/$1" "$2")" || exit 1
@@ -516,6 +522,10 @@ new_case c-open; printf micro > "$CASE/class"; timeline 2000
 edit_json "$CASE/timeline.json" ".stamps.created = \"$(at 900)\""
 assert_eq "$(field verdict "$(record KEN-1 micro)")" "verdict=miss" \
   "control: judged on launch to merge, a slow launch to PR opened records a miss"
+
+control m-phase oversee-cycle 'select(.key | IN("launched", "first_commit") | not)' 'select(true)'
+assert_eq "$(repeat_row c-phase "p:1 p:2 p:3")" "repeat-miss phase=first_commit items=KEN-1,KEN-2,KEN-3 causes=-,-,-" \
+  "control: read over the whole lane, a miss is charged to launch to first commit"
 
 control m-rollup oversee-cycle '| if $n == 0 then "-" else $a[(($n * $p) | ceil) - 1] end;' '| if $n == 0 then "-" else $a[(($n * $p) | floor) - 1] end;'
 new_case c-rollup
