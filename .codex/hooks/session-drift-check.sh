@@ -228,9 +228,10 @@ notice() { # KEY VALUE
       # or one under a package manager's prefix whose manager it cannot name.
       # The installer would put a second copy beside a package-managed one,
       # so it is no keyed route; it is named only in the sentence for that
-      # refusal. install.sh writes into the first of ~/.local/bin or
-      # /usr/local/bin on PATH, not where the old copy is, so the user checks
-      # the version a new shell runs. The hook does not judge the owner
+      # refusal. install.sh writes into ~/.local/bin when it is on PATH,
+      # else /usr/local/bin when that is, else ~/.local/bin; it never reads
+      # where the old copy is, so the user checks the version a new shell
+      # runs. The hook does not judge the owner
       # itself: `kendex update` is that judge.
       printf 'session-drift-check: install=kendex update\n'
       printf 'This kendex predates the check --report-only flag this hook runs, so drift status is unknown. Update kendex with the command above, then start a new session.\n'
