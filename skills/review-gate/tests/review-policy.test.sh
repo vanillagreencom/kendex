@@ -150,6 +150,43 @@ a malformed class policy does not stand in for the lock setting|main|render:none
 any other value is refused|v1.2.0|UNSET|2:policy-lock-kendex
 ROWS
 
+# Must-fail control: the verb is answered before the class policy is read.
+# The mutant moves the whole dispatch, unchanged, to just after the policy
+# parse, and the malformed-policy row must then read the parse's refusal.
+LATE="$TMP/late"
+package "$LATE" review-gate harness-ci orch
+LATE_POLICY="$LATE/review-gate/scripts/review-policy"
+LATE_START='if [ "${1:-}" = "--lock-kendex" ]; then'
+LATE_BEFORE='if [ "${1:-}" = "--review-bots" ]; then'
+assert_eq "$(grep -Fxc -- "$LATE_START" "$LATE_POLICY" || true):$(grep -Fxc -- "$LATE_BEFORE" "$LATE_POLICY" || true)" \
+  "1:1" "control: the --lock-kendex dispatch and the line after the parse are there once"
+if [ -L "$LATE_POLICY" ]; then
+  bad "control: the mutation source must not be a symlink"
+else
+  # Literal whole-line matches through the environment, as the marker mutant
+  # below does. The block ends at its first column-one fi.
+  LATE_RC=0
+  MOVE_START="$LATE_START" MOVE_BEFORE="$LATE_BEFORE" awk '
+    $0 == ENVIRON["MOVE_START"] { moving = 1 }
+    moving { held = held $0 "\n"; if ($0 == "fi") { moving = 0; moved++ }; next }
+    $0 == ENVIRON["MOVE_BEFORE"] { printf "%s", held; placed++ }
+    { print }
+    END { if (moved != 1 || placed != 1) exit 1 }' "$LATE_POLICY" >"$TMP/late-policy" || LATE_RC=$?
+  assert_eq "$LATE_RC:$(( $(wc -c <"$TMP/late-policy") ))" "0:$(( $(wc -c <"$LATE_POLICY") ))" \
+    "control: the mutant moves the dispatch once and adds no byte"
+  if cmp -s "$TMP/late-policy" "$LATE_POLICY"; then
+    bad "control: the mutant must move the dispatch"
+  else
+    cat "$TMP/late-policy" >"$LATE_POLICY"
+    LATE_RC=0
+    LATE_OUT="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE REVIEW_GATE_CLASS_POLICY=render:none \
+      REVIEW_GATE_LOCK_KENDEX=main "$LATE_POLICY" --lock-kendex 2>"$TMP/err")" || LATE_RC=$?
+    [ "$LATE_RC" -eq 0 ] || LATE_OUT="$(diagnostic_key)"
+    assert_eq "$LATE_RC:$LATE_OUT" "2:policy-invalid" \
+      "must-fail: a dispatch behind the parse lets a malformed class policy stand in for the lock setting"
+  fi
+fi
+
 echo "=== every shipped statement of the default is the default ==="
 
 # The default review-policy prints is the reference. The shipped settings
