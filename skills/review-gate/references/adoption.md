@@ -110,7 +110,7 @@ The template delta that split the writer into a relay and a converge leg:
 
 - A `request-converge` job (the relay) runs every PR-attached leg; the `write` job's `if:` is narrowed to `workflow_dispatch`/`schedule`.
 - **Permissions**: the relay holds `actions: write` and nothing else — no `contents`, no `statuses`, no `issues`. `actions: write` authorizes dispatching **any** workflow in the repo plus cancelling, re-running and deleting runs, logs and artifacts. The relay checks nothing out and executes no PR-controlled code — never add a checkout to this job. The `write` job holds no `actions` scope.
-- **The relay files no rolling escalation issue.** That stays on the `write` job. A sustained dispatch outage is detected through **gate staleness**: `pr-watch.sh --heal` dispatches one writer run per invocation on `gate-stale`. Each relay run's log carries a `::warning::`. For a louder signal, add it to staleness monitoring, not to the relay's scope.
+- **The relay files no rolling escalation issue.** That stays on the `write` job. A sustained dispatch outage is detected through **gate staleness**, which the cron floor converges. Each relay run's log carries a `::warning::`. For a louder signal, add it to staleness monitoring, not to the relay's scope.
 - **`workflow_dispatch` must stay in `on:`** — it is the dispatch target. Dropping it strips every event-fast path down to the cron floor.
 - The opt-in `check_run` trigger ships commented out. To enable it, uncomment the two trigger lines and set the repository variable `REVIEW_GATE_CHECK_RUN_NAME` to the reviewer's check name — the relay's `if:` already reads it, so no expression is hand-edited. An unset variable matches no check name, so the trigger without the variable relays nothing. The step separately refuses to dispatch on a `check_run` naming one of its own three jobs; that refusal is a literal list of the three job `name:` values — if you rename a job in your copy, rename it in the list too.
 - **Check the ruleset first** if it ever named a writer JOB (rather than the gate status context): a required `Evaluate and write the review gate` would block every PR. Require the status context only.
@@ -188,7 +188,7 @@ A repo on the pre-writer machinery deletes, in one PR: its `approval-rerun.yml` 
 
 ## Watching PRs as an agent (pr-watch)
 
-`.agents/skills/review-gate/scripts/pr-watch.sh` is a needs-attention reducer for sessions shepherding one or many PRs. Never watch gate-state *transitions*.
+`.agents/skills/review-gate/scripts/pr-watch.sh` is a needs-attention reducer for sessions shepherding one or many PRs. It reads GitHub's review state alone: unresolved threads, `reviewDecision`, the auto-merge arm and the merge-queue entry. Never watch review-state *transitions*.
 
 Wrap it in whatever wake-up mechanism the harness has — the loop body is always the same:
 
@@ -197,14 +197,14 @@ Wrap it in whatever wake-up mechanism the harness has — the loop body is alway
 # Run it BARE, once; the exit code is the predicate. Never invoke it a
 # second time to build a notification.
 export GH_REPO=your-org/your-repo
-.agents/skills/review-gate/scripts/pr-watch.sh --heal
+.agents/skills/review-gate/scripts/pr-watch.sh
 ```
 
 (The `export` is its own line, not a command prefix.)
 
-Exit 0 = silence (healthy); exit 1 = attention lines on stdout (threads to triage — queued PRs annotated with the dequeue-first warning — objections, a stale gate, a disarmed mergeable PR, reviewer silence past the quiet period, or `head-moved` when a push landed mid-reduction — re-run); exit 2 = a PR could not be read (fail loud, never skipped). `--heal` bounds itself to one writer dispatch per invocation and reports it as an informational `heal-dispatched` line. The orch skill's waiters are the single-PR *foreground* waits; pr-watch is the multi-PR *background* reducer over OPEN PRs only.
+Exit 0 = silence (healthy); exit 1 = attention lines on stdout (threads to triage — queued PRs annotated with the dequeue-first warning — objections, an approved PR nothing will merge, no approval past the quiet period, or `head-moved` when a push landed mid-reduction — re-run); exit 2 = a PR could not be read (fail loud, never skipped). The orch skill's waiters are the single-PR *foreground* waits; pr-watch is the multi-PR *background* reducer over OPEN PRs only.
 
-`--no-evaluate` skips the predicate but still reads threads, queue state, and gate status, so `threads-open`, `disarmed`, and the threads-driven `gate-stale` form still fire; verdict-driven forms need the predicate. `--awaiting-after SECS` replaces the `PR_REVIEW_WAIT_SECS` threshold.
+`--awaiting-after SECS` replaces the `PR_REVIEW_WAIT_SECS` threshold.
 
 ## Verification
 

@@ -1233,7 +1233,7 @@ MERGED='{"state":"MERGED","headRefOid":"abc123","headRefName":"ken-1","autoMerge
 OTHER='{"state":"OPEN","headRefOid":"abc123","headRefName":"ken-2","autoMergeRequest":{"enabledAt":"t"},"mergeStateStatus":"CLEAN"}'
 # The reducer's attention: two kinds on this pull request and one on another,
 # which the refusal must not name.
-printf '7\tabc123\tthreads-open\t1 unresolved\n7\tabc123\tgate-stale\tmismatch\n9\tdef\tdisarmed\t-\n' >"$TMP_ROOT/prwatch-out"
+printf '7\tabc123\tthreads-open\t1 unresolved\n7\tabc123\tchanges-requested\tobjection\n9\tdef\tdisarmed\t-\n' >"$TMP_ROOT/prwatch-out"
 for row in \
   "not-armed|LANE_CLOSE_PR_VIEW=$UNARMED|reason=not-armed pr=7 head=abc123" \
   "merge-state|LANE_CLOSE_PR_VIEW=$BLOCKED|reason=merge-state pr=7 state=BLOCKED" \
@@ -1244,7 +1244,7 @@ for row in \
   "queue-unparsed|LANE_CLOSE_PR_QUEUE={\"data\":null}|reason=queue-read-failed pr=7 cause=payload-unparsed" \
   "provider-unsupported|LANE_CLOSE_STOP_SANDBOX_CHECK_STATUS=2|reason=provider-unsupported host=/host exit=2" \
   "check-unparsed|LANE_CLOSE_STOP_SANDBOX_CHECK_OUT=|reason=provider-unsupported host=/host cause=answer-unparsed" \
-  "attention|LANE_CLOSE_PRWATCH_RC=1;LANE_CLOSE_PRWATCH_OUT=$TMP_ROOT/prwatch-out|reason=attention pr=7 kinds=threads-open,gate-stale" \
+  "attention|LANE_CLOSE_PRWATCH_RC=1;LANE_CLOSE_PRWATCH_OUT=$TMP_ROOT/prwatch-out|reason=attention pr=7 kinds=threads-open,changes-requested" \
   "reducer-failed|LANE_CLOSE_PRWATCH_RC=2|reason=reducer-failed pr=7 exit=2"; do
   IFS='|' read -r name envs expect <<<"$row"
   write_state running codex /host linear owner/repo; write_panes python; working_screen

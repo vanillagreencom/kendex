@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
-# pr-watch — reduce every open PR to normalized needs-attention lines
-# the long-horizon third piece beside the predicate (one
-# head's verdict) and the writer (converge the gate). Those two keep the
-# GATE correct; this one tells the AGENT when a PR needs a hand — a PR
-# sitting steadily at "pending because review threads are open"
-# TRANSITIONS NOTHING, so watchers keyed on gate-state transitions idled
-# for hours over a thread posted minutes after their last pass.
+# pr-watch — reduce every open PR to normalized needs-attention lines, each
+# read from GitHub's own review state: unresolved review threads, the pull
+# request's reviewDecision, its auto-merge arm and its merge-queue entry. A PR
+# sitting steadily over an open thread TRANSITIONS NOTHING, so a watcher keyed
+# on state transitions idles for hours over a thread posted minutes after its
+# last pass; this reducer reports the standing state on every call.
 # The authoritative contract — attention kinds, output format, exit
 # codes, env — is print_usage below: run with --help.
-# Stdout is the whole-text attention protocol consumed by orch oversee-watch:
-# PR number, head prefix, kind, and detail separated by literal tabs. The detail
-# includes the queue and submit-size annotations. Preserve these payloads.
+# Stdout is the whole-text attention protocol consumed by orch oversee-watch
+# and lane-close: PR number, head prefix, kind, and detail separated by
+# literal tabs. The detail includes the queue and submit-size annotations.
+# Preserve these payloads.
 # Global refusals use diagnostic records on stderr, followed by explanation.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/settings.sh
 if [ ! -r "$script_dir/lib/diagnostics.sh" ]; then
   printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$script_dir/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
   exit 2
@@ -24,84 +23,37 @@ fi
   printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$script_dir/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
   exit 2
 }
+# shellcheck source=lib/settings.sh
 . "$script_dir/lib/settings.sh"
 
 print_usage() {
   cat <<'USAGE'
-Usage: pr-watch.sh [PR# ...] [--no-evaluate] [--heal] [--awaiting-after SECS]
+Usage: pr-watch.sh [PR# ...] [--awaiting-after SECS]
 
-Reduce every open PR to normalized needs-attention lines — the
-long-horizon needs-attention reducer beside the predicate (one head's
-verdict) and the writer (converge the gate). One invocation answers: does
-any open PR need attention RIGHT NOW?
+Reduce every open PR to normalized needs-attention lines, read from GitHub's
+review state alone: unresolved review threads, the PR's reviewDecision, its
+auto-merge arm and its merge-queue entry. One invocation answers: does any
+open PR need attention RIGHT NOW?
 
   PR# ...            watch only these PRs (default: every open PR)
-  --no-evaluate      cheap mode: skips ONLY the predicate (the expensive
-                     multi-read evaluation) — the thread, queue, and
-                     gate-status reads still run, so threads-open,
-                     disarmed, and the threads-driven gate-stale (a green
-                     gate over open threads under enforced threads — no
-                     predicate needed) all fire; the verdict-driven
-                     gate-stale forms, changes-requested, and
-                     awaiting-stale need the predicate and do not
-  --heal             on gate-stale, dispatch the writer workflow once per
-                     invocation (name: PR_WATCH_WRITER_WORKFLOW, default
-                     "Review gate writer")
   --awaiting-after S override the awaiting-stale threshold (default: the
                      PR_REVIEW_WAIT_SECS setting, else 900)
 
 Attention kinds:
-  threads-open       unresolved review threads — read DIRECTLY in both
-                     modes, never only via the predicate (a repo running
-                     REVIEW_GATE_THREADS=off gets approved verdicts with
-                     threads open, and thread transitions have no webhook
-                     anywhere). Counted across pages (bound: 20 pages /
-                     2000 threads); past the bound, or on pagination
-                     metadata that cannot advance, the count fails CLOSED
-                     as attention. QUEUED PRs are annotated — a queued PR
-                     needs a DEQUEUE before any fix push; GitHub rejects
-                     pushes to queued branches
-  changes-requested  a standing objection blocks the gate
-  untracked-claim    a thread whose newest disposition reply claims
-                     tracking and names no issue; only a later Fixed in
-                     <sha>, Declined: <reason>, or Tracked: <issue> reply
-                     clears it. Needs the predicate (evaluate mode only)
-  suppressed-findings a review body carrying a `Suppressed comments (N)` or
-                     `Previously missed (N)` block at the commit the gate
-                     relies on — the head, or the carry base once carry
-                     supplies the evidence: findings the reviewer wrote into
-                     its own body instead of posting as comments, so NO
-                     thread carries them and the thread count above reads
-                     zero. The line names the count and the file:line entries
-                     still unanswered. An entry is answered by an issue
-                     comment from the PR author that carries a line
-                     `Dispositions at <sha>` naming this head, the one thing
-                     that binds it, and opens a line per entry with that
-                     entry's own file:line token, bare as this line prints it
-                     or bold or backticked as the review body does, followed
-                     by Fixed in <sha>, Declined: <reason>, or Tracked:
-                     <issue>. Also fires when the block cannot be read whole,
-                     which fails closed the same way. Needs the predicate
-                     (evaluate mode only)
-  unreasoned-decline a thread whose newest disposition reply declines and
-                     names no mechanism — an empty reason, or nothing but
-                     non-reason tokens (frozen, cap, round N, tests pass,
-                     out of scope, pre-existing and the like). Read by
-                     shape, so a decline without the colon counts too.
-                     Cleared by a reply naming a passing state, a false
-                     premise, or an excluded class with the fact that puts
-                     it there. Needs the predicate (evaluate mode only)
-  gate-stale         the predicate and the gate context's newest row
-                     disagree, in either mismatch direction — the writer
-                     has not converged (event missed, cron slipped). With
-                     --heal, one writer dispatch per invocation self-heals
-                     it. On kendex/lock, the rolling branch kendex's
-                     lock-record tool opens for the install record alone,
-                     an approved verdict over a gate that is not success
-                     also names a second possible cause: the writer's lock
-                     kendex lagging the kendex that recorded the record
-  disarmed           gate open (success) on an un-queued PR with auto-merge
-                     NOT armed — mergeable, but nothing will merge it (the
+  threads-open       unresolved review threads, which the base branch's
+                     thread rule holds the merge on. Counted across pages
+                     (bound: 20 pages / 2000 threads); past the bound, or on
+                     pagination metadata that cannot advance, the count
+                     fails CLOSED as attention. QUEUED PRs are annotated — a
+                     queued PR needs a DEQUEUE before any fix push; GitHub
+                     rejects pushes to queued branches. While a thread
+                     stands, the PR reports neither disarmed nor
+                     awaiting-stale: answering the thread comes first
+  changes-requested  reviewDecision CHANGES_REQUESTED: a standing objection
+                     holds the merge. Reported beside threads-open
+  disarmed           reviewDecision APPROVED, or null where the base's rules
+                     require no review, on an open, un-queued, non-draft PR
+                     with auto-merge NOT armed — nothing will merge it (the
                      known eviction-disarm failure mode). The line also
                      carries the size orch's branch-size-check recorded for
                      this head branch at submit (workflow state
@@ -112,25 +64,25 @@ Attention kinds:
                      verdict other than pass is named, so a branch over its
                      test allowance is not read off a passing production
                      ratio — read only, never re-measured, refusing nothing
-  awaiting-stale     no evidence and the head has sat unreviewed longer
-                     than the quiet period (PR_REVIEW_WAIT_SECS, default
-                     900) — time for a manual re-review trigger or the
-                     caller's on-timeout policy
-  heal-dispatched    informational companion to a healed gate-stale: the
-                     one bounded writer dispatch of this invocation fired
+  awaiting-stale     reviewDecision REVIEW_REQUIRED and the head has sat
+                     unapproved longer than the quiet period
+                     (PR_REVIEW_WAIT_SECS, default 900), counted from the
+                     newest of the head commit, the PR's creation, and a
+                     ready-for-review, reopen or re-review-request event.
+                     Drafts are never reported. Time for a re-review trigger
+                     or the fallback approval
   head-moved         the head changed while this PR was being reduced —
                      the findings (or the silence) describe the OLD head;
                      re-run. Attention, not an error: the race is
                      ordinary, the response is one more poll
-  error              this PR could not be evaluated (predicate exit 2 /
-                     read failure) — fail LOUD, never silently skipped. A
-                     predicate failure carries the first
-                     review-gate-error=KEY value=VALUE line it printed
+  error              this PR could not be reduced (a read failed or
+                     answered malformed data) — fail LOUD, never silently
+                     skipped
 
-A verdict of awaiting inside the quiet period, and approved+success with
-auto-merge armed or queued, are healthy states and emit NOTHING — silence
-on stdout means "nothing needs you", which is what makes the exit code a
-cheap loop/cron predicate.
+REVIEW_REQUIRED inside the quiet period, and an approved PR with auto-merge
+armed or queued, are healthy states and emit NOTHING — silence on stdout
+means "nothing needs you", which is what makes the exit code a cheap
+loop/cron predicate.
 
 Output: one tab-separated line per finding on stdout:
   <pr-number> <TAB> <head-sha-8> <TAB> <kind> <TAB> <detail>
@@ -155,9 +107,10 @@ record stale rather than as this PR's size
 Consumers: orch's workflows treat this as the single state reducer for
 multi-PR watching (orch's approval-wait remains the single-PR foreground
 wait with on-timeout policy; orch's oversee consumes it through
-oversee-watch); harness wake-up mechanisms (a monitor loop, cron, a
-scheduler) wrap it in a few lines instead of re-deriving state keys per
-session — the wrap-in-anything loop lives in references/adoption.md.
+oversee-watch, and lane-close reads its silence before a park); harness
+wake-up mechanisms (a monitor loop, cron, a scheduler) wrap it in a few
+lines instead of re-deriving state keys per session — the wrap-in-anything
+loop lives in references/adoption.md.
 USAGE
 }
 
@@ -172,14 +125,10 @@ if [ -z "${GH_REPO:-}" ]; then
   exit 2
 fi
 
-EVALUATE=1
-HEAL=0
 AWAITING_AFTER=""
 PR_ARGS=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --no-evaluate) EVALUATE=0 ;;
-    --heal) HEAL=1 ;;
     --awaiting-after)
       shift
       AWAITING_AFTER="${1:-}"
@@ -210,45 +159,15 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 2
-if [ -z "$GATE_CONTEXT" ]; then
-  rg_message error watch-context-empty "$GATE_CONTEXT" "::error::pr-watch: REVIEW_GATE_CONTEXT is explicitly empty — the predicate rejects this configuration and so does the watcher (cheap mode would otherwise search for an empty context)" >&2
-  exit 2
-fi
-THREADS_TERM="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 2
-# REVIEW_GATE_MODE=off: the predicate answers approved unconditionally and
-# the writer keeps the gate green BY DESIGN, so the merge-enabling
-# stale-green class (green gate over open threads) is the designed state,
-# not a writer miss — same suppression as REVIEW_GATE_THREADS=off. Every
-# other class stands: threads-open stays real attention (a server-side
-# thread ruleset can still block the merge), pending-gate staleness still
-# heals (the writer should converge to the disabled-success), and the
-# predicate's own verdict arms never fire spuriously (it answers approved).
-# Validation parity with the predicate: an unknown value refuses reduction.
-GATE_MODE="$(rg_setting REVIEW_GATE_MODE "enforce")" || exit 2
-case "$GATE_MODE" in
-  enforce|off) ;;
-  *)
-    rg_message error watch-mode-invalid "$GATE_MODE" "::error::pr-watch: invalid REVIEW_GATE_MODE value '$GATE_MODE' (enforce|off) — refusing to reduce against unknown gate semantics" >&2
-    exit 2
-    ;;
-esac
-case "$THREADS_TERM" in
-  enforce|off) ;;
-  *)
-    rg_message error watch-threads-invalid "$THREADS_TERM" "::error::pr-watch: invalid REVIEW_GATE_THREADS value '$THREADS_TERM' (enforce|off) — refusing to reduce against unknown enforcement semantics" >&2
-    exit 2
-    ;;
-esac
 if [ -z "$AWAITING_AFTER" ]; then
   AWAITING_AFTER="$(rg_setting PR_REVIEW_WAIT_SECS "900")" || exit 2
-  # Fail-loud, same as --awaiting-after and every REVIEW_GATE config error:
-  # a typo ("90s") must never silently become the 900 default — a silent
-  # fallback CHANGES the review-silence policy the operator thinks they set.
-  # Digit-only AND bounded: a digit string beyond Bash's integer range
-  # (e.g. 20 digits) passes a pure [!0-9] check but then errors inside the
-  # later [ -gt ] comparisons — swallowed by the if, silently disabling the
-  # awaiting-stale alert. 9 digits (~31 years) is bound enough.
+  # Fail-loud, same as --awaiting-after: a typo ("90s") must never silently
+  # become the 900 default — a silent fallback CHANGES the review-silence
+  # policy the operator thinks they set. Digit-only AND bounded: a digit
+  # string beyond Bash's integer range (e.g. 20 digits) passes a pure [!0-9]
+  # check but then errors inside the later [ -gt ] comparisons — swallowed by
+  # the if, silently disabling the awaiting-stale alert. 9 digits (~31 years)
+  # is bound enough.
   case "$AWAITING_AFTER" in
     ''|*[!0-9]*)
       rg_message error watch-wait-setting-invalid "$AWAITING_AFTER" "::error::pr-watch: PR_REVIEW_WAIT_SECS must be a non-negative integer, got '$AWAITING_AFTER'" >&2
@@ -262,7 +181,6 @@ if [ -z "$AWAITING_AFTER" ]; then
     exit 2
   fi
 fi
-WRITER_WORKFLOW="${PR_WATCH_WRITER_WORKFLOW:-Review gate writer}"
 # Read as the file orch's schema documents, not through orch's own
 # workflow-state CLI: orch calls this reducer, so calling back would close a
 # loop, and a PR is not the issue key that CLI addresses state by.
@@ -270,7 +188,6 @@ SIZE_STATE_DIR="${ORCH_STATE_DIR:-tmp}"
 
 attention=0
 errored=0
-healed=0
 
 emit() { # pr, head, kind, detail
   printf '%s\t%s\t%s\t%s\n' "$1" "$(printf %.8s "$2")" "$3" "$4"
@@ -329,78 +246,81 @@ size_note() { # branch, head -> the annotation, prefixed for the detail
   printf ' — %s' "$note"
 }
 
-heal() { # pr, head — one bounded writer dispatch ATTEMPT per invocation
-  [ "$HEAL" = "1" ] || return 0
-  [ "$healed" = "0" ] || return 0
-  # The attempt is recorded BEFORE the outcome: during an API/workflow
-  # outage a per-stale-PR retry storm would violate the once-per-invocation
-  # bound the docs promise.
-  healed=1
-  if gh workflow run "$WRITER_WORKFLOW" --repo "$GH_REPO" >/dev/null 2>&1; then
-    emit "$1" "$2" heal-dispatched "writer workflow '$WRITER_WORKFLOW' dispatched (once per invocation)"
-  else
-    emit "$1" "$2" error "writer dispatch failed for '$WRITER_WORKFLOW'"
-    errored=1
-  fi
-}
 
+# Queue membership and GitHub's review decision, in one read. The answer is
+# two words: queued or unqueued, then APPROVED, CHANGES_REQUESTED,
+# REVIEW_REQUIRED, or NONE for the null reviewDecision of a base whose rules
+# require no review. GraphQL errors, a missing field, or a value outside
+# either enum is a malformed read, never an unqueued or unreviewed PR: read
+# as unqueued it would print a false disarmed line and drop the dequeue note.
+REVIEW_STATE_QUERY='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){isInMergeQueue mergeQueueEntry{position} reviewDecision}}}'
+REVIEW_STATE_JQ='if ((.errors? // []) | length) > 0 then error("graphql errors present")
+  else .data.repository.pullRequest as $p
+  | if ($p | type) != "object"
+       or (($p.isInMergeQueue | type) != "boolean")
+       or ((($p.mergeQueueEntry | type) != "null") and (($p.mergeQueueEntry | type) != "object"))
+       or (($p | has("reviewDecision")) | not)
+       or ((($p.reviewDecision | type) != "null")
+           and (($p.reviewDecision | IN("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED")) | not))
+    then error("malformed review-state envelope")
+    else (if $p.isInMergeQueue or ($p.mergeQueueEntry != null) then "queued" else "unqueued" end)
+         + " " + ($p.reviewDecision // "NONE")
+    end
+  end'
 
-# A merge-enabling green gate over a finding that should have withdrawn it.
-# Report and heal are one call at every site: reporting alone leaves the green
-# gate for the cron floor, healing alone leaves the reader nothing. $queued is
-# the loop's own suffix, WITHDRAWAL_WHY the one reason three sites give.
-stale_gate() { # pr, head, why
-  emit "$1" "$2" gate-stale "$3$queued"
-  heal "$1" "$2"
-}
-WITHDRAWAL_WHY="threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal"
-
-# Why the writer has not written success over an approved verdict. kendex's
-# tools/lock-record opens its rolling pull request on LOCK_RECORD_BRANCH with
-# the install record alone, recorded by a kendex built from the default
-# branch's tree. The writer proves that record's class with a kendex that can
-# lag the tree, so there the pair has a second possible cause beside a writer
-# that has not converged. This script reads only the verdict and the newest
-# gate row, and cannot tell the two apart.
-LOCK_RECORD_BRANCH="kendex/lock"
-approved_stale_why() { # head_ref
-  if [ "$1" = "$LOCK_RECORD_BRANCH" ]; then
-    printf '%s' "the writer has not converged (on $LOCK_RECORD_BRANCH this can also be the writer's lock kendex lagging the recording tree's kendex)"
-  else
-    printf '%s' "the writer has not converged"
-  fi
-}
-
-read_gate_state() { # pr, head — sets gate_state; returns 1 after emitting an error
-  # Gate context's NEWEST row (list endpoint, newest-first — the same
-  # projection the predicate documents for the status surface), read
-  # JUST-IN-TIME at each consumer site: the writer can converge between an
-  # early snapshot and a status-dependent finding, and acting on a stale
-  # row would false-alert gate-stale (plus dispatch churn) or recommend
-  # re-arming from an obsolete success. Fetch and merge are SEPARATE steps
-  # with a zero-byte guard, the engine's required pattern.
-  status_pages="$(gh api "repos/$GH_REPO/commits/$2/statuses?per_page=100" --paginate 2>/dev/null)" || {
-    emit "$1" "$2" error "gate-status read failed"
+read_review_state() { # pr, head, what — sets queued (the annotation) and decision; returns 1 after emitting an error
+  local resp words queue_word
+  resp="$(gh api graphql -f query="$REVIEW_STATE_QUERY" \
+      -f owner="${GH_REPO%%/*}" -f name="${GH_REPO#*/}" -F number="$1" 2>/dev/null)" || {
+    emit "$1" "$2" error "$3 failed"
     errored=1
     return 1
   }
-  if [ -z "$status_pages" ]; then
-    emit "$1" "$2" error "gate-status read produced zero bytes (broken read)"
+  if [ -z "$resp" ]; then
+    emit "$1" "$2" error "$3 produced zero bytes (broken read)"
     errored=1
     return 1
   fi
-  gate_state="$(jq -rs --arg ctx "$GATE_CONTEXT" 'if (length > 0) and all(type == "array")
-      then (add | map(select(.context == $ctx))
-            | if length == 0 then "absent"
-              elif ((.[0].state | type) != "string")
-                   or ((.[0].state | IN("error","failure","pending","success")) | not)
-              then error("row with an invalid state")
-              else .[0].state end)
-      else error("not a status page") end' <<<"$status_pages" 2>/dev/null)" || {
-    emit "$1" "$2" error "gate-status pages are malformed (broken read, or a matching row without a valid error|failure|pending|success state)"
+  words="$(jq -r "$REVIEW_STATE_JQ" <<<"$resp" 2>/dev/null)" || {
+    emit "$1" "$2" error "$3 is malformed (GraphQL errors, a missing field, or a value outside the queue or reviewDecision enums)"
     errored=1
     return 1
   }
+  queue_word="${words%% *}"
+  decision="${words#* }"
+  case "$queue_word" in
+    queued) queued=" (QUEUED: dequeue before pushing)" ;;
+    unqueued) queued="" ;;
+    *)
+      emit "$1" "$2" error "$3 produced no usable sentinel (broken read)"
+      errored=1
+      return 1
+      ;;
+  esac
+  return 0
+}
+# An ISO-8601 UTC timestamp as epoch seconds; non-zero when it does not parse.
+# date -d is GNU; BSD/macOS uses -u -j -f (the -u is load-bearing: the
+# trailing Z is a LITERAL in this format string, so without -u BSD date reads
+# the timestamp in the machine's local zone and the silence clock shifts by
+# the UTC offset in either direction).
+to_epoch() { # timestamp
+  date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null
+}
+
+# Whether the decision read last lets the PR merge on review: APPROVED, or
+# NONE where the base requires no review. The disarmed line names which.
+classify_decision() { # pr, head, where — sets review_met and review_word; returns 1 after emitting an error
+  case "$decision" in
+    APPROVED) review_met=1; review_word="approved (reviewDecision APPROVED)" ;;
+    NONE) review_met=1; review_word="the base requires no review (reviewDecision null)" ;;
+    CHANGES_REQUESTED|REVIEW_REQUIRED) review_met=0; review_word="" ;;
+    *)
+      emit "$1" "$2" error "reviewDecision '$decision' reached the $3 unhandled — read_review_state admits only APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED and NONE"
+      errored=1
+      return 1
+      ;;
+  esac
   return 0
 }
 
@@ -409,9 +329,9 @@ read_gate_state() { # pr, head — sets gate_state; returns 1 after emitting an 
 # reduction time. A snapshot row would be a TOCTOU hazard: a push between
 # the listing and this PR's reduction would leave the loop evaluating an
 # old head (and old auto-merge state) while the queue/thread reads observe
-# the replacement — an approved green OLD head reading as healthy right after
-# an unreviewed push. Same fail-loud page discipline as the writer: a
-# zero-byte or non-array page is a broken read, never an empty repo.
+# the replacement — an approved OLD head reading as healthy right after an
+# unreviewed push. A zero-byte or non-array page is a broken read, never an
+# empty repo.
 if [ -n "$PR_ARGS" ]; then
   pr_numbers="$PR_ARGS"
 else
@@ -429,18 +349,6 @@ else
     rg_message error watch-list-malformed "$GH_REPO" "::error::pr-watch: open-PR listing pages are malformed (broken read or a row without a number)" >&2
     exit 2
   }
-fi
-
-# The predicate's stderr for the PR under evaluation: a failed evaluation
-# names the first keyed line the predicate printed, which is its own cause,
-# rather than a generic read failure.
-PREDICATE_ERR=""
-if [ "$EVALUATE" = "1" ]; then
-  PREDICATE_ERR="$(mktemp "${TMPDIR:-/tmp}/pr-watch-predicate.XXXXXX")" || {
-    rg_message error watch-scratch "${TMPDIR:-/tmp}" "::error::pr-watch: a scratch file for the predicate's diagnostics could not be created" >&2
-    exit 2
-  }
-  trap 'rm -f -- "${PREDICATE_ERR:?}"' EXIT
 fi
 
 # --- per-PR reduction ---------------------------------------------------
@@ -463,7 +371,6 @@ for number in $pr_numbers; do
   fi
   head="$(jq -r '.head.sha' <<<"$row")"
   state="$(jq -r '.state' <<<"$row")"
-  author="$(jq -r '.user.login // ""' <<<"$row")"
   draft="$(jq -r '.draft | tostring' <<<"$row")"
   armed="$(jq -r 'if .auto_merge == null then "false" else "true" end' <<<"$row")"
   created_at="$(jq -r '.created_at' <<<"$row")"
@@ -484,46 +391,16 @@ for number in $pr_numbers; do
       ;;
   esac
 
-  # Queue membership: pushes to a queued PR's branch are rejected, so every
-  # attention line on a queued PR carries the annotation. REQUIRED input —
-  # a failed read silently treated as "not queued" would emit a false
-  # disarmed finding and drop the dequeue warning, so it fails loud like
-  # every other read here.
-  queued="$(gh api graphql -f query="query{repository(owner:\"${GH_REPO%%/*}\",name:\"${GH_REPO#*/}\"){pullRequest(number:$number){isInMergeQueue mergeQueueEntry{position}}}}" \
-      --jq 'if ((.errors? // []) | length) > 0 then error("graphql errors present")
-            elif (.data.repository.pullRequest | type) != "object"
-               or ((.data.repository.pullRequest.isInMergeQueue | type) != "boolean")
-               or ((.data.repository.pullRequest.mergeQueueEntry | type) != "null" and (.data.repository.pullRequest.mergeQueueEntry | type) != "object")
-            then error("malformed queue envelope")
-            elif (.data.repository.pullRequest.isInMergeQueue or (.data.repository.pullRequest.mergeQueueEntry != null))
-            then "queued" else "unqueued" end' 2>/dev/null)" || {
-    emit "$number" "$head" error "merge-queue membership read failed or malformed"
-    errored=1
-    continue
-  }
-  # Explicit sentinels: an EMPTY successful projection is a broken read,
-  # never mistakable for the legitimate unqueued state.
-  case "$queued" in
-    queued) queued=" (QUEUED: dequeue before pushing)" ;;
-    unqueued) queued="" ;;
-    *)
-      emit "$number" "$head" error "merge-queue projection produced no usable sentinel (broken read)"
-      errored=1
-      continue
-      ;;
-  esac
+  # Pushes to a queued PR's branch are rejected, so every attention line on
+  # a queued PR carries the queue annotation this read sets.
+  read_review_state "$number" "$head" "review-state read" || continue
 
-
-  # Threads are read DIRECTLY in BOTH modes, never only through the
-  # predicate: a repo running REVIEW_GATE_THREADS=off gets `approved` from
-  # the predicate with threads open (thread hygiene is server-side there),
-  # and the watcher's whole reason to exist is that thread transitions have
-  # no webhook — the reducer must see them regardless of the repo's
-  # enforcement point. The count PAGINATES (long-lived PRs accumulate
-  # hundreds of RESOLVED threads; failing closed at 100 total made
-  # attention permanent regardless of unresolved count) — the fail-closed
-  # overflow posture now starts at the 20-page/2000-thread bound, or at a
-  # truthy hasNextPage whose cursor cannot advance, matching the predicate.
+  # Thread transitions have no webhook anywhere, which is the watcher's whole
+  # reason to exist. The count PAGINATES (long-lived PRs accumulate hundreds
+  # of RESOLVED threads; failing closed at 100 total made attention permanent
+  # regardless of unresolved count) — the fail-closed overflow posture starts
+  # at the 20-page/2000-thread bound, or at a truthy hasNextPage whose cursor
+  # cannot advance.
   unresolved=0
   overflow=false
   t_cursor=""
@@ -558,9 +435,9 @@ for number in $pr_numbers; do
       t_error="thread read produced zero bytes (broken read)"
       break
     fi
-    # Predicate-parity validation: a node whose isResolved is not a boolean
-    # (or a non-boolean hasNextPage) is a malformed response — counting it
-    # as resolved would report health from untrustworthy data.
+    # A node whose isResolved is not a boolean (or a non-boolean
+    # hasNextPage) is a malformed response — counting it as resolved would
+    # report health from untrustworthy data.
     page_unresolved="$(jq -r 'if ((.errors? // []) | length) > 0 then error("graphql errors present")
         elif (.data.repository.pullRequest.reviewThreads | type) != "object"
            or (.data.repository.pullRequest.reviewThreads.nodes | type) != "array"
@@ -595,6 +472,7 @@ for number in $pr_numbers; do
     errored=1
     continue
   fi
+  threads_open=0
   if [ "$overflow" = "true" ] || [ "$unresolved" -gt 0 ]; then
     if [ "$overflow" = "true" ]; then
       emit "$number" "$head" threads-open "review threads beyond the pagination bound (count overflow — fail closed)$queued"
@@ -602,142 +480,30 @@ for number in $pr_numbers; do
       emit "$number" "$head" threads-open "$unresolved unresolved review thread(s)$queued"
     fi
     attention=1
-    threads_reported=1
-    # A GREEN gate over open threads is the inverse writer miss — the
-    # merge-enabling direction, so it heals, not just reports. ONLY where
-    # the thread term is enforced: under REVIEW_GATE_THREADS=off a green
-    # gate over open threads is the DESIGNED state (thread hygiene is the
-    # server-side ruleset), and flagging it would false-alert and dispatch
-    # the writer on every poll for a status it would only re-affirm.
-    read_gate_state "$number" "$head" || continue
-    stale_green_reported=0
-    if [ "$THREADS_TERM" != "off" ] && [ "$GATE_MODE" != "off" ] && [ "$gate_state" = "success" ]; then
-      stale_gate "$number" "$head" "$WITHDRAWAL_WHY"
-      stale_green_reported=1
-    fi
-    # One line PER FINDING: open threads must not suppress a standing
-    # objection (or, under off, the disarmed nudge) — the predicate's
-    # duplicate threads-open verdict dedupes below.
-  else
-    threads_reported=0
-    stale_green_reported=0
+    threads_open=1
   fi
 
-  if [ "$EVALUATE" = "1" ]; then
-    # Ghost authors (user: null — a deleted account) cannot be evaluated by
-    # the predicate: its author-exclusion terms need a real login and it
-    # exits 2 on an empty one. Name the cause instead of burning the call
-    # on a generic failure — the line is the actionable finding.
-    if [ -z "$author" ]; then
-      emit "$number" "$head" error "PR author is a deleted account (ghost) — the predicate cannot evaluate author-exclusion terms; review and merge this PR manually"
-      errored=1
-      continue
-    fi
-    verdict_line="$(GH_REPO="$GH_REPO" PR_NUMBER="$number" HEAD_SHA="$head" PR_AUTHOR="$author" \
-        "$script_dir/review-predicate.sh" 2>"$PREDICATE_ERR")" || {
-      predicate_cause="$(sed -n '/^review-gate-error=[^ ]* value=/{p;q;}' "$PREDICATE_ERR")" || predicate_cause=""
-      if [ -n "$predicate_cause" ]; then
-        emit "$number" "$head" error "predicate evaluation failed (exit 2 — $predicate_cause)"
-      else
-        emit "$number" "$head" error "predicate evaluation failed (exit 2 — read failure or invalid config)"
-      fi
-      errored=1
-      continue
-    }
-    verdict="$(sed -n 's/^verdict=\([a-z-]*\) .*/\1/p' <<<"$verdict_line")"
-    detail="$(sed -n 's/^verdict=[a-z-]* detail=//p' <<<"$verdict_line")"
-    # The writer validates this same interface; an unknown or empty verdict
-    # from a zero-exit predicate is a broken reducer, never a healthy PR.
-    case "$verdict" in
-      approved|awaiting|threads-open|changes-requested|untracked-claim|unreasoned-decline|suppressed-findings) ;;
-      *)
-        emit "$number" "$head" error "predicate produced no recognizable verdict (broken output)"
-        errored=1
-        continue
-        ;;
-    esac
-  else
-    # Cheap mode skips only the PREDICATE (the expensive multi-read
-    # evaluation): threads above and the gate-status/disarmed reduction
-    # below still run, so the two cheap-mode findings the header documents
-    # are both reachable. gate-stale / changes-requested / awaiting-stale
-    # need the predicate and are evaluate-mode only.
-    verdict=""
-    detail=""
+  # GitHub's reviewDecision is the review verdict: the base's rules count the
+  # approvals, dismiss a stale one on push and name a standing objection. One
+  # line PER FINDING: open threads do not suppress an objection.
+  if [ "$decision" = "CHANGES_REQUESTED" ]; then
+    emit "$number" "$head" changes-requested "a reviewer requested changes (reviewDecision CHANGES_REQUESTED)$queued"
+    attention=1
+    continue
   fi
+  # An open thread holds the merge under the base's thread rule, so neither
+  # a re-arm nudge nor a stale-review nudge applies until it is answered.
+  if [ "$threads_open" = "1" ]; then
+    continue
+  fi
+  classify_decision "$number" "$head" reduction || continue
 
-  # Status-dependent reductions below act on a JUST-READ row (see the
-  # helper's rationale) — cheap-mode reductions included.
-  read_gate_state "$number" "$head" || continue
-
-  case "$verdict" in
-    untracked-claim)
-      emit "$number" "$head" untracked-claim "$detail$queued"
-      attention=1
-      if [ "$gate_state" = "success" ]; then
-        stale_gate "$number" "$head" "an unanchored tracking claim but the newest '$GATE_CONTEXT' row is success — the writer has not converged"
-      fi
-      continue
-      ;;
-    unreasoned-decline)
-      emit "$number" "$head" unreasoned-decline "$detail$queued"
-      attention=1
-      if [ "$gate_state" = "success" ]; then
-        stale_gate "$number" "$head" "a decline naming no mechanism but the newest '$GATE_CONTEXT' row is success — the writer has not converged"
-      fi
-      continue
-      ;;
-    suppressed-findings)
-      emit "$number" "$head" suppressed-findings "$detail$queued"
-      attention=1
-      if [ "$gate_state" = "success" ]; then
-        stale_gate "$number" "$head" "findings written into a review body but the newest '$GATE_CONTEXT' row is success — the writer has not converged"
-      fi
-      continue
-      ;;
-    threads-open)
-      # Already reported from the direct read — dedupe the predicate's
-      # duplicate verdict. Before stopping, re-check the FRESH gate state:
-      # a writer that evaluated before the thread appeared can post success
-      # BETWEEN the two reads, and discarding that would leave a
-      # merge-enabling green gate unhealed until the cron floor.
-      if [ "$threads_reported" = "1" ]; then
-        if [ "$stale_green_reported" = "0" ] && [ "$THREADS_TERM" != "off" ] && [ "$gate_state" = "success" ]; then
-          stale_gate "$number" "$head" "$WITHDRAWAL_WHY"
-        fi
-        continue
-      fi
-      # Direct count was zero but the predicate saw threads (paging race /
-      # mid-read resolution) — the predicate fails closed, so surface it,
-      # WITH the same stale-green companion as the direct path: a
-      # merge-enabling green gate over the raced-in thread must heal.
-      emit "$number" "$head" threads-open "$detail$queued"
-      attention=1
-      # THREADS_TERM guard is belt-and-braces: a predicate/config
-      # inconsistency must not become false stale alerts + dispatch churn.
-      if [ "$THREADS_TERM" != "off" ] && [ "$GATE_MODE" != "off" ] && [ "$gate_state" = "success" ]; then
-        stale_gate "$number" "$head" "$WITHDRAWAL_WHY"
-      fi
-      continue
-      ;;
-    changes-requested)
-      emit "$number" "$head" changes-requested "$detail$queued"
-      attention=1
-      if [ "$gate_state" = "success" ]; then
-        stale_gate "$number" "$head" "a standing objection but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal"
-      fi
-      continue
-      ;;
-  esac
-
-
-  # Disarmed reduction — BOTH modes (the cheap-mode contract includes it):
-  # a gate-open, un-queued, non-draft PR with auto-merge unarmed is
-  # mergeable, but nothing will merge it. Ownership is re-read JUST-IN-TIME
-  # (auto-merge and queue membership both move while the predicate runs —
-  # a queue ejection mid-reduction must not read healthy, and a concurrent
-  # arm must not false-alert).
-  if [ "$gate_state" = "success" ] && [ "$draft" != "true" ]; then
+  # Disarmed: an approved, un-queued, non-draft PR with auto-merge unarmed is
+  # mergeable, but nothing will merge it. Ownership and the decision are
+  # re-read JUST-IN-TIME (auto-merge, queue membership and the approval all
+  # move during a reduction — a queue ejection mid-reduction must not read
+  # healthy, and a concurrent arm must not false-alert).
+  if [ "$review_met" = "1" ] && [ "$draft" != "true" ]; then
     ownership_row="$(gh api "repos/$GH_REPO/pulls/$number" 2>/dev/null)" || {
       emit "$number" "$head" error "auto-merge recheck failed (broken read)"
       errored=1
@@ -747,8 +513,8 @@ for number in $pr_numbers; do
     # null|object (a missing field is null in jq and would silently coerce
     # to unarmed — a false disarmed from a broken envelope), and the row
     # must still describe THE SAME HEAD (a push mid-reduction cleared
-    # auto-merge on a new head; recommending re-arm against stale verdict
-    # and gate reads would arm an unreviewed head).
+    # auto-merge on a new head; recommending re-arm against stale reads
+    # would arm an unreviewed head).
     if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
         and (has("auto_merge"))
         and ((.auto_merge | type) == "null" or ((.auto_merge | type) == "object" and ((.auto_merge.merge_method? // null) | type) == "string"))
@@ -765,12 +531,6 @@ for number in $pr_numbers; do
     if [ "$(jq -r '.state' <<<"$ownership_row")" != "open" ]; then
       continue
     fi
-    # A to-draft conversion reloads draft (the disarmed condition below
-    # already excludes drafts). The verdict-dependent reductions still run
-    # for it — with the awaiting arm's own draft skip applying as usual, so
-    # a drafted PR on the awaiting path exits its iteration there (before
-    # the final head recheck), by the same rule as a PR that was always a
-    # draft.
     draft="$(jq -r '.draft | tostring' <<<"$ownership_row")"
     ownership_head="$(jq -r '.head.sha' <<<"$ownership_row")"
     if [ "$ownership_head" != "$head" ]; then
@@ -779,219 +539,170 @@ for number in $pr_numbers; do
       continue
     fi
     armed="$(jq -r 'if .auto_merge == null then "false" else "true" end' <<<"$ownership_row")"
-    queued_now="$(gh api graphql -f query="query{repository(owner:\"${GH_REPO%%/*}\",name:\"${GH_REPO#*/}\"){pullRequest(number:$number){isInMergeQueue mergeQueueEntry{position}}}}" \
-      --jq 'if ((.errors? // []) | length) > 0 then error("graphql errors present")
-            elif (.data.repository.pullRequest | type) != "object"
-               or ((.data.repository.pullRequest.isInMergeQueue | type) != "boolean")
-               or ((.data.repository.pullRequest.mergeQueueEntry | type) != "null" and (.data.repository.pullRequest.mergeQueueEntry | type) != "object")
-            then error("malformed queue envelope")
-            elif (.data.repository.pullRequest.isInMergeQueue or (.data.repository.pullRequest.mergeQueueEntry != null))
-            then "queued" else "unqueued" end' 2>/dev/null)" || {
-      emit "$number" "$head" error "merge-queue recheck failed or malformed"
-      errored=1
-      continue
-    }
-    case "$queued_now" in
-      queued) queued=" (QUEUED: dequeue before pushing)" ;;
-      unqueued) queued="" ;;
-      *)
-        emit "$number" "$head" error "merge-queue recheck produced no usable sentinel (broken read)"
-        errored=1
-        continue
-        ;;
-    esac
-  fi
-  if [ "$gate_state" = "success" ] && [ "$armed" = "false" ] && [ -z "$queued" ] && [ "$draft" != "true" ]; then
-    # In evaluate mode only a confirmed approved verdict nominates the
-    # disarmed line (an approved gate over an awaiting predicate is the
-    # writer's problem, reported below as the state mismatch it is).
-    if [ "$verdict" = "approved" ]; then
-      emit "$number" "$head" disarmed "gate open but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)$(size_note "$head_ref" "$head")"
-      attention=1
-    elif [ "$EVALUATE" = "0" ]; then
-      # Cheap mode saw only the STATUS — which could itself be the stale
-      # green evaluate mode would classify as gate-stale. Surface the state
-      # but never recommend arming on unconfirmed evidence.
-      emit "$number" "$head" disarmed "gate status reads success but auto-merge is not armed and the PR is not queued — UNCONFIRMED in cheap mode: run evaluate mode (or the predicate) before re-arming$(size_note "$head_ref" "$head")"
+    read_review_state "$number" "$head" "review-state recheck" || continue
+    classify_decision "$number" "$head" recheck || continue
+    if [ "$review_met" = "1" ] && [ "$armed" = "false" ] && [ -z "$queued" ] && [ "$draft" != "true" ]; then
+      emit "$number" "$head" disarmed "$review_word but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)$(size_note "$head_ref" "$head")"
       attention=1
     fi
   fi
 
-  case "$verdict" in
-    approved)
-      if [ "$gate_state" != "success" ]; then
-        attention=1
-        stale_gate "$number" "$head" "predicate says approved but the newest '$GATE_CONTEXT' row is $gate_state — $(approved_stale_why "$head_ref")"
-      fi
-      ;;
-    awaiting)
-      # The INVERSE mismatch is the dangerous one: evidence withdrawn but
-      # the gate still green (merge-enabling). Stale success heals too.
-      if [ "$gate_state" = "success" ]; then
-        attention=1
-        stale_gate "$number" "$head" "predicate says awaiting but the newest '$GATE_CONTEXT' row is still success — withdrawn evidence left a merge-enabling gate"
-      fi
-      # Drafts are not awaiting REVIEW — they are awaiting readiness: the
-      # silence clock skips them (the gate-mismatch check above still
-      # applies), or a long-lived draft pins the watcher at exit 1 asking
-      # for re-reviews nobody owes it.
-      if [ "$draft" = "true" ]; then
-        continue
-      fi
-      # Quiet-period clock: reviewer silence counts from when this head
-      # BECAME the head. GitHub exposes no head-transition timestamp, so
-      # the approximation is max(head commit's committer date, PR
-      # created_at) — the PR floor covers a cherry-picked or long-prepared
-      # commit landing in a freshly opened PR (its commit date can be days
-      # old); a future-dated commit clamps to "not stale yet" rather than
-      # "stale forever" because the age simply goes negative. A push of an
-      # OLD commit onto an old PR still reads stale early — accepted:
-      # over-reporting silence errs toward a nudge, never toward a stall.
-      head_at="$(gh api "repos/$GH_REPO/commits/$head" --jq '.commit.committer.date' 2>/dev/null)" || {
-        emit "$number" "$head" error "head-commit read failed"
+  # Awaiting-stale: no approval of this head within the quiet period. Drafts
+  # are not awaiting REVIEW — they are awaiting readiness: the silence clock
+  # skips them, or a long-lived draft pins the watcher at exit 1 asking for
+  # re-reviews nobody owes it.
+  if [ "$decision" = "REVIEW_REQUIRED" ] && [ "$draft" != "true" ]; then
+    # Quiet-period clock: reviewer silence counts from when this head
+    # BECAME the head. GitHub exposes no head-transition timestamp, so
+    # the approximation is max(head commit's committer date, PR
+    # created_at) — the PR floor covers a cherry-picked or long-prepared
+    # commit landing in a freshly opened PR (its commit date can be days
+    # old); a future-dated commit clamps to "not stale yet" rather than
+    # "stale forever" because the age simply goes negative. A push of an
+    # OLD commit onto an old PR still reads stale early — accepted:
+    # over-reporting silence errs toward a nudge, never toward a stall.
+    head_at="$(gh api "repos/$GH_REPO/commits/$head" --jq '.commit.committer.date' 2>/dev/null)" || {
+      emit "$number" "$head" error "head-commit read failed"
+      errored=1
+      continue
+    }
+    case "$head_at" in
+      ''|null)
+        emit "$number" "$head" error "head commit has no usable committer date (broken read)"
         errored=1
         continue
-      }
-      case "$head_at" in
-        ''|null)
-          emit "$number" "$head" error "head commit has no usable committer date (broken read)"
+        ;;
+    esac
+    head_epoch="$(to_epoch "$head_at")" || head_epoch=""
+    if [ -z "$head_epoch" ]; then
+      emit "$number" "$head" error "head committer date unparsable (broken read) — the silence clock never substitutes the creation time for broken head metadata"
+      errored=1
+      continue
+    fi
+    created_epoch=""
+    if [ -n "$created_at" ] && [ "$created_at" != "null" ]; then
+      created_epoch="$(to_epoch "$created_at")" || created_epoch=""
+      if [ -z "$created_epoch" ]; then
+        emit "$number" "$head" error "PR creation timestamp unparsable (broken read) — the silence floor cannot be computed"
+        errored=1
+        continue
+      fi
+    fi
+    if [ -n "$created_epoch" ] && { [ -z "$head_epoch" ] || [ "$created_epoch" -gt "$head_epoch" ]; }; then
+      head_epoch="$created_epoch"
+    fi
+    if [ -n "$head_epoch" ]; then
+      age=$(( $(date +%s) - head_epoch ))
+      # The committer timestamp is AUTHOR-CONTROLLED: a future-dated head
+      # would keep age negative and read healthy forever — the exact
+      # stall this reducer exists to prevent. Beyond a small skew
+      # allowance it is a loud error, never silence. (created_at is
+      # server-stamped, so the floor above cannot be forged forward past
+      # real PR creation.)
+      if [ "$age" -lt -300 ]; then
+        emit "$number" "$head" error "silence clock is in the future by $(( -age ))s (author-controlled committer timestamp) — silence age unprovable"
+        errored=1
+      elif [ "$age" -gt "$AWAITING_AFTER" ]; then
+        # A draft marked ready keeps its old commit/creation timestamps,
+        # so the first post-readiness poll would read stale instantly.
+        # The readiness event is the true start of the review wait —
+        # consulted only when the cheap clock already says stale (one
+        # timeline read per would-be-stale PR, not per poll).
+        timeline_pages="$(gh api "repos/$GH_REPO/issues/$number/timeline?per_page=100" --paginate \
+            -H "Accept: application/vnd.github+json" 2>/dev/null)" || {
+          emit "$number" "$head" error "timeline read failed while confirming staleness (fail loud, not a stale alert)"
           errored=1
           continue
-          ;;
-      esac
-      # date -d is GNU; BSD/macOS uses -u -j -f (the -u is load-bearing:
-      # the trailing Z is a LITERAL in this format string, so without -u
-      # BSD date reads the timestamp in the machine's local zone and the
-      # silence clock shifts by the UTC offset in either direction).
-      head_epoch="$(date -u -d "$head_at" +%s 2>/dev/null \
-        || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$head_at" +%s 2>/dev/null)" || head_epoch=""
-      if [ -z "$head_epoch" ]; then
-        emit "$number" "$head" error "head committer date unparsable (broken read) — the silence clock never substitutes the creation time for broken head metadata"
-        errored=1
-        continue
-      fi
-      created_epoch=""
-      if [ -n "$created_at" ] && [ "$created_at" != "null" ]; then
-        created_epoch="$(date -u -d "$created_at" +%s 2>/dev/null \
-          || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$created_at" +%s 2>/dev/null)" || created_epoch=""
-        if [ -z "$created_epoch" ]; then
-          emit "$number" "$head" error "PR creation timestamp unparsable (broken read) — the silence floor cannot be computed"
+        }
+        if [ -z "$timeline_pages" ]; then
+          emit "$number" "$head" error "timeline read produced zero bytes while confirming staleness (broken read)"
           errored=1
           continue
         fi
-      fi
-      if [ -n "$created_epoch" ] && { [ -z "$head_epoch" ] || [ "$created_epoch" -gt "$head_epoch" ]; }; then
-        head_epoch="$created_epoch"
-      fi
-      if [ -n "$head_epoch" ]; then
-        age=$(( $(date +%s) - head_epoch ))
-        # The committer timestamp is AUTHOR-CONTROLLED: a future-dated head
-        # would keep age negative and read healthy forever — the exact
-        # stall this reducer exists to prevent. Beyond a small skew
-        # allowance it is a loud error, never silence. (created_at is
-        # server-stamped, so the floor above cannot be forged forward past
-        # real PR creation.)
-        if [ "$age" -lt -300 ]; then
-          emit "$number" "$head" error "silence clock is in the future by $(( -age ))s (author-controlled committer timestamp) — silence age unprovable"
+        # The reviewable period restarts at readiness, at reopening, AND
+        # at a re-review request (the exact action the awaiting-stale
+        # line recommends — without this floor the next poll would nudge
+        # again immediately, forever) — each marks "the review wait
+        # started over" without a new head.
+        # A matching event whose created_at is not a string is malformed
+        # data, not an ignorable row (fail loud, never a stale alert
+        # from untrustworthy input).
+        ready_at="$(jq -rs 'if (length > 0) and all(type == "array")
+            then ([.[] | .[] | select((.event? == "ready_for_review") or (.event? == "reopened") or (.event? == "review_requested"))
+                   | if (.created_at | type) != "string" then error("event without a timestamp") else .created_at end]
+                  | sort | last // "")
+            else error("not a timeline page") end' <<<"$timeline_pages" 2>/dev/null)" || {
+          emit "$number" "$head" error "timeline pages malformed while confirming staleness (fail loud, not a stale alert)"
           errored=1
-        elif [ "$age" -gt "$AWAITING_AFTER" ]; then
-          # A draft marked ready keeps its old commit/creation timestamps,
-          # so the first post-readiness poll would read stale instantly.
-          # The readiness event is the true start of the review wait —
-          # consulted only when the cheap clock already says stale (one
-          # timeline read per would-be-stale PR, not per poll).
-          timeline_pages="$(gh api "repos/$GH_REPO/issues/$number/timeline?per_page=100" --paginate \
-              -H "Accept: application/vnd.github+json" 2>/dev/null)" || {
-            emit "$number" "$head" error "timeline read failed while confirming staleness (fail loud, not a stale alert)"
-            errored=1
-            continue
-          }
-          if [ -z "$timeline_pages" ]; then
-            emit "$number" "$head" error "timeline read produced zero bytes while confirming staleness (broken read)"
+          continue
+        }
+        if [ -n "$ready_at" ] && [ "$ready_at" != "null" ]; then
+          ready_epoch="$(to_epoch "$ready_at")" || ready_epoch=""
+          if [ -z "$ready_epoch" ]; then
+            emit "$number" "$head" error "readiness/reopen timestamp unparsable while confirming staleness (fail loud, not a stale alert)"
             errored=1
             continue
           fi
-          # The reviewable period restarts at readiness, at reopening, AND
-          # at a re-review request (the exact action the awaiting-stale
-          # line recommends — without this floor the next poll would nudge
-          # again immediately, forever) — each marks "the review wait
-          # started over" without a new head.
-          # A matching event whose created_at is not a string is malformed
-          # data, not an ignorable row (fail loud, never a stale alert
-          # from untrustworthy input).
-          ready_at="$(jq -rs 'if (length > 0) and all(type == "array")
-              then ([.[] | .[] | select((.event? == "ready_for_review") or (.event? == "reopened") or (.event? == "review_requested"))
-                     | if (.created_at | type) != "string" then error("event without a timestamp") else .created_at end]
-                    | sort | last // "")
-              else error("not a timeline page") end' <<<"$timeline_pages" 2>/dev/null)" || {
-            emit "$number" "$head" error "timeline pages malformed while confirming staleness (fail loud, not a stale alert)"
+          if [ "$ready_epoch" -gt "$head_epoch" ]; then
+            age=$(( $(date +%s) - ready_epoch ))
+            # Same skew rule as the head clock: a future-dated event must
+            # not buy silent health until wall-clock catches up.
+            if [ "$age" -lt -300 ]; then
+              emit "$number" "$head" error "silence clock is in the future by $(( -age ))s (timeline event timestamp) — silence age unprovable"
+              errored=1
+              continue
+            fi
+          fi
+        fi
+        if [ "$age" -gt "$AWAITING_AFTER" ]; then
+          # Head-bind the stale claim: a push after the initial fetch
+          # would make every timestamp above describe the OLD head while
+          # the new head's quiet period just began. The recheck runs
+          # here (the emission below would skip the end-of-loop one).
+          stale_row="$(gh api "repos/$GH_REPO/pulls/$number" 2>/dev/null)" || {
+            emit "$number" "$head" error "reviewability recheck failed while confirming staleness (broken read)"
             errored=1
             continue
           }
-          if [ -n "$ready_at" ] && [ "$ready_at" != "null" ]; then
-            ready_epoch="$(date -u -d "$ready_at" +%s 2>/dev/null \
-              || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ready_at" +%s 2>/dev/null)" || ready_epoch=""
-            if [ -z "$ready_epoch" ]; then
-              emit "$number" "$head" error "readiness/reopen timestamp unparsable while confirming staleness (fail loud, not a stale alert)"
-              errored=1
-              continue
-            fi
-            if [ "$ready_epoch" -gt "$head_epoch" ]; then
-              age=$(( $(date +%s) - ready_epoch ))
-              # Same skew rule as the head clock: a future-dated event must
-              # not buy silent health until wall-clock catches up.
-              if [ "$age" -lt -300 ]; then
-                emit "$number" "$head" error "silence clock is in the future by $(( -age ))s (timeline event timestamp) — silence age unprovable"
-                errored=1
-                continue
-              fi
-            fi
+          if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
+              and (((.head.sha? // null) | type) == "string" and (.head.sha | test("^[0-9a-fA-F]{40}$")))
+              and ((.state? // null) == "open" or (.state? // null) == "closed")
+              and (has("draft") and (.draft | type) == "boolean")' >/dev/null 2>&1 <<<"$stale_row"; then
+            emit "$number" "$head" error "reviewability recheck returned a malformed PR object while confirming staleness (broken read)"
+            errored=1
+            continue
           fi
-          if [ "$age" -gt "$AWAITING_AFTER" ]; then
-            # Head-bind the stale claim: a push after the initial fetch
-            # would make every timestamp above describe the OLD head while
-            # the new head's quiet period just began. The recheck runs
-            # here (the emission below would skip the end-of-loop one).
-            stale_row="$(gh api "repos/$GH_REPO/pulls/$number" 2>/dev/null)" || {
-              emit "$number" "$head" error "reviewability recheck failed while confirming staleness (broken read)"
-              errored=1
-              continue
-            }
-            if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
-                and (((.head.sha? // null) | type) == "string" and (.head.sha | test("^[0-9a-fA-F]{40}$")))
-                and ((.state? // null) == "open" or (.state? // null) == "closed")
-                and (has("draft") and (.draft | type) == "boolean")' >/dev/null 2>&1 <<<"$stale_row"; then
-              emit "$number" "$head" error "reviewability recheck returned a malformed PR object while confirming staleness (broken read)"
-              errored=1
-              continue
-            fi
-            # Closed or drafted mid-reduction: does not awaiting review —
-            # silence, per the same rules as the initial reduction.
-            if [ "$(jq -r '.state' <<<"$stale_row")" != "open" ] || [ "$(jq -r '.draft' <<<"$stale_row")" = "true" ]; then
-              continue
-            fi
-            stale_head_now="$(jq -r '.head.sha' <<<"$stale_row")"
-            if [ "$stale_head_now" != "$head" ]; then
-              emit "$number" "$head" head-moved "the head changed during this reduction (now $(printf %.8s "$stale_head_now")) — findings describe the old head; re-run"
-              attention=1
-              continue
-            fi
-            emit "$number" "$head" awaiting-stale "no review evidence for ${age}s (quiet period ${AWAITING_AFTER}s) — trigger a re-review or apply the on-timeout policy$queued"
+          # Closed or drafted mid-reduction: not awaiting review —
+          # silence, per the same rules as the initial reduction.
+          if [ "$(jq -r '.state' <<<"$stale_row")" != "open" ] || [ "$(jq -r '.draft' <<<"$stale_row")" = "true" ]; then
+            continue
+          fi
+          stale_head_now="$(jq -r '.head.sha' <<<"$stale_row")" || stale_head_now=""
+          if [ -z "$stale_head_now" ]; then
+            emit "$number" "$head" error "reviewability recheck head could not be read while confirming staleness (broken read)"
+            errored=1
+            continue
+          fi
+          if [ "$stale_head_now" != "$head" ]; then
+            emit "$number" "$head" head-moved "the head changed during this reduction (now $(printf %.8s "$stale_head_now")) — findings describe the old head; re-run"
             attention=1
+            continue
           fi
+          emit "$number" "$head" awaiting-stale "no approval for ${age}s (reviewDecision REVIEW_REQUIRED, quiet period ${AWAITING_AFTER}s) — trigger a re-review, or apply the fallback approval$queued"
+          attention=1
         fi
-      else
-        # Neither timestamp parsed: silence age is unprovable, and
-        # unprovable must never read as healthy (fail-loud contract).
-        emit "$number" "$head" error "silence clock has no parsable timestamp (head commit and created_at both unusable) — silence age unprovable"
-        errored=1
       fi
-      ;;
-  esac
+    else
+      # Neither timestamp parsed: silence age is unprovable, and
+      # unprovable must never read as healthy (fail-loud contract).
+      emit "$number" "$head" error "silence clock has no parsable timestamp (head commit and created_at both unusable) — silence age unprovable"
+      errored=1
+    fi
+  fi
 
   # Final head recheck — only when this PR would otherwise report healthy:
   # a push DURING the reduction leaves every read above describing the old
-# head, and silence would claim the new, unreviewed head needs nothing.
+  # head, and silence would claim the new, unreviewed head needs nothing.
   # A moved head is attention (re-run), never silence.
   if [ "$emitted_this_pr" = "0" ]; then
     head_now="$(gh api "repos/$GH_REPO/pulls/$number" --jq '.head.sha' 2>/dev/null)" || {

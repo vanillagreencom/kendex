@@ -18,10 +18,7 @@
 #
 # Neither verdict's consumers are here, and neither is checked by presence:
 # review-writer.test.sh runs both through the writer, w8/w8b for
-# unreasoned-decline and w9/w9b for untracked-claim, and pr-watch.test.sh
-# runs both through the reducer under `the predicate's disposition verdicts
-# reach the reducer` — the kind column, the attention exit, the stale-green
-# companion and the heal dispatch.
+# unreasoned-decline and w9/w9b for untracked-claim.
 #
 # The fixtures are tests/corpus/, not literals in here, and adding a label
 # starts there. Each label is paired with the real reason that must

@@ -107,7 +107,7 @@ Keys a repo decides: [references/adoption.md](references/adoption.md) § Keys a 
 
 ## 4. Operations
 
-**Watching one or many PRs without stalling.** Never key a hand-rolled monitor on gate-state transitions. Run `.agents/skills/review-gate/scripts/pr-watch.sh` (optionally `--heal`) on the harness's wake-up mechanism: silence + exit 0 means nothing needs you; attention lines name exactly what does. See [Watching PRs as an agent](references/adoption.md#watching-prs-as-an-agent-pr-watch).
+**Watching one or many PRs without stalling.** Never key a hand-rolled monitor on review-state transitions. Run `.agents/skills/review-gate/scripts/pr-watch.sh` on the harness's wake-up mechanism: it reads GitHub's review state alone, and silence + exit 0 means nothing needs you; attention lines name exactly what does. See [Watching PRs as an agent](references/adoption.md#watching-prs-as-an-agent-pr-watch).
 
 **A pull request drew no automatic review.** The automatic reviewer is armed by a branch ruleset, and a base outside that ruleset's target set never draws one. Request the review by hand with `gh pr edit <PR#> --add-reviewer @copilot`. The target set, the ruleset parameters, and the fallbacks when the manual request draws nothing: [references/automatic-review.md](references/automatic-review.md).
 
@@ -141,6 +141,6 @@ Carry-forward never creates evidence or bypasses a fail-closed term. Objections 
 - `scripts/review-predicate.sh`: evaluate one head or validate config. `--help`
 - `scripts/review-policy`: map the shared classifier's answer to the configured review evidence policy. `--help`
 - `scripts/review-writer.sh`: `workflow_dispatch` and `schedule` evaluate and converge every open PR; `merge_group` posts one queue success, while `WRITER_READ_ONLY=1` is a no-op. Its header documents the workflow-only contract.
-- `scripts/pr-watch.sh`: reduce open PRs to attention lines. `--help`
+- `scripts/pr-watch.sh`: reduce open PRs to attention lines read from GitHub's review state. `--help`
 
 Engine selftests run in kendex CI ([DEVELOPMENT.md](DEVELOPMENT.md)). Re-vendor PRs: [references/vendored-paths.md](references/vendored-paths.md).

@@ -18,56 +18,55 @@ assert_eq() {
   fi
 }
 
-# Sandbox: the real pr-watch + real settings lib + a stubbed predicate.
+# Sandbox: the real pr-watch and its two libraries, beside nothing else: the
+# reducer reads GitHub alone, so a call to any other review-gate script fails
+# here for want of the file.
 mkdir -p "$TMP_ROOT/scripts/lib" "$TMP_ROOT/bin" "$TMP_ROOT/cwd"
 cp "$SKILL_ROOT/scripts/pr-watch.sh" "$TMP_ROOT/scripts/"
 cp "$SKILL_ROOT/scripts/lib/settings.sh" "$SKILL_ROOT/scripts/lib/diagnostics.sh" "$TMP_ROOT/scripts/lib/"
-cat > "$TMP_ROOT/scripts/review-predicate.sh" <<'EOF'
-#!/usr/bin/env bash
-# Stub: STUB_PREDICATE_RC != 0 simulates a read failure, printing
-# STUB_PREDICATE_STDERR (backslash escapes read) when set; else
-# STUB_VERDICT_LINE is the verdict. STUB_PREDICATE_CALLS counts invocations.
-if [[ -n "${STUB_PREDICATE_CALLS:-}" ]]; then echo x >> "$STUB_PREDICATE_CALLS"; fi
-if [[ "${STUB_PREDICATE_RC:-0}" != "0" ]]; then
-  if [[ -n "${STUB_PREDICATE_STDERR:-}" ]]; then printf '%b\n' "$STUB_PREDICATE_STDERR" >&2; fi
-  echo "::error::stubbed predicate failure" >&2
-  exit "${STUB_PREDICATE_RC}"
-fi
-printf '%s\n' "${STUB_VERDICT_LINE:?}"
-EOF
-chmod +x "$TMP_ROOT/scripts/review-predicate.sh" "$TMP_ROOT/scripts/pr-watch.sh"
+chmod +x "$TMP_ROOT/scripts/pr-watch.sh"
 
 # Parametrized gh stub:
 #   STUB_OPEN_PRS       array for pulls?state=open ("emptybytes" = broken read)
 #   STUB_PR_<N>         object for pulls/<N> (explicit-arg fetches)
-#   STUB_QUEUED         "yes" -> every mergeQueueEntry read answers a position
+#   STUB_QUEUED         "yes" -> every review-state read answers a queue entry
+#   STUB_DECISION       reviewDecision of every review-state read: APPROVED
+#                       (the default), CHANGES_REQUESTED, REVIEW_REQUIRED, or
+#                       null for a base whose rules require no review
+#   STUB_DECISION_AFTER reviewDecision from the SECOND review-state read of a
+#                       number on (the just-in-time recheck)
+#   STUB_REVIEW_RAW     the whole review-state answer ("emptybytes" = broken)
 #   STUB_UNRESOLVED     count for the graphql reviewThreads read
-#   STUB_GATE_HISTORY   array for commits/<sha>/statuses
 #   STUB_HEAD_DATE      commit.committer.date for commits/<sha>
-#   STUB_DISPATCH_LOG   file collecting workflow-run dispatches
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -u
 cmd="${1:-}"
 shift || true
 args="$*"
-if [[ "$cmd" == "workflow" ]]; then
-  echo "dispatch:$args" >> "${STUB_DISPATCH_LOG:?}"
-  if [[ "${STUB_DISPATCH_FAIL:-}" == "yes" ]]; then exit 1; fi
-  exit 0
-fi
 [[ "$cmd" == "api" ]] || { echo "unexpected gh command: $cmd $args" >&2; exit 1; }
 case "$args" in
-  graphql*mergeQueueEntry*)
-    if [[ "${STUB_QUEUE_FAIL:-}" == "yes" ]]; then
+  graphql*reviewDecision*)
+    if [[ "${STUB_REVIEW_FAIL:-}" == "yes" ]]; then
       echo "HTTP 500" >&2
       exit 1
     fi
-    if [[ "${STUB_QUEUED:-}" == "yes" ]]; then
-      printf 'queued\n'
-    else
-      printf 'unqueued\n'
+    if [[ "${STUB_REVIEW_RAW:-}" == "emptybytes" ]]; then exit 0; fi
+    if [[ -n "${STUB_REVIEW_RAW:-}" ]]; then
+      printf '%s\n' "$STUB_REVIEW_RAW"
+      exit 0
     fi
+    decision="${STUB_DECISION:-APPROVED}"
+    if [[ -n "${STUB_DECISION_AFTER:-}" ]]; then
+      n="${args##*number=}"
+      n="${n%% *}"
+      cf="${STUB_PR_CALLS_DIR:?}/review-$n"
+      if [[ -f "$cf" ]]; then decision="$STUB_DECISION_AFTER"; else : > "$cf"; fi
+    fi
+    jq -n --arg q "${STUB_QUEUED:-no}" --arg d "$decision" \
+      '{data:{repository:{pullRequest:{isInMergeQueue:($q == "yes"),
+        mergeQueueEntry:(if $q == "yes" then {position:1} else null end),
+        reviewDecision:(if $d == "null" then null else $d end)}}}}'
     ;;
   graphql*reviewThreads*)
     if [[ "${STUB_THREADS_FAIL:-}" == "yes" ]]; then
@@ -192,10 +191,6 @@ case "$args" in
       printf '[]\n'
     fi
     ;;
-  *"/statuses?per_page=100"*)
-    if [[ "${STUB_GATE_HISTORY:-[]}" == "emptybytes" ]]; then exit 0; fi
-    printf '%s\n' "${STUB_GATE_HISTORY:-[]}"
-    ;;
   *commits/*)
     printf '%s\n' "${STUB_HEAD_DATE:-2026-01-01T00:00:00Z}"
     ;;
@@ -233,32 +228,26 @@ NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 OLD='2026-01-01T00:00:00Z'
 P7="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"
-G_OK='[{"context":"Review gate","state":"success"}]'
-G_PENDING='[{"context":"Review gate","state":"pending"}]'
-V_APPROVED='verdict=approved detail=review evidence at head'
-V_AWAITING='verdict=awaiting detail=no evidence'
 
 # --- harness -----------------------------------------------------------------
 
 # run_watch ENV FLAGS... — runs the sandboxed pr-watch with the stub PATH and
 # GH_REPO set; ENV is a semicolon-separated list of `env` arguments (JSON
-# values carry commas). Every run gets its own dispatch log, per-number fetch
-# counter and predicate-call log under $RUN. OUT is stdout and stderr
-# together, the way the scheduler sees it; RC the exit status.
+# values carry commas). Every run gets its own per-number fetch counter under
+# $RUN. OUT is stdout and stderr together, the way the scheduler sees it; RC
+# the exit status.
 RUN_SEQ=0
 WATCH_BIN="$TMP_ROOT/scripts/pr-watch.sh"   # a mutant row swaps this
+LIVE_WATCH="$WATCH_BIN"
 run_watch() {
   local env_list="$1" env_args=()
   shift
   [[ -z "$env_list" ]] || IFS=';' read -ra env_args <<<"$env_list"
   RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
   mkdir -p "$RUN/prcalls"
-  : > "$RUN/dispatch.log"
-  : > "$RUN/predicate-calls"
   set +e
   OUT=$(cd "$TMP_ROOT/cwd" && PATH="$TMP_ROOT/bin:$PATH" \
-    env GH_REPO=acme/widgets STUB_DISPATCH_LOG="$RUN/dispatch.log" \
-        STUB_PR_CALLS_DIR="$RUN/prcalls" STUB_PREDICATE_CALLS="$RUN/predicate-calls" \
+    env GH_REPO=acme/widgets STUB_PR_CALLS_DIR="$RUN/prcalls" \
         ${env_args[@]+"${env_args[@]}"} "$WATCH_BIN" "$@" 2>&1)
   RC=$?
   set -e
@@ -271,8 +260,6 @@ run_watch() {
 #                    (the tab-separated output is the contract --help states)
 #   threads          the count a threads-open line reports, or `overflow`
 #   queued_notes     finding lines carrying the queued dequeue note
-#   dispatches       writer dispatch attempts the stub received
-#   predicate_calls  predicate invocations
 #   protocol         whole stdout record, tabs as ~, spaces as +, lines as ;
 #   error_payload    complete error TSV record when attention precedes it
 #   diagnostic       exact global refusal record, spaces as +
@@ -288,8 +275,6 @@ observe() {
         else value="$(grep -o '[0-9]* unresolved review thread' <<<"$OUT" | head -1 | grep -o '^[0-9]*' || true)"; value="${value:-none}"; fi
         ;;
       queued_notes) value="$(grep -c 'QUEUED: dequeue' <<<"$OUT" || true)" ;;
-      dispatches) value="$(wc -l <"$RUN/dispatch.log" | tr -d ' ')" ;;
-      predicate_calls) value="$(wc -l <"$RUN/predicate-calls" | tr -d ' ')" ;;
       protocol)
         value="${OUT//$'\t'/$field_sep}"
         value="${value//$'\n'/;}"
@@ -327,6 +312,22 @@ observe() {
     got="$got $name=$value"
   done
   printf '%s' "${got# }"
+}
+
+# mutant_watch LABEL SED-EXPR ANCHOR — a copy of the reducer with one planted
+# defect, which the rows after it run against until WATCH_BIN="$LIVE_WATCH".
+# The anchor must stand once in the live script and be gone from the copy, so
+# a substitution that matched nothing never passes for a control.
+mutant_watch() {
+  local dir="$TMP_ROOT/mutants/$1"
+  mkdir -p "$dir/lib"
+  cp "$TMP_ROOT/scripts/pr-watch.sh" "$dir/"
+  cp "$TMP_ROOT/scripts/lib/settings.sh" "$TMP_ROOT/scripts/lib/diagnostics.sh" "$dir/lib/"
+  chmod +x "$dir/pr-watch.sh"
+  assert_eq "$(grep -Fc -- "$3" "$dir/pr-watch.sh")" "1" "mutant $1: its anchor stands once in the live script"
+  sed -i.bak "$2" "$dir/pr-watch.sh"
+  assert_eq "$(grep -Fc -- "$3" "$dir/pr-watch.sh")" "0" "mutant $1: the anchor is gone from the copy"
+  WATCH_BIN="$dir/pr-watch.sh"
 }
 
 # table ROW... — one run and one assertion per row: `label|flags|env|expect`.

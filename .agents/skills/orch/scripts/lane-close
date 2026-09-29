@@ -88,8 +88,8 @@ message() { # REASON FIELD=VALUE...
         '  queue-read-failed the merge queue could not be asked whether it holds the pull request; gh api graphql'"'"'s own words are on the lines above this one.' \
         '  not-armed         the pull request is neither in the merge queue nor auto-merge armed, so nothing will merge it while the lane is away.' \
         '  merge-state       the pull request is armed and not queued, and GitHub reports the state named: only CLEAN, every required check green on the head and nothing else blocking, admits a park there. A push after the arm, a running check or a red one all read otherwise. A queued pull request is admitted on the queue'"'"'s own judgement and this state is not read for it.' \
-        '  reducer-missing   the review-gate reducer pr-watch.sh is not installed beside this skill, and the gate and thread reading is its alone.' \
-        '  attention         the reducer prints attention for this pull request, kinds= naming what: an open thread, a stale gate, a standing objection. The lane is still needed.' \
+        '  reducer-missing   the review-gate reducer pr-watch.sh is not installed beside this skill, and the review and thread reading is its alone.' \
+        '  attention         the reducer prints attention for this pull request, kinds= naming what: an open thread, a standing objection, an approval that has not come. The lane is still needed.' \
         '  reducer-failed    the reducer could not evaluate the pull request; its own words are on the lines above this one.' ;;
     park-failed)
       printf '%s\n' \
@@ -180,7 +180,7 @@ isInMergeQueue or a mergeQueueEntry, or, outside the queue, auto-merge is
 armed on it and it reads mergeStateStatus CLEAN, which is GitHub reporting
 every required check green on the current head and nothing else blocking; and
 it gets no attention line from the review-gate reducer pr-watch.sh, whose
-silence is its healthy state: gate met, no unresolved thread, armed or queued.
+silence is its healthy state: approved, no unresolved thread, armed or queued.
 A queued pull request is admitted on the queue's own judgement, since GitHub
 admits nothing to the queue before every required check is green on its head,
 and its arm has converted to the queue entry by then, so autoMergeRequest is
@@ -519,7 +519,7 @@ tracker_terminal() {
 # away, the queue's own membership standing for every required check green
 # since nothing enters it otherwise, and mergeStateStatus CLEAN saying the
 # same for an armed pull request outside the queue; and the review-gate
-# reducer, whose silence for a pull request is its healthy state: gate met, no
+# reducer, whose silence for a pull request is its healthy state: approved, no
 # unresolved thread, armed or queued. Nothing here counts a check or a thread
 # itself. Each refusal names the condition it stopped on and changes nothing.
 # PARK_HEAD and PARK_REPO carry what the record will hold.

@@ -633,9 +633,9 @@ Which mode fits the overseer's harness:
                every line is handled. Nothing reports overseer-dead
 references/watch-delivery.md holds each harness's mechanism and re-arm rule.
 
-When pr-watch.sh is installed, oversee-watch runs it with --heal on every pass.
-Gate-stale dispatches PR_WATCH_WRITER_WORKFLOW, so its credential requires
-actions:write. When pr-watch.sh is absent, the step is skipped with one stderr note.
+When pr-watch.sh is installed, oversee-watch runs it on every pass for every
+--repo; it reads GitHub's review state and writes nothing. When pr-watch.sh is
+absent, the step is skipped with one stderr note.
 Inside tmux, an --item with no LANE_WINDOW skips the pane checks with one
 stderr note; outside tmux there is no pane to read and nothing is noted.
 
@@ -706,7 +706,6 @@ Environment:
                               read that passes it leaves the mark unjudged for
                               that pass, and on a host without `timeout` the
                               read runs unbounded
-  PR_WATCH_WRITER_WORKFLOW    workflow dispatched by pr-watch --heal
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
                               triage, lane-asking, usage-limit, handoff and
                               account rows — the mail pass's file beside the
