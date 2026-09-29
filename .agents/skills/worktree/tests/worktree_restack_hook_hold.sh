@@ -10,6 +10,9 @@
 # exist, and which files carry conflict markers. A library a declared hook
 # sources, directly or through another library, is held the same way.
 set -euo pipefail
+# The fixtures' origin is a local path that names no GitHub repository, so
+# the suite names the default branch.
+export WORKTREE_DEFAULT_BRANCH=main
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

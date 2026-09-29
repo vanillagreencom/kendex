@@ -136,6 +136,16 @@ if [[ -f "$GITHUB_AUTH_LIB" ]]; then
   # shellcheck source=../../github/scripts/lib/gh-auth.sh
   source "$GITHUB_AUTH_LIB"
 fi
+# The github skill's repository reads, for the default branch: present
+# together or not at all, as the skill installs them.
+GITHUB_REPO_LIB="$SCRIPT_DIR/../../github/scripts/lib/gh-repo.sh"
+GITHUB_SETTINGS_LIB="$SCRIPT_DIR/../../github/scripts/lib/repo-settings.sh"
+if [[ -f "$GITHUB_REPO_LIB" && -f "$GITHUB_SETTINGS_LIB" ]]; then
+  # shellcheck source=../../github/scripts/lib/gh-repo.sh
+  source "$GITHUB_REPO_LIB"
+  # shellcheck source=../../github/scripts/lib/repo-settings.sh
+  source "$GITHUB_SETTINGS_LIB"
+fi
 
 git_with_github_https_auth() {
   if declare -F kendex_github_git >/dev/null 2>&1; then
@@ -993,17 +1003,42 @@ resolve_worktree_base_dir() {
 # Layout: project/main (repo) + configured parent dir (worktrees)
 TREES_DIR="$(resolve_worktree_base_dir)"
 
-# Detect default branch (configurable, auto-detected, fallback: main)
-detect_default_branch() {
-  if [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then
-    echo "$WORKTREE_DEFAULT_BRANCH"
-    return
+# The branch new work starts from and merged work is proven against. With
+# the github skill beside this one, its answer: WORKTREE_DEFAULT_BRANCH when
+# set, else the repository's default branch on GitHub. A checkout with no
+# GitHub repository, or no github skill, takes WORKTREE_DEFAULT_BRANCH and
+# then git's record of origin's HEAD, the one answer a remote that is not
+# GitHub gives; git refreshes that record locally, never from the remote.
+# Only the commands that use the branch resolve it, so list, path and the
+# link repairs never wait on GitHub.
+DEFAULT_BRANCH=""
+resolve_default_branch() {
+  local answer="" rc=0 recorded=""
+  [[ -z "$DEFAULT_BRANCH" ]] || return 0
+  if declare -F kendex_github_default_branch >/dev/null 2>&1; then
+    # The reader writes stderr only when it fails, so one capture holds the
+    # branch or its diagnostic, which goes under this script's own record.
+    answer="$(kendex_github_default_branch "$PROJECT_ROOT" 2>&1)" || rc=$?
+    case "$rc" in
+      0) DEFAULT_BRANCH="$answer"; return 0 ;;
+      3) ;;
+      *)
+        worktree_message default-branch-unreadable "$PROJECT_ROOT" "Error: GitHub did not name the repository's default branch; set WORKTREE_DEFAULT_BRANCH to name it." >&2
+        sed 's/^/  /' <<<"$answer" >&2
+        return 1
+        ;;
+    esac
+  elif [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then
+    DEFAULT_BRANCH="$WORKTREE_DEFAULT_BRANCH"
+    return 0
   fi
-  local detected
-  detected=$(git -C "$PROJECT_ROOT" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')
-  echo "${detected:-main}"
+  recorded="$(git -C "$PROJECT_ROOT" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" || recorded=""
+  if [[ "$recorded" != origin/?* ]]; then
+    worktree_message default-branch-unknown "$PROJECT_ROOT" "Error: no GitHub repository names the default branch and git holds no record of origin's HEAD; set WORKTREE_DEFAULT_BRANCH, or run: git -C \"$PROJECT_ROOT\" remote set-head origin --auto" >&2
+    return 1
+  fi
+  DEFAULT_BRANCH="${recorded#origin/}"
 }
-DEFAULT_BRANCH="$(detect_default_branch)"
 
 # Refresh one remote for ownership discovery. initial-work claims must never treat
 # an outage or stale remote-tracking refs as proof that a branch is unowned.
@@ -2522,6 +2557,7 @@ case "${1:-}" in
       worktree_message transfer-mode-conflict "$TRANSFER" "Error: --transfer cannot be combined with a branch positional or another create mode." >&2
       exit 1
     fi
+    resolve_default_branch || exit 1
     # A positional branch name equal to the default branch can never become
     # issue work: `git worktree add -b` would always refuse the existing
     # branch. Fail loudly instead of dying inside the suppressed add.
@@ -3070,6 +3106,7 @@ case "${1:-}" in
       worktree_message remove-target-required "target" "Error: remove requires an issue ID or path" >&2
       exit 1
     fi
+    resolve_default_branch || exit 1
     # Accept either issue ID or direct path. An issue-addressed removal also
     # carries the issue ID as an owner identity for the lease release;
     # a path-addressed one has only the session env ladder.
@@ -3276,6 +3313,7 @@ case "${1:-}" in
       fi
       exit 0
     fi
+    resolve_default_branch || exit 1
     git_with_github_https_auth -C "$PROJECT_ROOT" fetch --prune origin
     CLEANUP_MERGE_TARGET="origin/$DEFAULT_BRANCH"
     if ! git -C "$PROJECT_ROOT" rev-parse --verify "$CLEANUP_MERGE_TARGET" >/dev/null 2>&1; then
@@ -3417,6 +3455,7 @@ case "${1:-}" in
     # name is the candidate only where no worktree is registered at all, and
     # nothing is checked out anywhere to contradict it.
     MERGED_ID="${2:?Error: merged requires an issue ID}"
+    resolve_default_branch || exit 2
     MERGED_WT=""
     MERGED_WT="$(worktree_path_for_issue "$MERGED_ID" 2>/dev/null)" || MERGED_WT=""
     MERGED_BRANCH=""
@@ -3452,6 +3491,7 @@ case "${1:-}" in
     if ! git -C "$PROJECT_ROOT" diff --quiet HEAD 2>/dev/null || ! git -C "$PROJECT_ROOT" diff --cached --quiet HEAD 2>/dev/null; then
       UNCOMMITTED="true"
     fi
+    resolve_default_branch || exit 1
     UNPUSHED_COMMITS=$(git -C "$PROJECT_ROOT" log "origin/$DEFAULT_BRANCH..$DEFAULT_BRANCH" --oneline 2>/dev/null)
     if [[ -n "$UNPUSHED_COMMITS" ]]; then
       UNPUSHED="true"
@@ -3489,6 +3529,7 @@ case "${1:-}" in
     warn_if_links_materialized "$WT_PATH"
     if [[ "$AUTO_REBASE" == true ]]; then
       validate_worktree_setup_config || exit 1
+      resolve_default_branch || exit 1
     fi
 
     REMOTE="${BOT_REMOTE_NAME:-origin}"

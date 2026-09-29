@@ -65,8 +65,12 @@ personal overrides):
   WORKTREE_HOSTED_NAME        The last segment of the path create --hosted
                               gives a new worktree (create --help); one path
                               segment in the issue-ID alphabet. Default: lane.
-  WORKTREE_DEFAULT_BRANCH     Default branch name (auto-detected if unset;
-                              fallback: main)
+  WORKTREE_DEFAULT_BRANCH     Default branch name. Unset: the repository's
+                              default branch on GitHub, read through the
+                              github skill; a checkout with no GitHub
+                              repository reads git's record of origin's HEAD
+                              and refuses where git holds none
+                              (worktree-default-branch-unknown).
   WORKTREE_SYMLINKS           Space-separated paths symlinked from the main
                               checkout into each worktree. Point entries at
                               untracked runtime paths (an entry that shadows

@@ -25,7 +25,10 @@ Options:
   --title TITLE    PR title (default: last commit message)
   --body BODY      PR body (inline; unsafe for Markdown with backticks)
   --body-file PATH PR body read from a file (preferred for any non-trivial body)
-  --base BASE      Base branch (default: main)
+  --base BASE      Base branch (default: WORKTREE_DEFAULT_BRANCH when set,
+                   else the repository's default branch on GitHub; a
+                   checkout with no GitHub repository refuses:
+                   pr-create: base=unresolved root=<dir>)
   --head HEAD      Head branch (default: current branch)
   --label LABEL    Add label (repeatable: --label foo --label bar)
   --draft          Create as draft PR
@@ -121,7 +124,7 @@ run_safety_checks() {
 }
 
 main() {
-    local title="" body="" body_file="" base="main" head="" draft=false dry_run=false force=false
+    local title="" body="" body_file="" base="" head="" draft=false dry_run=false force=false
     local body_set=false body_file_set=false
     local -a labels=()
 
@@ -171,6 +174,22 @@ main() {
             echo "Error: HEAD is detached; pass --head <branch> or check out a branch." >&2
             exit 1
         fi
+    fi
+
+    # The repository's default branch where --base names none; the reader
+    # prints its own first line when GitHub does not answer.
+    if [ -z "$base" ]; then
+        local base_rc=0
+        base=$(kendex_github_default_branch "${PROJECT_ROOT:-$PWD}") || base_rc=$?
+        case "$base_rc" in
+            0) ;;
+            3)
+                echo "pr-create: base=unresolved root=${PROJECT_ROOT:-$PWD}" >&2
+                echo "  The checkout names no GitHub repository to read a default branch from; pass --base or set WORKTREE_DEFAULT_BRANCH." >&2
+                exit 1
+                ;;
+            *) exit 1 ;;
+        esac
     fi
 
     # Run safety checks unless --force

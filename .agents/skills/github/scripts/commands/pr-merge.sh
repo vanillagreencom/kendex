@@ -26,11 +26,15 @@ Merge PR as bot account with safety checks
 Usage: pr-merge <PR_NUMBER> [options]
 
 Options:
-  --squash         Squash and merge (default)
-  --merge          Create merge commit
-  --rebase         Rebase and merge
-  --delete-branch  Delete branch after merge (default: true)
-  --keep-branch    Keep branch after merge
+  --squash         Accept a squash merge
+  --merge          Accept a merge commit
+  --rebase         Accept a rebase merge
+                   Repeat to accept several, most preferred first; none of
+                   the three accepts all of them, squash first. See Merge
+                   method below.
+  --delete-branch  Delete the head branch after an immediate merge, where
+                   the repository's delete_branch_on_merge is off
+  --keep-branch    Keep the head branch (the default)
   --check          Run checks only, don't merge. JSON on stdout; a one-word
                    verdict (mergeable|blocked|merged|closed) plus the run
                    scope ("head-run: <ids>" — the runs the CI classification
@@ -71,6 +75,10 @@ Merge-mode exit codes:
        --auto refused, nothing mutated: GitHub would merge at once with nothing to wait on,
        or, for required_context, without the --require-context check. unverified is a
        rules read that failed, which proves no gate.
+  1    pr-merge: merge-method allowed=<method,...|none> accepted=<method,...>
+  1    pr-merge: merge-method-unreadable cause=<base|rules|settings|queue>
+       Nothing mutated: the base allows none of the accepted methods, or its
+       method could not be read; see Merge method below.
   1    CLOSED (not merged) PR #N
        The PR is closed unmerged. Nothing was attempted.
   1    pr-merge: admin-refused class=queue-only pr=<N>
@@ -112,6 +120,28 @@ Merge route:
   is the class, and change-class --help states when it reads true. No
   classifier, an unreadable range, a failed classifier and a missing line
   all read queue-only.
+
+Merge method:
+  The merge modes and --dry-run read the method from GitHub, never --check. A
+  merge_queue rule on the base branch fixes it to the queue's merge_method.
+  Otherwise the base allows the repository's allowed methods, narrowed by
+  the allowed_merge_methods of every pull_request rule on it. The first
+  accepted method the base allows is passed to gh pr merge. A base that
+  allows none of the accepted methods refuses before any mutation with one
+  line, exit 1:
+    pr-merge: merge-method allowed=<method,...|none> accepted=<method,...>
+  A read that fails refuses the same way, exit 1:
+    pr-merge: merge-method-unreadable cause=<base|rules|settings|queue>
+  settings is the repository's allow_* flags, which GitHub omits for a
+  token without push access.
+
+Branch deletion:
+  --delete-branch deletes the head branch after an immediate MERGED only
+  where the repository's delete_branch_on_merge is off; where it is on,
+  GitHub deletes the branch. A delete_branch_on_merge read that fails keeps
+  the branch and says so on stderr, exit still 0:
+    pr-merge: branch-kept branch=<name>
+  A merge the queue makes later is GitHub's alone.
 
 Retired settings:
   ORCH_ADMIN_MERGE_GH_CONFIG_DIR, ORCH_ADMIN_MERGE_CLASSES and
@@ -900,6 +930,33 @@ merge_gate_gap() {
     [ -n "$rules" ] || [ "$classic" -gt 0 ] || echo required_check
 }
 
+# The method the merge modes pass to gh pr merge: the first of the accepted
+# methods the base branch allows, kendex_github_merge_method's answer. With
+# none named, squash, merge and rebase are accepted in that order. A refusal
+# is the one line --help § Merge method names; stdout is the method.
+merge_method() { # PR TOKEN [ACCEPTED...]
+    local pr_num="$1" token="$2" base="" answer="" rc=0
+    shift 2
+    [ "$#" -gt 0 ] || set -- squash merge rebase
+    if ! base=$(with_token "$token" gh pr view "$pr_num" --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$base" ]; then
+        echo "pr-merge: merge-method-unreadable cause=base" >&2
+        return 1
+    fi
+    answer=$(with_token "$token" kendex_github_merge_method '{owner}/{repo}' "$base" "$@") || rc=$?
+    case "$rc" in
+        0) printf '%s\n' "$answer" ;;
+        2)
+            local IFS=,
+            echo "pr-merge: merge-method allowed=$answer accepted=$*" >&2
+            return 1
+            ;;
+        *)
+            echo "pr-merge: merge-method-unreadable cause=$answer" >&2
+            return 1
+            ;;
+    esac
+}
+
 volatile_note() {
     local pr_num="$1" repo="${GH_REPO:-}" remote resolved reducer
     # pr-watch.sh requires GH_REPO; print the reducer with the repository it
@@ -1186,21 +1243,14 @@ refuse_admin_route() { # PR
 }
 
 main() {
-    local pr_num="" method="--squash" delete_branch=true admin=false
+    local pr_num="" delete_branch=false admin=false
+    local -a accepted=()
     local check_only=false dry_run=false auto=false supplied_head="" require_context=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
-        --squash)
-            method="--squash"
-            shift
-            ;;
-        --merge)
-            method="--merge"
-            shift
-            ;;
-        --rebase)
-            method="--rebase"
+        --squash | --merge | --rebase)
+            accepted+=("${1#--}")
             shift
             ;;
         --delete-branch)
@@ -1343,6 +1393,9 @@ main() {
         exit 1
     fi
 
+    local method
+    method=$(merge_method "$pr_num" "$token" ${accepted[@]+"${accepted[@]}"}) || exit 1
+
     local warnings
     warnings=$(echo "$check_result" | jq -r '.warnings | length')
     if [ "$warnings" -gt 0 ]; then
@@ -1355,7 +1408,7 @@ main() {
         [ -n "$token" ] && token_status="configured"
         local mode="immediate"
         [ "$auto" = true ] && mode="auto-merge fallback"
-        echo "Would merge PR #$pr_num ($method, mode=$mode, delete_branch=$delete_branch, token=$token_status)"
+        echo "Would merge PR #$pr_num (--$method, mode=$mode, delete_branch=$delete_branch, token=$token_status)"
         exit 0
     fi
 
@@ -1375,7 +1428,7 @@ main() {
     # head is the one the merge is pinned to.
     resolve_waived_threads "$check_result" "$pr_num" "$token" "$expected_head" || exit 1
 
-    local -a cmd=(pr merge "$pr_num" "$method" --match-head-commit "$expected_head")
+    local -a cmd=(pr merge "$pr_num" "--$method" --match-head-commit "$expected_head")
     [ "$auto" = true ] && cmd+=(--auto)
 
     local merge_output merge_exit=0
@@ -1430,11 +1483,15 @@ main() {
     if [ "$post_state" = "MERGED" ]; then
         echo "MERGED PR #$pr_num" >&2
         # Delete remote branch via API (avoids gh's local git checkout, which
-        # fails inside worktrees). Best-effort — branch may already be gone.
+        # fails inside worktrees), and only where GitHub does not delete it
+        # itself. Best-effort: the branch may already be gone.
         if [ "$delete_branch" = true ]; then
-            local branch
+            local branch deletes
             branch=$(jq -r '.head_branch' <<<"$post_snapshot")
-            if [ -n "$branch" ]; then
+            if ! deletes=$(with_token "$token" kendex_github_deletes_merged_branch '{owner}/{repo}'); then
+                echo "pr-merge: branch-kept branch=$branch" >&2
+                echo "  The repository's delete_branch_on_merge could not be read, so the head branch was not deleted." >&2
+            elif [ "$deletes" = false ] && [ -n "$branch" ]; then
                 with_token "$token" gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/$branch" 2>/dev/null || true
             fi
         fi

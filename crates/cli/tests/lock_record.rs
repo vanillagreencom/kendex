@@ -18,6 +18,10 @@
 //! judge's conflict arm narrowed to a clean apply it refuses the merge that
 //! re-recorded the lock; and with the judge a squash merge it refuses every
 //! run from the workflow's checkout, which holds no history behind the head.
+//! With the default-branch read replaced by `main` the rolling pull request
+//! of a repository whose default branch is `develop` is listed and opened
+//! against `main`, and with the arm's method pinned to `--squash` a
+//! repository allowing merge commits alone is armed with `--squash`.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -121,10 +125,28 @@ fn at(log: &str, needle: &str) -> usize {
 /// `state/queued` and removes each for its mutation. `GH_FAIL` names the
 /// one call that fails: `list` or `state` exit 1, and `disarm` or `dequeue`
 /// answer their mutation with an `errors` body and exit 0, as GitHub
-/// reports a mutation it refused.
+/// reports a mutation it refused. The repository reads answer what the
+/// github skill's filters would print: `repo view` names `acme/widgets`,
+/// whose default branch is `GH_DEFAULT` (`main` unset), the base's rules
+/// hold a merge queue with `GH_QUEUE`'s method where it is set, and the
+/// repository's squash, merge and rebase flags are `GH_METHODS` (all three
+/// unset). `GH_FAIL` fails the `default`, `rules` or `settings` read, and
+/// `methods-none` answers flags that allow nothing.
 const GH_STUB: &str = "#!/bin/sh
 printf '%s\\n' \"$*\" >> \"$GH_LOG\"
 case \"$1 $2\" in
+  'repo view') echo acme/widgets; exit 0 ;;
+  'api repos/acme/widgets')
+    [ \"$GH_FAIL\" != default ] || { echo 'gh stub: default refused' >&2; exit 1; }
+    printf '%s\\n' \"${GH_DEFAULT:-main}\"; exit 0 ;;
+  'api repos/{owner}/{repo}/rules/branches/'*)
+    [ \"$GH_FAIL\" != rules ] || { echo 'gh stub: rules refused' >&2; exit 1; }
+    [ -z \"$GH_QUEUE\" ] || printf '{\"type\":\"merge_queue\",\"parameters\":{\"merge_method\":\"%s\"}}\\n' \"$GH_QUEUE\"
+    exit 0 ;;
+  'api repos/{owner}/{repo}')
+    [ \"$GH_FAIL\" != settings ] || { echo 'gh stub: settings refused' >&2; exit 1; }
+    [ \"$GH_FAIL\" != methods-none ] || { echo '[false,false,false]'; exit 0; }
+    printf '%s\\n' \"${GH_METHODS:-[true,true,true]}\"; exit 0 ;;
   'pr list')
     [ \"$GH_FAIL\" != list ] || { echo 'gh stub: list refused' >&2; exit 1; }
     [ ! -f \"$GH_STATE/open\" ] || { n=$(cat \"$GH_STATE/open\"); printf '%s PR_node%s\\n' \"$n\" \"$n\"; }
@@ -316,8 +338,19 @@ impl World {
     /// The script with these arguments in place of `--repo <judged> --base
     /// main`, under the fixture home, with `GH_FAIL` and `KENDEX_FAIL` set
     /// to `gh_fail` and `kendex_fail`.
-    #[allow(clippy::expect_used)]
     fn run(&self, args: &[&str], gh_fail: &str, kendex_fail: &str) -> Output {
+        self.run_with(args, gh_fail, kendex_fail, &[])
+    }
+
+    /// `run`, with `env` added to the stub's environment.
+    #[allow(clippy::expect_used)]
+    fn run_with(
+        &self,
+        args: &[&str],
+        gh_fail: &str,
+        kendex_fail: &str,
+        env: &[(&str, &str)],
+    ) -> Output {
         Command::new("bash")
             .arg(script())
             .args(args)
@@ -334,6 +367,7 @@ impl World {
             .env("GIT_AUTHOR_EMAIL", "t@t")
             .env("GIT_COMMITTER_NAME", "t")
             .env("GIT_COMMITTER_EMAIL", "t@t")
+            .envs(env.iter().copied())
             .output()
             .expect("bash runs the script")
     }
@@ -674,9 +708,56 @@ fn two_branches_on_one_package_merge_in_sequence_and_main_records_after_each() {
     assert_eq!(world.gh_log(), before);
 }
 
+/// With no `--base`, the rolling pull request targets the default branch
+/// GitHub names and is armed with the merge method the base allows: a
+/// repository whose default branch is `develop` and which allows merge
+/// commits alone gets its pull request listed and opened against `develop`
+/// and armed with `--merge`. A merge queue on the base fixes the method
+/// whatever the repository allows. The squash every other scenario pins is
+/// this read's answer where all three are allowed.
+#[test]
+fn the_rolling_pull_request_takes_the_default_branch_and_merge_method_github_names() {
+    for (env, method) in [
+        (
+            &[
+                ("GH_DEFAULT", "develop"),
+                ("GH_METHODS", "[false,true,false]"),
+            ][..],
+            "--merge",
+        ),
+        (
+            &[("GH_DEFAULT", "develop"), ("GH_QUEUE", "REBASE")][..],
+            "--rebase",
+        ),
+    ] {
+        let world = world();
+        world.branch("a", "ship");
+        assert!(world.queue_merge("a").status.success());
+        let judged = world.main.display().to_string();
+        let run = world.run_with(&["--repo", &judged], "", "", env);
+        let output = said(&run);
+        assert_eq!(run.status.code(), Some(0), "{env:?}: {output}");
+        let log = world.gh_log();
+        let listed = at(
+            &log,
+            "pr list --head kendex/lock --base develop --state open",
+        );
+        let opened = at(&log, "pr create --base develop --head kendex/lock ");
+        let armed = at(
+            &log,
+            &format!(
+                "pr merge 41 {method} --auto --match-head-commit {}\n",
+                world.rolling_head()
+            ),
+        );
+        assert!(listed < opened && opened < armed, "{env:?}: {log}");
+    }
+}
+
 /// One stand-down run over `main` moved on by a merge outside the package:
 /// the rolling pull request's commit verifies clean on the new head, so
-/// nothing is pushed and the gh reads are the list and the state.
+/// nothing is pushed and the gh reads are the base's merge method, the list
+/// and the state.
 fn assert_stood_down(world: &World, before: &str, output: &str, rolling: &str) {
     assert!(
         output.contains(&format!(
@@ -688,8 +769,28 @@ fn assert_stood_down(world: &World, before: &str, output: &str, rolling: &str) {
     assert_eq!(world.rolling_head(), rolling, "{output}");
     let asked = world.gh_log();
     let asked = asked.strip_prefix(before).unwrap_or(&asked);
+    let reads: Vec<String> = asked
+        .lines()
+        .take(4)
+        .map(|line| {
+            line.split_whitespace()
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect();
+    assert_eq!(
+        reads,
+        [
+            "api repos/{owner}/{repo}/rules/branches/main",
+            "api repos/{owner}/{repo}",
+            "pr list",
+            "api graphql",
+        ],
+        "{asked}"
+    );
     assert!(
-        asked.starts_with("pr list --head kendex/lock --base main --state open"),
+        asked.contains("pr list --head kendex/lock --base main --state open"),
         "{asked}"
     );
     assert!(asked.contains("isInMergeQueue"), "{asked}");
@@ -754,7 +855,7 @@ fn a_merge_that_moves_no_record_leaves_the_open_rolling_pull_request_untouched()
     assert!(output.contains("lock-record: armed=already\n"), "{output}");
     let asked = world.gh_log();
     let asked = asked.strip_prefix(&before).unwrap_or(&asked);
-    assert_eq!(asked.lines().count(), 2, "{asked}");
+    assert_eq!(asked.lines().count(), 4, "{asked}");
 
     // The same, with the arm gone (a cancelled run, or a queue removal):
     // the stand-down arms the rolling head it judged current.
@@ -1015,6 +1116,36 @@ const REFUSALS: &[Refusal] = &[
         kendex_fail: "source",
         code: 1,
         first: "lock-record: source-refresh=7\n",
+        left: "",
+        above: "",
+    },
+    Refusal {
+        main: Main::Stale,
+        args: &["--repo", "MAIN"],
+        gh_fail: "default",
+        kendex_fail: "",
+        code: 1,
+        first: "lock-record: default-branch=MAIN\n",
+        left: "",
+        above: "default-branch: unreadable repo=acme/widgets",
+    },
+    Refusal {
+        main: Main::Stale,
+        args: &["--repo", "MAIN"],
+        gh_fail: "settings",
+        kendex_fail: "",
+        code: 1,
+        first: "lock-record: merge-method-unreadable=settings\n",
+        left: "",
+        above: "",
+    },
+    Refusal {
+        main: Main::Stale,
+        args: &["--repo", "MAIN"],
+        gh_fail: "methods-none",
+        kendex_fail: "",
+        code: 1,
+        first: "lock-record: merge-method=none\n",
         left: "",
         above: "",
     },

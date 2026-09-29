@@ -6,7 +6,9 @@
 #
 # --repo DIR       the checkout of the default branch to judge (default: the
 #                  checkout this script sits in)
-# --base BRANCH    the branch the rolling pull request targets (default main)
+# --base BRANCH    the branch the rolling pull request targets (default: the
+#                  repository's default branch, WORKTREE_DEFAULT_BRANCH when
+#                  set, else GitHub's)
 # --remote NAME    the remote the rolling branch is pushed to (default origin)
 # --branch NAME    the rolling branch (default kendex/lock)
 # -h, --help       print this help
@@ -18,8 +20,8 @@
 # this tree would write. A current record ends the run. Otherwise the open
 # rolling pull request, where one exists, is judged the same way: its
 # commit is cherry-picked onto the head with no commit, which applies the
-# change it made to the head it was recorded from, as the queue's squash
-# merge would, and `kendex verify` asked again; a pass means that pull
+# change it made to the head it was recorded from, as the queue's merge
+# would, and `kendex verify` asked again; a pass means that pull
 # request records this tree, so nothing is pushed and it is armed where it
 # was not, and a conflict or a failed verify means it is stale. A
 # cherry-pick, unlike a merge, needs no history behind the head: the
@@ -30,8 +32,10 @@
 # pull request the merge queue takes; a pull request already open on the
 # branch is disarmed and dequeued before the push, as
 # skills/orch/workflows/merge-pr-restack.md step 1 does, and armed again
-# after it. Nothing here pushes to the default branch: the organization
-# ruleset takes every change to it through the merge queue
+# after it. The arm passes the merge method the base branch allows, read
+# from GitHub like the default branch. Nothing here pushes to the default
+# branch: the organization ruleset takes every change to it through the
+# merge queue
 # (docs/decisions/D003-one-merge-path.md), and the record takes the same
 # route (docs/decisions/D007-lock-record-on-main.md). The rule a branch
 # follows is skills/AGENTS.md.
@@ -39,7 +43,8 @@
 # `gh` reads its token from GH_TOKEN, git pushes through the credential
 # helper `gh auth setup-git` installed for that token, and the commit
 # identity is GIT_AUTHOR_* and GIT_COMMITTER_*. The disarm and dequeue
-# mutations are the github skill's, .agents/skills/github/scripts/lib/merge-queue.sh.
+# mutations are the github skill's, .agents/skills/github/scripts/lib/merge-queue.sh,
+# and so are the default-branch and merge-method reads, lib/repo-settings.sh.
 # The suite is crates/cli/tests/lock_record.rs.
 #
 # Every notice this script writes opens `lock-record: <key>=<value>`; the
@@ -51,6 +56,10 @@
 #   dirty=<n>                   the checkout has n uncommitted paths; nothing was judged (exit 2)
 #   source-refresh=<status>     `kendex source refresh` failed (exit 1)
 #   current=<sha>               the record matches the tree at that head; nothing was written
+#   default-branch=<dir>        GitHub did not name the default branch of the repository the checkout resolves to; what it said is above (exit 1)
+#   merge-method=<set>          the base allows none of squash, merge and rebase, the set it allows named; nothing pushed (exit 1)
+#   merge-method-unreadable=<cause>
+#                               the base's merge method could not be read: rules, settings or queue; nothing pushed (exit 1)
 #   rolling-read=<status>       the remote could not say whether the rolling branch exists (exit 1)
 #   pull-request-list=<branch>  gh could not list the branch's pull requests; nothing pushed (exit 1)
 #   pull-request-state=<n>      the open pull request's arming and queue state could not be read; nothing pushed (exit 1)
@@ -81,9 +90,13 @@ count_lines() { # TEXT — how many lines it holds, none for the empty string
 here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../.agents/skills/github/scripts/lib/merge-queue.sh
 source "$here/../.agents/skills/github/scripts/lib/merge-queue.sh"
+# shellcheck source=../.agents/skills/github/scripts/lib/gh-repo.sh
+source "$here/../.agents/skills/github/scripts/lib/gh-repo.sh"
+# shellcheck source=../.agents/skills/github/scripts/lib/repo-settings.sh
+source "$here/../.agents/skills/github/scripts/lib/repo-settings.sh"
 
 repo="$(cd -- "$here/.." && pwd)"
-base=main
+base=""
 remote=origin
 branch=kendex/lock
 while [[ $# -gt 0 ]]; do
@@ -143,6 +156,25 @@ if [[ $rc -eq 0 ]]; then
   exit 0
 fi
 
+# Where the rolling pull request goes and how the queue merges it, both read
+# from GitHub before anything is pushed. The readers answer from the
+# checkout, as every gh call here does.
+if [[ -z "$base" ]]; then
+  rc=0
+  base="$(cd -- "$repo" && kendex_github_default_branch "$repo")" || rc=$?
+  if [[ $rc -ne 0 ]]; then
+    say default-branch "$repo" "GitHub did not name the default branch of the repository $repo resolves to; pass --base, and nothing was pushed" >&2
+    exit 1
+  fi
+fi
+rc=0
+method="$(cd -- "$repo" && kendex_github_merge_method '{owner}/{repo}' "$base" squash merge rebase)" || rc=$?
+case "$rc" in
+  0) ;;
+  2) say merge-method "$method" "$base allows none of squash, merge and rebase, so the rolling pull request could not be armed; nothing was pushed" >&2; exit 1 ;;
+  *) say merge-method-unreadable "$method" "$base's merge method could not be read from GitHub; nothing was pushed" >&2; exit 1 ;;
+esac
+
 # The rolling branch as the remote holds it, when it holds one: exit 2 from
 # ls-remote is the one answer that means absent, and any other failure is
 # no answer, since a push over a branch nothing could read may eject a
@@ -199,7 +231,7 @@ if [[ -n "$rolling" && -n "$number" ]]; then
     if [[ "$armed" == true ]]; then
       say armed already
     else
-      (cd -- "$repo" && gh pr merge "$number" --squash --auto --match-head-commit "$rolling")
+      (cd -- "$repo" && gh pr merge "$number" "--$method" --auto --match-head-commit "$rolling")
       say armed "$number"
     fi
     exit 0
@@ -256,7 +288,7 @@ fi
 git -C "$repo" checkout -q -B "$branch"
 git -C "$repo" commit -q \
   -m "chore(lock): record the install record at $short" \
-  -m "kendex refresh, built from $head, wrote these paths on main after the merges up to that head. The record is recorded here and never on a branch: skills/AGENTS.md states the rule, docs/decisions/D007-lock-record-on-main.md the reason."
+  -m "kendex refresh, built from $head, wrote these paths on $base after the merges up to that head. The record is recorded here and never on a branch: skills/AGENTS.md states the rule, docs/decisions/D007-lock-record-on-main.md the reason."
 say recorded "$head paths=$count" "$changed"
 
 git -C "$repo" push --quiet --force "$remote" "refs/heads/$branch:refs/heads/$branch"
@@ -267,11 +299,11 @@ if [[ -n "$number" ]]; then
 else
   url="$(cd -- "$repo" && gh pr create --base "$base" --head "$branch" \
     --title "chore(lock): record the install record at $short" \
-    --body "tools/lock-record re-recorded .kendex-lock.json on main after the merges up to $head, with a kendex built from that tree. Paths: $count. The record is recorded here and never on a branch: skills/AGENTS.md.")"
+    --body "tools/lock-record re-recorded .kendex-lock.json on $base after the merges up to $head, with a kendex built from that tree. Paths: $count. The record is recorded here and never on a branch: skills/AGENTS.md.")"
   number="${url##*/}"
   action=opened
 fi
 say pull-request "$number action=$action"
 
-(cd -- "$repo" && gh pr merge "$number" --squash --auto --match-head-commit "$(git -C "$repo" rev-parse HEAD)")
+(cd -- "$repo" && gh pr merge "$number" "--$method" --auto --match-head-commit "$(git -C "$repo" rev-parse HEAD)")
 say armed "$number"

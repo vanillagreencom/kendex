@@ -44,6 +44,8 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 source "$_LIB_DIR/gh-auth.sh"
 # shellcheck source=gh-repo.sh
 source "$_LIB_DIR/gh-repo.sh"
+# shellcheck source=repo-settings.sh
+source "$_LIB_DIR/repo-settings.sh"
 # shellcheck source=json-error.sh
 source "$_LIB_DIR/json-error.sh"
 

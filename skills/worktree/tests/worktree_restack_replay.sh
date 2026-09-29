@@ -10,6 +10,9 @@
 # reds the row: passing execution policies that reject `git rebase` is the
 # point of the engine.
 set -euo pipefail
+# The fixtures' origin is a local path that names no GitHub repository, so
+# the suite names the default branch.
+export WORKTREE_DEFAULT_BRANCH=main
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE

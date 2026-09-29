@@ -127,7 +127,7 @@ The owner applied this layout on 2026-09-29 (owner note 1790641164, § Sources).
 | `copilot_code_review` `{review_on_push true, drafts false}` | uniform, per repository | In 24148602. |
 | `deletion`, `non_fast_forward` | uniform, per repository | In 24148602. |
 | Thread resolution | uniform, with 0 approvals | In 24148602, with 0 approvals. The approval delta is § Target's. |
-| Allowed merge methods | squash only in 6, all three in 3 | Squash only, in 24148602. The queue takes one merge method per ruleset, and `pr-merge`, `tools/lock-record` and the refresh workflow squash (KEN-2071 reads the method from GitHub). |
+| Allowed merge methods | squash only in 6, all three in 3 | Squash only, in 24148602. The queue takes one merge method per ruleset. `pr-merge` and `tools/lock-record` read the method from GitHub, and the refresh workflow squashes. |
 | Queue ruleset bypass | lanes app in fleet and kendex; admin role in hyprtrade, vsys, memsira, drovr and the sandbox; none in hyprtrade-io and vg | The lanes app, in each repository's `main merge queue`: the admin merge route of owner decision 1790633650. The overseer app joined it in `pull_request` mode (owner note 1790642054). The sandbox's 20539568 keeps its admin-role bypass until owner step 4. |
 | Admin role bypassing required checks | 5 repositories | Gone everywhere. The overseer app, in `pull_request` mode, is the only bypass actor of `main required checks` (owner note 1790642054). The owner holds no standing bypass. |
 | Required check names | per repository | Per repository, in `main required checks`. `Review gate` leaves each list at owner step 6. |

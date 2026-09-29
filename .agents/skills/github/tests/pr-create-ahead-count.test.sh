@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tests for pr-create.sh: the safety-check ahead count, and the identity the
-# creation names.
+# Tests for pr-create.sh: the safety-check ahead count, the identity the
+# creation names, and the base it targets when --base names none.
 #
 # The "commits ahead of base" check must count against the REMOTE base
 # (origin/$base) that the PR actually targets. Counting against
@@ -18,9 +18,9 @@ PR_CREATE="$REPO_ROOT/skills/github/scripts/commands/pr-create.sh"
 source "$TEST_DIR/lib/check-stub.sh"
 TMP_ROOT="$TMPDIR"
 
-# Real repo pair: bare origin + working clone. The --dry-run rows make no gh
-# call: the safety checks and that path are pure git plus env-only token
-# lookup. Only the creation rows put the stub gh on PATH.
+# Real repo pair: bare origin + working clone. Every row puts the stub gh on
+# PATH: with no --base, the base is the repository's default branch, which
+# the stub answers (STUB_DEFAULT_BRANCH, main unless a row sets it).
 ORIGIN="$TMP_ROOT/origin.git"
 CLONE="$TMP_ROOT/clone"
 git init -q --bare "$ORIGIN"
@@ -36,6 +36,8 @@ first_commit=$(git -C "$CLONE" rev-parse HEAD)
 git -C "$CLONE" commit --allow-empty -qm "merged commit B"
 git -C "$CLONE" commit --allow-empty -qm "merged commit C"
 git -C "$CLONE" push -qu origin main
+# Two more branches at main's tip, each a default branch a row names.
+git -C "$CLONE" push -q origin main:develop main:trunk
 git -C "$CLONE" checkout -qb feature-x
 git -C "$CLONE" commit --allow-empty -qm "feature commit D"
 git -C "$CLONE" push -qu origin feature-x
@@ -44,7 +46,8 @@ git -C "$CLONE" push -qu origin feature-x
 git -C "$CLONE" branch -qf main "$first_commit"
 
 run_pr_create() {
-  (cd "$CLONE" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN "$PR_CREATE" "$@")
+  (cd "$CLONE" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u WORKTREE_DEFAULT_BRANCH \
+    PATH="$TMP_ROOT/bin:$PATH" "$PR_CREATE" "$@")
 }
 
 echo "=== pr-create ahead count vs stale local base (kendex#537) ==="
@@ -71,7 +74,7 @@ while IFS='|' read -r label caller_env line absent auth; do
   : >"$AUTH_LOG"
   set +e
   # shellcheck disable=SC2086
-  out=$(cd "$CLONE" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN PATH="$TMP_ROOT/bin:$PATH" STUB_AUTH_LOG="$AUTH_LOG" ${caller_env#-} "$PR_CREATE" 2>&1)
+  out=$(cd "$CLONE" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u WORKTREE_DEFAULT_BRANCH PATH="$TMP_ROOT/bin:$PATH" STUB_AUTH_LOG="$AUTH_LOG" ${caller_env#-} "$PR_CREATE" 2>&1)
   rc=$?
   set -e
   assert_eq "$rc" "0" "$label: gh pr create ran"
@@ -81,6 +84,43 @@ while IFS='|' read -r label caller_env line absent auth; do
 done <<'ROWS'
 GH_TOKEN alone|GH_TOKEN=ghp_CREATE|Using GH_TOKEN as stub-user|Warning: GH_BOT_TOKEN not configured|ghp_CREATE
 no token|-|Warning: GH_BOT_TOKEN not configured, using current user|Using |<unset>
+ROWS
+
+# 1c. The base with no --base: the repository's default branch on GitHub, or
+#     WORKTREE_DEFAULT_BRANCH, which is read in its place, so GitHub is never
+#     asked. A default branch GitHub cannot name, and a checkout with no
+#     GitHub repository, refuse on their first line with nothing created. The
+#     must-fail control is a copy of the scripts tree whose read is replaced
+#     by main: the develop row then targets main.
+MUTANT_DIR="$TMP_ROOT/mutant"
+mkdir -p "$MUTANT_DIR"
+cp -R "$REPO_ROOT/skills/github/scripts/." "$MUTANT_DIR/"
+READ_LINE='        base=$(kendex_github_default_branch "${PROJECT_ROOT:-$PWD}") || base_rc=$?'
+assert_eq "$(grep -cxF -- "$READ_LINE" "$MUTANT_DIR/commands/pr-create.sh")" "1" "control: the default-branch read is one line"
+F="$READ_LINE" awk 'BEGIN { f = ENVIRON["F"] } $0 == f { $0 = "        base=main" } { print }' \
+  "$MUTANT_DIR/commands/pr-create.sh" >"$MUTANT_DIR/pr-create.edit"
+cat -- "$MUTANT_DIR/pr-create.edit" >"$MUTANT_DIR/commands/pr-create.sh"
+assert_eq "$(grep -cxF -- "$READ_LINE" "$MUTANT_DIR/commands/pr-create.sh")" "0" "control: the read was replaced"
+CALL_LOG="$TMP_ROOT/calls.log"
+CLONE_PHYSICAL="$(cd "$CLONE" && pwd -P)"
+while IFS='|' read -r label script caller_env rc first base asked; do
+  : >"$CALL_LOG"
+  [[ "$script" == mutant ]] && script="$MUTANT_DIR/commands/pr-create.sh" || script="$PR_CREATE"
+  set +e
+  # shellcheck disable=SC2086
+  out=$(cd "$CLONE" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u WORKTREE_DEFAULT_BRANCH PATH="$TMP_ROOT/bin:$PATH" STUB_CALL_LOG="$CALL_LOG" ${caller_env#-} "$script" 2>&1)
+  got_rc=$?
+  set -e
+  assert_eq "$got_rc" "$rc" "$label: exit"
+  [[ "$first" == - ]] || assert_eq "$(head -1 <<<"$out")" "${first//CLONE/$CLONE_PHYSICAL}" "$label: first line"
+  assert_eq "$(sed -n 's/^pr create .*--base \([^ ]*\) .*/\1/p' "$CALL_LOG")" "${base#-}" "$label: the base gh pr create received"
+  assert_eq "$(grep -c '^api repos/' "$CALL_LOG" || true)" "$asked" "$label: GitHub reads of the repository"
+done <<'ROWS'
+GitHub's default branch develop is the base|real|STUB_DEFAULT_BRANCH=develop|0|-|develop|1
+must-fail: with the read replaced by main, develop's repository gets main|mutant|STUB_DEFAULT_BRANCH=develop|0|-|main|0
+WORKTREE_DEFAULT_BRANCH overrides and GitHub is not asked|real|STUB_DEFAULT_BRANCH=develop WORKTREE_DEFAULT_BRANCH=trunk|0|-|trunk|0
+a default branch GitHub cannot name refuses, nothing created|real|STUB_REPO_EXIT=1|1|default-branch: unreadable repo=owner/repo|-|1
+a checkout with no GitHub repository refuses, nothing created|real|STUB_NO_REPO=true|1|pr-create: base=unresolved root=CLONE|-|0
 ROWS
 
 # 2. Branch pointing at the origin/main tip has NO commits to submit. Against the

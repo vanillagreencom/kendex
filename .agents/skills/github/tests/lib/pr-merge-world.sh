@@ -35,6 +35,13 @@
 #     rule-type:<type> a ruleset rule of that type beside one requiring Lint
 #     rules:fail, branch:fail the ruleset or the branch-protection read errors
 #     repo:no-protection a branch answer carrying no protection object
+#     methods:<m+m|-> the repository's allowed merge methods, `+` a space,
+#     `-` none; repo:pushless the repository answer with no allow_* flags
+#     and no delete_branch_on_merge, as for a token without push access;
+#     deletes-on-merge:<true|false|null> its delete_branch_on_merge;
+#     queue:<METHOD> a merge_queue rule with that merge_method on main, or on
+#     the branch queue-on:<branch> names; rule-methods:<m+m> a pull_request
+#     rule allowing those methods
 #     base:<branch> the PR's base; gate reads answer only its encoded path
 #     post-graphql:partial  the post-merge read answers HTTP 200 with an
 #     errors array beside data
@@ -47,7 +54,9 @@
 #     queue_only=false, no line, a classifier that fails, or a range read
 #     that fails
 #     env:NAME=value  the caller's environment
-#   argv   check | auto | immediate |
+#   argv   check | auto | immediate | with:<flag+flag> (the flags alone,
+#          `+` a space, no --keep-branch) | mutant:<name>:<flag+flag> (the
+#          same, run from the mutant_copy named <name>) |
 #          expected:<sha> (--auto with --expected-head) | router:<flags> |
 #          gated:<context> (--auto with --require-context, `+` a space) |
 #          gated-immediate:<context> (--require-context without --auto) |
@@ -264,6 +273,13 @@ word() {
     branch:fail) W_ENV+=("STUB_BRANCH_EXIT=1") ;;
     repo:no-protection) W_ENV+=('STUB_CLASSIC_JSON={"name":"main","protected":true}') ;;
     base:*) W_ENV+=("STUB_BASE=$v") ;;
+    methods:-) W_ENV+=("STUB_MERGE_METHODS=") ;;
+    methods:*) W_ENV+=("STUB_MERGE_METHODS=$(printf '%s' "$v" | tr '+' ' ')") ;;
+    repo:pushless) W_ENV+=("STUB_REPO_PUSHLESS=true") ;;
+    deletes-on-merge:*) W_ENV+=("STUB_DELETE_BRANCH_ON_MERGE=$v") ;;
+    queue:*) W_ENV+=("STUB_QUEUE_METHOD=$v") ;;
+    queue-on:*) W_ENV+=("STUB_QUEUE_BRANCH=$v") ;;
+    rule-methods:*) W_ENV+=("STUB_RULE_METHODS=$(printf '%s' "$v" | tr '+' ' ')") ;;
     # An ACTIVE review-gate class policy. The value is the supported table; `-` leaves the classifier with no class to
     # answer, which is the unreadable-policy shape.
     class-policy:-) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS=$TRUSTED_LOGINS" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
@@ -322,6 +338,13 @@ argv_for() {
     immediate-no-rule) printf '%s\n' "$NO_RULE_PR_MERGE" 123 --keep-branch ;;
     auto) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch ;;
     immediate) printf '%s\n' "$PR_MERGE" 123 --keep-branch ;;
+    with:*) printf '%s\n' "$PR_MERGE" 123; printf '%s' "${1#with:}" | tr '+' '\n'; echo ;;
+    mutant:*)
+      set -- "${1#mutant:}"
+      printf '%s\n' "$TMPDIR/${1%%:*}/skills/github/scripts/commands/pr-merge.sh" 123
+      printf '%s' "${1#*:}" | tr '+' '\n'
+      echo
+      ;;
     force) printf '%s\n' "$PR_MERGE" 123 --force --keep-branch ;;
     admin) printf '%s\n' "$PR_MERGE" 123 --admin --keep-branch ;;
     expected:*) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch --expected-head "${1#expected:}" ;;
@@ -356,8 +379,12 @@ calls() {
       "pr checks"*) out="$out,checks" ;;
       # Each flag that changes what GitHub does with the merge is its own
       # suffix, so an --admin beside --auto shows rather than hiding behind it.
+      # The method comes first: merge:<method>[:auto][:admin].
       "pr merge 123"*)
         kind=merge
+        for class in squash merge rebase; do
+          [[ " $line " != *" --$class "* ]] || kind="$kind:$class"
+        done
         [[ " $line " != *" --auto "* ]] || kind="$kind:auto"
         [[ " $line " != *" --admin "* ]] || kind="$kind:admin"
         out="$out,$kind"
@@ -380,6 +407,7 @@ calls() {
         ;;
       "api graphql"*) out="$out,graphql:threads" ;;
       "api user"*) out="$out,user" ;;
+      "api -X DELETE repos/{owner}/{repo}/git/refs/heads/"*) out="$out,delete:${line##*/heads/}" ;;
       "auth status"*|"repo view"*|"api repos/"*|"pr view 123 --json baseRefName"*) ;;
       *) out="$out,?($line)" ;;
     esac
@@ -433,6 +461,29 @@ run() {
     STUB_CALL_LOG="$CALL_LOG" STUB_AUTH_LOG="$AUTH_LOG" \
     ${W_ENV[@]+"${W_ENV[@]}"} "${argv[@]}" >"$TMPDIR/stdout" 2>"$TMPDIR/stderr") || rc=$?
   printf 'rc=%s out=%s err=%s calls=%s auth=%s' "$rc" "$(stdout_text "$1")" "$(err_lines)" "$(calls)" "$(auth)"
+}
+
+# A must-fail control's subject: a copy of the scripts tree under
+# $TMPDIR/NAME with one whole line of FILE (a path under scripts/, default
+# commands/pr-merge.sh) replaced by TO, the rest kept. Prints the copy's
+# pr-merge.sh.
+mutant_copy() { # NAME FROM TO [FILE]
+  local dest="$TMPDIR/$1" script
+  mkdir -p "$dest/skills/github"
+  cp -R "$REPO_ROOT/skills/github/scripts" "$dest/skills/github/scripts"
+  script="$dest/skills/github/scripts/${4:-commands/pr-merge.sh}"
+  [[ "$(grep -cxF -- "$2" "$script")" == 1 ]] || {
+    echo "FIXTURE: the $1 line was not unique in $script" >&2
+    exit 2
+  }
+  F="$2" T="$3" awk 'BEGIN { f = ENVIRON["F"]; t = ENVIRON["T"] } $0 == f { $0 = t } { print }' "$script" >"$script.edit"
+  cat -- "$script.edit" >"$script"
+  rm -f -- "${script:?}.edit"
+  ! grep -qxF -- "$2" "$script" || {
+    echo "FIXTURE: the $1 edit matched nothing in $script" >&2
+    exit 2
+  }
+  printf '%s\n' "$dest/skills/github/scripts/commands/pr-merge.sh"
 }
 
 # --- the err macros ---------------------------------------------------------------

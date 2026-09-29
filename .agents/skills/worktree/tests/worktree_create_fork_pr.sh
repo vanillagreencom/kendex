@@ -14,6 +14,9 @@
 # its head and upstream, the main checkout's branch and head, origin's branch heads (refs/heads only, not its pull refs)
 # and the remotes the main checkout has.
 set -euo pipefail
+# The fixtures' origin is a local path that names no GitHub repository, so
+# the suite names the default branch.
+export WORKTREE_DEFAULT_BRANCH=main
 
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call in this file back at the real repository.

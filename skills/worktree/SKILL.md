@@ -4,6 +4,8 @@ description: "Load to create, list, remove, push, or repair a git worktree."
 summary: "Git worktree management: create, list, remove isolated working copies with env and config symlinks."
 license: MIT
 user-invocable: true
+dependencies:
+  optional: [github]
 argument-hint: "create <ID> [<branch>] [--base <branch>|--from <ref>|--pr <N>] [--reuse|--restack] [--replay] [--hosted] | create <ID> --transfer <branch> (not with <branch>, --base, --from, --pr, --reuse, --restack, or --replay) | restack continue|skip|abort <ID|path> | list | remove <ID|path>"
 metadata:
   author: vanillagreen
@@ -73,7 +75,7 @@ The layout table is data, one row per ecosystem, in `scripts/worktree-output-pru
 
 ## System Dependencies
 
-`git`; authenticated `gh` for new-work PR ownership discovery and for proving a squash-merged branch merged in `cleanup` and `remove`; `flock` for repository-local per-issue claim serialization; Bash 3.2+ (macOS system bash is supported).
+`git`; authenticated `gh` for reading the repository's default branch, for new-work PR ownership discovery and for proving a squash-merged branch merged in `cleanup` and `remove`; `flock` for repository-local per-issue claim serialization; Bash 3.2+ (macOS system bash is supported).
 
 ## Configuration
 

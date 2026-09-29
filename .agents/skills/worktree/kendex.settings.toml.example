@@ -3,10 +3,11 @@
 # Where worktrees are created, what is linked into them, and whose name
 # their commits carry.
 
-# The branch a new worktree starts from. Empty reads this checkout's own
-# record of the remote's default branch, and falls back to main. That record
-# is refreshed locally, never by the remote, so a stale one keeps handing
-# out the old branch.
+# The branch a new worktree starts from. Empty reads the repository's
+# default branch on GitHub. A checkout with no GitHub repository reads its
+# own record of the remote's default branch, which is refreshed locally,
+# never by the remote, so a stale one keeps handing out the old branch; with
+# no record, the commands that need the branch refuse.
 WORKTREE_DEFAULT_BRANCH = ""
 
 # Where worktrees are created, except a hosted lane's, which always sits

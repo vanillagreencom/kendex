@@ -8,6 +8,9 @@
 # and a fully untracked entry keeps the plain parent symlink. One table, a
 # row per scenario.
 set -euo pipefail
+# The fixtures' origin is a local path that names no GitHub repository, so
+# the suite names the default branch.
+export WORKTREE_DEFAULT_BRANCH=main
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
