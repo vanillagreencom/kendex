@@ -415,9 +415,9 @@ fn tracked_outputs(
         .collect())
 }
 
-/// A skill's whole tree; anything else is one file. Read through the same
-/// constructor every install-side reading uses, over the same whole tree,
-/// so this check scores the content the install-side passes read back.
+/// A skill's rendered tree; anything else is one file. Read through the
+/// same constructor every install-side reading uses, over the same tree, so
+/// this check scores the content the install-side passes read back.
 fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Content> {
     if kind != ItemKind::Skill {
         return Ok(Content::Document {
@@ -430,7 +430,7 @@ fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Content
         });
     }
     Ok(quality::observe::tree_content_from_bytes(
-        &sealed.collect_skill_tree(path)?,
+        &sealed.collect_rendered_skill_tree(path)?,
     ))
 }
 

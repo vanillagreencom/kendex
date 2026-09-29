@@ -68,6 +68,29 @@ pub struct SealedSource {
 pub const NOT_CONTENT: [&str; 6] = [".git", "node_modules", "target", "dist", "build", ".venv"];
 const TOOL_STATE: &str = ".git node_modules __pycache__ .pytest_cache .venv";
 
+/// The entries at a skill's own top level that a render leaves out: the
+/// package's test suites, its evaluation sets and its maintainer notes. An
+/// agent never reads them at run time, and a consumer never runs a
+/// package's tests. Only the top level: a template or an example deeper in
+/// the tree that carries one of these names is content. `tools/guard`'s
+/// render rule owes no render for the same names, and
+/// `guard_not_rendered_is_the_render_list` holds its copy to this one.
+pub const NOT_RENDERED: [&str; 3] = ["tests", "evals", "DEVELOPMENT.md"];
+
+/// What a tree walk leaves out: `skip` names at every depth, `top` names
+/// only among the walked directory's own entries.
+#[derive(Clone, Copy)]
+struct Prune<'a> {
+    skip: &'a [&'a str],
+    top: &'a [&'a str],
+}
+
+impl Prune<'_> {
+    fn drops(&self, name: &str, depth: usize) -> bool {
+        self.skip.contains(&name) || (depth == 0 && self.top.contains(&name))
+    }
+}
+
 impl SealedSource {
     pub fn open(root: &Path) -> Result<SealedSource> {
         let given = root.to_path_buf();
@@ -242,15 +265,25 @@ impl SealedSource {
     /// behind skill trees and package copies. `skip` prunes directory names
     /// that are never content (dependency trees, VCS internals).
     pub fn collect_tree(&self, dir: &Path, skip: &[&str]) -> Result<Vec<(PathBuf, Vec<u8>)>> {
-        let mut files = Vec::new();
-        let mut total: u64 = 0;
-        self.collect_into(dir, Path::new(""), skip, 0, &mut total, &mut files)?;
-        files.sort_by(|a, b| a.0.cmp(&b.0));
-        Ok(files)
+        self.walk(dir, Prune { skip, top: &[] })
     }
 
-    /// All skill trees exclude `TOOL_STATE`. Only repository-root skills also exclude `NOT_CONTENT`.
+    /// A skill's whole authored tree, what a copy of the package keeps. All
+    /// skill trees exclude `TOOL_STATE`. Only repository-root skills also
+    /// exclude `NOT_CONTENT`.
     pub fn collect_skill_tree(&self, dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+        self.skill_tree(dir, &[])
+    }
+
+    /// A skill's tree as a render carries it: [`Self::collect_skill_tree`]
+    /// without the top-level [`NOT_RENDERED`] entries, which the walk never
+    /// reads. Everything that renders, hashes or scores an install reads
+    /// this one, so a rendering and the hashes recorded for it agree.
+    pub fn collect_rendered_skill_tree(&self, dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+        self.skill_tree(dir, &NOT_RENDERED)
+    }
+
+    fn skill_tree(&self, dir: &Path, top: &[&str]) -> Result<Vec<(PathBuf, Vec<u8>)>> {
         // Either spelling of the root is the root: the repo-root exclusions
         // must hold however the caller reached it.
         let skip: &[&str] = match dir == self.root || dir == self.given {
@@ -258,14 +291,22 @@ impl SealedSource {
             false => &[],
         };
         let skip: Vec<_> = skip.iter().copied().chain(TOOL_STATE.split(' ')).collect();
-        self.collect_tree(dir, &skip)
+        self.walk(dir, Prune { skip: &skip, top })
+    }
+
+    fn walk(&self, dir: &Path, prune: Prune<'_>) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+        let mut files = Vec::new();
+        let mut total: u64 = 0;
+        self.collect_into(dir, Path::new(""), prune, 0, &mut total, &mut files)?;
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(files)
     }
 
     fn collect_into(
         &self,
         dir: &Path,
         rel: &Path,
-        skip: &[&str],
+        prune: Prune<'_>,
         depth: usize,
         total: &mut u64,
         files: &mut Vec<(PathBuf, Vec<u8>)>,
@@ -280,7 +321,7 @@ impl SealedSource {
             let Some(name) = path.file_name() else {
                 continue;
             };
-            if skip.contains(&name.to_string_lossy().as_ref()) {
+            if prune.drops(&name.to_string_lossy(), depth) {
                 continue;
             }
             let rel = rel.join(name);
@@ -293,7 +334,7 @@ impl SealedSource {
                 });
             }
             if meta.is_dir() {
-                self.collect_into(&path, &rel, skip, depth + 1, total, files)?;
+                self.collect_into(&path, &rel, prune, depth + 1, total, files)?;
             } else {
                 let bytes = self.read(&path)?;
                 *total += bytes.len() as u64;
@@ -312,12 +353,14 @@ impl SealedSource {
         Ok(())
     }
 
-    /// The hash a catalog item is recorded by: its skill tree for a
-    /// directory, its own bytes for a file. What a rendering is compared
+    /// The hash a catalog item is recorded by: its rendered skill tree for
+    /// a directory, its own bytes for a file. What a rendering is compared
     /// against to say whether it is the catalog's bytes unchanged.
     pub fn catalog_hash(&self, path: &Path) -> Result<String> {
         if self.is_dir(path) {
-            return Ok(crate::hash::hash_files(&self.collect_skill_tree(path)?));
+            return Ok(crate::hash::hash_files(
+                &self.collect_rendered_skill_tree(path)?,
+            ));
         }
         Ok(crate::hash::hash_bytes(&self.read(path)?))
     }

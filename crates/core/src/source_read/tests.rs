@@ -216,6 +216,50 @@ fn a_nested_skill_excludes_tool_caches_but_keeps_authored_build_dirs() {
     }
 }
 
+/// A render leaves out the package's own tests, evaluation sets and
+/// maintainer notes, and only at the skill's top level: a template or an
+/// example that carries one of those names deeper in the tree is content.
+/// The whole tree, which a copy of the package keeps, still holds them.
+#[test]
+fn a_rendered_skill_tree_leaves_out_top_level_tests_evals_and_development_notes() {
+    let (_tmp, sealed) = fixture();
+    let dir = sealed.root().join("skills/gh");
+    let paths = [
+        "DEVELOPMENT.md",
+        "evals/cases.json",
+        "examples/app/tests/case.ice",
+        "scripts/run.sh",
+        "templates/DEVELOPMENT.md",
+        "tests/lib/fixture.sh",
+        "tests/run.test.sh",
+    ];
+    for rel in paths {
+        std::fs::create_dir_all(dir.join(rel).parent().unwrap()).expect("mkdir");
+        std::fs::write(dir.join(rel), rel).expect("write");
+    }
+    let names = |files: Vec<(PathBuf, Vec<u8>)>| -> Vec<String> {
+        files
+            .into_iter()
+            .map(|(p, _)| p.to_string_lossy().into_owned())
+            .collect()
+    };
+
+    assert_eq!(
+        names(sealed.collect_rendered_skill_tree(&dir).expect("tree")),
+        [
+            "SKILL.md",
+            "examples/app/tests/case.ice",
+            "scripts/run.sh",
+            "templates/DEVELOPMENT.md",
+        ]
+    );
+    let whole = names(sealed.collect_skill_tree(&dir).expect("tree"));
+    assert_eq!(whole.len(), paths.len() + 1);
+    for rel in paths {
+        assert!(whole.contains(&rel.to_owned()), "{rel} left the whole tree");
+    }
+}
+
 #[test]
 fn skipped_names_are_pruned_from_trees() {
     let (_tmp, sealed) = fixture();
@@ -305,4 +349,25 @@ fn a_catalog_path_is_the_same_under_either_root_spelling() {
         "skills/gh/SKILL.md",
         "the canonical spelling open() resolved to"
     );
+}
+
+/// `tools/guard`'s render rule owes no render for the top-level entries a
+/// render leaves out; its copy of the list is held to [`NOT_RENDERED`] both
+/// ways, so a name added on one side alone reds here.
+#[test]
+fn guard_not_rendered_is_the_render_list() {
+    let guard =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/guard"))
+            .expect("tools/guard is readable");
+    let listed = guard
+        .lines()
+        .find_map(|line| line.strip_prefix("not_rendered='"))
+        .and_then(|rest| rest.strip_suffix('\''))
+        .expect("tools/guard declares not_rendered as one quoted line");
+    let guard_names: std::collections::BTreeSet<&str> = listed.split(' ').collect();
+    assert!(
+        guard_names.len() >= 2,
+        "the not_rendered reader found {guard_names:?}; the reader is broken"
+    );
+    assert_eq!(guard_names, NOT_RENDERED.into_iter().collect());
 }

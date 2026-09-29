@@ -529,7 +529,7 @@ pub fn installation_hash(
     harness: HarnessId,
 ) -> Result<String> {
     let files = if kind == ItemKind::Skill {
-        sealed.collect_skill_tree(source_tree)?
+        sealed.collect_rendered_skill_tree(source_tree)?
     } else if sealed.is_dir(source_tree) {
         sealed.collect_tree(source_tree, &[])?
     } else {

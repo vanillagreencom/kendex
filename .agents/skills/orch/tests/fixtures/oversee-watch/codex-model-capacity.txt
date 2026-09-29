@@ -1,5 +1,0 @@
-› Continue the task.
-
-■ Selected model is at capacity. Try again later.
-
-› Ask Codex to do anything

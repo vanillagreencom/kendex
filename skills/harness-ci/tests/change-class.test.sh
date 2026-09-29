@@ -1526,6 +1526,9 @@ description: a second demo skill
 
 Another body the catalog publishes.
 SECOND
+  # The package's own suite, which a consumer render leaves out.
+  mkdir -p "$catalog/skills/demo/tests"
+  printf '#!/usr/bin/env bash\necho demo suite\n' >"$catalog/skills/demo/tests/demo.test.sh"
   fixture_repo "$catalog"
   git -C "$catalog" add -A
   git -C "$catalog" commit -q -m "catalog at its first source commit"
@@ -1572,6 +1575,9 @@ TOML
   assert_eq "the install record holds both skills" "2" \
     "$(jq -r '[.entries | keys[] | select(startswith("skill:"))] | length' \
       "$consumer/.kendex-lock.json")"
+  assert_eq "the render carries no tests/ and the inventory lists none" "absent 0" \
+    "$([ -e "$consumer/.claude/skills/demo/tests" ] && echo present || echo absent) $(
+      jq '[.[] | select(test("/tests/"))] | length' "$consumer/.kendex-generated.json")"
 
   # A newer source commit, and the refresh that brings it in.
   printf '\nA paragraph the catalog added later.\n' >>"$catalog/skills/demo/SKILL.md"
@@ -1600,6 +1606,35 @@ TOML
     "$(printf '%s\n' "$refresh_err" | sed -n 's/^class: //p')"
   assert_eq "and a record the catalog has not moved past trails nothing" "" \
     "$(printf '%s\n' "$refresh_err" | sed -n '/^render-stale: /p')"
+
+  # The refresh that drops a package's tests/ from a consumer that a kendex
+  # rendering them had written: the base carries the suite in the skill's
+  # tree and the inventory, and the head is the tree this kendex renders,
+  # which removes both. The base is laid by hand because no kendex this suite
+  # runs renders tests/; the head is what `kendex refresh` wrote above. The
+  # removed paths are listed at the base, so harness-only reads them as
+  # generated, and the skill's tree position owns them.
+  git -C "$consumer" checkout -q -B carried-tests refreshed
+  mkdir -p "$consumer/.claude/skills/demo/tests"
+  cp "$catalog/skills/demo/tests/demo.test.sh" "$consumer/.claude/skills/demo/tests/demo.test.sh"
+  jq '. + [".claude/skills/demo/tests/demo.test.sh"] | sort' \
+    "$consumer/.kendex-generated.json" >"$SANDBOX/carried-inventory"
+  mv "$SANDBOX/carried-inventory" "$consumer/.kendex-generated.json"
+  git -C "$consumer" add -A
+  git -C "$consumer" commit -q -m "a consumer whose render carried the package's tests"
+  carried_base="$(git -C "$consumer" rev-parse HEAD)"
+  git -C "$consumer" rm -q .claude/skills/demo/tests/demo.test.sh
+  git -C "$consumer" checkout -q refreshed -- .kendex-generated.json
+  git -C "$consumer" commit -q -m "kendex refresh drops the package's tests"
+  assert_eq "the drop changes the suite and the inventory alone" \
+    ".claude/skills/demo/tests/demo.test.sh .kendex-generated.json" \
+    "$(git -C "$consumer" diff --name-only "$carried_base" HEAD | tr '\n' ' ' | sed 's/ $//')"
+  carried_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base "$carried_base" --head HEAD)"
+  assert_eq "a refresh that drops rendered tests/ is a render" \
+    "class=render measured=true cause=renders-match-their-sources" \
+    "$(printf '%s\n' "$carried_err" | sed -n 's/^class: //p')"
+  git -C "$consumer" checkout -q refreshed
 
   # A priming step that writes into the checkout would be weighing its own
   # repair rather than the commit, had the proof run there. It runs in a

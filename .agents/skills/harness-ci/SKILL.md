@@ -62,7 +62,7 @@ Nothing here writes `.github/`. Wire the one step yourself, once, from [referenc
 
 ## Fail-closed
 
-Every unprovable case answers `false`, which runs every lane ([DEVELOPMENT.md](DEVELOPMENT.md) § Invariants). `--no-renames` is fixed. `change-class` answers `standard` on the same terms.
+Every unprovable case answers `false`, which runs every lane ([DEVELOPMENT.md § Invariants](https://github.com/vanillagreencom/kendex/blob/main/skills/harness-ci/DEVELOPMENT.md#invariants)). `--no-renames` is fixed. `change-class` answers `standard` on the same terms.
 
 **A class is never read from an author-writable field.** Not a label, not a branch name, not a pull request title, and no flag carries one: the author of the diff being judged writes all of them, so trusting one fails open on exactly the diffs that most want to pass. A caller that acts on a verdict without review runs the DEFAULT BRANCH's copy of the script against the pull request's tree, because the branch can change the script too.
 

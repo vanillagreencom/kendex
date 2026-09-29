@@ -180,7 +180,6 @@ run_guard
   || bad "a 3.2-clean skill tree with every render in step passes" "rc=$RC out=$OUT"
 BASH4_LINE='mapfile -t demo_lines <"$0"'
 printf '%s\n' "$BASH4_LINE" >>"$R/skills/demo/tests/demo.test.sh"
-printf '%s\n' "$BASH4_LINE" >>"$R/.agents/skills/demo/tests/demo.test.sh"
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: bash32-lint=1"* ]] \
   && [[ "$OUT" == *"bash32-lint: constructs=1"* ]] \

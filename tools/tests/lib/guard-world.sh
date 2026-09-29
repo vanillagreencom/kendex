@@ -74,14 +74,14 @@ done < <(sed -n 's#^  set -- \(.*\)$#\1#p' "$REPO/tools/bash32-lint" | tr ' ' '\
 # tools/ is the covered set tools/bash32-parse adds to that roster, and a
 # covered directory holding no shell file is a refusal there as it is here.
 printf '#!/usr/bin/env bash\necho tooled\n' >"$R/tools/demo-tool.sh"
+# The render carries no tests/: a skill's suites are never rendered.
 mkdir -p "$R/skills/demo/scripts" "$R/skills/demo/tests" \
-  "$R/.agents/skills/demo/scripts" "$R/.agents/skills/demo/tests" \
+  "$R/.agents/skills/demo/scripts" \
   "$R/agents" "$R/.claude/agents" "$R/.codex/agents" "$R/.pi/agents"
 printf '#!/usr/bin/env bash\necho demo\n' >"$R/skills/demo/scripts/demo.sh"
 printf '#!/usr/bin/env bash\necho tested\n' >"$R/skills/demo/tests/demo.test.sh"
 printf '#!/usr/bin/env bash\necho accented\n' >"$R/skills/demo/scripts/frappé.sh"
 cp "$R/skills/demo/scripts/demo.sh" "$R/.agents/skills/demo/scripts/demo.sh"
-cp "$R/skills/demo/tests/demo.test.sh" "$R/.agents/skills/demo/tests/demo.test.sh"
 cp "$R/skills/demo/scripts/frappé.sh" "$R/.agents/skills/demo/scripts/frappé.sh"
 printf '# demo agent\n' >"$R/agents/demo.md"
 printf '# demo agent render\n' >"$R/.claude/agents/demo.md"

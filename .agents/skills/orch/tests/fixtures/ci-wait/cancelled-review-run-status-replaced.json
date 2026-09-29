@@ -1,6 +1,0 @@
-[
-  {"name":"Changes","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29634837074/job/88057237002","workflow":"CI","startedAt":"2026-07-18T06:55:24Z"},
-  {"name":"Lint","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29634837074/job/88057237008","workflow":"CI","startedAt":"2026-07-18T06:55:25Z"},
-  {"name":"CI Gate Publisher","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29634837074/job/88057237015","workflow":"CI","startedAt":"2026-07-18T06:55:27Z"},
-  {"name":"CI Required","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29634837179","workflow":"","startedAt":"0001-01-01T00:00:00Z"}
-]

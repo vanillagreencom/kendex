@@ -81,4 +81,4 @@ Launch settings and Codex compaction limits: [skill-rules.md](references/skill-r
 
 Every lane merges its own pull request through the merge queue. `ORCH_MERGE_BYPASS`, `ORCH_ADMIN_MERGE_GH_CONFIG_DIR` and `ORCH_ADMIN_MERGE_CLASSES` are retired and refused while set; `pr-merge --help` § Retired settings names where to delete them.
 
-Maintainer notes and the test entry point: [DEVELOPMENT.md](DEVELOPMENT.md).
+Maintainer notes and the test entry point: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/orch/DEVELOPMENT.md).

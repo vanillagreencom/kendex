@@ -41,4 +41,4 @@ COMMIT_GUARDS_CHECKS = "todo-ban suppression-ban"
 
 The Git hooks run the committed skill scripts: `pre-commit` and `commit-msg` per commit, `pre-push` per branch. The harness pre-commit hook requires these Git hooks before it allows a commit.
 
-Check definitions: [CHECKS.md](CHECKS.md). Hook setup and execution: [DEVELOPMENT.md](DEVELOPMENT.md).
+Check definitions: [CHECKS.md](CHECKS.md). Hook setup and execution: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md).

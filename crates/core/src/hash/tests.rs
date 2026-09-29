@@ -459,3 +459,39 @@ fn editing_a_shared_key_invalidates_dependents() {
     };
     assert_eq!(unrelated, unrelated_before);
 }
+
+/// A skill's installation hash reads what its render carries: an edit to
+/// the package's tests, evaluation sets or maintainer notes moves nothing a
+/// consumer records, and an edit to a file the render carries does.
+#[test]
+fn an_edit_a_render_leaves_out_moves_no_installation_hash() {
+    let tmp = tempfile::tempdir().unwrap();
+    let skill = tmp.path().join("skill");
+    std::fs::create_dir_all(skill.join("tests")).unwrap();
+    std::fs::create_dir_all(skill.join("evals")).unwrap();
+    std::fs::write(skill.join("SKILL.md"), "content").unwrap();
+    let manifest = Manifest {
+        schema: MANIFEST_SCHEMA,
+        ..Manifest::default()
+    };
+    let sealed = crate::source_read::SealedSource::open(tmp.path()).unwrap();
+    let skill = sealed.root().join("skill");
+    let hash = || {
+        installation_hash(
+            &sealed,
+            &skill,
+            &manifest,
+            ItemKind::Skill,
+            "skill",
+            HarnessId::Claude,
+        )
+        .unwrap()
+    };
+    let before = hash();
+    for rel in ["tests/run.test.sh", "evals/cases.json", "DEVELOPMENT.md"] {
+        std::fs::write(skill.join(rel), rel).unwrap();
+        assert_eq!(hash(), before, "{rel} moved the installation hash");
+    }
+    std::fs::write(skill.join("SKILL.md"), "edited").unwrap();
+    assert_ne!(hash(), before);
+}

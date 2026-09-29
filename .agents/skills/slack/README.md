@@ -144,4 +144,4 @@ Slack's call allowance is shared by every relay of one app. A relay's calls per 
 
 ## Proof
 
-The suites under `tests/` prove the package's behaviour against a fake Slack API and the real `lane-mail`. The rows that need the owner's Slack app and channel, each with the command that proves it, are listed in [DEVELOPMENT.md § Live proof](DEVELOPMENT.md#live-proof).
+The suites under `tests/` prove the package's behaviour against a fake Slack API and the real `lane-mail`. The rows that need the owner's Slack app and channel, each with the command that proves it, are listed in [DEVELOPMENT.md § Live proof](https://github.com/vanillagreencom/kendex/blob/main/skills/slack/DEVELOPMENT.md#live-proof).

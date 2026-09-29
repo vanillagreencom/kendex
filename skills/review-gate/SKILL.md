@@ -118,7 +118,7 @@ Evidence for the CURRENT head is any of:
 3. A trusted comment-form pass bound to this head's SHA.
 4. A trusted operator override with a reason, for missing evidence only.
 
-Carry-forward never creates evidence or bypasses a fail-closed term. Objections and unresolved threads fail closed; an evidence-read failure exits 2 with no verdict. Evidence, trust, relay, and writer mechanics: [DEVELOPMENT.md](DEVELOPMENT.md) § Predicate evidence and trust.
+Carry-forward never creates evidence or bypasses a fail-closed term. Objections and unresolved threads fail closed; an evidence-read failure exits 2 with no verdict. Evidence, trust, relay, and writer mechanics: [DEVELOPMENT.md § Predicate evidence and trust](https://github.com/vanillagreencom/kendex/blob/main/skills/review-gate/DEVELOPMENT.md#predicate-evidence-and-trust).
 
 ## Scripts
 
@@ -135,4 +135,4 @@ Carry-forward never creates evidence or bypasses a fail-closed term. Objections 
 - `scripts/review-writer.sh`: `workflow_dispatch` and `schedule` evaluate and converge every open PR; `merge_group` posts one queue success, while `WRITER_READ_ONLY=1` is a no-op. Its header documents the workflow-only contract.
 - `scripts/pr-watch.sh`: reduce open PRs to attention lines read from GitHub's review state. `--help`
 
-Engine selftests run in kendex CI ([DEVELOPMENT.md](DEVELOPMENT.md)). Re-vendor PRs: [references/vendored-paths.md](references/vendored-paths.md).
+Engine selftests run in kendex CI ([DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/review-gate/DEVELOPMENT.md)). Re-vendor PRs: [references/vendored-paths.md](references/vendored-paths.md).

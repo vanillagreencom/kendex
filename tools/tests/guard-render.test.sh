@@ -123,6 +123,48 @@ run_guard
 git -C "$R" reset -q HEAD -- skills .agents
 rm -f "$R/skills/demo/scripts/added.sh" "$R/.agents/skills/demo/scripts/added.sh"
 
+# A render leaves out a skill's top-level tests/, evals/ and DEVELOPMENT.md,
+# so an edit there owes none; the same name deeper in the tree is content
+# and does. One row per path, one control for the one rule.
+# path | owes a render (1) or not (0)
+not_rendered_rows=0
+while IFS='|' read -r rel owes; do
+  not_rendered_rows=$((not_rendered_rows + 1))
+  mkdir -p "$R/skills/demo/$(dirname "$rel")"
+  printf 'echo more\n' >>"$R/skills/demo/$rel"
+  git -C "$R" add -A
+  run_guard
+  if [ "$owes" = 1 ]; then
+    [ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo/$rel -> .agents/skills/demo/$rel"* ]] \
+      && ok "a source-only edit to $rel reds, naming its render" \
+      || bad "a source-only edit to $rel reds, naming its render" "rc=$RC out=$OUT"
+  else
+    [ "$RC" -eq 0 ] \
+      && ok "a source-only edit to $rel owes no render and passes" \
+      || bad "a source-only edit to $rel owes no render and passes" "rc=$RC out=$OUT"
+  fi
+  git -C "$R" reset -q --hard HEAD
+  git -C "$R" clean -qfd -- skills
+done <<'ROWS'
+tests/demo.test.sh|0
+evals/cases.json|0
+DEVELOPMENT.md|0
+templates/DEVELOPMENT.md|1
+scripts/tests/case.sh|1
+ROWS
+[ "$not_rendered_rows" -eq 5 ] || bad "the not-rendered table ran $not_rendered_rows rows, not 5"
+printf 'echo more\n' >>"$R/skills/demo/tests/demo.test.sh"
+git -C "$R" add -A
+if mutant_guard '/^    rendered_in_skill "\${x#\*\/}" || continue$/d'; then
+  run_mutant
+  [ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo/tests/demo.test.sh -> .agents/skills/demo/tests/demo.test.sh"* ]] \
+    && ok "control: with the not-rendered exemption deleted a skill test edit reds" \
+    || bad "control: with the not-rendered exemption deleted a skill test edit reds" "rc=$RC out=$OUT"
+else
+  bad "control: the not-rendered exemption could not be deleted from a guard copy"
+fi
+git -C "$R" reset -q --hard HEAD
+
 mkdir -p "$R/skills/other/scripts"
 printf '#!/usr/bin/env bash\necho local\n' >"$R/skills/other/scripts/local-only.sh"
 git -C "$R" add skills/other/scripts/local-only.sh

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Selftest for review-predicate.sh — pins the gate's decision table without
-# touching the network. This is the engine's portable proof: every consumer's
-# CI runs it in a deliberately UNGATED job (a broken predicate approves
+# touching the network. This is the engine's proof, run in the catalog
+# repository in a deliberately UNGATED job (a broken predicate approves
 # nothing, so a selftest behind the gate could never run when it matters).
+# Its tables live under ../tests/, which a consumer render does not carry,
+# so a rendered copy stops at selftest-table-load, exit 1.
 #
 # Why this exists: the predicate is the single thing standing between
 # "reviewed" and "merged", it is only ever exercised in production, and every
@@ -25,7 +27,7 @@
 # Mechanism: a `gh` shim prior on PATH answers from fixtures and applies any
 # `--jq` filter with real jq, so the predicate runs unmodified. Run:
 #
-#   .agents/skills/review-gate/scripts/review-predicate-selftest.sh
+#   skills/review-gate/scripts/review-predicate-selftest.sh
 #
 # Exit 0 = all cases pass. Any failure prints the case, the expectation and
 # what the predicate actually said.

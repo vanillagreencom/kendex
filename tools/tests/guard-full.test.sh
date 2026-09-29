@@ -226,9 +226,7 @@ SPACE_ROWS=(
 # A touched suite that leaves a marker: a refused start must end the run before
 # the suite lane, where a suite may run cargo of its own.
 SUITE_MARKER="$TMP/suite-ran"
-for f in skills/demo/tests/demo.test.sh .agents/skills/demo/tests/demo.test.sh; do
-  printf ': >"$SUITE_MARKER"\n' >>"$R/$f"
-done
+printf ': >"$SUITE_MARKER"\n' >>"$R/skills/demo/tests/demo.test.sh"
 space_row_holds() { # N — run row N under $GUARD; succeed when every expectation holds
   local env rc key ran did=0 suite=0
   IFS='|' read -r _ env rc key ran <<<"${SPACE_ROWS[$1]}"
@@ -276,7 +274,7 @@ done <<'EDITS'
 11|s/^    \*\[!0\]\*) ;;$/    *) ;;/
 4|/^  export CARGO_INCREMENTAL=0$/d
 EDITS
-git -C "$R" checkout -q -- skills/demo/tests/demo.test.sh .agents/skills/demo/tests/demo.test.sh
+git -C "$R" checkout -q -- skills/demo/tests/demo.test.sh
 
 # Every other lane fails its own write on a full stream too, so only fmt's
 # write straight to the guard's stream lands on the device.
@@ -800,13 +798,10 @@ run_lanes standard false $SKILL_TOOL
 # this file's own rows once ran under a prose-only micro selection. The
 # touched demo suite prints what reached it.
 inherited_row() { # — sets OUT and RC
-  local t
   git -C "$R" reset -q --hard "$lanes_head"
   git -C "$R" clean -qfd
-  for t in skills/demo/tests/demo.test.sh .agents/skills/demo/tests/demo.test.sh; do
-    printf '%s\n' '#!/usr/bin/env bash' \
-      'echo "inner=${DEV_VALIDATE_CLASS-unset}:${DEV_VALIDATE_DOCS_ONLY-unset}:${DEV_VALIDATE_PATHS-unset}"' >"$R/$t"
-  done
+  printf '%s\n' '#!/usr/bin/env bash' \
+    'echo "inner=${DEV_VALIDATE_CLASS-unset}:${DEV_VALIDATE_DOCS_ONLY-unset}:${DEV_VALIDATE_PATHS-unset}"' >"$R/skills/demo/tests/demo.test.sh"
   printf 'skills/demo/tests/demo.test.sh\n' >"$PATHS_FILE"
   OUT=""
   RC=0
