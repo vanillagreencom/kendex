@@ -110,25 +110,28 @@ function compareVersions(a, b) {
 
 // The highest Pi release a Pi peer floor may name is the one
 // pi-update.audit.md clears for lanes (pi-extensions/AGENTS.md): its
-// `Marker` line names the release it audited and the marker before it, and
-// its `Verdict:` line says `roll` or `hold`. A record for a release other than
-// the marker's is a missing record. Taking the manifests, marker and record as
-// arguments is what lets the controls below plant each defect.
+// `Marker` line names the marker the audit started from and the newest release
+// it read, and its `Verdict:` line says `roll` or `hold`. A `roll` clears the
+// new marker; a `hold` clears only the old one, and pi-update.state.json stays
+// there so the next audit reads the held release again. A record that clears a
+// release other than the state marker's is a missing record. Taking the
+// manifests, marker and record as arguments is what lets the controls below
+// plant each defect.
 function auditRecord(audit) {
 	const [, previous, release] = audit.match(/^Marker `(\d+\.\d+\.\d+)` → `(\d+\.\d+\.\d+)`/m) ?? [];
-	return { previous, release, verdict: audit.match(/^Verdict: `(roll|hold)`/m)?.[1] };
+	const verdict = audit.match(/^Verdict: `(roll|hold)`/m)?.[1];
+	return { previous, release, verdict, cleared: verdict === "roll" ? release : previous };
 }
 
 function floorRefusals(pkgs, marker, audit) {
-	const { previous, release, verdict } = auditRecord(audit);
-	if (release !== marker.lastVersion) return [`pi-update.audit.md: no audit record for ${marker.lastVersion}, the release pi-update.state.json marks audited`];
-	if (verdict === undefined) return [`pi-update.audit.md: the record for ${release} names no verdict, \`roll\` or \`hold\``];
-	const ceiling = verdict === "roll" ? release : previous;
+	const { release, verdict, cleared } = auditRecord(audit);
+	if (verdict === undefined) return [`pi-update.audit.md: the record names no verdict, \`roll\` or \`hold\``];
+	if (cleared !== marker.lastVersion) return [`pi-update.audit.md: no audit record clears ${marker.lastVersion}, the release pi-update.state.json marks audited (verdict ${verdict} for ${release} clears ${cleared})`];
 	return pkgs.flatMap(({ dir, pkg }) =>
 		Object.entries(pkg.peerDependencies ?? {}).flatMap(([name, range]) => {
 			const floor = name.startsWith("@earendil-works/pi-") ? range.match(/^>=(\d+\.\d+\.\d+)$/)?.[1] : undefined;
-			return floor !== undefined && compareVersions(floor, ceiling) > 0
-				? [`${dir}: Pi peer ${name} floor ${floor} is above ${ceiling}, the last release pi-update.audit.md clears (verdict ${verdict} for ${release})`]
+			return floor !== undefined && compareVersions(floor, cleared) > 0
+				? [`${dir}: Pi peer ${name} floor ${floor} is above ${cleared}, the last release pi-update.audit.md clears (verdict ${verdict} for ${release})`]
 				: [];
 		}),
 	);
@@ -144,28 +147,29 @@ test("no Pi peer floor rises above the release the Pi update audit clears", () =
 	assert.deepEqual(floorRefusals(pkgs, JSON.parse(readFileSync(markerPath, "utf8")), readFileSync(auditPath, "utf8")), []);
 });
 
-// Must-fail controls, one per rule floorRefusals holds: each plants one defect
-// in a copy of the real record, or one floor in a package of its own.
-test("a floor bump the audit record does not clear is refused", () => {
-	const marker = JSON.parse(readFileSync(markerPath, "utf8"));
-	const audit = readFileSync(auditPath, "utf8");
-	const { previous, release } = auditRecord(audit);
-	assert.ok(release, "the real record carries no Marker line: these controls plant nothing");
-	const [major, minor, patch] = release.split(".").map(Number);
-	const next = `${major}.${minor}.${patch + 1}`;
+// One row per rule floorRefusals holds, over records built here in the shape
+// .pi/prompts/pi-update.md § Audit record has the audit write, so a correct
+// live record under either verdict leaves these rows standing. An accept row
+// expects no refusal; a refuse row expects one naming its defect.
+test("the audit record gates Pi peer floors under both verdicts", () => {
+	const record = (verdict) => `# Pi package update audit\n\nMarker \`0.85.1\` → \`0.87.1\`. Sources fetched: every changelog.\n\n## Verdict\n\n${verdict}\n`;
 	const pkgAt = (floor) => [{ dir: "planted", pkg: { peerDependencies: { "@earendil-works/pi-coding-agent": `>=${floor}` } } }];
-	const swap = (from, to) => {
-		assert.equal(audit.split(from).length, 2, `the real record holds ${from} other than once: this control plants nothing`);
-		return audit.replace(from, to);
-	};
+	const floor = (version) => `planted: Pi peer @earendil-works/pi-coding-agent floor ${version} is above`;
 	const rows = [
-		{ name: "floor above the audited release", pkgs: pkgAt(next), marker, audit, refused: `planted: Pi peer @earendil-works/pi-coding-agent floor ${next} is above ${release}` },
-		{ name: "marker ahead of the record", pkgs: pkgAt(release), marker: { ...marker, lastVersion: next }, audit, refused: `no audit record for ${next}` },
-		{ name: "record without a verdict", pkgs: pkgAt(release), marker, audit: swap("Verdict: `roll`", "Verdict: pending"), refused: "names no verdict" },
-		{ name: "floor at a held release", pkgs: pkgAt(release), marker, audit: swap("Verdict: `roll`", "Verdict: `hold`"), refused: `floor ${release} is above ${previous}` },
+		{ name: "roll: floor at the new marker", verdict: "Verdict: `roll`.", lastVersion: "0.87.1", floor: "0.87.1", refused: undefined },
+		{ name: "roll: floor above the new marker", verdict: "Verdict: `roll`.", lastVersion: "0.87.1", floor: "0.87.2", refused: `${floor("0.87.2")} 0.87.1` },
+		{ name: "roll: state marker not advanced", verdict: "Verdict: `roll`.", lastVersion: "0.85.1", floor: "0.85.1", refused: "no audit record clears 0.85.1" },
+		{ name: "hold: floor at the cleared old marker", verdict: "Verdict: `hold`.", lastVersion: "0.85.1", floor: "0.85.1", refused: undefined },
+		{ name: "hold: floor at the held release", verdict: "Verdict: `hold`.", lastVersion: "0.85.1", floor: "0.87.1", refused: `${floor("0.87.1")} 0.85.1` },
+		{ name: "hold: state marker advanced past the held release", verdict: "Verdict: `hold`.", lastVersion: "0.87.1", floor: "0.85.1", refused: "no audit record clears 0.87.1" },
+		{ name: "record without a verdict", verdict: "Verdict: pending", lastVersion: "0.87.1", floor: "0.87.1", refused: "names no verdict" },
 	];
 	for (const row of rows) {
-		const refusals = floorRefusals(row.pkgs, row.marker, row.audit);
+		const refusals = floorRefusals(pkgAt(row.floor), { lastVersion: row.lastVersion }, record(row.verdict));
+		if (row.refused === undefined) {
+			assert.deepEqual(refusals, [], row.name);
+			continue;
+		}
 		assert.equal(refusals.length, 1, `${row.name}: ${JSON.stringify(refusals)}`);
 		assert.ok(refusals[0].includes(row.refused), `${row.name}: ${refusals[0]}`);
 	}

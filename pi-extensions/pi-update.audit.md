@@ -10,7 +10,7 @@ Behaviour was read from the installed Pi 0.87.1 (`dist/core/agent-session.js`, `
 
 Verdict: `roll`.
 
-This section was added after the audit, under the blocking rule in `pi-extensions/AGENTS.md` (KEN-2129). Every `### Breaking Changes` entry in range was read against `pi-hooks/pi-contract.json`, across every source; the `ai` and `agent` entries repeat the `coding-agent` ones they are inherited from. `tui` and the other sources carry none.
+Every `### Breaking Changes` entry in range was read against `pi-hooks/pi-contract.json`, across every source; the `ai` and `agent` entries repeat the `coding-agent` ones they are inherited from. `tui` and the other sources carry none.
 
 | Release | Entry | Names from the contract | Result |
 |---|---|---|---|

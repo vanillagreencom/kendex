@@ -37,8 +37,8 @@ State lives in `pi-extensions/pi-update.state.json` (committed source; not a dis
 
 1. Read the marker. **In scope = every released version header `> lastVersion`** (semver) across all sources, newest processed last. If the top released version equals `lastVersion`, there is nothing to do — say so, still refresh the `lastRun`/`lastRunHead` timestamp, commit the marker, and stop.
 2. **First run (marker absent):** do not silently process the entire history. Detect a candidate baseline (most recent Pi version referenced in `git log`, else the version bundled at `pi-extensions/pi-claude-bridge/node_modules/@earendil-works/pi-coding-agent/CHANGELOG.md`), then use the `question` tool to confirm the baseline version with the user before doing any work. Seed the marker at the confirmed baseline; only versions strictly greater are processed.
-3. **Override:** a pasted changelog is the authoritative item list and skips fetching. An explicit version or range after the command only constrains which version headers are in scope; every source is still fetched. Either way the marker advances to the highest version covered.
-4. **Update on success (even a no-op):** after the audit — whether or not any fix shipped — rewrite the marker with the newest processed version/date, a fresh `lastRun`, and the run-start `lastRunHead`, and commit it. The marker commit records "audited through vX.Y.Z" so the next run does not re-audit.
+3. **Override:** a pasted changelog is the authoritative item list and skips fetching. An explicit version or range after the command only constrains which version headers are in scope; every source is still fetched. Either way the marker advances to the highest version covered, under a `roll` verdict (§ Audit record).
+4. **Update on success (even a no-op):** after the audit — whether or not any fix shipped — rewrite the marker with a fresh `lastRun` and the run-start `lastRunHead`, and commit it. Under a `roll` verdict it also takes the newest processed version/date, and the marker commit records "audited through vX.Y.Z" so the next run does not re-audit. Under `hold`, `lastVersion` and `lastDate` stay at the last cleared release, so the next run audits the held releases again.
 
 ## Hard rules
 
@@ -75,7 +75,7 @@ State lives in `pi-extensions/pi-update.state.json` (committed source; not a dis
 
 ## Audit record
 
-Overwrite `pi-extensions/pi-update.audit.md` with this run's record: the ``Marker `<old>` → `<new>`.`` line, the sources fetched, every classified entry, and a `## Verdict` section whose first line is ``Verdict: `roll`.`` or ``Verdict: `hold`.``. `pi-extensions/package-policy.test.mjs` parses the Marker and Verdict lines to refuse a Pi peer floor above the release the record clears. The marker advances under either verdict. The change that lands the pi-hooks fix for a held release sets the verdict to `roll` and names its commit in the table.
+Overwrite `pi-extensions/pi-update.audit.md` with this run's record: the ``Marker `<old>` → `<new>`.`` line, the sources fetched, every classified entry, and a `## Verdict` section whose first line is ``Verdict: `roll`.`` or ``Verdict: `hold`.``. `<old>` is `lastVersion` at run start and `<new>` the newest release processed. The record clears `<new>` under `roll` and `<old>` under `hold`, and `lastVersion` is set to the release it clears. `pi-extensions/package-policy.test.mjs` parses the Marker and Verdict lines, refuses a record whose cleared release is not `lastVersion`, and refuses a Pi peer floor above the cleared release. The change that lands the pi-hooks fix for a held release sets the verdict to `roll`, names its commit in the table, and advances `lastVersion` and `lastDate` to `<new>`.
 
 ## Apply fixes
 
