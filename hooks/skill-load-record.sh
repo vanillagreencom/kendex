@@ -2,7 +2,7 @@
 # ---
 # name: skill-load-record
 # event: PostToolUse
-# matcher: Skill
+# matcher: Skill|skill
 # description: Writes down each skill a Copilot agent finished loading, so the skill-load-check hook can judge that agent's calls on Copilot, whose payload names no transcript to read loads from. The recording is the skill-load-check hook's, run from beside this one with the argument `record`: after a `skill` tool call whose `toolResult.resultType` is `success`, it appends the skill `toolArgs.skill` names to the record of the agent the payload's `sessionId` names, under `$XDG_STATE_HOME/kendex/skill-load-check/` or `~/.local/state/kendex/skill-load-check/` where that is unset, and removes records untouched for 30 days. It never refuses: the tool has already run, so a load it could not record is its keyed line on stderr and the same text as `additionalContext` on stdout at exit 0, and so is a skill-load-check missing from beside it, opening `skill-load-record: judge=<path>`. Not run on claude: a skill load is a Skill tool call in the transcript skill-load-check reads. Not run on codex: skill-load-check does not run there, a file write being `apply_patch`, whose payload carries no `tool_input.file_path`. Not run on pi: a skill load is a `read` of SKILL.md in the session file skill-load-check reads. Not run on gemini: skill-load-check does not run there, its tool-call payload and its record of a skill load unmeasured. Not run on antigravity: skill-load-check does not run there, a skill load being a `view_file` read with no skill record. Not run on opencode: kendex delivers a hook there only as advisory rule prose, and a record taken as an instruction records nothing. Not run on cursor: kendex delivers a hook there only as advisory rule prose, and a record taken as an instruction records nothing.
 # summary: Remembers which skills each Copilot agent has loaded, so the skill-load check can let that agent's edits and Linear commands through once it has.
 # safety: Runs only the skill-load-check hook installed in its own directory, whose safety line covers the payload it reads and the record it writes. A judge that is not there is reported, never run from elsewhere.
@@ -10,6 +10,13 @@
 # harnesses: [copilot]
 # requires: [skill-load-check]
 # ---
+
+# The matcher names Copilot's own `skill` beside `Skill`. Copilot anchors
+# the matcher and names a skill load `skill`, and kendex 1.2.0 leaves a tool
+# name it does not map as written, so there `Skill` alone would never fire
+# and skill-load-check would refuse every guarded call. A kendex that maps
+# `Skill` to `skill` says the pair once. Drop `skill` once the oldest kendex
+# installing this catalog is a release after 1.2.0.
 
 set -euo pipefail
 

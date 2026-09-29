@@ -307,6 +307,12 @@ fn a_hook_matcher_is_restated_alternative_by_alternative() {
         hook_matcher("Read|Skill|Agent|WebFetch", HarnessId::Copilot),
         ("view|skill|task|web_fetch".to_owned(), true)
     );
+    // skill-load-record authors Copilot's own name beside Claude's, and
+    // both land on the one runtime tool.
+    assert_eq!(
+        hook_matcher("Skill|skill", HarnessId::Copilot),
+        ("skill".to_owned(), true)
+    );
     assert_eq!(
         hook_matcher(
             "Grep|WebSearch|TodoWrite|AskUserQuestion",
