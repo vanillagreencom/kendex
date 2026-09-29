@@ -173,9 +173,13 @@ A Linear mirror of a reported GitHub issue is left untouched: under [oversee-eve
    .agents/skills/orch/scripts/lane-mail ask --item overseer --to owner --options merge-as-is,request-changes,take-over,close --recommend [OPTION] --wait 10080 --file [PATH]
    ```
 
-   A pull request reported again on a new head goes back to step 1 and gets one new ask naming that head.
+   A pull request reported again on a new head goes back to step 1 and gets one new ask naming that head. Before that ask, close the earlier ask for the same `[REPO]#[N]` while `lane-mail pending --item overseer --to owner` still lists it, with a file that names the new head as the reason, so the owner sees one open ask per pull request:
 
-3. **Act on the answer.** Act only on the owner's answer, the `owner-ask-resolved` event with `by=text`, and only on the head its ask named; an answer to an ask naming an older head acts on nothing. A `by=default` resolution acts on nothing: send the ask again as step 2.
+   ```bash
+   .agents/skills/orch/scripts/lane-mail resolve --item overseer --id [OLD_ASK_ID] --text [PATH]
+   ```
+
+3. **Act on the answer.** Act only on the owner's answer, the `owner-ask-resolved` event with `by=text`, and only on the head its ask named; an answer to an ask naming an older head acts on nothing. A `by=default` resolution acts on nothing: send the ask again as step 2 only where the ask named the current head; an ask naming an older head is not sent again, since the new head gets its own ask.
    - `merge-as-is`: the pull request merges by the normal route, [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) step 1's arm, only where the `[PREPARED_HEAD]` it reads is the head the ask named. Any other head arms nothing and goes back to step 1 for a new ask.
    - `request-changes`: post the changes on the pull request, about the change alone. The contribution stays this overseer's: the contributor's next push is reported again on its new head.
    - `take-over`: file a follow-up item and launch it through § 3; its lane adds what is missing, bookkeeping included, and merges by the normal route. For a pull request the item names the pull request and the head the ask named, and the lane's own branch in the base repository starts from the contributor's commits up to that head: `git fetch origin pull/[N]/head`, then a merge of that head. A head the fetch does not bring back is a new ask. Close the contributor's pull request with a thank-you and a link to the one that merged.

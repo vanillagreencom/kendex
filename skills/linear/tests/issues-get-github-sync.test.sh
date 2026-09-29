@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The live `issues get` names the GitHub issues Linear's GitHub sync links an
 # issue to, as github_sync; the cache read, which stores no sync, names none.
-# Consumer: orch's oversee-events.md `triage` rule matches github_sync against
-# the watch's `outside-contribution <repo>#<N>` key.
+# Consumer: skills/orch/workflows/oversee.md § Outside contributions matches
+# github_sync against the watch's `outside-contribution <repo>#<N>` key.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
