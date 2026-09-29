@@ -296,10 +296,15 @@ class Handler(BaseHTTPRequestHandler):
     def body_of(self, params):
         """The message body and the argument it came in, `markdown_text` or
         `text`, kept on the message as `body_arg` for the suites; None
-        after answering Slack's `markdown_text_conflict` for both at once."""
+        after answering Slack's `markdown_text_conflict` for both at once,
+        or `msg_blocks_too_long` for a `markdown_text` past its 12,000
+        characters, the error Slack gives the block it makes of that text."""
         if "markdown_text" in params:
             if "text" in params or "blocks" in params:
                 self.send_json({"ok": False, "error": "markdown_text_conflict"})
+                return None
+            if len(params["markdown_text"]) > 12000:
+                self.send_json({"ok": False, "error": "msg_blocks_too_long"})
                 return None
             return params["markdown_text"], "markdown_text"
         return params.get("text", ""), "text"

@@ -6,7 +6,7 @@
 # controls plant one mutant per rule: the text check gone, so a token posts;
 # the file check gone, so a token uploads; the body sent as `text`, which
 # Slack renders as mrkdwn; the length check gone, so a text past the cap
-# reaches Slack.
+# reaches Slack, which refuses it.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -89,7 +89,8 @@ sk_bin_reset
 
 sk_mutant length verbs.py '    markdown_checked\(body, "text"\)\n' ''
 sk_run -- post --root "$ROOT" --text "$LONG"
-assert_eq "$RC=${OUT%%=*}" "0=slack: posted" "control: the length check gone, a text past the cap reaches Slack"
+assert_eq "$ERR1" "slack: slack-api-failed=chat.postMessage error=msg_blocks_too_long" \
+  "control: the length check gone, a text past the cap reaches Slack, which refuses it"
 sk_bin_reset
 
 sk_mutant file-bytes secret.py 'check\(data, what\)\n    return data' 'check(b"", what)\n    return data'

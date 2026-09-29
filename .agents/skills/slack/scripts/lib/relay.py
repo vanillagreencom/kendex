@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from api import Slack, markdown_checked
+from api import MARKDOWN_LIMIT, Slack
 from mailbox import LaneMail
 from markup import plain
 from refusals import Refusal, keyed, print_refusal
@@ -486,19 +486,17 @@ class RootRelay:
 
     def _send(self, envelope: Dict, kind: str, text: str, thread_ts: Optional[str], attach: str = "") -> Optional[str]:
         """The one outbound rule: the text and any attached file pass the
-        secret-value check, and a text posted alone the `markdown_text` cap,
-        a refusal there journaled refused and printed; then the file is
-        uploaded with the text as its comment, or the text posted as
-        standard Markdown, Slack's refusal to `post_refused`. Returns the
-        message ts or the upload's file id; None when nothing landed."""
+        secret-value check, a refusal there journaled refused and printed;
+        then the file is uploaded with the text as its comment, or the text
+        posted as standard Markdown, Slack's refusal to `post_refused`. A
+        text past the `markdown_text` cap goes as `text`, Slack's mrkdwn,
+        its Markdown marks shown literally: an ask or an answer the owner
+        never sees would stand at its deadline unread. Returns the message
+        ts or the upload's file id; None when nothing landed."""
         env_id = str(envelope["id"])
         try:
             secret_check(text.encode(), f"id={env_id}")
-            if attach:
-                data: Optional[bytes] = checked_file(attach, f"id={env_id} file={attach}")
-            else:
-                data = None
-                markdown_checked(text, f"id={env_id}")
+            data = checked_file(attach, f"id={env_id} file={attach}") if attach else None
         except Refusal as err:
             self._out(envelope, kind, "refused", reason=err.key)
             print_refusal(err)
@@ -506,7 +504,8 @@ class RootRelay:
         try:
             if data is not None:
                 return self.api.upload(Path(attach).name, data, self.channel, text, thread_ts)
-            return str(self.api.post("chat.postMessage", channel=self.channel, markdown_text=text, thread_ts=thread_ts)["ts"])
+            body_arg = "markdown_text" if len(text) <= MARKDOWN_LIMIT else "text"
+            return str(self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts, **{body_arg: text})["ts"])
         except Refusal as err:
             self.post_refused(err, envelope, kind)
             return None

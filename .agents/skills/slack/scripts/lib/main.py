@@ -41,8 +41,8 @@ listen    the relay: every SLACK_POLL_SECONDS, per root, one history read since
           then the mailbox's events; owner text lands as a directive or, in
           a question's thread, as its answer, each with --delivery-id
           channel:ts; asks, notices and rulings land in Slack as standard
-          Markdown, a report as its file with the notice as its mrkdwn
-          comment. A post Slack refuses fails the poll and is made again on
+          Markdown, one past 12,000 characters as mrkdwn, a report as its
+          file with the notice as its mrkdwn comment. A post Slack refuses fails the poll and is made again on
           the next one; an envelope post whose response was lost is
           journaled unknown and never repeated. One relay per checkout, held
           by an OS lock; two roots bound to one channel are refused; --once

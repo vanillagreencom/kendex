@@ -44,13 +44,12 @@ COPY_BYTES = 64 * 1024
 MARKDOWN_LIMIT = 12000
 
 
-def markdown_checked(text: str, what: str) -> str:
-    """A message body for `markdown_text`, the argument Slack renders as
-    standard Markdown: one past MARKDOWN_LIMIT characters is `text-too-long`
-    naming `what`, refused before any call."""
+def markdown_checked(text: str, what: str) -> None:
+    """Refuses a `markdown_text` body, the argument Slack renders as
+    standard Markdown, past MARKDOWN_LIMIT characters: `text-too-long`
+    naming `what`, before any call."""
     if len(text) > MARKDOWN_LIMIT:
         raise Refusal("text-too-long", f"{what} chars={len(text)} limit={MARKDOWN_LIMIT}")
-    return text
 
 
 class Slack:

@@ -37,7 +37,7 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 | `out` | `channel`, `id`, `kind`, `state`, `at`, `thread` | A mailbox envelope posted: `kind` is `ask`, `notice` or `answer`; `state` is `open` for an ask awaiting its answer, `resolved` otherwise; `thread` the stamp the post is under, the ask's own for an ask |
 | `out` | `channel`, `id`, `kind` = `notice`, `state` = `file`, `at`, `file` | A report uploaded; its thread is bound by a later `bound` line |
 | `out` | `channel`, `id`, `kind`, `state` = `unknown`, `at` | A post whose response was lost; shown by `--status`, never repeated. A post Slack refused or never received has no line: the next poll makes it again |
-| `out` | `channel`, `id`, `kind`, `state` = `refused`, `at`, `reason` | A post refused before sending; `reason` is the refusal key, `secret-value`, `file-unreadable` or `text-too-long` |
+| `out` | `channel`, `id`, `kind`, `state` = `refused`, `at`, `reason` | A post refused before sending; `reason` is the refusal key, `secret-value` or `file-unreadable` |
 | `resolved` | `id` | The ask with this envelope id is closed; its thread is read every tenth poll while its parent is younger than `SLACK_THREAD_DAYS` |
 | `bound` | `file`, `id`, `ts` | The share message Slack made for an uploaded file; its thread now carries the notice's envelope |
 | `thread` | `ts`, `seen` | The thread under `ts` is read past the reply stamp `seen` |
