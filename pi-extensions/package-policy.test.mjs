@@ -159,11 +159,12 @@ test("no Pi peer floor rises above the release the Pi update audit clears", () =
 // expects no refusal; a refuse row expects one naming its defect.
 test("the audit record gates Pi peer floors under both verdicts", () => {
 	const record = (verdict) => `# Pi package update audit\n\nMarker \`0.85.1\` → \`0.87.1\`. Sources fetched: every changelog.\n\n## Verdict\n\n${verdict}\n`;
-	const pkgAt = (floor) => [{ dir: "planted", pkg: { peerDependencies: { "@earendil-works/pi-coding-agent": `>=${floor}` } } }];
+	const pkgAt = (floor, otherPeers) => [{ dir: "planted", pkg: { peerDependencies: { "@earendil-works/pi-coding-agent": `>=${floor}`, ...otherPeers } } }];
 	const floor = (version) => `planted: Pi peer @earendil-works/pi-coding-agent floor ${version} is above`;
 	const rows = [
 		{ name: "roll: floor at the new marker", verdict: "Verdict: `roll`.", lastVersion: "0.87.1", floor: "0.87.1", refused: undefined },
 		{ name: "roll: floor above the new marker", verdict: "Verdict: `roll`.", lastVersion: "0.87.1", floor: "0.87.2", refused: `${floor("0.87.2")} 0.87.1` },
+		{ name: "roll: a non-Pi peer floor is not gated", verdict: "Verdict: `roll`.", lastVersion: "0.87.1", floor: "0.87.1", otherPeers: { "@oh-my-pi/pi-coding-agent": ">=18.1.11" }, refused: undefined },
 		{ name: "roll: state marker not advanced", verdict: "Verdict: `roll`.", lastVersion: "0.85.1", floor: "0.85.1", refused: "no audit record clears 0.85.1" },
 		{ name: "hold: floor at the cleared old marker", verdict: "Verdict: `hold`.", lastVersion: "0.85.1", floor: "0.85.1", refused: undefined },
 		{ name: "hold: floor at the held release", verdict: "Verdict: `hold`.", lastVersion: "0.85.1", floor: "0.87.1", refused: `${floor("0.87.1")} 0.85.1` },
@@ -171,7 +172,7 @@ test("the audit record gates Pi peer floors under both verdicts", () => {
 		{ name: "record without a verdict", verdict: "Verdict: pending", lastVersion: "0.87.1", floor: "0.87.1", refused: "names no verdict" },
 	];
 	for (const row of rows) {
-		const refusals = floorRefusals(pkgAt(row.floor), { lastVersion: row.lastVersion }, record(row.verdict));
+		const refusals = floorRefusals(pkgAt(row.floor, row.otherPeers), { lastVersion: row.lastVersion }, record(row.verdict));
 		if (row.refused === undefined) {
 			assert.deepEqual(refusals, [], row.name);
 			continue;
