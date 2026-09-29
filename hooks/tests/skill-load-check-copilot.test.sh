@@ -8,7 +8,8 @@
 # harness's rows are skill-load-check.test.sh.
 #
 # Pinned: a Copilot agent is refused until a finished load of the skill is
-# recorded under its own sessionId, a subagent apart from its parent; only a
+# recorded under its own sessionId, a subagent apart from its parent; the
+# carrier's matcher names `skill` as an alternative of its own; only a
 # `skill` call whose toolResult.resultType is `success` records; the refusal
 # is also Copilot's permissionDecision deny on stdout, its reason the stderr
 # text; one skill's load clears no call that needs another; loads finishing
@@ -173,6 +174,17 @@ assert_eq "rc=$rc first=$(first_line)" "rc=2 first=skill-load-check: unloaded=co
 load child code-quality
 run_at "$JUDGE" "$(edit_of child)"
 assert_eq "rc=$rc" "rc=0" "and passes once the child loads it"
+
+echo "the carrier's matcher reaches Copilot's skill tool as written"
+# kendex 1.2.0 renders a matcher alternative it does not map as written, and
+# Copilot anchors the pattern, so there only an alternative spelled `skill`
+# fires on the tool the load payloads name. Every other row runs the carrier
+# directly and never reads its matcher.
+matcher=$(sed -n 's/^# matcher: //p' "$CARRIER")
+named=absent
+case "|$matcher|" in *"|skill|"*) named=present ;; esac
+assert_eq "skill=$named" "skill=present" \
+  "skill-load-record's matcher names skill as an alternative of its own"
 
 echo "only a finished, successful skill load records"
 # label|tool|args|result: each a finished call that is not a successful load
