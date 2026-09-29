@@ -36,8 +36,11 @@ setup     resolve every SLACK_OWNERS address to a Slack user, create the
           tmp/slack/binding.json, and restart the relay unit `install` wrote
           when one stands
 listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
-          for every root, each envelope acknowledged as it arrives and each
-          message routed by its channel; at every connect and reconnect,
+          for every root, each envelope acknowledged as soon as the loop
+          reads it, before its delivery, and each message routed by its
+          channel; an envelope that waits behind other work past Slack's
+          three seconds is sent again and its stamp judged a repeat; at
+          every connect and reconnect,
           per root, one history read that delivers what arrived while
           disconnected; every SLACK_POLL_SECONDS, per root, the mailbox's
           events; owner text lands as a directive or, in a question's
@@ -51,7 +54,9 @@ listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
           opens no connection, polls each root once, history read included,
           and exits 0 when every poll succeeded, 1 otherwise
   --status  one `slack-relay=ROOT state=ok|failing|stale|never` line per
-          root from the relay's status record, with the connection state
+          root from the relay's status record, with the connection state;
+          failing too while another connection shares the app, or while
+          the relay has been reconnecting past twice its longest wait
 post      one message to the bound channel, or --channel for another, its
           text sent as standard Markdown of at most 12,000 characters;
           --mention prefixes every owner; --file uploads the file with the

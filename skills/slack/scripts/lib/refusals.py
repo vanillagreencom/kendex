@@ -91,9 +91,11 @@ EXPLAIN = {
         " written. fix= names the remedy."
     ),
     "slack-rate-limited": (
-        "Slack answered 429 on every retry the relay allows. The relay makes"
-        " the call again on its next poll, and a history read it cut off"
-        " stays due until it lands."
+        "Slack answered 429 on every retry allowed. The relay makes a refused"
+        " post or read again on its next poll, and a history read it cut off"
+        " stays due until it lands; it makes a refused connect again on its"
+        " reconnect wait. A `slack post` or `slack setup` refused this way"
+        " sent nothing and must be run again."
     ),
     "slack-owner-unknown": (
         "Slack has no account under the named email address. fix= names the"
@@ -145,7 +147,17 @@ EXPLAIN = {
         " value says why. The relay opens a new one at once, then after 1,"
         " 2, 4 and up to 60 seconds while each attempt fails, and reads the"
         " channel's history once it holds one, so a message sent in between"
-        " still lands. Posts from the mailbox go on meanwhile."
+        " still lands. Posts from the mailbox go on meanwhile. Once the"
+        " relay has been without a connection for twice the longest wait,"
+        " `listen --status` reads failing, with the last refusal as its fix=."
+    ),
+    "slack-app-shared": (
+        "Slack counts more than one open Socket Mode connection on this"
+        " relay's app; the value is the count. Slack sends each owner message"
+        " to one of them, so another relay on the app takes part of this"
+        " relay's messages. The connection is kept and `listen --status`"
+        " reads failing until a later connection counts one. fix= names the"
+        " remedy: one relay per Slack app."
     ),
     "lane-mail-failed": (
         "lane-mail refused a call the relay needed; the value is its first"

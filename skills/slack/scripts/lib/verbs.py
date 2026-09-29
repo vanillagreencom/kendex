@@ -13,11 +13,11 @@ from typing import List, Optional
 
 from api import Slack, markdown_checked
 from refusals import Refusal, keyed, notice
-from relay import mention, resolve_owner_ids
+from relay import RECONNECT_BOUND_SECONDS, mention, resolve_owner_ids
 from secret import check as secret_check
 from secret import checked_file
 from settings import Settings, load
-from store import Binding, RelayLock, compact, format_at, journal_exists, read_binding, read_status, write_binding
+from store import Binding, RelayLock, compact, format_at, journal_exists, parse_at, read_binding, read_status, write_binding
 
 UNIT = "slack-listen.service"
 # Seconds between the restart and the read of the unit's state: long
@@ -208,18 +208,19 @@ def status(roots: List[Path], now: float) -> int:
             continue
         age = now - float(record["last_poll"])
         fresh = age <= 2 * int(record["poll_seconds"]) + 5
-        if fresh and record["last_poll_ok"]:
-            state = "ok"
-        elif fresh:
-            state = "failing"
+        # A shared app, or a connect refused past the bound, keeps owner
+        # messages from arriving though every poll succeeds.
+        link_error = record["connection_error"]
+        if record["connection"] == "reconnecting" and now - parse_at(record["connection_since"]) <= RECONNECT_BOUND_SECONDS:
+            link_error = ""
+        if not fresh:
+            state, fix = "stale", " fix=restart the relay and read its last lines"
+        elif not record["last_poll_ok"]:
+            state, fix = "failing", f" fix={record.get('last_error') or 'read the relay log'}"
+        elif link_error:
+            state, fix = "failing", f" fix={link_error}"
         else:
-            state = "stale"
-        if state == "ok":
-            fix = ""
-        elif state == "failing":
-            fix = f" fix={record.get('last_error') or 'read the relay log'}"
-        else:
-            fix = " fix=restart the relay and read its last lines"
+            state, fix = "ok", ""
         # A stale record's relay is gone, whatever connection it recorded.
         if fresh:
             connection, since = record["connection"], record["connection_since"]

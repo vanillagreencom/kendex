@@ -139,18 +139,21 @@ sk_run() {
   ERR1="$(sed -n '1p' "$SK_TMP/err")"
 }
 sk_bind() { sk_run -- setup --root "$1"; }                 # ROOT
-# sk_relay_start ROOT [VAR=VALUE]... — a relay on its Socket Mode connection
-# in the background, polling every second unless a VAR says otherwise, its
-# pid in SK_BG_PIDS, its stdout and stderr in SK_TMP/relay.out and relay.err;
-# returns once its first status record is written. The exec chain makes $!
-# the relay itself, so a kill reaches it and not a wrapper.
+# sk_relay_start ROOT [--root ROOT]... [VAR=VALUE]... — a relay on its Socket
+# Mode connection over every ROOT in the background, polling every second
+# unless a VAR says otherwise, its pid in SK_BG_PIDS, its stdout and stderr in
+# SK_TMP/relay.out and relay.err; returns once the first ROOT's first status
+# record is written. The exec chain makes $! the relay itself, so a kill
+# reaches it and not a wrapper.
 sk_relay_start() {
-  local tries=0 root="${1:?}"
+  local tries=0 root="${1:?}" roots=()
   shift
+  roots=(--root "$root")
+  while [ $# -gt 1 ] && [ "$1" = --root ]; do roots+=(--root "$2"); shift 2; done
   rm -f -- "${root:?}/tmp/slack/status.json"
   ( cd "$SK_TMP/home" && exec env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C \
     SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_APP_TOKEN="$SK_APP_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
-    SLACK_POLL_SECONDS=1 ${1+"$@"} "$SK_BIN" listen --root "$root" >"$SK_TMP/relay.out" 2>"$SK_TMP/relay.err" ) &
+    SLACK_POLL_SECONDS=1 ${1+"$@"} "$SK_BIN" listen "${roots[@]}" >"$SK_TMP/relay.out" 2>"$SK_TMP/relay.err" ) &
   SK_BG_PIDS="$!"
   while [ ! -f "$root/tmp/slack/status.json" ] && [ "$tries" -lt 100 ]; do tries=$((tries + 1)); sleep 0.1; done
   [ -f "$root/tmp/slack/status.json" ] || { printf 'background relay wrote no status\n' >&2; exit 1; }

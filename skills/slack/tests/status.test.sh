@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # `slack listen --status`: the doctor's row per root, `never` before a relay
 # ran, `ok` inside two poll intervals plus five seconds of the last poll,
-# `stale` past it, `failing` when the last poll was refused, the refused and
-# open counts, and the connection: as the relay recorded it while the record
-# is fresh, `disconnected` since the last poll once it is stale. The controls
-# plant a mutant whose freshness bound never expires, so a stale record reads
-# ok, and one that shows a stale record's connection as recorded.
+# `stale` past it, `failing` when the last poll was refused or the relay has
+# been reconnecting past the bound, with the last connect refusal as its fix,
+# the refused and open counts, and the connection: as the relay recorded it
+# while the record is fresh, `disconnected` since the last poll once it is
+# stale. The controls plant a mutant whose freshness bound never expires, so a
+# stale record reads ok, one that shows a stale record's connection as
+# recorded, and one that never reads the connection error.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -46,7 +48,28 @@ row
 assert_eq "$(field "$LINE" state)=${LINE#* fix=}" "failing=slack-api-failed=conversations.history error=channel_not_found" \
   "a fresh record of a refused poll is failing, with the refusal as its fix"
 
-# --- controls: the freshness bound and the stale connection -----------------------
+# since SECONDS — the UTC second SECONDS ago, as connection_since holds it
+since() { python3 -c 'import sys, time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - int(sys.argv[1]))))' "$1"; }
+# reconnecting SECONDS — a fresh ok record whose relay has reconnected for SECONDS
+reconnecting() {
+  jq --arg s "$(since "$1")" '.last_poll_ok = true | .connection = "reconnecting" | .connection_since = $s | .connection_error = "socket-lost=connection ended"' \
+    "$STATUS" > "$SK_TMP/link.json" && cp "$SK_TMP/link.json" "$STATUS"
+}
+sk_poll "$ROOT"
+reconnecting 30
+row
+assert_eq "$(field "$LINE" state)=$(field "$LINE" connection)" "ok=reconnecting" "a relay reconnecting inside the bound is ok"
+reconnecting 200
+row
+assert_eq "$(field "$LINE" state)=${LINE#* fix=}" "failing=socket-lost=connection ended" \
+  "a relay reconnecting past the bound is failing, with the last connect refusal as its fix"
+
+# --- controls: the freshness bound, the stale connection and the connection error -------
+sk_mutant link verbs.py 'elif link_error:' 'elif False:'
+row
+assert_eq "$(field "$LINE" state)" "ok" "control: the connection error unread, a relay reconnecting past the bound reads ok"
+sk_bin_reset
+sk_poll "$ROOT"
 sk_mutant stale-connection verbs.py '        if fresh:\n            connection, since' '        if True:\n            connection, since'
 jq '.last_poll = (.last_poll - 30) | .connection = "connected"' "$STATUS" > "$SK_TMP/stale.json" && cp "$SK_TMP/stale.json" "$STATUS"
 row

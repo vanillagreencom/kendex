@@ -24,7 +24,7 @@ D009 rejected Socket Mode because Slack sends each payload to one of an app's op
 
 ## Decision
 
-1. **Socket Mode, not polling.** `slack listen` opens one connection with `SLACK_APP_TOKEN`, acknowledges every envelope by its `envelope_id` as it arrives, and delivers each message event through `lane-mail send --delivery-id` or `lane-mail resolve --delivery-id`, as before. The `conversations.history` poll loop is deleted. The relay still polls each checkout's mailbox every `SLACK_POLL_SECONDS`, for posts and receipt marks.
+1. **Socket Mode, not polling.** `slack listen` opens one connection with `SLACK_APP_TOKEN`, acknowledges every envelope by its `envelope_id` as soon as its loop reads it, before the delivery, and delivers each message event through `lane-mail send --delivery-id` or `lane-mail resolve --delivery-id`, as before. The `conversations.history` poll loop is deleted. The relay still polls each checkout's mailbox every `SLACK_POLL_SECONDS`, for posts and receipt marks.
 2. **A history read on every connect.** The first poll after each connect and reconnect reads the channel's history, and the threads whose latest reply moved, and delivers what the connection missed. An event moves no position, so a message whose envelope was lost, or whose delivery a stop cut off after its acknowledgement, lands on the next such read; the delivery id judges any repeat.
 3. **One relay per machine, one Slack app per machine.** A relay serves every checkout on its machine from one process and one connection, routing each event by its channel to the bound checkout. Each machine runs its own Slack app: the fleet app on the control VM, a second app for the master home on the operator machine. A slash command registered by two apps goes to the app installed most recently, so commands live on the fleet app alone.
 4. **A WebSocket client in the package.** `skills/slack/scripts/lib/websocket.py` holds the opening handshake, text frames, ping and pong, and close; the package stays on the Python standard library.
@@ -33,7 +33,7 @@ D009 rejected Socket Mode because Slack sends each payload to one of an app's op
 
 - An event arrives the moment Slack has it; a poll waits up to its interval.
 - The per-minute history and replies reads of every relay are gone, so `SLACK_POLL_SECONDS` no longer spends Slack's call allowance; the history read runs once per connection.
-- Acknowledging before delivery keeps every acknowledgement inside Slack's three-second window, even behind a file download, and the history read of the next connect covers a stop between the two.
+- Each envelope is acknowledged as soon as the loop reads it, before its delivery, so a download never delays its own envelope's acknowledgement. The loop is one thread: an envelope that waits behind other work past Slack's three seconds is sent again, and the journal skips the repeat by its stamp. The history read of the next connect covers a stop between the acknowledgement and the delivery.
 - One connection per app is the one topology in which every event reaches the relay that can write its mailbox.
 - Socket Mode needs a small part of RFC 6455. One module of about 230 lines on the standard library costs less than a dependency and a package manager on the control VM and in a catalog that ships standard-library scripts.
 
@@ -51,10 +51,10 @@ D009 rejected Socket Mode because Slack sends each payload to one of an app's op
 
 - A relay needs a second secret, `SLACK_APP_TOKEN`, and the Slack app needs Socket Mode on and the `message.groups` bot event; the package README names both.
 - A reply under a notice younger than `SLACK_THREAD_DAYS` arrives at once, not within ten polls; `listen --status` shows the connection state and no longer prints a call budget.
-- A second relay on one app takes part of the first relay's events. Those messages land only at the first relay's next reconnect.
+- A second relay on one app takes part of the first relay's events. Those messages land only at the first relay's next reconnect. A relay whose `hello` counts another connection on the app prints `slack-app-shared`, and its `listen --status` row reads `failing`.
 
 **Revisit When**: Slack retires Socket Mode or the `message.groups` event; one machine needs more relays than one app serves; or the catalog admits a dependency manager.
 
-**Verification**: `skills/slack/tests/socket.test.sh`: an owner message lands from its event inside three seconds; every envelope is acknowledged, with a control that drops the acknowledgement; an envelope lost with its connection lands through the reconnect's history read, with a control that skips that read.
+**Verification**: `skills/slack/tests/socket.test.sh`: an owner message lands from its event; every envelope is acknowledged, with a control that drops the acknowledgement; an envelope lost with its connection lands through the reconnect's history read, with a control that skips that read.
 
 **References**: [D009](D009-slack-relay.md), KEN-2082, KEN-2099

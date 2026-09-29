@@ -4,14 +4,19 @@ Socket Mode connection.
 Slack sends each Events API envelope to one of an app's open connections,
 with no pattern to which, so one relay holds its app's one connection for
 every root on its machine and routes each message event by its channel. The
-relay opens the connection with SLACK_APP_TOKEN, acknowledges every envelope
-by its envelope_id as it arrives, then routes a message event to the root
-bound to its channel: a top-level message, or a reply under a bound thread
-that `live` accepts.
+relay opens the connection with SLACK_APP_TOKEN, acknowledges each envelope
+by its envelope_id as soon as its loop reads it, before the delivery, then
+routes a message event to the root bound to its channel: a top-level
+message, or a reply under a bound thread that `live` accepts. The loop is
+one thread, so an envelope that waits behind a download, a catch-up, the
+mailbox posts or a 429 wait past Slack's three seconds is sent again, and
+the journal skips the repeat by its stamp.
 
-An event moves no position. The catch-up alone writes `seen` and `thread`
-lines: it runs on the first poll after every connect and reconnect, and on
-the next poll after an event whose delivery was refused. It reads the
+An event moves no position. It writes no `seen` or `thread` line; the
+catch-up writes both, and a start with no journal writes the `seen` line of
+the binding moment. The catch-up runs on the first poll after every connect
+and reconnect, and on the next poll after an event whose delivery was
+refused. It reads the
 channel's history from the journal's position or SLACK_THREAD_DAYS back,
 whichever is older, delivers the top-level messages past the position, and
 reads the thread of every open ask and of every live parent whose latest
@@ -97,6 +102,13 @@ IDLE_SECONDS = 30
 # the second figure; a drop is answered with a connect at once.
 RETRY_FIRST_SECONDS = 1
 RETRY_MAX_SECONDS = 60
+# Seconds a relay may stay reconnecting before `listen --status` reads it as
+# failing: two of the longest waits between connects.
+RECONNECT_BOUND_SECONDS = 2 * RETRY_MAX_SECONDS
+# Slack's answers to apps.connections.open that no retry mends: a token of
+# another type in SLACK_APP_TOKEN, or an app-level token without
+# connections:write.
+APP_TOKEN_ERRORS = {"not_allowed_token_type", "missing_scope"}
 NOT_OWNER = "Only the channel's owners steer this session; this message is not routed."
 NO_TEXT = "Only text and files are routed; this message has neither."
 RECORDED = "Recorded as your answer."
@@ -625,7 +637,7 @@ class RootRelay:
             self.journal = Journal(self.path, self.state)
         self.compacted_day = today
 
-    def record_status(self, ok: bool, error: str, connection: str, since: str) -> None:
+    def record_status(self, ok: bool, error: str, connection: str, since: str, connection_error: str) -> None:
         delivered = max(self.state.delivered, key=float, default="")
         write_status(
             self.path,
@@ -645,6 +657,7 @@ class RootRelay:
                 "calls_last_minute": self.api.calls_last_minute(),
                 "connection": connection,
                 "connection_since": since,
+                "connection_error": connection_error,
                 "held_by": MASTER if self.state.held else "",
                 "master_seen": self.master_seen,
             },
@@ -684,6 +697,10 @@ class Relay:
         # is the UTC second the state began.
         self.connection = "disconnected"
         self.since = format_at(clock())
+        # The keyed refusal that keeps owner messages from arriving: the last
+        # refused connect or drop while reconnecting, or a shared app while
+        # connected; empty otherwise.
+        self.connection_error = ""
         self.opened = False
 
     def poll_once(self) -> bool:
@@ -694,12 +711,12 @@ class Relay:
             try:
                 root.compact_daily(today)
                 root.poll(self.bot_user)
-                root.record_status(True, "", self.connection, self.since)
+                root.record_status(True, "", self.connection, self.since, self.connection_error)
             except Refusal as err:
                 if err.key == "slack-auth-failed":
                     raise
                 print_refusal(err)
-                root.record_status(False, f"{err.key}={err.value}", self.connection, self.since)
+                root.record_status(False, f"{err.key}={err.value}", self.connection, self.since, self.connection_error)
                 clean = False
         return clean
 
@@ -738,23 +755,35 @@ class Relay:
             self.connection = connection
             self.since = format_at(self.clock())
 
+    def refused(self, err: Refusal) -> None:
+        """A connect refused or a connection dropped: printed, and carried
+        as the connection error while the relay reconnects."""
+        print_refusal(err)
+        self.connection_error = f"{err.key}={err.value}"
+        self.set_connection("reconnecting")
+
     def open(self, app_api: Slack) -> bool:
         """A new connection, ready once Slack's `hello` arrives: journaled
         `connect` the first time and `reconnect` after, every root's
-        catch-up then due. False, with the refusal printed, when Slack or
-        the network refused it."""
+        catch-up then due. A `hello` counting more than this connection on
+        the app is refused `slack-app-shared`, and the connection is kept.
+        False, with the refusal printed, when Slack or the network refused
+        it; a token no retry mends stops the relay."""
         try:
             url = str(app_api.post("apps.connections.open")["url"])
             socket = WebSocket.connect(url)
         except Refusal as err:
             if err.key == "slack-auth-failed":
                 raise
-            print_refusal(err)
-            self.set_connection("reconnecting")
+            if err.error in APP_TOKEN_ERRORS:
+                raise Refusal(
+                    "slack-auth-failed",
+                    f"{err.error} fix=set SLACK_APP_TOKEN to an app-level token with connections:write and restart the relay",
+                ) from err
+            self.refused(err)
             return False
         except Closed as err:
-            print_refusal(Refusal("socket-lost", str(err)))
-            self.set_connection("reconnecting")
+            self.refused(Refusal("socket-lost", str(err)))
             return False
         try:
             hello = json.loads(socket.recv(HELLO_SECONDS) or "{}")
@@ -762,11 +791,20 @@ class Relay:
                 raise Closed("no hello")
         except (Closed, ValueError) as err:
             socket.close()
-            print_refusal(Refusal("socket-lost", f"hello ({err})"))
-            self.set_connection("reconnecting")
+            self.refused(Refusal("socket-lost", f"hello ({err})"))
             return False
         self.socket = socket
         self.set_connection("connected")
+        self.connection_error = ""
+        shared = hello.get("num_connections")
+        if isinstance(shared, int) and shared > 1:
+            err = Refusal(
+                "slack-app-shared",
+                f"{shared} fix=stop every other relay on this Slack app; each machine runs its own app and one relay",
+            )
+            print_refusal(err)
+            self.connection_error = f"{err.key}={err.value}"
+
         kind = "reconnect" if self.opened else "connect"
         self.opened = True
         for root in self.roots:
@@ -783,7 +821,7 @@ class Relay:
         self.set_connection("reconnecting")
         for root in self.roots:
             root.journal.append(t="disconnect", at=self.since, reason=reason)
-        print_refusal(Refusal("socket-lost", reason))
+        self.refused(Refusal("socket-lost", reason))
 
     def listen_until(self, deadline: float) -> None:
         """Envelopes off the connection until `deadline` or a drop."""
@@ -804,7 +842,8 @@ class Relay:
     def envelope(self, socket: WebSocket, text: str) -> None:
         """One envelope: acknowledged by its envelope_id before anything
         else, since the catch-up delivers what a stop after the
-        acknowledgement cuts off. A `disconnect` drops the connection for a
+        acknowledgement cuts off, and the journal skips an envelope Slack
+        sent again. A `disconnect` drops the connection for a
         new one; a message event goes to the root bound to its channel, and
         a refused delivery leaves that root's catch-up due; every other
         envelope stops at the acknowledgement."""
