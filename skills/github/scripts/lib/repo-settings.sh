@@ -52,18 +52,26 @@ kendex_github_default_branch() {
 # queue's merge_method. Otherwise the allowed set is the repository's
 # allow_squash_merge, allow_merge_commit and allow_rebase_merge, narrowed by
 # the allowed_merge_methods of every pull_request rule on BASE. The first
-# accepted method the set allows is the answer.
+# accepted method the set allows is the answer. --direct asks for a merge
+# made past the queue, which GitHub holds to the repository's methods and the
+# pull_request rules, never to the queue's method: the merge_queue rule is
+# not read.
 #
-# Arguments: REPO, an owner/name slug or gh's {owner}/{repo} placeholder;
-# BASE; then the accepted methods, most preferred first, each squash, merge
-# or rebase.
+# Arguments: an optional --direct; REPO, an owner/name slug or gh's
+# {owner}/{repo} placeholder; BASE; then the accepted methods, most preferred
+# first, each squash, merge or rebase.
 # Stdout and exit: 0 the method; 2 the allowed set comma-joined, `none` when
 # empty; 1 what could not be read, one of `accepted` (no method, or a word
 # outside the three), `rules` (the base branch's rules), `settings` (the
 # repository's allow_* flags, which GitHub omits for a token without push
 # access) or `queue` (a queue method outside the three).
 kendex_github_merge_method() {
-  local repo="$1" base="$2" encoded="" lines="" rules="" settings=null allowed="" accepted="" method=""
+  local repo base encoded="" lines="" rules="" settings=null allowed="" accepted="" method="" kinds='"merge_queue", "pull_request"'
+  if [ "${1:-}" = --direct ]; then
+    kinds='"pull_request"'
+    shift
+  fi
+  repo="$1" base="$2"
   shift 2
   [ "$#" -gt 0 ] || { echo accepted; return 1; }
   for accepted in "$@"; do
@@ -74,7 +82,7 @@ kendex_github_merge_method() {
   done
   if ! encoded=$(jq -nr --arg v "$base" '$v | @uri') \
     || ! lines=$(gh api "repos/$repo/rules/branches/$encoded" --paginate \
-      --jq '.[] | select(.type == "merge_queue" or .type == "pull_request") | tojson' 2>/dev/null) \
+      --jq ".[] | select(.type | IN($kinds)) | tojson" 2>/dev/null) \
     || ! rules=$(jq -cs . <<<"$lines" 2>/dev/null); then
     echo rules
     return 1

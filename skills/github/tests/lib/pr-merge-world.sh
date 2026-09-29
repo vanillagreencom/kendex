@@ -57,6 +57,8 @@
 #     answers a protection object with no enabled field
 #     queue-two:<a>,<b>  two merge_queue rulesets, 20569265 answering <a> and
 #     20569266 answering <b>, beside the checks ruleset answering never
+#     queue-rule-method:<METHOD> after a queue-rule word, the queue's
+#     merge_method in place of SQUASH
 #     env:NAME=value  the caller's environment
 #   argv   check | auto | immediate | with:<flag+flag> (the flags alone,
 #          `+` a space, no --keep-branch) | mutant:<name>:<flag+flag> (the
@@ -65,7 +67,9 @@
 #          auto-mutant:<name> (--auto, run from the copy pr-merge.test.sh
 #          builds under that name with one line of pr-merge.sh replaced) |
 #          force | admin | admin-credential (the retired flags) |
-#          auto-classified | immediate-classified (run from the mirror tree
+#          auto-classified | immediate-classified |
+#          classified-with:<flag+flag> (the immediate merge with those flags,
+#          `+` a space) (run from the mirror tree
 #          whose harness-ci sibling is the classifier stub, which
 #          pr-merge.test.sh builds as $MIRROR) | immediate-classless (the
 #          immediate merge from that suite's mirror with no harness-ci
@@ -241,6 +245,7 @@ word() {
     other-bypass:*) W_ENV+=("$(ruleset_answer 24148610 "$v")") ;;
     protection:on) W_ENV+=('STUB_CLASSIC_JSON={"protection":{"enabled":true,"required_status_checks":{"contexts":[],"checks":[]}}}') ;;
     protection:unknown) W_ENV+=('STUB_CLASSIC_JSON={"protection":{"required_status_checks":{"contexts":[],"checks":[]}}}') ;;
+    queue-rule-method:*) W_ENV+=("STUB_GATE_RULES=$(jq -c --arg m "$v" '[.[] | if .type == "merge_queue" then .parameters.merge_method = $m else . end]' <<<"$QUEUE_RULES")") ;;
     queue-two:*) W_ENV+=("STUB_GATE_RULES=$(jq -c '[.[0], (.[0] | .ruleset_id = 20569266)] + .[1:]' <<<"$QUEUE_RULES")" \
       "$(ruleset_answer 20569265 "${v%,*}")" "$(ruleset_answer 20569266 "${v#*,}")" "$CHECKS_NEVER") ;;
     post-graphql:partial) W_ENV+=("STUB_POST_GRAPHQL_PARTIAL=true") ;;
@@ -270,6 +275,7 @@ argv_for() {
     # queue-only class is the row's own and not this repository's diff.
     auto-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --keep-branch ;;
     immediate-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --keep-branch ;;
+    classified-with:*) printf '%s\n' "$MIRROR_PR_MERGE" 123 --keep-branch; printf '%s' "${1#classified-with:}" | tr '+' '\n'; echo ;;
     immediate-classless) printf '%s\n' env "PATH=$CLASSLESS_PATH" "$CLASSLESS_PR_MERGE" 123 --keep-branch ;;
     auto) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch ;;
     immediate) printf '%s\n' "$PR_MERGE" 123 --keep-branch ;;
@@ -424,6 +430,8 @@ err_macro() {
     route-why:classic) printf 'The base branch has classic branch protection, which --admin would skip too.' ;;
     route-why:protection) printf "The base branch's classic protection could not be read, so no bypass is proven." ;;
     arm-admin) printf 'Nothing armed: the immediate merge takes this PR past the queue once its gates pass, and an arm now would queue it first.' ;;
+    route-why:direct-method) printf "A merge past the queue takes the repository's methods and the base's pull_request rules, which allow none of the accepted methods." ;;
+    route-why:direct-unread) printf 'The methods a merge past the queue may take could not be read.' ;;
     route-why:queue-only) printf 'A queue-only change runs in a merge group before it lands.' ;;
     auto-remedy) printf 'Nothing mutated. Enable auto-merge on the repository.' ;;
     approval-remedy) printf "Nothing mutated. No ruleset on the base branch requires an approval, so GitHub would merge the armed PR before review\\; require at least 1 approval, thread resolution and stale-approval dismissal in its pull_request rule." ;;

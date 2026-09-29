@@ -222,9 +222,9 @@ done
 
 # The immediate merge reads the route under the merge's token: every queue
 # ruleset holding the queue rule alone and answering a bypass, every other
-# ruleset answering never, no classic protection and a PR that is not
-# queue-only take --admin. The control for each admin row is the no-bypass row
-# beside it, whose trace names a plain merge; a failed read, the queue-only
+# ruleset answering never, no classic protection, an accepted method a direct
+# merge allows, and a PR that is not queue-only take --admin, with that
+# method. The control for each admin row is the no-bypass row beside it, whose trace names a plain merge; a failed read, the queue-only
 # class and a class nothing could read keep the queue too, and --auto never
 # reads a route but in the arm at creation, --unless-admin, which arms nothing
 # where the route reads admin.
@@ -233,9 +233,10 @@ done
 # copy of the scripts tree with that rule's line cut and the classifier stub
 # beside it: every merge-queue ruleset judged, not the first; a queue ruleset
 # holding another rule; another ruleset the token may bypass; classic
-# protection; the classified head being the pinned head; and the arm at
-# creation's route read. --unless-admin without
-# --auto is refused, and its control cuts that refusal.
+# protection; the classified head being the pinned head; the arm at
+# creation's route read; and the direct method, both the read that leaves the
+# queue's method out and the admin merge taking its answer. --unless-admin
+# without --auto is refused, and its control cuts that refusal.
 route_mutant() { # NAME FROM TO
   mutant_copy "$@" >/dev/null || exit 2
   mkdir -p "$TMPDIR/$1/skills/harness-ci/scripts"
@@ -247,6 +248,8 @@ route_mutant route-other '        elif [ "$bypass" != never ]; then' '        el
 route_mutant route-classic '    false) ;;' '    false | true) ;;'
 mutant_copy route-autoless '    if [ "$unless_admin" = true ] && [ "$auto" != true ]; then' '    if false; then' >/dev/null
 route_mutant route-head '        if [ "$head_sha" != "$pinned" ]; then' '        if false; then'
+route_mutant route-direct-read "    kinds='\"pull_request\"'" "    kinds='\"merge_queue\", \"pull_request\"'" lib/repo-settings.sh
+route_mutant route-direct-take '    [ "$route" != admin ] || method="$MERGE_ROUTE_METHOD"' '    :'
 route_mutant route-arm '    if [ "$dry_run" != true ] && { [ "$auto" != true ] || [ "$unless_admin" = true ]; }; then' '    if [ "$dry_run" != true ] && [ "$auto" != true ]; then'
 ROUTE_PRE="$PRE,view:range"
 QUEUED="QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}"
@@ -280,6 +283,11 @@ must-fail: with the head comparison cut, a head nobody classified is admin-merge
 the arm at creation on an unapproved PR arms nothing where the route reads admin, the route its first stderr line|checks:none queue-rule:always route:false post-entry review:none|auto-unless-admin-classified|1|-|merge-route: admin ruleset=20569265 bypass=always;$QUEUE_FALSE;{arm-admin}|calls=$ROUTE_PRE auth=<unset>
 the arm at creation arms where the route reads queue|checks:none queue-rule:never route:false post-entry|auto-unless-admin-classified|75|-|merge-route: queue cause=no-bypass ruleset=20569265 bypass=never;{route-queue:no-bypass};Warnings:;⚠ ci_unconfigured: No status checks configured;{no-token};$QUEUED|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
 must-fail: with the arm's route read cut, the arm queues a PR the admin route would take|checks:none queue-rule:always route:false post-entry review:none|auto-route-mutant:route-arm|75|-|Warnings:;⚠ ci_unconfigured: No status checks configured;⚠ not_approved: Review status is '';{no-token};$QUEUED|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
+the admin route merges with a method a direct merge allows, not the queue's|checks:ci-required queue-rule:always queue-rule-method:MERGE methods:squash route:false post:MERGED merge-commit:merged-oid|immediate-classified|0|-|merge-route: admin ruleset=20569265 bypass=always;$QUEUE_FALSE;{no-token};MERGED PR #123|calls=$ROUTE_PRE,merge:squash:admin,graphql:queue auth=<unset>
+must-fail: with the direct read taking the queue's method, the admin merge passes a method the repository does not allow|checks:ci-required queue-rule:always queue-rule-method:MERGE methods:squash route:false post:MERGED merge-commit:merged-oid|route-mutant:route-direct-read|0|-|merge-route: admin ruleset=20569265 bypass=always;$QUEUE_FALSE;{no-token};MERGED PR #123|calls=$ROUTE_PRE,merge:merge:admin,graphql:queue auth=<unset>
+must-fail: with the direct method not taken, the admin merge passes the queue's method|checks:ci-required queue-rule:always queue-rule-method:MERGE methods:squash route:false post:MERGED merge-commit:merged-oid|route-mutant:route-direct-take|0|-|merge-route: admin ruleset=20569265 bypass=always;$QUEUE_FALSE;{no-token};MERGED PR #123|calls=$ROUTE_PRE,merge:merge:admin,graphql:queue auth=<unset>
+a direct merge allowing none of the accepted methods takes the queue with the queue's method, naming both sets|checks:ci-required queue-rule:always queue-rule-method:MERGE methods:squash route:false post-queue|classified-with:--merge|75|-|merge-route: queue cause=direct-method allowed=squash accepted=merge;{route-queue:direct-method};{no-token};$QUEUED|calls=$PRE,merge:merge,graphql:queue auth=<unset>
+direct-merge methods that cannot be read take the queue, naming the read|checks:ci-required queue-rule:always repo:pushless route:false post-queue|immediate-classified|75|-|merge-route: queue cause=direct-method-unreadable read=settings;{route-queue:direct-unread};{no-token};$QUEUED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 --auto without --unless-admin reads no route and never passes --admin, whatever the token may bypass|checks:ci-required queue-rule:always route:false post-entry|auto-classified|75|-|{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
 --unless-admin without --auto is refused before any call|-|with:--unless-admin|1|-|Error: --unless-admin gates the --auto arm and needs --auto|calls=- auth=-
 must-fail: with the needs-auto check cut, --unless-admin alone runs the immediate merge|checks:ci-required post:MERGED merge-commit:merged-oid|mutant:route-autoless:--unless-admin+--keep-branch|0|-|{no-token};MERGED PR #123|calls=$PRE,merge:squash,graphql:queue auth=<unset>
