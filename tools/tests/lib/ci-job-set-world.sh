@@ -9,8 +9,9 @@
 #   ROOT, JOB_SET, TMP       this checkout, the script, the suite's scratch
 #   selection CLASS DOCS PATHS
 #                            the lane lines, blank-separated, or the refusal
-#                            key; SELECT_IN, SELECT_WITH, SELECT_EVENT and
-#                            SELECT_PROOF steer it (see below)
+#                            key; SELECT_IN, SELECT_WITH, SELECT_EVENT,
+#                            SELECT_PROOF and SELECT_ARG steer it (see
+#                            below)
 #   record EVENT CLASS DOCS PATH...
 #                            a proving run's record, its lines joined with
 #                            commas
@@ -43,13 +44,14 @@ check() { # DESC EXPECTED ACTUAL
 # ci-job-set reads the Rust source of the checkout it runs in: this one,
 # unless SELECT_IN names another; SELECT_WITH names a copy to run instead.
 # SELECT_EVENT is the event, pull_request unless set, and SELECT_PROOF the
-# proving run's record, none unless set.
+# proving run's record, none unless set. SELECT_ARG is the one argument
+# passed, none unless set; the workflow's changes job passes --event-parity.
 selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or the refusal key
-  local class="$1" docs="$2" paths="$3" out="$TMP/selection" status=0
+  local class="$1" docs="$2" paths="$3" out="$TMP/selection" status=0 arg="${SELECT_ARG:-}"
   : >"$out"
   (cd "${SELECT_IN:-$ROOT}" && CHANGE_CLASS="$class" DOCS_ONLY="$docs" CHANGED_PATHS="$paths" \
     EVENT="${SELECT_EVENT-pull_request}" PROOF_RECORD="${SELECT_PROOF:-}" \
-    GITHUB_OUTPUT="$out" "${SELECT_WITH:-$JOB_SET}" 2>"$TMP/selection-err") || status=$?
+    GITHUB_OUTPUT="$out" "${SELECT_WITH:-$JOB_SET}" ${arg:+"$arg"} 2>"$TMP/selection-err") || status=$?
   if [ "$status" -ne 0 ]; then
     printf 'exit=%s %s' "$status" \
       "$(sed -n 's/^ci-job-set: cause=//p' "$TMP/selection-err" | head -1)"

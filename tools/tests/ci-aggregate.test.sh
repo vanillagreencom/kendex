@@ -16,7 +16,8 @@
 #      publishes and the lanes ci-job-set selects are one set, compared by
 #      name, and each aggregate, on its own, holds every job it needs to the
 #      lane or event condition that job's own `if:` reads; and the changes
-#      job grants the `actions: read` the action's proof reads with.
+#      job grants the `actions: read` the action's proof reads with and
+#      calls tools/ci-job-set with --event-parity.
 #   2. the job set: each gated job's own `if:` and the shard matrix's `os:`
 #      and `shard:` expressions, read out of the workflow and EVALUATED
 #      against a selection and an event, with GitHub's implicit success() where a
@@ -74,6 +75,22 @@ check "the changes job grants the proof's read and the checkout's, nothing more"
 plant "$WORKFLOW" "      actions: read" "" "$TMP/no-actions-read.yml" changes
 check "must-fail: a changes job without actions: read is named" "contents: read" \
   "$(job_permissions "$TMP/no-actions-read.yml" changes)"
+
+# The selection's one call per workflow run is where the event-parity check
+# runs: tools/ci-job-set derives the other event only when asked, so a
+# changes job calling it bare would never refuse a selection that differs by
+# event.
+job_set_calls() { # WORKFLOW — each tools/ci-job-set call in the changes job
+  awk '
+    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == "changes:"); next }
+    in_job && /^ +run: tools\/ci-job-set/ { sub(/^ +run: /, ""); print }
+  ' "$1"
+}
+check "the changes job asks tools/ci-job-set for the event-parity check" \
+  "tools/ci-job-set --event-parity" "$(job_set_calls "$WORKFLOW")"
+plant "$WORKFLOW" "run: tools/ci-job-set --event-parity" "run: tools/ci-job-set" "$TMP/no-parity.yml" changes
+check "must-fail: a changes job calling tools/ci-job-set without --event-parity is named" \
+  "tools/ci-job-set" "$(job_set_calls "$TMP/no-parity.yml")"
 
 # A shard matrix key's expression, `os` or `shard`, the `${{ }}` stripped.
 matrix_expr() { # WORKFLOW KEY

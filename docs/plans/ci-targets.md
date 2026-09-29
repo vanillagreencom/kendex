@@ -152,9 +152,9 @@ Flakes also rode along in three real-defect runs (open-terminal at 07:25Z and 10
 Jobs are those of `.github/workflows/skill-tests.yml` unless named otherwise.
 
 - pull_request only: the `preflight` and `markdown` jobs, and the whole `own-catalog` workflow (push and pull_request, no merge_group).
-- merge_group only: the macOS legs of the Skill suites shards, which `tools/ci-job-set` lights on a pull request only where a lane source or another `.github/` path changed; the Review gate writer's merge-group leg, an unconditional green post.
-- Both: the `changes` classifier, `bot-instructions` (which carries doc-limits and the todo-ban scan), the Linux legs of the Skill suites shards, `ui-tests`, `gate-selftest`, the Linux, macOS and Windows cargo jobs, `cargo-lint`, and the aggregators.
-- Path filter on merge_group: the classifier runs on both events, reads the base and head from the merge-group payload, and selects shards from the group's diff. A stand-down skips a Linux shard when a passing PR run tested the identical tree.
+- merge_group only: the Review gate writer's merge-group leg, an unconditional green post. In the measured window the macOS legs of the Skill suites shards were merge_group only as well, save where a lane source or another `.github/` path changed; KEN-2031 moved them to both events.
+- Both: the `changes` classifier, `bot-instructions` (which carries doc-limits and the todo-ban scan), the Linux and macOS legs of the Skill suites shards the changed paths select, `ui-tests`, `gate-selftest`, the Linux, macOS and Windows cargo jobs, `cargo-lint`, and the aggregators.
+- Path filter on merge_group: the classifier runs on both events, reads the base and head from the merge-group payload, and selects shards from the group's diff. A stand-down skips a shard's leg when a passing PR run tested the identical tree.
 - Stand-down in practice: in the 88 green queue runs each Linux shard still ran in 77 to 83 of them, so a moved base almost always defeats the reuse. macOS shards ran in 79 to 86 of 88.
 - Slowest queue leg: the guards-tools macOS shard, median 25.3 min and max 29.6 min against its 30-minute timeout; it sets the queue's 27.9-minute median.
 

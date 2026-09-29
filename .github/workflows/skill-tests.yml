@@ -23,8 +23,9 @@ name: Skill Tests
 # run left, `tools/ci-job-set` re-derives what it ran from it and stands
 # those lanes down, so such a group runs nothing the pull request did. The
 # pull request selects every lane, shard and runner the merge group selects
-# for the same paths, the macOS legs included, and `tools/ci-job-set`
-# refuses a selection that differs by event; so the pull request's required
+# for the same paths, the macOS legs included, and the `changes` job's call
+# of `tools/ci-job-set --event-parity` refuses a selection that differs by
+# event; so the pull request's required
 # checks hold the whole merge-group job set, and an admin merge lands only
 # on a green run of that set. The aggregators
 # still report and accept only the skips the
@@ -285,6 +286,8 @@ jobs:
       # the pull request's tree, whose crates/ tools/rust-reads reads. The
       # proof record is the passing run that already tested this tree, where
       # the action found one; the script stands down what that run ran.
+      # --event-parity refuses a selection that differs by event, once per
+      # run here rather than on every call the suites make.
       - id: select
         env:
           CHANGE_CLASS: ${{ steps.classify.outputs.change_class }}
@@ -292,7 +295,7 @@ jobs:
           CHANGED_PATHS: ${{ steps.classify.outputs.changed_paths }}
           EVENT: ${{ env.EVENT }}
           PROOF_RECORD: ${{ steps.classify.outputs.proof_record }}
-        run: tools/ci-job-set
+        run: tools/ci-job-set --event-parity
 
   # This repository is the package's source, so the candidate's own checker
   # judges the candidate's renders: a change to the renderer or the derivation
@@ -376,10 +379,10 @@ jobs:
   # `guards-hooks` and `guards-tools-tail` beside it, as the comment above
   # their steps records.
   #
-  # THE macOS LEG runs the selected shell shards a second time, in the merge
-  # group, on the runner whose /bin/bash is 3.2.57, the shell every skill
-  # claims to support (skills/AGENTS.md). tools/bash32-lint
-  # scans the source for that claim; this leg runs it, which is the only way
+  # THE macOS LEG runs the selected shell shards a second time, on the pull
+  # request and in the merge group, on the runner whose /bin/bash is 3.2.57,
+  # the shell every skill claims to support (skills/AGENTS.md).
+  # tools/bash32-lint scans the source for that claim; this leg runs it, which is the only way
   # to reach what a text scan cannot — a quoted builtin name, a construct
   # assembled at runtime. The image's only
   # bash is that one today, and the leg does not rely on it: a symlink to

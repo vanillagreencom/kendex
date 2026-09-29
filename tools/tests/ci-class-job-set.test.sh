@@ -9,9 +9,10 @@
 #   asserting the whole lane line and the shards its case is about, and
 #   the refusals beside them; each lane source read queue-only by harness-ci's
 #   change-class; then event parity, a copy planting a macOS leg on the
-#   merge group alone refused on either event; then a `trivial` diff of a
-#   path the Rust source reads, and the shard selection whole, in fixture
-#   checkouts,
+#   merge group alone refused on either event by the --event-parity call,
+#   and answered for the one event by a call without it; then a `trivial`
+#   diff of a path the Rust source reads, and the shard selection whole, in
+#   fixture checkouts,
 #   with a control per selection rule and a row per refusal; then the
 #   proof: a merge group handed its pull request run's record stands
 #   down what that run ran, per lane and per shard runner, a record of
@@ -160,8 +161,11 @@ merge_group|crates/core/src/lib.rs|$BOTH
 ROWS
 [ "$leg_rows" -eq 8 ] || { echo "the legs table read $leg_rows rows" >&2; exit 1; }
 # Event parity: a copy that plants the macOS legs on the merge group alone is
-# refused on either event, a proof record beside it included, before any
-# proof stands a lane down. EVENT|RECORD (comma-joined, or none)|EXPECTED
+# refused by the --event-parity call on either event, a proof record beside
+# it included, before any proof stands a lane down. A call without the flag
+# derives its one event alone, so the same copy answers it.
+# ARGUMENT|EVENT|RECORD (comma-joined, or none)|EXPECTED; an argument other
+# than --event-parity is refused.
 mkdir -p "$TMP/parity/tools"
 cp "$ROOT/tools/rust-reads" "$TMP/parity/tools/rust-reads"
 sed 's/^      macos_shard "\$shards" || macos=false$/&; [ "$event" = merge_group ] || macos=false/' \
@@ -170,16 +174,22 @@ chmod +x "$TMP/parity/tools/ci-job-set"
 [ "$(grep -c 'macos=false; \[ "\$event" = merge_group \] || macos=false$' "$TMP/parity/tools/ci-job-set")" -eq 1 ] ||
   { echo "the event gate was not planted in the ci-job-set copy" >&2; exit 1; }
 parity_rows=0
-while IFS='|' read -r event proof expected; do
+while IFS='|' read -r arg event proof expected; do
   parity_rows=$((parity_rows + 1))
-  check "a macOS leg the merge group alone selects is refused on $event${proof:+ with a proof record}" "$expected" \
-    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_EVENT="$event" SELECT_PROOF="$(printf '%s' "$proof" | tr ',' '\n')" selection micro false skills/orch/scripts/lanes)"
+  check "a macOS leg the merge group alone selects, called with ${arg:-no argument} on $event${proof:+ with a proof record}" "$expected" \
+    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG="$arg" SELECT_EVENT="$event" SELECT_PROOF="$(printf '%s' "$proof" | tr ',' '\n')" selection micro false skills/orch/scripts/lanes | sed 's/.* shell_os=\(\[[^]]*\]\).*/\1/')"
 done <<ROWS
-pull_request||exit=2 event-parity event=merge_group
-merge_group||exit=2 event-parity event=pull_request
-merge_group|$(record pull_request micro false skills/orch/scripts/lanes)|exit=2 event-parity event=pull_request
+--event-parity|pull_request||exit=2 event-parity event=merge_group
+--event-parity|merge_group||exit=2 event-parity event=pull_request
+--event-parity|merge_group|$(record pull_request micro false skills/orch/scripts/lanes)|exit=2 event-parity event=pull_request
+|pull_request||$LINUX
+|merge_group||$BOTH
+--parity|pull_request||exit=2 unknown-argument value=--parity
 ROWS
-[ "$parity_rows" -eq 3 ] || { echo "the parity table read $parity_rows rows" >&2; exit 1; }
+[ "$parity_rows" -eq 6 ] || { echo "the parity table read $parity_rows rows" >&2; exit 1; }
+check "this tree's selection passes the --event-parity call unchanged" \
+  "$(selection micro false skills/orch/scripts/lanes)" \
+  "$(SELECT_ARG=--event-parity selection micro false skills/orch/scripts/lanes)"
 
 # Each declared lane source runs every lane and each declared build name is a
 # build input; both lists are read from the scripts and pinned here.

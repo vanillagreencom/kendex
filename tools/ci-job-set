@@ -9,6 +9,15 @@
 # workflow reads one of those lines, and the shard matrix reads the list, so
 # the selection is made once instead of re-derived in each `if:`.
 #
+# Usage: tools/ci-job-set [--event-parity]
+#
+#   --event-parity  also derive the selection at every other event and refuse
+#                   `event-parity` where one differs. The `changes` job of
+#                   skill-tests.yml passes it, so the check runs once per
+#                   workflow run over the real changed paths; a call without
+#                   it derives the one event, at half the cost, for the
+#                   suites that call this script many times.
+#
 # Environment:
 #   CHANGE_CLASS   render|trivial|micro|small|standard
 #   DOCS_ONLY      true|false, the shipped `harness-only --mode docs` verdict
@@ -16,8 +25,8 @@
 #   CHANGED_PATHS  the changed paths, one per line
 #   EVENT          pull_request|merge_group, the event the selection is for.
 #                  Both select the same lanes and shards for the same
-#                  class, docs verdict and paths; the script derives the
-#                  selection at each and refuses where they differ
+#                  class, docs verdict and paths, which --event-parity
+#                  checks
 #   PROOF_RECORD   the change-class action's `proof_record` output: the
 #                  record of the passing run that already tested this tree,
 #                  or empty where none did. Its `event`, `change_class`,
@@ -70,8 +79,9 @@
 #     runner the merge group runs for the same class, docs verdict and
 #     paths. So the pull request's required checks hold the whole
 #     merge-group job set, and an admin merge, which lands on those checks
-#     alone, lands only on a green run of that set. The script derives the
-#     selection at both events and refuses `event-parity` where they differ.
+#     alone, lands only on a green run of that set. With --event-parity the
+#     script derives the selection at both events and refuses
+#     `event-parity` where they differ.
 #   - A proof stands down what its run ran and nothing else. The run's
 #     selection is re-derived from its record with the rules above, at its
 #     event; each lane it ran stands down here, and the shell shards stand
@@ -158,6 +168,14 @@ die() { # CAUSE MESSAGE
   printf 'ci-job-set: %s\n' "$2" >&2
   exit 2
 }
+
+# A mistyped mode would drop the parity check the workflow relies on.
+parity=false
+case "$#:${1-}" in
+  0:) ;;
+  1:--event-parity) parity=true ;;
+  *) die "unknown-argument value=$*" "the one argument is --event-parity" ;;
+esac
 
 [ -n "${CHANGE_CLASS:-}" ] || die missing-class "CHANGE_CLASS is required"
 [ -n "${GITHUB_OUTPUT:-}" ] || die missing-output-file \
@@ -604,12 +622,16 @@ now="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "$EVENT")" || exit 2
 # included, so its required checks hold the whole merge-group job set and an
 # admin merge lands only on a green run of that set. A rule that reads the
 # event breaks that and is refused here, before any proof stands a lane down.
-for event in $EVENTS; do
-  [ "$event" != "$EVENT" ] || continue
-  other="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "$event")" || exit 2
-  [ "$other" = "$now" ] || die "event-parity event=$event" \
-    "$EVENT selects '$now' and $event selects '$other' for the same class, docs verdict and paths"
-done
+# Each other event costs a whole selection again, so only --event-parity
+# pays it.
+if [ "$parity" = true ]; then
+  for event in $EVENTS; do
+    [ "$event" != "$EVENT" ] || continue
+    other="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "$event")" || exit 2
+    [ "$other" = "$now" ] || die "event-parity event=$event" \
+      "$EVENT selects '$now' and $event selects '$other' for the same class, docs verdict and paths"
+  done
+fi
 
 # A lane the proving run ran stands down; one it skipped runs as selected.
 # The shell shards' legs stand down per runner, and only where that run ran
