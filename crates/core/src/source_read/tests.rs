@@ -241,7 +241,12 @@ fn a_rendered_skill_tree_leaves_out_top_level_tests_evals_and_development_notes(
     let names = |files: Vec<(PathBuf, Vec<u8>)>| -> Vec<String> {
         files
             .into_iter()
-            .map(|(p, _)| p.to_string_lossy().into_owned())
+            .map(|(p, _)| {
+                p.components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/")
+            })
             .collect()
     };
 
