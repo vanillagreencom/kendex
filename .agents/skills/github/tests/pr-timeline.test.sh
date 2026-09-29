@@ -128,6 +128,7 @@ run() { # EDIT [ARGS...]
   stage_pages
   gh_stub_answer "api-repos/owner/repo/commits/b1/statuses?per_page=100" "$(status_history "$HISTORY_B1")"
   gh_stub_answer "api-repos/owner/repo/commits/h2/statuses?per_page=100" "$(status_history "$HISTORY_H2")"
+  gh_stub_answer "api-repos/owner/repo/commits/b2/statuses?per_page=100" "$(status_history "")"
   gh_stub_answer "$ACTIVITY_PATH" "$(activity_log "$ACTIVITY")"
   (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u REVIEW_GATE_CONTEXT \
     bash "$BIN" 42 "$@" >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
@@ -150,7 +151,8 @@ a failing head run leaves CI never green, its wall time still read@.data.reposit
 a pending gate is not met@.data.repository.pullRequest.headCommit.nodes[0].commit.status.context.state = "PENDING"@.stamps.gate_met == null
 no Bot review leaves the first one null, the count zero and the times empty@.data.repository.pullRequest.reviews.nodes |= map(.author.__typename = "User")@[.stamps.first_bot_review, .bot_reviews, .bot_review_times] == [null, 0, []]
 a PR whose author GitHub no longer names counts every Bot review@.data.repository.pullRequest.author = null@[.bot_reviews, .bot_review_times[-1]] == [3, "2026-09-20T10:35:00Z"]
-no force push leaves the head's commit date the last push@.data.repository.pullRequest.timelineItems.nodes |= map(select(.__typename != "HeadRefForcePushedEvent"))@[.stamps.last_push, .stamps.first_gate_met] == ["2026-09-20T10:10:00Z", "2026-09-20T10:25:00Z"]
+no force push leaves the head's push, its first check suite, the last push@.data.repository.pullRequest.timelineItems.nodes |= map(select(.__typename != "HeadRefForcePushedEvent"))@[.stamps.last_push, .stamps.first_gate_met] == ["2026-09-20T10:20:00Z", "2026-09-20T10:25:00Z"]
+a final head with no check suite and no force push falls back to its commit date@.data.repository.pullRequest |= (.timelineItems.nodes |= map(select(.__typename != "HeadRefForcePushedEvent")) | (.commits.nodes[0], .reviews.nodes[2,3]).commit.firstSuite.nodes = [])@[.stamps.last_push, .stamps.first_gate_met] == ["2026-09-20T10:10:00Z", "2026-09-20T10:25:00Z"]
 ROWS
 
 echo "=== the pushes are read from the head branch's activity log ==="
@@ -182,12 +184,23 @@ echo "=== the review and fix rounds ==="
 # Each row asserts the rounds as [kind, head, start, end, secs], each stamp
 # as its hours and minutes.
 REPLY='.data.repository.pullRequest.reviews.nodes += [{submittedAt: "2026-09-20T10:22:00Z", author: {__typename: "Bot", login: "lane-app"}, commit: .data.repository.pullRequest.commits.nodes[0].commit}]'
+# h2 force-pushed over b2, pushed at 09:50 after the b1 review and reviewed
+# by nobody, so beforeCommit alone names it.
+B2='.data.repository.pullRequest.timelineItems.nodes[0].beforeCommit = pushed("b2"; "09:50")'
+# The viewer's own pending review, which GitHub returns unsubmitted, and a
+# review whose commit the schema leaves null.
+PENDING='.data.repository.pullRequest.reviews.nodes += [{submittedAt: null, author: {__typename: "User", login: "someone"}, commit: pushed("b1"; "09:20")}]'
+NO_COMMIT='.data.repository.pullRequest.reviews.nodes += [{submittedAt: t("09:25"), author: {__typename: "User", login: "someone"}, commit: null}]'
+ROUNDS='[["review","b1","09:20","09:30",600],["fix","b1","09:30","10:20",3000],["review","h2","10:20","10:30",600]]'
 while IFS='@' read -r label edit want; do
   [[ -n "$label" ]] || continue
   run "$edit" >/dev/null
   assert_eq "$(jq -c '[.rounds[] | [.kind, .head, (.start | if . == null then "-" else .[11:16] end), (.end | .[11:16]), .secs]]' "$TMP_ROOT/stdout")" "$want" "$label"
 done <<ROWS
-the PR author's thread reply on the new head ends no round@$REPLY@[["review","b1","09:20","09:30",600],["fix","b1","09:30","10:20",3000],["review","h2","10:20","10:30",600]]
+the PR author's thread reply on the new head ends no round@$REPLY@$ROUNDS
+a fix round ends at the first push after its review, an unreviewed force-pushed-over head's included@$B2@[["review","b1","09:20","09:30",600],["fix","b1","09:30","09:50",1200],["review","h2","10:20","10:30",600]]
+a pending review ends no round@$PENDING@$ROUNDS
+a review on no commit ends no round@$NO_COMMIT@$ROUNDS
 a head with no check suite is no push, so its round has no start@.data.repository.pullRequest |= (.timelineItems.nodes[0].beforeCommit.firstSuite.nodes = [] | .reviews.nodes[0,1].commit.firstSuite.nodes = [])@[["review","b1","-","09:30",null],["fix","b1","09:30","10:20",3000],["review","h2","10:20","10:30",600]]
 a PR nobody reviewed has no round@.data.repository.pullRequest.reviews.nodes = []@[]
 ROWS
@@ -447,6 +460,29 @@ mutate 'select($p.author == null or .author.login != $p.author.login)' 'select(t
 run "$REPLY" >/dev/null
 assert_eq "$(jq -c '.rounds[-1].end' "$TMP_ROOT/stdout")" '"2026-09-20T10:22:00Z"' \
   "control: without the author filter the author's reply ends the review round"
+
+# The fix round ending at the last push after its review, not the first.
+mutate 'select(. > $r.submittedAt)] | min)' 'select(. > $r.submittedAt)] | max)'
+run "$B2" >/dev/null
+assert_eq "$(jq -c '.rounds[1].end' "$TMP_ROOT/stdout")" '"2026-09-20T10:20:00Z"' \
+  "control: the last push after a review ends its fix round in place of the first"
+
+# The pushes without the force-pushed-over heads: b2's push is never known.
+mutate '($pushes[] | .beforeCommit // empty), ' ''
+run "$B2" >/dev/null
+assert_eq "$(jq -c '.rounds[1].end' "$TMP_ROOT/stdout")" '"2026-09-20T10:20:00Z"' \
+  "control: without the force-pushed-over heads the unreviewed b2 push ends no fix round"
+
+# The rounds read a pending review.
+mutate 'select(.submittedAt != null and .commit != null)' 'select(.commit != null)'
+run "$PENDING" >/dev/null
+assert_eq "$(jq -c '.rounds[0].end' "$TMP_ROOT/stdout")" 'null' \
+  "control: without the submitted filter a pending review ends the b1 review round with no time"
+
+# The rounds read a review on no commit.
+mutate 'select(.submittedAt != null and .commit != null)' 'select(.submittedAt != null)'
+assert_eq "$(run "$NO_COMMIT") $(tail -n 1 "$TMP_ROOT/stderr")" 'rc=1 {"error":"pr-timeline: unreadable response"}' \
+  "control: without the commit filter a review on no commit fails the read"
 
 # The page walk without its cap: the one page past the cap, which closes the
 # connection, is read, and the PR prints.

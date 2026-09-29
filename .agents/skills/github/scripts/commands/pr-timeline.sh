@@ -31,8 +31,8 @@ Output, one JSON object on stdout:
   "stamps": {
     "first_commit":     author date of the PR's first commit,
     "created":          the PR opened,
-    "last_push":        the later of the final head's committer date and the
-                        last force push,
+    "last_push":        the later of the final head's push and the last force
+                        push,
     "first_bot_review": the first review a Bot account other than the PR's
                         author submitted: a lane that opens its PR as an app
                         answers its threads in reviews of its own, which are
@@ -78,7 +78,8 @@ creation of its first check suite, which GitHub makes when the push arrives:
 a head's committer date predates its push by any wait before the push, the
 pull request's timeline keeps a push time only for a forced push, and
 push_times names no head. A head with no check suite is no push, and a round
-starting at one has a null start and secs.
+starting at one has a null start and secs; the final head's push falls back
+to its committer date only for last_push.
 
 Every stamp is ISO 8601 UTC, and every stamp and duration is null where the
 PR never reached it. The gate is a commit status, not a check run, so no CI
@@ -242,11 +243,11 @@ def pushed($c): $c.firstSuite.nodes[0].createdAt // null;
 # The review stage: per reviewed head, its push to its first review, then
 # that review to the next push. $pushed maps each known head to its push.
 def rounds($reviews; $pushed):
-  ([$pushed[] | select(. != null)] | unique) as $pushes
+  ([$pushed[] | select(. != null)] | unique) as $push_times
   | [$reviews | group_by(.commit.oid) | map(min_by(.submittedAt)) | sort_by(.submittedAt) | .[]
      | . as $r | $pushed[$r.commit.oid] as $start
      | {kind: "review", head: $r.commit.oid, start: $start, end: $r.submittedAt, secs: secs($start; $r.submittedAt)},
-       (([$pushes[] | select(. > $r.submittedAt)] | min) as $next
+       (([$push_times[] | select(. > $r.submittedAt)] | min) as $next
         | if $next == null then empty
           else {kind: "fix", head: $r.commit.oid, start: $r.submittedAt, end: $next, secs: secs($r.submittedAt; $next)} end)];
 .repository.pullRequest as $p
@@ -262,12 +263,14 @@ def rounds($reviews; $pushed):
   suites($head) as $head_suites
   | [if $p.mergeCommit == null then empty else suites($p.mergeCommit)[] | select(.workflowRun.event == "merge_group") end] as $group_suites
   | [$p.timelineItems.nodes[] | select(.__typename == "HeadRefForcePushedEvent")] as $pushes
+  | ([$p.commits.nodes[].commit, ($pushes[] | .beforeCommit // empty), ($p.reviews.nodes[] | .commit // empty)]
+     | map({key: .oid, value: pushed(.)}) | from_entries) as $pushed
   | [$p.reviews.nodes[] | select(.author.__typename == "Bot" and .submittedAt != null
       and .author.login != $p.author.login)] as $bot
   | {
       first_commit: ($p.firstCommit.nodes[0].commit.authoredDate // null),
       created: $p.createdAt,
-      last_push: ([$head.committedDate, ($pushes[] | .createdAt)] | map(select(. != null)) | max),
+      last_push: ([($pushed[$head.oid] // $head.committedDate), ($pushes[] | .createdAt)] | map(select(. != null)) | max),
       first_bot_review: ($bot | map(.submittedAt) | min),
       first_gate_met: null,
       gate_met: ([gate($head)] | first // null),
@@ -290,8 +293,7 @@ def rounds($reviews; $pushed):
       rounds: rounds(
         [$p.reviews.nodes[] | select(.submittedAt != null and .commit != null)
          | select($p.author == null or .author.login != $p.author.login)];
-        [$p.commits.nodes[].commit, ($pushes[] | .beforeCommit // empty), ($p.reviews.nodes[] | .commit // empty)]
-        | map({key: .oid, value: pushed(.)}) | from_entries)
+        $pushed)
     }
   end'
 

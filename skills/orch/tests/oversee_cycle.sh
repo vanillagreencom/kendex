@@ -444,8 +444,8 @@ cycle() { # CLASS ACTUAL VERDICT ROUNDS ESCAPED REFIXED [PR_ROUNDS]
 }
 R='{"review":1,"fix":2,"bot":1,"full_validations":1}'
 pr_round() { printf '{"kind":"%s","secs":%s}' "$1" "$2"; } # KIND SECS
-# Micro: 3, 1 and 0 review rounds on three records, one round of the three
-# unread, and a fourth record with no rounds; standard: 2 rounds.
+# Micro: 3, 1 and 0 review rounds on three records, one of P1's three with
+# no seconds, and a fourth record with no pr_rounds; standard: 2 rounds.
 P1="[$(pr_round review 300),$(pr_round fix 900),$(pr_round review 500),$(pr_round review null)]"
 P2="[$(pr_round review 700)]"
 P3="[]"
@@ -455,10 +455,10 @@ PS="[$(pr_round review 1200),$(pr_round fix 60),$(pr_round review 900)]"
 jq -n --argjson c "[$(cycle '"micro"' 100 met "$R" false false "$P1"),$(cycle '"micro"' 400 met "$R" true true "$P2"),$(cycle '"micro"' 1000 miss null false null "$P3"),$(cycle '"micro"' 200 met "$R" false false),$(cycle '"render"' 30 met "$R" false false),$(cycle '"standard"' 6000 miss "$R" false true "$PS"),$(cycle null 50 unclassified null null false)]" \
   '{lanes: ([$c | to_entries[] | {item: "KEN-\(.key)", status: "done", cycle: .value}] + [{item: "KEN-99", status: "running"}]), fleet_log: []}' \
   > "$CASE/state/workflow-state-oversee.json"
-want='rollup class=render items=1 median=30 p90=30 misses=0 review=1 fix=2 bot=1 full_validations=1 rounds_unread=0 escaped=0 refixed=0 pr_rounds=- round_median=- fix_median=-
-rollup class=micro items=4 median=200 p90=1000 misses=1 review=3 fix=6 bot=3 full_validations=3 rounds_unread=1 escaped=1 refixed=1 pr_rounds=1 round_median=500 fix_median=900
-rollup class=standard items=1 median=6000 p90=6000 misses=1 review=1 fix=2 bot=1 full_validations=1 rounds_unread=0 escaped=0 refixed=1 pr_rounds=2 round_median=900 fix_median=60
-rollup class=unclassified items=1 median=50 p90=50 misses=0 review=- fix=- bot=- full_validations=- rounds_unread=1 escaped=0 refixed=0 pr_rounds=- round_median=- fix_median=-'
+want='rollup class=render items=1 median=30 p90=30 misses=0 review=1 fix=2 bot=1 full_validations=1 rounds_unread=0 escaped=0 refixed=0 pr_rounds=- pr_rounds_unread=1 round_median=- fix_median=- rounds_untimed=0
+rollup class=micro items=4 median=200 p90=1000 misses=1 review=3 fix=6 bot=3 full_validations=3 rounds_unread=1 escaped=1 refixed=1 pr_rounds=1 pr_rounds_unread=1 round_median=500 fix_median=900 rounds_untimed=1
+rollup class=standard items=1 median=6000 p90=6000 misses=1 review=1 fix=2 bot=1 full_validations=1 rounds_unread=0 escaped=0 refixed=1 pr_rounds=2 pr_rounds_unread=0 round_median=900 fix_median=60 rounds_untimed=0
+rollup class=unclassified items=1 median=50 p90=50 misses=0 review=- fix=- bot=- full_validations=- rounds_unread=1 escaped=0 refixed=0 pr_rounds=- pr_rounds_unread=1 round_median=- fix_median=- rounds_untimed=0'
 rollup() { (cd "$REPO" && "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" rollup) 2>"$CASE/err"; }
 assert_eq "$(rollup)" "$want" "one row per class with a record, in target order, unclassified last"
 assert_eq "$(state '.fleet_log | map(.item) | join(",")')" '"render,micro,standard,unclassified"' "each row joins the fleet log under its class"
@@ -469,7 +469,7 @@ rc=0; out="$(rollup)" || rc=$?
 assert_eq "rc=$rc out=$out files=$(ls -A "$CASE/state" | tr '\n' ' ')" "rc=0 out= files=" "with no fleet state yet the rollup prints nothing, writes nothing and exits 0"
 assert_eq "$(record KEN-1 micro) $(head -n 1 "$CASE/err")" "rc=1  oversee-cycle: state-missing=$CASE/state/workflow-state-oversee.json" "while a record refuses"
 
-echo "=== --help prints the targets the verdict and the rollup read ==="
+echo "=== --help prints the targets the verdict and the reader of the rollup use ==="
 assert_eq "$("$BIN" --help | tail -n 2)" "Targets, seconds: render 300, trivial 300, micro 1200, small 1800, standard 5400
 Review rounds per pull request: micro 1, small 1, standard 2; seconds per round: 600" \
   "the last two help lines are the merge-time and review-stage target tables"

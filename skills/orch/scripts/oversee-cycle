@@ -84,15 +84,17 @@
 # fleet state yet it prints nothing and exits 0:
 #   rollup class=C items=N median=S p90=S misses=N review=N fix=N bot=N
 #     full_validations=N rounds_unread=N escaped=N refixed=N pr_rounds=N
-#     round_median=S fix_median=S
+#     pr_rounds_unread=N round_median=S fix_median=S rounds_untimed=N
 # median and p90 are nearest-rank over the measured launch-to-merge seconds;
 # the round figures are sums over the records that carry rounds, and
 # rounds_unread counts the records that do not. pr_rounds is the nearest-rank
 # median of the review rounds per record over the records that carry
-# pr_rounds; round_median and fix_median are the nearest-rank medians of the
-# seconds of every review round and every fix round those records hold.
-# pr_rounds and round_median are read against the review-stage targets
-# `--help` prints; the owner names no fix-round target.
+# pr_rounds, and pr_rounds_unread counts the records that do not;
+# round_median and fix_median are the nearest-rank medians of the seconds of
+# every review round and every fix round those records hold, and
+# rounds_untimed counts their rounds with no seconds. A person compares
+# pr_rounds and round_median to the review-stage targets `--help` prints; the
+# rollup gives no verdict on them, and the owner names no fix-round target.
 #
 # Every refusal's first stderr line is `oversee-cycle: KEY=VALUE`.
 # Exit status: 0 done; 1 a refusal (state-missing, state-unreadable,
@@ -184,8 +186,10 @@ if [[ "$VERB" == rollup ]]; then
       + " escaped=\([$c[] | select(.escaped == true)] | length)"
       + " refixed=\([$c[] | select(.refixed == true)] | length)"
       + " pr_rounds=\([$c[] | .pr_rounds // empty | [.[] | select(.kind == "review")] | length] | nr(0.5))"
+      + " pr_rounds_unread=\([$c[] | select(.pr_rounds == null)] | length)"
       + " round_median=\([$c[] | .pr_rounds // empty | .[] | select(.kind == "review") | .secs // empty] | nr(0.5))"
       + " fix_median=\([$c[] | .pr_rounds // empty | .[] | select(.kind == "fix") | .secs // empty] | nr(0.5))"
+      + " rounds_untimed=\([$c[] | .pr_rounds // empty | .[] | select(.secs == null)] | length)"
   ' "$STATE_FILE")" || refuse state-unreadable "$STATE_FILE"
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
