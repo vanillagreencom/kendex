@@ -29,9 +29,10 @@
 #      that guarantee breaks.
 #   3. the shell-shard partition — every file under skills/*/tests/*.sh,
 #      tools/tests/*.test.sh and hooks/tests/*.sh is claimed by exactly one
-#      shard. The must-fail arms drop a roster, repeat a roster, leave a moved
-#      path in a comment where only prose can see it, and delete the step that
-#      globs a package.
+#      shard, or by one job's one-line `run:` steps naming it by path. The
+#      must-fail arms drop a roster, repeat a roster, leave a moved path in a
+#      comment where only prose can see it, delete the step that globs a
+#      package, and delete a job's direct runs.
 #   4. the citations — a shard a tracked file names in backticks is one the
 #      matrix declares, so a rename cannot leave prose pointing at a lane no
 #      leg runs.
@@ -267,6 +268,39 @@ split_run_blocks() { # split_run_blocks <workflow> <dir> ; <dir>/N.sh and its `i
   done < <(awk -f "$BLOCK_AWK" "$wf")
 }
 
+# One record per one-line `run:` step: its job, its `if:` text, its working
+# directory and its command, parted on the unit separator, which no step text
+# holds: a tab IFS would fold an empty field away. A job opens at the
+# two-space key under `jobs:`.
+one_line_steps() { # one_line_steps <workflow> ; `job\037if\037wd\037run` per step
+  awk '
+    function flush() { if (wd != "" || run != "") printf "%s\037%s\037%s\037%s\n", job, cond, wd, run; cond = wd = run = "" }
+    substr($0, 1, 2) == "  " && substr($0, 3, 1) != " " && substr($0, 3, 1) != "#" && $0 ~ /:$/ { flush(); job = $0; sub(/^ */, "", job); sub(/:$/, "", job) }
+    substr($0, 1, 8) == "      - " { flush() }
+    substr($0, 1, 12) == "        if: " { cond = substr($0, 13) }
+    substr($0, 1, 27) == "        working-directory: " { wd = substr($0, 28) }
+    substr($0, 1, 13) == "        run: " && substr($0, 14, 1) != "|" && substr($0, 14, 1) != ">" { run = substr($0, 14) }
+    END { flush() }
+  ' "$1"
+}
+
+# A job outside the shell matrix may run a suite by path on a one-line step:
+# `gate-selftest` runs review-gate's decision-table runner twice, under two
+# settings. Each job claims a path once however many of its steps name it,
+# and only a path in the universe counts, so the orch runner and a shipped
+# script such as validate.sh claim nothing.
+direct_claims() { # direct_claims <workflow> ; one path per job that runs it by path
+  local job cond wd run word
+  one_line_steps "$1" | while IFS=$'\037' read -r job cond wd run; do
+    [[ -z "$wd" ]] || continue
+    set -f
+    for word in $run; do
+      if grep -qxF -- "$word" "$UNIV"; then printf '%s\t%s\n' "$job" "$word"; fi
+    done
+    set +f
+  done | sort -u | cut -f2
+}
+
 claims_of() { # claims_of <workflow> ; every path its roster steps claim
   local wf="$1" dir="$TMP/blocks" f line
   cp "$wf" "$PART/.github/workflows/skill-tests.yml"
@@ -291,6 +325,7 @@ claims_of() { # claims_of <workflow> ; every path its roster steps claim
     done <<< "$ofilters"
     union_of "${oargs[@]}" | sed "s%^%$ORCH_TESTS_DIR/%; s%\$%.sh%"
   fi
+  direct_claims "$wf"
 }
 
 # `linear` is out of the file-level accounting on purpose: its step runs the
@@ -321,7 +356,8 @@ claims_file() { # claims_file <workflow> <out> ; the sorted claim list
 
 # The universe: the three globs the roster steps loop over, less the runner
 # the orch steps invoke by path. That runner drives the battery and is not a
-# suite, the same exclusion section 2's roster makes by name.
+# suite, the same exclusion section 2's roster makes by name. A file here that
+# no roster runs is claimed by a job that runs it by path, or by nothing.
 UNIV="$TMP/universe"
 (
   cd "$ROOT" || exit 1
@@ -343,9 +379,16 @@ check "every claim names a file that exists, so no roster carries a phantom" \
 check "exactly one run block claims the linear package by glob" \
   "1" "$(grep -lF "${LINEAR_PREFIX}*.sh" "$TMP/blocks"/*.sh | wc -l | tr -d ' ')"
 
-# --- 3b. Must-fail: the three ways this partition breaks --------------------
+# --- 3b. Must-fail: the ways this partition breaks --------------------------
 # Each arm mutates a copy of the workflow, and the section above must name the
-# damage. An arm that stays clean means the section reports nothing.
+# damage. An arm that stays clean means the section reports nothing. An arm
+# whose needle no longer matches the workflow leaves the copy unchanged and
+# judges the workflow itself, so each copy must differ from what it mutates.
+edited() { # edited <original> <copy> <arm> ; fails the arm whose edit matched nothing
+  if cmp -s -- "$1" "$2"; then
+    bad "mutation-unmatched arm=[$3]: the copy equals $(basename -- "$1"), so the arm judges nothing"
+  fi
+}
 
 # A roster no fallback covers, dropped. No skip list points at the tools/tests
 # glob, so the files it alone claims land in no shard at all.
@@ -355,6 +398,7 @@ awk '{
     sub(/tools\/tests\/\*\.test\.sh/, "")
   print
 }' "$WORKFLOW" > "$wf_drop"
+edited "$WORKFLOW" "$wf_drop" roster-dropped
 claims_file "$wf_drop" "$TMP/claims-drop"
 if [[ -n "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-drop"))" ]]; then
   ok "must-fail: a dropped roster leaves its files unclaimed, and they are named"
@@ -365,10 +409,11 @@ fi
 # A roster claimed twice.
 wf_twice="$TMP/wf-roster-repeated.yml"
 awk '{
-  if (index($0, "for t in skills/review-gate/tests/*.sh; do"))
+  if (index($0, "for t in skills/review-gate/tests/*.test.sh; do"))
     sub(/; do/, " skills/worktree/tests/*.sh; do")
   print
 }' "$WORKFLOW" > "$wf_twice"
+edited "$WORKFLOW" "$wf_twice" roster-repeated
 claims_file "$wf_twice" "$TMP/claims-twice"
 if [[ -n "$(uniq -d "$TMP/claims-twice")" ]]; then
   ok "must-fail: a roster added to a second step is named as claimed twice"
@@ -404,6 +449,7 @@ while IFS='|' read -r moved loop; do
     if ($0 ~ /claims="\$\(grep -v/) { print "          claims=\"$(cat \"$wf\")\""; next }
     print
   }' "$wf_prose" > "$wf_open"
+  edited "$wf_prose" "$wf_open" "comment-filter-removed $moved"
   claims_file "$wf_open" "$TMP/claims-open"
   if grep -qxF -- "$moved" <<< "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-open"))"; then
     ok "must-fail: with the comment filter removed, the prose-only $moved runs in no shard and is named"
@@ -431,6 +477,7 @@ awk '
   drop == 1 { next }
   { print }
 ' "$WORKFLOW" > "$wf_nostep"
+edited "$WORKFLOW" "$wf_nostep" globbing-step-deleted
 claims_file "$wf_nostep" "$TMP/claims-nostep"
 check "with the step that globs a package deleted, no suite of it is unclaimed" \
   "" "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-nostep"))"
@@ -438,12 +485,25 @@ check "with the step that globs a package deleted, no suite of it is unclaimed" 
 wf_prefix="$TMP/wf-prefix-needle.yml"
 awk '{ sub(/needle="skills\/\$x\/tests\/\*\.sh"/, "needle=\"skills/$x/tests/\""); print }' \
   "$wf_nostep" > "$wf_prefix"
+edited "$wf_nostep" "$wf_prefix" prefix-needle
 claims_file "$wf_prefix" "$TMP/claims-prefix"
 if [[ -n "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-prefix"))" ]]; then
   ok "must-fail: a directory-prefix needle answers for a deleted step and the package's suites are named unclaimed"
 else
   bad "must-fail: a directory-prefix needle lost no suite, so the glob needle is unproven"
 fi
+
+# A job's direct runs, deleted. No roster globs the decision-table runner, so
+# with the `gate-selftest` steps that name it gone it runs nowhere, and the
+# coverage check names it.
+wf_nodirect="$TMP/wf-direct-run-deleted.yml"
+awk '$0 !~ /^ *run: .*skills\/review-gate\/tests\/review-predicate-selftest\.sh$/' \
+  "$WORKFLOW" > "$wf_nodirect"
+edited "$WORKFLOW" "$wf_nodirect" direct-run-deleted
+claims_file "$wf_nodirect" "$TMP/claims-nodirect"
+check "must-fail: with the direct runs deleted, the runner they named is unclaimed" \
+  "skills/review-gate/tests/review-predicate-selftest.sh" \
+  "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-nodirect"))"
 
 # --- 4. Shard names cited in tracked text -----------------------------------
 # A shard's name reaches prose: an AGENTS.md sends a contributor to the lane
@@ -544,17 +604,8 @@ suite_owners() { # suite_owners <workflow> ; `shard<tab>path`, one per shard and
         sed -n "s%^=== %$shard	%p"
     done
     # One-line steps: the package a node step works in, or the first word of
-    # its `run:` that names a file in this tree. Fields part on the unit
-    # separator, which no step text holds: a tab IFS would fold an empty
-    # working directory away.
-    awk '
-      function flush() { if (cond != "" && (wd != "" || run != "")) printf "%s\037%s\037%s\n", cond, wd, run; cond = wd = run = "" }
-      substr($0, 1, 8) == "      - " { flush() }
-      substr($0, 1, 12) == "        if: " { cond = substr($0, 13) }
-      substr($0, 1, 27) == "        working-directory: " { wd = substr($0, 28) }
-      substr($0, 1, 13) == "        run: " && substr($0, 14, 1) != "|" && substr($0, 14, 1) != ">" { run = substr($0, 14) }
-      END { flush() }
-    ' "$wf" | while IFS=$'\037' read -r cond wd run; do
+    # its `run:` that names a file in this tree.
+    one_line_steps "$wf" | while IFS=$'\037' read -r _ cond wd run; do
       shard="$(one_shard "$cond")"
       [[ -n "$shard" ]] || continue
       if [[ -n "$wd" ]]; then
