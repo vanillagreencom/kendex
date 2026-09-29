@@ -1298,6 +1298,7 @@
   ".agents/skills/slack/scripts/slack",
   ".agents/skills/slack/systemd/slack-listen.service",
   ".agents/skills/slack/tests/compact.test.sh",
+  ".agents/skills/slack/tests/hold.test.sh",
   ".agents/skills/slack/tests/install.test.sh",
   ".agents/skills/slack/tests/lib/fake_slack.py",
   ".agents/skills/slack/tests/lib/harness.sh",

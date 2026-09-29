@@ -27,6 +27,7 @@ Requires Python 3.8 or newer and the orch skill, which the install adds as a dep
 - An owner's message reaches the overseer through the checkout's `lane-mail`, keyed by the Slack message id, so a message the relay carried once is never carried twice.
 - The mailbox's new envelopes for the owner are posted to the channel: a question with its options, recommendation and deadline, a notice in the thread of the message it answers, a report as an uploaded file. An envelope older than `SLACK_THREAD_DAYS` is never posted.
 - The relay's first run reads Slack from the moment of the binding and the mailbox from its newest envelope, so neither side's past is replayed. Open questions are posted whatever their age inside `SLACK_THREAD_DAYS`.
+- While `SLACK_MASTER_FILE` is younger than `SLACK_MASTER_MAX_AGE`, a master session answers the overseer and the relay posts nothing to the channel; owner messages in the channel still reach the overseer, and `slack listen --status` shows `held-by=master`. When the file goes stale or is gone, the relay posts the questions still open, and the answer to a question the channel shows open, never the notices it held.
 - `slack compact` drops journal lines older than `SLACK_THREAD_DAYS` once they are resolved. The relay runs it once a day, so the verb is refused `relay-running` while the relay runs on that checkout.
 - `slack install` writes the systemd user unit that runs the relay over the roots you name.
 
@@ -122,6 +123,8 @@ Settings go in the project's `kendex.settings.toml` under `[env]` and the token 
 | `SLACK_OWNERS` | Comma-separated email addresses of the people whose messages steer | `KENDEX_USER_EMAIL` |
 | `SLACK_POLL_SECONDS` | Seconds between two reads of each channel | `15` |
 | `SLACK_THREAD_DAYS` | Days a thread stays open for replies | `7` |
+| `SLACK_MASTER_FILE` | A file a master session touches while it answers the overseer; while it is fresh the relay posts nothing | empty: no hold |
+| `SLACK_MASTER_MAX_AGE` | Seconds after its last touch that `SLACK_MASTER_FILE` still holds the relay | `600` |
 
 Slack's call allowance is shared by every relay of one app. A relay's calls per minute are `channels × (1 + open questions) × 60 / SLACK_POLL_SECONDS` plus the tenth-poll thread reads; `slack listen --status` prints the figure per root and the sum.
 

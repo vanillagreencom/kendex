@@ -222,6 +222,7 @@ def status(roots: List[Path], now: float) -> int:
         else:
             fix = " fix=restart the relay and read its last lines"
         unknown = record.get("unknown") or []
+        held = f" held-by={record['held_by']}" if record.get("held_by") else ""
         total += float(record.get("budget_per_minute", 0))
         print(
             keyed(
@@ -230,7 +231,7 @@ def status(roots: List[Path], now: float) -> int:
                 f" last_delivered_ts={record.get('last_delivered_ts') or '-'}"
                 f" open_asks={len(record.get('open_asks') or [])} oldest_unknown={unknown[0] if unknown else '-'}"
                 f" refused={len(record.get('refused') or [])} calls_last_minute={record.get('calls_last_minute', 0)}"
-                f" budget_per_minute={record.get('budget_per_minute', 0)}{fix}",
+                f" budget_per_minute={record.get('budget_per_minute', 0)}{held}{fix}",
             )
         )
     print(keyed("slack-relay-budget", f"{round(total, 1)} poll_seconds={settings.poll_seconds}"))

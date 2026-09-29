@@ -11,6 +11,12 @@ from the binding moment, so a channel's earlier history is never delivered,
 and the mailbox from its newest envelope, so notices and answers already
 there are never re-posted. Open asks are posted whatever their age inside
 SLACK_THREAD_DAYS, since they still want an answer.
+
+While SLACK_MASTER_FILE is younger than SLACK_MASTER_MAX_AGE a master session
+answers the overseer, and the relay posts nothing to the channel; reading the
+channel goes on. When the file goes stale or absent the relay resumes at the
+mailbox's newest envelope, as a start does, except that a held answer still
+posts so the thread of an ask the channel shows open is closed.
 """
 
 from __future__ import annotations
@@ -19,14 +25,14 @@ import datetime
 import os
 import time
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from api import Slack
 from mailbox import LaneMail
 from refusals import Refusal, keyed, print_refusal
 from secret import check as secret_check
 from secret import checked_file
-from settings import Settings
+from settings import MASTER, Settings
 from store import (
     Binding,
     Journal,
@@ -69,6 +75,28 @@ def resolve_owner_ids(api: Slack, owners: List[str]) -> Dict[str, str]:
             raise
         ids[email] = str(answer["user"]["id"])
     return ids
+
+
+def newest(events: List[Dict]) -> Tuple[str, List[str]]:
+    """The mailbox's newest `at` and the ids stamped in that second: `at` is a
+    whole second, so one written later in that second is named apart."""
+    at_newest = ""
+    ids: List[str] = []
+    for envelope in events:
+        at = str(envelope["at"])
+        if at_newest == "" or at_epoch(at) > at_epoch(at_newest):
+            at_newest, ids = at, [str(envelope["id"])]
+        elif at == at_newest:
+            ids.append(str(envelope["id"]))
+    return at_newest, ids
+
+
+def before(floor_at: str, floor_ids: Set[str], at: float, env_id: str) -> bool:
+    """Whether an envelope stamped `at` is at or before a journaled floor."""
+    if not floor_at:
+        return False
+    floor = at_epoch(floor_at)
+    return at < floor or at == floor and env_id in floor_ids
 
 
 def mention(binding: Binding) -> str:
@@ -115,17 +143,8 @@ class RootRelay:
         restart keeps them: Slack's history past the binding moment, and the
         mailbox past its newest envelope."""
         self.journal.append(t="seen", ts=self.binding.bound_at)
-        # `at` is a whole second, so the envelopes stamped in the newest
-        # second are named by id: one written later in that second is new.
-        newest = ""
-        ids: List[str] = []
-        for envelope in self.mail.events():
-            at = str(envelope["at"])
-            if newest == "" or at_epoch(at) > at_epoch(newest):
-                newest, ids = at, [str(envelope["id"])]
-            elif at == newest:
-                ids.append(str(envelope["id"]))
-        self.journal.append(t="start", at=newest, ids=ids)
+        at, ids = newest(self.mail.events())
+        self.journal.append(t="start", at=at, ids=ids)
         self.fresh = False
 
     # -- inbound: Slack to the mailbox --------------------------------------
@@ -138,7 +157,14 @@ class RootRelay:
             self.seed()
         self.read_history(bot_user)
         self.read_threads(bot_user)
-        self.post_events()
+        if self.master_live():
+            if not self.state.held:
+                self.journal.append(t="hold")
+        else:
+            events = self.mail.events()
+            if self.state.held:
+                self.resume(events)
+            self.post_events(events)
         if self.post_failed is not None:
             raise self.post_failed
         self.last_ok = self.clock()
@@ -221,36 +247,71 @@ class RootRelay:
 
     # -- outbound: the mailbox to Slack --------------------------------------
 
-    def post_events(self) -> None:
-        events = self.mail.events()
+    def master_live(self) -> bool:
+        """Whether SLACK_MASTER_FILE is younger than SLACK_MASTER_MAX_AGE; an
+        empty setting or an absent file is no master."""
+        path = self.settings.master_file
+        if not path:
+            return False
+        try:
+            mtime = os.stat(path).st_mtime
+        except FileNotFoundError:
+            return False
+        except OSError as err:
+            raise Refusal("master-file-unreadable", f"{path} ({err.strerror})") from err
+        return self.clock() - mtime < self.settings.master_max_age
+
+    def resume(self, events: List[Dict]) -> None:
+        """The end of a hold: a floor at the mailbox's newest envelope, under
+        which no notice posts, and the open asks it posts named."""
+        at, ids = newest(events)
+        asks = [str(e["id"]) for e, route in self.routes(events) if route == "ask"]
+        self.journal.append(t="resume", at=at, ids=ids, asks=asks)
+
+    def routes(self, events: List[Dict]) -> List[Tuple[Dict, str]]:
+        """Each envelope not yet carried and what it takes: `ask`, `notice`,
+        `answer`, or `skip` for one that never posts."""
         answered = {e.get("re") for e in events if e.get("kind") == "answer"}
         horizon = self.settings.horizon(self.clock())
-        start = at_epoch(self.state.start_at) if self.state.start_at else None
+        state = self.state
+        routed = []
         for envelope in events:
             env_id = str(envelope["id"])
-            if env_id in self.state.carried or env_id in self.skipped:
+            if env_id in state.carried or env_id in self.skipped:
                 continue
             at = at_epoch(str(envelope["at"]))
+            box = envelope.get("box")
+            kind = envelope.get("kind")
+            owner = box == "to-overseer" and envelope.get("to") == "owner"
             # `store.compact` drops an `out` line by this same age, so an
             # envelope whose line it may drop must never post again.
             if at < horizon:
-                self.skipped.add(env_id)
-                continue
-            box = envelope.get("box")
-            kind = envelope.get("kind")
-            if box == "to-overseer" and envelope.get("to") == "owner" and kind == "ask":
-                if env_id in answered:
-                    self.skipped.add(env_id)
-                else:
-                    self.post_ask(envelope)
-            elif start is not None and (at < start or at == start and env_id in self.state.start_ids):
-                self.skipped.add(env_id)
-            elif box == "to-overseer" and envelope.get("to") == "owner" and kind == "notice":
-                self.post_notice(envelope)
+                route = "skip"
+            elif owner and kind == "ask":
+                route = "skip" if env_id in answered else "ask"
+            elif before(state.start_at, state.start_ids, at, env_id):
+                route = "skip"
+            elif owner and kind == "notice":
+                route = "skip" if before(state.resume_at, state.resume_ids, at, env_id) else "notice"
             elif box == "to-lane" and kind == "answer":
-                self.post_answer(envelope)
+                route = "answer"
             else:
-                self.skipped.add(env_id)
+                route = "skip"
+            routed.append((envelope, route))
+        return routed
+
+    def post_events(self, events: List[Dict]) -> None:
+        for envelope, route in self.routes(events):
+            if route == "ask":
+                self.post_ask(envelope)
+            elif route == "notice":
+                self.post_notice(envelope)
+            elif route == "answer":
+                self.post_answer(envelope)
+            elif route == "skip":
+                self.skipped.add(str(envelope["id"]))
+            else:
+                raise AssertionError(f"route={route}")
 
     def _out(self, envelope: Dict, kind: str, state: str, **fields: object) -> None:
         """One `out` line. Each carries the envelope's `at`, the age
@@ -376,6 +437,7 @@ class RootRelay:
                 "open_asks": sorted(t.envelope for t in self.state.threads.values() if t.open),
                 "calls_last_minute": self.api.calls_last_minute(),
                 "budget_per_minute": round(self.budget_per_minute(), 1),
+                "held_by": MASTER if self.state.held else "",
             },
         )
 

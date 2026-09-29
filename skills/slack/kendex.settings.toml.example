@@ -21,6 +21,17 @@ SLACK_POLL_SECONDS = "15"
 # topic is not routed; the owner writes top-level instead.
 SLACK_THREAD_DAYS = "7"
 
+# A file a master session touches while it answers the overseer, such as
+# "~/.fleet/master-live". While it is younger than SLACK_MASTER_MAX_AGE the
+# relay posts nothing to the channel and `slack listen --status` shows
+# held-by=master; owner messages in the channel still reach the overseer.
+# Once it is older or gone, the relay posts the questions still open and
+# never the notices it held. Empty means no hold.
+SLACK_MASTER_FILE = ""
+
+# Seconds after its last touch that SLACK_MASTER_FILE still holds the relay.
+SLACK_MASTER_MAX_AGE = "600"
+
 [secrets]
 
 # The bot token of your Slack app. It lives in the private env file or the

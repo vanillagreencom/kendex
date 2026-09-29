@@ -16,6 +16,9 @@ from refusals import Refusal
 DEFAULT_API_URL = "https://slack.com/api"
 DEFAULT_POLL_SECONDS = 15
 DEFAULT_THREAD_DAYS = 7
+DEFAULT_MASTER_MAX_AGE = 600
+# The name `listen --status` shows for the presence SLACK_MASTER_FILE marks.
+MASTER = "master"
 EMAIL = re.compile(r"^[^\s@,]+@[^\s@,]+$")
 
 
@@ -26,6 +29,8 @@ class Settings:
     poll_seconds: int
     thread_days: int
     api_url: str
+    master_file: str
+    master_max_age: int
 
     def horizon(self, now: float) -> float:
         """SLACK_THREAD_DAYS before `now`: the one age every judge of age reads."""
@@ -70,4 +75,6 @@ def load(need_token: bool = True, need_owners: bool = True) -> Settings:
         poll_seconds=_positive_int("SLACK_POLL_SECONDS", DEFAULT_POLL_SECONDS),
         thread_days=_positive_int("SLACK_THREAD_DAYS", DEFAULT_THREAD_DAYS),
         api_url=os.environ.get("SLACK_API_URL", "").strip() or DEFAULT_API_URL,
+        master_file=os.path.expanduser(os.environ.get("SLACK_MASTER_FILE", "").strip()),
+        master_max_age=_positive_int("SLACK_MASTER_MAX_AGE", DEFAULT_MASTER_MAX_AGE),
     )

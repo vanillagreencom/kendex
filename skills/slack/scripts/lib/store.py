@@ -24,7 +24,7 @@ BINDING = "binding.json"
 JOURNAL = "journal.jsonl"
 STATUS = "status.json"
 LOCK = "listen.lock"
-LINE_KINDS = {"seen", "start", "in", "out", "resolved", "bound", "thread"}
+LINE_KINDS = {"seen", "start", "hold", "resume", "in", "out", "resolved", "bound", "thread"}
 AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
@@ -105,6 +105,9 @@ class State:
     seen_ts: str = "0"
     start_at: str = ""
     start_ids: Set[str] = field(default_factory=set)
+    held: bool = False
+    resume_at: str = ""
+    resume_ids: Set[str] = field(default_factory=set)
     carried: Set[str] = field(default_factory=set)
     delivered: Dict[str, str] = field(default_factory=dict)
     threads: Dict[str, Thread] = field(default_factory=dict)
@@ -121,6 +124,12 @@ class State:
         elif kind == "start":
             self.start_at = str(line["at"])
             self.start_ids = {str(i) for i in line["ids"]}
+        elif kind == "hold":
+            self.held = True
+        elif kind == "resume":
+            self.held = False
+            self.resume_at = str(line["at"])
+            self.resume_ids = {str(i) for i in line["ids"]}
         elif kind == "in":
             ts = str(line["ts"])
             if line["kind"] == "ignored":
@@ -207,7 +216,8 @@ class Journal:
 
 def compact(root: Path, cutoff_ts: float) -> int:
     """Drop resolved and ignored lines older than the cutoff, every report
-    upload older than it, and every history position but the last; keep
+    upload older than it, every history position but the last, and every
+    hold or resume line but the last; keep
     every open thread. Returns the lines dropped. An `out` line is judged by
     its envelope's `at`, the age `post_events` never posts past, so its
     envelope can never post again."""
@@ -219,6 +229,7 @@ def compact(root: Path, cutoff_ts: float) -> int:
         raws = [raw for raw in handle if raw.strip()]
     lines = [json.loads(raw) for raw in raws]
     last_seen = max((i for i, line in enumerate(lines) if line.get("t") == "seen"), default=-1)
+    last_hold = max((i for i, line in enumerate(lines) if line.get("t") in ("hold", "resume")), default=-1)
     kept: List[str] = []
     dropped = 0
     for index, (raw, line) in enumerate(zip(raws, lines)):
@@ -228,6 +239,8 @@ def compact(root: Path, cutoff_ts: float) -> int:
         drop = False
         if kind == "seen":
             drop = index != last_seen
+        elif kind in ("hold", "resume"):
+            drop = index != last_hold
         elif kind == "in" and old:
             thread = state.threads.get(str(line.get("thread", "")))
             drop = line["kind"] == "ignored" or thread is None or not thread.open

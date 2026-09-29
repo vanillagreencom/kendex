@@ -63,8 +63,12 @@ install   write the systemd user unit for `listen` over the roots given, then
 
 Settings, read from the process environment after the checkout's private env
 file and settings files: SLACK_BOT_TOKEN, SLACK_OWNERS (default
-KENDEX_USER_EMAIL), SLACK_POLL_SECONDS (15), SLACK_THREAD_DAYS (7).
-SLACK_API_URL names another API endpoint (default https://slack.com/api).
+KENDEX_USER_EMAIL), SLACK_POLL_SECONDS (15), SLACK_THREAD_DAYS (7),
+SLACK_MASTER_FILE (empty) and SLACK_MASTER_MAX_AGE (600): while that file is
+younger than that many seconds, listen posts nothing and --status shows
+held-by=master; once it is not, listen posts the asks still open and never
+the held notices. SLACK_API_URL names another API endpoint (default
+https://slack.com/api).
 
 """ + textwrap.fill(
     "Keyed lines, `slack: <key>=<value>` first: bound, posted, uploaded, updated,"

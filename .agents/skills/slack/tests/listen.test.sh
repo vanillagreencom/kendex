@@ -439,7 +439,7 @@ sk_poll "$GAMMA"
 assert_eq "$(asks C002 'Aging notice.')" "2" "control: the envelope horizon removed, the compacted notice posts again"
 sk_bin_reset
 
-sk_mutant start relay.py 'elif start is not None and \(at < start or at == start and env_id in self\.state\.start_ids\):' 'elif start is not None and False:'
+sk_mutant start relay.py 'elif before\(state\.start_at, state\.start_ids, at, env_id\):' 'elif False:'
 ETA="$(sk_new_root eta)"
 sk_lm "$ETA" notice --item overseer --to owner --file "$(sk_text n9 'Before the start.')" >/dev/null
 sk_bind "$ETA"

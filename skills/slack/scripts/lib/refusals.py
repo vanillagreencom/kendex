@@ -21,8 +21,9 @@ EXPLAIN = {
     ),
     "setting-invalid": (
         "The named setting holds a value the package cannot read; the value"
-        " above says which. SLACK_POLL_SECONDS and SLACK_THREAD_DAYS are"
-        " whole numbers of at least 1; SLACK_OWNERS is comma-separated email"
+        " above says which. SLACK_POLL_SECONDS, SLACK_THREAD_DAYS and"
+        " SLACK_MASTER_MAX_AGE are whole numbers of at least 1; SLACK_OWNERS"
+        " is comma-separated email"
         " addresses."
     ),
     "orch-missing": (
@@ -126,6 +127,12 @@ EXPLAIN = {
         " line; the relay sends nothing until it does."
     ),
     "file-unreadable": "The file to send could not be read.",
+    "master-file-unreadable": (
+        "SLACK_MASTER_FILE names a path whose age cannot be read, for a"
+        " reason other than its absence; the value names the path and the"
+        " error. Nothing is posted until it can be read or the setting is"
+        " emptied; owner messages are still delivered."
+    ),
     "lane-mail-failed": (
         "lane-mail refused a write the relay needed; the value is its first"
         " line. The Slack message is read again on the next poll."
