@@ -1,0 +1,1 @@
+- **Breaking:** review-gate: `standard-ruleset-source` fails an organization's required checks or merge queue (move both to repository rulesets) and an absent organization deletion or force-push rule.

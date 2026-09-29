@@ -70,7 +70,7 @@ A repository reaches this shape in one order. The workflow change that reports `
 - **No bypass actor**: no ruleset carries one, a Repository-admin actor included, so every merge goes through the merge queue. A gate-repair PR takes the break-glass procedure in [../SKILL.md](../SKILL.md#4-operations); a settings-change PR takes normal review.
 - **No classic branch protection** beside the rulesets.
 - **Required checks must NOT include the writer's own job names.** Require the commit STATUS context only.
-- **App-secret environment**: the organization owner runs `.agents/skills/review-gate/scripts/provision-environment.sh --org ORG` from their own machine, in a checkout that declares the three settings above. It creates the environment `REVIEW_GATE_STANDARD_ENVIRONMENT` names, with a default-branch-only deployment policy and the secrets `REVIEW_GATE_STANDARD_SECRETS` names, in every repository of the organization that is not archived; run it again for a new repository. An adoption never creates the environment.
+- **App-secret environment**: the organization owner runs `.agents/skills/review-gate/scripts/provision-environment.sh --org ORG` from their own machine, in a checkout that declares items 1 to 3 above: the app, the environment and the secrets. It creates the environment `REVIEW_GATE_STANDARD_ENVIRONMENT` names, with a default-branch-only deployment policy and the secrets `REVIEW_GATE_STANDARD_SECRETS` names, in every repository of the organization that is not archived; run it again for a new repository. An adoption never creates the environment.
 
 ## Updating an already-adopted copy
 
