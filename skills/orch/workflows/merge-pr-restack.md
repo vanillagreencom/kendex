@@ -50,7 +50,7 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
 
    A record with a `seconds=` field takes [dev-start.md § Store Validation Time](dev-start.md#store-validation-time)'s write, with `[ISSUE_ID]` being `[ISSUE]`, `[DEV_ROUND_ID]` being `restack-` and the run directory's name after `dev-validate-`, `[KIND]` being `restack`, `[VALIDATE_MODE]` the record's `validate-mode` and `[SECONDS]` its `seconds`. An exit-0 record with no `seconds=` field has no wall time, and records nothing.
 
-   Only `validate=pass` goes on to step 3. Any other result, `FAILING`, `no-verdict`, `state=timeout` or `state=lost`, pushes nothing and hands back with the verdict and the run's log path, as a fix round's red verdict ends its workflow with no second validation run. The PR stays unarmed from step 1, and this cycle never reaches the re-arm in step 4.
+   Only `validate=pass` goes on to step 3. Any other result, `FAILING`, `no-verdict`, `state=timeout` or `state=lost`, pushes nothing and hands back with the verdict and the run's log path, as a fix round's red verdict ends its workflow with no second validation run. The PR stays unarmed from step 1, and this cycle never reaches step 4.
 
 3. Push through the guarded owner:
 
@@ -68,7 +68,7 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
 
    A different head means the push rebased the branch again, onto a base that moved during the run, and pushed a head no run validated. The PR is still unarmed from step 1, so that head cannot enter the queue. Run step 2's range run again on it, then record and route its verdict as step 2 does. A pass goes to step 4 with no second push, and a base that moves again returns through the next queue-wait verdict. `--no-rebase` cannot hold the head still here: that push carries none of the restack's force-with-lease authorization, and git refuses the rewritten branch as a non-fast-forward push.
 
-4. The head changed. Re-confirm the gate mode, then return to `merge-pr.md` § 5 step 1 to read the new exact head before re-arming it and starting a new wait.
+4. The head changed. Re-confirm the gate mode, then return to `merge-pr.md` § 5 step 1 to read the new exact head, wait for its CI and take the merge route again.
 
 ## Unarm at a stop
 

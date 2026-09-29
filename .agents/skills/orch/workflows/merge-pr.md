@@ -237,7 +237,13 @@ Use the output as `MAIN_REPO_ROOT`.
 
    **Who acts.** The lane merges its own PR under the token the `github.sh` router selects, which in a lane sandbox is the lanes app's installation token, and waits in `queue-wait` to a terminal verdict where the PR takes the queue. The overseer's GitHub App merges only when a required check itself cannot pass (a broken review gate, broken CI, a GitHub outage): the overseer runs that emergency merge on the verified head, never a lane, and posts a notice naming the PR, the head, the broken check and the reason ([review-gate SKILL.md § 4. Operations](../../review-gate/SKILL.md#4-operations)).
 
-   **The direct attempt:**
+   **The direct attempt** follows a CI wait on the PR, on every entry to it. The immediate merge refuses a check still pending and does not wait for it, and an entry can reach this step minutes after a push: [micro.md](micro.md) § 4, the Restack cycle, late-findings triage. Wait through [Waiter launch](../references/waiter-launch.md):
+
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 180 600 --json --item [STATE_KEY]
+   ```
+
+   A PR whose CI already settled returns at once. A `status=timeout` result waits once more. Every other result goes on to the attempt, which judges it: the wait counts every red check, and the attempt only the checks the base branch requires. A push that moved the head past `[PREPARED_HEAD]` meanwhile is refused by the attempt's `--expected-head`.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --expected-head [PREPARED_HEAD]

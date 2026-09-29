@@ -180,7 +180,7 @@ Its JSON stdout is `[CHECK]`. Require a valid readiness object for an open pull 
 
 **Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]`, and `[STATE_KEY]` as `[ISSUE_ID]`, binding `[MICRO_ENTRY]` to `true` and `[MICRO_HEAD]` to `[HEAD_SHA]`. The class was measured over that head alone, so the head is what carries it across the handoff: § 5 step 1 refuses a prepared head that is not this one.
 
-Its § 3 is skipped, so nothing waits on CI or on a reviewer before the arm. § 5 step 1 attempts the prepared head and owns the queue wait to a terminal verdict. A refusal returns to its § 3.2, which reads the `[CHECK]` object only the skipped § 3 produces. That return escapes (§ Escape condition 8).
+Its § 3 is skipped, so nothing waits on a reviewer before § 5 step 1, and only that step's CI wait, ahead of its direct attempt, waits on CI. § 5 step 1 then attempts the prepared head and owns the queue wait to a terminal verdict. A refusal returns to its § 3.2, which reads the `[CHECK]` object only the skipped § 3 produces. That return escapes (§ Escape condition 8).
 
 A `dequeued` verdict routes to that step's late-findings triage. A finding there that needs a change § Escape excludes ends this run at the escape instead. A wording, naming or index finding there or at § 5 step 1's pre-arm [thread read](../references/thread-read.md) is answered by reply, per [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow): a fix push at either moves the head and escapes (§ Escape condition 9).
 
