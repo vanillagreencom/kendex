@@ -101,15 +101,17 @@ SETSID_LINE='runner=setsid reason=probe-failed detail=Failed to connect to bus: 
 
 # run_oversee [OVERSEE_BIN] -- ARGS... — the script under an explicit, whole
 # environment with no $TMUX, from the work directory, ORCH_TMUX_SESSION naming
-# the fleet. ROW_ENV, when set, is added to that environment. Sets OUT (both
-# streams) and RC.
+# the fleet. ROW_ENV, when set, is added to that environment, and ROW_LAUNCH,
+# when set, is the word the run is started under. Sets OUT (both streams) and
+# RC.
 ROW_ENV=()
+ROW_LAUNCH=""
 run_oversee() {
   local bin="$OVERSEE"
   [[ "$1" == -- ]] || { bin="$1"; shift; }
   shift
   RC=0
-  OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$NO_MANAGER:$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" \
+  OUT="$(cd "$TMP_ROOT/work" && ${ROW_LAUNCH:+"$ROW_LAUNCH"} env -i HOME="$H" PATH="$NO_MANAGER:$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
     ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_USAGE_TTL=0 \
     ORCH_OVERSEER_PREFERENCE=claude:1:high ORCH_TMUX_SESSION=fleet \
@@ -259,6 +261,41 @@ assert_eq "$RC|$(grep -A2 '^oversee: watch-restart-failed ' <<<"$OUT" | sed -n '
 fixture: display refused|0|alive" \
   "a successor server tmux will not name is a notice, the succession standing and no helper started"
 watch_stop "$OLD" "$FLEET_STATE" || true
+
+# A launch from inside the predecessor's window dies at the stop, so the
+# handover is arranged before it: modelled by a tmux that, having run the
+# stop's swap, kills the process group of the launch that called it, which is
+# started as a group of its own. The restart, left to a helper the orch job
+# runner started under setsid in a session of its own, still happens. A host
+# with no setsid has no runner here and no row.
+if command -v setsid >/dev/null 2>&1; then
+  REAL_TMUX="$(command -v tmux)"
+  TEST_PGID="$(ps -o pgid= -p $$ | tr -d ' ')"
+  mkdir -p "$TMP_ROOT/killbin"
+  cat > "$TMP_ROOT/killbin/tmux" <<EOF
+#!/usr/bin/env bash
+"$REAL_TMUX" "\$@"
+rc=\$?
+if [ "\$1" = swap-window ]; then
+  pg=\$(ps -o pgid= -p \$\$ | tr -d ' ')
+  [ "\$pg" = "$TEST_PGID" ] || kill -KILL -- "-\$pg"
+fi
+exit \$rc
+EOF
+  chmod +x "$TMP_ROOT/killbin/tmux"
+  new_predecessor
+  fresh_output
+  ROW_ENV=(PATH="$TMP_ROOT/killbin:$NO_MANAGER:$BIN:$PATH")
+  ROW_LAUNCH=setsid succeed
+  ROW_ENV=()
+  wait_restart
+  assert_eq "$RC|$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$PRED" || true)|${NEW:+restarted}|$(kill -0 "$OLD" 2>/dev/null && echo alive || echo gone)" \
+    "137|0|restarted|gone" \
+    "a launch killed with its process group at the stop still has the watch restarted from the successor pane"
+  watch_stop "$NEW" "$FLEET_STATE" || true
+else
+  printf '  skip  the process-group kill row needs setsid\n'
+fi
 
 # The owner's acceptance row: the real watch, started by hand from the
 # predecessor's pane as an overseer starts it, is handed over, and the
