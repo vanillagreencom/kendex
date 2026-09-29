@@ -86,7 +86,7 @@ pi_carrier() { # sends|old|nowake|none
 
 # The launch-choice refusals that run ahead of the gate are read too, so a row
 # refused before the gate cannot read as one the gate passed.
-GATE_KEYS='unsupported-for-oversee|compaction-on|launch-window-unknown|launch-compaction-missing|pi-settings-unreadable|launch-question-tool-missing|launch-model-missing|launch-effort-missing'
+GATE_KEYS='unsupported-for-oversee|compaction-on|launch-window-unknown|launch-compaction-missing|pi-settings-unreadable|launch-question-tool-missing|launch-model-missing|launch-effort-missing|launch-unattended-missing'
 # launch NAME ARGS... — the gate's line open-terminal wrote, or `passed` where it
 # wrote none, for a GUI launch of CC-1 under ARGS; OT names another copy, and
 # WT_CLI a worktree CLI other than the one that stops the launch before its
@@ -171,7 +171,11 @@ echo "=== a local Pi fleet lane's carrier decides its brief's arm line, never th
 # carrier without it launches all the same, its brief carrying the
 # watch-delivery.md arm line and the launch naming the carrier's version.
 printf '{"compaction":{"enabled":false}}\n' > "$PI_AGENT/settings.json"
-printf 'Work the item.\n' > "$TMP_ROOT/pi-brief.txt"
+# The brief carries Pi's unattended words, read from lib/lane-launch.sh, the
+# table open-terminal judges them from, so the launch reaches the carrier.
+PI_UNATTENDED_TEXT="$(bash -c 'source "$1" && launch_choice_unattended pi' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
+[[ -n "$PI_UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no pi unattended text" >&2; exit 1; }
+printf 'Work the item.\n%s\n' "$PI_UNATTENDED_TEXT" > "$TMP_ROOT/pi-brief.txt"
 PI_BRIEF_CMD='pi --exclude-tools question --model m --thinking high {brief}'
 for row in "sends|0|0" "nowake|1|1"; do
   IFS='|' read -r carrier want_arm want_notice <<<"$row"
