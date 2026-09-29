@@ -238,7 +238,7 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # owner progress reports go to (schemas/workflow-state.md, Recording policy).
 # ORCH_FLEET_LOG_ROW_BYTES = "600"
 # ORCH_TAKEOVER_ROWS = "10"
-# ORCH_RECORD_RETENTION_DAYS = "14"
+# ORCH_RECORD_RETENTION_DAYS = "5"
 # ORCH_PROGRESS_REPORT_DIR = "tmp/progress-reports"
 
 # The files whose change asks for a performance test, as path patterns

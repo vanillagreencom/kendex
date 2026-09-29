@@ -265,6 +265,31 @@ out="$( (cd "$TMP_ROOT/empty" && ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$TMP_RO
   && pass "a prune with no state directory removes nothing and creates none" \
   || fail "a prune with no state directory removes nothing and creates none" "rc=$rc out=$out"
 
+# The shipped default of five days, with ORCH_RECORD_RETENTION_DAYS unset: a
+# closed lane's six-day-old mailbox goes and a four-day-old one stays.
+dp="$TMP_ROOT/default"
+mkdir -p "$dp"
+(cd "$dp" && "$WS" init oversee >/dev/null)
+six_at="$(from_epoch "$((now - 6 * 86400))" '%Y-%m-%dT%H:%M:%SZ')"
+four_at="$(from_epoch "$((now - 4 * 86400))" '%Y-%m-%dT%H:%M:%SZ')"
+jq --arg six "$six_at" --arg four "$four_at" --arg fresh "$fresh_at" '
+  .lanes = [{item: "KEN-0", status: "done", launched_at: $fresh},
+            {item: "KEN-6", status: "done", launched_at: $six},
+            {item: "KEN-4", status: "done", launched_at: $four}]' \
+  "$dp/tmp/workflow-state-oversee.json" > "$dp/tmp/next.json"
+mv "$dp/tmp/next.json" "$dp/tmp/workflow-state-oversee.json"
+for n in 6 4; do
+  mkdir -p "$dp/tmp/lane-mail/KEN-$n"
+  printf 'x\n' > "$dp/tmp/lane-mail/KEN-$n/to-lane.jsonl"
+  find "$dp/tmp/lane-mail/KEN-$n" -exec touch -t "$(from_epoch "$((now - n * 86400))" '%Y%m%d%H%M' '')" {} +
+done
+rc=0
+out="$( (cd "$dp" && env -u ORCH_PROGRESS_REPORT_DIR -u ORCH_RECORD_RETENTION_DAYS FLEET_DIR="$dp/fleet" \
+  "$WS" prune) 2>&1)" || rc=$?
+[[ "$rc" -eq 0 && ! -e "$dp/tmp/lane-mail/KEN-6" && -e "$dp/tmp/lane-mail/KEN-4/to-lane.jsonl" ]] \
+  && pass "the default retention prunes a six-day-old closed lane's mailbox and keeps a four-day-old one" \
+  || fail "the default retention prunes a six-day-old closed lane's mailbox and keeps a four-day-old one" "rc=$rc out=$out"
+
 # Every shape of state the orch workflows write, in a checkout that is a git
 # repository with no fleet state, every state and file old, so only the
 # worktree a state names can hold it. The main checkout is on main; ken-1,

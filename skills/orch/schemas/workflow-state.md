@@ -198,7 +198,7 @@ Eight durable records outlive a turn on the control host. Each has one reader, o
 |---------|---------|---------|
 | `ORCH_FLEET_LOG_ROW_BYTES` | Most bytes one fleet log row's `text` may carry | `600` |
 | `ORCH_TAKEOVER_ROWS` | Fleet log rows a successor overseer reads at takeover | `10` |
-| `ORCH_RECORD_RETENTION_DAYS` | Days past the stamp each record's Retention cell names before `prune` archives and removes it: the newest write inside a path, a fleet log row's `at`, a lane record's `launched_at` | `14` |
+| `ORCH_RECORD_RETENTION_DAYS` | Days past the stamp each record's Retention cell names before `prune` archives and removes it: the newest write inside a path, a fleet log row's `at`, a lane record's `launched_at` | `5` |
 | `ORCH_PROGRESS_REPORT_DIR` | Owner progress report directory; a relative path joins the main checkout | `tmp/progress-reports` |
 
 | Record | Reader | Shape | Retention |

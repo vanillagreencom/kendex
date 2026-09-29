@@ -1225,7 +1225,7 @@ cmd_prune() {
     state_file=$(fleet_state_file) || fleet=false
 
     local days progress_dir now_epoch cutoff
-    days=$("$SCRIPT_DIR/orch-env" ORCH_RECORD_RETENTION_DAYS 14) || return 1
+    days=$("$SCRIPT_DIR/orch-env" ORCH_RECORD_RETENTION_DAYS 5) || return 1
     progress_dir=$(progress_report_dir) || return 1
     now_epoch=$(date -u +%s) || now_epoch=""
     cutoff=""
@@ -1573,7 +1573,7 @@ EOF
                                 section Recording policy to the oversee state
                                 and its directory, past the retention in days
                                 that ORCH_RECORD_RETENTION_DAYS sets (default
-                                14). Archives everything it removes under
+                                5). Archives everything it removes under
                                 FLEET_DIR/archive/REPO/oversee first (FLEET_DIR
                                 defaults to ~/.fleet); a failed archive removes
                                 nothing. Never removes a --keep path, the first
