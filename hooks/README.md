@@ -16,7 +16,7 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 - `lane-mail-halt`: Stops a lane at its next tool call when its overseer sends a halt, until the lane reads it, and refuses the harness question tool in a lane, naming lane mail as the route.
 - `lane-mail-prompt`: Hands a Copilot lane the messages its overseer sent with each prompt it is handed, and the notes another repository's overseer sent to the one session the checkout's fleet record names.
 - `lane-mail-start`: Hands a Copilot lane the messages its overseer sent as soon as its session starts, and the notes another repository's overseer sent to the one session the checkout's fleet record names.
-- `pre-commit-check`: Makes a commit go through the repository's own git hooks where they are armed, and refuses a commit carrying a word that would skip them.
+- `pre-commit-check`: Makes a commit go through the repository's own git hooks where they are armed, and refuses a commit carrying a word that would skip them. Only a command that runs git commit itself counts, so a note or a message that mentions git commit passes.
 - `reviewer-read-only`: Keeps a reviewer agent read-only: no edits, no commits, no pushes, no Git commands that discard work, only its review report.
 - `reviewer-stop-check`: Stops a reviewer agent from finishing while the worktree it reviewed still holds files it left behind.
 - `session-drift-check`: Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. Says nothing when everything matches.
