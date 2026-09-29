@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # job-unit.sh — start a long-lived orch job as a transient systemd user unit
 # where a user manager answers, under setsid elsewhere, and stop it by what
-# its launch recorded. It bounds a job's lifetime and, when asked, its
-# memory, and nothing else: no CPU or task limit. It holds the manager probe, the unit name, the
+# its launch recorded. It bounds a job's lifetime, its memory when asked, and
+# under a unit the tasks and memory its launching process's own cgroup caps; it
+# sets no CPU limit. It holds the manager probe, the unit name, the
 # systemd-run launch, the setsid fallback, the unit stop and the process-group
 # kill for the jobs that use it: dev-validate-run, every job
 # references/waiter-launch.md starts (the repeat watch among them), and
@@ -28,8 +29,9 @@
 #   job-unit.sh launch NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
 #       Start ARGV detached, as the unit orch-NAME-PID where a manager
 #       answers (and, with no --cap, lingers), PID being this launch's own
-#       process, in this launch's own working directory, environment and
-#       user-manager slice, and print its runner line. RECORD
+#       process, in this launch's own working directory, environment,
+#       user-manager slice and task and memory caps, and print its runner
+#       line. RECORD
 #       is written whole before each launch attempt, so the job can read how it
 #       runs the moment it starts:
 #         runner=systemd|setsid
@@ -39,8 +41,10 @@
 #       has: set above that bound plus the kill grace, so the job's own bound
 #       fires first. A job with no timeout, which runs until it is stopped,
 #       passes none, and its unit has no RuntimeMaxSec.
-#       --memory-max is the unit's MemoryMax in MiB; no process group holds a
-#       memory bound, so a launch that would run under setsid refuses it.
+#       --memory-max is the unit's MemoryMax in MiB, in place of the
+#       MemoryHigh the unit otherwise takes from its caller; no process group
+#       holds a memory bound, so a launch that would run under setsid refuses
+#       it.
 #       A systemd-run that fails after the probe answered falls back to setsid
 #       only where the manager has no unit of that name: its call can time out
 #       while the manager still starts the unit, which is then the job.
@@ -76,8 +80,10 @@
 # unit that had ended and a process left alone are exit 1 and no failure.
 # Sourced, each subcommand is the function job_unit_<name with _ for ->, and
 # job_unit_read RECORD loads a record into JOB_UNIT_RUNNER, JOB_UNIT_NAME and
-# JOB_UNIT_LINE, which launch also sets, and job_unit_slice CGROUP_FILE prints
-# the user-manager slice launch names for the unit. A failure leaves its KEY in
+# JOB_UNIT_LINE, which launch also sets, job_unit_slice CGROUP_FILE prints
+# the user-manager slice launch names for the unit, and job_unit_cgroup_cap
+# CGROUP_DIR FILE prints the cap launch copies from that cgroup file. A
+# failure leaves its KEY in
 # JOB_UNIT_ERROR_KEY and its fields in JOB_UNIT_ERROR.
 
 # The seconds between SIGTERM and SIGKILL, both for what a unit still holds
@@ -107,23 +113,43 @@ job_unit_arg() { # VALUE
   printf '%s' "${1//\$/\$\$}"
 }
 
-# The user-manager slice a process runs in, read from its cgroup file: the
-# innermost `.slice` in the cgroup v2 path below this user's user@UID.service.
-# Nothing where the process runs outside that manager (a login session scope,
-# a system service) or the file holds no cgroup v2 line or cannot be read.
-job_unit_slice() { # CGROUP_FILE
-  local line path part slice="" parts=()
+# The cgroup v2 path a process runs in, read from its cgroup file, where that
+# path is below this user's user@UID.service. Nothing where the process runs
+# outside that manager (a login session scope, a system service) or the file
+# holds no cgroup v2 line or cannot be read.
+job_unit_cgroup() { # CGROUP_FILE
+  local line path
   [[ -r "$1" ]] || return 0
   while IFS= read -r line; do
     [[ "$line" == 0::* ]] || continue
     path="${line#0::}"
     [[ "$path" == */user@"$UID".service/* ]] || return 0
-    IFS=/ read -r -a parts <<<"${path#*/user@"$UID".service/}"
-    for part in ${parts[@]+"${parts[@]}"}; do
-      [[ "$part" != *.slice ]] || slice="$part"
-    done
+    printf '%s' "$path"
+    return 0
   done < "$1"
+}
+
+# The user-manager slice a process runs in: the innermost `.slice` in the path
+# job_unit_cgroup reads from its cgroup file. Nothing where that reads none.
+job_unit_slice() { # CGROUP_FILE
+  local path part slice="" parts=()
+  path="$(job_unit_cgroup "$1")" && [[ -n "$path" ]] || return 0
+  IFS=/ read -r -a parts <<<"${path#*/user@"$UID".service/}"
+  for part in ${parts[@]+"${parts[@]}"}; do
+    [[ "$part" != *.slice ]] || slice="$part"
+  done
   printf '%s' "$slice"
+}
+
+# A cgroup v2 limit file's value where it is a whole number; nothing where it
+# reads `max` (no limit), is absent (a controller the cgroup lacks) or cannot
+# be read. systemd refuses `max` as a unit property value.
+job_unit_cgroup_cap() { # CGROUP_DIR FILE
+  local value
+  [[ -r "$1/$2" ]] || return 0
+  value="$(< "$1/$2")" || return 0
+  [[ "$value" =~ ^[0-9]+$ ]] || return 0
+  printf '%s' "$value"
 }
 
 # An open-file limit as systemd spells it.
@@ -163,7 +189,7 @@ job_unit_read() { # RECORD
 }
 
 job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
-  local job="${1:-}" record="${2:-}" probe_err="" launch_err="" linger capped="" memory_max="" load nofile name arg slice
+  local job="${1:-}" record="${2:-}" probe_err="" launch_err="" linger capped="" memory_max="" load nofile name arg slice cgroup_dir cap
   local unit_props=() unit_env=() unit_argv=()
   JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
   [[ $# -lt 2 ]] || shift 2
@@ -217,12 +243,23 @@ job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
     # value above its own ceiling at that ceiling. They are the caller's
     # numbers, never the runner's. A unit also starts in the manager's default
     # slice, not the caller's: one started from an agent's slice would run
-    # outside that slice's limits, where a warden that confines agent work to
-    # it reads the job as escaped work
+    # outside that slice's limits, where a warden that does not exempt the
+    # unit by name reads the job as escaped work; in the caller's slice the job
+    # stays inside agents.slice whatever the warden's job-unit pattern is
     # (../../references/job-units.md § Agent warden). So the caller's own
-    # slice is named too.
+    # slice is named too. In that slice the unit shares the slice's task and
+    # memory pool, so it also takes the caller's own cgroup's task cap and
+    # memory soft cap, a runaway job then held to what its caller may use;
+    # an explicit --memory-max is the unit's memory bound instead.
     if slice="$(job_unit_slice /proc/self/cgroup)" && [[ -n "$slice" ]]; then
       unit_props+=(--slice="$slice")
+      cgroup_dir="/sys/fs/cgroup$(job_unit_cgroup /proc/self/cgroup)"
+      if cap="$(job_unit_cgroup_cap "$cgroup_dir" pids.max)" && [[ -n "$cap" ]]; then
+        unit_props+=(-p "TasksMax=$cap")
+      fi
+      if [[ -z "$memory_max" ]] && cap="$(job_unit_cgroup_cap "$cgroup_dir" memory.high)" && [[ -n "$cap" ]]; then
+        unit_props+=(-p "MemoryHigh=$cap")
+      fi
     fi
     for name in $(compgen -e); do unit_env+=("--setenv=$name"); done
     for arg in "$@"; do unit_argv+=("$(job_unit_arg "$arg")"); done
