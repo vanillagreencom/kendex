@@ -72,7 +72,8 @@ Per repository it:
     GitHub and run this again.
 
 Secret values come from the environment of this command: each secret the
-standard names is read from the variable of the same name, for example,
+standard names is read from the environment variable of the same name,
+never from a shell variable, for example,
 with REVIEW_GATE_STANDARD_SECRETS = "APP_ID;APP_PRIVATE_KEY",
   APP_ID=123456 \
   APP_PRIVATE_KEY="$(cat app.private-key.pem)" \
@@ -152,7 +153,7 @@ rg_standard_load "$SCRIPT_DIR/../standard.json" all || exit 2
 
 if [ "$DRY_RUN" -eq 0 ]; then
   for name in $WANT_SECRETS; do
-    [ -n "${!name:-}" ] || die secret-value-missing "$name" "set $name to the value the $WANT_ENV environment's secret of that name must hold, or pass --dry-run"
+    rg_secret_value "$name" >/dev/null || die secret-value-missing "$name" "set $name to the value the $WANT_ENV environment's secret of that name must hold, or pass --dry-run"
   done
 fi
 
@@ -246,7 +247,7 @@ delete_branch_policy() { # FULL ID
 set_secret() { # FULL NAME
   local rc=0 name="$2"
   GH_ERR=""
-  printf '%s' "${!name}" | gh secret set "$name" --env "$WANT_ENV" --repo "$1" >/dev/null 2>"$SCRATCH/err" || rc=$?
+  rg_secret_value "$name" | gh secret set "$name" --env "$WANT_ENV" --repo "$1" >/dev/null 2>"$SCRATCH/err" || rc=$?
   [ "$rc" -eq 0 ] && return 0
   if ! GH_ERR="$(sed -n '1p' "$SCRATCH/err")" || [ -z "$GH_ERR" ]; then
     GH_ERR="gh exited $rc"

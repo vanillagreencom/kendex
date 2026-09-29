@@ -36,10 +36,13 @@ JSON
 cp "$TEST_DIR/lib/gh-shim.sh" "$BIN/gh"
 chmod +x "$BIN/gh"
 # The owner's checkouts the script runs from: `full` declares the
-# organization's values in its kendex.settings.toml, `none` declares none.
-mkdir -p "$TMP/consumer-full" "$TMP/consumer-none"
+# organization's values in its kendex.settings.toml, `none` declares none,
+# and `shell` names a secret that bash holds as a shell variable only.
+mkdir -p "$TMP/consumer-full" "$TMP/consumer-none" "$TMP/consumer-shell"
 printf '%s\n' '[env]' 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' \
   'REVIEW_GATE_STANDARD_SECRETS = "APP_ID;APP_KEY"' >"$TMP/consumer-full/kendex.settings.toml"
+sed 's/"APP_ID;APP_KEY"/"APP_ID;BASH_VERSION"/' "$TMP/consumer-full/kendex.settings.toml" >"$TMP/consumer-shell/kendex.settings.toml"
+grep -qF '"APP_ID;BASH_VERSION"' "$TMP/consumer-shell/kendex.settings.toml" || { echo "provision-environment.test: consumer-shell=edit-missed" >&2; exit 1; }
 printf '[env]\n' >"$TMP/consumer-none/kendex.settings.toml"
 
 cat >"$BASE/installations.json" <<'JSON'
@@ -258,6 +261,7 @@ done <<ROWS
 no organization~~~~yes~~--dry-run~review-gate-error=org-missing
 an unknown argument~~~~yes~~--org acme --repo acme/done~review-gate-error=unknown-argument
 a secret value unset~~~~no~~--org acme~review-gate-error=secret-value-missing
+a secret named for a shell variable the environment lacks~~~~yes~~--org acme~review-gate-error=secret-value-missing~shell~BASH_VERSION
 an owner checkout that declares nothing~~~~yes~~--org acme --dry-run~review-gate-error=standard-setting-missing~none~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
 no jq~~~~yes~$NOJQ~--org acme --dry-run~review-gate-error=jq-missing
 the app on selected repositories~~installations.json~.installations[1].repository_selection = "selected"~yes~~--org acme~review-gate-error=app-selection

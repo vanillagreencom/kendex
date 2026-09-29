@@ -37,7 +37,9 @@ if [ "${1:-}" = secret ]; then
     esac
     shift
   done
-  secret_value="$(cat)"
+  # Byte-exact: the x keeps the value's trailing newlines from the capture.
+  secret_value="$(cat && printf x)"
+  secret_value="${secret_value%x}"
   if [ "${GH_SHIM_FAIL:-}" = secret-set ]; then
     printf 'gh-shim-error=api value=%q\n' secret-set >&2
     exit 1

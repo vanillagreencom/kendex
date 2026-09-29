@@ -14,7 +14,7 @@
 # sets WANT_APP (REVIEW_GATE_STANDARD_APP); SCOPE `environment` leaves it
 # unread. With no jq on PATH, a missing, unreadable or malformed manifest, an
 # unreadable setting, a key the scope reads unset or empty, or a secret name
-# outside the uppercase shell identifier grammar, it prints the refusal to
+# outside GitHub's secret-name grammar in uppercase, it prints the refusal to
 # stderr and returns 1; the caller exits with its could-not-run status.
 rg_standard_load() { # MANIFEST SCOPE
   local secrets invalid missing="" rc=0
@@ -67,12 +67,11 @@ rg_standard_load() { # MANIFEST SCOPE
     rg_message error standard-setting-missing "$missing" "this repository declares no value for these review-gate settings; set each in the [env] table of kendex.settings.toml (references/settings.md names them)" >&2
     return 1
   fi
-  # provision-environment.sh reads each secret's value from the shell
-  # variable of its name, so a name bash cannot expand is refused here, not
-  # by bash. GitHub stores every secret name uppercase and the name lists
-  # rg_standard_held and rg_standard_missing read are that stored form, so a
-  # lowercase letter is refused too: an accepted name is the stored name, and
-  # two names differing only in case cannot both be declared.
+  # GitHub's secret-name rule, in the uppercase form GitHub stores every
+  # name in: the name lists rg_standard_held and rg_standard_missing read
+  # are that stored form, so a lowercase letter is refused too. An accepted
+  # name is the stored name, and two names differing only in case cannot
+  # both be declared.
   invalid="$(LC_ALL=C grep -vxE -- '[A-Z_][A-Z0-9_]*' <<<"$WANT_SECRETS")" || rc=$?
   case "$rc" in
     0)
@@ -107,6 +106,19 @@ rg_standard_missing() { # LISTED
       printf '%s\n' "$name"
     fi
   done
+}
+
+# The value of the environment variable NAME on stdout, byte-exact: its own
+# trailing newlines kept, none added. It reads the process environment only,
+# never a shell variable, so a secret named like a bash variable (EUID) or a
+# script's own unexported one reads as absent. Returns 1 when the environment
+# does not hold NAME, or holds it empty.
+rg_secret_value() { # NAME
+  local value
+  value="$(printenv -- "$1" && printf x)" || return 1
+  value="${value%$'\n'x}"
+  [ -n "$value" ] || return 1
+  printf '%s' "$value"
 }
 
 # VALUE percent-encoded as one URL path segment.
