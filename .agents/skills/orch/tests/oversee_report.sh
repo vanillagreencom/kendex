@@ -11,7 +11,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# mutant_scripts, for the must-fail control and the missing-helper row.
+# mutant_scripts, for the must-fail controls and the missing-helper row.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 REPORT_BIN="$(cd "$TEST_DIR/../scripts" && pwd)/oversee-report"
@@ -884,6 +884,24 @@ echo 'lane-mail: lane-host-busy=KEN-2' > "$CASE/mail-fail-KEN-2"
 echo 69 > "$CASE/mail-exit-KEN-2"
 REPORT_UNDER_TEST="$BUSY_MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: mail-read=KEN-2" "control: without it a refused mailbox read is mail-read"
+
+# write's report body: with the summary written back above the rows, the
+# summary shows in the print and the file, so the five-rows-alone row reddens.
+SUMMARY_MUTANT="$(mutant_scripts summary/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/summary/github"
+IFS= read -r body_line <<'EOF' || true
+printf '%s\n' "$BODY" > "$TMP_FILE"
+EOF
+IFS= read -r summary_line <<'EOF' || true
+printf '%s\n\n%s\n' "$SUMMARY_TEXT" "$BODY" > "$TMP_FILE"
+EOF
+mutate_file "$SUMMARY_MUTANT" "$body_line" "$summary_line"
+seed_fleet write_summary_mutant
+printf 'Two items landed and one waits on you.\n\n\n' > "$CASE/summary.txt"
+REPORT_UNDER_TEST="$SUMMARY_MUTANT" run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt" --succession
+FILE="$CASE/progress-reports/$NAME"
+assert_eq "$RC|$(awk 'NR == 1' <<<"$OUT")|$(grep -c -F 'Two items landed' <<<"$OUT")|$(grep -c -F 'Two items landed' "$FILE")" \
+  "0|Two items landed and one waits on you.|1|1" "control: with the summary back in the body, the print and the file open with it"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

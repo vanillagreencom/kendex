@@ -53,7 +53,8 @@ listen    the relay: every SLACK_POLL_SECONDS, per root, one history read since
 post      one message to the bound channel, or --channel for another, its
           text sent as standard Markdown of at most 12,000 characters;
           --mention prefixes every owner; --file uploads the file with the
-          text as its comment instead, in Slack's mrkdwn and with no cap;
+          text as its comment instead, in Slack's mrkdwn and outside the
+          12,000-character cap;
           --thread replies in a thread; --update edits the message at that
           ts. Text and file bytes are refused when they match the
           secret-value pattern
