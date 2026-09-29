@@ -160,7 +160,15 @@ Classify that range through `item-tier`, which reads the shared harness-ci class
 [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/item-tier --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]
 ```
 
-The accepted answer is `tier=micro`: the classifier measured `render`, `trivial` or `micro`. Any such answer continues. Every other answer escapes (§ Escape condition 7): a command failure, a class above this tier (`small`, `standard`), or a class the classifier did not measure. The pull request still waits on GitHub's approval rule for its base, which § 5 step 1's arm leaves to GitHub.
+The accepted answer is `tier=micro`: the classifier measured `render`, `trivial` or `micro`. Any such answer continues. Every other answer escapes (§ Escape condition 7): a command failure, a class above this tier (`small`, `standard`), or a class the classifier did not measure.
+
+Resolve the gate mode the pull request's base sets ([references/gates.md](../references/gates.md)):
+
+```bash
+[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
+```
+
+Continue only on `approval`. This tier runs no internal review, so a GitHub approval is the one review the pull request gets: § 5 step 1's arm leaves it to GitHub, which holds the merge until the approval lands. `off` or a non-zero exit escapes (§ Escape condition 7): on such a base the pull request would merge with no reviewer at all.
 
 Ask the canonical merge gate for its readiness object before any merge attempt:
 
@@ -205,9 +213,9 @@ The tier holds only while the item and its change stay inside it. Each condition
 4. The commit chain refuses the commit over a repository rule. A missing changelog fragment and a rejected commit message are this workflow's own to fix and are not escapes.
 5. `branch-size-check` reports `over`.
 6. A review finding on the pull request needs a change condition 3 or 5 excludes.
-7. § 4 cannot prove both halves of its precheck. Either the `item-tier` answer is not `tier=micro`, or `pr-merge --check` returns no valid readiness object for an open pull request.
+7. § 4 cannot prove all three parts of its precheck. Either the `item-tier` answer is not `tier=micro`, or `approval-wait --resolve-mode` does not print `approval`, or `pr-merge --check` returns no valid readiness object for an open pull request.
 8. merge-pr.md § 5 step 1 returns to its § 3.2.
-9. merge-pr.md § 5 step 1 refuses: the `item-tier` answer it reads over the prepared endpoints is not `tier=micro`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`. The endpoints moved between § 4's classification and that step, by a push or by a retarget that changes the class without moving the head.
+9. merge-pr.md § 5 step 1 refuses: the `item-tier` answer it reads over the prepared endpoints is not `tier=micro`, or the gate mode it resolves is not `approval`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`. The endpoints moved between § 4's checks and that step, by a push, or by a retarget that changes the class or moves the pull request onto a base that requires no approval without moving the head.
 
 The § 1 control-host refusal also ends the run, before any condition above can apply. It is not an escape: the item stays at the `micro` tier and launches as a hosted lane.
 

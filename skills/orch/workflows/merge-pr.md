@@ -227,7 +227,13 @@ Use the output as `MAIN_REPO_ROOT`.
    .agents/skills/orch/scripts/item-tier --base [PREPARED_BASE] --head [PREPARED_HEAD] --repo [WORKTREE_PATH]
    ```
 
-   A `[MICRO_ENTRY]` run continues only where that answer is `tier=micro` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`: the class is measured over both endpoints, and a retarget changes it without moving the head, so the fresh answer is what carries the micro tier and the head says it is the same run. Any other answer arms nothing and escapes by micro.md condition 9. Read workflow state `pr.size_check` for `[STATE_KEY]`, and use it only when its `head_sha` equals `[PREPARED_HEAD]`, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.
+   It also resolves the gate mode the prepared base sets:
+
+   ```bash
+   .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
+   ```
+
+   A `[MICRO_ENTRY]` run continues only where the `item-tier` answer is `tier=micro`, the gate mode is `approval`, AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`: the class is measured over both endpoints, and a retarget can change the class, or move the pull request onto a base that requires no approval, without moving the head. The fresh answers carry the micro tier, and the head says it is the same run. A micro run has no internal review, so a base that requires no approval would merge it unreviewed. Any other answer arms nothing and escapes by micro.md condition 9. Read workflow state `pr.size_check` for `[STATE_KEY]`, and use it only when its `head_sha` equals `[PREPARED_HEAD]`, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.
 
    **Merge route.** One route serves every change class while kendex decision D003 stands: every PR arms auto-merge and waits in the queue. Take the `--auto` arm below, and reach the direct attempt only where that arm answers `arm: no-merge-gate` outside § 3.2's `unknown:` path. That answer does not mean the base has no queue: a base that still queues the PR answers the direct attempt with exit `75`, which takes the queue-wait block. An item whose workflow state carries `pr_approval.forced` takes the same arm. A PR [submit-pr.md](submit-pr.md) § 2 step 5 armed at creation takes it too: the arm binds the prepared head and answers exit `75`, and the lane waits in the queue-wait block.
 
