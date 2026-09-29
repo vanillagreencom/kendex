@@ -399,6 +399,25 @@ over_ack inbox_over_ack
 assert_eq "$OVER_ACK" "0=lane-mail: ack-clamped=1 asked=2=1 Landed later.|" \
   "an --ack past the lines present stops at them, so a line that lands later is still handed over"
 
+# A cursor an --ack left past the lines before the clamp, then the hooks' peek
+# and ack, then a line lands. HIGH_CURSOR is the ack's exit and keyed line, the
+# cursor it left, and what a later inbox prints.
+high_cursor() { # NAME
+  new_lane "$1"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'First.')"
+  printf '2\n' >"$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
+  LANE_MAIL_BIN="$LANE_MAIL" lm inbox --item KEN-1 --peek
+  PEEKED="$(count_line)"
+  lm inbox --item KEN-1 --ack "${PEEKED#count=}"
+  HIGH_CURSOR="$RC=$ERR=$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Landed later.')"
+  LANE_MAIL_BIN="$LANE_MAIL" lm inbox --item KEN-1
+  HIGH_CURSOR+=" $(jq -r '.text' <<<"$OUT" | tr '\n' '|')"
+}
+high_cursor inbox_high_cursor
+assert_eq "$HIGH_CURSOR" "0=lane-mail: cursor-lowered=1 was=2=1 Landed later.|" \
+  "an --ack brings a cursor already past the lines present down to them, so a line that lands later is handed over"
+
 new_lane concurrent
 printf 'parallel\n' > "$TMP_ROOT/p.txt"
 for i in 1 2 3 4 5 6 7 8; do
@@ -1188,6 +1207,11 @@ mutant ack-unclamped 'if [ "$ACK" -gt "$COUNT" ]; then' 'if false; then'
 over_ack control_over_ack
 assert_eq "$OVER_ACK" "0==2 " \
   "control: without the line-count clamp an --ack past the lines present hides the line that lands later"
+
+mutant cursor-kept-high 'if [ "$SEEN" -gt "$COUNT" ]; then' 'if false; then'
+high_cursor control_high_cursor
+assert_eq "$HIGH_CURSOR" "0==2 " \
+  "control: without the lowering a cursor already past the lines present hides the line that lands later"
 LANE_MAIL_BIN=""
 
 mutant directives-alone 'foreach inputs as $raw (0; . + 1;' 'foreach (inputs | select(test("directive"))) as $raw (0; . + 1;'
