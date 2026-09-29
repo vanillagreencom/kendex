@@ -178,8 +178,10 @@ impl Tally {
 /// the pass-over line and is never a gap.
 ///
 /// A missing or unreadable install record closes the run non-zero, except
-/// a missing one where the expansion reached every declaration and none
-/// needs an entry: apply writes no record there. The verb still weighs
+/// a missing one where the expansion reached every declaration and each
+/// one it reached is a hook its own harnesses line leaves off every tool
+/// the scope installs on: apply writes no record there. A declaration no
+/// configured tool can hold by kind still owes a record. The verb still weighs
 /// current manifest and render bytes, so a recovery decision has the
 /// measured rows and the original record failure together.
 ///
@@ -279,10 +281,9 @@ fn check_scope(
         return Ok(());
     }
     let audited = kendex_core::ownership::audit(env, &scope, &records, &reading.plan_options());
-    // A failed audit leaves the declarations unread, which owes a record.
     let declared = match (&audited, manifest) {
         (Ok(audited), Some(manifest)) => declared_packages(env, &scope, manifest, &audited.report),
-        _ => Declared::default(),
+        (Err(_), _) | (Ok(_), None) => Declared::unread(),
     };
     if absent && !declared.owes_record_nothing() {
         report_record_problem(style, &scope, &path, None);
@@ -741,7 +742,6 @@ fn declared_packages(
 }
 
 /// A scope's declarations, split by whether the record owes them an entry.
-#[derive(Default)]
 struct Declared {
     /// What the record must hold.
     wanted: Vec<(ItemKind, String)>,
@@ -753,11 +753,23 @@ struct Declared {
 }
 
 impl Declared {
-    /// Whether apply writes no record for these declarations and is right
-    /// to: the expansion reached every one, and none needs an entry. This
-    /// is the engine's no-entries, no-carrier case in `plan_lock_write`.
-    /// Plugins and Pi extensions sit in `wanted`, so a scope with one
-    /// always owes a record.
+    /// Declarations this run could not read: the audit failed, or the
+    /// scope has no manifest to read them from. Nothing proves apply
+    /// writes no record for them, so they owe one.
+    fn unread() -> Self {
+        Declared {
+            wanted: Vec::new(),
+            left_out: Vec::new(),
+            status: DeclarationStatus::Incomplete,
+        }
+    }
+
+    /// Whether a missing record is excused: the expansion reached every
+    /// declaration, and each one it reached is a hook its own harnesses
+    /// line leaves off every configured tool, so apply records nothing.
+    /// Everything else sits in `wanted` and owes a record, a declaration
+    /// no configured tool can hold by kind included, although apply writes
+    /// no entry for it either.
     fn owes_record_nothing(&self) -> bool {
         match self.status {
             DeclarationStatus::Complete => self.wanted.is_empty(),

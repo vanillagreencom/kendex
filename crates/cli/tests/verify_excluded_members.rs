@@ -14,16 +14,19 @@
 //!   entries, where both are gaps and neither is passed over;
 //! - the names verify was asked about: the row naming only `tidy`, which
 //!   prints no pass-over line;
-//! - a missing record excused where apply writes none, which is where
-//!   nothing declared needs an entry: the two rows declaring the hook
-//!   alone, through a bundle and directly, and the row declaring a bundle
-//!   with no members, where verify passes;
-//! - and only where nothing declared needs an entry: the Codex row that
+//! - a missing record excused where every declaration is a hook its own
+//!   harnesses line leaves off every configured tool: the two rows
+//!   declaring the hook alone, through a bundle and directly, and the row
+//!   declaring a bundle with no members, where verify passes;
+//! - and only where every declaration is such a hook: the Codex row that
 //!   deletes the record apply wrote for the bundle's other members, which
 //!   verify refuses while it still prints the pass-over line;
 //! - and only where the expansion read every declaration: the row whose
 //!   second bundle comes from a source that is not there, which verify
-//!   still refuses for its missing record.
+//!   still refuses for its missing record;
+//! - and only where the declarations were read at all: the row whose
+//!   machine settings file does not parse, so the scope's audit fails,
+//!   which verify still refuses for its missing record.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -67,15 +70,18 @@ const WORKFLOW: &str = "[bundles.workflow]\nsource = \"cat\"\n";
 const CODEX: &str = "[\"codex\"]";
 const CLAUDE_CODEX: &str = "[\"claude\", \"codex\"]";
 
-/// What a row does to the record apply wrote, before verify reads it.
+/// What a row does between apply and verify.
 #[derive(Debug)]
 enum Edit {
-    /// Leaves it as apply wrote it.
+    /// Leaves everything as apply wrote it.
     Keep,
-    /// Deletes these entries.
+    /// Deletes these entries from the record.
     Drop(&'static [&'static str]),
     /// Deletes the record file.
     Delete,
+    /// Writes a machine settings file that does not parse, which the
+    /// scope's audit reads and fails on.
+    BreakSettings,
 }
 
 /// One consumer, what it does to its record, and what verify says.
@@ -84,7 +90,7 @@ struct Case {
     tools: &'static str,
     /// The consumer's declarations.
     declares: &'static str,
-    /// What the row does to the record between apply and verify.
+    /// What the row does between apply and verify.
     edit: Edit,
     /// The package names verify is asked about.
     names: &'static [&'static str],
@@ -210,6 +216,17 @@ const CASES: &[Case] = &[
         gap: &[],
         refused: true,
     },
+    Case {
+        tools: CODEX,
+        declares: "[hooks.claude-only]\nsource = \"cat\"\n",
+        edit: Edit::BreakSettings,
+        names: &[],
+        recorded: None,
+        passes: false,
+        passed_over: false,
+        gap: &[],
+        refused: true,
+    },
 ];
 
 #[test]
@@ -244,28 +261,38 @@ fn check(case: &Case) {
     let applied = kendex(&home, &project, &["apply", "-y", "--leave"]);
     assert!(applied.status.success(), "{at}: {}", said(&applied));
     let record = project.join(".kendex-lock.json");
+    let read = || -> serde_json::Value {
+        serde_json::from_str(&fs::read_to_string(&record).unwrap()).unwrap()
+    };
     match case.recorded {
         None => assert!(!record.exists(), "{at}"),
         Some(recorded) => {
-            let mut lock: serde_json::Value =
-                serde_json::from_str(&fs::read_to_string(&record).unwrap()).unwrap();
-            let entries = lock["entries"].as_object_mut().unwrap();
+            let lock = read();
             assert_eq!(
-                entries.contains_key("hook:claude-only:claude"),
+                lock["entries"]
+                    .as_object()
+                    .unwrap()
+                    .contains_key("hook:claude-only:claude"),
                 recorded,
                 "{at}: {lock}"
             );
-            match case.edit {
-                Edit::Keep => {}
-                Edit::Drop(keys) => {
-                    for key in keys {
-                        assert!(entries.remove(*key).is_some(), "{at}: {key}");
-                    }
-                    fs::write(&record, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
-                }
-                Edit::Delete => fs::remove_file(&record).unwrap(),
-            }
         }
+    }
+    match case.edit {
+        Edit::Keep => {}
+        Edit::Drop(keys) => {
+            let mut lock = read();
+            let entries = lock["entries"].as_object_mut().unwrap();
+            for key in keys {
+                assert!(entries.remove(*key).is_some(), "{at}: {key}");
+            }
+            fs::write(&record, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
+        }
+        Edit::Delete => fs::remove_file(&record).unwrap(),
+        Edit::BreakSettings => write(
+            &kendex_core::env::Env::host_rooted(&home).settings_file(),
+            "not = [\n",
+        ),
     }
     let mut args = vec!["verify", "--scope", "project"];
     args.extend(case.names);
@@ -296,6 +323,11 @@ fn check(case: &Case) {
             "{at}: {printed}"
         );
     }
+    assert_eq!(
+        printed.contains("not checked"),
+        matches!(case.edit, Edit::BreakSettings),
+        "{at}: the audit fails only on the broken settings: {printed}"
+    );
     assert_eq!(
         printed.contains("no install record"),
         case.refused,
