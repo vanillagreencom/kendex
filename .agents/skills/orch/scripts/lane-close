@@ -180,12 +180,15 @@ isInMergeQueue or a mergeQueueEntry, or, outside the queue, auto-merge is
 armed on it and it reads mergeStateStatus CLEAN, which is GitHub reporting
 every required check green on the current head and nothing else blocking; and
 it gets no attention line from the review-gate reducer pr-watch.sh, whose
-silence is its healthy state: approved or needing no review on its base, no
-unresolved thread, armed or queued.
+silence means no open thread, no objection and no disarmed or stale-review
+line; pr-watch.sh --help holds the exact condition. The silence is no proof of
+approval, since an unapproved PR inside its quiet period is silent too: the
+approval the base requires is proved by CLEAN for an armed PR, as GitHub reads
+a missing required review as BLOCKED, and by the queue for a queued one.
 A queued pull request is admitted on the queue's own judgement, since GitHub
-admits nothing to the queue before every required check is green on its head,
-and its arm has converted to the queue entry by then, so autoMergeRequest is
-null for the whole wait; the merge state is read for the armed, unqueued case
+admits nothing to the queue before every required check is green and every
+required approval given on its head, and its arm has converted to the queue
+entry by then, so autoMergeRequest is null for the whole wait; the merge state is read for the armed, unqueued case
 alone. A lane still inside a CI or gate wait after a push is neither queued
 nor CLEAN, or gets an attention line, and is never parked. The reducer is the
 one OVERSEE_WATCH_PR_WATCH names, as it is for oversee-watch, and the
@@ -519,10 +522,11 @@ tracker_terminal() {
 # which say whether anything will merge the pull request while the lane is
 # away, the queue's own membership standing for every required check green
 # since nothing enters it otherwise, and mergeStateStatus CLEAN saying the
-# same for an armed pull request outside the queue; and the review-gate
-# reducer, whose silence for a pull request is its healthy state: approved or
-# needing no review on its base, no unresolved thread, armed or queued.
-# Nothing here counts a check or a thread itself. Each refusal names the
+# same for an armed pull request outside the queue, and both standing for the
+# approval the base requires; and the review-gate reducer, whose silence means no open thread, no
+# objection and no disarmed or stale-review line (pr-watch.sh --help holds the
+# exact condition), never an approval. Nothing here counts a check or a thread
+# itself. Each refusal names the
 # condition it stopped on and changes nothing.
 # PARK_HEAD and PARK_REPO carry what the record will hold.
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SCRIPT_DIR/../../review-gate/scripts/pr-watch.sh}"

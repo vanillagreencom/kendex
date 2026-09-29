@@ -202,7 +202,7 @@ export GH_REPO=your-org/your-repo
 
 (The `export` is its own line, not a command prefix.)
 
-Exit 0 = silence (healthy); exit 1 = attention lines on stdout (threads to triage — queued PRs annotated with the dequeue-first warning — objections, a PR approved or needing no review on its base that nothing will merge, no approval past the quiet period, or `head-moved` when a push landed mid-reduction — re-run); exit 2 = a PR could not be read (fail loud, never skipped). The orch skill's waiters are the single-PR *foreground* waits; pr-watch is the multi-PR *background* reducer over OPEN PRs only.
+Exit 0 = silence (healthy); exit 1 = attention lines on stdout (threads to triage — queued PRs annotated with the dequeue-first warning — objections, an approved PR nothing will merge, no approval past the quiet period, or `head-moved` when a push landed mid-reduction — re-run); exit 2 = a PR could not be read (fail loud, never skipped). The orch skill's waiters are the single-PR *foreground* waits; pr-watch is the multi-PR *background* reducer over OPEN PRs only.
 
 `--awaiting-after SECS` replaces the `PR_REVIEW_WAIT_SECS` threshold.
 

@@ -4,8 +4,9 @@
 # consumers at .agents/skills/review-gate/scripts/. The authoritative caller
 # contract — evidence forms, trust model, settings keys, the carry-forward
 # engine, env seams, output, exit codes — is print_usage below: run --help.
-# review-writer.sh and pr-watch.sh consume the complete stdout verdict/detail
-# line. Keep that whole-text protocol unchanged; diagnostics go to stderr.
+# review-writer.sh and refresh-reviews.sh consume the complete stdout
+# verdict/detail line. Keep that whole-text protocol unchanged; diagnostics
+# go to stderr.
 set -u
 # A merge gate must never let an inherited BASHOPTS decide which paths match.
 shopt -u nocasematch nocaseglob extglob 2>/dev/null || true

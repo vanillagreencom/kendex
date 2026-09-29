@@ -51,12 +51,11 @@ Attention kinds:
                      awaiting-stale: answering the thread comes first
   changes-requested  reviewDecision CHANGES_REQUESTED: a standing objection
                      holds the merge. Reported beside threads-open
-  disarmed           reviewDecision APPROVED, or null where the base's rules
-                     require no review, on an open, un-queued, non-draft PR
-                     with auto-merge NOT armed — nothing will merge it (the
-                     known eviction-disarm failure mode). The line also
-                     carries the size orch's branch-size-check recorded for
-                     this head branch at submit (workflow state
+  disarmed           reviewDecision APPROVED on an open, un-queued,
+                     non-draft PR with auto-merge NOT armed — nothing will
+                     merge it (the known eviction-disarm failure mode). The
+                     line also carries the size orch's branch-size-check
+                     recorded for this head branch at submit (workflow state
                      `pr.size_check`): the production lines it added, the
                      allowance the issue stated and the ratio between them,
                      and the head it measured. A record of any other head
@@ -79,10 +78,14 @@ Attention kinds:
                      answered malformed data) — fail LOUD, never silently
                      skipped
 
-REVIEW_REQUIRED inside the quiet period, and a PR approved or needing no
-review on its base with auto-merge armed or queued, are healthy states and emit NOTHING — silence on stdout
+REVIEW_REQUIRED inside the quiet period, and an approved PR with auto-merge
+armed or queued, are healthy states and emit NOTHING — silence on stdout
 means "nothing needs you", which is what makes the exit code a cheap
 loop/cron predicate.
+
+A null reviewDecision, which GitHub answers on a base no approval rule
+targets (a stacked PR's base among them), is not an approval: that PR gets
+neither a disarmed nor an awaiting-stale line.
 
 Output: one tab-separated line per finding on stdout:
   <pr-number> <TAB> <head-sha-8> <TAB> <kind> <TAB> <detail>
@@ -249,8 +252,8 @@ size_note() { # branch, head -> the annotation, prefixed for the detail
 
 # Queue membership and GitHub's review decision, in one read. The answer is
 # two words: queued or unqueued, then APPROVED, CHANGES_REQUESTED,
-# REVIEW_REQUIRED, or NONE for the null reviewDecision of a base whose rules
-# require no review. GraphQL errors, a missing field, or a value outside
+# REVIEW_REQUIRED, or NONE for a null reviewDecision, which GitHub answers on
+# a base no approval rule targets. GraphQL errors, a missing field, or a value outside
 # either enum is a malformed read, never an unqueued or unreviewed PR: read
 # as unqueued it would print a false disarmed line and drop the dequeue note.
 REVIEW_STATE_QUERY='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){isInMergeQueue mergeQueueEntry{position} reviewDecision}}}'
@@ -308,13 +311,13 @@ to_epoch() { # timestamp
   date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null
 }
 
-# Whether the decision read last lets the PR merge on review: APPROVED, or
-# NONE where the base requires no review. The disarmed line names which.
-classify_decision() { # pr, head, where — sets review_met and review_word; returns 1 after emitting an error
+# Whether the decision read last is an approval. NONE is not: a base no
+# approval rule targets, such as a stacked PR's, reads null before any
+# review, so counting it as met would nudge an unreviewed PR to arm.
+classify_decision() { # pr, head, where — sets review_met; returns 1 after emitting an error
   case "$decision" in
-    APPROVED) review_met=1; review_word="approved (reviewDecision APPROVED)" ;;
-    NONE) review_met=1; review_word="the base requires no review (reviewDecision null)" ;;
-    CHANGES_REQUESTED|REVIEW_REQUIRED) review_met=0; review_word="" ;;
+    APPROVED) review_met=1 ;;
+    NONE|CHANGES_REQUESTED|REVIEW_REQUIRED) review_met=0 ;;
     *)
       emit "$1" "$2" error "reviewDecision '$decision' reached the $3 unhandled — read_review_state admits only APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED and NONE"
       errored=1
@@ -542,7 +545,7 @@ for number in $pr_numbers; do
     read_review_state "$number" "$head" "review-state recheck" || continue
     classify_decision "$number" "$head" recheck || continue
     if [ "$review_met" = "1" ] && [ "$armed" = "false" ] && [ -z "$queued" ] && [ "$draft" != "true" ]; then
-      emit "$number" "$head" disarmed "$review_word but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)$(size_note "$head_ref" "$head")"
+      emit "$number" "$head" disarmed "approved (reviewDecision APPROVED) but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)$(size_note "$head_ref" "$head")"
       attention=1
     fi
   fi

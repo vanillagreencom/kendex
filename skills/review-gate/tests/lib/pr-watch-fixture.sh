@@ -32,7 +32,8 @@ chmod +x "$TMP_ROOT/scripts/pr-watch.sh"
 #   STUB_QUEUED         "yes" -> every review-state read answers a queue entry
 #   STUB_DECISION       reviewDecision of every review-state read: APPROVED
 #                       (the default), CHANGES_REQUESTED, REVIEW_REQUIRED, or
-#                       null for a base whose rules require no review
+#                       null, GitHub's answer on a base no approval rule
+#                       targets
 #   STUB_DECISION_AFTER reviewDecision from the SECOND review-state read of a
 #                       number on (the just-in-time recheck)
 #   STUB_REVIEW_RAW     the whole review-state answer ("emptybytes" = broken)

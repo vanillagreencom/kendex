@@ -61,7 +61,8 @@ table \
   "open threads do not suppress a standing objection||STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=1;STUB_DECISION=CHANGES_REQUESTED|rc=1 kinds=threads-open,changes-requested" \
   "queued lines all carry the dequeue note||STUB_QUEUED=yes;STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=1;STUB_DECISION=CHANGES_REQUESTED|rc=1 queued_notes=2" \
   "approved, not armed, not queued: disarmed||STUB_OPEN_PRS=$P7U|rc=1 kinds=disarmed protocol=7~aaaaaaaa~disarmed~$DISARMED_DETAIL" \
-  "a base requiring no review reads null, and an unarmed PR there is disarmed||STUB_OPEN_PRS=$P7U;STUB_DECISION=null|rc=1 kinds=disarmed" \
+  "a null decision is no approval: an unarmed PR is never disarmed||STUB_OPEN_PRS=$P7U;STUB_DECISION=null|rc=0 kinds=none" \
+  "a null decision is never awaiting-stale|--awaiting-after 60|STUB_OPEN_PRS=$P7U;STUB_DECISION=null;STUB_HEAD_DATE=$OLD|rc=0 kinds=none" \
   "the same shape queued: the queue owns the merge||STUB_QUEUED=yes;STUB_OPEN_PRS=$P7U|rc=0 kinds=none" \
   "a draft never gets the disarmed nag||STUB_OPEN_PRS=$P7UD|rc=0 kinds=none" \
   "an open thread holds the re-arm nudge||STUB_OPEN_PRS=$P7U;STUB_UNRESOLVED=2|rc=1 kinds=threads-open" \
@@ -151,8 +152,9 @@ echo "=== must-fail controls for each kept kind ==="
 # with that rule's condition planted wrong and the row it holds replayed: the
 # row's live answer above must move. threads-open counts unresolved nodes;
 # changes-requested, disarmed and awaiting-stale each read reviewDecision,
-# disarmed in both the first read and the just-in-time recheck, and
-# awaiting-stale in both directions; head-moved compares the recheck's head.
+# disarmed in both the first read and the just-in-time recheck and never on
+# a null decision, and awaiting-stale in both directions; head-moved compares
+# the recheck's head.
 mutant_watch threads-count 's#select(.isResolved==false)#select(.isResolved==null)#' 'select(.isResolved==false)'
 table "must-fail: with unresolved nodes uncounted two open threads read as silence||STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=2|rc=0 kinds=none"
 
@@ -162,6 +164,9 @@ table "must-fail: with CHANGES_REQUESTED unread a standing objection reads as si
 mutant_watch disarmed-first-read 's#if \[ "$review_met" = "1" \] && \[ "$draft" != "true" \]; then#if [ "$draft" != "true" ]; then#' 'if [ "$review_met" = "1" ] && [ "$draft" != "true" ]; then'
 table "must-fail: without the first read's approval an approval landing mid-reduction nudges||STUB_DECISION=REVIEW_REQUIRED;STUB_DECISION_AFTER=APPROVED;STUB_OPEN_PRS=$P7U;STUB_HEAD_DATE=$NOW|rc=1 kinds=disarmed"
 
+mutant_watch disarmed-null 's#APPROVED) review_met=1#APPROVED|NONE) review_met=1#' 'APPROVED) review_met=1'
+table "must-fail: with a null decision read as approval an unreviewed PR nudges||STUB_OPEN_PRS=$P7U;STUB_DECISION=null|rc=1 kinds=disarmed"
+
 mutant_watch disarmed-recheck 's#classify_decision "$number" "$head" recheck || continue#:#' 'classify_decision "$number" "$head" recheck'
 table "must-fail: without the recheck's approval a dismissed approval still nudges|--awaiting-after 3600|STUB_DECISION_AFTER=REVIEW_REQUIRED;STUB_OPEN_PRS=$P7U;STUB_HEAD_DATE=$NOW|rc=1 kinds=disarmed"
 
@@ -169,7 +174,9 @@ mutant_watch awaiting-unread 's#"$decision" = "REVIEW_REQUIRED" \]#"$decision" =
 table "must-fail: with REVIEW_REQUIRED unread an old unapproved head reads as silence|--awaiting-after 60|STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=0 kinds=none"
 
 mutant_watch awaiting-any 's#"$decision" = "REVIEW_REQUIRED" \]#"$decision" != "CHANGES_REQUESTED" ]#' '"$decision" = "REVIEW_REQUIRED" ]'
-table "must-fail: with any decision starting the clock an approved old head reads stale|--awaiting-after 60|STUB_OPEN_PRS=$P7;STUB_HEAD_DATE=$OLD|rc=1 kinds=awaiting-stale"
+table \
+  "must-fail: with any decision starting the clock an approved old head reads stale|--awaiting-after 60|STUB_OPEN_PRS=$P7;STUB_HEAD_DATE=$OLD|rc=1 kinds=awaiting-stale" \
+  "must-fail: with any decision starting the clock a null decision on an old head reads stale|--awaiting-after 60|STUB_OPEN_PRS=$P7U;STUB_DECISION=null;STUB_HEAD_DATE=$OLD|rc=1 kinds=awaiting-stale"
 
 mutant_watch head-compare 's#if \[ "$head_now" != "$head" \]; then#if [ "$head_now" = "" ]; then#' 'if [ "$head_now" != "$head" ]; then'
 table "must-fail: without the head comparison a moved head reads as silence||STUB_HEAD_AFTER=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;STUB_OPEN_PRS=$P7|rc=0 kinds=none"
