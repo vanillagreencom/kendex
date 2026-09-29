@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 0.14.0
 
 - A session started below the home directory no longer takes a marked folder above home for its project, so it reads project hooks and settings from the same place kendex renders them. The walk up stops at home; a `.kendex-lock.json` at home still makes home the project.
 - A `Stop` or `TaskCompleted` hook that speaks no longer freezes the session on Pi 0.87. The carrier waited inside the settle for the run it asked for, which Pi 0.87 starts only after the settle ends, so the session stayed in that settle: no background task wake, no mail and no typed prompt started a turn until Pi was restarted. The carrier now waits only on a Pi that starts that run before the send returns, as Pi 0.86 and earlier do, so print mode on those still prints the hook's answer.

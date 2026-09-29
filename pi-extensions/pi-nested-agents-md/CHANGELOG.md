@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 0.1.2
 
 - A session started below the home directory no longer takes a marked folder above home for its project root, so settings and the `AGENTS.md` walk use the project kendex renders into. The walk up stops at home; a `.kendex-lock.json` at home still makes home the project.
 
