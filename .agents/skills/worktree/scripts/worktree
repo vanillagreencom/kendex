@@ -3499,7 +3499,14 @@ case "${1:-}" in
       UNCOMMITTED="true"
     fi
     resolve_default_branch || exit 1
-    UNPUSHED_COMMITS=$(git -C "$PROJECT_ROOT" log "origin/$DEFAULT_BRANCH..$DEFAULT_BRANCH" --oneline 2>/dev/null)
+    # A default branch GitHub names can exist only as origin/NAME, after the
+    # repository's default changed: the checkout then holds none of its commits.
+    UNPUSHED_COMMITS=""
+    if git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$DEFAULT_BRANCH" >/dev/null &&
+      ! UNPUSHED_COMMITS=$(git -C "$PROJECT_ROOT" log "origin/$DEFAULT_BRANCH..refs/heads/$DEFAULT_BRANCH" --oneline 2>/dev/null); then
+      worktree_message unpushed-unreadable "origin/$DEFAULT_BRANCH..$DEFAULT_BRANCH" "Error: git could not list the default branch's unpushed commits; fetch origin/$DEFAULT_BRANCH or set WORKTREE_DEFAULT_BRANCH" >&2
+      exit 1
+    fi
     if [[ -n "$UNPUSHED_COMMITS" ]]; then
       UNPUSHED="true"
       UNPUSHED_LIST=$(echo "$UNPUSHED_COMMITS" | jq -R -s -c 'split("\n") | map(select(. != ""))')

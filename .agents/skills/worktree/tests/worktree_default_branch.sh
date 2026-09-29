@@ -8,7 +8,8 @@
 # tree from GitHub's default branch; a table with no default branch known
 # runs the create modes, the reuse and the removal that need none beside
 # those that refuse; the last table runs `check`, which reports the default branch's
-# unpushed commits.
+# unpushed commits, none where the checkout holds no such branch, and refuses
+# where git cannot list them.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
@@ -104,7 +105,8 @@ git -C "$MAIN" branch lonely
 # prints the refusal where the caller works without the branch; `lazy-remove`
 # cuts remove's resolve call, so the tree goes before the branch proof reads
 # the default branch; `eager-reuse` resolves before --reuse reads the tree's
-# branch.
+# branch; `local-less` lists the range with no local default branch;
+# `silent` reads a failed listing as no unpushed commits.
 mutant() { # NAME FROM TO [NEXT]
   local script="$TMP_ROOT/$1/worktree/scripts/worktree" rc=0
   mkdir -p "$TMP_ROOT/$1"
@@ -128,7 +130,12 @@ mutant read '    answer="$(kendex_github_default_branch "$PROJECT_ROOT" 2>&1)" |
 mutant refusing "        sed 's/^/  /' <<<\"\$answer\" >&2" "        sed 's/^/  /' <<<\"\$answer\" >&2; return 1"
 # shellcheck disable=SC2016 # each line is the script's own text, not expanded
 mutant uncalled '    resolve_default_branch || exit 1' '    :' \
-  '    UNPUSHED_COMMITS=$(git -C "$PROJECT_ROOT" log "origin/$DEFAULT_BRANCH..$DEFAULT_BRANCH" --oneline 2>/dev/null)'
+  '    # A default branch GitHub names can exist only as origin/NAME, after the'
+# shellcheck disable=SC2016 # each line is the script's own text, not expanded
+mutant local-less '    if git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$DEFAULT_BRANCH" >/dev/null &&' '    if true &&'
+# shellcheck disable=SC2016 # each line is the script's own text, not expanded
+mutant silent '      ! UNPUSHED_COMMITS=$(git -C "$PROJECT_ROOT" log "origin/$DEFAULT_BRANCH..refs/heads/$DEFAULT_BRANCH" --oneline 2>/dev/null); then' \
+  '      UNPUSHED_COMMITS=$(git -C "$PROJECT_ROOT" log "origin/$DEFAULT_BRANCH..refs/heads/$DEFAULT_BRANCH" --oneline 2>/dev/null) && false; then'
 # shellcheck disable=SC2016 # each line is the script's own text, not expanded
 mutant eager-create '    [[ -z "$BRANCH" ]] || resolve_default_branch || exit 1' '    resolve_default_branch || exit 1' \
   '    if [[ -n "$BRANCH" && "$BRANCH" == "$DEFAULT_BRANCH" ]]; then'
@@ -244,9 +251,14 @@ git -C "$MAIN" commit -q -am ahead
 AHEAD="$(git -C "$MAIN" log -1 --format='%h ahead')"
 git -C "$MAIN" checkout -q main
 UNPUSHED="{\"uncommitted\": false, \"unpushed\": true, \"unpushed_commits\": [\"$AHEAD\"]}"
+CLEAN='{"uncommitted": false, "unpushed": false, "unpushed_commits": []}'
+# trunk exists only as origin/trunk, as after the repository's default
+# changed; solo exists only in the main checkout.
+git -C "$MAIN" push -q origin main:refs/heads/trunk
+git -C "$MAIN" branch solo
 
 # label|script|environment|git's record of origin's HEAD (- for none)|exit|
-# stderr records|GitHub repository reads|stdout (UNPUSHED or -)
+# stderr records|GitHub repository reads|stdout (UNPUSHED, CLEAN or -)
 echo "=== check reads the default branch's unpushed commits ==="
 while IFS='|' read -r label script env_words record rc err reads out; do
   [[ -z "$label" ]] && continue
@@ -256,12 +268,17 @@ while IFS='|' read -r label script env_words record rc err reads out; do
     git -C "$MAIN" remote set-head origin "$record"
   fi
   [[ "$out" != UNPUSHED ]] || out="$UNPUSHED"
+  [[ "$out" != CLEAN ]] || out="$CLEAN"
   got="$(run_verb "$script" "$env_words" check)"
   printed="$(cat -- "$TMP_ROOT/out")"
   assert_eq "$got out=${printed:--}" "rc=$rc err=$err reads=$reads out=$out" "$label"
 done <<'ROWS'
 GitHub's default branch develop holds the unpushed commit|real|GH_SLUG=acme/widgets GH_DEFAULT=develop|main|0|-|1|UNPUSHED
-must-fail: with check's resolve call cut, check dies on git's empty range and reports nothing|uncalled|GH_SLUG=acme/widgets GH_DEFAULT=develop|main|128|-|0|-
+must-fail: with check's resolve call cut, check reads no branch and reports nothing unpushed|uncalled|GH_SLUG=acme/widgets GH_DEFAULT=develop|main|0|-|0|CLEAN
+a default branch only origin holds has no unpushed commits in the checkout|real|GH_SLUG=acme/widgets GH_DEFAULT=trunk|main|0|-|1|CLEAN
+must-fail: with the local branch unchecked, a default branch only origin holds refuses|local-less|GH_SLUG=acme/widgets GH_DEFAULT=trunk|main|1|worktree-unpushed-unreadable: origin/trunk..trunk|1|-
+a local default branch origin lacks refuses|real|GH_SLUG=acme/widgets GH_DEFAULT=solo|main|1|worktree-unpushed-unreadable: origin/solo..solo|1|-
+must-fail: with a failed listing read as none, a default branch origin lacks reports nothing unpushed|silent|GH_SLUG=acme/widgets GH_DEFAULT=solo|main|0|-|1|CLEAN
 a default branch GitHub cannot name warns and takes git's record of origin's HEAD|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|develop|0|worktree-default-branch-unreadable: <root>|1|UNPUSHED
 a failed GitHub read with no record refuses|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|-|1|worktree-default-branch-unreadable: <root>;worktree-default-branch-unknown: <root>|1|-
 ROWS
