@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SESSION_START_LISTENER, TOOL_RESULT_LISTENER, TURN_END_LISTENER } from "../extensions/registry.ts";
@@ -489,5 +489,47 @@ test("unexpected session dispatch failure names the listener", async () => {
 	} finally {
 		run.mockRestore();
 		rmSync(project, { recursive: true, force: true });
+	}
+});
+
+/**
+ * Below Pi 0.87.0 Pi fires no `agent_before_settle`, so every `Stop` and
+ * `TaskCompleted` registration is skipped, and neither kendex nor Pi checks
+ * the peer range that says so. The carrier reads the host's `VERSION` export
+ * once, when Pi loads it, so each row loads a carrier against a host module
+ * reporting its version; the 0.87.0 row is the control.
+ */
+describe("a Pi without the Stop listener is named at session start", () => {
+	const HOST = "@earendil-works/pi-coding-agent";
+	const rows = [
+		{ version: "0.86.1", said: "hook-host-unsupported=pi 0.86.1" },
+		{ version: "0.87.0", said: undefined },
+	];
+	for (const row of rows) {
+		test(`pi ${row.version}`, async () => {
+			const project = initCleanRustRepo("pi-hooks-host-version-");
+			writePiConfig(project, { sessionDriftCheck: false });
+			const real = { ...(await import(HOST)) };
+			mock.module(HOST, () => ({ ...real, VERSION: row.version }));
+			try {
+				const carrier = installCarrier();
+				const notified: [string, string][] = [];
+				const ui = { notify: (content: string, level: string) => notified.push([content, level]) };
+				carrier.handler(SESSION_START_LISTENER)({ type: "session_start", reason: "startup" }, trusted(project, { hasUI: true, ui }));
+				await settle();
+				const spoken = carrier.sent.map((call) => call.message.content.split("\n")[0]);
+				const shown = notified.map(([content, level]) => `${level} ${content.split("\n")[0]}`);
+				if (row.said === undefined) {
+					expect(spoken).toEqual([]);
+					expect(shown).toEqual([]);
+				} else {
+					expect(spoken).toEqual([row.said]);
+					expect(shown).toEqual([`warning ${row.said}`]);
+				}
+			} finally {
+				mock.module(HOST, () => real);
+				rmSync(project, { recursive: true, force: true });
+			}
+		});
 	}
 });

@@ -1348,9 +1348,10 @@ expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
   "after the notice, a later wake's turn ending on the person is refused again"
 
 # Nothing landing inside a run opens a turn, and neither does a stop hook's
-# continuation: the pi-hooks carrier's `kendex-hook` message after a finished
-# run, and a steer such as `kendex-clippy` after a tool's result, leave the
-# ask the lane sent earlier in the turn carrying its question.
+# continuation: the `kendex-hook` entry the pi-hooks carrier appends at the
+# run's settle boundary, and a steer such as `kendex-clippy` after a tool's
+# result, leave the ask the lane sent earlier in the turn carrying its
+# question.
 pi_custom_line() { # EPOCH CUSTOM-TYPE
   jq -nc --argjson t "$1" --arg k "$2" \
     "$STAMP"'{type:"custom_message",customType:$k,content:"refused",display:false,id:"e5",parentId:"e4",timestamp:($t | stamp)}'

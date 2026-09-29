@@ -44,6 +44,7 @@ The other hook events cannot stop anything in Pi, so the extension delivers what
 - Any other exit status is reported to the agent as a hook that reached no verdict; a hook that ran out of time, or whose script is missing, is reported as one that did not run.
 - A `PostToolUse` matcher is matched against the tool's name, and a `SessionStart` matcher against why the session started: `startup`, `resume` or `clear`.
 - `Stop` and `TaskCompleted` hooks take no matcher, so both always run.
+- `Stop` and `TaskCompleted` hooks need Pi 0.87.0 or later. On an older Pi they do not run, and each fresh session starts with a `hook-host-unsupported=pi <version>` message and notification that says so.
 
 ## Lane mail wake
 

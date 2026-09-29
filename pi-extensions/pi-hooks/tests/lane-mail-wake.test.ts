@@ -43,9 +43,10 @@ afterAll(() => rmSync(world, { recursive: true, force: true }));
 /**
  * A launched lane as `lane-marker` records one, with the orch scripts and the
  * project-scope lane-mail hooks a kendex install renders, and a user scope
- * whose `Stop` hook says its piece once and stands down on the settle it
- * caused, as doc-drift-check does. `stands` is the nearest directory to the
- * lane's mailbox that the lane holds when its session starts.
+ * whose `Stop` hook says its piece once and stands down on the dispatch at
+ * the end of the continuation it caused, as doc-drift-check does. `stands` is
+ * the nearest directory to the lane's mailbox that the lane holds when its
+ * session starts.
  */
 function laneWorld(name: string, stands: Stands, enabled: boolean): { lane: string; agentDir: string } {
 	const lane = join(world, name);

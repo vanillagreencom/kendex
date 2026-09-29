@@ -5,6 +5,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { VERSION } from "@earendil-works/pi-coding-agent";
 import { isAbsolute, resolve } from "node:path";
 
 import { getBool, getNumber, projectRoot, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
@@ -46,6 +47,24 @@ export function toolCallVerdict(result: HookResult, ctx: ExtensionContext): Verd
 	return undefined;
 }
 
+/**
+ * The line a host too old for the `Stop` listener gets, or `undefined` on a
+ * host that has it. Pi fires `agent_before_settle` from 0.87.0, and below that
+ * every `Stop` and `TaskCompleted` registration is skipped with no error. The
+ * Pi peer range names the floor, but neither kendex nor Pi checks peers when it
+ * installs an extension, so this says it instead. It serves Pi 0.74.0, the
+ * first `@earendil-works` release, to 0.86.x. Remove it once no Pi below
+ * 0.87.0 can load this package. A version that does not parse as
+ * `major.minor` is not called old.
+ */
+function unsupportedHostLine(version: string): string | undefined {
+	const [major, minor] = version.split(".").map(Number);
+	if (major === 0 && minor !== undefined && minor < 87) {
+		return `hook-host-unsupported=pi ${version}\nStop and TaskCompleted hooks do not run on this Pi. Upgrade Pi to 0.87.0 or later.`;
+	}
+	return undefined;
+}
+
 interface TurnState {
 	rustFilesTouched: Set<string>;
 }
@@ -60,6 +79,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 	guard[INSTALL_SYMBOL] = true;
 
 	let turn = freshTurnState();
+	const hostLine = unsupportedHostLine(VERSION);
 
 	pi.on("turn_start", () => {
 		turn = freshTurnState();
@@ -152,6 +172,12 @@ export default function piHooks(pi: ExtensionAPI): void {
 		});
 
 		if (event.reason === "reload" || event.reason === "resume") return;
+		// A fresh start alone, as the drift report below: a resumed session
+		// already carries the line.
+		if (hostLine !== undefined) {
+			deliver(speak, hostLine);
+			deliver(notify(ctx, "warning"), hostLine);
+		}
 		if (!getBool(cfg, "sessionDriftCheck")) return;
 
 		void deliverDrift(
