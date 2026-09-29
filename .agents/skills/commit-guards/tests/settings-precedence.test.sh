@@ -107,7 +107,7 @@ run_rows \
   "a commented [env] header is a config error naming its line, not an invisible table|toml header [env] # comment\nCOMMIT_GUARDS_TP = \"hidden\"\n||rc=1 value= err=commit-guards: settings-header=kendex.settings.toml:1" \
   "a leading byte-order mark is a config error, not a misread first line|fx_bom||rc=1 value= err=commit-guards: settings-bom=kendex.settings.toml" \
   "an unrelated non-contract assignment fails the read|toml unrelated-bare [env]\nUNRELATED = bare\nCOMMIT_GUARDS_TP = \"v\"\n||rc=1 value= err=commit-guards: settings-string=kendex.settings.toml:2:UNRELATED" \
-  "an inner double quote in an unrelated value fails the read naming its file, line and key|toml unrelated-quote [env]\nCOMMIT_GUARDS_TP = \"v\"\nUNRELATED = \"a\\\"b\"\n||rc=1 value= err=commit-guards: settings-string=kendex.settings.toml:3:UNRELATED" \
+  "an inner double quote in an unrelated value fails the read naming its file, line and key|toml unrelated-quote [env]\nCOMMIT_GUARDS_TP = \"v\"\nUNRELATED = \"a\"b\"\n||rc=1 value= err=commit-guards: settings-string=kendex.settings.toml:3:UNRELATED" \
   "an unrelated duplicated key fails the read|toml unrelated-dup [env]\nUNRELATED = \"a\"\nUNRELATED = \"b\"\nCOMMIT_GUARDS_TP = \"v\"\n||rc=1 value= err=commit-guards: settings-duplicate=kendex.settings.toml:UNRELATED" \
   "an exported value does not mask a malformed settings file|toml masked-dup [env]\nDUP = \"a\"\nDUP = \"b\"\n|COMMIT_GUARDS_TP=explicit|rc=1 value= err=commit-guards: settings-duplicate=kendex.settings.toml:DUP" \
   "an exported value does not mask a DIRECTORY at .env.local|fx_env_dir env-dir-masked|COMMIT_GUARDS_TP=explicit|rc=1 value= err=commit-guards: settings-regular=.env.local"

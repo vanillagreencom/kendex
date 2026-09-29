@@ -3,9 +3,9 @@
 # name: command-safety
 # event: PreToolUse
 # matcher: Bash
-# description: On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent policy is inactive. Matching is textual, including quoted text, and does not inspect the desktop or running processes.
-# summary: Refuses shell commands that match the deny pattern a project's settings declare. A project that declares none is unaffected.
-# safety: When executed with a configured policy, blocks matching command text before the shell tool runs. Unreadable input, missing settings support, unreadable project settings (one malformed [env] value on any key), and invalid or explicitly empty patterns refuse execution. Every refusal opens with `command-safety: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# description: On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent policy is inactive unless the project settings file cannot be read. Matching is textual, including quoted text, and does not inspect the desktop or running processes.
+# summary: Refuses shell commands that match the deny pattern a project's settings declare. A project that declares none is unaffected unless its settings file cannot be read.
+# safety: When executed with a configured policy, blocks matching command text before the shell tool runs. Unreadable input, missing settings support, unreadable project settings (even where the unreadable part is a key this hook does not read), and invalid or explicitly empty patterns refuse execution. Every refusal opens with `command-safety: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # ---
 
@@ -34,7 +34,7 @@ refuse() { # KEY VALUE [CAUSE]
         git=unreadable) echo "the Git working directory could not be resolved" ;;
       hook=unlocatable) echo "this hook's own directory could not be read, so its installed dependencies cannot be found" ;;
       settings=no-loader) echo "the command-safety bundle requires the installed commit-guards settings loader" ;;
-      settings=unreadable) echo "the project settings could not be read, so COMMAND_SAFETY_DENY_PATTERN is unknown; rewrite the value the loader names below" ;;
+      settings=unreadable) echo "the project settings could not be read, so COMMAND_SAFETY_DENY_PATTERN is unknown; the loader's line below names what to fix" ;;
       settings=empty) echo "COMMAND_SAFETY_DENY_PATTERN must be configured" ;;
       settings=invalid-pattern) echo "COMMAND_SAFETY_DENY_PATTERN is not a readable POSIX ERE" ;;
       refused=policy) echo "the command text matches this project's COMMAND_SAFETY_DENY_PATTERN" ;;
@@ -133,14 +133,14 @@ if ! ROOT_ERR=$( (cd -- "$root") 2>&1 ); then
 fi
 cd -- "$root" || refuse cwd "$root"
 # The loader's diagnostic is captured, not left to precede the refusal: on
-# failure the substitution holds what it wrote — the file, the line and the
-# key — and a successful read is silent, so the pattern is not mixed with a
-# diagnostic.
+# failure the substitution holds the loader's keyed line — for a value in
+# another shape, the file, the line and the key — and a successful read is
+# silent, so the pattern is not mixed with a diagnostic.
 # A malformed value on a key this hook never reads still refuses: the loader
 # judges the [env] table whole, as every kendex settings reader does, so a
 # policy read past the bad line would come from a file the rest of the
-# toolchain rejects. The replayed line names what to rewrite, so the caller
-# can clear the refusal.
+# toolchain rejects. The replayed line names what to fix, so the caller can
+# clear the refusal.
 pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "^$" 2>&1)" || refuse settings unreadable "$pattern"
 [ -n "$pattern" ] || refuse settings empty
 [ "$pattern" != '^$' ] || exit 0

@@ -123,7 +123,7 @@ assert_cause present "and the loader's own words are replayed under it"
 # refusal carries the loader's line naming the file, the line and the key.
 # The probe runs the installed loader itself, so the row asserts the hook's
 # replay; the loader's own suite pins that line's value.
-printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "BLOCK_THIS"\nOTHER = "a\\"b"\n' >"$repo/kendex.settings.toml"
+printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "BLOCK_THIS"\nOTHER = "a"b"\n' >"$repo/kendex.settings.toml"
 check 2 'git status' 'an inner double quote on a key the hook does not read refuses'
 assert_first 'command-safety: settings=unreadable' 'and the value says the settings could not be read'
 assert_replays "$(cd "$repo" && GG_CHECK=command-safety bash -c '
