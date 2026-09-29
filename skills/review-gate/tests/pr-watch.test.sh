@@ -44,6 +44,8 @@ P7UNOREF="$(jq -cn --argjson r "$(pr_row 7 open unarmed | jq 'del(.head.ref)')" 
 P7AD="$(jq -cn --argjson r "$(pr_row 7 open armed true)" '[$r]')"
 P78="$(jq -cn --argjson a "$(pr_row 7)" --argjson b "$(pr_row 8)" '[$a,$b]')"
 P7NEW="$(jq -cn --argjson r "$(pr_row 7 open armed false "$NOW")" '[$r]')"
+# The rolling branch kendex's lock-record tool opens for the install record.
+P7LOCK="$(jq -cn --argjson r "$(pr_row 7 | jq '.head.ref = "kendex/lock"')" '[$r]')"
 V_THREADS1='verdict=threads-open detail=1 unresolved review threads'
 V_THREADS2='verdict=threads-open detail=2 unresolved review threads'
 V_CHANGES='verdict=changes-requested detail=reviewer objects'
@@ -67,7 +69,8 @@ table \
   "threads-open carries the count||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_THREADS2|rc=1 kinds=threads-open threads=2 protocol=7~aaaaaaaa~threads-open~2+unresolved+review+threads" \
   "threads-open on a queued PR carries the dequeue note||STUB_QUEUED=yes;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_THREADS1|rc=1 kinds=threads-open queued_notes=1" \
   "changes-requested||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_CHANGES|rc=1 kinds=changes-requested protocol=7~aaaaaaaa~changes-requested~reviewer+objects" \
-  "approved over a pending gate is gate-stale||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=gate-stale" \
+  "approved over a pending gate is gate-stale||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=gate-stale protocol=7~aaaaaaaa~gate-stale~predicate+says+approved+but+the+newest+'Review+gate'+row+is+pending+—+the+writer+has+not+converged" \
+  "on the lock-record branch the same line names the kendex lag||STUB_OPEN_PRS=$P7LOCK;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=gate-stale protocol=7~aaaaaaaa~gate-stale~predicate+says+approved+but+the+newest+'Review+gate'+row+is+pending+—+the+lock+class+waits+on+a+writer+kendex+that+carries+the+recording+tree's+kendex+(release+or+main-build+lag),+not+a+writer+outage" \
   "--heal dispatches the writer once across two stale PRs|--heal|STUB_OPEN_PRS=$P78;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=gate-stale,heal-dispatched,gate-stale dispatches=1" \
   "a failed dispatch still consumes the one attempt|--heal|STUB_DISPATCH_FAIL=yes;STUB_OPEN_PRS=$P78;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_PENDING|rc=2 kinds=gate-stale,error,gate-stale dispatches=1" \
   "awaiting over a green gate is gate-stale and heals|--heal --awaiting-after 3600|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_GATE_HISTORY=$G_OK;STUB_HEAD_DATE=$NOW|rc=1 kinds=gate-stale,heal-dispatched dispatches=1" \

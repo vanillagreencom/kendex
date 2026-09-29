@@ -51,7 +51,7 @@ adopt_row() { # SHAPE VERDICT
     catalog)
       mkdir "$DIR/skills"
       mv "$DIR/.agents/skills/review-gate" "$DIR/skills/review-gate"
-      workflow_edit "$DIR" 8 '\.agents/skills/review-gate/' 's#\.agents/skills/review-gate/#skills/review-gate/#g'
+      workflow_edit "$DIR" 9 '\.agents/skills/review-gate/' 's#\.agents/skills/review-gate/#skills/review-gate/#g'
       template='skills/review-gate/templates/review-gate-writer.yml'
       DRIVER_REL='skills/review-gate/scripts/validate-workflow.sh' ;;
     opt-in)

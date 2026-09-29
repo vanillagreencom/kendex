@@ -108,6 +108,13 @@ REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standa
 # policy without it, and refuses a path the repository does not track.
 REVIEW_GATE_CLASS_POLICY_DECISION = ""
 
+# Which kendex judges a pull request whose only change is the install record,
+# .kendex-lock.json. Empty leaves it to the pinned release the writer installs
+# for every pull request. "main" has the writer also install the default
+# branch's rolling main build for that one change, for a repository whose
+# record is written by a kendex built from its own tree.
+REVIEW_GATE_LOCK_KENDEX = ""
+
 # Whether a documentation-only change still needs a review, read only while
 # the class policy is off. "bot" asks for one as usual. "none" lets a shared
 # classifier stand in for a missing review. Requested changes and open

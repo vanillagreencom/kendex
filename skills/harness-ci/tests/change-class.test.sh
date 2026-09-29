@@ -25,14 +25,16 @@ repo="$(new_repo change-class)"
 commit_paths "$repo" baseline seed.txt
 base="$(git -C "$repo" rev-parse HEAD)"
 
-# The dependency double. It records every invocation and the tree it ran in,
-# the commit checked out there and how many arming records its git
+# The dependency double. It answers `--version` with a version of its own and
+# records nothing for it. Every other invocation it records with the tree it
+# ran in, the commit checked out there and how many arming records its git
 # directories hold, prints the ledger line the row chose, and exits with the
 # row's status.
 stub_bin="$SANDBOX/stub-bin"
 mkdir -p "$stub_bin"
 cat >"$stub_bin/kendex" <<'STUB'
 #!/usr/bin/env bash
+[ "$*" != --version ] || { echo 'kendex 0.0.0-stub'; exit 0; }
 printf '%s\n' "$*" >>"$KENDEX_STUB_CALLS"
 records=0
 for dir in "$(git rev-parse --git-common-dir)" "$(git rev-parse --git-dir)"; do
@@ -329,7 +331,7 @@ git -C "$repo" commit -q -m "a render under a failing row"
 failing_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "a failing row's positions own nothing" \
-  "cause=verify-refused" \
+  "cause=verify-refused verifier=path version=0.0.0-stub" \
   "$(printf '%s\n' "$failing_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
 
 # A kendex that prints its rows for a person rather than the document, or a
@@ -1641,8 +1643,8 @@ TOML
   hand_edit_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$consumer_base" --head HEAD)"
   assert_eq "a hand edit inside that refresh, in the armed consumer, is not a render" \
-    "class=standard measured=false cause=verify-refused" \
-    "$(printf '%s\n' "$hand_edit_err" | sed -n 's/^class: //p')"
+    "class=standard measured=false cause=verify-refused verifier=path" \
+    "$(printf '%s\n' "$hand_edit_err" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
   rm -rf -- "${consumer:?}/.git/kendex"
 
   # The proof weighs --head wherever the judged checkout sits. Sitting at the
@@ -1654,8 +1656,8 @@ TOML
   elsewhere_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$consumer_base" --head "$hand_edited")"
   assert_eq "a checkout at the pure refresh has verify weigh the hand edit at --head" \
-    "class=standard measured=false cause=verify-refused" \
-    "$(printf '%s\n' "$elsewhere_err" | sed -n 's/^class: //p')"
+    "class=standard measured=false cause=verify-refused verifier=path" \
+    "$(printf '%s\n' "$elsewhere_err" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
   git -C "$consumer" checkout -q hand-edited
   elsewhere_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$consumer_base" --head refreshed)"
@@ -1684,8 +1686,8 @@ TOML
   de_listed_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base refreshed --head HEAD)"
   assert_eq "a de-listing that touches bookkeeping alone is refused at the proof" \
-    "class=standard measured=false cause=verify-refused" \
-    "$(printf '%s\n' "$de_listed_err" | sed -n 's/^class: //p')"
+    "class=standard measured=false cause=verify-refused verifier=path" \
+    "$(printf '%s\n' "$de_listed_err" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
   assert_eq "and the proof names the path the inventory de-lists" \
     "1" \
     "$(grep -c 'de-lists .claude/skills/second/SKILL.md' <<<"$de_listed_err")"
@@ -1715,7 +1717,7 @@ TOML
   # refuses on an unowned path. Both answer standard, so the rows read the
   # cause: without that the inverse would pass on a verdict it never earned.
   catalog_mutant="$(plant_package "$SANDBOX/catalog-byte-mutant" link)"
-  proof_call='  if ! VERIFY_JSON="$( (cd -- "$proof_tree" && kendex "${verify_args[@]}") 2>"$work/verify-stderr" )"; then'
+  proof_call='  if ! VERIFY_JSON="$( (cd -- "$proof_tree" && "$verifier" "${verify_args[@]}") 2>"$work/verify-stderr" )"; then'
   catalog_call='  if ! VERIFY_JSON="$(cmp -s "$proof_tree/$CATALOG_RENDER" "$CATALOG_SOURCE" && printf "%s" "{\"version\":1,\"clean\":true,\"checked\":2,\"failed\":0,\"rows\":[{\"kind\":\"skill\",\"name\":\"demo\",\"state\":\"ok\",\"positions\":[{\"path\":\".claude/skills/demo\",\"owns\":\"tree\"}]}]}")"; then'
   assert_eq "the inverse replaces exactly one proof call" 1 \
     "$(grep -cxF "$proof_call" "$CHANGE_CLASS")"
@@ -1738,8 +1740,8 @@ TOML
     "$catalog_mutant" --repo "$consumer" --event pull_request \
     --base "$consumer_base" --head HEAD 2>&1 >/dev/null)"
   assert_eq "a classifier reading catalog bytes never clears the refresh row" \
-    "class=standard measured=false cause=verify-refused" \
-    "$(printf '%s\n' "$catalog_err" | sed -n 's/^class: //p')"
+    "class=standard measured=false cause=verify-refused verifier=path" \
+    "$(printf '%s\n' "$catalog_err" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
 
   # The catalog moves on after the refresh is pushed, and the runner's mirror
   # with it. The refresh is weighed at the commits its record names, so it is
@@ -1764,8 +1766,8 @@ TOML
   hand_behind_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$consumer_base" --head hand-edited)"
   assert_eq "a hand edit the catalog moved past is still refused" \
-    "class=standard measured=false cause=verify-refused" \
-    "$(printf '%s\n' "$hand_behind_err" | sed -n 's/^class: //p')"
+    "class=standard measured=false cause=verify-refused verifier=path" \
+    "$(printf '%s\n' "$hand_behind_err" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
 
   # A branch that puts the older install back, record and renders together,
   # renders clean at its own commits; the base's record is the floor that
@@ -1777,8 +1779,8 @@ TOML
   rolled_back_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base refreshed --head HEAD)"
   assert_eq "a record rewritten back past the base's is not a render" \
-    "class=standard measured=false cause=verify-refused" \
-    "$(printf '%s\n' "$rolled_back_err" | sed -n 's/^class: //p')"
+    "class=standard measured=false cause=verify-refused verifier=path" \
+    "$(printf '%s\n' "$rolled_back_err" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
 fi
 
 # Must-fail control: a classifier that trusts .kendex-generated.json instead of

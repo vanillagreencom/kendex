@@ -125,6 +125,30 @@ other rows are custom|render:none;trivial:none;micro:none;small:none;standard:no
 an empty assignment is off|EMPTY|0:review-policy-choice=off
 ROWS
 
+echo "=== --lock-kendex says which kendex judges the install record ==="
+
+# UNSET assigns nothing in any layer, EMPTY assigns the empty string, and
+# every other value is assigned as written, in the environment. A refused
+# row reads the diagnostic key.
+while IFS='|' read -r label value want; do
+  LOCK_RC=0
+  [ "$value" != EMPTY ] || value=""
+  if [ "$value" = UNSET ]; then
+    LOCK="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_LOCK_KENDEX \
+      "$WHOLE/review-gate/scripts/review-policy" --lock-kendex 2>"$TMP/err")" || LOCK_RC=$?
+  else
+    LOCK="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE REVIEW_GATE_LOCK_KENDEX="$value" \
+      "$WHOLE/review-gate/scripts/review-policy" --lock-kendex 2>"$TMP/err")" || LOCK_RC=$?
+  fi
+  [ "$LOCK_RC" -eq 0 ] || LOCK="$(diagnostic_key)"
+  assert_eq "$LOCK_RC:$LOCK" "$want" "$label"
+done <<'ROWS'
+no assignment leaves the install record to the pinned release|UNSET|0:review-policy-lock-kendex=off
+an empty assignment is the same|EMPTY|0:review-policy-lock-kendex=off
+main asks for the rolling main build|main|0:review-policy-lock-kendex=main
+any other value is refused|v1.2.0|2:policy-lock-kendex
+ROWS
+
 echo "=== every shipped statement of the default is the default ==="
 
 # The default review-policy prints is the reference. The shipped settings

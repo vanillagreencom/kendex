@@ -107,6 +107,19 @@
 # copy of this script against the pull request's tree; the branch can change
 # this file too.
 #
+# The render proof runs the `kendex` on PATH, save for one diff: where the only
+# changed path is `.kendex-lock.json`, the install record, and this process's
+# environment sets HARNESS_CI_LOCK_KENDEX, it runs the executable that names.
+# The record is written by a kendex built from the recording tree, so a
+# registration shape newer than the release on PATH reads to that release as
+# drift. review-gate's writer installs kendex's rolling main build there
+# where REVIEW_GATE_LOCK_KENDEX asks for it. The variable is read from the
+# environment alone, never from a settings file: it names a binary on the
+# machine running this script. A path that is not executable answers standard
+# with cause=no-verifier. The `render-verifier:` line names the verifier that
+# ran, `path` or `lock`, and the version its `--version` printed, and a
+# verify-refused cause carries both, so a refusal reads as the verifier's age.
+#
 # Only the render class reads kendex state, and it is reached only where
 # harness-only answers harness_only=true for the range. review-gate's
 # review-predicate.sh (resolve_class_policy) prepares the judged checkout's
@@ -410,11 +423,27 @@ checkout_head() {
 RENDER_REFUSAL=""
 VERIFY_JSON=""
 renders_match() {
-  local verify_args counts checked failed version
-  if ! command -v kendex >/dev/null 2>&1; then
-    RENDER_REFUSAL="cause=no-verifier"
+  local verify_args counts checked failed version verifier=kendex kind=path verifier_version
+  if [ "$changed" = .kendex-lock.json ] && [ -n "${HARNESS_CI_LOCK_KENDEX:-}" ]; then
+    verifier="$HARNESS_CI_LOCK_KENDEX"
+    kind=lock
+  fi
+  if ! command -v "$verifier" >/dev/null 2>&1; then
+    RENDER_REFUSAL="cause=no-verifier verifier=$kind"
     return 1
   fi
+  # The version names the verifier on the log and in a refusal, and decides
+  # nothing: one that cannot be read is named as such.
+  if ! verifier_version="$("$verifier" --version 2>/dev/null </dev/null)"; then
+    verifier_version=""
+  fi
+  verifier_version="${verifier_version%%$'\n'*}"
+  verifier_version="${verifier_version##* }"
+  case "$verifier_version" in
+    '' | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.+_-]*)
+      verifier_version=unreadable ;;
+  esac
+  printf 'render-verifier: verifier=%s version=%s\n' "$kind" "$verifier_version" >&2
   # harness-only prints head-rev: on every verdict it reaches after resolving
   # both ends, harness_only=true included, so an absent line is a
   # harness-only that broke that promise.
@@ -435,9 +464,9 @@ renders_match() {
     # commit.
     verify_args=("${verify_args[@]}" --base "$base_rev" --at-record)
   fi
-  if ! VERIFY_JSON="$( (cd -- "$proof_tree" && kendex "${verify_args[@]}") 2>"$work/verify-stderr" )"; then
+  if ! VERIFY_JSON="$( (cd -- "$proof_tree" && "$verifier" "${verify_args[@]}") 2>"$work/verify-stderr" )"; then
     cat "$work/verify-stderr" >&2
-    RENDER_REFUSAL="cause=verify-refused"
+    RENDER_REFUSAL="cause=verify-refused verifier=$kind version=$verifier_version"
     return 1
   fi
   # The document is the contract, its version first: a kendex printing
