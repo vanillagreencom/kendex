@@ -129,7 +129,7 @@ One watch command runs for the whole session, launched and read as § Watch deli
 
 `oversee-watch --help` states each refusal at start. After a self-succession the successor's own start takes over the watch `oversee-succeed` restarted and first prints what it reported, under `watch-replayed`: handle those lines as events.
 
-**The watch rule.** A turn never ends while the watch is stopped: it alone resolves an owner ask at its deadline, reported as `owner-ask-resolved`. The watch runs two passes on one clock. The mail pass starts every `ORCH_WATCH_MAIL_INTERVAL` seconds (default 20) and reads every mailbox and the lane records, printing what it finds as it finds it. The long pass, holding pr-watch, the merged check, triage and the pane reads, runs every `--interval` seconds; one that overruns holds up no mail pass. A lane's note is read within one mail interval, whatever `--interval` is, save the delays and the overseer-pane hold `oversee-watch --help` names. The mail pass never reads a lane's pane, so it runs on every surface and outside tmux.
+**The watch rule.** A turn never ends while the watch is stopped: it alone resolves an owner ask at its deadline, reported as `owner-ask-resolved`. The watch runs two passes on one clock. The mail pass starts every `ORCH_WATCH_MAIL_INTERVAL` seconds (default 20) and reads every mailbox and the lane records, printing what it finds as it finds it. The long pass, holding pr-watch, the merged check, triage, the outside-contribution check and the pane reads, runs every `--interval` seconds; one that overruns holds up no mail pass. A lane's note is read within one mail interval, whatever `--interval` is, save the delays and the overseer-pane hold `oversee-watch --help` names. The mail pass never reads a lane's pane, so it runs on every surface and outside tmux.
 
 ### Watch delivery
 
@@ -159,6 +159,25 @@ rm -f tmp/oversee-triage-source.json
 
 - Judgement rules for every event: [oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules).
 - Handling per event kind: [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds).
+
+### Outside contributions
+
+The overseer owns every open issue and pull request in its repositories whose author is outside the fleet, until it is merged or closed. `ORCH_EXTERNAL_TRIAGE`, default `on`, has each long pass of the watch list the open pull requests of every repository and the open issues of the first, and report each outside one once as `outside-contribution`; `off` lists nothing and changes nothing else. Who counts as the fleet is `oversee-watch --help`'s to state. A GitHub issue that the tracker sync mirrors into Linear is judged here once, and its Linear mirror is left untouched ([oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds) `triage`).
+
+1. **Investigate.** Read it with `gh issue view` or `gh pr view` and the diff, with `--repo [REPO]`: is the problem real, does the change fix it, does it add value for this project's consumers. On a pull request, review it and comment to the contributor on the PR where a question or a requested change is theirs to answer. Ask the contributor only about their change, never for a version bump, a changelog entry or fragment, or a tracked render: maintainers own that bookkeeping, and a contribution missing only that is a take-over.
+2. **Ask the owner once.** Send one owner ask for the contribution, per [communication-modes.md § Owner asks](../references/communication-modes.md#owner-asks), with the recommended option and a file that names the contribution, what the investigation found and the reason for the recommendation. Record the ask in the fleet log.
+
+   ```bash
+   .agents/skills/orch/scripts/lane-mail ask --item overseer --to owner --options merge-as-is,request-changes,take-over,close --recommend [OPTION] --file [PATH]
+   ```
+
+3. **Act on the answer.** Act only on the owner's answer, the `owner-ask-resolved` event with `by=text`. A `by=default` resolution changes nothing on the contribution, and the next status report names it as waiting on the owner.
+   - `merge-as-is`: the pull request merges by the normal route, [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) step 1's arm on the head the owner answered about.
+   - `request-changes`: post the changes on the pull request, about the change alone. The contribution stays this overseer's, and a new push is judged again with one new ask.
+   - `take-over`: launch a lane through § 3 on the contributor's branch where the pull request allows maintainer edits, otherwise on a follow-up item whose pull request carries the contributor's commits. The lane adds what is missing, bookkeeping included, and merges by the normal route. An issue taken over is a follow-up item.
+   - `close`: close it with the owner's reason as the closing comment.
+
+   A merged contribution gets a thank-you comment to the contributor and closes the issue it fixes. Record the outcome in the fleet log.
 
 ### Parking a merge wait
 

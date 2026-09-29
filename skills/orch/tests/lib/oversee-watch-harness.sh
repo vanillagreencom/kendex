@@ -1,10 +1,11 @@
 # Shared sandbox for the oversee-watch suites: the stub binaries every case
 # drives, the assertion library, and one `run_watch` entry point.
 #
-# oversee-watch reads GitHub (pr-watch, `gh pr list`), Linear, the tmux
-# panes of the lane windows, and the accounts through `lanes list`.
+# oversee-watch reads GitHub (pr-watch, `gh pr list`, the open issues list),
+# Linear, the tmux panes of the lane windows, and the accounts through `lanes list`.
 # oversee_watch.sh covers GitHub and process-wide failures;
-# oversee_watch_triage.sh covers the tracker; the three lane suites cover pane
+# oversee_watch_triage.sh covers the tracker; oversee_watch_outside.sh covers
+# outside contributions; the three lane suites cover pane
 # behavior, prompt state, and spent-account banners; oversee_watch_accounts.sh
 # covers account events and the heartbeat roster. They share this sandbox.
 #
@@ -59,7 +60,11 @@ CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
 #   auth-fail     present → keyring `auth status` fails
 #   list-fail     present → every `pr list` fails
 #   noisy         present → every successful `pr list` also writes to stderr
-# Every `auth status` and `pr list` call is logged to gh.calls.
+#   issues.json   the page `api --paginate repos/<repo>/issues` answers
+#                 (default: []), issues.<SLUG>.json per repo the same way,
+#                 run through the call's own --jq filter as gh runs it;
+#                 issues-fail present → that call fails
+# Every `auth status`, `pr list` and `api --paginate` call is logged to gh.calls.
 # `api user` (env-token preflight) succeeds for any token except one
 # starting with ghp_stale.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
@@ -76,6 +81,17 @@ case "${1:-} ${2:-}" in
   "repo view")
     [[ -f "$STUB_DIR/repoview.txt" ]] && { cat "$STUB_DIR/repoview.txt"; exit 0; }
     echo "owner/repo"; exit 0 ;;
+  "api --paginate")
+    printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
+    [[ -f "$STUB_DIR/issues-fail" ]] && { echo "HTTP 502: bad gateway" >&2; exit 1; }
+    path="$3"; filter=""
+    [[ "${4:-}" == --jq ]] && filter="$5"
+    repo="${path#repos/}"; repo="${repo%/issues\?*}"
+    slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
+    src="$STUB_DIR/issues.$slug.json"
+    [[ -f "$src" ]] || src="$STUB_DIR/issues.json"
+    if [[ -f "$src" ]]; then jq -r "${filter:-.}" "$src"; else jq -rn "[] | ${filter:-.}"; fi
+    exit ;;
   "pr list")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
     [[ -f "$STUB_DIR/list-fail" ]] && { echo "HTTP 502: bad gateway" >&2; exit 1; }
@@ -623,7 +639,7 @@ run_watch() {
   (cd "${WATCH_CWD:-$TMP_ROOT/repo}" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR -u ORCH_LANE_HOST \
-           -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u ORCH_WATCH_START_STALL_SECS -u ORCH_OVERSEER_MARK_REPEAT -u LINEAR_TEAM -u ORCH_DIRECTIVE_UNREAD_SECS \
+           -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u ORCH_WATCH_START_STALL_SECS -u ORCH_OVERSEER_MARK_REPEAT -u LINEAR_TEAM -u ORCH_DIRECTIVE_UNREAD_SECS -u ORCH_EXTERNAL_TRIAGE \
            -u ORCH_REPORT_EVERY_MINUTES -u ORCH_REPORT_EVERY_ISSUES -u ORCH_REPORT_UPCOMING \
            -u ORCH_REPORT_COLUMNS -u ORCH_PROGRESS_REPORT_DIR -u OVERSEE_WATCH_REPORT \
            -u OVERSEE_REPORT_WORKFLOW_STATE -u OVERSEE_REPORT_TRACKER -u OVERSEE_REPORT_GITHUB \

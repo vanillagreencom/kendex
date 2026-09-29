@@ -249,6 +249,13 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # go past it is refused.
 ORCH_OVERSEER_LANES = "3"
 
+# External triage. The overseer processes issues and pull requests from
+# outside contributors: it investigates each one, may review and comment,
+# asks the owner one question with its recommendation, and drives it to a
+# close or a merge. "off" leaves them unlisted.
+# values: on | off
+ORCH_EXTERNAL_TRIAGE = "on"
+
 # Whether a finished overseer starts its own replacement. "on" starts one.
 # "off" leaves a live overseer to write its handover note and ask you to
 # start the next session, and a dead one to be reported for replacement by
