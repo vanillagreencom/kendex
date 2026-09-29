@@ -9,7 +9,8 @@ In scope since the previous marker: four releases, `0.84.3` (2026-08-24), `0.84.
 | Bucket | Count |
 |---|---:|
 | Required parity fix | 3 |
-| Optional improvement (deferred) | 4 |
+| Optional improvement (adopted) | 1 |
+| Optional improvement (deferred) | 3 |
 | Non-impact | grouped below, not tallied |
 
 ## Shipped
@@ -24,6 +25,10 @@ Three fixes, each with a test at the function that changed and a red-first contr
 
 Not live-tested inside Pi; each fix is proven at its unit surface against the installed peer packages.
 
+## Adopted (Optional)
+
+QOL adopts Pi's embedded indicator ([#8799](https://github.com/earendil-works/pi/pull/8799)) when `statusline.enabled` is on. `QolStatusEditor.renderWorkingStatus` draws it in the statusline widget; Pi owns animation and cleanup. QOL requires Pi 0.86.0 for working, retry, compaction and branch-summary indicator delivery. With the statusline off, Pi keeps the standalone row.
+
 ## Deferred (Optional)
 
 | Item | Reasoning |
@@ -31,7 +36,6 @@ Not live-tested inside Pi; each fix is proven at its unit surface against the in
 | `ui_prompt_start` / `ui_prompt_end` and `session_compact_failed` extension events (0.84.3, 0.85.0) | `pi-session-bridge` republishes an explicit event allowlist (`extensions/session-bridge.ts:49-65`) and publishes `ctx.isIdle()`; a waiting-for-input distinction would help orchestration but the bridge never promised these events. `pi-qol` already has completion and error callbacks on the compactions it starts. Adopt with a bridge design, not in a parity round. |
 | RPC `clear_queue` (0.84.4) | Pi stdio RPC, not a method of kendex's socket bridge. Adding it is a bridge feature. |
 | `SessionManager.inMemory()` restorable sessions, summary routing ids, `detectSupportedImageMimeTypeFromFile` (0.85.0) | Additive SDK. The file-backed session manager and local image format detection stay correct; no net simplification without a redesign. |
-| Embedded working indicator in the default editor (0.85.0, [#8799](https://github.com/earendil-works/pi/pull/8799)) | Adopted by QOL: both editors opt into `embedWorkingStatus` while `statusline.enabled` is on. `QolStatusEditor.renderWorkingStatus` draws Pi's indicator in the statusline widget, not the editor border. Pi owns animation and cleanup. QOL requires Pi 0.86.0, which delivers working, retry, compaction and branch-summary indicators through this API. With the statusline off, Pi keeps the standalone row. |
 
 The 0.84.2 deferral of `sendUserMessage(..., { expandPromptTemplates: true })` stands unchanged; see the previous audit's reasoning (skill-hash reminder cache, live peer test).
 
