@@ -444,6 +444,25 @@ pi_first_row "$PIFIRSTCTL/oversee"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT" | awk '{print $2, $3}')|$(overseers)" "1|launch-choice-failed entry=pi:openai/gpt-5:high|0" \
   "control: a first launch that chooses the pi entry refuses and opens nothing"
 
+# A copilot entry ahead of a claude entry with room: nothing reads a Copilot
+# overseer's context or judges its handoff, so the first launch skips it
+# before its pick, says so, and opens on the claude entry.
+copilot_first_row() { # [OVERSEE_BIN]
+  OVERSEE_BIN="${1:-}" LAUNCH_PREF='copilot:gpt-5.3-codex:high,claude:fable:high' run_oversee -- launch --wait-secs 20
+}
+copilot_first_row
+assert_eq "$RC|$(keyed entry-harness-unhandled "$OUT" | sed -n 1p)|$(recorded harness)|$(recorded model)" \
+  "0|oversee: entry-harness-unhandled entry=copilot:gpt-5.3-codex:high harness=copilot|claude|fable" \
+  "a first launch skips a copilot entry and opens on the claude entry after it"
+tm kill-window -t "$(recorded window)"
+# Its control: a walk that takes the copilot entry never opens the claude
+# entry after it.
+COPILOTFIRSTCTL="$(mutant_scripts copilotfirstctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$COPILOTFIRSTCTL/lib/overseer-launch.sh" '      if [[ "$OL_HARNESS" == copilot ]]; then' '      if false; then'
+copilot_first_row "$COPILOTFIRSTCTL/oversee"
+assert_eq "$(keyed entry-harness-unhandled "$OUT" | sed -n 1p)|$(overseers)" "|0" \
+  "control: a first launch that takes the copilot entry opens no claude overseer"
+
 # The writer's control: a record write that leaves the launch identity out,
 # over a fleet with no prior record, records a session nothing says the
 # harness or model of.

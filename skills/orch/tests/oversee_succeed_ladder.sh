@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Tests for the model ladder oversee-succeed's successor walk takes: each
 # ORCH_OVERSEER_PREFERENCE entry names the model its successor runs, on
-# claude, codex, copilot or pi, the pick is judged on the bucket that walls
-# that model, the walk takes the setting's order and no other, and an unset
-# setting walks lib/overseer-launch.sh's default. Run over a real tmux server
-# on a private socket, as oversee_succeed.sh is; claude, codex, copilot and pi
-# are stubs on PATH, and `lanes pick` answers from the lanes-fixture usage
+# claude, codex or pi, and a copilot entry is skipped, the pick is judged on
+# the bucket that walls that model, the walk takes the setting's order and no
+# other, and an unset setting walks lib/overseer-launch.sh's default. Run over
+# a real tmux server on a private socket, as oversee_succeed.sh is; claude,
+# codex and pi are stubs on PATH, and `lanes pick` answers from the lanes-fixture usage
 # bodies. The
 # caller's own account is walled for the model it runs in every row, so every
 # row reaches the headroom mark, or is the wall recovery, and walks.
@@ -47,10 +47,9 @@ mkdir -p "$BIN" "$TMP_ROOT/work/tmp"
 # A harness stub records its lane and argv and draws the hint a running turn
 # shows, so the successor reads as working. A pi successor runs on claude's
 # account variable, the one the pi-claude bridge reads.
-for harness in claude codex copilot pi; do
+for harness in claude codex pi; do
   lane_var=CLAUDE_CONFIG_DIR
   [[ "$harness" != codex ]] || lane_var=CODEX_HOME
-  [[ "$harness" != copilot ]] || lane_var=COPILOT_HOME
   cat > "$BIN/$harness" <<STUB
 #!/bin/sh
 { printf 'lane=%s\n' "\${$lane_var:-}"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.$harness"
@@ -58,7 +57,7 @@ echo 'esc to interrupt'
 exec sleep 100000
 STUB
 done
-chmod +x "$BIN/claude" "$BIN/codex" "$BIN/copilot" "$BIN/pi"
+chmod +x "$BIN/claude" "$BIN/codex" "$BIN/pi"
 # A caller whose foreground process names claude: a copy of sleep, since a
 # script or a shell named for the harness can reset the name tmux reads.
 cp "$(command -v sleep)" "$BIN/hclaude"
@@ -319,24 +318,25 @@ order_row "$ORDERCTL/oversee-succeed"
 assert_eq "$RC|$(launched claude | awk '{print $2}')|$(launched codex)" "0|fable|none" \
   "control: a walk on a built-in order ignores the edited setting"
 
-# A copilot entry: `lanes` measures no Copilot CLI account, so the entry takes
-# no pick and opens with no account variable, on the model and effort it
-# names and the full-bypass word its own row writes for the claude caller's.
+# A copilot entry ahead of a claude entry with Fable room: nothing reads a
+# Copilot overseer's context or judges its handoff, so the walk skips the
+# copilot entry before its pick, says so, and opens on the claude entry.
 copilot_row() { # [SUCCEED_BIN]
   new_caller
-  SUCCEED_BIN="${1:-}" run_succeed "copilot${1:+ctl}" 'copilot:gpt-5.3-codex:high'
+  SUCCEED_BIN="${1:-}" run_succeed "copilot${1:+ctl}" 'copilot:gpt-5.3-codex:high,claude:fable:high'
 }
 copilot_row
-assert_eq "$RC|$(caller_open)|$(launched copilot)|$(grep -cx -e --reasoning-effort -e high -e "$(launch_choice_permission_write copilot)" "$TMP_ROOT/argv.copilot")" \
-  "0|no| gpt-5.3-codex|3" \
-  "a copilot entry opens on its model and effort with no lane"
-# Its control: a walk that asks `lanes` for a Copilot account refuses.
+assert_eq "$RC|$(keyed entry-harness-unhandled)|$(launched copilot)|$(launched claude)" \
+  "0|oversee-succeed: entry-harness-unhandled entry=copilot:gpt-5.3-codex:high harness=copilot|none|$H/.fclaude fable" \
+  "a copilot entry is skipped with entry-harness-unhandled and the next entry opens"
+# Its control: a walk that takes the copilot entry never reaches the claude
+# entry after it.
 COPILOTCTL="$(mutant_scripts copilotctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$COPILOTCTL/lib/overseer-launch.sh" \
-  '  [[ "${1:-}" != copilot ]] || { OL_ACCOUNT_HARNESS=none OL_ACCOUNT_MODEL=""; return 0; }' ''
+  '      if [[ "$OL_HARNESS" == copilot ]]; then' '      if false; then'
 copilot_row "$COPILOTCTL/oversee-succeed"
-assert_eq "$RC|$(first_key)|$(launched copilot)" "1|lanes-failed|none" \
-  "control: a walk that asks lanes for a Copilot account refuses the copilot entry"
+assert_eq "$(keyed entry-harness-unhandled)|$(launched claude)" "none|none" \
+  "control: a walk that takes the copilot entry never opens the claude entry after it"
 
 # A codex overseer under a permission posture no claude word matches, the
 # setting unset: the ladder's claude entries are skipped before their picks,

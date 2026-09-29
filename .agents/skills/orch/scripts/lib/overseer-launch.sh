@@ -107,13 +107,15 @@ ol_preference() {
 
 # ol_preference_entries VALUE — VALUE, ORCH_OVERSEER_PREFERENCE's
 # comma-separated `harness:model:effort` entries, into OL_ENTRIES, with
-# OL_NAMED the count. `harness` is claude, codex, copilot or pi; `model` is the
-# model the harness launches, as its own `--model` word takes it, and on pi
-# pi's own `provider/id`; `effort` is the level as that harness spells it, on
-# pi its thinking level. A model starts with a letter, so an entry naming no
-# model, an empty field or a bare number, is outside the shape. An entry
-# outside the shape returns 1 with it in OL_BAD_ENTRY. An empty VALUE is no
-# entries and no refusal.
+# OL_NAMED the count. `harness` is claude, codex, copilot or pi; `model` is
+# the model the harness's `--model` word takes, on pi its own `provider/id`;
+# `effort` is the level as that harness spells it, on pi its thinking level.
+# The characters each field may hold are the two patterns below, which
+# kendex.settings.toml.example § Fleet states for the operator: a model
+# starts with a letter, so an entry naming no model, an empty field or a bare
+# number, is outside the shape. An entry outside the shape returns 1 with it in OL_BAD_ENTRY. An
+# empty VALUE is no entries and no refusal. A copilot entry is in the shape
+# and ol_walk skips it.
 OL_ENTRIES=()
 OL_NAMED=0
 OL_BAD_ENTRY=""
@@ -145,15 +147,12 @@ ol_preference_entries() { # VALUE
 # into `none`, a model naming a provider `lanes` measures no account of, and
 # `unknown`, one naming no provider or no model at all, pi resolving a bare
 # model to a provider itself. A pi model's `:<thinking>` suffix is pi's level,
-# never the model. The model is empty for `none` and `unknown`. A copilot
-# session is `none` too: `lanes` measures no Copilot CLI account
-# (lib/lane-launch.sh § lane_env_prefix).
+# never the model. The model is empty for `none` and `unknown`.
 OL_ACCOUNT_HARNESS="" OL_ACCOUNT_MODEL=""
 ol_account() { # HARNESS MODEL
   local model="${2:-}"
   [[ "${1:-}" != pi ]] || model="${model%%:*}"
   OL_ACCOUNT_HARNESS="$(lane_pick_harness "${1:-}" "$model")" OL_ACCOUNT_MODEL="$model"
-  [[ "${1:-}" != copilot ]] || { OL_ACCOUNT_HARNESS=none OL_ACCOUNT_MODEL=""; return 0; }
   [[ "${1:-}" == pi ]] || return 0
   case "$OL_ACCOUNT_HARNESS" in
     claude) OL_ACCOUNT_MODEL="${model#pi-claude/}" ;;
@@ -239,9 +238,9 @@ ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
 # OL_WALKED_WALLED and OL_WALKED_UNMEASURED for the refusal a caller prints
 # when the walk ends empty; a record carrying neither leaves them alone.
 #
-# A launch spending no account `lanes` measures (ol_account's `none`), a
-# copilot launch or a pi model on a provider neither pi-claude nor the Copilot
-# pool, returns 0 with OL_PICKED_DIR empty: no account can be picked or
+# A launch spending no account `lanes` measures (ol_account's `none`), a pi
+# model on a provider neither pi-claude nor the Copilot pool, returns 0 with
+# OL_PICKED_DIR empty: no account can be picked or
 # refused for it, so it launches with no lane variable, and its first working
 # turn, which ol_session_verify waits for, is the one reading of its room. A pi
 # model naming no provider names no account to pick either, and returns 4.
@@ -282,9 +281,19 @@ ol_account_id() { # DIR
 # first that names a lane into OL_CHOSEN, with OL_HARNESS, OL_MODEL,
 # OL_EFFORT and OL_LANE_DIR beside it and OL_PICK_MODEL the model its pick was
 # judged on. A named entry's pick is judged on the bucket that walls the model
-# the entry names (ol_entry_model), the model its launch passes; ol_pick_lane picks at TRIGGER, leaving EXCLUDE_DIR out,
-# and its exit 3 skips the entry. An entry spending no account `lanes`
-# measures takes no pick and no lane (ol_pick_lane).
+# the entry names (ol_entry_model), the model its launch passes; ol_pick_lane
+# picks at TRIGGER, leaving EXCLUDE_DIR out, and its exit 3 skips the entry.
+# An entry spending no account `lanes` measures takes no pick and no lane
+# (ol_pick_lane).
+#
+# A copilot entry is skipped before its pick, with entry-harness-unhandled in
+# OL_WALK_SKIPS, on a first launch and a succession alike: `lanes` measures no
+# Copilot CLI account (lib/lane-launch.sh § lane_pick_harness), nothing here
+# reads a Copilot session's context, and its launch row names no switch that
+# turns Copilot compaction off, so a Copilot overseer would compact with no
+# handoff mark and could never hand over.
+# `oversee-succeed` refuses a Copilot caller for the same reason
+# (copilot-unmeasured).
 #
 # The entry `caller` is a predecessor's own, as OL_WALK_CALLER_* describe it:
 # its harness, its lane, the model and effort its record pairs, empty where
@@ -344,6 +353,10 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
       ol_entry_model "$entry"
       OL_HARNESS="$OL_ENTRY_HARNESS" OL_MODEL="$OL_ENTRY_MODEL" OL_EFFORT="$OL_ENTRY_EFFORT"
       OL_PICK_MODEL="$OL_ENTRY_MODEL"
+      if [[ "$OL_HARNESS" == copilot ]]; then
+        OL_WALK_SKIPS+=("entry-harness-unhandled${tab}entry=$entry${tab}harness=$OL_HARNESS")
+        continue
+      fi
       ol_entry_permitted "$entry" || continue
     fi
     rc=0
@@ -485,8 +498,10 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
 # open-terminal's pi lane brief does. The account variable is
 # lib/lane-launch.sh § lane_env_prefix's for the harness and the model FLAG...
 # names: pi's is claude's, which the pi-claude bridge reads, and
-# PI_CODING_AGENT_DIR on the Copilot pool. An empty LANE_DIR, a pi model on a
-# provider no lane measures (ol_pick_lane), launches the command bare.
+# PI_CODING_AGENT_DIR on the Copilot pool. An empty LANE_DIR, which ol_walk
+# hands on for a pi model on a provider no lane measures (ol_pick_lane),
+# launches the command bare; the walk skips every copilot entry before its
+# pick, so none arrives here.
 #
 # A codex session reads folder trust for LAUNCH_DIR before it reads its own
 # arguments, and the pane it opens in has nobody at it, so the entry is made

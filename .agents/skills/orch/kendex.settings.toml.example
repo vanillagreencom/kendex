@@ -264,12 +264,22 @@ ORCH_EXTERNAL_TRIAGE = "on"
 
 # The models a new or replacement overseer tries, in order. Each entry is
 # harness:model:effort, separated by commas. The harness is claude, codex,
-# copilot or pi. The model is the one that harness launches; on pi it is
-# provider/model, for example pi:github-copilot/claude-opus-5.5:high. The
-# effort is the level as that harness spells it; on pi it is the thinking
-# level. An entry that names no model stops the launch. The first entry with
-# allowance left wins. Change the order here when models change; no code
-# holds another order. Empty names no entries.
+# copilot or pi. The model is the name that harness's --model takes, in
+# lowercase letters, digits, dots and hyphens, starting with a letter. On pi
+# it is provider/model, for example pi:github-copilot/claude-opus-5.5:high:
+# the provider in those same characters, the model in lowercase letters,
+# digits, dots, underscores, hyphens and slashes, starting with a letter or
+# digit. The effort is lowercase letters, the level as that harness spells
+# it; on pi it is the thinking level. An entry that names no model stops the
+# launch. A tier rank is no model: write the model the rank named, so
+# claude:1:high becomes claude:fable:high. The model name is not checked
+# before launch, so a misspelled codex or pi model opens the new overseer on
+# that name. The walk takes the first entry whose account has allowance left.
+# It takes a pi entry on a provider no account measures when it reaches it,
+# with nothing to check. It always skips a copilot entry: nothing reads a
+# Copilot overseer's context, so it could never hand over. Change the order
+# here when models change; no code holds another order. Empty names no
+# entries.
 # ORCH_OVERSEER_PREFERENCE = "claude:fable:high,claude:claude-opus-5-5:high,codex:gpt-6-astra:high,codex:gpt-5.6-sol:high"
 
 # Minutes before the projected account wall that starts overseer succession.
