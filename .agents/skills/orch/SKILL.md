@@ -96,7 +96,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `dev-artifact-check` | Validate a dev round's completion artifact by round id |
 | `round-prune` | At a dev round's start, prune the item worktree's build output under its own lease when the disk is at or past `ORCH_ROUND_PRUNE_DISK_PCT`, recording the bytes in `round_prunes` |
 | `round-recover` | Close a stalled dev round from the idle agent's transcript: write the report as the artifact, or mint one re-delegation's round id |
-| `dev-validate-run` | Run `DEV_VALIDATE_CMD`, or with `--validate-mode range --base REF` `DEV_VALIDATE_RANGE_CMD`, detached under `DEV_VALIDATE_TIMEOUT_SECS`, with the change class as `DEV_VALIDATE_CLASS`, and leave its verdict on disk as one `guard-exit=N` sentinel; `--wait --run-dir` polls that run, exit 3 meaning poll again; `--record --run-dir` prints its mode, its verdict, the HEAD and time it started at, any base a rebase left off the branch and, once it has one, its wall time; `--resolve-mode --worktree` prints the mode a range run there records. Where a systemd user manager answers, the run is a transient user unit ([references/job-units.md](references/job-units.md)), so no process it started outlives it; elsewhere its process group is killed once the verdict lands. `--stop --worktree` ends the runs that worktree's run records name with no verdict, and `lane-close` calls it for a local lane. The route every harness validates through |
+| `dev-validate-run` | Run `DEV_VALIDATE_CMD`, or with `--validate-mode range --base REF` `DEV_VALIDATE_RANGE_CMD`, detached under `DEV_VALIDATE_TIMEOUT_SECS`, with the change class as `DEV_VALIDATE_CLASS`, and leave its verdict on disk as one `guard-exit=N` sentinel; `--wait --run-dir` polls that run, exit 3 meaning poll again; `--record --run-dir` prints its mode, its verdict, the HEAD and time it started at, any base a rebase left off the branch and, once it has one, its wall time; `--resolve-mode --worktree` prints the mode a range run there records. `--stop --worktree` ends the runs that worktree's run records name with no verdict, and `lane-close` calls it for a local lane. The route every harness validates through |
 | `item-tier` | Assign an item's tier, `micro`, `small` or `standard`, from the launch estimate, its Location paths, the classifier's class of its branch and the review gate's class policy; the widest input wins. `--help` |
 | `branch-size-check` | Report added production, test and render-mirror lines against the issue's optional `**Expected delta**`. Size never refuses; malformed allowance text exits 3. `--help` |
 | `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the effective gate mode |
@@ -144,7 +144,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; `.env.
 
 ## Skill Rules
 
-Delegation, agent lifecycle, round closure, coordination, and lane output: [references/skill-rules.md](references/skill-rules.md).
+Delegation, agent lifecycle, round closure, coordination, and lane output: [references/skill-rules.md](references/skill-rules.md). A design, an item brief or research on another system is held to [code-quality § Over-Engineering](../code-quality/SKILL.md#over-engineering).
 
 ### Workflow Execution
 
