@@ -36,6 +36,18 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reas
 # SECOND_OPINION_PI_DEEPSEEK_CMD = "pi -p --model deepseek/deepseek-v4-pro"
 # SECOND_OPINION_PI_DEEPSEEK_MODEL = "deepseek"
 
+# A reviewer can be checked for room on the account it spends before it is
+# asked. The check exits 0 when there is room and prints the account's
+# NAME=value env prefix, which the reviewer then runs under; any other exit
+# skips the reviewer for the next one. With the orch skill installed, its
+# lanes pick is that check: this pair reviews through Pi on the Copilot pool
+# while the Codex seats are walled, and codex again once its seat has room.
+# SECOND_OPINION_MODELS = "claude codex pi-copilot"
+# SECOND_OPINION_CODEX_ROOM_CMD = ".agents/skills/orch/scripts/lanes pick --harness codex --model gpt-6-astra --binding-floor"
+# SECOND_OPINION_PI_COPILOT_CMD = "pi -p --no-session --no-extensions --model github-copilot/gpt-6-astra --thinking xhigh --tools read,grep,find,ls"
+# SECOND_OPINION_PI_COPILOT_MODEL = "gpt-6-astra"
+# SECOND_OPINION_PI_COPILOT_ROOM_CMD = ".agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/gpt-6-astra"
+
 # Seconds to wait for a reviewer to answer before giving up on it.
 SECOND_OPINION_TIMEOUT = "1080"
 

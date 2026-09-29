@@ -1273,6 +1273,7 @@
   ".agents/skills/second-opinion/tests/response-gate.test.sh",
   ".agents/skills/second-opinion/tests/review-prompt.test.sh",
   ".agents/skills/second-opinion/tests/review-union.test.sh",
+  ".agents/skills/second-opinion/tests/room-check.test.sh",
   ".agents/skills/second-opinion/tests/startup.test.sh",
   ".agents/skills/second-opinion/tests/target-selection.test.sh",
   ".agents/skills/second-opinion/tests/timeout-defaults.test.sh",

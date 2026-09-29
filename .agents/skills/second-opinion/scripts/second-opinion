@@ -15,6 +15,7 @@
 #   SECOND_OPINION_<NAME>_MODEL  Declared model identity of target <NAME> (default: <NAME>;
 #                                pi/opencode/cursor/copilot have none and are skipped until it is set)
 #   SECOND_OPINION_<NAME>_CMD    Full command for target <NAME> (claude/codex have defaults)
+#   SECOND_OPINION_<NAME>_ROOM_CMD  Room check for target <NAME>'s account (default: none)
 #   SECOND_OPINION_TARGET        Force one target (still subject to self-exclusion)
 #   SECOND_OPINION_TIMEOUT       Timeout in seconds (default: 1080)
 #   SECOND_OPINION_FOREGROUND_CAP  Set to 1 instead of passing --foreground
@@ -90,8 +91,10 @@ Options:
   -h, --help        Show this help
 With --foreground, run the printed wait command and follow Exit codes below until terminal.
 Target selection: every mode walks SECOND_OPINION_MODELS in order and takes the
-first target that is available AND runs a different model from this session —
-the model this session runs is never dispatched to, in any mode, forced or not.
+first target that is available AND runs a different model from this session,
+AND whose account has room by its SECOND_OPINION_<NAME>_ROOM_CMD where it has
+one — the model this session runs is never dispatched to, in any mode, forced
+or not.
 When no eligible target remains the run refuses (exit 1) and says why.
 Review mode collects up to SECOND_OPINION_COUNT opinions (default 1; a
 shortfall is stated and stamped as degraded coverage); with 2 or more,
@@ -140,6 +143,19 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              CLI documents no headless mode that is read-only,
                              so SECOND_OPINION_COPILOT_CMD names a command you
                              have checked cannot write
+  SECOND_OPINION_<NAME>_ROOM_CMD
+                             Whether the account target <NAME> spends has
+                             room now (default: none, no check). Run from the
+                             project root with stdin closed, after every other
+                             check passed. Exit 0 is room, and each stdout line
+                             is a NAME=value assignment the target command
+                             runs under, the account it judged: the env prefix
+                             `lanes pick` prints (orch skill). Any other exit,
+                             or a stdout line that is no assignment, skips the
+                             target with its reason, and the walk goes on to
+                             the next entry, so a walled target is passed over
+                             for one whose account has room and is taken
+                             again once its check reads room
   SECOND_OPINION_TARGET      Force one target; still subject to self-exclusion
   SECOND_OPINION_TIMEOUT     Timeout in seconds (default: 1080), per
                              invocation: review/audit's one retry on a
@@ -995,10 +1011,46 @@ target_available() {
   command -v "$1" >/dev/null 2>&1
 }
 
+# Whether the account a target spends has room, by its
+# SECOND_OPINION_<NAME>_ROOM_CMD; a target with none has no check. Exit 0 is
+# room, and the stdout lines are the NAME=value env prefix naming the account
+# the command judged, which ROOM_ENV carries to the target command: `lanes pick`
+# prints exactly that, and `lanes pick --json` prints a record, which is
+# refused rather than exported. Any other exit is no room, walled and
+# unmeasured alike; the command's own stderr, passed through, says which. Run
+# from the project root, where a relative path in its settings file resolves,
+# with stdin closed: the roster walk reads its remaining entries from stdin, and
+# under a forced target it is the caller's, where a prompt may still wait.
+ROOM_ENV=""
+target_room() {
+  local t="$1" var cmd out rc=0 line shown=""
+  ROOM_ENV=""
+  var="$(target_var "$t" ROOM_CMD)"
+  cmd="${!var:-}"
+  [[ -n "$cmd" ]] || return 0
+  # shellcheck disable=SC2086
+  out="$(cd -- "${PROJECT_ROOT:-.}" && $cmd </dev/null)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    skip_target "$t" "no room — $var exited $rc; its own reason is on stderr above"
+    return 1
+  fi
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if [[ ! "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+      skip_target "$t" "room check printed a line that is no NAME=value assignment: $line — $var prints the env prefix of the account it judged and nothing else"
+      return 1
+    fi
+    ROOM_ENV="$ROOM_ENV$line"$'\n'
+    shown="${shown:+$shown }$line"
+  done <<<"$out"
+  echo "→ room: $t has room by $var${shown:+; runs under $shown}" >&2
+}
+
 # --- Target selection ---------------------------------------------------------
 # One path for every mode. The roster SECOND_OPINION_MODELS is walked in
-# priority order and a target is taken when it is available and its declared
-# model differs from this session's — the model this session runs is never
+# priority order and a target is taken when it is available, its declared
+# model differs from this session's and its room check, if any, reads room —
+# the model this session runs is never
 # dispatched to, and multi-lane cannot bypass that because it is the same walk
 # taken further: review mode takes up to SECOND_OPINION_COUNT distinct models
 # (default 1), every other mode exactly one. A forced target (--target /
@@ -1023,6 +1075,9 @@ resolve_current_model
 
 REVIEW_LANES=()
 SELECTED_MODELS=()
+# Per selected lane, the env prefix its room check printed, one NAME=value per
+# line; empty for a target with no room check.
+LANE_ENVS=()
 # Env-var namespaces already considered: `my-model` and `my_model` are distinct
 # names but one SECOND_OPINION_MY_MODEL_* configuration, so the second is the
 # first again.
@@ -1093,8 +1148,12 @@ consider_target() {
     skip_target "$t" "CLI not found — install it or configure $(target_cmd_var "$t")"
     return 1
   fi
+  # Last, so a target already passed over for identity or configuration never
+  # spends a room check.
+  target_room "$t" || return 1
   REVIEW_LANES+=("$t")
   SELECTED_MODELS+=("$model")
+  LANE_ENVS+=("$ROOM_ENV")
   return 0
 }
 
@@ -1252,11 +1311,13 @@ if [[ "$MODE" == "detect" ]]; then
 fi
 
 TARGET_CLI=""
+TARGET_CLI_ENV=""
 MULTI_LANE=false
 if [[ ${#REVIEW_LANES[@]} -ge 2 ]]; then
   MULTI_LANE=true
 else
   TARGET_CLI="${REVIEW_LANES[0]}"
+  TARGET_CLI_ENV="${LANE_ENVS[0]}"
 fi
 
 # Validate CWD, then canonicalize it to an ABSOLUTE path. --cwd is caller input
@@ -2323,7 +2384,9 @@ RESULT=""
 EXIT_CODE=0
 
 # Invoke the resolved target CLI with a prompt file on stdin. The command line
-# comes from target_cmd (env override or built-in default). Echoes the CLI's
+# comes from target_cmd (env override or built-in default) and runs under the
+# env prefix its room check printed, the account it judged to have room.
+# Echoes the CLI's
 # stdout on our stdout and returns its exit code (124 on timeout). Reused for
 # the retry on JSON-extraction failure, so it stays side-effect-free beyond
 # writing the CLI's stderr to STDERR_TMP.
@@ -2336,7 +2399,13 @@ run_target_cli() {
     return 2
   fi
   # shellcheck disable=SC2086
-  (cd -- "$CWD" && run_with_timeout "$TIMEOUT" "$STDERR_TMP" $cmd < "$prompt_file") || rc=$?
+  (
+    cd -- "$CWD" || exit
+    while IFS= read -r assignment; do
+      [[ -z "$assignment" ]] || export "${assignment?}"
+    done <<<"$TARGET_CLI_ENV"
+    run_with_timeout "$TIMEOUT" "$STDERR_TMP" $cmd < "$prompt_file"
+  ) || rc=$?
   return "$rc"
 }
 
