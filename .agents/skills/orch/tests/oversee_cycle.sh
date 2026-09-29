@@ -307,10 +307,11 @@ new_case no-launch
 printf small > "$CASE/class"
 timeline 1100
 edit_json "$CASE/state/workflow-state-oversee.json" '(.lanes[] | select(.item == "KEN-1")).launched_at = null'
+edit_json "$CASE/timeline.json" '.stamps.first_commit = null'
 got="$(record KEN-1 standard)"
 assert_eq "$(field verdict "$got") $(field actual "$got") $(field open "$got") $(field phase "$got") $(field missing "$got")" \
-  "verdict=met actual=- open=980 phase=merged missing=launched" \
-  "a lane with no launch stamp has no actual, and its open span is still judged and names its phase"
+  "verdict=met actual=- open=980 phase=merged missing=launched,first_commit" \
+  "a lane with no launch or first-commit stamp has no actual, and its open span is still judged and names its phase"
 
 new_case no-open
 printf small > "$CASE/class"
@@ -417,8 +418,9 @@ assert_eq "$(state '[.lanes[] | has("cycle")] | any')" "false" "and no refusal w
 # conjunct has a row it alone decides, and a control below that plants its
 # removal against that row.
 #   m   a miss at 5000 s, its longest gap ending at merged
-#   p   a miss whose first commit at 2400 s is the lane's longest gap, before
-#       the PR opens at 2460 s; the longest gap after it ends at gate_green
+#   p   a miss whose longest gap is 1860 s from first commit at 600 s to the
+#       PR opening at 2460 s; the longest gap after the PR opens ends at
+#       gate_green
 #   n   a miss with CI green absent, so no phase is named
 #   ok  a met record at 800 s, its phase merged too
 #   g   a miss on gate_green whose longest wait is the thread fix
@@ -433,7 +435,7 @@ repeat_row() { # CASE SEQUENCE — prints the bar lines the last record printed
     case "$kind" in
       m) timeline 5000 ;;
       p) timeline 4360
-         edit_json "$CASE/timeline.json" ".stamps |= (.first_commit = \"$(at 2400)\" | .created = \"$(at 2460)\"
+         edit_json "$CASE/timeline.json" ".stamps |= (.first_commit = \"$(at 600)\" | .created = \"$(at 2460)\"
            | .gate_met = \"$(at 3400)\" | .ci_green = \"$(at 3700)\" | .armed = \"$(at 3800)\")" ;;
       n) timeline 5000; edit_json "$CASE/timeline.json" '.stamps.ci_green = null' ;;
       ok) timeline 800 ;;
@@ -524,8 +526,8 @@ assert_eq "$(field verdict "$(record KEN-1 micro)")" "verdict=miss" \
   "control: judged on launch to merge, a slow launch to PR opened records a miss"
 
 control m-phase oversee-cycle 'select(.key | IN("launched", "first_commit") | not)' 'select(true)'
-assert_eq "$(repeat_row c-phase "p:1 p:2 p:3")" "repeat-miss phase=first_commit items=KEN-1,KEN-2,KEN-3 causes=-,-,-" \
-  "control: read over the whole lane, a miss is charged to launch to first commit"
+assert_eq "$(repeat_row c-phase "p:1 p:2 p:3")" "repeat-miss phase=pr_opened items=KEN-1,KEN-2,KEN-3 causes=-,-,-" \
+  "control: read over the whole lane, a miss is charged to first commit to PR opened"
 
 control m-rollup oversee-cycle '| if $n == 0 then "-" else $a[(($n * $p) | ceil) - 1] end;' '| if $n == 0 then "-" else $a[(($n * $p) | floor) - 1] end;'
 new_case c-rollup
