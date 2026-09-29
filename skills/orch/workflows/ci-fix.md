@@ -148,22 +148,16 @@ Report findings for a user decision.
 Re-confirm the review gate at the new head **before** waiting on CI, on every repo with no repo detection. Either wait exiting `5` with `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [STATE_KEY]`, act on what it prints, then re-run the same wait.
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefOid,headRefOid --jq '[.baseRefOid,.headRefOid]|@tsv'
+.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
 ```
 
-Those are `[BASE_SHA]` and `[HEAD_SHA]`:
-
-```bash
-.agents/skills/orch/scripts/approval-wait --resolve-mode --base [BASE_SHA] --head [HEAD_SHA]
-```
-
-`exempt` and `off` skip to the CI wait; a non-zero exit is no mode, so report it and stop. Otherwise run the short exact-head re-confirmation:
+`off` skips to the CI wait; a non-zero exit is no mode, so report it and stop. Otherwise run the short exact-head re-confirmation:
 
 ```bash
 .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE] --item [STATE_KEY]
 ```
 
-- `approved` / `reviewed` / `proceeded` → wait for CI. `proceeded` is returned to the caller, not persisted here; it is a LOCAL verdict — orch posts no status.
+- `approved` / `proceeded` → wait for CI. `proceeded` is returned to the caller, not persisted here; it is a LOCAL verdict — orch posts no status.
 - `comments` / `changes_requested` → new feedback on the fix push. Managed: return it to the caller's review-gate handling. Standalone: run that triage pass, then re-run this step.
 - `unreviewable` → this PR's base draws no automatic review ([references/gates.md](../references/gates.md) § Stacked pull requests). Request one with `gh pr edit [PR_NUMBER] --add-reviewer @copilot` and re-run this step once. If it repeats, `auto-recommended` records `ci-gate-unreviewable`; under `ask`, hand back the unconfirmed gate. Never treat it as a met gate.
 - `timeout` → no exact-head evidence yet; a missing or red CI run here is not a fix failure. Re-run this step once. If it repeats, `auto-recommended` records `ci-gate-unconfirmed`; under `ask`, hand back the unconfirmed gate.
@@ -232,4 +226,4 @@ Under `ask`, present `Run ci-fix again` | `Stop`; continuation clears the stop.
 
 ## 6. Return
 
-**Managed**: return to the parent workflow's next section with the `GATE_MODE` § 5 resolved at the new head. That head's mode is the caller's from here: the class a policy waives belongs to one head, and a push can change it. **Standalone**: return `.post_pr_stop` when present; otherwise the CI-fix session is complete.
+**Managed**: return to the parent workflow's next section with the `GATE_MODE` § 5 resolved at the new head. That mode is the caller's from here. **Standalone**: return `.post_pr_stop` when present; otherwise the CI-fix session is complete.

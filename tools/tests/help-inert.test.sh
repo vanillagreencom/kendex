@@ -164,7 +164,7 @@ linear	scripts/linear.sh	Linear Cache Query	cache cycles list --type --help	comm
 orch	scripts/approval-wait	Usage: approval-wait	--help
 orch	scripts/approval-wait	Usage: approval-wait	-h
 orch	scripts/approval-wait	Usage: approval-wait	help
-orch	scripts/approval-wait	Usage: approval-wait	123 --mode review -h
+orch	scripts/approval-wait	Usage: approval-wait	123 --mode approval -h
 orch	scripts/lanes	lanes list [--harness claude|codex|copilot|all]	-
 orch	scripts/lanes	lanes list [--harness claude|codex|copilot|all]	--help
 orch	scripts/lanes	lanes list [--harness claude|codex|copilot|all]	-h

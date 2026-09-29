@@ -163,7 +163,7 @@ Sub-issues (tree):
 | PR comment fixes | [PR_FIXES] |
 | PR comment issues | [PR_ISSUES] |
 | CI | ✅ passing |
-| Review gate | ✅ approved / ✅ reviewed / ⏳ pending / forced / off (no reviewer policy) |
+| Review gate | ✅ approved / ⏳ pending / forced / off (the base requires no approval) |
 | Unresolved threads | 0 |
 | Stop | [POST_PR_STOP name: gate; remaining] |
 

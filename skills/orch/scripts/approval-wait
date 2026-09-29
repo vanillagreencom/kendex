@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Wait for the reviewer-gate verdict on a PR, or print the project's
-# effective gate mode with --resolve-mode. The authoritative contract —
-# modes, mode resolution, settings, JSON output, auth, exit codes — is
-# print_usage below: run with --help.
-# --resolve-mode stdout is the approval|review|exempt|off enum consumed by
-# submit-pr, merge-pr and ci-fix. --json stdout is the result object consumed
-# by their gate routing.
+# Wait for the reviewer-gate verdict on a PR, or print the gate mode its base
+# branch's rules set with --resolve-mode. The authoritative contract — modes,
+# mode resolution, settings, JSON output, auth, exit codes — is print_usage
+# below: run with --help.
+# --resolve-mode stdout is the approval|off enum consumed by submit-pr,
+# merge-pr and ci-fix. --json stdout is the result object consumed by their
+# gate routing.
 # The error field contains a diagnostic key/value first line and English below.
 set -euo pipefail
 
@@ -34,25 +34,17 @@ approval_message() {
       printf 'approval-wait: pr-view-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
       printf '%s\n' "gh pr view failed for PR #$PR_NUM in $REPO"
       ;;
-    reviews-failed)
-      printf 'approval-wait: reviews-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
-      printf '%s\n' "review listing failed for PR #$PR_NUM in $REPO"
-      ;;
     author-failed)
       printf 'approval-wait: author-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
       printf '%s\n' "could not resolve the author login of PR #$PR_NUM in $REPO"
       ;;
-    review-comments-failed)
-      printf 'approval-wait: review-comments-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
-      printf '%s\n' "review-comment listing failed for PR #$PR_NUM in $REPO"
+    base-unreadable)
+      printf 'approval-wait: base-unreadable pr=%s repo=%s\n' "$PR_NUM" "$REPO"
+      printf '%s\n' "approval-wait: could not read the base branch of PR #$PR_NUM in $REPO, so no gate mode is available"
       ;;
-    checks-failed)
-      printf 'approval-wait: checks-failed commit=%s repo=%s\n' "$last_head_sha" "$REPO"
-      printf '%s\n' "check-run listing failed for commit $last_head_sha in $REPO"
-      ;;
-    statuses-failed)
-      printf 'approval-wait: statuses-failed commit=%s repo=%s\n' "$last_head_sha" "$REPO"
-      printf '%s\n' "commit-status listing failed for commit $last_head_sha in $REPO"
+    rules-unreadable)
+      printf 'approval-wait: rules-unreadable branch=%q repo=%s\n' "$RULES_BRANCH" "$REPO"
+      printf '%s\n' "approval-wait: could not read the rules GitHub applies to branch '$RULES_BRANCH' in $REPO, so no gate mode is available"
       ;;
     threads-failed)
       printf 'approval-wait: threads-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
@@ -80,15 +72,7 @@ approval_message() {
       ;;
     missing-mode)
       printf 'approval-wait: missing-mode option=%s\n' "--mode"
-      printf '%s\n' "approval-wait: --mode requires a value: approval or review"
-      ;;
-    missing-base)
-      printf 'approval-wait: missing-base option=%s\n' "--base"
-      printf '%s\n' "approval-wait: --base requires a value: the pull request's base commit"
-      ;;
-    missing-head)
-      printf 'approval-wait: missing-head option=%s\n' "--head"
-      printf '%s\n' "approval-wait: --head requires a value: the pull request's head commit"
+      printf '%s\n' "approval-wait: --mode requires a value: approval"
       ;;
     missing-item)
       printf 'approval-wait: missing-item option=%s\n' "--item"
@@ -98,46 +82,13 @@ approval_message() {
       printf 'approval-wait: missing-timeout option=%s\n' "--on-timeout"
       printf '%s\n' "approval-wait: --on-timeout requires a value: block or proceed"
       ;;
-    policy-config)
-      printf 'approval-wait: policy-config setting=%s\n' "REVIEW_GATE_CLASS_POLICY"
-      printf '%s\n' "approval-wait: the review-gate class policy owner could not report its configuration (see error above)"
-      ;;
-    policy-fetch)
-      printf 'approval-wait: policy-fetch remote=%s\n' "origin"
-      printf '%s\n' "approval-wait: the class-policy range is not in this checkout and the fetch of its two commits from origin failed:"
-      printf '%s\n' "$POLICY_FETCH_ERR"
-      ;;
-    policy-unreadable-range)
-      printf 'approval-wait: policy-unreadable-range range=%q\n' "$POLICY_REJECTED"
-      printf '%s\n' "approval-wait: '$POLICY_REJECTED' is not readable in this checkout — an end is missing, or the two share no ancestor — so no change class can be measured and no mode is available"
-      ;;
-    policy-range)
-      printf 'approval-wait: policy-range options=%s\n' "--base,--head"
-      printf '%s\n' "approval-wait: REVIEW_GATE_CLASS_POLICY is active, so the mode is per pull request: pass --base and --head. No range, no guess."
-      ;;
-    policy-resolve)
-      printf 'approval-wait: policy-resolve range=%q\n' "$POLICY_REJECTED"
-      printf '%s\n' "approval-wait: the review-gate class policy owner could not resolve '$POLICY_REJECTED' (see error above)"
-      ;;
-    policy-protocol)
-      printf 'approval-wait: policy-protocol record=%q\n' "$POLICY_REJECTED"
-      printf '%s\n' "approval-wait: the review-gate class policy owner returned a record this caller cannot read: '$POLICY_REJECTED'"
-      ;;
-    mode-resolution)
-      printf 'approval-wait: mode-resolution setting=%s\n' "REVIEW_GATE_MODE"
-      printf '%s\n' "approval-wait: REVIEW_GATE_MODE could not be resolved through the review-gate settings lib (see error above)"
-      ;;
-    gate-fallback)
-      printf 'approval-wait: gate-fallback value=%q fallback=%s\n' "$mode" "approval"
-      printf '%s\n' "approval-wait: unrecognized PR_REVIEW_GATE value '$mode'; using approval"
-      ;;
     invalid-mode)
       printf 'approval-wait: invalid-mode value=%q\n' "$MODE"
-      printf '%s\n' "approval-wait: invalid --mode '$MODE' (expected approval or review)"
+      printf '%s\n' "approval-wait: invalid --mode '$MODE' (expected approval)"
       ;;
     gate-off)
-      printf 'approval-wait: gate-off mode=%s\n' "$MODE"
-      printf '%s\n' "approval-wait: the reviewer gate does not apply in mode '$MODE'; no verdict is available to wait for"
+      printf 'approval-wait: gate-off mode=%s branch=%q\n' "$MODE" "$RULES_BRANCH"
+      printf '%s\n' "approval-wait: the rules on branch '$RULES_BRANCH' require no approval, so no verdict is available to wait for"
       ;;
     timeout-fallback)
       printf 'approval-wait: timeout-fallback value=%q fallback=%s\n' "$ON_TIMEOUT" "block"
@@ -170,8 +121,9 @@ source "$SCRIPT_DIR/lib/lane-mail-nap.sh"
 # name, never in REPO, so no consumer reads it as one that resolved.
 REPO=""
 REPO_REJECTED=""
-POLICY_REJECTED=""
-POLICY_FETCH_ERR=""
+# The base branch whose rules the mode resolution reads, named in its
+# diagnostics.
+RULES_BRANCH=""
 # shellcheck source=lib/review-threads.sh
 source "$SCRIPT_DIR/lib/review-threads.sh"
 
@@ -179,9 +131,9 @@ print_usage() {
   printf 'approval-wait: usage command=%s\n' 'approval-wait'
   cat <<'USAGE'
 Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json]
-                     [--mode approval|review] [--on-timeout block|proceed]
+                     [--mode approval] [--on-timeout block|proceed]
                      [--item ID]
-       approval-wait --resolve-mode [--base REF --head REF]
+       approval-wait <PR#> --resolve-mode
 
 Wait for the reviewer-gate verdict on a PR. Every exit path but 5 emits a final
 result on stdout: a stable status line with English below, or a JSON object
@@ -195,119 +147,42 @@ vs proceeded deterministically (kendex#538, kendex#642).
                  below; default 900) — the per-repo review quiet-period
                  knob; an explicit positional always wins
   --json         emit the machine-readable result object on stdout
-  --mode         approval | review; overrides the resolved project mode
+  --mode         approval; skips the mode resolution below
   --on-timeout   block | proceed — overrides the PR_REVIEW_ON_TIMEOUT
                  setting
   --item ID      the lane whose new mail exits 5; no mail check without it
-  --resolve-mode print the effective reviewer-gate mode
-                 (approval | review | exempt | off) and exit — see Mode
-                 resolution
-  --base REF     the pull request's base commit, and
-  --head REF     its head commit — the range an ACTIVE review-gate class
-                 policy needs to answer per pull request. Required with such
-                 a policy, ignored without one
+  --resolve-mode print the gate mode the PR's base branch sets
+                 (approval | off) and exit — see Mode resolution
 
-Modes:
-
-approval — GitHub-native approval detection ONLY, on either signal:
-  - reviewDecision == "APPROVED" (branch-protection aggregate), or
-  - when reviewDecision is empty/null (no required-review protection):
-    at least one reviewer whose LATEST review is APPROVED and no reviewer
-    whose latest review is CHANGES_REQUESTED.
+Approval mode reads GitHub-native review state ONLY, on either signal:
+  - reviewDecision == "APPROVED" (the aggregate the base's approval rule
+    computes), or
+  - when reviewDecision is empty/null: at least one reviewer whose LATEST
+    review is APPROVED and no reviewer whose latest review is
+    CHANGES_REQUESTED.
   Any reviewer counts — human or bot — as long as it posts a formal GitHub
   review. Emoji reactions, sticky comments, and checklist prose are never
   parsed. A reviewDecision of REVIEW_REQUIRED never falls back to
-  latestReviews: branch protection is still waiting on required approvals.
+  latestReviews: the rule is still waiting on required approvals.
+  An unresolved review thread holds the verdict at "comments", approval or
+  not: the base's rule refuses the merge while any thread stands open, so
+  the caller triages it first. A CHANGES_REQUESTED without an approval
+  reports "changes_requested" ahead of the thread count.
 
-review — for repos whose reviewers post COMMENTED reviews and never
-  approve (kendex#642). Succeeds (status "reviewed") when ALL of:
-  - review evidence for the CURRENT head commit, either:
-      (a) a submitted review pinned to the head (REST commit_id ==
-          headRefOid), not DISMISSED/PENDING, not the PR author's own, and
-          either a formal verdict (APPROVED or CHANGES_REQUESTED, whatever
-          its body, so an Approve with no comment counts) or a COMMENTED
-          review carrying content of its own — a body, or a review comment
-          that opens a thread rather than answering one. A COMMENTED review
-          whose only content is thread replies is engagement, not evidence:
-          the wait keeps waiting on it, and the proceed-on-timeout degrade
-          below still treats the head as one a reviewer engaged. Judging a
-          bodyless COMMENTED review reads the review-comment listing; a
-          transient failure of that read retries inside the wait budget,
-          and a terminal one ends the wait (review-comments-failed, exit 1).
-          review-gate's review-predicate.sh applies the same content rule;
-          or
-      (b) PR_REVIEW_CHECK is non-empty and the current head carries a
-          successful signal of exactly that name on EITHER evidence
-          surface (kendex#654, kendex#681): the newest check-run with that
-          name concluding "success", or — consulted only when no check-run
-          matched — the head's combined commit status carrying a context
-          of that name at state "success". Some review bots publish commit
-          STATUSES (statuses API), not check-runs, so both surfaces are
-          matched;
-  - no non-author reviewer's latest submitted review stands at
-    CHANGES_REQUESTED (dismissal or a newer review clears it);
-  - zero unresolved review threads.
-  The head SHA is re-read every poll, so a force-push resets the wait: a
-  review of a superseded commit never satisfies the gate, and check-runs
-  and commit statuses are only ever queried on the current head.
-
-Both modes return early (status "comments") when unresolved review threads
-exist without the mode's verdict, so callers can triage new comments
-instead of idling out the full timeout.
-
-Mode resolution: a wait without --mode uses the same resolver as
---resolve-mode, which prints the effective mode and exits without auth or
-a PR argument. A default wait exits 2 with a diagnostic if resolution fails
-or returns off or exempt. An explicit --mode overrides resolution.
-Deciding FIRST is the review-gate skill's CLASS POLICY, the per-pull-request
-question, through its own scripts/review-policy — the single owner of the
-class-to-policy mapping. Orch never classifies a change and never maps a
-class itself. Without that script the policy is inactive. With it,
---check-config says active or inactive; an active policy needs --base and
---head and exits 2 without them, since the answer belongs to one pull
-request and no range can be guessed. An ACTIVE class policy is therefore the
-one path here that TOUCHES THE NETWORK: both endpoints have to be commits
-this checkout holds, so a missing one is fetched from origin by SHA before
-the owner is asked, and an endpoint still missing after that exits 2 rather
-than let a class be reported for a diff nothing read. The owner's live record decides:
-review_evidence=none prints "exempt" — this change needs no review evidence
-and no thread wait, so every caller skips the wait and records the gate
-not-applicable; review_evidence=required keeps the reviewer keys
-authoritative even where REVIEW_GATE_MODE says off; review_evidence=current
-leaves the chain below untouched. Any other record, or an owner that cannot
-answer, exits 2.
-Deciding after it, though read before it so a malformed settings file is
-reported against the key that is malformed, is REVIEW_GATE_MODE, the
-ENGINE's per-repo gate disable, read through the review-gate engine's own
-resolver (rg_setting) when that skill is installed: set-even-empty process
-env, then the COMMITTED kendex.settings.toml (REVIEW_GATE_SETTINGS_FILE
-consults only itself, /dev/null means defaults only), else "enforce"; a
-malformed or duplicate assignment fails loud (exit 2). The engine skips
-dotenv and the machine-local .kendex/settings.toml for this key (the
-PR_REVIEW_* keys keep the full ladder). Without the review-gate skill:
-set-even-empty process env, then the committed kendex.settings.toml via
-the generic loader (REVIEW_GATE_SETTINGS_FILE is not consulted; a refused
-load exits 1). Exactly "off" prints "off"; any other
-value leaves the reviewer keys authoritative. Then PR_REVIEW_GATE
-(approval|review|off) when set; otherwise the legacy PR_APPROVAL_GATE maps
-on -> approval and off -> off; both unset defaults to approval. An
-unrecognized PR_REVIEW_GATE value warns on stderr and resolves to
-approval. PR_REVIEW_GATE and
-the legacy key read with the full Settings ladder below.
-This is the single implementation of the derivation: callers read the mode
-only through it, and never auto-detect the mode from the
-requested-reviewer list. Mode "off" means a reviewer-less repo, mode
-"exempt" one change class an active policy waives — the caller skips the
-wait and records the gate not-applicable for both.
+Mode resolution: GitHub's approval rule decides. --resolve-mode, and a wait
+without --mode, read the PR's base branch (gh pr view --json baseRefName) and
+then every rule GitHub applies to that branch, organization rulesets included
+(repos/<repo>/rules/branches/<base>, every page). A base whose pull_request
+rules require at least one approval prints "approval"; a base with no
+pull_request rule, or one requiring 0, prints "off". A failed read of either,
+or a rule whose required_approving_review_count is not a whole number, is no
+mode: exit 2 with a diagnostic and nothing on stdout. A default wait whose
+base resolves off exits 2 as well (gate-off): there is no verdict to wait for.
+Callers read the mode only through this resolution, and never auto-detect it
+from the requested-reviewer list.
 
 Settings (orch-env ladder: parent env > .env.local > .kendex/settings.toml /
-  kendex.settings.toml [env] > default; REVIEW_GATE_MODE skips dotenv):
-  PR_REVIEW_GATE        approval | review | off — see Mode resolution
-                        (default approval)
-  PR_REVIEW_CHECK       exact name the trusted review bot publishes on
-                        analyzed heads (e.g. "Devin Review") — review-mode
-                        check evidence. Matched by name alone: name only a
-                        trusted publisher (default empty)
+  kendex.settings.toml [env] > default):
   PR_REVIEW_ON_TIMEOUT  block | proceed — see the timeout paragraph below
                         (default proceed)
   PR_REVIEW_WAIT_SECS   total review-wait budget in seconds, read only
@@ -321,13 +196,11 @@ caller prompts or keeps waiting; "proceed" instead reports a distinct
 override — CI and the comment-hygiene gate still apply, and a
 CHANGES_REQUESTED always blocks. Proceed fires ONLY on genuine reviewer
 silence: zero unresolved threads (an open thread returns "comments"
-first), no reviewer engagement of any kind — no review pinned to the
-current head, (review mode) no named trusted check/status present at head
-in any state (a pending or failed reviewer check counts as engagement),
-(approval mode) no active COMMENTED review — AND a head that did not
-change during this wait. A mid-wait force-push falls back to "timeout",
-and the head is re-confirmed once more at the deadline itself, so proceed
-never bypasses a live gate and never attests a stale head.
+first), no non-author review of any state (an active COMMENTED review is
+engagement) — AND a head that did not change during this wait. A mid-wait
+force-push falls back to "timeout", and the head is re-confirmed once more
+at the deadline itself, so proceed never bypasses a live gate and never
+attests a stale head.
 
 Automatic review and the base branch: GitHub's automatic reviewer is armed
 by any ACTIVE BRANCH RULESET carrying a rule of type copilot_code_review. A
@@ -359,11 +232,12 @@ Transient GitHub API failures (kendex#748) — HTTP 5xx, HTTP 429, timeout,
 transport error — are retried with doubling backoff (capped at 8x) inside
 the existing max_wait budget and reported as a transient_api_errors count;
 a fully successful poll resets the backoff. Non-transient failures (HTTP
-404, 401/403, malformed arguments) stay immediately terminal.
+404, 401/403, malformed arguments) stay immediately terminal. The mode
+resolution runs once and does not retry.
 
 JSON output (always when --json):
   {
-    "status": "approved" | "reviewed" | "changes_requested" | "comments"
+    "status": "approved" | "changes_requested" | "comments"
               | "timeout" | "proceeded" | "unreviewable" | "error",
     "repo": <string>,             # the repository this verdict is about,
                                   # "" whenever the wait ended before one
@@ -374,16 +248,6 @@ JSON output (always when --json):
     "changes_requested": <int>,   # reviewers at CHANGES_REQUESTED
     "unresolved_count": <int>,    # unresolved review threads at emit time
     "elapsed_seconds": <int>,
-    "mode": <string>,             # review mode only
-    "head_sha": <string>,         # review mode only: head at last poll
-    "reviews_at_head": <int>,     # review mode only: non-author reviews
-                                  # at the head that are evidence (a
-                                  # verdict, or content of their own)
-    "review_evidence": <string>,  # review mode only, when the gate passes:
-                                  # "review" (review object) or "check"
-                                  # (PR_REVIEW_CHECK success)
-    "review_evidence_surface": <string>,  # alongside review_evidence
-                                  # "check": "check_run" or "status"
     "base_ref": <string>,         # the PR's base branch
     "auto_review_targeted": <bool>,  # the base draws an automatic review
     "auto_review_target_source": "ruleset" | "default_branch" | "unresolved",
@@ -392,17 +256,14 @@ JSON output (always when --json):
     "error": <string>             # only when status == "error"
   }
 
-PR author: read once per wait from REST repos/<repo>/pulls/<n> .user.login,
-the same spelling review-gate's review-predicate.sh reads and the same one
-the REST reviews listing carries, so review mode's author exclusion compares
-two logins GitHub renders identically. GitHub renders one account three ways
-— "<slug>[bot]" on REST, "app/<slug>" from gh pr view --json author, and a
-bare "<slug>" on GraphQL actors — so approval mode compares its
-latestReviews[].author.login rows against that same login with the "[bot]"
-suffix removed. A transient author-read failure (5xx, 429, timeout) retries
-inside the wait budget, as the other reads do; a terminal failure or an empty
-login ends the wait (author-failed, exit 1) rather than comparing every review
-against an empty login.
+PR author: read once per wait from REST repos/<repo>/pulls/<n> .user.login.
+GitHub renders one account three ways — "<slug>[bot]" on REST,
+"app/<slug>" from gh pr view --json author, and a bare "<slug>" on GraphQL
+actors — so the latestReviews[].author.login rows are compared against that
+login with the "[bot]" suffix removed. A transient author-read failure (5xx,
+429, timeout) retries inside the wait budget, as the other reads do; a
+terminal failure or an empty login ends the wait (author-failed, exit 1)
+rather than comparing every review against an empty login.
 
 Repository: resolved through lib/gh-repo.sh, shared with ci-wait and
 queue-wait — GH_REPO first, then the working directory (`gh repo view`, then
@@ -423,6 +284,8 @@ again once when that check is killed at its bound (`gh auth status` is
 authoritative for keyring auth only when no env token is selected). Full
 ladder:
 https://github.com/vanillagreencom/kendex/blob/main/skills/orch/DEVELOPMENT.md#github-auth-ladder
+--resolve-mode takes the same auth and repository resolution, and on their
+failure prints its diagnostic on stderr only.
 
 Long waiter launch:
   Follow orch's references/waiter-launch.md for the saved launch script and
@@ -431,13 +294,14 @@ Long waiter launch:
   completion file is no verdict and does not authorize a duplicate waiter.
 
 Exit codes:
-  0  approved (approval mode) / reviewed (review mode) / proceeded
-     (deadline reached under PR_REVIEW_ON_TIMEOUT=proceed)
+  0  approved / proceeded (deadline reached under
+     PR_REVIEW_ON_TIMEOUT=proceed); --resolve-mode printed a mode
   1  changes requested, unresolved comments pending, timeout,
      unreviewable (no automatic reviewer targets the PR's base and none
      arrived), or a non-auth error
   2  usage error: missing or empty argument, invalid --mode value,
-     unknown flag, or a default mode that fails to resolve or resolves off
+     unknown flag; or a mode resolution that failed, or a default wait
+     whose base resolves off
   3  hard GitHub auth/CLI failure (matches ci-wait and queue-wait)
   5  lane mail, no result: stdout is only `approval-wait: mail=<count>`, or
      `approval-wait: mail-unreadable=<path>` when the mailbox cannot be read
@@ -448,8 +312,6 @@ USAGE
 JSON_OUTPUT=false
 MODE=""
 RESOLVE_MODE=false
-CLASS_BASE=""
-CLASS_HEAD=""
 ON_TIMEOUT_FLAG=""
 ITEM=""
 POSITIONAL=()
@@ -461,16 +323,6 @@ while [[ $# -gt 0 ]]; do
     -h|--help|help) print_usage; exit 0 ;;
     --json) JSON_OUTPUT=true; shift ;;
     --resolve-mode) RESOLVE_MODE=true; shift ;;
-    --base)
-      [[ -n "${2:-}" ]] || { approval_message missing-base >&2; exit 2; }
-      CLASS_BASE="$2"
-      shift 2
-      ;;
-    --head)
-      [[ -n "${2:-}" ]] || { approval_message missing-head >&2; exit 2; }
-      CLASS_HEAD="$2"
-      shift 2
-      ;;
     --mode)
       [[ -n "${2:-}" ]] || { approval_message missing-mode >&2; exit 2; }
       MODE="$2"
@@ -498,190 +350,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# The class-policy range, as this checkout can read it: both ends present AND
-# an ancestor they share, since the classifier takes a merge-base diff and a
-# shallow or grafted checkout can hold two commits with no reachable ancestor
-# between them. The same three clauses review-predicate.sh materializes.
-policy_endpoints_present() {
-  git -C "$PROJECT_ROOT" cat-file -e "$CLASS_BASE^{commit}" 2>/dev/null &&
-    git -C "$PROJECT_ROOT" cat-file -e "$CLASS_HEAD^{commit}" 2>/dev/null &&
-    git -C "$PROJECT_ROOT" merge-base "$CLASS_BASE" "$CLASS_HEAD" >/dev/null 2>&1
-}
-
-# Print the effective reviewer-gate mode. An inactive class policy needs no
-# auth, no PR argument and no network.
-resolve_gate_mode() {
-  # The engine's one-switch gate disable wins over every reviewer-gate key:
-  # REVIEW_GATE_MODE=off means the repo's review gate is disabled by
-  # settings, so EVERY caller that resolves a mode here — submit-pr's § 4
-  # and nested flows like ci-fix alike — skips the reviewer wait. Resolved
-  # centrally so no workflow needs its own override. Only the exact value
-  # "off" narrows; any other value (including a typo) leaves the reviewer
-  # keys authoritative — the engine predicate is where a bad value fails
-  # loud, and a typo must never silently disable a wait.
-  #
-  # Resolved through the ENGINE's own resolver so waiter and gate cannot
-  # split: rg_setting honors set-even-empty env,
-  # the REVIEW_GATE_SETTINGS_FILE override (including the /dev/null
-  # force-defaults sentinel), skips dotenv for this key, and fails loud on
-  # a malformed or duplicate assignment — exactly as the predicate does.
-  # Subshell so the sourced lib leaks nothing; cd because the engine
-  # resolves its default settings path relative to the repo root.
-  rg_lib="$SCRIPT_DIR/../../review-gate/scripts/lib/settings.sh"
-  if [[ -f "$rg_lib" ]]; then
-    if ! engine_gate_mode="$(
-      cd "$PROJECT_ROOT" || exit 1
-      # shellcheck source=/dev/null
-      . "$rg_lib"
-      rg_setting REVIEW_GATE_MODE "enforce"
-    )"; then
-      approval_message mode-resolution >&2
-      return 2
-    fi
-  elif [[ -n "${REVIEW_GATE_MODE+x}" ]]; then
-    # Review-gate not installed: no engine exists to split from. Mirror its
-    # source set anyway — set-even-empty env, else the COMMITTED settings
-    # file, never dotenv.
-    engine_gate_mode="$REVIEW_GATE_MODE"
-  else
-    engine_gate_mode="$(
-      # shellcheck source=lib/kendex-env.sh
-      source "$SCRIPT_DIR/lib/kendex-env.sh"
-      # ROOT-ONLY, matching the engine resolver exactly: this safety key
-      # reads process env and the committed kendex.settings.toml alone, so
-      # the resolved mode cannot flip merely because review-gate is or is
-      # not installed.
-      kendex_load_settings_file "$PROJECT_ROOT/kendex.settings.toml" || exit 1
-      printf '%s' "${REVIEW_GATE_MODE:-enforce}"
-    )" || return 1
-  fi
-  # The review gate's class policy, the only per-pull-request term in this
-  # chain and the one that DECIDES first. Its owner is the review-gate
-  # skill's own review-policy, which calls the shared change classifier and
-  # maps the class to one evidence policy. Orch asks; it never classifies and
-  # never re-maps. That single owner is why the waiter, the merge gate and
-  # the CI predicate cannot split on which changes need a review.
-  #
-  # It is READ after the engine key above so a malformed settings file is
-  # still reported against the key that is malformed. No review-policy script
-  # means no class policy: the whole term is absent, not defaulted, and the
-  # chain is the answer as it always was.
-  class_evidence=""
-  policy_owner="$SCRIPT_DIR/../../review-gate/scripts/review-policy"
-  if [[ -x "$policy_owner" ]]; then
-    # Subshell with a cd because the engine resolves its settings files
-    # relative to the repository root, exactly as the REVIEW_GATE_MODE read
-    # above does.
-    if ! policy_state="$(cd "$PROJECT_ROOT" && "$policy_owner" --check-config)"; then
-      approval_message policy-config >&2
-      return 2
-    fi
-    case "$policy_state" in
-      review-policy=inactive) ;;
-      review-policy=active)
-        # An active policy answers for ONE pull request. A caller that names
-        # no range gets a diagnostic, never a mode: guessing here would
-        # either waive a review the policy requires or hold one it waives.
-        if [[ -z "$CLASS_BASE" || -z "$CLASS_HEAD" ]]; then
-          approval_message policy-range >&2
-          return 2
-        fi
-        POLICY_REJECTED="$CLASS_BASE...$CLASS_HEAD"
-        # The classifier takes a merge-base diff of the two endpoints, so both
-        # commits and an ancestor they share have to be in this checkout. A
-        # base tip newer than its last fetch is not, and no caller can be
-        # asked to remember that, so the TWO SHAs are fetched — never every
-        # ref of origin, which is a far larger transfer for a two-commit
-        # question. `--no-tags --no-write-fetch-head` keeps a mode resolution
-        # from downloading tags or rewriting FETCH_HEAD in a git directory
-        # other worktrees share. Then look again: a range still unreadable
-        # refuses here, rather than let the owner answer `standard` for a diff
-        # nothing read.
-        if ! policy_endpoints_present; then
-          if git -C "$PROJECT_ROOT" remote get-url origin >/dev/null 2>&1; then
-            POLICY_FETCH_ERR="$(git -C "$PROJECT_ROOT" fetch --quiet --no-tags --no-write-fetch-head origin "$CLASS_BASE" "$CLASS_HEAD" 2>&1)" ||
-              approval_message policy-fetch >&2
-          fi
-          if ! policy_endpoints_present; then
-            approval_message policy-unreadable-range >&2
-            return 2
-          fi
-        fi
-        if ! policy_record="$(cd "$PROJECT_ROOT" && "$policy_owner" \
-          --event pull_request --base "$CLASS_BASE" --head "$CLASS_HEAD" --repo .)"; then
-          approval_message policy-resolve >&2
-          return 2
-        fi
-        case "$policy_record" in
-          "change_class="*" review_evidence=none policy=active") class_evidence="none" ;;
-          "change_class="*" review_evidence=required policy=active") class_evidence="required" ;;
-          "change_class="*" review_evidence=current policy=active") class_evidence="current" ;;
-          *)
-            POLICY_REJECTED="$policy_record"
-            approval_message policy-protocol >&2
-            return 2
-            ;;
-        esac
-        ;;
-      *)
-        POLICY_REJECTED="$policy_state"
-        approval_message policy-protocol >&2
-        return 2
-        ;;
-    esac
-  fi
-  # A waived class is the whole answer: no evidence term, no thread term, no
-  # reviewer key below can put either back.
-  if [[ "$class_evidence" == "none" ]]; then
-    printf 'exempt\n'
-    return 0
-  fi
-  # A class the policy sends for review outranks the one-switch disable: the
-  # policy's `bot` row is the inverse of its `none` row and says this change
-  # needs its review round even in a repository that turned the engine off.
-  if [[ "$engine_gate_mode" == "off" && "$class_evidence" != "required" ]]; then
-    printf 'off\n'
-    return 0
-  fi
-  # shellcheck source=lib/kendex-env.sh
-  source "$SCRIPT_DIR/lib/kendex-env.sh"
-  kendex_load_project_env "$PROJECT_ROOT" >&2 || return 1
-  mode="${PR_REVIEW_GATE:-}"
-  case "$mode" in
-    approval|review|off) ;;
-    "")
-      # When PR_REVIEW_GATE is unset, PR_APPROVAL_GATE=off disables the wait.
-      # Every other value selects approval mode.
-      if [[ "${PR_APPROVAL_GATE:-}" == "off" ]]; then
-        mode="off"
-      else
-        mode="approval"
-      fi
-      ;;
-    *)
-      approval_message gate-fallback >&2
-      mode="approval"
-      ;;
-  esac
-  printf '%s\n' "$mode"
-}
-
-if $RESOLVE_MODE; then
-  resolve_gate_mode
-  exit 0
-fi
-if [[ -z "$MODE" ]]; then
-  MODE="$(resolve_gate_mode)" || exit 2
-  case "$MODE" in
-    off|exempt)
-      approval_message gate-off >&2
-      exit 2
-      ;;
-  esac
-fi
-
 case "$MODE" in
-  approval|review) ;;
+  ""|approval) ;;
   *)
     approval_message invalid-mode >&2
     exit 2
@@ -704,22 +374,6 @@ lane_mail_resolve approval-wait "$ITEM"
 MAX_WAIT="${POSITIONAL[2]:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_WAIT_SECS 900)}"
 START_TIME="$(date +%s)"
 elapsed=0
-
-# Review-check evidence: PR_REVIEW_CHECK names the
-# check the repo's review bot publishes on analyzed heads; review mode accepts
-# a successful signal of that name on the current head as an alternative to a
-# review object, on EITHER surface — a check-run concluding "success"
-# (check-runs API), or a commit status context at state "success" (combined
-# status API), because some review bots publish statuses rather than
-# check-runs. SECURITY: both surfaces are matched by NAME/context only, and
-# any GitHub App, Actions workflow, or token holder with statuses scope can
-# publish under any name — the setting must name a signal produced by the
-# TRUSTED review bot. The trust model is user configuration; no bot names are
-# baked in, and the matched check-run's app
-# slug (or the matched status's creator login) is reported (not filtered on)
-# so operators can audit who satisfied the gate. Empty disables check
-# evidence entirely.
-REVIEW_CHECK_NAME="$("$SCRIPT_DIR/orch-env" PR_REVIEW_CHECK "")"
 
 # Reviewer-down flexibility (PR_REVIEW_ON_TIMEOUT, default "proceed"): controls
 # the deadline verdict when the gate signal never arrives. "block" reports
@@ -752,18 +406,13 @@ last_approvals=0
 last_changes=0
 last_unresolved=0
 last_head_sha=""
-last_reviews_at_head=0
 last_base_ref=""
-# The PR author, resolved once (a PR never changes author) and threaded to
-# every filter that excludes the author's own reviews. GitHub renders one
-# account under three logins: REST `pulls/<n>` and `pulls/<n>/reviews` both
-# spell a GitHub App "<slug>[bot]", gh's `pr view --json author` spells it
-# "app/<slug>", and GraphQL actors — latestReviews[].author.login — spell it
-# bare "<slug>". Two of those read for one comparison is an exclusion that can
-# never match, so review mode compares against the REST login its review rows
-# carry and approval mode against the actor login its latestReviews rows carry.
-# For a human author the two are the same string.
-pr_author_rest=""
+# The PR author as the GraphQL actor login its latestReviews rows carry,
+# resolved once (a PR never changes author) for the filter that excludes the
+# author's own reviews. GitHub renders one account under three logins: REST
+# `pulls/<n>` spells a GitHub App "<slug>[bot]", gh's `pr view --json author`
+# spells it "app/<slug>", and GraphQL actors spell it bare "<slug>". For a
+# human author all three are the same string.
 pr_author_actor=""
 # The automatic-review target set and this PR's standing against it. Declared
 # beside the other snapshot state because emit_error runs on the pre-repo
@@ -775,16 +424,11 @@ AUTO_REVIEW_EXCLUDE=""
 AUTO_REVIEW_TARGETS_JSON="[]"
 AUTO_REVIEW_TARGETS_TEXT=""
 DEFAULT_BRANCH=""
-# Approval mode only: non-author, non-dismissed latest reviews of ANY state
-# (COMMENTED included). Distinguishes "a reviewer engaged but did not approve"
-# from "no reviewer showed at all", so the PR_REVIEW_ON_TIMEOUT=proceed degrade
-# fires only on genuine reviewer silence — never past an active COMMENTED
-# review. Review mode leaves this 0 and relies on its at-head evidence instead.
+# Non-author, non-dismissed latest reviews of ANY state (COMMENTED included).
+# Distinguishes "a reviewer engaged but did not approve" from "no reviewer
+# showed at all", so the PR_REVIEW_ON_TIMEOUT=proceed degrade fires only on
+# genuine reviewer silence — never past an active COMMENTED review.
 last_reviews_present=0
-last_review_evidence=""
-last_check_surface=""
-last_check_app=""
-last_check_creator=""
 
 # Transient-failure bookkeeping: every gh call in the poll loop
 # writes stderr to GH_ERR_FILE so a failure can be classified before it is
@@ -822,30 +466,12 @@ run_approved_gate() {
 
 # Emit the final machine-readable result on stdout. Every exit path routes
 # through here (or emit_error) so the script can never finish silently.
-#   status: approved | reviewed | changes_requested | comments | timeout
-#         | proceeded | unreviewable | error
+#   status: approved | changes_requested | comments | timeout | proceeded
+#         | unreviewable | error
 emit_result() {
-  local status="$1" error_msg="${2:-}" mode_fields
+  local status="$1" error_msg="${2:-}"
   update_elapsed
   if $JSON_OUTPUT; then
-    # Review-mode fields are additive, so approval-mode JSON keeps its field set.
-    mode_fields='{}'
-    if [[ "$MODE" == "review" ]]; then
-      # review_evidence appears only when the gate passed — "review" for a
-      # review object at head, "check" for PR_REVIEW_CHECK success
-      # on either surface; review_evidence_surface then pins which API surface
-      # matched — "check_run" or "status".
-      mode_fields=$(jq -n \
-        --arg mode "$MODE" \
-        --arg head "$last_head_sha" \
-        --argjson at_head "$last_reviews_at_head" \
-        --arg evidence "$last_review_evidence" \
-        --arg surface "$last_check_surface" \
-        '{mode: $mode, head_sha: $head, reviews_at_head: $at_head}
-         + (if $evidence == "" then {} else {review_evidence: $evidence} end)
-         + (if $evidence == "check" and $surface != ""
-            then {review_evidence_surface: $surface} else {} end)')
-    fi
     jq -n \
       --arg s "$status" \
       --arg repo "$REPO" \
@@ -858,7 +484,6 @@ emit_result() {
       --argjson changes "$last_changes" \
       --argjson unresolved "$last_unresolved" \
       --argjson elapsed "$elapsed" \
-      --argjson mode_fields "$mode_fields" \
       --argjson transient "$transient_api_errors" \
       --arg error "$error_msg" \
       '{
@@ -873,70 +498,45 @@ emit_result() {
         auto_review_targeted: $auto_targeted,
         auto_review_target_source: $auto_source,
         auto_review_targets: $auto_targets
-      } + $mode_fields
+      }
         + (if $transient > 0 then {transient_api_errors: $transient} else {} end)
         + (if $error == "" then {} else {error: $error} end)' || return $?
     return 0
   fi
-  printf 'approval-wait: result status=%s pr=%s repo=%s mode=%s elapsed=%s unresolved=%s\n' "$status" "$PR_NUM" "${REPO:-unresolved}" "$MODE" "$elapsed" "$last_unresolved"
+  printf 'approval-wait: result status=%s pr=%s repo=%s elapsed=%s unresolved=%s\n' "$status" "$PR_NUM" "${REPO:-unresolved}" "$elapsed" "$last_unresolved"
   case "$status" in
     approved)
       echo "Approval: approved (decision: ${last_review_decision:-none}, approvals: $last_approvals, unresolved threads: $last_unresolved)"
       ;;
-    reviewed)
-      if [[ "$last_review_evidence" == "check" && "$last_check_surface" == "status" ]]; then
-        echo "Review: reviewed via status '$REVIEW_CHECK_NAME'${last_check_creator:+ (creator: $last_check_creator)} (head: ${last_head_sha:-unknown}, unresolved threads: $last_unresolved)"
-      elif [[ "$last_review_evidence" == "check" ]]; then
-        echo "Review: reviewed via check-run '$REVIEW_CHECK_NAME'${last_check_app:+ (app: $last_check_app)} (head: ${last_head_sha:-unknown}, unresolved threads: $last_unresolved)"
-      else
-        echo "Review: reviewed (head: ${last_head_sha:-unknown}, reviews at head: $last_reviews_at_head, unresolved threads: $last_unresolved)"
-      fi
-      ;;
     proceeded)
-      if [[ "$MODE" == "review" ]]; then
-        echo "Review: no reviewer evidence after ${elapsed}s — proceeding per PR_REVIEW_ON_TIMEOUT=proceed (head: ${last_head_sha:-unknown}, unresolved threads: $last_unresolved)"
-      else
-        echo "Approval: no approval verdict after ${elapsed}s — proceeding per PR_REVIEW_ON_TIMEOUT=proceed (decision: ${last_review_decision:-none}, unresolved threads: $last_unresolved)"
-      fi
+      echo "Approval: no approval verdict after ${elapsed}s — proceeding per PR_REVIEW_ON_TIMEOUT=proceed (decision: ${last_review_decision:-none}, unresolved threads: $last_unresolved)"
       ;;
     changes_requested)
-      if [[ "$MODE" == "review" ]]; then
-        echo "Review: changes requested ($last_changes reviewer(s), unresolved threads: $last_unresolved)"
-      else
-        echo "Approval: changes requested ($last_changes reviewer(s), unresolved threads: $last_unresolved)"
-      fi
+      echo "Approval: changes requested ($last_changes reviewer(s), unresolved threads: $last_unresolved)"
       ;;
     comments)
-      if [[ "$MODE" == "review" ]]; then
-        echo "Review: $last_unresolved unresolved review thread(s) pending triage"
-      else
-        echo "Approval: $last_unresolved unresolved review thread(s) pending triage, no approval verdict yet"
-      fi
+      echo "Approval: $last_unresolved unresolved review thread(s) pending triage (decision: ${last_review_decision:-none}, approvals: $last_approvals)"
       ;;
     unreviewable)
       echo "No automatic review for base '${last_base_ref:-unknown}' after ${elapsed}s: the automatic-review target set (${AUTO_REVIEW_TARGETS_TEXT:-none}, source: $AUTO_REVIEW_SOURCE) does not cover it. Request one with: gh pr edit $PR_NUM --add-reviewer @copilot"
       ;;
     timeout)
-      if [[ "$MODE" == "review" ]]; then
-        echo "Review timeout after ${elapsed}s (head: ${last_head_sha:-unknown}, reviews at head: $last_reviews_at_head)"
-      else
-        echo "Approval timeout after ${elapsed}s (decision: ${last_review_decision:-none}, approvals: $last_approvals)"
-      fi
+      echo "Approval timeout after ${elapsed}s (decision: ${last_review_decision:-none}, approvals: $last_approvals)"
       ;;
     error)
-      if [[ "$MODE" == "review" ]]; then
-        echo "Review error: $error_msg"
-      else
-        echo "Approval error: $error_msg"
-      fi
+      echo "Approval error: $error_msg"
       ;;
   esac
 }
 
+# A --resolve-mode run's stdout is the mode enum alone, so its failures print
+# their diagnostic on stderr and no result.
 emit_error() {
   local message
   message="$(approval_message "$1")" || return $?
-  emit_result "error" "$message" || return $?
+  if ! $RESOLVE_MODE; then
+    emit_result "error" "$message" || return $?
+  fi
   printf '%s\n' "$message" >&2
 }
 
@@ -1012,6 +612,65 @@ fi
 
 OWNER="${REPO%%/*}"
 REPO_NAME="${REPO#*/}"
+
+# --- gate mode: GitHub's approval rule on the PR's base branch ---
+# The mode is what the base's own rules require, so the wait and GitHub's merge
+# refusal cannot disagree about whether an approval is needed. rules/branches
+# answers every active rule that applies to the branch, organization rulesets
+# included, which a repository ruleset listing does not show. Each read is
+# checked: a failed or unparseable answer is no mode, never "off", since off
+# skips the wait.
+
+# Print the largest required_approving_review_count among BRANCH's
+# pull_request rules, 0 when it has none. Returns 1 on a failed read, a
+# zero-byte answer, a page that is not a list, or a count that is not a whole
+# number, since the -ge test below reads anything else as neither mode.
+read_required_approvals() { # BRANCH
+  local uri raw
+  uri=$(jq -rn --arg v "$1" '$v | @uri') || return 1
+  raw=$(gh api "repos/$REPO/rules/branches/$uri" --paginate 2>"$GH_ERR_FILE") || return 1
+  [ -n "$raw" ] || return 1
+  jq -s -r 'if length > 0 and all(.[]; type == "array")
+    then add | [.[] | select(.type == "pull_request") | .parameters.required_approving_review_count]
+      | if all(.[]; type == "number" and . >= 0 and . == floor) then (max // 0)
+        else error("a required approval count is not a whole number") end
+    else error("the rules answer is not a set of pages") end' <<<"$raw" 2>/dev/null
+}
+
+# Set GATE_MODE to approval or off for this PR's base. Returns 1, the
+# diagnostic already on stderr, when the base or its rules cannot be read.
+GATE_MODE=""
+resolve_gate_mode() {
+  local required
+  if ! RULES_BRANCH=$(gh pr view "$PR_NUM" --repo "$REPO" --json baseRefName -q '.baseRefName' 2>"$GH_ERR_FILE") \
+    || [ -z "$RULES_BRANCH" ]; then
+    approval_message base-unreadable >&2
+    return 1
+  fi
+  if ! required=$(read_required_approvals "$RULES_BRANCH"); then
+    approval_message rules-unreadable >&2
+    return 1
+  fi
+  if [ "$required" -ge 1 ]; then
+    GATE_MODE=approval
+  else
+    GATE_MODE=off
+  fi
+}
+
+if $RESOLVE_MODE; then
+  resolve_gate_mode || exit 2
+  printf '%s\n' "$GATE_MODE"
+  exit 0
+fi
+if [[ -z "$MODE" ]]; then
+  resolve_gate_mode || exit 2
+  MODE="$GATE_MODE"
+  if [[ "$MODE" == off ]]; then
+    approval_message gate-off >&2
+    exit 2
+  fi
+fi
 
 # --- automatic-review target set (resolved ONCE, before the poll loop) ---
 # GitHub's automatic reviewer is armed by any ACTIVE BRANCH RULESET carrying a
@@ -1151,32 +810,17 @@ count_unresolved_threads() {
   orch_count_unresolved_threads "$OWNER" "$REPO_NAME" "$PR_NUM" "$GH_ERR_FILE"
 }
 
-# Fill pr_author_rest and pr_author_actor from the REST PR object, the endpoint
-# whose `.user.login` spelling is the one the reviews listing carries. An empty
-# login is a failed read, not an authorless PR: leaving it empty would compare
-# every review row against "" and exclude nobody.
+# Fill pr_author_actor from the REST PR object's `.user.login`, less the
+# "[bot]" suffix REST gives an App. An empty login is a failed read, not an
+# authorless PR: leaving it empty would compare every review row against ""
+# and exclude nobody.
 read_pr_author() {
   local login status=0
   : > "$GH_ERR_FILE"
   login=$(gh api "repos/$REPO/pulls/$PR_NUM" -q '.user.login' 2>"$GH_ERR_FILE") || status=$?
   [ "$status" -eq 0 ] || return "$status"
   [ -n "$login" ] || return 1
-  pr_author_rest="$login"
   pr_author_actor="${login%"[bot]"}"
-}
-
-# Read one paginated REST array listing (the path in $1) into rest_array_json.
-# The capture is two steps so the paginated read's own status is read before
-# jq folds the pages, and a zero-byte producer is a FAILED read (status 1),
-# never an empty page set that would read as an empty listing.
-read_rest_array() {
-  local raw status=0
-  rest_array_json=""
-  raw=$(gh api "$1" --paginate 2>"$GH_ERR_FILE") || status=$?
-  [ "$status" -eq 0 ] || return "$status"
-  [ -n "$raw" ] || return 1
-  rest_array_json=$(jq -s 'add // []' <<<"$raw") || return $?
-  jq -e 'type == "array"' >/dev/null 2>&1 <<<"$rest_array_json" || return 1
 }
 
 # Classify the failed gh call whose stderr sits in GH_ERR_FILE.
@@ -1255,7 +899,7 @@ update_elapsed
 while true; do
   # --- author identity: read once and reused for the rest of the wait, since
   # a PR's author cannot change while it is open ---
-  if [ -z "$pr_author_rest" ]; then
+  if [ -z "$pr_author_actor" ]; then
     author_status=0
     set +e
     read_pr_author
@@ -1271,220 +915,38 @@ while true; do
       exit 1
     fi
   fi
-  if [ "$MODE" = "review" ]; then
-    # --- head + base snapshot (re-read every poll: a force-push moves the
-    # head, and only reviews of the CURRENT head satisfy the gate) ---
-    view_status=0
-    set +e
-    view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid,baseRefName 2>"$GH_ERR_FILE")
-    view_status=$?
-    set -e
-    if [ "$view_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view_json"; then
-      if gh_failure_is_transient "$view_status"; then
-        transient_retry pr-view-failed
-        continue
-      fi
-      emit_error pr-view-failed
-
-      exit 1
+  # --- review verdict snapshot (headRefOid rides along for the head-change
+  # bookkeeping the proceed guard reads) ---
+  view_status=0
+  set +e
+  view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json reviewDecision,latestReviews,headRefOid,baseRefName 2>"$GH_ERR_FILE")
+  view_status=$?
+  set -e
+  if [ "$view_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view_json"; then
+    if gh_failure_is_transient "$view_status"; then
+      transient_retry pr-view-failed
+      continue
     fi
-    last_head_sha=$(jq -r '.headRefOid // ""' <<<"$view_json")
-    read_base_ref
+    emit_error pr-view-failed
 
-    # --- submitted reviews snapshot (REST carries commit_id; latestReviews
-    # does not, so head pinning needs the pulls/reviews listing). ---
-    reviews_status=0
-    read_rest_array "repos/$REPO/pulls/$PR_NUM/reviews" || reviews_status=$?
-    reviews_json="$rest_array_json"
-    if [ "$reviews_status" -ne 0 ]; then
-      if gh_failure_is_transient "$reviews_status"; then
-        transient_retry reviews-failed
-        continue
-      fi
-      emit_error reviews-failed
-
-      exit 1
-    fi
-
-    last_review_decision=""
-    # Candidate reviews: pinned to the current head, submitted (not PENDING),
-    # not DISMISSED, and not the PR author's own.
-    reviews_at_head_json=$(jq -c --arg head "$last_head_sha" --arg author "$pr_author_rest" \
-      '[.[] | select(.commit_id == $head
-                     and .state != "DISMISSED" and .state != "PENDING"
-                     and (.user.login // "") != $author)]' <<<"$reviews_json")
-    candidates_at_head=$(jq 'length' <<<"$reviews_at_head_json")
-    # A candidate is evidence when it carries a formal verdict (APPROVED or
-    # CHANGES_REQUESTED, whatever its body: the Approve button with no comment
-    # submits an empty-bodied APPROVED review), or, for a COMMENTED review,
-    # content of its own: a body, or a review comment that opens a thread
-    # rather than answering one. Answering an existing thread submits a
-    # COMMENTED review with an empty body whose every comment is a reply
-    # (github.sh post-reply is one such producer), so counting those would end
-    # the wait the moment anyone answers a thread, on evidence that says
-    # nothing about the head.
-    review_content_defs='def verdict: .state == "APPROVED" or .state == "CHANGES_REQUESTED";
-      def has_body: (.body // "") | test("\\S");'
-    comments_json='[]'
-    if jq -e "$review_content_defs any(.[]; (verdict or has_body) | not)" >/dev/null <<<"$reviews_at_head_json"; then
-      # The review row carries no comments, so which threads a bodyless
-      # COMMENTED review opened is only readable from the review-comment
-      # listing.
-      comments_status=0
-      read_rest_array "repos/$REPO/pulls/$PR_NUM/comments" || comments_status=$?
-      comments_json="$rest_array_json"
-      if [ "$comments_status" -ne 0 ]; then
-        if gh_failure_is_transient "$comments_status"; then
-          transient_retry review-comments-failed
-          continue
-        fi
-        emit_error review-comments-failed
-
-        exit 1
-      fi
-    fi
-    # Both documents go in on stdin: the comment listing grows with the PR, and
-    # an argv string past the kernel's per-argument cap fails exec outright.
-    last_reviews_at_head=$(jq -n "$review_content_defs"'
-      input as $reviews | input as $comments
-      | [$reviews[] | select(verdict or has_body
-                             or (.id as $id | any($comments[];
-                                   .pull_request_review_id == $id and .in_reply_to_id == null)))]
-      | length' <<<"$reviews_at_head_json
-$comments_json")
-    # A CHANGES_REQUESTED verdict stands until the reviewer re-reviews or it
-    # is dismissed — judge each non-author reviewer by their latest submitted
-    # review (the REST listing is in submission order).
-    last_changes=$(jq --arg author "$pr_author_rest" \
-      '[[.[] | select(.state != "DISMISSED" and .state != "PENDING"
-                      and (.user.login // "") != $author)]
-        | group_by(.user.login) | map(.[-1])
-        | .[] | select(.state == "CHANGES_REQUESTED")] | length' <<<"$reviews_json")
-    last_approvals=$(jq --arg author "$pr_author_rest" \
-      '[[.[] | select(.state != "DISMISSED" and .state != "PENDING"
-                      and (.user.login // "") != $author)]
-        | group_by(.user.login) | map(.[-1])
-        | .[] | select(.state == "APPROVED")] | length' <<<"$reviews_json")
-    # --- trusted review-check evidence: consulted
-    # only when no review object is pinned to the current head. Both queries
-    # target the CURRENT head, so a success on a superseded commit can never
-    # satisfy the gate. Check-runs first (when the bot re-analyzed the same
-    # head, the newest run of the configured name wins), then — only when no
-    # check-run matched, so bots that use check-runs cost no extra API call —
-    # the head's combined commit status, for review bots that publish
-    # statuses instead of check-runs. Matched by NAME/context (see the
-    # SECURITY note at REVIEW_CHECK_NAME); app.slug / creator.login are
-    # recorded for the text output, never filtered on. ---
-    check_at_head=0
-    last_check_surface=""
-    last_check_app=""
-    last_check_creator=""
-    # Reviewer engagement for the proceed-on-timeout guard (review mode): any
-    # candidate review pinned to this head, or a named check/status present in
-    # ANY state, means a reviewer engaged this head, so proceed must not treat
-    # it as silence. A thread reply is engagement without being evidence — the
-    # reviewer is present — so engagement counts every candidate while evidence
-    # counts only the ones carrying content.
-    last_reviews_present=0
-    [ "$candidates_at_head" -gt 0 ] && last_reviews_present=1
-    if [ -n "$REVIEW_CHECK_NAME" ] && [ "$last_reviews_at_head" -eq 0 ] \
-      && [ -n "$last_head_sha" ]; then
-      checks_status=0
-      set +e
-      checks_json=$(gh api "repos/$REPO/commits/$last_head_sha/check-runs" --paginate 2>"$GH_ERR_FILE" \
-        | jq -s '[.[].check_runs[]?]')
-      checks_status=$?
-      set -e
-      if [ "$checks_status" -ne 0 ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$checks_json"; then
-        if gh_failure_is_transient "$checks_status"; then
-          transient_retry checks-failed
-          continue
-        fi
-        emit_error checks-failed
-
-        exit 1
-      fi
-      named_check=$(jq -c --arg name "$REVIEW_CHECK_NAME" \
-        '[.[] | select(.name == $name)] | sort_by(.started_at // "") | last // {}' <<<"$checks_json")
-      last_check_app=$(jq -r '.app.slug // ""' <<<"$named_check")
-      # Presence in ANY conclusion (queued/in-progress/failure/success) is
-      # reviewer engagement — tracked apart from the success-only gate evidence
-      # so proceed-on-timeout cannot fire past an active or failed check.
-      if [ -n "$(jq -r '.name // ""' <<<"$named_check")" ]; then
-        last_reviews_present=1
-      fi
-      if [ "$(jq -r '.conclusion // ""' <<<"$named_check")" = "success" ]; then
-        check_at_head=1
-        last_check_surface="check_run"
-      fi
-      if [ "$check_at_head" -eq 0 ]; then
-        # The combined status reports the latest status per context; the
-        # newest-wins sort is a guard for paginated or duplicated contexts.
-        # Only state "success" is evidence — pending/failure/error keep
-        # waiting, same as a non-success check-run conclusion.
-        statuses_status=0
-        set +e
-        statuses_json=$(gh api "repos/$REPO/commits/$last_head_sha/status" --paginate 2>"$GH_ERR_FILE" \
-          | jq -s '[.[].statuses[]?]')
-        statuses_status=$?
-        set -e
-        if [ "$statuses_status" -ne 0 ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$statuses_json"; then
-          if gh_failure_is_transient "$statuses_status"; then
-            transient_retry statuses-failed
-            continue
-          fi
-          emit_error statuses-failed
-
-          exit 1
-        fi
-        named_status=$(jq -c --arg name "$REVIEW_CHECK_NAME" \
-          '[.[] | select(.context == $name)] | sort_by(.updated_at // "") | last // {}' <<<"$statuses_json")
-        # A named status in ANY state (pending/failure/error/success) is
-        # likewise reviewer engagement — track presence apart from success.
-        if [ -n "$(jq -r '.context // ""' <<<"$named_status")" ]; then
-          last_reviews_present=1
-        fi
-        if [ "$(jq -r '.state // ""' <<<"$named_status")" = "success" ]; then
-          check_at_head=1
-          last_check_surface="status"
-          last_check_creator=$(jq -r '.creator.login // ""' <<<"$named_status")
-        fi
-      fi
-    fi
-  else
-    # --- review verdict snapshot (headRefOid rides along for the head-change
-    # bookkeeping the proceed guard reads) ---
-    view_status=0
-    set +e
-    view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json reviewDecision,latestReviews,headRefOid,baseRefName 2>"$GH_ERR_FILE")
-    view_status=$?
-    set -e
-    if [ "$view_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view_json"; then
-      if gh_failure_is_transient "$view_status"; then
-        transient_retry pr-view-failed
-        continue
-      fi
-      emit_error pr-view-failed
-
-      exit 1
-    fi
-
-    last_review_decision=$(jq -r '.reviewDecision // ""' <<<"$view_json")
-    last_head_sha=$(jq -r '.headRefOid // ""' <<<"$view_json")
-    read_base_ref
-    # latestReviews already holds the latest review per reviewer; count formal
-    # verdict states only. COMMENTED/DISMISSED reviews neither approve nor block.
-    last_approvals=$(jq '[.latestReviews[]? | select(.state == "APPROVED")] | length' <<<"$view_json")
-    last_changes=$(jq '[.latestReviews[]? | select(.state == "CHANGES_REQUESTED")] | length' <<<"$view_json")
-    # Any non-author reviewer whose latest review is a formal state (APPROVED,
-    # CHANGES_REQUESTED, or COMMENTED — DISMISSED/PENDING excluded) is a reviewer
-    # that ENGAGED. The proceed-on-timeout degrade must not fire past one: a
-    # COMMENTED review means the reviewer is present, not silent, so proceeding
-    # would bypass a live gate rather than route around a dead reviewer.
-    last_reviews_present=$(jq --arg author "$pr_author_actor" \
-      '[.latestReviews[]? | select((.author.login // "") != $author
-        and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED"))] | length' <<<"$view_json")
+    exit 1
   fi
+
+  last_review_decision=$(jq -r '.reviewDecision // ""' <<<"$view_json")
+  last_head_sha=$(jq -r '.headRefOid // ""' <<<"$view_json")
+  read_base_ref
+  # latestReviews already holds the latest review per reviewer; count formal
+  # verdict states only. COMMENTED/DISMISSED reviews neither approve nor block.
+  last_approvals=$(jq '[.latestReviews[]? | select(.state == "APPROVED")] | length' <<<"$view_json")
+  last_changes=$(jq '[.latestReviews[]? | select(.state == "CHANGES_REQUESTED")] | length' <<<"$view_json")
+  # Any non-author reviewer whose latest review is a formal state (APPROVED,
+  # CHANGES_REQUESTED, or COMMENTED — DISMISSED/PENDING excluded) is a reviewer
+  # that ENGAGED. The proceed-on-timeout degrade must not fire past one: a
+  # COMMENTED review means the reviewer is present, not silent, so proceeding
+  # would bypass a live gate rather than route around a dead reviewer.
+  last_reviews_present=$(jq --arg author "$pr_author_actor" \
+    '[.latestReviews[]? | select((.author.login // "") != $author
+      and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED"))] | length' <<<"$view_json")
 
   # --- unresolved review threads snapshot ---
   threads_status=0
@@ -1504,41 +966,26 @@ $comments_json")
   last_unresolved="$unresolved_total"
 
   # --- route ---
-  if [ "$MODE" = "review" ]; then
-    if [ "$last_changes" -gt 0 ]; then
-      emit_result "changes_requested"
-      exit 1
-    fi
-    review_evidence=""
-    if [ "$last_reviews_at_head" -gt 0 ]; then
-      review_evidence="review"
-    elif [ "$check_at_head" -eq 1 ]; then
-      review_evidence="check"
-    fi
-    if [ -n "$review_evidence" ] && [ "$last_unresolved" -eq 0 ]; then
-      last_review_evidence="$review_evidence"
-      emit_result "reviewed"
-      exit 0
-    fi
-    if [ "$last_unresolved" -gt 0 ]; then
-      emit_result "comments"
-      exit 1
-    fi
-  else
-    if [ "$last_review_decision" = "APPROVED" ]; then
-      run_approved_gate
-    fi
-    if [ "$last_review_decision" = "CHANGES_REQUESTED" ] || [ "$last_changes" -gt 0 ]; then
-      emit_result "changes_requested"
-      exit 1
-    fi
-    if [ -z "$last_review_decision" ] && [ "$last_approvals" -gt 0 ]; then
-      run_approved_gate
-    fi
-    if [ "$last_unresolved" -gt 0 ]; then
-      emit_result "comments"
-      exit 1
-    fi
+  # An approval is reviewDecision APPROVED, or, with no reviewDecision, an
+  # approving latest review and no standing CHANGES_REQUESTED. An open thread
+  # holds an approved head at "comments": the base's rule refuses the merge
+  # while any thread stands unresolved, so the caller triages before it arms.
+  approved=false
+  if [ "$last_review_decision" = "APPROVED" ] \
+    || { [ -z "$last_review_decision" ] && [ "$last_approvals" -gt 0 ] && [ "$last_changes" -eq 0 ]; }; then
+    approved=true
+  fi
+  if [ "$approved" = true ] && [ "$last_unresolved" -eq 0 ]; then
+    run_approved_gate
+  fi
+  if [ "$approved" = false ] \
+    && { [ "$last_review_decision" = "CHANGES_REQUESTED" ] || [ "$last_changes" -gt 0 ]; }; then
+    emit_result "changes_requested"
+    exit 1
+  fi
+  if [ "$last_unresolved" -gt 0 ]; then
+    emit_result "comments"
+    exit 1
   fi
 
   # --- head-change bookkeeping for the proceed-on-timeout guard ---
@@ -1567,13 +1014,10 @@ done
 # "proceeded" (exit 0) so a credit-exhausted reviewer that posted nothing does
 # not block the fleet — but ONLY on genuine reviewer silence:
 #   - zero unresolved threads (an open thread already exited as "comments"),
-#   - no reviewer evidence (last_reviews_present == 0). In review mode that
-#     means no named trusted check/status is present at head in ANY state — a
-#     pending or failed reviewer check is engagement, not silence (a review
-#     object at head, or a success check, exits as "reviewed" before the
-#     deadline). In approval mode it means no non-author review (COMMENTED
-#     included) exists — a reviewer that engaged but did not approve is not
-#     "down", so it must timeout, not proceed. And
+#   - no reviewer engagement (last_reviews_present == 0): no non-author
+#     review of any state (COMMENTED included) exists — a reviewer that
+#     engaged but did not approve is not "down", so it must timeout, not
+#     proceed. And
 #   - the head did not change during this wait. elapsed is measured from
 #     START_TIME, so a force-push near MAX_WAIT would otherwise proceed seconds
 #     after the new commit appeared, before the reviewer could re-review it;

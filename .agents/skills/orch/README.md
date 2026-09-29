@@ -71,7 +71,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal | empty |
 | `RECONCILE_STALE_HOURS` | Hours before an In Progress or In Review item counts as started-stale in `reconcile-work-items` sweeps | `24` |
 | `WORKTREE_CLI` | Path to the worktree CLI `open-terminal` drives; empty resolves the installed worktree skill's script | resolved |
-| Review-gate settings | `REVIEW_GATE_MODE`, `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_WAIT_SECS`: [references/gates.md](references/gates.md) | |
+| Review-gate settings | `PR_REVIEW_WAIT_SECS`: [references/gates.md](references/gates.md) | |
 | `ORCH_LANE_MAX_PCT` | Usage share at or above which `lanes pick` refuses an account; the bucket it reads and its overrides: `lanes --help`, `open-terminal --help` | `95` |
 | Lane settings | `ORCH_LANE_BURN_PCT_PER_HOUR`, `ORCH_LANE_DIRS`, `ORCH_LANE_ALIASES`, `ORCH_LANE_EXCLUDE`, `ORCH_LANE_RETIRE`, `ORCH_LANE_COPILOT_POOL` (overrides the Copilot pool read live from the lane host), `ORCH_LANES_USAGE_TTL`, `ORCH_LANES_USAGE_MAX_AGE`, `ORCH_TMUX_VERIFY_SECS`, `ORCH_LANE_SSH_PROMPT_SECS`, `ORCH_TMUX_SESSION`: `lanes --help`, `open-terminal --help` | |
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |

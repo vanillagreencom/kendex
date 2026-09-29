@@ -28,13 +28,13 @@ git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD 
 
 A non-empty `status --porcelain` stops the review. Managed with a `dev_agent`: re-delegate to commit or revert the leftovers, then re-enter § 1. Standalone: report the dirty files and ask the user to commit, revert, or run `orch review all` for an ad-hoc uncommitted review. No committed diff after that check → report "No committed changes to review" and **END**.
 
-**Trivial diffs skip review by rule, not by asking.** Trivial is the shared classifier's class, asked of the review gate for the whole branch:
+**Trivial diffs skip review by rule, not by asking.** Trivial is the shared classifier's class for the whole branch, which `item-tier` reads:
 
 ```bash
-.agents/skills/review-gate/scripts/review-policy --event pull_request --base origin/[BASE_BRANCH] --head HEAD --repo [WORKTREE_PATH]
+.agents/skills/orch/scripts/item-tier --base origin/[BASE_BRANCH] --head HEAD --repo [WORKTREE_PATH]
 ```
 
-`change_class=trivial review_evidence=none policy=active` goes straight to § 9 with verdict `pass`. Any other answer, a failure included, runs the review.
+An answer whose cause is `cause=classifier class=trivial` goes straight to § 9 with verdict `pass`: the classifier measured the branch trivial. Any other answer, a failure included, runs the review.
 
 ### 1.1 Decision Context
 

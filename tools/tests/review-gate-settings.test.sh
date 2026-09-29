@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
-# This repository's committed kendex.settings.toml must RESOLVE the review
-# gate to "review" and its timeout policy to "proceed". The reviewers here
-# comment but never approve, so `approval` re-arms a gate no reviewer can
-# open and every session stalls, while `off` stops approval-wait waiting at
-# all and a session proceeds as though a review had landed. Both are
-# recognized values: approval-wait warns only on an unrecognized one, so
-# nothing else in the repo notices either.
+# This repository's committed kendex.settings.toml must resolve the reviewer
+# timeout policy to "proceed" and the decision mode to "auto-recommended".
+# Both are recognized values of their keys, so nothing else in the repo
+# notices a change from one to the other: "block" stops every session at a
+# reviewer that never shows, and "ask" stops it at every decision.
 #
-# This is the AGENT-side wait only. Whether a PR can merge without a review
-# is decided by REVIEW_GATE_MODE through the review-gate predicate and the
-# required "Review gate" context, which nothing here asserts.
-#
-# Spelling is approval-wait's to report and is not re-checked here. What is
+# Spelling is orch-env's to report and is not re-checked here. What is
 # checked is the resolved value, which a warning cannot cover.
 #
 # Lives under tools/tests/, not skills/orch/tests/: that suite ships with the
@@ -37,24 +31,10 @@ bad() {
   if [[ -s "$2" ]]; then sed 's/^/        stderr: /' "$2"; fi
 }
 
-# Read the committed file the way the gate does: from the repository root,
-# with the process env silent on every key that could override it. A lane
-# exporting one of these would otherwise mask a committed value.
-silent_env=(env -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u PR_REVIEW_ON_TIMEOUT -u ORCH_DECISION_MODE)
-
-# REVIEW_GATE_CLASS_POLICY is silenced for this one call, set-but-empty, which
-# is what the engine reads as no class policy. An ACTIVE one makes the mode a
-# per-pull-request question and the resolver refuses a call that names no
-# range — the right answer to "what mode does this pull request get?" and no
-# answer at all to the one asked here, which is what the committed reviewer
-# keys resolve to for the repository. Silencing it narrows this read, never
-# the resolver: a caller that does ask per pull request still passes a range.
-gate=$(cd "$REPO_ROOT" && "${silent_env[@]}" REVIEW_GATE_CLASS_POLICY= "$SCRIPTS/approval-wait" --resolve-mode 2>"$TMP/gate.err")
-if [[ "$gate" == "review" ]]; then
-  ok "committed PR_REVIEW_GATE resolves to review"
-else
-  bad "committed PR_REVIEW_GATE resolves to review (got '$gate')" "$TMP/gate.err"
-fi
+# Read the committed file from the repository root, with the process env
+# silent on every key that could override it. A lane exporting one of these
+# would otherwise mask a committed value.
+silent_env=(env -u PR_REVIEW_ON_TIMEOUT -u ORCH_DECISION_MODE)
 
 policy=$(cd "$REPO_ROOT" && "${silent_env[@]}" "$SCRIPTS/orch-env" PR_REVIEW_ON_TIMEOUT block 2>"$TMP/policy.err")
 if [[ "$policy" == "proceed" ]]; then

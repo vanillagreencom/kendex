@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# approval-wait's argument surface: `--resolve-mode` precedence over the
-# process environment, kendex.settings.toml, .env.local (a .env file is read by
-# nothing) and the settings-file override, with and without the engine installed;
-# and the parser's own answers (-h, --help, an unknown flag, a missing value)
+# approval-wait's argument surface: the parser's own answers (-h, --help, an
+# unknown flag, a missing value, a mode it does not have, a missing PR#)
 # before anything reaches gh. One run and one comparison per row: `observe`
-# reads exactly the fields the row's expect names.
+# reads exactly the fields the row's expect names. --resolve-mode's answers
+# over a PR's base rules are approval_wait.sh, which has the fake GitHub.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,133 +14,24 @@ TMP_ROOT="$(mktemp -d)"
 TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-# Two projects: `gate` has the review-gate engine beside orch, `nogate` has
-# orch copied and only github beside it, so approval-wait's own fallback
-# loader reads the settings. A gh that records every call and fails.
-mkdir -p "$TMP_ROOT/gate/.agents/skills" "$TMP_ROOT/nogate/.agents/skills" "$TMP_ROOT/bin"
-ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/gate/.agents/skills/orch"
-ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/gate/.agents/skills/review-gate"
-cp -r "$REPO_ROOT/skills/orch" "$TMP_ROOT/nogate/.agents/skills/orch"
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/nogate/.agents/skills/github"
-for p in gate nogate; do
-  git -C "$TMP_ROOT/$p" init -q
-  git -C "$TMP_ROOT/$p" config user.email test@example.com
-  git -C "$TMP_ROOT/$p" config user.name Test
-done
-# A third project for the review gate's class policy: orch and review-gate
-# COPIED rather than symlinked, because review-policy resolves its sibling
-# classifier from its own resolved directory and a symlink would reach the
-# repository's real one. The stub below is the classifier's contract, so a
-# resolver that drops a flag fails here instead of answering.
-mkdir -p "$TMP_ROOT/class/.agents/skills/harness-ci/scripts"
-cp -r "$REPO_ROOT/skills/orch" "$TMP_ROOT/class/.agents/skills/orch"
-cp -r "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/class/.agents/skills/review-gate"
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/class/.agents/skills/github"
-cat >"$TMP_ROOT/class/.agents/skills/harness-ci/scripts/change-class" <<'CLASSIFIER'
-#!/usr/bin/env bash
-# The shipped classifier's contract as review-policy uses it: the range comes
-# from the caller, and a diff it could not read is still answered as class
-# `standard` at exit 0, with the `class:` line's measured= marker saying so
-# and a harness-note carrying the cause. Spaces in a row's note and fields are
-# written '+', since a row's environment is space-separated.
-event="" base="" head="" prev=""
-for a in "$@"; do
-  case "$prev" in --event) event="$a" ;; --base) base="$a" ;; --head) head="$a" ;; esac
-  prev="$a"
-done
-[ "$event" = pull_request ] || { echo "change-class: cause=missing-event" >&2; exit 2; }
-[ "$base" = "${STUB_EXPECT_BASE:?}" ] || { echo "change-class: bad --base '$base'" >&2; exit 3; }
-[ "$head" = "${STUB_EXPECT_HEAD:?}" ] || { echo "change-class: bad --head '$head'" >&2; exit 3; }
-if [ -n "${STUB_NOTE:-}" ]; then
-  printf 'harness-note: %s\n' "$(printf '%s' "$STUB_NOTE" | tr '+' ' ')" >&2
-fi
-[ -n "${STUB_CLASS:-}" ] || { echo "change-class: no class configured" >&2; exit 1; }
-if [ "${STUB_MARKER:-yes}" = yes ]; then
-  printf 'class: class=%s measured=%s %s\n' "$STUB_CLASS" "${STUB_MEASURED:-true}" \
-    "$(printf '%s' "${STUB_NOTE:-cause=stub}" | tr '+' ' ')" >&2
-fi
-printf 'change_class=%s\n' "$STUB_CLASS"
-CLASSIFIER
-chmod +x "$TMP_ROOT/class/.agents/skills/harness-ci/scripts/change-class"
-git -C "$TMP_ROOT/class" init -q
-git -C "$TMP_ROOT/class" config maintenance.auto false
-git -C "$TMP_ROOT/class" config user.email test@example.com
-git -C "$TMP_ROOT/class" config user.name Test
-# Two real commits: the resolver requires both endpoints to be commits this
-# checkout holds before it asks the owner anything, so a fabricated SHA would
-# make every row below refuse for that reason instead of the row's own.
-printf 'base\n' >"$TMP_ROOT/class/app.txt"
-git -C "$TMP_ROOT/class" add app.txt
-git -C "$TMP_ROOT/class" commit -q -m base
-printf 'head\n' >"$TMP_ROOT/class/app.txt"
-git -C "$TMP_ROOT/class" add app.txt
-git -C "$TMP_ROOT/class" commit -q -m head
-CLASS_BASE_SHA="$(git -C "$TMP_ROOT/class" rev-parse HEAD~1)"
-CLASS_HEAD_SHA="$(git -C "$TMP_ROOT/class" rev-parse HEAD)"
-ABSENT_SHA=0000000000000000000000000000000000000000
-# An unrelated history: both ends present, no ancestor between them, which is
-# the shape a shallow or grafted checkout produces and which the classifier
-# cannot take a merge-base diff of.
-git -C "$TMP_ROOT/class" checkout -q --orphan unrelated
-git -C "$TMP_ROOT/class" rm -q -rf .
-printf 'unrelated\n' >"$TMP_ROOT/class/other.txt"
-git -C "$TMP_ROOT/class" add other.txt
-git -C "$TMP_ROOT/class" commit -q -m unrelated
-UNRELATED_SHA="$(git -C "$TMP_ROOT/class" rev-parse HEAD)"
-git -C "$TMP_ROOT/class" checkout -q --detach "$CLASS_HEAD_SHA"
-
+# One project with orch beside github, and a gh that records every call and
+# fails.
+mkdir -p "$TMP_ROOT/project/.agents/skills" "$TMP_ROOT/bin"
+ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/project/.agents/skills/orch"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/project/.agents/skills/github"
+git -C "$TMP_ROOT/project" init -q
 GH_CALLS="$TMP_ROOT/gh.calls"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> %s\nexit 1\n' "$GH_CALLS" > "$TMP_ROOT/bin/gh"
 chmod +x "$TMP_ROOT/bin/gh"
 
-# stage PROJECT FILES — the project's configuration files for one row, every
-# other file of the set removed first. FILES is `;`-separated `kind:K=V,K=V`
-# items: `settings` and `alt` write a TOML `[env]` table (kendex.settings.toml
-# and alt-settings.toml), `kendex` the machine-local .kendex/settings.toml,
-# `dotenv` and `dotenvlocal` a `.env` or `.env.local` line per pair. A key
-# listed twice is written twice.
-stage() {
-  local project="$TMP_ROOT/$1" spec="$2" items item kind pairs assignments pair path
-  rm -f -- "$project/kendex.settings.toml" "$project/alt-settings.toml" "$project/.env" "$project/.env.local" "$project/.kendex/settings.toml"
-  [[ -n "$spec" ]] || return 0
-  IFS=';' read -ra items <<<"$spec"
-  for item in "${items[@]}"; do
-    kind="${item%%:*}"; pairs="${item#*:}"
-    case "$kind" in
-      settings) path="$project/kendex.settings.toml" ;;
-      alt) path="$project/alt-settings.toml" ;;
-      kendex) mkdir -p "$project/.kendex"; path="$project/.kendex/settings.toml" ;;
-      dotenv) path="$project/.env" ;;
-      dotenvlocal) path="$project/.env.local" ;;
-      *) echo "stage: unknown file kind $kind" >&2; exit 1 ;;
-    esac
-    case "$kind" in settings|alt|kendex) printf '[env]\n' > "$path" ;; *) : > "$path" ;; esac
-    IFS=',' read -ra assignments <<<"$pairs"
-    for pair in "${assignments[@]}"; do
-      case "$kind" in
-        settings|alt|kendex) printf '%s = "%s"\n' "${pair%%=*}" "${pair#*=}" >> "$path" ;;
-        *) printf '%s\n' "$pair" >> "$path" ;;
-      esac
-    done
-  done
-}
-
-# run PROJECT ENV ARGS... — one approval-wait run in PROJECT under the
-# space-separated ENV assignments and no other reviewer-gate key: the four the
-# resolver reads are cleared from the inherited environment first, and the
-# class-policy key is assigned empty unless the row assigns it, so a row's
-# answer is its own on any machine. OUT, RC and ERR (a file) are what
-# `observe` reads. The gh call log is emptied first.
+# run ARGS... — one approval-wait run in the project. OUT, RC and ERR (a file)
+# are what `observe` reads. The gh call log is emptied first.
 RUN_SEQ=0
 run() {
-  local project="$TMP_ROOT/$1" env_spec="$2" env_args=()
-  shift 2
-  # shellcheck disable=SC2206
-  [[ -z "$env_spec" ]] || env_args=($env_spec)
   ERR="$TMP_ROOT/run-$((++RUN_SEQ)).err"
-  rm -f -- "$GH_CALLS"
+  rm -f -- "${GH_CALLS:?}"
   set +e
-  OUT="$(cd "$project" && PATH="$TMP_ROOT/bin:$PATH" env -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u REVIEW_GATE_SETTINGS_FILE REVIEW_GATE_CLASS_POLICY= ${env_args[@]+"${env_args[@]}"} .agents/skills/orch/scripts/approval-wait "$@" 2>"$ERR")"
+  OUT="$(cd "$TMP_ROOT/project" && PATH="$TMP_ROOT/bin:$PATH" .agents/skills/orch/scripts/approval-wait "$@" 2>"$ERR")"
   RC=$?
   set -e
 }
@@ -150,7 +40,6 @@ run() {
 # in EXPECT's order (`+` reads as a space in a needle, so a literal plus cannot
 # be pinned; no field carries one):
 #   rc              exit status
-#   mode            stdout whole
 #   stdout          `empty` when nothing was printed, else `lines`
 #   stdout_line     the first stdout line, spaces encoded as +
 #   stderr_line     the first stable diagnostic record, spaces encoded as +
@@ -162,12 +51,11 @@ observe() {
     name="${token%%=*}"
     case "$name" in
       rc) value="$RC" ;;
-      mode) value="${OUT// /+}" ;;
       stdout) value="$([[ -n "$OUT" ]] && echo lines || echo empty)" ;;
       stdout_line) value="${OUT%%$'\n'*}"; value="${value// /+}" ;;
       stderr_line)
-        value="$(awk '/^(approval-wait|kendex-env): [a-z-]+ .*=/ { print; exit }' "$ERR")"
-        value="${value//"$TMP_ROOT"/<tmp>}"; value="${value// /+}"
+        value="$(awk '/^approval-wait: [a-z-]+ .*=/ { print; exit }' "$ERR")"
+        value="${value// /+}"
         ;;
       gh) value="$([[ -s "$GH_CALLS" ]] && echo called || echo uncalled)" ;;
       *) echo "observe: unknown field $name" >&2; exit 1 ;;
@@ -178,178 +66,23 @@ observe() {
   printf '%s' "${got# }"
 }
 
-# resolve_table ROW... — `label|project|env|files|expect`, one --resolve-mode
-# run per row.
-resolve_table() {
-  local row label project env files expect
-  for row in "$@"; do
-    IFS='|' read -r label project env files expect <<<"$row"
-    [[ -n "$expect" ]] || { printf 'resolve_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
-    stage "$project" "$files"
-    run "$project" "$env" --resolve-mode
-    assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
-  done
-}
-
-echo "=== --resolve-mode precedence ==="
-# PR_REVIEW_GATE names the mode and beats the legacy PR_APPROVAL_GATE, whose
-# on and off map to approval and off; the default is approval, and so is an
-# invalid value. The process environment beats kendex.settings.toml.
-# REVIEW_GATE_MODE=off overrides either reviewer key; any other value never
-# narrows (the engine fails loud on it, not this resolver). REVIEW_GATE_MODE is
-# read from the process environment and the committed settings file only: a
-# .env file is read by nothing, and .env.local is ignored for that one key
-# while it keeps full precedence for PR_REVIEW_GATE. REVIEW_GATE_SETTINGS_FILE
-# names another settings file, /dev/null included. A key assigned twice in the
-# settings file fails loud, exit 2 from the engine and exit 1 from the
-# fallback loader, which resolves no mode. The fallback reads the committed
-# file and ignores the machine-local .kendex copy for the mode key too.
-resolve_table \
-  "PR_REVIEW_GATE=review|gate|PR_REVIEW_GATE=review||mode=review" \
-  "PR_REVIEW_GATE=off|gate|PR_REVIEW_GATE=off||mode=off" \
-  "PR_REVIEW_GATE=approval|gate|PR_REVIEW_GATE=approval||mode=approval" \
-  "PR_REVIEW_GATE beats the legacy PR_APPROVAL_GATE|gate|PR_REVIEW_GATE=review PR_APPROVAL_GATE=off||mode=review" \
-  "legacy on maps to approval|gate|PR_APPROVAL_GATE=on||mode=approval" \
-  "legacy off maps to off|gate|PR_APPROVAL_GATE=off||mode=off" \
-  "the default is approval|gate|||mode=approval" \
-  "an invalid value falls back to approval|gate|PR_REVIEW_GATE=bogus||rc=0 mode=approval" \
-  "a settings-file PR_REVIEW_GATE applies|gate||settings:PR_REVIEW_GATE=review|mode=review" \
-  "the process environment beats the settings file|gate|PR_REVIEW_GATE=approval|settings:PR_REVIEW_GATE=review|mode=approval" \
-  "REVIEW_GATE_MODE=off overrides approval|gate|REVIEW_GATE_MODE=off PR_REVIEW_GATE=approval||mode=off" \
-  "REVIEW_GATE_MODE=off overrides review|gate|REVIEW_GATE_MODE=off PR_REVIEW_GATE=review||mode=off" \
-  "REVIEW_GATE_MODE=enforce preserves the reviewer keys|gate|REVIEW_GATE_MODE=enforce PR_REVIEW_GATE=review||mode=review" \
-  "a non-off REVIEW_GATE_MODE never narrows here|gate|REVIEW_GATE_MODE=bogus PR_REVIEW_GATE=review||mode=review" \
-  "a settings-file REVIEW_GATE_MODE=off applies|gate||settings:REVIEW_GATE_MODE=off,PR_REVIEW_GATE=review|mode=off" \
-  "a .env REVIEW_GATE_MODE=off is read by nothing|gate||dotenv:REVIEW_GATE_MODE=off|mode=approval" \
-  "a .env PR_REVIEW_GATE is read by nothing either: the loader skips .env|gate||dotenv:PR_REVIEW_GATE=review|mode=approval" \
-  "a parent-environment off still applies beside a dotenv file|gate|REVIEW_GATE_MODE=off|dotenv:REVIEW_GATE_MODE=off|mode=off" \
-  "a settings-file off still applies beside a dotenv file|gate||settings:REVIEW_GATE_MODE=off;dotenv:REVIEW_GATE_MODE=off|mode=off" \
-  "a .env.local REVIEW_GATE_MODE=off is ignored, the per-key exception|gate||dotenvlocal:REVIEW_GATE_MODE=off|mode=approval" \
-  "control: a .env.local PR_REVIEW_GATE keeps full precedence|gate||dotenvlocal:PR_REVIEW_GATE=review|mode=review" \
-  "REVIEW_GATE_SETTINGS_FILE=/dev/null forces the default over a settings-file off|gate|REVIEW_GATE_SETTINGS_FILE=/dev/null|settings:REVIEW_GATE_MODE=off|mode=approval" \
-  "REVIEW_GATE_SETTINGS_FILE names another settings file|gate|REVIEW_GATE_SETTINGS_FILE=alt-settings.toml|alt:REVIEW_GATE_MODE=off|mode=off" \
-  "a duplicate REVIEW_GATE_MODE assignment fails loud, naming the cause|gate||settings:REVIEW_GATE_MODE=off,REVIEW_GATE_MODE=enforce|rc=2 stderr_line=approval-wait:+mode-resolution+setting=REVIEW_GATE_MODE" \
-  "the fallback loader reads the committed settings file|nogate||settings:REVIEW_GATE_MODE=off|mode=off" \
-  "the fallback ignores a machine-local .kendex off for the mode key too|nogate||kendex:REVIEW_GATE_MODE=off|mode=approval" \
-  "a duplicate assignment fails the fallback loud, exit 1, and resolves no mode|nogate||settings:REVIEW_GATE_MODE=off,REVIEW_GATE_MODE=enforce|rc=1 stdout=empty stderr_line=kendex-env:+duplicate-key+file=<tmp>/nogate/kendex.settings.toml+key=REVIEW_GATE_MODE"
-
-echo "=== --resolve-mode under the review gate's class policy ==="
-# The class policy decides before every reviewer key. review-policy owns the
-# class-to-policy mapping; this resolver only consumes it. An ACTIVE policy
-# answers for one pull request, so a call with no range refuses instead of
-# guessing a mode. A `none` class prints exempt and no reviewer key can put the
-# gate back; the `bot` class is its inverse and keeps the reviewer keys
-# authoritative under the engine's own REVIEW_GATE_MODE=off; a `current` class
-# leaves that switch exactly as it was. A classifier that cannot answer
-# resolves no mode at all.
-POLICY_ENV='REVIEW_GATE_CLASS_POLICY=render:none;trivial:none;micro:none;small:bot;standard:current'
-# The range each row's stub classifier must be handed, so a resolver that
-# passes the wrong endpoints fails the row instead of answering it.
-RANGE_ENV="STUB_EXPECT_BASE=$CLASS_BASE_SHA STUB_EXPECT_HEAD=$CLASS_HEAD_SHA"
-class_table() { # label|env|args|expect
-  local row label env args expect
-  for row in "$@"; do
-    IFS='|' read -r label env args expect <<<"$row"
-    [[ -n "$expect" ]] || { printf 'class_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
-    stage class ""
-    # shellcheck disable=SC2086
-    run class "$env" $args
-    assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
-  done
-}
-
-RANGE="--resolve-mode --base $CLASS_BASE_SHA --head $CLASS_HEAD_SHA"
-class_table \
-  "an inactive class policy leaves the chain untouched|PR_REVIEW_GATE=review|--resolve-mode|rc=0 mode=review" \
-  "an active policy with no range refuses rather than guess a mode|$POLICY_ENV PR_REVIEW_GATE=review|--resolve-mode|rc=2 stdout=empty stderr_line=approval-wait:+policy-range+options=--base,--head" \
-  "a waived class answers exempt|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|$RANGE|rc=0 mode=exempt" \
-  "no reviewer key puts the gate back for a waived class|$POLICY_ENV $RANGE_ENV STUB_CLASS=micro PR_REVIEW_GATE=approval|$RANGE|rc=0 mode=exempt" \
-  "the required-review inverse: a bot class keeps the reviewer keys under REVIEW_GATE_MODE=off|$POLICY_ENV $RANGE_ENV STUB_CLASS=small REVIEW_GATE_MODE=off PR_REVIEW_GATE=review|$RANGE|rc=0 mode=review" \
-  "a current class still honors REVIEW_GATE_MODE=off|$POLICY_ENV $RANGE_ENV STUB_CLASS=standard REVIEW_GATE_MODE=off PR_REVIEW_GATE=review|$RANGE|rc=0 mode=off" \
-  "a classifier that cannot answer resolves no mode|$POLICY_ENV $RANGE_ENV PR_REVIEW_GATE=review|$RANGE|rc=2 stdout=empty stderr_line=approval-wait:+policy-resolve+range=$CLASS_BASE_SHA...$CLASS_HEAD_SHA" \
-  "an endpoint this checkout does not hold is no mode, and the owner is never asked|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|--resolve-mode --base $ABSENT_SHA --head $CLASS_HEAD_SHA|rc=2 stdout=empty stderr_line=approval-wait:+policy-unreadable-range+range=$ABSENT_SHA...$CLASS_HEAD_SHA" \
-  "two ends with no ancestor between them is no mode either|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|--resolve-mode --base $UNRELATED_SHA --head $CLASS_HEAD_SHA|rc=2 stdout=empty stderr_line=approval-wait:+policy-unreadable-range+range=$UNRELATED_SHA...$CLASS_HEAD_SHA" \
-  "a wait on a waived class refuses instead of idling, and reaches no gh|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|123 --base $CLASS_BASE_SHA --head $CLASS_HEAD_SHA|rc=2 gh=uncalled stderr_line=approval-wait:+gate-off+mode=exempt"
-
-# `standard` is the classifier's fallback as well as one of its verdicts, and
-# only its measured= marker separates them. These rows vary the CAUSE while
-# holding the marker: the causes below are the shapes a real classifier
-# reports, and none of them decides anything here. REVIEW_GATE_MODE=off is the
-# answer a fallback would take if the marker were not read.
-policy_marker_rows() { # WANT LABEL-PREFIX CLASS MEASURED ROWS...
-  local want="$1" prefix="$2" class="$3" measured="$4" row note label
-  shift 4
-  for row in "$@"; do
-    IFS='|' read -r note label <<<"$row"
-    stage class ""
-    run class "$POLICY_ENV $RANGE_ENV STUB_CLASS=$class STUB_MEASURED=$measured STUB_NOTE=$note REVIEW_GATE_MODE=off PR_REVIEW_GATE=review" \
-      --resolve-mode --base "$CLASS_BASE_SHA" --head "$CLASS_HEAD_SHA"
-    assert_eq "$(observe "$want")" "$want" "$prefix: $label" "$ERR"
-  done
-}
-
-policy_marker_rows "rc=2 stdout=empty" "must-fail" standard false \
-  "cause=unresolved-endpoint+endpoint=$ABSENT_SHA|an unresolved endpoint is no mode, never the gate-disabled off" \
-  "cause=unreadable-diff+range=$CLASS_BASE_SHA...$CLASS_HEAD_SHA|an unreadable diff is no mode" \
-  "cause=unreadable-base-inventory|an inventory the base end cannot supply is no mode" \
-  "cause=narrow-change-list-unreadable|a narrow-change list the classifier cannot read is no mode" \
-  "cause=size-measurement-failed|a branch measurement that did not run is no mode" \
-  "cause=generated-ownership-gain|a cause the classifier calls measurable is no mode either, when it marks the answer refused"
-
-policy_marker_rows "rc=0 mode=review" "control" small true \
-  "cause=production-within-small+subsystem=app|a measured class answers whatever its cause says" \
-  "cause=unreadable-diff+range=x...y|and a cause that reads like a refusal does not make one"
-
-# A classifier that prints no marker at all is an answer this resolver cannot
-# read, and it refuses rather than assume the class on stdout was measured.
-stage class ""
-run class "$POLICY_ENV $RANGE_ENV STUB_CLASS=render STUB_MARKER=no REVIEW_GATE_MODE=off PR_REVIEW_GATE=review" \
-  --resolve-mode --base "$CLASS_BASE_SHA" --head "$CLASS_HEAD_SHA"
-assert_eq "$(observe "rc=2 stdout=empty")" "rc=2 stdout=empty" \
-  "must-fail: a classifier printing no marker is no mode" "$ERR"
-
-# Must-fail control: the exempt verdict is what keeps a waived class from
-# picking up the evidence and thread terms downstream. Collapse it onto the
-# reviewer-less `off` and the waived row must stop answering exempt.
-CLASS_PREDICATE="$TMP_ROOT/class/.agents/skills/orch/scripts/approval-wait"
-CLASS_WAIVED_ENV="$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review"
-exempt_count="$(grep -Fc "printf 'exempt\\n'" "$CLASS_PREDICATE" || true)"
-assert_eq "$exempt_count" "1" "control: the waived-class verdict has one mutation target"
-if [[ -L "$CLASS_PREDICATE" ]]; then
-  fail "control: the mutation source must not be a symlink"
-else
-  mutant="$TMP_ROOT/approval-wait.mutant"
-  sed "s/printf 'exempt\\\\n'/printf 'off\\\\n'/" "$CLASS_PREDICATE" >"$mutant"
-  if cmp -s "$mutant" "$CLASS_PREDICATE"; then
-    fail "control: the mutant must change the waived-class verdict"
-  else
-    cat "$mutant" >"$CLASS_PREDICATE"
-    stage class ""
-    run class "$CLASS_WAIVED_ENV" --resolve-mode --base "$CLASS_BASE_SHA" --head "$CLASS_HEAD_SHA"
-    if [[ "$OUT" == exempt ]]; then
-      fail "must-fail: collapsing exempt onto off must fail the waived-class contract"
-    else
-      pass "must-fail: collapsing exempt onto off fails the waived-class contract"
-    fi
-  fi
-fi
-
 echo "=== the arg parser answers -h, --help and its own errors before gh ==="
 # `label|args|expect`; keys identify the usage response and parser refusals.
-stage gate ""
 for row in \
   "--help prints the contract on stdout, exits 0 and never invokes gh|--help|rc=0 stdout_line=approval-wait:+usage+command=approval-wait gh=uncalled" \
   "-h prints usage|-h|rc=0 stdout_line=approval-wait:+usage+command=approval-wait" \
   "a bare help prints usage|help|rc=0 stdout_line=approval-wait:+usage+command=approval-wait" \
   "an unknown flag exits 2, is named, and never invokes gh|--bogus-flag|rc=2 stderr_line=approval-wait:+unknown-option+option=--bogus-flag gh=uncalled" \
-  "a missing PR# exits 2 and names the argument||rc=2 stderr_line=approval-wait:+missing-pr+operand=PR" \
+  "a missing PR# exits 2 and names the argument||rc=2 stderr_line=approval-wait:+missing-pr+operand=PR gh=uncalled" \
+  "--resolve-mode without a PR# exits 2 and never invokes gh|--resolve-mode|rc=2 stdout=empty stderr_line=approval-wait:+missing-pr+operand=PR gh=uncalled" \
   "--mode without a value exits 2 and names the requirement|1 --mode|rc=2 stderr_line=approval-wait:+missing-mode+option=--mode" \
+  "a mode other than approval exits 2 and never invokes gh|1 --mode review|rc=2 stderr_line=approval-wait:+invalid-mode+value=review gh=uncalled" \
   "--item without a value exits 2 and names the option|1 --item|rc=2 stderr_line=approval-wait:+missing-item+option=--item" \
   "--on-timeout without a value exits 2|1 --on-timeout|rc=2 stderr_line=approval-wait:+missing-timeout+option=--on-timeout"; do
   IFS='|' read -r label args expect <<<"$row"
   [[ -n "$expect" ]] || { printf 'usage: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
   # shellcheck disable=SC2086
-  run gate "" $args
+  run $args
   assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
 done
 

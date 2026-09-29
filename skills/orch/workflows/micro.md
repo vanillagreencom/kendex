@@ -154,13 +154,13 @@ Read the pull request's exact endpoints through the GitHub skill and bind them a
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-view [PR_NUMBER] --json baseRefOid,headRefOid
 ```
 
-Ask the review gate's policy owner to classify that range. It calls the shared harness-ci classifier and accepts no asserted class:
+Classify that range through `item-tier`, which reads the shared harness-ci classifier and accepts no asserted class:
 
 ```bash
-[MAIN_REPO_ROOT]/.agents/skills/review-gate/scripts/review-policy --event pull_request --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]
+[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/item-tier --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]
 ```
 
-The accepted set is every class at or below this tier that needs no review evidence under an active policy: `change_class=render`, `change_class=trivial` or `change_class=micro`, each followed by `review_evidence=none policy=active`. Any such answer continues. Every other answer escapes (§ Escape condition 7): a command failure, an inactive policy, an unresolved class, a class above this tier (`small`, `standard`), or another evidence policy. This route is independent of the repository's `approval` or `review` gate mode because the review gate owns the class exemption. Its [README per-class table](../../review-gate/README.md#class-policy) is the policy statement.
+The accepted answer is `tier=micro`: the classifier measured `render`, `trivial` or `micro`. Any such answer continues. Every other answer escapes (§ Escape condition 7): a command failure, a class above this tier (`small`, `standard`), or a class the classifier did not measure. The pull request still waits on GitHub's approval rule for its base, which § 5 step 1's arm leaves to GitHub.
 
 Ask the canonical merge gate for its readiness object before any merge attempt:
 
@@ -170,7 +170,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scrip
 
 Its JSON stdout is `[CHECK]`. Require a valid readiness object for an open pull request. A command failure, an unreadable object, or a non-open pull request escapes (§ Escape condition 7). A red required check or a merge conflict never reaches a merge: `pr-merge` refuses both, and § 5 step 1 routes that refusal.
 
-**Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]`, and `[STATE_KEY]` as `[ISSUE_ID]`, binding `[MICRO_ENTRY]` to `true` and `[MICRO_HEAD]` to `[HEAD_SHA]`. The exemption was proved over that head alone, so the head is what carries it across the handoff: § 5 step 1 refuses a prepared head that is not this one.
+**Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]`, and `[STATE_KEY]` as `[ISSUE_ID]`, binding `[MICRO_ENTRY]` to `true` and `[MICRO_HEAD]` to `[HEAD_SHA]`. The class was measured over that head alone, so the head is what carries it across the handoff: § 5 step 1 refuses a prepared head that is not this one.
 
 Its § 3 is skipped, so nothing waits on CI or on a reviewer before the arm. § 5 step 1 attempts the prepared head and owns the queue wait to a terminal verdict. A refusal returns to its § 3.2, which reads the `[CHECK]` object only the skipped § 3 produces. That return escapes (§ Escape condition 8).
 
@@ -205,9 +205,9 @@ The tier holds only while the item and its change stay inside it. Each condition
 4. The commit chain refuses the commit over a repository rule. A missing changelog fragment and a rejected commit message are this workflow's own to fix and are not escapes.
 5. `branch-size-check` reports `over`.
 6. A review finding on the pull request needs a change condition 3 or 5 excludes.
-7. § 4 cannot prove both halves of its precheck. Either the review gate's answer is outside the accepted set § 4 states, or `pr-merge --check` returns no valid readiness object for an open pull request.
+7. § 4 cannot prove both halves of its precheck. Either the `item-tier` answer is not `tier=micro`, or `pr-merge --check` returns no valid readiness object for an open pull request.
 8. merge-pr.md § 5 step 1 returns to its § 3.2.
-9. merge-pr.md § 5 step 1 refuses: the mode it resolves over the prepared endpoints is not `exempt`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`. The endpoints moved between § 4's classification and that step, by a push or by a retarget that changes the class without moving the head.
+9. merge-pr.md § 5 step 1 refuses: the `item-tier` answer it reads over the prepared endpoints is not `tier=micro`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`. The endpoints moved between § 4's classification and that step, by a push or by a retarget that changes the class without moving the head.
 
 The § 1 control-host refusal also ends the run, before any condition above can apply. It is not an escape: the item stays at the `micro` tier and launches as a hosted lane.
 

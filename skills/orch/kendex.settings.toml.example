@@ -42,27 +42,9 @@ ORCH_LANE_OUTPUT = "quiet"
 # set it where the free space left below it still holds one full validation.
 ORCH_ROUND_PRUNE_DISK_PCT = "75"
 
-# What counts as a review before a merge. "approval" needs a GitHub
-# approval. "review" needs any non-author review of the current commit and
-# no open comment threads, for bots that comment but never approve. "off"
-# is only for a project with no reviewer at all.
-# values: approval | review | off
-PR_REVIEW_GATE = "approval"
-
-# The review-gate engine's own off switch, read here even where that
-# package is not installed. Only the exact word "off" narrows the gate;
-# anything else leaves the setting above in charge.
-# values: enforce | off
-REVIEW_GATE_MODE = "enforce"
-
 # Seconds to wait for a review before the timeout policy below applies. A
 # wait named on the command line always wins.
 PR_REVIEW_WAIT_SECS = "900"
-
-# The check name a trusted review bot publishes, whose success counts as a
-# review received. Anyone can publish under any name, so name only the bot
-# you trust. Empty counts reviews alone.
-PR_REVIEW_CHECK = ""
 
 # What happens when that wait runs out. "proceed" goes ahead only where no
 # reviewer engaged and no thread is open. "block" stops and waits for a

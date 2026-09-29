@@ -114,27 +114,20 @@ Three conditions are merge gates, not advice:
 
 - **Open review threads** — not a `CHECK` field: run § 3.3 before the `not_approved` wait.
 - **`suppressed-findings`** — not a `CHECK` warning, and a merge gate. `pr-merge --check` reduces the red gate to `ci_failed`, `ci-classify-refusal` prints a `fail:` line naming the `Review gate` check, and that check's status description opens `N suppressed finding(s) in a review body`. Those entries are findings a reviewer wrote into its review body, so no thread carries them: `unresolved_count` reads zero and `review-pr-comments` reaches none of them. Answer them by [references/suppressed-findings.md](../references/suppressed-findings.md), which owns the whole route.
-- **`not_approved`** — bind this pull request's endpoints as `[BASE_SHA]` and `[HEAD_SHA]`:
+- **`not_approved`** — resolve the gate mode the pull request's base sets ([references/gates.md](../references/gates.md)). A non-zero exit is no mode: report it and stop.
 
   ```bash
-  env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefOid,headRefOid --jq '[.baseRefOid,.headRefOid]|@tsv'
-  ```
-
-  Resolve the gate mode from them ([references/gates.md](../references/gates.md)). A non-zero exit is no mode: report it and stop.
-
-  ```bash
-  .agents/skills/orch/scripts/approval-wait --resolve-mode --base [BASE_SHA] --head [HEAD_SHA]
+  .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
   ```
 
   Route on the printed `GATE_MODE`:
 
-  - `exempt`, `off` — informational; never gate or wait.
-  - `review` — `not_approved` is expected. Poll `approval-wait [PR_NUMBER] 30 --json --mode review --item [STATE_KEY]` and treat `reviewed` as the met gate.
+  - `off` — informational; never gate or wait.
   - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: poll `approval-wait [PR_NUMBER] 30 --json --mode approval --item [STATE_KEY]`; after its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
 
-  A `comments` answer (exit 1) in either mode is an open thread: run § 3.3, then this wait again.
+  A `comments` answer (exit 1) is an open thread: run § 3.3, then this wait again.
 
-  With `PR_REVIEW_ON_TIMEOUT=proceed`, a deadline reached with zero unresolved threads and no reviewer evidence returns `proceeded` (exit 0) instead of `timeout` in both modes — treat it as a met gate and record it in the § 6 report. An open thread answers `comments` instead; a `changes_requested` blocked earlier, at § 3.2's readiness check. The proceed is a LOCAL verdict — orch posts no status.
+  With `PR_REVIEW_ON_TIMEOUT=proceed`, a deadline reached with zero unresolved threads and no reviewer evidence returns `proceeded` (exit 0) instead of `timeout` — treat it as a met gate and record it in the § 6 report. An open thread answers `comments` instead; a `changes_requested` blocked earlier, at § 3.2's readiness check. The proceed is a LOCAL verdict — orch posts no status.
 
   An `unreviewable` status is never a met gate: no automatic reviewer targets this PR's base, so the silence is structural. Follow [references/gates.md](../references/gates.md) § Stacked pull requests, then re-run the wait. If it repeats, `auto-recommended` records `review-gate-unreviewable`, while `ask` presents the wait or stop choice.
 
@@ -210,7 +203,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
 1. **Merge**, before any cleanup:
 
-   Resolve the repository, gate mode and exact head before any merge attempt. `[RECOVERY_COUNT]` is `0` initially and one more per recovery cycle in this run. Nothing persists it: a run resumed after a compaction, or relaunched by oversee's `window-gone` rule, starts a fresh budget. Read a run that keeps returning to ci-fix as the signal the cap is there for, whatever the count says.
+   Resolve the repository and exact head before any merge attempt. `[RECOVERY_COUNT]` is `0` initially and one more per recovery cycle in this run. Nothing persists it: a run resumed after a compaction, or relaunched by oversee's `window-gone` rule, starts a fresh budget. Read a run that keeps returning to ci-fix as the signal the cap is there for, whatever the count says.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner
@@ -224,13 +217,17 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefOid,headRefOid --jq '[.baseRefOid,.headRefOid]|@tsv'
    ```
 
-   That head is `[PREPARED_HEAD]` and that base is `[PREPARED_BASE]`. Resolve the gate mode from them:
+   That head is `[PREPARED_HEAD]` and that base is `[PREPARED_BASE]`. A `[MICRO_ENTRY]` run classifies them, fetching both first so a base tip newer than the worktree's last fetch is still measured:
 
    ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait --resolve-mode --base [PREPARED_BASE] --head [PREPARED_HEAD]
+   git -C [WORKTREE_PATH] fetch --quiet --no-tags --no-write-fetch-head origin [PREPARED_BASE] [PREPARED_HEAD]
    ```
 
-   A `[MICRO_ENTRY]` run continues only where the mode resolved above is `exempt` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`: the class is measured over both endpoints, and a retarget changes it without moving the head, so the fresh answer is what carries the exemption and the head says it is the same run. Any other answer arms nothing and escapes by micro.md condition 9. Read workflow state `pr.size_check` for `[STATE_KEY]`, and use it only when its `head_sha` equals `[PREPARED_HEAD]`, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.
+   ```bash
+   .agents/skills/orch/scripts/item-tier --base [PREPARED_BASE] --head [PREPARED_HEAD] --repo [WORKTREE_PATH]
+   ```
+
+   A `[MICRO_ENTRY]` run continues only where that answer is `tier=micro` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`: the class is measured over both endpoints, and a retarget changes it without moving the head, so the fresh answer is what carries the micro tier and the head says it is the same run. Any other answer arms nothing and escapes by micro.md condition 9. Read workflow state `pr.size_check` for `[STATE_KEY]`, and use it only when its `head_sha` equals `[PREPARED_HEAD]`, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.
 
    **Merge route.** One route serves every change class while kendex decision D003 stands: every PR arms auto-merge and waits in the queue. Take the `--auto` arm below, and reach the direct attempt only where that arm answers `arm: no-merge-gate` outside § 3.2's `unknown:` path. That answer does not mean the base has no queue: a base that still queues the PR answers the direct attempt with exit `75`, which takes the queue-wait block. An item whose workflow state carries `pr_approval.forced` takes the same arm. A PR [submit-pr.md](submit-pr.md) § 2 step 5 armed at creation takes it too: the arm binds the prepared head and answers exit `75`, and the lane waits in the queue-wait block.
 
@@ -297,7 +294,7 @@ Use the output as `MAIN_REPO_ROOT`.
    Max `[MAX_CYCLES]` recovery cycles per merge-pr run. At the cap, report the failing check names, ci-fix's last error summary, and what each cycle attempted — never a bare "persistent failure" — then skip steps 2-6 and hand back. Use rerun-in-place only for flakes; gate or CI behavior changes need a fresh head.
 
    1. `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-6 → § 5 step 1` with context `worktree`, `lifecycle: "managed"`, `issue_id`. For a queue ejection the failing run is the **merge-group** run (event `merge_group`), not necessarily the PR-head run — locate it via the failing check's run link or `gh run list --event merge_group --limit 10` and point ci-fix at it.
-   2. Re-confirm the gate at the head about to be re-armed (skip under `exempt` or `off`):
+   2. Re-confirm the gate at the head about to be re-armed, under the `GATE_MODE` ci-fix returned (skip under `off`):
 
       ```bash
       env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE] --item [STATE_KEY]

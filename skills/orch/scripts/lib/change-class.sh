@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # change-class.sh — dev-validate-run's and item-tier's reader of harness-ci's
-# change classifier. review-gate's review-policy calls the classifier itself for the
-# measured marker it reads, and CI's .github/actions/change-class reads the
-# shipped scripts from its own trusted checkout. Sourced; it defines the
+# change classifier. CI's .github/actions/change-class reads the shipped
+# scripts from its own trusted checkout. Sourced; it defines the
 # functions below and sets nothing until one runs.
 #
 # The classifier is <skills>/harness-ci/scripts/change-class beside this

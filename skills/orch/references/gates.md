@@ -4,26 +4,22 @@ Cross-script routing behind the gate-mode summary and the `approval-wait` / `ci-
 
 ## Gate-mode routing
 
-Read the effective reviewer-gate mode ONLY through `approval-wait --resolve-mode` — never re-derive the chain, and never auto-detect the mode from the requested-reviewer list. Pass the pull request's base and head with `--base` and `--head`: where the review gate's class policy is active the mode belongs to one pull request, and a call with no range exits 2 rather than guess one. An active class policy is the one path here that touches the network: both endpoints must be commits the checkout holds, so the resolver fetches a missing one from origin by SHA, and refuses when it is still missing rather than report a class for a diff nothing read. A non-zero exit is no mode: report it and stop rather than pick one. It prints:
+Read the effective reviewer-gate mode ONLY through `approval-wait <PR#> --resolve-mode`, never re-derive it, and never auto-detect the mode from the requested-reviewer list. GitHub's approval rule on the pull request's base decides it: the resolver reads the base from the pull request, then every rule GitHub applies to that branch, organization rulesets included. A non-zero exit is no mode: report it and stop rather than pick one. It prints:
 
 | `GATE_MODE` | Meaning | Route |
 |-------------|---------|-------|
-| `approval` | GitHub-native approval verdict required | `approval-wait` |
-| `review` | a non-author review of the current head that is APPROVED or CHANGES_REQUESTED, or COMMENTED with a body or a thread it opened, plus zero unresolved threads | `approval-wait --mode review` |
-| `exempt` | the review gate's class policy waives review for this change class (resolved first) | skip the wait; record the gate not-applicable; open threads still stop the merge ([thread-read.md](thread-read.md)) |
-| `off` | reviewer-less repo, or the engine's `REVIEW_GATE_MODE=off` disable | skip the wait; record the gate not-applicable |
+| `approval` | the base's `pull_request` rules require at least one approval | `approval-wait` |
+| `off` | the base requires no approval, or has no `pull_request` rule | skip the wait; record the gate not-applicable |
 
-`exempt` and `off` both skip the wait, and they are not the same thing. `off` is a repository with no reviewer gate, where unresolved review threads still gate the merge. `exempt` is one change the review gate's own policy puts outside that gate, to the scope the [review-gate README class table](../../review-gate/README.md#class-policy) states, so submit-pr's gate 3 does not apply to it either. Its open threads still stop its merge, by the readers [thread-read.md § What reads an open thread](thread-read.md#what-reads-an-open-thread) lists. Required CI checks, commit guards, exact-head checks and conflict refusal are untouched in both, and the merge path still refuses a `CHANGES_REQUESTED` review at its readiness check.
+Under `off`, open review threads still stop the merge: submit-pr's gate 3 applies, and so do the readers [thread-read.md § What reads an open thread](thread-read.md#what-reads-an-open-thread) lists. Required CI checks, commit guards, exact-head checks and conflict refusal are untouched in both modes, and the merge path still refuses a `CHANGES_REQUESTED` review at its readiness check. In `approval` mode an unresolved thread holds the wait at `comments` even beside an approval, because the base's rule refuses the merge while one stands.
 
-The class policy is the review-gate skill's, and `review-policy` is its only owner: it calls the shared `harness-ci` change classifier and maps the class to one evidence policy. Orch never classifies a change and never re-maps a class. A `bot` row is the `none` row's inverse — it keeps the reviewer keys authoritative even under `REVIEW_GATE_MODE=off`. The per-class table is [`../../review-gate/README.md` § Class policy](../../review-gate/README.md#class-policy).
-
-The reviewer-gate settings — `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_WAIT_SECS` — live in `kendex.settings.toml` `[env]`; semantics and defaults are in `approval-wait --help`. The gate predicate, writer, and engine-side `REVIEW_GATE_*` keys belong to the review-gate skill (its SKILL.md and `.agents/skills/review-gate/references/settings.md`).
+The reviewer-gate settings, `PR_REVIEW_ON_TIMEOUT` and `PR_REVIEW_WAIT_SECS`, live in `kendex.settings.toml` `[env]`; semantics and defaults are in `approval-wait --help`. The gate predicate, writer, and engine-side `REVIEW_GATE_*` keys belong to the review-gate skill (its SKILL.md and `.agents/skills/review-gate/references/settings.md`).
 
 ## Which waiter answers which state
 
 | Waiting on | Tool |
 |------------|------|
-| Reviewer verdict on one PR | `approval-wait` — statuses `approved`/`reviewed`/`changes_requested`/`comments`/`timeout`/`proceeded`/`unreviewable`/`error` |
+| Reviewer verdict on one PR | `approval-wait` — statuses `approved`/`changes_requested`/`comments`/`timeout`/`proceeded`/`unreviewable`/`error` |
 | CI on one PR | `ci-wait` — verdicts `pass`/`fail`/`pending`/`none` |
 | Merge-queue / auto-merge outcome | `queue-wait` — the growing verdict set documented in its § Verdicts table |
 | Many PRs, long horizon | `pr-watch.sh` — § Multi-PR watching |

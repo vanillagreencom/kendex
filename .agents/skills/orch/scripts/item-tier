@@ -26,17 +26,9 @@
 #                    standard as classifier-unmeasured.
 #
 # At least one of --production, --floor and --base is required. --repo
-# (default .) is the checkout the classifier and the review gate read. No
-# `**Expected delta**` line is read here: that line is branch-size-check's
-# optional allowance, and the estimate is the caller's.
-#
-# A micro answer also needs the review gate's per-class policy active, as
-# `review-policy --check-config` answers it. With the policy inactive, the
-# review gate absent, or its answer unreadable, a micro run is certain to
-# escape at micro.md § Escape condition 7, so the item takes small and the
-# cause names why. This script reads only whether the policy is active, never
-# its micro row: an active policy that still requires review for micro
-# answers micro here, and that run escapes at condition 7.
+# (default .) is the checkout the classifier reads. No `**Expected delta**`
+# line is read here: that line is branch-size-check's optional allowance, and
+# the estimate is the caller's.
 #
 # A ceiling list or a classifier this script cannot read answers standard,
 # naming the cause, never a narrower class.
@@ -52,7 +44,6 @@ shopt -s extglob
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"
-REVIEW_POLICY="$SCRIPT_DIR/../../review-gate/scripts/review-policy"
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 
@@ -211,23 +202,6 @@ if [ -n "$base" ]; then
   else
     cat -- "$class_err" >&2
     consider standard "classifier-failed detail=$CHANGE_CLASS_CAUSE"
-  fi
-fi
-
-if [ "$tier" = micro ]; then
-  policy=""
-  if [ ! -x "$REVIEW_POLICY" ]; then
-    tier=small
-    cause="review-policy-absent"
-  elif ! policy="$(cd -- "$repo" && "$REVIEW_POLICY" --check-config)"; then
-    tier=small
-    cause="review-policy-unreadable"
-  else
-    case "$policy" in
-      review-policy=active) ;;
-      review-policy=inactive) tier=small; cause="review-policy-inactive" ;;
-      *) tier=small; cause="review-policy-unreadable" ;;
-    esac
   fi
 fi
 

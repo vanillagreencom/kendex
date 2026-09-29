@@ -25,28 +25,9 @@ LINEAR_AGENT_LABELS = "agent:generalist, agent:rust, agent:iced, agent:researche
 # `Tracked: <ID>` needs only an issue to exist. Empty = guard off.
 LINEAR_REQUIRE_REACH = "1"
 
-# Reviewer merge gate: "approval" needs a GitHub approval; "review" needs a
-# non-author review of the current head plus zero unresolved threads; "off"
-# only where no reviewer exists. This repo's reviewers (Codex, Copilot)
-# comment but never approve, and the CI "Review gate" status is the engine's
-# verdict, so "review" is the mode that can actually pass.
-PR_REVIEW_GATE = "review"
-
-# The review-gate ENGINE's one-switch disable, consumed by orch even where
-# the review-gate skill is not installed. Only the exact value "off"
-# narrows; anything else leaves PR_REVIEW_GATE authoritative.
-REVIEW_GATE_MODE = "enforce"
-
 # Total review-wait budget in seconds before the on-timeout policy applies;
 # an explicit max_wait argument always wins.
 PR_REVIEW_WAIT_SECS = "900"
-
-# Check-run or commit-status name a trusted review bot publishes on
-# analyzed heads; a
-# success counts as review-received. SECURITY: matched by NAME and anyone
-# can publish under any name — name only the trusted bot's check. Empty =
-# review objects only.
-PR_REVIEW_CHECK = ""
 
 # When the review signal never arrives: "block" reports a timeout;
 # "proceed" records a reviewer-down override and moves on, but only with
