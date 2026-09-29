@@ -38,7 +38,6 @@ from refusals import Refusal
 AUTH_ERRORS = {"invalid_auth", "not_authed", "account_inactive", "token_revoked", "token_expired"}
 RETRIES = 3
 TIMEOUT_SECONDS = 30
-AUTH_FIX = "fix=set a live SLACK_BOT_TOKEN and restart the relay"
 COPY_BYTES = 64 * 1024
 # The cap chat.postMessage and chat.update put on `markdown_text`.
 MARKDOWN_LIMIT = 12000
@@ -59,8 +58,11 @@ class Slack:
         base_url: str,
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
+        token_name: str = "SLACK_BOT_TOKEN",
     ) -> None:
         self.token = token
+        # The setting a refused token is named by in the refusal's fix=.
+        self.token_name = token_name
         self.base_url = base_url.rstrip("/")
         self.clock = clock
         self.sleep = sleep
@@ -109,7 +111,7 @@ class Slack:
         if not answer.get("ok"):
             error = str(answer.get("error", "unknown"))
             if error in AUTH_ERRORS:
-                raise Refusal("slack-auth-failed", f"{error} {AUTH_FIX}")
+                raise Refusal("slack-auth-failed", f"{error} fix=set a live {self.token_name} and restart the relay")
             raise Refusal("slack-api-failed", f"{method} error={error}", error=error)
         return answer
 

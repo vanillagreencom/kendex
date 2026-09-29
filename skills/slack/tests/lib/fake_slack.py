@@ -2,7 +2,8 @@
 """A fake Slack Web API for the suites: the methods the package calls, an
 in-memory workspace, and a control surface under /_test/ the suites drive.
 
-    fake_slack.py --port-file PATH --token TOKEN [--user EMAIL=ID]... [--page N]
+    fake_slack.py --port-file PATH --token TOKEN --app-token TOKEN
+                  [--user EMAIL=ID]... [--page N]
 
 Control: POST /_test/message injects a message and answers its ts; POST
 /_test/file holds `content` as file `id`, which GET /_files/<id> serves to the
@@ -18,15 +19,30 @@ client meets as a refused connection before its request is written, or with
 halfway through: `length` under its full Content-Length, `chunked` inside
 its first chunk, or with `chunked: true` the whole file in two chunks and
 no Content-Length. A download's method is `download`.
+
+Socket Mode: apps.connections.open, called with the app token, answers the
+URL of a WebSocket on this same port. Its first frame is Slack's `hello`;
+every message the workspace gains after that, the app's own included, goes
+to the newest open connection as an `events_api` envelope, and the client's
+acknowledgements are kept. A `socket` fault with `drop` withholds the next
+envelope and closes that connection with no close frame, as a network drop
+does; POST /_test/faults-reset drops every pending fault; POST
+/_test/socket with `disconnect: REASON` sends Slack's
+`disconnect` envelope. /_test/state carries `sent`, `acks` and `withheld`
+envelope ids and the count of connections `opened`.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import os
+import select
 import socket
 import socketserver
+import struct
 import sys
 import threading
 import time
@@ -35,12 +51,65 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BOT = "UBOT"
 BOT_ID = "B01"
+GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 SIGNIN = b"<!DOCTYPE html><html><head><title>Slack</title></head><body>Sign in to Slack</body></html>"
 
 
+class Conn:
+    """One server side of a Socket Mode connection: frames out unmasked,
+    each closed with no close frame when the suite drops it."""
+
+    def __init__(self, sock: socket.socket) -> None:
+        self.sock = sock
+        self.open = True
+        self.buf = b""
+
+    def send(self, text: str, opcode: int = 0x1) -> None:
+        data = text.encode() if isinstance(text, str) else text
+        size = len(data)
+        if size < 126:
+            head = struct.pack("!BB", 0x80 | opcode, size)
+        elif size < 1 << 16:
+            head = struct.pack("!BBH", 0x80 | opcode, 126, size)
+        else:
+            head = struct.pack("!BBQ", 0x80 | opcode, 127, size)
+        try:
+            self.sock.sendall(head + data)
+        except OSError:
+            self.close()
+
+    def close(self) -> None:
+        self.open = False
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def frames(self):
+        """Every whole client frame buffered, unmasked, as (opcode, payload)."""
+        while len(self.buf) >= 2:
+            size, offset = self.buf[1] & 0x7F, 2
+            if size == 126:
+                size, offset = struct.unpack("!H", self.buf[2:4])[0], 4
+            elif size == 127:
+                size, offset = struct.unpack("!Q", self.buf[2:10])[0], 10
+            if len(self.buf) < offset + 4 + size:
+                return
+            mask = self.buf[offset : offset + 4]
+            data = bytes(b ^ mask[i % 4] for i, b in enumerate(self.buf[offset + 4 : offset + 4 + size]))
+            opcode = self.buf[0] & 0x0F
+            self.buf = self.buf[offset + 4 + size :]
+            yield opcode, data
+
+
 class Workspace:
-    def __init__(self, token: str, users: dict, page: int) -> None:
+    def __init__(self, token: str, app_token: str, users: dict, page: int) -> None:
         self.token = token
+        self.app_token = app_token
+        self.sockets: list = []  # every connection opened, newest last
+        self.sent: list = []
+        self.acks: list = []
+        self.withheld: list = []
         self.users = users  # email -> id
         self.page = page
         self.channels: dict = {}  # id -> {id, name, members, is_private}
@@ -77,7 +146,36 @@ class Workspace:
                     parent["reply_count"] = parent.get("reply_count", 0) + 1
                     parent["latest_reply"] = message["ts"]
         self.messages[channel].append(message)
+        self.push(channel, message)
         return message
+
+    def push(self, channel: str, message: dict) -> None:
+        """The message as an events_api envelope to the newest open
+        connection, or withheld by a `socket` drop fault; none with no
+        connection open, as Slack sends none."""
+        live = [conn for conn in self.sockets if conn.open]
+        if not live:
+            return
+        self.counter += 1
+        env_id = f"E{self.counter:04d}"
+        event = dict(message, channel=channel, channel_type="group")
+        event.pop("body_arg", None)
+        for fault in self.faults:
+            if fault["method"] == "socket" and fault["times"] > 0 and fault.get("drop"):
+                fault["times"] -= 1
+                self.withheld.append(env_id)
+                live[-1].close()
+                return
+        envelope = {
+            "envelope_id": env_id,
+            "type": "events_api",
+            "accepts_response_payload": False,
+            "retry_attempt": 0,
+            "payload": {"type": "event_callback", "event": event},
+        }
+        self.sent.append(env_id)
+        live[-1].send(json.dumps(envelope))
+
 
     def top_level(self, channel: str):
         return [m for m in self.messages.get(channel, []) if not m.get("thread_ts") or m["thread_ts"] == m["ts"]]
@@ -150,7 +248,47 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(length) if length else b""
 
     def do_GET(self):
+        if urllib.parse.urlsplit(self.path).path == "/_socket":
+            return self.socket_mode()
         self.dispatch()
+
+    def socket_mode(self):
+        """The WebSocket handshake, `hello`, then the client's frames until
+        it or the suite closes the connection."""
+        key = self.headers.get("Sec-WebSocket-Key", "")
+        accept = base64.b64encode(hashlib.sha1((key + GUID).encode()).digest()).decode()
+        self.send_response(101)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept)
+        self.end_headers()
+        self.wfile.flush()
+        self.close_connection = True
+        conn = Conn(self.connection)
+        with self.ws.lock:
+            self.ws.sockets.append(conn)
+            conn.send(json.dumps({"type": "hello", "num_connections": 1}))
+        while conn.open:
+            readable, _, _ = select.select([conn.sock], [], [], 0.05)
+            if not readable:
+                continue
+            try:
+                chunk = conn.sock.recv(65536)
+            except OSError:
+                chunk = b""
+            with self.ws.lock:
+                if not chunk:
+                    conn.close()
+                    break
+                conn.buf += chunk
+                for opcode, data in conn.frames():
+                    if opcode == 0x1:
+                        self.ws.acks.append(json.loads(data)["envelope_id"])
+                    elif opcode == 0x9:
+                        conn.send(data, 0xA)
+                    elif opcode == 0x8:
+                        conn.send(data, 0x8)
+                        conn.close()
 
     def do_POST(self):
         self.dispatch()
@@ -170,6 +308,7 @@ class Handler(BaseHTTPRequestHandler):
             if raw and self.headers.get("Content-Type", "").startswith("application/json"):
                 params.update(json.loads(raw))
             method = "download" if path.startswith("/_files/") else path.lstrip("/")
+            token = self.ws.app_token if method == "apps.connections.open" else self.ws.token
             self.ws.calls.append(method)
             for fault in list(self.ws.faults):
                 if fault["method"] == method and fault["times"] > 0:
@@ -189,7 +328,9 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send_json({"ok": False}, fault["status"], {"Retry-After": str(fault.get("retry_after", 0))})
                     return self.send_json({"ok": False, "error": fault["error"]})
             auth = self.headers.get("Authorization", "")
-            if auth != f"Bearer {self.ws.token}":
+            if auth == f"Bearer {self.ws.token}" and token != self.ws.token:
+                return self.send_json({"ok": False, "error": "not_allowed_token_type"})
+            if auth != f"Bearer {token}":
                 return self.send_json({"ok": False, "error": "invalid_auth"})
             if method == "download":
                 served = self.ws.files.get(path[len("/_files/") :])
@@ -212,6 +353,10 @@ class Handler(BaseHTTPRequestHandler):
                     "messages": ws.messages,
                     "calls": ws.calls,
                     "uploads": {k: v.decode("utf-8", "replace") for k, v in ws.uploads.items()},
+                    "sent": ws.sent,
+                    "acks": ws.acks,
+                    "withheld": ws.withheld,
+                    "opened": len(ws.sockets),
                 }
             )
         body = json.loads(raw or b"{}")
@@ -232,12 +377,24 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/_test/file":
             ws.files[body["id"]] = (body["content"].encode(), body.get("type") or "application/octet-stream")
             return self.send_json({"ok": True})
+        if path == "/_test/socket":
+            live = [conn for conn in ws.sockets if conn.open]
+            if live and body.get("disconnect"):
+                live[-1].send(json.dumps({"type": "disconnect", "reason": body["disconnect"]}))
+            return self.send_json({"ok": bool(live)})
+        if path == "/_test/faults-reset":
+            ws.faults.clear()
+            return self.send_json({"ok": True})
         if path == "/_test/calls-reset":
             ws.calls.clear()
             return self.send_json({"ok": True})
         return self.send_json({"ok": False, "error": "unknown_control"}, 404)
 
     # -- the methods ----------------------------------------------------------
+
+    def m_apps_connections_open(self, params):
+        host = self.headers.get("Host")
+        self.send_json({"ok": True, "url": f"ws://{host}/_socket"})
 
     def m_auth_test(self, params):
         self.send_json({"ok": True, "user_id": BOT, "bot_id": BOT_ID, "team_id": "T01"})
@@ -400,11 +557,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port-file", required=True)
     parser.add_argument("--token", required=True)
+    parser.add_argument("--app-token", required=True)
     parser.add_argument("--user", action="append", default=[])
     parser.add_argument("--page", type=int, default=200)
     args = parser.parse_args()
     users = dict(item.split("=", 1) for item in args.user)
-    Handler.ws = Workspace(args.token, users, args.page)
+    Handler.ws = Workspace(args.token, args.app_token, users, args.page)
     server = Server(("127.0.0.1", 0), Handler)
     # Written aside and renamed, so the harness never reads a partial port.
     tmp = args.port_file + ".tmp"

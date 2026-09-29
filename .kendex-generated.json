@@ -770,6 +770,7 @@
   ".agents/skills/slack/scripts/lib/settings.py",
   ".agents/skills/slack/scripts/lib/store.py",
   ".agents/skills/slack/scripts/lib/verbs.py",
+  ".agents/skills/slack/scripts/lib/websocket.py",
   ".agents/skills/slack/scripts/slack",
   ".agents/skills/slack/systemd/slack-listen.service",
   ".agents/skills/worktree/README.md",

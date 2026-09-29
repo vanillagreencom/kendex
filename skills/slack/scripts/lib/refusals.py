@@ -14,9 +14,10 @@ NAME = "slack"
 EXPLAIN = {
     "usage": "Usage: slack --help",
     "setting-missing": (
-        "The named setting is not set. SLACK_BOT_TOKEN lives in the private"
-        " env file or the process environment; SLACK_OWNERS defaults to"
-        " KENDEX_USER_EMAIL. Unset is off, never half on: every missing key"
+        "The named setting is not set. SLACK_BOT_TOKEN and SLACK_APP_TOKEN,"
+        " which `listen` needs for its Socket Mode connection, live in the"
+        " private env file or the process environment; SLACK_OWNERS defaults"
+        " to KENDEX_USER_EMAIL. Unset is off, never half on: every missing key"
         " is named above before anything runs."
     ),
     "setting-invalid": (
@@ -63,9 +64,9 @@ EXPLAIN = {
         " binding is answered once more."
     ),
     "slack-auth-failed": (
-        "Slack refused the token. fix= names the remedy: set a live"
-        " SLACK_BOT_TOKEN in the private env file or the process environment,"
-        " then restart the relay."
+        "Slack refused the token. fix= names the remedy: set a live token"
+        " under the setting it names, in the private env file or the process"
+        " environment, then restart the relay."
     ),
     "slack-api-failed": (
         "A Slack API call did not succeed; the value names the method and"
@@ -90,8 +91,9 @@ EXPLAIN = {
         " written. fix= names the remedy."
     ),
     "slack-rate-limited": (
-        "Slack answered 429 on every retry the relay allows. Lower the call"
-        " rate: raise SLACK_POLL_SECONDS on this home."
+        "Slack answered 429 on every retry the relay allows. The relay makes"
+        " the call again on its next poll, and a history read it cut off"
+        " stays due until it lands."
     ),
     "slack-owner-unknown": (
         "Slack has no account under the named email address. fix= names the"
@@ -137,6 +139,13 @@ EXPLAIN = {
         " reason other than its absence; the value names the path and the"
         " error. Nothing from the mailbox is posted until it can be read or"
         " the setting is emptied; owner messages are still delivered."
+    ),
+    "socket-lost": (
+        "The Socket Mode connection closed, or a new one did not open; the"
+        " value says why. The relay opens a new one at once, then after 1,"
+        " 2, 4 and up to 60 seconds while each attempt fails, and reads the"
+        " channel's history once it holds one, so a message sent in between"
+        " still lands. Posts from the mailbox go on meanwhile."
     ),
     "lane-mail-failed": (
         "lane-mail refused a call the relay needed; the value is its first"

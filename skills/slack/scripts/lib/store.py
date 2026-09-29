@@ -32,7 +32,13 @@ FILES = "files"
 # `<id>-<name>` is cut to this many characters, each ASCII once substituted,
 # so it stays inside the 255 bytes a file name may take.
 NAME_CHARS = 200
-LINE_KINDS = {"seen", "start", "hold", "resume", "in", "out", "resolved", "bound", "thread", "mark"}
+LINE_KINDS = {
+    "seen", "start", "hold", "resume", "in", "out", "resolved", "bound", "thread", "mark",
+    "connect", "reconnect", "disconnect",
+}
+# The lines a Socket Mode connection's changes write; replay reads nothing
+# from them, and `compact` drops one by its `at`.
+CONNECTION_KINDS = {"connect", "reconnect", "disconnect"}
 # A directive's receipt marks, the reaction names its `mark` lines carry.
 SEEN = "eyes"
 READ = "white_check_mark"
@@ -227,6 +233,8 @@ class State:
                 thread.seen = str(line["seen"])
         elif kind == "mark":
             self.marks[str(line["ts"])] = str(line["name"])
+        elif kind in CONNECTION_KINDS:
+            parse_at(str(line["at"]))  # the age `compact` judges the line by
         else:
             raise KeyError(kind)
 
@@ -270,8 +278,8 @@ class Journal:
 def compact(root: Path, cutoff_ts: float) -> int:
     """Drop resolved and ignored lines older than the cutoff, every report
     upload and receipt mark older than it, every history position but the
-    last, every hold line but a standing one, and every resume line whose
-    end is older than the cutoff; keep every open thread, and the `in` and
+    last, every hold line but a standing one, every resume line whose end
+    is older than the cutoff, and every connection line older than it; keep every open thread, and the `in` and
     `mark` lines of a directive not yet marked READ, whatever its age: one
     with no mark, which the relay marks SEEN on its next poll, and one
     marked SEEN, which it swaps for READ once the overseer reads it.
@@ -292,7 +300,7 @@ def compact(root: Path, cutoff_ts: float) -> int:
     for index, (raw, line) in enumerate(zip(raws, lines)):
         kind = line.get("t")
         old = "ts" in line and _ts_float(str(line["ts"])) < cutoff_ts
-        aged = kind in ("out", "resume") and parse_at(str(line["at"])) < cutoff_ts
+        aged = (kind in ("out", "resume") or kind in CONNECTION_KINDS) and parse_at(str(line["at"])) < cutoff_ts
         pending = kind in ("in", "mark") and str(line["ts"]) in state.directives and state.marks.get(str(line["ts"])) != READ
         drop = False
         if kind == "seen":
@@ -300,6 +308,8 @@ def compact(root: Path, cutoff_ts: float) -> int:
         elif kind == "hold":
             drop = index != last_hold
         elif kind == "resume":
+            drop = aged
+        elif kind in CONNECTION_KINDS:
             drop = aged
         elif kind == "in" and old:
             thread = state.threads.get(str(line.get("thread", "")))

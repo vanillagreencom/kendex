@@ -25,6 +25,7 @@ EMAIL = re.compile(r"^[^\s@,]+@[^\s@,]+$")
 @dataclass
 class Settings:
     token: str
+    app_token: str
     owners: List[str]
     poll_seconds: int
     thread_days: int
@@ -57,12 +58,15 @@ def owners_from_env() -> List[str]:
     return owners
 
 
-def load(need_token: bool = True, need_owners: bool = True) -> Settings:
+def load(need_token: bool = True, need_owners: bool = True, need_app_token: bool = False) -> Settings:
     token = os.environ.get("SLACK_BOT_TOKEN", "").strip()
+    app_token = os.environ.get("SLACK_APP_TOKEN", "").strip()
     owners = owners_from_env()
     missing = []
     if need_token and token == "":
         missing.append("SLACK_BOT_TOKEN")
+    if need_app_token and app_token == "":
+        missing.append("SLACK_APP_TOKEN")
     if need_owners and not owners:
         missing.append("SLACK_OWNERS")
     if missing:
@@ -71,6 +75,7 @@ def load(need_token: bool = True, need_owners: bool = True) -> Settings:
         )
     return Settings(
         token=token,
+        app_token=app_token,
         owners=owners,
         poll_seconds=_positive_int("SLACK_POLL_SECONDS", DEFAULT_POLL_SECONDS),
         thread_days=_positive_int("SLACK_THREAD_DAYS", DEFAULT_THREAD_DAYS),

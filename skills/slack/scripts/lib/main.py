@@ -25,9 +25,9 @@ Usage: slack setup [--root ROOT] [--name NAME | --take CHANNEL_ID]
        slack install --root ROOT [--root ROOT]... [--print]
 
 Relays one checkout's overseer mailbox to one private Slack channel and back,
-by polling, reading and writing the mailbox only through that checkout's
-lane-mail. A root is a checkout; without --root, the checkout the command
-runs in.
+owner messages over Slack's Socket Mode, reading and writing the mailbox only
+through that checkout's lane-mail. A root is a checkout; without --root, the
+checkout the command runs in.
 
 setup     resolve every SLACK_OWNERS address to a Slack user, create the
           private channel or find it by name (--name; default
@@ -35,21 +35,23 @@ setup     resolve every SLACK_OWNERS address to a Slack user, create the
           by id (--take), invite the owners, write the binding
           tmp/slack/binding.json, and restart the relay unit `install` wrote
           when one stands
-listen    the relay: every SLACK_POLL_SECONDS, per root, one history read since
-          the journal's position, the thread of every open question, every
-          tenth poll the other bound threads younger than SLACK_THREAD_DAYS,
-          then the mailbox's events; owner text lands as a directive or, in
-          a question's thread, as its answer, each with --delivery-id
-          channel:ts; asks, notices and rulings land in Slack as standard
+listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
+          for every root, each envelope acknowledged as it arrives and each
+          message routed by its channel; at every connect and reconnect,
+          per root, one history read that delivers what arrived while
+          disconnected; every SLACK_POLL_SECONDS, per root, the mailbox's
+          events; owner text lands as a directive or, in a question's
+          thread, as its answer, each with --delivery-id channel:ts; asks,
+          notices and rulings land in Slack as standard
           Markdown, one past 12,000 characters as mrkdwn, a report as its
           file with the notice as its mrkdwn comment. A post Slack refuses fails the poll and is made again on
           the next one; an envelope post whose response was lost is
           journaled unknown and never repeated. One relay per checkout, held
           by an OS lock; two roots bound to one channel are refused; --once
-          polls each root once and exits 0 when every poll succeeded, 1
-          otherwise
+          opens no connection, polls each root once, history read included,
+          and exits 0 when every poll succeeded, 1 otherwise
   --status  one `slack-relay=ROOT state=ok|failing|stale|never` line per
-          root from the relay's status record, then the summed call budget
+          root from the relay's status record, with the connection state
 post      one message to the bound channel, or --channel for another, its
           text sent as standard Markdown of at most 12,000 characters;
           --mention prefixes every owner; --file uploads the file with the
@@ -66,17 +68,18 @@ install   write the systemd user unit for `listen` over the roots given, then
           new roots; --print writes the unit to stdout only
 
 Settings, read from the process environment after the checkout's private env
-file and settings files: SLACK_BOT_TOKEN, SLACK_OWNERS (default
-KENDEX_USER_EMAIL), SLACK_POLL_SECONDS (15), SLACK_THREAD_DAYS (7),
-SLACK_MASTER_FILE (empty) and SLACK_MASTER_MAX_AGE (600): while that file is
-younger than that many seconds, listen holds its mailbox posts and --status
-shows held-by=master; README.md says what posts on resume. SLACK_API_URL
-names another API endpoint (default https://slack.com/api).
+file and settings files: SLACK_BOT_TOKEN, SLACK_APP_TOKEN (listen without
+--once), SLACK_OWNERS (default KENDEX_USER_EMAIL), SLACK_POLL_SECONDS (15),
+SLACK_THREAD_DAYS (7), SLACK_MASTER_FILE (empty) and SLACK_MASTER_MAX_AGE
+(600): while that file is younger than that many seconds, listen holds its
+mailbox posts and --status shows held-by=master; README.md says what posts on
+resume. SLACK_API_URL names another API endpoint (default
+https://slack.com/api).
 
 """ + textwrap.fill(
     "Keyed lines, `slack: <key>=<value>` first: bound, posted, uploaded, updated,"
-    " compacted, installed, enabled, active, restarted, listening, slack-relay,"
-    " slack-relay-budget on stdout; refusals on stderr with exit 2: python3 and"
+    " compacted, installed, enabled, active, restarted, listening, connected,"
+    " reconnected, slack-relay on stdout; refusals on stderr with exit 2: python3 and"
     " settings-unreadable from the launcher before Python starts, then "
     + ", ".join(EXPLAIN) + ".",
     width=78, break_on_hyphens=False,
@@ -141,7 +144,7 @@ def run(argv: List[str]) -> int:
         roots = roots_of(args.root)
         if args.status:
             return verbs.status(roots, time.time())
-        settings = load()
+        settings = load(need_app_token=not args.once)
         relay = Relay(roots, settings, verbs.api_for(settings))
         return relay.run(args.once)
     if args.verb == "post":

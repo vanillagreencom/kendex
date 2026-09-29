@@ -16,6 +16,7 @@ SK_BIN="$SK_SLACK"
 SK_FAKE="$SK_ROOT/skills/slack/tests/lib/fake_slack.py"
 SK_LANE_MAIL="$SK_ROOT/skills/orch/scripts/lane-mail"
 SK_TOKEN="test-token-$$"
+SK_APP_TOKEN="test-app-token-$$"
 OWNER="brad@example.test"
 OWNER2="ann@example.test"
 OWNERS="$OWNER,$OWNER2"
@@ -70,7 +71,7 @@ sk_summary() {
 # sk_fake_start [FAKE ARGS...] — the fake API on a port of its own, SK_URL set.
 sk_fake_start() {
   rm -f -- "${SK_TMP:?}/port"
-  python3 "$SK_FAKE" --port-file "$SK_TMP/port" --token "$SK_TOKEN" \
+  python3 "$SK_FAKE" --port-file "$SK_TMP/port" --token "$SK_TOKEN" --app-token "$SK_APP_TOKEN" \
     --user "$OWNER=U001" --user "$OWNER2=U002" "$@" &
   FAKE_PID=$!
   local tries=0
@@ -138,22 +139,24 @@ sk_run() {
   ERR1="$(sed -n '1p' "$SK_TMP/err")"
 }
 sk_bind() { sk_run -- setup --root "$1"; }                 # ROOT
-# sk_relay_start ROOT — a relay polling every second in the background, its pid
-# in SK_BG_PIDS; returns once its first status record is written. The exec
-# chain makes $! the relay itself, so a kill reaches it and not a wrapper.
+# sk_relay_start ROOT [VAR=VALUE]... — a relay on its Socket Mode connection
+# in the background, polling every second unless a VAR says otherwise, its
+# pid in SK_BG_PIDS, its stdout and stderr in SK_TMP/relay.out and relay.err;
+# returns once its first status record is written. The exec chain makes $!
+# the relay itself, so a kill reaches it and not a wrapper.
 sk_relay_start() {
-  local tries=0
-  rm -f -- "${1:?}/tmp/slack/status.json"
+  local tries=0 root="${1:?}"
+  shift
+  rm -f -- "${root:?}/tmp/slack/status.json"
   ( cd "$SK_TMP/home" && exec env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C \
-    SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
-    SLACK_POLL_SECONDS=1 "$SK_BIN" listen --root "$1" >/dev/null 2>&1 ) &
+    SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_APP_TOKEN="$SK_APP_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
+    SLACK_POLL_SECONDS=1 ${1+"$@"} "$SK_BIN" listen --root "$root" >"$SK_TMP/relay.out" 2>"$SK_TMP/relay.err" ) &
   SK_BG_PIDS="$!"
-  while [ ! -f "$1/tmp/slack/status.json" ] && [ "$tries" -lt 100 ]; do tries=$((tries + 1)); sleep 0.1; done
-  [ -f "$1/tmp/slack/status.json" ] || { printf 'background relay wrote no status\n' >&2; exit 1; }
+  while [ ! -f "$root/tmp/slack/status.json" ] && [ "$tries" -lt 100 ]; do tries=$((tries + 1)); sleep 0.1; done
+  [ -f "$root/tmp/slack/status.json" ] || { printf 'background relay wrote no status\n' >&2; exit 1; }
 }
 sk_relay_stop() { kill "$SK_BG_PIDS" 2>/dev/null; wait "$SK_BG_PIDS" 2>/dev/null; SK_BG_PIDS=""; }
 sk_poll() { local root="$1"; shift; sk_run "$@" -- listen --root "$root" --once; } # ROOT [VAR=VALUE]...
-sk_polls() { local n="$2"; while [ "$n" -gt 0 ]; do sk_poll "$1"; n=$((n - 1)); done; } # ROOT N — N polls
 sk_channel() { jq -r .channel "$1/tmp/slack/binding.json"; }   # ROOT — the bound channel
 sk_reactions() { sk_state "[.messages.${1}[] | select(.ts == \"$2\") | (.reactions // [])[].name] | join(\",\")"; } # CHANNEL TS — its reaction names
 # sk_rebind_at ROOT TS — the binding's moment moved to TS, so a first start

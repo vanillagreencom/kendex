@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-27
 
-**Status**: Active
+**Status**: Active (polling, one relay per person → D014)
 
 **Research**: —
 

@@ -13,8 +13,9 @@
 # unset too, setup and the relay refuse and name the key.
 SLACK_OWNERS = ""
 
-# How often the relay reads each channel, in seconds. Lower is faster and
-# uses more of Slack's call allowance, which every relay of one app shares.
+# How often the relay reads each mailbox for questions, notices and reports
+# to post, in seconds. Owner messages do not wait for it: Slack sends each
+# one over the relay's Socket Mode connection as it is posted.
 SLACK_POLL_SECONDS = "15"
 
 # How many days a thread stays open for replies. A reply under an older
@@ -37,3 +38,9 @@ SLACK_MASTER_MAX_AGE = "600"
 # process environment only, never in this file. Unset, Slack is off: setup
 # and the relay refuse and name the key.
 SLACK_BOT_TOKEN = ""
+
+# The app-level token of the same Slack app, scope connections:write, which
+# opens the relay's Socket Mode connection. It lives where SLACK_BOT_TOKEN
+# lives. Unset, `slack listen` refuses and names the key; `listen --once` and
+# the other verbs do not read it.
+SLACK_APP_TOKEN = ""

@@ -17,7 +17,7 @@ from relay import mention, resolve_owner_ids
 from secret import check as secret_check
 from secret import checked_file
 from settings import Settings, load
-from store import Binding, RelayLock, compact, journal_exists, read_binding, read_status, write_binding
+from store import Binding, RelayLock, compact, format_at, journal_exists, read_binding, read_status, write_binding
 
 UNIT = "slack-listen.service"
 # Seconds between the restart and the read of the unit's state: long
@@ -201,8 +201,6 @@ def install(roots: List[Path], print_only: bool) -> int:
 
 
 def status(roots: List[Path], now: float) -> int:
-    settings = load(need_token=False, need_owners=False)
-    total = 0.0
     for root in roots:
         record = read_status(root)
         if record is None:
@@ -222,18 +220,22 @@ def status(roots: List[Path], now: float) -> int:
             fix = f" fix={record.get('last_error') or 'read the relay log'}"
         else:
             fix = " fix=restart the relay and read its last lines"
+        # A stale record's relay is gone, whatever connection it recorded.
+        if fresh:
+            connection, since = record["connection"], record["connection_since"]
+        else:
+            connection, since = "disconnected", format_at(float(record["last_poll"]))
         unknown = record.get("unknown") or []
         held = f" held-by={record['held_by']}" if record.get("held_by") else ""
-        total += float(record.get("budget_per_minute", 0))
         print(
             keyed(
                 "slack-relay",
                 f"{root} state={state} channel={record['channel']} last_poll_age={int(age)}s"
+                f" connection={connection} connection_since={since}"
                 f" last_delivered_ts={record.get('last_delivered_ts') or '-'}"
                 f" open_asks={len(record.get('open_asks') or [])} oldest_unknown={unknown[0] if unknown else '-'}"
                 f" refused={len(record.get('refused') or [])} calls_last_minute={record.get('calls_last_minute', 0)}"
-                f" budget_per_minute={record.get('budget_per_minute', 0)}{held}{fix}",
+                f"{held}{fix}",
             )
         )
-    print(keyed("slack-relay-budget", f"{round(total, 1)} poll_seconds={settings.poll_seconds}"))
     return 0

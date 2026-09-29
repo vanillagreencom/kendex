@@ -104,8 +104,8 @@ sk_poll "$ROOT"
 assert_eq "$(answers "$ROOT")" "$ASK text C001:$R1 keep" "the first reply in the thread resolves the ask with the delivery id"
 assert_has "$(posts C001)" "$ASK_TS | Recorded as your answer." "the relay confirms the answer in the thread"
 R2="$(sk_inject C001 U001 'and keep the tests' "$ASK_TS")"
-sk_polls "$ROOT" 10
-assert_has "$(directives "$ROOT")" "C001:$R2 and keep the tests" "a second reply is delivered as a directive within ten polls"
+sk_poll "$ROOT"
+assert_has "$(directives "$ROOT")" "C001:$R2 and keep the tests" "a second reply is delivered as a directive on the next poll's history read"
 assert_has "$(posts C001)" "$ASK_TS | This question was already answered; delivered as a directive instead." \
   "the second reply is told the question was answered"
 assert_eq "$(answers "$ROOT" | wc -l | tr -d ' ')" "1" "one answer stands"
@@ -126,7 +126,7 @@ sk_lm "$ROOT" resolve --item overseer --id "$ASK3" --default >/dev/null
 sk_poll "$ROOT"
 assert_has "$(posts C001)" "$ASK3_TS | No answer by the deadline: yes stands." "a default resolution is shown in the thread"
 R3="$(sk_inject C001 U001 'too late' "$ASK3_TS")"
-sk_polls "$ROOT" 10
+sk_poll "$ROOT"
 assert_has "$(directives "$ROOT")" "C001:$R3 too late" "a reply after the default is a directive"
 assert_eq "$(sk_lm "$ROOT" pending --item overseer --to owner | wc -l | tr -d ' ')" "0" "no ask is left open"
 
@@ -139,7 +139,7 @@ assert_has "$(posts C001)" "$TS1 | Shipping." "a notice answering an owner note 
 assert_has "$(posts C001)" "top | Round done." "a notice with no ref lands top-level"
 assert_eq "$(sk_state '.messages.C001[] | select(.text == "Round done.") | .body_arg')" "markdown_text" "a notice is sent as markdown_text"
 R0="$(sk_inject C001 U001 'and the docs' "$TS1")"
-sk_polls "$ROOT" 10
+sk_poll "$ROOT"
 D0="$(jq -r "select(.delivery_id == \"C001:$R0\") | .id" "$(sk_box "$ROOT")/to-lane.jsonl")"
 sk_lm "$ROOT" notice --item overseer --to owner --ref "$D0" --file "$(sk_text n0 'Docs too.')" >/dev/null
 sk_poll "$ROOT"
@@ -160,7 +160,7 @@ sk_poll "$ROOT"
 assert_eq "$(jq -r 'select(.t == "bound") | [.file, .ts] | join(" ")' "$(sk_journal "$ROOT")")" "F001 $SHARE_TS" \
   "the next poll binds the report's thread from the share message"
 R4="$(sk_inject C001 U001 'good report' "$SHARE_TS")"
-sk_polls "$ROOT" 10
+sk_poll "$ROOT"
 assert_has "$(directives "$ROOT")" "C001:$R4 good report" "a reply under the report is a directive"
 
 # --- a non-owner and an empty message: one reply each, nothing routed -------------
@@ -264,16 +264,15 @@ sk_bind "$GAMMA"
 OLD_TS="$(python3 -c 'import time; print("%.6f" % (time.time() - 8 * 86400))')"
 sk_rebind_at "$GAMMA" "$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400))')"
 OLD="$(sk_inject C002 U001 'an old topic' '' "\"ts\": \"$OLD_TS\"")"
+sk_inject C002 U001 'reply under the old one' "$OLD" >/dev/null
 YOUNG="$(sk_inject C002 U001 'a young topic')"
 sk_poll "$GAMMA"
-assert_eq "$(directives "$GAMMA" | wc -l | tr -d ' ')" "2" "both topics land as directives"
-sk_inject C002 U001 'reply under the old one' "$OLD" >/dev/null
+assert_eq "$(directives "$GAMMA" | wc -l | tr -d ' ')" "2" \
+  "both topics land as directives, and the reply under the thread past SLACK_THREAD_DAYS, read in the same history, is not routed"
 YR="$(sk_inject C002 U001 'reply under the young one' "$YOUNG")"
-for n in 2 3 4 5 6 7 8 9; do sk_poll "$GAMMA"; done
-assert_eq "$(directives "$GAMMA" | wc -l | tr -d ' ')" "2" "before the tenth poll no bound thread is re-read"
 sk_poll "$GAMMA"
-assert_eq "$(directives "$GAMMA" | sed -n '3p')" "C002:$YR reply under the young one" "the tenth poll routes the reply under the young thread"
-assert_eq "$(directives "$GAMMA" | wc -l | tr -d ' ')" "3" "the reply under the thread past SLACK_THREAD_DAYS is not routed"
+assert_eq "$(directives "$GAMMA" | sed -n '3p')" "C002:$YR reply under the young one" "the history read routes the reply under the young thread"
+assert_eq "$(directives "$GAMMA" | wc -l | tr -d ' ')" "3" "the reply under the old thread stays unrouted"
 
 # --- a secret value is refused, journaled, never posted --------------------------------
 sk_lm "$GAMMA" notice --item overseer --to owner --file "$(sk_text s1 'token xoxb-0123456789-abcdefghij')" >/dev/null
@@ -321,11 +320,15 @@ assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$LONG_FILE_ID\") | .st
   "0=file=$((UPLOADS + 1))" "a notice past the cap beside a report uploads with it as the comment, the cap being markdown_text's alone"
 
 # --- a 429 is honoured by Retry-After -------------------------------------------------------
+history_calls() { sk_state '[.calls[] | select(. == "conversations.history")] | length'; }
 sk_ctl /_test/calls-reset >/dev/null
 sk_ctl /_test/fault '{"method": "conversations.history", "status": 429, "retry_after": 0, "times": 1}' >/dev/null
 L1="$(sk_inject C002 U001 'after the limit')"
 sk_poll "$GAMMA"
-assert_eq "$RC=$(sk_state '[.calls[] | select(. == "conversations.history")] | length')" "0=2" "a 429 is retried after Retry-After"
+LIMITED_RC="$RC" LIMITED_CALLS="$(history_calls)"
+sk_ctl /_test/calls-reset >/dev/null
+sk_poll "$GAMMA"
+assert_eq "$LIMITED_RC=$LIMITED_CALLS" "0=$(($(history_calls) + 1))" "a 429 is retried after Retry-After: one history call more than the same read unrefused"
 assert_eq "$(directives "$GAMMA" | sed -n '4p')" "C002:$L1 after the limit" "the message behind the 429 lands"
 
 # --- owners re-resolved from the setting before delivery -----------------------------------
@@ -622,15 +625,14 @@ sk_run -- listen --root "$PAIR_A" --root "$PAIR_B" --once
 assert_eq "$RC" "0" "control: the one-channel rule gone, both roots poll one channel"
 sk_bin_reset
 
-sk_mutant horizon relay.py 'tenth and float\(thread\.ts\) >= horizon' 'tenth'
+sk_mutant horizon relay.py 'return thread\.open or float\(thread\.ts\) >= self\.settings\.horizon\(self\.clock\(\)\)' 'return True'
 ZETA="$(sk_new_root zeta)"
 sk_bind "$ZETA"
 sk_rebind_at "$ZETA" "$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400))')"
 ZETA_CH="$(sk_channel "$ZETA")"
 OLD2="$(sk_inject "$ZETA_CH" U001 'old' '' "\"ts\": \"$OLD_TS\"")"
-sk_poll "$ZETA"
 sk_inject "$ZETA_CH" U001 'late reply' "$OLD2" >/dev/null
-for n in 2 3 4 5 6 7 8 9 10; do sk_poll "$ZETA"; done
+sk_poll "$ZETA"
 assert_eq "$(directives "$ZETA" | wc -l | tr -d ' ')" "2" "control: the horizon removed, the reply under the old thread is routed"
 sk_bin_reset
 

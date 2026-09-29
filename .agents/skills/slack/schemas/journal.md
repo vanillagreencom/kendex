@@ -28,7 +28,7 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 
 | `t` | Fields | Meaning |
 |-----|--------|---------|
-| `seen` | `ts` | The channel's history is read past this stamp; `compact` keeps the last one |
+| `seen` | `ts` | The channel's history is read past this stamp; `compact` keeps the last one. Only a history read writes it: a message event moves no position |
 | `start` | `at`, `ids` | Written by a start with no journal: the mailbox's newest envelope `at` then, or empty with none, and the ids of the envelopes stamped in that second. A notice or answer before it, or in that second and named, is never posted; an open ask is |
 | `hold` | `at` | `SLACK_MASTER_FILE` turned fresh: no mailbox envelope is posted until the poll that ends the hold, whose posts precede its `resume` line. `at` is the hold's start, the second of the file's mtime the poll that found it fresh read, so a notice stamped in or before that second, one Slack refused among them, posts on the resume whatever the relay's own polls missed. Written on the transition alone; `compact` drops it once a `resume` follows |
 | `resume` | `from_at`, `at`, `asks` | The hold ended. `from_at` is its `hold` line's `at`; `at` its end: the second `SLACK_MASTER_MAX_AGE` past the file's last touch when it went stale, or of the last poll that found it fresh when it is gone. A notice stamped after the start's second and before the end's is never posted; `asks` are the ids of the open asks whose post landed on this resume, journaled after those posts, so one refused or lost there is not named. `compact` drops it once its `at` is older than `SLACK_THREAD_DAYS` |
@@ -40,10 +40,13 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 | `out` | `channel`, `id`, `kind`, `state` = `refused`, `at`, `reason` | A post refused before sending; `reason` is the refusal key, `secret-value` or `file-unreadable` |
 | `resolved` | `id` | The ask with this envelope id is closed; its thread is read every tenth poll while its parent is younger than `SLACK_THREAD_DAYS` |
 | `bound` | `file`, `id`, `ts` | The share message Slack made for an uploaded file; its thread now carries the notice's envelope |
-| `thread` | `ts`, `seen` | The thread under `ts` is read past the reply stamp `seen` |
-| `mark` | `ts`, `name` | The directive's message at `ts` carries the reaction `name`: `eyes` once delivered, `white_check_mark` once the overseer's `to-lane.cursor` passes the directive. Each poll marks `eyes` a `directive` `in` line with no `mark` line. An `eyes` line with no later `white_check_mark` line is checked every poll; `compact` drops a mark line once `ts` is past `SLACK_THREAD_DAYS` and the directive is read, and keeps the `in` and `mark` lines of a directive with no `white_check_mark` line whatever their age |
+| `thread` | `ts`, `seen` | The thread under `ts` is read past the reply stamp `seen`; only a history read writes it |
+| `mark` | `ts`, `name` | The directive's message at `ts` carries the reaction `name`: `eyes` once delivered, `white_check_mark` once the overseer's `to-lane.cursor` passes the directive. Each delivery and each poll marks `eyes` a `directive` `in` line with no `mark` line. An `eyes` line with no later `white_check_mark` line is checked every poll; `compact` drops a mark line once `ts` is past `SLACK_THREAD_DAYS` and the directive is read, and keeps the `in` and `mark` lines of a directive with no `white_check_mark` line whatever their age |
+| `connect` | `at` | The relay's first Socket Mode connection since it started is open: Slack's `hello` arrived at the UTC second `at`. The next poll reads the channel's history |
+| `disconnect` | `at`, `reason` | The connection closed at `at`. `reason` is `slack-<reason>` for Slack's own `disconnect` envelope, such as `slack-refresh_requested`, or the client's cause, such as `connection ended` or `no frame in 60s` |
+| `reconnect` | `at` | A later connection is open; the next poll reads the channel's history, which delivers what was sent while the relay was disconnected |
 
-Stamps (`ts`, `thread`, `seen`) are Slack message stamps, seconds with six decimals; `at` is the UTC second `lane-mail` writes. Every inbound delivery hands `lane-mail` the key `channel:ts`. Every `out` line carries its envelope's `at`. An envelope whose `at` is older than `SLACK_THREAD_DAYS` is never posted, and `compact` judges an `out` line by that same `at`, never by its `thread`, so a line it drops is one whose envelope can never post again.
+Stamps (`ts`, `thread`, `seen`) are Slack message stamps, seconds with six decimals; `at` is the UTC second `lane-mail` writes, or the relay's clock on a connection line. `compact` drops a connection line once its `at` is older than `SLACK_THREAD_DAYS`; the connection lines of one relay are written to the journal of every root it serves, and replay reads nothing from them. Every inbound delivery hands `lane-mail` the key `channel:ts`. Every `out` line carries its envelope's `at`. An envelope whose `at` is older than `SLACK_THREAD_DAYS` is never posted, and `compact` judges an `out` line by that same `at`, never by its `thread`, so a line it drops is one whose envelope can never post again.
 
 ## The status record
 
@@ -54,14 +57,14 @@ Stamps (`ts`, `thread`, `seen`) are Slack message stamps, seconds with six decim
 | `pid` | The relay's process id |
 | `channel` | The bound channel id |
 | `poll_seconds` | The `SLACK_POLL_SECONDS` the relay runs with |
-| `polls` | Polls since the record was first written; every tenth reads the other bound threads |
 | `compacted_day` | The UTC day the journal was last compacted, or first seen |
 | `last_poll`, `last_poll_ok` | The clock at the last poll and whether it succeeded |
 | `last_error` | The keyed refusal of the last failed poll, empty after a successful one |
 | `last_delivered_ts`, `seen_ts` | The last stamp delivered and the history position |
 | `open_asks`, `unknown`, `refused` | Envelope ids: asks awaiting an answer, posts with a lost response, posts refused |
-| `calls_last_minute`, `budget_per_minute` | Slack calls made in the last minute, and the calls per minute the settings and open asks budget |
+| `calls_last_minute` | Slack Web API calls made with the bot token in the last minute |
+| `connection`, `connection_since` | `connected` while the Socket Mode connection is open, `reconnecting` while the relay tries to open one, `disconnected` for a `--once` run, which opens none; and the UTC second the state began |
 | `held_by` | `master` while a hold stands, empty otherwise |
 | `master_seen` | The clock at the last poll that found `SLACK_MASTER_FILE` fresh, or null; a resume after a restart with the file gone takes it as the hold's end |
 
-`listen --status` prints per root: `state` (`ok` inside two poll intervals plus five seconds of a successful poll, `failing` inside that of a refused one, `stale` past it, `never` with no record), `channel`, `last_poll_age`, `last_delivered_ts`, `open_asks`, `oldest_unknown`, `refused`, `calls_last_minute`, `budget_per_minute`, `held-by=master` while a hold stands, and `fix=` when the state is not `ok`: `last_error` for `failing`, a restart for `stale`, the start command for `never`.
+`listen --status` prints per root: `state` (`ok` inside two poll intervals plus five seconds of a successful poll, `failing` inside that of a refused one, `stale` past it, `never` with no record), `channel`, `last_poll_age`, `connection` and `connection_since` (for a `stale` record `disconnected` since its `last_poll`, since its relay is gone), `last_delivered_ts`, `open_asks`, `oldest_unknown`, `refused`, `calls_last_minute`, `held-by=master` while a hold stands, and `fix=` when the state is not `ok`: `last_error` for `failing`, a restart for `stale`, the start command for `never`.

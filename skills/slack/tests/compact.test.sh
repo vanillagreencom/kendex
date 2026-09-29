@@ -5,11 +5,12 @@
 # young line, an old directive still marked eyes with its delivery, and an
 # old directive Slack refused to mark with its delivery stay, the relay reads
 # the compacted file as before, marks the unmarked directive eyes and swaps
-# both marks once read, and a running relay's lock refuses the verb. Six
-# controls, one per rule: a mutant that drops no old line, one that keeps
-# every receipt mark, one that keeps no unread directive, one that keeps no
-# unmarked directive, one that keeps every history position, and one that
-# takes no lock.
+# both marks once read, and a running relay's lock refuses the verb; an old
+# connection line leaves and a young one stays. Seven controls, one per rule:
+# a mutant that drops no old line, one that keeps every receipt mark, one
+# that keeps no unread directive, one that keeps no unmarked directive, one
+# that keeps every history position, one that keeps every connection line,
+# and one that takes no lock.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -24,9 +25,11 @@ OLD_SHARE="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400 + 
 OLD_UNMARKED="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400 + 90))')"
 OLD_UNMARKED_LOST="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400 + 150))')"
 OLD_AT="$(python3 -c 'import time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 9 * 86400)))')"
+YOUNG_AT="$(python3 -c 'import time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))')"
 # An old ask answered long ago, an old ignored non-owner line, an old bound
 # notice, an old report's upload and its share, old read receipt marks, an old
-# history position, and an open ask: only the open ask stays.
+# history position, an old disconnect, an open ask and a young connect: only
+# the open ask and the young connect stay.
 JOURNAL="$(sk_journal "$ROOT")"
 mkdir -p "$(dirname "$JOURNAL")"
 cat > "$JOURNAL" <<EOF
@@ -42,16 +45,18 @@ cat > "$JOURNAL" <<EOF
 {"name": "eyes", "t": "mark", "ts": "$OLD_REPLY"}
 {"name": "white_check_mark", "t": "mark", "ts": "$OLD_REPLY"}
 {"t": "seen", "ts": "$OLD_REPLY"}
+{"at": "$OLD_AT", "reason": "connection ended", "t": "disconnect"}
+{"at": "$YOUNG_AT", "t": "connect"}
 EOF
 YOUNG="$(sk_inject C001 U001 'young')"
 sk_poll "$ROOT"
 BEFORE="$(wc -l < "$JOURNAL" | tr -d ' ')"
 sk_run -- compact --root "$ROOT"
-assert_eq "$RC=$OUT" "0=slack: compacted=$ROOT dropped=11" "compact prints the lines it dropped"
-assert_eq "$(jq -r '[.t, (.ts // .id)] | join(":")' "$JOURNAL" | tr '\n' ' ')" \
-  "out:ASK-OPEN in:$YOUNG seen:$YOUNG mark:$YOUNG " \
-  "the open ask, the young delivery, its mark and the last position stay; the resolved, ignored, uploaded, marked and superseded old lines go"
-assert_eq "$((BEFORE - $(wc -l < "$JOURNAL" | tr -d ' ')))" "11" "the file shrank by the lines reported"
+assert_eq "$RC=$OUT" "0=slack: compacted=$ROOT dropped=12" "compact prints the lines it dropped"
+assert_eq "$(jq -r '[.t, (.ts // .id // .at)] | join(":")' "$JOURNAL" | tr '\n' ' ')" \
+  "out:ASK-OPEN connect:$YOUNG_AT in:$YOUNG seen:$YOUNG mark:$YOUNG " \
+  "the open ask, the young connect, the young delivery, its mark and the last position stay; the resolved, ignored, uploaded, marked, superseded and old connection lines go"
+assert_eq "$((BEFORE - $(wc -l < "$JOURNAL" | tr -d ' ')))" "12" "the file shrank by the lines reported"
 NEXT="$(sk_inject C001 U001 'after compaction')"
 sk_poll "$ROOT"
 assert_eq "$RC=$(jq -r 'select(.t == "in") | .ts' "$JOURNAL" | tr '\n' ' ')" "0=$YOUNG $NEXT " \
@@ -129,6 +134,14 @@ cat >> "$JOURNAL" <<EOF
 EOF
 sk_run -- compact --root "$ROOT"
 assert_eq "$RC=$(jq -r 'select(.t == "mark") | .ts' "$JOURNAL" | tr '\n' ' ')" "0=$YOUNG $NEXT $OLD_TS " "control: the mark rule gone, an old receipt mark stays"
+sk_bin_reset
+
+sk_mutant connection store.py 'elif kind in CONNECTION_KINDS:\n            drop = aged' 'elif kind in CONNECTION_KINDS:\n            drop = False'
+cat >> "$JOURNAL" <<EOF
+{"at": "$OLD_AT", "t": "reconnect"}
+EOF
+sk_run -- compact --root "$ROOT"
+assert_eq "$RC=$(jq -r 'select(.t == "reconnect") | .at' "$JOURNAL")" "0=$OLD_AT" "control: the connection rule gone, an old reconnect line stays"
 sk_bin_reset
 
 sk_mutant pending store.py 'pending = kind in \("in", "mark"\) and' 'pending = False and'

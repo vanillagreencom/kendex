@@ -1,7 +1,7 @@
 ---
 name: slack
 description: "Load to bind an overseer's mailbox to a private Slack channel, run or check the relay, or post an alert or a file to Slack."
-summary: "Relays one checkout's overseer mailbox to one private Slack channel and back by polling, through lane-mail alone: setup, listen, post, compact and install."
+summary: "Relays one checkout's overseer mailbox to one private Slack channel and back, owner messages over Socket Mode, through lane-mail alone: setup, listen, post, compact and install."
 license: MIT
 user-invocable: true
 dependencies:
@@ -41,13 +41,14 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 ## Rules
 
 - A root is a checkout with the orch skill installed. A relay serves every root it is given, and one relay serves one checkout, held by an OS lock.
+- One relay per Slack app. Slack sends each owner message to one of an app's open Socket Mode connections, so a second relay on the same app takes part of the first one's messages, and each waits for the first relay's next reconnect. Each machine runs its own app and one relay over every root on it.
 - The relay never reads or writes a mailbox file itself. An owner's words land through `lane-mail send --delivery-id` or `lane-mail resolve --delivery-id`; who judges a repeat is [DEVELOPMENT.md § Constraints](https://github.com/vanillagreencom/kendex/blob/main/skills/slack/DEVELOPMENT.md#constraints).
 - The first owner reply in a question's thread closes the question. The ruling the overseer records reaches Slack as a notice with `--ref`, per [orch communication-modes.md § Owner asks](../orch/references/communication-modes.md#owner-asks).
 - Every outbound text and file passes the secret-value pattern the orch skill ships at `references/secret-value.ere`. A match is refused, journaled and never sent.
-- A relay reads its settings at start. After changing `SLACK_OWNERS`, run `slack setup` for each bound root: it invites an added owner to the channel and restarts the unit `install` wrote. A plain restart drops a removed owner but never invites an added one. After changing the token, restart the relay.
+- A relay reads its settings at start. After changing `SLACK_OWNERS`, run `slack setup` for each bound root: it invites an added owner to the channel and restarts the unit `install` wrote. A plain restart drops a removed owner but never invites an added one. After changing either token, restart the relay.
 - The journal holds identifiers only: [schemas/journal.md](schemas/journal.md).
 - The channel binding is installation state written by `setup`, never a setting. The alert channel is the caller's `--channel` argument.
-- Settings live in the project's `kendex.settings.toml` and the token in its private env file: [kendex.settings.toml.example](kendex.settings.toml.example).
+- Settings live in the project's `kendex.settings.toml` and the two tokens, `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`, in its private env file: [kendex.settings.toml.example](kendex.settings.toml.example).
 
 ## Message standard
 
@@ -58,4 +59,4 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 
 ## Doctor row
 
-`slack listen --status` prints one `slack: slack-relay=ROOT state=ok|failing|stale|never` line per root, then one `slack: slack-relay-budget=N` line summing the roots. A state other than `ok` carries `fix=`. The fields of the row: [schemas/journal.md § The status record](schemas/journal.md#the-status-record).
+`slack listen --status` prints one `slack: slack-relay=ROOT state=ok|failing|stale|never` line per root, with `connection=connected|reconnecting|disconnected` and `connection_since=`. A state other than `ok` carries `fix=`. The fields of the row: [schemas/journal.md § The status record](schemas/journal.md#the-status-record).
