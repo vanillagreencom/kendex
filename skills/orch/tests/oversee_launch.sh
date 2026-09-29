@@ -126,6 +126,7 @@ keyed() { awk -v k="oversee: $1" 'index($0, k) == 1 { found = 1 } found' <<<"$2"
 field() { sed -n "s/.* $2=\([^ ]*\).*/\1/p" <<<"$(sed -n 1p <<<"$1")"; }
 layout() { tm list-windows -t fleet -F '#{window_index} #{window_name}' | awk '$1 > 0' | tr '\n' ';'; }
 overseers() { tm list-windows -t fleet -F '#{window_name}' | awk '$0 == "overseer"' | wc -l | tr -d ' '; }
+listed() { tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$1" || true; }
 recorded_argv() { if [[ -f "$TMP_ROOT/argv.claude" ]]; then tr '\n' ';' < "$TMP_ROOT/argv.claude"; else printf 'none'; fi; }
 BRIEF='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
 
@@ -167,6 +168,27 @@ run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
   "1|oversee: overseer-live session=$SESSION server=$SOCKET generation=1|1|1" \
   "a launch beside a live pane a record with no server start names refuses and opens nothing"
+# Yet that record names no predecessor: its pane may be one a later server
+# handed the same pid and pane id, so --predecessor on it refuses and the
+# succession stops nothing.
+run_oversee -- launch --predecessor "$SESSION" --wait-secs 20
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(listed "$SESSION")|$(recorded generation)" \
+  "1|oversee: predecessor-not-live session=$SESSION live=none server=$SOCKET|1|1|1" \
+  "a --predecessor naming the live pane a record with no server start names is refused and left running"
+# Its control: a predecessor check that takes a startless record's live pane
+# stops that pane. It runs over a pane of its own, since the succession stops
+# it and $SESSION serves the rows below.
+cp -- "$FLEET_STATE" "$TMP_ROOT/state.startless"
+STARTLESS_PANE="$(tm new-window -d -t fleet -n startless -P -F '#{pane_id}' 'exec sleep 100000')"
+jq --arg pane "$STARTLESS_PANE" '.overseer.pane = $pane' "$TMP_ROOT/state.startless" > "$FLEET_STATE" || exit 1
+STARTLESSPREDCTL="$(mutant_scripts startlesspredctl oversee)" || exit 1
+mutate_file "$STARTLESSPREDCTL/oversee" \
+  '[[ -z "$PREDECESSOR" || "$named_pane" == "$PREDECESSOR" ]] \' '[[ -z "$PREDECESSOR" || "$live_pane" == "$PREDECESSOR" ]] \'
+OVERSEE_BIN="$STARTLESSPREDCTL/oversee" run_oversee -- launch --predecessor "$STARTLESS_PANE" --wait-secs 20
+assert_eq "$RC|$(listed "$STARTLESS_PANE")" "0|0" \
+  "control: a predecessor check that takes a startless record's live pane stops it"
+tm kill-window -t "$(recorded window)"
+mv -- "$TMP_ROOT/state.startless" "$FLEET_STATE"
 # Its control: a liveness check that takes a startless record as naming no
 # session opens a second overseer beside the first.
 STARTLESSCTL="$(mutant_scripts startlessctl oversee)" || exit 1
@@ -567,7 +589,6 @@ run_oversee -- launch --wait-secs 20
 PRED="$(recorded pane)"
 PRED_GEN="$(recorded generation)"
 PRED_INDEX="$(tm display-message -p -t "$PRED" '#{window_index}')"
-listed() { tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$1" || true; }
 run_oversee -- launch --predecessor "$PRED" --wait-secs 20
 SUCCEEDED="$(keyed overseer-launched "$OUT" | sed -n 1p)"
 SUCC="$(field "$SUCCEEDED" session)"
@@ -589,7 +610,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(listed "$OTHER")" \
   "a predecessor the fleet does not record as its live overseer is refused and left running"
 # Its control: without the check the launch stops that pane.
 PREDCTL="$(mutant_scripts predctl oversee)" || exit 1
-mutate_file "$PREDCTL/oversee" '[[ -z "$PREDECESSOR" || "$live_pane" == "$PREDECESSOR" ]] \' 'true \'
+mutate_file "$PREDCTL/oversee" '[[ -z "$PREDECESSOR" || "$named_pane" == "$PREDECESSOR" ]] \' 'true \'
 OVERSEE_BIN="$PREDCTL/oversee" run_oversee -- launch --predecessor "$OTHER" --wait-secs 20
 assert_eq "$RC|$(listed "$OTHER")" "0|0" \
   "control: a launch without the predecessor check stops a pane the fleet never recorded"

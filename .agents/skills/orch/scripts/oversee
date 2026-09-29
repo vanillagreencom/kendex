@@ -40,13 +40,16 @@
 #        it and its generation. A live pane whose server start cannot be read
 #        refuses `launch-failed step=server-start`: whether it is the
 #        recorded overseer cannot be judged. A record carrying no server
-#        start is judged on the server pid and pane alone, so its live pane
-#        refuses `overseer-live` too. Two overseers never act at once; a live one
+#        start names no session, yet its pane live on the recorded server
+#        pid refuses `overseer-live` too. Two overseers never act at once; a live one
 #        is replaced as the --predecessor this launch names, or through
 #        `oversee-succeed`, never launched over. --predecessor naming any
 #        session but that live one refuses `predecessor-not-live`, its `live`
 #        field the live overseer or `none` where none is recorded: a
-#        succession stops the recorded overseer and no other pane.
+#        succession stops the recorded overseer and no other pane. A record
+#        carrying no server start names no predecessor, so --predecessor
+#        over it refuses the same way until `oversee register` in its pane
+#        binds it.
 #     4. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:model:effort`
 #        entries, in order, and open on the first whose harness has a lane
 #        above ORCH_OVERSEER_HEADROOM_PCT: the entry names its model, or a
@@ -194,8 +197,8 @@ message() { # KEY FIELD=VALUE...
     tmux-session-missing) text='The tmux session named does not exist on the server this run reaches. Nothing was opened; the server field names the socket.' ;;
     tmux-failed) text='The tmux call the operation field names failed on the server the server field names, for another reason than an absent session: no server may be running at that socket. Nothing was opened; tmux says why below.' ;;
     state-unwritable) text='The oversee workflow state could not be created or read, so no session record can be kept. Nothing was launched.' ;;
-    overseer-live) text='The fleet state names an overseer session this tmux server still lists, so a second one is not opened beside it. Two overseers never act at once: replace a live one through oversee launch --predecessor naming it, or oversee-succeed, or stop it and clear the record.' ;;
-    predecessor-not-live) text='The session --predecessor names is not the live overseer the fleet state records on this server. The live field names that overseer, or none where no live one is recorded. A succession only ever stops the recorded overseer; nothing was opened.' ;;
+    overseer-live) text='The fleet state names an overseer session this tmux server still lists, so a second one is not opened beside it. Two overseers never act at once: replace a live one through oversee launch --predecessor naming it, or oversee-succeed, or stop it and clear the record. A record carrying no server start takes oversee register in that pane before --predecessor accepts it.' ;;
+    predecessor-not-live) text='The session --predecessor names is not the live overseer the fleet state records on this server. The live field names that overseer, or none where no live one is recorded. A record carrying no server start names none: run oversee register in its pane first. A succession only ever stops the recorded overseer; nothing was opened.' ;;
     option-conflict) text='--predecessor is a launch option, and a successor opens beside its predecessor rather than in the tmux session --session names, so the two are never given together.' ;;
     close-failed) text='The predecessor could not be stopped, so the successor was closed and the record put back; the predecessor keeps running.' ;;
     invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex or pi and model a model name or a tier ladder rank, or on pi a lowercase provider/id. A first launch skips pi entries.' ;;
@@ -448,18 +451,20 @@ state_ready
 # `ol_names`: that server pid, started when the record says. A record naming
 # a session the runtime no longer lists, or one an earlier server handed the
 # same pid and pane held, is a stopped fleet's, and the launch takes the next
-# generation over it. A record carrying no server start is judged here on the
-# server pid and pane alone: it names no session to any other reader, but a
-# pane it records live on that pid may be the running overseer, so nothing is
-# opened beside it. A live one is launched over only as the
-# predecessor --predecessor names, and a predecessor is only ever that one:
-# the session a succession stops is the one the fleet records as its
-# overseer, never another pane.
+# generation over it. A record carrying no server start names no session, but
+# a pane it records live on that server pid may be the running overseer, so
+# nothing is opened beside it: live_pane is the pane that blocks a launch,
+# named_pane the one the record names. A live one is launched over only as
+# the predecessor --predecessor names, and a predecessor is only ever the
+# named one: the session a succession stops is the one the fleet records as
+# its overseer on this very server, never another pane, and never a pane a
+# startless record names, which a later server may have handed the same pid
+# and pane id.
 if ! live="$(jq -r 'if type == "object" and (.runtime // "tmux") == "tmux" and (.pane // "") != ""
     then (.pane + " " + ((.generation // 0) | tostring)) else "" end' <<<"$OL_PRIOR" 2>"$DEP_ERR")"; then
   die state-unwritable field=overseer
 fi
-live_pane=""
+live_pane="" named_pane=""
 if [[ -n "$live" ]]; then
   read -r live_pane live_generation <<<"$live"
   ol_session_inspect "$live_pane" || die launch-failed step=inspect
@@ -472,15 +477,18 @@ if [[ -n "$live" ]]; then
     live_start="$(ol_session_start "$OL_INSPECT_SERVER" "$live_pane")" \
       || die launch-failed step=server-start "session=$live_pane" "server=$SERVER_SOCKET"
     if ! live_named="$(jq -r --arg server "$OL_INSPECT_SERVER" --arg start "$live_start" --arg pane "$live_pane" \
-      "$OL_JQ_DEFS"' if .server_start == null then .server_start = $start else . end
-        | ol_names($server; $start; $pane)' <<<"$OL_PRIOR" 2>"$DEP_ERR")"; then
+      "$OL_JQ_DEFS"' [ol_names($server; $start; $pane),
+        (if .server_start == null then .server_start = $start else . end
+          | ol_names($server; $start; $pane))] | map(tostring) | join(" ")' <<<"$OL_PRIOR" 2>"$DEP_ERR")"; then
       die state-unwritable field=overseer
     fi
-    [[ "$live_named" == true ]] || live_pane=""
+    read -r live_named live_blocks <<<"$live_named"
+    [[ "$live_named" != true ]] || named_pane="$live_pane"
+    [[ "$live_blocks" == true ]] || live_pane=""
   fi
 fi
-[[ -z "$PREDECESSOR" || "$live_pane" == "$PREDECESSOR" ]] \
-  || die predecessor-not-live "session=$PREDECESSOR" "live=${live_pane:-none}" "server=$SERVER_SOCKET"
+[[ -z "$PREDECESSOR" || "$named_pane" == "$PREDECESSOR" ]] \
+  || die predecessor-not-live "session=$PREDECESSOR" "live=${named_pane:-none}" "server=$SERVER_SOCKET"
 [[ -z "$live_pane" || -n "$PREDECESSOR" ]] \
   || die overseer-live "session=$live_pane" "server=$SERVER_SOCKET" "generation=$live_generation"
 
