@@ -113,9 +113,11 @@ def code_review(model):
 
 def copilot_instructions(model):
     """One level-one heading, the repo name, then what this repo is and where
-    its review doctrine lives. The doctrine itself is not restated here: this
-    file and the pointed file are both read from the pull request head, and a
-    second copy of eight blocks is a second thing to keep in step."""
+    its review doctrine lives. Only the blocks this file's routing column
+    names are restated, under the pointer: Copilot loads this file itself and
+    reaches the pointed file only by following the pointer, so a block whose
+    rule must reach it regardless rides here. `renders.md` § Doctrine routing
+    note (b) says which and why."""
     out = [model.marker("html"), ""]
     out.append(f"# {model.repo_name}")
     out.append("")
@@ -125,6 +127,12 @@ def copilot_instructions(model):
     out.append("")
     out.append(POINTER.format(path=model.code_review_path))
     out.append("")
+    for bid, text in model.blocks_for("copilot-instructions.md"):
+        out.append(f"### {bid}")
+        out.append("")
+        for para in block_paragraphs(model, bid, text):
+            out.append(para)
+            out.append("")
     if model.surfaces:
         out.append("## Path rules")
         out.append("")

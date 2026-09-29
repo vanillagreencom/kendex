@@ -117,6 +117,7 @@ FROZEN_BLOCK_IDS = (
 # The routing table's columns, in the order the table writes them.
 ROUTING_COLUMNS = (
     "code-review.md",
+    "copilot-instructions.md",
     ".coderabbit.yaml",
     "pr_agent issues",
     "pr_agent compliance",

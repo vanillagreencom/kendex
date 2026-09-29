@@ -61,6 +61,10 @@ That AGENTS.md row is worth reading twice. Copilot code review does read it, whi
 
 **Content exclusion.** Code review honors repository, organization and enterprise content-exclusion settings. Exclusion itself is a settings-UI feature and cannot be expressed in any repo file, which is why it is a checklist item. <https://docs.github.com/en/copilot/how-tos/configure-content-exclusion/exclude-content-from-copilot>
 
+**Approvals.** <https://docs.github.com/en/copilot/how-tos/use-copilot-agents/request-a-code-review/use-code-review> and <https://docs.github.com/en/copilot/how-tos/copilot-on-github/set-up-copilot/configure-code-review>. By default Copilot leaves a Comment review, which counts toward no required approval. Approvals are off by default and are set at the enterprise, organization and repository level; the repository setting can limit counted approvals to pull requests whose every changed file matches one of up to 15 globs. Every review states an approval assessment in its overview comment, and a push dismisses an approval like a person's. Copilot reviews again only on a push, with automatic review of new pushes on, or on a re-request. A reply to its comments is not visible to it.
+
+<https://docs.github.com/en/copilot/tutorials/customize-code-review> lists changing the overview comment and blocking a merge among the instruction types code review does not support, and no vendor page says instructions move the assessment. The evidence that they do is fleet experience: on kendex, assessments of "Needs a closer look" with no finding quoted a repository rule that a policy change needs a trusted person's approval. That is why the approve rule rides `severity` into `copilot-instructions.md`, [../schemas/renders.md](../schemas/renders.md) § Doctrine routing note (b), rather than waiting behind the pointer.
+
 ## Codex code review
 
 <https://learn.chatgpt.com/docs/third-party/github>

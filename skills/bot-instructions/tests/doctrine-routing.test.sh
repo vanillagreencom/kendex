@@ -106,7 +106,7 @@ EOF
 # of double quotes runs its parse past the closing parenthesis.
 IFS= read -r -d '' rows <<'ROWS'
 a doctrine block with no routing row~SKILL.md~\n## Adding a repo\n~\n### unrouted\n\nA block no column carries.\n\n## Adding a repo\n~red:doctrine-routing:doctrine block 'unrouted' has no row in the routing table
-a routing row naming no doctrine heading~schemas/renders.md~| `trust-model` |~| `no-such-block` | – | – | – | – | – | – | – |\n| `trust-model` |~red:doctrine-routing:routing table row 'no-such-block' names no `###` heading
+a routing row naming no doctrine heading~schemas/renders.md~| `trust-model` |~| `no-such-block` | – | – | – | – | – | – | – | – |\n| `trust-model` |~red:doctrine-routing:routing table row 'no-such-block' names no `###` heading
 a position repeated inside a column~schemas/renders.md~| `rounds` | 2 |~| `rounds` | 1 |~red:doctrine-routing:column 'code-review.md' repeats a position
 a gap in a column, whose positions must run 1..n~schemas/renders.md~| `rounds` | 2 |~| `rounds` | 9 |~red:doctrine-routing:column 'code-review.md' positions are [1, 3, 4, 5, 6, 7, 8, 9], not 1..n
 a block missing from the code-review.md column~schemas/renders.md~| `reply-contract` | 8 |~| `reply-contract` | – |~red:doctrine-routing:column 'code-review.md' omits 'reply-contract'
@@ -263,7 +263,7 @@ sys.path.insert(0, os.path.join(PKG, "scripts"))
 from lib import run, spec as spec_mod, tree
 
 FENCE = "```\nseverity = consequence * reach\n```"
-CARRIERS = (".github/instructions/code-review.md", "REVIEW.md",
+CARRIERS = (".github/instructions/code-review.md", ".github/copilot-instructions.md", "REVIEW.md",
             ".macroscope/correctness/doctrine.md", ".pr_agent.toml")
 for rel in CARRIERS:
     if FENCE not in open(os.path.join(repo, rel)).read():
@@ -310,19 +310,21 @@ else
   bad 'an overridden block keeps its line breaks, and a package one is still joined'
 fi
 
-# --- every block the code-review.md column routes lands in the file --------
-# The pointed file is where Codex, Copilot and CodeRabbit are all sent, so
-# each block the routing table sends there has to arrive as written. The rows
-# are derived from the spec copy rather than copied here: the column names the
-# blocks, and each block's paragraphs, joined the way the file joins one, must
-# appear in it, each block after the one the column routes before it, so a
-# dropped, truncated or reordered block shows in its row. The `reply-contract`
-# block's `<issue>` placeholder becomes
-# `<PREFIX>-<n>` under `[bot-instructions.repo] tracker` (`renders.md`
-# § Common rules; the canonical fixture's tracker is `FIX`), so a paragraph
-# is held with that substitution made. The floor is the column's own length:
-# a column routing no block, a block with no paragraph, or a region that
-# cannot be located fails as a fixture before any row is counted.
+# --- every block a markdown column routes lands in its file, and no other ---
+# The pointed file is where Codex, Copilot and CodeRabbit are all sent, and
+# `copilot-instructions.md` is the file Copilot loads itself, so each block the
+# routing table sends to either has to arrive as written. The rows are derived
+# from the spec copy rather than copied here: the column names the blocks, and
+# each block's paragraphs, joined the way the file joins one, must appear in
+# it, each block after the one the column routes before it, so a dropped,
+# truncated or reordered block shows in its row. A block the column does not
+# route must be absent, so a file restating the whole doctrine shows too. The
+# `reply-contract` block's `<issue>` placeholder becomes `<PREFIX>-<n>` under
+# `[bot-instructions.repo] tracker` (`renders.md` § Common rules; the canonical
+# fixture's tracker is `FIX`), so a paragraph is held with that substitution
+# made. The floor is each column's own length: a column routing no block, a
+# block with no paragraph, or a file that cannot be read fails as a fixture
+# before any row is counted.
 repo="$(bi_rendered_repo doctrine-pointed)" || exit 1
 if python3 - "$BI_ROOT/skills/bot-instructions" "$repo" > "$BI_TMP/pointed-rows" <<'PY'; then
 import os, sys
@@ -330,36 +332,47 @@ PKG, repo = sys.argv[1], sys.argv[2]
 sys.path.insert(0, os.path.join(PKG, "scripts"))
 from lib import spec as spec_mod, tree
 doctrine = spec_mod.load(tree.Worktree(PKG), "SKILL.md", "schemas/renders.md")
-pointed = open(os.path.join(repo, ".github/instructions/code-review.md")).read()
-blocks = doctrine.routing["code-review.md"]
-if not blocks:
-    sys.exit("the code-review.md column routes no block")
-at = 0
-for bid in blocks:
+CARRIERS = (("code-review.md", ".github/instructions/code-review.md"),
+            ("copilot-instructions.md", ".github/copilot-instructions.md"))
+
+def paragraphs(bid):
     paras = [" ".join(p.split()).replace("<issue>", "<FIX-n>")
              for p in doctrine.blocks[bid].split("\n\n") if p.strip()]
     if not paras:
-        sys.exit(f"{bid}: no paragraph to hold against the region")
-    verdict = "ok"
-    for para in paras:
-        found = pointed.find(para, at)
-        if found == -1:
-            verdict = "missing-or-out-of-order"
-            break
-        at = found + len(para)
-    print(f"{verdict}\t{bid}\t{len(paras)}")
+        sys.exit(f"{bid}: no paragraph to hold against the file")
+    return paras
+
+for column, rel in CARRIERS:
+    body = open(os.path.join(repo, rel)).read()
+    blocks = doctrine.routing[column]
+    if not blocks:
+        sys.exit(f"the {column} column routes no block")
+    at = 0
+    for bid in blocks:
+        paras = paragraphs(bid)
+        verdict = "ok"
+        for para in paras:
+            found = body.find(para, at)
+            if found == -1:
+                verdict = "missing-or-out-of-order"
+                break
+            at = found + len(para)
+        print(f"{verdict}\t{column} carries block {bid} in its routed order ({len(paras)} paragraph(s))")
+    for bid in sorted(set(doctrine.blocks) - set(blocks)):
+        verdict = "restated" if paragraphs(bid)[0] in body else "ok"
+        print(f"{verdict}\t{column} leaves block {bid} to the pointed file")
 PY
   before=$((BI_PASS + BI_FAIL))
-  while IFS="$(printf '\t')" read -r verdict bid count; do
+  while IFS="$(printf '\t')" read -r verdict row; do
     if [ "$verdict" = ok ]; then
-      ok "code-review.md carries block $bid in its routed order ($count paragraph(s))"
+      ok "$row"
     else
-      bad "code-review.md carries block $bid in its routed order ($count paragraph(s))" "$verdict"
+      bad "$row" "$verdict"
     fi
   done < "$BI_TMP/pointed-rows"
   [ "$((BI_PASS + BI_FAIL))" -gt "$before" ] || { printf 'no block row was asserted\n' >&2; exit 2; }
 else
-  bad 'the code-review.md block rows could be derived from the spec copy' "$(cat "$BI_TMP/pointed-rows")"
+  bad 'the markdown block rows could be derived from the spec copy' "$(cat "$BI_TMP/pointed-rows")"
 fi
 
 bi_summary

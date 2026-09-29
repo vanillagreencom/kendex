@@ -52,18 +52,18 @@ That read decodes strictly, and so does every other read in this package. **Text
 
 One table, one row per doctrine block, one column per destination that carries doctrine. A number is that block's position in that destination; a dash is a deliberate omission with its reason below. Every per-surface section below cites this table rather than restating its own list, and the generator reads it as its single routing input. A per-surface list written out in prose is a second copy of this knowledge, and two copies drift.
 
-| Block | code-review.md | .coderabbit.yaml | pr_agent issues | pr_agent compliance | pr_agent extra | REVIEW.md | macroscope doctrine.md |
-|-------|----------------|------------------|-----------------|---------------------|----------------|-----------|------------------------|
-| `scope` | 1 | – (a) | 2 | – | 2 | 1 | 2 |
-| `rounds` | 2 | – (a) | 3 | – | 3 | 2 | 3 |
-| `severity` | 3 | – (a) | – | 1 | 4 | 3 | 4 |
-| `no-preferences` | 4 | – (a) | 4 | – | 5 | 4 | 5 |
-| `declined` | 5 | – (a) | – | 2 | 6 | 5 | 6 |
-| `render-out-of-scope` | 6 | 1 | 1 | – | 1 | – (c) | 1 |
-| `trust-model` | 7 | – (a) | – | 3 | 7 | – (c) | 7 |
-| `reply-contract` | 8 | – (a) | – | 4 | 8 | 6 | 8 |
+| Block | code-review.md | copilot-instructions.md | .coderabbit.yaml | pr_agent issues | pr_agent compliance | pr_agent extra | REVIEW.md | macroscope doctrine.md |
+|-------|----------------|-------------------------|------------------|-----------------|---------------------|----------------|-----------|------------------------|
+| `scope` | 1 | – (b) | – (a) | 2 | – | 2 | 1 | 2 |
+| `rounds` | 2 | – (b) | – (a) | 3 | – | 3 | 2 | 3 |
+| `severity` | 3 | 1 | – (a) | – | 1 | 4 | 3 | 4 |
+| `no-preferences` | 4 | – (b) | – (a) | 4 | – | 5 | 4 | 5 |
+| `declined` | 5 | – (b) | – (a) | – | 2 | 6 | 5 | 6 |
+| `render-out-of-scope` | 6 | – (b) | 1 | 1 | – | 1 | – (c) | 1 |
+| `trust-model` | 7 | – (b) | – (a) | – | 3 | 7 | – (c) | 7 |
+| `reply-contract` | 8 | – (b) | – (a) | – | 4 | 8 | 6 | 8 |
 
-`[bot-instructions.repo] summary` placement, since the destinations differ: it opens `.github/copilot-instructions.md`, immediately after the `# <repo name>` line. That file carries no doctrine block, so it has no column here. Everywhere else the summary follows the last block — both `pr_agent` `[review_agent]` keys, `pr_agent extra`, and `macroscope doctrine.md`.
+`[bot-instructions.repo] summary` placement, since the destinations differ: it opens `.github/copilot-instructions.md`, immediately after the `# <repo name>` line, ahead of the one block that file carries. Everywhere else the summary follows the last block — both `pr_agent` `[review_agent]` keys, `pr_agent extra`, and `macroscope doctrine.md`.
 
 **The exclusion set's placement.** Where it is rendered, it follows the `render-out-of-scope` block immediately, as the closing paragraph of that block, in the exclusion set's own fixed order. Three destinations carry it: `code-review.md`, `pr_agent issues`, and `pr_agent extra` — the columns whose `render-out-of-scope` cell carries a number and whose bot has no file-based review exclusion. Codex and Copilot need no fourth: both are sent to `code-review.md`, Codex by the `AGENTS.md` directive and Copilot by the pointer in `.github/copilot-instructions.md`.
 
@@ -82,6 +82,8 @@ What that buys, per surface, since the five do not get the same thing:
 The three unenforced rows are why the paths are rendered at all. Codex has no file-based exclusion, Copilot's is a settings page no repo file reaches, and Qodo's `[ignore]` governs `/improve` analysis rather than review content. Naming the paths makes the instruction actionable; those three may comment on render paths anyway, and SKILL.md § Every rendered config excludes the render trees carries the requirement.
 
 **(a) `.coderabbit.yaml` carries one block.** CodeRabbit reaches the rest through `knowledge_base.code_guidelines.filePatterns`, which names `AGENTS.md` and the pointed file. That key is a reference, not a restatement: CodeRabbit loads what the patterns name. `render-out-of-scope` is the exception because it rides the `path: "**"` instruction entry, where it is doing scoping work rather than repeating doctrine.
+
+**(b) `copilot-instructions.md` carries one block.** Copilot reaches the rest by following the pointer to `code-review.md`, which no vendor page documents (`references/limits.md` § GitHub Copilot code review). `severity` is the exception because it holds the approve rule. On a repo whose rules require an approval, that rule decides whether a head merges, so it goes in a file Copilot loads itself and does not depend on the pointer. The other seven stay behind the pointer, so this file keeps one copy of one block.
 
 **(c) `REVIEW.md` omits two.** `render-out-of-scope` names trees whose exclusion Qodo already carries in `[ignore]` and in the `[review_agent]` guidance, and `trust-model` is about a merge gate's evidence rather than about writing a finding. Both reach Qodo through `.pr_agent.toml`.
 
@@ -155,9 +157,10 @@ Read by Copilot code review, repo-wide, from the pull request's head branch.
 1. The marker comment.
 2. `# <repo name>` followed by `[bot-instructions.repo] summary`, which the routing table's placement note names as this destination's opening rather than its close.
 3. `## Code review`, one sentence naming the configured `code-review.md` path and telling the reader to read it first, emitted on one line and never wrapped: a reader looking for the file name reads one line, and a wrap splits the pointer in two. The repo name is the file's only level-one heading.
-4. `## Path rules`, one sentence naming `.github/instructions/` as where per-path rules live, emitted only when at least one surface exists, a default surface included.
+4. The blocks the `copilot-instructions.md` column of the routing table carries, in its order, as `###` sections keyed by block id under `## Code review`, joined as `code-review.md` joins them.
+5. `## Path rules`, one sentence naming `.github/instructions/` as where per-path rules live, emitted only when at least one surface exists, a default surface included.
 
-No doctrine block is restated here, so this destination has no routing column. Copilot reads both files from the pull request head, and a second copy of eight blocks is a second thing to keep in step.
+Only the blocks its routing column names are restated here, and note (b) says why that is one. Copilot reads both files from the pull request head, and a second copy of eight blocks is a second thing to keep in step.
 
 **Budget.** The rendered file must not exceed `[bot-instructions.budgets] copilot_chars` (default 6000). Over it, the render fails naming the character count and the budget. GitHub documents no numeric cap here; see `references/limits.md`.
 

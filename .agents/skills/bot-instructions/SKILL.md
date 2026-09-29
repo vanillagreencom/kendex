@@ -9,7 +9,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "2.3.0"
+  version: "2.4.0"
 tags: [review]
 repo-effects:
   summary: "Renders the enabled review-bot instruction files, the pointed code-review file and the owned Code Review Rules region in this repository."
@@ -63,7 +63,7 @@ Exit codes: 0 clean, 1 findings, 2 could not complete. A pre-commit lane blocks 
 | Qodo | `.pr_agent.toml`, `best_practices.md`, `REVIEW.md` | the default branch root |
 | Macroscope | `.macroscope/ignore.md`, `.macroscope/correctness/*.md`, plus `.macroscope/check-run-agents/**` and `.macroscope/approvability.md`, which this package never writes | the pull request's most recent commit, or the default branch for a fork |
 
-Codex and Copilot reach the doctrine by following a pointer rather than by reading it in place. The `AGENTS.md` region is one directive line naming the pointed file, and `.github/copilot-instructions.md` carries the same pointer; CodeRabbit follows a real file reference. No block is restated to those three anywhere else, except `render-out-of-scope` in `.coderabbit.yaml`'s catch-all entry, where it is doing scoping work — [schemas/renders.md](schemas/renders.md) § Doctrine routing note (a).
+Codex and Copilot reach the doctrine by following a pointer rather than by reading it in place. The `AGENTS.md` region is one directive line naming the pointed file, and `.github/copilot-instructions.md` carries the same pointer; CodeRabbit follows a real file reference. No block is restated to those three anywhere else, with two exceptions. `render-out-of-scope` rides `.coderabbit.yaml`'s catch-all entry, where it is doing scoping work: [schemas/renders.md](schemas/renders.md) § Doctrine routing note (a). `severity` rides `.github/copilot-instructions.md`: it holds the approve rule, which decides whether a head merges on a repo that requires an approval, so the rule goes in a file Copilot loads itself, note (b).
 
 Routing per block and surface: [schemas/renders.md](schemas/renders.md) § Doctrine routing. Vendor caps: [references/limits.md](references/limits.md).
 
@@ -130,6 +130,8 @@ Report all findings about the current diff in one round. Write one comment per r
 ### severity
 
 Mark a finding as blocking only if it must stop the merge. Mark other findings as suggestions. Group suggestions together. Omit suggestions when a repeat review covers a one-line fix. Match severity and confidence to the evidence. Name the user-visible consequence in every finding.
+
+Approve the pull request when the review reports no finding, and when every finding it reports is a suggestion or a nit. Withhold approval only for a blocking finding, and name that finding in the review. Do not withhold approval for a concern you cannot state as a finding. A rule that another reviewer, a person included, must also approve is not a reason either: the repo's merge rules enforce that rule. On a later review, a finding the author answered under the reply contract does not block approval unless the code it names changed after the answer.
 
 ### no-preferences
 

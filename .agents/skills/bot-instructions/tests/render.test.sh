@@ -173,14 +173,14 @@ for f in .github/copilot-instructions.md .github/instructions/code-review.md; do
 done
 
 # Copilot is sent to the pointed file rather than handed a second copy of the
-# doctrine, and the pointer is one unwrapped line carrying the path.
+# doctrine, and the pointer is one unwrapped line carrying the path. Which
+# blocks the file restates under it is `doctrine-routing.test.sh`'s rows.
 if grep -q '^## Code review$' "$repo/.github/copilot-instructions.md" \
    && grep -q '^The complete review doctrine .*`\.github/instructions/code-review\.md`\.' \
-        "$repo/.github/copilot-instructions.md" \
-   && ! grep -q '^### scope$' "$repo/.github/copilot-instructions.md"; then
-  ok 'copilot-instructions.md points at the pointed file and restates no block'
+        "$repo/.github/copilot-instructions.md"; then
+  ok 'copilot-instructions.md points at the pointed file'
 else
-  bad 'copilot-instructions.md points at the pointed file and restates no block' \
+  bad 'copilot-instructions.md points at the pointed file' \
       "$(grep '^#\|code-review' "$repo/.github/copilot-instructions.md" | head -4 | tr '\n' ' ')"
 fi
 
