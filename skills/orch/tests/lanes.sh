@@ -898,7 +898,9 @@ cat > "$CODEX_BIN/codex" <<'STUB'
 # a refresh the CLI could not make: CODEX_SAYS is then the CLI's own `Failed
 # to refresh token:` message on stderr, and CODEX_ANSWER its answer to request
 # 1. With CODEX_EXITS set it exits at once, answering nothing, as a codex with
-# no app-server does. It logs `<CODEX_HOME> <working dir> <methods>`.
+# no app-server does. It logs `<CODEX_HOME> <working dir> <methods>`. The
+# delay exits on TERM whatever the stub inherited, as the CLI's own handler
+# does. It is perl's: bash cannot trap a signal ignored on its entry.
 [[ "$*" == app-server ]] || { printf '%s %s argv=%s\n' "$CODEX_HOME" "$(pwd)" "$*" >> "$CODEX_LOG"; exit 2; }
 [[ -z "${CODEX_EXITS:-}" ]] || { printf '%s %s exited\n' "$CODEX_HOME" "$(pwd)" >> "$CODEX_LOG"; exit 2; }
 answer='{"id":1,"result":{"account":null,"requiresOpenaiAuth":true}}'
@@ -908,7 +910,7 @@ while IFS= read -r line; do
   methods="$methods${methods:+,}$m"
   case "$line" in
     *'"method":"account/read"'*'"refreshToken":true'*)
-      sleep "${CODEX_RENEW_DELAY:-0}"
+      perl -e '$SIG{TERM} = sub { exit 143 }; sleep $ARGV[0]' "${CODEX_RENEW_DELAY:-0}" || exit 143
       [[ -z "${CODEX_RENEWED_AUTH:-}" ]] || cp -- "$CODEX_RENEWED_AUTH" "$CODEX_HOME/auth.json"
       [[ -z "${CODEX_SAYS:-}" ]] ||
         printf '\033[31mERROR\033[0m \033[2mcodex_login::auth::manager\033[0m\033[2m:\033[0m Failed to refresh token: %s\n' "$CODEX_SAYS" >&2
@@ -942,11 +944,14 @@ CODEX_REMEDY="run_codex_once_with_CODEX_HOME=$TMP_ROOT/codex-expired/.codex"
 CODEX_REVOKED="Your access token could not be refreshed. Please log out and sign in again."
 CODEX_OFFLINE="error sending request for url (https://auth.openai.com/oauth/token)"
 CODEX_ERROR_ANSWER='{"error":{"code":-32603,"message":"workspace routing discovery failed"},"id":1}'
+CODEX_UNKNOWN="500 Internal Server Error: upstream failure"
 CODEX_RENEWAL_ROWS=(
   "renewal refused: a token the CLI left expired reads expired, naming the codex command that renews it, and posts no usage query|$CODEX_STUB_PATH|$CODEX_LIST|codex.status=expired codex.refreshable=false codex.headroom_pct=null codex.cause=${CODEX_CAUSE}_did_not_renew_it;_$CODEX_REMEDY codexrenew=codex:codex:initialize,initialized,account/read fetched=none"
   "a refresh token the endpoint refused reads expired, naming codex login|$CODEX_STUB_PATH;CODEX_SAYS=$CODEX_REVOKED|$CODEX_LIST|codex.status=expired codex.cause=${CODEX_CAUSE}_could_not_renew_it:_${CODEX_REVOKED// /_};_log_in_again_with_CODEX_HOME=$TMP_ROOT/codex-expired/.codex_codex_login fetched=none"
   "a refresh that never reached the endpoint reads unreachable, with the CLI's message|$CODEX_STUB_PATH;CODEX_SAYS=$CODEX_OFFLINE;CODEX_ANSWER=$CODEX_ERROR_ANSWER|$CODEX_LIST|codex.status=unreachable codex.cause=${CODEX_CAUSE}_could_not_reach_the_token_endpoint:_${CODEX_OFFLINE// /_} fetched=none"
   "an error answer to the renewal reads unreachable, with the CLI's message|$CODEX_STUB_PATH;CODEX_ANSWER=$CODEX_ERROR_ANSWER|$CODEX_LIST|codex.status=unreachable codex.cause=${CODEX_CAUSE}_answered_the_renewal_with_an_error:_workspace_routing_discovery_failed fetched=none"
+  "a refresh failure no pattern knows is named first, before the error answer, and reads unreachable|$CODEX_STUB_PATH;CODEX_SAYS=$CODEX_UNKNOWN;CODEX_ANSWER=$CODEX_ERROR_ANSWER|$CODEX_LIST|codex.status=unreachable codex.cause=${CODEX_CAUSE}_could_not_renew_it:_${CODEX_UNKNOWN// /_};_codex_answered_the_renewal_with_an_error:_workspace_routing_discovery_failed fetched=none"
+  "with no answer, that failure is named before the remedy, and reads expired|$CODEX_STUB_PATH;CODEX_SAYS=$CODEX_UNKNOWN|$CODEX_LIST|codex.status=expired codex.cause=${CODEX_CAUSE}_could_not_renew_it:_${CODEX_UNKNOWN// /_};_$CODEX_REMEDY fetched=none"
   "no codex on PATH reads expired too, naming the CLI to install|PATH=$CLAIM_BIN:$NOCODEX_PATH|$CODEX_LIST|codex.status=expired codex.cause=access_token_expired_and_could_not_be_renewed:_no_codex_command_is_on_PATH_to_renew_it;_install_the_Codex_CLI_and_$CODEX_REMEDY fetched=none"
 )
 codex_expired_home refresh-codex
@@ -2469,9 +2474,10 @@ echo "=== a renewal a ceiling lands on finishes, keeps the rotated token and rel
 # `renew_token` takes that mutex inside a command substitution, which a
 # ceiling signals along with the shell that called it: `timeout` signals the
 # whole process group. Once a renewal step reached its endpoint, the endpoint
-# may already have rotated the refresh token, so the renewal ignores the
-# ceiling's TERM across the step, every process it starts included, and a
-# credentials file never keeps a retired token. Left behind, the mutex
+# may already have rotated the refresh token, so the renewal runs the step in
+# a process group of its own, which the ceiling's TERM never reaches whatever
+# handlers the step's processes install, and a credentials file never keeps a
+# retired token. Left behind, the mutex
 # makes every later renewal on that account wait out its whole timeout and
 # fail with "another tool holds the credentials lock". Only the mkdir mutex
 # can outlive its holder — under flock the kernel releases it — so the probe
@@ -2542,7 +2548,8 @@ if command -v timeout > /dev/null 2>&1; then
     "rotated-refresh renewed-token" \
     "and the credentials file holds the rotated refresh token the endpoint answered with"
   # The Codex step is the CLI's own run: the ceiling lands while the codex
-  # stub is renewing, and the ignore it inherits lets it write auth.json.
+  # stub is renewing. The stub exits on TERM, as the CLI does, so only a step
+  # outside the caller's process group writes auth.json.
   codex_ceiling() { # LANES
     local rc=0
     new_home codex-ceiling
@@ -2556,10 +2563,11 @@ if command -v timeout > /dev/null 2>&1; then
   }
   assert_eq "$(codex_ceiling "$LANES")" "rc=124 mutex=released auth=renewed" \
     "a codex renewal the ceiling lands on still writes auth.json and leaves no mutex"
-  # The control: without the ignore, the ceiling's TERM ends the CLI mid-renewal.
-  lanes_mutant mutant-renew-signals lanes "trap '' INT TERM"
-  assert_eq "$(codex_ceiling "$TMP_ROOT/mutant-renew-signals/scripts/lanes")" "rc=124 mutex=released auth=unrenewed" \
-    "control: without the ignore the ceiling ends the codex renewal before it writes auth.json"
+  # The control: with the step in the caller's process group, the ceiling's
+  # TERM ends the CLI mid-renewal although the renewal ignores TERM.
+  lanes_mutant mutant-renew-group lanes '^[[:space:]]*set -m$'
+  assert_eq "$(codex_ceiling "$TMP_ROOT/mutant-renew-group/scripts/lanes")" "rc=124 mutex=released auth=unrenewed" \
+    "control: with the step in the caller's process group the ceiling ends the codex renewal before it writes auth.json"
 else
   printf '  skip  a renewal a ceiling lands on: this host has no timeout to bound one with\n'
 fi

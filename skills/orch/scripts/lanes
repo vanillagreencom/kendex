@@ -46,12 +46,13 @@
 #         from being tried; `refused`, a usage endpoint that answered any
 #         other code outside 2xx, 401 and 403 included, which is a reading of
 #         the credential it was asked through and not a read that was never
-#         made; `expired`, a login proven dead, or a Codex login the Codex
-#         CLI could not renew on this machine, whose `detail` names the
-#         codex command that renews it; `no_credentials`;
+#         made; `expired`, a login no renewal on this machine brought back;
+#         `no_credentials`;
 #         `no_usage_data`, authenticated with no window to measure; `retired`;
 #         and `error`, a step this machine failed on its own, a renewal's
-#         included. A lane whose usage REFRESH met a 429 while the host still
+#         included. Which of these a failed Codex renewal reads, and its
+#         remedy, is stated once, under "Why a Codex token is renewed by the
+#         Codex CLI" in this script's header. A lane whose usage REFRESH met a 429 while the host still
 #         holds a figure for it younger than the 5-hour session window reports
 #         `rate_limited` ON that figure, with its age in the AGE column, and is
 #         judged on it; with no such figure it carries no window. Only `ok`
@@ -592,10 +593,25 @@
 #   one rotating the same refresh token can leave the account on a revoked
 #   login. `codex app-server` in that config dir is asked `account/read` with
 #   `refreshToken`, the request its protocol documents for a proactive
-#   refresh, under the same credentials lock the Claude renewal takes. A lane
-#   with no refresh token, no codex command on PATH, or a token still expired
-#   after the CLI ran reads `expired`, its `detail` naming the codex command
-#   that renews it.
+#   refresh, under the same credentials lock the Claude renewal takes. Its
+#   answer does not say whether the refresh worked, so auth.json read back is
+#   the verdict. This is the one statement of what a failed Codex renewal
+#   reads; `detail` carries the cause and the remedy, CODEX_HOME naming that
+#   config dir:
+#   - no refresh token in auth.json: `expired`, remedy `codex login`;
+#   - no codex command on PATH: `expired`, remedy install the CLI and run
+#     codex once;
+#   - a token still expired after the run, judged by codex_renew_refusal on
+#     the CLI's last `Failed to refresh token:` line and its answer: the token
+#     endpoint refused the refresh token, `expired`, remedy `codex login`; the
+#     request never reached that endpoint, `unreachable`; any other line, put
+#     first in `detail`, or none, `unreachable` where the CLI answered with an
+#     error, `detail` naming it, and otherwise `expired`, remedy run codex
+#     once;
+#   - a live expiry but no access token after the run: `expired`, remedy run
+#     codex once;
+#   - a run directory this machine could not create: `error`.
+#   A held credentials lock reads `unreachable`, as for Claude.
 #
 # Credentials never reach argv: `ps` and journald can read /proc/<pid>/cmdline,
 # which on Linux is world-readable while /proc/<pid>/environ is not. Bearer
@@ -1973,11 +1989,21 @@ token_error_suffix() { # BODY
 # A step that reached its endpoint may already have rotated the refresh token,
 # and an interrupt before the file is rewritten leaves the account on a
 # retired one only a fresh login recovers. A caller's ceiling is such an
-# interrupt, since `timeout` signals the whole process group, so INT and TERM
-# are ignored across the step, every process it starts inherits the ignore,
-# and the step's own request bound ends it. No caller sends KILL. The lock's
-# own handlers go back afterwards, never `trap - INT TERM`, whose default
-# disposition kills the shell with no EXIT trap and leaves the mutex held.
+# interrupt, since `timeout` signals the whole process group, and an ignore
+# alone does not stop it: the Codex CLI installs its own INT and TERM
+# handlers. So the step runs as a background job under `set -m`, which bash
+# puts in a process group of its own and never hands the terminal, and no
+# group signal to the caller reaches it; macOS ships no setsid. The job is a
+# subshell that execs nothing, so bash's setpgid never races an exec. This shell
+# ignores INT and TERM while it waits, so it keeps the lock until the step
+# exits. Job control is on only for the fork, so no foreground command here
+# takes the terminal. The cost: the step holds this script's stderr, so a
+# caller reading stderr through a pipe waits past its ceiling for the step's
+# own request bound, curl's --max-time for Claude and the CLI's request
+# timeouts for Codex. No caller sends KILL. The
+# lock's own handlers go back afterwards, never `trap - INT TERM`, whose
+# default disposition kills the shell with no EXIT trap and leaves the mutex
+# held.
 renew_token() { # HARNESS DIR CREDS
 	local harness="$1" dir="$2" creds="$3" lock at rc=0
 	lock="$dir/.lanes-refresh.lock"
@@ -1988,11 +2014,16 @@ renew_token() { # HARNESS DIR CREDS
 		printf '%s' "$at"
 	else
 		trap '' INT TERM
+		# Under job control bash leaves a job's stdin alone, and a job that
+		# read a terminal would stop for good while this shell holds the lock.
+		set -m
 		case "$harness" in
 			claude) refresh_claude_token "$dir" "$creds" ;;
 			codex) refresh_codex_token "$dir" "$creds" ;;
 			*) token_refusal error '' '' "no renewal exists for a $harness token"; false ;;
-		esac || rc=1
+		esac </dev/null &
+		set +m
+		wait "$!" || rc=1
 		orch_arm_lock_signals
 	fi
 	exec 9>&-
@@ -2056,8 +2087,8 @@ refresh_claude_token() { # DIR CREDS
 	new_rt=$(jq -r 'try (.refresh_token // empty) catch empty' <<<"$HTTP_BODY")
 	tmp="$(mktemp "$dir/.credentials.XXXXXX")" || { token_refusal error '' '' "no temporary file could be created in $dir"; return 1; }
 	# Between here and the rename this file holds a live rotated refresh token.
-	# renew_token's ignore keeps an interrupt from leaving it in the config
-	# directory, where a backup or a dotfile sync would carry it off the machine.
+	# renew_token's process group keeps a caller's interrupt from leaving it in
+	# the config directory, where a backup or a dotfile sync would carry it off the machine.
 	LANES_AT="$new_at" LANES_RT="${new_rt:-$rt}" jq --argjson exp "$new_exp" \
 		'.claudeAiOauth.accessToken = env.LANES_AT
 		 | .claudeAiOauth.refreshToken = env.LANES_RT
@@ -2081,11 +2112,8 @@ CODEX_RENEW_WAIT_TENTHS=250
 # Why a `codex app-server` run left the token expired, as a `token_refusal`:
 # one table over the last `Failed to refresh token:` line the CLI logged into
 # run dir $2 and its answer to request 1, each pattern a codex-cli 0.159.0
-# message. The endpoint refusing the refresh token is a dead login, answered by
-# `codex login`. A request that never reached the endpoint, or an error answer
-# to request 1 (`workspace routing discovery failed`), leaves the login
-# untested. Any other run, one that answered nothing included, is renewed by
-# running codex once.
+# message. The status and remedy each row takes are the header's, under "Why a
+# Codex token is renewed by the Codex CLI".
 codex_renew_refusal() { # DIR RUN_DIR
 	local said answer
 	said="$(sed -n 's/.*Failed to refresh token: //p' "$2/stderr" | tail -n 1)"
@@ -2097,10 +2125,11 @@ codex_renew_refusal() { # DIR RUN_DIR
 		*'error sending request for url (https://auth.openai.com/'*)
 			token_refusal unreachable '' '' "codex could not reach the token endpoint: $said" ;;
 		*)
+			said="${said:+codex could not renew it: $said; }"
 			if [[ -n "$answer" ]]; then
-				token_refusal unreachable '' '' "codex answered the renewal with an error: $answer"
+				token_refusal unreachable '' '' "${said}codex answered the renewal with an error: $answer"
 			else
-				token_refusal expired '' '' "codex did not renew it; run codex once with CODEX_HOME=$1"
+				token_refusal expired '' '' "${said:-codex did not renew it; }run codex once with CODEX_HOME=$1"
 			fi
 			;;
 	esac
@@ -2110,10 +2139,9 @@ codex_renew_refusal() { # DIR RUN_DIR
 # script's own: a second refresher of one auth.json races every Codex session
 # on the account, and the loser holds a revoked login. `codex app-server` in
 # that config dir is asked `account/read` with `refreshToken` and writes
-# auth.json as any Codex run does. Its answer does not say whether the refresh
-# worked, so auth.json read back is the verdict. No refresh token, or no codex
-# on PATH, is `expired`, naming the codex command that renews it; a run dir it
-# cannot create is `error`, and codex_renew_refusal judges a run.
+# auth.json as any Codex run does, and auth.json read back is the verdict.
+# The outcomes are the header's, under "Why a Codex token is renewed by the
+# Codex CLI".
 refresh_codex_token() { # DIR AUTH_JSON
 	local dir="$1" creds="$2" run waited refusal="" at
 	if [[ -z "$(jq -r 'try (.tokens.refresh_token // empty) catch empty' "$creds")" ]]; then
