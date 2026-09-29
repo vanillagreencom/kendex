@@ -220,8 +220,7 @@ new_usage_overseer() { # NAME [JUDGE]
   rm -f -- "${LANE:?}/.claude/hooks/lane-mail-check.sh"
   install_copilot_hooks "$LANE/.github/hooks" "${2:-$HOOK}"
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
-  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee overseer \
-    "$(jq -nc --arg s "$OVERSEER_SERVER" --arg p "$OVERSEER_PANE" '{server: $s, pane: $p, window: "@7"}')" >/dev/null)
+  record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
   BOX="$LANE/tmp/lane-mail/overseer"
   JUDGE="$LANE/.github/hooks/lane-mail-check.sh"
   cop_clear_leads
@@ -250,8 +249,7 @@ assert_eq "$(quiet) record=$(record)" "RC=0 stdout= stderr=- record=none" \
 # again, its turn end reads that record as no reading, never as room.
 # overseer_named PANE: the fleet record names PANE as the overseer's.
 overseer_named() { # PANE
-  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee overseer \
-    "$(jq -nc --arg s "$OVERSEER_SERVER" --arg p "$1" '{server: $s, pane: $p, window: "@7"}')" >/dev/null)
+  record_overseer "$1" "$OVERSEER_SERVER"
 }
 # LOST is the lost turn end's first line and record; the run left is the
 # turn end after it.

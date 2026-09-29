@@ -177,8 +177,7 @@ new_compact_overseer() { # NAME [JUDGE]
   install_hook "$TEST_DIR/../lane-mail-compact.sh" "$LANE/.github/hooks/lane-mail-compact.sh"
   install_hook "${2:-$HOOK}" "$LANE/.github/hooks/lane-mail-check.sh"
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
-  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee overseer \
-    "$(jq -nc --arg s "$OVERSEER_SERVER" --arg p "$OVERSEER_PANE" '{server: $s, pane: $p, window: "@7"}')" >/dev/null)
+  record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
   BOX="$LANE/tmp/lane-mail/overseer"
   cop_clear_leads
   cop_lead_start "$LANE/.github/hooks/lane-mail-check.sh" s1
