@@ -670,7 +670,8 @@ impl World {
 
 /// One record run over a stale `main`: recorded on the rolling branch from
 /// `main`'s head with the record and nothing else, pushed, its pull
-/// request `number` opened and armed on the pushed head.
+/// request `number` opened with a title and body naming that head, and
+/// armed on the pushed head.
 fn assert_recorded_and_opened(world: &World, output: &str, number: u32) {
     let head = world.main_head();
     assert!(
@@ -709,6 +710,18 @@ fn assert_recorded_and_opened(world: &World, output: &str, number: u32) {
         )),
         "{log}"
     );
+    let short = git_ok(&world.home, &world.main, &["rev-parse", "--short", &head]);
+    let opening = "pr create --base main --head kendex/lock --title ";
+    let create = log
+        .rfind(opening)
+        .unwrap_or_else(|| panic!("no create in the gh log:\n{log}"));
+    let created = log[create..].lines().next().unwrap_or_default();
+    let (title, body) = created
+        .strip_prefix(opening)
+        .and_then(|rest| rest.split_once(" --body "))
+        .unwrap_or_else(|| panic!("no title and body arguments in:\n{created}"));
+    assert!(title.ends_with(short.trim()), "{short} missing:\n{title}");
+    assert!(body.contains(&head), "{head} missing:\n{body}");
 }
 
 #[test]
@@ -729,10 +742,6 @@ fn two_branches_on_one_package_merge_in_sequence_and_main_records_after_each() {
         log.matches("pr list --head kendex/lock --base main --state open")
             .count(),
         1,
-        "{log}"
-    );
-    assert!(
-        log.contains("pr create --base main --head kendex/lock --title chore(lock): record the install record at "),
         "{log}"
     );
     world.merge_rolling();
@@ -864,8 +873,8 @@ fn assert_stood_down(world: &World, before: &str, output: &str, rolling: &str) {
 
 /// One push over the open rolling pull request `41`, armed from an earlier
 /// run: disarmed first, the record re-recorded from `main`'s head, the
-/// pull request armed on the pushed head and then its title rewritten to
-/// name that head, and the judged checkout left as it was found.
+/// pull request armed on the pushed head and then its title and body
+/// rewritten to name that head, and the judged checkout left as it was found.
 fn assert_pushed_over(world: &World, output: &str) {
     let head = world.main_head();
     for line in [
@@ -895,12 +904,12 @@ fn assert_pushed_over(world: &World, output: &str) {
         .unwrap_or_else(|| panic!("no title edit in the gh log:\n{log}"));
     assert!(arm < edit, "the edit came before the arm:\n{log}");
     let edited = log[edit..].lines().next().unwrap_or_default();
-    let title = edited
+    let (title, body) = edited
         .strip_prefix("pr edit 41 --title ")
         .and_then(|rest| rest.split_once(" --body "))
-        .map(|(title, _)| title)
-        .unwrap_or_else(|| panic!("no title argument in:\n{edited}"));
+        .unwrap_or_else(|| panic!("no title and body arguments in:\n{edited}"));
     assert!(title.ends_with(short.trim()), "{short} missing:\n{title}");
+    assert!(body.contains(&head), "{head} missing:\n{body}");
     let status = git_ok(&world.home, &world.judged(), &["status", "--porcelain"]);
     assert_eq!(
         status, "",
