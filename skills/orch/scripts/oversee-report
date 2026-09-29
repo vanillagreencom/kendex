@@ -54,7 +54,7 @@ message() { # KEY VALUE [CAUSE]
       notice) echo "The report file stands and was printed above, and the notice carrying it to the owner could not be sent:" ;;
       item-state) echo "The lane's own workflow state could not be read, so whether a post-PR stop holds it is unknown:" ;;
       lane-host-busy) echo "lane-host refused a provider call for this lane at its per-home cap on provider calls, so what the lane waits on is unknown and nothing is rendered from a partial fleet. Run the report again:" ;;
-      summary) echo "The summary file is missing or empty. The report opens with the overseer's own summary, so nothing is written without one." ;;
+      summary) echo "The summary file is missing or empty. The report notice carries the overseer's own summary to the owner, so nothing is written without one." ;;
       report-exists) echo "A report under this name already stands, and it is never overwritten. Write again in the next minute." ;;
       write) echo "The report file could not be written." ;;
       report-written) echo "The report printed above is this file's content." ;;
@@ -102,12 +102,15 @@ due      prints `report-due reason=minutes since=<UTC>` once the last report
          ORCH_REPORT=off, and nothing where no report exists and no lanes[]
          record has a launched_at.
 render   prints the rows.
-write    prints the summary file's text, a blank line and the rows, and
-         writes the same bytes to the path `workflow-state
-         progress-report-path` prints, with --succession passed on to it,
-         then sends the owner the report notice, `lane-mail notice --item
-         overseer --to owner --attach <that file>` with the summary as its
-         text, so a relay carries the file to the owner. The new file is
+write    prints the rows and writes the same bytes to the path
+         `workflow-state progress-report-path` prints, with --succession
+         passed on to it, then sends the owner the report notice,
+         `lane-mail notice --item overseer --to owner --attach <that file>`
+         with the summary file's text as its text, so a relay carries the
+         file to the owner. The summary is the notice's text alone, never
+         in the file or the print: the relay posts it as the file's Slack
+         comment, in Slack's mrkdwn markup, which Markdown does not read
+         the same way. The new file is
          the next report's starting point. A path that already stands is
          refused; a notice that cannot be sent is refused as `notice`
          after the report is printed, the file standing.
@@ -679,7 +682,7 @@ if [[ "$SUCCESSION" -eq 1 ]]; then report_path --succession; else report_path; f
 TARGET="$REPORT_PATH"
 [[ ! -e "$TARGET" ]] || refuse report-exists "$TARGET"
 TMP_FILE="$(mktemp "${TARGET%/*}/.report.XXXXXX")" || refuse write "${TARGET%/*}"
-printf '%s\n\n%s\n' "$SUMMARY_TEXT" "$BODY" > "$TMP_FILE" || refuse write "$TMP_FILE"
+printf '%s\n' "$BODY" > "$TMP_FILE" || refuse write "$TMP_FILE"
 # Stamped NOW, not the end of the render: the next report starts where this
 # one's lists were read. touch -t reads its stamp in TZ.
 STAMP="$(from_epoch "$NOW" %Y%m%d%H%M.%S)" || refuse clock "$NOW"
@@ -690,7 +693,8 @@ TMP_FILE=""
 cat -- "$TARGET" || refuse write "$TARGET"
 # The report reaches the owner as one notice carrying the file, after the
 # print so the chat has the report whatever the notice does. The summary is
-# the notice's text: the file's own opening, in the overseer's words.
+# the notice's text alone, written in Slack's mrkdwn for the upload comment,
+# so it stays out of the Markdown file and the chat.
 printf '%s\n' "$SUMMARY_TEXT" > "$WORK_DIR/notice.txt" || refuse write "$WORK_DIR/notice.txt"
 "$LANE_MAIL" notice --item overseer --to owner --attach "$TARGET" --file "$WORK_DIR/notice.txt" \
   2>"$WORK_DIR/notice.err" || refuse notice "$TARGET" "$(cat "$WORK_DIR/notice.err")"

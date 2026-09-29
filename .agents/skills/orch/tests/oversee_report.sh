@@ -686,8 +686,8 @@ NAME="$("$REAL_DATE" -u -d "@$NOW" +%m-%d-%H-%M 2>/dev/null || "$REAL_DATE" -u -
 FILE="$CASE/progress-reports/$NAME"
 assert_eq "$RC|$(first_err)" "0|oversee-report: report-written=$FILE" "a succession write names its file MM-DD-HH-MM-succession.md"
 assert_eq "printed=$([[ -n "$OUT" ]] && echo yes)|$OUT" "printed=yes|$(cat "$FILE" 2>/dev/null)" "what write prints is the file's content, byte for byte"
-assert_eq "$(grep -c -E '^(Landed|Running|Validation|Next|Waiting on you):' <<<"$OUT")|$(awk 'NR == 1' <<<"$OUT")|$(awk 'NR == 3' <<<"$OUT")" \
-  "5|Two items landed and one waits on you.|Landed:" "the report is the summary, one blank line, then the five rows"
+assert_eq "$(grep -c -E '^(Landed|Running|Validation|Next|Waiting on you):' <<<"$OUT")|$(awk 'NR == 1' <<<"$OUT")|$(grep -c -F 'Two items landed' <<<"$OUT")" \
+  "5|Landed:|0" "the report is the five rows alone: the summary is in neither the file nor the print"
 assert_eq "$(awk '{ $NF = "TEXT"; print }' "$CASE/mail.calls")" "notice --item overseer --to owner --attach $FILE --file TEXT" \
   "write sends the owner one report notice carrying the file"
 run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt" --succession
@@ -695,9 +695,9 @@ assert_eq "$RC|$(first_err)" "2|oversee-report: report-exists=$FILE" "a second r
 : > "$CASE/empty.txt"
 run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/empty.txt"
 assert_eq "$RC|$(first_err)" "2|oversee-report: summary=$CASE/empty.txt" "a write with an empty summary is refused"
-# The notice's text is the summary as written into the file, the trailing
-# blank lines dropped; the stub keeps the argv alone, so the text is read
-# through a copy of the stub that saves it.
+# The notice's text is the summary file's text, the trailing blank lines
+# dropped; the stub keeps the argv alone, so the text is read through a copy
+# of the stub that saves it.
 seed_fleet write_notice_text
 printf 'One line.\nTwo.\n\n' > "$CASE/summary.txt"
 sed 's@printf .%s\\n. "\$\*" >> "\$CASE/mail.calls"@cat "$9" > "$CASE/notice.txt"@' "$TMP_ROOT/bin/lane-mail" > "$TMP_ROOT/bin/lane-mail-saving"
@@ -706,14 +706,14 @@ assert_eq "$(cmp -s "$TMP_ROOT/bin/lane-mail-saving" "$TMP_ROOT/bin/lane-mail" &
   "the saving stub really differs from the recording one"
 run OVERSEE_REPORT_LANE_MAIL="$TMP_ROOT/bin/lane-mail-saving" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
 assert_eq "$RC|$(cat "$CASE/notice.txt")" "0|One line.
-Two." "the notice's text is the summary the report opens with"
+Two." "the notice's text is the summary, its trailing blank lines dropped"
 seed_fleet write_notice_fails
 echo "Nobody hears this." > "$CASE/summary.txt"
 touch "$CASE/notice-fail"
 run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
 FILE="$CASE/progress-reports/$("$REAL_DATE" -u -d "@$NOW" +%m-%d-%H-%M 2>/dev/null || "$REAL_DATE" -u -r "$NOW" +%m-%d-%H-%M).md"
-assert_eq "$RC|$(first_err)|$([[ -f "$FILE" ]] && echo written || echo missing)|$(awk 'NR == 1' <<<"$OUT")" \
-  "2|oversee-report: notice=$FILE|written|Nobody hears this." \
+assert_eq "$RC|$(first_err)|$([[ -f "$FILE" ]] && echo written || echo missing)|$([[ -n "$OUT" && "$OUT" == "$(cat "$FILE")" ]] && echo printed)" \
+  "2|oversee-report: notice=$FILE|written|printed" \
   "a notice that cannot be sent is refused by name after the report is printed, the file standing"
 seed_fleet write_report_off
 echo "The overseer hands over." > "$CASE/summary.txt"
