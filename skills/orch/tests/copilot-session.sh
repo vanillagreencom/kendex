@@ -130,18 +130,21 @@ assert_eq "$(bash -c '. "$1/lib/lane-context.sh"; COPILOT_HOME= LANES_HOME=/h la
   $'/h/.copilot\n/a' "a copilot session's account is COPILOT_HOME, else the CLI's default home"
 
 echo "=== the stop cause, and the session a lane in a worktree runs ==="
-# cause RECORD_JSON — copilot_session_stop_cause over one record: the cause, or none.
+# cause RECORD_JSON GRANTED — copilot_session_stop_cause over one record and a
+# launch's grant: the cause, or none.
 cause() {
-  bash -c 'set -euo pipefail; . "$1/lib/lane-context.sh"; copilot_session_stop_cause "$2" || echo none' \
-    _ "${LIB:-$SCRIPTS_DIR}" "$1"
+  bash -c 'set -euo pipefail; . "$1/lib/lane-context.sh"; copilot_session_stop_cause "$2" "$3" || echo none' \
+    _ "${LIB:-$SCRIPTS_DIR}" "$1" "$2"
 }
-while IFS='|' read -r label allow want; do
-  assert_eq "$(cause "{\"status\":{\"allow_all_enabled\":$allow}}")" "$want" "$label"
+while IFS='|' read -r label allow grant want; do
+  assert_eq "$(cause "{\"status\":{\"allow_all_enabled\":$allow}}" "$grant")" "$want" "$label"
 done <<'ROWS'
-allow_all_enabled false is a stop with its own cause|false|allow-all-blocked-by-policy
-allow_all_enabled true names none|true|none
-a record that does not say names none|null|none
-a string is not the CLI's boolean and names none|"false"|none
+allow_all_enabled false under an allow-all launch is a stop with its own cause|false|true|allow-all-blocked-by-policy
+allow_all_enabled false under a launch without allow-all is its prompts by design and names none|false||none
+a grant spelled other than true is no grant and names none|false|1|none
+allow_all_enabled true names none|true|true|none
+a record that does not say names none|null|true|none
+a string is not the CLI's boolean and names none|"false"|true|none
 ROWS
 # A lane's worktree and the session store beside the record: WT_SESSION ran
 # in WT and holds events, EMPTY_SESSION started in WT and ended before its
@@ -198,7 +201,7 @@ another window's record is not this lane's|$(lanes running copilot "$ACCOUNT" nu
 a watch with no fleet state reads nothing||CC-1|$WRITTEN|none
 a fleet state that is not JSON is refused|{|CC-1|$WRITTEN|refused
 a lane launched without allow-all reads allow_all_enabled false too, and names no cause|$(lanes running copilot "$ACCOUNT" null "$WT" false)|CC-1|$WRITTEN|none
-a record naming no grant is no lane launched with allow-all|$(lanes running copilot "$ACCOUNT" null "$WT" null)|CC-1|$WRITTEN|none
+a record naming no grant is no lane launched with allow-all, and no session is looked up for it|$(lanes running copilot "$ACCOUNT" null "$TMP_ROOT" null)|CC-1|$WRITTEN|none
 ROWS
 # A record naming no account is the account a launch with no --lane runs on,
 # COPILOT_HOME, which the default of every launch and relaunch is too.
@@ -245,7 +248,9 @@ assert_eq "$(reading '{"status":{"context_window":{"context_window_size":1000000
 lib_control ctl-owned lib/lane-context.sh '    claude | codex | copilot) ;;' '    claude | codex) ;;'
 assert_eq "$(owned "$ACCOUNT/session-state/other/events.jsonl" "$SESSION" "$ACCOUNT")" "3 harness-unlisted" "control: without copilot in the gate's list another session's transcript is never held to its own"
 lib_control ctl-cause lib/copilot-session.sh '[ "$CS_ALLOW_ALL" = false ] || return 1' '[ "$CS_ALLOW_ALL" = never ] || return 1'
-assert_eq "$(cause '{"status":{"allow_all_enabled":false}}')" none "control: without the allow-all test a policy-blocked record names no cause"
+assert_eq "$(cause '{"status":{"allow_all_enabled":false}}' true)" none "control: without the allow-all test a policy-blocked record names no cause"
+lib_control ctl-cause-grant lib/copilot-session.sh '  [ "$2" = true ] || return 1' '  : || return 1'
+assert_eq "$(cause '{"status":{"allow_all_enabled":false}}' '')" allow-all-blocked-by-policy "control: without the grant test a launch without allow-all is named policy-blocked"
 lib_control ctl-unmatched lib/copilot-session.sh '1) COPILOT_SESSION_NOTE=session-record=worktree-unmatched; return 0 ;;' '1) return 0 ;;'
 assert_eq "$(lane_row "$(lanes running copilot "$ACCOUNT" null "$TMP_ROOT")" CC-1 "$WRITTEN")" none "control: without the unmatched arm a worktree no session ran in reads as a lane with no cause"
 lib_control ctl-session-id lib/copilot-session.sh '  if [ -z "$session" ]; then' '  if true; then'
@@ -257,7 +262,7 @@ assert_eq "$(lane_row "$(lanes stopped copilot "$ACCOUNT" "$SESSION" "$WT")" CC-
 lib_control ctl-harness lib/lane-claims.sh 'running and .harness == $h and' 'running and'
 assert_eq "$(lane_row "$(lanes running pi "$ACCOUNT" "$SESSION" "$WT")" CC-1 "$WRITTEN")" stop-cause=allow-all-blocked-by-policy "control: without the harness test a Pi lane's record is read as a Copilot lane"
 lib_control ctl-granted lib/copilot-session.sh '[ "$4" = true ] || return 0' ': || return 0'
-assert_eq "$(lane_row "$(lanes running copilot "$ACCOUNT" "$SESSION" "$WT" false)" CC-1 "$WRITTEN")" stop-cause=allow-all-blocked-by-policy "control: without the grant test a lane launched without allow-all is named policy-blocked"
+assert_eq "$(lane_row "$(lanes running copilot "$ACCOUNT" null "$TMP_ROOT" false)" CC-1 "$WRITTEN")" session-record=worktree-unmatched "control: without the grant test a lane launched without allow-all is looked up and reports a record reason"
 lib_control ctl-grant-field lib/lane-context.sh '(.allow_all == true | tostring)' '"true"'
 assert_eq "$(lane_row "$(lanes running copilot "$ACCOUNT" "$SESSION" "$WT" false)" CC-1 "$WRITTEN")" stop-cause=allow-all-blocked-by-policy "control: without the record's grant every Copilot lane reads as launched with allow-all"
 lib_control ctl-write lib/copilot-session.sh '       status: .}' '       status: {}}'

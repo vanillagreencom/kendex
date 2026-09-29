@@ -1742,7 +1742,7 @@ context_read_and_record() { # BOX PANE_KEY
       message session-record "$COPILOT_SESSION_REASON"
       return 0
     fi
-    ! STOP_CAUSE=$(copilot_session_stop_cause "$COPILOT_SESSION_RECORD") || message stop-cause "$STOP_CAUSE"
+    ! STOP_CAUSE=$(copilot_session_stop_cause "$COPILOT_SESSION_RECORD" "${COPILOT_ALLOW_ALL:-}") || message stop-cause "$STOP_CAUSE"
     READING=$(lane_context_reading copilot <<<"$COPILOT_SESSION_RECORD" 2>"$WORK_DIR/transcript.err") ||
       refuse_handoff transcript unread "$(cat -- "$WORK_DIR/transcript.err")"
     SOURCE=$LANE_ADAPTER_COPILOT_CAPACITY_SOURCE

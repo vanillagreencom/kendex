@@ -158,18 +158,24 @@ copilot_session_fields() { # RECORD
   CS_ALLOW_ALL="${line#*	}"
 }
 
-# copilot_session_stop_cause RECORD — the stop cause a record establishes:
-# `allow-all-blocked-by-policy` where the CLI reports allow_all_enabled false.
-# Enterprise managed settings, delivered for the account or for the machine,
-# can block the allow-all mode, and the CLI refreshes them each hour, so a
-# session launched with `--allow-all` can lose it mid-run; every tool call then
-# waits on a permission prompt nobody at the pane answers. That is a stop with
-# its own cause, never a quiet lane. A session launched without allow-all
-# reports false as well: the record alone cannot tell the two apart, so a
-# reader that knows the launch holds the cause to it (copilot_session_lane_note
-# below). Prints the cause, 0; prints nothing, 1, where the record says
+# copilot_session_stop_cause RECORD GRANTED — the stop cause a record
+# establishes for a session whose launch GRANTED allow-all:
+# `allow-all-blocked-by-policy` where GRANTED is `true` and the CLI reports
+# allow_all_enabled false. Enterprise managed settings, delivered for the
+# account or for the machine, can block the allow-all mode, and the CLI
+# refreshes them each hour, so a session launched with `--allow-all` can lose
+# it mid-run; every tool call then waits on a permission prompt nobody at the
+# pane answers. That is a stop with its own cause, never a quiet lane. A
+# session launched without allow-all reports false as well and waits on its
+# prompts by design; the record alone cannot tell the two apart, so every
+# caller passes the launch's grant: copilot_session_lane_note the fleet
+# record's `allow_all`, the lane-mail-check hook the session's
+# COPILOT_ALLOW_ALL, which lib/lane-launch.sh lane_copilot_env sets `true` on
+# a launch line granting it and empty on any other. Prints the cause, 0;
+# prints nothing, 1, where GRANTED is anything but `true`, or the record says
 # allow-all is on, does not say, or is not JSON.
-copilot_session_stop_cause() { # RECORD
+copilot_session_stop_cause() { # RECORD GRANTED
+  [ "$2" = true ] || return 1
   copilot_session_fields "$1" || return 1
   [ "$CS_ALLOW_ALL" = false ] || return 1
   printf 'allow-all-blocked-by-policy\n'
@@ -222,12 +228,12 @@ copilot_session_in_worktree() { # HOME WORKTREE
 #                            `store-unreadable` for a WORKTREE or a session
 #                            store that could not be read
 # GRANTED is `true` for a lane whose launch granted the full allow-all mode,
-# `--allow-all` or `--yolo` (lib/lane-launch.sh lane_copilot_allows_all). Only
-# such a lane has an allow-all a policy can take: a lane launched without it
-# reads allow_all_enabled false as well, and waits on its prompts by design, so
-# any other GRANTED leaves the note empty and reads nothing. The session is
-# SESSION_ID, else the one copilot_session_in_worktree names for WORKTREE.
-# Always 0.
+# `--allow-all` or `--yolo` (lib/lane-launch.sh lane_copilot_allows_all), and
+# is handed on to copilot_session_stop_cause, which judges it. Only such a lane
+# has an allow-all a policy can take, so any other GRANTED leaves the note
+# empty and reads no record: a record reason for a lane that can carry no
+# cause names nothing to act on. The session is SESSION_ID, else the one
+# copilot_session_in_worktree names for WORKTREE. Always 0.
 COPILOT_SESSION_NOTE=""
 copilot_session_lane_note() { # HOME SESSION_ID WORKTREE GRANTED NOW
   local home="$1" session="$2" file rc=0
@@ -244,7 +250,7 @@ copilot_session_lane_note() { # HOME SESSION_ID WORKTREE GRANTED NOW
   fi
   if ! copilot_session_read "$home" "$session" "" "$5"; then
     COPILOT_SESSION_NOTE="session-record=$COPILOT_SESSION_REASON"
-  elif COPILOT_SESSION_NOTE="$(copilot_session_stop_cause "$COPILOT_SESSION_RECORD")"; then
+  elif COPILOT_SESSION_NOTE="$(copilot_session_stop_cause "$COPILOT_SESSION_RECORD" "$4")"; then
     COPILOT_SESSION_NOTE="stop-cause=$COPILOT_SESSION_NOTE"
   fi
 }
