@@ -157,27 +157,60 @@ workspace "$SESSION" "$WT" '{"type":"session.start"}'
 workspace empty-1 "$WT" none
 workspace other-2 "$TMP_ROOT/elsewhere" '{"type":"session.start"}'
 touch -t 200001010000 "$ACCOUNT/session-state/$SESSION/workspace.yaml"
-# lane_row HOME WORKTREE NOW — `cause=<cause>` or the reason, from a child shell.
+# lanes STATUS HARNESS ACCOUNT SESSION_ID MAIL_ROOT — the fleet state's lanes
+# array holding one record for the window kendex:CC-1, `null` for a field it
+# leaves unset.
+lanes() {
+  jq -nc --arg st "$1" --arg h "$2" --arg a "$3" --arg s "$4" --arg m "$5" \
+    'def v: if . == "null" then null else . end;
+     [{item: "CC-1", window: "kendex:CC-1", status: $st, harness: $h,
+       account: ($a | v), session_id: ($s | v), mail_root: ($m | v)}]'
+}
+# lane_row LANES WINDOW NOW [COPILOT_HOME] — the note copilot_session_lane_note
+# reads for WINDOW, `none` for an empty one, from a child shell.
 lane_row() {
-  bash -c 'set -euo pipefail; . "$1/lib/lane-context.sh"
-    if copilot_session_lane_cause "$2" "$3" "$4"; then echo "cause=$COPILOT_SESSION_CAUSE"; else echo "$COPILOT_SESSION_REASON"; fi' \
-    _ "${LIB:-$SCRIPTS_DIR}" "$@"
+  COPILOT_HOME="${4:-}" LANES_HOME="$TMP_ROOT" bash -c 'set -euo pipefail; . "$1/lib/lane-claims.sh"; . "$1/lib/lane-context.sh"
+    copilot_session_lane_note "$2" "$3" "$4" || { echo "rc=$?"; exit 0; }
+    echo "${COPILOT_SESSION_NOTE:-none}"' \
+    _ "${LIB:-$SCRIPTS_DIR}" "$1" "$2" "$3"
 }
 statusline blocked <<<"$(status | jq -c '.allow_all_enabled = false')"
 WRITTEN="$(jq -r '.written_at' "$RECORD")"
-while IFS='|' read -r label home worktree now want; do
-  assert_eq "$(lane_row "$home" "$worktree" "$now")" "$want" "$label"
+while IFS='|' read -r label lanes_json window now want; do
+  assert_eq "$(lane_row "$lanes_json" "$window" "$now")" "$want" "$label"
 done <<ROWS
-the lane's session reporting allow-all blocked names the cause|$ACCOUNT|$WT|$WRITTEN|cause=allow-all-blocked-by-policy
-another worktree's session is read as that lane's, and wrote no record|$ACCOUNT|$TMP_ROOT/elsewhere|$WRITTEN|missing
-a worktree no session ran in is unmatched|$ACCOUNT|$TMP_ROOT|$WRITTEN|worktree-unmatched
-the lane's session record past the bound is stale|$ACCOUNT|$WT|$((WRITTEN + MAX + 1))|stale
-an account with no session store is unmatched|$TMP_ROOT/.2copilot|$WT|$WRITTEN|worktree-unmatched
-a worktree that does not resolve is unreadable|$ACCOUNT|$TMP_ROOT/gone|$WRITTEN|store-unreadable
+the lane's session reporting allow-all blocked names the cause|$(lanes running copilot "$ACCOUNT" null "$WT")|CC-1|$WRITTEN|stop-cause=allow-all-blocked-by-policy
+a session-qualified window and the state object holding the array name the same lane|{"lanes":$(lanes running copilot "$ACCOUNT" null "$WT")}|other:CC-1|$WRITTEN|stop-cause=allow-all-blocked-by-policy
+another worktree's session is read as that lane's, and wrote no record|$(lanes running copilot "$ACCOUNT" null "$TMP_ROOT/elsewhere")|CC-1|$WRITTEN|session-record=missing
+a worktree no session ran in is unmatched|$(lanes running copilot "$ACCOUNT" null "$TMP_ROOT")|CC-1|$WRITTEN|session-record=worktree-unmatched
+a record naming no session and no worktree is unmatched|$(lanes running copilot "$ACCOUNT" null null)|CC-1|$WRITTEN|session-record=worktree-unmatched
+the lane's session record past the bound is stale|$(lanes running copilot "$ACCOUNT" null "$WT")|CC-1|$((WRITTEN + MAX + 1))|session-record=stale
+an account with no session store is unmatched|$(lanes running copilot "$TMP_ROOT/.2copilot" null "$WT")|CC-1|$WRITTEN|session-record=worktree-unmatched
+a worktree that does not resolve is unreadable|$(lanes running copilot "$ACCOUNT" null "$TMP_ROOT/gone")|CC-1|$WRITTEN|session-record=store-unreadable
+a record that is not running is no lane to read|$(lanes stopped copilot "$ACCOUNT" null "$WT")|CC-1|$WRITTEN|none
+a Pi lane's record is no Copilot lane|$(lanes running pi "$ACCOUNT" null "$WT")|CC-1|$WRITTEN|none
+another window's record is not this lane's|$(lanes running copilot "$ACCOUNT" null "$WT")|CC-2|$WRITTEN|none
+a watch with no fleet state reads nothing||CC-1|$WRITTEN|none
+a fleet state that is not JSON is refused|{|CC-1|$WRITTEN|rc=2
 ROWS
+# A record naming no account is the account a launch with no --lane runs on,
+# COPILOT_HOME, which the default of every launch and relaunch is too.
+assert_eq "$(lane_row "$(lanes running copilot null null "$WT")" CC-1 "$WRITTEN" "$ACCOUNT")" \
+  stop-cause=allow-all-blocked-by-policy "a record naming no account is read under the account a launch with no --lane runs on"
+# A newer session of another run in the same worktree, a second-opinion run
+# from it, say: the record's session_id names the lane's own, and the scan
+# alone would read the newer one.
+workspace foreign-3 "$WT" '{"type":"session.start"}'
+assert_eq "$(lane_row "$(lanes running copilot "$ACCOUNT" "$SESSION" "$WT")" CC-1 "$WRITTEN")" \
+  stop-cause=allow-all-blocked-by-policy "the record's session_id is read over a newer session in the worktree"
+assert_eq "$(lane_row "$(lanes running copilot "$ACCOUNT" null "$WT")" CC-1 "$WRITTEN")" \
+  session-record=missing "a record naming no session is read as the newest session in the worktree"
 statusline allowed <<<"$(status)"
 WRITTEN="$(jq -r '.written_at' "$RECORD")"
-assert_eq "$(lane_row "$ACCOUNT" "$WT" "$WRITTEN")" "cause=" "the lane's session with allow-all on names no cause"
+assert_eq "$(lane_row "$(lanes running copilot "$ACCOUNT" "$SESSION" "$WT")" CC-1 "$WRITTEN")" none \
+  "the lane's session with allow-all on names no cause"
+statusline blocked <<<"$(status | jq -c '.allow_all_enabled = false')"
+WRITTEN="$(jq -r '.written_at' "$RECORD")"
 rm -rf -- "${ACCOUNT:?}/session-state/empty-1" "${ACCOUNT:?}/session-state/other-2"
 
 echo "=== must-fail controls ==="
@@ -206,8 +239,16 @@ lib_control ctl-owned lib/lane-context.sh '    claude | codex | copilot) ;;' '  
 assert_eq "$(owned "$ACCOUNT/session-state/other/events.jsonl" "$SESSION" "$ACCOUNT")" "3 harness-unlisted" "control: without copilot in the gate's list another session's transcript is never held to its own"
 lib_control ctl-cause lib/copilot-session.sh '[ "$CS_ALLOW_ALL" = false ] || return 1' '[ "$CS_ALLOW_ALL" = never ] || return 1'
 assert_eq "$(cause '{"status":{"allow_all_enabled":false}}')" none "control: without the allow-all test a policy-blocked record names no cause"
-lib_control ctl-unmatched lib/copilot-session.sh '1) COPILOT_SESSION_REASON="worktree-unmatched"; return 1 ;;' '1) return 0 ;;'
-assert_eq "$(lane_row "$ACCOUNT" "$TMP_ROOT" "$WRITTEN")" "cause=" "control: without the unmatched arm a worktree no session ran in reads as a lane with no cause"
+lib_control ctl-unmatched lib/copilot-session.sh '1) COPILOT_SESSION_NOTE=session-record=worktree-unmatched; return 0 ;;' '1) return 0 ;;'
+assert_eq "$(lane_row "$(lanes running copilot "$ACCOUNT" null "$TMP_ROOT")" CC-1 "$WRITTEN")" none "control: without the unmatched arm a worktree no session ran in reads as a lane with no cause"
+lib_control ctl-session-id lib/copilot-session.sh '  if [ -z "$session" ]; then' '  if true; then'
+assert_eq "$(lane_row "$(lanes running copilot "$ACCOUNT" "$SESSION" "$WT")" CC-1 "$WRITTEN")" session-record=missing "control: without the record's session_id a newer session in the worktree is read in the lane's place"
+lib_control ctl-default-account lib/copilot-session.sh 'home="$(lane_context_caller_cfg copilot)"' 'home="$(printf "")"'
+assert_eq "$(lane_row "$(lanes running copilot null "$SESSION" "$WT")" CC-1 "$WRITTEN" "$ACCOUNT")" session-record=missing "control: without the default account a record naming none is read under no account"
+lib_control ctl-running lib/copilot-session.sh 'select(running and .harness == "copilot"' 'select(.harness == "copilot"'
+assert_eq "$(lane_row "$(lanes stopped copilot "$ACCOUNT" "$SESSION" "$WT")" CC-1 "$WRITTEN")" stop-cause=allow-all-blocked-by-policy "control: without the running test a stopped record is read as a lane"
+lib_control ctl-harness lib/copilot-session.sh 'running and .harness == "copilot" and' 'running and'
+assert_eq "$(lane_row "$(lanes running pi "$ACCOUNT" "$SESSION" "$WT")" CC-1 "$WRITTEN")" stop-cause=allow-all-blocked-by-policy "control: without the harness test a Pi lane's record is read as a Copilot lane"
 lib_control ctl-write lib/copilot-session.sh '       status: .}' '       status: {}}'
 statusline ctl-write "$LIB" <<<"$(status)"
 assert_eq "$(reading "$(cat "$RECORD")")" unread "control: a writer that drops the CLI's object leaves nothing to read"

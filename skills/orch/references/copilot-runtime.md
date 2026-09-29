@@ -18,7 +18,7 @@ A session keeps its state under `${COPILOT_HOME:-~/.copilot}/session-state/<sess
 - `workspace.yaml` holds plain `id:` and `cwd:` lines, written as the session starts and before any turn (measured).
 - `events.jsonl` holds the session's events. A session that ended before its first event, for example one whose sign-in failed, has none (measured).
 
-`lib/copilot-session.sh` reads these two files, for the relaunch in `lib/lane-relaunch.sh` and for `lanes state` (§ Allow-all blocked by policy), and nothing else does. No live context count is in either. A fleet session's context is read by the `kendex-lane-context` Copilot extension that `open-terminal` installs in its `COPILOT_HOME`, [`scripts/copilot-lane-context/extension.mjs`](../scripts/copilot-lane-context/extension.mjs): it hands `lane-mail-check` each `session.usage_info` reading, which the turn end judges. A reading handed on and not yet recorded, or one the extension could not read, leaves a pending marker under `~/.cache/lane-mail/copilot-usage`, and a turn end that finds it still standing after 5 seconds reports the context unmeasured under `reading-pending`. `open-terminal` makes that directory and writes and removes one probe file there before a fleet lane starts, since a reading the extension cannot mark leaves the earlier record standing as room; where it cannot, it refuses the lane as `unsupported-for-oversee reason=no-context-reader detail=pending-unwritable`, `file=` naming the directory. Where no extension reading of the session stands and no pending marker does, the turn end falls back to the session record the account's status-line command writes, which `scripts/copilot-statusline` records (§ Measurement).
+`lib/copilot-session.sh` reads these two files, for the relaunch in `lib/lane-relaunch.sh` and for the readers in § Allow-all blocked by policy, and nothing else does. No live context count is in either. A fleet session's context is read by the `kendex-lane-context` Copilot extension that `open-terminal` installs in its `COPILOT_HOME`, [`scripts/copilot-lane-context/extension.mjs`](../scripts/copilot-lane-context/extension.mjs): it hands `lane-mail-check` each `session.usage_info` reading, which the turn end judges. A reading handed on and not yet recorded, or one the extension could not read, leaves a pending marker under `~/.cache/lane-mail/copilot-usage`, and a turn end that finds it still standing after 5 seconds reports the context unmeasured under `reading-pending`. `open-terminal` makes that directory and writes and removes one probe file there before a fleet lane starts, since a reading the extension cannot mark leaves the earlier record standing as room; where it cannot, it refuses the lane as `unsupported-for-oversee reason=no-context-reader detail=pending-unwritable`, `file=` naming the directory. Where no extension reading of the session stands and no pending marker does, the turn end falls back to the session record the account's status-line command writes, which `scripts/copilot-statusline` records (§ Measurement).
 
 ## Launch environment
 
@@ -51,16 +51,29 @@ The first three rows are launch settings. A caller's copy of any one of them, ty
 
 ## Allow-all blocked by policy
 
-An account's enterprise policy can block the allow-all mode, and the CLI refreshes its managed settings each hour. So a lane launched with `--allow-all` can lose it mid-run, and each tool call then waits on a permission prompt that nobody at the pane answers. The session record keeps the CLI's `allow_all_enabled`. Where it reads `false`, `scripts/lib/copilot-session.sh` names the stop cause `allow-all-blocked-by-policy`. Two readers report it:
+Enterprise managed settings can block the allow-all mode. GitHub delivers them per account from the server, or per machine through device management or a `managed-settings.json` file, and a machine delivery stays active when the CLI signs in to another account. The CLI checks for new settings about once an hour ([Choosing how to deploy enterprise-managed settings](https://docs.github.com/en/copilot/how-tos/administer-copilot/manage-for-enterprise/use-managed-settings/deploy-managed-settings)). So a lane launched with `--allow-all` can lose it mid-run, and each tool call then waits on a permission prompt that nobody at the pane answers. The session record keeps the CLI's `allow_all_enabled`. Where it reads `false`, `scripts/lib/copilot-session.sh` names the stop cause `allow-all-blocked-by-policy`. Three readers report it:
 
 | Reader | When it reads | What it prints |
 |---|---|---|
-| `lanes state [WINDOW]` | At any time, for a window that a running fleet lane record names as a Copilot lane. It reads the record of the newest session in the lane's worktree, under the record's `account`. | `lanes: stop-cause=allow-all-blocked-by-policy` on stderr, beside the state the pane shows. A record that does not answer prints `lanes: session-record=<reason>`. |
+| `oversee-watch` | When it prints `lane-asking` or `idle-after-return` for a lane that a running fleet record names as a Copilot lane | `stop-cause=allow-all-blocked-by-policy` on the event line, or `session-record=<reason>` where the record does not answer |
+| `lanes state [WINDOW]` | When a pane on this tmux server carries the window and a running fleet record names it as a Copilot lane | `lanes: stop-cause=allow-all-blocked-by-policy` on stderr, beside the state the pane shows, or `lanes: session-record=<reason>` |
 | The `lane-mail-check` turn-end hook | At a turn end whose record answers | `lane-mail-check: stop-cause=allow-all-blocked-by-policy`. The turn end is judged as usual. |
 
-A lane that waits at a permission prompt reaches no turn end, so `lanes state` is the reader that sees it.
+The first two find the session by the record's `session_id` where a relaunch or a wake wrote one, else as the newest session in the lane's worktree. They read it under the record's `account`, or under the account a launch with no `--lane` runs on. A lane that waits at a permission prompt reaches no turn end, so the first two are the readers that see it. A fleet has no hosted Copilot lane (§ Recovery), so every read is on this machine.
 
-The remedy is the owner's. Only the account's enterprise administrator can lift the block, so tell the owner the account and the cause. To move the item meanwhile, relaunch it with `--lane` naming another Copilot account whose policy allows allow-all ([lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch)).
+| `session-record=` reason | Meaning | Remedy |
+|---|---|---|
+| `missing`, `stale` | The account's status line writes no record, or stopped refreshing it | Set the account's `statusLine` (§ Account setup) |
+| `worktree-unmatched` | The fleet record names no session, and no session with events ran in the lane's worktree under that account | Check the record's `account` and `mail_root` |
+| `store-unreadable` | The worktree or the account's `session-state` could not be read | Fix the path or its permissions |
+| `unbound` | The session id the fleet record or `workspace.yaml` names is empty or is not an id | Check the record's `session_id` and the session's `workspace.yaml` |
+| `unreadable`, `wrong-session`, `wrong-account` | The record file is not one `lib/copilot-session.sh` wrote for this session and account | Remove the file under `<account>/lane-status/` and let the status line write it again |
+
+The remedy for the block is the owner's. Tell the owner the account and the cause: an enterprise administrator lifts an account block, and the machine's administrator lifts a machine block. To move the item meanwhile:
+
+1. Where a lane of another Copilot account runs on this machine, run `lanes state` on it. Where it also prints `stop-cause=allow-all-blocked-by-policy`, the block is the machine's, and another account does not help. A relaunched lane that reports the same cause shows the same: stop it and wait for the owner.
+2. Stop the blocked lane first, by [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver) steps 1 to 3, so two sessions never run in one worktree.
+3. Relaunch the item with `--lane` naming the other account ([lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch)). The relaunch finds no session of the item under that account, so it starts afresh on the item's branch and does not resume the blocked session.
 
 ## Recovery
 

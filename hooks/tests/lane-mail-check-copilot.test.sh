@@ -536,14 +536,16 @@ assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
 rm -f -- "${LANE:?}/tmp/lane-mail/KEN-204/context.json"
 
 # A record reporting allow_all_enabled false is a policy stop, reported under
-# its own cause at the turn end the lane reaches; true names none.
+# its own cause at the turn end the lane reaches, and the turn end is still
+# judged: at the cap it is held; true names none.
 while IFS='|' read -r allow want; do
-  cop_record 100000 1000000 "" "$allow"
+  cop_record 400000 1000000 "" "$allow"
   copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
-  assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=$want" "a record whose allow_all_enabled is $allow at the turn end"
+  assert_eq "RC=$RC keyed=$(cop_keys) decision=$(stdout_field .decision)" "RC=0 keyed=$want decision=block" \
+    "a record at the cap whose allow_all_enabled is $allow at the turn end"
 done <<'ROWS'
-false|stop-cause=allow-all-blocked-by-policy;account=unmeasured
-true|account=unmeasured
+false|stop-cause=allow-all-blocked-by-policy;context=400000
+true|context=400000
 ROWS
 
 # The account mark on Copilot: the account the session runs on is measured

@@ -3104,7 +3104,8 @@ check_lanes() {
     fi
     asking_state="$(lane_row_set lane-asking "$asking_state" "$lane" "$fingerprint")"
     if [[ "$fingerprint" == "$prior" ]]; then continue; fi
-    echo "EVENT lane-asking $lane"
+    copilot_session_lane_note "$FLEET_STATE" "$lane" "$PASS_NOW" || die state-invalid "" "option=--state" "path=$STATE_FILE"
+    echo "EVENT lane-asking $lane${COPILOT_SESSION_NOTE:+ $COPILOT_SESSION_NOTE}"
     # The dialog, which is what gets answered. It is the bottom of the slice
     # the question was found in, so the cap trims the turn above it and not
     # the rows.
@@ -3176,7 +3177,8 @@ check_lanes() {
       # ended, and the cap keeps its last lines. Unfiltered: the dead-worktree
       # prompt noise is drawn by a shell that has the terminal back, and a
       # lane whose shell is drawing prompts reads exited, not idle.
-      echo "EVENT idle-after-return $lane"
+      copilot_session_lane_note "$FLEET_STATE" "$lane" "$PASS_NOW" || die state-invalid "" "option=--state" "path=$STATE_FILE"
+      echo "EVENT idle-after-return $lane${COPILOT_SESSION_NOTE:+ $COPILOT_SESSION_NOTE}"
       bounded_tail "$below"
       PASS_EVENT=1
     else

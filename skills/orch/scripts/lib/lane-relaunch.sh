@@ -131,8 +131,8 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
 }
 # The id a harness resumes a transcript by: the file's basename for claude,
 # the session_meta id inside a codex transcript, the file itself for pi,
-# whose --session takes a path, and the `id:` line of a copilot session's
-# workspace.yaml. Empty is a transcript the harness cannot resume, and a
+# whose --session takes a path, and a copilot session's own id, read from its
+# workspace.yaml by lib/copilot-session.sh. Empty is a transcript the harness cannot resume, and a
 # failure.
 session_id_of() { # HARNESS SESSION_FILE
   local id=""
@@ -140,7 +140,7 @@ session_id_of() { # HARNESS SESSION_FILE
     claude) id="$(basename "$2" .jsonl)" ;;
     codex) id="$(jq -Rrn 'first(inputs|fromjson?|select(.type=="session_meta")|.payload.id)//empty' "$2")" ;;
     pi) id="$2" ;;
-    copilot) id="$(awk 'index($0, "id: ") == 1 { print substr($0, 5); exit }' "$2")" || return 1 ;;
+    copilot) id="$(copilot_session_id "$2")" || return 1 ;;
   esac
   [[ -n "$id" ]] || return 1
   printf '%s\n' "$id"

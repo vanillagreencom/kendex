@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Cross-run state controls for oversee-watch lane-asking events.
+# Cross-run state controls for oversee-watch lane-asking events, and the note
+# a Copilot lane's session record puts on its lane-asking and idle lines.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
+# mutant_scripts and mutate_file, the two halves of the Copilot control below.
+# shellcheck source=lib/growth-state.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 
 echo "=== oversee-watch lane-asking state ==="
 
@@ -154,6 +158,55 @@ assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
   "the event is delivered before its baseline write" "$err"
 assert_contains "$(cat "$err")" "oversee-watch: state-target-invalid path=$STATE_DIR/owner_repo__none" \
   "the baseline write failure names its target" "$err"
+
+echo "=== a Copilot lane's session record rides its lane-asking and idle lines ==="
+# copilot_lane ALLOW SCREEN — gh-2 is a running Copilot fleet lane on an account
+# whose one session ran in the lane's worktree, its record saying
+# allow_all_enabled ALLOW, the watch's clock at the record's stamp, and its
+# pane showing SCREEN: a permission prompt, or an idle composer.
+copilot_lane() {
+  local account="$STUB_DIR/.1copilot" wt="$STUB_DIR/wt"
+  mkdir -p "$wt" "$account/session-state/cop-1"
+  printf 'id: cop-1\ncwd: %s\n' "$(cd "$wt" && pwd -P)" > "$account/session-state/cop-1/workspace.yaml"
+  printf '{"type":"session.start"}\n' > "$account/session-state/cop-1/events.jsonl"
+  jq -cn --arg a "$account" --arg root "$wt" \
+    '{issue_id: "oversee", triaged: [], lanes: [{item: "gh-2", window: "gh-2", harness: "copilot",
+      account: $a, mail_root: $root, status: "running"}]}' > "$STUB_DIR/state.json"
+  jq -cn --argjson a "$1" '{session_id: "cop-1", allow_all_enabled: $a}' \
+    | COPILOT_HOME="$account" "$REPO_ROOT/skills/orch/scripts/copilot-statusline" >/dev/null
+  jq -r '.written_at' "$account/lane-status/cop-1.json" > "$STUB_DIR/now.epoch"
+  case "$2" in
+    prompt) printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt" ;;
+    idle) printf '%b\n' '⏺ Done: the PR is merged.' '\xe2\x9d\xaf\xc2\xa0' > "$STUB_DIR/pane-gh-2.txt" ;;
+  esac
+}
+# copilot_events — the lane events one two-pass run prints, `|`-joined.
+copilot_events() {
+  WATCH_BIN="${COPILOT_WATCH:-}" run_watch -- --state "$STUB_DIR/state.json" 2>"$STUB_DIR/err" </dev/null \
+    | grep '^EVENT lane-asking\|^EVENT idle-after-return' | paste -sd '|' - || true
+}
+# ALLOW|SCREEN|WANT
+while IFS='|' read -r allow screen want; do
+  [[ -n "$allow" ]] || continue
+  new_case "copilot_${allow}_$screen"
+  copilot_lane "$allow" "$screen"
+  assert_eq "$(copilot_events)" "$want" \
+    "a Copilot lane whose record says allow_all_enabled $allow, at a $screen pane" "$STUB_DIR/err"
+done <<'ROWS'
+false|prompt|EVENT lane-asking gh-2 stop-cause=allow-all-blocked-by-policy
+true|prompt|EVENT lane-asking gh-2
+false|idle|EVENT idle-after-return gh-2 stop-cause=allow-all-blocked-by-policy
+ROWS
+# The control: a watch whose lane-asking line drops the note reports a
+# policy-blocked lane as a plain dialog to answer.
+COPILOT_WATCH="$(mutant_scripts copilot-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/copilot-mutant/github"
+mutate_file "$COPILOT_WATCH" 'echo "EVENT lane-asking $lane${COPILOT_SESSION_NOTE:+ $COPILOT_SESSION_NOTE}"' 'echo "EVENT lane-asking $lane"'
+new_case copilot_mutant
+copilot_lane false prompt
+assert_eq "$(copilot_events)" "EVENT lane-asking gh-2" \
+  "control: without the note a policy-blocked Copilot lane reads as a plain dialog" "$STUB_DIR/err"
+COPILOT_WATCH=""
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

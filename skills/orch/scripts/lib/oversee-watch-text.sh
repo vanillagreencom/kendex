@@ -264,15 +264,22 @@ The long pass's events, checked and reported in this order:
                              naming only a clock or a weekday reaches this only
                              once this watch has seen that wall standing; one
                              naming a date is spent on sight
-  EVENT lane-asking <lane>   a question or selection prompt differs from the
-                             last one emitted for this lane; the dialog follows
+  EVENT lane-asking <lane> [<copilot note>]
+                             a question or selection prompt differs from the
+                             last one emitted for this lane; the dialog follows.
+                             A Copilot lane's line carries
+                             stop-cause=<cause> or session-record=<reason>
+                             where its session record names one
+                             (lib/copilot-session.sh
+                             copilot_session_lane_note)
   EVENT model-capacity <lane>
                              a Codex turn ended because its selected model is
                              at capacity. Nothing follows the line: the
                              remedy is one continuation line back to the lane
-  EVENT idle-after-return <lane>
+  EVENT idle-after-return <lane> [<copilot note>]
                              the live harness sits idle on two passes; the
-                             lane's closing lines follow. A Pi lane is idle,
+                             lane's closing lines follow, and the note is
+                             lane-asking's. A Pi lane is idle,
                              working or walled by the last row its own
                              lane-mail-check hook wrote under the pi-hooks
                              carrier, a Stop at its turn end or a PreToolUse
