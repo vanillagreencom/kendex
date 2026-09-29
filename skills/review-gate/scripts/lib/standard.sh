@@ -11,20 +11,27 @@
 # Sets WANT_CI (the CI context) and WANT_GATE (the gate context, which the
 # target layout no longer requires) from MANIFEST, and from settings WANT_ENV
 # (REVIEW_GATE_STANDARD_ENVIRONMENT) and WANT_SECRETS
-# (REVIEW_GATE_STANDARD_SECRETS, sorted, one per line). SCOPE `all` also
-# sets WANT_APP (REVIEW_GATE_STANDARD_APP) and WANT_CONTEXTS
-# (REVIEW_GATE_STANDARD_CONTEXTS, sorted, `;`-joined); SCOPE `environment`
-# leaves both unread. An empty WANT_CONTEXTS is no refusal: the
-# standard-required-contexts row reports it. With no jq on PATH, a missing, unreadable or malformed manifest, an
-# unreadable setting, a key the scope reads unset or empty, or a secret name
+# (REVIEW_GATE_STANDARD_SECRETS, sorted, one per line). Each SCOPE reads the
+# keys of the one before it and more:
+#   environment  validate-standard.sh --environment-only: those two keys
+#   provision    provision-environment.sh: also WANT_APP
+#                (REVIEW_GATE_STANDARD_APP)
+#   full         validate-standard.sh's full mode: also WANT_CONTEXTS
+#                (REVIEW_GATE_STANDARD_CONTEXTS, sorted, `;`-joined)
+# A key a scope does not read is left empty and never resolved, so its
+# value cannot refuse that scope's run. An empty WANT_CONTEXTS is no
+# refusal: the standard-required-contexts row reports it. With no jq on
+# PATH, a missing, unreadable or malformed manifest, an unreadable setting
+# the scope reads, a key the scope reads unset or empty, or a secret name
 # that is not uppercase letters, digits and underscores starting with no
-# digit, it prints the refusal to stderr and returns 1; the caller exits with its could-not-run status.
+# digit, it prints the refusal to stderr and returns 1; the caller exits
+# with its could-not-run status.
 rg_standard_load() { # MANIFEST SCOPE
   local secrets contexts invalid missing="" rc=0
   case "$2" in
-    all | environment) ;;
+    environment | provision | full) ;;
     *)
-      rg_message error standard-scope "$2" "rg_standard_load: the scope is all or environment" >&2
+      rg_message error standard-scope "$2" "rg_standard_load: the scope is environment, provision or full" >&2
       return 1
       ;;
   esac
@@ -55,9 +62,11 @@ rg_standard_load() { # MANIFEST SCOPE
 
   WANT_APP=""
   WANT_CONTEXTS=""
-  if [ "$2" = all ]; then
+  if [ "$2" != environment ]; then
     WANT_APP="$(rg_setting REVIEW_GATE_STANDARD_APP "")" || return 1
     [ -n "$WANT_APP" ] || missing=REVIEW_GATE_STANDARD_APP
+  fi
+  if [ "$2" = full ]; then
     contexts="$(rg_setting REVIEW_GATE_STANDARD_CONTEXTS "")" || return 1
     WANT_CONTEXTS="$(rg_pack "$contexts" ';' | LC_ALL=C sort -u | paste -sd ';' -)" || {
       rg_message error standard-read REVIEW_GATE_STANDARD_CONTEXTS "could not split the required contexts" >&2

@@ -193,6 +193,8 @@ done <<'ROWS'
 a repository matching the standard~~~~
 a pull-request rule from a repository ruleset~~rules.json~.[2].ruleset_source_type = "Repository"~standard-ruleset-source=Repository:1:pull_request\,missing:pull_request^standard-required-approvals=absent^standard-stale-dismissal=absent
 no deletion rule~~rules.json~del(.[0])~standard-ruleset-source=missing:deletion
+no force-push rule~~rules.json~del(.[1])~standard-ruleset-source=missing:non_fast_forward
+required checks from an enterprise ruleset~~rules.json~.[5].ruleset_source_type = "Enterprise"~standard-ruleset-source=Enterprise:4:required_status_checks^standard-bypass-actors=unreadable:4
 no ruleset at all~~rules.json~[]~standard-ruleset-source=none^standard-merge-queue=absent^standard-required-contexts=''^standard-required-approvals=absent^standard-stale-dismissal=absent^standard-conversation-resolution=false^standard-copilot-review=absent
 no merge queue~~rules.json~del(.[4])~standard-merge-queue=absent
 an extra required context~~rules.json~.[5].parameters.required_status_checks += [{"context": "Other"}]~standard-required-contexts=CI\;Cargo\ \(workspace\ tests\)\;Other

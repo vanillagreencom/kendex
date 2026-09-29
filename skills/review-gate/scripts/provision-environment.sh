@@ -149,7 +149,7 @@ done
 if [ ! -r "$SCRIPT_DIR/lib/standard.sh" ] || ! . "$SCRIPT_DIR/lib/standard.sh" 2>/dev/null; then
   die standard-lib-load "$SCRIPT_DIR/lib/standard.sh" "could not load the standard library"
 fi
-rg_standard_load "$SCRIPT_DIR/../standard.json" all || exit 2
+rg_standard_load "$SCRIPT_DIR/../standard.json" provision || exit 2
 
 if [ "$DRY_RUN" -eq 0 ]; then
   for name in $WANT_SECRETS; do

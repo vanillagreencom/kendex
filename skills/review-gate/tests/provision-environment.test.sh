@@ -37,13 +37,19 @@ cp "$TEST_DIR/lib/gh-shim.sh" "$BIN/gh"
 chmod +x "$BIN/gh"
 # The owner's checkouts the script runs from: `full` declares the
 # organization's values in its kendex.settings.toml, `none` declares none,
-# and `shell` names a secret that bash holds as a shell variable only.
-mkdir -p "$TMP/consumer-full" "$TMP/consumer-none" "$TMP/consumer-shell"
+# `shell` names a secret that bash holds as a shell variable only, and
+# `contexts` adds, in .env.local, a REVIEW_GATE_STANDARD_CONTEXTS the
+# settings reader refuses, which only validate-standard.sh's full mode
+# reads. The layer is .env.local because the reader judges that layer one
+# key at a time; it judges a kendex.settings.toml [env] table whole.
+mkdir -p "$TMP/consumer-full" "$TMP/consumer-none" "$TMP/consumer-shell" "$TMP/consumer-contexts"
 printf '%s\n' '[env]' 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' \
   'REVIEW_GATE_STANDARD_SECRETS = "APP_ID;APP_KEY"' >"$TMP/consumer-full/kendex.settings.toml"
 sed 's/"APP_ID;APP_KEY"/"APP_ID;BASH_VERSION"/' "$TMP/consumer-full/kendex.settings.toml" >"$TMP/consumer-shell/kendex.settings.toml"
 grep -qF '"APP_ID;BASH_VERSION"' "$TMP/consumer-shell/kendex.settings.toml" || { echo "provision-environment.test: consumer-shell=edit-missed" >&2; exit 1; }
 printf '[env]\n' >"$TMP/consumer-none/kendex.settings.toml"
+cp "$TMP/consumer-full/kendex.settings.toml" "$TMP/consumer-contexts/kendex.settings.toml"
+printf '%s\n' 'REVIEW_GATE_STANDARD_CONTEXTS="CI"x' >"$TMP/consumer-contexts/.env.local"
 
 cat >"$BASE/installations.json" <<'JSON'
 {"installations": [{"app_slug": "other-app", "repository_selection": "selected"}, {"app_slug": "lanes-app", "repository_selection": "all"}]}
@@ -85,13 +91,14 @@ world() { # DIR PREFIX FILES EDITS
 
 # Sets RAW, REPORT (the record, step and total lines), WRITES and RC.
 # SECRETS `yes` hands the script both secret values; a dry run needs none.
+# It runs from the checkout CONSUMER names, `full` when unset.
 run() { # FIXTURES SHIM_FAIL SECRETS ARGS...
   local fixtures="$1" fail="$2" secrets=""
   [ "$3" != yes ] || secrets=1
   shift 3
   RC=0
   rm -f -- "$fixtures/.writes.log"
-  RAW="$(cd "$TMP/consumer-full" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$fixtures" GH_SHIM_FAIL="$fail" \
+  RAW="$(cd "$TMP/consumer-${CONSUMER:-full}" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$fixtures" GH_SHIM_FAIL="$fail" \
     ${secrets:+APP_ID=4242} ${secrets:+"APP_KEY=$KEY"} "$SKILL/scripts/provision-environment.sh" "$@" 2>&1)" || RC=$?
   REPORT="$(grep -E '^(provision(-total)? |  step=)' <<<"$RAW" || true)"
   WRITES=""
@@ -124,6 +131,16 @@ if [ "$RC" -eq 0 ] && [ "$REPORT" = "$want" ] && [ -z "$WRITES" ]; then
   ok "with no secret value, the provisioned repository is current, the other would be created step by step, the archived one is not listed, and nothing is written"
 else
   bad "dry run (rc=$RC)" "$RAW
+writes: $WRITES"
+fi
+
+# The same plan from a checkout whose REVIEW_GATE_STANDARD_CONTEXTS the
+# settings reader refuses: the provisioning run never resolves that key.
+CONSUMER=contexts run "$BASE" "" no --org acme --dry-run
+if [ "$RC" -eq 0 ] && [ "$REPORT" = "$want" ] && [ -z "$WRITES" ]; then
+  ok "an unreadable REVIEW_GATE_STANDARD_CONTEXTS leaves the dry run's plan as it is"
+else
+  bad "unreadable contexts (rc=$RC)" "$RAW
 writes: $WRITES"
 fi
 

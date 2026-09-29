@@ -48,14 +48,14 @@ Value rules come from the engine, not from a copy of it: the settings half calls
 
 ## Repo-side wiring
 
-An organization ruleset carries the shared rules for every repository: the pull-request rule, the Copilot review, and the deletion and force-push rules. Each repository keeps two rulesets of its own, one for its required checks and one for its merge queue, and no other. `scripts/validate-standard.sh` reports each part of it.
+An organization ruleset carries the shared rules for every repository: the pull-request rule, the Copilot review, and the deletion and force-push rules. Each repository keeps two rulesets of its own, one for its required checks and one for its merge queue, and no other. `scripts/validate-standard.sh` reports which source each rule type comes from, not which ruleset holds it: it neither counts nor names the repository rulesets, so their number and their split are the owner's to hold.
 
 `validate-standard.sh` and `provision-environment.sh` read the organization's own values from settings, since the package ships none. Before either runs, declare in the `[env]` table of the repository's `kendex.settings.toml` ([settings.md](settings.md)):
 
 1. `REVIEW_GATE_STANDARD_APP`: the slug of the GitHub App the organization installs on every repository.
 2. `REVIEW_GATE_STANDARD_ENVIRONMENT`: the environment that holds that app's secrets.
 3. `REVIEW_GATE_STANDARD_SECRETS`: those secrets' names, `;`-separated. Never their values. A name is uppercase letters, digits and underscores, and does not start with a digit. GitHub stores every secret name uppercase.
-4. `REVIEW_GATE_STANDARD_CONTEXTS`: the contexts the repository's required-checks ruleset requires, `;`-separated. `validate-standard.sh` alone reads it.
+4. `REVIEW_GATE_STANDARD_CONTEXTS`: the contexts the repository's required-checks ruleset requires, `;`-separated. Only `validate-standard.sh` without `--environment-only` reads it; `provision-environment.sh` does not.
 
 Each script exits 2 with one `standard-setting-missing` record naming every key among the first three it reads that is unset or empty, or with one `standard-secret-invalid` record naming every secret name outside that grammar. An unset `REVIEW_GATE_STANDARD_CONTEXTS` is no refusal: `validate-standard.sh` reports it as a failed `standard-required-contexts` row. Refresh adoption reads none of these keys (§ Automatic consumer refresh).
 
@@ -168,7 +168,7 @@ Concrete per-consumer values are tracked on the org adoption issue, not here. Ev
 | `REVIEW_GATE_MODE` | `enforce`. `off` disables an inactive or `current` class policy and attests rather than evaluates. A `bot` class still requires review. |
 | `REVIEW_GATE_WRITER` | `required`. `optional`, with `REVIEW_GATE_MODE = "off"`, only in a repository that runs the automatic refresh and posts no gate status. |
 | `REVIEW_GATE_STANDARD_APP`, `REVIEW_GATE_STANDARD_ENVIRONMENT`, `REVIEW_GATE_STANDARD_SECRETS` | The organization's app, app-secret environment and secret names (§ Repo-side wiring). No default. `validate-standard.sh` and `provision-environment.sh` refuse on each unset key. `validate-standard.sh --environment-only` reads the environment and secret keys only. Refresh adoption reads none of them. |
-| `REVIEW_GATE_STANDARD_CONTEXTS` | The repository's required contexts (§ Repo-side wiring). No default. `validate-standard.sh` reports an unset list as a failed `standard-required-contexts` row; `--environment-only` does not read it. |
+| `REVIEW_GATE_STANDARD_CONTEXTS` | The repository's required contexts (§ Repo-side wiring). No default. `validate-standard.sh` reports an unset list as a failed `standard-required-contexts` row; neither `--environment-only` nor `provision-environment.sh` reads it. |
 
 ## Repair by verdict line
 

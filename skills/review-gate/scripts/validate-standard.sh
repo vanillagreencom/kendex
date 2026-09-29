@@ -192,7 +192,7 @@ fi
 if [ "$ENVIRONMENT_ONLY" -eq 1 ]; then
   rg_standard_load "$SCRIPT_DIR/../standard.json" environment || exit 2
 else
-  rg_standard_load "$SCRIPT_DIR/../standard.json" all || exit 2
+  rg_standard_load "$SCRIPT_DIR/../standard.json" full || exit 2
 fi
 
 SCRATCH="$(mktemp -d)" || die scratch "${TMPDIR:-/tmp}" "could not create a scratch directory"
