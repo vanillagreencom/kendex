@@ -100,6 +100,15 @@ sk_inject() {
   sk_ctl /_test/message "{\"channel\": \"$1\", \"user\": \"$2\", \"text\": $text$thread$extra}" | jq -r .ts
 }
 
+# sk_file ID NAME MIMETYPE CONTENT — the fake serves CONTENT as file ID; prints
+# the file object a message's files[] carries for it
+sk_file() {
+  sk_ctl /_test/file "$(jq -cn --arg id "$1" --arg c "$4" '{id: $id, content: $c}')" >/dev/null
+  jq -cn --arg id "$1" --arg name "$2" --arg type "$3" --arg url "$SK_URL/_files/$1" \
+    '{id: $id, name: $name, mimetype: $type, url_private_download: $url}'
+}
+sk_mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$1"; } # PATH — its permission bits
+
 # sk_new_root NAME — an overseer checkout with the real orch scripts; prints it
 sk_new_root() {
   local root="$SK_TMP/$1"

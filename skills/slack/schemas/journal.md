@@ -1,6 +1,6 @@
 # The relay's record
 
-What one checkout keeps under `tmp/slack/`. Every file holds identifiers, never a message body.
+What one checkout keeps under `tmp/slack/`. Every file but an owner's own under `files/` holds identifiers, never a message body.
 
 | File | Writer | Holds |
 |------|--------|-------|
@@ -8,6 +8,7 @@ What one checkout keeps under `tmp/slack/`. Every file holds identifiers, never 
 | `journal.jsonl` | The relay | The transport ledger, one JSON object per line |
 | `status.json` | The relay, every poll | The record `listen --status` reads |
 | `listen.lock` | The relay | The OS lock; its text is the holder's pid |
+| `files/<file id>-<name>` | The relay | A file an owner sent, as Slack served it; the directory mode 700, each file 600. Every byte of `<file id>-<name>` outside `A-Z a-z 0-9 . _ -` is `_` |
 
 ## The binding
 
@@ -32,7 +33,7 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 | `hold` | `at` | `SLACK_MASTER_FILE` turned fresh: no mailbox envelope is posted until the poll that ends the hold, whose posts precede its `resume` line. `at` is the hold's start, the second of the file's mtime the poll that found it fresh read, so a notice stamped in or before that second, one Slack refused among them, posts on the resume whatever the relay's own polls missed. Written on the transition alone; `compact` drops it once a `resume` follows |
 | `resume` | `from_at`, `at`, `asks` | The hold ended. `from_at` is its `hold` line's `at`; `at` its end: the second `SLACK_MASTER_MAX_AGE` past the file's last touch when it went stale, or of the last poll that found it fresh when it is gone. A notice stamped after the start's second and before the end's is never posted; `asks` are the ids of the open asks whose post landed on this resume, journaled after those posts, so one refused or lost there is not named. `compact` drops it once its `at` is older than `SLACK_THREAD_DAYS` |
 | `in` | `channel`, `ts`, `kind`, `id`, `thread` | A Slack message delivered to the mailbox: `kind` is `directive` or `answer`, `id` the envelope it landed as, `thread` the parent stamp it belongs to |
-| `in` | `channel`, `ts`, `kind` = `ignored`, `reason` | A message answered once and not routed: `reason` is `not-owner` or `no-text` |
+| `in` | `channel`, `ts`, `kind` = `ignored`, `reason` | A message answered once and not routed: `reason` is `not-owner`, or `no-text` for a message with no text and no file |
 | `out` | `channel`, `id`, `kind`, `state`, `at`, `thread` | A mailbox envelope posted: `kind` is `ask`, `notice` or `answer`; `state` is `open` for an ask awaiting its answer, `resolved` otherwise; `thread` the stamp the post is under, the ask's own for an ask |
 | `out` | `channel`, `id`, `kind` = `notice`, `state` = `file`, `at`, `file` | A report uploaded; its thread is bound by a later `bound` line |
 | `out` | `channel`, `id`, `kind`, `state` = `unknown`, `at` | A post whose response was lost; shown by `--status`, never repeated. A post Slack refused or never received has no line: the next poll makes it again |

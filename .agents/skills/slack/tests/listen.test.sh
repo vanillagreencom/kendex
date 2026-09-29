@@ -5,8 +5,10 @@
 # answered once in its thread, the second reply as a directive, a chat answer
 # and a deadline default shown in the thread, a notice threaded on its ref,
 # a notice on an owner's reply threaded under that reply's parent,
-# a report uploaded and its thread bound from the share, a non-owner and a
-# file alone answered once and not routed, catch-up over pages, the crash
+# a report uploaded and its thread bound from the share, a non-owner and an
+# empty message answered once and not routed, an owner's files saved and
+# named in the envelope, a refused download, Slack's sign-in page and a
+# file with no download url each named by file id, catch-up over pages, the crash
 # between the mailbox append and the journal mark, the second relay refused
 # by the lock, two roots bound to one channel refused at start, a reply
 # under a thread past SLACK_THREAD_DAYS left unrouted,
@@ -21,7 +23,9 @@
 # across compaction. The controls at the end plant one mutant per rule: the
 # delivery id dropped, the ask thread no longer resolved, the lock no longer
 # exclusive, two roots on one channel accepted, the thread-age horizon
-# removed, the owner gate open, the no-text gate open, the outbound text
+# removed, the owner gate open, the no-text gate open, the files unread,
+# the sign-in check gone, the file name kept whole, the files directory
+# mode unset, the outbound text
 # and the report bytes unchecked, the post failure swallowed, the envelope
 # horizon removed, the start horizon removed, the history seed at zero, a
 # posted line aged by its thread, and a refused connection read as a lost
@@ -134,19 +138,43 @@ R4="$(sk_inject C001 U001 'good report' "$SHARE_TS")"
 sk_polls "$ROOT" 10
 assert_has "$(directives "$ROOT")" "C001:$R4 good report" "a reply under the report is a directive"
 
-# --- a non-owner and a file alone: one reply each, nothing routed ------------------
+# --- a non-owner and an empty message: one reply each, nothing routed -------------
 N1="$(sk_inject C001 U999 'let me in')"
-F1="$(sk_inject C001 U001 '' '' '"files": [{"id": "F777"}]')"
+F1="$(sk_inject C001 U001 '')"
 sk_poll "$ROOT"
 sk_poll "$ROOT"
 assert_has "$(posts C001)" "$N1 | Only the channel's owners steer this session; this message is not routed." "a non-owner gets one reply"
-assert_has "$(posts C001)" "$F1 | Only text is routed; a file alone is not." "a file alone gets one reply"
+assert_has "$(posts C001)" "$F1 | Only text and files are routed; this message has neither." "a message with no text and no file gets one reply"
 assert_eq "$(sk_state '[.messages.C001[] | select(.text | startswith("Only"))] | length')" "2" "each is answered once"
 assert_lacks "$(directives "$ROOT")" "$N1" "the non-owner's message is not routed"
-assert_lacks "$(directives "$ROOT")" "$F1" "the file alone is not routed"
+assert_lacks "$(directives "$ROOT")" "$F1" "the empty message is not routed"
 B1="$(sk_inject C001 U001 'broadcast' "$ASK_TS" '"subtype": "thread_broadcast"')"
 sk_poll "$ROOT"
 assert_lacks "$(directives "$ROOT")" "$B1" "a thread broadcast is ignored"
+
+# --- an owner's files: saved under tmp/slack/files, each named in the envelope -------
+text_of() { jq -r --arg d "$2" 'select(.delivery_id == $d) | .text' "$(sk_box "$1")/to-lane.jsonl"; } # ROOT DELIVERY_ID
+FILES_DIR="$ROOT/tmp/slack/files"
+FM1="$(sk_inject C001 U001 'get this error, why' '' "\"files\": [$(sk_file F901 'shots/shot one.png' image/png 'png bytes one'), $(sk_file F902 err.log text/plain 'log line two')]")"
+sk_poll "$ROOT"
+assert_eq "$RC=$(text_of "$ROOT" "C001:$FM1")" "0=get this error, why
+$FILES_DIR/F901-shots_shot_one.png
+$FILES_DIR/F902-err.log" "an owner's message lands with the saved path of each file, one line each, the name made one path component"
+assert_eq "$(cat "$FILES_DIR/F901-shots_shot_one.png")|$(cat "$FILES_DIR/F902-err.log")" "png bytes one|log line two" \
+  "each saved file holds the bytes Slack served"
+assert_eq "$(sk_mode "$FILES_DIR") $(sk_mode "$FILES_DIR/F901-shots_shot_one.png")" "700 600" "the directory is 700 and each file 600"
+sk_ctl /_test/fault '{"method": "download", "status": 403}' >/dev/null
+sk_ctl /_test/fault '{"method": "download", "signin": true}' >/dev/null
+FM2="$(sk_inject C001 U001 'and this one' '' "\"files\": [$(sk_file F903 a.png image/png 'x')]")"
+FM3="$(sk_inject C001 U001 '' '' "\"files\": [$(sk_file F904 b.png image/png 'y')]")"
+FM4="$(sk_inject C001 U001 '' '' '"files": [{"id": "F777"}]')"
+sk_poll "$ROOT"
+assert_eq "$RC=$(text_of "$ROOT" "C001:$FM2")" "0=and this one
+file F903 not fetched: HTTP 403" "a refused download lands the message with the file id and the HTTP status"
+assert_eq "$(text_of "$ROOT" "C001:$FM3")" "file F904 not fetched: HTTP 200 sign-in page, the app needs files:read" \
+  "Slack's sign-in page in place of a file names files:read, and a file with no text lands"
+assert_eq "$(text_of "$ROOT" "C001:$FM4")" "file F777 not fetched: no download url" "a file Slack sends with no download url lands as its id"
+assert_eq "$(ls -A "$FILES_DIR" | tr '\n' ' ')" "F901-shots_shot_one.png F902-err.log " "a download that failed leaves no file behind"
 
 # --- catch-up over pages -------------------------------------------------------------
 for n in 1 2 3 4 5; do sk_inject C001 U001 "note $n" >/dev/null; done
@@ -407,10 +435,36 @@ sk_poll "$ZETA"
 assert_has "$(directives "$ZETA")" "$N2 not an owner" "control: the owner gate open, a non-owner's message is routed"
 sk_bin_reset
 
-sk_mutant notext relay.py 'if not text:' 'if not text and False:'
-F2="$(sk_inject "$ZETA_CH" U001 '' '' '"files": [{"id": "F778"}]')"
+sk_mutant notext relay.py 'if not lines:' 'if not lines and False:'
+F2="$(sk_inject "$ZETA_CH" U001 '')"
 sk_poll "$ZETA"
-assert_lacks "$(posts "$ZETA_CH")" "$F2 | Only text is routed" "control: the no-text gate open, a file alone gets no reply"
+assert_lacks "$(posts "$ZETA_CH")" "$F2 | Only text and files are routed" "control: the no-text gate open, an empty message gets no reply"
+sk_bin_reset
+
+ZETA_FILES="$ZETA/tmp/slack/files"
+sk_mutant files-dropped relay.py 'lines = \(\[text\] if text else \[\]\) \+ self\.fetch_files\(message\)' 'lines = [text] if text else []'
+FC1="$(sk_inject "$ZETA_CH" U001 'see file' '' "\"files\": [$(sk_file F911 c.png image/png 'c')]")"
+sk_poll "$ZETA"
+assert_eq "$(text_of "$ZETA" "$ZETA_CH:$FC1")" "see file" "control: the files unread, the envelope names no file"
+sk_bin_reset
+
+sk_mutant signin api.py 'if resp\.headers\.get_content_type\(\) == "text/html" and mimetype != "text/html":' 'if False:'
+sk_ctl /_test/fault '{"method": "download", "signin": true}' >/dev/null
+FC2="$(sk_inject "$ZETA_CH" U001 '' '' "\"files\": [$(sk_file F912 d.png image/png 'd')]")"
+sk_poll "$ZETA"
+assert_eq "$(text_of "$ZETA" "$ZETA_CH:$FC2")" "$ZETA_FILES/F912-d.png" "control: the sign-in check gone, the sign-in page is saved as the file"
+sk_bin_reset
+
+sk_mutant name store.py 're\.sub\(r"\[\^A-Za-z0-9\._-\]", "_", f"\{file_id\}-\{name\}"\)' 'f"{file_id}-{name}"'
+FC3="$(sk_inject "$ZETA_CH" U001 '' '' "\"files\": [$(sk_file F913 'shots/e.png' image/png 'e')]")"
+sk_poll "$ZETA"
+assert_has "$(text_of "$ZETA" "$ZETA_CH:$FC3")" "file F913 not fetched: " "control: the name kept whole, a slash in it leaves the file unsaved"
+sk_bin_reset
+
+sk_mutant file-mode store.py 'os\.chmod\(directory, 0o700\)' 'os.chmod(directory, 0o755)'
+sk_inject "$ZETA_CH" U001 '' '' "\"files\": [$(sk_file F914 f.png image/png 'f')]" >/dev/null
+sk_poll "$ZETA"
+assert_eq "$(sk_mode "$ZETA_FILES")" "755" "control: the directory mode unset, the files directory is readable by others"
 sk_bin_reset
 
 sk_mutant text-check relay.py 'secret_check\(text\.encode\(\), f"id=\{env_id\}"\)' 'secret_check(b"", f"id={env_id}")'

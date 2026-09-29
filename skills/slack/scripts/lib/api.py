@@ -13,17 +13,21 @@ from the response phase, after the request was written: Slack may have acted
 on it, so the call is `slack-response-lost`. The relay journals an envelope
 post lost this way as unknown and never repeats it; a read is made again on
 the next poll.
+
+A file download is no API method: Slack answers it with the file, an HTTP
+status, or, when the app lacks `files:read`, its sign-in page with 200.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections import deque
-from typing import Callable, Deque, Dict, Optional
+from typing import BinaryIO, Callable, Deque, Dict, Optional
 
 from refusals import Refusal
 
@@ -53,13 +57,14 @@ class Slack:
             self.calls.popleft()
         return len(self.calls)
 
-    def _open(self, req: urllib.request.Request, label: str) -> bytes:
-        """One counted exchange and its body. `HTTPError` is the caller's to
-        judge; a network failure takes its key by the rule above."""
+    def _open(self, req: urllib.request.Request, label: str, read: Callable = lambda resp: resp.read()):
+        """One counted exchange, its response handed to `read`, the body
+        whole by default. `HTTPError` is the caller's to judge; a network
+        failure takes its key by the rule above."""
         self.calls.append(self.clock())
         try:
             with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
-                return resp.read()
+                return read(resp)
         except urllib.error.HTTPError:
             raise
         except urllib.error.URLError as err:
@@ -116,6 +121,23 @@ class Slack:
             cursor = (answer.get("response_metadata") or {}).get("next_cursor") or None
             if not cursor:
                 return
+
+    def download(self, url: str, mimetype: str, out: BinaryIO) -> None:
+        """A message's file from its `url_private_download`, streamed into
+        `out`. Refused `file-not-fetched` with the HTTP status, or with the
+        sign-in page Slack sends in place of any file but an HTML one."""
+
+        def copy(resp) -> None:
+            if resp.headers.get_content_type() == "text/html" and mimetype != "text/html":
+                raise Refusal("file-not-fetched", f"HTTP {resp.status} sign-in page, the app needs files:read")
+            shutil.copyfileobj(resp, out)
+
+        req = urllib.request.Request(url)
+        req.add_header("Authorization", f"Bearer {self.token}")
+        try:
+            self._open(req, "download", copy)
+        except urllib.error.HTTPError as err:
+            raise Refusal("file-not-fetched", f"HTTP {err.code}") from err
 
     def upload(self, filename: str, data: bytes, channel: str, comment: str, thread_ts: Optional[str]) -> str:
         """The three-step external upload; returns the file id."""

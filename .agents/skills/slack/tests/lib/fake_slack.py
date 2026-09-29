@@ -4,12 +4,15 @@ in-memory workspace, and a control surface under /_test/ the suites drive.
 
     fake_slack.py --port-file PATH --token TOKEN [--user EMAIL=ID]... [--page N]
 
-Control: POST /_test/message injects a message and answers its ts; GET
+Control: POST /_test/message injects a message and answers its ts; POST
+/_test/file holds `content` as file `id`, which GET /_files/<id> serves to the
+bot token as Slack's url_private_download does; GET
 /_test/state dumps messages, calls, uploads and posts; POST /_test/fault
 makes the next `times` calls of `method` answer `error`, HTTP `status`, or
 with `drop` close the connection after reading the request and before any
 response, or with `refuse` redirect to a port nothing listens on, which the
-client meets as a refused connection before its request is written.
+client meets as a refused connection before its request is written, or with
+`signin` Slack's sign-in page. A download's method is `download`.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BOT = "UBOT"
 BOT_ID = "B01"
+SIGNIN = b"<!DOCTYPE html><html><head><title>Slack</title></head><body>Sign in to Slack</body></html>"
 
 
 class Workspace:
@@ -37,6 +41,7 @@ class Workspace:
         self.channels: dict = {}  # id -> {id, name, members, is_private}
         self.messages: dict = {}  # channel -> [message]
         self.uploads: dict = {}  # file id -> bytes
+        self.files: dict = {}  # file id -> bytes a download serves
         self.calls: list = []
         self.faults: list = []
         self.counter = 0
@@ -93,9 +98,11 @@ class Handler(BaseHTTPRequestHandler):
         return
 
     def send_json(self, body: dict, status: int = 200, headers: dict = None) -> None:
-        data = json.dumps(body).encode()
+        self.send_bytes(json.dumps(body).encode(), "application/json", status, headers)
+
+    def send_bytes(self, data: bytes, content_type: str, status: int = 200, headers: dict = None) -> None:
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", content_type)
         for key, value in (headers or {}).items():
             self.send_header(key, value)
         self.send_header("Content-Length", str(len(data)))
@@ -126,7 +133,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True})
             if raw and self.headers.get("Content-Type", "").startswith("application/json"):
                 params.update(json.loads(raw))
-            method = path.lstrip("/")
+            method = "download" if path.startswith("/_files/") else path.lstrip("/")
             self.ws.calls.append(method)
             for fault in list(self.ws.faults):
                 if fault["method"] == method and fault["times"] > 0:
@@ -136,12 +143,19 @@ class Handler(BaseHTTPRequestHandler):
                         return None
                     if fault.get("refuse"):
                         return self.send_json({}, 302, {"Location": f"http://127.0.0.1:{self.ws.dead_port}/{method}"})
+                    if fault.get("signin"):
+                        return self.send_bytes(SIGNIN, "text/html; charset=utf-8")
                     if fault.get("status"):
                         return self.send_json({"ok": False}, fault["status"], {"Retry-After": str(fault.get("retry_after", 0))})
                     return self.send_json({"ok": False, "error": fault["error"]})
             auth = self.headers.get("Authorization", "")
             if auth != f"Bearer {self.ws.token}":
                 return self.send_json({"ok": False, "error": "invalid_auth"})
+            if method == "download":
+                data = self.ws.files.get(path[len("/_files/") :])
+                if data is None:
+                    return self.send_json({"ok": False}, 404)
+                return self.send_bytes(data, "application/octet-stream")
             handler = getattr(self, "m_" + method.replace(".", "_"), None)
             if handler is None:
                 return self.send_json({"ok": False, "error": "unknown_method"})
@@ -174,6 +188,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/_test/fault":
             body.setdefault("times", 1)
             ws.faults.append(body)
+            return self.send_json({"ok": True})
+        if path == "/_test/file":
+            ws.files[body["id"]] = body["content"].encode()
             return self.send_json({"ok": True})
         if path == "/_test/calls-reset":
             ws.calls.clear()

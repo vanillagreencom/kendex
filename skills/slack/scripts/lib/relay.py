@@ -49,6 +49,7 @@ from store import (
     read_binding,
     read_journal,
     read_status,
+    save_file,
     write_binding,
     write_status,
 )
@@ -56,7 +57,7 @@ from store import (
 ROUTED_SUBTYPES = {None, "file_share"}
 OTHER_THREADS_EVERY = 10
 NOT_OWNER = "Only the channel's owners steer this session; this message is not routed."
-NO_TEXT = "Only text is routed; a file alone is not."
+NO_TEXT = "Only text and files are routed; this message has neither."
 RECORDED = "Recorded as your answer."
 ALREADY = "This question was already answered; delivered as a directive instead."
 
@@ -245,10 +246,12 @@ class RootRelay:
             self.journal.append(t="in", channel=self.channel, ts=ts, kind="ignored", reason="not-owner")
             return
         text = (message.get("text") or "").strip()
-        if not text:
+        lines = ([text] if text else []) + self.fetch_files(message)
+        if not lines:
             self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts, text=NO_TEXT)
             self.journal.append(t="in", channel=self.channel, ts=ts, kind="ignored", reason="no-text")
             return
+        text = "\n".join(lines)
         delivery = f"{self.channel}:{ts}"
         thread = self.state.threads.get(thread_ts) if thread_ts != ts else None
         # The mailbox judges whether an ask is still open; the journal's own
@@ -263,6 +266,33 @@ class RootRelay:
             self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts, text=ALREADY)
         envelope = self.mail.send_directive(text, delivery)
         self.journal.append(t="in", channel=self.channel, ts=ts, kind="directive", id=envelope, thread=thread_ts)
+
+    def fetch_files(self, message: Dict) -> List[str]:
+        """One line per file of an owner's message: the path it was saved
+        to, or `file <id> not fetched: <why>`, so the message lands whether
+        or not its files do."""
+        lines = []
+        for item in message.get("files") or []:
+            file_id = str(item.get("id", ""))
+            # Slack sends a file hidden by the plan's limit, or deleted, with
+            # no download url.
+            url = str(item.get("url_private_download") or "")
+            if not url:
+                lines.append(f"file {file_id} not fetched: no download url")
+                continue
+            mimetype = str(item.get("mimetype") or "")
+            try:
+                saved = save_file(
+                    self.path, file_id, str(item.get("name") or ""), lambda out: self.api.download(url, mimetype, out)
+                )
+            except Refusal as err:
+                lines.append(f"file {file_id} not fetched: {err.value}")
+                continue
+            except OSError as err:
+                lines.append(f"file {file_id} not fetched: {err.strerror or err}")
+                continue
+            lines.append(str(saved))
+        return lines
 
     # -- outbound: the mailbox to Slack --------------------------------------
 

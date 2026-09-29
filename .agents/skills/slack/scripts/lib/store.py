@@ -1,21 +1,25 @@
 """What one checkout keeps under tmp/slack/: the binding, the journal, the
-status record and the relay lock.
+status record, the relay lock, and the files owners sent.
 
 The journal is a transport ledger of identifiers, one JSON object per line,
 replayed into `State` at start and appended to as the relay works. Its line
-shapes are schemas/journal.md. Nothing here holds a message body.
+shapes are schemas/journal.md. Nothing here but an owner's file holds a
+message body.
 """
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import errno
 import fcntl
 import json
 import os
+import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import BinaryIO, Callable, Dict, List, Optional, Set
 
 from refusals import Refusal
 
@@ -24,6 +28,10 @@ BINDING = "binding.json"
 JOURNAL = "journal.jsonl"
 STATUS = "status.json"
 LOCK = "listen.lock"
+FILES = "files"
+# A name's bytes past this are cut, so `<id>-<name>` stays inside the 255
+# bytes a file name may take.
+NAME_BYTES = 200
 LINE_KINDS = {"seen", "start", "hold", "resume", "in", "out", "resolved", "bound", "thread"}
 AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -90,6 +98,27 @@ def write_binding(root: Path, binding: Binding) -> None:
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(binding.to_json(), indent=2) + "\n")
     os.replace(tmp, path)
+
+
+def save_file(root: Path, file_id: str, name: str, fill: Callable[[BinaryIO], None]) -> Path:
+    """An owner's file at tmp/slack/files/<id>-<name>, the directory 700 and
+    the file 600. Every byte outside [A-Za-z0-9._-] becomes `_`, so the name
+    is one path component. `fill` writes a temporary beside it, renamed only
+    once complete, so the path never names part of a file."""
+    directory = root_dir(root) / FILES
+    directory.mkdir(parents=True, exist_ok=True)
+    os.chmod(directory, 0o700)
+    target = directory / re.sub(r"[^A-Za-z0-9._-]", "_", f"{file_id}-{name}")[:NAME_BYTES]
+    fd, tmp = tempfile.mkstemp(dir=str(directory), prefix=".part-")
+    try:
+        with os.fdopen(fd, "wb") as out:
+            fill(out)
+        os.replace(tmp, target)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
+    return target
 
 
 @dataclass

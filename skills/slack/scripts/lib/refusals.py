@@ -59,7 +59,7 @@ EXPLAIN = {
         " its open asks, which post again as new threads: answer the"
         " re-posted one, because replies under the relay's earlier posts are"
         " no longer read. Replies under an owner's own earlier message are"
-        " read as directives. Every non-owner or file-only message since the"
+        " read as directives. Every non-owner or empty message since the"
         " binding is answered once more."
     ),
     "slack-auth-failed": (
@@ -127,6 +127,12 @@ EXPLAIN = {
         " line; the relay sends nothing until it does."
     ),
     "file-unreadable": "The file to send could not be read.",
+    "file-not-fetched": (
+        "A file of an owner's message was not downloaded; the value names"
+        " the HTTP status, or the sign-in page Slack sends when the app"
+        " lacks files:read. The relay delivers the message with this line"
+        " in place of the file's path."
+    ),
     "master-file-unreadable": (
         "SLACK_MASTER_FILE names a path whose age cannot be read, for a"
         " reason other than its absence; the value names the path and the"
