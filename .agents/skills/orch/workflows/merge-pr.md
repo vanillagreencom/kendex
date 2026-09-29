@@ -243,7 +243,7 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 180 600 --json --item [STATE_KEY]
    ```
 
-   A PR whose CI already settled returns at once. A `status=timeout` result waits once more. Every other result goes on to the attempt, which judges it: the wait counts every red check, and the attempt only the checks the base branch requires. A push that moved the head past `[PREPARED_HEAD]` meanwhile is refused by the attempt's `--expected-head`.
+   A settled failure returns at once. A settled green run the wait never saw in progress returns after its stale window, at the second poll at this interval (`ci-wait --help`). A `status=timeout` result waits once more. Every other result goes on to the attempt, which judges it: the wait counts every red check, and the attempt only the checks the base branch requires. A push that moved the head past `[PREPARED_HEAD]` meanwhile is refused by the attempt's `--expected-head`.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --expected-head [PREPARED_HEAD]
