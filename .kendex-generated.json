@@ -1294,6 +1294,7 @@
   ".agents/skills/slack/scripts/lib/api.py",
   ".agents/skills/slack/scripts/lib/mailbox.py",
   ".agents/skills/slack/scripts/lib/main.py",
+  ".agents/skills/slack/scripts/lib/markup.py",
   ".agents/skills/slack/scripts/lib/refusals.py",
   ".agents/skills/slack/scripts/lib/relay.py",
   ".agents/skills/slack/scripts/lib/secret.py",

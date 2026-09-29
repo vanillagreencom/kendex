@@ -3,37 +3,36 @@
 # the real lane-mail and a fake Slack API paged two messages at a time. The
 # rows: a directive with its delivery id, an ask posted with the mention and
 # answered once in its thread, the second reply as a directive, a chat answer
-# and a deadline default shown in the thread, a notice threaded on its ref,
-# a notice on an owner's reply threaded under that reply's parent,
-# a report uploaded and its thread bound from the share, a non-owner and an
-# empty message answered once and not routed, an owner's files saved and
-# named in the envelope, a refused download, Slack's sign-in page and a
-# file with no download url each named by file id, a directive's eyes mark
-# swapped for a check once the cursor passes it, a refused mark printed
-# without failing the poll, a refused swap completed on the next poll,
-# catch-up over pages, the crash
-# between the mailbox append and the journal mark, the second relay refused
-# by the lock, two roots bound to one channel refused at start, a reply
-# under a thread past SLACK_THREAD_DAYS left unrouted,
-# a secret value refused, a 429 honoured, a post Slack refuses failing the
-# poll and made again, a post whose response was lost journaled unknown, a
-# refused history read failing the poll, a first start reading Slack from
-# the binding moment and posting nothing from the mailbox's past but open
-# asks, an envelope past the horizon never posted across the daily
-# compaction, a journal reset re-posting open asks alone, owners re-resolved
-# from the setting, a report whose file matches the pattern or is gone
-# refused, and a notice under an owner message past the horizon posted once
-# across compaction. The controls at the end plant one mutant per rule: the
-# delivery id dropped, the ask thread no longer resolved, the lock no longer
-# exclusive, two roots on one channel accepted, the thread-age horizon
-# removed, the owner gate open, the no-text gate open, the files unread,
-# the sign-in check gone, the file name kept whole, the files directory
-# mode unset, the seen mark gone, the cursor unread, a refused mark raised,
-# no Slack answer settled, the outbound text
-# and the report bytes unchecked, the post failure swallowed, the envelope
-# horizon removed, the start horizon removed, the history seed at zero, a
-# posted line aged by its thread, and a refused connection read as a lost
-# response.
+# and a deadline default shown in the thread, a notice threaded on its ref, a
+# notice on an owner's reply threaded under that reply's parent, a report
+# uploaded and its thread bound from the share, a non-owner and an empty
+# message answered once and not routed, an owner's files saved and named in
+# the envelope, a refused download, Slack's sign-in page and a file with no
+# download url each named by file id, a directive's eyes mark swapped for a
+# check once the cursor passes it, a refused mark printed without failing the
+# poll, a refused swap completed on the next poll, each form of Slack's
+# escapes and tokens read back as typed, catch-up over pages, the crash
+# between the mailbox append and the journal mark, the second relay refused by
+# the lock, two roots bound to one channel refused at start, a reply under a
+# thread past SLACK_THREAD_DAYS left unrouted, a secret value refused, a 429
+# honoured, a post Slack refuses failing the poll and made again, a post whose
+# response was lost journaled unknown, a refused history read failing the
+# poll, a first start reading Slack from the binding moment and posting
+# nothing from the mailbox's past but open asks, an envelope past the horizon
+# never posted across the daily compaction, a journal reset re-posting open
+# asks alone, owners re-resolved from the setting, a report whose file matches
+# the pattern or is gone refused, and a notice under an owner message past the
+# horizon posted once across compaction. The controls at the end plant one
+# mutant per rule: the delivery id dropped, the ask thread no longer resolved,
+# the lock no longer exclusive, two roots on one channel accepted, the
+# thread-age horizon removed, the owner gate open, the no-text gate open, the
+# files unread, the sign-in check gone, the file name kept whole, the files
+# directory mode unset, the seen mark gone, the cursor unread, a refused mark
+# raised, no Slack answer settled, the markup unread, &amp; unescaped first,
+# the outbound text and the report bytes unchecked, the post failure
+# swallowed, the envelope horizon removed, the start horizon removed, the
+# history seed at zero, a posted line aged by its thread, and a refused
+# connection read as a lost response.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -423,6 +422,31 @@ sk_ctl /_test/calls-reset >/dev/null
 sk_poll "$IOTA"
 assert_eq "$(sk_state '[.calls[] | select(startswith("reactions."))] | length')" "0" "a completed swap is not made again"
 
+# --- text as the owner typed it: Slack's escapes and tokens read back, one row per form ---
+markup_rows() { # SENT<TAB>DELIVERED, one line per form
+  printf '%s\t%s\n' \
+    'a &amp; b &lt;c&gt;' 'a & b <c>' \
+    'see <https://example.test/a?x=1&amp;y=2|the docs>' 'see the docs (https://example.test/a?x=1&y=2)' \
+    'open <https://example.test/b>' 'open https://example.test/b' \
+    'ask <@U002> first' 'ask @ann first' \
+    'ask <@U404> too' 'ask @U404 too' \
+    '<!here> ship it :rocket:' '@here ship it :rocket:' \
+    'in <#C123|general>' 'in #general' \
+    'typed &amp;lt; as is' 'typed &lt; as is'
+}
+LAMBDA="$(sk_new_root lambda)"
+sk_bind "$LAMBDA"
+LAMBDA_CH="$(sk_channel "$LAMBDA")"
+MARKUP_TS=()
+while IFS=$'\t' read -r sent _; do MARKUP_TS+=("$(sk_inject "$LAMBDA_CH" U001 "$sent")"); done <<<"$(markup_rows)"
+sk_poll "$LAMBDA"
+assert_eq "$RC=$ERR1" "0=slack: slack-api-failed=users.info error=user_not_found" "a mention Slack will not name is printed and fails no poll"
+n=0
+while IFS=$'\t' read -r sent want; do
+  assert_eq "$(text_of "$LAMBDA" "$LAMBDA_CH:${MARKUP_TS[$n]}")" "$want" "Slack's text [$sent] lands as [$want]"
+  n=$((n + 1))
+done <<<"$(markup_rows)"
+
 # --- controls, one mutant per rule ------------------------------------------------------------
 sk_mutant delivery mailbox.py '"--delivery-id", delivery_id, "--file"' '"--delivery-id", delivery_id + "." + str(os.getpid()), "--file"'
 DELTA="$(sk_new_root delta)"
@@ -536,6 +560,18 @@ sk_ctl /_test/fault '{"method": "reactions.add", "error": "internal_error"}' >/d
 sk_poll "$KAPPA"
 sk_poll "$KAPPA"
 assert_eq "$(reactions "$KAPPA_CH" "$MC3")" "" "control: no Slack answer settled, a swap cut after the removal never completes"
+sk_bin_reset
+
+sk_mutant markup-skipped relay.py 'text = plain\(\(message\.get\("text"\) or ""\)\.strip\(\), self\.user_name\)' 'text = (message.get("text") or "").strip()'
+MK1="$(sk_inject "$ZETA_CH" U001 'a &amp; b')"
+sk_poll "$ZETA"
+assert_eq "$(text_of "$ZETA" "$ZETA_CH:$MK1")" "a &amp; b" "control: the markup unread, Slack's escape lands as sent"
+sk_bin_reset
+
+sk_mutant markup-order markup.py 'return text\.replace\("&lt;", "<"\)\.replace\("&gt;", ">"\)\.replace\("&amp;", "&"\)' 'return text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")'
+MK2="$(sk_inject "$ZETA_CH" U001 'typed &amp;lt;')"
+sk_poll "$ZETA"
+assert_eq "$(text_of "$ZETA" "$ZETA_CH:$MK2")" "typed <" "control: &amp; unescaped first, a typed &lt; lands as <"
 sk_bin_reset
 
 sk_mutant text-check relay.py 'secret_check\(text\.encode\(\), f"id=\{env_id\}"\)' 'secret_check(b"", f"id={env_id}")'

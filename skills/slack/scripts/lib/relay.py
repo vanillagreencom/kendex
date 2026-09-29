@@ -37,6 +37,7 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from api import Slack
 from mailbox import LaneMail
+from markup import plain
 from refusals import Refusal, keyed, print_refusal
 from secret import check as secret_check
 from secret import checked_file
@@ -140,6 +141,7 @@ class RootRelay:
         self.skipped: set = set()
         self.last_ok: Optional[float] = None
         self.post_failed: Optional[Refusal] = None
+        self.names: Dict[str, str] = {}
         # The status record carries the poll count and the compaction day
         # across restarts; the journal holds deliveries and positions alone.
         record = read_status(path) or {}
@@ -256,7 +258,7 @@ class RootRelay:
             self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts, text=NOT_OWNER)
             self.journal.append(t="in", channel=self.channel, ts=ts, kind="ignored", reason="not-owner")
             return
-        text = (message.get("text") or "").strip()
+        text = plain((message.get("text") or "").strip(), self.user_name)
         lines = ([text] if text else []) + self.fetch_files(message)
         if not lines:
             self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts, text=NO_TEXT)
@@ -306,6 +308,21 @@ class RootRelay:
                 continue
             if self.react("reactions.remove", ts, SEEN) and self.react("reactions.add", ts, READ):
                 self.journal.append(t="mark", ts=ts, name=READ)
+
+    def user_name(self, user_id: str) -> str:
+        """The name Slack shows for a user a message mentions, asked once
+        per relay; the id itself when Slack refuses to say."""
+        if user_id not in self.names:
+            try:
+                user = self.api.get("users.info", user=user_id)["user"]
+            except Refusal as err:
+                if err.key == "slack-auth-failed":
+                    raise
+                print_refusal(err)
+                return user_id
+            profile = user.get("profile") or {}
+            self.names[user_id] = str(profile.get("display_name") or profile.get("real_name") or user.get("name") or user_id)
+        return self.names[user_id]
 
     def fetch_files(self, message: Dict) -> List[str]:
         """One line per file of an owner's message: the path it was saved

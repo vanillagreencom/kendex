@@ -208,6 +208,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"ok": False, "error": "users_not_found"})
         self.send_json({"ok": True, "user": {"id": user, "profile": {"email": params["email"]}}})
 
+    def m_users_info(self, params):
+        """A user's display name is the local part of the address the suite
+        gave it."""
+        for email, user in self.ws.users.items():
+            if user == params.get("user"):
+                name = email.split("@")[0]
+                return self.send_json({"ok": True, "user": {"id": user, "name": name, "profile": {"display_name": name}}})
+        self.send_json({"ok": False, "error": "user_not_found"})
+
     def m_conversations_list(self, params):
         channels = [dict(c, is_member=BOT in c["members"]) for c in self.ws.channels.values() if BOT in c["members"]]
         self.send_json({"ok": True, "channels": channels, "response_metadata": {"next_cursor": ""}})

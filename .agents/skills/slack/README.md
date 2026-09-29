@@ -27,6 +27,7 @@ Requires Python 3.8 or newer and the orch skill, which the install adds as a dep
 - `slack setup` resolves each owner's email address to a Slack user, creates the private channel or finds it by name, invites the owners and writes the binding under `tmp/slack/` in the checkout.
 - `slack listen --root A --root B` is one process for one person. Every `SLACK_POLL_SECONDS` it reads each channel's new messages, the thread of every open question, and every tenth poll the other threads younger than `SLACK_THREAD_DAYS`.
 - An owner's message reaches the overseer through the checkout's `lane-mail`, keyed by the Slack message id, so a message the relay carried once is never carried twice.
+- An owner's text reaches the overseer as typed. Slack's escapes read back as `&`, `<` and `>`; a link as `label (URL)`, or the URL alone; a mention as `@name`; a channel as `#name`; `<!here>` as `@here`. Emoji stay `:name:`.
 - Each file on an owner's message is downloaded with the bot token to `tmp/slack/files/<file id>-<name>` in the checkout, the directory mode 700 and the file mode 600. The message reaches the overseer with one line per file after its text: the saved path, or `file <id> not fetched: <why>`, such as `HTTP 403`. A download that fails never holds the message back.
 - A directive's message gets an :eyes: reaction in the poll that delivers it. Once the overseer's mailbox read passes that directive, the relay swaps it for :white_check_mark:. Neither mark posts a message. A mark Slack refuses is printed and delivery goes on; a refused swap is made again on the next poll.
 - The mailbox's new envelopes for the owner are posted to the channel: a question with its options, recommendation and deadline, a notice in the thread of the message it answers, a report as an uploaded file. An envelope older than `SLACK_THREAD_DAYS` is never posted.
@@ -74,7 +75,7 @@ settings:
 | `groups:read` | Find a private channel by name or id |
 | `groups:write` | Create a private channel and invite the owners |
 | `reactions:write` | Mark a directive's message as delivered and as read |
-| `users:read`, `users:read.email` | Resolve an owner's email address to a user |
+| `users:read`, `users:read.email` | Resolve an owner's email address to a user, and name a user an owner mentions |
 
 An app made from an earlier copy of this manifest lacks the scopes added since. Add each missing scope under the app's OAuth settings and reinstall the app to the workspace.
 
