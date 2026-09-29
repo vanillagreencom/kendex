@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# websocket.py's keepalive, the one check that finds a connection the network
-# dropped with no close. A WebSocket over a socket pair runs on an injected
-# clock; the peer reads what the client sent. The rows: no ping before `idle`
-# silent seconds, a ping at `idle`, no drop before `idle` more, `Closed` at
-# `idle` more with no frame, and any frame resetting the timer. The control
-# removes the `Closed` branch, so a silent connection is never dropped.
+# The keepalive inside websocket.py's `WebSocket.recv`, the one check that
+# finds a connection the network dropped with no close, and the read the
+# relay makes. A WebSocket over a socket pair runs on an injected clock; each
+# check is a `recv` that waits no time, and the peer reads what the client
+# sent. The rows: no ping before `idle` silent seconds, a ping at `idle`, no
+# drop before `idle` more, `Closed` at `idle` more with no frame, and any
+# frame resetting the timer. The control removes the `Closed` branch, so a
+# silent connection is never dropped.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -24,7 +26,7 @@ now = [0.0]
 def pair():
     client, peer = socket.socketpair()
     peer.setblocking(False)
-    return WebSocket(client, b"", lambda: now[0]), peer
+    return WebSocket(client, b"", IDLE, lambda: now[0]), peer
 
 
 def sent(peer):
@@ -43,7 +45,7 @@ def sent(peer):
 
 def check(ws):
     try:
-        ws.keepalive(IDLE)
+        ws.recv(0)
         return "open"
     except Closed:
         return "closed"
@@ -83,7 +85,7 @@ assert_eq "$(row frame-resets)|$(row idle-after-frame)" "open:none|open:ping" \
   "a frame resets the timer: no drop at the old bound, a new ping idle seconds after the frame"
 
 # --- control: the drop branch gone ---------------------------------------------
-sk_mutant drop websocket.py 'raise Closed\(f"no frame in \{int\(2 \* idle\)\}s"\)' 'return idle'
+sk_mutant drop websocket.py 'raise Closed\(f"no frame in \{int\(2 \* self\.idle\)\}s"\)' 'return self.idle'
 OUT="$(keepalive)"
 assert_eq "$(row at-drop)" "open" "control: the Closed branch gone, a silent connection is never dropped"
 sk_bin_reset

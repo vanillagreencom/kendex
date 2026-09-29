@@ -26,11 +26,11 @@ every message the workspace gains after that, the app's own included, goes
 to the newest open connection as an `events_api` envelope, and the client's
 acknowledgements are kept. A `socket` fault with `drop` withholds the next
 envelope and closes that connection with no close frame, as a network drop
-does; POST /_test/faults-reset drops every pending fault and sets the
-`hello` count back to one; POST /_test/socket with `disconnect: REASON`
-sends Slack's `disconnect` envelope, and with `num_connections: N` makes
-every later `hello` count N open connections on the app. /_test/state carries `sent`, `acks` and `withheld`
-envelope ids and the count of connections `opened`.
+does; POST /_test/faults-reset drops every pending fault; POST /_test/socket
+with `disconnect: REASON` sends Slack's `disconnect` envelope. Each token
+used on a method of the other answers `not_allowed_token_type`, as Slack
+does. /_test/state carries `sent`, `acks` and `withheld` envelope ids and the
+count of connections `opened`.
 """
 
 from __future__ import annotations
@@ -111,7 +111,6 @@ class Workspace:
         self.sent: list = []
         self.acks: list = []
         self.withheld: list = []
-        self.num_connections = 1  # the count every `hello` carries
         self.users = users  # email -> id
         self.page = page
         self.channels: dict = {}  # id -> {id, name, members, is_private}
@@ -269,7 +268,7 @@ class Handler(BaseHTTPRequestHandler):
         conn = Conn(self.connection)
         with self.ws.lock:
             self.ws.sockets.append(conn)
-            conn.send(json.dumps({"type": "hello", "num_connections": self.ws.num_connections}))
+            conn.send(json.dumps({"type": "hello"}))
         while conn.open:
             readable, _, _ = select.select([conn.sock], [], [], 0.05)
             if not readable:
@@ -330,7 +329,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send_json({"ok": False}, fault["status"], {"Retry-After": str(fault.get("retry_after", 0))})
                     return self.send_json({"ok": False, "error": fault["error"]})
             auth = self.headers.get("Authorization", "")
-            if auth == f"Bearer {self.ws.token}" and token != self.ws.token:
+            if auth in (f"Bearer {self.ws.token}", f"Bearer {self.ws.app_token}") and auth != f"Bearer {token}":
                 return self.send_json({"ok": False, "error": "not_allowed_token_type"})
             if auth != f"Bearer {token}":
                 return self.send_json({"ok": False, "error": "invalid_auth"})
@@ -381,14 +380,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"ok": True})
         if path == "/_test/socket":
             live = [conn for conn in ws.sockets if conn.open]
-            if body.get("num_connections"):
-                ws.num_connections = int(body["num_connections"])
             if live and body.get("disconnect"):
                 live[-1].send(json.dumps({"type": "disconnect", "reason": body["disconnect"]}))
             return self.send_json({"ok": bool(live)})
         if path == "/_test/faults-reset":
             ws.faults.clear()
-            ws.num_connections = 1
             return self.send_json({"ok": True})
         if path == "/_test/calls-reset":
             ws.calls.clear()

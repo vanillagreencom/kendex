@@ -51,7 +51,7 @@ D009 rejected Socket Mode because Slack sends each payload to one of an app's op
 
 - A relay needs a second secret, `SLACK_APP_TOKEN`, and the Slack app needs Socket Mode on and the `message.groups` bot event; the package README names both.
 - A reply under a notice younger than `SLACK_THREAD_DAYS` arrives at once, not within ten polls; `listen --status` shows the connection state and no longer prints a call budget.
-- A second relay on one app takes part of the first relay's events. Those messages land only at the first relay's next reconnect. A relay whose `hello` counts another connection on the app prints `slack-app-shared`, and its `listen --status` row reads `failing`.
+- A second relay on one app takes part of the first relay's events. Those messages land only at the first relay's next reconnect.
 
 **Revisit When**: Slack retires Socket Mode or the `message.groups` event; one machine needs more relays than one app serves; or the catalog admits a dependency manager.
 

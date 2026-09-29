@@ -1,25 +1,29 @@
 #!/usr/bin/env bash
 # `slack listen` on its Socket Mode connection, against the fake's WebSocket
 # and the real lane-mail. The rows: listen with no SLACK_APP_TOKEN refused, a
-# bot token in SLACK_APP_TOKEN stopping the relay, the first connection
-# journaled `connect` and shown connected, an owner message landing from its
-# event alone, its eyes mark set and every envelope acknowledged, the first
-# reply in an ask's thread landing as the answer, a reply under a thread past
+# bot token in SLACK_APP_TOKEN and an app-level token without
+# connections:write each stopping the relay, the first connection journaled
+# `connect` and shown connected, an owner message landing from its event
+# alone, its eyes mark set and every envelope acknowledged, the first reply in
+# an ask's thread landing as the answer, a reply under a thread past
 # SLACK_THREAD_DAYS left unrouted, two roots on one relay each receiving its
-# own channel's events, an event whose delivery lane-mail refused landing
-# through the next history read, an envelope lost with its connection
-# delivered by the history read of the reconnect, journaled `disconnect` and
-# `reconnect`, Slack's `disconnect` envelope answered with a new connection,
-# a relay that cannot reconnect shown reconnecting, and a `hello` counting a
-# second connection on the app refused and shown failing. The relay reads
-# Slack's history only on a connect or after a refused delivery, so between
-# them a message lands by its event alone. A positive row waits up to twenty
-# seconds; the `events`, `catch-up` and `re-arm` controls wait three, which
-# tells the event path, or the re-armed read of the next poll, from no path
-# at all. The controls: no acknowledgement, the app-token check gone, events
-# unread, routing by channel gone, no history read on reconnect, no history
-# read after a refused delivery, the thread-age check gone from the event
-# path, and the connection count unread.
+# own channel's events and neither an unbound channel's, an event whose
+# delivery lane-mail refused landing through the next history read, an
+# envelope lost with its connection delivered by the history read of the
+# reconnect, journaled `disconnect` and `reconnect`, a reconnect whose history
+# read Slack refused delivering on a later poll, Slack's `disconnect` envelope
+# answered with a new connection and the doctor row back to `ok`, and a relay
+# that cannot reconnect shown reconnecting. The relay reads Slack's history
+# only on a connect or after a refused read or delivery, so between them a
+# message lands by its event alone. A positive row waits up to twenty
+# seconds; the `events`, `catch-up`, `re-arm` and `read-due` controls wait
+# three, which tells the event path, or the re-armed read of the next poll,
+# from no path at all. The controls: no acknowledgement, the token type and
+# the app token's scope no longer refusing the token, events unread, routing
+# by channel gone, an unbound channel's event routed to the first root, no
+# history read on reconnect, no history read after a refused delivery or a
+# refused read, the thread-age check gone from the event path, and the
+# connection error kept past a reconnect.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -58,7 +62,7 @@ opened_at_least() { [ "$(sk_state .opened)" -ge "$1" ] && echo yes; } # N
 unacked() { sk_state '(.sent - .acks) | length'; }
 field() { printf '%s\n' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p"; } # LINE KEY
 connection() { sk_run -- listen --status --root "$1"; field "$OUT" connection; } # ROOT
-state_fix() { sk_run -- listen --status --root "$1"; printf '%s %s' "$(field "$OUT" state)" "${OUT#* fix=}"; } # ROOT
+state_link() { sk_run -- listen --status --root "$1"; printf '%s %s' "$(field "$OUT" state)" "$(field "$OUT" connection)"; } # ROOT
 texts() { jq -r .text "$(sk_box "$1")/to-lane.jsonl" | tr '\n' ' '; } # ROOT — every text in its to-lane box
 # relay ROOT [--root ROOT]... — sk_relay_start, then a stop of the suite unless
 # the relay holds its connection, so no row reads an event path that was never
@@ -75,8 +79,13 @@ sk_run -- listen --root "$ROOT"
 assert_eq "$RC=$ERR1" "2=slack: setting-missing=SLACK_APP_TOKEN" "listen with no SLACK_APP_TOKEN is refused before anything runs"
 sk_run SLACK_APP_TOKEN="$SK_TOKEN" -- listen --root "$ROOT"
 assert_eq "$RC=$ERR1" \
-  "2=slack: slack-auth-failed=not_allowed_token_type fix=set SLACK_APP_TOKEN to an app-level token with connections:write and restart the relay" \
+  "2=slack: slack-auth-failed=not_allowed_token_type fix=set a live SLACK_APP_TOKEN with connections:write and restart the relay" \
   "a bot token in SLACK_APP_TOKEN stops the relay, naming the setting and its scope"
+sk_ctl /_test/fault '{"method": "apps.connections.open", "error": "missing_scope"}' >/dev/null
+sk_run SLACK_APP_TOKEN="$SK_APP_TOKEN" -- listen --root "$ROOT"
+assert_eq "$RC=$ERR1" \
+  "2=slack: slack-auth-failed=missing_scope fix=set a live SLACK_APP_TOKEN with connections:write and restart the relay" \
+  "an app-level token without connections:write stops the relay, naming the setting and its scope"
 
 # --- the first connection: an owner message lands from its event -------------------
 relay "$ROOT"
@@ -112,17 +121,23 @@ assert_eq "$(landed "$BETA" "C002:$YR")|$(landed "$BETA" "C002:$OR")" "under the
 sk_relay_stop
 
 # --- two roots on one relay: each channel's event lands in its own mailbox ------------------
+# IOTA is bound, so the app is in its channel and Slack sends its events,
+# but the relay is not given it.
 ZETA="$(sk_new_root zeta)"
 sk_bind "$ZETA"
 ETA="$(sk_new_root eta)"
 sk_bind "$ETA"
+IOTA="$(sk_new_root iota)"
+sk_bind "$IOTA"
 ZC="$(sk_channel "$ZETA")"
 EC="$(sk_channel "$ETA")"
+IC="$(sk_channel "$IOTA")"
 relay "$ZETA" --root "$ETA"
+sk_inject "$IC" U001 'for no root here' >/dev/null
 TZ="$(sk_inject "$ZC" U001 'for zeta')"
 TE="$(sk_inject "$EC" U001 'for eta')"
 assert_eq "$(landed "$ZETA" "$ZC:$TZ")|$(landed "$ETA" "$EC:$TE")|$(texts "$ZETA")|$(texts "$ETA")" "for zeta|for eta|for zeta |for eta " \
-  "two roots on one relay: each channel's event lands in its own root's mailbox and not the other's"
+  "two roots on one relay: each channel's event lands in its own root's mailbox, not the other's and not an unbound channel's"
 sk_relay_stop
 
 # --- an event whose delivery lane-mail refused: the next history read lands it ---------------
@@ -177,6 +192,9 @@ assert_eq "$(awaited opened_at_least $((OPENED + 1)))" "yes" "Slack's disconnect
 assert_eq "$(lines "$GAMMA" disconnect | sed -n '2p')" "disconnect slack-refresh_requested" "the disconnect is journaled with Slack's reason"
 TS2="$(sk_inject "$GC" U001 'after the refresh')"
 assert_eq "$(landed "$GAMMA" "$GC:$TS2")" "after the refresh" "a message after the refresh lands from its event"
+# The landing above follows the reconnect's first poll, so the record read
+# here is one the new connection wrote.
+assert_eq "$(state_link "$GAMMA")" "ok connected" "after the refresh the doctor row reads ok and connected"
 
 # --- a relay that cannot reconnect shows reconnecting ----------------------------------------
 sk_ctl /_test/fault '{"method": "apps.connections.open", "error": "internal_error", "times": 100}' >/dev/null
@@ -188,14 +206,24 @@ assert_has "$(cat "$SK_TMP/relay.err")" "slack: slack-api-failed=apps.connection
 sk_relay_stop
 sk_ctl /_test/faults-reset >/dev/null
 
-# --- a second connection on the app: refused, kept, and shown failing ------------------------
-SHARED="$(sk_new_root shared)"
-sk_bind "$SHARED"
-SHARED_FIX="slack-app-shared=2 fix=stop every other relay on this Slack app; each machine runs its own app and one relay"
-sk_ctl /_test/socket '{"num_connections": 2}' >/dev/null
-relay "$SHARED"
-assert_has "$(cat "$SK_TMP/relay.err")" "slack: $SHARED_FIX" "a hello counting two connections on the app is refused slack-app-shared"
-assert_eq "$(state_fix "$SHARED")" "failing $SHARED_FIX" "the shared app's relay stays connected and its row reads failing, the one-relay rule as its fix"
+# --- a reconnect whose history read Slack refused: a later poll reads it ---------------------
+KAPPA="$(sk_new_root kappa)"
+sk_bind "$KAPPA"
+KC="$(sk_channel "$KAPPA")"
+# refused_read [TRIES] — drop the connection with one envelope withheld and
+# refuse the reconnect's history read; KAPPA_TEXT is what landed of it.
+refused_read() {
+  relay "$KAPPA"
+  OPENED="$(sk_state .opened)"
+  sk_ctl /_test/fault '{"method": "conversations.history", "error": "internal_error"}' >/dev/null
+  sk_ctl /_test/fault '{"method": "socket", "drop": true}' >/dev/null
+  KT="$(sk_inject "$KC" U001 'sent while the read was refused')"
+  KAPPA_TEXT="$(landed "$KAPPA" "$KC:$KT" "${1:-200}")"
+}
+refused_read
+assert_eq "$KAPPA_TEXT|$(sk_state .opened)" "sent while the read was refused|$((OPENED + 1))" \
+  "a reconnect whose history read Slack refused delivers the message on a later poll, with no second reconnect"
+assert_has "$(cat "$SK_TMP/relay.err")" "slack: slack-api-failed=conversations.history error=internal_error" "the reconnect's history read was refused"
 sk_relay_stop
 sk_ctl /_test/faults-reset >/dev/null
 
@@ -211,10 +239,18 @@ assert_eq "$(unacked)" "1" "control: the acknowledgement gone, the envelope stay
 sk_relay_stop
 sk_bin_reset
 
-sk_mutant app-token relay.py 'if err\.error in APP_TOKEN_ERRORS:' 'if False:'
+sk_mutant token-type api.py '"token_expired",\n    "not_allowed_token_type",' '"token_expired",'
 sk_relay_start "$ROOT" SLACK_APP_TOKEN="$SK_TOKEN"
-assert_eq "$(connection "$ROOT")" "reconnecting" "control: the app-token check gone, a bot token in SLACK_APP_TOKEN leaves the relay reconnecting"
+assert_eq "$(connection "$ROOT")" "reconnecting" "control: the token type no longer judged, a bot token in SLACK_APP_TOKEN leaves the relay reconnecting"
 sk_relay_stop
+sk_bin_reset
+
+sk_mutant app-scope api.py 'if error in AUTH_ERRORS or error == "missing_scope" and self\.scope:' 'if error in AUTH_ERRORS:'
+sk_ctl /_test/fault '{"method": "apps.connections.open", "error": "missing_scope", "times": 100}' >/dev/null
+sk_relay_start "$ROOT"
+assert_eq "$(connection "$ROOT")" "reconnecting" "control: missing_scope no longer refusing the app token, the relay stays reconnecting"
+sk_relay_stop
+sk_ctl /_test/faults-reset >/dev/null
 sk_bin_reset
 
 sk_mutant events relay.py 'root\.on_message\(event, self\.bot_user\)' 'pass'
@@ -228,6 +264,13 @@ sk_mutant routing relay.py 'root = self\.by_channel\.get\(str\(event\.get\("chan
 relay "$ZETA" --root "$ETA"
 TE2="$(sk_inject "$EC" U001 'for eta again')"
 assert_eq "$(landed "$ZETA" "$ZC:$TE2")" "for eta again" "control: routing by channel gone, eta's message lands in zeta's mailbox"
+sk_relay_stop
+sk_bin_reset
+
+sk_mutant unbound relay.py 'root = self\.by_channel\.get\(str\(event\.get\("channel", ""\)\)\)' 'root = self.by_channel.get(str(event.get("channel", ""))) or self.roots[0]'
+relay "$ZETA" --root "$ETA"
+TI="$(sk_inject "$IC" U001 'unbound, routed anyway')"
+assert_eq "$(landed "$ZETA" "$ZC:$TI")" "unbound, routed anyway" "control: an unbound channel's event falls to the first root, and lands in zeta's mailbox"
 sk_relay_stop
 sk_bin_reset
 
@@ -247,6 +290,13 @@ assert_eq "$LOST_TEXT" "" "control: no history read on a connect, the lost envel
 sk_relay_stop
 sk_bin_reset
 
+sk_mutant read-due relay.py '        horizon = self\.settings\.horizon\(self\.clock\(\)\)\n        position = self\.state\.seen_ts' '        self.caught_up = True\n        horizon = self.settings.horizon(self.clock())\n        position = self.state.seen_ts'
+refused_read 30
+assert_eq "$KAPPA_TEXT" "" "control: the read marked done before Slack answers, the refused reconnect's message does not land within the short bound"
+sk_relay_stop
+sk_ctl /_test/faults-reset >/dev/null
+sk_bin_reset
+
 sk_mutant event-age relay.py 'if thread is None or not self\.live\(thread\):' 'if thread is None:'
 relay "$BETA"
 OR2="$(sk_inject C002 U001 'late under the old one' "$OLD")"
@@ -254,12 +304,15 @@ assert_eq "$(landed "$BETA" "C002:$OR2")" "late under the old one" "control: the
 sk_relay_stop
 sk_bin_reset
 
-sk_mutant shared relay.py 'if isinstance\(shared, int\) and shared > 1:' 'if False:'
-sk_ctl /_test/socket '{"num_connections": 2}' >/dev/null
-relay "$SHARED"
-assert_eq "$(state_fix "$SHARED" | cut -d' ' -f1)" "ok" "control: the connection count unread, a shared app's row reads ok"
+sk_mutant link-clear relay.py 'self\.set_connection\("connected"\)\n        self\.connection_error = ""' 'self.set_connection("connected")'
+relay "$GAMMA"
+OPENED="$(sk_state .opened)"
+sk_ctl /_test/socket '{"disconnect": "refresh_requested"}' >/dev/null
+awaited opened_at_least $((OPENED + 1)) >/dev/null
+TS5="$(sk_inject "$GC" U001 'after the refresh, error kept')"
+landed "$GAMMA" "$GC:$TS5" >/dev/null
+assert_eq "$(state_link "$GAMMA")" "failing connected" "control: the connection error kept past a reconnect, the refreshed relay's row reads failing"
 sk_relay_stop
-sk_ctl /_test/faults-reset >/dev/null
 sk_bin_reset
 
 sk_summary

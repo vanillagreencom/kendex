@@ -2,8 +2,9 @@
 # `slack setup`: the owners resolved by email, the channel created or found
 # by name or adopted by id, the invite, the binding it writes, and the
 # refusals a partial configuration, an unknown owner, a public channel, a
-# channel the bot is not in, a dead token, a refused invite and a rebind over
-# a standing journal get. The controls at the end plant one mutant per rule:
+# channel the bot is not in, a dead token, an app-level token in
+# SLACK_BOT_TOKEN, a refused invite and a rebind over a standing journal get.
+# The token-type rule's control is socket.test.sh's `token-type`. The controls at the end plant one mutant per rule:
 # the owner lookup no longer mapping users_not_found, the public channel
 # taken, the invite refusal tolerated, and the rebind rule gone.
 set -uo pipefail
@@ -65,6 +66,9 @@ assert_eq "$RC=$ERR1" "2=slack: setting-invalid=SLACK_POLL_SECONDS=soon" "a poll
 sk_run SLACK_BOT_TOKEN=wrong -- setup --root "$ROOT"
 assert_eq "$RC=$ERR1" "2=slack: slack-auth-failed=invalid_auth fix=set a live SLACK_BOT_TOKEN and restart the relay" \
   "a token Slack refuses is slack-auth-failed with its remedy"
+sk_run SLACK_BOT_TOKEN="$SK_APP_TOKEN" -- setup --root "$ROOT"
+assert_eq "$RC=$ERR1" "2=slack: slack-auth-failed=not_allowed_token_type fix=set a live SLACK_BOT_TOKEN and restart the relay" \
+  "an app-level token in SLACK_BOT_TOKEN is slack-auth-failed, naming the setting"
 sk_run -- setup --root "$SK_TMP/nowhere"
 assert_eq "$RC=$ERR1" "2=slack: root-unreadable=$SK_TMP/nowhere" "a root that is no directory is refused"
 IOTA="$(sk_new_root iota)"

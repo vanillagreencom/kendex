@@ -55,8 +55,8 @@ listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
           and exits 0 when every poll succeeded, 1 otherwise
   --status  one `slack-relay=ROOT state=ok|failing|stale|never` line per
           root from the relay's status record, with the connection state;
-          failing too while another connection shares the app, or while
-          the relay has been reconnecting past twice its longest wait
+          failing too while the relay has been reconnecting past twice its
+          longest wait
 post      one message to the bound channel, or --channel for another, its
           text sent as standard Markdown of at most 12,000 characters;
           --mention prefixes every owner; --file uploads the file with the

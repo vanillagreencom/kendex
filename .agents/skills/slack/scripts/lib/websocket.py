@@ -43,19 +43,25 @@ def accept_key(key: str) -> str:
 
 
 class WebSocket:
-    def __init__(self, sock: socket.socket, buffered: bytes, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self, sock: socket.socket, buffered: bytes, idle: float, clock: Callable[[], float] = time.monotonic
+    ) -> None:
         self.sock = sock
         self.buf = bytearray(buffered)
+        # Seconds of silence before `recv` pings, and as many again with no
+        # frame before it reads the connection as dropped.
+        self.idle = idle
         self.clock = clock
         self.parts: list = []
         # The clock when a frame last arrived, and when an unanswered ping
-        # went out; `keepalive` judges both.
+        # went out; `_keepalive` judges both.
         self.heard = clock()
         self.pinged: Optional[float] = None
 
     @classmethod
-    def connect(cls, url: str) -> "WebSocket":
-        """The opening handshake to a ws:// or wss:// URL."""
+    def connect(cls, url: str, idle: float) -> "WebSocket":
+        """The opening handshake to a ws:// or wss:// URL; `idle` as the
+        constructor states it."""
         parts = urllib.parse.urlsplit(url)
         if parts.scheme not in ("ws", "wss") or not parts.hostname:
             raise Closed(f"url {parts.scheme}://{parts.hostname}")
@@ -95,7 +101,7 @@ class WebSocket:
             sock.close()
             raise
         # The connect timeout bounded the handshake; `recv` sets its own.
-        return cls(sock, rest)
+        return cls(sock, rest, idle)
 
     def send_text(self, text: str) -> None:
         self._send(TEXT, text.encode())
@@ -118,34 +124,36 @@ class WebSocket:
         except OSError as err:
             raise Closed(f"send ({err})") from err
 
-    def keepalive(self, idle: float) -> float:
+    def _keepalive(self) -> float:
         """A ping after `idle` seconds with no frame, and `Closed` when
         `idle` more pass with no frame in answer: a connection the network
         dropped without a word reads as open until then. Returns the
-        seconds until the next check is due."""
+        seconds until the next check is due, always more than zero."""
         now = self.clock()
         if self.pinged is not None:
-            if now - self.pinged >= idle:
-                raise Closed(f"no frame in {int(2 * idle)}s")
-            return self.pinged + idle - now
-        if now - self.heard >= idle:
+            if now - self.pinged >= self.idle:
+                raise Closed(f"no frame in {int(2 * self.idle)}s")
+            return self.pinged + self.idle - now
+        if now - self.heard >= self.idle:
             self._send(PING, b"")
             self.pinged = now
-            return idle
-        return self.heard + idle - now
+            return self.idle
+        return self.heard + self.idle - now
 
     def recv(self, timeout: float) -> Optional[str]:
         """The next text message, or None once `timeout` seconds pass with
-        none. A ping is answered and a close is returned before `Closed` is
-        raised."""
+        none. Every wait for a frame first runs the keepalive, so no caller
+        can skip it. A ping is answered and a close is returned before
+        `Closed` is raised."""
         deadline = self.clock() + max(timeout, 0.0)
         while True:
             frame = self._frame()
             if frame is None:
+                due = self._keepalive()
                 remaining = deadline - self.clock()
                 if remaining <= 0:
                     return None
-                self._fill(remaining)
+                self._fill(min(remaining, due))
                 continue
             self.heard = self.clock()
             self.pinged = None

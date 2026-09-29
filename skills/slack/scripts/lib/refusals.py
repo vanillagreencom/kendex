@@ -151,14 +151,6 @@ EXPLAIN = {
         " relay has been without a connection for twice the longest wait,"
         " `listen --status` reads failing, with the last refusal as its fix=."
     ),
-    "slack-app-shared": (
-        "Slack counts more than one open Socket Mode connection on this"
-        " relay's app; the value is the count. Slack sends each owner message"
-        " to one of them, so another relay on the app takes part of this"
-        " relay's messages. The connection is kept and `listen --status`"
-        " reads failing until a later connection counts one. fix= names the"
-        " remedy: one relay per Slack app."
-    ),
     "lane-mail-failed": (
         "lane-mail refused a call the relay needed; the value is its first"
         " line. After a refused write the Slack message is read again on the"

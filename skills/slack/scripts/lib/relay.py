@@ -95,8 +95,8 @@ from websocket import Closed, WebSocket
 ROUTED_SUBTYPES = {None, "file_share"}
 # Seconds the relay waits for Slack's `hello` on a new connection.
 HELLO_SECONDS = 10
-# Seconds of silence on the connection before the relay pings it, and as
-# many again before it reads the connection as dropped.
+# Seconds of silence on the connection before it pings, and as many again
+# before it reads itself as dropped: `WebSocket.recv` judges both.
 IDLE_SECONDS = 30
 # The wait before a failed connect is tried again, doubled per failure up to
 # the second figure; a drop is answered with a connect at once.
@@ -105,10 +105,6 @@ RETRY_MAX_SECONDS = 60
 # Seconds a relay may stay reconnecting before `listen --status` reads it as
 # failing: two of the longest waits between connects.
 RECONNECT_BOUND_SECONDS = 2 * RETRY_MAX_SECONDS
-# Slack's answers to apps.connections.open that no retry mends: a token of
-# another type in SLACK_APP_TOKEN, or an app-level token without
-# connections:write.
-APP_TOKEN_ERRORS = {"not_allowed_token_type", "missing_scope"}
 NOT_OWNER = "Only the channel's owners steer this session; this message is not routed."
 NO_TEXT = "Only text and files are routed; this message has neither."
 RECORDED = "Recorded as your answer."
@@ -697,9 +693,8 @@ class Relay:
         # is the UTC second the state began.
         self.connection = "disconnected"
         self.since = format_at(clock())
-        # The keyed refusal that keeps owner messages from arriving: the last
-        # refused connect or drop while reconnecting, or a shared app while
-        # connected; empty otherwise.
+        # The last refused connect or drop while the relay reconnects; empty
+        # once a connection opens.
         self.connection_error = ""
         self.opened = False
 
@@ -727,7 +722,7 @@ class Relay:
         print(keyed("listening", f"{len(self.roots)} poll_seconds={self.settings.poll_seconds}"), flush=True)
         if once:
             return 0 if self.poll_once() else 1
-        app_api = Slack(self.settings.app_token, self.settings.api_url, token_name="SLACK_APP_TOKEN")
+        app_api = Slack(self.settings.app_token, self.settings.api_url, token_name="SLACK_APP_TOKEN", scope="connections:write")
         next_poll = retry_at = self.clock()
         delay = RETRY_FIRST_SECONDS
         while True:
@@ -765,21 +760,14 @@ class Relay:
     def open(self, app_api: Slack) -> bool:
         """A new connection, ready once Slack's `hello` arrives: journaled
         `connect` the first time and `reconnect` after, every root's
-        catch-up then due. A `hello` counting more than this connection on
-        the app is refused `slack-app-shared`, and the connection is kept.
-        False, with the refusal printed, when Slack or the network refused
-        it; a token no retry mends stops the relay."""
+        catch-up then due. False, with the refusal printed, when Slack or
+        the network refused it; a token no retry mends stops the relay."""
         try:
             url = str(app_api.post("apps.connections.open")["url"])
-            socket = WebSocket.connect(url)
+            socket = WebSocket.connect(url, IDLE_SECONDS)
         except Refusal as err:
             if err.key == "slack-auth-failed":
                 raise
-            if err.error in APP_TOKEN_ERRORS:
-                raise Refusal(
-                    "slack-auth-failed",
-                    f"{err.error} fix=set SLACK_APP_TOKEN to an app-level token with connections:write and restart the relay",
-                ) from err
             self.refused(err)
             return False
         except Closed as err:
@@ -796,15 +784,6 @@ class Relay:
         self.socket = socket
         self.set_connection("connected")
         self.connection_error = ""
-        shared = hello.get("num_connections")
-        if isinstance(shared, int) and shared > 1:
-            err = Refusal(
-                "slack-app-shared",
-                f"{shared} fix=stop every other relay on this Slack app; each machine runs its own app and one relay",
-            )
-            print_refusal(err)
-            self.connection_error = f"{err.key}={err.value}"
-
         kind = "reconnect" if self.opened else "connect"
         self.opened = True
         for root in self.roots:
@@ -824,13 +803,13 @@ class Relay:
         self.refused(Refusal("socket-lost", reason))
 
     def listen_until(self, deadline: float) -> None:
-        """Envelopes off the connection until `deadline` or a drop."""
+        """Envelopes off the connection until `deadline` or a drop, the
+        silent drop `WebSocket.recv` finds among them."""
         socket = self.socket
         assert socket is not None, "listen needs an open connection"
         while self.clock() < deadline:
             try:
-                wait = socket.keepalive(IDLE_SECONDS)
-                text = socket.recv(min(wait, deadline - self.clock()))
+                text = socket.recv(deadline - self.clock())
                 if text is not None:
                     self.envelope(socket, text)
             except Closed as err:

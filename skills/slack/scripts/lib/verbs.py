@@ -208,8 +208,8 @@ def status(roots: List[Path], now: float) -> int:
             continue
         age = now - float(record["last_poll"])
         fresh = age <= 2 * int(record["poll_seconds"]) + 5
-        # A shared app, or a connect refused past the bound, keeps owner
-        # messages from arriving though every poll succeeds.
+        # A connect refused past the bound keeps owner messages from
+        # arriving though every poll succeeds.
         link_error = record["connection_error"]
         if record["connection"] == "reconnecting" and now - parse_at(record["connection_since"]) <= RECONNECT_BOUND_SECONDS:
             link_error = ""

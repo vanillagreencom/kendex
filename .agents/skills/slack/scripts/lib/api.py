@@ -35,7 +35,17 @@ from typing import BinaryIO, Callable, Deque, Dict, Optional
 
 from refusals import Refusal
 
-AUTH_ERRORS = {"invalid_auth", "not_authed", "account_inactive", "token_revoked", "token_expired"}
+# Slack's answers that no retry mends, since the token itself is wrong;
+# not_allowed_token_type is a token of another type under the setting, such
+# as an app-level token in SLACK_BOT_TOKEN.
+AUTH_ERRORS = {
+    "invalid_auth",
+    "not_authed",
+    "account_inactive",
+    "token_revoked",
+    "token_expired",
+    "not_allowed_token_type",
+}
 RETRIES = 3
 TIMEOUT_SECONDS = 30
 COPY_BYTES = 64 * 1024
@@ -59,10 +69,16 @@ class Slack:
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
         token_name: str = "SLACK_BOT_TOKEN",
+        scope: str = "",
     ) -> None:
         self.token = token
         # The setting a refused token is named by in the refusal's fix=.
         self.token_name = token_name
+        # The one scope every call of this client needs, `connections:write`
+        # for the app-level token: Slack's missing_scope then refuses the
+        # token. Empty for the bot token, whose missing scope refuses one
+        # method alone.
+        self.scope = scope
         self.base_url = base_url.rstrip("/")
         self.clock = clock
         self.sleep = sleep
@@ -110,8 +126,9 @@ class Slack:
             raise Refusal("slack-api-failed", f"{method} error=not-object")
         if not answer.get("ok"):
             error = str(answer.get("error", "unknown"))
-            if error in AUTH_ERRORS:
-                raise Refusal("slack-auth-failed", f"{error} fix=set a live {self.token_name} and restart the relay")
+            if error in AUTH_ERRORS or error == "missing_scope" and self.scope:
+                held = f" with {self.scope}" if self.scope else ""
+                raise Refusal("slack-auth-failed", f"{error} fix=set a live {self.token_name}{held} and restart the relay")
             raise Refusal("slack-api-failed", f"{method} error={error}", error=error)
         return answer
 
