@@ -2195,9 +2195,11 @@ overseer_publish() { # NOTICE RECORD ERR_FILE
 # that was taken, and how a relaunch describes where the successor's account
 # came from. Every other plan reads the same for both, because the reason no
 # successor opens is the same reason. RECORD is the fleet state's overseer
-# record key, `<server> <pane>` or empty for none, and IDENTITY this pane's;
-# the no-line plan names which of the three shapes left it with no line.
-overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD IDENTITY
+# record key, `<server> <pane>` or empty for none, and MINE 1 where that
+# record names this session (overseer_record_read), which the key alone does
+# not say: an earlier server handed the same pid and pane id left the same
+# one. The no-line plan names which of the three shapes left it with no line.
+overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
   local kind="$1" notice="$WORK_DIR/overseer-$1.txt" record="$WORK_DIR/overseer-$1.json"
   local errf="$WORK_DIR/overseer-deliver.err" now plan_text reading relaunch_text
   now="$(from_epoch "$PASS_NOW" '%Y-%m-%dT%H:%M:%SZ')" || now=""
@@ -2214,7 +2216,7 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD IDENTITY
     no-line)
       if [[ -z "$6" ]]; then
         plan_text='The fleet state holds no overseer record, so no successor is launched; start one by hand.'
-      elif [[ "$6" == "$7" ]]; then
+      elif [[ "$7" == 1 ]]; then
         plan_text='The fleet state record for this pane holds no launch line, so no successor is launched; start one by hand.'
       else
         plan_text="The fleet state record names another session, tmux server ${6%% *} pane ${6#* }, whose launch line is not replayed as this pane's, so no successor is launched; start one by hand."
@@ -2547,7 +2549,8 @@ overseer_context_check() { # PANE IDENTITY
 }
 
 # The overseer's own session as one reading: OV_WINDOW, OV_IDENTITY (`<server>
-# <pane>`, the key its rows are kept under), OV_STATE, the word the shared
+# <pane>`, the key its rows are kept under), OV_START (its server's start,
+# empty where unread, which the record is judged against), OV_STATE, the word the shared
 # judge would give it, and OV_SOURCE, what settled that word. The long pass
 # reads it before its checks and the mail pass before it takes any mail, so
 # both read one session the one way. A pane that cannot be read is noted once
@@ -2574,6 +2577,7 @@ overseer_context_check() { # PANE IDENTITY
 # capture, empty on every other source.
 OV_WINDOW=""
 OV_IDENTITY=""
+OV_START=""
 OV_SCREEN=""
 OV_STATE=""
 OV_SOURCE=""
@@ -2596,11 +2600,13 @@ overseer_pane_read() { # PANE
   OV_WINDOW="$OL_INSPECT_WINDOW"
   server="$OL_INSPECT_SERVER"
   OV_IDENTITY="$server $pane"
+  OV_START="$(ol_session_start "$server" "$pane")"
   [[ "$OL_INSPECT_STATE" != exited ]] || bare=1
   [[ ",$OL_INSPECT_CAUSE," != *,process-probe,* ]] || note_probe_unusable "$pane" "$OL_INSPECT_PROBE"
   # The rows file and the exit status the record holds for THIS pane on THIS
-  # server, and neither for a record naming another session: that one's are
-  # not this pane's. An exit status is `overseer-run`'s, written once the
+  # server, by `ol_names`, and neither for a record naming another session:
+  # that one's, an earlier server's handed the same pid and pane among them,
+  # are not this pane's. An exit status is `overseer-run`'s, written once the
   # launch line returned (lib/overseer-launch.sh § ol_record_exit), and it
   # settles the session, `source=record`, only over the state that return
   # leaves: a bare shell with nothing under it. A harness the person started
@@ -2608,7 +2614,7 @@ overseer_pane_read() { # PANE
   # earlier session's.
   cause=unrecorded exit_status=""
   if ! rows="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee \
-    "if (.overseer.server // \"\") == \"$server\" and (.overseer.pane // \"\") == \"$pane\"
+    "$OL_JQ_DEFS if .overseer | ol_names(\"$server\"; \"$OV_START\"; \"$pane\")
      then \"\\(.overseer.exit.status // \"\")\\t\\(.overseer.session_rows // \"\")\" else \"\" end" 2>"$errf")"; then
     cause=state-unreadable rows=""
   fi
@@ -2673,7 +2679,7 @@ overseer_judge() { # PANE
 
 check_overseer() {
   local pane="${TMUX_PANE:-}" window screen prior count succession plan
-  local record record_field identity rows attempt completed passes=""
+  local record record_mine record_field identity rows attempt completed passes=""
   local ov_case row other succeed_rc below banner banner_rc
   local errf="$WORK_DIR/overseer.err"
   # Off tmux there is no overseer pane to read, and with no workflow-state
@@ -2704,10 +2710,11 @@ check_overseer() {
   # replay. The reader is lib/watch-overseer-record.sh's, the one the start
   # names its `held=` line with, and it answers the record's own key too, so
   # a death no line is replayed for can say which record stood in the way.
-  overseer_record_read "${identity%% *}" "$pane" 2>"$errf" \
+  overseer_record_read "${identity%% *}" "$OV_START" "$pane" 2>"$errf" \
     || { overseer_note overseer-unwatched "state=oversee"; return 0; }
   OVERSEER_LINE="$OVERSEER_RECORD_LINE"
   record="$OVERSEER_RECORD_KEY"
+  record_mine="$OVERSEER_RECORD_MINE"
 
   overseer_judge "$pane"
   # An account the mark judgement reads at zero headroom is a wall whether or
@@ -2833,7 +2840,7 @@ check_overseer() {
       banner_payload "$below" "$banner" || die limit-banner-missing "" "pane=$pane"
     fi
     PASS_EVENT=1
-    overseer_deliver "$ov_case" "$pane" "$window" "$succession" "$plan" "$record" "$identity"
+    overseer_deliver "$ov_case" "$pane" "$window" "$succession" "$plan" "$record" "$record_mine"
   fi
   if [[ "$plan" != relaunch ]]; then
     OVERSEER_STOP=1

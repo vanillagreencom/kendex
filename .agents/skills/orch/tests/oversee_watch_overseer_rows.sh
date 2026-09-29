@@ -156,6 +156,16 @@ assert_eq "$(grep '^EVENT overseer-walled' <<<"$OUT")|$(sed -n 2p <<<"$OUT")" \
 one_pass five_mark "$FIVE_MARK" "$START"
 assert_eq "$ONE_PASS" "rc=0 walled=0 marks=1 launched=0" "a mark above zero is reported as the mark alone" "$ERR"
 
+# exit_case_state NAME STATUS [PANE_STATE] — a rows sandbox over PANE_STATE,
+# exited by default, whose record carries STATUS as overseer-run's exit
+# status, none where it is empty.
+exit_case_state() { # NAME STATUS [PANE_STATE]
+  rows_case "$1" "${3:-exited}" "$START"
+  if [[ -n "$2" ]]; then
+    jq --argjson status "$2" '.overseer.exit = {status: $status, at: "2026-09-28T01:00:00Z"}' \
+      "$STUB_DIR/oversee-state.json" > "$STUB_DIR/state.tmp" && mv -- "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
+  fi
+}
 # The exit status overseer-run writes into the record once the launch line
 # returns settles the session, `source=record`, over the bare shell that
 # return leaves. A harness started again in the same pane is that shell's
@@ -163,11 +173,7 @@ assert_eq "$ONE_PASS" "rc=0 walled=0 marks=1 launched=0" "a mark above zero is r
 # session's and the rows judge, saying live. With no status the process and
 # the rows judge as before.
 exit_case() { # NAME PANE_STATE [STATUS]
-  rows_case "$1" "$2" "$START"
-  if [[ -n "${3:-}" ]]; then
-    jq --argjson status "$3" '.overseer.exit = {status: $status, at: "2026-09-28T01:00:00Z"}' \
-      "$STUB_DIR/oversee-state.json" > "$STUB_DIR/state.tmp" && mv -- "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
-  fi
+  exit_case_state "$1" "${3:-}" "$2"
   run TMUX_PANE="$PANE" -- --max-loops 2
   EXIT_CASE="event=$(grep '^EVENT overseer-dead' <<<"$OUT" || echo none) launched=$(succeed_calls --dead-pane)"
 }
@@ -205,6 +211,27 @@ jq '.overseer.pane = "%3"' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/state.tmp
 run TMUX_PANE="$PANE" -- --max-loops 2
 assert_contains "$(cat -- "$ERR")" "oversee-watch: overseer-fallback pane=$PANE cause=unrecorded" \
   "another session's rows file is no reading of this pane" "$ERR"
+# The record names this pane id on this pid, bound to an earlier server's
+# start (the stub's server started at 1790000000): a later server handed the
+# same pid and pane id, and neither that record's rows nor its exit status is
+# this pane's. Its control is ol_names judging the pair alone, which reads the
+# earlier server's exit status as this session's death.
+earlier_server_case() { # NAME [WATCH_BIN]
+  exit_case_state "$1" 137
+  jq '.overseer.server_start = 1789996400' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/state.tmp" \
+    && mv -- "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
+  WATCH_BIN="${2:-}" run TMUX_PANE="$PANE" -- --max-loops 2
+}
+earlier_server_case earlier_server
+assert_eq "$(grep '^EVENT overseer-dead' <<<"$OUT" | grep -o 'source=[a-z]*')|$(grep -c "^oversee-watch: overseer-fallback pane=$PANE cause=unrecorded" "$ERR")" \
+  "source=pane|1" "an earlier server's record for this pane id is no reading of it: the pane judges, not its status or its rows" "$ERR"
+EARLIER_CTL="$(mutant_scripts earlier-ctl/orch lib/overseer-launch.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/earlier-ctl/github"
+mutate_file "$EARLIER_CTL/lib/overseer-launch.sh" \
+  '    and (.server_start == null or (.server_start | tostring) == $start);' '    and true;'
+earlier_server_case earlier_server_mutant "$EARLIER_CTL/oversee-watch"
+assert_eq "$(grep '^EVENT overseer-dead' <<<"$OUT" | grep -o 'source=[a-z]*')" "source=record" \
+  "control: without the start test the earlier server's exit status is read as this session's death" "$ERR"
 
 # --- the overseer's context record, judged each long pass ------------------
 # The turn-end hook writes context.json in the overseer mailbox at each turn

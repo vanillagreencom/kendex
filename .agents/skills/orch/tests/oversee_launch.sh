@@ -658,33 +658,51 @@ tm kill-window -t "$(tm list-windows -t fleet -F '#{window_id} #{window_name}' |
 
 # A record from an earlier tmux server naming a pane id this server reuses is
 # no live overseer: the launch opens the next generation over it, and a
-# --predecessor naming that pane is refused, the pane left running.
+# --predecessor naming that pane is refused, the pane left running. One row
+# per way the record tells that server from this one: another server pid, and
+# this pid bound to an earlier server's start, a server a restart handed the
+# same pid.
 STALE="$(tm new-window -d -t fleet -n stale -P -F '#{pane_id}' 'exec sleep 100000')"
-stale_record() {
-  jq --arg pane "$STALE" '.overseer.pane = $pane | .overseer.server = "1"' "$FLEET_STATE" > "$FLEET_STATE.tmp" \
+EARLIER_START=$((SERVER_START - 3600))
+stale_record() { # SERVER [START]
+  jq --arg pane "$STALE" --arg server "$1" --arg start "${2:-}" '.overseer.pane = $pane | .overseer.server = $server
+    | .overseer.server_start = (if $start == "" then null else ($start | tonumber) end)' "$FLEET_STATE" > "$FLEET_STATE.tmp" \
     && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
 }
-stale_record
-STALE_GEN="$(recorded generation)"
-run_oversee -- launch --predecessor "$STALE" --wait-secs 20
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(listed "$STALE")" \
-  "1|oversee: predecessor-not-live session=$STALE live=none server=$SOCKET|0|1" \
-  "a --predecessor naming a pane an earlier server's record names is refused and left running"
-# Its control: a liveness check reading the pane alone takes the stale record
-# for a live overseer.
-SERVERCTL="$(mutant_scripts serverctl oversee)" || exit 1
-mutate_file "$SERVERCTL/oversee" \
-  'if [[ "$OL_INSPECT_STATE" == gone || "$OL_INSPECT_SERVER" != "$live_server" ]]; then live_pane=""; fi' \
-  'if [[ "$OL_INSPECT_STATE" == gone ]]; then live_pane=""; fi'
-OVERSEE_BIN="$SERVERCTL/oversee" run_oversee -- launch --wait-secs 20
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "1|oversee: overseer-live session=$STALE server=$SOCKET generation=$STALE_GEN|0" \
-  "control: a liveness check that ignores the server refuses over an earlier server's record"
-run_oversee -- launch --wait-secs 20
-assert_eq "$RC|$(recorded generation)|$(overseers)|$(listed "$STALE")" \
-  "0|$((STALE_GEN + 1))|1|1" \
-  "a launch over an earlier server's record opens the next generation"
-tm kill-window -t "$(recorded window)"
+for row in "1||another server pid" "$SERVER_PID|$EARLIER_START|this server pid bound to an earlier start"; do
+  IFS='|' read -r row_server row_start row_what <<<"$row"
+  stale_record "$row_server" "$row_start"
+  STALE_GEN="$(recorded generation)"
+  run_oversee -- launch --predecessor "$STALE" --wait-secs 20
+  assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(listed "$STALE")" \
+    "1|oversee: predecessor-not-live session=$STALE live=none server=$SOCKET|0|1" \
+    "a --predecessor naming a pane an earlier server's record names by $row_what is refused and left running"
+  run_oversee -- launch --wait-secs 20
+  assert_eq "$RC|$(recorded generation)|$(overseers)|$(listed "$STALE")" \
+    "0|$((STALE_GEN + 1))|1|1" \
+    "a launch over an earlier server's record naming $row_what opens the next generation"
+  tm kill-window -t "$(recorded window)"
+done
+# The controls, one per clause of ol_names that tells the servers apart: a
+# liveness check whose test ignores the server pid, or the server start,
+# takes that row's record for a live overseer and refuses.
+stale_control() { # NAME OLD NEW SERVER START WHAT
+  local ctl
+  ctl="$(mutant_scripts "$1" lib/overseer-launch.sh)" || exit 1
+  mutate_file "$ctl/lib/overseer-launch.sh" "$2" "$3"
+  stale_record "$4" "$5"
+  STALE_GEN="$(recorded generation)"
+  OVERSEE_BIN="$ctl/oversee" run_oversee -- launch --wait-secs 20
+  assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+    "1|oversee: overseer-live session=$STALE server=$SOCKET generation=$STALE_GEN|0" \
+    "control: a liveness check that ignores the $6 refuses over an earlier server's record"
+}
+stale_control serverctl \
+  '  def ol_names($server; $start; $session): type == "object" and (.server // "") == $server' \
+  '  def ol_names($server; $start; $session): type == "object"' 1 "" "server pid"
+stale_control startctl-live \
+  '    and (.server_start == null or (.server_start | tostring) == $start);' '    and true;' \
+  "$SERVER_PID" "$EARLIER_START" "server start"
 tm kill-window -t "$STALE"
 
 # A first launch on a codex entry: the entry's model and effort, codex's

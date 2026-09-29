@@ -551,29 +551,45 @@ assert_eq "home=$(recorded home)" "home=none" "control: a start that binds no ho
 
 # A record naming another pane is another session's: its generation is not
 # this one's, so the start records only what it observes.
-# Both halves of that test, one row each: a record naming another pane on this
-# server, and one naming this pane id on another server, which is what a
-# fleet state left by a previous tmux server holds, pane ids restarting at %0.
-for row in "7000|%4|another pane" "7001|$PANE|this pane id on another server"; do
-  IFS='|' read -r row_server row_pane row_what <<<"$row"
-  overseer_case "record_drops_other_session_${row_server}" idle
-  jq -n --arg window "$WINDOW" --arg server "$row_server" --arg pane "$row_pane" \
-    '{triaged: [], overseer: {runtime: "tmux", generation: 3, account: "/home/me/.claude", server: $server, pane: $pane, window: $window, launch_line: "old",
-      harness: "codex", model: "gpt-6-astra"}}' \
+# Each part of that test, one row each: a record naming another pane on this
+# server; one naming this pane id on another server, which is what a fleet
+# state left by a previous tmux server holds, pane ids restarting at %0; and
+# one naming this pane id on this pid, bound to an earlier server's start,
+# which is what that state holds where the next server was handed the same
+# pid. The stub's server started at 1790000000.
+record_drops_run() { # SERVER PANE START [WATCH_BIN]
+  overseer_case "record_drops_other_session_$1_${3:-unbound}${4:+_mutant}" idle
+  jq -n --arg window "$WINDOW" --arg server "$1" --arg pane "$2" --arg start "$3" \
+    '{triaged: [], overseer: ({runtime: "tmux", generation: 3, account: "/home/me/.claude", server: $server, pane: $pane, window: $window, launch_line: "old",
+      harness: "codex", model: "gpt-6-astra"} + (if $start == "" then {} else {server_start: ($start | tonumber)} end))}' \
     > "$STUB_DIR/oversee-state.json"
   printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
-  run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
-  assert_eq "server=$(recorded server) pane=$(recorded pane) generation=$(recorded generation) account=$(recorded account) harness=$(recorded harness) model=$(recorded model)" \
-    "server=7000 pane=$PANE generation=none account=none harness=none model=none" \
+  WATCH_BIN="${4:-}" run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
+}
+for row in "7000|%4||another pane" "7001|$PANE||this pane id on another server" \
+  "7000|$PANE|1789996400|this pane id on an earlier server handed the same pid"; do
+  IFS='|' read -r row_server row_pane row_start row_what <<<"$row"
+  record_drops_run "$row_server" "$row_pane" "$row_start"
+  assert_eq "server=$(recorded server) pane=$(recorded pane) generation=$(recorded generation) account=$(recorded account) harness=$(recorded harness) model=$(recorded model) start=$(recorded server_start)" \
+    "server=7000 pane=$PANE generation=none account=none harness=none model=none start=1790000000" \
     "a start over a record naming $row_what drops that session's generation, account and launch identity" "$ERR"
 done
+# The start test's control: ol_names judging the pair alone keeps the earlier
+# server's generation and launch identity for the session now in its pane id.
+KEEPSTART_CTL="$(mutant_scripts keepstart-ctl/orch lib/overseer-launch.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/keepstart-ctl/github"
+mutate_file "$KEEPSTART_CTL/lib/overseer-launch.sh" \
+  '    and (.server_start == null or (.server_start | tostring) == $start);' '    and true;'
+record_drops_run 7000 "$PANE" 1789996400 "$KEEPSTART_CTL/oversee-watch"
+assert_eq "generation=$(recorded generation) harness=$(recorded harness)" "generation=3 harness=codex" \
+  "control: without the start test a start keeps an earlier server's generation and launch identity" "$ERR"
 # The must-fail control: a start that replaces the object whole loses the
 # generation the launcher wrote for this very pane.
 RECORD_MUTANT="$TMP_ROOT/record-mutant"
 mkdir -p "$RECORD_MUTANT/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$RECORD_MUTANT/orch/scripts"
 ln -s "$REPO_ROOT/skills/github" "$RECORD_MUTANT/github"
-FROM='        | if ol_names($server; $pane) then . else {} end)'
+FROM='        | if ol_names($server; $start; $pane) then . else {} end)'
 assert_eq "$(grep -cxF -- "$FROM" "$REPO_ROOT/skills/orch/scripts/lib/watch-overseer-record.sh")" "1" \
   "control: the merge rule is one line of the record library"
 FROM="$FROM" awk '$0 == ENVIRON["FROM"] { print "        | {})"; next } { print }' \
@@ -644,17 +660,20 @@ assert_eq "$(cat "$STUB_DIR/succeed.line-file")" "$LINE" \
 # server, and this pane id on another server, which is the record a previous
 # tmux server left behind, pane ids restarting at %0 on the next. The same
 # row shape as the one above, the record's key the one difference.
-other_dead_run() { # SERVER PANE [WATCH_BIN]
-  overseer_case "record_failure_dead_other_$1_${2#%}${3:+_mutant}" exited
-  jq -n --arg window "$WINDOW" --arg line "$BYPASS_LINE" --arg server "$1" --arg pane "$2" \
-    '{triaged: [], overseer: {server: $server, pane: $pane, window: $window, launch_line: $line}}' \
+# A third row binds this pane id on this pid to an earlier server's start.
+other_dead_run() { # SERVER PANE [WATCH_BIN] [START]
+  overseer_case "record_failure_dead_other_$1_${2#%}${4:+_$4}${3:+_mutant}" exited
+  jq -n --arg window "$WINDOW" --arg line "$BYPASS_LINE" --arg server "$1" --arg pane "$2" --arg start "${4:-}" \
+    '{triaged: [], overseer: ({server: $server, pane: $pane, window: $window, launch_line: $line}
+      + (if $start == "" then {} else {server_start: ($start | tonumber)} end))}' \
     > "$STUB_DIR/oversee-state.json"
   jq -n '{issue_id: "oversee", triaged: [], lanes: []}' > "$STUB_DIR/state.json"
   WATCH_BIN="${3:-}" run TMUX_PANE="$PANE" -- --max-loops 2 --repeat 0 --state "$STUB_DIR/state.json"
 }
-for row in "7000|%4|another pane" "7001|$PANE|this pane id on another server"; do
-  IFS='|' read -r row_server row_pane row_what <<<"$row"
-  other_dead_run "$row_server" "$row_pane"
+for row in "7000|%4||another pane" "7001|$PANE||this pane id on another server" \
+  "7000|$PANE|1789996400|this pane id on an earlier server handed the same pid"; do
+  IFS='|' read -r row_server row_pane row_start row_what <<<"$row"
+  other_dead_run "$row_server" "$row_pane" "" "$row_start"
   assert_eq "rc=$RC event=$(grep '^EVENT overseer-dead' <<<"$OUT" || true) launched=$(succeed_calls --dead-pane) noted=$(grep -c -x -F -- "oversee-watch: overseer-line-missing pane=$PANE path=$TMP_ROOT/bin/succeed-stub.sh held=none" "$ERR")" \
     "rc=0 event=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane record=$row_server:$row_pane launched=0 noted=1" \
     "a death over a record naming $row_what is reported with that record and never relaunched from its line" "$ERR"
@@ -695,11 +714,29 @@ done
 SERVER_MUTANT="$(mutant_scripts mutant-server/orch lib/watch-overseer-record.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mutant-server/github"
 mutate_file "$SERVER_MUTANT/lib/watch-overseer-record.sh" \
-  $'($o | ol_names("\'"$1"\'"; "\'"$2"\'"))' $'(($o.pane // $o.session // "") == "\'"$2"\'")'
+  $'($o | ol_names("\'"$1"\'"; "\'"$2"\'"; "\'"$3"\'"))' $'(($o.pane // $o.session // "") == "\'"$3"\'")'
 other_dead_run 7001 "$PANE" "$SERVER_MUTANT/oversee-watch"
 assert_eq "launched=$(succeed_calls --dead-pane) line=$(cat "$STUB_DIR/succeed.line-file" 2>/dev/null || echo none)" \
   "launched=1 line=$BYPASS_LINE" \
   "control: a reader that compares the pane id alone replays the previous server's command" "$ERR"
+# The notice's control: one that takes any record for this session's own says
+# the earlier server's record is this pane's with no line.
+MINE_CTL="$(mutant_scripts mine-ctl/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mine-ctl/github"
+mutate_file "$MINE_CTL/oversee-watch" '      elif [[ "$7" == 1 ]]; then' '      elif [[ -n "$7" ]]; then'
+other_dead_run 7000 "$PANE" "$MINE_CTL/oversee-watch" 1789996400
+assert_contains "$(fleet_log_text)" "The fleet state record for this pane holds no launch line" \
+  "control: a notice that ignores whether the record is this session's calls the earlier server's record this pane's" "$ERR"
+# The start test's control on the same reader: ol_names judging the pair alone
+# replays the earlier server's command for the session now in its pane id.
+READSTART_CTL="$(mutant_scripts readstart-ctl/orch lib/overseer-launch.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/readstart-ctl/github"
+mutate_file "$READSTART_CTL/lib/overseer-launch.sh" \
+  '    and (.server_start == null or (.server_start | tostring) == $start);' '    and true;'
+other_dead_run 7000 "$PANE" "$READSTART_CTL/oversee-watch" 1789996400
+assert_eq "launched=$(succeed_calls --dead-pane) line=$(cat "$STUB_DIR/succeed.line-file" 2>/dev/null || echo none)" \
+  "launched=1 line=$BYPASS_LINE" \
+  "control: a reader that judges the pair alone replays the earlier server's command" "$ERR"
 
 # A walled overseer whose start could not record it: the wall is read from
 # the pane and confirmed by the account judgement, and the recovery picks its

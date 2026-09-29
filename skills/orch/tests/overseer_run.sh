@@ -2,8 +2,9 @@
 # Tests for scripts/overseer-run, the wrapper every overseer launch line runs
 # under: it hands back its command's own status, and writes that status into
 # the oversee state's session record only where the record names the pane it
-# runs in. tmux is a stub answering the server pid; workflow-state is the real
-# script over a sandbox state directory.
+# runs in. tmux is a stub answering the server pid, and the server's start
+# for lib/tmux-server.sh's read of it; workflow-state is the real script over
+# a sandbox state directory.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/assertions.sh
@@ -22,15 +23,19 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/state"
 cat > "$TMP_ROOT/bin/tmux" <<'STUB'
 #!/bin/sh
-printf '7000\n'
+case "$*" in
+  *'#{start_time}'*) printf '7000 1790000000\n' ;;
+  *) printf '7000\n' ;;
+esac
 STUB
 chmod +x "$TMP_ROOT/bin/tmux"
 
 STATE="$TMP_ROOT/state/workflow-state-oversee.json"
-# state PANE — a fleet state whose record names PANE on server 7000.
+# state PANE [START] — a fleet state whose record names PANE on server 7000,
+# bound to the server started at START where one is given.
 state() {
-  jq -n --arg pane "$1" '{issue_id: "oversee", overseer: {runtime: "tmux", server: "7000", pane: $pane,
-    window: "@1", launch_line: "claude"}}' > "$STATE"
+  jq -n --arg pane "$1" --arg start "${2:-}" '{issue_id: "oversee", overseer: ({runtime: "tmux", server: "7000", pane: $pane,
+    window: "@1", launch_line: "claude"} + (if $start == "" then {} else {server_start: ($start | tonumber)} end))}' > "$STATE"
 }
 exit_of() { jq -r '.overseer.exit.status // "none"' "$STATE"; }
 
@@ -46,14 +51,17 @@ run() {
 
 echo "=== overseer-run ==="
 
-while IFS='|' read -r label recorded pane want_rc want_exit; do
-  state "$recorded"
+# A record carrying no start is judged on the pane and server pid alone.
+while IFS='|' read -r label recorded start pane want_rc want_exit; do
+  state "$recorded" "$start"
   run "$pane" -- sh -c 'exit 7'
   assert_eq "rc=$RC exit=$(exit_of) err=$(wc -c < "$ERR" | tr -d ' ')" "rc=$want_rc exit=$want_exit err=0" "$label" "$ERR"
 done <<'ROWS'
-the record names this pane: its status is written and handed back|%9|%9|7|7
-the record names another pane: nothing is written|%3|%9|7|none
-outside tmux: nothing is written|%9||7|none
+the record names this pane: its status is written and handed back|%9||%9|7|7
+the record names this pane on this server's start: its status is written|%9|1790000000|%9|7|7
+the record names this pane id on an earlier server handed the same pid: nothing is written|%9|1789996400|%9|7|none
+the record names another pane: nothing is written|%3||%9|7|none
+outside tmux: nothing is written|%9|||7|none
 ROWS
 
 state %9
@@ -64,8 +72,8 @@ assert_eq "rc=$RC" "rc=2" "no command is a usage error"
 
 # A status an earlier session in this pane left is dropped before the command
 # runs: the command reads the record mid-run and exits 0 only where it is gone.
-state_exit() { # PANE STATUS
-  state "$1"
+state_exit() { # PANE STATUS [START]
+  state "$1" "${3:-}"
   jq --argjson s "$2" '.overseer.exit = {status: $s, at: "2026-09-28T01:00:00Z"}' "$STATE" > "$STATE.tmp"
   mv -- "$STATE.tmp" "$STATE"
 }
@@ -76,6 +84,9 @@ assert_eq "rc=$RC exit=$(exit_of)" "rc=0 exit=0" "a prior status in this pane is
 state_exit %3 9
 run %9 -- sh -c "$CLEARED_CHECK"
 assert_eq "rc=$RC exit=$(exit_of)" "rc=1 exit=9" "another pane's status is left where it stands"
+state_exit %9 9 1789996400
+run %9 -- sh -c "$CLEARED_CHECK"
+assert_eq "rc=$RC exit=$(exit_of)" "rc=1 exit=9" "an earlier server's status for this pane id is left where it stands"
 
 # A record that cannot be written is said under its key, and the status stands.
 printf 'not json' > "$STATE"
@@ -85,9 +96,18 @@ assert_eq "rc=$RC keys=$(grep -o '^overseer-run: [a-z-]*=[a-z0-9]*' "$ERR" | tr 
   "an unwritable record is reported at both writes and the command's status handed back" "$ERR"
 
 # --- control ----------------------------------------------------------------
+# The start test removed from ol_names: an earlier server's record for this
+# pane id takes the status.
+START_CTL="$(mutant_scripts start-ctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$START_CTL/lib/overseer-launch.sh" \
+  '    and (.server_start == null or (.server_start | tostring) == $start);' '    and true;'
+state %9 1789996400
+RUN_BIN="$START_CTL/overseer-run" run %9 -- sh -c 'exit 7'
+assert_eq "exit=$(exit_of)" "exit=7" "control: without the start test an earlier server's record takes the status"
+
 # The record's session test removed: another pane's record takes the status.
 MUTANT="$(mutant_scripts mutant lib/overseer-launch.sh)" || exit 1
-mutate_file "$MUTANT/lib/overseer-launch.sh" 'if (.overseer | ol_names($server; $pane)) then .overseer.exit = {' 'if true then .overseer.exit = {'
+mutate_file "$MUTANT/lib/overseer-launch.sh" 'if (.overseer | ol_names($server; $start; $pane)) then .overseer.exit = {' 'if true then .overseer.exit = {'
 state %3
 RUN_BIN="$MUTANT/overseer-run" run %9 -- sh -c 'exit 7'
 assert_eq "exit=$(exit_of)" "exit=7" "control: without the session test another pane's record takes the status"

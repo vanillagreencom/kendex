@@ -438,21 +438,32 @@ fi
 
 state_ready
 # A live overseer: the record names a tmux session, and the runtime's
-# `inspect` of it answers a live state under that server pid. A record naming
-# a session the runtime no longer lists is a stopped fleet's, and the launch
-# takes the next generation over it. A live one is launched over only as the
+# `inspect` of it answers a live state on a server the record names it on by
+# `ol_names`: that server pid, started when the record says. A record naming
+# a session the runtime no longer lists, or one an earlier server handed the
+# same pid and pane held, is a stopped fleet's, and the launch takes the next
+# generation over it. A live one is launched over only as the
 # predecessor --predecessor names, and a predecessor is only ever that one:
 # the session a succession stops is the one the fleet records as its
 # overseer, never another pane.
 if ! live="$(jq -r 'if type == "object" and (.runtime // "tmux") == "tmux" and (.pane // "") != ""
-    then ((.server // "") + " " + .pane + " " + ((.generation // 0) | tostring)) else "" end' <<<"$OL_PRIOR" 2>"$DEP_ERR")"; then
+    then (.pane + " " + ((.generation // 0) | tostring)) else "" end' <<<"$OL_PRIOR" 2>"$DEP_ERR")"; then
   die state-unwritable field=overseer
 fi
 live_pane=""
 if [[ -n "$live" ]]; then
-  read -r live_server live_pane live_generation <<<"$live"
+  read -r live_pane live_generation <<<"$live"
   ol_session_inspect "$live_pane" || die launch-failed step=inspect
-  if [[ "$OL_INSPECT_STATE" == gone || "$OL_INSPECT_SERVER" != "$live_server" ]]; then live_pane=""; fi
+  if [[ "$OL_INSPECT_STATE" == gone ]]; then
+    live_pane=""
+  else
+    live_start="$(ol_session_start "$OL_INSPECT_SERVER" "$live_pane")"
+    if ! live_named="$(jq -r --arg server "$OL_INSPECT_SERVER" --arg start "$live_start" --arg pane "$live_pane" \
+      "$OL_JQ_DEFS"' ol_names($server; $start; $pane)' <<<"$OL_PRIOR" 2>"$DEP_ERR")"; then
+      die state-unwritable field=overseer
+    fi
+    [[ "$live_named" == true ]] || live_pane=""
+  fi
 fi
 [[ -z "$PREDECESSOR" || "$live_pane" == "$PREDECESSOR" ]] \
   || die predecessor-not-live "session=$PREDECESSOR" "live=${live_pane:-none}" "server=$SERVER_SOCKET"

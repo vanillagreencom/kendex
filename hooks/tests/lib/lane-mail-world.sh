@@ -290,26 +290,37 @@ TMUX_BIN="$TMP_ROOT/tmux-bin"
 mkdir -p "$TMUX_BIN"
 cat > "$TMUX_BIN/tmux" <<'TMUXSTUB'
 #!/bin/sh
-# `display-message -p -t <pane> '#{pid}'` and nothing else: TMUX_SERVER_ID is
-# what this fixture's server answers, and no value at all is a pane tmux cannot
-# resolve, which is every session outside a live server.
+# `display-message -p -t <pane> '#{pid}'`, and `'#{pid} #{start_time}'` for
+# the server's start the orch lib/tmux-server.sh reads, and nothing else:
+# TMUX_SERVER_ID is what this fixture's server answers and TMUX_SERVER_START
+# when it started, and no value at all is a pane tmux cannot resolve, which is
+# every session outside a live server.
 [ -n "${TMUX_SERVER_ID:-}" ] || { echo "can't find pane" >&2; exit 1; }
-printf '%s\n' "$TMUX_SERVER_ID"
+case "$*" in
+  *'#{start_time}'*)
+    [ -n "${TMUX_SERVER_START:-}" ] || { echo "can't find pane" >&2; exit 1; }
+    printf '%s %s\n' "$TMUX_SERVER_ID" "$TMUX_SERVER_START" ;;
+  *) printf '%s\n' "$TMUX_SERVER_ID" ;;
+esac
 TMUXSTUB
 chmod +x "$TMUX_BIN/tmux"
 
 OVERSEER_PANE=%9
 OVERSEER_SERVER=7000
+OVERSEER_SERVER_START=1790000000
 
 # The launch home the fleet record's `.overseer.home` names for the overseer
 # session, which the transcript ownership gate holds the payload's transcript to.
 # OVERSEER_HOME_DIR by default, a claude config dir whose projects tree the
 # owned transcript below sits under; a row naming a codex home passes its own.
+# START, where given, is the `server_start` the record binds its server by;
+# with none the record carries no start and is judged on the pair alone.
 OVERSEER_HOME_DIR="$TMP_ROOT/overseer-home"
-record_overseer() { # PANE SERVER [HOME]
+record_overseer() { # PANE SERVER [HOME] [START]
   local record home="${3:-$OVERSEER_HOME_DIR}"
-  record="$(jq -nc --arg s "$2" --arg p "$1" --arg h "$home" \
-    '{server: $s, pane: $p, window: "@7", home: $h, launch_line: "claude -n overseer"}')"
+  record="$(jq -nc --arg s "$2" --arg p "$1" --arg h "$home" --arg start "${4:-}" \
+    '{server: $s, pane: $p, window: "@7", home: $h, launch_line: "claude -n overseer"}
+     + (if $start == "" then {} else {server_start: ($start | tonumber)} end)')"
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" \
     set oversee overseer "$record" >/dev/null)
 }
@@ -317,7 +328,7 @@ record_overseer() { # PANE SERVER [HOME]
 # The environment a session inside the overseer's own pane carries.
 overseer_env() { # [PANE]
   printf '%s\n' "PATH=$TMUX_BIN:$PATH" "TMUX=fake" "TMUX_PANE=${1:-$OVERSEER_PANE}" \
-    "TMUX_SERVER_ID=$OVERSEER_SERVER"
+    "TMUX_SERVER_ID=$OVERSEER_SERVER" "TMUX_SERVER_START=$OVERSEER_SERVER_START"
 }
 
 # `lane-mail peer send --repo` from another repository's checkout into the

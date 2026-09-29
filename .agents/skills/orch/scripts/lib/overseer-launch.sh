@@ -550,16 +550,29 @@ ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
 
 # The jq definitions every reader and writer of the record shares, so none
 # spells either question a second time: `ol_identity` is the launch identity
-# an object carries, its six fields in their one order, and `ol_names($server;
-# $session)` is whether a record names that session on that server, the pane
-# on tmux and the session elsewhere, and `ol_server_start` is the
-# `server_start` a tmux record holds for the start tmux_server_start printed,
-# null for none. lib/watch-overseer-record.sh takes the last two for the watch
-# start.
+# an object carries, its six fields in their one order, and
+# `ol_names($server; $start; $session)` is whether a record names that
+# session on that server, the pane on tmux and the session elsewhere. $start
+# is the start ol_session_start printed for that session's server, empty
+# where it could not be read: a record carrying a `server_start` names the
+# session only on the server started then, since after a tmux restart a new
+# server may be handed the recorded pid and numbers its panes from %0 again,
+# and a record carrying none is judged on the pair alone. `ol_server_start`
+# is the `server_start` a tmux record holds for the start tmux_server_start
+# printed, null for none. lib/watch-overseer-record.sh takes the last two for
+# the watch start.
 OL_JQ_DEFS='def ol_identity: {harness, account, home, model, effort, cwd};
-  def ol_names($server; $session): type == "object" and (.server // "") == $server
-    and ((.pane // .session // "") == $session);
+  def ol_names($server; $start; $session): type == "object" and (.server // "") == $server
+    and ((.pane // .session // "") == $session)
+    and (.server_start == null or (.server_start | tostring) == $start);
   def ol_server_start: if . == "" then null else tonumber end;'
+
+# ol_session_start SERVER SESSION — the start ol_names judges SESSION on
+# SERVER by: tmux_server_start's for a pane, nothing where it cannot be read,
+# which a record carrying a start never matches.
+ol_session_start() { # SERVER SESSION
+  tmux_server_start "$2" "$1" || true
+}
 
 # ol_identity HARNESS ACCOUNT HOME MODEL EFFORT CWD — the launch identity into
 # OL_IDENTITY as the JSON object the record carries, null for each field the
@@ -799,14 +812,14 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
   if [[ "$1" == tmux ]]; then
     cwd="$(jq -r '.cwd // empty' <<<"$5" 2>"$DEP_ERR")" || return 1
     rows="$(session_rows_overseer_file "${cwd:-$PWD}" "$4" "$2")"
-    start="$(tmux_server_start "$2" "$4")" || start=""
+    start="$(ol_session_start "$4" "$2")"
   fi
   record="$(jq -cn --argjson prior "$prior" --argjson identity "$5" --arg runtime "$1" \
     --arg session "$2" --arg window "$3" --arg server "$4" --arg line "${6:-}" --arg rows "$rows" \
     --arg start "$start" "$OL_JQ_DEFS"'
       ($prior // {}) as $p
       | (($p.generation // 0) | if type == "number" then . else 0 end) as $g
-      | (if ($p | ol_names($server; $session)) and $g > 0 then $g else $g + 1 end) as $next
+      | (if ($p | ol_names($server; $start; $session)) and $g > 0 then $g else $g + 1 end) as $next
       | ($p | del(.pending, .exit, .launch_line)) + {runtime: $runtime, server: $server, window: $window, generation: $next}
       + $identity
       + (if $runtime == "tmux"
@@ -848,12 +861,13 @@ ol_record_pending() { # LINE IDENTITY
 # puts back, and a query is not a snapshot.
 OL_CUR_HARNESS="" OL_CUR_ACCOUNT="" OL_CUR_HOME="" OL_CUR_MODEL="" OL_CUR_EFFORT="" OL_CUR_CWD=""
 ol_record_current() { # SERVER PANE
-  local record fields sep=$'\x1f'
+  local record fields start sep=$'\x1f'
   OL_CUR_HARNESS="" OL_CUR_ACCOUNT="" OL_CUR_HOME="" OL_CUR_MODEL="" OL_CUR_EFFORT="" OL_CUR_CWD=""
   "$SCRIPT_DIR/workflow-state" exists oversee >/dev/null 2>&1 || return 1
   record="$(ol_record_get)" || return 2
-  fields="$(jq -r --arg server "$1" --arg pane "$2" --arg sep "$sep" "$OL_JQ_DEFS"'
-      if ol_names($server; $pane) then ol_identity | map(. // "" | tostring) | join($sep)
+  start="$(ol_session_start "$1" "$2")"
+  fields="$(jq -r --arg server "$1" --arg start "$start" --arg pane "$2" --arg sep "$sep" "$OL_JQ_DEFS"'
+      if ol_names($server; $start; $pane) then ol_identity | map(. // "" | tostring) | join($sep)
       else empty end' <<<"$record" 2>"$DEP_ERR")" || return 2
   [[ -n "$fields" ]] || return 1
   IFS="$sep" read -r OL_CUR_HARNESS OL_CUR_ACCOUNT OL_CUR_HOME OL_CUR_MODEL OL_CUR_EFFORT OL_CUR_CWD <<<"$fields"
@@ -864,8 +878,10 @@ ol_record_current() { # SERVER PANE
 # its line runs, so a launch line run again in the same pane leaves no status
 # its predecessor earned. Returns 1 with the writer's words in DEP_ERR.
 ol_record_exit_clear() { # SERVER PANE
-  "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg pane "$2" "$OL_JQ_DEFS"'
-      if (.overseer | ol_names($server; $pane)) then .overseer |= del(.exit) else . end' \
+  local start
+  start="$(ol_session_start "$1" "$2")"
+  "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg start "$start" --arg pane "$2" "$OL_JQ_DEFS"'
+      if (.overseer | ol_names($server; $start; $pane)) then .overseer |= del(.exit) else . end' \
     >/dev/null 2>"$DEP_ERR"
 }
 
@@ -878,11 +894,12 @@ ol_record_exit_clear() { # SERVER PANE
 # bare shell with nothing under it, the state this return leaves.
 # Returns 1 with the writer's words in DEP_ERR.
 ol_record_exit() { # SERVER PANE STATUS
-  local at
+  local at start
   at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
-  "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg pane "$2" \
+  start="$(ol_session_start "$1" "$2")"
+  "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg start "$start" --arg pane "$2" \
     --argjson status "$3" --arg at "$at" "$OL_JQ_DEFS"'
-      if (.overseer | ol_names($server; $pane)) then .overseer.exit = {status: $status, at: $at} else . end' \
+      if (.overseer | ol_names($server; $start; $pane)) then .overseer.exit = {status: $status, at: $at} else . end' \
     >/dev/null 2>"$DEP_ERR"
 }
 

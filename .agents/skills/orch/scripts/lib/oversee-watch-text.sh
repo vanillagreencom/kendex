@@ -517,11 +517,12 @@ Options:
                       from the pane, the named fallback, where it names
                       none; a death relaunches from the line the fleet
                       state already holds where its record names this pane
-                      by server and pane id, the last line a launch, a
-                      succession or a watch start recorded for it, which a
-                      session restarted by hand may not have been started
-                      with; a record naming another pane, or none, reports
-                      the death with no successor, naming that record
+                      by server, server start and pane id, the last line a
+                      launch, a succession or a watch start recorded for
+                      it, which a session restarted by hand may not have
+                      been started with; a record naming another pane, or
+                      none, reports the death with no successor, naming
+                      that record
   --repeat SECS       the watch for a session: run one watch per pass with
                       the other options, sleep SECS after it exits, or
                       ORCH_WATCH_MAIL_INTERVAL where that is shorter and the
@@ -744,7 +745,7 @@ USAGE
 # restate it in prose. Bounded in length by that row: the fleet log takes
 # ORCH_FLEET_LOG_ROW_BYTES per row, and the row carries the notice's reason
 # and pane ahead of this, never a path.
-OW_REPLAY_RULE='A death replays the held line only where the record names this pane by server and pane id: the last line a launch, a succession or a watch start recorded for it, which a session restarted by hand may not have started with. A record naming another pane, or no line, means a death with no successor.'
+OW_REPLAY_RULE='A death replays the held line only where the record names this pane by server, server start and pane id: the last line a launch, a succession or a watch start recorded for it, which a session restarted by hand may not have started with. A record naming another pane, or no line, means a death with no successor.'
 
 ow_message() { # REASON FIELD=VALUE...
   local reason="$1" text field

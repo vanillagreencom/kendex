@@ -3117,6 +3117,37 @@ CALL_ENV=()
 expect 2 "lane-mail-check: unread=1" \
   "a turn end called from another checkout reads the record at the root CLAUDE_PROJECT_DIR names"
 
+# The record binds its pair to the start of the tmux server it was written on,
+# since a server a tmux restart starts may be handed the recorded pid and
+# numbers its panes from %0 again. The rows above record no start and are
+# judged on the pair alone. One naming this server's start names the session
+# in its pane; one naming an earlier start names a server that is gone, and
+# the session a later server put in the same pane id is handed nothing; one
+# whose server start tmux cannot read establishes nothing.
+EARLIER_START=$((OVERSEER_SERVER_START - 3600))
+bound_session() { # NAME START [JUDGE]
+  named_session "$1" "${3:-$HOOK}"
+  record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER" "" "$2"
+}
+bound_session peer_bound "$OVERSEER_SERVER_START"
+peer_send 'Bound to its server.'
+stop "${SESSION_ENV[@]}"
+expect 2 "lane-mail-check: unread=1" "a record bound to this server's start names the session in its pane"
+bound_session peer_reused "$EARLIER_START"
+peer_send 'Sent to the gone server.'
+stop "${SESSION_ENV[@]}"
+expect 0 - "a session in the recorded pane id on a server started after the record is handed nothing at its turn end"
+CALL_ENV=("${SESSION_ENV[@]}")
+tool deliver
+CALL_ENV=()
+assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" "nor after its tool call"
+assert_eq "$(overseer_unread 'Sent to the gone server.')" "1" "and the note stays unread"
+bound_session peer_start_unread "$OVERSEER_SERVER_START"
+peer_send 'Start unread.'
+stop "${SESSION_ENV[@]}" TMUX_SERVER_START=
+expect 0 - "a session whose server start tmux cannot read is handed nothing from a bound record"
+assert_eq "$(overseer_unread 'Start unread.')" "1" "and the note stays unread"
+
 # A checkout with no fleet record names no reader: no session there is handed
 # a note, inside tmux or out.
 new_plain_session peer_unnamed
@@ -3254,6 +3285,23 @@ peer_send 'Taken by another pane.'
 stop "${OTHER_ENV[@]}"
 expect 2 "lane-mail-check: unread=1" \
   "control: without the record test a session in another pane is handed the named session's note"
+
+# With the start test gone the pair alone names the session, and a later
+# server handed the recorded pid and pane id is handed the gone server's note.
+mutant pair-only -e 's@^  \[ -n "\$RECORDED_START" \] || return 0$@  return 0@'
+bound_session control_peer_reused "$EARLIER_START" "$MUTANT_PATH"
+peer_send 'Taken by a later server.'
+stop "${SESSION_ENV[@]}"
+expect 2 "lane-mail-check: unread=1" \
+  "control: without the start test a later server's session in the recorded pane id is handed the note"
+# With an unread start taken as a match, a bound record names a session whose
+# server nothing could read.
+mutant start-unread-names -e '/^  if ! CALLER_START=/,/^  fi$/ s@^    return 1$@    return 0@'
+bound_session control_peer_start_unread "$OVERSEER_SERVER_START" "$MUTANT_PATH"
+peer_send 'Unread start taken.'
+stop "${SESSION_ENV[@]}" TMUX_SERVER_START=
+expect 2 "lane-mail-check: unread=1" \
+  "control: a hook that takes an unread start as a match hands a bound record's note to that session"
 
 mutant record-at-call-dir -e '/^overseer_identified() {/,/^}/ s@cd -- "\$ROOT" 2>/dev/null && @@'
 named_session control_peer_call_elsewhere "$MUTANT_PATH"
