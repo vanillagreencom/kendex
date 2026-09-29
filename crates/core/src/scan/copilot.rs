@@ -22,10 +22,7 @@ pub fn read(path: &Path) -> Result<Vec<RawEntry>, super::ScanProblem> {
     let Some(events) = value.get("hooks").and_then(Value::as_object) else {
         return Ok(Vec::new());
     };
-    let enabled = !value
-        .get("disableAllHooks")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let enabled = !switched_off(&value);
     let mut entries = Vec::new();
     for (event, list) in events {
         let Some(list) = list.as_array() else {
@@ -46,6 +43,32 @@ pub fn read(path: &Path) -> Result<Vec<RawEntry>, super::ScanProblem> {
         }
     }
     Ok(entries)
+}
+
+/// Whether a hook document's own top-level `disableAllHooks` switches every
+/// entry in it off.
+fn switched_off(value: &Value) -> bool {
+    value
+        .get("disableAllHooks")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// Whether the hook document at `path` switches every entry in it off, read
+/// as commented JSON as `registrations_text` reads one. A file that cannot be
+/// read, is not there, or is no JSON once its comments are stripped is an
+/// error naming it: the switch in it is then unknown, never off.
+pub(crate) fn document_switched_off(path: &Path) -> crate::error::Result<bool> {
+    let text = crate::fs::read_if_exists(path)?.ok_or_else(|| {
+        crate::error::CoreError::io(path, std::io::Error::from(std::io::ErrorKind::NotFound))
+    })?;
+    let value: Value = serde_json::from_str(&super::jsonc::to_json(&text)).map_err(|e| {
+        crate::error::CoreError::JsonParse {
+            path: path.to_path_buf(),
+            message: e.to_string(),
+        }
+    })?;
+    Ok(switched_off(&value))
 }
 
 /// Every registration in one of these documents, in its parts — the
@@ -158,6 +181,37 @@ mod tests {
         let entries = read(&path).unwrap();
         assert_eq!(entries[0].name, "sessionStart:*:setup");
         assert_eq!(entries[0].enabled, Some(false));
+    }
+
+    /// The document's own switch, read with its comments: true, false or
+    /// absent, and a document that is no JSON or not there is an error naming
+    /// it.
+    #[test]
+    fn a_hook_documents_own_switch_is_read_and_an_unreadable_one_is_an_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("lane-mail-check.json");
+        let rows: [(&str, bool); 3] = [
+            (
+                "// written by kendex\n{\"version\": 1, \"disableAllHooks\": true,}",
+                true,
+            ),
+            (r#"{"version": 1, "disableAllHooks": false}"#, false),
+            (r#"{"version": 1, "hooks": {}}"#, false),
+        ];
+        for (text, off) in rows {
+            std::fs::write(&path, text).unwrap();
+            assert_eq!(document_switched_off(&path).unwrap(), off, "{text}");
+        }
+        std::fs::write(&path, "{\"disableAllHooks\": true").unwrap();
+        match document_switched_off(&path) {
+            Err(crate::error::CoreError::JsonParse { path: named, .. }) => assert_eq!(named, path),
+            other => panic!("expected a JSON error naming the document, got {other:?}"),
+        }
+        let absent = tmp.path().join("absent.json");
+        match document_switched_off(&absent) {
+            Err(crate::error::CoreError::Io { path: named, .. }) => assert_eq!(named, absent),
+            other => panic!("expected an IO error naming the document, got {other:?}"),
+        }
     }
 
     #[test]

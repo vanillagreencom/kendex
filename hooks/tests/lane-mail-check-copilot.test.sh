@@ -293,9 +293,17 @@ assert_eq "RC=$RC carried=$(stdout_field '.additionalContext' | grep -cF 'After 
 perl -e '$t = time - $ARGV[0] * 86400; utime($t, $t, $ARGV[1]) or die "utime: $!\n"' 29 "$COP_LEADS/s1"
 perl -e '$t = time - $ARGV[0] * 86400; utime($t, $t, $ARGV[1]) or die "utime: $!\n"' 31 "$COP_LEADS/s2"
 touch -t 200001010000 "$COP_LEADS/crashed"
+# The pending reading markers beside them, on the same window.
+COP_USAGE="$COP_HOME/.cache/lane-mail/copilot-usage"
+mkdir -p "$COP_USAGE"
+: > "$COP_USAGE/young"
+: > "$COP_USAGE/old"
+perl -e '$t = time - $ARGV[0] * 86400; utime($t, $t, $ARGV[1]) or die "utime: $!\n"' 29 "$COP_USAGE/young"
+perl -e '$t = time - $ARGV[0] * 86400; utime($t, $t, $ARGV[1]) or die "utime: $!\n"' 31 "$COP_USAGE/old"
 COP_SESSION=s3 copilot_context start
-assert_eq "RC=$RC stderr=$(first_line) recorded=$(cop_recorded)" "RC=0 stderr=- recorded=s1,s3" \
-  "a session start prunes the records untouched for 30 days and keeps the younger ones"
+assert_eq "RC=$RC stderr=$(first_line) recorded=$(cop_recorded) pending=$(ls "$COP_USAGE" | paste -sd, -)" \
+  "RC=0 stderr=- recorded=s1,s3 pending=young" \
+  "a session start prunes the records and pending markers untouched for 30 days and keeps the younger ones"
 COP_SESSION=crashed copilot_stop "$COP_TRANSCRIPT"
 assert_eq "RC=$RC recorded=$(cop_recorded)" "RC=0 recorded=s1,s3" \
   "a stop whose session is not the one its transcript is named for records nothing"
@@ -308,9 +316,9 @@ chmod +x "$FAKE_FIND_BIN/find"
 CALL_ENV=("HOME=$COP_HOME" "PATH=$FAKE_FIND_BIN:$PATH")
 copilot_context start
 CALL_ENV=("HOME=$COP_HOME")
-assert_eq "RC=$RC first=$(first_line) cause=$(grep -cxF 'find: planted failure' "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: leads-unpruned=$COP_LEADS cause=1" \
-  "a prune that fails is reported with its cause, and the start still passes"
+assert_eq "RC=$RC keys=$(cop_keys) cause=$(grep -cxF 'find: planted failure' "$ERR_FILE")" \
+  "RC=0 keys=leads-unpruned=$COP_LEADS;leads-unpruned=$COP_USAGE cause=2" \
+  "a prune that fails is reported for each directory with its cause, and the start still passes"
 
 # A lead whose record cannot be written: reported and never refused, and its
 # tool calls are then a session the judge cannot name, handed no mail, while
@@ -780,8 +788,17 @@ touch -t 200001010000 "$COP_LEADS/crashed"
 copilot_context start
 assert_eq "RC=$RC recorded=$(cop_recorded)" "RC=0 recorded=crashed,s1" \
   "control: without the prune a crashed session's record outlives the next start"
+# The pending markers left out of the prune: one untouched for 30 days
+# outlives every start.
+mutant copilot-no-usage-prune -e 's@^  for dir in "\$COPILOT_LEADS" "\$COPILOT_USAGE"; do$@  for dir in "$COPILOT_LEADS"; do@'
+new_copilot_lane control_cop_usage_prune ken-255 "$MUTANT_PATH"
+mkdir -p "$COP_HOME/.cache/lane-mail/copilot-usage"
+touch -t 200001010000 "$COP_HOME/.cache/lane-mail/copilot-usage/crashed"
+copilot_context start
+assert_eq "RC=$RC pending=$(ls "$COP_HOME/.cache/lane-mail/copilot-usage")" "RC=0 pending=crashed" \
+  "control: without the markers in the prune a crashed session's marker outlives the next start"
 # The prune's failure report dropped: a prune that fails is passed in silence.
-mutant copilot-prune-quiet -e 's@^    message leads-unpruned "\$COPILOT_LEADS" "\$err"$@    :@'
+mutant copilot-prune-quiet -e 's@^      message leads-unpruned "\$dir" "\$err"$@      :@'
 new_copilot_lane control_cop_prune_quiet ken-235 "$MUTANT_PATH"
 mkdir -p "$LANE/tmp/lane-mail/KEN-235"
 CALL_ENV=("HOME=$COP_HOME" "PATH=$FAKE_FIND_BIN:$PATH")

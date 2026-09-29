@@ -28,19 +28,34 @@
 //
 // At most one hook run is in flight, bounded by HOOK_TIMEOUT_MS, so a slow
 // hook never stalls the session and readings never pile up: a reading that
-// lands while one runs replaces the one queued behind it. A gap is written to
-// the session timeline at level warning, once per distinct first line:
+// lands while one runs replaces the one queued behind it.
+//
+// The hook runs apart from the session, so nothing orders its run before the
+// session's next agentStop, whose turn end would read the earlier record. So
+// each reading handed on first leaves the session's pending marker,
+// `~/.cache/lane-mail/copilot-usage/<session id>`, beside the lead records
+// lane-mail-check keeps under `~/.cache/lane-mail`, and the turn end judges a
+// session whose marker stands unmeasured, never its earlier record as room.
+// The marker is removed once a run exits 0 with no reading queued behind it;
+// a run that fails leaves it standing until a later reading is recorded.
+//
+// A gap is written to the session timeline at level warning, once per
+// distinct first line:
 //   kendex-lane-context: hooks-missing=<project scope>,<global scope>, only
 //   for a session that can be a fleet session (fleetSession); any other runs
 //   no hook and says nothing
 //   kendex-lane-context: reading=unreadable
+//   kendex-lane-context: pending-unwritten=<marker>, a marker that could not
+//   be written, so a turn end during the run reads the earlier record
+//   kendex-lane-context: pending-unremoved=<marker>, a marker that could not
+//   be removed, so every turn end judges the session unmeasured
 //   kendex-lane-context: usage-spawn=<error code>
 //   kendex-lane-context: usage-signal=<signal>
 //   kendex-lane-context: usage-exit=<status>, for a hook that wrote nothing
 //   the hook's own keyed stderr, `lane-mail-check: <key>=<value>`, for any
 //   other exit that is not 0
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { joinSession } from "@github/copilot-sdk/extension";
@@ -55,6 +70,8 @@ const HOOK_TIMEOUT_MS = 30000;
 
 const session = await joinSession({});
 const cwd = process.cwd();
+const PENDING_DIR = join(homedir(), ".cache", "lane-mail", "copilot-usage");
+const pending = join(PENDING_DIR, session.sessionId);
 
 const logged = new Set();
 function gap(text) {
@@ -108,15 +125,37 @@ function hookScope() {
   return scope;
 }
 
+function markPending() {
+  try {
+    mkdirSync(PENDING_DIR, { recursive: true });
+    writeFileSync(pending, "");
+  } catch (error) {
+    gap(`${KEY}: pending-unwritten=${pending}\n` +
+      "the marker that tells this session's turn end a reading is on its way could not be written, " +
+      `so a turn end while the hook runs judges the earlier recorded reading: ${error.message}`);
+  }
+}
+
+function clearPending() {
+  try {
+    rmSync(pending, { force: true });
+  } catch (error) {
+    // A path through a file that is no directory holds no marker to remove.
+    if (error.code === "ENOTDIR") return;
+    gap(`${KEY}: pending-unremoved=${pending}\n` +
+      "this session's reading is recorded and its pending marker could not be removed, " +
+      `so its turn ends judge its context unmeasured until the marker is removed: ${error.message}`);
+  }
+}
+
 let running = false;
 let queued = null;
 
+// queued: {scope, reading}, the hook scope decided when the reading landed.
 function drain() {
   if (running || queued === null) return;
-  const reading = queued;
+  const { scope, reading } = queued;
   queued = null;
-  const scope = hookScope();
-  if (scope === null) return;
   running = true;
   const child = spawn("bash", [join(scope, "lane-mail-check.sh"), "usage"], {
     cwd,
@@ -142,6 +181,8 @@ function drain() {
         `the lane-mail-check hook did not finish within ${HOOK_TIMEOUT_MS} ms and was stopped, so this reading is not recorded`);
     } else if (code !== 0) {
       gap(stderr.trim() || `${KEY}: usage-exit=${code}\nthe lane-mail-check hook exited ${code} and wrote nothing`);
+    } else if (queued === null) {
+      clearPending();
     }
     running = false;
     drain();
@@ -161,6 +202,9 @@ session.on("session.usage_info", (event) => {
       "a session.usage_info event carried no whole currentTokens and tokenLimit, so it is not recorded");
     return;
   }
-  queued = { session_id: session.sessionId, cwd, current_tokens: currentTokens, token_limit: tokenLimit };
+  const scope = hookScope();
+  if (scope === null) return;
+  markPending();
+  queued = { scope, reading: { session_id: session.sessionId, cwd, current_tokens: currentTokens, token_limit: tokenLimit } };
   drain();
 });

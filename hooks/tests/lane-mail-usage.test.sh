@@ -117,6 +117,32 @@ if [ "$CAN_DENY_READS" -eq 1 ]; then
     "a reading that stands and cannot be read holds the turn end under its own key"
 fi
 
+echo "=== a reading handed on and not yet recorded ==="
+# The extension's pending marker for s1: a reading of the session is on its
+# way to the record.
+PENDING="$COP_HOME/.cache/lane-mail/copilot-usage/s1"
+pend() { mkdir -p "${PENDING%/*}" && : > "$PENDING"; }
+# unpend_after SECONDS: the marker removed that long into the turn end, as
+# the extension removes it once the run records. A real wait, the turn end's
+# own poll being the thing under test.
+unpend_after() { (sleep "$1" && rm -f -- "${PENDING:?}") & UNPEND_PID=$!; }
+new_usage_lane pending KEN-421
+usage 150000 272000
+pend
+# A real wait of the whole bound: the marker never goes.
+turn_end s1 "$MARK90"
+assert_eq "RC=$RC first=$(first_line) keys=$(grep -c '^lane-mail-check: ' "$ERR_FILE") decision=$(stdout_field .decision)" \
+  "RC=0 first=lane-mail-check: reading-pending=$PENDING keys=2 decision=" \
+  "a marker standing through the wait leaves the context unmeasured, never the earlier record below the mark read as room"
+usage 195841 272000
+pend
+unpend_after 0.5
+turn_end s1 "$MARK90"
+wait "$UNPEND_PID"
+assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision) pending=$([ -e "$PENDING" ] && echo stands || echo gone)" \
+  "RC=0 first=lane-mail-check: context=195841 decision=block pending=gone" \
+  "a marker removed during the wait lets the turn end judge the record it waited for"
+
 echo "=== a gap is refused at exit 2 on stderr, for the extension's timeline ==="
 # A session no start or turn end recorded as a lead is recorded nowhere.
 new_usage_lane unrecorded KEN-407
@@ -301,6 +327,26 @@ usage 150000 272000
 usage 199000 272000 s1 "PATH=$TMP_ROOT/nodate:$PATH"
 turn_end s1 "$MARK90"
 expect 0 "$GAP" "control: without the removal the turn end past the mark passes on the earlier figure"
+
+# The pending check removed: the earlier record below the mark is read as
+# room while a reading is on its way.
+mutant usage-pending-unread -e 's@^  if copilot_reading_pending; then$@  if false; then@'
+new_usage_lane control_pending KEN-422 "$MUTANT_PATH"
+usage 150000 272000
+pend
+turn_end s1 "$MARK90"
+rm -f -- "${PENDING:?}"
+expect 0 "$GAP" "control: without the pending check the earlier record passes the turn end as room"
+# The wait removed: a run recording as the turn ends leaves it unmeasured.
+mutant usage-pending-unwaited -e 's@^PENDING_POLLS=25$@PENDING_POLLS=0@'
+new_usage_lane control_pending_wait KEN-423 "$MUTANT_PATH"
+usage 195841 272000
+pend
+unpend_after 0.5
+turn_end s1 "$MARK90"
+wait "$UNPEND_PID"
+expect 0 "lane-mail-check: reading-pending=$PENDING" \
+  "control: without the wait a reading recorded as the turn ends is still reported pending"
 
 # The session rule at the turn end removed: a successor is judged on its
 # predecessor's reading.

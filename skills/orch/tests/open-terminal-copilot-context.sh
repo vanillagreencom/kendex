@@ -11,12 +11,13 @@
 # harnesses.
 #
 # With the hooks in place, the gate asks `kendex hooks-off` whether a Copilot
-# settings file of that home and worktree switches every hook off, refusing as
+# settings file of that home and worktree switches every hook off, or a hook
+# document of the three in the scope holding them switches its own off, refusing as
 # reason=hooks-disabled where one does and reason=hooks-unjudged where kendex
 # cannot answer. Those rows run the real kendex on PATH, whose answer comes
 # from crates/cli/src/commands/hooks_off.rs over the reader in
 # crates/core/src/harness/copilot/settings.rs. Where no kendex there answers
-# hooks-off they are skipped by name, and ORCH_REQUIRE_KENDEX set turns that
+# hooks-off with --hook-document they are skipped by name, and ORCH_REQUIRE_KENDEX set turns that
 # skip into a failure. Every other row asks a stub that answers null.
 #
 # The hooks are judged in the item's worktree, which the stubbed worktree CLI
@@ -66,7 +67,7 @@ chmod +x "$BIN/term" "$BIN/gh" "$BIN/worktree-stub"
 # The real kendex the hooks-off rows ask, found on the PATH this suite was
 # started with and run in a home of its own, so it never writes the
 # developer's. KX_REAL is its directory, empty where no kendex there answers
-# hooks-off.
+# hooks-off with --hook-document.
 REAL_KENDEX="$(command -v kendex || true)"
 KX_REAL=""
 if [[ -n "$REAL_KENDEX" ]]; then
@@ -79,10 +80,13 @@ if [[ -n "$REAL_KENDEX" ]]; then
   } > "$TMP_ROOT/kendex-real/kendex"
   chmod +x "$TMP_ROOT/kendex-real/kendex"
   # A kendex without the verb reads `hooks-off` as a source to add, and its
-  # --help as the whole program's, so the probe is a query of an empty home.
+  # --help as the whole program's, so the probe is a query of an empty home
+  # naming one hook document.
   mkdir -p "$TMP_ROOT/kendex-probe"
+  printf '{}\n' > "$TMP_ROOT/kendex-probe/hook.json"
   if [[ "$("$TMP_ROOT/kendex-real/kendex" hooks-off --copilot-home "$TMP_ROOT/kendex-probe" \
-    --project "$TMP_ROOT/kendex-probe" 2>/dev/null)" == '{"switched_off_by":null}' ]]; then
+    --project "$TMP_ROOT/kendex-probe" --hook-document "$TMP_ROOT/kendex-probe/hook.json" 2>/dev/null)" \
+    == '{"switched_off_by":null}' ]]; then
     KX_REAL="$TMP_ROOT/kendex-real"
   fi
 fi
@@ -147,8 +151,9 @@ launch() { # NAME [ARG...]
 
 # copilot_world HOOKS SETTINGS — HOOKS is where the three Copilot hooks are
 # (project: on the item's base; caller: only in the caller's checkout; global;
-# half: lane-mail-check alone on the base; none); SETTINGS the home's
-# settings.json, `-` for no file. No worktree stands.
+# half: lane-mail-check alone on the base; none), each document an empty
+# hook registry; SETTINGS the home's settings.json, `-` for no file. No
+# worktree stands.
 copilot_world() { # HOOKS SETTINGS
   local dir="" names="lane-mail-check lane-mail-compact lane-mail-start" name
   chmod -R u+rwx -- "$COP_HOME" 2>/dev/null || :
@@ -162,7 +167,7 @@ copilot_world() { # HOOKS SETTINGS
   esac
   if [[ -n "$dir" ]]; then
     mkdir -p "$dir"
-    for name in $names; do : > "$dir/$name.sh"; : > "$dir/$name.json"; done
+    for name in $names; do : > "$dir/$name.sh"; printf '{"version":1,"hooks":{}}\n' > "$dir/$name.json"; done
   fi
   [[ "$2" == - ]] || printf '%s\n' "$2" > "$COP_SETTINGS"
 }
@@ -285,16 +290,18 @@ assert_eq "$(grep -c '^kendex-stub: settings unread$' "$TMP_ROOT/unjudged-fail.e
 echo "=== disableAllHooks, as the real kendex reads it ==="
 if [[ -z "$KX_REAL" ]]; then
   if [[ -n "${ORCH_REQUIRE_KENDEX:-}" ]]; then
-    fail "ORCH_REQUIRE_KENDEX is set and no kendex on PATH answers hooks-off"
+    fail "ORCH_REQUIRE_KENDEX is set and no kendex on PATH answers hooks-off --hook-document"
   else
-    printf '  skip  no kendex on PATH answers hooks-off; the disableAllHooks rows and their controls did not run\n'
+    printf '  skip  no kendex on PATH answers hooks-off --hook-document; the disableAllHooks rows and their controls did not run\n'
   fi
 else
   disabled() { printf '%s' "open-terminal: unsupported-for-oversee harness=copilot reason=hooks-disabled item=CC-1 file=$1"; }
   # real_world WHERE — the project hooks on the base, and disableAllHooks
   # true in the home's settings.json (home), in the base's Claude Code
-  # settings (claude), or in the home and set false again by the base's
-  # Copilot settings, a later layer (cleared).
+  # settings (claude), in the home and set false again by the base's
+  # Copilot settings, a later layer (cleared), in the base's lane-mail-check
+  # document (document), or false there (document-on); or that document no
+  # JSON (document-broken).
   real_world() { # WHERE
     copilot_world project -
     case "$1" in
@@ -303,6 +310,9 @@ else
       cleared)
         printf '{"disableAllHooks":true}\n' > "$COP_SETTINGS"
         mkdir -p "$BASE/.github/copilot" && printf '{"disableAllHooks":false}\n' > "$BASE/.github/copilot/settings.json" ;;
+      document) printf '{"version":1,"disableAllHooks":true,"hooks":{}}\n' > "$BASE/.github/hooks/lane-mail-check.json" ;;
+      document-on) printf '{"version":1,"disableAllHooks":false,"hooks":{}}\n' > "$BASE/.github/hooks/lane-mail-check.json" ;;
+      document-broken) printf '{"version":1,\n' > "$BASE/.github/hooks/lane-mail-check.json" ;;
     esac
   }
   # `label|world|launch|gate line`
@@ -313,7 +323,12 @@ else
 true in the home's settings is refused, naming that file|home|real-home|$(disabled "$COP_SETTINGS")
 true in the worktree's Claude Code settings is refused, naming the worktree's copy|claude|real-claude|$(disabled "$WTS/real-claude/.claude/settings.json")
 true in the home and false in the worktree's Copilot settings, a later layer, passes|cleared|real-cleared|passed
+true in the worktree's lane-mail-check document is refused, naming that document|document|real-document|$(disabled "$WTS/real-document/.github/hooks/lane-mail-check.json")
+false in that document passes|document-on|real-document-on|passed
+that document no JSON is refused as unjudged|document-broken|real-document-broken|open-terminal: unsupported-for-oversee harness=copilot reason=hooks-unjudged item=CC-1 exit=1
 ROWS
+  assert_eq "$(grep -c "real-document-broken/.github/hooks/lane-mail-check.json: invalid JSON" "$TMP_ROOT/real-document-broken.err" || true)" 1 \
+    "the unjudged document is named in kendex's words under the refusal"
   # real_ctrl NAME OLD NEW — a staged copy of open-terminal with OLD cut.
   real_ctrl() { stage "$TMP_ROOT/$1" && mutate_file "$TMP_ROOT/$1/scripts/open-terminal" "$2" "$3"; }
   real_ctrl off-ctrl '  [[ -n "$off" ]] || return 0' '  return 0'
@@ -328,6 +343,10 @@ ROWS
   assert_eq "$(OT="$TMP_ROOT/project-ctrl/scripts/open-terminal" KENDEX_DIR="$KX_REAL" launch project-ctrl-cleared)" \
     "$(disabled "$COP_SETTINGS")" \
     "control: asked of the caller's checkout, the worktree's later false never clears the home's true"
+  real_ctrl document-ctrl ' "${documents[@]}" 2>"$err")' ' 2>"$err")'
+  real_world document
+  assert_eq "$(OT="$TMP_ROOT/document-ctrl/scripts/open-terminal" KENDEX_DIR="$KX_REAL" launch document-ctrl)" passed \
+    "control: without the hook documents a lane whose lane-mail-check document switches its hooks off passes"
 fi
 
 echo "=== must-fail controls ==="
@@ -342,10 +361,10 @@ copilot_ctrl() { # NAME OLD NEW HOOKS SETTINGS WANT LABEL
 copilot_ctrl admit-ctrl '    copilot) [[ "$LANE_HOST" == local ]] ||' '    copilot-x) [[ "$LANE_HOST" == local ]] ||' project - \
   "open-terminal: unsupported-for-oversee harness=copilot flag=none" \
   "control: without its admission a copilot fleet launch is refused as a harness nothing judges"
-copilot_ctrl hooks-ctrl '  if ! home="$(copilot_launch_home)" || ! lane_context_copilot_hooks "$1" "$home" >/dev/null; then' '  if ! home="$(copilot_launch_home)"; then' \
+copilot_ctrl hooks-ctrl '  if ! home="$(copilot_launch_home)" || ! scope="$(lane_context_copilot_hooks "$1" "$home")"; then' '  if ! home="$(copilot_launch_home)"; then' \
   none - "passed flag=true" "control: without the hook check a copilot fleet lane nothing would judge passes"
-copilot_ctrl caller-ctrl '  if ! home="$(copilot_launch_home)" || ! lane_context_copilot_hooks "$1" "$home" >/dev/null; then' \
-  '  if ! home="$(copilot_launch_home)" || ! lane_context_copilot_hooks "$CLAIM_ROOT" "$home" >/dev/null; then' \
+copilot_ctrl caller-ctrl '  if ! home="$(copilot_launch_home)" || ! scope="$(lane_context_copilot_hooks "$1" "$home")"; then' \
+  '  if ! home="$(copilot_launch_home)" || ! scope="$(lane_context_copilot_hooks "$CLAIM_ROOT" "$home")"; then' \
   caller - "passed flag=true" "control: judged in the caller's checkout, hooks the worktree lacks pass"
 stage "$TMP_ROOT/reuse-ctrl"
 mutate_file "$TMP_ROOT/reuse-ctrl/scripts/open-terminal" \

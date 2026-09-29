@@ -56,14 +56,17 @@ USER_HOME="$TMP_ROOT/user-home"
 git init -q "$REPO"
 mkdir -p "$USER_HOME"
 
-# The hook each run records: its scope, argument, directory and stdin, one TAB
-# line per run. FAKE_HOOK_SLEEP holds a run in flight, FAKE_HOOK_EXIT and
+# The hook each run records: its scope, argument, directory, stdin, and
+# whether session s1's pending marker stood as it started, one TAB line per
+# run. FAKE_HOOK_SLEEP holds a run in flight, FAKE_HOOK_EXIT and
 # FAKE_HOOK_STDERR are what it answers.
 FAKE_HOOK="$TMP_ROOT/fake-hook.sh"
 cat > "$FAKE_HOOK" <<'HOOK'
 #!/usr/bin/env bash
 payload=$(cat)
-printf '%s\t%s\t%s\t%s\n' "${BASH_SOURCE[0]%/*}" "$1" "$PWD" "$payload" >> "$FAKE_HOOK_LOG"
+marker=unmarked
+[ ! -e "$HOME/.cache/lane-mail/copilot-usage/s1" ] || marker=marked
+printf '%s\t%s\t%s\t%s\t%s\n' "${BASH_SOURCE[0]%/*}" "$1" "$PWD" "$payload" "$marker" >> "$FAKE_HOOK_LOG"
 [ "${FAKE_HOOK_SLEEP:-0}" = 0 ] || exec sleep "$FAKE_HOOK_SLEEP"
 [ -z "${FAKE_HOOK_STDERR:-}" ] || printf '%s\n' "$FAKE_HOOK_STDERR" >&2
 exit "${FAKE_HOOK_EXIT:-0}"
@@ -84,7 +87,9 @@ hooks_in() { # DIR [NAMES|sh-only]
 clear_scopes() { rm -rf -- "${REPO:?}/.github" "${REPO:?}/tmp" "${COP_HOME:?}" "${USER_HOME:?}/.copilot"; }
 
 # run_ext NAME EVENTS [ENV=VAL...] — the extension, or EXT's copy, joined to
-# a session delivering EVENTS; HOOK_RUNS and TIMELINE hold what it did.
+# a session delivering EVENTS; HOOK_RUNS and TIMELINE hold what it did, and
+# PENDING whether s1's pending marker stands once it exits.
+PENDING_MARKER="$USER_HOME/.cache/lane-mail/copilot-usage/s1"
 run_ext() { # NAME EVENTS [ENV=VAL...]
   local name="$1" events="$2" dir="$TMP_ROOT/ext/$1"
   shift 2
@@ -93,12 +98,15 @@ run_ext() { # NAME EVENTS [ENV=VAL...]
   printf '%s\n' "$events" > "$dir/events.json"
   : > "$dir/hook.log"
   : > "$dir/timeline.log"
+  rm -rf -- "${USER_HOME:?}/.cache"
   RC=0
   (cd "$REPO" && env -i PATH="$PATH" HOME="$USER_HOME" COPILOT_HOME="$COP_HOME" \
     FAKE_EVENTS="$dir/events.json" FAKE_LOG="$dir/timeline.log" FAKE_HOOK_LOG="$dir/hook.log" "$@" \
     node "$dir/extension.mjs") >"$dir/out" 2>&1 || RC=$?
   HOOK_RUNS="$(cat "$dir/hook.log")"
   TIMELINE="$(jq -r '"\(.level) \(.message | split("\n")[0])"' "$dir/timeline.log")"
+  PENDING=unmarked
+  [[ ! -e "$PENDING_MARKER" ]] || PENDING=marked
 }
 # One event's JSON: TOKENS in context against LIMIT, AFTER ms in, from AGENT.
 event() { # AFTER TOKENS LIMIT [AGENT]
@@ -109,6 +117,8 @@ event() { # AFTER TOKENS LIMIT [AGENT]
 events() { printf '[%s]' "$(IFS=,; echo "$*")"; }
 # The payload a run handed the hook, as `tokens/limit`, one per run.
 run_tokens() { printf '%s\n' "$HOOK_RUNS" | awk -F'\t' 'NF { print $4 }' | jq -r '"\(.current_tokens)/\(.token_limit)"' | paste -sd' ' -; }
+# The marker each run found as it started, one per run.
+run_marks() { printf '%s\n' "$HOOK_RUNS" | awk -F'\t' 'NF { print $5 }' | paste -sd' ' -; }
 run_scope() { printf '%s\n' "$HOOK_RUNS" | awk -F'\t' 'NF { print $1 }' | sort -u | paste -sd' ' -; }
 
 echo "=== a root reading reaches the hook ==="
@@ -117,7 +127,7 @@ hooks_in "$REPO/.github/hooks"
 run_ext root "$(events "$(event 0 1200 64000)" "$(event 50 1300 64000 sub-1)")"
 assert_eq "rc=$RC runs=$(printf '%s\n' "$HOOK_RUNS" | wc -l | tr -d ' ') timeline=${TIMELINE:-none}" "rc=0 runs=1 timeline=none" \
   "the root agent's reading runs the hook once and a subagent's runs nothing"
-IFS=$'\t' read -r scope arm dir payload <<<"$HOOK_RUNS"
+IFS=$'\t' read -r scope arm dir payload _ <<<"$HOOK_RUNS"
 assert_eq "$scope|$arm|$dir|$payload" \
   "$REPO/.github/hooks|usage|$REPO|{\"session_id\":\"s1\",\"cwd\":\"$REPO\",\"current_tokens\":1200,\"token_limit\":64000}" \
   "the hook in the project scope runs as usage in the session's directory, handed its id, directory and reading"
@@ -206,6 +216,37 @@ mutate_file "$TMP_ROOT/short-bound.mjs" 'const HOOK_TIMEOUT_MS = 30000;' 'const 
 EXT="$TMP_ROOT/short-bound.mjs" run_ext timeout "$(events "$(event 0 1 100)")" FAKE_HOOK_SLEEP=5
 assert_eq "$TIMELINE" "warning kendex-lane-context: usage-signal=SIGTERM" "a hook that outlives the bound is stopped and named"
 
+echo "=== a reading handed on stands pending until it is recorded ==="
+# `label|hook env|readings|marker at each run|marker after`
+while IFS='|' read -r label envs readings want_runs want_after; do
+  clear_scopes
+  hooks_in "$REPO/.github/hooks"
+  case "$readings" in
+    one) evs="$(events "$(event 0 10 100)")" ;;
+    queued) evs="$(events "$(event 0 1 100)" "$(event 100 2 100)")" ;;
+  esac
+  # shellcheck disable=SC2086
+  run_ext pending "$evs" $envs
+  assert_eq "marks=$(run_marks) after=$PENDING" "marks=$want_runs after=$want_after" "$label"
+done <<ROWS
+a run that exits 0 finds the marker standing and removes it|FAKE_HOOK_EXIT=0|one|marked|unmarked
+a run that exits 2 leaves the marker standing|FAKE_HOOK_EXIT=2|one|marked|marked
+a run that exits 0 with a reading queued behind it leaves the marker for that reading|FAKE_HOOK_SLEEP=1|queued|marked marked|unmarked
+ROWS
+# The bound shortened as above: a run stopped by it leaves the marker.
+EXT="$TMP_ROOT/short-bound.mjs" run_ext pending-timeout "$(events "$(event 0 1 100)")" FAKE_HOOK_SLEEP=5
+assert_eq "after=$PENDING" "after=marked" "a run stopped at the bound leaves the marker standing"
+# A cache the marker directory cannot be made under: the reading still runs,
+# and the gap is named.
+clear_scopes
+hooks_in "$REPO/.github/hooks"
+mkdir -p "$TMP_ROOT/blocked-home"
+: > "$TMP_ROOT/blocked-home/.cache"
+run_ext pending-unwritten "$(events "$(event 0 10 100)")" HOME="$TMP_ROOT/blocked-home"
+assert_eq "runs=$(run_tokens) timeline=$TIMELINE" \
+  "runs=10/100 timeline=warning kendex-lane-context: pending-unwritten=$TMP_ROOT/blocked-home/.cache/lane-mail/copilot-usage/s1" \
+  "a marker that cannot be written is named, and the reading is still handed on"
+
 echo "=== must-fail controls ==="
 # ext_ctrl NAME OLD NEW — a private copy of the extension with OLD made NEW,
 # in EXT.
@@ -252,6 +293,25 @@ hooks_in "$REPO/.github/hooks" "lane-mail-check lane-mail-compact"
 hooks_in "$COP_HOME/hooks"
 EXT="$EXT" run_ext start-ctrl "$(events "$(event 0 10 100)")"
 assert_eq "$(run_scope)" "$REPO/.github/hooks" "control: without lane-mail-start in the set a scope that cannot record the lead is run"
+
+clear_scopes
+hooks_in "$REPO/.github/hooks"
+ext_ctrl mark-ctrl '  markPending();' ''
+EXT="$EXT" run_ext mark-ctrl "$(events "$(event 0 10 100)")"
+assert_eq "$(run_marks)" "unmarked" "control: without the marker a reading's run starts with nothing pending"
+ext_ctrl clear-ctrl '      clearPending();' ''
+EXT="$EXT" run_ext clear-ctrl "$(events "$(event 0 10 100)")"
+assert_eq "$PENDING" "marked" "control: without the removal a recorded reading stays pending"
+ext_ctrl failed-ctrl '    } else if (queued === null) {' '    } if (queued === null) {'
+EXT="$EXT" run_ext failed-ctrl "$(events "$(event 0 10 100)")" FAKE_HOOK_EXIT=2
+assert_eq "$PENDING" "unmarked" "control: removed whatever the run did, a failed reading is cleared"
+ext_ctrl notdir-ctrl '    if (error.code === "ENOTDIR") return;' ''
+EXT="$EXT" run_ext notdir-ctrl "$(events "$(event 0 10 100)")" HOME="$TMP_ROOT/blocked-home"
+assert_eq "$(printf '%s\n' "$TIMELINE" | grep -c 'pending-unremoved=' || true)" "1" \
+  "control: without the no-directory rule a marker never written is reported as one left standing"
+ext_ctrl queued-ctrl '    } else if (queued === null) {' '    } else {'
+EXT="$EXT" run_ext queued-ctrl "$(events "$(event 0 1 100)" "$(event 100 2 100)")" FAKE_HOOK_SLEEP=1
+assert_eq "$(run_marks)" "marked unmarked" "control: removed with a reading queued, the queued reading runs unmarked"
 
 ext_ctrl fleet-ctrl '    if (!fleetSession(root)) return null;' '    if (false) return null;'
 clear_scopes

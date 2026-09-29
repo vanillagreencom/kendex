@@ -73,7 +73,7 @@ pub(super) fn hook(
     // install notice names only a switch it read; the fleet launch gate,
     // which must not pass on an unknown, asks through `kendex hooks-off`,
     // which fails on it.
-    if let Ok(Some(path)) = settings::hooks_switched_off_by(env, scope) {
+    if let Ok(Some(path)) = settings::hooks_switched_off_by(env, scope, &[]) {
         state.warnings.push(named(
             format!(
                 "kendex-hooks-disabled: harness=copilot hook={record_name} setting=disableAllHooks\n`disableAllHooks` is on in {arg0}, which switches off every Copilot hook — as configured, this one installs but stays inert",

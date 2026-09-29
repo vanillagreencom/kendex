@@ -794,13 +794,16 @@ copilot_context_configure() { # HOME
 # checkout, so copilot_hooks_gate asks once that worktree stands and before the
 # harness starts in it. There it also asks whether Copilot runs those hooks at
 # all: `disableAllHooks` true in any settings layer Copilot reads for that home
-# and worktree switches every hook off, while the extension still records the
-# readings. kendex's Copilot settings reader owns those layers and which one
-# wins, so the gate asks it through `kendex hooks-off`, whose stdout is one
-# JSON object whose `switched_off_by` names the file or is null; a kendex that
-# is missing, fails or answers anything else refuses the lane, since an
-# unanswered question is not hooks that run. A settings file there that it
-# cannot read or parse as commented JSON fails it, naming the file.
+# and worktree switches every hook off, and true in one of the three hooks'
+# own documents in the scope that holds them switches off what that document
+# registers, while the extension still records the readings. kendex's Copilot
+# settings reader owns those layers, which one wins and a hook document's own
+# switch, so the gate asks it through `kendex hooks-off`, naming each of those
+# documents with `--hook-document`, whose stdout is one JSON object whose
+# `switched_off_by` names the file or is null; a kendex that is missing, fails
+# or answers anything else refuses the lane, since an unanswered question is
+# not hooks that run. A settings file or named document there that it cannot
+# read or parse as commented JSON fails it, naming the file.
 #
 # The home must be an absolute path. A relative one is configured and judged
 # here against this launcher's directory, the caller's checkout, while the
@@ -840,8 +843,8 @@ copilot_fleet_gate() {
   return 1
 }
 copilot_hooks_gate() { # WORKTREE ITEM
-  local home answer err query_rc=0 off=""
-  if ! home="$(copilot_launch_home)" || ! lane_context_copilot_hooks "$1" "$home" >/dev/null; then
+  local home scope="" name answer err query_rc=0 off="" documents=()
+  if ! home="$(copilot_launch_home)" || ! scope="$(lane_context_copilot_hooks "$1" "$home")"; then
     ot_message unsupported-for-oversee harness=copilot reason=no-context-hooks "item=$2" \
       "scope=$1/.github/hooks" "scope=$home/hooks" >&2
     return 1
@@ -850,7 +853,10 @@ copilot_hooks_gate() { # WORKTREE ITEM
     ot_message unsupported-for-oversee harness=copilot reason=hooks-unjudged "item=$2" exit=scratch >&2
     return 1
   fi
-  answer="$(kendex hooks-off --copilot-home "$home" --project "$1" 2>"$err")" || query_rc=$?
+  for name in $LANE_CONTEXT_COPILOT_HOOKS; do
+    documents+=(--hook-document "$scope/$name.json")
+  done
+  answer="$(kendex hooks-off --copilot-home "$home" --project "$1" "${documents[@]}" 2>"$err")" || query_rc=$?
   # `input` refuses an empty answer, which a bare filter would read as none.
   [[ "$query_rc" -ne 0 ]] || off="$(jq -rn 'input
     | if type == "object" and has("switched_off_by")

@@ -74,7 +74,31 @@ fn layers(env: &Env, scope: &Scope) -> Vec<PathBuf> {
 /// that is there but cannot be read, or is no JSON once its comments and
 /// trailing commas are stripped, is an error naming it, since Copilot may
 /// read a switch there that this answer would leave out.
-pub fn hooks_switched_off_by(env: &Env, scope: &Scope) -> Result<Option<PathBuf>> {
+///
+/// `documents` are hook documents the caller needs running, each of which
+/// carries its own `disableAllHooks` for the entries in it alone. A settings
+/// layer that switches every hook off is the answer; else the first document
+/// whose own switch is on. A named document that is not there, cannot be
+/// read, or is no JSON is an error naming it.
+pub fn hooks_switched_off_by(
+    env: &Env,
+    scope: &Scope,
+    documents: &[PathBuf],
+) -> Result<Option<PathBuf>> {
+    if let Some(layer) = settings_switched_off_by(env, scope)? {
+        return Ok(Some(layer));
+    }
+    for document in documents {
+        if crate::scan::copilot::document_switched_off(document)? {
+            return Ok(Some(document.clone()));
+        }
+    }
+    Ok(None)
+}
+
+/// The settings layer that switched every hook off, the last one to set
+/// `disableAllHooks` winning.
+fn settings_switched_off_by(env: &Env, scope: &Scope) -> Result<Option<PathBuf>> {
     let mut off = None;
     for path in layers(env, scope) {
         let Some(value) = settings_json(&path)? else {
@@ -242,11 +266,14 @@ mod tests {
         let Scope::Project { root } = &scope else {
             unreachable!("fixture scope is a project");
         };
-        assert_eq!(hooks_switched_off_by(&env, &scope).unwrap(), None);
+        assert_eq!(hooks_switched_off_by(&env, &scope, &[]).unwrap(), None);
 
         let claude = root.join(".claude/settings.json");
         std::fs::write(&claude, r#"{"disableAllHooks": true}"#).unwrap();
-        assert_eq!(hooks_switched_off_by(&env, &scope).unwrap(), Some(claude));
+        assert_eq!(
+            hooks_switched_off_by(&env, &scope, &[]).unwrap(),
+            Some(claude)
+        );
 
         // The repository file is the later layer, so its answer is the one
         // Copilot ends up with.
@@ -255,7 +282,7 @@ mod tests {
             r#"{"disableAllHooks": false}"#,
         )
         .unwrap();
-        assert_eq!(hooks_switched_off_by(&env, &scope).unwrap(), None);
+        assert_eq!(hooks_switched_off_by(&env, &scope, &[]).unwrap(), None);
     }
 
     /// A layer is read with its comments, as Copilot writes `config.json`
@@ -269,7 +296,7 @@ mod tests {
             unreachable!("fixture scope is a project");
         };
         assert!(!user_settings_file(&env).exists());
-        assert_eq!(hooks_switched_off_by(&env, &scope).unwrap(), None);
+        assert_eq!(hooks_switched_off_by(&env, &scope, &[]).unwrap(), None);
 
         let legacy = legacy_user_settings_file(&env);
         std::fs::write(
@@ -277,7 +304,10 @@ mod tests {
             "// User settings belong in settings.json.\n{\"disableAllHooks\": true,}\n",
         )
         .unwrap();
-        assert_eq!(hooks_switched_off_by(&env, &scope).unwrap(), Some(legacy));
+        assert_eq!(
+            hooks_switched_off_by(&env, &scope, &[]).unwrap(),
+            Some(legacy)
+        );
 
         let claude = root.join(".claude/settings.json");
         std::fs::write(&claude, "// a comment\n{\"disableAllHooks\": true").unwrap();
@@ -286,10 +316,38 @@ mod tests {
             r#"{"disableAllHooks": false}"#,
         )
         .unwrap();
-        match hooks_switched_off_by(&env, &scope) {
+        match hooks_switched_off_by(&env, &scope, &[]) {
             Err(CoreError::JsonParse { path, .. }) => assert_eq!(path, claude),
             other => panic!("expected the malformed layer as a JSON error, got {other:?}"),
         }
+    }
+
+    /// A hook document's own switch turns off the entries it holds, so a
+    /// document named with it on is the answer where no settings layer
+    /// switched every hook off, and a settings layer that did wins over it.
+    #[test]
+    fn a_named_hook_document_switched_off_is_named_after_the_settings_layers() {
+        let (_tmp, env, scope) = fixture();
+        let Scope::Project { root } = &scope else {
+            unreachable!("fixture scope is a project");
+        };
+        let hooks = root.join(".github/hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let check = hooks.join("lane-mail-check.json");
+        let compact = hooks.join("lane-mail-compact.json");
+        std::fs::write(&check, r#"{"version": 1, "disableAllHooks": false}"#).unwrap();
+        std::fs::write(&compact, r#"{"version": 1, "disableAllHooks": true}"#).unwrap();
+        let documents = [check.clone(), compact.clone()];
+        assert_eq!(
+            hooks_switched_off_by(&env, &scope, &documents).unwrap(),
+            Some(compact.clone())
+        );
+        let claude = root.join(".claude/settings.json");
+        std::fs::write(&claude, r#"{"disableAllHooks": true}"#).unwrap();
+        assert_eq!(
+            hooks_switched_off_by(&env, &scope, &documents).unwrap(),
+            Some(claude)
+        );
     }
 
     #[test]

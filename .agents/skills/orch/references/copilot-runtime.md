@@ -9,7 +9,7 @@ A Copilot account is a directory the CLI runs under as `COPILOT_HOME`, such as `
 | File in the account | What reads it | Without it |
 |---|---|---|
 | `config.json` with a stored login | The CLI's own login, from `copilot login` or the fleet's seat delivery. A launch signs in with it, `COPILOT_GITHUB_TOKEN` cleared (§ Launch environment), and `lanes` asks GitHub's usage endpoint for the account's monthly credit pool with it (`scripts/lib/copilot-credits.sh` states the layout it assumes). No token is copied or handed to a launch. | The launch has no identity, and `lanes` reads the account `no_credentials` under the reason, or its `ORCH_LANE_COPILOT_POOL` reading where one is stated. |
-| `settings.json` with `statusLine` | `"statusLine": {"type": "command", "command": "<repo>/.agents/skills/orch/scripts/copilot-statusline", "refreshInterval": 30}`, the command an executable file and the interval under 120 seconds. The command writes the session record the lane's turn-end hook reads its context from; the header of `scripts/copilot-statusline` states the record. | No context reading: the hook reports `session-record=missing`, and a fleet launch refuses the lane as `unsupported-for-oversee reason=status-line`, and an overseer succession skips the account. |
+| `settings.json` with `statusLine` | `"statusLine": {"type": "command", "command": "<repo>/.agents/skills/orch/scripts/copilot-statusline", "refreshInterval": 30}`, the command an executable file and the interval under 120 seconds. The command writes the session record the lane's turn-end hook falls back to where the `kendex-lane-context` extension recorded no reading of the session; the header of `scripts/copilot-statusline` states the record. | No fallback reading. Where the extension records the session's readings, nothing is lost. Where `enabledFeatureFlags.EXTENSIONS` is false, a fleet launch refuses the lane as `unsupported-for-oversee reason=no-context-reader detail=disabled`, `cause=` naming what failed in the status line, and an overseer succession skips the account. A session with neither reading reports `reading-unrecorded` and `session-record=missing`. |
 
 ## Session record
 
@@ -18,7 +18,7 @@ A session keeps its state under `${COPILOT_HOME:-~/.copilot}/session-state/<sess
 - `workspace.yaml` holds plain `id:` and `cwd:` lines, written as the session starts and before any turn (measured).
 - `events.jsonl` holds the session's events. A session that ended before its first event, for example one whose sign-in failed, has none (measured).
 
-`lib/lane-relaunch.sh` reads these two files and nothing else. No live context count is in either: the CLI's status-line command is the only producer of one, and `scripts/copilot-statusline` records it (§ Measurement).
+`lib/lane-relaunch.sh` reads these two files and nothing else. No live context count is in either. A fleet session's context is read by the `kendex-lane-context` Copilot extension that `open-terminal` installs in its `COPILOT_HOME`, [`scripts/copilot-lane-context/extension.mjs`](../scripts/copilot-lane-context/extension.mjs): it hands `lane-mail-check` each `session.usage_info` reading, which the turn end judges. A reading handed on and not yet recorded leaves a pending marker under `~/.cache/lane-mail/copilot-usage`, and a turn end that finds it still standing after 5 seconds reports the context unmeasured under `reading-pending`. Where no extension reading of the session stands and no pending marker does, the turn end falls back to the session record the account's status-line command writes, which `scripts/copilot-statusline` records (§ Measurement).
 
 ## Launch environment
 
@@ -46,7 +46,7 @@ The first three rows are launch settings. A caller's copy of any one of them, ty
 
 ## Measurement
 
-- Context: `scripts/lib/adapters/copilot.sh` reads the session record, held to the session id, transcript, account and a freshness bound by `scripts/lib/copilot-session.sh`, and hands the shared judge the window's documented compaction point as capacity ([oversee-events.md](oversee-events.md#judgement-rules), Hand off a lane). The record is no credit source.
+- Context: the `kendex-lane-context` extension's reading of Copilot's `session.usage_info` is read first, against 80 percent of `tokenLimit`, the limit Copilot compacts at (`scripts/lib/lane-context.sh`, `LANE_CONTEXT_COPILOT_COMPACTION_PCT`). Where no such reading of the session stands, `scripts/lib/adapters/copilot.sh` reads the session record, held to the session id, transcript, account and a freshness bound by `scripts/lib/copilot-session.sh`, and hands the shared judge the same share of the window as capacity ([oversee-events.md](oversee-events.md#judgement-rules), Hand off a lane). The record is no credit source.
 - Credits: `lanes` reads the monthly pool through `scripts/lib/copilot-credits.sh`; the record it produces is [schemas/copilot-credits.md](../schemas/copilot-credits.md). Nothing here reads a Pi root's Copilot login, so a Pi root on a `github-copilot/` model is judged on the lane host's `harness=pi` accounts row for it ([lane-host.md](../schemas/lane-host.md)), or on its stated `ORCH_LANE_COPILOT_POOL` override where no row reads it.
 
 ## Recovery

@@ -263,6 +263,73 @@ fn hooks_off_fails_naming_a_copilot_settings_file_it_cannot_parse() {
     );
 }
 
+/// A hook document named with `--hook-document` carries its own
+/// `disableAllHooks`: one switched on is named, one switched off or silent
+/// is not, and one that is no JSON fails the verb naming it, so
+/// `open-terminal` refuses the lane instead of reading null.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn hooks_off_reads_the_switch_of_each_named_hook_document() {
+    let tmp = fixture_home();
+    let home = tmp.path();
+    let folder = tempfile::tempdir().unwrap();
+    let root = rooted(&folder);
+    let copilot_home = root.join("copilot-home");
+    let project = root.join("worktree");
+    let hooks = project.join(".github/hooks");
+    fs::create_dir_all(&copilot_home).unwrap();
+    fs::create_dir_all(&hooks).unwrap();
+    let check = hooks.join("lane-mail-check.json");
+    let compact = hooks.join("lane-mail-compact.json");
+    fs::write(&compact, r#"{"version": 1, "hooks": {}}"#).unwrap();
+    let ask = || {
+        kendex(
+            home,
+            home,
+            &[
+                "hooks-off",
+                "--copilot-home",
+                copilot_home.to_str().unwrap(),
+                "--project",
+                project.to_str().unwrap(),
+                "--hook-document",
+                compact.to_str().unwrap(),
+                "--hook-document",
+                check.to_str().unwrap(),
+            ],
+        )
+    };
+    // A label, lane-mail-check.json's text, and the answer.
+    let rows: [(&str, &str, serde_json::Value); 2] = [
+        (
+            "a document switching its own hooks off is named",
+            "// kendex\n{\"version\": 1, \"disableAllHooks\": true}\n",
+            serde_json::json!({ "switched_off_by": check.to_str().unwrap() }),
+        ),
+        (
+            "a document switching them on is not",
+            r#"{"version": 1, "disableAllHooks": false}"#,
+            serde_json::json!({ "switched_off_by": null }),
+        ),
+    ];
+    for (label, text, want) in rows {
+        fs::write(&check, text).unwrap();
+        let output = ask();
+        assert_eq!(output.status.code(), Some(0), "{label}: {output:?}");
+        let got: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(got, want, "{label}");
+    }
+    fs::write(&check, "{\"disableAllHooks\": true\n").unwrap();
+    let output = ask();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!("{}: invalid JSON", check.display())),
+        "{stderr}"
+    );
+}
+
 #[test]
 fn scope_project_outside_a_project_is_an_error() {
     let tmp = fixture_home();
