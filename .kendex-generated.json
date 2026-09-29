@@ -575,6 +575,7 @@
   ".agents/skills/orch/scripts/branch-size-check",
   ".agents/skills/orch/scripts/ci-wait",
   ".agents/skills/orch/scripts/container-close",
+  ".agents/skills/orch/scripts/copilot-lane-context/extension.mjs",
   ".agents/skills/orch/scripts/copilot-statusline",
   ".agents/skills/orch/scripts/dev-artifact-check",
   ".agents/skills/orch/scripts/dev-return-write",

@@ -87,6 +87,7 @@ lane_context_emit() {
         context_used_pct: ($r.used_pct // null),
         context_tokens: ($r.tokens // null),
         context_window: ($r.window // null),
+        context_capacity_source: ($r.capacity_source // null),
         context_at: ($r.at // null),
         context_handoff_due: (if $r | has("handoff_due") then $r.handoff_due else null end),
         status: $status,
@@ -273,38 +274,147 @@ lane_context_handoff_due() { # TOKENS WINDOW PCT
   fi
 }
 
-# lane_context_record BOX HARNESS TOKENS WINDOW MODEL [SESSION] [PANE_KEY] [GAP]
-# — write a session's reading to BOX/$LANE_CONTEXT_RECORD, through a file
-# renamed over it so no reader meets half a record. `used_pct` is the whole
-# percent of the window used, null with the window. SESSION is the id the
-# harness names the session by and PANE_KEY the `<server pid> <pane id>` it
-# runs in, which is how a successor overseer's reader tells its own record from
-# the one its predecessor left in the same mailbox. GAP is the word for why a
-# turn end took no reading, with TOKENS `null`: the overseer's turn-end hook
-# writes one where its gate refused the read, so the record still advances at
-# every turn end and says why it carries no figure. Exit non-zero where the
-# record could not be written, the cause on stderr.
-lane_context_record() { # BOX HARNESS TOKENS WINDOW MODEL [SESSION] [PANE_KEY] [GAP]
-  local box="${1:?}" staged at
+# lane_context_file_write BOX FILE JQ_ARGS... — the document jq prints from
+# JQ_ARGS, which end with its filter, written to BOX/FILE through a file
+# renamed over it so no reader meets half a record. `at` is bound to the time
+# of writing. Exit non-zero where the file could not be written, the cause on
+# stderr. Every record this library names is written through here.
+lane_context_file_write() { # BOX FILE JQ_ARGS...
+  local box="${1:?}" file="${2:?}" staged at
+  shift 2
   at=$(date -u +%Y-%m-%dT%H:%M:%SZ) || return 1
-  staged="$box/.$LANE_CONTEXT_RECORD.$$"
-  if ! jq -nc --arg harness "$2" --argjson tokens "$3" --arg window "$4" --arg model "$5" \
-    --arg session "${6:-}" --arg pane_key "${7:-}" --arg gap "${8:-}" --arg at "$at" '
+  staged="$box/.$file.$$"
+  if ! jq -nc --arg at "$at" "$@" >"$staged"; then
+    rm -f -- "${staged:?}"
+    return 1
+  fi
+  mv -f -- "$staged" "$box/$file" || { rm -f -- "${staged:?}"; return 1; }
+}
+
+# lane_context_record BOX HARNESS TOKENS WINDOW MODEL [SESSION] [PANE_KEY]
+# [GAP] [CAPACITY_SOURCE] — write a session's reading to
+# BOX/$LANE_CONTEXT_RECORD. `used_pct` is the whole percent of the window
+# used, null with the window. SESSION is the id the harness names the session
+# by and PANE_KEY the `<server pid> <pane id>` it runs in, which is how a
+# successor overseer's reader tells its own record from the one its
+# predecessor left in the same mailbox. GAP is the word for why a turn end
+# took no reading, with TOKENS `null`: the overseer's turn-end hook writes one
+# where its gate refused the read, so the record still advances at every turn
+# end and says why it carries no figure. CAPACITY_SOURCE names where WINDOW
+# came from where it is not the window the harness itself reported as its
+# capacity, a Copilot CLI one (lane_context_copilot_reading);
+# `capacity_source` is null otherwise.
+lane_context_record() { # BOX HARNESS TOKENS WINDOW MODEL [SESSION] [PANE_KEY] [GAP] [CAPACITY_SOURCE]
+  lane_context_file_write "$1" "$LANE_CONTEXT_RECORD" --arg harness "$2" --argjson tokens "$3" \
+    --arg window "$4" --arg model "$5" --arg session "${6:-}" --arg pane_key "${7:-}" \
+    --arg gap "${8:-}" --arg source "${9:-}" '
     def nul: if . == "" then null else . end;
     ($window | nul | if . == null then null else tonumber end) as $w
     | {harness: $harness, model: ($model | nul), tokens: $tokens, window: $w,
        used_pct: (if $w == null or $w == 0 then null else ($tokens * 100 / $w | floor) end),
-       session_id: ($session | nul), pane_key: ($pane_key | nul), gap: ($gap | nul), at: $at}' >"$staged"; then
-    rm -f -- "${staged:?}"
-    return 1
-  fi
-  mv -f -- "$staged" "$box/$LANE_CONTEXT_RECORD" || { rm -f -- "${staged:?}"; return 1; }
+       capacity_source: ($source | nul),
+       session_id: ($session | nul), pane_key: ($pane_key | nul), gap: ($gap | nul), at: $at}'
+}
+
+# The share of a Copilot CLI session's prompt token limit at which Copilot
+# starts its automatic compaction, which nothing turns off: the capacity a
+# Copilot session is judged against, so the shared rule hands it off before
+# that compaction and needs no threshold of its own. It is the Copilot SDK's
+# documented `InfiniteSessionConfig.backgroundCompactionThreshold` default,
+# 0.80 (copilot-sdk types.d.ts), and the CLI compacts at the first
+# `session.usage_info` reading at or past it.
+# REVISIT(D012): a usage field naming the compaction limit replaces this share
+# with the figure.
+LANE_CONTEXT_COPILOT_COMPACTION_PCT=80
+LANE_CONTEXT_COPILOT_CAPACITY_SOURCE="80% of tokenLimit, Copilot's backgroundCompactionThreshold default"
+
+# lane_context_copilot_reading — the reading the orch copilot-lane-context
+# extension hands on stdin, {current_tokens, token_limit} from one
+# `session.usage_info` event, read as `TOKENS<TAB>CAPACITY<TAB>SOURCE`: the
+# tokens in context, LANE_CONTEXT_COPILOT_COMPACTION_PCT percent of the token
+# limit rounded down, and LANE_CONTEXT_COPILOT_CAPACITY_SOURCE. Exit non-zero
+# where the payload is not an object carrying a whole `current_tokens` and a
+# whole `token_limit` above 0.
+lane_context_copilot_reading() {
+  jq -r --argjson pct "$LANE_CONTEXT_COPILOT_COMPACTION_PCT" --arg source "$LANE_CONTEXT_COPILOT_CAPACITY_SOURCE" '
+    def whole: type == "number" and . >= 0 and . == floor;
+    if type != "object" then error("not an object")
+    elif (.current_tokens | whole | not) then error("current_tokens is no whole number")
+    elif (.token_limit | whole | not) or .token_limit == 0 then error("token_limit is no whole number above 0")
+    else [(.current_tokens | tostring), (.token_limit * $pct / 100 | floor | tostring), $source] | join("\t")
+    end'
+}
+
+# The file a Copilot session's automatic compaction is flagged in, beside its
+# reading in its mailbox directory. The reading is rewritten at every model
+# call, so the flag is a file of its own, which no reading touches: the backstop for a turn that crosses into Copilot's compaction
+# before a reading past the mark reaches a turn end.
+LANE_CONTEXT_COMPACTION=compaction.json
+
+# lane_context_compaction_flag BOX HARNESS TRIGGER [SESSION] [PANE_KEY] — flag
+# the session SESSION's compaction, begun on TRIGGER, in
+# BOX/$LANE_CONTEXT_COMPACTION. Exit non-zero where it could not be written,
+# the cause on stderr.
+lane_context_compaction_flag() { # BOX HARNESS TRIGGER [SESSION] [PANE_KEY]
+  lane_context_file_write "$1" "$LANE_CONTEXT_COMPACTION" --arg harness "$2" --arg trigger "$3" \
+    --arg session "${4:-}" --arg pane_key "${5:-}" '
+    def nul: if . == "" then null else . end;
+    {harness: $harness, trigger: $trigger, session_id: ($session | nul),
+     pane_key: ($pane_key | nul), at: $at}'
+}
+
+# lane_context_compaction_flagged BOX SESSION — whether BOX/$LANE_CONTEXT_COMPACTION
+# flags the session SESSION: 0 where it does, 1 where no flag stands or it
+# names another session, a predecessor's in the same mailbox included, and 2
+# with the cause on stderr where a flag stands and cannot be read as one. An
+# empty SESSION matches a flag naming none. The one reader of the flag, so the
+# turn end and any report cannot read it two ways.
+lane_context_compaction_flagged() { # BOX SESSION
+  local file="${1:?}/$LANE_CONTEXT_COMPACTION" doc rc=0
+  [ -e "$file" ] || [ -L "$file" ] || return 1
+  doc=$(cat -- "$file") || return 2
+  jq -e --arg s "${2:-}" 'if type != "object" then error("not a compaction flag")
+    else (.session_id // "") == $s end' <<<"$doc" >/dev/null || rc=$?
+  case "$rc" in
+    0 | 1) return "$rc" ;;
+    *) return 2 ;;
+  esac
+}
+
+# The two hooks a Copilot CLI fleet session is judged by, in the form kendex
+# renders a Copilot hook (crates/core/src/engine/targets.rs, copilot_hook):
+# `<name>.sh` beside the registry document `<name>.json` Copilot loads it
+# from. lane-mail-check judges the turn end and records the context readings
+# the orch copilot-lane-context extension hands it, which spells this rule
+# again, being a copy in the Copilot home with no orch install beside it;
+# lane-mail-compact flags the automatic compaction.
+LANE_CONTEXT_COPILOT_HOOKS="lane-mail-check lane-mail-compact"
+
+# lane_context_copilot_hooks ROOT HOME — the hook directory a Copilot CLI
+# session working in the repository ROOT under the Copilot home HOME loads
+# both of LANE_CONTEXT_COPILOT_HOOKS from: ROOT/.github/hooks, the project
+# scope, else HOME/hooks, the global one. Exit 1 where neither holds both, an
+# empty ROOT or HOME naming no scope.
+lane_context_copilot_hooks() { # ROOT HOME
+  local dir name held
+  for dir in "${1:+$1/.github/hooks}" "${2:+$2/hooks}"; do
+    [ -n "$dir" ] || continue
+    held=1
+    for name in $LANE_CONTEXT_COPILOT_HOOKS; do
+      { [ -f "$dir/$name.sh" ] && [ -f "$dir/$name.json" ]; } || { held=0; break; }
+    done
+    if [ "$held" -eq 1 ]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+  done
+  return 1
 }
 
 # lane_context_record_fields RECORD — one record split into LANE_CTX_HARNESS,
 # LANE_CTX_TOKENS, LANE_CTX_WINDOW, LANE_CTX_MODEL, LANE_CTX_PANE_KEY,
-# LANE_CTX_SESSION, LANE_CTX_GAP and LANE_CTX_AT, each empty where the record
-# holds none. A
+# LANE_CTX_SESSION, LANE_CTX_GAP, LANE_CTX_AT and LANE_CTX_SOURCE, the
+# record's `capacity_source`, each empty where the record holds none. A
 # reading carries a token count and no gap; a gap record carries the gap and
 # no token count. Exit 1, every field empty, where RECORD is neither shape
 # lane_context_record writes.
@@ -312,10 +422,12 @@ lane_context_record_fields() { # RECORD
   local fields rest
   LANE_CTX_HARNESS="" LANE_CTX_TOKENS="" LANE_CTX_WINDOW=""
   LANE_CTX_MODEL="" LANE_CTX_PANE_KEY="" LANE_CTX_SESSION="" LANE_CTX_GAP="" LANE_CTX_AT=""
+  LANE_CTX_SOURCE=""
   fields=$(jq -er 'select(type == "object" and (((.tokens | type) == "number" and .gap == null)
       or (.tokens == null and (.gap | type) == "string" and .gap != "")))
     | [(.harness // ""), (.tokens // "" | tostring), (.window // "" | tostring),
-       (.model // ""), (.pane_key // ""), (.session_id // ""), (.gap // ""), (.at // "")] | join("\t")' <<<"${1:-}" 2>/dev/null) || return 1
+       (.model // ""), (.pane_key // ""), (.session_id // ""), (.gap // ""), (.at // ""),
+       (.capacity_source // "")] | join("\t")' <<<"${1:-}" 2>/dev/null) || return 1
   # Split by hand for the reason lane_context_collect gives: an empty field
   # would otherwise collapse into its neighbour.
   rest="$fields"
@@ -325,8 +437,9 @@ lane_context_record_fields() { # RECORD
   LANE_CTX_MODEL="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
   LANE_CTX_PANE_KEY="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
   LANE_CTX_SESSION="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
-  LANE_CTX_GAP="${rest%%$'\t'*}"
-  LANE_CTX_AT="${rest#*$'\t'}"
+  LANE_CTX_GAP="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+  LANE_CTX_AT="${rest%%$'\t'*}"
+  LANE_CTX_SOURCE="${rest#*$'\t'}"
 }
 
 # lane_context_record_judged RECORD PCT — RECORD with `handoff_due` set from
@@ -433,7 +546,7 @@ lane_context_collect() {
         0) ;;
         1)
           lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" \
-            unrecorded "no turn end of this session has recorded a reading" "$server" "$caller"
+            unrecorded "no reading of this session is recorded, so its context is unmeasured" "$server" "$caller"
           continue
           ;;
         *)

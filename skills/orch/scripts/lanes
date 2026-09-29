@@ -205,12 +205,19 @@
 #   context  Print context use for each live work lane in this fleet, as its
 #         own turn-end hook recorded it: the tokens the last response left in the
 #         context, read by the harness adapter (lib/lane-context.sh) from the
-#         transcript, or for Copilot from the session record its status line
-#         writes (references/copilot-runtime.md), and its effective
-#         compaction point. No pane is
+#         transcript, and its effective compaction point; a Copilot CLI lane's
+#         is the reading its kendex extension took of Copilot's
+#         `session.usage_info`, the capacity the limit Copilot compacts at,
+#         whose source the --json row names in `context_capacity_source`, or,
+#         where no such reading stands, the one its turn end took from the
+#         session record its status line writes (references/copilot-runtime.md);
+#         one with neither is `unrecorded`, never room. No pane is
 #         read. A lane's reading is in its own mailbox, which the running
 #         lane record of the fleet state (`workflow-state get oversee`)
-#         places, read through the provider that record names. The
+#         places, read through the provider that record names. A running
+#         lane record no claim names, a lane launched with no --lane, is a
+#         row of its own, its `pane` the record's
+#         SESSION:WINDOW and its server null. The
 #         caller's own row with no lane record is the overseer, which is
 #         judged at its own turn end and reads `unrecorded` here.
 #         CONTEXT_USED_PCT is the share of that effective capacity CONSUMED. A row
@@ -2729,6 +2736,25 @@ context_record_fetch() { # LANE CALLER
 	mailbox_file_fetch "$rec" "$LANE_CONTEXT_RECORD"
 }
 
+# CLAIMS with a row appended for every running fleet lane record LANES_JSON
+# holds whose window no claim names. A lane launched with no --lane takes no
+# claim, yet its turn end judges a reading recorded in its mailbox like any
+# lane's, so the sweep reads it from its record. The row names the
+# record's account, or none, its window's name as the lane, no server, and
+# the window's whole `SESSION:WINDOW` as the pane, a target tmux takes where
+# it takes a pane id. Exit 1 where the records could not be read.
+context_record_claims() { # CLAIMS LANES_JSON
+	local rows
+	rows="$(jq -r --arg claims "$1" '
+		($claims | split("\n") | map(split("\t") | .[1] // empty)) as $named
+		| .[] | select((.window // "") != "")
+		| (.window | sub("^[^:]*:"; "")) as $w
+		| select(any($named[]; . == $w) | not)
+		| [(.account // ""), $w, "", .window] | join("\t")' <<<"$2")" || return 1
+	[[ -z "$1" ]] || printf '%s\n' "$1"
+	[[ -z "$rows" ]] || printf '%s\n' "$rows"
+}
+
 # The file NAME in the lane mailbox the fleet lane record REC names, under the
 # same contract: its bytes on stdout and exit 0, exit 1 where it is not there
 # or is empty, exit 2 with the cause on stdout where it could not be read.
@@ -3695,6 +3721,7 @@ case "$SUB" in
 		fi
 		context_claims="$(lane_claims_for_fleet "$LANE_CLAIMS_LIVE" "$context_fleet" "$context_records")" \
 			|| die context-claims "$@"
+		context_claims="$(context_record_claims "$context_claims" "$CONTEXT_LANES")" || die context-fleet oversee
 		# A separate list, never LANE_CLAIMS_LIVE itself: the caller's pane is
 		# a pane to measure and not a launch in flight, and the usage pass
 		# below counts that global's rows against each account.

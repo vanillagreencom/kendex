@@ -76,6 +76,7 @@ hooks = [
   "stop-failure-row",
   "lane-mail-start",
   "lane-mail-prompt",
+  "lane-mail-compact",
 ]
 
 [bundles.orchestration]
@@ -99,6 +100,7 @@ hooks = [
   "stop-failure-row",
   "lane-mail-start",
   "lane-mail-prompt",
+  "lane-mail-compact",
 ]
 
 [bundles.code-review]

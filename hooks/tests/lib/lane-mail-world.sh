@@ -155,6 +155,27 @@ ARM_ARGS=()
 # what the harness running that call sets, such as the directory it started in.
 CALL_DIR=""
 CALL_ENV=()
+# The user home a Copilot run keeps its lead records under, and the records
+# themselves: a suite driving Copilot payloads names this home in CALL_ENV, so
+# no run writes the developer's own cache.
+COP_HOME="$TMP_ROOT/copilot-user"
+COP_LEADS="$COP_HOME/.cache/lane-mail/copilot-leads"
+mkdir -p "$COP_HOME"
+cop_clear_leads() {
+  rm -rf -- "${COP_HOME:?}/.cache"
+}
+# SESSION's sessionStart, run through JUDGE's start arm, which records the
+# session as a Copilot lead: what a lead's own start writes.
+cop_lead_start() { # JUDGE SESSION
+  local judge="$CASE_HOOK"
+  CASE_HOOK="$1"
+  ARM_ARGS=(start)
+  run_payload "$(jq -nc --arg s "$2" '{sessionId:$s, timestamp:1, cwd:"/w", source:"new"}')"
+  ARM_ARGS=()
+  CASE_HOOK="$judge"
+  assert_eq "RC=$RC lead=$([ -f "$COP_LEADS/$2" ] && echo recorded || echo none)" "RC=0 lead=recorded" \
+    "the start of $2 records it as a Copilot lead"
+}
 run_payload() { # RAW-JSON [ENV=VAL...]
   local payload="$1"
   shift
@@ -266,6 +287,27 @@ plant_install() { # [SKIP]
   mkdir -p "$LANE/.claude/skills/orch/scripts"
   ln -s -f -n "$REPO_ROOT/skills/orch/scripts/lane-mail" "$LANE/.claude/skills/orch/scripts/lane-mail"
   plant_siblings "$LANE/.claude/skills/orch/scripts" "${1:-}"
+}
+
+# The orch install the lane renders under .agents, which the hook finds from
+# any hook directory in the lane, made a copy with SKIP left out: a script, or
+# a library under lib/.
+hole_install() { # SKIP
+  local dir="$LANE/.agents/skills/orch/scripts" entry
+  rm -f -- "${LANE:?}/.agents/skills/orch/scripts"
+  mkdir -p "$dir"
+  ln -s -f -n "$REPO_ROOT/skills/orch/scripts/lane-mail" "$dir/lane-mail"
+  case "$1" in
+    lib/*)
+      plant_siblings "$dir" lib
+      mkdir -p "$dir/lib"
+      for entry in "$REPO_ROOT/skills/orch/scripts/lib"/*; do
+        [ "lib/${entry##*/}" != "$1" ] || continue
+        ln -s -f -n "$entry" "$dir/lib/${entry##*/}"
+      done
+      ;;
+    *) plant_siblings "$dir" "$1" ;;
+  esac
 }
 
 # The repository's own reader: it touches MARKER, so a run of it is visible.

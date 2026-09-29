@@ -252,7 +252,7 @@ echo "=== the reading a turn end records, and the report's judgement of it ==="
 BOX="$TMP_ROOT/box"; mkdir -p "$BOX"
 bash -c 'source "$1"; lane_context_record "$2" codex 232560 258400 gpt-6-astra s1 "7000 %9"' _ "$LIB" "$BOX"
 assert_eq "$(jq -c 'del(.at)' "$BOX/context.json")" \
-  '{"harness":"codex","model":"gpt-6-astra","tokens":232560,"window":258400,"used_pct":90,"session_id":"s1","pane_key":"7000 %9","gap":null}' \
+  '{"harness":"codex","model":"gpt-6-astra","tokens":232560,"window":258400,"used_pct":90,"capacity_source":null,"session_id":"s1","pane_key":"7000 %9","gap":null}' \
   "the record names the reading, the share used, and the session and pane it belongs to"
 assert_eq "$(bash -c 'source "$1"; lane_context_record_judged "$(cat "$2")" 90' _ "$LIB" "$BOX/context.json" | jq -c '.handoff_due')" \
   "false" "the report judges a recorded reading by the same judge"
@@ -265,7 +265,7 @@ assert_eq "$(ls -A "$BOX")" "context.json" "the record lands by a rename, leavin
 # reading, which the report's judge refuses to judge.
 bash -c 'source "$1"; lane_context_record "$2" claude null "" "" s1 "7000 %9" home-unnamed' _ "$LIB" "$BOX"
 assert_eq "$(jq -c 'del(.at)' "$BOX/context.json")" \
-  '{"harness":"claude","model":null,"tokens":null,"window":null,"used_pct":null,"session_id":"s1","pane_key":"7000 %9","gap":"home-unnamed"}' \
+  '{"harness":"claude","model":null,"tokens":null,"window":null,"used_pct":null,"capacity_source":null,"session_id":"s1","pane_key":"7000 %9","gap":"home-unnamed"}' \
   "a gap record names the reason and the session and pane, with no reading"
 # shellcheck disable=SC2016  # expanded by the child shell.
 fields() { bash -c 'source "$1"; if lane_context_record_fields "$2"; then
@@ -281,6 +281,90 @@ $(cat "$BOX/context.json")|rc=0 harness=claude tokens=none pane=7000 %9 session=
 ROWS
 assert_eq "$(bash -c 'source "$1"; if lane_context_record_judged "$(cat "$2")" 90; then echo rc=0; else echo "rc=$?"; fi' _ "$LIB" "$BOX/context.json")" \
   "rc=1" "the report's judge refuses a gap record as no reading"
+bash -c 'source "$1"; lane_context_record "$2" copilot 150000 217600 "" s1 "" "" "80% of tokenLimit"' _ "$LIB" "$BOX"
+assert_eq "$(bash -c 'source "$1"; lane_context_record_fields "$(cat "$2")"; printf "%s|%s|%s" "$LANE_CTX_SESSION" "$LANE_CTX_WINDOW" "$LANE_CTX_AT"' _ "$LIB" "$BOX/context.json" | cut -c1-12)" \
+  "s1|217600|20" "a record's fields name its session apart from the time it was taken"
+assert_eq "$(jq -c '[.capacity_source, .gap]' "$BOX/context.json")" '["80% of tokenLimit",null]' \
+  "a reading whose capacity is not the window its harness reported names where it came from, and names no gap"
+
+echo "=== a Copilot usage reading read as one reading ==="
+# copilot_reading PAYLOAD — lane_context_copilot_reading's answer, TABs as `|`.
+copilot_reading() { # PAYLOAD
+  local out rc=0
+  out="$(printf '%s' "$1" | bash -c 'source "$1"; lane_context_copilot_reading' _ "$LIB" 2>/dev/null)" || rc=$?
+  printf 'rc=%s%s' "$rc" "${out:+ ${out//$'\t'/|}}"
+}
+# `payload|want`: the payload the copilot-lane-context extension hands the
+# usage arm, the capacity 80 percent of the token limit, rounded down.
+COPILOT_SOURCE="80% of tokenLimit, Copilot's backgroundCompactionThreshold default"
+while IFS='|' read -r payload want; do
+  assert_eq "$(copilot_reading "$payload")" "${want//@/$COPILOT_SOURCE}" "copilot $payload: ${want//@/SOURCE}"
+done <<'ROWS'
+{"session_id":"s1","cwd":"/w","current_tokens":150000,"token_limit":272000}|rc=0 150000|217600|@
+{"session_id":"s1","cwd":"/w","current_tokens":0,"token_limit":24001}|rc=0 0|19200|@
+{"current_tokens":150000,"token_limit":0}|rc=5
+{"current_tokens":150000}|rc=5
+{"current_tokens":"150000","token_limit":272000}|rc=5
+{"current_tokens":1.5,"token_limit":272000}|rc=5
+[]|rc=5
+ROWS
+
+echo "=== a Copilot session's compaction flag, and whose it is ==="
+FLAGBOX="$TMP_ROOT/flagbox"; mkdir -p "$FLAGBOX"
+flagged() { # SESSION
+  local rc=0
+  bash -c 'source "$1"; lane_context_compaction_flagged "$2" "$3"' _ "$LIB" "$FLAGBOX" "$1" 2>/dev/null || rc=$?
+  printf 'rc=%s' "$rc"
+}
+assert_eq "$(flagged s1)" "rc=1" "no flag standing flags no session"
+bash -c 'source "$1"; lane_context_compaction_flag "$2" copilot auto s1 "7000 %9"' _ "$LIB" "$FLAGBOX"
+assert_eq "$(jq -c 'del(.at)' "$FLAGBOX/compaction.json")" \
+  '{"harness":"copilot","trigger":"auto","session_id":"s1","pane_key":"7000 %9"}' \
+  "the flag names the trigger, and the session and pane it belongs to"
+assert_eq "$(flagged s1)" "rc=0" "its own session is flagged"
+assert_eq "$(flagged s2)" "rc=1" "another session is not, so a successor is never held on its predecessor's compaction"
+printf 'not json\n' > "$FLAGBOX/compaction.json"
+assert_eq "$(flagged s1)" "rc=2" "a flag that is no JSON object is unreadable, neither flagged nor clear"
+
+echo "=== the Copilot hook scope a session loads ==="
+SCOPES="$TMP_ROOT/scopes"
+scope() { # ROOT HOME
+  local out rc=0
+  out="$(bash -c 'source "$1"; lane_context_copilot_hooks "$2" "$3"' _ "$LIB" "$1" "$2")" || rc=$?
+  printf 'rc=%s %s' "$rc" "${out#"$SCOPES"/}"
+}
+# render_hooks DIR NAME... — each NAME rendered as Copilot loads a hook, its
+# script beside its registry document; a name spelled NAME.sh renders the
+# script alone.
+render_hooks() { # DIR NAME...
+  local dir="$1" name
+  shift
+  mkdir -p "$dir"
+  for name in "$@"; do
+    case "$name" in
+      *.sh) : > "$dir/$name" ;;
+      *) : > "$dir/$name.sh"; : > "$dir/$name.json" ;;
+    esac
+  done
+}
+render_hooks "$SCOPES/repo/.github/hooks" lane-mail-check lane-mail-compact
+render_hooks "$SCOPES/home/hooks" lane-mail-check lane-mail-compact
+render_hooks "$SCOPES/half/.github/hooks" lane-mail-check
+render_hooks "$SCOPES/bare/.github/hooks" lane-mail-check lane-mail-compact.sh
+# `root|home|want`, `-` naming none.
+while IFS='|' read -r root home want; do
+  [ "$root" != - ] || root=""
+  [ "$home" != - ] || home=""
+  assert_eq "$(scope "${root:+$SCOPES/$root}" "${home:+$SCOPES/$home}")" "$want" "scope ${root:-none} under ${home:-none}: $want"
+done <<'ROWS'
+repo|home|rc=0 repo/.github/hooks
+half|home|rc=0 home/hooks
+bare|home|rc=0 home/hooks
+half|-|rc=1 
+bare|-|rc=1 
+-|home|rc=0 home/hooks
+-|-|rc=1 
+ROWS
 
 echo "=== the ownership gate binds a reading to its own session's file ==="
 # lane_context_transcript_owned holds a transcript to the session id and launch
@@ -338,6 +422,16 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     out="$(LIB_UNDER_TEST="$copy/lane-context.sh" bash "${BASH_SOURCE[0]}" 2>&1 || true)"
     assert_eq "$(grep -cF -- "FAIL  $5" <<<"$out" || true)" "1" "control $1: $5 goes red"
   }
+  control copilot-share lane-context.sh 'LANE_CONTEXT_COPILOT_COMPACTION_PCT=80' 'LANE_CONTEXT_COPILOT_COMPACTION_PCT=100' \
+    'copilot {"session_id":"s1","cwd":"/w","current_tokens":150000'
+  control copilot-floor lane-context.sh '(.token_limit * $pct / 100 | floor | tostring)' '(.token_limit * $pct / 100 | ceil | tostring)' \
+    'copilot {"session_id":"s1","cwd":"/w","current_tokens":0'
+  control copilot-zero-limit lane-context.sh ' or .token_limit == 0 then' ' then' \
+    'copilot {"current_tokens":150000,"token_limit":0}'
+  control flag-any-session lane-context.sh 'else (.session_id // "") == $s end' 'else true end' \
+    'another session is not'
+  control scope-registry lane-context.sh '[ -f "$dir/$name.sh" ] && [ -f "$dir/$name.json" ]' '[ -f "$dir/$name.sh" ]' \
+    'scope bare under none'
   control first-reading adapters/claude.sh '| last // empty' '| first // empty' \
     'claude reads claude-last as'
   control no-synthetic-skip adapters/claude.sh ' and .model != "<synthetic>"' '' \

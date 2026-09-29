@@ -537,12 +537,17 @@ fi
 #           pi-hooks carrier that sends the window, both read on this machine
 #           under the Pi root the lane runs on (pi_local_gate), or for a hosted
 #           lane on its host once create has made it (host_pi_gate)
-#   copilot its account's settings.json running copilot-statusline as its
-#           statusLine command, the one producer of the session record the
-#           copilot adapter reads, read on this machine under the account the
-#           lane runs on once the lane is resolved (copilot_fleet_gate); a
-#           hosted lane's account is on its host, which nothing here reads for
-#           it, so a hosted copilot fleet lane is refused
+#   copilot its own `session.usage_info` readings, which the kendex
+#           extension hands lane-mail-check to record with the limit Copilot
+#           compacts at as the capacity, since no switch turns that
+#           compaction off, or, where the home's settings turn the EXTENSIONS
+#           feature off, the session record its account's copilot-statusline
+#           statusLine command writes, the fallback reader; judged below once
+#           the lane, and so the Copilot home, is resolved
+#           (copilot_fleet_gate), and its hooks once its worktree stands
+#           (copilot_hooks_gate); a hosted lane's home is on its host, which
+#           nothing here reads for it, so a hosted copilot fleet lane is
+#           refused
 # Every other harness, and a launch naming none, has no adapter. A wake is not
 # judged: it re-enters a session its own launch was admitted with, and names no
 # model of its own.
@@ -700,6 +705,132 @@ lane_check() {
 # the overseer seat `lanes` omits is the one the fleet the launch records into
 # names, whichever checkout the launch runs from; the value resolves as
 # --state-dir does for workflow-state.
+# The Copilot home a copilot launch runs under: the lane's own where --lane
+# named one, else the COPILOT_HOME this launcher inherits, else Copilot's own
+# default under the home. The fleet gate configures the context reader there
+# and find_relaunch_session reads the session store there, so both ask here.
+copilot_launch_home() {
+  if [[ "${LANE_ENV%%=*}" == COPILOT_HOME ]]; then
+    printf '%s\n' "${LANE_ENV#*=}"
+  else
+    printf '%s\n' "${COPILOT_HOME:-${LANES_HOME:-$HOME}/.copilot}"
+  fi
+}
+
+# Make the Copilot home HOME run the kendex context reader, the Copilot
+# extension copilot-lane-context/extension.mjs beside this script: copied to
+# HOME/extensions/kendex-lane-context/extension.mjs, rewritten only where its
+# content differs, and loaded by the EXTENSIONS feature, which Copilot keeps
+# off until `enabledFeatureFlags.EXTENSIONS` is true in HOME/settings.json.
+# Both hold for every session on that home. A settings.json that is a link is
+# written through to its target, so the link stays. Each file is renamed into
+# place from its own directory, so Copilot never reads half of one. Refused,
+# with COPILOT_CONTEXT_FILE naming the file and COPILOT_CONTEXT_DETAIL why:
+# `disabled`, an EXTENSIONS flag set false, the operator's choice and never
+# overridden; `unreadable`, a file that cannot be read, or settings that are
+# no JSON object or carry an EXTENSIONS flag that is no boolean; `unwritable`,
+# a write that failed.
+COPILOT_CONTEXT_FILE=""
+COPILOT_CONTEXT_DETAIL=""
+copilot_context_configure() { # HOME
+  local source="$SCRIPT_DIR/copilot-lane-context/extension.mjs" dest target link hops=0 doc='{}' verdict staged
+  dest="$1/extensions/kendex-lane-context/extension.mjs"
+  COPILOT_CONTEXT_FILE="$source" COPILOT_CONTEXT_DETAIL=unreadable
+  [[ -r "$source" ]] || return 1
+  COPILOT_CONTEXT_FILE="$dest" COPILOT_CONTEXT_DETAIL=unwritable
+  if ! cmp -s -- "$source" "$dest"; then
+    mkdir -p -- "${dest%/*}" && staged="$(mktemp "${dest%/*}/.extension.mjs.XXXXXX")" || return 1
+    if ! cp -- "$source" "$staged" || ! mv -f -- "$staged" "$dest"; then
+      rm -f -- "${staged:?}"
+      return 1
+    fi
+  fi
+  # The link's own target, hop by hop: readlink with no option is the one
+  # spelling every platform this runs on shares.
+  target="$1/settings.json"
+  COPILOT_CONTEXT_FILE="$target" COPILOT_CONTEXT_DETAIL=unreadable
+  while [[ -L "$target" ]]; do
+    hops=$((hops + 1))
+    (( hops <= 40 )) && link="$(readlink -- "$target")" || return 1
+    case "$link" in /*) target="$link" ;; *) target="${target%/*}/$link" ;; esac
+  done
+  if [[ -e "$target" ]]; then
+    doc="$(cat -- "$target")" || return 1
+  fi
+  # jq refuses to index a flags value that is no object, which reads as
+  # unreadable below.
+  verdict="$(jq -r '
+    if type != "object" then "unreadable"
+    else .enabledFeatureFlags.EXTENSIONS as $on
+      | if $on == true then "enabled" elif $on == false then "disabled"
+        elif $on == null then "absent" else "unreadable" end
+    end' <<<"$doc")" || verdict=unreadable
+  case "$verdict" in
+    enabled) return 0 ;;
+    absent) ;;
+    disabled) COPILOT_CONTEXT_DETAIL=disabled; return 1 ;;
+    *) return 1 ;;
+  esac
+  COPILOT_CONTEXT_DETAIL=unwritable
+  staged="$(mktemp "${target%/*}/.settings.json.XXXXXX")" || return 1
+  if ! jq '.enabledFeatureFlags = ((.enabledFeatureFlags // {}) + {EXTENSIONS: true})' <<<"$doc" >"$staged" \
+     || ! mv -f -- "$staged" "$target"; then
+    rm -f -- "${staged:?}"
+    return 1
+  fi
+}
+
+# A Copilot fleet lane is judged by what its own Copilot loads: the
+# lane-mail-check hook at its turn end and lane-mail-compact at its automatic
+# compaction, from the project or the global hook scope
+# (lib/lane-context.sh § lane_context_copilot_hooks), and the context reading
+# the copilot-lane-context extension of the lane's Copilot home hands
+# lane-mail-check. Copilot runs no hook and no extension the home does not
+# name, and a lane running with either missing would be reported measured
+# while nothing measured it. copilot_fleet_gate makes the home run the
+# extension, before any worktree. The project scope is the lane's worktree,
+# made from the item's base or kept from an earlier launch, never the caller's
+# checkout, so copilot_hooks_gate asks once that worktree stands and before the
+# harness starts in it.
+#
+# A home whose settings turn EXTENSIONS off (`detail=disabled`) runs no
+# extension, and that choice is the operator's. There the lane is admitted
+# only where the fallback reader serves: the account's statusLine runs
+# copilot-statusline often enough for its session record to stay fresh
+# (lib/adapters/copilot.sh § lane_adapter_copilot_status_line, whose reason
+# the refusal carries as `cause=`), the record the turn end reads where no
+# extension reading stands. Every other failure refuses, since the fallback
+# stands in for an extension the operator switched off, never for a home
+# this launcher could not set up.
+#
+# Called for the lane resolved up front and again for each one a batch
+# re-picks, so it asks whether this launch is a Copilot fleet one itself.
+# Returns 1 with the refusal printed.
+copilot_fleet_gate() {
+  local home
+  [[ "$FLEET" == true && "$WAKE" != true && "$LAUNCH_HARNESS" == copilot ]] || return 0
+  home="$(copilot_launch_home)"
+  copilot_context_configure "$home" && return 0
+  if [[ "$COPILOT_CONTEXT_DETAIL" != disabled ]]; then
+    ot_message unsupported-for-oversee harness=copilot reason=no-context-reader \
+      "file=$COPILOT_CONTEXT_FILE" "detail=$COPILOT_CONTEXT_DETAIL" >&2
+    return 1
+  fi
+  lane_adapter_copilot_status_line "$home" && return 0
+  ot_message unsupported-for-oversee harness=copilot reason=no-context-reader \
+    "file=$COPILOT_CONTEXT_FILE" "detail=$COPILOT_CONTEXT_DETAIL" \
+    "cause=$LANE_ADAPTER_COPILOT_STATUS_REASON" >&2
+  return 1
+}
+copilot_hooks_gate() { # WORKTREE ITEM
+  local home
+  home="$(copilot_launch_home)"
+  lane_context_copilot_hooks "$1" "$home" >/dev/null && return 0
+  ot_message unsupported-for-oversee harness=copilot reason=no-context-hooks "item=$2" \
+    "scope=$1/.github/hooks" "scope=$home/hooks" >&2
+  return 1
+}
+
 pick_auto_lane() {
   local model_args=() state_env=()
   [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
@@ -1008,30 +1139,17 @@ if [[ -n "$LANE" ]]; then
   ot_message lane-selected "lane=$LANE_ENV"
   pi_lane_root_apply || exit 1
 fi
-# The copilot arm of the fleet gate above, run once the account is known: the
-# lane's where one was named or picked, else the one a launch with none runs on
-# (launch_finish). Its statusLine must run copilot-statusline often enough for
-# its record to stay fresh (lib/adapters/copilot.sh §
-# lane_adapter_copilot_status_line, whose reason the refusal carries as
-# `cause=`), since that record is what the turn-end hook judges the lane's
-# context on; with none every turn end reads the context unmeasured.
-# Called for the lane resolved up front and again for each one a batch
-# re-picks. Returns 1 with the refusal printed.
-copilot_fleet_gate() {
-  local home
-  [[ "$FLEET" == true && "$WAKE" != true && "$LAUNCH_HARNESS" == copilot ]] || return 0
-  home="${LANE_ENV#COPILOT_HOME=}"
-  [[ -n "$LANE_ENV" ]] || home="$(lane_context_caller_cfg copilot)"
-  lane_adapter_copilot_status_line "$home" \
-    || { ot_message unsupported-for-oversee "harness=copilot" "reason=status-line" "cause=$LANE_ADAPTER_COPILOT_STATUS_REASON" "file=$home/settings.json" >&2; return 1; }
-}
-copilot_fleet_gate || exit 1
 # The hosted pane is driven by keystrokes, the provider's --account is the
 # lane's config dir and the host protocol names four harnesses, so each gap is
 # refused before any host is created.
 if [[ "$LANE_HOST" != local && ( "$TERMINAL_MODE" != tmux || -z "$LANE_ENV" || ! "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ) ]]; then
   ot_message host-invalid "host=$LANE_HOST" "mode=$TERMINAL_MODE" "lane=$LANE_ENV" "harness=$HARNESS" >&2
   exit 1
+fi
+COPILOT_HOOKS_GATED=false
+if [[ "$FLEET" == true && "$WAKE" != true && "$LAUNCH_HARNESS" == copilot ]]; then
+  copilot_fleet_gate || exit 1
+  COPILOT_HOOKS_GATED=true
 fi
 
 # The repository the launch command renders as `{repo}`. An explicit --repo
@@ -2859,6 +2977,10 @@ for raw in "${ITEMS[@]}"; do
   # itself and is this item's failure, not a warning to launch past.
   if [[ -n "$reuse_merged" ]] && ! "$WORKTREE_CLI" fix-links "$wt_id" >/dev/null; then
     ot_message worktree-links-failed "item=$item" "path=$wt" >&2
+    failed=$((failed + 1))
+    continue
+  fi
+  if [[ "$COPILOT_HOOKS_GATED" == true ]] && ! copilot_hooks_gate "$wt" "$item"; then
     failed=$((failed + 1))
     continue
   fi

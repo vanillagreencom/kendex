@@ -313,6 +313,34 @@ err="$(CTX_CONTEXT_PCT=101 run_ctx --json 2>&1 >/dev/null)" && rc=0 || rc=$?
 assert_eq "rc=$rc first=${err%%$'\n'*}" "rc=1 first=lanes: invalid-handoff-context value=101" \
   "a context mark outside whole percents 1 to 100 is refused by name"
 
+echo "=== a lane no claim names, a Copilot one, is read from its running record ==="
+# A Copilot fleet launch takes no --lane, `lanes` keeping no Copilot
+# inventory, so no claim names its window; its turn end still judges the
+# context reading its extension recorded in its mailbox, the capacity the limit Copilot
+# compacts at. A fleet of its own, so the claims above name none of it.
+COP_FLEET="$TMP_ROOT/copilot-fleet"
+COP_BOX="$TMP_ROOT/lanes/ken-108/tmp/lane-mail/KEN-108"
+mkdir -p "$COP_FLEET" "$COP_BOX"
+"$SCRIPTS_DIR/workflow-state" --state-dir "$COP_FLEET" init oversee >/dev/null
+"$SCRIPTS_DIR/workflow-state" --state-dir "$COP_FLEET" set oversee lanes "$(jq -nc --arg root "$TMP_ROOT/lanes/ken-108" '[
+  {item: "KEN-108", window: "fleet:ken-108", harness: "copilot", account: null, host: null, mail_root: $root, status: "running"}]')" >/dev/null
+bash -c 'source "$1/lib/lane-context.sh"; lane_context_record "$2" copilot 199000 220320 "" s1 "" "" "80% of tokenLimit"' \
+  _ "$SCRIPTS_DIR" "$COP_BOX"
+COPILOT_OUT="$(CTX_FLEET="$COP_FLEET" run_ctx --json)"
+lanes_table "$COPILOT_OUT" \
+  "a running Copilot lane record no claim names is a row, its pane the record's window|ken-108|status=ok harness=copilot pane=fleet:ken-108 server=null account=null context_tokens=199000 context_window=220320 context_used_pct=90" \
+  "its reading past 90 percent of the compaction limit requires handoff|ken-108|context_handoff_due=true handoff_required=true"
+assert_eq "$(jq -r '.[] | select(.lane == "ken-108") | .context_capacity_source' <<<"$COPILOT_OUT")" \
+  "80% of tokenLimit" "the row names where the capacity came from"
+rm -f -- "${COP_BOX:?}/context.json"
+lanes_table "$(CTX_FLEET="$COP_FLEET" run_ctx --json)" \
+  "with no reading recorded the row is unrecorded, never room|ken-108|status=unrecorded context_tokens=null context_handoff_due=null handoff_required=false"
+RECORD_ROWS_CTRL="$(mutant_scripts mutant-record-rows lanes)" || exit 1
+mutate_file "$RECORD_ROWS_CTRL/lanes" \
+  'context_claims="$(context_record_claims "$context_claims" "$CONTEXT_LANES")" || die context-fleet oversee' ':'
+assert_eq "$(CTX_LANES="$RECORD_ROWS_CTRL/lanes" CTX_FLEET="$COP_FLEET" run_ctx --json | jq -c '[.[].lane]')" '[]' \
+  "control: without the record rows a Copilot lane no claim names has no row"
+
 echo "=== the recorded provider decides both the read and its probe ==="
 # ambient|record|down|expected. A missing record and an unreachable host both
 # return 2 from cat. Only a probe of that same recorded provider separates them.
@@ -461,6 +489,8 @@ assert_eq "$(launched_caller "$CURSTART_CTRL/lanes")" "%48 null" \
   "control: a record read judged on no start names no account for the launched overseer"
 
 echo "=== an empty fleet says so; an unreadable store refuses ==="
+# No claim and no running lane record: a record no claim names is a row.
+"$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee lanes '[]' >/dev/null
 rm -f "$STATE"/claims/*.claim
 EMPTY="$(run_ctx)"
 assert_eq "${EMPTY%%$'\n'*}" "lane-context: empty count=0" "an empty fleet says so"

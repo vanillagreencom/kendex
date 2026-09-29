@@ -5,7 +5,8 @@
 # The relaunch session lookup: which harness transcript a --relaunch or --wake
 # resumes, and the id the harness resumes it by. It reads open-terminal's
 # globals (TRACKER, LANE_ENV, LAUNCH_FLAGS, LANES_CLI) and calls its
-# launch_ambient_codex_home, so it is loaded by that script alone.
+# launch_ambient_codex_home and copilot_launch_home, so it is loaded by that
+# script alone.
 #
 # Sourced, never run.
 
@@ -106,7 +107,7 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
       match_filter='[inputs|fromjson?|select(.type=="event_msg" and .payload.type=="user_message")|.payload.message]'"$id_match" ;;
     pi) roots="$(pi_relaunch_root "$cwd" "$home")" || return 2; match_filter='[inputs|fromjson?|select(.type=="message" and .message.role=="user")|.message.content]'"$id_match" ;;
     copilot)
-      config="${COPILOT_HOME:-$home/.copilot}"; [[ "${LANE_ENV%%=*}" != COPILOT_HOME ]] || config="${LANE_ENV#*=}"
+      config="$(copilot_launch_home)"
       roots="$config/session-state"
       cwd="$(cd -- "$cwd" && pwd -P)" || return 2 ;;
   esac

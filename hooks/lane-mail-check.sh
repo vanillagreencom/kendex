@@ -3,9 +3,9 @@
 # name: lane-mail-check
 # event: Stop
 # matcher:
-# description: Blocks a lane's turn end while its overseer mailbox holds unread lines, so a directive or a ruling reaches the lane without a keystroke, a pane or a question tool. The lane is the work item `LANE_MAIL_ITEM` names, or the one directory under `<repo>/tmp/lane-mail/` whose name lowercases to the current branch; a session with neither is not a lane; a lane whose mailbox holds no unread line passes silently, as does a directory git reports no repository for and that holds no mailbox of its own. The checkout's overseer mailbox, `<repo>/tmp/lane-mail/overseer`, has one reader: the session whose tmux server and pane the checkout's oversee workflow state names under `.overseer`, the pair every writer the orch `schemas/workflow-state.md` `overseer` row names writes, `oversee register` among them for a session opened by hand, and the one the fleet's OVERSEER is established by below, so a record naming a dead pane names no reader. The pair names a session only on the tmux server started at the record's `server_start`, so a server a tmux restart handed the recorded pid and pane id names no reader either, and a record carrying no start names none. Where a file stands there, that session is handed the notes `lane-mail peer send --repo` wrote there at its turn end and after its tool calls, under the same `unread=<count>` line, unless a live watch holds the fleet state: the `oversee-watch.pid` record a repeat `oversee-watch` writes beside the fleet state on every surface and removes on exit, judged by the orch `lib/watch-pid.sh` library's `watch_pid_live`, which reads the mailbox itself, so the named session is handed nothing from it beside that watch. A fleet watched in single passes writes no watch record, so its named overseer is handed the notes as `unread=` lines and the next pass does not report them. Every other session in the checkout, one the owner opened there for other work included, is handed nothing from that mailbox, and so is a session whose install has no reader beside this hook. For the named session, where the install's `workflow-state path oversee` prints no path, or the library cannot be sourced or answers neither way, the hook refuses, opening `lane-mail-check: fleet-state=<path of the failing file>` with that file's own words under it; the halt arm never reads that mailbox, a subagent's turn end is handed nothing from it, and a session in a checkout with no overseer mailbox pays two file tests for the question. `<repo>` is the lane's root, resolved in this order: `CLAUDE_PROJECT_DIR`, the directory Claude Code started the session in; else the root the launch marker for `LANE_MAIL_ITEM` binds, where that root exists; else the directory the hook runs in, which on Codex and Pi is the session's start directory and on Claude Code without the variable is the call's own. A Claude Code lane working from the main clone is therefore still judged on its own mailbox. A root its launch marker binds that has no `tmp/lane-mail` directory is refused at a turn end, before any tool call and after the lead's finished one, opening `lane-mail-check: mailbox-missing=<path>` with the marker and the one `mkdir` command that restores the directory, and that command alone passes a tool call. Before a tool call a subagent is refused whatever it runs, and a call whose caller is unknown may run that command; after one a subagent is handed nothing and refused nothing, as with any mail, and its next call meets the refusal. The marker is looked up for the item `LANE_MAIL_ITEM` names or else the branch names, so that check costs one stat in a repository whose common git directory holds no `lane-mail` directory, and one branch read and one marker stat in one that does. A mailbox belongs to a lane only where a launch recorded one: `open-terminal` and `lane-host create` write the lane's root to `lane-mail/<item in lower case>` under the repository's common git directory and create the lane's own `tmp/lane-mail/<item>`, and a mailbox with no marker bound to this root passes silently. Unread lines are peeked through the orch skill's own `lane-mail inbox --peek`, the one reader of the mailbox and its cursor, and acknowledged with `inbox --ack` only once the refusal is written, so a hook killed at its budget leaves them unread and a line acknowledged here is never handed over twice. That reader is resolved from this hook's own install, walking up to the home directory for `skills/orch/scripts/lane-mail` or the shared `.agents/skills/orch/scripts/lane-mail` beside it, then the home's own shared tree for a harness root relocated out of it; the open repository's `.agents/skills/orch/scripts/lane-mail` is used only where this hook is installed in that repository, and a reader outside that containment is refused rather than run. The refusal opens with `lane-mail-check: unread=<count>` and carries one JSON envelope per line under it, and for the lead, where a halt is among them, the one `lane-mail inbox` command that reads it; the turn then continues with them. Run with the argument `deliver` by the lane-mail-deliver hook after a tool call, it exits 0 with the harness's JSON on stdout, whose `additionalContext` carries the same lines. Run with `start` by the lane-mail-start hook at a session start, or with `prompt` by the lane-mail-prompt hook at a prompt, both on Copilot alone, it hands the same lines over the same way and acknowledges them only once that is written, and refuses nothing: every refusal this description names is its keyed line on stderr at exit 0, with nothing on stdout and nothing acknowledged. Run with `halt` by the lane-mail-halt hook before one, it acknowledges nothing and refuses the call while an unread directive sent with `lane-mail send --halt` stands, opening `lane-mail-check: halt=<id>` with the directive and the one `lane-mail inbox` command that reads it, which names the lane's root with `--root` so it reads the same mailbox from any checkout; that command alone passes. Run with `row` by the session-start-row, session-end-row and stop-failure-row hooks, it writes the event row of a session with no lane of its own, and only for the pane's top-level harness, through the orch skill's `lib/session-rows.sh`, the file those hooks describe, and refuses nothing: every gap below its payload read is reported and passed; the overseer's own turn end writes a Stop row there through the same library at every turn end, compact, its time, event, harness and session alone, except over a standing StopFailure row, which it lifts and where it keeps the turn's last message. On a Pi install a launched lane's lead writes its own turn rows through that library into its mailbox directory, `session-rows.jsonl`: a Stop row at each turn end, carrying the `stopReason` of the turn's last assistant message in the transcript and Pi's `errorMessage` where that reason is `error`, and a PreToolUse row at the first tool call of each turn, after a turn end or on an empty file, written ahead of the mailbox check; oversee-watch and `lanes state` judge a Pi lane idle, working or walled from those rows in place of its pane, and a gap in the write is reported under `lane-rows-skipped` or `lane-rows-unwritten` and passed. The Pi install is the hook directory under `.pi` or `.pi/agent`, or under the user root `PI_CODING_AGENT_DIR` names; an install naming no harness writes no row, which a launched lane's turn end reports under `harness-unlisted`. Who made a call is answered once for every arm: the lead, a subagent, or unknown. A payload carrying a non-empty `agent_id` or `agent_type` is a subagent's on every harness, handed no mail and acknowledging none, and while a halt stands refused without that command. On Copilot, whose payloads name no agent, a preToolUse or postToolUse call is the lead's where its `sessionId` is a lead session this install recorded: one empty file per session under `~/.cache/lane-mail/copilot-leads`, written at the session's sessionStart, which Copilot fires for the lead alone, and at each turn end the transcript rule below proves the lead's, and pruned at a start once untouched for 30 days. A custom subagent's call was measured on Copilot CLI 1.0.88 carrying its own session id, which nothing recorded; whether a built-in task-tool subagent's calls carry their own session id or the lead's is a pending live-lane proof, and one whose calls carry the lead's is read as the lead, handed the lead's mail after its calls, which marks it read, and under a halt shown the read that clears it. A call whose session is no recorded lead, a custom subagent's among them, is unknown: the deliver arm hands it nothing and acknowledges nothing, writing `lane-mail-check: session-unrecorded=<id>` to stderr, so the lead's turn end hands the lines over and acknowledges them, and the halt arm refuses it without showing that command yet passes the command, because the reader's `--ack` stops short of an unread halt and a lead whose record could not be written would otherwise be refused for good; the lead is shown the command by every notice and refusal that hands it the halt, its turn end's included. A record that cannot be written is reported on stderr under `lane-mail-check: lead-unrecorded=<path>`, or `=none` for a session start naming no session id, and never refused. A Copilot sessionStart or userPromptSubmitted is the lead's, and an agentStop is ruled by its transcript, below; a prompt records no lead, since that a subagent's prompt fires no userPromptSubmitted is unmeasured. `stop_hook_active` true skips the mailbox check whole on the turn-end run. The flag is in the payload, so nothing above the payload read knows a turn was continued, and `arm`, the `missing-tools` refusal for `jq` or `cat`, `payload=unreadable` and `payload=invalid-json` are refused on every turn, the continued one included. Below that read one rule holds and every refusal is on one side of it: a refusal the lane itself can clear is still made, and a refusal it cannot is reported on stderr and passed. The lane clears the two handoff marks, and `script`, `setting`, `setting-range` and both `transcript` refusals, by writing its handoff record, and `mailbox-missing` by running the command it names, so those are refused on a continued turn as on any other. It clears none of `workdir`, `git`, `item`, `marker` or the `missing-tools` refusal for `git`, `tr`, `awk`, `mktemp` or `tail`, so each of those is reported and the turn ends, where a fresh turn refuses it. The halt arm reports and passes that same set at every tool call: a lane whose tool calls are refused can clear nothing, since clearing it takes a tool call, so there only the payload refusals and the mailbox's own, `reader`, `inbox`, `halt` and `mailbox-missing`, are refused, the last two each passing the one command that clears it. The same turn-end run hands the lane off before it runs out, so the handoff never waits on an overseer reading a pane. It reads this session's context use from the `transcript_path` the payload names, through the orch adapter for the harness this hook's install directory names, `.claude/hooks`, `.codex/hooks` or Pi's `kendex/hooks`: the tokens the last response left in context and effective capacity, with Pi reading the payload's own `context_window`. It records that reading as `context.json` in the lane's mailbox directory, where `lanes context` reads it, and refuses the turn end when `lane_context_handoff_due` requires handoff under the shared context rule in orch `references/oversee-events.md`, Judgement rules. It reads the account the credential this session runs on still has through the orch skill's own `lanes pick --lane`, and refuses at or below `ORCH_HANDOFF_HEADROOM_PCT` (default 3). A Pi session's account is the one its model's provider bills, by the orch `lane_pick_harness` rule on the `<provider>/<model>` its transcript names: a `pi-claude/` model spends the Claude seat `CLAUDE_CONFIG_DIR` names and is judged there on that model, a `github-copilot/` model spends the Copilot pool on Pi's own root, and any other provider, or a reading naming none, is left unjudged under `account=unmeasured`. Either refusal opens `lane-mail-check: context=<tokens>` or `lane-mail-check: headroom=<percent>` and carries one instruction: reach the next safe point, write the record with `workflow-state set <item> handoff`, send a `handoff` notice, and exit. The instruction opens with the `workflow-state init <item>` that `set` needs where the item has no state file yet, so it is enough on its own. It repeats at every turn end, `stop_hook_active` included, until the item's workflow state carries a `.handoff` object no relaunch has resumed; only the lane can write that record, so a single refusal it declines to act on would end the session with nothing recorded. That record is judged before every mark, before every read they rest on and before `orch-env` and `lanes` are looked for, so no failure but the record's own writer can hold a lane that has already done what it was asked. `orch-env` or `lanes` missing from this hook's install, a mark setting that is not a whole number in range, and a transcript the payload names and nothing can read are refusals too, each on the lane path alone and each carrying the same instruction. What the marks cannot judge is reported and passed, never refused: a payload naming no transcript leaves the context unread, and so does a transcript whose last usage line is an object carrying none of the field names its adapter reads, which is reported under `usage-unread=<path>` rather than summed to a figure of zero and read as room, a reading below the independent token limit whose capacity the adapter could not name, reported under `window-unread=<model>`, and an install directory naming no harness, reported under `harness-unlisted=<directory>`; a reading that could not be recorded is reported under `context-unrecorded=<path>` and still judged; an account `lanes` keeps no inventory for, one it could not measure and a read that passed this hook's own ceiling each leave the account unjudged under `account=unlisted`, `account=unmeasured` or `account=timeout`, never read as room, so a setup with no usage endpoint still ends its turns; and a lane whose handoff record cannot be judged leaves both marks unjudged under one of four keys, `handoff-skipped=<path>` for a reader or a script this install has not got, or `handoff-skipped=unlocatable` where this hook's own directory could not be resolved and none of them could be looked for, `handoff-outside=<path>` for one only the open repository supplies, `handoff-unanswered=<path>` for one that is there and answered nothing this hook can read, and `handoff-unreadable=<path>` for a state file the install's own `workflow-state` could not read. Passing the turn is the answer for all four. For the first three it is because an install whose orch scripts cannot answer cannot run `workflow-state set` either, so a lane told to record a handoff with them could never end a turn again; for `handoff-unreadable` the install answers and the fault is the item's own state file, which is the file the record would be written into, so that write could not land either and the refusal would be as uncloseable. A subagent's turn end is judged on neither mark. The fleet's OVERSEER meets four triggers of its own on its turn end: a session with no lane of its own whose tmux server and pane are the pair the oversee workflow state records under `.overseer` is that overseer, and nothing weaker establishes one, so an ordinary session in a fleet checkout is judged on nothing. A session the record does not name whose pane the overseer's `context.json` names, the overseer the record lost, is judged on nothing either, and reports `pane-unrecorded=<its pane key>` with the recorded key under it and writes that record with no reading and the gap `pane-unrecorded`; any other session the record does not name writes nothing, so the real overseer's reading stands. Before it reads that transcript for the overseer it binds it to the current session: the `transcript_path` the payload names is read only where it is this session's own native file, held to the `session_id` the payload carries and the launch home the fleet record names under `.overseer.home`, through the orch adapter for a claude, codex or copilot install; a Pi install states no transcript shape and reads the payload's own window as a Pi lane does. A file that is not this session's under that home, a newer unrelated transcript, a predecessor's in the same pane, or one under an account the fleet never picked, and a binding that cannot be made, a payload naming no session or a record naming no home, are each reported once under `transcript-unowned=<path>` with the reason the gate gave. Nothing is read then, and the context record is written with a null token count and that reason as its `gap` (orch `workflow-state.md`, `context.json` row), so it still advances at every turn end and oversee-watch reports the gap, and the judge is handed this install's harness and no context figure, so it judges the account triggers alone, the `transcript-unowned` line is this hook's one report that the context went unmeasured, and a session is never judged on a file it does not own. Every overseer turn end whose orch context library loads writes that record, a reading or a null token count with a `gap` naming why none was taken: the gate's reason, `binding-missing` for a payload naming no session, `home-unnamed` for a fleet record naming no launch home, `session-mismatch` for a file another session wrote and `home-mismatch` for one under another launch home, `transcript-unnamed` for a payload naming no transcript, `usage-absent` for a transcript holding no usage line, `usage-unread` for a usage object its adapter does not read, which is also reported under `usage-unread=<path>`, `session-record` for a Copilot session record that does not answer, which is also reported under `session-record=<reason>`, or `pane-unrecorded` below. An install naming no harness an adapter reads writes no gap, since its context is never read, and leaves the record as it was; a gap record that cannot be written is reported under `context-gap-unrecorded=<path>`, the record keeping its earlier entry. This hook records the overseer's own context reading as `context.json` in the overseer mailbox directory at the main checkout, naming the session and its pane, and hands that reading to `oversee-succeed --check-marks --context <tokens>:<window>` from this hook's own install, which judges those marks on it and on no stored figure, and nothing here judges them, under the same ceiling the account read runs under, so the turn-end refusal and the `overseer-mark` watch event cannot describe one overseer differently. Its refusal opens with the `context=`, `headroom=`, `rate=` or `qualifying=` key, carrying the figure that judgement read, and names `oversee-succeed`, handed the same reading, as the route, with `workflow-state set oversee handoff` under it for a succession that refuses, so the refusal always has an escape the overseer can reach. That record names the session that wrote it, in a `session_id` the payload gives and a `pane_key` for a harness that sends none. One other refusal stands on that path, `script` for an `oversee-succeed` this install has not got, and the record clears it as it clears the marks. `ORCH_OVERSEER_SUCCESSION=off`, read off the judgement's own line and never here, turns the account-mark refusals off with the succession they name, the watch's `overseer-mark` event still reporting those marks; the context mark is refused whatever the setting, since only this hook judges it, and the handoff record ends that refusal. An answer this hook cannot act on, one the ceiling abandoned, and one whose own reading was unmeasured are reported under `marks=unjudged`, `marks=timeout` and `marks=unmeasured` and the turn ends, never held. A lane asks its overseer only through lane mail, and this hook holds that rule at both places a lane could ask elsewhere. Before a tool call in a launched lane, the halt arm refuses the harness question tool, whichever of the four names the payload's `tool_name` carries, Claude Code's `AskUserQuestion` and `EnterPlanMode`, Codex's `request_user_input` and Pi's `question`, opening `lane-mail-check: question-tool=<name>` and naming the `lane-mail ask --item <ID> --file <PATH>` send and the `lane-mail wait` on its printed id as the route, because a dialog on the pane reaches no overseer; an unread halt is refused ahead of it, a subagent's call is refused and told to report its question to the lead, and a session that is no launched lane passes the call silently, a committed mailbox and status file included. At a lane lead's turn end, once no handoff record stands, it refuses a turn whose final assistant text asks the person at the pane while the lane wrote no `lane-mail ask` or `notice` this turn, opening `lane-mail-check: question-turn=<transcript>` with one continuation, the lane's `lane-mail inbox` read and then its workflow, beside the same route; on a turn the harness continued for a stop hook's refusal it refuses nothing and sends the overseer a lane notice naming the question instead, opening `lane-mail-check: question-notice=<transcript>`, or `question-notice-unsent=<exit status>` with the sender's words where the send fails, so a lane that asks twice in a row is reported and never looped. The question test is deterministic: the last non-empty line of the text blocks of the last assistant record in the transcript, trailing whitespace dropped and lowercased, ends with `?` or holds a phrasing the hook's `asks_the_person` table lists, such as `say if you` or `let me know`, read in Claude Code's `assistant` record and Pi's assistant `message` record, so a Codex lane's rollout, which spells neither, leaves its turn end unjudged; the sent test is the reader's own `lane-mail events` listing, an ask or notice in the lane's outbound file stamped in a later second than the turn's opening, a send in the opener's own second counting as the turn before's, the last typed prompt or extension wake after a run that last called no tool, never a tool's result or a stop hook's continuation, or the window's first stamp where none stands; a turn start that cannot be read is reported under `turn-start=<exit status>` and the turn ends. A payload naming no transcript, a window holding no assistant text in either spelling, and an install with no reader leave the turn unjudged, the last under the marks' own `handoff-skipped` line; an `events` listing that fails is reported under `events=<status>` and the turn ends, because nothing a lane does at its turn end repairs its mailbox. On Copilot the event is `agentStop`, registered in Copilot's own hook file under its camelCase name, so the payload spells its fields `sessionId`, `transcriptPath` and `toolArgs`, which this hook reads beside the snake_case spellings; its reference spells `stop_hook_active` so on both, and `toolName` goes unread, since the question rule names no Copilot tool. Copilot also runs the hooks `.claude/settings.json` registers, under their PascalCase names, but the registration kendex writes there exits 0 before its script in a Copilot hook process, so a Copilot call reaches an install that is not Copilot's, the claude copy of this hook among them, only through a registration made there by hand or one kendex wrote before that skip and no refresh has rewritten. Whether Copilot made the call is read from the call, never from the install: a payload carrying `timestamp`, which both of Copilot's payload formats carry and no Claude, Codex or Pi payload does, or naming the session `sessionId`, is Copilot's, and any install but Copilot's own passes it silently, exit 0 with nothing written and nothing acknowledged, so the Copilot install is the one reader of the mailbox for a Copilot call. A Copilot agentStop names no agent: the stop whose `transcriptPath` sits in the directory named for the `sessionId`, Copilot's `session-state/<session id>/events.jsonl`, is the lead's and records it, a stop naming a transcript under another directory is read as a subagent's, handed nothing and judged on nothing, and a payload naming no transcript, or no session, is the lead's and records nothing. Copilot CLI 1.0.88 was measured firing agentStop at a custom subagent's end too, with the subagent's own `sessionId` and the lead's `transcriptPath`, which this rule reads as a subagent's. A refusal on Copilot is the documented answer for its event, on stdout beside the keyed stderr line: at a turn end `{"decision":"block","reason":<the refusal text>}` with exit 0, which Copilot stops honouring after 8 consecutive blocks, before a tool call `{"permissionDecision":"deny","permissionDecisionReason":<the text>}` with exit 2, since any non-zero exit denies the call and the JSON carries the words, and after one `{"additionalContext":<the text>}` with exit 0, since Copilot reads a postToolUse answer only at exit 0. That halt decision is local, the mailbox peek and nothing else, so it lands inside the hook's deadline: a preToolUse hook that times out on Copilot lets the call through. A Copilot session's context is read not from its transcript, which holds no live count, but from the session record the orch `copilot-statusline` command writes as the account's `statusLine`, under `<COPILOT_HOME>/lane-status/<session id>.json`, through the orch adapter for copilot, which holds the record to the payload's `sessionId`, its `transcriptPath` where one is named, the account directory and a freshness bound, and hands the shared judge the window's documented compaction point, about 80 percent, as the capacity; a record that does not answer leaves the context unmeasured under `session-record=<reason>`, reported and passed. A Copilot account is judged through `lanes pick --lane` like any other. Not run on gemini: it has no Stop event. Not run on antigravity: its Stop payload carries no `stop_hook_active`.
+# description: Blocks a lane's turn end while its overseer mailbox holds unread lines, so a directive or a ruling reaches the lane without a keystroke, a pane or a question tool. The lane is the work item `LANE_MAIL_ITEM` names, or the one directory under `<repo>/tmp/lane-mail/` whose name lowercases to the current branch; a session with neither is not a lane; a lane whose mailbox holds no unread line passes silently, as does a directory git reports no repository for and that holds no mailbox of its own. The checkout's overseer mailbox, `<repo>/tmp/lane-mail/overseer`, has one reader: the session whose tmux server and pane the checkout's oversee workflow state names under `.overseer`, the pair every writer the orch `schemas/workflow-state.md` `overseer` row names writes, `oversee register` among them for a session opened by hand, and the one the fleet's OVERSEER is established by below, so a record naming a dead pane names no reader. The pair names a session only on the tmux server started at the record's `server_start`, so a server a tmux restart handed the recorded pid and pane id names no reader either, and a record carrying no start names none. Where a file stands there, that session is handed the notes `lane-mail peer send --repo` wrote there at its turn end and after its tool calls, under the same `unread=<count>` line, unless a live watch holds the fleet state: the `oversee-watch.pid` record a repeat `oversee-watch` writes beside the fleet state on every surface and removes on exit, judged by the orch `lib/watch-pid.sh` library's `watch_pid_live`, which reads the mailbox itself, so the named session is handed nothing from it beside that watch. A fleet watched in single passes writes no watch record, so its named overseer is handed the notes as `unread=` lines and the next pass does not report them. Every other session in the checkout, one the owner opened there for other work included, is handed nothing from that mailbox, and so is a session whose install has no reader beside this hook. For the named session, where the install's `workflow-state path oversee` prints no path, or the library cannot be sourced or answers neither way, the hook refuses, opening `lane-mail-check: fleet-state=<path of the failing file>` with that file's own words under it; the halt arm never reads that mailbox, a subagent's turn end is handed nothing from it, and a session in a checkout with no overseer mailbox pays two file tests for the question. `<repo>` is the lane's root, resolved in this order: `CLAUDE_PROJECT_DIR`, the directory Claude Code started the session in; else the root the launch marker for `LANE_MAIL_ITEM` binds, where that root exists; else the directory the hook runs in, which on Codex and Pi is the session's start directory and on Claude Code without the variable is the call's own. A Claude Code lane working from the main clone is therefore still judged on its own mailbox. A root its launch marker binds that has no `tmp/lane-mail` directory is refused at a turn end, before any tool call and after the lead's finished one, opening `lane-mail-check: mailbox-missing=<path>` with the marker and the one `mkdir` command that restores the directory, and that command alone passes a tool call. Before a tool call a subagent is refused whatever it runs, and a call whose caller is unknown may run that command; after one a subagent is handed nothing and refused nothing, as with any mail, and its next call meets the refusal. The marker is looked up for the item `LANE_MAIL_ITEM` names or else the branch names, so that check costs one stat in a repository whose common git directory holds no `lane-mail` directory, and one branch read and one marker stat in one that does. A mailbox belongs to a lane only where a launch recorded one: `open-terminal` and `lane-host create` write the lane's root to `lane-mail/<item in lower case>` under the repository's common git directory and create the lane's own `tmp/lane-mail/<item>`, and a mailbox with no marker bound to this root passes silently. Unread lines are peeked through the orch skill's own `lane-mail inbox --peek`, the one reader of the mailbox and its cursor, and acknowledged with `inbox --ack` only once the refusal is written, so a hook killed at its budget leaves them unread and a line acknowledged here is never handed over twice. That reader is resolved from this hook's own install, walking up to the home directory for `skills/orch/scripts/lane-mail` or the shared `.agents/skills/orch/scripts/lane-mail` beside it, then the home's own shared tree for a harness root relocated out of it; the open repository's `.agents/skills/orch/scripts/lane-mail` is used only where this hook is installed in that repository, and a reader outside that containment is refused rather than run. The refusal opens with `lane-mail-check: unread=<count>` and carries one JSON envelope per line under it, and for the lead, where a halt is among them, the one `lane-mail inbox` command that reads it; the turn then continues with them. Run with the argument `deliver` by the lane-mail-deliver hook after a tool call, it exits 0 with the harness's JSON on stdout, whose `additionalContext` carries the same lines. Run with `start` by the lane-mail-start hook at a session start, or with `prompt` by the lane-mail-prompt hook at a prompt, both on Copilot alone, it hands the same lines over the same way and acknowledges them only once that is written, and refuses nothing: every refusal this description names is its keyed line on stderr at exit 0, with nothing on stdout and nothing acknowledged. Run with `halt` by the lane-mail-halt hook before one, it acknowledges nothing and refuses the call while an unread directive sent with `lane-mail send --halt` stands, opening `lane-mail-check: halt=<id>` with the directive and the one `lane-mail inbox` command that reads it, which names the lane's root with `--root` so it reads the same mailbox from any checkout; that command alone passes. Run with `row` by the session-start-row, session-end-row and stop-failure-row hooks, it writes the event row of a session with no lane of its own, and only for the pane's top-level harness, through the orch skill's `lib/session-rows.sh`, the file those hooks describe, and refuses nothing: every gap below its payload read is reported and passed; the overseer's own turn end writes a Stop row there through the same library at every turn end, compact, its time, event, harness and session alone, except over a standing StopFailure row, which it lifts and where it keeps the turn's last message. On a Pi install a launched lane's lead writes its own turn rows through that library into its mailbox directory, `session-rows.jsonl`: a Stop row at each turn end, carrying the `stopReason` of the turn's last assistant message in the transcript and Pi's `errorMessage` where that reason is `error`, and a PreToolUse row at the first tool call of each turn, after a turn end or on an empty file, written ahead of the mailbox check; oversee-watch and `lanes state` judge a Pi lane idle, working or walled from those rows in place of its pane, and a gap in the write is reported under `lane-rows-skipped` or `lane-rows-unwritten` and passed. The Pi install is the hook directory under `.pi` or `.pi/agent`, or under the user root `PI_CODING_AGENT_DIR` names; an install naming no harness writes no row, which a launched lane's turn end reports under `harness-unlisted`. Who made a call is answered once for every arm: the lead, a subagent, or unknown. A payload carrying a non-empty `agent_id` or `agent_type` is a subagent's on every harness, handed no mail and acknowledging none, and while a halt stands refused without that command. On Copilot, whose payloads name no agent, a preToolUse or postToolUse call, a preCompact and a context reading the usage arm is handed are the lead's where the session id they carry is a lead session this install recorded, the one rule for all four: one empty file per session under `~/.cache/lane-mail/copilot-leads`, written at the session's sessionStart, which Copilot fires for the lead alone, and at each turn end the transcript rule below proves the lead's, and pruned at a start once untouched for 30 days. A custom subagent's call was measured on Copilot CLI 1.0.88 carrying its own session id, which nothing recorded; whether a built-in task-tool subagent's calls carry their own session id or the lead's is a pending live-lane proof, and one whose calls carry the lead's is read as the lead, handed the lead's mail after its calls, which marks it read, and under a halt shown the read that clears it. A call whose session is no recorded lead, a custom subagent's among them, is unknown: the deliver arm hands it nothing and acknowledges nothing, writing `lane-mail-check: session-unrecorded=<id>` to stderr, the compact arm flags nothing and writes the same line at exit 0, the usage arm records nothing and refuses under that key at exit 2, so the lead's turn end hands the lines over and acknowledges them, and the halt arm refuses it without showing that command yet passes the command, because the reader's `--ack` stops short of an unread halt and a lead whose record could not be written would otherwise be refused for good; the lead is shown the command by every notice and refusal that hands it the halt, its turn end's included. A record that cannot be written is reported on stderr under `lane-mail-check: lead-unrecorded=<path>`, or `=none` for a session start naming no session id, and never refused. A Copilot sessionStart or userPromptSubmitted is the lead's, and an agentStop is ruled by its transcript, below; a prompt records no lead, since that a subagent's prompt fires no userPromptSubmitted is unmeasured. `stop_hook_active` true skips the mailbox check whole on the turn-end run. The flag is in the payload, so nothing above the payload read knows a turn was continued, and `arm`, the `missing-tools` refusal for `jq` or `cat`, `payload=unreadable` and `payload=invalid-json` are refused on every turn, the continued one included. Below that read one rule holds and every refusal is on one side of it: a refusal the lane itself can clear is still made, and a refusal it cannot is reported on stderr and passed. The lane clears the two handoff marks, and `script`, `setting`, `setting-range` and both `transcript` refusals, by writing its handoff record, and `mailbox-missing` by running the command it names, so those are refused on a continued turn as on any other. It clears none of `workdir`, `git`, `item`, `marker` or the `missing-tools` refusal for `git`, `tr`, `awk`, `mktemp` or `tail`, so each of those is reported and the turn ends, where a fresh turn refuses it. The halt arm reports and passes that same set at every tool call: a lane whose tool calls are refused can clear nothing, since clearing it takes a tool call, so there only the payload refusals and the mailbox's own, `reader`, `inbox`, `halt` and `mailbox-missing`, are refused, the last two each passing the one command that clears it. The same turn-end run hands the lane off before it runs out, so the handoff never waits on an overseer reading a pane. It reads this session's context use from the `transcript_path` the payload names, through the orch adapter for the harness this hook's install directory names, `.claude/hooks`, `.codex/hooks` or Pi's `kendex/hooks`: the tokens the last response left in context and effective capacity, with Pi reading the payload's own `context_window`. It records that reading as `context.json` in the lane's mailbox directory, where `lanes context` reads it, and refuses the turn end when `lane_context_handoff_due` requires handoff under the shared context rule in orch `references/oversee-events.md`, Judgement rules. It reads the account the credential this session runs on still has through the orch skill's own `lanes pick --lane`, and refuses at or below `ORCH_HANDOFF_HEADROOM_PCT` (default 3). A Pi session's account is the one its model's provider bills, by the orch `lane_pick_harness` rule on the `<provider>/<model>` its transcript names: a `pi-claude/` model spends the Claude seat `CLAUDE_CONFIG_DIR` names and is judged there on that model, a `github-copilot/` model spends the Copilot pool on Pi's own root, and any other provider, or a reading naming none, is left unjudged under `account=unmeasured`. Either refusal opens `lane-mail-check: context=<tokens>` or `lane-mail-check: headroom=<percent>` and carries one instruction: reach the next safe point, write the record with `workflow-state set <item> handoff`, send a `handoff` notice, and exit. The instruction opens with the `workflow-state init <item>` that `set` needs where the item has no state file yet, so it is enough on its own. It repeats at every turn end, `stop_hook_active` included, until the item's workflow state carries a `.handoff` object no relaunch has resumed; only the lane can write that record, so a single refusal it declines to act on would end the session with nothing recorded. That record is judged before every mark, before every read they rest on and before `orch-env` and `lanes` are looked for, so no failure but the record's own writer can hold a lane that has already done what it was asked. `orch-env` or `lanes` missing from this hook's install, a mark setting that is not a whole number in range, and a transcript the payload names and nothing can read are refusals too, each on the lane path alone and each carrying the same instruction. What the marks cannot judge is reported and passed, never refused: a payload naming no transcript leaves the context unread, and so does a transcript whose last usage line is an object carrying none of the field names its adapter reads, which is reported under `usage-unread=<path>` rather than summed to a figure of zero and read as room, a reading below the independent token limit whose capacity the adapter could not name, reported under `window-unread=<model>`, and an install directory naming no harness, reported under `harness-unlisted=<directory>`; a reading that could not be recorded is reported under `context-unrecorded=<path>` and still judged; an account `lanes` keeps no inventory for, one it could not measure and a read that passed this hook's own ceiling each leave the account unjudged under `account=unlisted`, `account=unmeasured` or `account=timeout`, never read as room, so a setup with no usage endpoint still ends its turns; and a lane whose handoff record cannot be judged leaves both marks unjudged under one of four keys, `handoff-skipped=<path>` for a reader or a script this install has not got, or `handoff-skipped=unlocatable` where this hook's own directory could not be resolved and none of them could be looked for, `handoff-outside=<path>` for one only the open repository supplies, `handoff-unanswered=<path>` for one that is there and answered nothing this hook can read, and `handoff-unreadable=<path>` for a state file the install's own `workflow-state` could not read. Passing the turn is the answer for all four. For the first three it is because an install whose orch scripts cannot answer cannot run `workflow-state set` either, so a lane told to record a handoff with them could never end a turn again; for `handoff-unreadable` the install answers and the fault is the item's own state file, which is the file the record would be written into, so that write could not land either and the refusal would be as uncloseable. A subagent's turn end is judged on neither mark. The fleet's OVERSEER meets four triggers of its own on its turn end: a session with no lane of its own whose tmux server and pane are the pair the oversee workflow state records under `.overseer` is that overseer, and nothing weaker establishes one, so an ordinary session in a fleet checkout is judged on nothing. A session the record does not name whose pane the overseer's `context.json` names, the overseer the record lost, is judged on nothing either, and reports `pane-unrecorded=<its pane key>` with the recorded key under it and writes that record with no reading and the gap `pane-unrecorded`; any other session the record does not name writes nothing, so the real overseer's reading stands. Before it reads that transcript for the overseer it binds it to the current session: the `transcript_path` the payload names is read only where it is this session's own native file, held to the `session_id` the payload carries and the launch home the fleet record names under `.overseer.home`, through the orch adapter for a claude, codex or copilot install; a Pi install states no transcript shape and reads the payload's own window as a Pi lane does. A file that is not this session's under that home, a newer unrelated transcript, a predecessor's in the same pane, or one under an account the fleet never picked, and a binding that cannot be made, a payload naming no session or a record naming no home, are each reported once under `transcript-unowned=<path>` with the reason the gate gave. Nothing is read then, and the context record is written with a null token count and that reason as its `gap` (orch `workflow-state.md`, `context.json` row), so it still advances at every turn end and oversee-watch reports the gap, and the judge is handed this install's harness and no context figure, so it judges the account triggers alone, the `transcript-unowned` line is this hook's one report that the context went unmeasured, and a session is never judged on a file it does not own. Every overseer turn end whose orch context library loads writes that record, a reading or a null token count with a `gap` naming why none was taken: the gate's reason, `binding-missing` for a payload naming no session, `home-unnamed` for a fleet record naming no launch home, `session-mismatch` for a file another session wrote and `home-mismatch` for one under another launch home, `transcript-unnamed` for a payload naming no transcript, `usage-absent` for a transcript holding no usage line, `usage-unread` for a usage object its adapter does not read, which is also reported under `usage-unread=<path>`, `session-record` for a Copilot session with no extension reading whose statusLine session record does not answer either, which is also reported under `session-record=<reason>`, or `pane-unrecorded` below. An install naming no harness an adapter reads writes no gap, since its context is never read, and leaves the record as it was, and a Copilot one names none where the reading its usage arm wrote for this session stands, its turn end reading that record rather than taking a reading of its own; a gap record that cannot be written is reported under `context-gap-unrecorded=<path>`, the record keeping its earlier entry. This hook records the overseer's own context reading as `context.json` in the overseer mailbox directory at the main checkout, naming the session and its pane, and hands that reading to `oversee-succeed --check-marks --context <tokens>:<window>` from this hook's own install, which judges those marks on it and on no stored figure, and nothing here judges them, under the same ceiling the account read runs under, so the turn-end refusal and the `overseer-mark` watch event cannot describe one overseer differently. Its refusal opens with the `context=`, `headroom=`, `rate=` or `qualifying=` key, carrying the figure that judgement read, and names `oversee-succeed`, handed the same reading, as the route, with `workflow-state set oversee handoff` under it for a succession that refuses, so the refusal always has an escape the overseer can reach. That record names the session that wrote it, in a `session_id` the payload gives and a `pane_key` for a harness that sends none. One other refusal stands on that path, `script` for an `oversee-succeed` this install has not got, and the record clears it as it clears the marks. `ORCH_OVERSEER_SUCCESSION=off`, read off the judgement's own line and never here, turns the account-mark refusals off with the succession they name, the watch's `overseer-mark` event still reporting those marks; the context mark is refused whatever the setting, since only this hook judges it, and the handoff record ends that refusal. An answer this hook cannot act on, one the ceiling abandoned, and one whose own reading was unmeasured are reported under `marks=unjudged`, `marks=timeout` and `marks=unmeasured` and the turn ends, never held. A lane asks its overseer only through lane mail, and this hook holds that rule at both places a lane could ask elsewhere. Before a tool call in a launched lane, the halt arm refuses the harness question tool, whichever of the four names the payload's `tool_name` carries, Claude Code's `AskUserQuestion` and `EnterPlanMode`, Codex's `request_user_input` and Pi's `question`, opening `lane-mail-check: question-tool=<name>` and naming the `lane-mail ask --item <ID> --file <PATH>` send and the `lane-mail wait` on its printed id as the route, because a dialog on the pane reaches no overseer; an unread halt is refused ahead of it, a subagent's call is refused and told to report its question to the lead, and a session that is no launched lane passes the call silently, a committed mailbox and status file included. At a lane lead's turn end, once no handoff record stands, it refuses a turn whose final assistant text asks the person at the pane while the lane wrote no `lane-mail ask` or `notice` this turn, opening `lane-mail-check: question-turn=<transcript>` with one continuation, the lane's `lane-mail inbox` read and then its workflow, beside the same route; on a turn the harness continued for a stop hook's refusal it refuses nothing and sends the overseer a lane notice naming the question instead, opening `lane-mail-check: question-notice=<transcript>`, or `question-notice-unsent=<exit status>` with the sender's words where the send fails, so a lane that asks twice in a row is reported and never looped. The question test is deterministic: the last non-empty line of the text blocks of the last assistant record in the transcript, trailing whitespace dropped and lowercased, ends with `?` or holds a phrasing the hook's `asks_the_person` table lists, such as `say if you` or `let me know`, read in Claude Code's `assistant` record and Pi's assistant `message` record, so a Codex lane's rollout, which spells neither, leaves its turn end unjudged; the sent test is the reader's own `lane-mail events` listing, an ask or notice in the lane's outbound file stamped in a later second than the turn's opening, a send in the opener's own second counting as the turn before's, the last typed prompt or extension wake after a run that last called no tool, never a tool's result or a stop hook's continuation, or the window's first stamp where none stands; a turn start that cannot be read is reported under `turn-start=<exit status>` and the turn ends. A payload naming no transcript, a window holding no assistant text in either spelling, and an install with no reader leave the turn unjudged, the last under the marks' own `handoff-skipped` line; an `events` listing that fails is reported under `events=<status>` and the turn ends, because nothing a lane does at its turn end repairs its mailbox. On Copilot the event is `agentStop`, registered in Copilot's own hook file under its camelCase name, so the payload spells its fields `sessionId`, `transcriptPath` and `toolArgs`, which this hook reads beside the snake_case spellings; its reference spells `stop_hook_active` so on both, and `toolName` goes unread, since the question rule names no Copilot tool. Copilot also runs the hooks `.claude/settings.json` registers, under their PascalCase names, but the registration kendex writes there exits 0 before its script in a Copilot hook process, so a Copilot call reaches an install that is not Copilot's, the claude copy of this hook among them, only through a registration made there by hand or one kendex wrote before that skip and no refresh has rewritten. Whether Copilot made the call is read from the call, never from the install: a payload carrying `timestamp`, which both of Copilot's payload formats carry and no Claude, Codex or Pi payload does, or naming the session `sessionId`, is Copilot's, and any install but Copilot's own passes it silently, exit 0 with nothing written and nothing acknowledged, so the Copilot install is the one reader of the mailbox for a Copilot call. A Copilot agentStop names no agent: the stop whose `transcriptPath` sits in the directory named for the `sessionId`, Copilot's `session-state/<session id>/events.jsonl`, is the lead's and records it, a stop naming a transcript under another directory is read as a subagent's, handed nothing and judged on nothing, and a payload naming no transcript, or no session, is the lead's and records nothing. Copilot CLI 1.0.88 was measured firing agentStop at a custom subagent's end too, with the subagent's own `sessionId` and the lead's `transcriptPath`, which this rule reads as a subagent's. A refusal on Copilot is the documented answer for its event, on stdout beside the keyed stderr line: at a turn end `{"decision":"block","reason":<the refusal text>}` with exit 0, which Copilot stops honouring after 8 consecutive blocks, ending that turn unheld, so a handoff refusal holds a Copilot session for 8 continued turns and then returns at its next turn end, before a tool call `{"permissionDecision":"deny","permissionDecisionReason":<the text>}` with exit 2, since any non-zero exit denies the call and the JSON carries the words, and after one `{"additionalContext":<the text>}` with exit 0, since Copilot reads a postToolUse answer only at exit 0. That halt decision is local, the mailbox peek and nothing else, so it lands inside the hook's deadline: a preToolUse hook that times out on Copilot lets the call through. A Copilot session's context is read through Copilot's own SDK event `session.usage_info`: the orch `copilot-lane-context` extension, which `open-terminal` installs in a Copilot fleet lane's `COPILOT_HOME` with the EXTENSIONS feature on, runs this hook with the argument `usage` at each reading of the session's root agent, handing it `{session_id, cwd, current_tokens, token_limit}` on stdin, and for a recorded lead session that is a launched lane's lead or the fleet's overseer, named by the same gate every arm that judges the marks asks, it records `current_tokens` as the tokens and, as the capacity, the limit Copilot compacts at: 80 percent of `token_limit`, the SDK's documented `backgroundCompactionThreshold` default, named in the record's `capacity_source`. It writes nothing on stdout; a gap is refused on stderr at exit 2, which the extension writes to the session timeline: `payload=invalid-json`, an orch install it cannot use under the key its turn end reports that gap under, `handoff-skipped=<path>`, `handoff-outside=<path>` or `handoff-unanswered=<path>`, or `context-unrecorded=<path>` for a reading that could not be written, where the session's earlier reading is removed too so its turn end reports the context unmeasured rather than judging an older figure as room. Any other session passes silently. The Copilot turn end judges this session's record under the shared context rule exactly as it judges a transcript reading, the capacity putting the handoff before Copilot's own compaction; no reading of this session, no record or a gap record, is reported under `reading-unrecorded=<path>` and passed, never read as room, and a record that stands and cannot be read is refused under `record=<path>`. Where no reading of the extension's stands for this session, no record, one naming another session, a gap record or one the fallback below wrote, which its `capacity_source` tells apart, the turn end reads the fallback: the session record the orch `copilot-statusline` command writes as the account's `statusLine`, under `<COPILOT_HOME>/lane-status/<session id>.json`, through the orch adapter for copilot, which holds the record to the payload's `sessionId`, its `transcriptPath` where one is named, the account directory and a freshness bound, and hands the shared judge the same compaction point of the window as the capacity; that reading is judged and recorded as any other harness's, and a record that does not answer leaves the context unmeasured under `reading-unrecorded=<path>` and `session-record=<reason>`, reported and passed, never read as room. An extension reading below the mark is never overridden by a statusLine record past it. Run with `compact` by the lane-mail-compact hook at a preCompact whose `trigger` is `auto`, from a recorded lead session that gate names, it flags that compaction as `compaction.json` beside the reading, the backstop for a turn that crossed into the compaction before a reading past the mark reached a turn end, and the turn end then refuses under `compacted=auto` until the handoff record stands, the overseer's whatever its succession setting; a gap there is refused under `compaction-unrecorded=<path>` on stderr at exit 2, which Copilot shows the operator without holding the compaction. A Copilot account is judged through `lanes pick --lane` like any other. Not run on gemini: it has no Stop event. Not run on antigravity: its Stop payload carries no `stop_hook_active`.
 # summary: Hands a lane the messages its overseer sent before the turn can end, so a directive is acted on instead of waiting for the next launch, and the same way hands the notes another repository's overseer sent to the one session the checkout's fleet record names. It also holds the turn end once the lane is near the end of its context window or its account's limit, until the lane records where it got to and exits, so the work resumes in a fresh session instead of stopping mid-round. The session running the fleet is held the same way, and hands itself over to a fresh one. On Claude Code and Pi, a lane ending a turn on a question it sent no lane mail about is told once to continue, then its overseer is told, so no question waits unread.
-# safety: Reads the payload, the repository's branch, the lane's launch marker, read with the shell's own `read`, and the lane mailbox directory, and for a session that is no lane the checkout's overseer mailbox and, where a file stands there and the fleet record names this session's pane, the fleet state's path from one `workflow-state path oversee` and the watch record beside it, read by the orch watch record library `lib/watch-pid.sh` sourced in a child shell from the same install as the mailbox reader, which checks the record's pid with `kill -0` and `ps`; the writes are the mailbox cursor the orch reader advances, the session's context reading, `context.json`, renamed into its mailbox directory, and on a Pi lane its turn rows, `session-rows.jsonl`, appended there under that file's own lock at a turn end and at the first tool call of each turn, and for the overseer one row appended to its rows file, `session-<server>-<pane>.jsonl` in the overseer mailbox directory, under that file's own lock, a compact Stop at every overseer turn end, the overseer's directory made where the fleet has not made it yet, and on Copilot a lead session's empty record under `~/.cache/lane-mail/copilot-leads`, touched at its session start and at each turn end its transcript proves the lead's, with records untouched for 30 days removed by one `find` at each start. Exit 2 names the unread count and the messages, and asks for them to be acted on, never bypassed. The reader it runs comes from its own install, never from the repository a session has open, so a repository that tracks a mailbox and an executable at that path cannot have it run. jq and cat read the payload; a payload it cannot read is refused on every turn, the continued one included, because the flag that marks a continued turn is in the payload none of those refusals reached. A mailbox whose reader is missing or fails is refused on the turns the mailbox check runs, which is every turn end but a continued one; on a continued turn that check is skipped whole, and the same missing reader is reported under `handoff-skipped` or `handoff-outside` and the turn is passed. An item name outside the alphabet a work item is spelled in, a branch that matches more than one mailbox, and a repository state git cannot report where a mailbox sits under the working directory are refused on a fresh turn and reported on a continued one and before a tool call, by the one rule the description states; none of them is ever passed in silence. For a lane's handoff marks it also reads the transcript the payload names and runs `orch-env`, `lanes` and `workflow-state` and sources the orch context library from the same install as the mailbox reader, never the open repository's, and on Pi one child shell sourcing that install's `lib/lane-launch.sh` to name the account the session's provider bills; the context reading is the one thing it writes for them. A session that names no lane costs two file tests of the checkout's overseer mailbox; where a file stands there it adds that install's resolution and, inside tmux, the overseer test below, and for the session the record names one `workflow-state path oversee`, one child shell sourcing the watch record library, and the reader's peek where no live watch stands. Outside tmux it costs nothing more, where the overseer test stops at its first condition. Inside tmux the overseer test costs that install's resolution, one child shell sourcing the orch context library, one tmux read and one `workflow-state` read, which together ask the oversee state whether this pane is the overseer's, plus, for a session whose pane the state names beside a server start, one child shell sourcing the orch `lib/tmux-server.sh` library for one more tmux read of its server's start; a session the state does not name stops there, after one child shell loading the orch context library, one `git-context` call and one read of the overseer's `context.json` where the state names another pane or none, and where that record names this session's pane, one `pane-unrecorded` report and one rewrite of that record. The overseer's own marks are then judged by `oversee-succeed --check-marks` from that same install, under the same 20 second ceiling the lane's account read runs under. That judgement measures the one account the overseer session runs on, through the same `lanes pick --lane` this hook asks about a lane, renewing an expired token in that account's credential file and refreshing that account's usage cache, the writes `lanes` states in its own contract; it opens no window and launches nothing. Only the last 1 MiB of the transcript is parsed, and the whole file only where that window carries no usage line, so the cost does not grow with the session. `lanes pick --lane` measures one account and renews that account's expired token, the write its own contract states; it can wait on a credentials lock and two network calls, and on a cache miss on the host-wide usage refresh lock for up to 10 seconds and, after a 429 with nothing cached, one sleep of up to 5 seconds and one more usage request, so it runs under a 20 second ceiling that leaves the rest of the run inside this hook's 30 second budget, and a read that reaches the ceiling is reported as a gap rather than refused. Where `timeout` is not installed that read runs unbounded, and a hook the harness then kills at its budget leaves the account unjudged, the same outcome the reported gap gives without the line. For the question rule it reads the payload's `tool_name` before a tool call and, at a turn end, the last assistant text and the last turn-opening stamp in the transcript, and runs the reader's `events` listing, which moves no cursor; it writes nothing for either but the one lane notice a second question in a row sends through the reader's `notice`. Every refusal opens with `lane-mail-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the payload, the repository's branch, the lane's launch marker, read with the shell's own `read`, and the lane mailbox directory, and for a session that is no lane the checkout's overseer mailbox and, where a file stands there and the fleet record names this session's pane, the fleet state's path from one `workflow-state path oversee` and the watch record beside it, read by the orch watch record library `lib/watch-pid.sh` sourced in a child shell from the same install as the mailbox reader, which checks the record's pid with `kill -0` and `ps`; the writes are the mailbox cursor the orch reader advances, the session's context reading, `context.json`, and a Copilot session's compaction flag, `compaction.json`, each renamed into its mailbox directory, and on a Pi lane its turn rows, `session-rows.jsonl`, appended there under that file's own lock at a turn end and at the first tool call of each turn, and for the overseer one row appended to its rows file, `session-<server>-<pane>.jsonl` in the overseer mailbox directory, under that file's own lock, a compact Stop at every overseer turn end, the overseer's directory made where the fleet has not made it yet, and on Copilot a lead session's empty record under `~/.cache/lane-mail/copilot-leads`, touched at its session start and at each turn end its transcript proves the lead's, with records untouched for 30 days removed by one `find` at each start. Exit 2 names the unread count and the messages, and asks for them to be acted on, never bypassed. The reader it runs comes from its own install, never from the repository a session has open, so a repository that tracks a mailbox and an executable at that path cannot have it run. jq and cat read the payload; a payload it cannot read is refused on every turn, the continued one included, because the flag that marks a continued turn is in the payload none of those refusals reached. A mailbox whose reader is missing or fails is refused on the turns the mailbox check runs, which is every turn end but a continued one; on a continued turn that check is skipped whole, and the same missing reader is reported under `handoff-skipped` or `handoff-outside` and the turn is passed. An item name outside the alphabet a work item is spelled in, a branch that matches more than one mailbox, and a repository state git cannot report where a mailbox sits under the working directory are refused on a fresh turn and reported on a continued one and before a tool call, by the one rule the description states; none of them is ever passed in silence. For a lane's handoff marks it also reads the transcript the payload names and runs `orch-env`, `lanes` and `workflow-state` and sources the orch context library from the same install as the mailbox reader, never the open repository's, and on Pi one child shell sourcing that install's `lib/lane-launch.sh` to name the account the session's provider bills; the context reading is the one thing it writes for them. A session that names no lane costs two file tests of the checkout's overseer mailbox; where a file stands there it adds that install's resolution and, inside tmux, the overseer test below, and for the session the record names one `workflow-state path oversee`, one child shell sourcing the watch record library, and the reader's peek where no live watch stands. Outside tmux it costs nothing more, where the overseer test stops at its first condition. Inside tmux the overseer test costs that install's resolution, one child shell sourcing the orch context library, one tmux read and one `workflow-state` read, which together ask the oversee state whether this pane is the overseer's, plus, for a session whose pane the state names beside a server start, one child shell sourcing the orch `lib/tmux-server.sh` library for one more tmux read of its server's start; a session the state does not name stops there, after one child shell loading the orch context library, one `git-context` call and one read of the overseer's `context.json` where the state names another pane or none, and where that record names this session's pane, one `pane-unrecorded` report and one rewrite of that record. The overseer's own marks are then judged by `oversee-succeed --check-marks` from that same install, under the same 20 second ceiling the lane's account read runs under. That judgement measures the one account the overseer session runs on, through the same `lanes pick --lane` this hook asks about a lane, renewing an expired token in that account's credential file and refreshing that account's usage cache, the writes `lanes` states in its own contract; it opens no window and launches nothing. Only the last 1 MiB of the transcript is parsed, and the whole file only where that window carries no usage line, so the cost does not grow with the session. `lanes pick --lane` measures one account and renews that account's expired token, the write its own contract states; it can wait on a credentials lock and two network calls, and on a cache miss on the host-wide usage refresh lock for up to 10 seconds and, after a 429 with nothing cached, one sleep of up to 5 seconds and one more usage request, so it runs under a 20 second ceiling that leaves the rest of the run inside this hook's 30 second budget, and a read that reaches the ceiling is reported as a gap rather than refused. Where `timeout` is not installed that read runs unbounded, and a hook the harness then kills at its budget leaves the account unjudged, the same outcome the reported gap gives without the line. For the question rule it reads the payload's `tool_name` before a tool call and, at a turn end, the last assistant text and the last turn-opening stamp in the transcript, and runs the reader's `events` listing, which moves no cursor; it writes nothing for either but the one lane notice a second question in a row sends through the reader's `notice`. Every refusal opens with `lane-mail-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
 # harnesses: [claude, codex, pi, copilot, opencode, cursor]
 # requires: [lane-mail-deliver, lane-mail-halt]
@@ -37,6 +37,9 @@ PCT=""
 # number, or none or unreadable where nothing measured it.
 MARK_HEADROOM=""
 WINDOW=""
+# Whether the lane-mail-compact hook flagged this Copilot session's automatic
+# compaction, the backstop mark; false until its turn end reads the flag.
+COMPACTED=false
 # What the overseer's judge and the succession its refusal names are handed:
 # the reading this turn end took, as `--context`, or the harness this install
 # names where nothing was read; empty until the overseer path sets it.
@@ -78,6 +81,13 @@ OVERSEER_ITEM=oversee
 FAIL_KEY=""
 FAIL_VALUE=""
 FAIL_CAUSE=""
+# The key session_gate reports an install gap under, beside FAIL_VALUE and
+# FAIL_CAUSE: handoff-skipped, or handoff-outside for a reader the open
+# repository supplies. Empty until the gate meets one.
+GATE_KEY=""
+# What a usage run whose record write failed left of the session's earlier
+# reading: removed, or stands where the removal failed too. Empty until then.
+STALE_RECORD=""
 # Who made the call the payload describes: lead, subagent, or unknown where
 # the payload cannot tell.
 CALLER=""
@@ -150,6 +160,15 @@ if [ -z "$HARNESS" ] && [ -f "${BASH_SOURCE[0]%.sh}.json" ]; then HARNESS=copilo
 # stable key for the condition and the value acted on. The English explanation
 # follows it, and never a bypass.
 message() { # KEY VALUE [CAUSE]
+  # What an install gap in the handoff marks costs the arm that meets it: a
+  # turn end is passed, and a reading or a flag the arm would have written is
+  # not, the session's next turn end then passing on the same gap.
+  local passed
+  case "$ARM" in
+    usage) passed="this context reading is not recorded, and this session's next turn end is passed" ;;
+    compact) passed="this compaction is not flagged, and this session's next turn end is passed" ;;
+    *) passed="this turn end is passed" ;;
+  esac
   {
     printf 'lane-mail-check: %s=%s\n' "$1" "$2"
     case "$1=$2" in
@@ -187,7 +206,7 @@ message() { # KEY VALUE [CAUSE]
         echo "the only lane mailbox reader on offer is $2, supplied by the repository this session has open, and this hook is not installed in that repository; refusing to run it. Install the orch skill in the scope this hook is installed in."
         ;;
       arm=*)
-        echo "this hook judges a turn end with no argument, a finished tool call with deliver, a tool call about to run with halt, a session start with start and a prompt with prompt; $2 is none of them"
+        echo "this hook judges a turn end with no argument, a finished tool call with deliver, a tool call about to run with halt, a session start with start, a prompt with prompt, a compaction about to begin with compact and a Copilot session's context reading with usage; $2 is none of them"
         ;;
       mailbox-missing=*)
         if [ "$CALLER" = subagent ]; then
@@ -221,16 +240,16 @@ message() { # KEY VALUE [CAUSE]
         echo "the lane mailbox reader exited $2, so whether messages are waiting is unknown:"
         ;;
       handoff-skipped=unlocatable)
-        echo "this hook's own directory could not be resolved, so the orch scripts the handoff marks are judged with could not be looked for; both marks are unjudged and this turn end is passed rather than held."
+        echo "this hook's own directory could not be resolved, so the orch scripts the handoff marks are judged with could not be looked for; both marks are unjudged and $passed rather than held."
         ;;
       handoff-skipped=*)
-        echo "the handoff marks are judged with the orch scripts beside this hook, and $2 is not there; this turn end is passed unjudged rather than held, because the same install holds the one command that records a handoff and a refusal naming a command the lane has not got could never be cleared. Install the orch skill beside this hook."
+        echo "the handoff marks are judged with the orch scripts beside this hook, and $2 is not there; $passed unjudged rather than held, because the same install holds the one command that records a handoff and a refusal naming a command the lane has not got could never be cleared. Install the orch skill beside this hook."
         ;;
       handoff-outside=*)
-        echo "the only orch install on offer is $2, supplied by the repository this session has open, and this hook is not installed in that repository; refusing to judge the handoff marks with it. Both marks are unjudged and this turn end is passed rather than held. Install the orch skill in the scope this hook is installed in."
+        echo "the only orch install on offer is $2, supplied by the repository this session has open, and this hook is not installed in that repository; refusing to judge the handoff marks with it. Both marks are unjudged and $passed rather than held. Install the orch skill in the scope this hook is installed in."
         ;;
       handoff-unanswered=*)
-        echo "the handoff marks are judged with the orch scripts beside this hook, and $2 is there but did not answer; both marks are unjudged while that stands, and this turn end is passed rather than held, because the same install holds the one command that records a handoff. Check the settings those scripts load, .env.local first, or refresh the orch install. Anything it wrote is below."
+        echo "the handoff marks are judged with the orch scripts beside this hook, and $2 is there but did not answer; both marks are unjudged while that stands, and $passed rather than held, because the same install holds the one command that records a handoff. Check the settings those scripts load, .env.local first, or refresh the orch install. Anything it wrote is below."
         ;;
       handoff-unreadable=*)
         echo "the workflow state at $2 could not be read, so whether this lane has already handed off is unknown; this turn end is passed unjudged rather than held, because the handoff record would be written into that same file and a refusal naming a write that cannot land could never be cleared. Repair or remove it. Anything its reader wrote is below."
@@ -268,7 +287,7 @@ message() { # KEY VALUE [CAUSE]
         echo "$2 is no hook directory of a harness the orch adapters read a transcript for, so this session's context is not read and the context mark is not judged, and no Pi turn row is written, so a Pi lane running this install reads unjudged in oversee-watch and lanes state; the gap is reported rather than held"
         ;;
       session-record=*)
-        echo "this Copilot session's context is read from the record its statusLine command, copilot-statusline, writes under the account directory, and that record did not answer for this session: $2. The context mark is not judged and the gap is reported rather than held; the account mark is judged as usual. Set statusLine in the account's settings.json to run copilot-statusline with a refreshInterval under two minutes."
+        echo "this Copilot session has no context reading from the kendex-lane-context extension, so it is read from the record its statusLine command, copilot-statusline, writes under the account directory, and that record did not answer for this session: $2. The context mark is not judged and the gap is reported rather than held; the account mark is judged as usual. Set statusLine in the account's settings.json to run copilot-statusline with a refreshInterval under two minutes."
         ;;
       transcript-unowned=*)
         echo "the transcript $2 the payload names is not bound to this overseer session's own file under the launch home its fleet record names: the reason below is a session identity or a launch home that disagrees, a payload naming no session, or a record naming no launch home. Nothing is read; the context record is written with no reading and that reason as its gap, which oversee-watch reports as overseer-context-unmeasured, and the judge is handed this hook's harness and no reading, so the context is unmeasured while the account triggers are judged as usual and a session is never judged on a file it does not own:"
@@ -277,7 +296,40 @@ message() { # KEY VALUE [CAUSE]
         echo "the fleet record names the overseer by the pane key below, or none, not this session's own, although the overseer context record holds this session's reading; this session is judged on no mark, and its context record is written with no reading and the gap pane-unrecorded, which oversee-watch reports as overseer-context-unmeasured. Run oversee register from the overseer's own pane, or oversee-succeed by hand, to name the overseer again:"
         ;;
       context-unrecorded=*)
-        echo "this session's context reading could not be written to $2, so lanes context and oversee-succeed still hold the reading before it; the mark itself is judged on the reading this hook took:"
+        case "$ARM:$STALE_RECORD" in
+          usage:removed)
+            echo "this Copilot session's context reading could not be written to $2, and no earlier reading stands there now, so its next turn end reports the context unmeasured under reading-unrecorded, never judging an older figure as room, until a later reading is recorded. The cause follows:"
+            ;;
+          usage:stands)
+            echo "this Copilot session's context reading could not be written to $2, and the earlier reading standing there could not be removed either, so its next turn end still judges that older figure, which can lie below the mark this reading crossed, until a later reading is recorded; repair the directory. The causes follow:"
+            ;;
+          *)
+            echo "this session's context reading could not be written to $2, so lanes context and oversee-succeed still hold the reading before it; the mark itself is judged on the reading this hook took:"
+            ;;
+        esac
+        ;;
+      reading-unrecorded=*)
+        printf 'no context reading of this Copilot session stands in %s, and the statusLine session record its fallback reads did not answer either, as the session-record line with this one names, so its context is unmeasured and the context mark is not judged; the gap is reported rather than held, and never read as room. The first reader is the kendex-lane-context Copilot extension open-terminal installs in the lane'"'"'s COPILOT_HOME, which records a reading at each model call of the session. A `kendex-lane-context:` or `lane-mail-check:` warning in the session timeline is the gap that reader met. None means the extension did not run: check that <COPILOT_HOME>/extensions/kendex-lane-context/extension.mjs stands, that enabledFeatureFlags.EXTENSIONS is true in that home'"'"'s settings.json, and Copilot'"'"'s own log.\n' "$2"
+        ;;
+      compaction-unrecorded=*)
+        echo "for the operator: Copilot began compacting this fleet session automatically, the backstop handoff mark, and this hook could not flag it because $2 could not be used, so no turn end of this session will hold it for the compaction. Tell the session to write its handoff record and end, or end it and relaunch the item. The cause follows:"
+        ;;
+      record=*)
+        printf 'the context record %s could not be read, so whether this Copilot session is past its handoff mark is unknown; refusing rather than letting it run on. Recording the handoff ends this refusal:\n%s\n' \
+          "$2" "$HANDOFF_INSTRUCTION"
+        ;;
+      compacted=*)
+        # The backstop: the reading marks a session before its compaction,
+        # and this flag is what a turn that crossed into the compaction
+        # before any reading past the mark reached its turn end leaves.
+        COMPACTED_FACT="Copilot began compacting this session automatically, its preCompact hook naming trigger $2, before a context reading past the handoff mark reached a turn end. Nothing after that compaction is trusted, so start no new work and write the handoff from durable state, the workflow state, git and the PR, never from the conversation the compaction summarised."
+        if [ "$ROLE" = overseer ]; then
+          printf 'oversee-succeed requires handoff: %s Succeed this session yourself.\n%s\n' \
+            "$COMPACTED_FACT" "$HANDOFF_INSTRUCTION"
+        else
+          printf 'this lane requires handoff: %s No handoff record stands. Then end the session, so the next one continues the work.\n%s\n' \
+            "$COMPACTED_FACT" "$HANDOFF_INSTRUCTION"
+        fi
         ;;
       context-gap-unrecorded=*)
         echo "this overseer turn end took no context reading, so the context mark is not judged at it, and the record naming why could not be written to $2, which keeps its earlier entry; the account marks are judged as usual:"
@@ -391,7 +443,17 @@ message() { # KEY VALUE [CAUSE]
         echo "the Copilot lead records under $2 untouched for $LEAD_DAYS days could not be removed; this session's own record stands:"
         ;;
       session-unrecorded=*)
-        echo "this finished Copilot tool call's session $2 is no lead session this install recorded at a session start or at a turn end its own transcript proved, so it may be a subagent's: the unread lines are not handed over here and stay unread for the lead's turn end, which hands them over and acknowledges them"
+        case "$ARM" in
+          compact)
+            echo "this Copilot compaction's session $2 is no lead session this install recorded at a session start or at a turn end its own transcript proved, so it may be a subagent's compacting its own window: nothing is flagged, and no turn end of the lead's is held for it"
+            ;;
+          usage)
+            echo "this Copilot context reading's session $2 is no lead session this install recorded at a session start or at a turn end its own transcript proved, so the reading is recorded nowhere and the session's turn end reports its context unmeasured under reading-unrecorded; once a turn end whose transcript proves the session the lead's records it, its later readings are recorded"
+            ;;
+          *)
+            echo "this finished Copilot tool call's session $2 is no lead session this install recorded at a session start or at a turn end its own transcript proved, so it may be a subagent's: the unread lines are not handed over here and stay unread for the lead's turn end, which hands them over and acknowledges them"
+            ;;
+        esac
         ;;
     esac
     # The cause a command this hook ran wrote, captured at the site and
@@ -438,8 +500,15 @@ json_string() { # TEXT
 # the exit, so a hook killed at its budget leaves the lines unread rather
 # than consumed unseen. A session
 # start and a prompt are never refused: there the keyed text is a report on
-# stderr at exit 0, with nothing on stdout and nothing acknowledged. No caller
-# exits on its own: the status is this function's, and it never returns.
+# stderr at exit 0, with nothing on stdout and nothing acknowledged. A
+# compaction cannot be held either, but its reference shows a non-zero exit
+# to the operator as a warning while the compaction goes on, so there the
+# keyed text is on stderr at exit 2 with nothing on stdout, as on every
+# harness but Copilot's other events. A context reading takes no answer either:
+# the extension that runs it writes the keyed text of a run that exits
+# non-zero to the session timeline, so there too the text is on stderr at exit
+# 2. No caller exits on its own: the status is this function's, and it never
+# returns.
 ACK_LINES=""
 refuse() { # KEY VALUE [CAUSE]
   local text
@@ -464,12 +533,16 @@ refuse() { # KEY VALUE [CAUSE]
 
 # The event this run judges: a turn end with no argument, or the arm the
 # lane-mail-deliver, lane-mail-halt, lane-mail-start, lane-mail-prompt,
-# session-start-row, session-end-row or stop-failure-row hook beside this one
-# names. The three arms that hand mail over as context carry the event name
-# that context is written under. `row` judges nothing: it writes the session's
-# own event row and refuses nothing.
+# session-start-row, session-end-row, stop-failure-row or lane-mail-compact
+# hook beside this one names, or `usage`, which the orch copilot-lane-context
+# extension names. The three arms that hand mail over as
+# context carry the event name that context is written under. `row` judges
+# nothing: it writes the session's own event row and refuses nothing.
+# `compact` flags a Copilot session's automatic compaction, which its next
+# turn end judges, and `usage` records a Copilot session's context reading,
+# which the same turn end judges.
 case "${1:-stop}" in
-  stop | halt | row) ARM="${1:-stop}" ;;
+  stop | halt | row | compact | usage) ARM="${1:-stop}" ;;
   deliver) ARM=deliver CONTEXT_EVENT=PostToolUse ;;
   start) ARM=start CONTEXT_EVENT=SessionStart ;;
   prompt) ARM=prompt CONTEXT_EVENT=UserPromptSubmit ;;
@@ -502,8 +575,11 @@ INPUT=$(cat 2>&1) || refuse payload unreadable "$INPUT"
 # Copilot made the call, read from the call and never from the install: both
 # payload formats its reference gives carry `timestamp`, and its own camelCase
 # one names the session `sessionId`; no Claude, Codex or Pi payload carries
-# either. TAB separators preserve transcript spaces.
-READ=$(printf '%s' "$INPUT" | jq -r '
+# either. Last the `trigger` a Copilot preCompact payload names, manual or
+# auto, in the one spelling both its formats share, and the `cwd` the
+# extension's usage payload names the session's directory by, read for that
+# arm alone. TAB separators preserve transcript spaces.
+READ=$(printf '%s' "$INPUT" | jq -r --arg arm "$ARM" '
   def str(f): if f == null then "" elif (f | type) == "string" then f else error("not a string") end;
   def whole(f): if f == null then "" elif (f | type) == "number" and f > 0 and f == (f | floor)
     then (f | tostring) else error("not a whole number") end;
@@ -514,7 +590,9 @@ READ=$(printf '%s' "$INPUT" | jq -r '
    str(either(.session_id; .sessionId)),
    str(.tool_name),
    whole(.context_window),
-   (if type == "object" and (has("timestamp") or has("sessionId")) then "copilot" else "" end)] | join("\t")' 2>&1) ||
+   (if type == "object" and (has("timestamp") or has("sessionId")) then "copilot" else "" end),
+   str(.trigger),
+   (if $arm == "usage" then str(.cwd) else "" end)] | join("\t")' 2>&1) ||
   refuse payload invalid-json "$READ"
 TAB=$(printf '\t')
 ACTIVE=${READ%%"$TAB"*}
@@ -528,7 +606,11 @@ READ=${READ#*"$TAB"}
 TOOL=${READ%%"$TAB"*}
 READ=${READ#*"$TAB"}
 PAYLOAD_WINDOW=${READ%%"$TAB"*}
-CALL_HARNESS=${READ#*"$TAB"}
+READ=${READ#*"$TAB"}
+CALL_HARNESS=${READ%%"$TAB"*}
+READ=${READ#*"$TAB"}
+TRIGGER=${READ%%"$TAB"*}
+PAYLOAD_CWD=${READ#*"$TAB"}
 # A Copilot call reaches an install that is not Copilot's only through a
 # registration made in `.claude/settings.json` by hand or one kendex wrote
 # before the Copilot skip that no refresh has rewritten; kendex's own current
@@ -598,17 +680,22 @@ record_lead() { # [prune]
 #   a subagent's. A stop naming no transcript, or no session the alphabet above
 #   admits, is the lead's and records nothing: an empty session name matches no
 #   directory and would otherwise make every such stop a subagent's.
-# - preToolUse and postToolUse: the lead's where the session is a recorded
-#   lead, and otherwise unknown. They carry neither an agent nor a transcript,
-#   and a custom subagent's carry a session id no sessionStart announced. An
-#   unknown caller is handed no mail and acknowledges none, so such a subagent
-#   cannot take the lead's directive, which the lead's turn end hands over;
-#   under a halt it is never shown the read that clears the halt, and
-#   mail_check states why that read still passes. Whether a built-in
-#   task-tool subagent's calls carry their own session id or the lead's is a
-#   pending live-lane proof: one whose calls carry the lead's is read as the
-#   lead, handed the lead's mail after its calls, which marks it read, and
-#   under a halt shown the read that clears it.
+# - preToolUse, postToolUse, preCompact and usage: the lead's where the
+#   session is a recorded lead, and otherwise unknown, the one rule for every
+#   Copilot arm that cannot prove the lead itself. They carry neither an agent
+#   nor a transcript the rule above can trust, and a custom subagent's carry a
+#   session id no sessionStart announced; a preCompact names a transcript, but
+#   what a subagent's names is unmeasured, and a usage reading is the one the
+#   extension took of the session's root agent, under the session id the hooks
+#   see. An unknown caller is handed no mail and acknowledges none, so such a
+#   subagent cannot take the lead's directive, which the lead's turn end hands
+#   over; under a halt it is never shown the read that clears the halt, and
+#   mail_check states why that read still passes. Its compaction flags nothing
+#   and its reading is recorded nowhere, so a subagent never marks the lead's
+#   session. Whether a built-in task-tool subagent's calls carry their own
+#   session id or the lead's is a pending live-lane proof: one whose calls
+#   carry the lead's is read as the lead, handed the lead's mail after its
+#   calls, which marks it read, and under a halt shown the read that clears it.
 # - sessionStart: the lead's, and recorded, being the session's own start.
 # - userPromptSubmitted: the lead's, and never recorded: that a subagent's
 #   prompt fires no such hook is unmeasured.
@@ -626,7 +713,7 @@ if [ "$CALLER" = lead ]; then
         fi
       fi
       ;;
-    copilot:deliver | copilot:halt)
+    copilot:deliver | copilot:halt | copilot:compact | copilot:usage)
       { copilot_lead_file && [ -f "$LEAD_FILE" ]; } || CALLER=unknown
       ;;
     *) ;;
@@ -667,6 +754,16 @@ stall() { # KEY VALUE [CAUSE]
 if [ -n "$CONTEXT_EVENT" ] && [ "$CALLER" = subagent ]; then
   exit 0
 fi
+# A compaction the caller rule does not name the lead's is a subagent's own
+# window's, or a lead's whose record could not be written, and flags nothing
+# for the lead; it is passed before any gap of the lead's is reached, the
+# unknown one's automatic compaction reported on stderr at exit 0, since a
+# warning to the operator at every subagent's compaction would bury the gaps
+# the compact arm refuses.
+if [ "$ARM" = compact ] && [ "$CALLER" != lead ]; then
+  [ "$CALLER" != unknown ] || [ "$TRIGGER" != auto ] || message session-unrecorded "${SESSION:-none}"
+  exit 0
+fi
 
 MISSING=""
 for dependency in git tr awk mktemp tail; do
@@ -686,7 +783,8 @@ trap 'rm -rf -- "$WORK_DIR"' EXIT
 # post-merge steps from the main clone, and a judge that asked the call's
 # directory there found no mailbox and passed every call made from it, the arm
 # step included. Codex and Pi run a hook in the session's start directory, so
-# on them the last step is the lane's own root already.
+# on them the last step is the lane's own root already. A Copilot context
+# reading starts from the session directory its payload names.
 #
 # Git reports one status for a directory that is no repository and for
 # metadata it cannot read, and a lane always runs in one. So that directory
@@ -694,6 +792,7 @@ trap 'rm -rf -- "$WORK_DIR"' EXIT
 # with one the lane cannot be named, which is never passed off as no lane.
 # The common git directory rides the same call: the launch markers live there.
 LANE_DIR=${CLAUDE_PROJECT_DIR:-$PWD}
+[ "$ARM" != usage ] || LANE_DIR=$PAYLOAD_CWD
 GIT_RC=0
 GIT_DIRS=$(git -C "$LANE_DIR" rev-parse --show-toplevel --path-format=absolute --git-common-dir 2>&1) ||
   GIT_RC=$?
@@ -1533,20 +1632,27 @@ refuse_handoff() { # KEY VALUE [CAUSE]
 # different bash than the one about to source the file answers another
 # question. The options are passed with it for the same reason. No readability
 # test stands ahead of the probe, because failing the source is what writes
-# bash's own words to the file the arm below replays; a `-r` test would leave
-# that cause empty under a line that promises one.
+# bash's own words to the cause; a `-r` test would leave that cause empty
+# under a line that promises one.
+#
+# A gap returns 1 with FAIL_KEY, FAIL_VALUE and FAIL_CAUSE naming it and
+# nothing written: a turn end reports it and passes, while the usage and
+# compact arms refuse it.
 #
 # Called on the left of `||`, so bash suspends errexit for this whole body;
 # every status is tested where it is taken.
 load_context_lib() {
   [ -z "${LANE_CONTEXT_RECORD:-}" ] || return 0
+  FAIL_VALUE="$SCRIPTS/lib/lane-context.sh"
+  FAIL_CAUSE=""
   if [ ! -e "$SCRIPTS/lib/lane-context.sh" ]; then
-    message handoff-skipped "$SCRIPTS/lib/lane-context.sh"
+    FAIL_KEY=handoff-skipped
     return 1
   fi
   : >"$WORK_DIR/lib.err"
   if ! "$BASH" -euo pipefail -c '. "$1" && declare -F lane_context_handoff_due >/dev/null' _ "$SCRIPTS/lib/lane-context.sh" 2>"$WORK_DIR/lib.err"; then
-    message handoff-unanswered "$SCRIPTS/lib/lane-context.sh" "$(cat -- "$WORK_DIR/lib.err")"
+    FAIL_KEY=handoff-unanswered
+    FAIL_CAUSE=$(cat -- "$WORK_DIR/lib.err")
     return 1
   fi
   # The probe proved this source parses, reads and returns 0 under these very
@@ -1564,8 +1670,9 @@ load_context_lib() {
 # transcript named, no usage line in it, or a harness no adapter reads — and
 # LANE_CONTEXT_UNREAD for a usage object the adapter does not read; neither is
 # recorded, and READ_GAP names which it was, `transcript-unnamed`,
-# `usage-absent`, `usage-unread` or, for Copilot, `session-record`, empty where
-# a reading was taken or the harness is one no adapter reads. A transcript named and unreadable is
+# `usage-absent`, `usage-unread` or, for a Copilot session with no extension
+# reading, `session-record`, empty where a reading was taken or the harness is
+# one no adapter reads. A transcript named and unreadable is
 # refused, since the record is
 # what clears it. A record that cannot be written is reported and the reading
 # still judged: the mark rests on this read, the record serves the others.
@@ -1578,18 +1685,27 @@ load_context_lib() {
 # adapter that stops reading leaves the tail a write error, which reaching
 # stderr ahead of the keyed line would take its place.
 #
-# A Copilot transcript holds no live count, so a Copilot session is read from
-# the session record its statusLine command writes instead, bound through
+# A Copilot transcript holds no live count. A Copilot session is read first
+# from the reading the orch copilot-lane-context extension recorded
+# (copilot_context_read). Only where no such reading of this session stands is
+# it read from the session record its statusLine command writes, bound through
 # lib/copilot-session.sh to the payload's session id, its transcript where it
 # names one, and the account the session runs on, and held to the record's
-# freshness bound. A record that does not answer leaves the context unmeasured
-# under `session-record=<reason>` and the gap `session-record`, reported and
-# passed like a transcript that names no usage, and never read as room.
+# freshness bound: the fallback for a home whose EXTENSIONS feature is off,
+# since the extension's usage event is the interface Copilot offers and the
+# statusLine is a display command. That reading is recorded with its own
+# capacity source, so no later turn end takes it for the extension's. A record
+# that does not answer leaves the context unmeasured under
+# `reading-unrecorded=<path>` and `session-record=<reason>` and the gap
+# `session-record`, reported and passed like a transcript that names no usage,
+# and never read as room.
 context_read_and_record() { # BOX PANE_KEY
   TOKENS=""
   WINDOW=""
   MODEL=""
   READ_GAP=""
+  COMPACTED=false
+  SOURCE=""
   # An install directory naming no harness has no adapter to read its context,
   # so it is reported unmeasured where the payload names a transcript to go
   # unread. No gap is named for it, whatever the payload carries: this hook
@@ -1602,13 +1718,18 @@ context_read_and_record() { # BOX PANE_KEY
     return 0
   fi
   if [ "$HARNESS" = copilot ]; then
+    # The extension's reading is the session's own and is never overwritten
+    # here: the reader owns the record.
+    copilot_context_read "$1" && return 0
     if ! copilot_session_read "$(lane_context_caller_cfg copilot)" "$SESSION" "$TRANSCRIPT" "$(date +%s)"; then
       READ_GAP=session-record
+      message reading-unrecorded "$1/$LANE_CONTEXT_RECORD"
       message session-record "$COPILOT_SESSION_REASON"
       return 0
     fi
     READING=$(lane_context_reading copilot <<<"$COPILOT_SESSION_RECORD" 2>"$WORK_DIR/transcript.err") ||
       refuse_handoff transcript unread "$(cat -- "$WORK_DIR/transcript.err")"
+    SOURCE=$LANE_ADAPTER_COPILOT_CAPACITY_SOURCE
   else
     READ_GAP=transcript-unnamed
     [ -n "$TRANSCRIPT" ] || return 0
@@ -1640,9 +1761,190 @@ context_read_and_record() { # BOX PANE_KEY
   READING=${READING#*"$TAB"}
   WINDOW=${READING%%"$TAB"*}
   MODEL=${READING#*"$TAB"}
-  lane_context_record "$1" "$HARNESS" "$TOKENS" "$WINDOW" "$MODEL" "$SESSION" "$2" \
+  lane_context_record "$1" "$HARNESS" "$TOKENS" "$WINDOW" "$MODEL" "$SESSION" "$2" "" "$SOURCE" \
     2>"$WORK_DIR/record.err" ||
     message context-unrecorded "$1/$LANE_CONTEXT_RECORD" "$(cat -- "$WORK_DIR/record.err")"
+  return 0
+}
+
+# A Copilot session's context at its turn end, from BOX, as the orch
+# copilot-lane-context extension recorded it: COMPACTED true where the
+# lane-mail-compact hook flagged this session's automatic compaction, and
+# TOKENS, WINDOW and MODEL from the reading the usage arm below last recorded
+# for this session, WINDOW being the capacity it named, the limit Copilot
+# compacts at. 0 once either is taken; nothing is written here, since the
+# reader owns the record. 1 where no reading of the extension's stands for
+# this session: no record, one naming another session, a predecessor's in the
+# same mailbox included, a gap record, which the turn end of an overseer the
+# fleet record lost writes, and a reading the statusLine fallback recorded,
+# told apart by its capacity source. The caller then takes the statusLine
+# fallback, and never reads that as room. A flag or a record that stands and
+# cannot be read is refused, since the handoff record is what clears that.
+copilot_context_read() { # BOX
+  FLAG_RC=0
+  lane_context_compaction_flagged "$1" "$SESSION" 2>"$WORK_DIR/flag.err" || FLAG_RC=$?
+  case "$FLAG_RC" in
+    0)
+      # Past the mark whatever the reading says: the refusal follows, and a
+      # report on the reading ahead of it would stand before its keyed line.
+      COMPACTED=true
+      return 0
+      ;;
+    1) ;;
+    *) refuse_handoff record "$1/$LANE_CONTEXT_COMPACTION" "$(cat -- "$WORK_DIR/flag.err")" ;;
+  esac
+  [ -e "$1/$LANE_CONTEXT_RECORD" ] || return 1
+  RECORD=$(cat -- "$1/$LANE_CONTEXT_RECORD" 2>"$WORK_DIR/record.err") ||
+    refuse_handoff record "$1/$LANE_CONTEXT_RECORD" "$(cat -- "$WORK_DIR/record.err")"
+  lane_context_record_fields "$RECORD" ||
+    refuse_handoff record "$1/$LANE_CONTEXT_RECORD" "it is neither a reading nor a gap record"
+  if [ "$LANE_CTX_SESSION" != "$SESSION" ] || [ -n "$LANE_CTX_GAP" ] ||
+    [ "$LANE_CTX_SOURCE" != "$LANE_CONTEXT_COPILOT_CAPACITY_SOURCE" ]; then
+    return 1
+  fi
+  TOKENS=$LANE_CTX_TOKENS
+  WINDOW=$LANE_CTX_WINDOW
+  MODEL=$LANE_CTX_MODEL
+  return 0
+}
+
+# Whether this session is one the handoff marks are judged for, the one rule
+# every arm that judges or records them asks: the lead of a launched lane, or
+# the fleet's overseer. 0 with ROLE set, ITEM then naming the fleet item for
+# the overseer; 1 for a session that is neither, passed in silence; 2 for a
+# launched lane whose install this hook could not resolve, with GATE_KEY,
+# FAIL_VALUE and FAIL_CAUSE naming the gap. A session naming no
+# lane item is asked whether it is the overseer only inside tmux and only once
+# the install resolves: a session outside tmux pays nothing, and an install
+# this hook cannot find establishes no overseer, so that session reports
+# nothing. The tmux test is that cost bound and no rule of its own: outside
+# tmux the pane key the fleet state is matched on cannot be read either. The
+# overseer is established by overseer_identified alone.
+#
+# Called on the left of `||`, so bash suspends errexit for this whole body;
+# every status is tested where it is taken.
+session_gate() {
+  if [ -z "$ITEM" ]; then
+    { [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ]; } || return 1
+    NO_LANE_ITEM=1
+  else
+    lane_launched || return 1
+  fi
+  # The marks are judged with the orch scripts beside the mailbox reader, from
+  # this hook's own install and never the open repository's, as the reader is.
+  # An install that carries none of them carries no `workflow-state` either,
+  # so a lane could not record a handoff whatever it was told.
+  GATE_KEY=""
+  if ! resolve_reader; then
+    GATE_KEY=handoff-skipped
+    [ "$FAIL_KEY" != reader-outside ] || GATE_KEY=handoff-outside
+  elif [ ! -x "$SCRIPTS/workflow-state" ]; then
+    GATE_KEY=handoff-skipped
+    FAIL_VALUE="$SCRIPTS/workflow-state"
+    FAIL_CAUSE=""
+  fi
+  if [ -n "$GATE_KEY" ]; then
+    [ "$NO_LANE_ITEM" -eq 0 ] || return 1
+    return 2
+  fi
+  # The fleet state is what names the overseer, so this is the first step that
+  # can ask. A session that is not it has no marks of this hook's to meet.
+  if [ "$NO_LANE_ITEM" -eq 1 ]; then
+    overseer_identified || return 1
+    ROLE=overseer
+    ITEM="$OVERSEER_ITEM"
+  fi
+  return 0
+}
+
+# The mailbox directory the session session_gate established records in, into
+# BOX, and the pane key its records carry, into PANE_KEY: the lane's own, or
+# the overseer's, keyed by its pane so a successor tells its own record from
+# its predecessor's.
+gated_box() {
+  if [ "$ROLE" = overseer ]; then
+    overseer_box
+    BOX=$OVERSEER_BOX
+    PANE_KEY=$CALLER_KEY
+  else
+    BOX="$MAIL_ROOT/$ITEM"
+    PANE_KEY=""
+  fi
+}
+
+# The compact arm: a Copilot lane lead's or overseer's automatic compaction,
+# flagged in the mailbox directory its turn end reads, which holds that turn
+# end until the handoff record stands. The backstop: the usage reading
+# hands a session off before Copilot compacts it, and this flag holds a turn
+# that crossed into the compaction before any reading past the mark reached a
+# turn end. Copilot's preCompact takes no answer and cannot be held, so a gap
+# is refused at exit 2, which Copilot shows the operator as a warning while
+# the compaction goes on. A manual compaction is the operator's own and flags
+# nothing; nor does a session session_gate passes over, nor, passed before
+# this, one the caller rule does not name the lead's. The hook is rendered
+# for Copilot alone, whose compaction no switch turns off, so a copy run
+# elsewhere flags nothing.
+#
+# Called plainly, so errexit is live: every status is tested where it is taken.
+compaction_mark() {
+  { [ "$HARNESS" = copilot ] && [ "$TRIGGER" = auto ]; } || return 0
+  GATE_RC=0
+  session_gate || GATE_RC=$?
+  case "$GATE_RC" in
+    0) ;;
+    1) return 0 ;;
+    *) refuse compaction-unrecorded "$FAIL_VALUE" "$FAIL_CAUSE" ;;
+  esac
+  load_context_lib || refuse compaction-unrecorded "$FAIL_VALUE" "$FAIL_CAUSE"
+  gated_box
+  lane_context_compaction_flag "$BOX" "$HARNESS" "$TRIGGER" "$SESSION" "$PANE_KEY" 2>"$WORK_DIR/flag.err" ||
+    refuse compaction-unrecorded "$BOX/$LANE_CONTEXT_COMPACTION" "$(cat -- "$WORK_DIR/flag.err")"
+  return 0
+}
+
+# The usage arm, the Copilot session's context reader: the orch
+# copilot-lane-context extension hands it each reading Copilot's
+# `session.usage_info` gives of the session's root agent, as
+# {session_id, cwd, current_tokens, token_limit}. For a recorded lead session
+# session_gate passes, the reading lib/lane-context.sh's lane_context_copilot_reading takes
+# of that payload is recorded as the session's `context.json`, the capacity
+# being the limit Copilot compacts at, which its turn end judges under the
+# shared context rule as any other harness's reading. Nothing is written on
+# stdout; a gap is refused on stderr at exit 2, which the extension writes to
+# the session timeline, and a session that is no lane and no overseer passes
+# silently.
+#
+# Called plainly, so errexit is live: every status is tested where it is taken.
+usage_read() {
+  [ "$HARNESS" = copilot ] || refuse harness-unlisted "${BASH_SOURCE[0]%/*}"
+  GATE_RC=0
+  session_gate || GATE_RC=$?
+  case "$GATE_RC" in
+    0) ;;
+    1) return 0 ;;
+    *) refuse "$GATE_KEY" "$FAIL_VALUE" "$FAIL_CAUSE" ;;
+  esac
+  # The extension hands over the root agent's readings alone, so a session
+  # the caller rule leaves unknown is a lead whose record could not be
+  # written; refused, so the gap reaches the session timeline.
+  [ "$CALLER" = lead ] || refuse session-unrecorded "${SESSION:-none}"
+  load_context_lib || refuse "$FAIL_KEY" "$FAIL_VALUE" "$FAIL_CAUSE"
+  READING=$(printf '%s' "$INPUT" | lane_context_copilot_reading 2>"$WORK_DIR/reading.err") ||
+    refuse payload invalid-json "$(cat -- "$WORK_DIR/reading.err")"
+  TOKENS=${READING%%"$TAB"*}
+  READING=${READING#*"$TAB"}
+  WINDOW=${READING%%"$TAB"*}
+  SOURCE=${READING#*"$TAB"}
+  gated_box
+  if ! lane_context_record "$BOX" "$HARNESS" "$TOKENS" "$WINDOW" "" "$SESSION" "$PANE_KEY" "" "$SOURCE" \
+    2>"$WORK_DIR/record.err"; then
+    # The record standing there is an earlier reading, which can lie below
+    # the mark this one crossed: left in place, the next turn end would judge
+    # it as room.
+    STALE_RECORD=removed
+    rm -f -- "${BOX:?}/$LANE_CONTEXT_RECORD" 2>>"$WORK_DIR/record.err" || STALE_RECORD=stands
+    refuse context-unrecorded "$BOX/$LANE_CONTEXT_RECORD" "$(cat -- "$WORK_DIR/record.err")"
+  fi
   return 0
 }
 
@@ -1706,7 +2008,6 @@ overseer_transcript_owned() {
 # Called on the left of `||`, so bash suspends errexit for this whole body;
 # every status is tested where it is taken.
 overseer_identified() {
-  [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] || return 1
   [ -e "$SCRIPTS/lib/lane-context.sh" ] || return 1
   if ! CALLER_KEY=$("$BASH" -euo pipefail -c '. "$1" && lane_context_caller_key' \
     _ "$SCRIPTS/lib/lane-context.sh" 2>/dev/null)
@@ -1783,7 +2084,10 @@ overseer_gap_record() { # GAP
 # be read names no pane. Called plainly, so every status is tested here.
 overseer_unrecorded() {
   [ "$OVERSEER_UNRECORDED" -eq 1 ] || return 0
-  load_context_lib || return 0
+  if ! load_context_lib; then
+    message "$FAIL_KEY" "$FAIL_VALUE" "$FAIL_CAUSE"
+    return 0
+  fi
   # Named without overseer_box, which makes the directory: a session that is
   # no overseer's has no directory to make, and a record this reads is one
   # the directory already holds.
@@ -1957,52 +2261,28 @@ pi_account() {
 # judged. Every status is therefore tested where it is taken.
 handoff_check() {
   [ "$ARM" = stop ] && [ "$CALLER" = lead ] || return 0
-  if [ -z "$ITEM" ]; then
-    # An overseer runs in a tmux pane, and the fleet state names that pane:
-    # a session with neither is not one, and this is the whole of what a
-    # session outside tmux pays at its turn end. Judged before the install is
-    # resolved, so an ordinary checkout costs what it cost before this arm
-    # existed.
-    { [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ]; } || return 0
-    NO_LANE_ITEM=1
-  else
-    lane_launched || return 0
-  fi
-
-  # The marks are judged with the orch scripts beside the mailbox reader, from
-  # this hook's own install and never the open repository's, as the reader is.
-  # An install that carries none of them carries no `workflow-state` either, so
-  # the lane could not record a handoff whatever it was told: the gap is
-  # reported and the turn ends. A reader the open repository supplies is that
-  # same gap for a different reason, and says so under its own key rather than
-  # sending the operator to reinstall a skill that is installed.
-  if ! resolve_reader; then
-    # An install this hook could not find is also what would have established
-    # that a session naming no lane item is the overseer, so that session is
-    # neither and reporting a gap for it would put a keyed line on every turn
-    # end of every session in the checkout.
-    [ "$NO_LANE_ITEM" -eq 0 ] || return 0
-    case "$FAIL_KEY" in
-      reader-outside) message handoff-outside "$FAIL_VALUE" "$FAIL_CAUSE" ;;
-      *) message handoff-skipped "$FAIL_VALUE" "$FAIL_CAUSE" ;;
-    esac
-    exit 0
-  fi
-  if [ ! -x "$SCRIPTS/workflow-state" ]; then
-    [ "$NO_LANE_ITEM" -eq 0 ] || return 0
-    message handoff-skipped "$SCRIPTS/workflow-state"
-    exit 0
-  fi
-  # The fleet state is what names the overseer, so this is the first step that
-  # can ask. A session that is not it has no marks of this hook's to meet.
-  if [ "$NO_LANE_ITEM" -eq 1 ]; then
-    if ! overseer_identified; then
+  # An install this hook could not find is also what would have established
+  # that a session naming no lane item is the overseer, so session_gate passes
+  # that session over in silence: a keyed line there would stand on every turn
+  # end of every session in the checkout. A lane's gap is reported under the
+  # key the gate names and the turn ends.
+  GATE_RC=0
+  session_gate || GATE_RC=$?
+  case "$GATE_RC" in
+    0) ;;
+    1)
+      # A session the fleet record lost as its overseer still writes the
+      # overseer context record at its turn end, with the gap
+      # `pane-unrecorded`; every other session the gate passes writes
+      # nothing.
       overseer_unrecorded
       return 0
-    fi
-    ROLE=overseer
-    ITEM="$OVERSEER_ITEM"
-  fi
+      ;;
+    *)
+      message "$GATE_KEY" "$FAIL_VALUE" "$FAIL_CAUSE"
+      exit 0
+      ;;
+  esac
 
   # A record already standing is the lane handing itself off: it reached its
   # safe point and is exiting, so nothing below may hold it here. Judged
@@ -2052,11 +2332,16 @@ handoff_check() {
     # A turn that ended lifts a wall its StopFailure row recorded, and dates
     # the turn end oversee-watch holds the context record against.
     session_row
-    # Every turn end here writes the context record, a reading or a gap
-    # naming why none was taken, so the record advances whatever this turn
-    # end could read and oversee-watch reports a gap rather than a stale
-    # figure passing for a mark that is watching.
-    if load_context_lib; then
+    # Every turn end here whose orch context library loads writes the context
+    # record, a reading or a gap naming why none was taken, so the record
+    # advances whatever this turn end could read and oversee-watch reports a
+    # gap rather than a stale figure passing for a mark that is watching; a
+    # Copilot session's reading is its usage arm's where one stands, and it
+    # names no gap over it. A library that does not load is reported under its
+    # own key.
+    if ! load_context_lib; then
+      message "$FAIL_KEY" "$FAIL_VALUE" "$FAIL_CAUSE"
+    else
       overseer_box
       if overseer_transcript_owned; then
         context_read_and_record "$OVERSEER_BOX" "$CALLER_KEY"
@@ -2065,6 +2350,10 @@ handoff_check() {
           "$LANE_CONTEXT_UNREAD") message usage-unread "$TRANSCRIPT" ;;
           *) JUDGE_ARGS=(--context "$TOKENS:$WINDOW") ;;
         esac
+        # The compaction backstop is a verdict, not a reading: no judge
+        # derives it, and it is refused whatever the succession setting, as
+        # the context mark is.
+        [ "$COMPACTED" != true ] || refuse_handoff compacted auto
       else
         # The gate reported why nothing is read. With no reading of its own
         # to take the harness from, the judge is handed the one this install
@@ -2083,7 +2372,10 @@ handoff_check() {
   for script in orch-env lanes; do
     [ -x "$SCRIPTS/$script" ] || refuse_handoff script "$SCRIPTS/$script"
   done
-  load_context_lib || return 0
+  if ! load_context_lib; then
+    message "$FAIL_KEY" "$FAIL_VALUE" "$FAIL_CAUSE"
+    return 0
+  fi
 
   MARK=$("$SCRIPTS/orch-env" ORCH_HANDOFF_CONTEXT_PCT 90 2>"$WORK_DIR/env.err") ||
     refuse_handoff setting ORCH_HANDOFF_CONTEXT_PCT "$(cat -- "$WORK_DIR/env.err")"
@@ -2091,6 +2383,7 @@ handoff_check() {
   MARK=$(lane_context_handoff_pct "$REQUESTED_MARK") ||
     refuse_handoff setting-range "ORCH_HANDOFF_CONTEXT_PCT=$REQUESTED_MARK"
   context_read_and_record "$MAIL_ROOT/$ITEM" ""
+  [ "$COMPACTED" != true ] || refuse_handoff compacted auto
   # Three answers, and the mark is judged on one of them. A reading with a
   # window is judged by the library's one judge; the empty answer is a
   # transcript with no usage line, or a payload naming none, and leaves the
@@ -2206,6 +2499,14 @@ lane_row() {
 # mailbox's to carry, and no reader of the overseer's rows reads them.
 if [ "$ARM" = row ]; then
   [ -n "$ITEM" ] || session_row
+  exit 0
+fi
+if [ "$ARM" = compact ]; then
+  compaction_mark
+  exit 0
+fi
+if [ "$ARM" = usage ]; then
+  usage_read
   exit 0
 fi
 lane_row

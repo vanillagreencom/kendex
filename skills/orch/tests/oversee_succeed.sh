@@ -423,6 +423,23 @@ assert_eq "harness=$(orec harness) home=$(orec home) model=$(orec model) effort=
 assert_eq "$(recorded_line)" \
   "env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high $CLAUDE_COMPACT_LINE --dangerously-skip-permissions --verbose '$BRIEF'" \
   "a succession records the line it launched, for a later dead-overseer relaunch"
+# The succession's context arm, run from outside the caller's pane on the
+# reading the turn-end hook hands it: a caller past the context mark on an
+# account with room launches a successor on the context mark alone. Its
+# control cuts that arm from a copy: the same caller is told it is below every
+# mark and nothing launches.
+new_caller "$MARK"
+run_succeed walkcontext 'claude:1:high' -- --dangerously-skip-permissions
+assert_eq "$RC|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "0|no|1|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;--dangerously-skip-permissions;$BRIEF;" \
+  "a caller past the context mark with account room hands over to a successor on that mark"
+WALKCTL="$(mutant_scripts walkctl oversee-succeed)" || exit 1
+mutate_file "$WALKCTL/oversee-succeed" '  elif [[ "$CONTEXT_STATE" == due ]]; then' '  elif false; then'
+new_caller "$MARK"
+SUCCEED_BIN="$WALKCTL/oversee-succeed" run_succeed walkctl 'claude:1:high' -- --dangerously-skip-permissions
+assert_eq "$RC|$(caller_open)|$(overseers)|$(sed -n 1p <<<"$OUT" | cut -d' ' -f1-2)" \
+  "0|yes|0|oversee-succeed: context-below-mark" \
+  "control: without the walk's context arm a caller past its context mark launches no successor"
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 # A codex successor opens into the caller's own directory, which the account's

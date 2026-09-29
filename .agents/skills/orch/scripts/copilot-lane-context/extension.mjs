@@ -1,0 +1,163 @@
+// kendex-lane-context: the context reader of a Copilot CLI fleet session.
+//
+// open-terminal installs this file as the Copilot extension
+// `<COPILOT_HOME>/extensions/kendex-lane-context/extension.mjs` of the home a
+// Copilot fleet lane runs under, and turns on the EXTENSIONS feature that
+// loads it (`enabledFeatureFlags` in that home's settings.json). Copilot runs
+// it for every session on that home, as a child process whose working
+// directory and environment are the session's.
+//
+// It joins the session through the Copilot SDK and subscribes to
+// `session.usage_info`, which Copilot emits at every model call and right
+// after each compaction, carrying `currentTokens` and `tokenLimit`, the prompt
+// token limit. A reading of the root agent, which carries no `agentId`, is
+// handed to the lane-mail-check hook run with the argument `usage`, as the
+// JSON object {session_id, cwd, current_tokens, token_limit} on stdin. That
+// hook decides whether the session is a launched lane's lead or the fleet
+// overseer and records the reading in the session's `context.json`, which its
+// turn end judges; this file only finds the hook and runs it.
+//
+// The hook is the one in the Copilot hook scope the session loads, the rule
+// orch lib/lane-context.sh states as lane_context_copilot_hooks and
+// open-terminal's launch gate asks: `<git root>/.github/hooks` where it holds
+// both lane-mail-check and lane-mail-compact, each `<name>.sh` beside its
+// `<name>.json`, else `${COPILOT_HOME:-$HOME/.copilot}/hooks`. It is spelled
+// again here because this copy runs from the Copilot home with no orch install
+// beside it to ask; skills/orch/tests/copilot-lane-context.sh holds the two
+// spellings to the same answers.
+//
+// At most one hook run is in flight, bounded by HOOK_TIMEOUT_MS, so a slow
+// hook never stalls the session and readings never pile up: a reading that
+// lands while one runs replaces the one queued behind it. A gap is written to
+// the session timeline at level warning, once per distinct first line:
+//   kendex-lane-context: hooks-missing=<project scope>,<global scope>, only
+//   for a session that can be a fleet session (fleetSession); any other runs
+//   no hook and says nothing
+//   kendex-lane-context: reading=unreadable
+//   kendex-lane-context: usage-spawn=<error code>
+//   kendex-lane-context: usage-signal=<signal>
+//   kendex-lane-context: usage-exit=<status>, for a hook that wrote nothing
+//   the hook's own keyed stderr, `lane-mail-check: <key>=<value>`, for any
+//   other exit that is not 0
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { joinSession } from "@github/copilot-sdk/extension";
+
+const KEY = "kendex-lane-context";
+const HOOKS = ["lane-mail-check", "lane-mail-compact"];
+// The lane-mail-check hook's own timeout: the longest a run of it is budgeted.
+const HOOK_TIMEOUT_MS = 30000;
+
+const session = await joinSession({});
+const cwd = process.cwd();
+
+const logged = new Set();
+function gap(text) {
+  const first = text.split("\n", 1)[0];
+  if (logged.has(first)) return;
+  logged.add(first);
+  // The timeline is the one place this process can report to; a log call that
+  // fails leaves stderr, which Copilot keeps in its own log.
+  session.log(text, { level: "warning" }).catch((error) => {
+    process.stderr.write(`${first}\n${error}\n`);
+  });
+}
+
+function holdsHooks(dir) {
+  return HOOKS.every((name) => existsSync(join(dir, `${name}.sh`)) && existsSync(join(dir, `${name}.json`)));
+}
+
+// Whether this session can be one lane-mail-check's session gate passes, from
+// the inputs that gate starts from: a lane is named by LANE_MAIL_ITEM or its
+// branch under the checkout's `tmp/lane-mail` mailbox root, and the overseer
+// runs in a tmux pane. Copilot runs this extension for every session on the
+// home, so a session with none of them is no fleet session, and hooks missing
+// there are nothing to report.
+function fleetSession(root) {
+  if (process.env.LANE_MAIL_ITEM || (process.env.TMUX && process.env.TMUX_PANE)) return true;
+  if (root === null) return false;
+  try {
+    return statSync(join(root, "tmp", "lane-mail"), { throwIfNoEntry: false })?.isDirectory() === true;
+  } catch {
+    // A mailbox root that cannot be examined may be a lane's, so the gap is
+    // reported rather than passed over.
+    return true;
+  }
+}
+
+// The hook scope this session loads, or null with no scope holding both hooks.
+function hookScope() {
+  const scopes = [];
+  const git = spawnSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], { encoding: "utf8" });
+  const root = git.status === 0 && git.stdout.trim() !== "" ? git.stdout.trim() : null;
+  if (root !== null) scopes.push(join(root, ".github", "hooks"));
+  scopes.push(join(process.env.COPILOT_HOME || join(homedir(), ".copilot"), "hooks"));
+  const scope = scopes.find(holdsHooks);
+  if (scope === undefined) {
+    if (!fleetSession(root)) return null;
+    gap(`${KEY}: hooks-missing=${scopes.join(",")}\n` +
+      "no Copilot hook scope this session loads holds lane-mail-check and lane-mail-compact, " +
+      "so its context is not recorded and its turn end judges it unmeasured; install both hooks in one of these scopes");
+    return null;
+  }
+  return scope;
+}
+
+let running = false;
+let queued = null;
+
+function drain() {
+  if (running || queued === null) return;
+  const reading = queued;
+  queued = null;
+  const scope = hookScope();
+  if (scope === null) return;
+  running = true;
+  const child = spawn("bash", [join(scope, "lane-mail-check.sh"), "usage"], {
+    cwd,
+    env: process.env,
+    stdio: ["pipe", "ignore", "pipe"],
+    timeout: HOOK_TIMEOUT_MS,
+  });
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  // A hook that exits before reading its stdin closes the pipe; its exit
+  // status is what reports that run.
+  child.stdin.on("error", () => {});
+  child.stdin.end(JSON.stringify(reading));
+  let spawnError = null;
+  child.on("error", (error) => { spawnError = error; });
+  child.on("close", (code, signal) => {
+    if (spawnError !== null) {
+      gap(`${KEY}: usage-spawn=${spawnError.code ?? "unknown"}\n` +
+        `bash could not run ${join(scope, "lane-mail-check.sh")}, so this reading is not recorded: ${spawnError.message}`);
+    } else if (signal !== null) {
+      gap(`${KEY}: usage-signal=${signal}\n` +
+        `the lane-mail-check hook did not finish within ${HOOK_TIMEOUT_MS} ms and was stopped, so this reading is not recorded`);
+    } else if (code !== 0) {
+      gap(stderr.trim() || `${KEY}: usage-exit=${code}\nthe lane-mail-check hook exited ${code} and wrote nothing`);
+    }
+    running = false;
+    drain();
+  });
+}
+
+function whole(value) {
+  return Number.isInteger(value) && value >= 0;
+}
+
+session.on("session.usage_info", (event) => {
+  // A subagent's window is its own, not the session's.
+  if (event.agentId) return;
+  const { currentTokens, tokenLimit } = event.data ?? {};
+  if (!whole(currentTokens) || !whole(tokenLimit) || tokenLimit === 0) {
+    gap(`${KEY}: reading=unreadable\n` +
+      "a session.usage_info event carried no whole currentTokens and tokenLimit, so it is not recorded");
+    return;
+  }
+  queued = { session_id: session.sessionId, cwd, current_tokens: currentTokens, token_limit: tokenLimit };
+  drain();
+});

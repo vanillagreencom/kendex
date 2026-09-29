@@ -2,7 +2,10 @@
 #
 # The Copilot adapter: the context a session has used, read from the session
 # record its `statusLine` command writes (lib/copilot-session.sh), never from
-# the transcript, which holds no live count, and never from the pane.
+# the transcript, which holds no live count, and never from the pane. It is the
+# fallback reader: a turn end reads the reading the orch copilot-lane-context
+# extension records from Copilot's own usage event first, and this record only
+# where no such reading of the session stands.
 #
 # Copilot has no switch that turns its automatic compaction off: its CLI starts
 # compacting at about 80 percent of the window (GitHub's Copilot CLI context
@@ -16,9 +19,12 @@
 # shellcheck source=../copilot-session.sh
 source "${BASH_SOURCE[0]%/*}/../copilot-session.sh"
 
-# The share of the window at which Copilot starts compacting, from its
-# documentation rather than a setting: nothing in the CLI reports or moves it.
-LANE_ADAPTER_COPILOT_COMPACT_PCT=80
+# The share of the window at which Copilot starts compacting is
+# LANE_CONTEXT_COPILOT_COMPACTION_PCT (lib/lane-context.sh), the one figure
+# both Copilot readers judge against. A reading taken here is recorded under
+# this capacity source, so a turn end tells it from the reading the orch
+# copilot-lane-context extension records, which it reads first.
+LANE_ADAPTER_COPILOT_CAPACITY_SOURCE="80% of context_window_size, from the Copilot statusLine session record"
 
 # One reading from a session record on stdin, as copilot_session_read accepted
 # it: `<tokens>\t<capacity>\t<model>`, the capacity empty where the record names
@@ -30,7 +36,7 @@ lane_adapter_copilot_reading() { # UNREAD
     printf '%s\n' "$1"
     return 0
   fi
-  [ -z "$CS_WINDOW" ] || capacity=$((CS_WINDOW * LANE_ADAPTER_COPILOT_COMPACT_PCT / 100))
+  [ -z "$CS_WINDOW" ] || capacity=$((CS_WINDOW * LANE_CONTEXT_COPILOT_COMPACTION_PCT / 100))
   printf '%s\t%s\t%s\n' "$CS_TOKENS" "$capacity" "$CS_MODEL"
 }
 

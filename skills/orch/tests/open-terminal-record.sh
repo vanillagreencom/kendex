@@ -131,6 +131,7 @@ mkdir -p "$REPO/scripts/lib"
 cp "$SRC_OT" "$REPO/scripts/open-terminal"
 cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/orch-env" "$REPO/scripts/"
 cp -R "$SCRIPTS_DIR/lib/." "$REPO/scripts/lib/"
+cp -R "$SCRIPTS_DIR/copilot-lane-context" "$REPO/scripts/"
 orch_fixture_shared_libs "$REPO"
 chmod +x "$REPO/scripts/open-terminal"
 git -C "$REPO" init -q
@@ -217,6 +218,17 @@ assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surfa
 STUB_GH_REPO=o/resolved RUN_TMUX=stub,1,0 run_ot --tmux --tracker github "${FLEET_CMD[@]}" 2711
 assert_eq "rc=$RC repo=$(field "$(record issue-2711)" repo)" "rc=0 repo=o/resolved" \
   "a GitHub launch with no --repo records the repository its resolver answered"
+
+# A Copilot fleet lane is recorded as any other lane is, once its gate has its
+# hooks where the lane loads them and has made its home load the context
+# reader (open-terminal-copilot-context.sh holds those rules).
+COP_RECORD_HOME="$TMP_ROOT/copilot-home"
+mkdir -p "$COP_RECORD_HOME/hooks"
+for name in lane-mail-check lane-mail-compact; do : > "$COP_RECORD_HOME/hooks/$name.sh"; : > "$COP_RECORD_HOME/hooks/$name.json"; done
+COPILOT_HOME="$COP_RECORD_HOME" RUN_TMUX=stub,1,0 run_ot --tmux --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high" CC-140
+assert_eq "rc=$RC $(record CC-140 | sed -E 's/ (launched_at|over_cap)=[^ ]*//g') extensions=$(jq -r .enabledFeatureFlags.EXTENSIONS "$COP_RECORD_HOME/settings.json" 2>/dev/null)" \
+  "rc=0 item=CC-140 tracker=linear repo=null harness=copilot window=stub:CC-140 account=null host=null mail_root=$TMP_ROOT/wt/CC-140 surface=tmux model=claude-opus-5 session_id=null status=running extensions=true" \
+  "a Copilot fleet launch opens its window and records the lane, its harness and model, its home loading the reader"
 
 echo "=== a tmux launch opens its window in the fleet's named session ==="
 # A window target with no session is the client's current session, and a

@@ -147,7 +147,7 @@ lib_control ctl-future lib/copilot-session.sh '[ "$age" -ge 0 ] &&' 'true &&'
 assert_eq "$(read_row "$ACCOUNT" "$SESSION" "$TRANSCRIPT" "$((WRITTEN - 1))")" ok "control: without the future bound a record stamped ahead answers"
 lib_control ctl-alphabet lib/copilot-session.sh "'' | . | .. | *[!A-Za-z0-9._-]*) return 1 ;;" "'') return 1 ;;"
 assert_eq "$(read_row "$ACCOUNT" ../x "$TRANSCRIPT" "$WRITTEN")" missing "control: without the alphabet a path-shaped id is looked up as a file"
-lib_control ctl-point lib/adapters/copilot.sh 'capacity=$((CS_WINDOW * LANE_ADAPTER_COPILOT_COMPACT_PCT / 100))' 'capacity=$CS_WINDOW'
+lib_control ctl-point lib/adapters/copilot.sh 'capacity=$((CS_WINDOW * LANE_CONTEXT_COPILOT_COMPACTION_PCT / 100))' 'capacity=$CS_WINDOW'
 assert_eq "$(reading "$(cat "$RECORD")")" $'416000\t1000000\tclaude-opus-5' "control: without the compaction point the whole window is the capacity"
 lib_control ctl-unread lib/adapters/copilot.sh '  if [ -z "$CS_TOKENS" ]; then' '  if false; then'
 assert_eq "$(reading '{"status":{"context_window":{"context_window_size":1000000}}}')" $'\t800000\t' "control: without the unread arm a record with no count reads as an empty figure"
