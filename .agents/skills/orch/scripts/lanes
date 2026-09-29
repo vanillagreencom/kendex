@@ -46,24 +46,22 @@
 #         from being tried; `refused`, a usage endpoint that answered any
 #         other code outside 2xx, 401 and 403 included, which is a reading of
 #         the credential it was asked through and not a read that was never
-#         made; `expired`, a login proven dead;
-#         `no_credentials`;
+#         made; `expired`, a login proven dead, or a Codex login whose
+#         renewal ended in an `expired` outcome that "Why a Codex token is
+#         renewed by the Codex CLI" below lists, the one statement of what a
+#         failed Codex renewal reads and its remedy; `no_credentials`;
 #         `no_usage_data`, authenticated with no window to measure; `retired`;
 #         and `error`, a step this machine failed on its own, a renewal's
-#         included. Which of these a failed Codex renewal reads, and its
-#         remedy, is stated once, under "Why a Codex token is renewed by the
-#         Codex CLI" below. A lane whose usage REFRESH met a 429 while the
-#         host still
+#         included. A lane whose usage REFRESH met a 429 while the host still
 #         holds a figure for it younger than the 5-hour session window reports
 #         `rate_limited` ON that figure, with its age in the AGE column, and is
 #         judged on it; with no such figure it carries no window. Only `ok`
 #         and a `rate_limited` lane carrying a figure are pickable. The split
-#         matters because
-#         `expired` is the one word an operator answers by logging in again,
-#         or for a Codex lane by the codex command its `detail` names —
-#         `open-terminal` turns it into that remedy line — so a refusal
-#         the account will survive never takes it, and every refusal an endpoint
-#         answered names its HTTP code in the record's `detail`.
+#         matters because `expired` is the one word an operator answers by
+#         logging in again, or for a Codex lane by the codex command its
+#         `detail` names — `open-terminal` turns it into that remedy line — so
+#         it goes only to a login proven dead and to those Codex outcomes, and
+#         every refusal an endpoint answered names its HTTP code in `detail`.
 #         Where ORCH_LANE_HOST names a provider that implements the OPTIONAL
 #         `accounts` verb, its answer is merged in: one further row per account
 #         the PROVIDER holds a credential for, carrying the windows read
@@ -1119,10 +1117,9 @@ split_http_answer() { # ANSWER
 }
 
 # What an HTTP refusal of a lane's own request means for the lane, with the
-# caller's own reading of every other code as $2. `expired` is read downstream
-# as a proven-dead login — `open-terminal` turns it into a remedy line telling
-# the operator to log in again on this machine — so a refusal the account will
-# survive must never take it.
+# caller's own reading of every other code as $2. `expired` asks the operator to
+# log in again — `open-terminal` turns it into that remedy line — so an HTTP
+# refusal the account will survive must never take it.
 http_refusal_status() { # CODE DEFAULT
 	case "$1" in
 		429) printf 'rate_limited' ;;
