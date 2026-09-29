@@ -767,6 +767,58 @@ assert_eq "$(VERB_RUN_REPO="$ROWS_MUTANT_REPO" verb_state CC-1 working local 0)"
 rm -f -- "${PI_VERB_ROWS:?}"
 (cd "$VERB_REPO" && ./scripts/workflow-state set oversee lanes '[]' >/dev/null)
 
+# A window a running fleet record names as a Copilot lane's is judged at its
+# pane, and the record of the newest session in its worktree, under the
+# record's account, is read beside it: allow_all_enabled false is noted as a
+# stop cause, true as nothing, and a record that does not answer as the reason.
+COP_VERB_WT="$TMP_ROOT/copilot-verb-lane"
+COP_VERB_ACCOUNT="$TMP_ROOT/copilot-verb-account"
+COP_VERB_SESSION=cop-verb-1
+mkdir -p "$COP_VERB_WT" "$COP_VERB_ACCOUNT/session-state/$COP_VERB_SESSION"
+printf 'id: %s\ncwd: %s\n' "$COP_VERB_SESSION" "$(cd "$COP_VERB_WT" && pwd -P)" \
+  > "$COP_VERB_ACCOUNT/session-state/$COP_VERB_SESSION/workspace.yaml"
+printf '{"type":"session.start"}\n' > "$COP_VERB_ACCOUNT/session-state/$COP_VERB_SESSION/events.jsonl"
+# cop_verb_lane ACCOUNT — the fleet's one running record, a Copilot lane on
+# ACCOUNT (null for none) in COP_VERB_WT.
+cop_verb_lane() {
+  (cd "$VERB_REPO" && ./scripts/workflow-state set oversee lanes "$(jq -nc --arg root "$COP_VERB_WT" --arg a "$1" \
+    '[{item: "CC-1", window: "kendex:CC-1", harness: "copilot", host: null, mail_root: $root,
+       account: (if $a == "null" then null else $a end), status: "running"}]')" >/dev/null)
+}
+# cop_verb_record ALLOW — the record copilot-statusline writes for the session
+# now, or none at all.
+cop_verb_record() {
+  rm -rf -- "${COP_VERB_ACCOUNT:?}/lane-status"
+  [[ "$1" == none ]] || jq -nc --arg s "$COP_VERB_SESSION" --argjson a "$1" '{session_id: $s, allow_all_enabled: $a}' \
+    | COPILOT_HOME="$COP_VERB_ACCOUNT" "$SCRIPTS_DIR/copilot-statusline" >/dev/null
+}
+# ACCOUNT|ALLOW|SCREEN|WANT
+while IFS='|' read -r account allow screen want; do
+  [[ -n "$account" ]] || continue
+  cop_verb_lane "${account/ACCOUNT/$COP_VERB_ACCOUNT}"
+  cop_verb_record "$allow"
+  assert_eq "$(verb_state CC-1 "$screen" local 0)" "$want" \
+    "lanes state: a Copilot lane on account $account whose record says allow_all_enabled $allow, on a $screen pane"
+done <<'ROWS'
+ACCOUNT|false|asking|asking rc=0 note=stop-cause=allow-all-blocked-by-policy
+ACCOUNT|true|asking|asking rc=0 note=none
+ACCOUNT|none|idle|idle rc=0 note=session-record=missing
+null|false|asking|asking rc=0 note=session-record=account-unnamed
+ACCOUNT|false|none|unjudged rc=0 note=none
+ROWS
+# The verb's Copilot control: a cause read and never printed leaves the
+# policy stop out of the report.
+cop_verb_lane "$COP_VERB_ACCOUNT"
+cop_verb_record false
+CAUSE_MUTANT_SCRIPTS="$(mutant_scripts verb-cause-mutant lanes)" || exit 1
+CAUSE_MUTANT_REPO="$(dirname "$CAUSE_MUTANT_SCRIPTS")"
+git -C "$CAUSE_MUTANT_REPO" init -q
+cp -R "$VERB_REPO/tmp" "$CAUSE_MUTANT_REPO/tmp"
+mutate_file "$CAUSE_MUTANT_SCRIPTS/lanes" '[[ -z "$STATE_CAUSE" ]] || message stop-cause' '[[ -n "$STATE_CAUSE" ]] || message stop-cause'
+assert_eq "$(VERB_RUN_REPO="$CAUSE_MUTANT_REPO" verb_state CC-1 asking local 0)" "asking rc=0 note=none" \
+  "control: a verb that drops the stop cause reports a policy-blocked Copilot lane as a plain dialog"
+(cd "$VERB_REPO" && ./scripts/workflow-state set oversee lanes '[]' >/dev/null)
+
 # The hosted probe names the item, which is the window part of a
 # session-qualified name: the provider knows items and never tmux sessions.
 # probed NAME [REPO] — the item the provider was asked about for NAME.

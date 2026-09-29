@@ -461,10 +461,11 @@ assert_eq "RC=$RC keyed=$(cop_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keye
 # COPILOT_HOME, for session s1 and its transcript, then judged by the shared
 # judge on the capacity the copilot adapter names: 80 percent of the window.
 COP_ACCOUNT="$TMP_ROOT/cop-account"
-cop_record() { # TOKENS WINDOW [TRANSCRIPT]
-  jq -nc --arg t "${3:-$COP_TRANSCRIPT}" --argjson n "$1" --argjson w "$2" \
+cop_record() { # TOKENS WINDOW [TRANSCRIPT] [ALLOW_ALL]
+  jq -nc --arg t "${3:-$COP_TRANSCRIPT}" --argjson n "$1" --argjson w "$2" --arg a "${4:-}" \
     '{session_id:"s1", transcript_path:$t, model:{id:"claude-opus-5"},
-      context_window:{current_context_tokens:$n, context_window_size:$w}}' |
+      context_window:{current_context_tokens:$n, context_window_size:$w}}
+     + (if $a == "" then {} else {allow_all_enabled: ($a == "true")} end)' |
     COPILOT_HOME="$COP_ACCOUNT" "$REPO_ROOT/skills/orch/scripts/copilot-statusline" >/dev/null
 }
 cop_context_recorded() { # the reading the hook recorded in the lane's mailbox
@@ -533,6 +534,17 @@ assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
   "RC=0 first=lane-mail-check: context=400000 decision=block" \
   "a gap record gives way to this session's fresh status-line record past the mark"
 rm -f -- "${LANE:?}/tmp/lane-mail/KEN-204/context.json"
+
+# A record reporting allow_all_enabled false is a policy stop, reported under
+# its own cause at the turn end the lane reaches; true names none.
+while IFS='|' read -r allow want; do
+  cop_record 100000 1000000 "" "$allow"
+  copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
+  assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=$want" "a record whose allow_all_enabled is $allow at the turn end"
+done <<'ROWS'
+false|stop-cause=allow-all-blocked-by-policy;account=unmeasured
+true|account=unmeasured
+ROWS
 
 # The account mark on Copilot: the account the session runs on is measured
 # through `lanes`, and a pool at zero holds the turn end at the headroom mark.
@@ -964,6 +976,16 @@ cop_extension_reading KEN-257 100000 800000 s0
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=" \
   "control: without the fallback past another session's record a status-line record past the mark does not hold the turn end"
+# The stop-cause read cut: a record reporting allow-all blocked by policy ends
+# the turn with no cause reported.
+mutant copilot-no-stop-cause -e 's@STOP_CAUSE=\$(copilot_session_stop_cause @STOP_CAUSE=$(false @'
+new_copilot_lane control_cop_cause ken-258 "$MUTANT_PATH"
+mkdir -p "$LANE/tmp/lane-mail/KEN-258"
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-258 >/dev/null)
+cop_record 100000 1000000 "" false
+copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
+assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=account=unmeasured" \
+  "control: without the stop-cause read a policy-blocked lane ends its turn with no cause"
 # The account arm cut: a Copilot account at zero is reported unlisted and the
 # turn ends.
 mutant copilot-no-account -e 's@^    claude | codex | copilot) CFG=@    claude | codex) CFG=@'

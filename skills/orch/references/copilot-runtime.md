@@ -18,7 +18,7 @@ A session keeps its state under `${COPILOT_HOME:-~/.copilot}/session-state/<sess
 - `workspace.yaml` holds plain `id:` and `cwd:` lines, written as the session starts and before any turn (measured).
 - `events.jsonl` holds the session's events. A session that ended before its first event, for example one whose sign-in failed, has none (measured).
 
-`lib/lane-relaunch.sh` reads these two files and nothing else. No live context count is in either. A fleet session's context is read by the `kendex-lane-context` Copilot extension that `open-terminal` installs in its `COPILOT_HOME`, [`scripts/copilot-lane-context/extension.mjs`](../scripts/copilot-lane-context/extension.mjs): it hands `lane-mail-check` each `session.usage_info` reading, which the turn end judges. A reading handed on and not yet recorded, or one the extension could not read, leaves a pending marker under `~/.cache/lane-mail/copilot-usage`, and a turn end that finds it still standing after 5 seconds reports the context unmeasured under `reading-pending`. `open-terminal` makes that directory and writes and removes one probe file there before a fleet lane starts, since a reading the extension cannot mark leaves the earlier record standing as room; where it cannot, it refuses the lane as `unsupported-for-oversee reason=no-context-reader detail=pending-unwritable`, `file=` naming the directory. Where no extension reading of the session stands and no pending marker does, the turn end falls back to the session record the account's status-line command writes, which `scripts/copilot-statusline` records (§ Measurement).
+`lib/copilot-session.sh` reads these two files, for the relaunch in `lib/lane-relaunch.sh` and for `lanes state` (§ Allow-all blocked by policy), and nothing else does. No live context count is in either. A fleet session's context is read by the `kendex-lane-context` Copilot extension that `open-terminal` installs in its `COPILOT_HOME`, [`scripts/copilot-lane-context/extension.mjs`](../scripts/copilot-lane-context/extension.mjs): it hands `lane-mail-check` each `session.usage_info` reading, which the turn end judges. A reading handed on and not yet recorded, or one the extension could not read, leaves a pending marker under `~/.cache/lane-mail/copilot-usage`, and a turn end that finds it still standing after 5 seconds reports the context unmeasured under `reading-pending`. `open-terminal` makes that directory and writes and removes one probe file there before a fleet lane starts, since a reading the extension cannot mark leaves the earlier record standing as room; where it cannot, it refuses the lane as `unsupported-for-oversee reason=no-context-reader detail=pending-unwritable`, `file=` naming the directory. Where no extension reading of the session stands and no pending marker does, the turn end falls back to the session record the account's status-line command writes, which `scripts/copilot-statusline` records (§ Measurement).
 
 ## Launch environment
 
@@ -48,6 +48,19 @@ The first three rows are launch settings. A caller's copy of any one of them, ty
 
 - Context: the `kendex-lane-context` extension's reading of Copilot's `session.usage_info` is read first, against 80 percent of `tokenLimit`, the limit Copilot compacts at (`scripts/lib/lane-context.sh`, `LANE_CONTEXT_COPILOT_COMPACTION_PCT`). Where no such reading of the session stands, `scripts/lib/adapters/copilot.sh` reads the session record, held to the session id, transcript, account and a freshness bound by `scripts/lib/copilot-session.sh`, and hands the shared judge the same share of the window as capacity ([oversee-events.md](oversee-events.md#judgement-rules), Hand off a lane). The record is no credit source.
 - Credits: `lanes` reads the monthly pool through `scripts/lib/copilot-credits.sh`; the record it produces is [schemas/copilot-credits.md](../schemas/copilot-credits.md). Nothing here reads a Pi root's Copilot login, so a Pi root on a `github-copilot/` model is judged on the lane host's `harness=pi` accounts row for it ([lane-host.md](../schemas/lane-host.md)), or on its stated `ORCH_LANE_COPILOT_POOL` override where no row reads it.
+
+## Allow-all blocked by policy
+
+An account's enterprise policy can block the allow-all mode, and the CLI refreshes its managed settings each hour. So a lane launched with `--allow-all` can lose it mid-run, and each tool call then waits on a permission prompt that nobody at the pane answers. The session record keeps the CLI's `allow_all_enabled`. Where it reads `false`, `scripts/lib/copilot-session.sh` names the stop cause `allow-all-blocked-by-policy`. Two readers report it:
+
+| Reader | When it reads | What it prints |
+|---|---|---|
+| `lanes state [WINDOW]` | At any time, for a window that a running fleet lane record names as a Copilot lane. It reads the record of the newest session in the lane's worktree, under the record's `account`. | `lanes: stop-cause=allow-all-blocked-by-policy` on stderr, beside the state the pane shows. A record that does not answer prints `lanes: session-record=<reason>`. |
+| The `lane-mail-check` turn-end hook | At a turn end whose record answers | `lane-mail-check: stop-cause=allow-all-blocked-by-policy`. The turn end is judged as usual. |
+
+A lane that waits at a permission prompt reaches no turn end, so `lanes state` is the reader that sees it.
+
+The remedy is the owner's. Only the account's enterprise administrator can lift the block, so tell the owner the account and the cause. To move the item meanwhile, relaunch it with `--lane` naming another Copilot account whose policy allows allow-all ([lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch)).
 
 ## Recovery
 
@@ -87,3 +100,5 @@ No Copilot model turn ran on the machine where this reference was written, so ea
 | `COPILOT_ALLOW_ALL=true` opens a new worktree with no trust dialog | A first launch into a fresh worktree reaches its first turn with no `Confirm folder trust` screen |
 | A second process on a session: the wake's `-p` run beside a live interactive one | Not made by orch: the wake refuses a live Copilot process |
 | A Copilot overseer succession on its recorded account | `oversee-succeed --print-launch-line --harness copilot -- <flags>`, then run the line in a fresh pane |
+| Allow-all takes effect on the first fleet lane | Launch the first fleet lane with `--allow-all`; a tool call runs with no prompt, and the record under `<account>/lane-status/` reads `allow_all_enabled: true` |
+| A policy block reaches the record, and the record stays fresh at a waiting prompt | On an account whose policy blocks allow-all, launch with `--allow-all`; the record reads `allow_all_enabled: false`, its `written_at` keeps moving while the prompt waits, and `lanes state [WINDOW]` prints `lanes: stop-cause=allow-all-blocked-by-policy` |

@@ -400,7 +400,7 @@ assert_eq "${CMD:-none} $(grep -c '^open-terminal: harness-unsupported harness=c
 # The record's directory read under another key: no record names the worktree,
 # and the relaunch starts afresh.
 stage "$TMP_ROOT/cwd-ctrl"
-mutate_file "$TMP_ROOT/cwd-ctrl/scripts/lib/lane-relaunch.sh" 'index($0, "cwd: ") == 1' 'index($0, "cwd:: ") == 1'
+mutate_file "$TMP_ROOT/cwd-ctrl/scripts/lib/copilot-session.sh" 'index($0, "cwd: ") == 1' 'index($0, "cwd:: ") == 1'
 OT="$TMP_ROOT/cwd-ctrl/scripts/open-terminal" launch cwd-ctrl --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
 assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-738'" \
   "control: without the record's directory the relaunch resumes nothing and starts afresh"
@@ -429,7 +429,7 @@ assert_eq "$(stderr_kept "$TMP_ROOT/stderr-arm-ctrl/scripts/open-terminal")" "0"
 # The events test cut: the newest record in the worktree is resumed though it
 # holds no events, which copilot refuses to resume.
 stage "$TMP_ROOT/events-ctrl"
-mutate_file "$TMP_ROOT/events-ctrl/scripts/lib/lane-relaunch.sh" ' && -s "${file%/*}/events.jsonl" ]]' ' ]]'
+mutate_file "$TMP_ROOT/events-ctrl/scripts/lib/copilot-session.sh" ' && [ -s "${file%/*}/events.jsonl" ]; }' '; }'
 OT="$TMP_ROOT/events-ctrl/scripts/open-terminal" launch events-ctrl --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
 assert_contains "$CMD" "--resume=66666666-ffff-4fff-8fff-666666666666 -i" \
   "control: without the events test the relaunch resumes a record copilot cannot load"
