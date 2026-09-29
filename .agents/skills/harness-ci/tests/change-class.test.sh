@@ -1031,7 +1031,6 @@ assert_eq "and the verifier was not run" "0" \
 # where the case wants one, so a classifier standing there resolves the same
 # siblings the shipped one does. A case that needs a mutant writes its own
 # body over the path this prints.
-ORCH_PACKAGE="$(cd "$(dirname "$CHANGE_CLASS")/../../orch" && pwd)"
 plant_package() { # ROOT link|none -> prints the planted change-class path
   mkdir -p "$1/harness-ci/scripts"
   ln -s "$(dirname "$CHANGE_CLASS")/harness-only" "$1/harness-ci/scripts/harness-only"

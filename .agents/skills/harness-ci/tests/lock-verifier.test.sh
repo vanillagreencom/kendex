@@ -110,4 +110,20 @@ assert_eq "the log names the lock kendex and its version" \
   "render-verifier: verifier=lock version=1.2.0+main.365.1cdc8b27" \
   "$(printf '%s\n' "$lock_err" | grep '^render-verifier: ')"
 
+# Must-fail control for the selection rule: a planted copy whose lock-only
+# arm can never be taken runs the pinned release on the record-only diff
+# above, with the lock kendex set, and answers that release's refusal.
+select_line='  if [ "$changed" = .kendex-lock.json ] && [ -n "${HARNESS_CI_LOCK_KENDEX:-}" ]; then'
+unselected="$(mutant unselected change-class "$select_line" "  if false && ${select_line#  if }")"
+if cmp -s -- "$CHANGE_CLASS" "$unselected"; then
+  assert_eq "the control changes the copy" changed unchanged
+fi
+: >"$VERIFIER_CALLS"
+control_err="$(PATH="$PINNED_PATH" HARNESS_CI_LOCK_KENDEX="$LOCK_KENDEX" "$unselected" \
+  --repo "$repo" --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "a classifier that never selects the lock kendex refuses the record" \
+  "class=standard measured=false cause=verify-refused verifier=path version=1.2.0" \
+  "$(printf '%s\n' "$control_err" | sed -n 's/^class: //p')"
+assert_eq "and ran the pinned release alone" pinned "$(paste -sd' ' - <"$VERIFIER_CALLS")"
+
 report lock-verifier

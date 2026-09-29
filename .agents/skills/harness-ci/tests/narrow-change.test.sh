@@ -13,7 +13,6 @@ set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
 
-ORCH_PACKAGE="$(cd "$(dirname "$CHANGE_CLASS")/../../orch" && pwd)"
 INVENTORY=.kendex-generated.json
 RENDER=.agents/skills/orch/tests/added.test.sh
 SOURCE=skills/orch/tests/added.test.sh
@@ -172,41 +171,6 @@ assert_eq "the inventory's names-only change is in the log" \
 names_err="$(run_row "$CHANGE_CLASS" hash-changed)"
 assert_eq "a hash change prints no names-only line" "" \
   "$(grep '^inventory-change: ' <<<"$names_err" || true)"
-
-# A package laid out as the real one, with the script under test swapped for
-# a planted copy.
-plant() { # ROOT SCRIPT PLANTED -> prints the planted change-class path
-  mkdir -p "$1/harness-ci/scripts"
-  cp "$(dirname "$CHANGE_CLASS")/harness-only" "$(dirname "$CHANGE_CLASS")/change-class" \
-    "$1/harness-ci/scripts/"
-  ln -s "$ORCH_PACKAGE" "$1/orch"
-  cp "$3" "$1/harness-ci/scripts/$2"
-  chmod +x "$1/harness-ci/scripts/"*
-  printf '%s' "$1/harness-ci/scripts/change-class"
-}
-
-# A copy of the package's SCRIPT with each exact LINE replaced by
-# REPLACEMENT, `-` deleting it, planted beside the real scripts. Each LINE
-# has to occur exactly once in the copy, or the control is not an edit.
-mutant() { # NAME SCRIPT LINE REPLACEMENT [LINE REPLACEMENT]...
-  local name="$1" script="$2" copy
-  shift 2
-  copy="$SANDBOX/$name.$script"
-  cp "$(dirname "$CHANGE_CLASS")/$script" "$copy"
-  while [ "$#" -ge 2 ]; do
-    if ! LINE="$1" WITH="$2" awk '
-      $0 == ENVIRON["LINE"] { hits++; if (ENVIRON["WITH"] != "-") print ENVIRON["WITH"]; next }
-      { print }
-      END { exit hits == 1 ? 0 : 3 }
-    ' "$copy" >"$copy.next"; then
-      echo "FAIL: control $name: '$1' does not occur once in $script" >&2
-      exit 1
-    fi
-    mv "$copy.next" "$copy"
-    shift 2
-  done
-  plant "$SANDBOX/$name" "$script" "$copy"
-}
 
 # One must-fail control per rule: the planted copy drops that rule alone, and
 # the row it reaches answers the class the rule was refusing.
