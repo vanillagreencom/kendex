@@ -167,10 +167,13 @@ overseer_case() { # NAME STATE
 wall_confirmed() { printf '%s\n' "$WALL_MARK_LINE" > "$STUB_DIR/succeed.check"; }
 # recorded FIELD — the overseer record the fleet state now holds.
 recorded() { jq -r ".overseer.$1 // \"none\"" "$STUB_DIR/oversee-state.json"; }
-# state_with LINE — a fleet state already naming this pane, its window and LINE.
+# state_with LINE — a fleet state already naming this pane, its window and LINE,
+# bound to the start of the stub's server, 1790000000, as every tmux record a
+# launch, a watch start or `oversee register` writes is.
 state_with() { # LINE
   jq -n --arg server "7000" --arg pane "$PANE" --arg window "$WINDOW" --arg line "$1" \
-    '{triaged: [], overseer: {server: $server, pane: $pane, window: $window, launch_line: $line}}' \
+    '{triaged: [], overseer: {server: $server, pane: $pane, window: $window, launch_line: $line,
+      server_start: 1790000000}}' \
     > "$STUB_DIR/oversee-state.json"
 }
 # succeed_calls MODE — how many times the stub was called in MODE. A stub

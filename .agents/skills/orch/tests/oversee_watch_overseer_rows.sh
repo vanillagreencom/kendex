@@ -232,6 +232,23 @@ mutate_file "$EARLIER_CTL/lib/overseer-launch.sh" \
 earlier_server_case earlier_server_mutant "$EARLIER_CTL/oversee-watch"
 assert_eq "$(grep '^EVENT overseer-dead' <<<"$OUT" | grep -o 'source=[a-z]*')" "source=record" \
   "control: without the start test the earlier server's exit status is read as this session's death" "$ERR"
+# The same record carrying no start is judged on the pane and server pid
+# alone: its rows are this pane's.
+rows_case unbound_rows exited "$START" "$END_EXIT"
+jq 'del(.overseer.server_start)' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/state.tmp" \
+  && mv -- "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "$(grep '^EVENT overseer-dead' <<<"$OUT" | grep -o 'source=[a-z]*')" "source=rows" \
+  "a record carrying no start names this pane on the pair alone, and its rows judge the session" "$ERR"
+# The pane read's own start emptied: this pane's bound record reads as
+# another session's, and the pane judges in place of its rows.
+PANESTART_CTL="$(mutant_scripts panestart-ctl/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/panestart-ctl/github"
+mutate_file "$PANESTART_CTL/oversee-watch" 'ol_names(\"$server\"; \"$OV_START\"; \"$pane\")' 'ol_names(\"$server\"; \"\"; \"$pane\")'
+rows_case dead_rows_start_mutant exited "$START" "$END_EXIT"
+WATCH_BIN="$PANESTART_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "$(grep '^EVENT overseer-dead' <<<"$OUT" | grep -o 'source=[a-z]*')|$(grep -c "^oversee-watch: overseer-fallback pane=$PANE cause=unrecorded" "$ERR")" \
+  "source=pane|1" "control: a pane read judged on no start reads this pane's bound record as another session's" "$ERR"
 
 # --- the overseer's context record, judged each long pass ------------------
 # The turn-end hook writes context.json in the overseer mailbox at each turn

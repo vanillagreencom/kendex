@@ -502,14 +502,18 @@ assert_eq "$(succeed_calls --print-launch-line)" "1" \
 # wrote before this session's first turn: its runtime, generation and account
 # are kept where the record names this pane on this server, since the watch
 # observes the pane and the launch line and nothing about the generation.
-overseer_case record_keeps_generation idle
-jq -n --arg pane "$PANE" --arg window "$WINDOW" \
-  '{triaged: [], overseer: {runtime: "tmux", generation: 3, account: "/home/me/.claude", server: "7000", pane: $pane, window: $window, launch_line: "old",
-    harness: "claude", home: "/home/me/.claude", model: "fable", effort: "high", cwd: "/home/me/kendex",
-    pending: {launch_line: "pending", account: "/home/me/.eclaude"}}}' \
-  > "$STUB_DIR/oversee-state.json"
-printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
-run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
+# The record is bound to the stub server's start, as every writer binds it.
+keeps_generation_run() { # NAME [WATCH_BIN]
+  overseer_case "$1" idle
+  jq -n --arg pane "$PANE" --arg window "$WINDOW" \
+    '{triaged: [], overseer: {runtime: "tmux", generation: 3, account: "/home/me/.claude", server: "7000", pane: $pane, window: $window, launch_line: "old",
+      harness: "claude", home: "/home/me/.claude", model: "fable", effort: "high", cwd: "/home/me/kendex",
+      server_start: 1790000000, pending: {launch_line: "pending", account: "/home/me/.eclaude"}}}' \
+    > "$STUB_DIR/oversee-state.json"
+  printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+  WATCH_BIN="${2:-}" run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
+}
+keeps_generation_run record_keeps_generation
 assert_eq "runtime=$(recorded runtime) generation=$(recorded generation) account=$(recorded account) line=$(recorded launch_line)" \
   "runtime=tmux generation=3 account=/home/me/.claude line=$LINE" \
   "a start on the recorded pane keeps the session record's runtime, generation and account and replaces the line" "$ERR"
@@ -583,6 +587,15 @@ mutate_file "$KEEPSTART_CTL/lib/overseer-launch.sh" \
 record_drops_run 7000 "$PANE" 1789996400 "$KEEPSTART_CTL/oversee-watch"
 assert_eq "generation=$(recorded generation) harness=$(recorded harness)" "generation=3 harness=codex" \
   "control: without the start test a start keeps an earlier server's generation and launch identity" "$ERR"
+# The merge's own start emptied: this pane's bound record reads as another
+# session's, and its generation is dropped.
+KEEPEMPTY_CTL="$(mutant_scripts keepempty-ctl/orch lib/watch-overseer-record.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/keepempty-ctl/github"
+mutate_file "$KEEPEMPTY_CTL/lib/watch-overseer-record.sh" \
+  '        | if ol_names($server; $start; $pane) then . else {} end)' '        | if ol_names($server; ""; $pane) then . else {} end)'
+keeps_generation_run record_keeps_generation_start_mutant "$KEEPEMPTY_CTL/oversee-watch"
+assert_eq "generation=$(recorded generation)" "generation=none" \
+  "control: a start judged on no start drops this pane's bound generation" "$ERR"
 # The must-fail control: a start that replaces the object whole loses the
 # generation the launcher wrote for this very pane.
 RECORD_MUTANT="$TMP_ROOT/record-mutant"
@@ -635,6 +648,18 @@ assert_eq "$(recorded launch_line)" "$BYPASS_LINE" \
   "the line the fleet state already held is left where it was" "$ERR"
 assert_contains "$(fleet_log_text)" "A line is held for this pane, at overseer.pending.launch_line if set, else overseer.launch_line." \
   "and the fleet log row says a line is held, and where" "$ERR"
+# The held line's read with its own start emptied: this pane's bound record
+# reads as another session's, and the notice says no line is held.
+HELDSTART_CTL="$(mutant_scripts heldstart-ctl/orch lib/watch-overseer-record.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/heldstart-ctl/github"
+mutate_file "$HELDSTART_CTL/lib/watch-overseer-record.sh" \
+  'if overseer_record_read "$server" "$start" "$pane"; then' 'if overseer_record_read "$server" "" "$pane"; then'
+overseer_case record_derivation_failure_start_mutant idle
+state_with "$BYPASS_LINE"
+touch "$STUB_DIR/succeed.print-fail"
+WATCH_BIN="$HELDSTART_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2 -- --model fable
+assert_eq "$(grep -c -- "^oversee-watch: overseer-line-missing pane=$PANE .* held=none\$" "$ERR")" "1" \
+  "control: a held-line read judged on no start says no line is held for this pane" "$ERR"
 
 # The line held is what a death then replays: a start whose pane already
 # reads exited cannot build a line, since a dead pane names no harness,
@@ -737,6 +762,17 @@ other_dead_run 7000 "$PANE" "$READSTART_CTL/oversee-watch" 1789996400
 assert_eq "launched=$(succeed_calls --dead-pane) line=$(cat "$STUB_DIR/succeed.line-file" 2>/dev/null || echo none)" \
   "launched=1 line=$BYPASS_LINE" \
   "control: a reader that judges the pair alone replays the earlier server's command" "$ERR"
+# The relaunch's own start emptied: this pane's bound record reads as another
+# session's, and the death is relaunched from no line.
+DEADSTART_CTL="$(mutant_scripts deadstart-ctl/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/deadstart-ctl/github"
+mutate_file "$DEADSTART_CTL/oversee-watch" 'overseer_record_read "${identity%% *}" "$OV_START" "$pane"' \
+  'overseer_record_read "${identity%% *}" "" "$pane"'
+overseer_case dead_relaunch_start_mutant exited
+state_with "$LINE"
+WATCH_BIN="$DEADSTART_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "launched=$(succeed_calls --dead-pane)" "launched=0" \
+  "control: a relaunch judged on no start never replays this pane's bound line" "$ERR"
 
 # A walled overseer whose start could not record it: the wall is read from
 # the pane and confirmed by the account judgement, and the recovery picks its

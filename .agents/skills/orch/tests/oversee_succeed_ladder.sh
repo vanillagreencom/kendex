@@ -120,6 +120,8 @@ tm set-option -g renumber-windows off
 tm set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 SERVER_PID="$(tm display-message -p '#{pid}')"
+# The server's start, which the launch record below binds its server by.
+SERVER_START="$(tm display-message -p '#{start_time}')"
 # A pane that stays live for the whole run, for a claim to name.
 CLAIM_PANE="$(tm display-message -p -t fleet:0 '#{pane_id}')"
 
@@ -361,9 +363,10 @@ new_pi_caller() { # [norecord]
   CALLER_WINDOW="$(tm display-message -p -t "$CALLER_PANE" '#{window_id}')"
   [[ "${1:-}" != norecord ]] || return 0
   jq -n --arg server "$SERVER_PID" --arg pane "$CALLER_PANE" --arg account "$H/.claude" --arg cwd "$TMP_ROOT/work" \
+    --argjson start "$SERVER_START" \
     '{issue_id: "oversee", overseer: {runtime: "tmux", generation: 1, server: $server, pane: $pane,
       harness: "pi", account: $account, home: $account, model: "pi-claude/claude-fable-5-1",
-      effort: "high", cwd: $cwd, launch_line: "recorded"}}' > "$FLEET_STATE"
+      effort: "high", cwd: $cwd, launch_line: "recorded", server_start: $start}}' > "$FLEET_STATE"
 }
 # The walled account's own Opus window has room, so the walled exclusion alone
 # keeps the pick off it, as for the claude recovery above.

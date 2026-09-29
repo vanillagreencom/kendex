@@ -125,6 +125,10 @@ tm set-option -g renumber-windows off
 tm set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 SERVER_PID="$(tm display-message -p '#{pid}')"
+# The server's start, which every record a launch, a watch start or
+# `oversee register` writes binds its server by; the hand-written records
+# below carry it too.
+SERVER_START="$(tm display-message -p '#{start_time}')"
 
 MARK='  kendex (ken-1453) Fable 5.1 (1M context) 52% (fixture@example.com)     /rc'
 UNDER_MARK='  kendex (ken-1453) Fable 5.1 (1M context) 10% (fixture@example.com)     /rc'
@@ -1210,9 +1214,9 @@ qualifying_cross_row() { # ROW PREFERENCE [SUCCEED_BIN]
 # caller_record HARNESS MODEL — this pane's launch record on .claude.
 caller_record() {
   jq --arg server "$SERVER_PID" --arg pane "$CALLER_PANE" --arg account "$H/.claude" \
-    --arg harness "$1" --arg model "$2" \
+    --arg harness "$1" --arg model "$2" --argjson start "$SERVER_START" \
     '.overseer = {runtime: "tmux", generation: 1, server: $server, pane: $pane, harness: $harness,
-      account: $account, home: $account, model: $model, effort: "high"}' \
+      account: $account, home: $account, model: $model, effort: "high", server_start: $start}' \
     "$FLEET_STATE" > "$FLEET_STATE.tmp" && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
 }
 cp -p -- "$FLEET_STATE" "$FLEET_STATE.held"
@@ -1521,8 +1525,8 @@ assert_eq "$RC|$OUT|$(recorded codex)" \
 # session's and leaves the environment's answer standing. The harness is
 # named on the line, as a watch recording inside the first turn names it.
 record_account() { # PANE ACCOUNT
-  jq --arg server "$SERVER_PID" --arg pane "$1" --arg account "$2" \
-    '.overseer = {runtime: "tmux", generation: 1, server: $server, pane: $pane, account: $account}' \
+  jq --arg server "$SERVER_PID" --arg pane "$1" --arg account "$2" --argjson start "$SERVER_START" \
+    '.overseer = {runtime: "tmux", generation: 1, server: $server, pane: $pane, account: $account, server_start: $start}' \
     "$FLEET_STATE" > "$FLEET_STATE.tmp" && mv "$FLEET_STATE.tmp" "$FLEET_STATE"
 }
 new_caller "$UNDER_MARK"

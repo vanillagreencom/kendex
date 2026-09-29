@@ -70,7 +70,7 @@ mkdir -p "$OVERSEER_BOX"
 
 # tmux stub: `list-panes` replays $TMUX_PANES_FILE, whose rows are
 # `<server pid> <pane id> <foreground process>`, projected onto the -F format
-# the caller asked for, and `display-message` answers the three fields the
+# the caller asked for, and `display-message` answers the fields the
 # report asks about the caller's own pane. Every call is logged, so a row can
 # pin that no pane is captured.
 cat > "$BIN/tmux" <<'STUBEOF'
@@ -95,6 +95,8 @@ case "${1:-}" in
     for a in "$@"; do fmt="$a"; [[ "$prev" == "-t" ]] && pane="$a"; prev="$a"; done
     case "$fmt" in
       '#{pid}') printf '%s\n' "${TMUX_STUB_SERVER_PID:-}" ;;
+      # The server's start, the one a launch record binds its server by.
+      '#{pid} #{start_time}') printf '%s 1790000000\n' "${TMUX_STUB_SERVER_PID:-}" ;;
       '#{window_name}') printf '%s\n' "${TMUX_STUB_WINDOW_NAME:-}" ;;
       '#{pane_current_command}')
         [[ ! -f "${TMUX_PANES_FILE:-}" ]] || awk -v p="$pane" '$2 == p { print $3; exit }' "$TMUX_PANES_FILE"
@@ -422,20 +424,41 @@ echo "=== a launched overseer's pane names no harness; its record names its acco
 # Every launched overseer runs under overseer-run, whose bash is the pane's
 # foreground command, so the pane names no harness, and where both account
 # variables are set that shape names no account. The launch record names
-# both, and the caller's row stands on it.
+# both, and the caller's row stands on it where the record names this pane on
+# this server: bound to the stub server's start, 1790000000, as every writer
+# binds it; carrying no start, judged on the pair alone; and not where it is
+# bound to an earlier server handed the same pid.
 printf '%s %%48 bash\n' "$LIVE_PID" >> "$PANES"
-"$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer "$(jq -nc --arg s "$LIVE_PID" --arg a "$H/.claude" \
-  '{runtime: "tmux", server: $s, pane: "%48", window: "@9", harness: "claude", account: $a, home: $a}')" >/dev/null
+launched_record() { # START — the launch record for %48, `none` carrying no start
+  "$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer "$(jq -nc --arg s "$LIVE_PID" --arg a "$H/.claude" --arg start "$1" \
+    '{runtime: "tmux", server: $s, pane: "%48", window: "@9", harness: "claude", account: $a, home: $a}
+      + (if $start == "none" then {} else {server_start: ($start | tonumber)} end)')" >/dev/null
+}
 launched_caller() { # [LANES]
   ( export CODEX_HOME="$H/.codex"
     CTX_LANES="${1:-$LANES}" CTX_CONFIG_DIR="$H/.eclaude" CTX_TMUX_PANE=%48 CTX_WINDOW_NAME=overseer run_ctx --json ) |
     jq -r '[.[] | select(.caller == true) | "\(.pane) \(.config_dir)"] | join(",")'
 }
-assert_eq "$(launched_caller)" "%48 $H/.claude" "a launched overseer under overseer-run keeps its caller row, on its recorded account"
+while IFS='|' read -r start want label; do
+  launched_record "$start"
+  assert_eq "$(launched_caller)" "$want" "$label"
+done <<ROWS
+1790000000|%48 $H/.claude|a launched overseer under overseer-run keeps its caller row, on its recorded account
+none|%48 $H/.claude|a record carrying no start names the launched overseer on the pair alone
+1789996400|%48 null|a record bound to an earlier server handed the same pid names no account for this pane
+ROWS
+launched_record 1790000000
 LAUNCHED_CTRL="$(mutant_scripts launched-ctrl lanes)" || exit 1
 mutate_file "$LAUNCHED_CTRL/lanes" '				DEP_ERR=/dev/null ol_caller_known "${caller_key%% *}" "$TMUX_PANE" "$PWD" || true' '				:'
 assert_eq "$(launched_caller "$LAUNCHED_CTRL/lanes")" "%48 null" \
   "control: a caller read off the pane's command alone names no account for the launched overseer"
+# The record read's own start emptied: this pane's bound record reads as
+# another session's.
+CURSTART_CTRL="$(mutant_scripts curstart-ctrl lib/overseer-launch.sh)" || exit 1
+mutate_file "$CURSTART_CTRL/lib/overseer-launch.sh" \
+  'if ol_names($server; $start; $pane) then ol_identity' 'if ol_names($server; ""; $pane) then ol_identity'
+assert_eq "$(launched_caller "$CURSTART_CTRL/lanes")" "%48 null" \
+  "control: a record read judged on no start names no account for the launched overseer"
 
 echo "=== an empty fleet says so; an unreadable store refuses ==="
 rm -f "$STATE"/claims/*.claim
