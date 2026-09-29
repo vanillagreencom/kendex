@@ -58,7 +58,7 @@ A lane relaunched with `open-terminal --relaunch` ([lane-directive.md § Recover
 | Killed pane | Resumes the newest session record whose `cwd:` is the lane's worktree and that holds events. |
 | Session ended before its first event | Passes that record over. `--resume=<id>` on it exits 1 with `No session, task, or name matched`, under `-p` and at a pane, and opens no picker (measured). An older record in the same worktree resumes in its place; with none, the start brief runs. |
 | No record | Renders the start brief. |
-| Harness switch | Reads only the relaunch harness's own store, so a lane that ran on another harness starts afresh. |
+| Harness switch | Under `--state-dir`, a fleet record that names another harness as the last one to run the lane starts fresh, reported as `harness-switched`, and no session store is read. Where no record names a harness, the relaunch reads only the relaunch harness's own store, so a lane that ran on another harness starts afresh. |
 | Retired session | A standing handoff record means the lane ended that session. `workflow-state handoff-standing` answers `stands`, asked from the lane's worktree, where the lane wrote the record. A local relaunch of any harness then looks for no session, reports `session-retired`, and renders the start brief, whose [start.md](../workflows/start.md) § 0 continues from the record. A verdict that cannot be read refuses as `handoff-unreadable`. |
 | Hosted lane | Not read here: a hosted lane's session records are on its host, and its relaunch is the provider's `create --relaunch` ([schemas/lane-host.md](../schemas/lane-host.md)). A fleet refuses a hosted Copilot lane as `unsupported-for-oversee reason=hosted`. |
 

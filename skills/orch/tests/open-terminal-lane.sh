@@ -1492,9 +1492,10 @@ assert_eq "$(observe "rc=1 promptmissing=item=CC-137,host=$HOST_STUB,reason=prom
   "a prompt with a banner line under it is not the line the wait reads, and the bound is spent"
 
 # A hosted lane reads ORCH_TMUX_VERIFY_SECS only where it is claude with no
-# --cmd: a fresh launch waits on its brief, a relaunch on its harness screen.
-# Its other two readers sit behind lane_account_readable, which is false for
-# every hosted lane. So a broken one must not abort the hosted shapes that
+# --cmd: a fresh launch waits on its brief, a relaunch on its harness screen
+# through tmux_wait_harness. The account read, and tmux_wait_harness as its
+# premise, sit behind lane_account_readable, which is false for every hosted
+# lane. So a broken one must not abort the hosted shapes that
 # never consult it, and must still abort the ones that do. One row per term of
 # that condition, the harness and the --cmd template, and one for each shape it
 # lets through.

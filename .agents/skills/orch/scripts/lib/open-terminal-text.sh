@@ -132,9 +132,9 @@ ot_message() { # REASON FIELD=VALUE...
     session-scan-failed) text='The harness session store could not be read.' ;;
     session-resumed) text='The harness resumed the matching session.' ;;
     session-retired) text='The item'"'"'s handoff record stands, so its lane handed its work to that record and ended the session. The relaunch resumes no session: it starts the lane afresh, and the start workflow continues from the record.' ;;
-    harness-switched) text='The lane record names another harness than this relaunch runs, and the relaunching harness holds no session of that lane to continue. The relaunch resumes no session: it starts the lane afresh on the start brief.' ;;
-    harness-screen-missing) text='The hosted relaunch drew no harness screen within seconds: the resume and the start brief behind it both exited, and the pane is at a shell. The lane is not launched, and a fleet record reads stopped. Read the pane for the harness'"'"'s own words, then relaunch.' ;;
-    record-stop-failed) text='The hosted relaunch did not take, and its record could not be rewritten stopped, so it still reads as it did before the relaunch. workflow-state names why above: fix it, then relaunch.' ;;
+    harness-switched) text='The lane record names another harness as the last one to run the lane, so no session this harness holds carries that work. The relaunch resumes no session: it starts the lane afresh on the start brief.' ;;
+    harness-screen-missing) text='The hosted relaunch showed no harness screen the launcher recognizes within seconds. The resume and the start brief behind it may both have exited, or the harness may be slow to start or show a screen the launcher does not know. The lane is not launched; under a fleet its window is closed and its record reads stopped. Relaunch; if this recurs, run the harness in the sandbox by hand to read its own words.' ;;
+    record-stop-failed) text='The hosted relaunch did not take, and its record could not be rewritten stopped, so the record keeps whatever status the launch last wrote. workflow-state names why above: fix it, then relaunch.' ;;
     handoff-unreadable) text='workflow-state handoff-standing, asked from the lane'"'"'s worktree, answered unreadable or gave no verdict, so nothing says whether the lane handed off and retired its session. Nothing was launched. Its own words are above. state is the item'"'"'s state file, or the item where even the path could not be read: repair it, then relaunch.' ;;
     wake-invalid) text='The wake option takes --harness claude, codex, pi or copilot, and no --cmd, --relaunch or lane host.' ;;
     session-missing) text='No session of this harness names the item. Nothing was started.' ;;
@@ -306,7 +306,8 @@ Options:
                     stopped with its reason, logging to
                     lane-prepare-ITEM.log in the state directory; the summary
                     counts it as preparing. Without --state-dir, and for a
-                    codex --relaunch, the launch runs `lane-host wait` itself.
+                    codex --relaunch that resumes, the launch runs `lane-host
+                    wait` itself.
                     lane-close closes a record still preparing. With
                     --relaunch the provider keeps its tree and the harness
                     continues natively: claude --continue, codex resume
@@ -321,9 +322,11 @@ Options:
                     A claude --continue that exits 1, its answer where the
                     host holds no session, runs the start brief in the same
                     call, and the lane counts as launched only once its pane
-                    draws a harness screen within ORCH_TMUX_VERIFY_SECS; a
-                    pane that draws none is harness-screen-missing, and the
-                    lane's fleet record reads stopped.
+                    draws a harness screen within twice
+                    ORCH_TMUX_VERIFY_SECS, one bound for each claude start; a
+                    pane that draws none is harness-screen-missing, and under
+                    --state-dir its window is closed and the lane's fleet
+                    record reads stopped.
                     WHICH CREDENTIAL RUNS THE LANE: the copy the provider
                     installed on the host. `create` receives the lane's config
                     dir as --account on every call, a relaunch included, and
@@ -477,9 +480,14 @@ Options:
                     ended that session and the start workflow continues from
                     the record. A verdict that cannot be read refuses as
                     handoff-unreadable and launches nothing. A relaunch whose
-                    harness differs from the one its fleet record names starts
-                    fresh too, hosted or local, reported as harness-switched:
-                    that harness holds no session of the lane. Before the
+                    fleet record names another harness as the last one to run
+                    the lane starts fresh too, hosted or local, reported as
+                    harness-switched: no session this harness holds carries
+                    that work. A relaunch needs no --cmd, because the launcher
+                    runs the start brief itself where the resume finds no
+                    session. A --cmd relaunch renders its template verbatim:
+                    no session lookup, no harness-switch check and no start
+                    brief after it. Before the
                     worktree step an existing tree is asked whether its pull
                     request merged (`worktree merged`). A merged item keeps its
                     tree as it stands and is reported as worktree-reuse-merged

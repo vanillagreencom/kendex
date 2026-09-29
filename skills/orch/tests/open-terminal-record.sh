@@ -771,12 +771,28 @@ assert_eq "rc=$RC refused=$(grep -c '^open-terminal: host-prepare-failed item=CC
   "rc=1 refused=1 marker=none summary=launched=0 skipped=0 failed=1" \
   "a foreground wait the host fails is host-prepare-failed and launches nothing"
 
-# A hosted codex relaunch resumes with no continuation line; resume-lineless
-# must reach the caller, so that relaunch waits in the foreground even in a fleet.
-HAND_OFF_HARNESS=codex HAND_OFF_CMD="true --model gpt-5 -c model_reasoning_effort=high" hand_off CC-83 -- --relaunch
+# A hosted codex relaunch that resumes carries no continuation line;
+# resume-lineless must reach the caller, so that relaunch waits in the
+# foreground even in a fleet. One whose record names claude starts fresh on its
+# start brief, which carries the line, so it is handed off like any launch.
+CODEX_RELAUNCH=(-- --relaunch --launch-flags "-m gpt-5 -c model_reasoning_effort=high")
+HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 "${CODEX_RELAUNCH[@]}"
 assert_eq "rc=$RC waited=$(grep -c '^wait --item CC-83 $' "$TMP_ROOT/host.log" || true) handed=$(grep -c '^open-terminal: lane-preparing ' <<<"$OUT" || true) lineless=$(grep -c '^open-terminal: resume-lineless item=CC-83 harness=codex$' <<<"$ERR" || true) record=$(prepared CC-83)" \
   "rc=0 waited=1 handed=0 lineless=1 record=running none none" \
-  "a hosted codex relaunch waits for its host in the foreground and reports resume-lineless to the caller"
+  "a hosted codex relaunch that resumes waits for its host in the foreground and reports resume-lineless to the caller"
+"$WS" --state-dir "$STATE" update oversee '.lanes += [{item: "CC-87", harness: "claude", status: "running"}]' >/dev/null
+HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-87 "${CODEX_RELAUNCH[@]}"
+assert_eq "rc=$RC handed=$(grep -c '^open-terminal: lane-preparing item=CC-87 ' <<<"$OUT" || true) lineless=$(grep -c 'resume-lineless' <<<"$ERR" || true) record=$(settled CC-87)" \
+  "rc=0 handed=1 lineless=0 record=running prepare none" \
+  "a hosted codex relaunch across a harness switch starts fresh and is handed off"
+LINELESS_MUTANT="$TMP_ROOT/lineless-mutant/scripts"
+mkdir -p "$LINELESS_MUTANT"
+cp -R "$REPO/scripts/." "$LINELESS_MUTANT/"
+mutate_file "$LINELESS_MUTANT/open-terminal" '"$FLEET" == true && "$RESUME_LINELESS" != true ]]' '"$FLEET" == true && "$HARNESS" != codex ]]'
+"$WS" --state-dir "$STATE" update oversee '.lanes += [{item: "CC-88", harness: "claude", status: "running"}]' >/dev/null
+HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-88 -- SCRIPT="$LINELESS_MUTANT/open-terminal" "${CODEX_RELAUNCH[@]:1}"
+assert_eq "handed=$(grep -c '^open-terminal: lane-preparing item=CC-88 ' <<<"$OUT" || true)" "handed=0" \
+  "control: gated on every hosted codex relaunch the switched one waits in the foreground"
 
 # lane-host refuses a call at its per-home cap once every slot stays taken. A
 # slot naming this suite's own shell, alive throughout, fills a cap of 1 in a
