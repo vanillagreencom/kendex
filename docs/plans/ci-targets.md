@@ -26,6 +26,11 @@ Median and p90 use the nearest-rank method; with n=3 the p90 is the largest valu
 | Merge-group runs failed | under 5 percent | 34 percent (51 of 150), one figure for all classes | same | same |
 | Open to merge (min) | micro under 20, small under 30, standard under 90 | median 151, p90 161; 0 of 3 under | median 47, p90 873; 1 of 5 under | median 115, p90 661; 37 of 86 under |
 | Main blocker (PRs whose longest gap ends there) | none | merge queue 3 | review-and-fix loop 2, merge queue 2, wait for queue entry 1 | review-and-fix loop 43, merge queue 33, wait for queue entry 6, final-head checks 4 |
+| Review rounds per PR | micro 1, small 1, standard 2 | first measured 2026-10-01 | first measured 2026-10-01 | first measured 2026-10-01 |
+| Review round, push to review (min) | under 10 | first measured 2026-10-01 | first measured 2026-10-01 | first measured 2026-10-01 |
+| Fix round, review to next push (min) | none named | first measured 2026-10-01 | first measured 2026-10-01 | first measured 2026-10-01 |
+
+The three review-stage rows come from owner decision 1790637688, which makes review rounds their own CI stage; the round targets are owner note 1790619146 item C. The 94 pull requests above merged before the cycle record carried round stamps, so the next measurement run fills these rows.
 
 The 15-minute merge-group target is unreachable while the merge-group Skill Tests run takes 27.9 minutes at the median (p90 37.1) over the 150 runs in the window. Its slowest leg, the guards-tools macOS shard, runs 25.3 minutes at the median and 29.6 at most against its 30-minute timeout. KEN-2031 runs every merge-group job the touched paths select on the pull request, and owner decision 1790634126 item 2 adds splitting that shard so PR checks approach their 10-minute target.
 
@@ -177,7 +182,7 @@ What each doc check prevents, and on which event it runs. "Both" means pull_requ
 - Merge queue: `queued` stamp to `merged` stamp.
 - Open to merge: `open_secs`, created to merged.
 - Main blocker: the longest gap between consecutive stamps among `created`, `last_push`, `ci_green`, `gate_met`, `queued` and `merged`, named by the stamp that ends it. `last_push` is the review-and-fix loop before the final push, `ci_green` the checks on the final head, `gate_met` the review gate, `queued` the wait between green and queue entry, and `merged` the merge queue.
-- The draft's review-round and fix-time readings are not re-measured; the targets name neither.
+- Review stage: the `rounds` list `pr-timeline` reads, which the cycle record carries as `pr_rounds`. A review round runs from a head's push, the creation of the head's first check suite, to the first review of that head by anyone but the pull request's author. A fix round runs from that review to the next push. The author's own reviews are thread replies and end no round. `oversee-cycle rollup` gives each class its median review rounds per pull request, its median seconds per review round and its median seconds per fix round. The lane's local reviewer rounds, which GitHub never sees, stay in the lane's workflow state and are not in these rows.
 
 ## Per-PR appendix
 

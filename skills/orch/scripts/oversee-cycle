@@ -30,7 +30,7 @@
 # log, and prints the same line:
 #   cycle item=ITEM pr=N class=C tier=T target=S actual=S verdict=V phase=P
 #     phase_secs=S cause=W bot_wait=S thread_fix=S paused=S missing=A,B
-#     review=N fix=N bot=N full_validations=N escaped=B refixed=B
+#     review=N fix=N bot=N full_validations=N pr_rounds=N escaped=B refixed=B
 # (one line). A value it could not read prints `-`.
 #   stamps    launched (the record's launched_at), first_commit, pr_opened,
 #             gate_green, ci_green, armed (armed, else queued), merged
@@ -67,6 +67,11 @@
 #             tier whose merged class is standard
 #   refixed   a push landed after the first review-gate pass; null where no
 #             gate pass or no push was read
+#   pr_rounds the count of review rounds in the record's `pr_rounds` list,
+#             which is pr-timeline's `rounds`: each review round and fix round
+#             GitHub saw, with its start, end and seconds. review, fix, bot
+#             and full_validations count the lane's local rounds, read from
+#             its workflow state, which GitHub never sees
 # When this record makes the third miss on one phase among the fleet's
 # records, it also prints and logs
 #   repeat-miss phase=P items=A,B,C causes=W,W,W
@@ -78,10 +83,16 @@
 # recorded lane, in the order of the target table, then unclassified; with no
 # fleet state yet it prints nothing and exits 0:
 #   rollup class=C items=N median=S p90=S misses=N review=N fix=N bot=N
-#     full_validations=N rounds_unread=N escaped=N refixed=N
+#     full_validations=N rounds_unread=N escaped=N refixed=N pr_rounds=N
+#     round_median=S fix_median=S
 # median and p90 are nearest-rank over the measured launch-to-merge seconds;
 # the round figures are sums over the records that carry rounds, and
-# rounds_unread counts the records that do not.
+# rounds_unread counts the records that do not. pr_rounds is the nearest-rank
+# median of the review rounds per record over the records that carry
+# pr_rounds; round_median and fix_median are the nearest-rank medians of the
+# seconds of every review round and every fix round those records hold.
+# pr_rounds and round_median are read against the review-stage targets
+# `--help` prints; the owner names no fix-round target.
 #
 # Every refusal's first stderr line is `oversee-cycle: KEY=VALUE`.
 # Exit status: 0 done; 1 a refusal (state-missing, state-unreadable,
@@ -101,10 +112,17 @@ source "$SCRIPT_DIR/lib/lane-gitfile.sh"
 source "$SCRIPT_DIR/../../github/scripts/lib/gh-repo.sh"
 
 TARGETS='{"render":300,"trivial":300,"micro":1200,"small":1800,"standard":5400}'
+# The owner's review-stage targets: review rounds per pull request by class,
+# and seconds per review round.
+ROUND_TARGETS='{"micro":1,"small":1,"standard":2}'
+ROUND_SECS_TARGET=600
 
 usage() {
   awk 'NR > 1 && /^set -euo/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"
   jq -r '"Targets, seconds: " + (to_entries | map("\(.key) \(.value)") | join(", "))' <<<"$TARGETS"
+  jq -r --arg secs "$ROUND_SECS_TARGET" \
+    '"Review rounds per pull request: " + (to_entries | map("\(.key) \(.value)") | join(", "))
+     + "; seconds per round: " + $secs' <<<"$ROUND_TARGETS"
 }
 
 refuse() { # KEY VALUE [DETAIL_FILE]
@@ -165,6 +183,9 @@ if [[ "$VERB" == rollup ]]; then
       + " rounds_unread=\([$c[] | select(.rounds == null)] | length)"
       + " escaped=\([$c[] | select(.escaped == true)] | length)"
       + " refixed=\([$c[] | select(.refixed == true)] | length)"
+      + " pr_rounds=\([$c[] | .pr_rounds // empty | [.[] | select(.kind == "review")] | length] | nr(0.5))"
+      + " round_median=\([$c[] | .pr_rounds // empty | .[] | select(.kind == "review") | .secs // empty] | nr(0.5))"
+      + " fix_median=\([$c[] | .pr_rounds // empty | .[] | select(.kind == "fix") | .secs // empty] | nr(0.5))"
   ' "$STATE_FILE")" || refuse state-unreadable "$STATE_FILE"
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
@@ -313,6 +334,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
      cause: (if $dominant.phase != "gate_green" or $waits == null then null
              else $waits | to_entries | sort_by(- .value) | first.key end),
      missing: $missing, rounds: $rounds,
+     pr_rounds: $t.rounds,
      escaped: (if $class == null then null
                else ($tier == "micro" and ($class | IN("small", "standard")))
                  or ($tier == "small" and $class == "standard") end),
@@ -331,7 +353,9 @@ line="$(jq -r --arg item "$ITEM" 'def n: if . == null then "-" else tostring end
   + " paused=\(.gate_waits.paused | n)"
   + " missing=\(if .missing == [] then "-" else .missing | join(",") end)"
   + " review=\(.rounds.review | n) fix=\(.rounds.fix | n) bot=\(.rounds.bot | n)"
-  + " full_validations=\(.rounds.full_validations | n) escaped=\(.escaped | n) refixed=\(.refixed | n)"' <<<"$cycle")"
+  + " full_validations=\(.rounds.full_validations | n)"
+  + " pr_rounds=\(if .pr_rounds == null then null else [.pr_rounds[] | select(.kind == "review")] | length end | n)"
+  + " escaped=\(.escaped | n) refixed=\(.refixed | n)"' <<<"$cycle")"
 log_row "$ITEM" "$line"
 printf '%s\n' "$line"
 [[ -z "$class_cause" ]] || printf 'oversee-cycle: class-unread cause=%s\n' "$class_cause" >&2

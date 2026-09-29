@@ -62,8 +62,23 @@ Output, one JSON object on stdout:
                          PR's opening, between the deletions around it. Null
                          where the PR names no head repository or branch, or
                          the log records no push in that life,
-  "bot_review_times":    each of those Bot reviews' submission, ascending
+  "bot_review_times":    each of those Bot reviews' submission, ascending,
+  "rounds": [           the review stage, in time order:
+    {"kind": "review", "head": <oid>, "start": the head's push,
+     "end": the first review submitted on that head, "secs": end - start},
+    {"kind": "fix", "head": <the reviewed oid>, "start": that review,
+     "end": the first push after it, "secs": end - start}
+  ]
 }
+
+A review round is one per head that carries a review; a fix round follows a
+review round only where a push came after its review. A review by the PR's
+own author is a thread reply and never a review round. A head's push is the
+creation of its first check suite, which GitHub makes when the push arrives:
+a head's committer date predates its push by any wait before the push, the
+pull request's timeline keeps a push time only for a forced push, and
+push_times names no head. A head with no check suite is no push, and a round
+starting at one has a null start and secs.
 
 Every stamp is ISO 8601 UTC, and every stamp and duration is null where the
 PR never reached it. The gate is a commit status, not a check run, so no CI
@@ -120,13 +135,13 @@ QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
       mergeCommit { oid ...suites }
       firstCommit: commits(first: 1) { nodes { commit { authoredDate } } }
       headCommit: commits(last: 1) { nodes { commit { oid committedDate ...gate ...suites } } }
-      commits(last: 100) { totalCount nodes { commit { oid committedDate } } }
-      reviews(first: 100) { totalCount nodes { submittedAt author { __typename login } } }
+      commits(last: 100) { totalCount nodes { commit { oid committedDate ...pushed } } }
+      reviews(first: 100) { totalCount nodes { submittedAt author { __typename login } commit { oid ...pushed } } }
       timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, AUTO_MERGE_ENABLED_EVENT, ADDED_TO_MERGE_QUEUE_EVENT]) {
         pageInfo { hasNextPage }
         nodes {
           __typename
-          ... on HeadRefForcePushedEvent { createdAt beforeCommit { oid } }
+          ... on HeadRefForcePushedEvent { createdAt beforeCommit { oid ...pushed } }
           ... on AutoMergeEnabledEvent { createdAt }
           ... on AddedToMergeQueueEvent { createdAt }
         }
@@ -136,6 +151,7 @@ QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
 }
 fragment gate on Commit { status { context(name: $gate) { state createdAt } } }
 fragment suites on Commit { checkSuites(first: 50) { ...suitePage } }
+fragment pushed on Commit { firstSuite: checkSuites(first: 1) { nodes { createdAt } } }
 '"$SUITE_PAGE_FRAGMENTS"
 
 # The page caps the help states: 20 pages of 50 suites per commit, 10 pages
@@ -221,6 +237,18 @@ def rollup($s): [$s[] | . as $suite | .checkRuns.nodes[]
      startedAt, completedAt}];
 def gate($c): $c.status.context // null | select(. != null and .state == "SUCCESS") | .createdAt;
 def secs($a; $b): if $a == null or $b == null then null else ($b | fromdate) - ($a | fromdate) end;
+# A commit connection lists its check suites oldest first.
+def pushed($c): $c.firstSuite.nodes[0].createdAt // null;
+# The review stage: per reviewed head, its push to its first review, then
+# that review to the next push. $pushed maps each known head to its push.
+def rounds($reviews; $pushed):
+  ([$pushed[] | select(. != null)] | unique) as $pushes
+  | [$reviews | group_by(.commit.oid) | map(min_by(.submittedAt)) | sort_by(.submittedAt) | .[]
+     | . as $r | $pushed[$r.commit.oid] as $start
+     | {kind: "review", head: $r.commit.oid, start: $start, end: $r.submittedAt, secs: secs($start; $r.submittedAt)},
+       (([$pushes[] | select(. > $r.submittedAt)] | min) as $next
+        | if $next == null then empty
+          else {kind: "fix", head: $r.commit.oid, start: $r.submittedAt, end: $next, secs: secs($r.submittedAt; $next)} end)];
 .repository.pullRequest as $p
 | ($p.headCommit.nodes[0].commit) as $head
 | ([$head, $p.mergeCommit] | map(select(. != null)) | map(suites(.)) | add // []) as $all_suites
@@ -258,7 +286,12 @@ def secs($a; $b): if $a == null or $b == null then null else ($b | fromdate) - (
       open_secs: secs($stamps.created; $stamps.merged),
       bot_reviews: ($bot | length),
       push_times: null,
-      bot_review_times: ($bot | map(.submittedAt) | sort)
+      bot_review_times: ($bot | map(.submittedAt) | sort),
+      rounds: rounds(
+        [$p.reviews.nodes[] | select(.submittedAt != null and .commit != null)
+         | select($p.author == null or .author.login != $p.author.login)];
+        [$p.commits.nodes[].commit, ($pushes[] | .beforeCommit // empty), ($p.reviews.nodes[] | .commit // empty)]
+        | map({key: .oid, value: pushed(.)}) | from_entries)
     }
   end'
 
