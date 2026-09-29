@@ -40,8 +40,8 @@ listen    the relay: every SLACK_POLL_SECONDS, per root, one history read since
           tenth poll the other bound threads younger than SLACK_THREAD_DAYS,
           then the mailbox's events; owner text lands as a directive or, in
           a question's thread, as its answer, each with --delivery-id
-          channel:ts; asks, notices and rulings land in Slack, a report as
-          its file. A post Slack refuses fails the poll and is made again
+          channel:ts; asks, notices and rulings land in Slack as standard
+          Markdown, a report as its file. A post Slack refuses fails the poll and is made again
           on the next one; an envelope post whose response was lost is
           journaled unknown and never repeated. One relay per checkout, held
           by an OS lock; two roots bound to one channel are refused; --once
@@ -49,11 +49,12 @@ listen    the relay: every SLACK_POLL_SECONDS, per root, one history read since
           otherwise
   --status  one `slack-relay=ROOT state=ok|failing|stale|never` line per
           root from the relay's status record, then the summed call budget
-post      one message to the bound channel, or --channel for another; --mention
-          prefixes every owner; --file uploads the file with the text as its
-          comment; --thread replies in a thread; --update edits the message
-          at that ts. Text and file bytes are refused when they match the
-          secret-value pattern
+post      one message to the bound channel, or --channel for another, its
+          text sent as standard Markdown of at most 12,000 characters;
+          --mention prefixes every owner; --file uploads the file with the
+          text as its comment; --thread replies in a thread; --update edits
+          the message at that ts. Text and file bytes are refused when they
+          match the secret-value pattern
 compact   drop journal lines resolved or ignored longer ago than
           SLACK_THREAD_DAYS; open questions and positions stay. The relay runs
           it once a day; a root whose relay is running is refused

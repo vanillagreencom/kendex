@@ -8,7 +8,8 @@ Control: POST /_test/message injects a message and answers its ts; POST
 /_test/file holds `content` as file `id`, which GET /_files/<id> serves to the
 bot token as Slack's url_private_download does, typed `type` when given and
 application/octet-stream when not; GET
-/_test/state dumps messages, calls, uploads and posts; POST /_test/fault
+/_test/state dumps messages, calls, uploads and posts, each message the app
+posted or edited naming its body's argument in `body_arg`; POST /_test/fault
 makes the next `times` calls of `method` answer `error`, HTTP `status`, or
 with `drop` close the connection after reading the request and before any
 response, or with `refuse` redirect to a port nothing listens on, which the
@@ -292,8 +293,22 @@ class Handler(BaseHTTPRequestHandler):
         items = sorted(self.ws.thread(params["channel"], params["ts"]), key=lambda m: float(m["ts"]))
         self.send_json(self.ws.page_of(items, params, "messages"))
 
+    def body_of(self, params):
+        """The message body and the argument it came in, `markdown_text` or
+        `text`, kept on the message as `body_arg` for the suites; None
+        after answering Slack's `markdown_text_conflict` for both at once."""
+        if "markdown_text" in params:
+            if "text" in params or "blocks" in params:
+                self.send_json({"ok": False, "error": "markdown_text_conflict"})
+                return None
+            return params["markdown_text"], "markdown_text"
+        return params.get("text", ""), "text"
+
     def m_chat_postMessage(self, params):
-        message = {"user": BOT, "bot_id": BOT_ID, "text": params.get("text", "")}
+        body = self.body_of(params)
+        if body is None:
+            return None
+        message = {"user": BOT, "bot_id": BOT_ID, "text": body[0], "body_arg": body[1]}
         if params.get("thread_ts"):
             message["thread_ts"] = params["thread_ts"]
         self.ws.channels.setdefault(params["channel"], {"id": params["channel"], "name": params["channel"], "members": [BOT], "is_private": True})
@@ -301,9 +316,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"ok": True, "channel": params["channel"], "ts": message["ts"]})
 
     def m_chat_update(self, params):
+        body = self.body_of(params)
+        if body is None:
+            return None
         for message in self.ws.messages.get(params["channel"], []):
             if message["ts"] == params["ts"]:
-                message["text"] = params.get("text", "")
+                message["text"], message["body_arg"] = body
                 message["edited"] = {"ts": self.ws.next_ts()}
                 return self.send_json({"ok": True, "ts": params["ts"]})
         self.send_json({"ok": False, "error": "message_not_found"})

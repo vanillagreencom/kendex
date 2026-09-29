@@ -19,6 +19,7 @@ Requires Python 3.8 or newer and the orch skill, which the install adds as a dep
 - Mark each directive's message with :eyes: once it reaches the overseer's mailbox, and with :white_check_mark: once the overseer has read it.
 - Post the overseer's notices and rulings, and upload its progress reports with the notice as the comment.
 - Post an alert or a file to any channel from a script, with `--mention` for the owners.
+- Send questions, notices, answers and `slack post` text as standard Markdown, so bold, lists, headings, links and code blocks render.
 - Refuse any text or file that matches the secret-value pattern.
 - Run as a systemd user unit, and report its health in one line per checkout.
 

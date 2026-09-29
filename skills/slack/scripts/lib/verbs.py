@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-from api import Slack
+from api import Slack, markdown_checked
 from refusals import Refusal, keyed, notice
 from relay import mention, resolve_owner_ids
 from secret import check as secret_check
@@ -125,16 +125,17 @@ def post(
             prefix = " ".join(f"<@{i}>" for i in resolve_owner_ids(api, owners).values()) + " "
     body = prefix + (text or (Path(file).name if file else ""))
     secret_check(body.encode(), "text")
-    if update:
-        api.post("chat.update", channel=channel, ts=update, text=body)
-        notice("updated", f"{update} channel={channel}")
-        return 0
     if file:
         data = checked_file(file, f"file={file}")
         file_id = api.upload(Path(file).name, data, channel, body, thread)
         notice("uploaded", f"{file_id} channel={channel}")
         return 0
-    answer = api.post("chat.postMessage", channel=channel, text=body, thread_ts=thread)
+    markdown_checked(body, "text")
+    if update:
+        api.post("chat.update", channel=channel, ts=update, markdown_text=body)
+        notice("updated", f"{update} channel={channel}")
+        return 0
+    answer = api.post("chat.postMessage", channel=channel, markdown_text=body, thread_ts=thread)
     notice("posted", f"{answer['ts']} channel={channel}")
     return 0
 

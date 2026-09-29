@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from api import Slack
+from api import Slack, markdown_checked
 from mailbox import LaneMail
 from markup import plain
 from refusals import Refusal, keyed, print_refusal
@@ -123,6 +123,13 @@ def within(window: Window, at: float) -> bool:
     """Whether an envelope stamped `at` was written during a closed hold: in a
     later second than its start and an earlier one than its end."""
     return at_epoch(window.from_at) < at < at_epoch(window.at)
+
+
+def local_time(at: str) -> str:
+    """An `at`-shaped stamp as Slack's date token, which each reader's Slack
+    shows in that reader's own time zone and clock format; the stamp is the
+    fallback a client that cannot render the token shows."""
+    return f"<!date^{int(at_epoch(at))}^{{date_short_pretty}} at {{time}}|{at}>"
 
 
 def mention(binding: Binding) -> str:
@@ -479,14 +486,19 @@ class RootRelay:
 
     def _send(self, envelope: Dict, kind: str, text: str, thread_ts: Optional[str], attach: str = "") -> Optional[str]:
         """The one outbound rule: the text and any attached file pass the
-        secret-value check, a refusal there journaled refused and printed;
-        then the file is uploaded with the text as its comment, or the text
-        posted, Slack's refusal to `post_refused`. Returns the message ts or
-        the upload's file id; None when nothing landed."""
+        secret-value check, and a text posted alone the `markdown_text` cap,
+        a refusal there journaled refused and printed; then the file is
+        uploaded with the text as its comment, or the text posted as
+        standard Markdown, Slack's refusal to `post_refused`. Returns the
+        message ts or the upload's file id; None when nothing landed."""
         env_id = str(envelope["id"])
         try:
             secret_check(text.encode(), f"id={env_id}")
-            data = checked_file(attach, f"id={env_id} file={attach}") if attach else None
+            if attach:
+                data: Optional[bytes] = checked_file(attach, f"id={env_id} file={attach}")
+            else:
+                data = None
+                markdown_checked(text, f"id={env_id}")
         except Refusal as err:
             self._out(envelope, kind, "refused", reason=err.key)
             print_refusal(err)
@@ -494,7 +506,7 @@ class RootRelay:
         try:
             if data is not None:
                 return self.api.upload(Path(attach).name, data, self.channel, text, thread_ts)
-            return str(self.api.post("chat.postMessage", channel=self.channel, text=text, thread_ts=thread_ts)["ts"])
+            return str(self.api.post("chat.postMessage", channel=self.channel, markdown_text=text, thread_ts=thread_ts)["ts"])
         except Refusal as err:
             self.post_refused(err, envelope, kind)
             return None
@@ -509,10 +521,10 @@ class RootRelay:
         if envelope.get("recommend"):
             tail.append(f"Recommended: {envelope['recommend']}.")
         if envelope.get("deadline"):
-            tail.append(f"It stands at {envelope['deadline']} unless you reply in this thread.")
+            tail.append(f"It stands at {local_time(str(envelope['deadline']))} unless you reply in this thread.")
         if tail:
             lines.append(" ".join(tail))
-        ts = self._send(envelope, "ask", "\n".join(lines), None)
+        ts = self._send(envelope, "ask", "\n\n".join(lines), None)
         if ts is None:
             return False
         self._out(envelope, "ask", "open", thread=ts)

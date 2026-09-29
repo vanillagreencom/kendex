@@ -109,10 +109,33 @@ Landed: [WHAT SHIPPED AND WHAT IT CHANGES FOR THE USER]
 Running: [WHAT IS IN FLIGHT AND WHEN IT LANDS]
 Validation: [EACH RUNNING LANE: MINUTES SPENT VALIDATING, IN TOTAL AND PER ROUND]
 Next: [WHAT STARTS AFTER THAT]
-Waiting on you: [EACH OPEN QUESTION, OR none]
+Waiting on you: [EACH OPEN ASK: ITS LINK OR THREAD AND WHAT STANDS AT ITS DEADLINE, OR none]
 ```
 
-Under `engineer` a report is the same shape with the session's own vocabulary. A report the overseer writes to the user takes this shape whatever produced its rows. The Validation line per lane comes from that lane's workflow state `validate_rounds`, which [`dev-start.md` § Store Validation Time](../workflows/dev-start.md#store-validation-time) writes, so the owner sees what each round's validation cost. Waiting on you is the unresolved owner asks `lane-mail pending --item overseer --to owner` lists, one record for the report, the relay and the chat.
+Under `engineer` a report is the same shape with the session's own vocabulary. A report the overseer writes to the user takes this shape whatever produced its rows, in the chat and in its file. A report posted to Slack takes the shorter shape in § Owner messages. The Validation line per lane comes from that lane's workflow state `validate_rounds`, which [`dev-start.md` § Store Validation Time](../workflows/dev-start.md#store-validation-time) writes, so the owner sees what each round's validation cost. Waiting on you is the unresolved owner asks `lane-mail pending --item overseer --to owner` lists, one record for the report, the relay and the chat. It is `none` only when that list is empty.
+
+## Owner messages
+
+These rules hold for every message the owner reads in Slack: each post the relay makes for a `to=owner` envelope, each `slack post`, and each notice or ask the overseer writes for the owner. A mailbox notice to a master session keeps its full detail.
+
+Words:
+
+1. Write in ASD-STE100 Simplified Technical English. Put the answer first.
+2. Say what happened and what it means for the work. Name no generation number, pane id, token count, seat name, mailbox id or internal rule name unless the owner must act on it.
+3. Write a time in the owner's time zone with am or pm (`9:29 pm`), never as a `Z` stamp.
+4. Write each pull request, commit, issue and tracker item as a Markdown link labelled with its short name: `[REPO#N](https://github.com/OWNER/REPO/pull/N)`, `[SHORT_SHA](https://github.com/OWNER/REPO/commit/SHORT_SHA)`, `[KEY-N](TRACKER_ISSUE_URL)`.
+5. A status or progress report posted to Slack is four labels, each with short bullets: **Landed**, **Running**, **Blocked**, **Waiting on you**.
+6. **Waiting on you** lists each ask `lane-mail pending --item overseer --to owner` shows, with its link or Slack thread and what stands at its deadline. It is never empty while an ask is open.
+7. An ask sent during the owner's night gets no reply before morning. Its recommended option is the safe choice, and its deadline (`--wait`) falls after the owner's morning unless the ask can stand on that option.
+8. Attach a screenshot or an image when it shows the point better than words: `slack post --file`, or a notice's `--attach`.
+
+Markup, standard Markdown:
+
+- A blank line between paragraphs, before and after every list, and before every label.
+- A numbered list for steps or options; bullets for parallel facts.
+- Bold for a label or a decision; italics seldom.
+- Inline code for a command, a path or an id; a code block for output of more than one line.
+- No paragraph longer than a few sentences.
 
 ## Handoff
 

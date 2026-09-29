@@ -23,7 +23,9 @@
 # bound to one channel refused at start, a reply under a thread past
 # SLACK_THREAD_DAYS left unrouted, a secret value refused, a 429 honoured, a
 # post Slack refuses failing the poll and made again, a post whose response
-# was lost journaled unknown, a refused history read failing the poll, a first
+# was lost journaled unknown, a refused history read failing the poll, asks
+# and notices sent as markdown_text, an ask's deadline as Slack's date token,
+# a notice past its cap refused, a first
 # start reading Slack from the binding moment and posting nothing from the
 # mailbox's past but open asks, an envelope past the horizon never posted
 # across the daily compaction, a journal reset re-posting open asks alone,
@@ -39,7 +41,8 @@
 # in the download, the seen mark gone, the cursor unread, a refused mark
 # raised, each settled Slack answer unsettled, a refused receipts read raised,
 # the markup unread, &amp; unescaped first, the outbound text and the report
-# bytes unchecked, the post failure swallowed, the envelope horizon removed,
+# bytes unchecked, the body sent as text, the length check gone, the
+# deadline as its raw stamp, the post failure swallowed, the envelope horizon removed,
 # the start horizon removed, the history seed at zero, a posted line aged by
 # its thread, and a refused connection read as a lost response.
 set -uo pipefail
@@ -83,8 +86,17 @@ ASK="$(sed 's/^id=//' "$SK_TMP/ask.out")"
 sk_poll "$ROOT"
 ASK_TS="$(sk_state '.messages.C001[] | select(.text | startswith("<@U001> <@U002> Question")) | .ts')"
 assert_has "$(sk_state ".messages.C001[] | select(.ts == \"$ASK_TS\") | .text")" \
-  "Cut the scanner?
-Options: cut, keep. Recommended: cut. It stands at " "the ask is posted with every owner mentioned, its options, recommendation and deadline"
+  "Question from overseer:
+
+Cut the scanner?
+
+Options: cut, keep. Recommended: cut. It stands at " "the ask is posted with every owner mentioned, its options, recommendation and deadline, a blank line between its paragraphs"
+assert_eq "$(sk_state ".messages.C001[] | select(.ts == \"$ASK_TS\") | .body_arg")" "markdown_text" "the ask is sent as markdown_text"
+DEADLINE="$(jq -r "select(.id == \"$ASK\") | .deadline" "$(sk_box "$ROOT")/to-overseer.jsonl")"
+DEADLINE_EPOCH="$(python3 -c 'import calendar, sys, time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "$DEADLINE")"
+assert_has "$(sk_state ".messages.C001[] | select(.ts == \"$ASK_TS\") | .text")" \
+  "It stands at <!date^$DEADLINE_EPOCH^{date_short_pretty} at {time}|$DEADLINE> unless you reply in this thread." \
+  "the deadline is Slack's date token, shown in the owner's own time zone, the stamp its fallback"
 sk_poll "$ROOT"
 assert_eq "$(sk_state '[.messages.C001[] | select(.text | startswith("<@U001>"))] | length')" "1" "the ask is posted once"
 R1="$(sk_inject C001 U002 'keep' "$ASK_TS")"
@@ -125,6 +137,7 @@ sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text n2 'Round done
 sk_poll "$ROOT"
 assert_has "$(posts C001)" "$TS1 | Shipping." "a notice answering an owner note lands in that note's thread"
 assert_has "$(posts C001)" "top | Round done." "a notice with no ref lands top-level"
+assert_eq "$(sk_state '.messages.C001[] | select(.text == "Round done.") | .body_arg')" "markdown_text" "a notice is sent as markdown_text"
 R0="$(sk_inject C001 U001 'and the docs' "$TS1")"
 sk_polls "$ROOT" 10
 D0="$(jq -r "select(.delivery_id == \"C001:$R0\") | .id" "$(sk_box "$ROOT")/to-lane.jsonl")"
@@ -287,6 +300,13 @@ rm -f -- "${GONE:?}"
 sk_poll "$GAMMA"
 assert_eq "$RC=$ERR1" "0=slack: file-unreadable=$GONE" "a report whose file is gone is refused"
 assert_eq "$(refused_line "$GAMMA" "$(notice_id "$GAMMA" 'Missing report.')")" "refused file-unreadable" "the unreadable file is journaled refused"
+LONG="$(python3 -c 'print("x" * 12001)')"
+sk_lm "$GAMMA" notice --item overseer --to owner --file "$(sk_text s5 "$LONG")" >/dev/null
+sk_poll "$GAMMA"
+LONG_ID="$(notice_id "$GAMMA" "$LONG")"
+assert_eq "$RC=$ERR1" "0=slack: text-too-long=id=$LONG_ID chars=12001 limit=12000" "a notice past the markdown_text cap is refused by id with its length"
+assert_eq "$(refused_line "$GAMMA" "$LONG_ID")=$(sk_state '[.messages.C002[] | select(.text | startswith("xxxx"))] | length')" \
+  "refused text-too-long=0" "the long notice is journaled refused and never posted"
 
 # --- a 429 is honoured by Retry-After -------------------------------------------------------
 sk_ctl /_test/calls-reset >/dev/null
@@ -741,6 +761,25 @@ printf 'ghp_%s\n' "abcdefghijklmnopqrstuvwxyz0123456789" > "$ZETA/tmp/progress-r
 sk_lm "$ZETA" notice --item overseer --to owner --attach "$ZETA/tmp/progress-reports/leak.md" --file "$(sk_text n8 'Leaky report.')" >/dev/null
 sk_poll "$ZETA"
 assert_eq "$(sk_state '[.uploads[] | select(. | contains("ghp_"))] | length')" "1" "control: the report bytes unchecked, a token uploads"
+sk_bin_reset
+
+sk_mutant body-arg relay.py 'channel=self\.channel, markdown_text=text, thread_ts=thread_ts' 'channel=self.channel, text=text, thread_ts=thread_ts'
+sk_lm "$ZETA" notice --item overseer --to owner --file "$(sk_text n13 'Plain again.')" >/dev/null
+sk_poll "$ZETA"
+assert_eq "$(sk_state ".messages.${ZETA_CH}[] | select(.text == \"Plain again.\") | .body_arg")" "text" "control: the body sent as text, Slack renders mrkdwn"
+sk_bin_reset
+
+sk_mutant length relay.py '                markdown_checked\(text, f"id=\{env_id\}"\)\n' ''
+sk_lm "$ZETA" notice --item overseer --to owner --file "$(sk_text n14 "$LONG")" >/dev/null
+sk_poll "$ZETA"
+assert_eq "$(sk_state "[.messages.${ZETA_CH}[] | select(.text | startswith(\"xxxx\"))] | length")" "1" "control: the length check gone, a notice past the cap reaches Slack"
+sk_bin_reset
+
+sk_mutant deadline relay.py 'local_time\(str\(envelope\[.deadline.\]\)\)' 'envelope["deadline"]'
+sk_lm "$ZETA" ask --item overseer --to owner --file "$(sk_text q11 'Zulu deadline?')" --options a,b --recommend a >/dev/null
+sk_poll "$ZETA"
+assert_eq "$(sk_state ".messages.${ZETA_CH}[] | select(.text | contains(\"Zulu deadline?\")) | .text | contains(\"<!date^\")")" "false" \
+  "control: the deadline as its raw stamp, the ask posts with no date token"
 sk_bin_reset
 
 sk_mutant swallow relay.py 'if self\.post_failed is not None:\n            raise self\.post_failed' 'if self.post_failed is not None:\n            self.post_failed = None'

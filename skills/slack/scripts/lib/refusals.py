@@ -127,6 +127,12 @@ EXPLAIN = {
         " line; the relay sends nothing until it does."
     ),
     "file-unreadable": "The file to send could not be read.",
+    "text-too-long": (
+        "The text is longer than Slack takes as one Markdown message and is"
+        " not sent; the value names its length and the limit. Send the long"
+        " part as a file with --file, or as a notice's --attach, with a"
+        " short text beside it."
+    ),
     "master-file-unreadable": (
         "SLACK_MASTER_FILE names a path whose age cannot be read, for a"
         " reason other than its absence; the value names the path and the"

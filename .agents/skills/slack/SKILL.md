@@ -49,6 +49,12 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 - The channel binding is installation state written by `setup`, never a setting. The alert channel is the caller's `--channel` argument.
 - Settings live in the project's `kendex.settings.toml` and the token in its private env file: [kendex.settings.toml.example](kendex.settings.toml.example).
 
+## Message standard
+
+- `slack post` and the relay send each text as standard Markdown, which Slack renders: `**bold**`, lists, headings, links and code blocks. A text longer than 12,000 characters is refused `text-too-long`; send the long part as a file.
+- A file's comment, the text beside `--file` or a notice's `--attach`, renders as Slack's own mrkdwn markup, not standard Markdown.
+- The words and markup of every post follow [orch communication-modes.md § Owner messages](../orch/references/communication-modes.md#owner-messages).
+
 ## Doctor row
 
 `slack listen --status` prints one `slack: slack-relay=ROOT state=ok|failing|stale|never` line per root, then one `slack: slack-relay-budget=N` line summing the roots. A state other than `ok` carries `fix=`. The fields of the row: [schemas/journal.md § The status record](schemas/journal.md#the-status-record).
