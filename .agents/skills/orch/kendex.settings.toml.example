@@ -262,6 +262,16 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # hand.
 # ORCH_OVERSEER_SUCCESSION = "on"
 
+# The models a new or replacement overseer tries, in order. Each entry is
+# harness:model:effort, separated by commas. The harness is claude, codex,
+# copilot or pi. The model is the one that harness launches; on pi it is
+# provider/model, for example pi:github-copilot/claude-opus-5.5:high. The
+# effort is the level as that harness spells it; on pi it is the thinking
+# level. An entry that names no model stops the launch. The first entry with
+# allowance left wins. Change the order here when models change; no code
+# holds another order. Empty names no entries.
+# ORCH_OVERSEER_PREFERENCE = "claude:fable:high,claude:claude-opus-5-5:high,codex:gpt-6-astra:high,codex:gpt-5.6-sol:high"
+
 # Minutes before the projected account wall that starts overseer succession.
 # Zero disables the rate trigger.
 ORCH_OVERSEER_WALL_MINUTES = "20"

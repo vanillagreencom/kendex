@@ -2,7 +2,7 @@
 # Tests for what a self-succession does to the fleet watch: the watch served
 # the caller's pane, which the succession closes, so `oversee-succeed` stops it
 # and starts it again from the successor pane. Run over a real tmux server on a
-# private socket with the harness and tier stubs of oversee_succeed.sh, whose
+# private socket with the harness stubs of oversee_succeed.sh, whose
 # suite owns everything else the succession does. The watch is a stand-in that
 # records itself through lib/watch-pid.sh, as the real one does, and notes
 # what it was started with; what the real watch does with that record is
@@ -45,14 +45,7 @@ cat > "$BIN/claude" <<'STUB'
 echo 'esc to interrupt'
 exec sleep 100000
 STUB
-cat > "$BIN/kendex" <<'STUB'
-#!/bin/sh
-case "$1:$2:$3" in
-  tier-model:claude:1) echo fable ;;
-  *) exit 1 ;;
-esac
-STUB
-chmod +x "$BIN/claude" "$BIN/kendex"
+chmod +x "$BIN/claude"
 
 new_home fleet
 make_lane "$H" claude
@@ -133,7 +126,7 @@ run_succeed() {
     TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
     CLAUDE_CONFIG_DIR="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" \
-    ORCH_OVERSEER_PREFERENCE=claude:1:high ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 \
+    ORCH_OVERSEER_PREFERENCE=claude:fable:high ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 \
     ORCH_QUESTION_TOOL=overseer \
     "${1:-$SUCCEED}" --context 950000:1000000 -- --permission-mode dontAsk --verbose 2>&1)" || RC=$?
   # The window the caller held, which the successor holds once the close ran.

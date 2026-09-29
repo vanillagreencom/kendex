@@ -5,7 +5,7 @@
 # pane's command, its context reading in the overseer mailbox and its account
 # variables, with the record's `pending` successor never read as the caller's
 # own. Run over a real tmux server on a private socket, as
-# oversee_succeed.sh is; claude, codex and kendex are stubs on PATH, and `lanes
+# oversee_succeed.sh is; claude, codex and pi are stubs on PATH, and `lanes
 # pick` answers from the lanes-fixture usage bodies. The judgement and print
 # rows open nothing; the dead-pane relaunch rows and the pending-successor rows
 # each open a successor pane on the private tmux server, which the EXIT trap's
@@ -57,14 +57,7 @@ mkdir -p "$BIN" "$TMP_ROOT/work/tmp"
 for harness in claude codex pi; do
   printf '#!/bin/sh\necho "esc to interrupt"\nexec sleep 100000\n' > "$BIN/$harness"
 done
-cat > "$BIN/kendex" <<'STUB'
-#!/bin/sh
-case "$1:$2:$3" in
-  tier-model:claude:1) echo fable-next ;;
-  *) exit 1 ;;
-esac
-STUB
-chmod +x "$BIN/claude" "$BIN/codex" "$BIN/pi" "$BIN/kendex"
+chmod +x "$BIN/claude" "$BIN/codex" "$BIN/pi"
 # A caller whose foreground process names claude: a copy of sleep, since a
 # script or a shell named for the harness can reset the name tmux reads.
 cp "$(command -v sleep)" "$BIN/hclaude"
@@ -670,7 +663,7 @@ STUB
 reading "Fable 5.1"
   CALLER_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
   state "$(record "$CALLER_PANE" "$H/.eclaude" fable "$(jq -cn --arg cwd "$RECORDED_CWD" '{cwd: $cwd}')")"
-  SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:1:low run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$BYPASS"
+  SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:fable-next:low run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$BYPASS"
   SNAP="$(cat -- "$TMP_ROOT/pending.snap" 2>/dev/null || echo none)"
   SUCC_CWD="$(tm display-message -p -t "$(jq -r '.overseer.pane' "$FLEET_STATE")" '#{pane_current_path}')"
 }
@@ -712,7 +705,7 @@ STUB
   new_caller claude
   reading "Fable 5.1"
   state "$(record "$CALLER_PANE" "$H/.eclaude" fable)"
-  SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:1:low run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$BYPASS"
+  SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:fable-next:low run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$BYPASS"
   CALLER_LISTED="$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$CALLER_PANE" || true)"
 }
 recordfail_run "$(mutant_scripts recordfail)"

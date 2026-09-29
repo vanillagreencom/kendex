@@ -52,14 +52,16 @@
 #        binds it.
 #     4. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:model:effort`
 #        entries, in order, and open on the first whose harness has a lane
-#        above ORCH_OVERSEER_HEADROOM_PCT: the entry names its model, or a
-#        rank `kendex tier-model` names it for, and unset the setting is
+#        above ORCH_OVERSEER_HEADROOM_PCT: the entry names its model as its
+#        harness launches it, an entry naming none refusing
+#        `invalid-preference`, and unset the setting is
 #        lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE; the walk is that
 #        file's ol_walk, and `lanes pick` names
 #        the lane, judged on the bucket that
 #        walls that model and held to the reading the session will take of
-#        itself (lib/overseer-launch.sh § ol_pick_lane). A rank the tier
-#        ladder cannot answer refuses `model-failed`; an entry with no
+#        itself (lib/overseer-launch.sh § ol_pick_lane). A copilot entry
+#        spends no account `lanes` measures, so it takes no pick and opens
+#        with no lane variable. An entry with no
 #        qualifying lane is skipped, and so is one whose harness row names no
 #        full-bypass word to launch it under, pi's, before its pick, with
 #        `entry-permission-unwritable` on stderr; a preference set to empty
@@ -201,11 +203,10 @@ message() { # KEY FIELD=VALUE...
     predecessor-not-live) text='The session --predecessor names is not the live overseer the fleet state records on this server. The live field names that overseer, or none where no live one is recorded. A record carrying no server start names none: run oversee register in its pane first. A succession only ever stops the recorded overseer; nothing was opened.' ;;
     option-conflict) text='--predecessor is a launch option, and a successor opens beside its predecessor rather than in the tmux session --session names, so the two are never given together.' ;;
     close-failed) text='The predecessor could not be stopped, so the successor was closed and the record put back; the predecessor keeps running.' ;;
-    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex or pi and model a model name or a tier ladder rank, or on pi a lowercase provider/id. A first launch skips pi entries.' ;;
+    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex, copilot or pi, model the model that harness launches, starting with a letter, on pi a lowercase provider/id, and effort the level as that harness spells it. An entry naming no model is refused. A first launch skips pi entries.' ;;
     preference-empty) text='A first launch has no caller whose own harness and lane could stand in, so ORCH_OVERSEER_PREFERENCE must name at least one entry.' ;;
     invalid-headroom-trigger) text='ORCH_OVERSEER_HEADROOM_PCT takes a whole number of percent from 0 to 100.' ;;
     invalid-question-tool) text='ORCH_QUESTION_TOOL takes off or overseer.' ;;
-    model-failed) text='kendex tier-model named no model for this entry: its rank is past the tier ladder, or its model name is none the ladder names for its harness. Either is a setting to fix, not an entry to pass over.' ;;
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     no-lane-qualifies) text='No lane of any harness the preference names is above the headroom trigger; nothing was launched. entries counts the preference entries walked; walled and unmeasured are the accounts the sweeps refused and the accounts nothing could measure.' ;;
     entry-permission-unwritable) text='The launch flag table names no full-bypass permission word for this entry'\''s harness, so a first launch there would stop at its first approval prompt with nobody at the pane. The entry is skipped and the walk goes on; oversee-succeed takes such an entry for a caller of the same harness.' ;;

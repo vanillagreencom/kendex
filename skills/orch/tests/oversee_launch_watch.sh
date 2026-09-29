@@ -70,14 +70,7 @@ sleep 100000 &
 echo \$! > "$HARNESS_PIDS/\${TMUX_PANE#%}"
 wait
 STUB
-cat > "$BIN/kendex" <<'STUB'
-#!/bin/sh
-case "$1:$2:$3" in
-  tier-model:claude:1) echo fable ;;
-  *) exit 1 ;;
-esac
-STUB
-chmod +x "$BIN/claude" "$BIN/kendex"
+chmod +x "$BIN/claude"
 
 new_home fleet
 make_lane "$H" claude
@@ -118,7 +111,7 @@ run_oversee() {
   OUT="$(cd "$TMP_ROOT/work" && ${ROW_LAUNCH:+"$ROW_LAUNCH"} env -i HOME="$H" PATH="$NO_MANAGER:$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
     ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_USAGE_TTL=0 \
-    ORCH_OVERSEER_PREFERENCE=claude:1:high ORCH_TMUX_SESSION=fleet \
+    ORCH_OVERSEER_PREFERENCE=claude:fable:high ORCH_TMUX_SESSION=fleet \
     ${ROW_ENV[@]+"${ROW_ENV[@]}"} "$bin" "$@" 2>&1 </dev/null)" || RC=$?
 }
 FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"

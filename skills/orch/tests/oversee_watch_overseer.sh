@@ -185,11 +185,11 @@ assert_contains "$OUT" "-- [FLAGS] at the next safe point, with ORCH_OVERSEER_PR
 overseer_case mark_reported idle
 state_with "$LINE"
 mark_stands
-run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=3 ORCH_OVERSEER_PREFERENCE=claude:1:high -- --max-loops 1
+run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=3 ORCH_OVERSEER_PREFERENCE=claude:fable:high -- --max-loops 1
 assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT")" \
   "rc=0 first=EVENT overseer-mark $PANE kind=context value=612000 mark=500000 succession=on" \
   "a reached mark becomes the event, carrying its kind, the value read and the mark crossed" "$ERR"
-assert_contains "$OUT" "-- [FLAGS] at the next safe point, with ORCH_OVERSEER_PREFERENCE=claude:1:high choosing the successor lane." \
+assert_contains "$OUT" "-- [FLAGS] at the next safe point, with ORCH_OVERSEER_PREFERENCE=claude:fable:high choosing the successor lane." \
   "and the line under it names the succession and the fleet's preference" "$ERR"
 
 # The same mark stands on every pass until the overseer hands over. A line on

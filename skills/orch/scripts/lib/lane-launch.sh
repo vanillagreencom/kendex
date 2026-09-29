@@ -434,13 +434,23 @@ launch_choice_value() { # SPELLINGS TEXT...
 # judge reading `github-copilot/` sees a Copilot launch whichever way it was
 # typed. A model already naming a provider keeps its own.
 launch_choice_launch_model() { # HARNESS TEXT
-  local model provider
+  local model provider spelling
   model="$(launch_choice_value "$(launch_choice_model_spellings "$1")" "$2")"
-  if [[ "$1" == pi && -n "$model" && "$model" != */* ]]; then
-    provider="$(launch_choice_value --provider "$2")"
+  spelling="$(launch_choice_provider_spelling "$1")"
+  if [[ -n "$spelling" && -n "$model" && "$model" != */* ]]; then
+    provider="$(launch_choice_value "$spelling" "$2")"
     [[ -z "$provider" ]] || model="$provider/$model"
   fi
   printf '%s\n' "$model"
+}
+
+# The flag word a launch of HARNESS names its model's provider on apart from
+# the model, empty where the harness has none: pi's `--provider`, the split
+# form launch_choice_launch_model reads into the model and launch_choice_strip
+# takes out with it, so a launch written with its own `provider/id` model is
+# never handed a caller's provider word beside it.
+launch_choice_provider_spelling() { # HARNESS
+  [[ "$1" != pi ]] || printf '%s\n' --provider
 }
 
 # The EFFORT one launch names, empty where it names none or where the harness has
@@ -756,8 +766,10 @@ launch_choice_phrase_present() { # PHRASE TEXT
 }
 
 # The flags of a launch on HARNESS with that harness's own MODEL and EFFORT
-# words taken out, left in LAUNCH_CHOICE_KEPT. With `--permissions`, permission
-# words are taken out too. What is left stays in its original order.
+# words taken out, left in LAUNCH_CHOICE_KEPT, a provider word the model is
+# split across (launch_choice_provider_spelling) going with the model. With
+# `--permissions`, permission words are taken out too. What is left stays in
+# its original order.
 #
 # The inverse of launch_choice_write over the same row, and the reason it
 # exists: a caller hands its flags on to a launch it did not write, and those
@@ -782,14 +794,14 @@ launch_choice_phrase_present() { # PHRASE TEXT
 # refuses rather than guessing.
 LAUNCH_CHOICE_KEPT=()
 launch_choice_strip() { # HARNESS [--permissions] FLAG...
-  local row attach permission_specs word tok drop i n strip_permissions=0
+  local row attach permission_specs word words tok drop i n strip_permissions=0
   local -a spellings=() rest=()
   LAUNCH_CHOICE_KEPT=()
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 1
   IFS='|' read -r _ _ _ _ attach permission_specs _ _ <<<"$row"
-  read -r -a spellings \
-    <<<"$(launch_choice_model_spellings "$1") $(launch_choice_effort_spellings "$1")"
+  words="$(launch_choice_model_spellings "$1") $(launch_choice_provider_spelling "$1")"
+  read -r -a spellings <<<"$words $(launch_choice_effort_spellings "$1")"
   [[ "$permission_specs" != - ]] || permission_specs=""
   shift
   if [[ "${1:-}" == --permissions ]]; then
