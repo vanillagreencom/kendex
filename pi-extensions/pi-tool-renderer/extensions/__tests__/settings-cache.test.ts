@@ -41,13 +41,24 @@ function project(config: Record<string, unknown>): string {
 }
 
 describe("readPackageConfig memoization", () => {
-	test("two roots read their own configs", () => {
+	test("two roots read their own configs and stay cached side by side", () => {
+		// Both roots exist before either is read: project() records trust, which clears the cache.
 		const a = project({ commandPreviewChars: 100 });
-		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(100);
 		const b = project({ commandPreviewChars: 200 });
-		expect(readPackageConfig(CONFIG_ID, b).commandPreviewChars).toBe(200);
 		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(100);
 		expect(readPackageConfig(CONFIG_ID, b).commandPreviewChars).toBe(200);
+		// Disk now disagrees with both entries: alternating reads inside the window
+		// return the primed values only if neither root evicts the other.
+		writeConfig(join(a, ".pi", "settings.json"), { commandPreviewChars: 300 });
+		writeConfig(join(b, ".pi", "settings.json"), { commandPreviewChars: 400 });
+		monotonicNow = SETTINGS_RECHECK_MS - 1;
+		for (let round = 0; round < 2; round++) {
+			expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(100);
+			expect(readPackageConfig(CONFIG_ID, b).commandPreviewChars).toBe(200);
+		}
+		monotonicNow = SETTINGS_RECHECK_MS;
+		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(300);
+		expect(readPackageConfig(CONFIG_ID, b).commandPreviewChars).toBe(400);
 	});
 
 	test("an edit is served from the cache inside the window and read from disk after it", () => {
