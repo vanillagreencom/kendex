@@ -30,6 +30,9 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
+# mutant_scripts and mutate_file, the two halves of the refusal controls.
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
@@ -625,41 +628,62 @@ launch one 5 --lane "$LANE_A" CC-1
 assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
   "rc=1 open-terminal: cap-unreadable item=CC-1 source=state opened=no" \
   "a fleet state that does not parse refuses the launch rather than counting nothing"
-row lock-unopenable
-"$WS" --state-dir "$STATE" init oversee >/dev/null
-mkdir -p "$STATE/workflow-state-oversee.json.launch.lock"
-launch one 5 --lane "$LANE_A" CC-1
-assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
-  "rc=1 open-terminal: cap-lock-unopenable item=CC-1 lock=$STATE/workflow-state-oversee.json.launch.lock opened=no" \
-  "a launch lock that cannot be opened refuses the launch rather than counting unlocked"
-# A flock that fails at once is a holder past the bound with no clock: both
-# takes fail with no wait. The state exists first, since its init locks too.
-row lock-failed
-"$WS" --state-dir "$STATE" init oversee >/dev/null
-mkdir -p "$ROW/bin"
-printf '#!/usr/bin/env bash\nexit 1\n' > "$ROW/bin/flock"
-chmod +x "$ROW/bin/flock"
-PATH="$ROW/bin:$PATH" launch one 5 --lane "$LANE_A" CC-1
-assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no) lock-waits=$(lock_waits one)" \
-  "rc=1 open-terminal: cap-lock-failed item=CC-1 lock=$STATE/workflow-state-oversee.json.launch.lock opened=no lock-waits=1" \
-  "a launch lock not taken within its wait refuses the launch, naming the lock, after one wait notice"
-# workflow-state answers every verb but `path oversee`, so the fleet state
-# exists and only its path cannot be had. No lock file stands: the refusal
-# came ahead of the lock, not from the count under it.
-row state-path-failed
-"$WS" --state-dir "$STATE" init oversee >/dev/null
-mv -- "$WS" "$WS.real"
-cat > "$WS" <<'EOF'
-#!/usr/bin/env bash
-[[ " $* " != *" path oversee "* ]] || exit 1
-exec "$0.real" "$@"
-EOF
-chmod +x "$WS"
-launch one 5 --lane "$LANE_A" CC-1
-mv -- "$WS.real" "$WS"
-assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no) lock=$([[ -e "$STATE/workflow-state-oversee.json.launch.lock" ]] && echo yes || echo no)" \
-  "rc=1 open-terminal: cap-unreadable item=CC-1 source=state opened=no lock=no" \
-  "a fleet state whose path cannot be had refuses the launch before its lock is opened"
+# cap_take's own refusals, one row each: a launch lock that cannot be opened
+# (unopenable), one not taken within its wait (failed), and a fleet state whose
+# path cannot be had (path). created is the worktree create, which a refused
+# launch never reaches: the failed row's flock stub fails workflow-state's own
+# lock too, so a launch its gate admitted still stops before any window, rc=1,
+# and only the create tells it apart. lock is whether the lock file stands.
+# refusal ROW KIND — one launch of CC-1 by the open-terminal OT names, the
+# row's state path printed as STATE so a control's row reads the same.
+refusal() {
+  local ws line
+  ws="$(dirname "$OT")/workflow-state"
+  row "$1"
+  "$ws" --state-dir "$STATE" init oversee >/dev/null
+  case "$2" in
+    unopenable)
+      mkdir -p "$STATE/workflow-state-oversee.json.launch.lock"
+      launch one 5 --lane "$LANE_A" CC-1 ;;
+    failed)
+      # A flock that fails at once is a holder past the bound with no clock:
+      # both takes fail with no wait. The state exists first, since its init
+      # locks too.
+      mkdir -p "$ROW/bin"
+      printf '#!/usr/bin/env bash\nexit 1\n' > "$ROW/bin/flock"
+      chmod +x "$ROW/bin/flock"
+      PATH="$ROW/bin:$PATH" launch one 5 --lane "$LANE_A" CC-1 ;;
+    path)
+      # workflow-state answers every verb but `path oversee`, so the fleet
+      # state exists and only its path cannot be had.
+      # shellcheck disable=SC2016  # the stub's own text, never expanded here.
+      mv -- "$ws" "$ws.real"
+      printf '%s\n' '#!/usr/bin/env bash' '[[ " $* " != *" path oversee "* ]] || exit 1' 'exec "$0.real" "$@"' > "$ws"
+      chmod +x "$ws"
+      launch one 5 --lane "$LANE_A" CC-1
+      mv -- "$ws.real" "$ws" ;;
+  esac
+  line="rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)"
+  line+=" created=$([[ -e "$ROW/reached.create.one" ]] && echo yes || echo no) lock-waits=$(lock_waits one)"
+  line+=" lock=$([[ -e "$STATE/workflow-state-oversee.json.launch.lock" ]] && echo yes || echo no)"
+  printf '%s\n' "${line//"$STATE"/STATE}"
+}
+# Each row's control keeps its refusal's message and returns 0 after it, a
+# copy of lib/lane-cap.sh that reports the refusal and admits the launch: the
+# row goes red on the create it reaches. The site is the message line, found
+# by its indent, which the count in cap_count does not share.
+for spec in \
+  "unopenable|rc=1 open-terminal: cap-lock-unopenable item=CC-1 lock=STATE/workflow-state-oversee.json.launch.lock opened=no created=no lock-waits=0 lock=yes|    |ot_message cap-lock-unopenable \"item=\$1\" \"lock=\$CAP_LOCK\" >&2|a launch lock that cannot be opened refuses the launch rather than counting unlocked" \
+  "failed|rc=1 open-terminal: cap-lock-failed item=CC-1 lock=STATE/workflow-state-oversee.json.launch.lock opened=no created=no lock-waits=1 lock=yes|  |ot_message cap-lock-failed \"item=\$1\" \"lock=\$CAP_LOCK\" >&2|a launch lock not taken within its wait refuses the launch, naming the lock, after one wait notice" \
+  "path|rc=1 open-terminal: cap-unreadable item=CC-1 source=state opened=no created=no lock-waits=0 lock=no|      |ot_message cap-unreadable \"item=\$1\" \"source=state\" >&2|a fleet state whose path cannot be had refuses the launch before its lock is opened"; do
+  IFS='|' read -r kind want indent message says <<<"$spec"
+  assert_eq "$(refusal "lock-$kind" "$kind")" "$want" "$says"
+  CTL_OT="$(mutant_scripts "lock-$kind-control" lib/lane-cap.sh)/open-terminal" || exit 1
+  orch_fixture_shared_libs "$TMP_ROOT/lock-$kind-control"
+  mutate_file "$(dirname "$CTL_OT")/lib/lane-cap.sh" "$indent$message" "$indent{ $message; return 0; }"
+  assert_eq "$(OT="$CTL_OT" refusal "lock-$kind-control" "$kind" | grep -oE 'created=[a-z]+')" "created=yes" \
+    "control: a $kind refusal that returns 0 admits the launch to its worktree create"
+done
 
 echo "=== refusals ahead of any count ==="
 row options
