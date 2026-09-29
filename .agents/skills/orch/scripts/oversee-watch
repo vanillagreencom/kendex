@@ -8,10 +8,9 @@
 # pr-watch, merged items, team triage, outside contributions, lane
 # preparation, lane classification, accounts, report) runs forked on
 # --interval. A check that finds an event records it and the pass runs on to
-# the next check, so no kind starves
-# another: a reducer line on every pass or a lane parked on its limit banner
-# would otherwise be the only thing the watch ever said. The block carries the
-# latest pr-watch context once. Live tracker and pane reads remain
+# the next check, so no kind starves another: a reducer line on every pass or
+# a lane parked on its limit banner would otherwise be the only thing the watch
+# ever said. The block carries the latest pr-watch context once. Live tracker and pane reads remain
 # authoritative; persisted state holds only edge keys. Usage, event details,
 # configuration, and failure contracts live in usage(), which lib/oversee-watch-text.sh
 # holds beside the message catalog.
@@ -3531,10 +3530,10 @@ heartbeat() {
 
 # The long pass: the overseer's own pane, one lane snapshot, pr-watch, merged
 # items, triage, outside contributions, lane preparation, the lane checks and
-# the accounts, in a forked process. Mail passes go on while it runs, so it spools its stdout and
-# stderr and this process prints them whole once it ends, staying the one
-# writer of the event protocol. The
-# fork has its own copy of every global: the ones the loop below needs back
+# the accounts, in a forked process. Mail passes go on while it runs, so it
+# spools its stdout and stderr and this process prints them whole once it
+# ends, staying the one writer of the event protocol. The fork has its own
+# copy of every global: the ones the loop below needs back
 # are LONG_RETURNS, written to LONG_STATUS, and a global a long-pass check
 # sets for this process belongs there. The baselines it committed are what the
 # next long pass reads, never this process's copy of them.
