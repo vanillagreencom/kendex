@@ -133,11 +133,49 @@ fi
 
 # Adoption must consume the environment validator's status, even if the
 # validator still emits the same failure record and provisioning command.
-file_edit "$DIR" "$ADOPT" 1 '^"\$SCRIPT_DIR/validate-standard.sh" --environment-only$' \
+file_edit "$DIR" "$ADOPT" 1 '^  "\$SCRIPT_DIR/validate-standard.sh" --environment-only$' \
   's/ --environment-only$/ --environment-only || true/'
 chmod +x "$DIR/$ADOPT"
 run_refresh_command "$DIR" "$DIR/$ADOPT"
 if [ "$RC" -eq 0 ] && adoption_metadata; then ok 'control: ignored environment failure allows adoption'; else bad "control: environment guard (rc=$RC)" "$OUT"; fi
+
+# Adoption judges the environment and secrets the refresh template reads. The
+# consumer's settings name another environment, fully provisioned, and each
+# row leaves the template's short in one way; the failed check is its own.
+KENDEX_ENVIRONMENT='{"name":"kendex","deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
+OTHER_ENVIRONMENT='{"name":"other","deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
+printf '{"secrets":[{"name":"OTHER_ID"},{"name":"OTHER_KEY"}]}\n' >"$FIXTURES/environment-secrets-other.json"
+cp "$FIXTURES/environment-secrets-kendex.json" "$TMP/kendex-secrets"
+# name ~ environments listed ~ kendex's secrets ~ failed verdict line
+while IFS='~' read -r name environments secrets verdict; do
+  sandbox
+  settings "$DIR" REVIEW_GATE_STANDARD_ENVIRONMENT other
+  settings "$DIR" REVIEW_GATE_STANDARD_SECRETS 'OTHER_ID;OTHER_KEY'
+  commit "$DIR"
+  printf '{"environments":[%s]}\n' "$environments" >"$FIXTURES/environments.json"
+  printf '{"secrets":[%s]}\n' "$secrets" >"$FIXTURES/environment-secrets-kendex.json"
+  run_refresh_command "$DIR" "$DIR/$ADOPT"
+  if [ "$RC" -eq 1 ] && grep -qxF "$verdict" <<<"$OUT" && [ ! -e "$DIR/$REFRESH" ]; then
+    ok "$name refuses adoption whatever the settings name"
+  else
+    bad "$name (rc=$RC)" "$OUT"
+  fi
+done <<ROWS
+the template's environment absent~$OTHER_ENVIRONMENT~~FAIL check=standard-environment value=absent
+the template's environment short of a secret~$KENDEX_ENVIRONMENT,$OTHER_ENVIRONMENT~{"name":"FLEET_GH_APP_ID"}~FAIL check=standard-environment-secrets value=FLEET_GH_APP_ID
+ROWS
+
+# The control keeps the template's names in the script and stops passing them
+# to the validator, which then reads the consumer's settings and adopts.
+file_edit "$DIR" "$ADOPT" 1 '^REVIEW_GATE_STANDARD_ENVIRONMENT="\$template_environment" REVIEW_GATE_STANDARD_SECRETS=' \
+  's/^REVIEW_GATE_STANDARD_ENVIRONMENT=\(.*\) REVIEW_GATE_STANDARD_SECRETS=/TEMPLATE_ENVIRONMENT=\1 TEMPLATE_SECRETS=/'
+chmod +x "$DIR/$ADOPT"
+run_refresh_command "$DIR" "$DIR/$ADOPT"
+if [ "$RC" -eq 0 ] && adoption_metadata; then
+  ok 'control: the settings-named environment adopts once the template names stay unpassed'
+else bad "control: template names (rc=$RC)" "$OUT"; fi
+printf '{"environments":[%s]}\n' "$KENDEX_ENVIRONMENT" >"$FIXTURES/environments.json"
+cp "$TMP/kendex-secrets" "$FIXTURES/environment-secrets-kendex.json"
 
 sandbox
 printf '{"full_name":"vanillagreencom/kendex","default_branch":"main"}\n' >"$FIXTURES/repository.json"

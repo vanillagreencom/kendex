@@ -46,8 +46,9 @@ repository is the one `gh` resolves: GH_REPO when set, else the checkout's
 remote.
 
 --environment-only reports the environment policy and its secret names, and
-reads neither REVIEW_GATE_STANDARD_APP nor organization rulesets. Adoption
-uses this mode.
+reads neither REVIEW_GATE_STANDARD_APP nor organization rulesets. Refresh
+adoption uses this mode, with the refresh template's environment and secret
+names set as process values, which outrank the settings files.
 
 One verdict line per row, VALUE being what was observed:
   standard-ruleset-source           every effective default-branch rule comes

@@ -56,7 +56,7 @@ The organization rulesets carry this shape for every repository. Until they stan
 2. `REVIEW_GATE_STANDARD_ENVIRONMENT`: the environment that holds that app's secrets.
 3. `REVIEW_GATE_STANDARD_SECRETS`: those secrets' names, `;`-separated. Never their values.
 
-Each script exits 2 with one `standard-setting-missing` record naming every key it reads that is unset or empty.
+Each script exits 2 with one `standard-setting-missing` record naming every key it reads that is unset or empty. Refresh adoption reads none of these keys (§ Automatic consumer refresh).
 
 A repository reaches this shape in one order. The workflow change that reports `CI` on `pull_request` and `merge_group`, both under `on:`, and the ruleset change to exactly `CI` and `Review gate` apply back to back. Where the workflow change renames an existing aggregate, the ruleset changes first and the rename merges through the queue at once. After the first merge through the queue, `scripts/validate-standard.sh` runs: its `standard-ci-context` ok confirms the workflow change on both legs, and its `standard-required-contexts` and `standard-merge-queue` oks confirm the ruleset change.
 
@@ -83,14 +83,7 @@ Run it after every `kendex refresh` so template changes land with the refresh. T
 
 The shipped `templates/kendex-refresh.yml` checks for updates every 30 minutes. A manual run uses the same path. Each run updates `kendex/refresh`, keeps one open pull request, and enables auto-merge with the repository's app token. Required CI checks and the merge queue still control merging. An unchanged result opens no pull request.
 
-Provision the `kendex` environment before adoption. It must contain `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` and allow deployments from the default branch only. The organization owner uses `scripts/provision-environment.sh --org ORG` from their own machine. `scripts/adopt-refresh.sh` reads the existing environment through `validate-standard.sh --environment-only`, which checks the environment the consumer's settings name. The refresh template reads that environment and those secret names, so the consumer declares them in its committed `kendex.settings.toml` before adoption:
-
-```toml
-REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"
-REVIEW_GATE_STANDARD_SECRETS = "FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY"
-```
-
-An undeclared key stops adoption with the `standard-setting-missing` record naming it. A missing secret or branch policy stops adoption with the failed check and provisioning remedy.
+Provision the `kendex` environment before adoption. It must contain `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` and allow deployments from the default branch only. The organization owner uses `scripts/provision-environment.sh --org ORG` from their own machine. `scripts/adopt-refresh.sh` reads the existing environment through `validate-standard.sh --environment-only`. It checks the environment and secret names the refresh template it installs reads, whatever the consumer's `REVIEW_GATE_STANDARD_*` settings say, so refresh adoption needs none of those keys. A missing environment, secret or branch policy stops adoption with the failed check and provisioning remedy.
 
 After installing the skill and copying the writer verbatim, stage that writer so the validator can find it. Run from the consumer root:
 
@@ -166,7 +159,7 @@ Concrete per-consumer values are tracked on the org adoption issue, not here. Ev
 | `REVIEW_GATE_RENDER_PATHS` | Leave it unassigned under the default class policy. The lane applies only after a recorded opt-out from the class policy. After an opt-out, it names render trees that may merge on CI alone. Empty disables the lane. |
 | `REVIEW_GATE_MODE` | `enforce`. `off` disables an inactive or `current` class policy and attests rather than evaluates. A `bot` class still requires review. |
 | `REVIEW_GATE_WRITER` | `required`. `optional`, with `REVIEW_GATE_MODE = "off"`, only in a repository that runs the automatic refresh and posts no gate status. |
-| `REVIEW_GATE_STANDARD_APP`, `REVIEW_GATE_STANDARD_ENVIRONMENT`, `REVIEW_GATE_STANDARD_SECRETS` | The organization's app, app-secret environment and secret names (§ Repo-side wiring). No default: `validate-standard.sh`, `provision-environment.sh` and refresh adoption refuse until they are set. |
+| `REVIEW_GATE_STANDARD_APP`, `REVIEW_GATE_STANDARD_ENVIRONMENT`, `REVIEW_GATE_STANDARD_SECRETS` | The organization's app, app-secret environment and secret names (§ Repo-side wiring). No default. `validate-standard.sh` and `provision-environment.sh` refuse on each unset key. `validate-standard.sh --environment-only` reads the environment and secret keys only. Refresh adoption reads none of them. |
 
 ## Repair by verdict line
 

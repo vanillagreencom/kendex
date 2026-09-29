@@ -22,7 +22,15 @@ if [ "$repository" = vanillagreencom/kendex ]; then
   printf 'refresh-adoption=excluded repository=%s\n' "$repository"
   exit 0
 fi
-"$SCRIPT_DIR/validate-standard.sh" --environment-only
+# The environment check judges the names the refresh workflow installed here
+# reads, its job's environment and the secrets its steps name, whatever the
+# consumer's settings say: these process values outrank every settings file. An empty extraction reaches the validator empty, and
+# it refuses with standard-setting-missing.
+refresh_template="$templates/kendex-refresh.yml"
+template_environment="$(sed -n 's/^    environment: \(.*\)$/\1/p' "$refresh_template")" || exit 2
+template_secrets="$(sed -n 's/.*\${{ secrets\.\([A-Za-z0-9_]*\) }}.*/\1/p' "$refresh_template" | LC_ALL=C sort -u | paste -sd ';' -)" || exit 2
+REVIEW_GATE_STANDARD_ENVIRONMENT="$template_environment" REVIEW_GATE_STANDARD_SECRETS="$template_secrets" \
+  "$SCRIPT_DIR/validate-standard.sh" --environment-only
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 "$SCRIPT_DIR/validate-workflow.sh" --adopt --templates-dir "$templates" --adopted-path-file "$TMP/writer-path"
