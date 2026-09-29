@@ -108,7 +108,7 @@ External review runs automatically alongside the internal panel when available, 
 .agents/skills/second-opinion/scripts/second-opinion detect
 ```
 
-A failure, `none`, or empty output sets `EXTERNAL_REVIEW_REQUESTED=false`; anything else sets it `true`. The output is an availability signal only — the external review is launched without `--target`. On `none`, the error JSON's `candidates` carry a reason per target. Tell the user once — `External review skipped — [CANDIDATE_REASONS]. Fix: [FIX]` — then continue. `[FIX]` is each candidate's remedy for its reason, as [second-opinion SKILL.md § Error Handling](../../second-opinion/SKILL.md#error-handling) states.
+A failure, `none`, or empty output sets `EXTERNAL_REVIEW_REQUESTED=false`; anything else, `true`. The output only signals availability; the external review runs without `--target`. On `none`, the error JSON's `candidates` carry a reason per target. Tell the user once — `External review skipped — [CANDIDATE_REASONS]. Fix: [FIX]` — then continue. `[FIX]` is each reason's remedy in [second-opinion SKILL.md § Error Handling](../../second-opinion/SKILL.md#error-handling).
 
 ### 2.2 Launch And Delegate
 
