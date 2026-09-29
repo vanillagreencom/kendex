@@ -103,17 +103,17 @@ Merge route:
   auth ladder selected: in a lane sandbox, the lanes app's installation token.
 
   Every PR arms --auto and takes the queue while kendex decision D003
-  stands, whatever its class. The PR's queue-only class is the input the
-  admin route that replaces D003 will read; today only --admin reads it,
-  and refuses on both values, naming the class: admin-refused
-  class=queue-only or admin-retired class=not-queue-only. It is read from
+  stands, whatever its class. The PR's queue-only class is the input of
+  the admin route owner decision 1790636210 C1 assigns to KEN-2069; D003
+  stays Active until that change lands. Today only --admin reads it, and
+  refuses on both values, naming the class: admin-refused class=queue-only
+  or admin-retired class=not-queue-only. It is read from
   <skills>/harness-ci/scripts/change-class, else change-class on PATH, over
   the PR's base and head, fetched as the class policy's range is (see
   Review-thread gate). Its stderr `queue-only: queue_only=true|false` line
-  is the class; queue_only=true means the change touches a path of the
-  `queue` group in orch's references/narrow-change.conf. No classifier, an
-  unreadable range, a failed classifier and a missing line all read
-  queue-only.
+  is the class, and change-class --help states when it reads true. No
+  classifier, an unreadable range, a failed classifier and a missing line
+  all read queue-only.
 
 Retired settings:
   ORCH_ADMIN_MERGE_GH_CONFIG_DIR, ORCH_ADMIN_MERGE_CLASSES and

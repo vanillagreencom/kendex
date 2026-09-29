@@ -25,12 +25,15 @@
 # one `queue-only: queue_only=true|false cause=<name> [path=<p> glob=<g>]`
 # line on stderr, ahead of the `class:` line: true where a changed path
 # matches a `queue` line of orch's narrow-change.conf, which is the list of
-# paths a change must run in a merge group for, where the diff is empty
+# paths a change must run in a merge group for; where a changed path is one
+# git quoted (cause=path-quoted), where the diff is empty
 # (cause=no-changed-paths), and where the paths were not read
 # (cause=paths-unread) or the list was not (cause=queue-list-unreadable,
 # cause=queue-list-missing). It is judged on every changed path harness-only
-# read, before any refusal or rule below, and no class changes it. A wiring error
-# prints no such line, and a reader takes its absence as queue_only=true.
+# read, before any refusal or rule below, and no class changes it. A wiring
+# error prints no such line, and a reader takes its absence as
+# queue_only=true. This paragraph is the one statement of when the line
+# reads true; other docs point here.
 # The render proof runs `kendex verify --scope
 # project --json` in that private checkout, with `--base` set to the base-rev:
 # line harness-only printed and `--at-record` beside it, and reads its
@@ -343,9 +346,16 @@ list_globs() { # KEYWORD
 # The queue-only class, from the whole changed-path set before any rule below
 # trims it, so every verdict from here on carries it. A list this script
 # cannot read, or one from before the `queue` group, keeps the unreadable
-# default: queue_only=true.
+# default: queue_only=true. git C-quotes a path holding a double quote or a
+# newline, whatever core.quotePath says, and no anchored glob matches that
+# spelling, so a quoted path is queue-only before any glob is read.
 queue_only_of_paths() {
-  local globs
+  local globs path
+  while IFS= read -r path; do
+    case "$path" in
+      \"*) QUEUE_CAUSE="cause=path-quoted path=$path"; return ;;
+    esac
+  done <<<"$changed"
   if [ ! -r "$NARROW_CONF" ] || ! globs="$(list_globs queue)"; then
     QUEUE_CAUSE="cause=queue-list-unreadable"
     return

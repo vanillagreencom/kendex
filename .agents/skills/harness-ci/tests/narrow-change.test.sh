@@ -262,8 +262,9 @@ queue_of() { # STDERR
 }
 
 # One row per `queue` entry, each touching one path that entry alone names,
-# in the source or the render spelling; a queue path beside others; and the
-# control, a diff of paths no entry names. A row's path is the edit's own.
+# in the source or the render spelling; a queue path beside others; a path
+# git quotes, alone and beside a product file; and the control, a diff of
+# paths no entry names. A row's path is the edit's own.
 # label | expected queue-only line | edits
 queue_rows=0
 queue_paths=""
@@ -301,6 +302,8 @@ a review-bot instruction file is queue-only|queue_only=true cause=queue-path pat
 a queue path beside a product file is queue-only|queue_only=true cause=queue-path path=tools/ci-aggregate glob=tools/ci-aggregate|runtime/product.ts=2 tools/ci-aggregate=2
 a diff no entry names is not queue-only|queue_only=false cause=no-queue-path|docs/guide.md=2 runtime/product.ts=2 skills/orch/tests/added.test.sh=30
 a refusal raised after the paths were read carries their class|queue_only=false cause=no-queue-path|inventory-invalid runtime/product.ts=2
+a workflow path git quotes is queue-only|queue_only=true cause=path-quoted path=".github/workflows/we\"ird.yml"|.github/workflows/we"ird.yml=2
+a quoted workflow path beside a product file is queue-only|queue_only=true cause=path-quoted path=".github/workflows/we\"ird.yml"|runtime/product.ts=2 .github/workflows/we"ird.yml=2
 ROWS
 require_rows queue-only "$queue_rows"
 
@@ -375,8 +378,10 @@ assert_eq "an orch with no list reads queue-only" \
   "$(queue_of "$(run_row "$listless/harness-ci/scripts/change-class" docs/guide.md=2)")"
 
 # One must-fail control per queue rule. A classifier that never matches the
-# group answers not queue-only on a CI workflow; one whose default before the
-# paths are read is false answers not queue-only on an unread diff; one that
+# group answers not queue-only on a CI workflow; one that reads a quoted path
+# against the globs answers not queue-only on a quoted workflow; one whose
+# default before the paths are read is false answers not queue-only on an
+# unread diff; one that
 # reads an empty group as a list answers not queue-only on the queueless list;
 # one that reads a missing list as not queue-only answers so on the listless
 # orch; one that judges the class after harness-only's refusals, as it once
@@ -385,6 +390,10 @@ CONTROL_READ=queue_of
 control "a classifier that never matches the queue group lets a workflow through" \
   "queue_only=false cause=no-queue-path" .github/workflows/ci.yml=2 \
   queue-match change-class '  if path_matches any; then' '  if false; then'
+control "a classifier that matches a quoted path against the globs lets a quoted workflow through" \
+  "queue_only=false cause=no-queue-path" '.github/workflows/we"ird.yml=2' \
+  queue-quoted change-class \
+  '      \"*) QUEUE_CAUSE="cause=path-quoted path=$path"; return ;;' -
 unread_mutant="$(mutant queue-default change-class 'QUEUE_ONLY=true' 'QUEUE_ONLY=false')"
 unread_err="$("$unread_mutant" --repo "$repo" --event pull_request \
   --base 0123456789abcdef0123456789abcdef01234567 --head HEAD 2>&1 >/dev/null)" || true
