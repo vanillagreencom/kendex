@@ -107,7 +107,11 @@ NL='
 
 # Which harness this install serves comes from where it is installed, the one
 # place that records it; which harness made the call is the payload's to say,
-# read below, since Copilot also runs another harness's copy. `hook_target` in `crates/core/src/engine/targets.rs`
+# read below, since a Copilot call can reach another harness's copy through a
+# registration made in `.claude/settings.json` by hand or one kendex wrote
+# before the Copilot skip that no refresh has rewritten; kendex's own current
+# registration exits 0 before the script. `hook_target` in
+# `crates/core/src/engine/targets.rs`
 # writes the claude copy under `.claude/hooks`, the codex copy under
 # `.codex/hooks`, Pi's under the `kendex/hooks` segment of `.pi` or of its
 # user root `.pi/agent`, and the copilot copy under `.github/hooks` at project
@@ -521,8 +525,10 @@ TOOL=${READ%%"$TAB"*}
 READ=${READ#*"$TAB"}
 PAYLOAD_WINDOW=${READ%%"$TAB"*}
 CALL_HARNESS=${READ#*"$TAB"}
-# Copilot also runs the hooks `.claude/settings.json` registers, so a Copilot
-# call can reach an install that is not Copilot's. That install passes it
+# A Copilot call reaches an install that is not Copilot's only through a
+# registration made in `.claude/settings.json` by hand or one kendex wrote
+# before the Copilot skip that no refresh has rewritten; kendex's own current
+# registration exits 0 before the script. That install passes it
 # silently, exit 0 with nothing written and nothing acknowledged: its answers
 # take a shape Copilot does not read and its caller rules are not Copilot's,
 # so the Copilot install is the one reader of the mailbox for a Copilot call.

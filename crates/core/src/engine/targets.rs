@@ -199,11 +199,11 @@ pub(crate) const CLAUDE_OUTSIDE_COPILOT: &str = "[ -z \"${COPILOT_PROJECT_DIR-}\
 
 /// `command` with an opening [`CLAUDE_OUTSIDE_COPILOT`] taken off, and any
 /// other command as it is. Claude Code keeps an entry written before the
-/// prefix until a refresh rewrites it, and that entry runs the same script:
-/// a reader comparing a registry entry with what this build renders compares
-/// through this (`configedit::nested::hook_key`,
-/// `scan::hooks::authored_summary`). A reader matching the lock's recorded
-/// command compares exactly, since one apply writes the lock and the entry.
+/// prefix until a refresh rewrites it, and that entry runs the same script.
+/// `configedit::nested::hook_key` keys both the upsert and the removal of a
+/// nested Claude Code entry through this, a removal by the lock's recorded
+/// command included, and `scan::hooks::authored_summary` reads a pre-skip
+/// entry's words through it.
 pub(crate) fn without_copilot_skip(command: &str) -> &str {
     command
         .strip_prefix(CLAUDE_OUTSIDE_COPILOT)

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # lane-mail-check on Copilot: the lane-mail hooks installed where kendex
 # renders them for Copilot, run with the payloads Copilot's hooks reference
-# gives, and a Copilot call reaching a Claude copy registered by hand in
-# `.claude/settings.json`, which Copilot also runs. The shared world is
+# gives, and a Copilot call reaching a Claude copy registered in
+# `.claude/settings.json` by hand or by kendex before the Copilot skip, which
+# Copilot also runs. The shared world is
 # lib/lane-mail-world.sh; lane-mail-check.test.sh holds every other harness's
 # rows. HOOK_UNDER_TEST overrides the script the must-fail controls at the end
 # run against.
@@ -452,9 +453,11 @@ assert_eq "RC=$RC keyed=$(cop_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keye
 : > "$COP_TRANSCRIPT"
 
 # --- a Copilot call reaching the Claude copy ------------------------------
-# Copilot runs a Claude copy registered by hand in `.claude/settings.json`,
-# kendex's own registration exiting before the script (docs/adapters/claude.md
-# § Cross-reads), under its PascalCase name, and hands it the snake_case format
+# Copilot runs a Claude copy registered in `.claude/settings.json` by hand or
+# by kendex before the Copilot skip, where no refresh has rewritten it,
+# kendex's own current registration exiting before the script
+# (docs/adapters/claude.md § Cross-reads), under its PascalCase name, and
+# hands it the snake_case format
 # its reference gives: `hook_event_name`, an ISO 8601 `timestamp` and the
 # Claude tool name. Each row installs both copies, the Claude one under
 # `.claude/hooks` and the Copilot one under `.github/hooks`, and runs the
