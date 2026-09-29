@@ -76,9 +76,9 @@ name: Skill Tests
 # fails inside the budget instead of running to the job ceiling, and their
 # compile steps carry their own for a cold cache; the shell shards answer to
 # the job `timeout-minutes` above their steps, 30 minutes on macOS, 30 on the
-# Linux `rest` leg that builds kendex-cli from the checkout first, and 15 on
-# every other Linux leg. The per-shard figures behind each budget are in the
-# comment above it.
+# Linux `rest` leg that builds kendex-cli from the checkout first and on the
+# Linux `guards-tools` leg, and 15 on every other Linux leg. The per-shard
+# figures behind each budget are in the comment above it.
 # Every pull request pays its selected Linux shards on the pull request, and
 # the merge queue stands them down where the proof above holds, so the
 # slowest of them is charged once per merge there. It is charged twice where
@@ -447,7 +447,10 @@ jobs:
     # and after each rustc release — pays the whole build. Its duration on a
     # runner is unmeasured, so that leg takes the macOS ceiling until a
     # figure is recorded here.
-    timeout-minutes: ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest') && 30 || 15 }}
+    # The `guards-tools` shard ran 13m04s to 15m15s on Linux and 24m05s on
+    # macOS on 2026-09-29, and the 15-minute ceiling cancelled its Linux leg
+    # in merge groups, so that leg takes the 30-minute ceiling as well.
+    timeout-minutes: ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'guards-tools') && 30 || 15 }}
     # harness-ci's change-class suite skips its real-kendex rows where no
     # kendex is on PATH, and this turns that skip into a failure. It is set
     # for the whole job rather than beside the install step below, so the
