@@ -73,7 +73,8 @@ personal overrides):
                               installed, and after a failed GitHub read,
                               which warns first
                               (worktree-default-branch-unreadable). Where git
-                              holds no record the command refuses
+                              holds no record a command that reads the
+                              branch refuses
                               (worktree-default-branch-unknown); set this
                               to name the branch.
   WORKTREE_SYMLINKS           Space-separated paths symlinked from the main
@@ -778,7 +779,9 @@ because refusing there would disable every reuse on a machine with no gh.
 For the same reason a default branch GitHub cannot name falls back to git's
 record of origin's HEAD with a warning, worktree-default-branch-unreadable;
 create refuses only where git holds no record either,
-worktree-default-branch-unknown.
+worktree-default-branch-unknown, and only in a mode that reads the branch:
+a plain create, --reuse or --restack of a tree on a branch, --transfer, or
+a positional branch name. --from, --pr and --base work without it.
 EOF
 }
 

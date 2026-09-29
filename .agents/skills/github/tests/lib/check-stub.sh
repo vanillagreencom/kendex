@@ -202,7 +202,8 @@ case "${1:-}" in
                     --argjson auto "${STUB_POST_AUTO_JSON:-null}" \
                     --argjson in_queue "${STUB_POST_IN_QUEUE:-false}" \
                     --argjson queue_entry "${STUB_POST_QUEUE_ENTRY_JSON:-null}" \
-                    '{data:{repository:{pullRequest:{state:$state,headRefOid:$head,headRefName:$branch,mergeCommit:(if $commit == "" then null else {oid:$commit} end),autoMergeRequest:$auto,isInMergeQueue:$in_queue,mergeQueueEntry:$queue_entry}}}}'
+                    --argjson cross "${STUB_CROSS_REPOSITORY:-false}" \
+                    '{data:{repository:{pullRequest:{state:$state,headRefOid:$head,headRefName:$branch,isCrossRepository:$cross,mergeCommit:(if $commit == "" then null else {oid:$commit} end),autoMergeRequest:$auto,isInMergeQueue:$in_queue,mergeQueueEntry:$queue_entry}}}}'
                 exit 0
             fi
             # The thread mutations post-reply.sh and resolve-thread.sh send.
@@ -350,7 +351,7 @@ case "${1:-}" in
                         '{reviewDecision:$d,latestReviews:$l}'
                     exit 0
                 fi
-                if [[ "$*" == *"--json state,headRefOid,headRefName,mergeCommit,autoMergeRequest"* ]]; then
+                if [[ "$*" == *"--json state,headRefOid,headRefName,isCrossRepository,mergeCommit,autoMergeRequest"* ]]; then
                     if [[ "${STUB_POST_VIEW_FAIL:-false}" == "true" ]]; then
                         echo "post-merge view unavailable" >&2
                         exit 1
@@ -361,7 +362,8 @@ case "${1:-}" in
                         --arg branch "${STUB_HEAD_BRANCH:-issue-123}" \
                         --arg commit "${STUB_MERGE_COMMIT:-}" \
                         --argjson auto "${STUB_POST_AUTO_JSON:-null}" \
-                        '{state:$state,headRefOid:$head,headRefName:$branch,mergeCommit:(if $commit == "" then null else {oid:$commit} end),autoMergeRequest:$auto}'
+                        --argjson cross "${STUB_CROSS_REPOSITORY:-false}" \
+                        '{state:$state,headRefOid:$head,headRefName:$branch,isCrossRepository:$cross,mergeCommit:(if $commit == "" then null else {oid:$commit} end),autoMergeRequest:$auto}'
                     exit 0
                 fi
                 ;;

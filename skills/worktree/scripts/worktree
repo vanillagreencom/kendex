@@ -1008,10 +1008,11 @@ TREES_DIR="$(resolve_worktree_base_dir)"
 # GitHub, read through the github skill beside this one. With no GitHub
 # repository, no github skill, or a failed GitHub read (a warning), git's
 # record of origin's HEAD answers; git refreshes it locally, never from the
-# remote. Only the commands that use the branch resolve it, so list, path
-# and the link repairs never wait on GitHub.
+# remote. Only the commands and create modes that use the branch resolve it,
+# so list, path and the link repairs never wait on GitHub. `optional` returns
+# 1 without the refusal, for a caller that works without the branch.
 DEFAULT_BRANCH=""
-resolve_default_branch() {
+resolve_default_branch() { # [optional]
   local answer="" rc=0 recorded=""
   [[ -z "$DEFAULT_BRANCH" ]] || return 0
   if declare -F kendex_github_default_branch >/dev/null 2>&1; then
@@ -1032,6 +1033,7 @@ resolve_default_branch() {
   fi
   recorded="$(git -C "$PROJECT_ROOT" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" || recorded=""
   if [[ "$recorded" != origin/?* ]]; then
+    [[ "${1:-}" == optional ]] && return 1
     worktree_message default-branch-unknown "$PROJECT_ROOT" "Error: GitHub named no default branch (no GitHub repository, no github skill, or a failed read) and git holds no record of origin's HEAD; set WORKTREE_DEFAULT_BRANCH, or run: git -C \"$PROJECT_ROOT\" remote set-head origin --auto" >&2
     return 1
   fi
@@ -2555,10 +2557,10 @@ case "${1:-}" in
       worktree_message transfer-mode-conflict "$TRANSFER" "Error: --transfer cannot be combined with a branch positional or another create mode." >&2
       exit 1
     fi
-    resolve_default_branch || exit 1
     # A positional branch name equal to the default branch can never become
     # issue work: `git worktree add -b` would always refuse the existing
     # branch. Fail loudly instead of dying inside the suppressed add.
+    [[ -z "$BRANCH" ]] || resolve_default_branch || exit 1
     if [[ -n "$BRANCH" && "$BRANCH" == "$DEFAULT_BRANCH" ]]; then
       worktree_message branch-default "$BRANCH" "Error: '$BRANCH' is the default branch and cannot be claimed as an issue work branch." >&2
       echo "To base new work on it, run: $0 create $ISSUE --base $DEFAULT_BRANCH" >&2
@@ -2567,8 +2569,10 @@ case "${1:-}" in
     # --base names a fork point when it is the default branch. "Checkout an
     # existing branch" semantics can never apply to it — it is always checked
     # out in the main checkout — and it is not issue-ownership evidence, so
-    # base a fresh issue branch on it exactly like --from.
-    if [[ -z "$FROM" && -z "$PR" ]]; then
+    # base a fresh issue branch on it exactly like --from. With no default
+    # branch known, --base inspects the named branch, whose main-checkout
+    # guard refuses the default branch itself.
+    if [[ -z "$FROM" && -z "$PR" && -n "$BASE" ]] && resolve_default_branch optional; then
       case "$BASE" in
         "$DEFAULT_BRANCH" | "origin/$DEFAULT_BRANCH")
           FROM="$DEFAULT_BRANCH"
@@ -2615,6 +2619,7 @@ case "${1:-}" in
       fetch_origin || exit 1
       CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
       if [[ -n "$CURRENT_BRANCH" ]]; then
+        resolve_default_branch || exit 1
         REUSE_REMOTE="${BOT_REMOTE_NAME:-origin}"
         if ! git -C "$WT_PATH" remote get-url "$REUSE_REMOTE" >/dev/null 2>&1; then
           REUSE_REMOTE="origin"
@@ -2870,6 +2875,7 @@ case "${1:-}" in
         worktree_message transfer-main-required "$CALLER_ROOT" "Error: --transfer must run from the repository's main checkout." >&2
         exit 1
       fi
+      resolve_default_branch || exit 1
       if [[ "$TRANSFER" == "$DEFAULT_BRANCH" ]]; then
         worktree_message transfer-default "$TRANSFER" "Error: the default branch cannot be transferred out of the main checkout." >&2
         exit 1
@@ -3041,6 +3047,7 @@ case "${1:-}" in
           git -C "$PROJECT_ROOT" worktree add "$WT_PATH" "$BASE" >/dev/null 2>&1
       fi
     else
+      resolve_default_branch || exit 1
       build_candidate_branches "$ISSUE" "$BRANCH"
       discover_candidate_ownership || exit 1
       scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
@@ -3104,7 +3111,6 @@ case "${1:-}" in
       worktree_message remove-target-required "target" "Error: remove requires an issue ID or path" >&2
       exit 1
     fi
-    resolve_default_branch || exit 1
     # Accept either issue ID or direct path. An issue-addressed removal also
     # carries the issue ID as an owner identity for the lease release;
     # a path-addressed one has only the session env ladder.
@@ -3148,6 +3154,9 @@ case "${1:-}" in
         "ref: refs/heads/"*) BRANCH="${REMOVE_HEAD#ref: refs/heads/}" ;;
       esac
     fi
+    # The branch's deletion proof reads the default branch; resolve it before
+    # anything is released or removed. A detached worktree needs none.
+    [[ -z "$BRANCH" ]] || resolve_default_branch || exit 1
     if [[ -d "$WT_PATH" ]]; then
       # Only a worktree registered to this repository (compared canonically,
       # so a symlinked spelling still matches its physical form) may

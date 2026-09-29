@@ -33,7 +33,8 @@ Options:
                    the three accepts all of them, squash first. See Merge
                    method below.
   --delete-branch  Delete the head branch after an immediate merge, where
-                   the repository's delete_branch_on_merge is off
+                   the repository's delete_branch_on_merge is off and the
+                   head is not a fork's
   --keep-branch    Keep the head branch (the default)
   --check          Run checks only, don't merge. JSON on stdout; a one-word
                    verdict (mergeable|blocked|merged|closed) plus the run
@@ -138,9 +139,11 @@ Merge method:
 Branch deletion:
   --delete-branch deletes the head branch after an immediate MERGED only
   where the repository's delete_branch_on_merge is off; where it is on,
-  GitHub deletes the branch. A delete_branch_on_merge read that fails keeps
-  the branch and says so on stderr, exit still 0:
-    pr-merge: branch-kept branch=<name>
+  GitHub deletes the branch. A fork's head branch lives in the fork and is
+  never deleted. A kept branch is said on stderr, exit still 0:
+    pr-merge: branch-kept branch=<name> cause=<cross-repository|cross-repository-unreadable|setting-unreadable>
+  cross-repository-unreadable: GitHub did not say whether the head is a
+  fork's; setting-unreadable: the delete_branch_on_merge read failed.
   A merge the queue makes later is GitHub's alone.
 
 Retired settings:
@@ -1088,7 +1091,7 @@ post_merge_snapshot() {
     # so a payload that fails this validation falls through to the pr-view
     # fallback exactly as a failed call does.
     if snapshot=$(with_token "$auth_token" gh api graphql \
-        -f query='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { state headRefOid headRefName mergeCommit { oid } autoMergeRequest { enabledAt } isInMergeQueue mergeQueueEntry { state } } } }' \
+        -f query='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { state headRefOid headRefName isCrossRepository mergeCommit { oid } autoMergeRequest { enabledAt } isInMergeQueue mergeQueueEntry { state } } } }' \
         -F owner='{owner}' -F repo='{repo}' -F number="$pr_num" 2>/dev/null) && \
         jq -e '
             (((.errors // []) | length) == 0)
@@ -1104,6 +1107,7 @@ post_merge_snapshot() {
                 state: .state,
                 head: (.headRefOid // ""),
                 head_branch: (.headRefName // ""),
+                cross_repository: (if (.isCrossRepository | type) == "boolean" then .isCrossRepository else null end),
                 merge_commit: (.mergeCommit.oid // ""),
                 auto_merge: (.autoMergeRequest != null),
                 in_merge_queue: .isInMergeQueue,
@@ -1116,13 +1120,14 @@ post_merge_snapshot() {
     fi
 
     if snapshot=$(with_token "$auth_token" gh pr view "$pr_num" \
-        --json state,headRefOid,headRefName,mergeCommit,autoMergeRequest 2>/dev/null) && \
+        --json state,headRefOid,headRefName,isCrossRepository,mergeCommit,autoMergeRequest 2>/dev/null) && \
         jq -e 'type == "object"' >/dev/null 2>&1 <<<"$snapshot"; then
         jq -c '
             {
                 state: (.state // "UNKNOWN"),
                 head: (.headRefOid // ""),
                 head_branch: (.headRefName // ""),
+                cross_repository: (if (.isCrossRepository | type) == "boolean" then .isCrossRepository else null end),
                 merge_commit: (.mergeCommit.oid // ""),
                 auto_merge: (.autoMergeRequest != null),
                 in_merge_queue: false,
@@ -1134,7 +1139,7 @@ post_merge_snapshot() {
         return 0
     fi
 
-    jq -cn '{state:"UNKNOWN",head:"",head_branch:"",merge_commit:"",auto_merge:false,in_merge_queue:false,merge_queue_entry:false,queue_state:"",source:"unavailable"}'
+    jq -cn '{state:"UNKNOWN",head:"",head_branch:"",cross_repository:null,merge_commit:"",auto_merge:false,in_merge_queue:false,merge_queue_entry:false,queue_state:"",source:"unavailable"}'
 }
 
 # The merge settings whose routes are retired. A set key is refused rather than
@@ -1484,12 +1489,21 @@ main() {
         echo "MERGED PR #$pr_num" >&2
         # Delete remote branch via API (avoids gh's local git checkout, which
         # fails inside worktrees), and only where GitHub does not delete it
-        # itself. Best-effort: the branch may already be gone.
+        # itself. The DELETE names this repository, so a fork's head, which
+        # lives in the fork, is never deleted: the same name here is another
+        # branch. Best-effort: the branch may already be gone.
         if [ "$delete_branch" = true ]; then
-            local branch deletes
+            local branch cross deletes
             branch=$(jq -r '.head_branch' <<<"$post_snapshot")
-            if ! deletes=$(with_token "$token" kendex_github_deletes_merged_branch '{owner}/{repo}'); then
-                echo "pr-merge: branch-kept branch=$branch" >&2
+            if ! cross=$(jq -r '.cross_repository' <<<"$post_snapshot") || [ "$cross" != false ]; then
+                case "$cross" in
+                    true) echo "pr-merge: branch-kept branch=$branch cause=cross-repository" >&2
+                          echo "  The head branch lives in a fork, not in this repository, so it was not deleted." >&2 ;;
+                    *) echo "pr-merge: branch-kept branch=$branch cause=cross-repository-unreadable" >&2
+                       echo "  GitHub did not say which repository holds the head branch, so it was not deleted." >&2 ;;
+                esac
+            elif ! deletes=$(with_token "$token" kendex_github_deletes_merged_branch '{owner}/{repo}'); then
+                echo "pr-merge: branch-kept branch=$branch cause=setting-unreadable" >&2
                 echo "  The repository's delete_branch_on_merge could not be read, so the head branch was not deleted." >&2
             elif [ "$deletes" = false ] && [ -n "$branch" ]; then
                 with_token "$token" gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/$branch" 2>/dev/null || true

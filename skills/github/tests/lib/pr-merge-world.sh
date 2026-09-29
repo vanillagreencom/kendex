@@ -39,6 +39,7 @@
 #     `-` none; repo:pushless the repository answer with no allow_* flags
 #     and no delete_branch_on_merge, as for a token without push access;
 #     deletes-on-merge:<true|false|null> its delete_branch_on_merge;
+#     cross-repository the PR's head is a fork's;
 #     queue:<METHOD> a merge_queue rule with that merge_method on main, or on
 #     the branch queue-on:<branch> names; rule-methods:<m+m> a pull_request
 #     rule allowing those methods
@@ -277,6 +278,7 @@ word() {
     methods:*) W_ENV+=("STUB_MERGE_METHODS=$(printf '%s' "$v" | tr '+' ' ')") ;;
     repo:pushless) W_ENV+=("STUB_REPO_PUSHLESS=true") ;;
     deletes-on-merge:*) W_ENV+=("STUB_DELETE_BRANCH_ON_MERGE=$v") ;;
+    cross-repository) W_ENV+=("STUB_CROSS_REPOSITORY=true") ;;
     queue:*) W_ENV+=("STUB_QUEUE_METHOD=$v") ;;
     queue-on:*) W_ENV+=("STUB_QUEUE_BRANCH=$v") ;;
     rule-methods:*) W_ENV+=("STUB_RULE_METHODS=$(printf '%s' "$v" | tr '+' ' ')") ;;

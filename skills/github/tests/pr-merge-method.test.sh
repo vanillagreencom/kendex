@@ -5,7 +5,7 @@
 # caller accepts, the one-line refusal where none is allowed or the read
 # fails, --dry-run naming the method and --check reading none, and the head
 # branch deleted only on --delete-branch where the repository's
-# delete_branch_on_merge is off. The row format and the world words are
+# delete_branch_on_merge is off and the head is not a fork's. The row format and the world words are
 # lib/pr-merge-world.sh's.
 set -euo pipefail
 
@@ -41,7 +41,9 @@ run_table "the head branch after a merge" "\
 --delete-branch deletes it where the repository does not|$DONE deletes-on-merge:false|with:--delete-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue,delete:issue-123 auth=<unset>
 where delete_branch_on_merge is on GitHub deletes it, and pr-merge does not|$DONE deletes-on-merge:true|with:--delete-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 no --delete-branch keeps it|$DONE deletes-on-merge:false|with:--squash|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
-a delete_branch_on_merge read that fails keeps it and says so|$DONE deletes-on-merge:null|with:--delete-branch|0|-|$MERGED;pr-merge: branch-kept branch=issue-123;The repository's delete_branch_on_merge could not be read, so the head branch was not deleted.|calls=$PRE,merge:squash,graphql:queue auth=<unset>
+a delete_branch_on_merge read that fails keeps it and says so|$DONE deletes-on-merge:null|with:--delete-branch|0|-|$MERGED;pr-merge: branch-kept branch=issue-123 cause=setting-unreadable;The repository's delete_branch_on_merge could not be read, so the head branch was not deleted.|calls=$PRE,merge:squash,graphql:queue auth=<unset>
+a fork's head is kept, and the same name in this repository is not deleted|$DONE deletes-on-merge:false cross-repository|with:--delete-branch|0|-|$MERGED;pr-merge: branch-kept branch=issue-123 cause=cross-repository;The head branch lives in a fork, not in this repository, so it was not deleted.|calls=$PRE,merge:squash,graphql:queue auth=<unset>
+the fork answer holds when the post-merge read falls back to gh pr view|$DONE deletes-on-merge:false cross-repository graphql:fail|with:--delete-branch|0|-|$MERGED;pr-merge: branch-kept branch=issue-123 cause=cross-repository;The head branch lives in a fork, not in this repository, so it was not deleted.|calls=$PRE,merge:squash,graphql:queue,view:post auth=<unset>
 "
 
 # The must-fail controls, each a copy of the scripts tree with one whole line
@@ -52,13 +54,15 @@ a delete_branch_on_merge read that fails keeps it and says so|$DONE deletes-on-m
 # with no repository settings read; the pull_request narrowing
 # cut; the withheld settings read as a set that allows nothing; and the
 # delete_branch_on_merge check cut, so pr-merge deletes a branch GitHub
-# deletes itself.
+# deletes itself; and the fork check cut, so a fork's head name is deleted
+# in this repository.
 mutant_copy fixed '    local -a cmd=(pr merge "$pr_num" "--$method" --match-head-commit "$expected_head")' '    local -a cmd=(pr merge "$pr_num" --squash --match-head-commit "$expected_head")' >/dev/null || exit 2
 mutant_copy deaf '    answer=$(with_token "$token" kendex_github_merge_method '"'"'{owner}/{repo}'"'"' "$base" "$@") || rc=$?' '    answer=$(with_token "$token" kendex_github_merge_method '"'"'{owner}/{repo}'"'"' "$base" merge squash rebase) || rc=$?' >/dev/null || exit 2
 mutant_copy queueless '      | if ($queue | length) > 0 then' '      | if false then' lib/repo-settings.sh >/dev/null || exit 2
 mutant_copy unnarrowed '          [$rules[] | select(.type == "pull_request") | (.parameters.allowed_merge_methods // $methods)] as $narrow' '          [] as $narrow' lib/repo-settings.sh >/dev/null || exit 2
 mutant_copy withheld '        elif ($s | type) != "array" or ($s | length) != 3 or any($s[]; type != "boolean") then "!settings"' '        elif false then "!settings"' lib/repo-settings.sh >/dev/null || exit 2
 mutant_copy deleter '            elif [ "$deletes" = false ] && [ -n "$branch" ]; then' '            elif [ -n "$branch" ]; then' >/dev/null || exit 2
+mutant_copy forker '            if ! cross=$(jq -r '"'"'.cross_repository'"'"' <<<"$post_snapshot") || [ "$cross" != false ]; then' '            if false; then' >/dev/null || exit 2
 
 run_table "the must-fail controls" "\
 must-fail: with the method pinned, a merge-only repository is squashed|$DONE methods:merge|mutant:fixed:--keep-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
@@ -67,6 +71,7 @@ must-fail: with the queue's precedence cut, the queue's base has no method|check
 must-fail: with the narrowing cut, the rule's excluded squash is taken|$DONE methods:squash+merge+rebase rule-methods:rebase+merge|mutant:unnarrowed:--keep-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 must-fail: with withheld settings read, the refusal names an empty set|$DONE repo:pushless|mutant:withheld:--keep-branch|1|-|pr-merge: merge-method allowed=none accepted=squash,merge,rebase|calls=$CHECK auth=<unset>
 must-fail: with the repository's setting not read, pr-merge deletes what GitHub deletes|$DONE deletes-on-merge:true|mutant:deleter:--delete-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue,delete:issue-123 auth=<unset>
+must-fail: with the fork check cut, a fork's head name is deleted in this repository|$DONE deletes-on-merge:false cross-repository|mutant:forker:--delete-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue,delete:issue-123 auth=<unset>
 "
 
 echo
