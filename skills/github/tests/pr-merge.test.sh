@@ -72,47 +72,53 @@ a failed CLI is still a success when the exact-head snapshot is MERGED|checks:ci
 "
 
 # The --auto arm's gate. GitHub merges an armed PR the moment its required
-# checks pass unless a ruleset requires an approval, and on that approval past
-# open threads unless one requires thread resolution, so the arm is made only
-# where the base's pull_request rules, one or several, require at least 1
-# approval and thread resolution. --auto defers every readiness blocker to
-# that gate. Its must-fail controls, each a copy of the scripts tree with one
-# whole line of pr-merge.sh replaced, the rest kept: the approval refusal cut,
-# so a base requiring 0 approvals arms; the count's number check answering a
-# gate, so a missing count arms; the thread refusal cut, so a base requiring
-# no thread resolution arms; the flag's boolean check answering a gate, so a
-# missing flag arms; and --auto's deferral cut, so a PR with a pending
-# required check is refused rather than armed.
-mutant_copy no-refusal '        echo required_approval' '        : required_approval' >/dev/null
-mutant_copy no-number-check '        case "$count" in *[!0-9]*) echo unverified; return 0 ;; esac' '        case "$count" in *[!0-9]*) count=1 ;; esac' >/dev/null
-mutant_copy no-thread-refusal '        echo required_thread_resolution' '        : required_thread_resolution' >/dev/null
-mutant_copy no-boolean-check '            *) echo unverified; return 0 ;;' '            *) threads=true ;;' >/dev/null
+# checks pass unless a ruleset requires an approval, on that approval past
+# open threads unless one requires thread resolution, and on an approval of
+# an earlier head unless one dismisses stale approvals on push, so the arm is
+# made only where the base's pull_request rules, one or several, meet every
+# row of merge_gate_gap's rule shape. --auto defers every readiness blocker
+# to that gate. Its must-fail controls, each a copy of the scripts tree with
+# one whole line of pr-merge.sh replaced, the rest kept: each shape row cut,
+# so a base missing that row's setting arms; the value-kind check answering
+# true, so a missing count or flag is read as a setting rather than
+# unverified; and --auto's deferral cut, so a PR with a pending required
+# check is refused rather than armed.
+mutant_copy no-refusal "        'required_approval required_approving_review_count count'" '' >/dev/null
+mutant_copy no-thread-refusal "        'required_thread_resolution required_review_thread_resolution flag'" '' >/dev/null
+mutant_copy no-stale-refusal "        'dismiss_stale_reviews dismiss_stale_reviews_on_push flag'" '' >/dev/null
+mutant_copy no-kind-check '        def fits($kind): if $kind == "count" then type == "number" and . >= 0 and . == floor else type == "boolean" end;' '        def fits($kind): true;' >/dev/null
 mutant_copy no-deferral '    if [ "$can_merge" != "true" ] && [ "$auto" != true ]; then' '    if [ "$can_merge" != "true" ]; then' >/dev/null
 
 ARMED="{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>"
 NO_APPROVAL="arm: no-merge-gate=required_approval repo=owner/repo;{approval-remedy}|calls=$CHECK auth=<unset>"
 NO_THREADS="arm: no-merge-gate=required_thread_resolution repo=owner/repo;{thread-remedy}|calls=$CHECK auth=<unset>"
+NO_STALE="arm: no-merge-gate=dismiss_stale_reviews repo=owner/repo;{stale-remedy}|calls=$CHECK auth=<unset>"
 UNVERIFIED="arm: no-merge-gate=unverified repo=owner/repo;{unverified-remedy}|calls=$CHECK auth=<unset>"
 run_table "the approval gate" "\
-a base requiring 1 approval and thread resolution arms|checks:ci-required post-auto approvals:1/true|auto|75|-|$ARMED
-a base requiring 2 approvals and thread resolution arms|checks:ci-required post-auto approvals:2/true|auto|75|-|$ARMED
-a base requiring 0 approvals refuses, naming the repository: nothing mutated|checks:ci-required post-auto approvals:0/true|auto|1|-|$NO_APPROVAL
-must-fail: with the approval refusal cut, the base requiring 0 approvals arms|checks:ci-required post-auto approvals:0/true|auto-mutant:no-refusal|75|-|$ARMED
+a base requiring 1 approval, thread resolution and stale dismissal arms|checks:ci-required post-auto approvals:1/true/true|auto|75|-|$ARMED
+a base requiring 2 approvals, thread resolution and stale dismissal arms|checks:ci-required post-auto approvals:2/true/true|auto|75|-|$ARMED
+a base requiring 0 approvals refuses, naming the repository: nothing mutated|checks:ci-required post-auto approvals:0/true/true|auto|1|-|$NO_APPROVAL
+must-fail: with the approval row cut, the base requiring 0 approvals arms|checks:ci-required post-auto approvals:0/true/true|auto-mutant:no-refusal|75|-|$ARMED
 a base with no pull_request rule refuses the same way|checks:ci-required post-auto repo:no-rule|auto|1|-|$NO_APPROVAL
 a classic required check is no approval: it refuses|checks:ci-required post-auto repo:classic|auto|1|-|$NO_APPROVAL
-two rules each requiring 0 approvals refuse, whatever their thread flags|checks:ci-required post-auto approvals:0/true,0/false|auto|1|-|$NO_APPROVAL
-a base requiring an approval but not thread resolution refuses: nothing mutated|checks:ci-required post-auto approvals:1/false|auto|1|-|$NO_THREADS
-must-fail: with the thread refusal cut, the base requiring no thread resolution arms|checks:ci-required post-auto approvals:1/false|auto-mutant:no-thread-refusal|75|-|$ARMED
-the approval from one rule and thread resolution from another arm together|checks:ci-required post-auto approvals:1/false,0/true|auto|75|-|$ARMED
-a pull_request rule whose count is missing is unverified, never a gate|checks:ci-required post-auto approvals:null/true|auto|1|-|$UNVERIFIED
-must-fail: with the number check cut, the missing count arms|checks:ci-required post-auto approvals:null/true|auto-mutant:no-number-check|75|-|$ARMED
-a pull_request rule whose thread flag is missing is unverified, never a gate|checks:ci-required post-auto approvals:1/null|auto|1|-|$UNVERIFIED
-must-fail: with the boolean check cut, the missing flag arms|checks:ci-required post-auto approvals:1/null|auto-mutant:no-boolean-check|75|-|$ARMED
+two rules each requiring 0 approvals refuse, whatever their flags|checks:ci-required post-auto approvals:0/true/true,0/false/false|auto|1|-|$NO_APPROVAL
+a base requiring an approval but not thread resolution refuses: nothing mutated|checks:ci-required post-auto approvals:1/false/true|auto|1|-|$NO_THREADS
+must-fail: with the thread row cut, the base requiring no thread resolution arms|checks:ci-required post-auto approvals:1/false/true|auto-mutant:no-thread-refusal|75|-|$ARMED
+a base keeping approvals past a push refuses: nothing mutated|checks:ci-required post-auto approvals:1/true/false|auto|1|-|$NO_STALE
+must-fail: with the stale row cut, the base keeping approvals past a push arms|checks:ci-required post-auto approvals:1/true/false|auto-mutant:no-stale-refusal|75|-|$ARMED
+the approval from one rule and thread resolution from another arm together|checks:ci-required post-auto approvals:1/false/true,0/true/true|auto|75|-|$ARMED
+stale dismissal from another rule than the approval arms too|checks:ci-required post-auto approvals:1/true/false,0/false/true|auto|75|-|$ARMED
+a pull_request rule whose count is missing is unverified, never a gate|checks:ci-required post-auto approvals:null/true/true|auto|1|-|$UNVERIFIED
+a pull_request rule whose thread flag is missing is unverified, never a gate|checks:ci-required post-auto approvals:1/null/true|auto|1|-|$UNVERIFIED
+a pull_request rule whose stale flag is missing is unverified, never a gate|checks:ci-required post-auto approvals:1/true/null|auto|1|-|$UNVERIFIED
+a missing value in a rule beside a complete one is still unverified|checks:ci-required post-auto approvals:1/true/true,0/true/null|auto|1|-|$UNVERIFIED
+must-fail: with the kind check answering true, the missing count reads as no approval|checks:ci-required post-auto approvals:null/true/true|auto-mutant:no-kind-check|1|-|$NO_APPROVAL
+must-fail: with the kind check answering true, the missing flag beside a complete rule arms|checks:ci-required post-auto approvals:1/true/true,0/true/null|auto-mutant:no-kind-check|75|-|$ARMED
 a ruleset read that fails is unverified|checks:ci-required post-auto rules:fail|auto|1|-|$UNVERIFIED
---auto arms a PR whose required check is still pending: GitHub holds it|checks:pending2 checks-exit:8 post-auto approvals:1/true|auto|75|-|$ARMED
-must-fail: with --auto's deferral cut, the pending PR is refused and nothing arms|checks:pending2 checks-exit:8 post-auto approvals:1/true|auto-mutant:no-deferral|1|-|{blocked};{transient};✗ ci_pending: Cross-Platform (PENDING), Linux Integration (IN_PROGRESS);{hint-auto}|calls=$CHECK auth=<unset>
-the same pending PR on a base requiring 0 approvals refuses before any mutation|checks:pending2 checks-exit:8 post-auto approvals:0/true|auto|1|-|$NO_APPROVAL
-the immediate merge reads no approval rule: a base requiring 0 still merges|checks:ci-required post:MERGED merge-commit:merged-oid approvals:0/true|immediate|0|-|{no-token};MERGED PR #123|calls=$PRE,merge:squash,graphql:queue auth=<unset>
+--auto arms a PR whose required check is still pending: GitHub holds it|checks:pending2 checks-exit:8 post-auto approvals:1/true/true|auto|75|-|$ARMED
+must-fail: with --auto's deferral cut, the pending PR is refused and nothing arms|checks:pending2 checks-exit:8 post-auto approvals:1/true/true|auto-mutant:no-deferral|1|-|{blocked};{transient};✗ ci_pending: Cross-Platform (PENDING), Linux Integration (IN_PROGRESS);{hint-auto}|calls=$CHECK auth=<unset>
+the same pending PR on a base requiring 0 approvals refuses before any mutation|checks:pending2 checks-exit:8 post-auto approvals:0/true/true|auto|1|-|$NO_APPROVAL
+the immediate merge reads no approval rule: a base requiring 0 still merges|checks:ci-required post:MERGED merge-commit:merged-oid approvals:0/true/true|immediate|0|-|{no-token};MERGED PR #123|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 "
 
 run_table "the terminal states" "\

@@ -41,8 +41,9 @@ Options:
   --auto           If immediate merge is blocked, enable GitHub auto-merge
                    (will fire when CI + branch protection clear). Exits 75.
                    Arms only where the base branch's rulesets require at
-                   least 1 approval and thread resolution; see Approvals
-                   and review threads below.
+                   least 1 approval and thread resolution and dismiss
+                   stale approvals on push; see Approvals and review
+                   threads below.
   --expected-head SHA
                    Bind GitHub's match-head merge guard to prepared SHA.
   --dry-run        Show what would happen without merging
@@ -66,16 +67,19 @@ Merge-mode exit codes:
        Classic auto-merge is armed until protection clears.
   1    BLOCKED PR #N
        The requested operation failed; a pre-existing queue entry or auto-merge request may remain active.
-  1    arm: no-merge-gate=<allow_auto_merge|required_approval|required_thread_resolution|unverified> repo=<owner/repo>
+  1    arm: no-merge-gate=<allow_auto_merge|required_approval|required_thread_resolution|dismiss_stale_reviews|unverified> repo=<owner/repo>
        --auto refused, nothing mutated. allow_auto_merge: the repository has
        auto-merge off. required_approval: no ruleset on the base branch
        requires an approval, so GitHub would merge the armed PR before any
        review. required_thread_resolution: an approval is required but no
        ruleset requires thread resolution, so GitHub would merge the armed
-       PR on its first approval past open review threads. unverified: a read
-       failed, or a pull_request rule's approval count did not read as a
-       number or its thread-resolution flag as a boolean, which proves no
-       gate.
+       PR on its first approval past open review threads.
+       dismiss_stale_reviews: approvals and thread resolution are required
+       but no ruleset dismisses stale approvals on push, so GitHub would
+       merge the armed PR on an approval of an earlier head, with no review
+       of the pushed one. unverified: a read failed, or a pull_request
+       rule's approval count did not read as a whole number or one of its
+       two flags as a boolean, which proves no gate.
   1    pr-merge: merge-method allowed=<method,...|none> accepted=<method,...>
   1    pr-merge: merge-method-unreadable cause=<base|rules|settings|queue>
        Nothing mutated: the base allows none of the accepted methods, or its
@@ -109,19 +113,21 @@ Approvals and review threads:
   rules, the most restrictive of them applying: it holds the merge, and an
   armed PR, until the required approvals are in and, only where a rule sets
   required_review_thread_resolution, until every review thread is resolved.
-  GitHub defaults that flag to false on a new rule, so a base can require an
-  approval and still merge past an open thread. This command reads no review
-  thread and resolves none. It reports reviewDecision as review, blocks on a
-  changes-requested review, and names a missing approval as the not_approved
-  warning.
+  An approval keeps counting after a push unless a rule sets
+  dismiss_stale_reviews_on_push. GitHub defaults both flags to false on a new
+  rule, so a base can require an approval and still merge past an open
+  thread, or merge a pushed head on the approval of an earlier one. This
+  command reads no review thread and resolves none. It reports
+  reviewDecision as review, blocks on a changes-requested review, and names
+  a missing approval as the not_approved warning.
 
   --auto reads every pull_request rule on the base branch
   (repos/{owner}/{repo}/rules/branches/<base>, which returns the rules of
-  every active ruleset, organization and repository) and arms only where one
-  rule requires at least 1 approval and one rule, the same or another,
-  requires thread resolution. Classic branch protection's review settings
-  are not read: a base gated there alone is refused as required_approval,
-  which arms nothing.
+  every active ruleset, organization and repository) and arms only where
+  each of these is set by one rule, the same or another: at least 1
+  approval, thread resolution, and stale approvals dismissed on push.
+  Classic branch protection's review settings are not read: a base gated
+  there alone is refused as required_approval, which arms nothing.
 
 Merge route:
   Every merge goes through the base branch's merge queue where the base
@@ -599,20 +605,28 @@ with_token() {
 }
 
 # Print why `gh pr merge --auto` must not arm, or nothing. With auto-merge off
-# GitHub cannot arm. A base whose rulesets require no approval lets GitHub
-# merge an armed PR the moment its checks pass, before any review; one that
-# requires an approval but not thread resolution merges it on that approval
-# past every open review thread. So the arm needs, across the base's active
-# pull_request rules (GitHub applies the most restrictive), a count of at
-# least 1 and a thread-resolution flag set. A failed read, a count that is not
-# a number or a flag that is not a boolean prints `unverified`.
+# GitHub cannot arm. Otherwise the arm needs every row of `shape`, the rule
+# shape under which GitHub holds an armed PR until a review of its current
+# head: each row names the gap word printed when no active pull_request rule
+# on the base meets it (GitHub applies the most restrictive rule, so any one
+# rule meeting a row meets it), the rule parameter, and its kind: a `count`
+# of at least 1 or a `flag` set true. Without the approval GitHub merges the
+# armed PR the moment its checks pass; without thread resolution, on the
+# approval past every open thread; without stale-approval dismissal, on an
+# approval of an earlier head after a push no review saw. A failed read, or a
+# pull_request rule whose value for any row is not of the row's kind, prints
+# `unverified`. Rows are checked in order, so the first gap is printed.
 #
-# review-gate's validate-standard.sh reads the same flag inside its own audit
-# of the default branch; it is a sibling skill's report, not a predicate this
-# command can call, so the flag is read here too.
+# review-gate's validate-standard.sh reads the same parameters inside its own
+# audit of the default branch; it is a sibling skill's report, not a
+# predicate this command can call, so they are read here too.
 merge_gate_gap() {
-    local pr_num="$1" token="$2" allow="" base="" rules="" count resolve
-    local approval=false threads=false
+    local pr_num="$1" token="$2" allow="" base="" rules="" gap=""
+    local -a shape=(
+        'required_approval required_approving_review_count count'
+        'required_thread_resolution required_review_thread_resolution flag'
+        'dismiss_stale_reviews dismiss_stale_reviews_on_push flag'
+    )
     allow=$(with_token "$token" gh api 'repos/{owner}/{repo}' --jq '.allow_auto_merge' 2>/dev/null) || allow=""
     case "$allow" in
         true) ;;
@@ -621,25 +635,21 @@ merge_gate_gap() {
     esac
     if ! base=$(with_token "$token" gh pr view "$pr_num" --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$base" ] \
         || ! base=$(jq -nr --arg v "$base" '$v | @uri') \
-        || ! rules=$(with_token "$token" gh api "repos/{owner}/{repo}/rules/branches/$base" --paginate --jq '.[] | select(.type == "pull_request") | "\(.parameters.required_approving_review_count) \(.parameters.required_review_thread_resolution)"' 2>/dev/null); then
+        || ! rules=$(with_token "$token" gh api "repos/{owner}/{repo}/rules/branches/$base" --paginate --jq '.[] | select(.type == "pull_request") | .parameters | tojson' 2>/dev/null); then
         echo unverified; return 0
     fi
-    # One line per pull_request rule; a base with none yields no line.
-    while read -r count resolve; do
-        [ -n "$count" ] || continue
-        case "$count" in *[!0-9]*) echo unverified; return 0 ;; esac
-        case "$resolve" in
-            true) threads=true ;;
-            false) ;;
-            *) echo unverified; return 0 ;;
-        esac
-        [ "$count" -eq 0 ] || approval=true
-    done <<<"$rules"
-    if [ "$approval" != true ]; then
-        echo required_approval
-    elif [ "$threads" != true ]; then
-        echo required_thread_resolution
+    # One JSON line per pull_request rule; a base with none yields no line,
+    # so every row is unmet.
+    if ! gap=$(jq -rn --args '
+        def fits($kind): if $kind == "count" then type == "number" and . >= 0 and . == floor else type == "boolean" end;
+        def meets($kind): if $kind == "count" then . >= 1 else . == true end;
+        [$ARGS.positional[] | split(" ")] as $shape | [inputs] as $rules
+        | if any($rules[]; . as $rule | any($shape[]; . as [$gap, $key, $kind] | $rule[$key] | fits($kind) | not)) then "unverified"
+          else first($shape[] | . as [$gap, $key, $kind] | select(any($rules[]; .[$key] | meets($kind)) | not) | $gap) // empty end
+    ' "${shape[@]}" <<<"$rules" 2>/dev/null); then
+        echo unverified; return 0
     fi
+    [ -z "$gap" ] || echo "$gap"
 }
 
 # The method the merge modes pass to gh pr merge: the first of the accepted
@@ -983,8 +993,8 @@ main() {
     fi
 
     # `--auto` defers every blocker: merge_gate_gap below arms only where
-    # GitHub holds the armed PR until its required checks, an approval and
-    # thread resolution pass.
+    # GitHub holds the armed PR until its required checks, an approval of its
+    # current head and thread resolution pass.
     if [ "$can_merge" != "true" ] && [ "$auto" != true ]; then
         print_blocked "$check_result" "$pr_num"
         exit 1
@@ -998,8 +1008,9 @@ main() {
         echo "arm: no-merge-gate=$gate_gap repo=$slug" >&2
         case "$gate_gap" in
             allow_auto_merge) echo "  Nothing mutated. Enable auto-merge on the repository." >&2 ;;
-            required_approval) echo "  Nothing mutated. No ruleset on the base branch requires an approval, so GitHub would merge the armed PR before review; require at least 1 approval and thread resolution in its pull_request rule." >&2 ;;
+            required_approval) echo "  Nothing mutated. No ruleset on the base branch requires an approval, so GitHub would merge the armed PR before review; require at least 1 approval, thread resolution and stale-approval dismissal in its pull_request rule." >&2 ;;
             required_thread_resolution) echo "  Nothing mutated. No ruleset on the base branch requires thread resolution, so GitHub would merge the armed PR on its first approval past open review threads; require review threads resolved in its pull_request rule." >&2 ;;
+            dismiss_stale_reviews) echo "  Nothing mutated. No ruleset on the base branch dismisses stale approvals on push, so GitHub would merge the armed PR on an approval of an earlier head, with no review of the pushed one; dismiss stale approvals on push in its pull_request rule." >&2 ;;
             *) echo "  Nothing mutated. The base branch's rules could not be read, so no merge gate is proven; retry once they read." >&2 ;;
         esac
         exit 1
