@@ -12,7 +12,7 @@
 
 **Approval**: owner decision 1790616596, 2026-09-28, relayed by the kendex overseer (lane mail 1790616843-3086369-26438); owner correction 1790623442, 2026-09-28, relayed by the kendex overseer (lane mail 1790623545-924328-13182); owner note 1790633650, 2026-09-28, relayed by the kendex overseer (lane mail 1790633853-3815502-10519)
 
-**Applies to**: every lane's merge; [../architecture/merge-rail.md](../architecture/merge-rail.md), [../../skills/orch/workflows/merge-pr.md](../../skills/orch/workflows/merge-pr.md), [../../skills/review-gate/references/adoption.md](../../skills/review-gate/references/adoption.md), [../../skills/review-gate/SKILL.md](../../skills/review-gate/SKILL.md#4-operations) § 4, [../../skills/orch/references/oversee-events.md](../../skills/orch/references/oversee-events.md)
+**Applies to**: every lane's merge
 
 ## Context
 
@@ -22,6 +22,7 @@ The owner's words: "we have to use copilot and pi and we have to get it done as 
 - Owner correction 1790623442 gives the record since the rule went on: five admin merges, kendex pull requests 3074, 3072, 3081 and 3089 and fleet pull request 486, one of them run by a lane, each green at its head.
 - Owner note 1790633650 moved the admin-merge conditions into GitHub, as the Decision states. Who may bypass the queue is closed by the bypass list of ruleset 20569265, the queue ruleset.
 - Fleet decision D066, items 2 to 4, says the same for the fleet repository.
+- Owner decision 1790634126 took D003's restatement out of this pull request. D003's status, and the rewrite to this decision of [merge-rail.md](../architecture/merge-rail.md), review-gate [adoption.md](../../skills/review-gate/references/adoption.md), review-gate [SKILL.md § 4](../../skills/review-gate/SKILL.md#4-operations) and [merge-pr.md § 5](../../skills/orch/workflows/merge-pr.md#5-execute-the-merge) step 1, are carried by KEN-2069; until it lands, those files keep their queue-only text.
 
 ## Decision
 
@@ -37,4 +38,4 @@ The owner's words: "we have to use copilot and pi and we have to get it done as 
 
 **Revisit When**: the PR run runs every merge-group job for the touched paths (a P1 item the overseer files).
 
-**References**: [D003](D003-one-merge-path.md), KEN-2023, fleet D066
+**References**: [D003](D003-one-merge-path.md), KEN-2023, KEN-2069, fleet D066

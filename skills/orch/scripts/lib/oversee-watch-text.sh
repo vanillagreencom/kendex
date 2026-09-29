@@ -166,8 +166,11 @@ The long pass's events, checked and reported in this order:
                              and nothing is closed, since nothing here wakes a
                              parked sandbox and the record carries no launch
                              flags. The overseer relaunches the lane, which
-                             runs its own post-merge. Printed once per merge,
-                             as merged is
+                             runs its own post-merge. Printed in the pass
+                             that reports the merge, and again ahead of every
+                             heartbeat while the record still reads parked
+                             and its merged row holds that pull request; the
+                             relaunch rewriting the record stopped ends it
   EVENT triage <item>        an item created at or after --since that is absent
                              from the first repository's persisted baseline
   EVENT lane-ready <item>    a lane open-terminal handed to a background job
@@ -285,7 +288,8 @@ The long pass's events, checked and reported in this order:
                              settings. Reported on every long pass while it
                              stays due, so it stops once a report is written;
                              read only with --state
-  EVENT heartbeat            --max-loops long passes with no event. A line
+  EVENT heartbeat            --max-loops long passes with no event, after
+                             the repeated parked-merged lines above. A line
                              `  failing <item> <key>` follows for every lane
                              of the current fleet whose failure still stands,
                              reported once and quiet since, then every
@@ -307,7 +311,8 @@ The long pass's events, checked and reported in this order:
                              --repo on an issue-N branch, from a listing of its
                              own that exits 2 as owed-list-truncated at 1000.
                              A record running, preparing or parked owes
-                             nothing. `merged` is a record carrying its merge's
+                             nothing; a parked one over its merge is named by
+                             parked-merged instead. `merged` is a record carrying its merge's
                              `cycle`. A record with no harness is `queue`.
                              Every other verdict reads the accounts of the
                              record's host, its `host` or `local`, as
@@ -568,7 +573,8 @@ Options:
                       pane is gone and its mailbox and state are on a stopped
                       disk, so no other check reads it, and the merge of the
                       pull request its `parked` names, in that repository,
-                      prints parked-merged in the same pass and closes
+                      prints parked-merged in the same pass and at every
+                      heartbeat while the record reads parked, and closes
                       nothing.
                       The set is noted on stderr as fleet-read whenever a
                       read changes what the reader last carried, with the

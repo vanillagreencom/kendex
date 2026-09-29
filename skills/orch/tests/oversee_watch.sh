@@ -42,8 +42,10 @@
 #       non-first --repo fires, the fork rejection holding per repo; a merged
 #       item still in --item is reported once across runs while a further PR
 #       on its branch is news; a parked record's own merge prints
-#       parked-merged once and closes nothing, its must-fail control being the
-#       close restored, and another merge on its branch hands nothing on
+#       parked-merged and closes nothing, its must-fail control being the
+#       close restored, the heartbeat names it again while the record still
+#       reads parked, its control being that repeat removed, and another
+#       merge on its branch hands nothing on
 #   2b. handoff: an --item whose state carries `.handoff` with no
 #       `.resumed_at` fires once, with the record, read from the checkout's
 #       state directory even when the item has a worktree; a state
@@ -1180,15 +1182,33 @@ assert_eq "$(grep '^EVENT parked-merged ' <<<"$out")" "EVENT parked-merged issue
   "the hand names the item, the pull request and the repository" "$err"
 assert_contains "$(cat "$err")" "oversee-watch: fleet-read items=1 windows=1 hosted=0 parked=1 dropped=1" \
   "the parked record is carried as parked, not as a running item" "$err"
-# The same pass again: the merged row is committed, so nothing repeats.
+# The same pass again: the merged row is committed, so the merge is not news
+# again, but the record still reads parked, so the next heartbeat hands it on
+# again: a relaunch refused, or an overseer gone after the first hand, is
+# named until the relaunch rewrites the record.
 parked_run --
-assert_eq "merged=$(grep -c '^EVENT merged ' <<<"$out" || true) handed=$(grep -c '^EVENT parked-merged ' <<<"$out" || true) closes=${CLOSES:-0}" \
-  "merged=0 handed=0 closes=0" "a parked merge already handed on is not reported again" "$err"
+assert_eq "events=$EVENTS closes=${CLOSES:-0}" "events=parked-merged issue-2,heartbeat loops=2 closes=0" \
+  "a record still parked over its already-handed merge is named again at the heartbeat, and the merge is not reported again" "$err"
+assert_eq "$(grep '^EVENT parked-merged ' <<<"$out")" "EVENT parked-merged issue-2 pr=2 repo=owner/repo" \
+  "the repeated hand is spelled as the first" "$err"
+# The must-fail control for the repeat: the heartbeat's hand removed.
+HAND_MUTANT_DIR="$TMP_ROOT/parked-hand-mutant"
+HAND_MUTANT="$(mutant_scripts parked-hand-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$HAND_MUTANT_DIR/github"
+mutate_file "$HAND_MUTANT" "  [[ -z \"\$hands\" ]] || printf '%s\\n' \"\$hands\"" '  :'
+WATCH_BIN="$HAND_MUTANT" parked_run --
+assert_eq "events=$EVENTS" "events=heartbeat loops=2" \
+  "control: with the heartbeat's hand removed the record left parked over its merge is silent" "$err"
+# The relaunch rewrites the record stopped and drops `parked`: the repeat ends.
+jq '(.lanes[] | select(.item == "issue-2")) |= (.status = "stopped" | del(.parked))' "$STUB_DIR/state.json" > "$STUB_DIR/state.next" && mv -- "$STUB_DIR/state.next" "$STUB_DIR/state.json"
+parked_run --
+assert_eq "events=$EVENTS" "events=heartbeat loops=2" \
+  "a record the relaunch rewrote stopped is handed on no more" "$err"
 # The must-fail control: the close restored where the hand is printed.
 PARKED_MUTANT_DIR="$TMP_ROOT/parked-mutant"
 PARKED_MUTANT="$(mutant_scripts parked-mutant/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$PARKED_MUTANT_DIR/github"
-mutate_file "$PARKED_MUTANT" '    echo "EVENT parked-merged $item pr=${PARKED_KEY##*#} repo=${PARKED_KEY%#*}"' '    close_hosted_lane "$item"'
+mutate_file "$PARKED_MUTANT" '    parked_merged_line "$item" "$PARKED_KEY"' '    close_hosted_lane "$item"'
 parked_fleet parked_merged_mutant
 printf '[{"number": 2, "headRefName": "issue-2", "mergedAt": "2026-09-20T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
 WATCH_BIN="$PARKED_MUTANT" parked_run --
