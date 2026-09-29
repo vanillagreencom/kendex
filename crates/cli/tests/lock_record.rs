@@ -31,10 +31,13 @@
 //! a lagging head, that row exits 0 unarmed; with the reads cut to two, the
 //! never-matches row counts two reads, not five; with the wait between
 //! reads cut to one second, the `sleep` stub's log reddens the rows; and
-//! with the unarmed warning annotation dropped, that row finds none. The
-//! update's title and body: left alone, the push over the pull request
-//! reddens; with a failed edit passed over, the failed-edit run exits 0;
-//! and with the edit made ahead of the arm, that run ends unarmed.
+//! with the unarmed warning annotation dropped, or printed only under
+//! `GITHUB_ACTIONS`, that row finds none. The update's title and body: left
+//! alone, or titled with no short head, the push over the pull request
+//! reddens; with a failed edit passed over, the failed-edit rows exit 0;
+//! with the edit made ahead of the arm, the armed failed-edit row ends
+//! unarmed; and with the failed edit's `arm=` field always `armed`, the
+//! unarmed failed-edit row reddens.
 //!
 //! `sleep` on the fixture's `PATH` is a stub that logs its argument and
 //! returns at once, so the arm's waits between reads cost the suite
@@ -403,16 +406,7 @@ impl World {
         kendex_fail: &str,
         env: &[(&str, &str)],
     ) -> Output {
-        self.command(args, gh_fail, kendex_fail)
-            .envs(env.iter().copied())
-            .output()
-            .expect("bash runs the script")
-    }
-
-    /// The command `run` runs, for a row that sets more of its environment.
-    fn command(&self, args: &[&str], gh_fail: &str, kendex_fail: &str) -> Command {
-        let mut command = Command::new("bash");
-        command
+        Command::new("bash")
             .arg(script())
             .args(args)
             .env_clear()
@@ -427,8 +421,10 @@ impl World {
             .env("GIT_AUTHOR_NAME", "t")
             .env("GIT_AUTHOR_EMAIL", "t@t")
             .env("GIT_COMMITTER_NAME", "t")
-            .env("GIT_COMMITTER_EMAIL", "t@t");
-        command
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .envs(env.iter().copied())
+            .output()
+            .expect("bash runs the script")
     }
 
     /// The script against the checkout it judges, every `gh` read answered
@@ -899,7 +895,12 @@ fn assert_pushed_over(world: &World, output: &str) {
         .unwrap_or_else(|| panic!("no title edit in the gh log:\n{log}"));
     assert!(arm < edit, "the edit came before the arm:\n{log}");
     let edited = log[edit..].lines().next().unwrap_or_default();
-    assert!(edited.contains(short.trim()), "{short} missing:\n{edited}");
+    let title = edited
+        .strip_prefix("pr edit 41 --title ")
+        .and_then(|rest| rest.split_once(" --body "))
+        .map(|(title, _)| title)
+        .unwrap_or_else(|| panic!("no title argument in:\n{edited}"));
+    assert!(title.ends_with(short.trim()), "{short} missing:\n{title}");
     let status = git_ok(&world.home, &world.judged(), &["status", "--porcelain"]);
     assert_eq!(
         status, "",
@@ -1079,11 +1080,7 @@ fn assert_head_read(row: &HeadRead) {
     assert!(merged.status.success(), "{}", said(&merged));
     write(&world.gh_state.join("lag"), &format!("{}\n", row.lag));
     let main = world.main.display().to_string();
-    let run = world
-        .command(&["--repo", &main, "--base", "main"], row.gh_fail, "")
-        .env("GITHUB_ACTIONS", "true")
-        .output()
-        .unwrap_or_else(|error| panic!("bash runs the script: {error}"));
+    let run = world.run(&["--repo", &main, "--base", "main"], row.gh_fail, "");
     let output = said(&run);
     let lag = row.lag;
     let code = match row.arm {
@@ -1159,11 +1156,38 @@ fn assert_head_read(row: &HeadRead) {
     }
 }
 
+/// One push over the open rolling pull request whose title and body gh
+/// then fails to rewrite: how many reads GitHub stays behind on the pull
+/// request's head, and what the arm ahead of the edit comes to.
+struct EditFailure {
+    lag: u32,
+    arm: Arm,
+}
+
+const EDIT_FAILURES: &[EditFailure] = &[
+    EditFailure {
+        lag: 0,
+        arm: Arm::Armed,
+    },
+    EditFailure {
+        lag: 99,
+        arm: Arm::Unarmed,
+    },
+];
+
 /// A push over the open rolling pull request whose title and body gh then
-/// fails to rewrite: the pull request is armed on the pushed head first,
-/// and the run names the failed edit and exits 1.
+/// fails to rewrite: the arm runs first, the run names the failed edit with
+/// what the arm came to, armed on the pushed head or left unarmed behind a
+/// head GitHub never showed, and exits 1.
 #[test]
-fn a_failed_title_edit_after_a_push_leaves_the_pull_request_armed_and_exits_nonzero() {
+fn a_failed_title_edit_after_a_push_names_the_arm_and_exits_nonzero() {
+    assert!(!EDIT_FAILURES.is_empty(), "the edit-failure table is empty");
+    for row in EDIT_FAILURES {
+        assert_edit_failed(row);
+    }
+}
+
+fn assert_edit_failed(row: &EditFailure) {
     let world = world();
     world.branch("a", "ship");
     world.branch("b", "roll");
@@ -1171,24 +1195,46 @@ fn a_failed_title_edit_after_a_push_leaves_the_pull_request_armed_and_exits_nonz
     let first = world.lock_record();
     assert_eq!(first.status.code(), Some(0), "{}", said(&first));
     assert!(world.queue_merge("b").status.success());
+    write(&world.gh_state.join("lag"), &format!("{}\n", row.lag));
     let main = world.main.display().to_string();
     let run = world.run(&["--repo", &main, "--base", "main"], "edit", "");
     let output = said(&run);
-    assert_eq!(run.status.code(), Some(1), "{output}");
+    let lag = row.lag;
+    assert_eq!(run.status.code(), Some(1), "lag {lag}: {output}");
     let stderr = String::from_utf8_lossy(&run.stderr);
-    assert!(
-        stderr.contains("lock-record: pull-request-edit=41\n"),
-        "{output}"
-    );
-    assert!(output.contains("lock-record: armed=41\n"), "{output}");
     let rolling = world.rolling_head();
     let parent = git_ok(
         &world.home,
         &world.main,
         &["rev-parse", &format!("{rolling}^")],
     );
-    assert_eq!(parent.trim(), world.main_head(), "{output}");
-    assert!(world.gh_state.join("armed").exists(), "{output}");
+    assert_eq!(parent.trim(), world.main_head(), "lag {lag}: {output}");
+    let armed = world.gh_state.join("armed").exists();
+    match row.arm {
+        Arm::Armed => {
+            assert!(
+                stderr.contains("lock-record: pull-request-edit=41 arm=armed\n"),
+                "lag {lag}: {output}"
+            );
+            assert!(
+                output.contains("lock-record: armed=41\n"),
+                "lag {lag}: {output}"
+            );
+            assert!(armed, "lag {lag}: {output}");
+        }
+        Arm::Unarmed => {
+            assert!(
+                stderr.contains("lock-record: pull-request-edit=41 arm=unarmed\n"),
+                "lag {lag}: {output}"
+            );
+            assert!(
+                stderr.contains("lock-record: unarmed=41 "),
+                "lag {lag}: {output}"
+            );
+            assert!(!armed, "lag {lag}: {output}");
+        }
+        Arm::ReadFailed => panic!("a failed head read ends the run before the edit"),
+    }
 }
 
 /// The workflow's checkout holds the head alone, so the judge has no

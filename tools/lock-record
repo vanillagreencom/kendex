@@ -40,8 +40,8 @@
 # names a head it does not show yet: every arm, on the stand-down and after
 # the push, first reads the pull request's head until it is the revision
 # armed, and a head GitHub never shows within those reads leaves the pull
-# request unarmed, which the next run arms; under GitHub Actions that run
-# also carries a warning annotation, so the unarmed pull request shows on a
+# request unarmed, which the next run arms; the run also prints a warning
+# annotation, so under GitHub Actions the unarmed pull request shows on a
 # green run. Nothing here pushes to the default branch: the organization
 # ruleset takes every change to it through the merge queue
 # (docs/decisions/D003-one-merge-path.md), and the record takes the same
@@ -83,12 +83,13 @@
 #   recorded=<sha> paths=<n>    the commit on the rolling branch; its paths follow
 #   pushed=<remote>/<branch>    the branch reached the remote
 #   pull-request=<n> action=<opened|updated>
-#   pull-request-edit=<n>       gh could not rewrite the updated pull request's title and body to the head just recorded; the arm came first (exit 1)
+#   pull-request-edit=<n> arm=<armed|unarmed>
+#                               gh could not rewrite the updated pull request's title and body to the head just recorded; the arm ran first, and arm= says whether it armed or left the pull request unarmed as the unarmed line reports (exit 1)
 #   armed=<n|already>           auto-merge enabled on it for its head, or found enabled on a stand-down
 #   head-read=<n>               gh could not read the pull request's head after the push or on the stand-down, so it was not armed (exit 1)
 #   unarmed=<n> pushed=<sha> head=<sha>
 #                               GitHub still showed the other head on the pull request after every read, so it was not armed; the record landed, and the next run arms it;
-#                               with GITHUB_ACTIONS=true, a `::warning title=lock-record unarmed::` workflow command on stdout names both revisions too
+#                               a `::warning title=lock-record unarmed::` workflow command on stdout names both revisions too
 set -euo pipefail
 
 say() { # KEY VALUE [LINE...] — the keyed line, then each explanation line
@@ -100,7 +101,9 @@ say() { # KEY VALUE [LINE...] — the keyed line, then each explanation line
 # head: an arm matched against a head GitHub has not caught up to is
 # refused. The reads stop at five, two seconds apart, so the wait is bounded
 # at eight seconds; a failed arm on the matched head ends the run with what
-# gh printed.
+# gh printed. `armed_on` is REVISION once the arm is made, and stays empty
+# when the pull request is left unarmed.
+armed_on=""
 arm() { # NUMBER REVISION
   local number="$1" revision="$2" seen="" reads=1
   while :; do
@@ -120,12 +123,11 @@ arm() { # NUMBER REVISION
     # The run stays green, and nobody opens a green run's log: the
     # annotation puts the unarmed pull request on the run summary and on
     # the commit's checks.
-    if [[ "${GITHUB_ACTIONS:-}" == true ]]; then
-      printf '::warning title=lock-record unarmed::pull request %s left unarmed: GitHub showed %s, pushed %s\n' "$number" "$seen" "$revision"
-    fi
+    printf '::warning title=lock-record unarmed::pull request %s left unarmed: GitHub showed %s, pushed %s\n' "$number" "$seen" "$revision"
     return 0
   fi
   (cd -- "$repo" && gh pr merge "$number" "--$method" --auto --match-head-commit "$revision")
+  armed_on="$revision"
   say armed "$number"
 }
 count_lines() { # TEXT — how many lines it holds, none for the empty string
@@ -353,10 +355,17 @@ say pull-request "$number action=$action"
 
 arm "$number" "$recorded"
 
-# The title and body follow the arm, so a failed edit leaves the pull
-# request armed on the record with only its description stale.
+# The title and body follow the arm, so a failed edit leaves the arm's
+# outcome as it was with only the description stale.
 if [[ "$action" == updated ]] && ! (cd -- "$repo" && gh pr edit "$number" --title "$title" --body "$body"); then
-  say pull-request-edit "$number" \
-    "gh could not rewrite pull request $number's title and body to $head; it is armed on the record, and the next re-record rewrites them" >&2
+  if [[ -n "$armed_on" ]]; then
+    arm_state=armed
+    arm_note="it is armed on the record"
+  else
+    arm_state=unarmed
+    arm_note="it was left unarmed, as the unarmed line above reports, and the next run arms it"
+  fi
+  say pull-request-edit "$number arm=$arm_state" \
+    "gh could not rewrite pull request $number's title and body to $head; $arm_note; the next re-record rewrites them" >&2
   exit 1
 fi
