@@ -22,6 +22,12 @@ tags: [automation]
 <!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
 <!-- kendex:shared-instructions:end -->
+
+### Owner messages
+
+- The owner's time zone is Pacific (America/Los_Angeles). Write a time in it as `9:29 pm`, per rule 3 of `skills/orch/references/communication-modes.md` § Owner messages.
+- The owner's night, for rule 7 there, is 11 pm to 8 am Pacific.
+
 <!-- kendex:project-instructions:end -->
 
 # Orchestration

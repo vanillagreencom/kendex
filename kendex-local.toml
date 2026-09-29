@@ -20,6 +20,12 @@ code-quality = '''
 
 Enforce a rule on the platform where it can hold it (GitHub settings and rulesets, a harness's own settings). Keep a hook, script or instruction guard only where it cannot, and state why at the guard.
 '''
+orch = '''
+### Owner messages
+
+- The owner's time zone is Pacific (America/Los_Angeles). Write a time in it as `9:29 pm`, per rule 3 of `skills/orch/references/communication-modes.md` § Owner messages.
+- The owner's night, for rule 7 there, is 11 pm to 8 am Pacific.
+'''
 project-management = '''
 ### Project taxonomy
 

@@ -43,8 +43,8 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 
 ## Message standard
 
-- `slack post` and the relay send each text as standard Markdown, which Slack renders: `**bold**`, lists, headings, links and code blocks. A text longer than 12,000 characters is refused `text-too-long`; send the long part as a file.
-- A file's comment, the text beside `--file` or a notice's `--attach`, renders as Slack's own mrkdwn markup, not standard Markdown.
+- `slack post` text without `--file`, and the relay's ask, notice and answer posts, go out as standard Markdown, which Slack renders: `**bold**`, lists, headings, links and code blocks. Such a text longer than 12,000 characters is refused `text-too-long`; send the long part as a file.
+- A file's comment, the text beside `--file` or a notice's `--attach`, renders as Slack's own mrkdwn markup, not standard Markdown, and has no such cap. How to write it: [orch communication-modes.md § Owner messages](../orch/references/communication-modes.md#owner-messages), the rule for a text sent beside a file.
 - The words and markup of every post follow [orch communication-modes.md § Owner messages](../orch/references/communication-modes.md#owner-messages).
 
 ## Doctor row

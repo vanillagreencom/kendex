@@ -59,6 +59,10 @@ assert_eq "$(sk_state '.messages.C001 | length')=$(sk_state ".messages.C001[] | 
   "$BEFORE=Lane 3 recovered." "nothing past the cap is posted or edited"
 sk_run -- post --root "$ROOT" --text "${LONG%x}" --channel C778
 assert_eq "$RC=$(sk_state '.messages.C778[-1].text | length')" "0=12000" "a text at the cap posts whole"
+UPLOADS="$(sk_state '.uploads | length')"
+sk_run -- post --root "$ROOT" --text "$LONG" --file "$SK_TMP/report.md"
+assert_eq "$RC=${OUT%%=*}=$(sk_state '.uploads | length')" "0=slack: uploaded=$((UPLOADS + 1))" \
+  "a text past the cap beside a file uploads as its comment, the cap being markdown_text's alone"
 sk_run -- post --root "$ROOT" --text 'x' --file "$SK_TMP/absent.md"
 assert_eq "$RC=$ERR1" "2=slack: file-unreadable=$SK_TMP/absent.md" "an unreadable file is refused by path"
 sk_run -- post --root "$ROOT"

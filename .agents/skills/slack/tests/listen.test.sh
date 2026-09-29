@@ -307,6 +307,14 @@ LONG_ID="$(notice_id "$GAMMA" "$LONG")"
 assert_eq "$RC=$ERR1" "0=slack: text-too-long=id=$LONG_ID chars=12001 limit=12000" "a notice past the markdown_text cap is refused by id with its length"
 assert_eq "$(refused_line "$GAMMA" "$LONG_ID")=$(sk_state '[.messages.C002[] | select(.text | startswith("xxxx"))] | length')" \
   "refused text-too-long=0" "the long notice is journaled refused and never posted"
+LONG_REPORT="$GAMMA/tmp/progress-reports/long.md"
+printf '# Long\n' > "$LONG_REPORT"
+UPLOADS="$(sk_state '.uploads | length')"
+sk_lm "$GAMMA" notice --item overseer --to owner --attach "$LONG_REPORT" --file "$(sk_text s6 "y$LONG")" >/dev/null
+sk_poll "$GAMMA"
+LONG_FILE_ID="$(notice_id "$GAMMA" "y$LONG")"
+assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$LONG_FILE_ID\") | .state" "$(sk_journal "$GAMMA")")=$(sk_state '.uploads | length')" \
+  "0=file=$((UPLOADS + 1))" "a notice past the cap beside a report uploads with it as the comment, the cap being markdown_text's alone"
 
 # --- a 429 is honoured by Retry-After -------------------------------------------------------
 sk_ctl /_test/calls-reset >/dev/null
