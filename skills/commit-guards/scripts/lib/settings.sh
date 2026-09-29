@@ -26,7 +26,11 @@
 # `\` — exactly the kendex settings contract, decoded identically by every
 # kendex resolver. An assignment outside [env] belongs to another tool and
 # is ignored; a key re-assigned inside [env], or a value in any other
-# shape, fails loud below.
+# shape, fails loud below. It fails every read from that file, whichever key
+# the caller asked for: every kendex resolver refuses the same file whole,
+# so a reader that answered past the bad line would act on a file the rest
+# of the toolchain rejects. A value in another shape is named by file, line
+# and key (settings-string=FILE:LINE:KEY) so the refusal says what to rewrite.
 #
 # The caller cds to the repo root before resolving, so the default settings
 # path is relative.
@@ -324,8 +328,11 @@ gg_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
       value = l
       sub(/^[^=]*=[[:space:]]*/, "", value)
       sub(/[[:space:]]+$/, "", value)
+      # The value is FILE:LINE:KEY: the table is refused whole, so the key
+      # that fails can be one the caller never asked for, and the line is
+      # what the person fixing the file needs to find it.
       if (value !~ /^"[^"\\]*"[[:space:]]*(#.*)?$/) {
-        printf "%s: settings-string=%s:%s\n  Expected a single-line basic string.\n", check, src, key > "/dev/stderr"
+        printf "%s: settings-string=%s:%d:%s\n  %s on line %d is not a single-line basic string with no \" and no \\ inside (%s = \"value\"); every read of this file fails until it is rewritten.\n", check, src, NR, key, key, NR, key > "/dev/stderr"
         exit 3
       }
       print

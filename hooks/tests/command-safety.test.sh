@@ -119,6 +119,19 @@ printf '[env\n' >"$repo/kendex.settings.toml"
 check 2 'git status' 'malformed project settings refuse'
 assert_first 'command-safety: settings=unreadable' 'and the value says the settings could not be read'
 assert_cause present "and the loader's own words are replayed under it"
+# A malformed value on a key the hook never reads still refuses, and the
+# refusal carries the loader's line naming the file, the line and the key.
+# The probe runs the installed loader itself, so the row asserts the hook's
+# replay; the loader's own suite pins that line's value.
+printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "BLOCK_THIS"\nOTHER = "a\\"b"\n' >"$repo/kendex.settings.toml"
+check 2 'git status' 'an inner double quote on a key the hook does not read refuses'
+assert_first 'command-safety: settings=unreadable' 'and the value says the settings could not be read'
+assert_replays "$(cd "$repo" && GG_CHECK=command-safety bash -c '
+  source "$1/common.sh"
+  source "$1/settings.sh"
+  gg_setting COMMAND_SAFETY_DENY_PATTERN "^\$"
+' _ "$repo/.agents/skills/commit-guards/scripts/lib" 2>&1 || true)" \
+  "and the loader's line naming the file, line and key stands under it"
 settings
 
 # Every payload shape a shipped harness sends, each counted as a row rather
