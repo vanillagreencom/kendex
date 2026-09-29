@@ -273,7 +273,7 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
   if [ -z "$WANT_CONTEXTS" ]; then
     bad standard-required-contexts "undeclared:$contexts" "this repository declares no REVIEW_GATE_STANDARD_CONTEXTS, so $BRANCH's required contexts have nothing to match; set it in the [env] table of kendex.settings.toml to the contexts $BRANCH should require"
   elif [ "$gated" = true ]; then
-    bad standard-required-contexts "gate-required:$contexts" "$BRANCH requires $WANT_GATE; the standard's approval rule replaces it, so remove it from the required contexts and from REVIEW_GATE_STANDARD_CONTEXTS"
+    bad standard-required-contexts "gate-required:$contexts" "$BRANCH requires $WANT_GATE, which the standard's approval rule replaces. While the writer runs, $WANT_GATE stays required: remove it from the required contexts in the ruleset edit that precedes disabling the writer, never before, and never list it in REVIEW_GATE_STANDARD_CONTEXTS: .agents/skills/review-gate/references/adoption.md § Repo-side wiring"
   elif [ "$contexts" = "$WANT_CONTEXTS" ]; then
     ok standard-required-contexts "$contexts" "$BRANCH requires exactly the contexts this repository declares"
   else
