@@ -124,7 +124,8 @@ Rows:
                   the pull request its park judged. A parked lane's disk is
                   stopped, so no row below reads it.
   Validation      one line per lanes[] record reading running: the minutes
-                  its validation runs took, in total and per dev round, from
+                  its validation runs took, in total and per dev round or
+                  restack, from
                   the validate_rounds its own workflow state holds
                   (schemas/workflow-state.md), each rounded to the nearest
                   minute; `no validation run recorded` where it holds none.

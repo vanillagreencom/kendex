@@ -24,6 +24,32 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
 
    No issue worktree means hand back. On conflicts, resolve every listed file, stage it, and run `worktree restack continue [ISSUE]` until complete. Never force-push over an unresolved base.
 
+   Then validate the restacked head before step 3 pushes it. Bind the base branch the restack rebased onto as `[BASE_BRANCH]`, and read the mode a range run in the worktree records:
+
+   ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/resolve-base-branch [WT_PATH]
+   ```
+
+   ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --resolve-mode --worktree [WT_PATH]
+   ```
+
+   `validate-mode=full` means the project sets no `DEV_VALIDATE_RANGE_CMD`: go to step 3 with no run. `validate-mode=range` runs the range command over the branch as it now sits on the base, started and polled as [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) sets out for the harness, the way a fix round's run is:
+
+   ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]
+   ```
+
+   Once the run ends, record its minutes before routing its verdict. Read the run's record, with `[RUN_DIR]` the `run-dir=` value the run printed:
+
+   ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --record --run-dir [RUN_DIR]
+   ```
+
+   A record with a `seconds=` field takes [dev-start.md § Store Validation Time](dev-start.md#store-validation-time)'s write, with `[ISSUE_ID]` being `[ISSUE]`, `[DEV_ROUND_ID]` being `restack-` and the run directory's name after `dev-validate-`, `[KIND]` being `restack`, `[VALIDATE_MODE]` the record's `validate-mode` and `[SECONDS]` its `seconds`. A record with no `seconds=` field has no wall time, and records nothing.
+
+   Only `validate=pass` goes on to step 3. Any other result, `FAILING`, `no-verdict`, `state=timeout` or `state=lost`, pushes nothing and hands back with the verdict and the run's log path, as a fix round's red verdict ends its workflow with no second validation run. The PR stays unarmed from step 1, and this cycle never reaches the re-arm in step 4.
+
 3. Push through the guarded owner:
 
    ```bash

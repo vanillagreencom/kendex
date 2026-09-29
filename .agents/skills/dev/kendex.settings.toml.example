@@ -10,7 +10,8 @@ DEV_VALIDATE_CMD = "" # required
 # The command a review-fix round runs instead, validating only the changes
 # since the commit it reads from $DEV_VALIDATE_BASE, for example
 # "tools/check --since $DEV_VALIDATE_BASE". Empty runs DEV_VALIDATE_CMD.
-# Submit reuses only a DEV_VALIDATE_CMD result.
+# A restack runs it on the rebased branch before its push; empty runs nothing
+# there. Submit reuses only a DEV_VALIDATE_CMD result.
 DEV_VALIDATE_RANGE_CMD = ""
 
 # Seconds either command may run before it is stopped. A stopped run is

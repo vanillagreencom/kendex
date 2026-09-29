@@ -84,7 +84,7 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
 
    The push rebases onto the updated base where that base needs it and reconciles every SHA workflow state records. A merge-queue base whose rules demand no up-to-date branch takes a branch that merges cleanly as it stands; `worktree push --help` § Merge-queue base owns that rule. Route its exit code and its `sha-reconcile:` line by `worktree-push --help`, which owns the reconciliation and repair contract.
 
-   A `worktree-push-base-conflict` refusal pushed and rebased nothing: the branch conflicts with that base, and the guarded restack is its one rebase. Run [merge-pr-restack.md](merge-pr-restack.md) steps 1-3, which unarm the PR where one exists, restack and push through `worktree-push`, then continue here.
+   A `worktree-push-base-conflict` refusal pushed and rebased nothing: the branch conflicts with that base, and the guarded restack is its one rebase. Run [merge-pr-restack.md](merge-pr-restack.md) steps 1-3, which unarm the PR where one exists, restack, validate the restacked head where the project sets `DEV_VALIDATE_RANGE_CMD`, and push through `worktree-push`, then continue here; a red run there hands back instead.
 
    Measure the pushed branch before constructing publication text. The issue's optional `**Expected delta**` line supplies the comparison.
 
