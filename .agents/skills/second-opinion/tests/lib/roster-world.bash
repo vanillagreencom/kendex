@@ -178,8 +178,8 @@ SH
 
 # A room check for target NAME, as `lanes pick` answers one, written into DIR as
 # room-<kind>-<name>: `room` exits 0 printing the account's env prefix,
-# `walled` exits 3 with its reason on stderr and `unmeasured` 5 with its reason
-# then a detail line, as `lanes pick` puts its keyed line first, `json` prints
+# `walled` exits 3 with its reason on stderr and `unmeasured` 5 with two
+# stderr lines, both passed through, `json` prints
 # a record instead of a prefix, `bare` exits 0 printing nothing, `drain` reads
 # its stdin before answering as `room`. Each run is counted per name.
 make_room_stub() { # NAME=KIND DIR
@@ -213,7 +213,7 @@ room_word() { # NAME=KIND DIR PREFIX
 # The account each lane stub ran under, and each room check's run count, the
 # suffix a room-check row appends: seat=<lane>:<seat>,... rooms=<name>:<n>,...
 room_state() {
-  local f seats="" rooms="" refusal
+  local f seats="" rooms=""
   for f in claude codex extra; do
     seats="$seats,$f:$(cat "$ROW/seat-$f" 2>/dev/null || printf 'none')"
   done
@@ -223,10 +223,6 @@ room_state() {
   done
   printf 'seat=%s rooms=%s' "${seats#,}" "${rooms:+${rooms#,}}"
   [[ -n "$rooms" ]] || printf -- '-'
-  # A refusal's room-check candidates, as a relayer of its JSON reads them;
-  # rendered only when the run refused on one.
-  refusal="$(sed -n '/^{$/,/^}$/p' "$ROW/stderr" | jq -r '[.candidates[]? | select(contains("room check"))] | join(";")')"
-  [[ -z "$refusal" ]] || printf ' refusal=%s' "$refusal"
 }
 
 # A `ps` that answers the detection walk: one ancestor named W_PS at a pid
@@ -425,10 +421,9 @@ err_word() {
     selected:*) printf '→ skipping %s: model %s already selected' "$a" "$b" ;;
     nocli:*) printf '→ skipping %s: CLI not found — install it or configure SECOND_OPINION_%s_CMD' "$a" "$b" ;;
     nocmd:*) printf '→ skipping %s: no command — %s has no built-in command; set SECOND_OPINION_%s_CMD to the command it runs, one you have checked cannot write' "$a" "$a" "$b" ;;
-    # roomrefused:<name>:<NAME>:<exit>:<kind>, the cause being the stub's own
-    # stderr line; roomsaid:<name>:<kind>, room:<name>:<NAME>:<seat | ->,
+    # roomrefused:<name>:<NAME>:<exit>, roomsaid:<name>:<kind>, room:<name>:<NAME>:<seat | ->,
     # noassign:<name>:<NAME>
-    roomrefused:*) printf '→ skipping %s: room check refused — SECOND_OPINION_%s_ROOM_CMD exited %s: room-check %s: %s' "$a" "$b" "${c%%:*}" "$a" "${c#*:}" ;;
+    roomrefused:*) printf "→ skipping %s: room check refused — SECOND_OPINION_%s_ROOM_CMD exited %s; its own reason is on stderr above, and running SECOND_OPINION_%s_ROOM_CMD's command prints it again" "$a" "$b" "$c" "$b" ;;
     roomsaid:*) printf 'room-check %s: %s' "$a" "$b" ;;
     room:*) printf '→ room: %s has room by SECOND_OPINION_%s_ROOM_CMD%s' "$a" "$b" "$([[ "$c" == - ]] || printf '; runs under SO_TEST_SEAT=%s' "$c")" ;;
     noassign:*) printf '→ skipping %s: room check printed a line that is no NAME=value assignment: {"config_dir":"/seat"} — SECOND_OPINION_%s_ROOM_CMD prints the env prefix of the account it judged and nothing else' "$a" "$b" ;;
