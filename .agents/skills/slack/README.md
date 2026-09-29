@@ -32,7 +32,7 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 - An owner's message reaches the overseer through the checkout's `lane-mail`, keyed by the Slack message id, so the relay never carries a message twice.
 - An owner's text reaches the overseer as typed: Slack's escapes, links, mentions, channel names and dates read back as plain text, and emoji stay `:name:`.
 - Each file on an owner's message is downloaded with the bot token to `tmp/slack/files/<file id>-<name>` in the checkout, directory mode 700, file mode 600. The message reaches the overseer with one line per file after its text: the saved path, or `file <id> not fetched: <why>`, such as `HTTP 403` or a download cut short. A failed download never holds the message back.
-- A directive's message gets an :eyes: reaction as it is delivered. Once the overseer's mailbox read passes that directive, the relay swaps it for :white_check_mark:. Neither mark posts a message. A mark Slack refuses is printed and delivery goes on; a refused mark or swap, a mark a relay stop cut off, or the relay's check of what the overseer has read that `lane-mail` refuses, is made again on the next poll.
+- A directive's message gets an :eyes: reaction as it is delivered. Once the overseer's mailbox read passes that directive, the relay swaps it for :white_check_mark:. Neither mark posts a message. A mark Slack refuses is made again on the next poll.
 - The mailbox's new envelopes for the owner are posted to the channel: a question with its options, recommendation and deadline, a notice in the thread of the message it answers, a report as an uploaded file. An envelope older than `SLACK_THREAD_DAYS` is never posted.
 - The relay's first run reads Slack from the moment of the binding and the mailbox from its newest envelope, so neither side's past is replayed. Open questions are posted whatever their age inside `SLACK_THREAD_DAYS`.
 - While `SLACK_MASTER_FILE` is younger than `SLACK_MASTER_MAX_AGE`, a master session answers the overseer and the relay posts no questions, notices, reports or answers from the mailbox; owner messages in the channel still reach the overseer, the relay's replies to them still post, and `slack listen --status` shows `held-by=master`. When the file goes stale or is gone, the relay posts the questions still open and the answer to a question the channel shows open. A notice written during the hold never posts; one written just before it can, though the master saw it. The exact window: [schemas/journal.md](schemas/journal.md), the `resume` line.
@@ -42,8 +42,6 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 ## Slack app
 
 Create one Slack app per machine from this manifest and install it to the workspace. Copy its bot token into the project's private env file as `SLACK_BOT_TOKEN`. Under the app's Basic Information, create an app-level token with the `connections:write` scope and copy it into the same file as `SLACK_APP_TOKEN`.
-
-Slack sends each message to one of an app's open connections, so two relays on one app each receive part of the other's messages. Run one app and one relay per machine.
 
 ```yaml
 display_information:
