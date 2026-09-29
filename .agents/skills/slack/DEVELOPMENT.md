@@ -40,7 +40,7 @@ Each suite starts `tests/lib/fake_slack.py`, a fake Slack Web API with a control
 | `hold.test.sh` | A fresh `SLACK_MASTER_FILE` holding a notice and an ask while owner messages still land, the hold journaled once and shown as `held-by=master`, the resume posting the open ask and the notices from before and after the hold but none from during it, its line naming the asks that landed and never one Slack refused, whether the file went stale or was removed, a notice written before the touch posting though the relay first saw the hold a poll later or its channel read failed in between, `SLACK_MASTER_MAX_AGE` bounding the hold, an unreadable file refusing the post step alone, an absent file or empty setting posting as before, and compaction of hold and resume lines |
 | `install.test.sh` | The unit written or printed, the systemctl calls, a reinstall restarting the running unit on its new roots, `setup` restarting the unit, and the refusals |
 
-The suites run on the `rest` shard of `.github/workflows/skill-tests.yml`, on Linux and macOS.
+The suites run on the `rest` shard of `.github/workflows/skill-tests.yml`; `tools/ci-job-set` states which change runs that shard on which runner.
 
 ## Live proof
 
