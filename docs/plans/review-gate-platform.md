@@ -1,8 +1,8 @@
 # Review gate on GitHub rulesets and Copilot approvals
 
-GitHub now enforces everything the review gate exists for. The ruleset `pull_request` rule requires approvals, dismisses a stale approval on push and requires every review thread resolved, and the `copilot_code_review` rule requests a Copilot review on every push. Since 2026-09-01, Copilot's approval can count toward the approval rule. The target is one organization rule set: one approval, stale approvals dismissed, threads resolved, Copilot review on push, and Copilot approvals counting on every path. Under it the gate's writer, predicate, class policy, override, carry-forward and every `REVIEW_GATE_*` key are deleted. No consumer of the package lacks the feature: all nine PR-flow repositories are in the organization, on Enterprise Cloud, with Copilot. Kept are the parts GitHub has no answer for: the reviewer wait that detects Copilot's silence, the failure handling in the queue and CI waiters, the multi-PR reducer, and the organization-standard report. When Copilot is down or the enterprise AI-credit budget stops, the owner approves the pull request, and no ruleset changes.
+GitHub now enforces everything the review gate exists for. The ruleset `pull_request` rule requires approvals, dismisses a stale approval on push and requires every review thread resolved, and the `copilot_code_review` rule requests a Copilot review on every push. Since 2026-09-01, Copilot's approval can count toward the approval rule. The owner's organization ruleset 24148602 already requires threads resolved, a Copilot review on push and squash merges on every PR-flow repository but the sandbox. The target is a delta on it: one approval, stale approvals dismissed, and Copilot approvals counting on every path. Under it the gate's writer, predicate, class policy, override, carry-forward and every `REVIEW_GATE_*` key are deleted. No consumer of the package lacks the feature: all nine PR-flow repositories are in the organization, on Enterprise Cloud, with Copilot. Kept are the parts GitHub has no answer for: the reviewer wait that detects Copilot's silence, the failure handling in the queue and CI waiters, the multi-PR reducer, and the organization-standard report. When Copilot is down or the enterprise AI-credit budget stops, the owner approves the pull request, and no ruleset changes.
 
-Design note, 2026-09-29, for KEN-2067 under owner direction 1790636017, owner audit decisions 1790636210 and owner direction 1790636279. Read: [D003](../decisions/D003-one-merge-path.md), [merge-rail.md](../architecture/merge-rail.md), [park-and-resume.md § Admin merge route](park-and-resume.md#admin-merge-route), `skills/review-gate/` (SKILL.md, README.md, `references/settings.md`, `references/adoption.md`, each script's `--help`), `skills/orch/scripts/approval-wait`, `queue-wait`, `ci-wait`, `item-tier`, `skills/github/scripts/commands/pr-merge.sh` and `await-mergeable.sh`, and the kendex rulesets as the lanes app reads them on 2026-09-29.
+Design note, 2026-09-29, for KEN-2067 under owner direction 1790636017, owner audit decisions 1790636210 and owner direction 1790636279, rewritten on owner note 1790641164, which set the organization layout the target starts from. Read: [D003](../decisions/D003-one-merge-path.md), [merge-rail.md](../architecture/merge-rail.md), [park-and-resume.md § Admin merge route](park-and-resume.md#admin-merge-route), `skills/review-gate/` (SKILL.md, README.md, `references/settings.md`, `references/adoption.md`, each script's `--help`), `skills/orch/scripts/approval-wait`, `queue-wait`, `ci-wait`, `item-tier`, `skills/github/scripts/commands/pr-merge.sh` and `await-mergeable.sh`, and the kendex rulesets as the lanes app reads them on 2026-09-29.
 
 ## Sources
 
@@ -10,28 +10,46 @@ Design note, 2026-09-29, for KEN-2067 under owner direction 1790636017, owner au
 - docs.github.com, configure code review, read by the lane on 2026-09-29. The repository settings sit at Settings > Copilot > Code review > Auto-approval: "Allow Copilot to approve pull requests", "Allow Copilot approvals to count toward merge requirements", and "File paths", one glob per line and at most 15. An approval counts only when every changed file matches a glob, and a blank list counts every file. The organization setting sits at Settings > Copilot > Code review > Approvals, "Count Copilot approvals toward merge requirements", with the values Enabled everywhere, Let repositories decide, Enable for selected repositories and Disabled everywhere. The enterprise setting sits under AI controls, "Allow Copilot to approve pull requests", with the values Let organizations decide, Enable for selected organizations and Disabled everywhere; Disabled everywhere is the default.
 - docs.github.com, use code review, read by the lane on 2026-09-29. By default Copilot leaves a Comment review. Once approvals are configured it leaves Approve reviews. Without `review_on_push` Copilot does not review a new push. Copilot reads its instructions from the head branch.
 - docs.github.com, available rules for rulesets, read by the lane on 2026-09-29. The `pull_request` rule's parameters: required approvals, dismiss stale approvals on push, code owner review, dismissal restriction, last-push approval, thread resolution, allowed merge methods, required reviewers by team and file pattern, and the extra approval for unattributed Copilot pull requests.
-- kendex today, as the lanes app reads it on 2026-09-29. All three are repository rulesets on `~DEFAULT_BRANCH`:
-  - 16519713: `copilot_code_review` (`review_on_push` true, drafts false), `deletion` and `non_fast_forward`.
-  - 20569268: `pull_request` with 0 approvals, `dismiss_stale_reviews_on_push` false, `required_review_thread_resolution` true, `require_extra_approval_for_unattributed_changes` true and squash only; `required_status_checks` for `Review gate` and seven CI job names, `strict` false; `deletion` and `non_fast_forward`. The lanes app cannot bypass it.
-  - 20569265: `merge_queue` (SQUASH, ALLGREEN, 5 entries, 90-minute check timeout). The lanes app can always bypass it: the admin merge route.
+- Owner note 1790641164, relayed as overseer directive 1790641270-2014629-2305, 2026-09-29: the organization layout the owner applied. Organization ruleset 24148602 targets hyprtrade, fleet, hyprtrade-io, kendex, vsys, memsira, drovr and vg. Each of them holds exactly two repository rulesets, `main required checks (zero-bypass)` and `main merge queue`, and every other repository ruleset is deleted. The admin-role bypass is gone everywhere. The lanes app (actor id 4925608) is the only bypass actor of each `main merge queue`. The sandbox keeps its trial ruleset 24147461 until KEN-2067 lands. The lanes app cannot read the targets or the bypass actors (below), so those facts are the note's.
+- kendex today, as the lanes app reads it on 2026-09-29 through `repos/vanillagreencom/kendex/rulesets?includes_parents=true` and each ruleset. All three are on `~DEFAULT_BRANCH`, and `rules/branches/main` draws every rule from them:
+  - 24148602 `main protections (zero-bypass)`, organization ruleset: `deletion`, `non_fast_forward`; `pull_request` with `required_approving_review_count` 0, `dismiss_stale_reviews_on_push` false, `required_review_thread_resolution` true, `require_last_push_approval` false, `require_code_owner_review` false, `require_extra_approval_for_unattributed_changes` true, `allowed_merge_methods` `["squash"]` and `required_reviewers` empty; `copilot_code_review` with `review_on_push` true and `review_draft_pull_requests` false. `current_user_can_bypass` is `never`. The organization read of it answers 403 to the lanes app.
+  - 24148610 `main required checks (zero-bypass)`, repository ruleset: `required_status_checks` for `Review gate` and seven CI job names, none bound to an app, `strict` false, `do_not_enforce_on_create` true. `current_user_can_bypass` is `never`.
+  - 20569265 `main merge queue`, repository ruleset: `merge_queue` only (SQUASH, ALLGREEN, 5 entries, 90-minute check timeout). `current_user_can_bypass` is `always`, the admin merge route. GitHub withholds its `bypass_actors` from the lanes app.
+  - The layout replaced two repository rulesets of 2026-09-28, both deleted and answering 404: 16519713 (`copilot_code_review`, `deletion`, `non_fast_forward`) and 20569268 (`pull_request` with 0 approvals, `required_status_checks` for `Review gate` and seven CI job names, `deletion`, `non_fast_forward`, zero bypass). 20569265 held the same `merge_queue` rule before, and was updated at 2026-09-29T00:17:41Z.
 - docs.github.com, about Copilot code review, read by the lane on 2026-09-29. AI credits that members without a Copilot license consume are billed to the organization or enterprise as paid usage. When the enterprise or cost-center spending limit is exhausted, GitHub blocks code reviews.
 - Sandbox proof on `vanillagreencom/review-gate-sandbox`, 2026-09-28: the owner's two notes, relayed as overseer directives 1790638858-1231047-24163 (the settings applied) and 1790639192-1327983-1295 (owner note 1790639174, the PR results). § Sandbox proof holds the values.
 
 ## Target
 
-### Organization rulesets
+The target starts from the layout the owner applied on 2026-09-29 (§ Sources, § Organization rule set) and changes only what this section names.
 
-Every ruleset below is an organization ruleset on `~DEFAULT_BRANCH`. It targets the repositories whose custom property `fleet-managed` is `true`, except where a row says otherwise.
+### Organization ruleset 24148602
 
-| Ruleset | Rules | Bypass |
+`main protections (zero-bypass)` takes one delta, on its `pull_request` rule:
+
+| Parameter | Now | Target |
 |---|---|---|
-| `fleet: review` | `pull_request`: `required_approving_review_count` 1, `dismiss_stale_reviews_on_push` true, `required_review_thread_resolution` true, `require_last_push_approval` false, `require_code_owner_review` false, `require_extra_approval_for_unattributed_changes` true, `required_reviewers` empty, `allowed_merge_methods` `["squash"]`; `copilot_code_review`: `review_on_push` true, `review_draft_pull_requests` false; `deletion`; `non_fast_forward` | none |
-| `fleet: CI` | `required_status_checks`: `CI` bound to the GitHub Actions app (`integration_id` 15368), `strict_required_status_checks_policy` false, `do_not_enforce_on_create` true. It targets, by name, only the repositories that report `CI` (§ Organization rule set) | none |
-| `fleet: merge queue` | `merge_queue`: `merge_method` SQUASH, `grouping_strategy` ALLGREEN, `max_entries_to_build` 5, `min_entries_to_merge` 1, `max_entries_to_merge` 5, `min_entries_to_merge_wait_minutes` 0, `check_response_timeout_minutes` 90 | the lanes app, `vanillagreen-fleet-lanes`, as an Integration actor with mode `always` |
+| `required_approving_review_count` | 0 | 1 |
+| `dismiss_stale_reviews_on_push` | false | true |
 
-- The approval and thread rules sit in a ruleset nobody bypasses, as `required_status_checks` does. The admin merge (`gh pr merge N --squash --admin`, [park-and-resume.md § Admin merge route](park-and-resume.md#admin-merge-route)) therefore skips only the queue. GitHub still refuses it without an approval of the current head and with an open thread.
+Every other rule and parameter of 24148602 stays as § Sources reads it, zero bypass included.
+
+- The approval and thread rules sit in 24148602, which nobody bypasses, as `main required checks (zero-bypass)` does. The admin merge (`gh pr merge N --squash --admin`, [park-and-resume.md § Admin merge route](park-and-resume.md#admin-merge-route)) therefore skips only the queue. GitHub still refuses it without an approval of the current head and with an open thread.
 - `require_last_push_approval` stays false. With stale approvals dismissed on every push, the only case it adds is a pusher approving their own push. No pusher in the fleet's flow approves its own push: lanes and the refresh workflow push as the lanes app, which never approves.
 - The extra approval for unattributed Copilot pull requests keeps GitHub's default. No flow opens a pull request under Copilot's own identity.
+- When no Copilot approval arrives, the owner's approval satisfies the same rule (§ Copilot-down fallback).
+
+### Repository rulesets
+
+Each repository keeps its two repository rulesets.
+
+| Ruleset | Holds | Bypass | Delta |
+|---|---|---|---|
+| `main required checks (zero-bypass)`, kendex 24148610 | `required_status_checks`: the repository's own contexts, `strict` false, `do_not_enforce_on_create` true | none | `Review gate` leaves the list, and each remaining context is bound to the app that reports it: the GitHub Actions app (`integration_id` 15368) for every Actions job. One edit does both when P1 reaches the repository (§ Owner steps, step 6). |
+| `main merge queue`, kendex 20569265 | `merge_queue` only | the lanes app `vanillagreen-fleet-lanes` (actor id 4925608) alone, the admin merge route | none |
+
+- `Review gate` leaves when P1 reaches the repository. Until then the writer posts it, and the gate holds beside the approval rule. P1 deletes the writer, so a merge group without the writer never reports `Review gate`. In kendex the edit therefore precedes queuing P1's own pull request, and in a consumer it precedes queuing the refresh pull request that carries P1.
+- The binding is decided, not optional. P1 deletes the trust lists by name (the B3 row), and an unbound required context is satisfied by a check run or commit status of that name from any source that can post one to the repository. Binding closes that. It rides the `Review gate` edit, so each `main required checks` changes once.
 
 ### Copilot approval settings
 
@@ -42,7 +60,7 @@ Every ruleset below is an organization ruleset on `~DEFAULT_BRANCH`. It targets 
 
 ### What merges a pull request
 
-A lane arms auto-merge at pull request creation, as it does today. Copilot reviews each push. An approval of the current head, zero open threads and a green `CI` let GitHub enroll the pull request in the queue, and the queue merges it. A push dismisses the approval, and Copilot's review of that push can approve it again. A changes-requested review from anyone with write access blocks the merge until that person approves or the review is dismissed.
+A lane arms auto-merge at pull request creation, as it does today. Copilot reviews each push. An approval of the current head, zero open threads and green required checks let GitHub enroll the pull request in the queue, and the queue merges it. A push dismisses the approval, and Copilot's review of that push can approve it again. A changes-requested review from anyone with write access blocks the merge until that person approves or the review is dismissed.
 
 ## Behaviour-to-setting table
 
@@ -60,7 +78,7 @@ One row per review-gate behaviour. A kept row names its reason. None needs a sta
 | Outage attestation (A2) | `REVIEW_GATE_OVERRIDE_CONTEXT`, the predicate's override read | a person's approval counts toward the `pull_request` rule | Delete (P1). The owner's approval replaces it (§ Copilot-down fallback). No bypass entry is needed. |
 | Reviewer-down proceed | `PR_REVIEW_ON_TIMEOUT`, `approval-wait` `proceeded` | none | Keep: a lane-side choice between stopping and arming. An armed PR still waits on GitHub for an approval, so `proceed` merges nothing by itself. |
 | Writer workflow | `scripts/review-writer.sh`, `templates/review-gate-writer.yml`: relay, converge and schedule legs | the `pull_request` rule is the status | Delete (P1). |
-| Merge-queue success leg | `review-writer.sh` `merge_group` leg | none needed | Delete (P1). The audit kept it while the queue required `Review gate`, and no queue requires it now. |
+| Merge-queue success leg | `review-writer.sh` `merge_group` leg | none needed | Delete (P1). The audit kept it while the queue required `Review gate`, and under the target no queue requires it. |
 | Predicate | `scripts/review-predicate.sh`, `review-predicate-selftest.sh` | `reviewDecision` under the approval rule | Delete (P1). |
 | The gate status itself | `REVIEW_GATE_CONTEXT`, the required `Review gate` context | the approval rule | Delete (P1, owner steps). Superseded: Copilot approvals count as approvals (owner audit). |
 | Gate switches | `REVIEW_GATE_MODE`, `REVIEW_GATE_WRITER` | none needed | Delete (P1, P2). There is no gate to switch off. |
@@ -74,12 +92,12 @@ One row per review-gate behaviour. A kept row names its reason. None needs a sta
 | Threads (A1) | `REVIEW_GATE_THREADS`, the predicate's thread term, `pr-merge.sh` § Review-thread gate | `required_review_thread_resolution`, zero bypass | Delete all three (P1, P3). `pr-watch.sh` `threads-open` stays as the lane's early signal; it enforces nothing. |
 | Bot-thread resolving (C2) | `pr-merge.sh` waiver resolve and reopen, `scripts/lib/waiver.sh` | the thread rule it got past | Delete (P3, P1). A bot nitpick on a small PR is fixed in the review instructions `bot-instructions` renders into `.github/instructions/`, which Copilot reads from the head branch. |
 | Mode keys (B1) | `PR_REVIEW_GATE`, `PR_APPROVAL_GATE`, `REVIEW_GATE_MODE`, `PR_REVIEW_CHECK` | `required_approving_review_count` | Delete (P2). `approval-wait` derives the mode: `approval` where the base's rules require at least 1 approval, `off` where they require 0, exit 2 when the rules cannot be read. |
-| Trust lists by name (B3) | `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS`, `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` | GitHub counts approvals by identity, never by name | Delete (P1). Nothing is left to match by name. The one check kept, `CI`, is bound to the Actions app in `fleet: CI`. |
+| Trust lists by name (B3) | `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS`, `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` | GitHub counts approvals by identity, never by name | Delete (P1). Nothing is left to match by name. Owner step 6 binds each required context to the app that reports it (§ Repository rulesets). |
 | `untracked-claim`, `unreasoned-decline` | predicate thread-content terms, `pr-watch.sh` | none: no setting reads reply text | Delete (P1, P4). Without a required status they block nothing. The rule stays in orch's `references/finding-disposition.md`. |
 | `suppressed-findings` | predicate review-body term, `pr-watch.sh`, `scripts/lib/review-findings.sh` | none | Delete (P1, P4). Copilot's approval assessment judges its own suppressed comments. Another bot's review body counts toward nothing. |
 | Carry-forward, docs-only carry included | `REVIEW_GATE_CARRY_FORWARD`, `REVIEW_GATE_VENDORED_PATHS`, `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`, `REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC` | `dismiss_stale_reviews_on_push`, which is its opposite | Delete (P1). The owner's direction asks for stale approvals dismissed, and under that rule a carry cannot exist. Each docs push costs one Copilot re-review, which `review_on_push` starts. |
 | Install validation | `scripts/validate.sh`, `scripts/validate-workflow.sh` | none needed | Delete (P1). Both judge only the engine's install and settings. |
-| `validate-standard` | `scripts/validate-standard.sh`, `standard.json` | none: GitHub reports no repository against an organization standard | Keep. It reports a repository ruleset or classic protection beside the organization set, and the environment and secrets [D003](../decisions/D003-one-merge-path.md) places. P5 moves its rows to the target, KEN-2070 moves its values out of the package, and KEN-2069 owns its bypass row. |
+| `validate-standard` | `scripts/validate-standard.sh`, `standard.json` | none: GitHub reports no repository against an organization standard | Keep. It reports a rule from a source the layout of § Target does not sanction, classic protection, and the environment and secrets [D003](../decisions/D003-one-merge-path.md) places. P5 moves its rows to the target, KEN-2070 moves its values out of the package, and KEN-2069 owns its bypass row. |
 | Reviewer wait (D3) | `skills/orch/scripts/approval-wait` | `reviewDecision` | Keep, reduced (P2). What stays is failure handling: the early `comments` return that sends the lane to fix a finding, `changes_requested`, the `unreviewable` stacked base, and the timeout that starts the owner ask. P2 puts the `comments` return ahead of `approved`, so an approval beside an unresolved thread returns `comments`. Today's approval mode checks the approval first and returns `approved` whatever threads stand open. |
 | Queue wait (D3) | `skills/orch/scripts/queue-wait` | none for ejection | Keep. `ejected`, `disarmed`, `conflicting` and `not_queued` are failures GitHub does not push to the lane. The late-findings guard stays for a thread opened while a PR waits in the queue; the sandbox proof does not test GitHub's answer to it. |
 | CI wait (D3) | `skills/orch/scripts/ci-wait`, `skills/github/scripts/lib/ci-run-correlation.sh` | `gh pr checks --required --watch` waits, but does not say which run is current after a rerun | Keep: run matching is the part GitHub lacks. |
@@ -90,36 +108,35 @@ The audit's other kept items, the byte ceiling, the commit-message shape and cha
 
 ## Adjustments to the owner notes
 
-- **Required contexts.** Direction 1790636279 says every repository reports `CI` and `Review gate`. The target requires `CI` alone. The audit ruling in the same session supersedes the gate status: Copilot approvals now count as approvals.
-- **A2.** The override's replacement is the owner's approval, not a temporary bypass on the checks ruleset. With no `Review gate` context there is nothing for a bypass to skip. An approval satisfies the only rule a Copilot outage leaves unmet.
+- **Required contexts.** Direction 1790636279 says every repository reports `CI` and `Review gate`. The target drops `Review gate`. The audit ruling in the same session supersedes the gate status: Copilot approvals now count as approvals. Each repository keeps its own contexts in `main required checks (zero-bypass)`, and whether a list shrinks to `CI` is KEN-1906's.
+- **A2.** The override's replacement is the owner's approval, not a temporary bypass on `main required checks (zero-bypass)`. With no `Review gate` context there is nothing for a bypass to skip. An approval satisfies the only rule a Copilot outage leaves unmet.
 - **Docs-only carry.** The audit kept it. Dismissing stale approvals, which direction 1790636017 asks for, leaves nothing for a carry to act on, so it goes with the engine.
 - **Merge-queue success leg.** The audit kept it while `Review gate` was a queue context. It goes with the writer.
-- **B3.** It needs no app-id matching. The trust lists go with the engine, and the one required check is bound to the Actions app.
+- **B3.** It needs no app-id matching in the package. The trust lists go with the engine, and owner step 6 binds each required context to the app that reports it.
 - **B1.** The derived mode has two values, `approval` and `off`, because no repository in the fleet has a gate context to wait on.
 - **Stand-down.** Direction 1790636017 keeps a guard for a consumer whose plan lacks the feature. No consumer does: the nine PR-flow repositories all carry Copilot under Enterprise Cloud. The engine is deleted rather than kept for an absent consumer, and git history holds it. A consumer without Copilot approvals is this design's revisit condition.
 - **Sandbox globs.** The sandbox proof sets File paths to `**/*.md`, and the target leaves them blank. Every proof PR changes one `.md` file only, so the glob covers every change and the proof reads the same as it would under a blank list.
 
 ## Organization rule set
 
-Today, as the master read nine repositories and 27 rulesets on 2026-09-28:
+The owner applied this layout on 2026-09-29 (owner note 1790641164, § Sources). The Before column is the master's read of nine repositories and 27 rulesets on 2026-09-28.
 
-| Item | Today | Decision |
+| Item | Before | Applied on 2026-09-29 |
 |---|---|---|
-| `copilot_code_review` `{review_on_push true, drafts false}` | uniform | Unify into `fleet: review`. |
-| `deletion`, `non_fast_forward` | uniform | Unify into `fleet: review`. |
-| Thread resolution | uniform, with 0 approvals | Unify into `fleet: review`, with 1 approval and stale approvals dismissed. |
-| Allowed merge methods | squash only in 6, all three in 3 | Owner decides. Recommendation: unify on squash only. The queue takes one merge method per ruleset, and `pr-merge`, `tools/lock-record` and the refresh workflow squash (KEN-2071 reads the method from GitHub). |
-| Queue ruleset bypass | lanes app in fleet and kendex; admin role in hyprtrade, vsys, memsira, drovr and the sandbox; none in hyprtrade-io and vg | Owner decides the standing admin bypass. Recommendation: unify on the lanes app alone, the admin merge route of owner decision 1790633650, with no admin role anywhere. An admin-role bypass lets any organization admin merge past the queue by hand, and no flow uses that. |
-| Admin role bypassing required checks | 5 repositories | Unify on zero bypass. The owner's approval is an ordinary approval under the target, so the owner needs no bypass to merge during a Copilot outage. |
-| Required check names | per repository | Keep per repository until the repository reports `CI` on `pull_request` and `merge_group`. An organization rule requiring `CI` would block every PR of a repository that does not report it. KEN-1906 and its per-repository items carry the aggregation. |
+| `copilot_code_review` `{review_on_push true, drafts false}` | uniform, per repository | In 24148602. |
+| `deletion`, `non_fast_forward` | uniform, per repository | In 24148602. |
+| Thread resolution | uniform, with 0 approvals | In 24148602, with 0 approvals. The approval delta is § Target's. |
+| Allowed merge methods | squash only in 6, all three in 3 | Squash only, in 24148602. The queue takes one merge method per ruleset, and `pr-merge`, `tools/lock-record` and the refresh workflow squash (KEN-2071 reads the method from GitHub). |
+| Queue ruleset bypass | lanes app in fleet and kendex; admin role in hyprtrade, vsys, memsira, drovr and the sandbox; none in hyprtrade-io and vg | The lanes app alone, in each repository's `main merge queue`: the admin merge route of owner decision 1790633650. The sandbox's 20539568 keeps its admin-role bypass until owner step 4. |
+| Admin role bypassing required checks | 5 repositories | Gone everywhere. `main required checks (zero-bypass)` has no bypass actor. The owner's approval is an ordinary approval under the target, so the owner needs no bypass to merge during a Copilot outage. |
+| Required check names | per repository | Per repository, in `main required checks (zero-bypass)`. `Review gate` leaves each list at owner step 6. |
 
-- Targets: the custom property `fleet-managed`, of type true/false, set `true` on the nine repositories. A new repository joins with one property value, where a name list drifts. `fleet: CI` alone targets a name list: the repositories whose `validate-standard.sh` row `standard-ci-context` reads `ok`. kendex reports `CI` from `.github/workflows/skill-tests.yml`. The sandbox reports `CI Required`, not `CI` (§ Sandbox proof), so it stays off the list. When the last of the nine joins, its target becomes the property.
-- The one per-repository piece is a repository ruleset `checks`, zero bypass, holding the repository's own required check names without `Review gate`. It exists only in a repository not yet in `fleet: CI`, and it is deleted the day the repository joins. The sandbox holds one requiring `CI Required` until it reports `CI`.
-- The master applies the three organization rulesets and the Copilot approval settings in one step (§ Owner steps), so the rulesets change once.
+- Targets: 24148602 names the eight repositories (§ Sources). The sandbox joins it at owner step 4.
+- The two repository rulesets are the only per-repository pieces. A repository holds no other ruleset and no classic branch protection.
 
 ## Copilot-down fallback
 
-When Copilot is down, or the enterprise AI-credit budget stops, no Copilot approval arrives. The budget is the enterprise's because Copilot code review for members without a Copilot license bills its AI credits to the enterprise (§ Sandbox proof), and GitHub blocks code reviews once the enterprise spending limit is exhausted (§ Sources). The owner approves the pull request in GitHub, and the approval satisfies `fleet: review` like Copilot's would. No ruleset or setting changes. The signal is `approval-wait`'s timeout for a lane, and `pr-watch.sh`'s `awaiting-stale` line for the overseer (P4). The overseer puts the pull requests to the owner as one approval ask. A pull request the owner authored cannot take the owner's approval, because GitHub refuses self-approval. It waits for Copilot, or the owner adds a one-session bypass entry to `fleet: review`, merges, and removes the entry in the same session, as the gate-repair break-glass does today ([review-gate SKILL.md § 4. Operations](../../skills/review-gate/SKILL.md#4-operations)).
+When Copilot is down, or the enterprise AI-credit budget stops, no Copilot approval arrives. The budget is the enterprise's because Copilot code review for members without a Copilot license bills its AI credits to the enterprise (§ Sandbox proof), and GitHub blocks code reviews once the enterprise spending limit is exhausted (§ Sources). The owner approves the pull request in GitHub, and the approval satisfies 24148602 like Copilot's would. No ruleset or setting changes. The signal is `approval-wait`'s timeout for a lane, and `pr-watch.sh`'s `awaiting-stale` line for the overseer (P4). The overseer puts the pull requests to the owner as one approval ask. A pull request the owner authored cannot take the owner's approval, because GitHub refuses self-approval. It waits for Copilot, or the owner adds a one-session bypass entry to 24148602, merges, and removes the entry in the same session, as the gate-repair break-glass does today ([review-gate SKILL.md § 4. Operations](../../skills/review-gate/SKILL.md#4-operations)).
 
 ## Deletion list
 
@@ -173,15 +190,16 @@ kendex's own wiring (P1 unless marked):
 
 ## Consumer configuration in GitHub
 
-A fleet repository configures only the following. Everything else it inherits.
+A fleet repository configures only the following. Everything else it inherits from 24148602.
 
-1. Set the custom property `fleet-managed` to `true`.
+1. The owner adds the repository to 24148602's targets.
 2. Settings > Copilot > Code review > Auto-approval: turn on "Allow Copilot to approve pull requests" and "Allow Copilot approvals to count toward merge requirements", and leave "File paths" blank.
-3. Report a job named `CI` on `pull_request` and `merge_group` ([harness-ci wiring.md § The CI context](../../skills/harness-ci/references/wiring.md#the-ci-context)), then join `fleet: CI`'s name list. Until then, hold the repository ruleset `checks`.
-4. Delete every repository ruleset that `fleet: review`, `fleet: CI` or `fleet: merge queue` now covers, and any classic branch protection.
-5. Disable the `Review gate writer` workflow. After P1, the consumer's refresh pull request deletes its file.
+3. Repository ruleset `main required checks (zero-bypass)` on `~DEFAULT_BRANCH`, no bypass actor: `required_status_checks` with the repository's own contexts, no `Review gate`, each context bound to the app that reports it, `strict` false, `do_not_enforce_on_create` true. A context list that shrinks to `CI` follows [harness-ci wiring.md § The CI context](../../skills/harness-ci/references/wiring.md#the-ci-context).
+4. Repository ruleset `main merge queue` on `~DEFAULT_BRANCH`: `merge_queue` only, with the lanes app its only bypass actor.
+5. No other ruleset and no classic branch protection.
+6. Disable the `Review gate writer` workflow. After P1, the consumer's refresh pull request deletes its file.
 
-A repository outside the organization copies the three rulesets as repository rulesets and takes step 2.
+A repository outside the organization copies 24148602 as a third repository ruleset and takes step 2.
 
 ## Sandbox proof
 
@@ -193,12 +211,14 @@ The master ran the proof on `vanillagreencom/review-gate-sandbox` on 2026-09-28,
 |---|---|
 | New ruleset | Organization ruleset 24147461, `review-gate-sandbox: platform review target (zero-bypass)`: condition `repository_name` include `[review-gate-sandbox]`, ref `~DEFAULT_BRANCH`, zero bypass. |
 | Rules of 24147461 | `pull_request`: `required_approving_review_count` 1, `dismiss_stale_reviews_on_push` true, `required_review_thread_resolution` true, `require_last_push_approval` false, `require_code_owner_review` false, `allowed_merge_methods` `["squash"]`; `copilot_code_review`: `review_on_push` true, `review_draft_pull_requests` false; `required_status_checks`: `CI Required`, `strict` false, `do_not_enforce_on_create` true; `deletion`; `non_fast_forward`. |
-| Not set on 24147461 | `require_extra_approval_for_unattributed_changes`: the master found no API name for it. The name `fleet: review` uses is the parameter kendex ruleset 20569268 carries (§ Sources). |
+| Not set on 24147461 | `require_extra_approval_for_unattributed_changes`: the master found no API name for it. 24148602 carries it under that name (§ Sources). |
 | Sandbox repository rulesets | 20539569 (`pull_request`, thread resolution) is disabled. 20539568 stays as the merge-queue ruleset and holds `merge_queue` only; its `required_status_checks` and `non_fast_forward` moved into 24147461. Its admin-role bypass stays, and it is what let the owner account take the admin route. |
 | Workflows | `Review gate writer` is disabled; it was the only workflow posting `Review gate`. The sandbox `ci.yml` only reads the gate predicate, and with no verdict its heavy jobs fail open and run. |
 | Copilot approvals | Enterprise "Allow Copilot to approve pull requests" = Let organizations decide; it was unset, which meant disabled. Organization = Enable for selected repositories: review-gate-sandbox. Sandbox approvals On by organization policy, File paths `**/*.md`. |
 | Copilot review without a license | Enterprise policy "Allow members without a Copilot license to use Copilot code review" is On, and its AI credits bill to the enterprise. |
 | Visibility and plan | The sandbox is private. The organization plan is enterprise (GitHub Enterprise Cloud). |
+
+24147461 carries the delta 24148602 takes, 1 approval and stale approvals dismissed, on the same rule shape: thread resolution, no last-push or code-owner approval, squash only, `copilot_code_review` on push, `deletion` and `non_fast_forward`, zero bypass. The proof therefore covers the delta.
 
 ### Results
 
@@ -220,7 +240,7 @@ Proven, as measured:
 
 Not proven:
 
-- A head Copilot does not approve. All three PRs were one-line `.md` changes inside the `**/*.md` limit. The design: no approval of the head exists, so `fleet: review` holds the merge. A finding sends the lane to fix it through `approval-wait`'s early `comments` return, and once P2 orders that return ahead of `approved`, a Copilot approval carrying an inline finding does too; today's approval mode returns `approved` beside an open thread. The fix push draws a new Copilot review under `review_on_push`. When no approval arrives, `approval-wait`'s timeout and `pr-watch.sh`'s `awaiting-stale` start the owner-approval ask (§ Copilot-down fallback).
+- A head Copilot does not approve. All three PRs were one-line `.md` changes inside the `**/*.md` limit. The design: no approval of the head exists, so 24148602 holds the merge. A finding sends the lane to fix it through `approval-wait`'s early `comments` return, and once P2 orders that return ahead of `approved`, a Copilot approval carrying an inline finding does too; today's approval mode returns `approved` beside an open thread. The fix push draws a new Copilot review under `review_on_push`. When no approval arrives, `approval-wait`'s timeout and `pr-watch.sh`'s `awaiting-stale` start the owner-approval ask (§ Copilot-down fallback).
 - A change outside `.md`. Under the sandbox's `**/*.md` limit, Copilot's approval of it would not count, so it needs a person's approval: the same owner-approval ask, reached through the reviewer wait and `awaiting-stale`. The target leaves File paths blank, so there a Copilot approval counts for every path; no proof PR shows that.
 
 ## Issues the design makes moot
@@ -236,30 +256,25 @@ Each is moot once the item named lands. The lane dispositions them.
 
 ## Implementation items
 
-Each is filed as a proposal comment on KEN-2067 with source PR vanillagreencom/kendex#3111, and its comment id follows its title. After this PR merges, the proposal sweep files each one and records the issue id, or the decline, as a reply on its comment. P2, P3, P4 and P6 land before P1: each removes a caller of a script P1 deletes. Nothing lands before the owner steps have been applied in all nine repositories.
+Each is filed as a proposal comment on KEN-2067 with source PR vanillagreencom/kendex#3111, and its comment id follows its title. After this PR merges, the proposal sweep files each one and records the issue id, or the decline, as a reply on its comment. P2, P3, P4 and P6 land before P1: each removes a caller of a script P1 deletes. Nothing lands before owner steps 1 to 5 have been applied. Owner steps 6 and 7 go with P1, repository by repository (§ Owner steps).
 
 1. **P1. review-gate: the gate engine goes and the package keeps the reducer, the standard report and the consumer refresh.** Proposal `622ef116-c72d-4b24-9bd0-72797562115f`. Scope: the `skills/review-gate/` deletions, the P1 keys and kendex's own wiring in § Deletion list, and the decision record superseding D003 item 3. Done when: outside `docs/plans/` and `docs/decisions/`, no tracked file names `review-predicate.sh`, `review-writer.sh`, `review-policy` or a P1 key; `kendex verify` passes; and a consumer refresh PR under the target removes the writer copy and its inventory entry and merges on a Copilot approval.
 2. **P2. orch: the reviewer wait reads GitHub's approval rule.** Proposal `d005fdc2-2397-4adb-a3d0-c30aa7d624f1`. Scope: `approval-wait` derives `approval` or `off` from the base branch's rules and exits 2 on a failed read; in approval mode it returns `comments` while any review thread stands unresolved, ahead of `approved`, the case sandbox PR B #96 shows (a Copilot approval beside an open thread); the `review` and `exempt` modes and the P2 keys go; `item-tier`, `micro.md` and `review-pr.md` read `change-class`; and the orch documents in § Deletion list follow. Done when: `approval-wait --resolve-mode` prints `approval` against rules requiring 1 approval, `off` against 0, and exits 2 on an unreadable rules read, each row with its must-fail control; an approved head with an unresolved thread returns `comments` in approval mode, with a must-fail control replacing the `skills/orch/tests/approval_wait.sh` case that pins it as `approved`; and no orch file names `review-policy` or a P2 key.
 3. **P3. github: pr-merge leaves threads and approvals to GitHub.** Proposal `716c0ec6-50d4-4d52-be61-f66f9f03f969`. Scope: the pr-merge deletions and `await-mergeable.sh` in § Deletion list. `--auto` arms only where the base's rules require at least 1 approval (`arm: no-merge-gate=required_approval`), replacing `--require-context`. Done when: `pr-merge --check` JSON carries no thread term; `--auto` refuses on a base requiring 0 approvals and arms on 1, with a must-fail control; and `github.sh` routes no `await-mergeable`. It edits the same file as KEN-2069, and either lands first.
 4. **P4. review-gate: pr-watch reports GitHub's review state only.** Proposal `78dfa054-4765-4111-866d-8891f7dc7b20`. Scope: `pr-watch.sh` keeps `threads-open`, `changes-requested`, `awaiting-stale`, `disarmed` and `head-moved`, each read from GitHub; `awaiting-stale` and `disarmed` read `reviewDecision` in place of the gate status. Orch's watch routes `awaiting-stale` to the owner-approval ask. The P4 deletions in § Deletion list go. Done when: the pr-watch suite covers each kept kind with a must-fail control, and the script calls no predicate.
-5. **P5. review-gate: validate-standard reports the target.** Proposal `56ef9976-c2b2-4c06-8abc-c37e0bd8d2c7`. Scope: `standard-required-contexts` expects `CI` alone; new rows read the `pull_request` rule (1 approval, stale approvals dismissed, thread resolution) and `copilot_code_review` (`review_on_push`). Lands after KEN-2070; the bypass row stays KEN-2069's. Done when: each new row has a must-fail control in `validate-standard.test.sh`, and kendex reads `ok` on every row after the owner steps.
+5. **P5. review-gate: validate-standard reports the target layout.** Proposal `56ef9976-c2b2-4c06-8abc-c37e0bd8d2c7`. Scope: `skills/review-gate/scripts/validate-standard.sh` accepts the layout of § Target and reports every departure from it. `standard-ruleset-source` requires `pull_request`, `copilot_code_review`, `deletion` and `non_fast_forward` from an organization ruleset, and accepts `required_status_checks` from the repository ruleset `main required checks (zero-bypass)` and `merge_queue` from `main merge queue` as repository sources, not failures. `standard-required-contexts` compares the required contexts to the repository's own context list, which KEN-2070 moves out of the package, and fails when `Review gate` is required or when the repository declares no list. The new rows `standard-required-approvals` and `standard-stale-dismissal` read 24148602's delta: the organization-sourced `pull_request` rule requires at least 1 approval and dismisses stale approvals on push. Lands after KEN-2070; the bypass row stays KEN-2069's. Done when: each new or changed row has a must-fail control in `skills/review-gate/tests/validate-standard.test.sh`, namely a repository-sourced `pull_request` rule failing `standard-ruleset-source` beside repository-sourced `required_status_checks` and `merge_queue` reading `ok`, a required `Review gate` and a missing context list each failing `standard-required-contexts`, 0 approvals failing `standard-required-approvals`, and stale approvals kept failing `standard-stale-dismissal`. On kendex after owner step 6, `standard-ruleset-source`, `standard-merge-queue`, `standard-required-contexts`, `standard-required-approvals`, `standard-stale-dismissal`, `standard-conversation-resolution`, `standard-copilot-review` and `standard-classic-protection` read `ok`, and `standard-ci-context` reads `ok` once the head of `main` came through the merge queue. `standard-ci-context` stays red on a repository that does not report `CI` until it does: the sandbox reports `CI Required`.
 6. **P6. review-gate: the refresh workflow answers findings without the gate.** Proposal `958464ca-6815-42aa-8750-1b8af585dbd1`. Scope: `refresh-reviews.sh` proves the `render` class through harness-ci's `change-class`, and finds automatic reviewers by GitHub's `Bot` author type in place of the two settings. It resolves a thread only after its reply names the upstream issue it filed, and leaves the thread open when filing fails. The `Dispositions at <sha>` comment goes. Done when: the refresh suites cover a filed-and-resolved thread and a failed filing that leaves the thread open, each with a must-fail control.
 7. **P7. fleet consumers: the dead review-gate keys go.** Proposal `0cf57c43-34ad-4411-877f-aecb52971e6b`. Scope: each of the eight consumers deletes the P1 and P2 keys from its own `kendex.settings.toml` once P1 and P2 have reached it through its refresh. Done when: no consumer's `kendex.settings.toml` assigns a deleted key.
 
 ## Owner steps, in order
 
-The master applies these in order. The sandbox proof has run (§ Sandbox proof).
+The master applies these in order. The sandbox proof has run (§ Sandbox proof). The enterprise setting "Allow Copilot to approve pull requests" = Let organizations decide has been in force since the proof and takes no step. Steps 1 and 2 come before step 3, so no pull request waits for a person's approval while a Copilot approval cannot count.
 
-1. Enterprise: AI controls > "Allow Copilot to approve pull requests" = Let organizations decide. In force since the sandbox proof; nothing to apply.
-2. Organization Settings > Copilot > Code review > Approvals > "Count Copilot approvals toward merge requirements" stays Enable for selected repositories, and its selection widens from review-gate-sandbox to the nine PR-flow repositories.
-3. In each of the nine repositories: Settings > Copilot > Code review > Auto-approval: "Allow Copilot to approve pull requests" on, "Allow Copilot approvals to count toward merge requirements" on, "File paths" blank. In the sandbox this replaces `**/*.md` with a blank list.
-4. Organization Settings > Custom properties: create `fleet-managed`, of type true/false, and set it `true` on the nine repositories.
-5. Decide the merge methods and the standing admin bypass (§ Organization rule set holds the recommendations).
-6. Create the organization ruleset `fleet: CI` (§ Target), with its name list holding each repository whose `validate-standard.sh` `standard-ci-context` row reads `ok`.
-7. Create the organization ruleset `fleet: merge queue`, with the bypass decided in step 5.
-8. Create the organization ruleset `fleet: review`, with the merge methods decided in step 5 and zero bypass.
-9. In the sandbox, once `fleet: review` covers it: create the repository ruleset `checks` requiring `CI Required`, then delete the organization ruleset 24147461 and the disabled repository ruleset 20539569.
-10. In each of the nine repositories, delete its repository rulesets and any classic branch protection. A repository not in `fleet: CI` keeps or first gets the repository ruleset `checks` with its CI check names and no `Review gate`. In the sandbox this deletes 20539568, and `fleet: merge queue` takes over the queue with the bypass decided in step 5. Under the recommended lanes-app-only bypass, the admin-role bypass that carried the proof's admin merges ends with 20539568.
-11. In each of the nine repositories, disable the `Review gate writer` workflow and delete the repository variable `REVIEW_GATE_CHECK_RUN_NAME` where it is set.
-12. On every open pull request in the nine repositories, request a Copilot review (`gh pr edit N --add-reviewer @copilot`), so it can draw an approval under `fleet: review`.
-13. Tell the lane the ruleset ids, so it records them here.
+1. Organization Settings > Copilot > Code review > Approvals > "Count Copilot approvals toward merge requirements" stays Enable for selected repositories, and its selection widens from review-gate-sandbox to the eight repositories and the sandbox.
+2. In each of those nine repositories: Settings > Copilot > Code review > Auto-approval: "Allow Copilot to approve pull requests" on, "Allow Copilot approvals to count toward merge requirements" on, "File paths" blank. In the sandbox this replaces `**/*.md` with a blank list.
+3. Organization ruleset 24148602: set `required_approving_review_count` to 1 and `dismiss_stale_reviews_on_push` to true. Change nothing else.
+4. Sandbox: add review-gate-sandbox to 24148602's targets, and give it the two repository rulesets of § Target. Create `main required checks (zero-bypass)` requiring `CI Required`, with no bypass actor. 20539568, which already holds `merge_queue` only, becomes `main merge queue`: rename it and replace its admin-role bypass with the lanes app. Then delete 24147461 and every other sandbox ruleset, 20539569 among them. The admin-role bypass that carried the proof's admin merges ends here.
+5. On every open pull request in the nine repositories, request a Copilot review (`gh pr edit N --add-reviewer @copilot`), so it can draw an approval under 24148602.
+6. When P1 reaches a repository, edit its `main required checks (zero-bypass)` once: delete the `Review gate` context, and bind each remaining context to the app that reports it, the GitHub Actions app (`integration_id` 15368) for every Actions job. In kendex the edit precedes queuing P1's pull request. In a consumer it precedes queuing the refresh pull request that carries P1. The sandbox, whose list holds no `Review gate`, takes the binding with kendex.
+7. In the same repository, right after step 6, disable the `Review gate writer` workflow and delete the repository variable `REVIEW_GATE_CHECK_RUN_NAME` where it is set.
+8. Tell the lane the ids of the sandbox's two repository rulesets from step 4, so it records them here.

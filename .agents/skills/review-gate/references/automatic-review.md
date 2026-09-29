@@ -14,7 +14,7 @@ Which pull requests draw GitHub's automatic Copilot review, and what to do when 
 
 Read a repo's own set with `gh api --paginate repos/<owner>/<repo>/rulesets`, then the detail of each `target: "branch"`, `enforcement: "active"` entry.
 
-The target set is per-repo configuration, not GitHub behaviour. In `vanillagreencom/kendex` it is ruleset `16519713`, "Copilot review for default branch", whose `conditions.ref_name.include` is `["~DEFAULT_BRANCH"]`. A pull request based on any branch other than `main` therefore draws no automatic review in this repo. A repo whose ruleset targets more branches reviews stacked pull requests.
+The target set is per-repo configuration, not GitHub behaviour. In `vanillagreencom/kendex` it is organization ruleset `24148602`, "main protections (zero-bypass)", whose `conditions.ref_name.include` is `["~DEFAULT_BRANCH"]`. A pull request based on any branch other than `main` therefore draws no automatic review in this repo. A repo whose ruleset targets more branches reviews stacked pull requests.
 
 ## When no review arrives
 
