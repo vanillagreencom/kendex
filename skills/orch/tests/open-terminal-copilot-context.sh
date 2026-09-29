@@ -342,10 +342,10 @@ copilot_ctrl() { # NAME OLD NEW HOOKS SETTINGS WANT LABEL
 copilot_ctrl admit-ctrl '    copilot) [[ "$LANE_HOST" == local ]] ||' '    copilot-x) [[ "$LANE_HOST" == local ]] ||' project - \
   "open-terminal: unsupported-for-oversee harness=copilot flag=none" \
   "control: without its admission a copilot fleet launch is refused as a harness nothing judges"
-copilot_ctrl hooks-ctrl '  if ! lane_context_copilot_hooks "$1" "$home" >/dev/null; then' '  if false; then' \
+copilot_ctrl hooks-ctrl '  if ! home="$(copilot_launch_home)" || ! lane_context_copilot_hooks "$1" "$home" >/dev/null; then' '  if ! home="$(copilot_launch_home)"; then' \
   none - "passed flag=true" "control: without the hook check a copilot fleet lane nothing would judge passes"
-copilot_ctrl caller-ctrl '  if ! lane_context_copilot_hooks "$1" "$home" >/dev/null; then' \
-  '  if ! lane_context_copilot_hooks "$CLAIM_ROOT" "$home" >/dev/null; then' \
+copilot_ctrl caller-ctrl '  if ! home="$(copilot_launch_home)" || ! lane_context_copilot_hooks "$1" "$home" >/dev/null; then' \
+  '  if ! home="$(copilot_launch_home)" || ! lane_context_copilot_hooks "$CLAIM_ROOT" "$home" >/dev/null; then' \
   caller - "passed flag=true" "control: judged in the caller's checkout, hooks the worktree lacks pass"
 stage "$TMP_ROOT/reuse-ctrl"
 mutate_file "$TMP_ROOT/reuse-ctrl/scripts/open-terminal" \
@@ -356,7 +356,7 @@ mkdir -p "$WTS/reuse-ctrl"
 assert_eq "$(OT="$TMP_ROOT/reuse-ctrl/scripts/open-terminal" launch reuse-ctrl --relaunch)" "passed" \
   "control: without the relaunch's check a kept worktree that lacks the hooks passes"
 stage "$TMP_ROOT/relative-ctrl"
-mutate_file "$TMP_ROOT/relative-ctrl/scripts/open-terminal" '  if [[ "$home" != /* ]]; then' '  if false; then'
+mutate_file "$TMP_ROOT/relative-ctrl/scripts/open-terminal" '  if ! home="$(copilot_launch_home)" || [[ "$home" != /* ]]; then' '  if ! home="$(copilot_launch_home)"; then'
 copilot_world project -
 assert_eq "$(OT="$TMP_ROOT/relative-ctrl/scripts/open-terminal" LAUNCH_HOME=rel-home launch relative-ctrl) ext=$([[ -e "$REPO/rel-home/extensions/kendex-lane-context/extension.mjs" ]] && echo caller || echo none)" \
   "passed ext=caller" "control: without the absolute-home rule a relative home is configured in the caller's checkout and the lane passes"

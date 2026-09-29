@@ -823,8 +823,7 @@ copilot_context_configure() { # HOME
 copilot_fleet_gate() {
   local home
   [[ "$FLEET" == true && "$WAKE" != true && "$LAUNCH_HARNESS" == copilot ]] || return 0
-  home="$(copilot_launch_home)"
-  if [[ "$home" != /* ]]; then
+  if ! home="$(copilot_launch_home)" || [[ "$home" != /* ]]; then
     ot_message unsupported-for-oversee harness=copilot reason=relative-home "home=$home" >&2
     return 1
   fi
@@ -842,8 +841,7 @@ copilot_fleet_gate() {
 }
 copilot_hooks_gate() { # WORKTREE ITEM
   local home answer err query_rc=0 off=""
-  home="$(copilot_launch_home)"
-  if ! lane_context_copilot_hooks "$1" "$home" >/dev/null; then
+  if ! home="$(copilot_launch_home)" || ! lane_context_copilot_hooks "$1" "$home" >/dev/null; then
     ot_message unsupported-for-oversee harness=copilot reason=no-context-hooks "item=$2" \
       "scope=$1/.github/hooks" "scope=$home/hooks" >&2
     return 1
