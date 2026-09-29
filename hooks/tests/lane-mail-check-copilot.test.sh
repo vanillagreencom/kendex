@@ -498,18 +498,40 @@ assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=reading-unrecorded=$LANE/tmp/la
   "a record the status line stopped refreshing is unmeasured, never read as room"
 # The extension's reading is read first: one below the mark stands although
 # the status line's record of the same session is past it.
-# cop_extension_reading ITEM TOKENS CAPACITY: the reading the usage arm records
-# for s1 in the lane's mailbox, under the capacity source it writes.
-cop_extension_reading() { # ITEM TOKENS CAPACITY
+# cop_extension_reading ITEM TOKENS CAPACITY [SESSION]: the reading the usage
+# arm records for SESSION, s1 by default, in the lane's mailbox, under the
+# capacity source it writes.
+cop_extension_reading() { # ITEM TOKENS CAPACITY [SESSION]
   bash -c 'set -euo pipefail; . "$1/lib/lane-context.sh"
-    lane_context_record "$2" copilot "$3" "$4" "" s1 "" "" "$LANE_CONTEXT_COPILOT_CAPACITY_SOURCE"' \
-    _ "$REPO_ROOT/skills/orch/scripts" "$LANE/tmp/lane-mail/$1" "$2" "$3"
+    lane_context_record "$2" copilot "$3" "$4" "" "$5" "" "" "$LANE_CONTEXT_COPILOT_CAPACITY_SOURCE"' \
+    _ "$REPO_ROOT/skills/orch/scripts" "$LANE/tmp/lane-mail/$1" "$2" "$3" "${4:-s1}"
+}
+# cop_gap_record ITEM: the gap record an overseer's turn end that took no
+# reading writes for s1 (overseer_gap_record): no figure, no capacity source.
+cop_gap_record() { # ITEM
+  bash -c 'set -euo pipefail; . "$1/lib/lane-context.sh"
+    lane_context_record "$2" copilot null "" "" s1 "" pane-unrecorded' \
+    _ "$REPO_ROOT/skills/orch/scripts" "$LANE/tmp/lane-mail/$1"
 }
 cop_record 400000 1000000
 cop_extension_reading KEN-204 100000 800000
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC keyed=$(cop_keys) decision=$(stdout_field .decision)" "RC=0 keyed=account=unmeasured decision=" \
   "an extension reading below the mark is judged room, never overridden by a status-line record past it"
+# A record that is no extension reading of this session is passed over for
+# the status-line record: a predecessor's in the same mailbox, and a gap record.
+cop_record 400000 1000000
+cop_extension_reading KEN-204 100000 800000 s0
+copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
+assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
+  "RC=0 first=lane-mail-check: context=400000 decision=block" \
+  "an extension reading of another session gives way to this session's fresh status-line record past the mark"
+cop_record 400000 1000000
+cop_gap_record KEN-204
+copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
+assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
+  "RC=0 first=lane-mail-check: context=400000 decision=block" \
+  "a gap record gives way to this session's fresh status-line record past the mark"
 rm -f -- "${LANE:?}/tmp/lane-mail/KEN-204/context.json"
 
 # The account mark on Copilot: the account the session runs on is measured
@@ -930,6 +952,18 @@ cop_extension_reading KEN-256 100000 800000
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=block" \
   "control: without the extension's reading read first a status-line record past the mark overrides one below it"
+# A record that is no extension reading of this session reported unmeasured
+# where the fallback should be read: another session's reading then hides this
+# session's status-line record past the mark.
+mutant copilot-no-fallback -e '/^copilot_context_read() {/,/^}/s@^    return 1$@    if [ "$LANE_CTX_SESSION" != "$SESSION" ] || [ -n "$LANE_CTX_GAP" ]; then READ_GAP=session-record; message reading-unrecorded "$1/$LANE_CONTEXT_RECORD"; message session-record missing; return 0; fi; return 1@'
+new_copilot_lane control_cop_fallback ken-257 "$MUTANT_PATH"
+mkdir -p "$LANE/tmp/lane-mail/KEN-257"
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-257 >/dev/null)
+cop_record 400000 1000000
+cop_extension_reading KEN-257 100000 800000 s0
+copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
+assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=" \
+  "control: without the fallback past another session's record a status-line record past the mark does not hold the turn end"
 # The account arm cut: a Copilot account at zero is reported unlisted and the
 # turn ends.
 mutant copilot-no-account -e 's@^    claude | codex | copilot) CFG=@    claude | codex) CFG=@'
