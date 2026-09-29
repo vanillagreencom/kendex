@@ -43,6 +43,26 @@ make_codex_lane() {
   jq -n '{tokens: {access_token: "codex-token", account_id: "acct-1"}}' > "$dir/auth.json"
 }
 
+# codex_jwt EXPIRES_IN_S — an access token in the shape the Codex CLI writes,
+# a JWT whose `exp` claim is EXPIRES_IN_S from now, negative for one already
+# expired. Its segments are unpadded base64url, as a real one's are.
+codex_jwt() {
+  jq -rn --argjson exp "$(( $(date +%s) + $1 ))" '
+    def seg: tojson | @base64 | gsub("\\+"; "-") | gsub("/"; "_") | gsub("="; "");
+    ({alg: "RS256"} | seg) + "." + ({exp: $exp} | seg) + ".sig"'
+}
+
+# make_codex_token_lane DIR EXPIRES_IN_S [REFRESH_TOKEN] — a codex home whose
+# auth.json holds a JWT access token expiring EXPIRES_IN_S from now; with no
+# REFRESH_TOKEN it holds none, the login `lanes` cannot ask the CLI to renew.
+make_codex_token_lane() {
+  local dir="$1"
+  mkdir -p "$dir"
+  jq -n --arg at "$(codex_jwt "$2")" --arg rt "${3:-}" \
+    '{tokens: ({access_token: $at, account_id: "acct-1"}
+               + (if $rt == "" then {} else {refresh_token: $rt} end))}' > "$dir/auth.json"
+}
+
 # make_fetcher PATH — the ORCH_LANES_FETCH_CMD stub: answers in the shape both
 # network calls of `lanes` answer in, the HTTP status and any Retry-After on the
 # first line and the body under it, with the fixture file

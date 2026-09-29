@@ -97,7 +97,7 @@ run_lanes() {
   ERR="$RUN/stderr"
   OUT=$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
     LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" FETCH_LOG="$RUN/fetch.log" \
-    FETCH_SEQ_DIR="$RUN/fetchseq" TOKEN_LOG="$RUN/token.log" \
+    FETCH_SEQ_DIR="$RUN/fetchseq" TOKEN_LOG="$RUN/token.log" CODEX_LOG="$RUN/codex.log" \
     OVERSEE_WATCH_STATE_DIR="$RUN/store" TMUX_PANES_FILE="$RUN/panes" \
     PATH="$CLAIM_BIN:$PATH" ${env_args[@]+"${env_args[@]}"} "$LANES" "$@" 2>"$ERR")
   RC=$?
@@ -164,6 +164,12 @@ observe() {
       files) value="$(ls -1 "$STORE/claims" 2>/dev/null | sed 's/\.claim$//' | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
       fetched) value="$(fetched_lanes "$RUN/fetch.log")" ;;
       tokencalls) value="$(grep -c . "$RUN/token.log" 2>/dev/null || true)"; value="${value:-0}" ;;
+      # Every run of the codex stub, as `<config dir name>:<request methods>`,
+      # comma-joined per run and `;` between runs, or none.
+      codexrenew)
+        value="$(sed "s#^$H/\\.##; s# #:#" "$RUN/codex.log" 2>/dev/null | paste -sd';' - || true)"
+        value="${value:-none}"
+        ;;
       # Every jq argument vector of the run, searched for the fixture's own
       # refresh token and for both tokens the endpoint stub hands back.
       jqsecrets) value="$(grep -c -e refresh-claude -e renewed-token -e rotated-refresh "$JQ_ARGV_LOG" 2>/dev/null || true)"; value="${value:-0}" ;;
@@ -874,6 +880,74 @@ jq -n '{rate_limit: {primary_window: {used_percent: 30, reset_at: 1785000000, li
   > "$FIXTURE_DIR/.codex.json"
 table \
   "a 5h and a 7d window fill their slots and the larger binds||list --harness codex --json|first.session_5h_pct=30 first.weekly_pct=70 first.headroom_pct=30"
+
+echo "=== an expired codex token is renewed by the Codex CLI, or the lane reads expired ==="
+# The Codex CLI renews its token only while it runs, so an idle account's token
+# expires and its usage query answers 401. The expiry is read from the token's
+# own `exp` claim before any usage query, and the renewal is the CLI's own,
+# asked through `codex app-server`: the stub below stands in for the CLI and
+# logs the requests it read. The lock, the handshake and the auth.json read
+# back are the real ones. No row reaches the usage endpoint with an expired
+# token, so none reads the 401 as `refused`.
+CODEX_BIN="$TMP_ROOT/codex-bin"; mkdir -p "$CODEX_BIN"
+cat > "$CODEX_BIN/codex" <<'STUB'
+#!/usr/bin/env bash
+# With CODEX_RENEWED_AUTH set the stub renews: it writes that file over the
+# config dir's auth.json before answering account/read, as the CLI does. Unset,
+# it answers and leaves auth.json alone, which is a refresh the CLI could not
+# make. It logs `<CODEX_HOME> <methods>` once its stdin closes.
+[[ "$*" == app-server ]] || { printf '%s argv=%s\n' "$CODEX_HOME" "$*" >> "$CODEX_LOG"; exit 2; }
+methods=""
+while IFS= read -r line; do
+  m="${line#*\"method\":\"}"; m="${m%%\"*}"
+  methods="$methods${methods:+,}$m"
+  case "$line" in
+    *'"method":"account/read"'*'"refreshToken":true'*)
+      [[ -z "${CODEX_RENEWED_AUTH:-}" ]] || cp -- "$CODEX_RENEWED_AUTH" "$CODEX_HOME/auth.json"
+      printf '{"id":1,"result":{"account":null,"requiresOpenaiAuth":true}}\n'
+      ;;
+  esac
+done
+printf '%s %s\n' "$CODEX_HOME" "$methods" >> "$CODEX_LOG"
+STUB
+chmod +x "$CODEX_BIN/codex"
+# PATH with every directory holding a real codex dropped, so no row reaches
+# the operator's own CLI and the absent-CLI row finds none.
+NOCODEX_PATH=""
+IFS=: read -ra PATH_DIRS <<<"$PATH"
+for d in "${PATH_DIRS[@]}"; do
+  [[ -x "$d/codex" ]] || NOCODEX_PATH="$NOCODEX_PATH${NOCODEX_PATH:+:}$d"
+done
+RENEWED_AUTH="$TMP_ROOT/codex-renewed.json"
+jq -n --arg at "$(codex_jwt 36000)" \
+  '{tokens: {access_token: $at, refresh_token: "rotated-refresh", account_id: "acct-1"}}' > "$RENEWED_AUTH"
+CODEX_STUB_PATH="PATH=$CODEX_BIN:$CLAIM_BIN:$NOCODEX_PATH"
+CODEX_LIST='list --harness codex --json'
+codex_expired_home() { # REFRESH_TOKEN
+  new_home codex-expired
+  make_codex_token_lane "$H/.codex" -60 "$1"
+  jq -n '{rate_limit: {primary_window: {used_percent: 30, reset_at: 1785000000, limit_window_seconds: 18000}}}' \
+    > "$FIXTURE_DIR/.codex.json"
+}
+CODEX_REMEDY="run_codex_once_with_CODEX_HOME=$TMP_ROOT/codex-expired/.codex"
+codex_expired_home refresh-codex
+table \
+  "renewal succeeds: the CLI is asked through app-server in that config dir and the renewed lane is measured, marked refreshable|$CODEX_STUB_PATH;CODEX_RENEWED_AUTH=$RENEWED_AUTH|$CODEX_LIST|codex.status=ok codex.refreshable=true codex.headroom_pct=70 codexrenew=codex:initialize,initialized,account/read fetched=codex"
+codex_expired_home refresh-codex
+table \
+  "renewal refused: a token the CLI left expired reads expired, naming the codex command that renews it, and posts no usage query|$CODEX_STUB_PATH|$CODEX_LIST|codex.status=expired codex.refreshable=false codex.headroom_pct=null codex.cause=access_token_expired_and_could_not_be_renewed:_codex_did_not_renew_it;_$CODEX_REMEDY codexrenew=codex:initialize,initialized,account/read fetched=none" \
+  "no codex on PATH reads expired too, naming the CLI to install|PATH=$CLAIM_BIN:$NOCODEX_PATH|$CODEX_LIST|codex.status=expired codex.cause=access_token_expired_and_could_not_be_renewed:_no_codex_command_is_on_PATH_to_renew_it;_install_the_Codex_CLI_and_$CODEX_REMEDY fetched=none"
+codex_expired_home ''
+table \
+  "401 without a refresh token: the lane reads expired, naming codex login, and the CLI is never started|$CODEX_STUB_PATH;CODEX_RENEWED_AUTH=$RENEWED_AUTH|$CODEX_LIST|codex.status=expired codex.cause=access_token_expired_and_could_not_be_renewed:_there_is_no_refresh_token_in_$H/.codex/auth.json_to_renew_with;_log_in_again_with_CODEX_HOME=$H/.codex_codex_login codexrenew=none fetched=none"
+# The control: with the Codex expiry unread, the expired token goes to the
+# usage query and the renewal row is red.
+lanes_mutant mutant-codex-expiry lanes 'expires_ms="\$(codex_token_expiry_ms "\$creds")"'
+LANES="$TMP_ROOT/mutant-codex-expiry/scripts/lanes"
+codex_expired_home refresh-codex
+table \
+  "control: with the expiry unread the CLI is never asked and the lane is not refreshable|$CODEX_STUB_PATH;CODEX_RENEWED_AUTH=$RENEWED_AUTH|$CODEX_LIST|codex.refreshable=false codexrenew=none"
+LANES="$SCRIPTS_DIR/lanes"
 
 echo "=== in-flight lane claims ==="
 # open-terminal records one claim per lane window it launches; a claim is live

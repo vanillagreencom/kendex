@@ -366,11 +366,10 @@ Options:
                         whose remedy is to log in again here for that config
                         dir, or the provider's copy where its accounts row
                         reports `expired`, renewed through the provider. On this
-                        machine's reading that refusal reaches claude lanes
-                        alone: an unrenewable expiry is the one local state
-                        `lanes` names and only a claude credential carries it,
-                        so a codex lane whose own auth.json is dead reads as a
-                        window that could not be read;
+                        machine's reading an expiry `lanes` could not renew,
+                        of a claude or a codex token, is the one local state
+                        that refusal reaches; for a codex lane, `lanes list`
+                        names in its detail the codex command that renews it;
                       anything else is refused as lane-model-unreadable, an
                         unread window being neither a full one nor an empty one.
   --lane-max-pct N  Usage threshold, applied both when --lane auto chooses an

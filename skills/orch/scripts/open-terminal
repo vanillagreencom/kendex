@@ -836,11 +836,11 @@ named_lane_judge() {
     #
     # `expired` and no wider for the login remedy: on this machine's reading
     # that status is the only one `lanes` reports for a credential it holds
-    # and cannot renew, and it reaches claude lanes alone, since the expiry it
-    # reads is the claude token's. A codex account whose local auth.json is
-    # dead reads `refused`, the usage endpoint's own answer, which a 403 on a
-    # live login produces too, so widening to it would print a login remedy
-    # for a refusal no re-login answers. A rate-limited read is `rate_limited`: one the host still holds
+    # and cannot renew, a claude token or a codex one, whose `detail` names
+    # the codex command that renews it. A usage query refused on a token
+    # `lanes` read as live is `refused`, the endpoint's own answer, which a
+    # 403 on a live login produces too, so widening to it would print a login
+    # remedy for a refusal no re-login answers. A rate-limited read is `rate_limited`: one the host still holds
     # a figure for is judged on that figure, and one with none carries no
     # window, which this arm refuses as lane-model-unreadable like any other
     # unread window. --help and the message name both copies.

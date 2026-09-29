@@ -1254,17 +1254,24 @@ run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/h
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows")" \
   "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows" \
   "an accounts row naming this account under another harness holds nothing for this launch"
-# host-credential-dead reaches claude lanes. `lanes` reads an unrenewable expiry
-# from the claude token alone; a codex account whose own auth.json cannot be used
-# reads `refused`, which a 403 on a live login also produces, so the refusal stays
-# the unread window and --help says so.
+# host-credential-dead is `expired` and no wider. A codex account whose usage
+# read this machine could not make is the unread window, never the login
+# remedy; one whose expired token `lanes` cannot renew, here for want of a
+# refresh token, so no Codex CLI is started, reads `expired` and takes it.
 make_codex_lane "$H/.xcodex"
 printf 'account=%s\tharness=codex\n' "$H/.xcodex" > "$TMP_ROOT/hosted-accounts-xcodex.tsv"
 run_ot "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-xcodex.tsv;cmd=true -m gpt-6-astra -c model_reasoning_effort=high" \
   --host "$HOST_STUB" --harness codex --lane "$H/.xcodex" --repo o/r CC-104
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xcodex,model=gpt-6-astra,step=windows")" \
   "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xcodex,model=gpt-6-astra,step=windows" \
-  "a codex lane this machine cannot measure is the unread window, never the claude-only login remedy"
+  "a codex lane this machine cannot measure is the unread window, never the login remedy"
+make_codex_token_lane "$H/.ycodex" -60
+printf 'account=%s\tharness=codex\n' "$H/.ycodex" > "$TMP_ROOT/hosted-accounts-ycodex.tsv"
+run_ot "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-ycodex.tsv;cmd=true -m gpt-6-astra -c model_reasoning_effort=high" \
+  --host "$HOST_STUB" --harness codex --lane "$H/.ycodex" --repo o/r CC-105
+assert_eq "$(observe "rc=1 launched=nolog credentialdead=lane=$H/.ycodex,host=$HOST_STUB unreadable=none")" \
+  "rc=1 launched=nolog credentialdead=lane=$H/.ycodex,host=$HOST_STUB unreadable=none" \
+  "a codex lane whose expired token cannot be renewed is refused as host-credential-dead"
 # A folder whose credential only the provider holds: no local credentials file,
 # and a provider row carrying its windows. The judge runs under the host this
 # launch resolved, --host here with no ORCH_LANE_HOST, so the account is judged

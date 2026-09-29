@@ -46,7 +46,9 @@
 #         from being tried; `refused`, a usage endpoint that answered any
 #         other code outside 2xx, 401 and 403 included, which is a reading of
 #         the credential it was asked through and not a read that was never
-#         made; `expired`, a login proven dead; `no_credentials`;
+#         made; `expired`, a login proven dead, or a Codex login the Codex
+#         CLI could not renew on this machine, whose `detail` names the
+#         codex command that renews it; `no_credentials`;
 #         `no_usage_data`, authenticated with no window to measure; `retired`;
 #         and `error`, a step this machine failed on its own, a renewal's
 #         included. A lane whose usage REFRESH met a 429 while the host still
@@ -580,6 +582,20 @@
 #   renewal opt-in instead left every idle account reading `expired` and `pick`
 #   choosing nothing, which is the failure it exists to prevent.
 #
+# Why a Codex token is renewed by the Codex CLI:
+#   The Codex CLI renews its own token only while it runs, so an idle Codex
+#   account's token expires, and its usage query then answers 401. Its expiry
+#   is the access token's own `exp` claim, read before any usage query. The
+#   renewal runs the CLI rather than posting a refresh-token grant of this
+#   script's own: the CLI is the one refresher of its auth.json, and a second
+#   one rotating the same refresh token can leave the account on a revoked
+#   login. `codex app-server` in that config dir is asked `account/read` with
+#   `refreshToken`, the request its protocol documents for a proactive
+#   refresh, under the same credentials lock the Claude renewal takes. A lane
+#   with no refresh token, no codex command on PATH, or a token still expired
+#   after the CLI ran reads `expired`, its `detail` naming the codex command
+#   that renews it.
+#
 # Credentials never reach argv: `ps` and journald can read /proc/<pid>/cmdline,
 # which on Linux is world-readable while /proc/<pid>/environ is not. Bearer
 # tokens go to curl over stdin via `-K -`, and the refresh and access tokens
@@ -591,8 +607,9 @@
 # environment. Both print what their network call prints: the HTTP status and
 # any Retry-After on the FIRST line, separated by a space, and the response body
 # under it. A command that exits non-zero is the call failing outright, which
-# names no status at all. The network layer is the only impure part; everything
-# else is pure parsing.
+# names no status at all. The Codex renewal runs the `codex` PATH resolves, so
+# a stub first on PATH stands in for the CLI. The network layer is the only
+# impure part; everything else is pure parsing.
 
 set -uo pipefail
 
@@ -1365,6 +1382,8 @@ measure_lane() {
 	elif [[ "$harness" == codex ]]; then
 		token=$(jq -r 'try (.tokens.access_token // .OPENAI_API_KEY // empty) catch empty' "$creds")
 		account_id=$(jq -r 'try (.tokens.account_id // empty) catch empty' "$creds")
+		expires_ms="$(codex_token_expiry_ms "$creds")"
+		[[ "$expires_ms" =~ ^[0-9]+$ ]] || expires_ms=0
 	fi
 
 	if [[ -z "$token" ]]; then
@@ -1374,18 +1393,22 @@ measure_lane() {
 
 	# An expired access token is renewed here, so the lane `pick` prints is one
 	# whose token is live — see the header. A renewal that cannot happen fails
-	# closed with the status `refresh_claude_token` judged, naming its cause, and
-	# is never measured as `ok`.
-	local refusal
-	if claude_token_expired "$expires_ms" "$now_s"; then
+	# closed with the status its renewal function judged, naming its cause, and
+	# is never measured as `ok`. A Copilot lane states no expiry and never gets
+	# here.
+	local refusal renew=refresh_codex_token
+	if token_expired "$expires_ms" "$now_s"; then
 		if refusal="$(read_usage_refusal "$harness" "$dir" "$now_s" token)"; then
 			emit_refusal "$alias" "$harness" "$dir" "$plan" "$refusal"
 			return
 		fi
-		# At most one `claude --version` per measuring shell, and none at all on a
-		# run whose lanes all carry live tokens.
-		[[ -n "$CLAUDE_TOKEN_UA" ]] || CLAUDE_TOKEN_UA="$(claude_token_ua)"
-		if ! refresh_out="$(refresh_claude_token "$dir" "$creds")"; then
+		if [[ "$harness" == claude ]]; then
+			renew=refresh_claude_token
+			# At most one `claude --version` per measuring shell, and none at all on a
+			# run whose lanes all carry live tokens.
+			[[ -n "$CLAUDE_TOKEN_UA" ]] || CLAUDE_TOKEN_UA="$(claude_token_ua)"
+		fi
+		if ! refresh_out="$("$renew" "$dir" "$creds")"; then
 			local head code retry
 			head="${refresh_out%%$'\n'*}"
 			read -r status code retry <<<"$head"
@@ -1871,10 +1894,12 @@ usage_lock_release() {
 	orch_release_lock
 }
 
-# Whether an OAuth expiresAt in milliseconds has passed at epoch seconds $2.
+# Whether an OAuth expiry in milliseconds since the epoch has passed at epoch
+# seconds $2: a Claude credentials file's expiresAt, or the `exp` claim
+# codex_token_expiry_ms reads out of a Codex access token.
 # A zero or unparseable stamp is NOT expired: the file states no expiry, and
 # refusing on it would disable a lane that works.
-claude_token_expired() {
+token_expired() {
 	local exp="${1%%.*}"
 	[[ "$exp" =~ ^[0-9]+$ ]] || return 1
 	[[ "$exp" -gt 0 ]] && (( exp / 1000 <= $2 ))
@@ -1914,12 +1939,27 @@ token_error_suffix() { # BODY
 	else printf ' (%s%s)' "$type" "$message"; fi
 }
 
+# Takes the credentials lock of config dir $1 on descriptor 9: the one lock
+# every renewal this script makes of that account takes, so two callers
+# renewing it together renew it once. lib/file-lock.sh carries the lock on a
+# host with no flock, where the bare `flock -w 30 9` this used to run resolved
+# to nothing and every refresh on that host returned failure instead of a
+# token. Every caller runs inside a command substitution, so the whole renewal
+# is a subshell and the EXIT trap orch_take_lock arms releases a mkdir mutex on
+# every path out. On failure it prints the renewal's `token_refusal` and returns
+# 1 with the descriptor closed: a lock another tool holds keeps the renewal from
+# being tried, which leaves the login untested.
+take_credentials_lock() { # DIR
+	local lock
+	lock="$1/.lanes-refresh.lock"
+	exec 9>"$lock" || { token_refusal error '' '' "the lock file $lock could not be opened"; return 1; }
+	orch_take_lock 9 "$lock" 30 || { token_refusal unreachable '' '' "another tool holds the credentials lock $lock"; exec 9>&-; return 1; }
+}
+
 # Refresh under a lock on the credentials file, re-reading inside the lock:
 # a peer tool may have rotated the refresh token between our first read and
 # this attempt, and refreshing with the stale one fails while the credentials
-# are actually fine. lib/file-lock.sh carries the lock on a host with no
-# flock, where the bare `flock -w 30 9` this used to run resolved to nothing
-# and every refresh on that host returned failure instead of a token.
+# are actually fine.
 # Prints the new access token on stdout and returns 0; on failure prints a
 # `token_refusal` there instead and returns 1, so this stays the only judge of
 # why a renewal did not happen and of what the lane's status becomes. Only a
@@ -1928,28 +1968,16 @@ token_error_suffix() { # BODY
 # lock kept from being tried, is `unreachable`. None of those carries a code, so
 # none is recorded as a refusal window.
 refresh_claude_token() {
-	local dir="$1" creds="$2" rt client_id body resp new_at lock suffix
-	# Composed after the declaration, never inside it: bash expands every word
-	# on a `local` line in the ENCLOSING scope before the builtin creates any
-	# local, so a `lock` built there reads whatever `dir` the CALLER has rather
-	# than this one's `$1`, and in a scope with no `dir` of its own it yields
-	# the filesystem root. The leak is what hides it: `measure_lane` happens to
-	# hold a `dir` of the same value, so the one-line form answered correctly
-	# there and would answer the root at the next caller to be added.
-	lock="$dir/.lanes-refresh.lock"
+	local dir="$1" creds="$2" rt client_id body resp new_at suffix
 	client_id="${ORCH_LANES_CLAUDE_CLIENT_ID:-}"
 	[[ -n "$client_id" ]] || { token_refusal error '' '' 'no OAuth client id is configured (ORCH_LANES_CLAUDE_CLIENT_ID)'; return 1; }
-	exec 9>"$lock" || { token_refusal error '' '' "the lock file $lock could not be opened"; return 1; }
-	# Every caller runs this function in a command substitution, so the whole
-	# body is a subshell and the EXIT trap orch_take_lock arms releases a mkdir
-	# mutex on every path out — including this one.
-	orch_take_lock 9 "$lock" 30 || { token_refusal unreachable '' '' "another tool holds the credentials lock $lock"; exec 9>&-; return 1; }
+	take_credentials_lock "$dir" || return 1
 	# The expiry was decided before this lock was taken. A peer that renewed
 	# while this call waited has already written a live token, and posting
 	# anyway would rotate the peer's fresh refresh token away and leave that
 	# account needing a manual re-login. Take what the peer wrote instead.
 	local fresh_at
-	if ! claude_token_expired "$(jq -r 'try (.claudeAiOauth.expiresAt // 0) catch 0' "$creds")" "$(date +%s)"; then
+	if ! token_expired "$(jq -r 'try (.claudeAiOauth.expiresAt // 0) catch 0' "$creds")" "$(date +%s)"; then
 		fresh_at=$(jq -r 'try (.claudeAiOauth.accessToken // empty) catch empty' "$creds")
 		if [[ -n "$fresh_at" ]]; then exec 9>&-; printf '%s' "$fresh_at"; return 0; fi
 	fi
@@ -2028,6 +2056,88 @@ refresh_claude_token() {
 	orch_arm_lock_signals
 	exec 9>&-
 	printf '%s' "$new_at"
+}
+
+# The expiry of the access token a Codex auth.json holds, in milliseconds since
+# the epoch: the `exp` claim of the token itself, which is a JWT, since the file
+# states no expiry of its own. 0 where the file holds no such token (an API key,
+# or a token no claim reads out of), which token_expired reads as no expiry.
+# Padded before decoding, because a JWT segment is unpadded base64url.
+codex_token_expiry_ms() { # AUTH_JSON
+	jq -r '(try (.tokens.access_token | split(".")[1]
+	        | gsub("-"; "+") | gsub("_"; "/")
+	        | . + ("=" * ((4 - length % 4) % 4))
+	        | @base64d | fromjson | .exp | numbers | floor * 1000)
+	       catch null) // 0' "$1"
+}
+
+# The three lines `codex app-server` reads on stdin for a renewal: the
+# handshake every client opens with, then `account/read` with `refreshToken`,
+# which the app-server protocol documents as asking the CLI to refresh its
+# token before answering.
+CODEX_RENEW_REQUESTS='{"method":"initialize","id":0,"params":{"clientInfo":{"name":"lanes","version":"1"}}}
+{"method":"initialized"}
+{"method":"account/read","id":1,"params":{"refreshToken":true}}'
+# Tenths of a second the renewal waits for that answer: the Claude token POST's
+# own bound. The app-server exits once its stdin closes, so the bound is also
+# how long a CLI that never answers holds the lane.
+CODEX_RENEW_WAIT_TENTHS=250
+
+# Renews an expired Codex access token through the Codex CLI, never through a
+# refresh-token grant of this script's own. The CLI is the one refresher of its
+# auth.json: a second one rotating the same refresh token races every Codex
+# session on the account, and the loser holds a revoked login. So the renewal
+# runs `codex app-server` in that config dir and asks it `account/read` with
+# `refreshToken`, and the CLI refreshes and writes auth.json as any Codex run
+# does. Its answer does not say whether the refresh worked, so auth.json read
+# back afterwards is the verdict. The credentials lock keeps two callers of
+# this script from both starting the CLI; the CLI takes no part in it.
+# The output contract is refresh_claude_token's. Each refusal is `expired` with
+# the Codex remedy in its cause: the CLI's own refresh is the one renewal this
+# account has, so a lane the CLI cannot renew here is one the operator must
+# renew by running codex, or log in to again. None carries a code, so none is
+# recorded as a refusal window, and the next run asks the CLI again.
+refresh_codex_token() { # DIR AUTH_JSON
+	local dir="$1" creds="$2" out waited fresh_at
+	local remedy="run codex once with CODEX_HOME=$dir"
+	take_credentials_lock "$dir" || return 1
+	# A peer that renewed while this call waited on the lock wrote a live
+	# token; take it rather than starting the CLI again.
+	if ! token_expired "$(codex_token_expiry_ms "$creds")" "$(date +%s)"; then
+		fresh_at=$(jq -r 'try (.tokens.access_token // empty) catch empty' "$creds")
+		if [[ -n "$fresh_at" ]]; then exec 9>&-; printf '%s' "$fresh_at"; return 0; fi
+	fi
+	if [[ -z "$(jq -r 'try (.tokens.refresh_token // empty) catch empty' "$creds")" ]]; then
+		token_refusal expired '' '' "there is no refresh token in $creds to renew with; log in again with CODEX_HOME=$dir codex login"
+		exec 9>&-; return 1
+	fi
+	if ! command -v codex >/dev/null 2>&1; then
+		token_refusal expired '' '' "no codex command is on PATH to renew it; install the Codex CLI and $remedy"
+		exec 9>&-; return 1
+	fi
+	out="$(mktemp "$dir/.lanes-renew.XXXXXX")" || { token_refusal error '' '' "no temporary file could be created in $dir"; exec 9>&-; return 1; }
+	# The writer holds the CLI's stdin open until the answer to request 1 is in
+	# its output, or the bound passes, and closing it ends the CLI. The CLI runs
+	# in the config dir, so no project configuration of the caller's directory
+	# reaches it, and without descriptor 9, so a process it leaves behind cannot
+	# hold the credentials lock.
+	{
+		printf '%s\n' "$CODEX_RENEW_REQUESTS"
+		waited=0
+		until grep -q -e '"id":1[,}]' -- "$out" 2>/dev/null || [[ "$waited" -ge "$CODEX_RENEW_WAIT_TENTHS" ]]; do
+			sleep 0.1
+			waited=$((waited + 1))
+		done
+	} | (cd -- "$dir" && CODEX_HOME="$dir" exec codex app-server) >"$out" 2>/dev/null 9>&-
+	rm -f -- "$out"
+	if token_expired "$(codex_token_expiry_ms "$creds")" "$(date +%s)"; then
+		token_refusal expired '' '' "codex did not renew it; $remedy"
+		exec 9>&-; return 1
+	fi
+	fresh_at=$(jq -r 'try (.tokens.access_token // empty) catch empty' "$creds")
+	[[ -n "$fresh_at" ]] || { token_refusal expired '' '' "codex left no access token in $creds; $remedy"; exec 9>&-; return 1; }
+	exec 9>&-
+	printf '%s' "$fresh_at"
 }
 
 # headroom = 100 - the BINDING bucket. A lane with an unknown bucket set gets
