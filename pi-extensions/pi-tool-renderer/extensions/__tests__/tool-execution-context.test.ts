@@ -43,7 +43,7 @@ for (const [name, register] of registrations) {
 		expect(received[4]).toBe(context);
 	});
 
-	test(`${name} carries Pi's own request contract onto the replacement`, () => {
+	test(`${name} carries the wrapped tool's request fields onto the replacement`, () => {
 		let definition: ToolDefinition | undefined;
 		const original = {
 			description: "fixture",

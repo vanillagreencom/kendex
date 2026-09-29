@@ -80,8 +80,10 @@ export function getBuiltInTool(agent: any, cwd: string, toolName: BuiltInToolNam
 }
 
 /**
- * The fields of Pi's own tool that shape a model request, which a replacement
- * definition carries unchanged so the renderer changes rendering alone.
+ * Four fields of the wrapped AgentTool that Pi's agent loop reads, which a
+ * replacement definition carries unchanged. Pi's `promptSnippet` and
+ * `promptGuidelines` live on its ToolDefinition, not on the AgentTool that
+ * `agent.create*Tool` returns, so they are not carried here.
  * Pi's agent loop runs `prepareArguments` before schema validation, so without
  * it the argument shapes Pi's own tool accepts fail validation before
  * `execute` can delegate; `constrainedSampling` is Pi's schema-sampling
