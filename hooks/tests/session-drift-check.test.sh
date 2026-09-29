@@ -241,7 +241,7 @@ an error: inside a report line is still a completed report|2|error-inside-a-line
 exit 2 with no output is a failure to run, not an empty partial report|2|-|check=could-not-run;exit=2
 an Error: line at exit 2 is a failure to run|2|Error-line|check=could-not-run;exit=2
 a usage error: at exit 2 is a failure to run, never partial|2|usage-error|check=could-not-run;exit=2
-a kendex that refuses --report-only is named too old, with the install route|2|too-old|check=kendex-too-old;install=curl -fsSL https://kendex.ai/install.sh | sh
+a kendex that refuses --report-only is named too old, with its own updater as the route|2|too-old|check=kendex-too-old;install=kendex update
 exit 3 is a failure to run, and the code is the value|3|fatal|check=could-not-run;exit=3
 exit 3 with no output chooses the same arm|3|-|check=could-not-run;exit=3
 "

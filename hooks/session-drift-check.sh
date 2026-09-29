@@ -217,9 +217,14 @@ notice() { # KEY VALUE
       # The flag this hook passes is what keeps a session start from writing
       # a tracked file, so a kendex that refuses it is named for what it is,
       # with the route that replaces it; running the check without the flag
-      # would be the write the flag exists to stop.
-      printf 'session-drift-check: install=%s\n' "$INSTALL_ROUTE"
-      printf 'This kendex predates the check --report-only flag this hook runs, so drift status is unknown. Update kendex with the install route above, then start a new session. What kendex said:\n%s\n' "$OUTPUT"
+      # would be the write the flag exists to stop. That route is the
+      # command's own updater: a kendex command is on PATH to have refused
+      # the flag, and `kendex update` asks the package manager who owns it
+      # (crates/core/src/install_channel.rs) and names that manager's route
+      # for a copy it does not own. The installer would put a second copy
+      # beside a package-managed one.
+      printf 'session-drift-check: install=kendex update\n'
+      printf 'This kendex predates the check --report-only flag this hook runs, so drift status is unknown. Update kendex with the command above, then start a new session. What kendex said:\n%s\n' "$OUTPUT"
       ;;
     check=incomplete)
       printf 'session-drift-check: exit=%s\n' "$RC"
@@ -327,7 +332,6 @@ case "$RC" in
       # clap's own refusal of an argument it does not know, in the spelling
       # clap prints.
       "error: unexpected argument '--report-only'"*)
-        install_route
         notice check kendex-too-old
         ;;
       "" | Error:* | error:*) notice check could-not-run ;;
