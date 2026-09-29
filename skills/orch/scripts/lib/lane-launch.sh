@@ -99,17 +99,23 @@ lane_pick_harness() { # HARNESS MODEL
 # for the Pi root DIR, or for every Pi root where DIR is empty. Two reads can
 # measure that pool: the lane host's `accounts` row for the root, harness=pi
 # with monthly-pct (schemas/lane-host.md), and the ORCH_LANE_COPILOT_POOL
-# override. HOST is the ORCH_LANE_HOST the pick ran under, which says whether
-# the first read was made. Printed by `lanes` under copilot-pool-unstated and
-# by open-terminal under that refusal and under lane-model-unreadable, so each
-# names the same repair.
-lane_copilot_pool_fix() { # HOST [DIR]
-  local root="${2:-any Pi root}" dir="${2:-<Pi root>}"
-  if [[ "$1" == local ]]; then
-    printf 'fix=no Copilot pool reading for %s: ORCH_LANE_HOST=local asks no lane host, and ORCH_LANE_COPILOT_POOL states none; state the override ORCH_LANE_COPILOT_POOL=%s=<credits used>/<credits granted>, or launch through a lane host whose accounts verb carries a harness=pi row for that root\n' "$root" "$dir"
-  else
-    printf 'fix=no Copilot pool reading for %s: the accounts verb of lane host %s carried no harness=pi row with monthly-pct for it, and ORCH_LANE_COPILOT_POOL states none; store the Copilot seat on that provider so its accounts row reads the pool (lanes host-accounts --harness pi --no-cache prints what it answers), or state the override ORCH_LANE_COPILOT_POOL=%s=<credits used>/<credits granted>\n' "$root" "$1" "$dir"
-  fi
+# override, which states none here. READ is how the first ended under the
+# ORCH_LANE_HOST value HOST: `local` asked no lane host, `absent` the provider
+# implements no accounts verb, `answered` it answered with no harness=pi row
+# for the root, and `row` its row for the root reads no pool, STATUS and
+# DETAIL that row's own words. A failed read is no refusal of this kind: a
+# retry can answer it. Printed by `lanes`, the one caller that knows READ,
+# under copilot-pool-unstated and under pick-lane-unmeasured for a Pi root.
+lane_copilot_pool_fix() { # HOST READ [DIR [STATUS [DETAIL]]]
+  local root="${3:-any Pi root}" override
+  override="state the override ORCH_LANE_COPILOT_POOL=${3:-<Pi root>}=<credits used>/<credits granted>"
+  case "$2" in
+    local) printf 'fix=no Copilot pool reading for %s: ORCH_LANE_HOST=local asks no lane host, and ORCH_LANE_COPILOT_POOL states none; %s, or launch through a lane host whose accounts verb carries a harness=pi row for that root\n' "$root" "$override" ;;
+    absent) printf 'fix=no Copilot pool reading for %s: lane host %s implements no accounts verb, so only ORCH_LANE_COPILOT_POOL can measure the pool, and it states none; %s\n' "$root" "$1" "$override" ;;
+    answered) printf 'fix=no Copilot pool reading for %s: the accounts verb of lane host %s carried no harness=pi row with monthly-pct for it, and ORCH_LANE_COPILOT_POOL states none; store the Copilot seat on that provider so its accounts row reads the pool (lanes host-accounts --harness pi --no-cache prints what it answers), or %s\n' "$root" "$1" "$override" ;;
+    row) printf 'fix=no Copilot pool reading for %s: the accounts row of lane host %s for it read no pool, status=%s detail=%s, and ORCH_LANE_COPILOT_POOL states none; repair the provider'"'"'s read of that Copilot seat as its detail says, or %s\n' "$root" "$1" "${4:-none}" "${5:-none}" "$override" ;;
+    *) printf 'lane_copilot_pool_fix: unknown read %s\n' "$2" >&2; return 1 ;;
+  esac
 }
 
 # How each harness spells the two choices a lane launch must make, for every

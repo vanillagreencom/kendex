@@ -186,6 +186,17 @@ ROW_ENV=()
 assert_eq "$(jq -c '[.status, .measured_through, .monthly_pct, (.credits | del(.measured_at))]' <<<"$OUT" 2>/dev/null || echo unparseable)" \
   '["ok","stated",25,{"unit":"AIC","unlimited":false,"used":250,"granted":1000,"remaining":750}]' \
   "an account whose login does not read takes its stated reading as the fallback"
+# measure_copilot_pool refuses an override entry nothing can read, the named
+# Copilot form's one guard for it; its control reads the entry as no reading.
+ROW_ENV=(ORCH_LANE_COPILOT_POOL="$H/.1copilot=12.5/300")
+run_lanes pick --lane "$H/.1copilot" --harness copilot
+assert_eq "rc=$RC key=$(sed -n 1p <<<"$ERR" | cut -d' ' -f2)" "rc=1 key=invalid-copilot-pool" \
+  "a named account whose login does not read refuses an override entry nothing can read"
+CTL_MEASURE="$(mutant_scripts ctl-pool-measure lanes)" || exit 1
+mutate_file "$CTL_MEASURE/lanes" '	entries="$(copilot_pool_entries)" || return 1' '	entries="$(copilot_pool_entries)"'
+LANES_BIN="$CTL_MEASURE/lanes" run_lanes pick --lane "$H/.1copilot" --harness copilot
+assert_eq "rc=$RC" "rc=5" "control: the named form ignoring the refusal reads an unreadable entry as no reading"
+ROW_ENV=()
 
 echo "=== lanes asks the Copilot endpoint with the account's stored login ==="
 # End to end, with no fetch stub: `lanes` reads the login copilot_account
@@ -392,12 +403,14 @@ pi_row refused "" refused
 PI_HOST="ORCH_LANE_HOST=$TEST_DIR/fixtures/lane-host"
 # pi_run ROWS SETTING ARGS... — `lanes` under the fixture host answering
 # ROWS (`-` for no provider) and SETTING as ORCH_LANE_COPILOT_POOL (`-` for
-# none); OUT, RC, ERR.
+# none), PI_STUB one more LANE_HOST_STUB_ setting where set; OUT, RC, ERR.
+PI_STUB=""
 pi_run() {
   local rows="$1" setting="$2"
   shift 2
   ROW_ENV=()
   [[ "$rows" == - ]] || ROW_ENV+=("$PI_HOST" "LANE_HOST_STUB_LOG=$TMP_ROOT/pi-host.log" "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pi-$rows.tsv")
+  [[ -z "$PI_STUB" ]] || ROW_ENV+=("$PI_STUB")
   [[ "$setting" == - ]] || ROW_ENV+=("ORCH_LANE_COPILOT_POOL=$H/.pi1=$setting")
   run_lanes "$@"
   ROW_ENV=()
@@ -410,6 +423,18 @@ fix_line() { # the fix= line on stderr, the host path shortened
   line="$(grep '^fix=' <<<"$ERR" | sed -n 1p)"
   printf '%s' "${line//$TEST_DIR\/fixtures\/lane-host/HOST}"
 }
+# pi_verdict — the exit, the key of the last keyed lanes: line, and the read
+# the fix= line names: local, absent, answered, or row:STATUS:DETAIL for a
+# provider row that read no pool, or none.
+pi_verdict() {
+  local key fix
+  key="$(grep '^lanes: ' <<<"$ERR" | tail -n 1 | cut -d' ' -f2)"
+  fix="$(sed -nE -e 's/^fix=[^:]*: ORCH_LANE_HOST=local asks no lane host,.*/local/p' \
+    -e 's/^fix=[^:]*: lane host .* implements no accounts verb,.*/absent/p' \
+    -e 's/^fix=[^:]*: the accounts verb of lane host .* carried no harness=pi row .*/answered/p' \
+    -e 's/^fix=[^:]*: the accounts row of lane host .* read no pool, status=([^ ]*) detail=([^,]*),.*/row:\1:\2/p' <<<"$ERR" | paste -sd, -)"
+  printf 'rc=%s key=%s fix=%s' "$RC" "${key:-none}" "${fix:-none}"
+}
 PI_READ='[.config_dir, .measured_through, .monthly_pct, .binding_bucket, .binding_resets_at]'
 pi_run room - pick "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC $(pi_fields "$PI_READ")" "rc=0 [\"$H/.pi1\",\"host\",40,\"monthly\",\"2026-10-07T00:00:00Z\"]" \
@@ -421,8 +446,8 @@ pi_run walled 1/100 pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC $(pi_fields '[.measured_through, .wall, .binding_resets_at]')" 'rc=3 ["host",97,"2026-10-07T00:00:00Z"]' \
   "a walled provider row refuses the named form even where the override has room, dated by its reset"
 pi_run refused 10/100 pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
-assert_eq "rc=$RC $(pi_fields '[.measured_through, .monthly_pct]')" 'rc=0 ["stated",10]' \
-  "a provider row with no reading leaves the override standing"
+assert_eq "rc=$RC $(pi_fields '[.measured_through, .monthly_pct]') local=$(grep -c '^lanes: pick-local-reading' <<<"$ERR")" 'rc=0 ["stated",10] local=0' \
+  "a provider row with no reading leaves the override standing, never reported as a local reading"
 pi_run refused - pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC $(pi_fields '[.status, .detail]')" 'rc=5 ["refused","http-403-forbidden"]' \
   "with no override the provider's refused row stands, carrying its detail"
@@ -434,6 +459,36 @@ assert_eq "$(fix_line)" "fix=no Copilot pool reading for any Pi root: the accoun
 pi_run - - pick "${PI_MODEL[@]}"
 assert_eq "rc=$RC $(fix_line | cut -d: -f2 | cut -d, -f1)" "rc=5  ORCH_LANE_HOST=local asks no lane host" \
   "the unstated refusal with no provider names the host setting as the read that was not made"
+# How the provider's accounts read ended, one row each: FORM is `auto` or
+# `named`, STUB one LANE_HOST_STUB_ setting or `-`. A row that reads no pool
+# and an absent verb are unstated, each fix= line naming that read; a failed or
+# busy read is lanes failing, which a retry can answer, unless the override
+# states the pool.
+while IFS='|' read -r label rows setting stub form want; do
+  PI_STUB="${stub#-}"
+  args=(pick "${PI_MODEL[@]}")
+  [[ "$form" == auto ]] || args=(pick --lane "$H/.pi1" "${PI_MODEL[@]}")
+  pi_run "$rows" "$setting" "${args[@]}"
+  assert_eq "$(pi_verdict)" "$want" "$label"
+done <<'ROWS'
+a refused row with no override refuses auto as unstated, naming its status and detail|refused|-|-|auto|rc=5 key=copilot-pool-unstated fix=row:refused:http-403-forbidden
+a refused row with no override refuses a named root, naming its status and detail|refused|-|-|named|rc=5 key=pick-lane-unmeasured fix=row:refused:http-403-forbidden
+a failed accounts read with no override is lanes failing, never unstated|room|-|LANE_HOST_STUB_ACCOUNTS_STATUS=1|auto|rc=1 key=copilot-pool-unread fix=none
+a failed accounts read fails a named root the same way|room|-|LANE_HOST_STUB_ACCOUNTS_STATUS=1|named|rc=1 key=copilot-pool-unread fix=none
+a busy lane host is a failed read a retry can answer|room|-|LANE_HOST_STUB_ACCOUNTS_STATUS=69|auto|rc=1 key=copilot-pool-unread fix=none
+a failed accounts read leaves a stated override to judge|room|10/100|LANE_HOST_STUB_ACCOUNTS_STATUS=1|auto|rc=0 key=host-accounts-unreadable fix=none
+a provider with no accounts verb is unstated, the fix naming the absent verb|room|-|LANE_HOST_STUB_NO_ACCOUNTS=1|auto|rc=5 key=copilot-pool-unstated fix=absent
+a named root on a provider with no accounts verb names the absent verb|room|-|LANE_HOST_STUB_NO_ACCOUNTS=1|named|rc=5 key=pick-lane-unmeasured fix=absent
+a named root the provider has no row for names the accounts read|none|-|-|named|rc=5 key=pick-lane-unmeasured fix=answered
+a named root with no provider names the host setting|-|-|-|named|rc=5 key=pick-lane-unmeasured fix=local
+a malformed override refuses a named root even where the provider row reads the pool|room|garbage|-|named|rc=1 key=invalid-copilot-pool fix=none
+ROWS
+PI_STUB=""
+# A named account on another harness that reads nothing is sent to no Copilot
+# pool repair.
+copilot_account nopoolcopilot '{"quota_snapshots":{}}'
+run_lanes pick --lane "$H/.nopoolcopilot" --harness copilot
+assert_eq "$(pi_verdict)" "rc=5 key=pick-lane-unmeasured fix=none" "an unmeasured Copilot CLI account prints no Pi pool fix"
 pi_run room - list --json
 assert_eq "$(pi_fields '[.[] | select(.harness == "pi")] | length')" 0 "list shows no Pi row"
 pi_run room - host-accounts --json
@@ -459,9 +514,40 @@ assert_eq "rc=$RC $(pi_fields '.measured_through')" 'rc=5 "host"' \
 lanes_control ctl-pi-all lanes '		[[ "$want:$harness" != all:pi || "$mode" == cache ]] || continue' ''
 pi_run room - list --json
 assert_eq "$(pi_fields '[.[] | select(.harness == "pi")] | length')" 1 "control: without the all filter list shows the Pi row"
-lanes_control ctl-pi-fix lanes '      lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}"' ':'
+lanes_control ctl-pi-fix lanes 'lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" "$HOSTED_READ"; } >&2' ':; } >&2'
 pi_run none - pick "${PI_MODEL[@]}"
 assert_eq "rc=$RC fix=$(fix_line)" "rc=5 fix=" "control: without the fix call the unstated refusal names no repair"
+lanes_control ctl-pi-stated lanes 'if [[ "$age" == stated ]]; then' 'if false; then'
+pi_run refused 10/100 pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
+assert_eq "rc=$RC local=$(grep -c '^lanes: pick-local-reading' <<<"$ERR")" "rc=0 local=1" \
+  "control: without the stated arm a stated override is reported as a local reading the provider never made"
+lanes_control ctl-pi-unread-rows lanes 'if [[ "$harness" == pi && "${walled:-0}" -eq 0 && "${unmeasured:-0}" -gt 0 ]]; then' 'if false; then'
+pi_run refused - pick "${PI_MODEL[@]}"
+assert_eq "$(pi_verdict)" "rc=3 key=no-candidate-unmeasured fix=none" \
+  "control: without the unread-rows arm a refused row is a pick with no candidate and no repair"
+lanes_control ctl-pi-row-fix lanes 'if [[ "$through" == host ]]; then' 'if false; then'
+pi_run refused - pick --lane "$H/.pi1" "${PI_MODEL[@]}"
+assert_eq "$(pi_verdict)" "rc=5 key=pick-lane-unmeasured fix=answered" \
+  "control: without the row arm a refused row is reported as no row at all"
+lanes_control ctl-pi-named-fix lanes '[[ "$harness" != pi ]] || copilot_pool_records_fix "[$record]" >&2 || return 1' ':'
+pi_run none - pick --lane "$H/.pi1" "${PI_MODEL[@]}"
+assert_eq "$(pi_verdict)" "rc=5 key=pick-lane-unmeasured fix=none" "control: without the named fix call a named root names no repair"
+lanes_control ctl-pi-named-gate lanes '[[ "$harness" != pi ]] || copilot_pool_records_fix "[$record]" >&2 || return 1' 'copilot_pool_records_fix "[$record]" >&2 || return 1'
+run_lanes pick --lane "$H/.nopoolcopilot" --harness copilot
+assert_eq "$(pi_verdict)" "rc=5 key=pick-lane-unmeasured fix=local" "control: without the Pi test a Copilot CLI account is sent to the Pi pool repair"
+lanes_control ctl-pi-unread lanes 'if [[ "$harness" == pi && -z "$pool_entries" && "$HOSTED_READ" == failed ]]; then' 'if false; then'
+PI_STUB=LANE_HOST_STUB_ACCOUNTS_STATUS=69 pi_run room - pick "${PI_MODEL[@]}"
+assert_eq "rc=$RC" "rc=5" "control: without the failed-read arm a busy host is refused as unstated"
+lanes_control ctl-pi-unread-named lanes 'if [[ "$harness" == pi && "$HOSTED_READ" == failed ]]; then' 'if false; then'
+PI_STUB=LANE_HOST_STUB_ACCOUNTS_STATUS=1 pi_run room - pick --lane "$H/.pi1" "${PI_MODEL[@]}"
+assert_eq "$(pi_verdict)" "rc=1 key=pick-lane-unmeasured fix=none" "control: without the named failed-read arm a failed read is refused as an unmeasured root"
+lanes_control ctl-pi-absent lanes '		2) HOSTED_READ=absent; return 0 ;;' '		2) HOSTED_READ=answered; return 0 ;;'
+PI_STUB=LANE_HOST_STUB_NO_ACCOUNTS=1 pi_run room - pick "${PI_MODEL[@]}"
+assert_eq "$(pi_verdict)" "rc=5 key=copilot-pool-unstated fix=answered" "control: an absent verb read as an answer sends the operator to a row no verb can carry"
+lanes_control ctl-pi-named-pool lanes '	if [[ "$harness" == pi ]]; then copilot_pool_entries >/dev/null || return 1; fi' ''
+pi_run room garbage pick --lane "$H/.pi1" "${PI_MODEL[@]}"
+assert_eq "rc=$RC" "rc=0" "control: without the named override check a malformed override is judged past on the provider row"
+PI_STUB=""
 LANES_BIN=""
 
 echo

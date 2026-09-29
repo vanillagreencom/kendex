@@ -327,7 +327,7 @@ table \
   "a pool at its grant is walled even under a bound of 100|$POOL=1000000/1000000|pick --harness pi $COPILOT --max-pct 100|rc=3 key=no-candidate,harness=pi,max-pct=100,model=github-copilot/claude-sonnet-5,walled=1,unmeasured=0,seats=0" \
   "one credit short of the grant rounds up to a spent pool|$POOL=999999/1000000|pick --lane $H/.pi1 --harness pi $COPILOT --max-pct 100 --json|rc=3 wall=100 binding_bucket=monthly" \
   "a pool used past its grant reads 100, with no negative headroom|$POOL=1500/1000|pick --lane $H/.pi1 --harness pi $COPILOT --json|rc=3 wall=100 headroom_pct=0" \
-  "no stated pool is exit 5 by the setting's name||pick --harness pi $COPILOT|rc=5 key=copilot-pool-unstated,model=github-copilot/claude-sonnet-5,setting=ORCH_LANE_COPILOT_POOL" \
+  "no stated pool is exit 5 by the setting's name||pick --harness pi $COPILOT|rc=5 key=copilot-pool-unstated,model=github-copilot/claude-sonnet-5,setting=ORCH_LANE_COPILOT_POOL,read=local" \
   "a stated pool every entry of which is excluded is a pick with no candidate, not an unstated one|$POOL=1/10;ORCH_LANE_EXCLUDE=pi1|pick --harness pi $COPILOT|rc=3 key=no-candidate,harness=pi,max-pct=95,model=github-copilot/claude-sonnet-5,walled=0,unmeasured=0,seats=0" \
   "a named account the setting states nothing for is unmeasured, never unlisted|$POOL=1/10|pick --lane $H/.eclaude --harness pi $COPILOT --json|rc=5 status=no_usage_data" \
   "a listing of every harness leaves the stated pool out|$POOL=1/10|list --json|aliases=claude,eclaude,nclaude,openclaude"
@@ -365,15 +365,16 @@ pool_control mutant-pool-clamp lanes '(( used >= limit ))' 'false' \
 pool_control mutant-pool-unlisted lanes '\[\[ -n "\$found" || "\$harness" != pi \]\] || found="\$dir"' - \
   "control: an unstated account read as unlisted exits 4, which a launcher launches on|$POOL=1/10|pick --lane $H/.eclaude --harness pi $COPILOT --json|rc=4"
 pool_control mutant-pool-bucket lib/lane-model.sh 'pct: (.monthly_pct' 'pct: (null' \
-  "control: with the monthly bucket out of the shared windows the stated pool measures nothing|$POOL=100000/1000000|pick --harness pi $COPILOT|rc=3"
+  "control: with the monthly bucket out of the shared windows the stated pool measures nothing|$POOL=100000/1000000|pick --harness pi $COPILOT|rc=5"
 pool_control mutant-pool-relative lanes '"\$dir" != .\* || ' '' \
   "control: with no absolute-path test a relative account dir is picked|ORCH_LANE_COPILOT_POOL=pi1=1/10|pick --harness pi $COPILOT|rc=0"
 pool_control mutant-pool-grant lanes '(( limit > 0 ))' '(( limit >= 0 ))' \
   "control: with no grant test 0/0 is judged, as a spent pool|$POOL=0/0|pick --harness pi $COPILOT|rc=3"
 pool_control mutant-pool-status lanes 'pool_entries="\$(copilot_pool_entries)" || return 1$' 'pool_entries="$(copilot_pool_entries)"' \
   "control: the chooser ignoring the refusal reads an unreadable entry as no entry|$POOL=12.5/300|pick --harness pi $COPILOT|rc=5"
-pool_control mutant-pool-lane-status lanes '[[:space:]]entries="\$(copilot_pool_entries)" || return 1$' ' entries="$(copilot_pool_entries)"' \
-  "control: the named form ignoring the refusal reads an unreadable entry as no reading|$POOL=12.5/300|pick --lane $H/.pi1 --harness pi $COPILOT|rc=5"
+# The named Pi form's refusal is held twice, by cmd_pick_lane before any read
+# and by measure_copilot_pool, so no one edit reddens its row above; each
+# guard's control is in lanes-copilot.sh, on the form only that guard holds.
 pool_control mutant-pool-anchors lanes '=~ \^(\[0-9]{1,12})' '=~ ([0-9]{1,12})' \
   "control: with the credits anchors gone 12.5/300 is read as its tail|$POOL=12.5/300|pick --harness pi $COPILOT|rc=0"
 pool_control mutant-pool-duplicate lanes 'case "\$seen" in' - \

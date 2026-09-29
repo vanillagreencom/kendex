@@ -277,11 +277,15 @@
 #                    `binding_resets_at` (schemas/lane-host.md). The
 #                    ORCH_LANE_COPILOT_POOL setting is the override, judged
 #                    only for a Pi root no provider row reads. Its candidates
-#                    are the Pi roots either names; with neither the pick
-#                    exits 5 as `copilot-pool-unstated`, whose `fix=` line
-#                    names the read that failed and its repair, and under
-#                    --lane a directory neither reads is unmeasured (exit 5),
-#                    never unlisted. A provider row says
+#                    are the Pi roots either names. Where none carries a
+#                    reading and none is walled the pick exits 5 as
+#                    `copilot-pool-unstated`, and under --lane a directory
+#                    neither reads is unmeasured (exit 5), never unlisted;
+#                    each prints a `fix=` line naming the read that failed,
+#                    a provider row's own status and detail among them, and
+#                    its repair. An accounts read that failed or was busy,
+#                    with no override, exits 1 as `copilot-pool-unread`,
+#                    which asking again can answer. A provider row says
 #                    `measured_through: "host"` and a stated reading "stated";
 #                    a stated pool that is walled stays walled until the owner
 #                    states a new reading. The printed prefix is
@@ -695,9 +699,12 @@ message() {
       printf '%s\n' "a Pi launch spends the account its model's provider bills, a Claude seat for pi-claude/ and the Copilot pool for github-copilot/; nothing here measures what this model spends, so the launch is unmeasured, and an unmeasured account is not one with room"
       ;;
     copilot-pool-unstated)
-      printf 'lanes: copilot-pool-unstated model=%s setting=%s\n' "$1" "ORCH_LANE_COPILOT_POOL"
-      printf '%s\n' "no lane host row and no ORCH_LANE_COPILOT_POOL entry reads a Copilot pool for any Pi account, so nothing measures what this launch spends, and an unmeasured pool is not an empty one"
-      lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}"
+      printf 'lanes: copilot-pool-unstated model=%s setting=%s read=%s\n' "$1" "ORCH_LANE_COPILOT_POOL" "$2"
+      printf '%s\n' "no lane host row and no ORCH_LANE_COPILOT_POOL entry reads a Copilot pool for any Pi account, so nothing measures what this launch spends, and an unmeasured pool is not an empty one; the fix= line below names the read that failed"
+      ;;
+    copilot-pool-unread)
+      printf 'lanes: copilot-pool-unread host=%s model=%s setting=%s\n' "$1" "$2" "ORCH_LANE_COPILOT_POOL"
+      printf '%s\n' "the lane host's accounts read failed, as the line above says, and ORCH_LANE_COPILOT_POOL states no pool reading here, so nothing measured this Pi launch; a failed read is never cached, so asking again can answer it"
       ;;
     invalid-copilot-pool)
       printf 'lanes: invalid-copilot-pool entry=%s\n' "$1"
@@ -2244,12 +2251,16 @@ host_row_or_local() { # HARNESS DIR HOSTROW
 	fi
 }
 
-# The provider's rows for HARNESS as one JSON array, `[]` where ORCH_LANE_HOST
-# names none or there are none to merge. READINGS is host_account_records' own.
-# The reader's own status adds nothing here: it has already said on stderr what
-# it did with an absent or failed verb, and either way there are no host rows,
-# so the caller keeps this machine's reading. Only the merge is this function's
-# to report, so a merge failure is never printed as the provider's answer.
+# The provider's rows for HARNESS as one JSON array in HOSTED_ROWS, `[]` where
+# ORCH_LANE_HOST names none or there are none to merge. READINGS is
+# host_account_records' own. The reader has already said on stderr what it did
+# with an absent or failed verb, and either way there are no host rows, so the
+# caller keeps this machine's reading. HOSTED_READ names how the read ended,
+# `local`, `answered`, `absent` or `failed`, a merge failure among the last:
+# a Pi pick with no override tells a pool no provider reads from one a retry
+# can read. Globals, so the caller runs this in its own shell. Only the merge is
+# this function's to report, so a merge failure is never printed as the
+# provider's answer.
 #
 # Each row carries `_id`, its config dir through the one normaliser, so a dir
 # the provider names with a trailing slash or through a symlink still stands for
@@ -2257,11 +2268,17 @@ host_row_or_local() { # HARNESS DIR HOSTROW
 # through the usage cache under ORCH_LANES_USAGE_TTL, like every usage figure
 # here: they are windows, and whether the host holds an account for a launch
 # gate is `host-accounts --no-cache`'s answer, never this one.
+HOSTED_ROWS="[]" HOSTED_READ=local
 host_lane_rows() { # HARNESS [READINGS]
 	local rows row stamped="" hosted="" d accounts_rc=0 hosted_rc=0
-	[[ "${ORCH_LANE_HOST:-local}" != local ]] || { printf '[]\n'; return 0; }
+	HOSTED_ROWS="[]" HOSTED_READ=local
+	[[ "${ORCH_LANE_HOST:-local}" != local ]] || return 0
 	rows="$(host_account_records "$ORCH_LANE_HOST" "$1" "${2:-}")" || accounts_rc=$?
-	[[ "$accounts_rc" -eq 0 ]] || { printf '[]\n'; return 0; }
+	case "$accounts_rc" in
+		0) HOSTED_READ=answered ;;
+		2) HOSTED_READ=absent; return 0 ;;
+		*) HOSTED_READ=failed; return 0 ;;
+	esac
 	# emit_lane writes each row as one compact line.
 	while IFS= read -r row; do
 		[[ -n "$row" ]] || continue
@@ -2272,10 +2289,10 @@ host_lane_rows() { # HARNESS [READINGS]
 	[[ "$hosted_rc" -ne 0 ]] || hosted="$(jq -cs . <<<"$stamped")" || hosted_rc=$?
 	if [[ "$hosted_rc" -ne 0 ]]; then
 		message host-accounts-merge-failed "$ORCH_LANE_HOST" "$hosted_rc" >&2
-		printf '[]\n'
+		HOSTED_READ=failed
 		return 0
 	fi
-	printf '%s\n' "$hosted"
+	HOSTED_ROWS="$hosted"
 }
 
 # ── Host accounts ────────────────────────────────────────────────────────────
@@ -2730,16 +2747,34 @@ render_table() {
 # tell a window naming no model from a credential this machine cannot renew:
 # only the second has a remedy, and only that one leaves an account whose
 # copy on another host may still be live.
-# The provider rows both pick forms judge HARNESS on, host_lane_rows' readings.
-# For a Pi pick these are the provider's harness=pi rows, each a Pi root's
-# Copilot pool, which host_row_or_local sets against the stated override.
+# The provider rows both pick forms judge HARNESS on, host_lane_rows' readings,
+# in HOSTED_ROWS and HOSTED_READ. For a Pi pick these are the provider's
+# harness=pi rows, each a Pi root's Copilot pool, which host_row_or_local sets
+# against the stated override.
 pick_host_rows() { # HARNESS
 	host_lane_rows "$1" readings
+}
+
+# The fix= line for each unmeasured Pi record in RECORDS, a JSON array: a
+# provider row that stands names its own status and detail, and any other the
+# accounts read HOSTED_READ names.
+copilot_pool_records_fix() { # RECORDS
+	local through dir status detail
+	while IFS=$'\x1f' read -r through dir status detail; do
+		if [[ "$through" == host ]]; then
+			lane_copilot_pool_fix "$ORCH_LANE_HOST" row "$dir" "$status" "$detail"
+		else
+			lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" "$HOSTED_READ" "$dir"
+		fi || return 1
+	done < <(jq -r '.[] | [.measured_through, .config_dir, .status, .detail // ""] | join("\u001f")' <<<"$1")
 }
 
 cmd_pick_lane() {
 	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6" burn="$7" projected_verdict="$8"
 	local target found="" d record="" wall bucket verdict hosted projected
+	# A malformed override refuses this form as it refuses the chooser, before a
+	# provider row could stand in for an entry nobody can parse.
+	if [[ "$harness" == pi ]]; then copilot_pool_entries >/dev/null || return 1; fi
 	# The same claim load `list` does, for the same reason: the record this form
 	# hands back carries `claims` and the projection beside it, which the
 	# verdict judges under --projected. Without the
@@ -2774,7 +2809,8 @@ cmd_pick_lane() {
 	# `lanes: pick-local-reading` line. A dir the provider holds and discovery
 	# does not reach is judged on the provider's row alone, which is then no
 	# longer a lane with no record.
-	hosted="$(pick_host_rows "$harness")"
+	pick_host_rows "$harness"
+	hosted="$HOSTED_ROWS"
 	record="$(jq -c --arg t "$target" 'map(select(._id == $t)) | first // empty' <<<"$hosted")" || { message pick-lane-failed "$dir" host >&2; return 1; }
 	if [[ -n "$record" && -z "$found" ]]; then
 		found="$(jq -r '.config_dir' <<<"$record")" || { message pick-lane-failed "$dir" host >&2; return 1; }
@@ -2834,7 +2870,14 @@ cmd_pick_lane() {
 			return 3
 			;;
 		unmeasured)
+			# A Pi root nothing measured: a failed accounts read is one a retry
+			# can answer, and any other read is named on a fix= line.
+			if [[ "$harness" == pi && "$HOSTED_READ" == failed ]]; then
+				message copilot-pool-unread "$ORCH_LANE_HOST" "${model:-none}" >&2
+				return 1
+			fi
 			message pick-lane-unmeasured "$dir" "${model:-none}" >&2
+			[[ "$harness" != pi ]] || copilot_pool_records_fix "[$record]" >&2 || return 1
 			# Under --json only, as on 0 and 3. The record's `status` is the
 			# whole of what a launcher needs here: `expired` names a credential
 			# this machine could not renew, which is an owner's login to fix
@@ -2921,13 +2964,18 @@ cmd_pick() {
 		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
 	fi
 	# After the claim load: emit_lane counts claims on every host row it writes.
-	hosted="$(pick_host_rows "$harness")"
+	pick_host_rows "$harness"
+	hosted="$HOSTED_ROWS"
 	# With neither a provider row nor an override entry nothing measures this
-	# Pi launch: exit 5, a read to repair and never a window to wait out.
-	# Entries that exclusion removed are a pick with no candidate, answered as
-	# one below.
-	if [[ "$harness" == pi && -z "$pool_entries" && "$hosted" == "[]" ]]; then
-		message copilot-pool-unstated "${model:-none}" >&2
+	# Pi launch: exit 1 where the accounts read failed, which a retry can
+	# answer, and otherwise exit 5, a read to repair and never a window to wait
+	# out. Entries that exclusion removed are a pick with no candidate, answered
+	# as one below.
+	if [[ "$harness" == pi && -z "$pool_entries" && "$HOSTED_READ" == failed ]]; then
+		message copilot-pool-unread "$ORCH_LANE_HOST" "${model:-none}" >&2
+		return 1
+	elif [[ "$harness" == pi && -z "$pool_entries" && "$hosted" == "[]" ]]; then
+		{ message copilot-pool-unstated "${model:-none}" "$HOSTED_READ"; lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" "$HOSTED_READ"; } >&2
 		return 5
 	fi
 	lanes="$(collect_lanes "$harness" "$exclude"$'\n'"$SEATS" "$hosted")"
@@ -2948,7 +2996,8 @@ cmd_pick() {
 		                | del(.wall, .verdict) | lane_public end),
 		    qualifying: ([ .[] | select(.verdict == "room") ] | length),
 		    walled: ([ .[] | select(.verdict == "walled") ] | length),
-		    unmeasured: ([ .[] | select(.verdict == "unmeasured") ] | length) }
+		    unmeasured: ([ .[] | select(.verdict == "unmeasured") ] | length),
+		    unread: [ .[] | select(.verdict == "unmeasured") ] }
 	' <<<"$lanes")"
 	chosen="$(jq -c '.chosen' <<<"$judged" 2>/dev/null || true)"
 	if [[ -z "$chosen" || "$chosen" == "null" ]]; then
@@ -2956,6 +3005,16 @@ cmd_pick() {
 		unmeasured="$(jq -r '.unmeasured // 0' <<<"$judged" 2>/dev/null || true)"
 		[[ -z "$SEATS" ]] || omitted="$(omitted_seats "$harness" "$hosted")" || die pick-overseer-seats omitted oversee
 		[[ -z "$omitted" ]] || seats="$(grep -c . <<<"$omitted")"
+		# A Pi pick where no candidate carries a pool reading and none is walled
+		# is the unstated refusal, each unread provider row named on its fix=
+		# line: a pool nobody read is never one to wait out.
+		if [[ "$harness" == pi && "${walled:-0}" -eq 0 && "${unmeasured:-0}" -gt 0 ]]; then
+			{
+				message copilot-pool-unstated "${model:-none}" row
+				copilot_pool_records_fix "$(jq -c '.unread' <<<"$judged")"
+			} >&2
+			return 5
+		fi
 		{
 			# Walled and unmeasured are different news for an operator: one
 			# allowance is spent and will reset, the other was never read, and
@@ -3311,8 +3370,8 @@ case "$SUB" in
 		# Asked only where a provider is configured. A fleet with no provider
 		# reads the local config dirs and nothing else, exactly as before.
 		if [[ "$LOCAL_ONLY" != true && "${ORCH_LANE_HOST:-local}" != local ]]; then
-			hosted="$(host_lane_rows "$HARNESS")"
-			out="$(jq -c --argjson hosted "$hosted" '. + $hosted' <<<"$out")"
+			host_lane_rows "$HARNESS"
+			out="$(jq -c --argjson hosted "$HOSTED_ROWS" '. + $hosted' <<<"$out")"
 		fi
 		# The verdict is the reading's: `walled` tells oversee-watch the wall is
 		# reached and lifts at binding_resets_at, which a projection does not

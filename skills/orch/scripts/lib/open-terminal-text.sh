@@ -44,7 +44,7 @@ ot_message() { # REASON FIELD=VALUE...
     copilot-pool-walled) text='Every Pi account this launch could spend is at or above the usage threshold on its Copilot pool, as the lane host'"'"'s accounts row reads it or, where no row reads it, as ORCH_LANE_COPILOT_POOL states it. Nothing was launched. A pool the host read reopens at the reset its record names as binding_resets_at; a stated reading moves only when the owner restates it. The keyed lanes: line above names the pool and the threshold.' ;;
     lane-provider-unmeasured) text='Nothing measures the account this Pi launch spends: its model names no provider, or a provider other than pi-claude/ (a Claude seat) and github-copilot/ (the Copilot pool), the two whose accounts are judged. Nothing was launched: an unmeasured account is not one with room. Spell the model pi-claude/<model> or github-copilot/<model>, or pass --provider beside a bare --model.' ;;
     host-pi-claude-seat) text='A Pi launch on a pi-claude/ model spends a Claude seat, and the lane host protocol hands a Pi lane its account as its Pi root, so it cannot carry that seat into the host: pi-claude-bridge would run on the host'"'"'s own Claude login, not the seat judged here. Nothing was picked, judged or created. Launch it with --host local, or on a github-copilot/ model.' ;;
-    copilot-pool-unstated) text='This Pi launch spends the Copilot pool, and neither a lane host accounts row nor ORCH_LANE_COPILOT_POOL reads a pool for any Pi account, so nothing measures what it would spend. Nothing was launched, and waiting changes nothing. The fix= line below names the read that failed and its repair (lanes --help).' ;;
+    copilot-pool-unstated) text='This Pi launch spends the Copilot pool, and neither a lane host accounts row nor ORCH_LANE_COPILOT_POOL reads a pool for any Pi account, so nothing measures what it would spend. Nothing was launched, and waiting changes nothing. The fix= line above names the read that failed and its repair (lanes --help).' ;;
     lane-directory-missing) text='The specified lane directory does not exist.' ;;
     lane-unknown) text='The lane is neither a known alias nor a directory.' ;;
     lane-refused) text='A lane setting excludes or retires this lane. No window was opened.' ;;
@@ -246,11 +246,13 @@ Options:
                     accounts row for the Pi root, with ORCH_LANE_COPILOT_POOL
                     the override where no row reads it (`lanes --help`),
                     which `auto` with --harness pi picks on too, refusing as
-                    copilot-pool-unstated where neither reads a pool and
-                    copilot-pool-walled where every pool read is spent; a
-                    named lane neither reads is refused as
-                    lane-model-unreadable. Both unread refusals carry a fix=
-                    line naming the read that failed and its repair. That
+                    copilot-pool-unstated where no read measures any pool
+                    and copilot-pool-walled where every pool read is spent;
+                    a named lane neither reads is refused as
+                    lane-model-unreadable. `lanes` prints a fix= line above
+                    both unread refusals, naming the read that failed and
+                    its repair; a failed lane host accounts read is refused
+                    as lanes failing, which a retry can answer. That
                     lane runs under PI_CODING_AGENT_DIR, its
                     settings and carrier read there for a fleet launch. A pi
                     model naming no provider, or any other provider, is

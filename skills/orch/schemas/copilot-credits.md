@@ -11,7 +11,7 @@ The record `lanes` produces for one Copilot account's monthly AI credit pool, re
 
 | Field | Meaning |
 |---|---|
-| `harness` | `copilot`, or `pi` for a Pi root's stated pool |
+| `harness` | `copilot`, or `pi` for a Pi root's pool, from a provider `harness=pi` row or the stated override |
 | `config_dir` | The account: the `COPILOT_HOME` directory, or the Pi root |
 | `alias` | The account's label (`ORCH_LANE_ALIASES`, else the directory name) |
 | `measured_through` | `local` for this machine's read, `host` for a provider's `accounts` row, `stated` for `ORCH_LANE_COPILOT_POOL` |
@@ -19,7 +19,7 @@ The record `lanes` produces for one Copilot account's monthly AI credit pool, re
 | `monthly_pct` | Share of the grant used, whole percent rounded up; 100 at or past the grant; 0 for an unlimited seat; null where unmeasured |
 | `unlimited` | `true` only for a seat the endpoint marks `unlimited: true` |
 | `headroom_pct` | 100 minus `monthly_pct`, null where unmeasured |
-| `binding_bucket`, `binding_resets_at`, `resets.monthly` | `monthly` and the pool's reset, ISO 8601 UTC, from `quota_reset_date_utc`. All null for an unmeasured account; the reset is null for a stated reading and wherever the endpoint gives no date |
+| `binding_bucket`, `binding_resets_at`, `resets.monthly` | `monthly` and the pool's reset, ISO 8601 UTC, from `quota_reset_date_utc`. All null for an unmeasured account; a provider row's reset is its `monthly-resets`; the reset is null for a stated reading and wherever the endpoint or the row gives no date |
 | `usage_age_s` | Seconds since the endpoint answered the figure served |
 | `credits` | The counts, below; null where unmeasured |
 
@@ -37,4 +37,4 @@ The record `lanes` produces for one Copilot account's monthly AI credit pool, re
 
 `credits` for an unlimited seat is `{unit: "AIC", unlimited: true, measured_at}`.
 
-A provider's `accounts` row carries a Copilot account as `harness=copilot` with `monthly-pct` and `monthly-resets` ([lane-host.md](lane-host.md)), and its record carries no `credits`.
+A provider's `accounts` row carries a Copilot account as `harness=copilot`, or a Pi root's pool as `harness=pi`, with `monthly-pct` and `monthly-resets` ([lane-host.md](lane-host.md)), and its record carries no `credits`.

@@ -148,9 +148,10 @@
 #        the setting's order and holds no model list or order of its own. A
 #        pi session spends a claude account on the pi-claude provider and the
 #        Copilot pool on a github-copilot model, which `lanes pick --harness
-#        pi` judges from ORCH_LANE_COPILOT_POOL and whose lane variable is
-#        PI_CODING_AGENT_DIR (lib/lane-launch.sh § lane_pick_harness). On any
-#        other provider it spends one no lane measures, so that entry takes
+#        pi` judges from the lane host's harness=pi accounts row for the Pi
+#        root, with ORCH_LANE_COPILOT_POOL as the override, and whose lane
+#        variable is PI_CODING_AGENT_DIR
+#        (lib/lane-launch.sh § lane_pick_harness). On any other provider it spends one no lane measures, so that entry takes
 #        no pick and launches with no lane variable, and a qualifying mark
 #        never chooses it. A pi caller's own model is the first of its
 #        record's, the --model word after -- and its reading's that names a
