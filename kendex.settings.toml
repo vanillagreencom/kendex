@@ -292,7 +292,7 @@ REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standa
 # tools/lock-record writes .kendex-lock.json with a kendex built from main's
 # tree, so its registration shape can be newer than the writer's pinned
 # release. The writer judges a lock-only pull request with the rolling main
-# build instead, per D007.
+# build instead, as D007 § Revisit Outcome (2026-09-29) records.
 REVIEW_GATE_LOCK_KENDEX = "main"
 
 # ── Skill settings ───────────────────────────────────────────────────────

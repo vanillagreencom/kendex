@@ -27,6 +27,7 @@ settings-known|kendex.settings.toml
 settings-env-table|kendex.settings.toml
 settings-key-shapes|kendex.settings.toml
 settings-values|0
+settings-lock-kendex|off
 class-policy-default|default
 ROWS
 [ "$rows" -gt 0 ] && [ "$((PASS + FAIL - before))" -eq "$rows" ] || { printf 'fixture-error=report-table value=%q\n' "$rows" >&2; exit 2; }
@@ -162,6 +163,7 @@ root mode is read~append~REVIEW_GATE_MODE = "off"~clean~~~~~~~
 illegal writer setting with a writer present~append~REVIEW_GATE_WRITER = "bogus"~FAIL~settings-writer~2~writer-setting~bogus~~~
 optional writer setting is legal with a writer present~append~REVIEW_GATE_WRITER = "optional"~clean~settings-writer~enforced~~~~~
 nested writer is unread~nested~[env]\nREVIEW_GATE_WRITER = "optional"~FAIL~settings-writer-source~.kendex/settings.toml~~~~~
+illegal lock kendex with the policy owner's diagnostic~append~REVIEW_GATE_LOCK_KENDEX = "yes"~FAIL~settings-lock-kendex~2~policy-lock-kendex~yes~~~
 exported writer settings cannot hide a missing writer~exported-writer~~FAIL~workflow-count~0~~~~~
 the default assigned explicitly~append~REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standard:current"~clean~class-policy-default~default-assigned~~~~~
 explicit untracked source~explicit~~clean~~~~~settings-explicit~@/kendex.settings.toml~

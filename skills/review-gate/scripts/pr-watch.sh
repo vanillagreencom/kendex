@@ -98,9 +98,8 @@ Attention kinds:
                      it. On kendex/lock, the rolling branch kendex's
                      lock-record tool opens for the install record alone,
                      an approved verdict over a gate that is not success
-                     names the kendex lag instead: the writer's kendex has
-                     to carry the recording tree's kendex before it passes
-                     that record, so the line is not a writer outage
+                     also names a second possible cause: the writer's lock
+                     kendex lagging the kendex that recorded the record
   disarmed           gate open (success) on an un-queued PR with auto-merge
                      NOT armed â€” mergeable, but nothing will merge it (the
                      known eviction-disarm failure mode). The line also
@@ -360,13 +359,13 @@ WITHDRAWAL_WHY="threads are open but the newest '$GATE_CONTEXT' row is success â
 # tools/lock-record opens its rolling pull request on LOCK_RECORD_BRANCH with
 # the install record alone, recorded by a kendex built from the default
 # branch's tree. The writer proves that record's class with a kendex that can
-# lag the tree, a release or the last published main build, and until one
-# carries the recording tree's kendex it refuses the record: a lag a heal
-# cannot clear, which the line names so it is not read as a writer outage.
+# lag the tree, so there the pair has a second possible cause beside a writer
+# that has not converged. This script reads only the verdict and the newest
+# gate row, and cannot tell the two apart.
 LOCK_RECORD_BRANCH="kendex/lock"
 approved_stale_why() { # head_ref
   if [ "$1" = "$LOCK_RECORD_BRANCH" ]; then
-    printf '%s' "the lock class waits on a writer kendex that carries the recording tree's kendex (release or main-build lag), not a writer outage"
+    printf '%s' "the writer has not converged (on $LOCK_RECORD_BRANCH this can also be the writer's lock kendex lagging the recording tree's kendex)"
   else
     printf '%s' "the writer has not converged"
   fi

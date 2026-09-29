@@ -5,7 +5,8 @@
 # (its own suite holds what the flags print), curl hands back an installer
 # double, and that double records the arguments and the HOME, XDG_DATA_HOME
 # and first PATH entry it ran under, which are what decide where the real
-# installer puts the command. The step runs against the template and against
+# installer puts the command, then exits with the case's status for a --git
+# install, the main build. The step runs against the template and against
 # this repository's adopted copy where one exists.
 set -euo pipefail
 
@@ -51,6 +52,7 @@ CURL
 export INSTALLER_DOUBLE="$TMP_ROOT/installer"
 cat >"$INSTALLER_DOUBLE" <<'INSTALLER'
 printf 'args=%s home=%s data=%s path=%s\n' "$*" "$HOME" "${XDG_DATA_HOME:-}" "${PATH%%:*}" >>"$INSTALL_LOG"
+case "$*" in *--git*) exit "$MAIN_BUILD_RC" ;; esac
 INSTALLER
 # review-policy answers --check-config with CHECK_CONFIG and --lock-kendex with
 # LOCK_KENDEX, or exits 2 where LOCK_KENDEX is `refuse`.
@@ -95,35 +97,38 @@ for i in "${!WORKFLOWS[@]}"; do
   policy_double "$work/.agents/skills/review-gate/scripts/review-policy"
   policy_double "$work/skills/review-gate/scripts/review-policy"
 
-  # label | --check-config | --lock-kendex | exit | installs | GITHUB_ENV
+  # label | --check-config | --lock-kendex | main-build installer exit | exit
+  # | installs | GITHUB_ENV | warning keys
   rows=0
-  while IFS='|' read -r case_label check lock want_rc want_installs want_env; do
+  while IFS='|' read -r case_label check lock main_rc want_rc want_installs want_env want_warn; do
     rows=$((rows + 1))
     runner_temp="$work/runner-temp"
     rm -rf -- "$runner_temp"
     mkdir -p "$runner_temp"
     : >"$work/curl.log"; : >"$work/install.log"; : >"$work/github-env"
     rc=0
-    (cd "$work" && env CHECK_CONFIG="$check" LOCK_KENDEX="$lock" \
+    (cd "$work" && env CHECK_CONFIG="$check" LOCK_KENDEX="$lock" MAIN_BUILD_RC="$main_rc" \
       CURL_LOG="$work/curl.log" INSTALL_LOG="$work/install.log" \
       GITHUB_ENV="$work/github-env" RUNNER_TEMP="$runner_temp" HOME="$work/home" \
       KENDEX_VERSION=v1.2.0 KENDEX_INSTALLER_SHA=0123456789abcdef0123456789abcdef01234567 \
       KENDEX_INSTALLER_REPO=o/kendex GH_TOKEN= PATH="$BIN:$PATH" \
-      bash -e "$step" >/dev/null 2>&1) || rc=$?
+      bash -e "$step" >"$work/stdout" 2>/dev/null) || rc=$?
     installs="$(sed "s#$runner_temp#RT#g; s#$work/home#HOME#g; s#$BIN#BIN#g" "$work/install.log" | paste -sd';' -)"
     github_env="$(sed "s#$runner_temp#RT#g" "$work/github-env" | paste -sd';' -)"
     assert_eq "$rc" "$want_rc" "[$label] $case_label: exit"
     assert_eq "$installs" "$want_installs" "[$label] $case_label: installs"
     assert_eq "$github_env" "$want_env" "[$label] $case_label: GITHUB_ENV"
+    assert_eq "$(sed -n 's/^::warning::\([^:]*\):.*/\1/p' "$work/stdout" | paste -sd';' -)" "$want_warn" "[$label] $case_label: warnings"
     if [[ -s "$work/curl.log" ]]; then
       assert_eq "$(sort -u "$work/curl.log")" "$INSTALLER_URL" "[$label] $case_label: every install fetches the pinned installer"
     fi
   done <<'CASES'
-an inactive policy installs nothing|review-policy=inactive|review-policy-lock-kendex=main|0||
-an empty setting installs the pinned release alone|review-policy=active|review-policy-lock-kendex=off|0|args=--version v1.2.0 home=HOME data= path=BIN|
-main also installs the rolling main build into its own home and hands its path on|review-policy=active|review-policy-lock-kendex=main|0|args=--version v1.2.0 home=HOME data= path=BIN;args=--git --cli-only home=RT/kendex-lock data=RT/kendex-lock/.local/share path=RT/kendex-lock/.local/bin|HARNESS_CI_LOCK_KENDEX=RT/kendex-lock/.local/bin/kendex
-a refused setting fails the step after the pinned release|review-policy=active|refuse|2|args=--version v1.2.0 home=HOME data= path=BIN|
-a record neither off nor main fails the step|review-policy=active|review-policy-lock-kendex=yes|1|args=--version v1.2.0 home=HOME data= path=BIN|
+an inactive policy installs nothing|review-policy=inactive|review-policy-lock-kendex=main|0|0|||
+an empty setting installs the pinned release alone|review-policy=active|review-policy-lock-kendex=off|0|0|args=--version v1.2.0 home=HOME data= path=BIN||
+main also installs the rolling main build into its own home and hands its path on|review-policy=active|review-policy-lock-kendex=main|0|0|args=--version v1.2.0 home=HOME data= path=BIN;args=--git --cli-only home=RT/kendex-lock data=RT/kendex-lock/.local/share path=RT/kendex-lock/.local/bin|HARNESS_CI_LOCK_KENDEX=RT/kendex-lock/.local/bin/kendex|
+a main build that fails to install warns and leaves the pinned release to judge|review-policy=active|review-policy-lock-kendex=main|3|0|args=--version v1.2.0 home=HOME data= path=BIN;args=--git --cli-only home=RT/kendex-lock data=RT/kendex-lock/.local/share path=RT/kendex-lock/.local/bin||lock-kendex-install exit=3
+a refused setting fails the step after the pinned release|review-policy=active|refuse|0|2|args=--version v1.2.0 home=HOME data= path=BIN||
+a record neither off nor main fails the step|review-policy=active|review-policy-lock-kendex=yes|0|1|args=--version v1.2.0 home=HOME data= path=BIN||
 CASES
   [[ "$rows" -gt 0 ]] || { FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$label" "the case table ran no rows"; }
 done

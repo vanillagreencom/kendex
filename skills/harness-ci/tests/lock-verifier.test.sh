@@ -8,7 +8,8 @@
 # alone, and the rolling main build, which also knows `v2`. Each refuses a
 # record whose shape it does not know, as `kendex verify` does a registration
 # written by a newer kendex, and passes one it knows. Each answers `--version`
-# from its own directory and records its name for every other call.
+# from its own directory and records its name for every other call. A third,
+# a lock kendex whose `--version` exits non-zero, is named unreadable.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
@@ -29,7 +30,12 @@ write_verifier() { # NAME VERSION SHAPE...
   cat >"$dir/kendex" <<'STUB'
 #!/usr/bin/env bash
 here="$(cd "$(dirname "$0")" && pwd)"
-[ "$*" != --version ] || { printf 'kendex %s\n' "$(cat "$here/version")"; exit 0; }
+if [ "$*" = --version ]; then
+  version="$(cat "$here/version")"
+  [ -n "$version" ] || exit 1
+  printf 'kendex %s\n' "$version"
+  exit 0
+fi
 printf '%s\n' "${here##*/}" >>"$VERIFIER_CALLS"
 shape="$(sed -n 's/.*"registration":"\([^"]*\)".*/\1/p' .kendex-lock.json)"
 grep -qxF -- "$shape" "$here/knows" ||
@@ -40,6 +46,7 @@ STUB
 }
 write_verifier pinned 1.2.0 v1
 write_verifier lock 1.2.0+main.365.1cdc8b27 v1 v2
+write_verifier unversioned '' v1
 PINNED_PATH="$SANDBOX/pinned:$PATH"
 LOCK_KENDEX="$SANDBOX/lock/kendex"
 not_executable="$SANDBOX/not-executable"
@@ -56,7 +63,8 @@ record "$repo" v1
 commit_paths "$repo" "a consumer recording one hook" .agents/skills/orch/SKILL.md
 base="$(git -C "$repo" rev-parse HEAD)"
 
-# label | lock kendex (unset, lock, not-executable) | changes | class line | verifier calls
+# label | lock kendex (unset, lock, unversioned, not-executable) | changes
+# | class line | verifier calls
 rows=0
 while IFS='|' read -r label lock changes want calls; do
   rows=$((rows + 1))
@@ -74,6 +82,7 @@ while IFS='|' read -r label lock changes want calls; do
   case "$lock" in
     unset) lock_env=(env -u HARNESS_CI_LOCK_KENDEX) ;;
     lock) lock_env=(env HARNESS_CI_LOCK_KENDEX="$LOCK_KENDEX") ;;
+    unversioned) lock_env=(env HARNESS_CI_LOCK_KENDEX="$SANDBOX/unversioned/kendex") ;;
     not-executable) lock_env=(env HARNESS_CI_LOCK_KENDEX="$not_executable") ;;
     *) echo "lock-verifier: unknown lock kendex $lock" >&2; exit 1 ;;
   esac
@@ -87,6 +96,7 @@ the same record is refused by the pinned release, named with its version|unset|r
 a render beside the record runs the pinned release though the lock kendex is set|lock|record skill|class=standard measured=false cause=verify-refused verifier=path version=1.2.0|pinned
 a render with no record change runs the pinned release though the lock kendex is set|lock|skill|class=render measured=true cause=renders-match-their-sources|pinned
 a lock kendex that is not executable is no verifier|not-executable|record|class=standard measured=false cause=no-verifier verifier=lock|
+a lock kendex whose version cannot be read is named unreadable in its refusal|unversioned|record|class=standard measured=false cause=verify-refused verifier=lock version=unreadable|unversioned
 CASES
 require_rows lock-verifier "$rows"
 

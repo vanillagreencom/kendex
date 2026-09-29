@@ -163,6 +163,7 @@ Concrete per-consumer values are tracked on the org adoption issue, not here. Ev
 | `workflow-count` | Adopt (§ What an adoption PR contains), or `git add` the workflow: Actions runs only what is committed. A repository that posts no gate status sets `REVIEW_GATE_WRITER = "optional"` and `REVIEW_GATE_MODE = "off"` instead. |
 | `workflow-absent-mode` | The writer is optional but the gate is enforced. Set `REVIEW_GATE_MODE = "off"`, or adopt the writer. |
 | `settings-writer` or `settings-writer-source` | Set `REVIEW_GATE_WRITER` to `required` or `optional` in the committed `kendex.settings.toml`, never in `.kendex/settings.toml`. |
+| `settings-lock-kendex` | Set `REVIEW_GATE_LOCK_KENDEX` to empty or `main`; the indented `policy-lock-kendex` record names the value `review-policy` refused. |
 | `workflow-equality` | Run `validate-workflow.sh --adopt` (§ Updating an already-adopted copy) and commit its write. The `note check=workflow-template` line under the verdict names the template blob the copy was compared against. |
 | `workflow-edited` | A person edited the copy. Re-copy `templates/review-gate-writer.yml` over it; the line named under the verdict says where it diverges. Keep only the `check_run` opt-in's two trigger lines if that opt-in is on. |
 | `class-policy-undecided` | Delete the `REVIEW_GATE_CLASS_POLICY` assignment so the default applies. A departure from the default needs a decision record named in `REVIEW_GATE_CLASS_POLICY_DECISION`. |

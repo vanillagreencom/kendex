@@ -40,16 +40,16 @@ name = "review-gate"
 
 [[package.file]]
 path = "templates/review-gate-writer.yml"
-hash = "e1ac840f59f2605cbe5af68622c90ea9d325a5784a632df03ace3b670016d97e"
+hash = "9be8aff4db9553b669541b35d3a1f24f66934f37a0778372e8213c9f2e080479"
 
 [[package.file.finding]]
 rule = "rce"
-line = 653
+line = 657
 message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KE… c4e2972fc18a3f5a`, so whatever the far end serves is what runs"
 
 [[package.file.finding]]
 rule = "rce"
-line = 659
+line = 664
 message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KE… c4e2972fc18a3f5a`, so whatever the far end serves is what runs"
 
 [[package.file]]

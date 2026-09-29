@@ -636,16 +636,20 @@ jobs:
         # with a kendex built from its own tree writes a registration shape
         # the pinned release may not know yet, and that release refuses the
         # record. In kendex's own repository that build is the default
-        # branch's code, lagging it by at most one published build. It is not
-        # a build of the pull request's tree, which would cost a cold cargo
-        # build on every pass and run pull request code in the job that later
-        # holds the writer token. It is not a build the record names either:
-        # the record names none, and the commit it names often has no
-        # published build. The main build is a release asset kendex's own
-        # release workflow published, fetched by the same pinned installer
-        # with no credential in reach, so it takes no trust the pinned release
-        # does not. Every other diff keeps the pinned release, and so does
-        # every diff where the setting is empty.
+        # branch's code, lagging it until the next main build publishes; a
+        # failed main build leaves the rolling-main pointer, and the lag,
+        # where they were. It is not a build of the pull request's tree, which
+        # would cost a cold cargo build on every pass and run pull request
+        # code in the job that later holds the writer token. It is not a build
+        # the record names either: the record names none, and the commit it
+        # names often has no published build. The main build is a release
+        # asset kendex's own release workflow published, fetched by the same
+        # pinned installer with no credential in reach, so it takes no trust
+        # the pinned release does not. Every other diff keeps the pinned
+        # release, and so does every diff where the setting is empty. A main
+        # build that fails to install is a warning, never a step failure: the
+        # lock-only diff falls back to the pinned release, which refuses a
+        # record it cannot read, and every other pull request converges.
         run: |
           set -euo pipefail
           policy="$(.agents/skills/review-gate/scripts/review-policy --check-config)"
@@ -656,8 +660,13 @@ jobs:
               review-policy-lock-kendex=off) ;;
               review-policy-lock-kendex=main)
                 lock_home="$RUNNER_TEMP/kendex-lock"
-                curl -fsSL "https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KENDEX_INSTALLER_SHA/install.sh" | HOME="$lock_home" XDG_DATA_HOME="$lock_home/.local/share" PATH="$lock_home/.local/bin:$PATH" sh -s -- --git --cli-only
-                printf 'HARNESS_CI_LOCK_KENDEX=%s\n' "$lock_home/.local/bin/kendex" >>"$GITHUB_ENV"
+                lock_rc=0
+                curl -fsSL "https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KENDEX_INSTALLER_SHA/install.sh" | HOME="$lock_home" XDG_DATA_HOME="$lock_home/.local/share" PATH="$lock_home/.local/bin:$PATH" sh -s -- --git --cli-only || lock_rc=$?
+                if [ "$lock_rc" -eq 0 ]; then
+                  printf 'HARNESS_CI_LOCK_KENDEX=%s\n' "$lock_home/.local/bin/kendex" >>"$GITHUB_ENV"
+                else
+                  echo "::warning::lock-kendex-install exit=$lock_rc: kendex's main build did not install, so a pull request whose only change is .kendex-lock.json is judged by the pinned release"
+                fi
                 ;;
               *)
                 echo "::error::review-policy --lock-kendex printed '$lock', neither off nor main"
