@@ -192,6 +192,12 @@ B2='.data.repository.pullRequest.timelineItems.nodes[0].beforeCommit = pushed("b
 PENDING='.data.repository.pullRequest.reviews.nodes += [{submittedAt: null, author: {__typename: "User", login: "someone"}, commit: pushed("b1"; "09:20")}]'
 NO_COMMIT='.data.repository.pullRequest.reviews.nodes += [{submittedAt: t("09:25"), author: {__typename: "User", login: "someone"}, commit: null}]'
 ROUNDS='[["review","b1","09:20","09:30",600],["fix","b1","09:30","10:20",3000],["review","h2","10:20","10:30",600]]'
+# b1's reviews submitted at 10:32, after h2's review: a stale review on an
+# older head, whose round starts before h2's.
+STALE_REVIEW='.data.repository.pullRequest.reviews.nodes[0,1].submittedAt = t("10:32")'
+STALE_ROUNDS='[["review","b1","09:20","10:32",4320],["review","h2","10:20","10:30",600]]'
+NO_START='.data.repository.pullRequest |= (.timelineItems.nodes[0].beforeCommit.firstSuite.nodes = [] | .reviews.nodes[0,1].commit.firstSuite.nodes = [])'
+NO_START_ROUNDS='[["review","b1","-","09:30",null],["fix","b1","09:30","10:20",3000],["review","h2","10:20","10:30",600]]'
 while IFS='@' read -r label edit want; do
   [[ -n "$label" ]] || continue
   run "$edit" >/dev/null
@@ -201,7 +207,8 @@ the PR author's thread reply on the new head ends no round@$REPLY@$ROUNDS
 a fix round ends at the first push after its review, an unreviewed force-pushed-over head's included@$B2@[["review","b1","09:20","09:30",600],["fix","b1","09:30","09:50",1200],["review","h2","10:20","10:30",600]]
 a pending review ends no round@$PENDING@$ROUNDS
 a review on no commit ends no round@$NO_COMMIT@$ROUNDS
-a head with no check suite is no push, so its round has no start@.data.repository.pullRequest |= (.timelineItems.nodes[0].beforeCommit.firstSuite.nodes = [] | .reviews.nodes[0,1].commit.firstSuite.nodes = [])@[["review","b1","-","09:30",null],["fix","b1","09:30","10:20",3000],["review","h2","10:20","10:30",600]]
+a head with no check suite is no push, so its round has no start and sorts by its end, before its fix@$NO_START@$NO_START_ROUNDS
+a stale review on an older head sorts by its round's start@$STALE_REVIEW@$STALE_ROUNDS
 a PR nobody reviewed has no round@.data.repository.pullRequest.reviews.nodes = []@[]
 ROWS
 
@@ -483,6 +490,19 @@ assert_eq "$(jq -c '.rounds[0].end' "$TMP_ROOT/stdout")" 'null' \
 mutate 'select(.submittedAt != null and .commit != null)' 'select(.submittedAt != null)'
 assert_eq "$(run "$NO_COMMIT") $(tail -n 1 "$TMP_ROOT/stderr")" 'rc=1 {"error":"pr-timeline: unreadable response"}' \
   "control: without the commit filter a review on no commit fails the read"
+
+# The rounds ordered by their ends: a stale review orders its round by its
+# submission.
+mutate 'sort_by([.start // .end, ' 'sort_by([.end, '
+run "$STALE_REVIEW" >/dev/null
+assert_eq "$(jq -c '[.rounds[].head]' "$TMP_ROOT/stdout")" '["h2","b1"]' \
+  "control: ordered by end a stale review's round follows the newer head's"
+
+# The rounds sorting a fix before a review at one time.
+mutate '(if .kind == "review" then 0 else 1 end)' '(if .kind == "review" then 1 else 0 end)'
+run "$NO_START" >/dev/null
+assert_eq "$(jq -c '[.rounds[0,1].kind]' "$TMP_ROOT/stdout")" '["fix","review"]' \
+  "control: with fix ranked first a startless review follows the fix that starts at its end"
 
 # The page walk without its cap: the one page past the cap, which closes the
 # connection, is read, and the PR prints.

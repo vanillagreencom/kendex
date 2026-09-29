@@ -63,7 +63,8 @@ Output, one JSON object on stdout:
                          where the PR names no head repository or branch, or
                          the log records no push in that life,
   "bot_review_times":    each of those Bot reviews' submission, ascending,
-  "rounds": [           the review stage, in time order:
+  "rounds": [           the review stage, ordered by start (a round with no
+                         start by its end), a review before a fix at one time:
     {"kind": "review", "head": <oid>, "start": the head's push,
      "end": the first review submitted on that head, "secs": end - start},
     {"kind": "fix", "head": <the reviewed oid>, "start": that review,
@@ -242,14 +243,17 @@ def secs($a; $b): if $a == null or $b == null then null else ($b | fromdate) - (
 def pushed($c): $c.firstSuite.nodes[0].createdAt // null;
 # The review stage: per reviewed head, its push to its first review, then
 # that review to the next push. $pushed maps each known head to its push.
+# The rounds are ordered once built: a review on an older head can be
+# submitted after the review of a newer head.
 def rounds($reviews; $pushed):
   ([$pushed[] | select(. != null)] | unique) as $push_times
-  | [$reviews | group_by(.commit.oid) | map(min_by(.submittedAt)) | sort_by(.submittedAt) | .[]
+  | [$reviews | group_by(.commit.oid) | map(min_by(.submittedAt)) | .[]
      | . as $r | $pushed[$r.commit.oid] as $start
      | {kind: "review", head: $r.commit.oid, start: $start, end: $r.submittedAt, secs: secs($start; $r.submittedAt)},
        (([$push_times[] | select(. > $r.submittedAt)] | min) as $next
         | if $next == null then empty
-          else {kind: "fix", head: $r.commit.oid, start: $r.submittedAt, end: $next, secs: secs($r.submittedAt; $next)} end)];
+          else {kind: "fix", head: $r.commit.oid, start: $r.submittedAt, end: $next, secs: secs($r.submittedAt; $next)} end)]
+  | sort_by([.start // .end, (if .kind == "review" then 0 else 1 end)]);
 .repository.pullRequest as $p
 | ($p.headCommit.nodes[0].commit) as $head
 | ([$head, $p.mergeCommit] | map(select(. != null)) | map(suites(.)) | add // []) as $all_suites
