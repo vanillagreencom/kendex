@@ -189,11 +189,11 @@ Review-thread gate:
   answered and resolved again is theirs and no longer a waiver.
 
   An unreadable policy or review-bot list, or an endpoint still missing after
-  the fetch, blocks with review_policy_unreadable in every mode, --auto
-  included, and is never a waiver; the child's own diagnostics reach stderr
-  so the cause is named. Conflicts, required contexts, the exact-head guard
-  and the base branch's own conversation-resolution rule are untouched by
-  every answer.
+  the fetch, blocks with review_policy_unreadable in --check, the immediate
+  merge and --auto alike, and is never a waiver; the child's own diagnostics
+  reach stderr so the cause is named. Conflicts, required contexts, the
+  exact-head guard and the base branch's own conversation-resolution rule are
+  untouched by every answer.
 
   The gate is policy, not mechanism. It applies only through pr-merge. A raw
   gh pr merge call or the GitHub UI Merge button bypasses it.
