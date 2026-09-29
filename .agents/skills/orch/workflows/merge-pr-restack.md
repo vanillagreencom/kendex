@@ -16,27 +16,13 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
 
    It pushes nothing. Exit 0 is the only answer that permits the restack; any other exit hands back, and the command says which it was (`worktree-push --help`). `worktree create [ISSUE] --reuse` rebases outside this check too, and carries no live-round refusal of its own.
 
-   Bind the branch head the lane has worked on as `[PRE_RESTACK_HEAD]`:
-
-   ```bash
-   git -C [WT_PATH] rev-parse --verify HEAD
-   ```
-
-   Then start the guarded restack:
+   The restack takes [SKILL.md § The Cycle](../SKILL.md#the-cycle), Rules reload after a rebase. Then start the guarded restack:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree create [ISSUE] --restack
    ```
 
    No issue worktree means hand back. On conflicts, resolve every listed file, stage it, and run `worktree restack continue [ISSUE]` until complete. Never force-push over an unresolved base.
-
-   Then list the skill and review-instruction files the restack changed under the branch:
-
-   ```bash
-   git -C [WT_PATH] diff --no-renames --name-only [PRE_RESTACK_HEAD] HEAD -- .agents/skills/ .github/instructions/
-   ```
-
-   A session keeps the skill text it loaded, so a rule that landed on the base under the branch stays unseen until the file is read again. An empty list needs nothing. Otherwise read again now `[WT_PATH]/<path>` for each listed path this session has loaded, before the validation run below and step 3. A listed path this session loaded that no longer exists voids the text loaded from it; read again the skill's current `SKILL.md`, or the file that replaced it, in its place. A dev session reused after the restack finds the same list itself, by [dev SKILL.md § Round Contract](../../dev/SKILL.md#round-contract).
 
    Then validate the restacked head before step 3 pushes it. Where a run is made, the head that leaves step 3 is always a head a passing run recorded, and step 3 holds that across its push. Bind the base branch the restack rebased onto as `[BASE_BRANCH]`, and read the mode a range run in the worktree records:
 
