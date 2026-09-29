@@ -1,3 +1,4 @@
 # Document size exceptions. Each row is pattern<TAB>reason.
 
 CHANGELOG*.md	append-only release record, read by release rather than as agent instructions
+hooks/README.md	rendered whole from every catalog hook's frontmatter and pinned by crates/core/tests/hooks_readme.rs, one bullet and one table row per hook; a split needs that renderer to write more than one file
