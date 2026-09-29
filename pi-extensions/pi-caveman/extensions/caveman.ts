@@ -1,39 +1,26 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import {
 	CONFIG_ID,
 	bridgeCavemanHookEnabled,
 	configurationSource,
-	expandHome,
 	instructions,
 	normalizeActiveMode,
 	normalizeMode,
 	readkendexConfig,
-	recordProjectTrust,
 	settingBoolean,
 	settingString,
 	shouldClarityEscape,
 	type ActiveMode,
 	type Mode,
 } from "./prompt.js";
+import { clearPackageConfigCache, installSettingsCacheRefresh, piUserDir, recordProjectTrust, SETTINGS_CHANGED_EVENT } from "./package-config.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-caveman.installed");
 const BRIDGE_SYMBOL = Symbol.for("kendex.pi.caveman");
 const STATE_TYPE = "kendex-caveman:state";
 const STATUS_KEY = "caveman";
-const SETTINGS_EVENT = "kendex:extension-settings-changed";
-
-/** Root-anchored as `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`
- * means it, which `isAbsolute` is not: it calls a driveless `\root` absolute
- * where the renderer does not, putting the two on different roots. Hoisted, so
- * a circular import cannot reach it inside a temporal dead zone. */
-function rootAnchored(path: string, windows: boolean): boolean { return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/"); }
-
-function piUserDir(): string {
-	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-	return resolve(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
-}
 
 function safeFileName(value: string): string {
 	return value.replace(/[^\w.-]+/g, "_");
@@ -276,6 +263,7 @@ export default function caveman(pi: ExtensionAPI): void {
 		runCtx.ui.setStatus(STATUS_KEY, settingBoolean("showStatusBadge", true, runCtx.cwd) ? statusLabel(mode) : undefined);
 	};
 
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", (_event, ctx) => {
 		recordProjectTrust(ctx);
 		activeCtx = ctx;
@@ -356,7 +344,10 @@ export default function caveman(pi: ExtensionAPI): void {
 		});
 	}
 
-	pi.events.on(SETTINGS_EVENT, (data: unknown) => {
+	pi.events.on(SETTINGS_CHANGED_EVENT, (data: unknown) => {
+		// Cleared here as well as by installSettingsCacheRefresh: this handler
+		// reads the new mode, and may run before that listener does.
+		clearPackageConfigCache();
 		if (!data || typeof data !== "object") return;
 		const event = data as { extensionId?: unknown; key?: unknown };
 		if (event.extensionId !== CONFIG_ID) return;

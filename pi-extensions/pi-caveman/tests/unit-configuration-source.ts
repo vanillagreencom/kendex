@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { configurationSource, recordProjectTrust } from "../extensions/prompt.ts";
+import { recordProjectTrust } from "../extensions/package-config.ts";
+import { configurationSource } from "../extensions/prompt.ts";
 import { settingsFixture } from "./lib/settings-fixture.ts";
 
 for (const source of ["default", "user", "project"] as const) {

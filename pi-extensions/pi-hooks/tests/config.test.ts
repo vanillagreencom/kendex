@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { PROJECT_LOCK_FILE, projectRoot, readConfig, recordProjectTrust } from "../extensions/config.ts";
+import { clearPackageConfigCache } from "../extensions/package-config.ts";
 import { CONFIG_ID, initRustRepo, installToolCallHandler, readLog, renderStub, renderUserStub, sessionManager, trusted, useIsolatedGitEnv } from "./harness.ts";
 
 useIsolatedGitEnv();
@@ -91,6 +92,10 @@ describe("pi-hooks root selection", () => {
 			writeFileSync(join(inner, ".pi"), "not a directory\n");
 			expect(projectRoot(join(inner, "deep"))).toBeUndefined();
 			mkdirSync(join(inner, ".claude"), { recursive: true });
+			// Every event asks, so "no project" is memoized like a root is; the
+			// next window, or a settings change, walks again.
+			expect(projectRoot(join(inner, "deep"))).toBeUndefined();
+			clearPackageConfigCache();
 			expect(projectRoot(join(inner, "deep"))).toBe(realpathSync(inner));
 		} finally {
 			rmSync(outer, { recursive: true, force: true });

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test, { after } from "node:test";
 import { formatPreparedParallelSection, parallelResultLimits } from "../extensions/subagent/dispatch.js";
 import { prepareSingleResultForReturn } from "../extensions/subagent/runner.js";
-import { recordProjectTrust } from "../extensions/subagent/settings.js";
+import { recordProjectTrust } from "../extensions/subagent/package-config.js";
 import { DEFAULT_RESULT_MAX_BYTES, DEFAULT_RESULT_MAX_LINES, type PreparedSingleResult } from "../extensions/subagent/types.js";
 
 function writeProjectSettings(cwd: string, config: Record<string, unknown>): void {

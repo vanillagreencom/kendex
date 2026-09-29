@@ -1,9 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { piSettingsPaths, readPackageConfig, resolveSettingsRelativePath } from "./paths.js";
+import { piSettingsPaths, readPackageConfig, readSettingsFiles } from "./package-config.js";
+import { resolveSettingsRelativePath } from "./paths.js";
 import { DEFAULT_SHORTCUT, PACKAGE_ID, type Scope, type SortMode, type kendexConfig } from "./types.js";
 
-// One reader for this package, in paths.ts, the way the other packages do it.
 export function readkendexConfig(cwd?: string): kendexConfig {
 	return readPackageConfig(PACKAGE_ID, cwd);
 }
@@ -49,16 +48,10 @@ export function configuredSessionDir(cwd: string): string | undefined {
 	const envDir = process.env.PI_CODING_AGENT_SESSION_DIR?.trim();
 	if (envDir) return resolveSettingsRelativePath(envDir, join(resolve(cwd), ".pi", "settings.json"));
 	let configured: string | undefined;
-	for (const settingsPath of piSettingsPaths(cwd)) {
-		if (!existsSync(settingsPath)) continue;
-		try {
-			const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
-			if (typeof parsed?.sessionDir === "string" && parsed.sessionDir.trim()) {
-				configured = resolveSettingsRelativePath(parsed.sessionDir, settingsPath);
-			}
-		} catch {
-			// Ignore malformed optional settings.
-		}
+	for (const file of readSettingsFiles(piSettingsPaths(cwd))) {
+		if (file.kind !== "parsed") continue;
+		const sessionDir = file.settings.sessionDir;
+		if (typeof sessionDir === "string" && sessionDir.trim()) configured = resolveSettingsRelativePath(sessionDir, file.path);
 	}
 	return configured;
 }

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { safeFileName } from "./names.js";
-import { piUserDir } from "./settings.js";
+import { piUserDir } from "./package-config.js";
 import type { PaneTaskRecord, TaskArtifactPaths } from "./types.js";
 
 export function registryPath(runtimeRoot: string): string {

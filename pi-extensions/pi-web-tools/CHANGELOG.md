@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 3.0.2
+
+- Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again, and an unchanged file is not parsed again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk, and widgets and renderers read settings many times per repaint. The resolved settings, `op://` keys included, are kept while no settings, `.env` or private config file changes, so `op read` runs once per change instead of on every provider request.
+
 ### 3.0.1
 
 - The npm install and uninstall helper reports each refusal as an `append-system: <key>=<value>` line followed by the explanation, and an appendSystem source that cannot be read is reported and skipped instead of throwing.

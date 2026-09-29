@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { loadConfig, recordProjectTrust, resolveExternalConfigValue } from "../src/config.ts";
+import { clearPackageConfigCache } from "../src/package-config.ts";
 
 function withTempDirs(fn) {
 	const root = mkdtempSync(join(tmpdir(), "claude-bridge-resolver-"));
@@ -74,6 +75,8 @@ describe("resolveExternalConfigValue", () => {
 
 		// A key only the global file sets still reports the global file.
 		writeFileSync(join(user, "claude-bridge.json"), JSON.stringify({ provider: { strictMcpConfig: false } }));
+		// A read inside the settings window would still see the first write.
+		clearPackageConfigCache();
 		const strict = resolveExternalConfigValue("strictMcpConfig", project);
 		assert.equal(strict.value, false);
 		assert.equal(strict.source, join(user, "claude-bridge.json"));

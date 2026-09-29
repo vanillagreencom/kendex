@@ -161,10 +161,10 @@ import {
 	runtimeDirForContext,
 	runtimeSessionId,
 	sessionRuntimeDir,
-	recordProjectTrust,
 	settingBoolean,
 	settingNumber,
 } from "./settings.js";
+import { installSettingsCacheRefresh, recordProjectTrust } from "./package-config.js";
 import {
 	appendUniqueDiagnostic,
 	backfillTaskSummaryFromTranscript,
@@ -1360,6 +1360,7 @@ export default function (pi: ExtensionAPI) {
 		return framedMessage(`${headline}\n${subagentBranch(theme, "└")}${theme.fg("toolOutput", "Call complete_subagent; task kept active.")}`, theme);
 	});
 
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", async (_event, ctx) => {
 		recordProjectTrust(ctx);
 		dashboardCtx = ctx;

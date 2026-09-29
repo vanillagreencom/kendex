@@ -7,7 +7,8 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { isAbsolute, resolve } from "node:path";
 
-import { getBool, getNumber, projectRoot, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
+import { getBool, getNumber, projectRoot, readConfig, recordProjectTrust } from "./config.js";
+import { installSettingsCacheRefresh, projectTrusted } from "./package-config.js";
 import { agentLine, boundForAgent, deliver, type HookResult, type ListenerRun, personLine, runListener, unreadableLine } from "./dispatch.js";
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { workspaceClippyOutcome } from "./lint-hooks.js";
@@ -149,6 +150,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 	// registered `SessionStart` hook runs to its own budget while the session
 	// opens, and says what it has to say when it settles. Pi refuses no
 	// session start, so nothing here could gate one even if it wanted to.
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", (event, ctx: ExtensionContext) => {
 		const project = ctx.cwd ? projectRoot(ctx.cwd) : undefined;
 		recordProjectTrust(ctx, project);

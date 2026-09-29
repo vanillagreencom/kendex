@@ -8,7 +8,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { QOL_BUDGET_HANDOFF_FOLDER, QOL_BUDGET_HANDOFF_LATEST } from "./constants.js";
-import { expandHome } from "./settings.js";
+import { expandHome } from "./package-config.js";
 
 export interface QolBudgetHandoff {
 	reason: string;

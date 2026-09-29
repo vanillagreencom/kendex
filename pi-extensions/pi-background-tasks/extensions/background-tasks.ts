@@ -67,7 +67,8 @@ import { finalizeTaskLifecycle, replayMissedExitsLifecycle, type LifecycleHooks 
 import { createOrphanWatcher, type OrphanWatcher } from "./orphan-watcher.js";
 import { applyCustomEntryWithBarrier, createPersistence, sessionIdForContext, sidecarStatePath } from "./persistence.js";
 import { defaultSystemdUnitActive, planResourceControlledSpawn, stopResourceControlledTask } from "./resource-control.js";
-import { logFilePath, recordProjectTrust, settingBoolean, settingEnum, settingNumber, settingString, taskEnv } from "./settings.js";
+import { installSettingsCacheRefresh, recordProjectTrust } from "./package-config.js";
+import { logFilePath, settingBoolean, settingEnum, settingNumber, settingString, taskEnv } from "./settings.js";
 import { applyBgToolResultTasksWithBarrier } from "./tool-result-details.js";
 import {
 	defaultReadProcessIdentity,
@@ -835,6 +836,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 	pi.registerMessageRenderer(BG_MESSAGE_TYPE, (message, { expanded }, theme) => renderTaskEventMessage(message, expanded, theme));
 
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", (_event, ctx) => {
 		shuttingDown = false;
 		recordProjectTrust(ctx);

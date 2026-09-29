@@ -11,7 +11,7 @@ import {
 	trackToolExecutionComponent,
 } from "../tool-renderer/live-settings.js";
 import { RESERVED_IMAGE_ROW_MARKER, TOOL_RENDER_OVERLAY_CHECK_SYMBOL } from "../tool-renderer/overlay.js";
-import { recordProjectTrust } from "../tool-renderer/settings.js";
+import { recordProjectTrust } from "../tool-renderer/package-config.js";
 import { registerRead } from "../tool-renderer/tools.js";
 
 const createdDirs: string[] = [];

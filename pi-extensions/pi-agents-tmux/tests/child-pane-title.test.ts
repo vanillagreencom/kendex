@@ -65,7 +65,7 @@ async function installExtension(harness: Harness): Promise<(event: unknown, ctx:
 	const bus = new EventEmitter();
 	const pi = {
 		appendEntry: () => undefined,
-		events: { emit: bus.emit.bind(bus), on: bus.on.bind(bus) },
+		events: { emit: bus.emit.bind(bus), on: (channel: string, handler: (data: unknown) => void) => { bus.on(channel, handler); return () => bus.off(channel, handler); } },
 		getActiveTools: () => [],
 		getThinkingLevel: () => undefined,
 		on: (event: string, handler: (event: unknown, ctx: any) => Promise<void>) => {
@@ -82,9 +82,11 @@ async function installExtension(harness: Harness): Promise<(event: unknown, ctx:
 	url.searchParams.set("t", `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	const mod = await import(url.href);
 	mod.default(pi);
-	const handler = handlers.get("session_start")?.[0];
-	expect(handler).toBeTruthy();
-	return handler!;
+	const registered = handlers.get("session_start") ?? [];
+	expect(registered.length).toBeGreaterThan(0);
+	return async (event, ctx) => {
+		for (const handler of registered) await handler(event, ctx);
+	};
 }
 
 function fakeCtx(harness: Harness): any {

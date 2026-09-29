@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { clearPackageConfigCache } from "../extensions/qol/package-config.ts";
 
 import {
 	createRateLimitAutoResumeController,
@@ -51,6 +52,8 @@ function writeQolConfig(values: Record<string, unknown>): void {
 		`${JSON.stringify({ kendex: { extensionManager: { config: { "@vanillagreen/pi-qol": values } } } }, null, 2)}\n`,
 		"utf8",
 	);
+	// What pi-extension-manager's settings-changed event does after a write.
+	clearPackageConfigCache();
 }
 
 function makeHarness(clock = new FakeClock()) {

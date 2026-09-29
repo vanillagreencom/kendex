@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { publishQuestionActivity, publishQuestionDebug } from "./activity.js";
 import { emitAnswerSteer } from "./answer-steer.js";
 import { frameGlyphs, glyphs, treeGlyph } from "./glyphs.js";
-import { readPackageConfig, recordProjectTrust } from "./settings.js";
+import { installSettingsCacheRefresh, readPackageConfig, recordProjectTrust } from "./package-config.js";
 import {
 	DEFAULT_CUSTOM_LABEL,
 	isQuestionCustomRow,
@@ -967,6 +967,7 @@ export default function questions(pi: ExtensionAPI): void {
 		emitAnswerSteer(pi, event.request, event.result.answers, noteSteerUnavailable);
 	});
 
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", (_event, ctx) => {
 		recordProjectTrust(ctx);
 		activeCtx = ctx;

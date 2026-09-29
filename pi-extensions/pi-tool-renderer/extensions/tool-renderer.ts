@@ -17,7 +17,8 @@ import {
 	installUserMessageRenderer,
 } from "./tool-renderer/messages.js";
 import { installLiveSettingsRefresh } from "./tool-renderer/live-settings.js";
-import { recordProjectTrust, settingBoolean } from "./tool-renderer/settings.js";
+import { installSettingsCacheRefresh, recordProjectTrust } from "./tool-renderer/package-config.js";
+import { settingBoolean } from "./tool-renderer/settings.js";
 import { registerStackEvents } from "./tool-renderer/stack.js";
 import { registerBash, registerEdit, registerRead, registerReadOnly, registerWrite } from "./tool-renderer/tools.js";
 
@@ -28,6 +29,7 @@ export default async function toolRenderer(pi: ExtensionAPI): Promise<void> {
 	if (guard[INSTALL_SYMBOL]) return;
 	guard[INSTALL_SYMBOL] = true;
 	if (!settingBoolean("enabled", true)) return;
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", (_event, ctx) => recordProjectTrust(ctx));
 
 	registerStackEvents(pi);

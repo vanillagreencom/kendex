@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import qolDefault from "../extensions/qol.ts";
+import { clearPackageConfigCache } from "../extensions/qol/package-config.ts";
 import { QOL_BUDGET_GUARD_SENTINEL } from "../extensions/qol/budget-guard.ts";
 import { statusMessage } from "../extensions/qol/status-message.ts";
 
@@ -163,6 +164,8 @@ function writePiSettings(enabled: boolean | undefined, qol: Record<string, unkno
 		...(enabled === undefined ? {} : { compaction: { enabled } }),
 		kendex: { extensionManager: { config: { "@vanillagreen/pi-qol": qol } } },
 	};
+	// What pi-extension-manager's settings-changed event does after a write.
+	clearPackageConfigCache();
 	writeFileSync(join(workdir, "settings.json"), `${JSON.stringify(settings)}\n`, "utf8");
 	if (project === undefined) return;
 	mkdirSync(join(workdir, ".pi"), { recursive: true });

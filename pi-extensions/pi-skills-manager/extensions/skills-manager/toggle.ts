@@ -1,6 +1,7 @@
 import { relative, dirname } from "node:path";
 import { getAgentDir, SettingsManager, type PackageSource } from "@earendil-works/pi-coding-agent";
-import { findProjectPiDir, projectSettingsTrusted } from "./paths.js";
+import { projectSettingsTrustedForCwd } from "./package-config.js";
+import { findProjectPiDir } from "./paths.js";
 import type { SkillEntry } from "./types.js";
 
 function updatePatterns(current: string[], pattern: string, enabled: boolean): string[] {
@@ -28,8 +29,8 @@ function hasPackageFilters(pkg: Exclude<PackageSource, string>): boolean {
 
 export async function setSkillEnabled(cwd: string, skill: SkillEntry, enabled: boolean): Promise<void> {
 	if (skill.scope === "temporary") throw new Error("Temporary skills cannot be toggled.");
-	if (skill.scope === "project" && !projectSettingsTrusted(cwd)) throw new Error("Project skills cannot be toggled before project trust is active.");
-	const settingsManager = SettingsManager.create(cwd, getAgentDir(), { projectTrusted: projectSettingsTrusted(cwd) });
+	if (skill.scope === "project" && !projectSettingsTrustedForCwd(cwd)) throw new Error("Project skills cannot be toggled before project trust is active.");
+	const settingsManager = SettingsManager.create(cwd, getAgentDir(), { projectTrusted: projectSettingsTrustedForCwd(cwd) });
 
 	if (skill.origin === "top-level") {
 		const settings = skill.scope === "project" ? settingsManager.getProjectSettings() : settingsManager.getGlobalSettings();

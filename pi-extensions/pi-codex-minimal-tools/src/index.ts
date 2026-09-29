@@ -5,7 +5,8 @@ import { registerBackgroundImageGenerationCommand } from "./background-image-gen
 import { computeNextActiveTools, computeToolCapabilities, modelKey, PACKAGE_TOOL_NAMES, type ModelLike } from "./capabilities.js";
 import { registerOpenAICodexCustomProvider } from "./provider-shim.js";
 import { rewriteNativeOpenAiTools } from "./provider-native-tools.js";
-import { loadSettings, recordProjectTrust, settingsDiagnostics } from "./settings.js";
+import { installSettingsCacheRefresh, recordProjectTrust } from "./package-config.js";
+import { loadSettings, settingsDiagnostics } from "./settings.js";
 import { createApplyPatchToolDefinition } from "./tools/apply-patch.js";
 import { createImageGenerationToolDefinition } from "./tools/image-generation.js";
 import { viewImage, viewImageToolSchema, type ValidatedImage, type ViewImageInput } from "./tools/view-image.js";
@@ -201,6 +202,7 @@ export default function codexMinimalTools(pi: ExtensionAPI): void {
 
 	registerDiagnosticCommand(pi);
 
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", async (_event, ctx) => {
 		recordProjectTrust(ctx);
 		syncActiveTools(pi, ctx, ensureToolsRegistered(ctx));

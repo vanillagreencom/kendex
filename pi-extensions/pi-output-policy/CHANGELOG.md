@@ -11,6 +11,7 @@
 - Large tool output is no longer split into whole-output line arrays. The truncation preview copies only the lines it keeps; the shell minimizer still copies the lines it keeps, for output up to `shellMinimizer.maxCaptureBytes`, and settings are read once per tool result instead of once per setting.
 - Detail sanitizing shares one budget of 2,000 values and 64 KiB of string text across a result's whole `details` tree, beside the per-array, per-object and per-string caps. A string the byte budget cuts ends with an `[output-policy:detail-byte-budget=65536]` notice, and a container the budget stops ends with that notice or `[output-policy:detail-node-budget=2000]`. Details within every limit pass through unchanged, not copied.
 - A tool result within every limit now passes through unchanged. Before, its CRLF line ends were rewritten to LF.
+- Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again, and an unchanged file is not parsed again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk, and widgets and renderers read settings many times per repaint. A tool result reads the settings once, not once per key per text block.
 
 ### 2.0.2
 

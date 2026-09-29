@@ -34,7 +34,8 @@
 import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { lstatSync, readFileSync, statSync } from "fs";
 import { dirname, join, resolve } from "path";
-import { isolatedFromEnv, piUserDir } from "./config.js";
+import { isolatedFromEnv } from "./config.js";
+import { piUserDir } from "./package-config.js";
 import { debug } from "./debug.js";
 
 const CONTEXT_FILE_CANDIDATES = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD"];

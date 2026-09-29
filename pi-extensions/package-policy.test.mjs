@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 const root = new URL(".", import.meta.url).pathname;
@@ -233,6 +233,40 @@ test("vendored append-system helpers stay identical", () => {
 	}
 	assert.ok(hashes.length > 0, "expected append-system helper copies");
 	assert.equal(new Set(hashes.map(([, hash]) => hash)).size, 1, `append-system helpers differ: ${JSON.stringify(hashes)}`);
+});
+
+// The settings reader every package vendors: one `package-config.ts` per
+// package, the same bytes in each. Taking the copies as an argument is what lets
+// the control below plant each defect instead of asserting against a list.
+function vendoredReaderCopies() {
+	return packages().map(({ dir }) => [dir, tsFiles(join(root, dir)).filter((file) => basename(file) === "package-config.ts").map((file) => readFileSync(file))]);
+}
+
+function vendoredReaderRefusals(copies) {
+	const refusals = copies.filter(([, files]) => files.length !== 1).map(([dir, files]) => `${dir}: carries ${files.length} package-config.ts copies, not 1`);
+	const hashes = Object.fromEntries(copies.flatMap(([dir, files]) => files.map((content) => [dir, createHash("sha256").update(content).digest("hex")])));
+	if (new Set(Object.values(hashes)).size > 1) refusals.push(`package-config.ts copies differ: ${JSON.stringify(hashes)}`);
+	return refusals;
+}
+
+test("every package vendors one identical package-config.ts", () => {
+	const copies = vendoredReaderCopies();
+	assert.ok(copies.length > 0, "no packages found: the package reader is broken");
+	assert.deepEqual(vendoredReaderRefusals(copies), []);
+});
+
+// Must-fail control for the reader above: with every copy equal, a reader that
+// stopped comparing would return the same empty list as the correct one.
+test("a missing or diverged package-config.ts is reported", () => {
+	const copies = vendoredReaderCopies();
+	assert.deepEqual(vendoredReaderRefusals(copies), [], "precondition: the real tree vendors one identical copy per package");
+	const [planted] = copies[0];
+	const without = copies.map(([dir, files]) => [dir, dir === planted ? [] : files]);
+	assert.deepEqual(vendoredReaderRefusals(without), [`${planted}: carries 0 package-config.ts copies, not 1`]);
+	const diverged = copies.map(([dir, files]) => [dir, dir === planted ? [Buffer.concat([files[0], Buffer.from("\n")])] : files]);
+	const refusals = vendoredReaderRefusals(diverged);
+	assert.equal(refusals.length, 1, JSON.stringify(refusals));
+	assert.ok(refusals[0].startsWith("package-config.ts copies differ:"), refusals[0]);
 });
 
 test("Pi extension TypeScript stays compatible with Node strip-only parsing", () => {

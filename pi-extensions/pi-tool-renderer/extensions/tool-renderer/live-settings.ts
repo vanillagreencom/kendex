@@ -1,8 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { CONFIG_ID, clearPackageConfigCache } from "./settings.js";
-
-const SETTINGS_EVENT = "kendex:extension-settings-changed";
+import { clearPackageConfigCache, SETTINGS_CHANGED_EVENT } from "./package-config.js";
+import { CONFIG_ID } from "./settings.js";
 
 interface ToolExecutionUi {
 	requestRender?: () => void;
@@ -48,7 +47,7 @@ export function clearTrackedToolExecutionComponents(): void {
 }
 
 export function installLiveSettingsRefresh(pi: ExtensionAPI): void {
-	const unsubscribe = pi.events.on(SETTINGS_EVENT, (data: unknown) => {
+	const unsubscribe = pi.events.on(SETTINGS_CHANGED_EVENT, (data: unknown) => {
 		clearPackageConfigCache();
 		const change = data as ExtensionSettingChange | undefined;
 		if (change?.extensionId !== CONFIG_ID || change.key !== "showReadImages") return;

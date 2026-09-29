@@ -12,6 +12,7 @@ import { host, initializeHost } from "./manager/host.js";
 import { buildInventory, npmCandidatesFromInventory } from "./manager/inventory.js";
 export { npmCandidatesFromInventory };
 import { recordProjectTrust } from "./manager/glyphs.js";
+import { installSettingsCacheRefresh } from "./manager/package-config.js";
 import { openManager } from "./manager/manager-ui.js";
 import { openQuickSettings, quickSettingsCompletions } from "./manager/quick-settings-ui.js";
 import {
@@ -111,6 +112,7 @@ export default async function extensionManager(pi: ExtensionAPI): Promise<void> 
 		handler: async (ctx) => openSettingsPopup(ctx as ExtensionContext),
 	});
 
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", async (_event, ctx) => {
 		await host.prepare(ctx.cwd);
 		recordProjectTrust(ctx);

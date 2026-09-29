@@ -9,7 +9,7 @@ import {
 	type ExtensionContext,
 	type ResolvedResource,
 } from "@earendil-works/pi-coding-agent";
-import { projectSettingsTrusted } from "./paths.js";
+import { projectSettingsTrustedForCwd } from "./package-config.js";
 import type { SkillEntry, SkillOrigin, SkillRegistry, SkillScope } from "./types.js";
 
 function compareSkills(a: SkillEntry, b: SkillEntry): number {
@@ -67,7 +67,7 @@ function dedupeByPath(skills: SkillEntry[]): SkillEntry[] {
 }
 
 export async function loadSkillRegistry(cwd: string): Promise<SkillRegistry> {
-	const settingsManager = SettingsManager.create(cwd, getAgentDir(), { projectTrusted: projectSettingsTrusted(cwd) });
+	const settingsManager = SettingsManager.create(cwd, getAgentDir(), { projectTrusted: projectSettingsTrustedForCwd(cwd) });
 	const packageManager = new DefaultPackageManager({ cwd, agentDir: getAgentDir(), settingsManager });
 	const resolved = await packageManager.resolve();
 	const allSkills = dedupeByPath(resolved.skills.map(toSkillEntry).filter((entry): entry is SkillEntry => entry !== null)).sort(compareSkills);

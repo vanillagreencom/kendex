@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
 import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
-import { recordProjectTrust } from "../extensions/subagent/settings.js";
+import { recordProjectTrust } from "../extensions/subagent/package-config.js";
 import type { SingleResult, SubagentDetails } from "../extensions/subagent/types.js";
 
 const tempRuntimeDirs = new Set<string>();

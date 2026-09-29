@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 3.0.1
+
+- Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again, and an unchanged file is not parsed again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk, and widgets and renderers read settings many times per repaint.
+
 ### 3.0.0
 
 - **Breaking**: the settings keys `enabled` and `defaultMode` are no longer read. The mode comes from `mode` alone, and a configuration without `mode` is off. A configuration that relied on `enabled: true` without `mode` had caveman active at 2.0.0 and gets an off session here, with no notice; set `mode` to keep it on. `/caveman debug` no longer lists the removed keys.

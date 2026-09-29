@@ -14,6 +14,10 @@ OMP settings edits are restricted to this manager's namespace. A different kende
 
 OMP global settings prefer `config.yml`, then `config.yaml`. Native project settings layer `settings.json` before `config.yml`; edits target the last matching raw layer, never a merged document. `HostAdapter.projectSettingsWritable` treats trusted OMP project documents as creatable even when none exists, while Pi retains its existing-file fallback. The project settings directory is cwd-local, while the project plugin anchor can be an ancestor. Pi retains its root-anchored override policy when its runtime resolver returns a relative directory (`extensions/manager/paths.ts::rootAnchored`).
 
+## Settings-changed event
+
+A quick-settings write emits `kendex:extension-settings-changed` on `pi.events` with `{ extensionId, key, value }` (`extensions/manager/quick-settings-ui.ts`). Every kendex package memoizes its settings reads (`package-config.ts`, vendored in each) and drops them on this event, so a setting written here applies on the next read. A write through `HostAdapter.write` also clears this package's own memo.
+
 ## External config resolvers
 
 On Pi, the settings editor owns `kendex.extensionManager.config[<packageName>]` in user and project settings. A package that also reads its own config file publishes an external resolver under `Symbol.for("kendex.pi.extension-config-resolver")`, in a record keyed by package name:

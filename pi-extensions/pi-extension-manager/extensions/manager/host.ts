@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { managerNotice, stringifyError } from "./format.js";
+import { clearPackageConfigCache } from "./package-config.js";
 import { findProjectPiDir, rootAnchored, userPiDir } from "./paths.js";
 import { MANAGER_ID, type InventoryItem, type PackageManifest, type SettingsFile } from "./types.js";
 
@@ -107,6 +108,9 @@ export class HostAdapter {
 		mkdirSync(dirname(file.path), { recursive: true });
 		writeFileSync(file.path, `${text.trimEnd()}\n`, "utf8");
 		file.exists = true;
+		// This package's own memoized reads see the write at once; other
+		// packages see it on pi-extension-manager's settings-changed event.
+		clearPackageConfigCache();
 	}
 
 	/** OMP replaces the configured extension array and resolves its paths against cwd. */

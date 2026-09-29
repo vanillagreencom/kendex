@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import { frameGlyphs, glyphs, glyphStyle, treeGlyph } from "./glyphs.js";
-import { piUserDir, readPackageConfig, recordProjectTrust } from "./settings.js";
+import { installSettingsCacheRefresh, piUserDir, readPackageConfig, recordProjectTrust } from "./package-config.js";
 import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js";
 import {
 	applyTaskPanelContentVisibility,
@@ -1207,6 +1207,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		},
 	});
 
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", (_event, ctx) => {
 		recordProjectTrust(ctx);
 		restore(ctx);

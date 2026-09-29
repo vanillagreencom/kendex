@@ -50,9 +50,9 @@ import {
 	type TopTab,
 	DEFAULT_MAX_HEIGHT,
 	DEFAULT_WIDTH_PERCENT,
-	SETTINGS_EVENT,
 	TAB_ALL,
 } from "./types.js";
+import { SETTINGS_CHANGED_EVENT } from "./package-config.js";
 
 const EXTERNAL_SOURCE_FALLBACK = "the extension's own config file";
 
@@ -127,7 +127,7 @@ function applyOf(schema: SettingsSchema): "live" | "reload" | "session" | "resta
 
 function saveQuickSetting(pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext, inventory: Inventory, row: QuickSettingRow, value: unknown): void {
 	setConfigValue(inventory, row.item, row.schema, value);
-	pi.events.emit(SETTINGS_EVENT, { extensionId: row.extensionId, key: row.schema.key, value });
+	pi.events.emit(SETTINGS_CHANGED_EVENT, { extensionId: row.extensionId, key: row.schema.key, value });
 	const apply = applyOf(row.schema);
 	if (apply !== "live") ctx.ui.notify(applyMessage(row.schema), apply === "restart" ? "warning" : "info");
 }
@@ -151,7 +151,7 @@ function resetQuickSetting(pi: ExtensionAPI, ctx: ExtensionCommandContext | Exte
 		return;
 	}
 	resetConfigKeys(inventory, row.extensionId, [row.schema.key]);
-	pi.events.emit(SETTINGS_EVENT, { extensionId: row.extensionId, key: row.schema.key, value: row.schema.default });
+	pi.events.emit(SETTINGS_CHANGED_EVENT, { extensionId: row.extensionId, key: row.schema.key, value: row.schema.default });
 	notifyReset(ctx, label, [row.schema]);
 }
 
@@ -169,7 +169,7 @@ function resetQuickSettingsForExtension(pi: ExtensionAPI, ctx: ExtensionCommandC
 		return;
 	}
 	resetConfigKeys(inventory, extensionId, managed.map((entry) => entry.row.schema.key));
-	for (const entry of managed) pi.events.emit(SETTINGS_EVENT, { extensionId, key: entry.row.schema.key, value: entry.row.schema.default });
+	for (const entry of managed) pi.events.emit(SETTINGS_CHANGED_EVENT, { extensionId, key: entry.row.schema.key, value: entry.row.schema.default });
 	notifyReset(ctx, `${label} settings`, managed.map((entry) => entry.row.schema));
 	if (external.length > 0) {
 		const sources = [...new Set(external.map((entry) => externalSource(entry.config)))].join(", ");

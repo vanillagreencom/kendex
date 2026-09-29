@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.0.6
+
+- Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again, and an unchanged file is not parsed again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk, and widgets and renderers read settings many times per repaint.
+
 ### 2.0.5
 
 - Pi 0.86.0 parity: the replacement `read`, `bash`, `edit` and `write` tools carry Pi's `constrainedSampling` setting from the wrapped tool, so their requests keep Pi's strict-prefer JSON-schema sampling with the renderer active. Every replacement tool now forwards the wrapped tool's description, parameters, `constrainedSampling` and `prepareArguments`.

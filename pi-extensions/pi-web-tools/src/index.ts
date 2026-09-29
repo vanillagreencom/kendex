@@ -3,7 +3,8 @@ import { computeNextActiveTools, statusLines } from "./active-tools.js";
 import { INSTALL_SYMBOL } from "./activation.js";
 import { rewriteNativeOpenAiWebSearch } from "./native-openai.js";
 import { resolveWebProvider } from "./provider-selection.js";
-import { loadSettings, recordProjectTrust, WEB_PROVIDERS, type WebProvider, type WebToolsSettings } from "./settings.js";
+import { installSettingsCacheRefresh, recordProjectTrust } from "./package-config.js";
+import { loadSettings, WEB_PROVIDERS, type WebProvider, type WebToolsSettings } from "./settings.js";
 import { restoreStoredContent } from "./storage.js";
 import { createCodeSearchToolDefinition } from "./tools/code-search.js";
 import { createGetWebContentToolDefinition } from "./tools/get-web-content.js";
@@ -18,8 +19,7 @@ let providerOverride: WebProvider | undefined;
 
 function currentSettings(cwd?: string): WebToolsSettings {
 	const settings = loadSettings(cwd);
-	if (providerOverride) settings.defaultProvider = providerOverride;
-	return settings;
+	return providerOverride ? { ...settings, defaultProvider: providerOverride } : settings;
 }
 
 function contextModel(ctx: ExtensionContext): ModelLike | undefined {
@@ -123,6 +123,7 @@ export default function webTools(pi: ExtensionAPI): void {
 	registerDiagnosticCommand(pi);
 	registerTools(pi);
 
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", async (_event, ctx) => {
 		recordProjectTrust(ctx);
 		registerConfiguredCompatibilityTools(pi, ctx.cwd);

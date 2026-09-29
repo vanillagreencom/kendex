@@ -1,6 +1,8 @@
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+
+import { piUserDir, readPackageConfigAt, recordSettingsTrust, settingsFileTrusted, settingsMemo } from "./package-config.js";
 
 /** Package id used as the config namespace key in `.pi/settings.json`. */
 export const CONFIG_ID = "@vanillagreen/pi-hooks";
@@ -23,44 +25,6 @@ export const DEFAULTS = {
 } as const;
 
 export type HookKey = Exclude<keyof typeof DEFAULTS, "clippyTimeoutMs" | "driftCheckTimeoutMs">;
-
-function expandHome(input: string): string {
-	if (input === "~") return homedir();
-	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
-	return input;
-}
-
-/**
- * Anchored to a named root, the way the renderer means it
- * (`crates/core/src/harness/pi.rs::pi_root_is_absolute_for`): a drive letter or
- * a UNC `\\server\share` on Windows, a leading `/` on POSIX.
- *
- * `isAbsolute` is the wrong test. Node calls a driveless `\root` absolute on
- * Windows, and the renderer does not, so the two would render and read the
- * global guards under different roots for one value of the variable — the
- * carrier finding no script there, and allowing the command. It is cwd
- * dependence either way: `\root` resolves against whichever drive the session
- * sits on, which is the thing this rule refuses.
- */
-export function rootAnchored(path: string, windows: boolean): boolean {
-	if (!windows) return path.startsWith("/");
-	return /^[A-Za-z]:[\\/]/.test(path) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(path);
-}
-
-/**
- * Pi's global root: `~/.pi/agent`, or `PI_CODING_AGENT_DIR` when it names a
- * root-anchored path.
- *
- * The global scope is trusted without asking, because it holds the person's own
- * files rather than a checkout's. A blank or relative override breaks that: the
- * root becomes whichever directory the session happens to sit in, so an
- * untrusted clone's own `kendex/hooks/<name>.sh` would be spawned through the
- * branch that never consults Pi's trust answer. Such a value takes the default.
- */
-export function piUserDir(): string {
-	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-	return resolve(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
-}
 
 /**
  * The renderer's own set, copied from `crates/core/src/discover.rs` MARKER_DIRS
@@ -104,8 +68,15 @@ function realpathOrResolve(path: string): string {
  * subdirectory read the same settings and run the same guards as one at the
  * repository root — which is how Pi answers trust too: a saved decision applies
  * to the folder or any parent, held in `~/.pi/agent/trust.json`.
+ *
+ * Every hook event asks, so the answer is memoized per `cwd` for the settings
+ * window, "no project" included: a stored `undefined` is an answer, not a miss.
  */
 export function projectRoot(cwd: string): string | undefined {
+	return settingsMemo(`project-root\0${cwd}`, () => walkProjectRoot(cwd));
+}
+
+function walkProjectRoot(cwd: string): string | undefined {
 	const home = realpathOrResolve(homedir());
 	let current: string | undefined = realpathOrResolve(cwd);
 	while (current !== undefined) {
@@ -140,35 +111,6 @@ function projectSettingsPath(project: string | undefined): string | undefined {
 	return project === undefined ? undefined : join(project, ".pi", "settings.json");
 }
 
-const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
-
-interface ProjectTrustRegistry {
-	projectSettings?: Map<string, boolean>;
-}
-
-function projectTrustRegistry(): ProjectTrustRegistry {
-	const host = globalThis as unknown as Record<PropertyKey, ProjectTrustRegistry | undefined>;
-	const existing = host[PROJECT_TRUST_SYMBOL];
-	if (existing) return existing;
-	const created: ProjectTrustRegistry = {};
-	host[PROJECT_TRUST_SYMBOL] = created;
-	return created;
-}
-
-/**
- * Pi's answer to "has this person trusted this workspace". Only a plain `true`
- * counts: a Pi with no such method, or one that throws, is not trusted. This
- * gates reading the project's settings and running the project's own scripts,
- * and both of those are safe to withhold and unsafe to grant by accident.
- */
-export function projectTrusted(ctx: { isProjectTrusted?: () => boolean }): boolean {
-	try {
-		return ctx.isProjectTrusted?.() === true;
-	} catch {
-		return false;
-	}
-}
-
 /**
  * `project` is the caller's already-resolved project root, since the walk that
  * finds it costs an ancestor `stat` per level and a `tool_call` needs the same
@@ -178,23 +120,7 @@ export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () =>
 	if (!ctx.cwd) return;
 	const settings = projectSettingsPath(project === undefined ? projectRoot(ctx.cwd) : project);
 	if (settings === undefined) return;
-	const trusted = projectTrusted(ctx);
-	const registry = projectTrustRegistry();
-	if (!registry.projectSettings) registry.projectSettings = new Map();
-	registry.projectSettings.set(settings, trusted);
-}
-
-function projectSettingsTrusted(settingsPath: string): boolean {
-	return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
-}
-
-function loadJson(path: string): unknown {
-	if (!existsSync(path)) return undefined;
-	try {
-		return JSON.parse(readFileSync(path, "utf8"));
-	} catch {
-		return undefined;
-	}
+	recordSettingsTrust(settings, ctx);
 }
 
 /**
@@ -203,22 +129,12 @@ function loadJson(path: string): unknown {
  * resolved project root, for the same reason `recordProjectTrust` takes one.
  */
 export function readConfig(cwd: string, projectDir?: string | undefined): kendexConfig {
-	const merged: kendexConfig = {};
 	const project = projectSettingsPath(projectDir === undefined ? projectRoot(cwd) : projectDir);
 	const paths = [
 		join(piUserDir(), "settings.json"),
-		...(project !== undefined && projectSettingsTrusted(project) ? [project] : []),
+		...(project !== undefined && settingsFileTrusted(project) ? [project] : []),
 	];
-	for (const path of paths) {
-		const parsed = loadJson(path) as
-			| { kendex?: { extensionManager?: { config?: Record<string, kendexConfig> } } }
-			| undefined;
-		const cfg = parsed?.kendex?.extensionManager?.config?.[CONFIG_ID];
-		if (cfg && typeof cfg === "object" && !Array.isArray(cfg)) {
-			Object.assign(merged, cfg);
-		}
-	}
-	return merged;
+	return readPackageConfigAt(CONFIG_ID, paths) as kendexConfig;
 }
 
 export function getBool(cfg: kendexConfig, key: HookKey | "enabled"): boolean {

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { loadSettings, recordProjectTrust } from "../src/settings.js";
+import { recordProjectTrust } from "../src/package-config.js";
+import { loadSettings } from "../src/settings.js";
 import { environment, world } from "./helpers/world.js";
 
 for (const row of [

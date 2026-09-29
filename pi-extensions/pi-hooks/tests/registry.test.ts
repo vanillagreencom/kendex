@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { registeredHooks, TOOL_CALL_LISTENER } from "../extensions/registry.ts";
 import { initRustRepo, installToolCallHandler, readLog, registerProjectHook, registerRendered, renderedHookPath, renderStub, renderUserStub, runGit, SESSION_ID, sessionManager, trusted, useIsolatedGitEnv } from "./harness.ts";
 
 useIsolatedGitEnv();
@@ -236,4 +238,31 @@ describe("pi-hooks registry dispatch", () => {
 	});
 
 
+});
+
+// Every event reads both registries, so a registry file is parsed again only
+// when its inode, size or mtime moves. The planted edit keeps all three: were
+// the parse not kept, the second read would return the edit.
+describe("pi-hooks registry parse cache", () => {
+	test("an edit that keeps the file's stat is not read; one that moves its mtime is", () => {
+		const project = mkdtempSync(join(tmpdir(), "pi-hooks-registry-cache-"));
+		try {
+			const path = join(project, ".pi", "kendex", "hooks.json");
+			const registry = (command: string) => `${JSON.stringify({ hooks: { tool_call: [{ matcher: "Bash", hooks: [{ type: "command", command }] }] } })}\n`;
+			mkdirSync(join(project, ".pi", "kendex"), { recursive: true });
+			// Whole seconds, so setting the mtime back restores it exactly.
+			const mtime = new Date(1_700_000_000_000);
+			writeFileSync(path, registry("echo aaaa"));
+			utimesSync(path, mtime, mtime);
+			const commands = () => registeredHooks(TOOL_CALL_LISTENER, "Bash", project, true).hooks.map((hook) => hook.command);
+			expect(commands()).toEqual(["echo aaaa"]);
+			writeFileSync(path, registry("echo bbbb"));
+			utimesSync(path, mtime, mtime);
+			expect(commands()).toEqual(["echo aaaa"]);
+			utimesSync(path, mtime, new Date(mtime.getTime() + 5_000));
+			expect(commands()).toEqual(["echo bbbb"]);
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
 });

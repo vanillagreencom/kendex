@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { loadSettings, recordProjectTrust, settingsDiagnostics } from "../src/settings.js";
+import { recordProjectTrust } from "../src/package-config.js";
+import { loadSettings, settingsDiagnostics } from "../src/settings.js";
 import { isolateEnvironment, settingsEnvironment, tempDir } from "./fixtures.js";
 
 function config(path: string, value: Record<string, unknown>): void {

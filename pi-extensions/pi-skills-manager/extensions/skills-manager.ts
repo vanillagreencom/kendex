@@ -9,7 +9,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { INSTALL_SYMBOL } from "./skills-manager/constants.js";
 import { createSkillFromAnswers } from "./skills-manager/creation.js";
 import { showSkillsManager } from "./skills-manager/dialog.js";
-import { recordProjectTrust } from "./skills-manager/paths.js";
+import { installSettingsCacheRefresh, recordProjectTrust } from "./skills-manager/package-config.js";
 import { deleteSkill, loadSkillRegistry } from "./skills-manager/registry.js";
 import { settingBoolean, updatePackageConfig } from "./skills-manager/settings.js";
 import { patchInteractiveModeStartupSkillsBlock, setStartupHideEnabled } from "./skills-manager/startup.js";
@@ -115,5 +115,6 @@ export default function skillsManager(pi: ExtensionAPI): void {
 		},
 	});
 
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", async (_event, ctx) => { await prepareSession(ctx); });
 }

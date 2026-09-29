@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { PACKAGE_ID } from "./constants.js";
-import { detectExtensionInstallScope, projectSettingsPath, projectSettingsTrusted, readPackageConfig, userPiDir } from "./paths.js";
+import { clearPackageConfigCache, piUserDir, projectSettingsPath, projectSettingsTrustedForCwd, readPackageConfig } from "./package-config.js";
+import { detectExtensionInstallScope } from "./paths.js";
 import type { ExtensionInstallScope, OverlaySize, SettingsFile } from "./types.js";
 
 export function readJsonObject(path: string): SettingsFile {
@@ -31,16 +32,15 @@ function getOrCreateRecord(parent: Record<string, unknown>, key: string): Record
 }
 
 function piSettingsFiles(cwd = process.cwd()): SettingsFile[] {
-	const user = readJsonObject(join(userPiDir(), "settings.json"));
-	return projectSettingsTrusted(cwd) ? [user, readJsonObject(projectSettingsPath(cwd))] : [user];
+	const user = readJsonObject(join(piUserDir(), "settings.json"));
+	return projectSettingsTrustedForCwd(cwd) ? [user, readJsonObject(projectSettingsPath(cwd))] : [user];
 }
 
 function packageConfigFromFile(file: SettingsFile): Record<string, unknown> | undefined {
 	return asRecord(asRecord(asRecord(file.json.kendex)?.extensionManager)?.config)?.[PACKAGE_ID] as Record<string, unknown> | undefined;
 }
 
-// One reader for this package, in paths.ts, the way the other packages do it.
-// piSettingsFiles below stays for the write path, which needs the parsed file
+// piSettingsFiles stays for the write path, which needs the parsed file
 // and must throw on malformed JSON rather than overwrite it.
 function readkendexConfig(cwd = process.cwd()): Record<string, unknown> {
 	return readPackageConfig(PACKAGE_ID, cwd);
@@ -78,13 +78,13 @@ function writeScopeForConfigKey(cwd: string, key: string): ExtensionInstallScope
 	if (project && packageConfigFromFile(project)?.[key] !== undefined) return "project";
 	if (packageConfigFromFile(user)?.[key] !== undefined) return "global";
 	const detected = detectExtensionInstallScope(cwd);
-	return detected === "project" && !projectSettingsTrusted(cwd) ? "global" : detected;
+	return detected === "project" && !projectSettingsTrustedForCwd(cwd) ? "global" : detected;
 }
 
 export function updatePackageConfig(cwd: string, updates: Record<string, unknown>, scope?: ExtensionInstallScope): void {
 	const firstKey = Object.keys(updates)[0] ?? "enabled";
 	const targetScope = scope ?? writeScopeForConfigKey(cwd, firstKey);
-	const path = targetScope === "global" ? join(userPiDir(), "settings.json") : projectSettingsPath(cwd);
+	const path = targetScope === "global" ? join(piUserDir(), "settings.json") : projectSettingsPath(cwd);
 	const file = readJsonObject(path);
 	const kendex = getOrCreateRecord(file.json, "kendex");
 	const extensionManager = getOrCreateRecord(kendex, "extensionManager");
@@ -92,4 +92,5 @@ export function updatePackageConfig(cwd: string, updates: Record<string, unknown
 	const packageConfig = getOrCreateRecord(config, PACKAGE_ID);
 	Object.assign(packageConfig, updates);
 	writeJsonFile(file);
+	clearPackageConfigCache();
 }

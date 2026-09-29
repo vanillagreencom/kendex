@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PROJECT_LOCK_FILE } from "../extensions/config.ts";
+import { PROJECT_LOCK_FILE, projectRoot } from "../extensions/config.ts";
+import { clearPackageConfigCache } from "../extensions/package-config.ts";
 
 /** `projectRoot` under a given HOME, in a child because homedir() reads the
  * process's own environment. */
@@ -36,6 +37,23 @@ test("the walk stops at home, and a home lock answers", () => {
 
 		writeFileSync(join(home, PROJECT_LOCK_FILE), "{}\n");
 		expect(projectRootUnder(home, join(home, "notes"))).toBe(home);
+	} finally {
+		rmSync(outer, { recursive: true, force: true });
+	}
+});
+
+// Every successful `read` asks, so the walk's answer is memoized for the
+// settings window, "no project" included; a settings change walks again.
+test("projectRoot memoizes its answer, no project included", () => {
+	const outer = realpathSync(mkdtempSync(join(tmpdir(), "nested-agents-md-memo-")));
+	try {
+		const deep = join(outer, "inner", "deep");
+		mkdirSync(deep, { recursive: true });
+		expect(projectRoot(deep)).toBeUndefined();
+		mkdirSync(join(outer, "inner", ".claude"));
+		expect(projectRoot(deep)).toBeUndefined();
+		clearPackageConfigCache();
+		expect(projectRoot(deep)).toBe(join(outer, "inner"));
 	} finally {
 		rmSync(outer, { recursive: true, force: true });
 	}

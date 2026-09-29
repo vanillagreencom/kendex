@@ -17,6 +17,7 @@ export function fakePi(): FakePi {
 	return {
 		handlers,
 		pi: {
+			events: { emit: () => undefined, on: () => () => undefined },
 			exec: async () => ({ code: 0, stdout: "" }),
 			getCommands: () => [],
 			getSessionName: () => undefined,

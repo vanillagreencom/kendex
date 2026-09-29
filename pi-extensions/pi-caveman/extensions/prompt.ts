@@ -7,9 +7,8 @@
 // driven by `cwd` plus the `PI_CODING_AGENT_DIR` env var, exactly as pi-core
 // resolves them at runtime.
 
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
+import { packageConfigIn, piSettingsPaths, piUserDir, projectSettingsPath, readPackageConfig, readSettingsFiles } from "./package-config.js";
 
 export type Mode = "off" | "lite" | "full" | "ultra" | "micro";
 export type ActiveMode = Exclude<Mode, "off">;
@@ -18,83 +17,8 @@ export type kendexConfig = Record<string, unknown>;
 export const MODE_VALUES: readonly Mode[] = ["off", "lite", "full", "ultra", "micro"];
 export const CONFIG_ID = "@vanillagreen/pi-caveman";
 
-export function expandHome(input: string): string {
-	if (input === "~") return homedir();
-	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
-	return input;
-}
-
-export function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
-}
-
-const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
-
-interface ProjectTrustRegistry {
-	projectSettings?: Map<string, boolean>;
-}
-
-function projectTrustRegistry(): ProjectTrustRegistry {
-	const host = globalThis as unknown as Record<PropertyKey, ProjectTrustRegistry | undefined>;
-	const existing = host[PROJECT_TRUST_SYMBOL];
-	if (existing) return existing;
-	const created: ProjectTrustRegistry = {};
-	host[PROJECT_TRUST_SYMBOL] = created;
-	return created;
-}
-
-export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () => boolean }): void {
-	if (!ctx.cwd) return;
-	let trusted = true;
-	try {
-		trusted = ctx.isProjectTrusted?.() === true;
-	} catch {
-		trusted = false;
-	}
-	const registry = projectTrustRegistry();
-	if (!registry.projectSettings) registry.projectSettings = new Map();
-	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);
-}
-
-function projectSettingsTrusted(settingsPath: string): boolean {
-	return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
-}
-
-/** Root-anchored as `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`
- * means it, which `isAbsolute` is not: it calls a driveless `\root` absolute
- * where the renderer does not, putting the two on different roots. Hoisted, so
- * a circular import cannot reach it inside a temporal dead zone. */
-function rootAnchored(path: string, windows: boolean): boolean { return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/"); }
-
-export function piSettingsPaths(cwd = process.cwd()): string[] {
-	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-	const userDir = resolve(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
-	const user = join(userDir, "settings.json");
-	const project = projectSettingsPath(cwd);
-	return projectSettingsTrusted(project) ? [user, project] : [user];
-}
-
 export function readkendexConfig(cwd?: string): kendexConfig {
-	const merged: kendexConfig = {};
-	for (const path of piSettingsPaths(cwd)) {
-		if (!existsSync(path)) continue;
-		try {
-			const parsed = JSON.parse(readFileSync(path, "utf8"));
-			const config = parsed?.kendex?.extensionManager?.config?.[CONFIG_ID];
-			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
-		} catch {
-			// Ignore malformed optional manager config.
-		}
-	}
-	return merged;
+	return readPackageConfig(CONFIG_ID, cwd) as kendexConfig;
 }
 
 export function settingBoolean(key: string, fallback: boolean, cwd?: string): boolean {
@@ -117,26 +41,17 @@ export interface ConfigurationSource {
 // Walks user → project settings.json files (matching readkendexConfig order)
 // and reports which file's `mode` key won the merge. Project wins on tie.
 export function configurationSource(cwd?: string): ConfigurationSource {
-	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-	const userDir = resolve(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
-	const userPath = join(userDir, "settings.json");
+	const userPath = join(piUserDir(), "settings.json");
 	const projectPath = projectSettingsPath(cwd ?? process.cwd());
-	const activePaths = new Set(piSettingsPaths(cwd));
 	let sourcePath: string | undefined;
 	let sourceLabel: "user" | "project" | "default" = "default";
-	for (const [label, path] of [["user", userPath], ["project", projectPath]] as const) {
-		if (!activePaths.has(path)) continue;
-		if (!existsSync(path)) continue;
-		try {
-			const parsed = JSON.parse(readFileSync(path, "utf8"));
-			const config = parsed?.kendex?.extensionManager?.config?.[CONFIG_ID];
-			if (!config || typeof config !== "object" || Array.isArray(config)) continue;
-			if (typeof config.mode === "string") {
-				sourceLabel = label;
-				sourcePath = path;
-			}
-		} catch {
-			// Ignore malformed optional manager config.
+	for (const file of readSettingsFiles(piSettingsPaths(cwd))) {
+		if (file.kind !== "parsed") continue;
+		const label = file.path === userPath ? "user" : file.path === projectPath ? "project" : undefined;
+		if (label === undefined) continue;
+		if (typeof packageConfigIn(file.settings, CONFIG_ID)?.mode === "string") {
+			sourceLabel = label;
+			sourcePath = file.path;
 		}
 	}
 	return { source: sourceLabel, path: sourcePath, userPath, projectPath };
@@ -148,17 +63,10 @@ export function configurationSource(cwd?: string): ConfigurationSource {
 // /caveman debug surfaces this caveat.
 export function bridgeCavemanHookEnabled(cwd?: string): boolean | undefined {
 	let value: boolean | undefined;
-	for (const path of piSettingsPaths(cwd)) {
-		if (!existsSync(path)) continue;
-		try {
-			const parsed = JSON.parse(readFileSync(path, "utf8"));
-			const config = parsed?.kendex?.extensionManager?.config?.["@vanillagreen/pi-claude-bridge"];
-			if (config && typeof config === "object" && !Array.isArray(config) && typeof config.includeCavemanHook === "boolean") {
-				value = config.includeCavemanHook;
-			}
-		} catch {
-			// Ignore malformed optional manager config.
-		}
+	for (const file of readSettingsFiles(piSettingsPaths(cwd))) {
+		if (file.kind !== "parsed") continue;
+		const includeCavemanHook = packageConfigIn(file.settings, "@vanillagreen/pi-claude-bridge")?.includeCavemanHook;
+		if (typeof includeCavemanHook === "boolean") value = includeCavemanHook;
 	}
 	return value;
 }

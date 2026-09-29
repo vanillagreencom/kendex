@@ -10,6 +10,7 @@ import { extractAllToolResults as _extractAllToolResults, type McpResult } from 
 import { QueryContext, ctx, deleteQueryLane, drainPendingToolCalls, drainStrandedToolCalls, popContext, stackDepth, pushContext, summarizeDroppedUserMessages, takeQueuedOrParkedResult, toolCallDrainCause, type DeferredUserMessage, type QueryRestartRequest } from "./query-state.js";
 import { abortSdkQuery, closeSdkQuery, teardownQuery } from "./query-teardown.js";
 import { loadConfig, recordProjectTrust, registerExternalConfigResolver } from "./config.js";
+import { installSettingsCacheRefresh } from "./package-config.js";
 import { hasClaudeCredentials } from "./auth-presence.js";
 import { NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, buildNativeProvider, supportsNativeProvider } from "./native-provider.js";
 import { jsonSchemaToZodShape } from "./typebox-to-zod.js";
@@ -1644,6 +1645,7 @@ export default function (pi: ExtensionAPI) {
 		setSharedSession(null);
 	};
 
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", (event, ctx) => runInRequestLane(ctx.sessionManager.getSessionId(), () => {
 		recordStartedLane(ctx.sessionManager, ctx.sessionManager.getSessionId());
 		recordProjectTrust(ctx);

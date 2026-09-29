@@ -31,9 +31,8 @@ const PI_BRIDGE_PARENT_SESSION_ENV = "PI_BRIDGE_PARENT_SESSION_ID";
 const PI_BRIDGE_CHILD_ROLE_ENV = "PI_BRIDGE_CHILD_ROLE";
 const PI_BRIDGE_SUBAGENT_ROLE = "subagent";
 export const PI_SUBAGENT_CHILD_PANE_ENV = "PI_SUBAGENT_CHILD_PANE";
+import { piUserDir, projectSettingsPath } from "./package-config.js";
 import {
-	piUserDir,
-	projectSettingsPath,
 	selectedEffortForAgent,
 	selectedModelForAgent,
 	selectedThinkingLevelForAgent,

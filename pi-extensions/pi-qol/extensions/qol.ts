@@ -69,7 +69,8 @@ import {
 	runSessionSearchResumeOrFork,
 	sessionSearchShortcut,
 } from "./qol/session-search/index.js";
-import { recordProjectTrust, settingBoolean, settingNumber, settingString } from "./qol/settings.js";
+import { installSettingsCacheRefresh, recordProjectTrust } from "./qol/package-config.js";
+import { settingBoolean, settingNumber, settingString } from "./qol/settings.js";
 import { statusMessage } from "./qol/status-message.js";
 import {
 	formatTmuxSessionTitle,
@@ -586,6 +587,7 @@ export default function qol(pi: ExtensionAPI): void {
 		rateLimitAutoResumeController.noteExternalRateLimitEvent(payload, currentCtx);
 	});
 
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", (event, ctx) => {
 		recordProjectTrust(ctx);
 		currentCtx = ctx;

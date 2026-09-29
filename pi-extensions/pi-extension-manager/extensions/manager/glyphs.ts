@@ -1,4 +1,5 @@
 import { host } from "./host.js";
+import { recordSettingsTrust, settingsFileTrusted, settingsMemo } from "./package-config.js";
 
 export type GlyphStyle = "unicode" | "ascii";
 export type GlobalGlyphStyleOverride = "inherit" | GlyphStyle;
@@ -10,51 +11,28 @@ function projectSettingsPath(cwd: string): string {
 	return host.settingsPath("project", cwd);
 }
 
-const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
-
-interface ProjectTrustRegistry {
-	projectSettings?: Map<string, boolean>;
-}
-
-function projectTrustRegistry(): ProjectTrustRegistry {
-	const host = globalThis as unknown as Record<PropertyKey, ProjectTrustRegistry | undefined>;
-	const existing = host[PROJECT_TRUST_SYMBOL];
-	if (existing) return existing;
-	const created: ProjectTrustRegistry = {};
-	host[PROJECT_TRUST_SYMBOL] = created;
-	return created;
-}
-
 export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () => boolean }): void {
 	if (!ctx.cwd) return;
-	let trusted = true;
-	try {
-		trusted = ctx.isProjectTrusted?.() === true;
-	} catch {
-		trusted = false;
-	}
-	const registry = projectTrustRegistry();
-	if (!registry.projectSettings) registry.projectSettings = new Map();
-	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);
+	recordSettingsTrust(projectSettingsPath(ctx.cwd), ctx);
 }
 
-function projectSettingsTrusted(settingsPath: string): boolean {
-	return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
-}
-
+/** Read through the host, which knows OMP's YAML documents, and memoized for
+ * the settings window: the manager list renders glyphs per row per frame. */
 function readPackageConfig(packageId: string, cwd = process.cwd()): Record<string, unknown> {
-	const merged: Record<string, unknown> = {};
-	try {
-		const files = host.settings({ cwd, isProjectTrusted: () => projectSettingsTrusted(projectSettingsPath(cwd)) });
-		for (const file of files) {
-			const parsed = file.json as { kendex?: { extensionManager?: { config?: Record<string, unknown> } } };
-			const config = parsed.kendex?.extensionManager?.config?.[packageId];
-			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
+	return settingsMemo(`manager-glyph-config\0${packageId}\0${cwd}`, () => {
+		const merged: Record<string, unknown> = {};
+		try {
+			const files = host.settings({ cwd, isProjectTrusted: () => settingsFileTrusted(projectSettingsPath(cwd)) });
+			for (const file of files) {
+				const parsed = file.json as { kendex?: { extensionManager?: { config?: Record<string, unknown> } } };
+				const config = parsed.kendex?.extensionManager?.config?.[packageId];
+				if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
+			}
+		} catch {
+			// Optional glyph settings cannot prevent a diagnostic from rendering.
 		}
-	} catch {
-		// Optional glyph settings cannot prevent a diagnostic from rendering.
-	}
-	return merged;
+		return merged;
+	});
 }
 
 function asGlyphStyle(value: unknown): GlyphStyle | undefined {

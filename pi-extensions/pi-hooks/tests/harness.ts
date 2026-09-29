@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import piHooks from "../extensions/hooks.ts";
+import { clearPackageConfigCache } from "../extensions/package-config.ts";
 
 /* Fixtures shared by the pi-hooks suites. */
 
@@ -43,6 +44,8 @@ export function writePiConfig(project: string, overrides: Record<string, unknown
 			},
 		},
 	}, null, 2));
+	// What pi-extension-manager's settings-changed event does after a write.
+	clearPackageConfigCache();
 }
 
 /* Git reads no config of the developer's here: a global core.hooksPath would

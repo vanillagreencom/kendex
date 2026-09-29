@@ -7,6 +7,7 @@
 - A task change that leaves the task list as it was no longer writes the sidecar `state.json` or adds a session entry. A real change writes the sidecar in the background, off Pi's main thread, and replaces the file whole, so a crash during the write leaves the previous state readable. The sidecar is now compact JSON instead of indented JSON.
 - `tasks_write`, the `/tasks` commands, the shortcuts and the manager return after their sidecar write lands, and session shutdown waits for any write still queued.
 - A session entry that Pi refuses to append is reported with a `persistence_failure=session-entry` warning instead of failing the call, or `persistence_failure=session-entry-no-sidecar` when the sidecar write failed too. Either warning says a session restart can bring back the older state until the next successful save. After a failed sidecar write or session entry, the next task change saves the state again, even when it leaves the task list as it was.
+- Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again, and an unchanged file is not parsed again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk, and widgets and renderers read settings many times per repaint.
 
 ### 3.0.2
 

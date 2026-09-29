@@ -2,7 +2,7 @@ import { afterEach, beforeEach } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { recordProjectTrust } from "../../tool-renderer/settings.js";
+import { recordProjectTrust } from "../../tool-renderer/package-config.js";
 
 /** Give each case owned project and user settings directories. */
 export function useWorld() {

@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { basename, resolve } from "node:path";
 
-import { piUserDir } from "./config.js";
+import { piUserDir } from "./package-config.js";
 
 /**
  * The registry keys kendex renders hooks under. Pi has no per-hook runner, so
@@ -105,11 +105,54 @@ function matches(matcher: unknown, subject: string | undefined): boolean {
 	if (typeof matcher !== "string") return true;
 	const pattern = matcher.trim();
 	if (pattern === "" || pattern === "*") return true;
-	try {
-		return new RegExp(`^(?:${pattern})$`).test(subject);
-	} catch {
-		return true;
+	const compiled = compiledMatcher(pattern);
+	return compiled === "invalid" ? true : compiled.test(subject);
+}
+
+/** Every matcher pattern ever compiled, or `"invalid"` for one that would not.
+ * Registries hold a handful of patterns and every event tests them. */
+const compiledMatchers = new Map<string, RegExp | "invalid">();
+
+function compiledMatcher(pattern: string): RegExp | "invalid" {
+	let compiled = compiledMatchers.get(pattern);
+	if (compiled === undefined) {
+		try {
+			compiled = new RegExp(`^(?:${pattern})$`);
+		} catch {
+			compiled = "invalid";
+		}
+		compiledMatchers.set(pattern, compiled);
 	}
+	return compiled;
+}
+
+type RegistryDocument = { kind: "parsed"; document: unknown } | { kind: "failed"; error: unknown };
+
+/** The last parse of each registry file, keyed by path, with the stat it was
+ * read under. Every hook event reads both registries; a file whose inode, size
+ * and mtime all match is not read or parsed again. */
+const registryDocuments = new Map<string, { ino: number; size: number; mtimeMs: number; read: RegistryDocument }>();
+
+/** Throws what `statSync` threw, so the caller's absent-versus-unreadable
+ * reading is the same as it was for `readFileSync`. */
+function registryDocument(path: string): RegistryDocument {
+	let stat;
+	try {
+		stat = statSync(path);
+	} catch (error) {
+		registryDocuments.delete(path);
+		throw error;
+	}
+	const known = registryDocuments.get(path);
+	if (known && known.ino === stat.ino && known.size === stat.size && known.mtimeMs === stat.mtimeMs) return known.read;
+	let read: RegistryDocument;
+	try {
+		read = { kind: "parsed", document: JSON.parse(readFileSync(path, "utf8")) as unknown };
+	} catch (error) {
+		read = { kind: "failed", error };
+	}
+	registryDocuments.set(path, { ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, read });
+	return read;
 }
 
 /** What a registered command names. */
@@ -193,7 +236,9 @@ function readRegistry(root: string, listener: string, subject: string | undefine
 	const hooks: RegisteredHook[] = [];
 	let position = 0;
 	try {
-		const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+		const read = registryDocument(path);
+		if (read.kind === "failed") throw read.error;
+		const parsed = read.document;
 		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("not a JSON object");
 		const registry = (parsed as { hooks?: unknown }).hooks;
 		if (registry === undefined) return { hooks };
@@ -273,6 +318,9 @@ export function registeredHooks(listener: string, subject: string | undefined, p
 	if (project !== undefined && trusted) {
 		answering.push(readRegistry(resolve(project, ".pi", "kendex"), listener, subject, project));
 	}
+	// The global registry runs without a trust check, so its root must never
+	// follow the session's directory: `piUserDir` takes the default root for a
+	// blank or relative PI_CODING_AGENT_DIR rather than resolving it here.
 	answering.push(readRegistry(resolve(piUserDir(), "kendex"), listener, subject, undefined));
 
 	for (const read of answering) {

@@ -35538,26 +35538,175 @@ function splitPrefixSuffix(input, options = {}) {
 }
 
 // src/config.ts
-import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
-import { homedir } from "os";
-import { dirname as dirname5, join as join6, resolve as resolve5, sep as sep5 } from "path";
+import { homedir as homedir2 } from "os";
+import { dirname as dirname6, join as join7, sep as sep5 } from "path";
 
 // src/debug.ts
 import { appendFileSync as appendFileSync2, chmodSync, mkdirSync as mkdirSync2 } from "fs";
-import { dirname as dirname4, join as join5 } from "path";
+import { dirname as dirname5, join as join6 } from "path";
+
+// src/package-config.ts
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
+import { homedir } from "node:os";
+import { dirname as dirname4, join as join5, resolve as resolve5 } from "node:path";
+var SETTINGS_CHANGED_EVENT = "kendex:extension-settings-changed";
+var SETTINGS_RECHECK_MS = 1e3;
+function expandHome(input) {
+  if (input === "~") return homedir();
+  if (input.startsWith("~/")) return join5(homedir(), input.slice(2));
+  return input;
+}
+function rootAnchored(path, windows) {
+  return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/");
+}
+function piUserDir() {
+  const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
+  return resolve5(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
+}
+var memo = /* @__PURE__ */ new Map();
+function clearPackageConfigCache() {
+  memo.clear();
+}
+function settingsMemo(key, compute, fingerprint) {
+  const now = performance.now();
+  const entry = memo.get(key);
+  if (entry && now - entry.readAt < SETTINGS_RECHECK_MS) return entry.value;
+  const print = fingerprint?.();
+  if (entry && print !== void 0 && entry.fingerprint === print) {
+    entry.readAt = now;
+    return entry.value;
+  }
+  const value = compute();
+  memo.set(key, { readAt: now, fingerprint: print, value });
+  return value;
+}
+function projectSettingsPath(cwd) {
+  let current = resolve5(cwd);
+  while (true) {
+    const candidate = join5(current, ".pi", "settings.json");
+    if (existsSync2(candidate)) return candidate;
+    if (existsSync2(join5(current, ".pi")) || existsSync2(join5(current, ".git")) || existsSync2(join5(current, ".kendex-lock.json"))) return candidate;
+    const parent = dirname4(current);
+    if (parent === current) return join5(resolve5(cwd), ".pi", "settings.json");
+    current = parent;
+  }
+}
+var PROJECT_TRUST_SYMBOL = /* @__PURE__ */ Symbol.for("kendex.pi.project-trust");
+function projectTrustRegistry() {
+  const host = globalThis;
+  const existing = host[PROJECT_TRUST_SYMBOL];
+  if (existing) return existing;
+  const created = {};
+  host[PROJECT_TRUST_SYMBOL] = created;
+  return created;
+}
+function projectTrusted(ctx2) {
+  try {
+    return ctx2.isProjectTrusted?.() === true;
+  } catch {
+    return false;
+  }
+}
+function recordSettingsTrust(settingsPath, ctx2) {
+  const registry2 = projectTrustRegistry();
+  if (!registry2.projectSettings) registry2.projectSettings = /* @__PURE__ */ new Map();
+  registry2.projectSettings.set(settingsPath, projectTrusted(ctx2));
+}
+function recordProjectTrust(ctx2) {
+  if (!ctx2.cwd) return;
+  recordSettingsTrust(projectSettingsPath(ctx2.cwd), ctx2);
+}
+function settingsFileTrusted(settingsPath) {
+  return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
+}
+function memoizedProjectSettingsPath(cwd) {
+  return settingsMemo(`project-settings-path\0${cwd}`, () => projectSettingsPath(cwd));
+}
+function trustedProjectSettingsPath(cwd = process.cwd()) {
+  const project = memoizedProjectSettingsPath(cwd);
+  return settingsFileTrusted(project) ? project : void 0;
+}
+function piSettingsPaths(cwd = process.cwd()) {
+  const user = join5(piUserDir(), "settings.json");
+  const project = trustedProjectSettingsPath(cwd);
+  return project === void 0 ? [user] : [user, project];
+}
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function deepFreeze(value) {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) deepFreeze(child);
+  }
+  return value;
+}
+function readText(path) {
+  try {
+    return { kind: "text", text: readFileSync2(path, "utf8") };
+  } catch (error51) {
+    const code = error51?.code;
+    if (code === "ENOENT" || code === "ENOTDIR") return { kind: "absent" };
+    return { kind: "unreadable", error: error51 instanceof Error ? error51.message : String(error51) };
+  }
+}
+function readSettingsFiles(paths) {
+  let texts = [];
+  return settingsMemo(
+    `settings-files\0${paths.join("\0")}`,
+    () => deepFreeze(
+      paths.flatMap((path, index) => {
+        const text = texts[index] ?? readText(path);
+        if (text.kind === "absent") return [];
+        if (text.kind === "unreadable") return [{ kind: "malformed", path, error: text.error }];
+        try {
+          const parsed = JSON.parse(text.text);
+          return [{ kind: "parsed", path, settings: isRecord(parsed) ? parsed : {} }];
+        } catch (error51) {
+          return [{ kind: "malformed", path, error: error51 instanceof Error ? error51.message : String(error51) }];
+        }
+      })
+    ),
+    () => {
+      texts = paths.map(readText);
+      return JSON.stringify(texts);
+    }
+  );
+}
+function packageConfigIn(settings, packageId) {
+  const kendex = settings.kendex;
+  const manager = isRecord(kendex) ? kendex.extensionManager : void 0;
+  const config2 = isRecord(manager) ? manager.config : void 0;
+  const own = isRecord(config2) ? config2[packageId] : void 0;
+  return isRecord(own) ? own : void 0;
+}
+function installSettingsCacheRefresh(pi2) {
+  let unsubscribe;
+  pi2.on("session_start", () => {
+    clearPackageConfigCache();
+    unsubscribe ??= pi2.events.on(SETTINGS_CHANGED_EVENT, () => clearPackageConfigCache());
+  });
+  pi2.on("session_shutdown", () => {
+    unsubscribe?.();
+    unsubscribe = void 0;
+    clearPackageConfigCache();
+  });
+}
+
+// src/debug.ts
 var DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
-var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join5(piUserDir(), "claude-bridge.log");
+var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join6(piUserDir(), "claude-bridge.log");
 function diagLogPath() {
-  return process.env.CLAUDE_BRIDGE_DIAG_PATH || join5(piUserDir(), "claude-bridge-diag.log");
+  return process.env.CLAUDE_BRIDGE_DIAG_PATH || join6(piUserDir(), "claude-bridge-diag.log");
 }
 function diagGuidance() {
   return DEBUG ? `see ${diagLogPath()}` : "re-run with CLAUDE_BRIDGE_DEBUG=1 to capture a diagnostic dump";
 }
 if (DEBUG) {
   try {
-    mkdirSync2(dirname4(DEBUG_LOG_PATH), { recursive: true, mode: 448 });
-    mkdirSync2(dirname4(diagLogPath()), { recursive: true, mode: 448 });
-    chmodSync(dirname4(DEBUG_LOG_PATH), 448);
+    mkdirSync2(dirname5(DEBUG_LOG_PATH), { recursive: true, mode: 448 });
+    mkdirSync2(dirname5(diagLogPath()), { recursive: true, mode: 448 });
+    chmodSync(dirname5(DEBUG_LOG_PATH), 448);
     chmodSync(DEBUG_LOG_PATH, 384);
   } catch {
   }
@@ -35612,13 +35761,13 @@ function makeCliDebugOptions(tag) {
   if (!DEBUG) return {};
   const seq = nextCliDebugSeq++;
   const ts = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-  const logDir = join5(dirname4(DEBUG_LOG_PATH), "cc-cli-logs");
+  const logDir = join6(dirname5(DEBUG_LOG_PATH), "cc-cli-logs");
   try {
     mkdirSync2(logDir, { recursive: true, mode: 448 });
     chmodSync(logDir, 448);
   } catch {
   }
-  const debugFile = join5(logDir, `${ts}-${tag}-${seq}.log`);
+  const debugFile = join6(logDir, `${ts}-${tag}-${seq}.log`);
   debug(`cli-debug: ${tag} #${seq} \u2192 ${debugFile}`);
   return {
     debug: true,
@@ -35637,7 +35786,7 @@ function diagDump(label, data) {
     const entry = { ts, moduleInstanceId, label, ...data };
     const path = diagLogPath();
     try {
-      mkdirSync2(dirname4(path), { recursive: true, mode: 448 });
+      mkdirSync2(dirname5(path), { recursive: true, mode: 448 });
     } catch {
     }
     appendFileSync2(path, JSON.stringify(entry) + "\n", { mode: 384 });
@@ -35655,18 +35804,6 @@ function diagDump(label, data) {
 var PACKAGE_ID = "@vanillagreen/pi-claude-bridge";
 var EXTERNAL_CONFIG_RESOLVER_SYMBOL = /* @__PURE__ */ Symbol.for("kendex.pi.extension-config-resolver");
 var VALID_EFFORT_LEVELS = /* @__PURE__ */ new Set(["low", "medium", "high", "xhigh", "max"]);
-function expandHome(input) {
-  if (input === "~") return homedir();
-  if (input.startsWith("~/")) return join6(homedir(), input.slice(2));
-  return input;
-}
-function rootAnchored(path, windows) {
-  return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/");
-}
-function piUserDir() {
-  const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-  return resolve5(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
-}
 function isolatedFromEnv() {
   const v = (process.env.CLAUDE_BRIDGE_ISOLATED ?? "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "yes" || v === "on";
@@ -35683,70 +35820,30 @@ function mergeDeep(target, source) {
   }
   return target;
 }
-function projectSettingsPath(cwd) {
-  let current = resolve5(cwd);
-  while (true) {
-    const candidate = join6(current, ".pi", "settings.json");
-    if (existsSync2(candidate)) return candidate;
-    if (existsSync2(join6(current, ".pi")) || existsSync2(join6(current, ".git")) || existsSync2(join6(current, ".kendex-lock.json"))) return candidate;
-    const parent = dirname5(current);
-    if (parent === current) return join6(resolve5(cwd), ".pi", "settings.json");
-    current = parent;
-  }
-}
-var PROJECT_TRUST_SYMBOL = /* @__PURE__ */ Symbol.for("kendex.pi.project-trust");
-function projectTrustRegistry() {
-  const host = globalThis;
-  const existing = host[PROJECT_TRUST_SYMBOL];
-  if (existing) return existing;
-  const created = {};
-  host[PROJECT_TRUST_SYMBOL] = created;
-  return created;
-}
-function recordProjectTrust(ctx2) {
-  if (!ctx2.cwd) return;
+function recordProjectTrust2(ctx2) {
   if (isolatedFromEnv()) return;
-  let trusted = true;
-  try {
-    trusted = ctx2.isProjectTrusted?.() === true;
-  } catch {
-    trusted = false;
-  }
-  const registry2 = projectTrustRegistry();
-  if (!registry2.projectSettings) registry2.projectSettings = /* @__PURE__ */ new Map();
-  registry2.projectSettings.set(projectSettingsPath(ctx2.cwd), trusted);
-}
-function projectSettingsTrusted(settingsPath) {
-  return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
-}
-function settingsPaths(cwd) {
-  const user = join6(piUserDir(), "settings.json");
-  if (isolatedFromEnv()) return [];
-  const project = projectSettingsPath(cwd);
-  return projectSettingsTrusted(project) ? [user, project] : [user];
+  recordProjectTrust(ctx2);
 }
 function tryParseJson(path) {
-  if (!existsSync2(path)) return {};
-  try {
-    return JSON.parse(readFileSync2(path, "utf-8"));
-  } catch (error51) {
-    debug(`config: ignoring malformed ${path}:`, error51 instanceof Error ? error51.message : String(error51));
+  const [file2] = readSettingsFiles([path]);
+  if (file2 === void 0) return {};
+  if (file2.kind === "malformed") {
+    debug(`config: ignoring malformed ${path}:`, file2.error);
     return {};
   }
+  return file2.settings;
 }
 function readManagerConfig(cwd) {
+  if (isolatedFromEnv()) return {};
   const merged = {};
-  const userPath = join6(piUserDir(), "settings.json");
-  for (const path of settingsPaths(cwd)) {
-    if (!existsSync2(path)) continue;
-    try {
-      const parsed = JSON.parse(readFileSync2(path, "utf8"));
-      const configRoot = asRecord(asRecord(asRecord(parsed?.kendex)?.extensionManager)?.config);
-      const config2 = asRecord(configRoot?.[PACKAGE_ID]);
-      if (config2) mergeDeep(merged, path === userPath ? config2 : withoutUserScopeOnlyKeys(config2));
-    } catch (error51) {
-      debug(`config: ignoring malformed manager config ${path}:`, error51 instanceof Error ? error51.message : String(error51));
+  const userPath = join7(piUserDir(), "settings.json");
+  for (const file2 of readSettingsFiles(piSettingsPaths(cwd))) {
+    if (file2.kind === "malformed") {
+      debug(`config: ignoring malformed manager config ${file2.path}:`, file2.error);
+      continue;
     }
+    const config2 = packageConfigIn(file2.settings, PACKAGE_ID);
+    if (config2) mergeDeep(merged, file2.path === userPath ? config2 : withoutUserScopeOnlyKeys(config2));
   }
   return merged;
 }
@@ -35867,12 +35964,12 @@ function legacyFileConfig(path) {
   };
 }
 function legacyLayers(cwd) {
-  const globalPath = join6(piUserDir(), "claude-bridge.json");
+  const globalPath = join7(piUserDir(), "claude-bridge.json");
   const layers = [{ path: globalPath, config: legacyFileConfig(globalPath) }];
   if (isolatedFromEnv()) return layers;
-  const projectSettings = projectSettingsPath(cwd);
-  if (!projectSettingsTrusted(projectSettings)) return layers;
-  const projectPath = join6(dirname5(projectSettings), "claude-bridge.json");
+  const projectSettings = trustedProjectSettingsPath(cwd);
+  if (projectSettings === void 0) return layers;
+  const projectPath = join7(dirname6(projectSettings), "claude-bridge.json");
   return [...layers, { path: projectPath, config: stripUserScopeOnlyProviderKeys(legacyFileConfig(projectPath)) }];
 }
 function mergeLayers(layers) {
@@ -35917,7 +36014,7 @@ function configValueForKey(config2, key) {
   return void 0;
 }
 function displayPath(path) {
-  const home = homedir();
+  const home = homedir2();
   return home && path.startsWith(home + sep5) ? `~${path.slice(home.length)}` : path;
 }
 function resolveExternalConfigValue(key, cwd) {
@@ -37712,12 +37809,12 @@ function teardownQuery(queryCtx, sdkQuery, cause, cwd, isReentrant) {
 
 // src/auth-presence.ts
 import { existsSync as existsSync3, readFileSync as readFileSync3 } from "fs";
-import { homedir as homedir2, platform as osPlatform } from "os";
-import { join as join7 } from "path";
+import { homedir as homedir3, platform as osPlatform } from "os";
+import { join as join8 } from "path";
 function resolveClaudeConfigDir(env = process.env) {
   const configured = env.CLAUDE_CONFIG_DIR;
   if (typeof configured === "string" && configured.trim().length > 0) return configured.trim();
-  return join7(homedir2(), ".claude");
+  return join8(homedir3(), ".claude");
 }
 function nonEmptyEnv(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -37728,7 +37825,7 @@ function envTruthy(value) {
 }
 function hasApiKeyHelper(configDir) {
   try {
-    const settingsPath = join7(configDir, "settings.json");
+    const settingsPath = join8(configDir, "settings.json");
     if (!existsSync3(settingsPath)) return false;
     const parsed = JSON.parse(readFileSync3(settingsPath, "utf8"));
     return typeof parsed?.apiKeyHelper === "string" && parsed.apiKeyHelper.trim().length > 0;
@@ -37746,7 +37843,7 @@ function hasClaudeCredentials(env = process.env, platform = osPlatform()) {
   if (envTruthy(env.CLAUDE_CODE_USE_ANTHROPIC_AWS)) return true;
   if (envTruthy(env.CLAUDE_CODE_USE_MANTLE)) return true;
   const configDir = resolveClaudeConfigDir(env);
-  if (existsSync3(join7(configDir, ".credentials.json"))) return true;
+  if (existsSync3(join8(configDir, ".credentials.json"))) return true;
   if (hasApiKeyHelper(configDir)) return true;
   if (platform === "darwin") return true;
   return false;
@@ -52367,7 +52464,7 @@ async function resolveGetModels(root, loadCompat = () => dynamicImport("@earendi
 // src/connector-cache.ts
 import { createHash } from "node:crypto";
 import { mkdirSync as mkdirSync3, readFileSync as readFileSync4, writeFileSync } from "node:fs";
-import { dirname as dirname6, join as join8 } from "node:path";
+import { dirname as dirname7, join as join9 } from "node:path";
 var CACHE_VERSION = 2;
 var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 function scopeKeyFor(claudeConfigDir) {
@@ -52381,7 +52478,7 @@ function connectorCacheScopeDigest(scopeKey) {
 }
 function connectorCachePath(scopeKey = connectorCacheScopeKey()) {
   const digest = connectorCacheScopeDigest(scopeKey).slice(0, 16);
-  return join8(piUserDir(), "connector-cache", `${digest}.json`);
+  return join9(piUserDir(), "connector-cache", `${digest}.json`);
 }
 function readCachedConnectors(scopeKey = connectorCacheScopeKey(), now = Date.now()) {
   let raw;
@@ -52411,7 +52508,7 @@ function writeCachedConnectors(connectors, scopeKey = connectorCacheScopeKey(), 
   if (!Array.isArray(connectors) || connectors.length === 0) return false;
   const path = connectorCachePath(scopeKey);
   try {
-    mkdirSync3(dirname6(path), { recursive: true, mode: 448 });
+    mkdirSync3(dirname7(path), { recursive: true, mode: 448 });
     writeFileSync(
       path,
       JSON.stringify({ version: CACHE_VERSION, scope: connectorCacheScopeDigest(scopeKey), savedAt: now, connectors }),
@@ -52509,11 +52606,11 @@ function connectorServersSnapshot(claudeConfigDir) {
 // src/claude-executable.ts
 import { spawn as spawnProcess } from "child_process";
 import { accessSync, closeSync as closeSync2, constants as fsConstants, openSync as openSync2, readSync as readSync2, realpathSync as realpathSync2, statSync as statSync2 } from "fs";
-import { delimiter as delimiter2, join as join9 } from "path";
+import { delimiter as delimiter2, join as join10 } from "path";
 function executableFromPath(name) {
   const paths = (process.env.PATH ?? "").split(delimiter2).filter(Boolean);
   for (const dir of paths) {
-    const candidate = join9(dir, name);
+    const candidate = join10(dir, name);
     try {
       accessSync(candidate, fsConstants.X_OK);
       return candidate;
@@ -52746,11 +52843,11 @@ function spawnClaudeCodeWithDiagnostics(options) {
 // node_modules/cc-session-io/dist/chunk-7RWUSC7F.js
 import { randomUUID as randomUUID2 } from "crypto";
 import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync2, appendFileSync as appendFileSync3, existsSync as existsSync4, rmSync as rmSync2 } from "fs";
-import { dirname as dirname7 } from "path";
+import { dirname as dirname8 } from "path";
 import { readFileSync as readFileSync5 } from "fs";
 import { realpathSync as realpathSync3 } from "fs";
-import { homedir as homedir3 } from "os";
-import { join as join10 } from "path";
+import { homedir as homedir4 } from "os";
+import { join as join11 } from "path";
 function parseJsonl(content) {
   return content.split("\n").filter((line) => line.trim()).map(parseRecord);
 }
@@ -52768,7 +52865,7 @@ function serializeRecord(record2) {
 }
 var MAX_SANITIZED_LENGTH = 200;
 function getClaudeDir(claudeDir) {
-  return claudeDir ?? process.env.CLAUDE_CONFIG_DIR ?? join10(homedir3(), ".claude");
+  return claudeDir ?? process.env.CLAUDE_CONFIG_DIR ?? join11(homedir4(), ".claude");
 }
 function normalizeProjectPath(projectPath) {
   try {
@@ -52786,10 +52883,10 @@ function projectPathToHash(projectPath) {
   return `${sanitized.slice(0, MAX_SANITIZED_LENGTH)}-${Math.abs(h).toString(36)}`;
 }
 function getProjectDir(projectPath, claudeDir) {
-  return join10(getClaudeDir(claudeDir), "projects", projectPathToHash(normalizeProjectPath(projectPath)));
+  return join11(getClaudeDir(claudeDir), "projects", projectPathToHash(normalizeProjectPath(projectPath)));
 }
 function getSessionPath(sessionId, projectPath, claudeDir) {
-  return join10(getProjectDir(projectPath, claudeDir), `${sessionId}.jsonl`);
+  return join11(getProjectDir(projectPath, claudeDir), `${sessionId}.jsonl`);
 }
 function repairToolPairing(messages) {
   const result = [];
@@ -53128,7 +53225,7 @@ var Session = class {
   /** Write pending records to disk. Creates the file/directory if needed. */
   save() {
     if (this._pendingRecords.length === 0) return;
-    const dir = dirname7(this.jsonlPath);
+    const dir = dirname8(this.jsonlPath);
     if (!existsSync4(dir)) {
       mkdirSync4(dir, { recursive: true });
     }
@@ -53274,8 +53371,8 @@ Malformed JSONL: ${e.message}`);
 }
 
 // src/account-router.ts
-import { homedir as homedir4 } from "node:os";
-import { join as join11 } from "node:path";
+import { homedir as homedir5 } from "node:os";
+import { join as join12 } from "node:path";
 
 // src/rate-limit.ts
 var RATE_LIMIT_AUTO_RESUME_EVENT = "kendex:rate-limit";
@@ -53386,7 +53483,7 @@ function subscriberProfileEnv(profile, base = process.env) {
   return env;
 }
 function claudeDirForProfile(profile) {
-  return profile.configDir?.trim() || join11(homedir4(), ".claude");
+  return profile.configDir?.trim() || join12(homedir5(), ".claude");
 }
 function accountSessionScope(profile) {
   return profile ? { accountProfileId: profile.profileId, claudeConfigDir: claudeDirForProfile(profile) } : {};
@@ -54873,11 +54970,11 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
 
 // src/agents-md.ts
 import { lstatSync as lstatSync2, readFileSync as readFileSync6, statSync as statSync5 } from "fs";
-import { dirname as dirname8, join as join12, resolve as resolve6 } from "path";
+import { dirname as dirname9, join as join13, resolve as resolve6 } from "path";
 var CONTEXT_FILE_CANDIDATES = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD"];
 function contextFileInDir(dir) {
   for (const filename of CONTEXT_FILE_CANDIDATES) {
-    const candidate = join12(dir, filename);
+    const candidate = join13(dir, filename);
     try {
       if (statSync5(candidate).isFile()) return candidate;
     } catch (error51) {
@@ -54910,7 +55007,7 @@ function findAgentsMdInParents(startDir) {
   while (true) {
     const candidate = contextFileInDir(current);
     if (candidate) return candidate;
-    const parent = dirname8(current);
+    const parent = dirname9(current);
     if (parent === current) break;
     current = parent;
   }
@@ -54942,7 +55039,7 @@ function sanitizeAgentsContent(content) {
 
 // src/prompt-context.ts
 import { existsSync as existsSync5, readFileSync as readFileSync7 } from "fs";
-import { dirname as dirname9, join as join13, resolve as resolve7 } from "path";
+import { dirname as dirname10, join as join14, resolve as resolve7 } from "path";
 function readTrimmed(path) {
   try {
     if (!existsSync5(path)) return void 0;
@@ -54956,9 +55053,9 @@ function readTrimmed(path) {
 function findProjectAppendSystem(startDir) {
   let current = resolve7(startDir);
   while (true) {
-    const candidate = join13(current, ".pi", "APPEND_SYSTEM.md");
+    const candidate = join14(current, ".pi", "APPEND_SYSTEM.md");
     if (existsSync5(candidate)) return candidate;
-    const parent = dirname9(current);
+    const parent = dirname10(current);
     if (parent === current) break;
     current = parent;
   }
@@ -54966,7 +55063,7 @@ function findProjectAppendSystem(startDir) {
 }
 function readAppendSystemPromptFiles(cwd) {
   const files = [
-    { label: "global APPEND_SYSTEM.md", path: join13(piUserDir(), "APPEND_SYSTEM.md") }
+    { label: "global APPEND_SYSTEM.md", path: join14(piUserDir(), "APPEND_SYSTEM.md") }
   ];
   const projectPath = isolatedFromEnv() ? void 0 : findProjectAppendSystem(cwd);
   if (projectPath) files.push({ label: "project .pi/APPEND_SYSTEM.md", path: projectPath });
@@ -56077,9 +56174,10 @@ function index_default(pi2) {
     debug(`${event}: clearing session ${activeSession?.sessionId?.slice(0, 8) ?? "none"}`);
     setSharedSession(null);
   };
+  installSettingsCacheRefresh(pi2);
   pi2.on("session_start", (event, ctx2) => runInRequestLane(ctx2.sessionManager.getSessionId(), () => {
     recordStartedLane(ctx2.sessionManager, ctx2.sessionManager.getSessionId());
-    recordProjectTrust(ctx2);
+    recordProjectTrust2(ctx2);
     setPiUI(ctx2.ui);
     if (event.reason === "new" || event.reason === "resume" || event.reason === "fork") {
       clearSession(`session_start:${event.reason}`);

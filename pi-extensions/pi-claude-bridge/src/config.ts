@@ -5,10 +5,17 @@
 // user claude-bridge.json and never read extension-manager settings.
 
 import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
-import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
-import { dirname, join, resolve, sep } from "path";
+import { dirname, join, sep } from "path";
 import { debug } from "./debug.js";
+import {
+	packageConfigIn,
+	piSettingsPaths,
+	piUserDir,
+	readSettingsFiles,
+	recordProjectTrust as recordPiProjectTrust,
+	trustedProjectSettingsPath,
+} from "./package-config.js";
 
 export const PACKAGE_ID = "@vanillagreen/pi-claude-bridge";
 
@@ -89,29 +96,6 @@ export interface Config {
 
 type SettingsRecord = Record<string, unknown>;
 
-function expandHome(input: string): string {
-	if (input === "~") return homedir();
-	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
-	return input;
-}
-
-/** Root-anchored as `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`
- * means it, which `isAbsolute` is not: it calls a driveless `\root` absolute
- * where the renderer does not, putting the two on different roots. Hoisted, so
- * a circular import cannot reach it inside a temporal dead zone. */
-function rootAnchored(path: string, windows: boolean): boolean { return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/"); }
-
-/**
- * The Pi agent config dir: `PI_CODING_AGENT_DIR` when it names a root-anchored
- * path, else `~/.pi/agent`. Every bridge default routes through this function
- * so a host app that owns the agent dir owns
- * those paths too.
- */
-export function piUserDir(): string {
-	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-	return resolve(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
-}
-
 /**
  * Isolated mode (`CLAUDE_BRIDGE_ISOLATED=1`) : a host app embedding the bridge
  * declares that nothing outside its explicitly configured dirs may be read.
@@ -141,93 +125,42 @@ function mergeDeep<T extends SettingsRecord>(target: T, source: SettingsRecord):
 	return target;
 }
 
-function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
-}
-
-const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
-
-interface ProjectTrustRegistry {
-	projectSettings?: Map<string, boolean>;
-}
-
-function projectTrustRegistry(): ProjectTrustRegistry {
-	const host = globalThis as unknown as Record<PropertyKey, ProjectTrustRegistry | undefined>;
-	const existing = host[PROJECT_TRUST_SYMBOL];
-	if (existing) return existing;
-	const created: ProjectTrustRegistry = {};
-	host[PROJECT_TRUST_SYMBOL] = created;
-	return created;
-}
-
 export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () => boolean }): void {
-	if (!ctx.cwd) return;
 	// Isolated mode never reads project config, so recording trust would only
 	// run the cwd-ancestor `.pi/settings.json` walk (a filesystem probe outside
 	// the host-owned dirs) for a result nothing consumes. Skip it entirely.
 	if (isolatedFromEnv()) return;
-	let trusted = true;
-	try {
-		trusted = ctx.isProjectTrusted?.() === true;
-	} catch {
-		trusted = false;
-	}
-	const registry = projectTrustRegistry();
-	if (!registry.projectSettings) registry.projectSettings = new Map();
-	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);
+	recordPiProjectTrust(ctx);
 }
 
-function projectSettingsTrusted(settingsPath: string): boolean {
-	return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
-}
-
-
-function settingsPaths(cwd: string): string[] {
-	const user = join(piUserDir(), "settings.json");
-	// An embedding host may have to share PI_CODING_AGENT_DIR with an in-process
-	// Pi SDK. In isolated mode, settings.json is therefore not authoritative and
-	// must not be consulted even at user scope.
-	if (isolatedFromEnv()) return [];
-	const project = projectSettingsPath(cwd);
-	return projectSettingsTrusted(project) ? [user, project] : [user];
-}
-
+/** A JSON config file, `{}` when it is absent. A malformed file is ignored:
+ * stdout/stderr output can corrupt active Pi TUI widgets, so the debug log is
+ * the one place it explains itself. */
 export function tryParseJson(path: string): Partial<Config> {
-	if (!existsSync(path)) return {};
-	try {
-		return JSON.parse(readFileSync(path, "utf-8"));
-	} catch (error) {
-		// Malformed optional config should not write raw terminal diagnostics;
-		// stdout/stderr output can corrupt active Pi TUI widgets. The debug log is
-		// the one place a silently-ignored file explains itself.
-		debug(`config: ignoring malformed ${path}:`, error instanceof Error ? error.message : String(error));
+	const [file] = readSettingsFiles([path]);
+	if (file === undefined) return {};
+	if (file.kind === "malformed") {
+		debug(`config: ignoring malformed ${path}:`, file.error);
 		return {};
 	}
+	return file.settings as Partial<Config>;
 }
 
 function readManagerConfig(cwd: string): SettingsRecord {
+	// An embedding host may have to share PI_CODING_AGENT_DIR with an in-process
+	// Pi SDK. In isolated mode, settings.json is therefore not authoritative and
+	// must not be consulted even at user scope.
+	if (isolatedFromEnv()) return {};
 	const merged: SettingsRecord = {};
 	const userPath = join(piUserDir(), "settings.json");
-	for (const path of settingsPaths(cwd)) {
-		if (!existsSync(path)) continue;
-		try {
-			const parsed = JSON.parse(readFileSync(path, "utf8"));
-			const configRoot = asRecord(asRecord(asRecord(parsed?.kendex)?.extensionManager)?.config);
-			const config = asRecord(configRoot?.[PACKAGE_ID]);
-			if (config) mergeDeep(merged, path === userPath ? config : withoutUserScopeOnlyKeys(config));
-		} catch (error) {
-			// Ignore malformed optional manager config; Pi will surface settings
-			// issues elsewhere. Still say so in the debug log.
-			debug(`config: ignoring malformed manager config ${path}:`, error instanceof Error ? error.message : String(error));
+	for (const file of readSettingsFiles(piSettingsPaths(cwd))) {
+		if (file.kind === "malformed") {
+			// Pi surfaces settings issues elsewhere; the debug log still says so.
+			debug(`config: ignoring malformed manager config ${file.path}:`, file.error);
+			continue;
 		}
+		const config = packageConfigIn(file.settings, PACKAGE_ID);
+		if (config) mergeDeep(merged, file.path === userPath ? config : withoutUserScopeOnlyKeys(config));
 	}
 	return merged;
 }
@@ -392,8 +325,8 @@ function legacyLayers(cwd: string): LegacyLayer[] {
 	const globalPath = join(piUserDir(), "claude-bridge.json");
 	const layers: LegacyLayer[] = [{ path: globalPath, config: legacyFileConfig(globalPath) }];
 	if (isolatedFromEnv()) return layers;
-	const projectSettings = projectSettingsPath(cwd);
-	if (!projectSettingsTrusted(projectSettings)) return layers;
+	const projectSettings = trustedProjectSettingsPath(cwd);
+	if (projectSettings === undefined) return layers;
 	const projectPath = join(dirname(projectSettings), "claude-bridge.json");
 	// Project trust covers ordinary options only; the connector keys stay
 	// user-scope/env (see USER_SCOPE_ONLY_PROVIDER_KEYS).

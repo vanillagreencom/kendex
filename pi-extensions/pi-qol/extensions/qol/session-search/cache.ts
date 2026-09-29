@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -9,7 +9,8 @@ import {
 	SESSION_SEARCH_PENDING_SYMBOL,
 	SESSION_SEARCH_STATUS_KEY,
 } from "../constants.js";
-import { expandHome, piSettingsPaths, settingBoolean, settingNumber, settingString, settingStringAllowEmpty } from "../settings.js";
+import { expandHome, piSettingsPaths, readSettingsFiles } from "../package-config.js";
+import { settingBoolean, settingNumber, settingString, settingStringAllowEmpty } from "../settings.js";
 import { forEachSessionJsonlLine } from "./jsonl.js";
 import type {
 	QolSessionPaletteAction,
@@ -82,16 +83,10 @@ function configuredSessionDir(cwd: string): string | undefined {
 	const envDir = process.env.PI_CODING_AGENT_SESSION_DIR?.trim();
 	if (envDir) return resolveSettingsRelativePath(envDir, join(resolve(cwd), ".pi", "settings.json"));
 	let configured: string | undefined;
-	for (const settingsPath of piSettingsPaths(cwd)) {
-		if (!existsSync(settingsPath)) continue;
-		try {
-			const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
-			if (typeof parsed?.sessionDir === "string" && parsed.sessionDir.trim()) {
-				configured = resolveSettingsRelativePath(parsed.sessionDir, settingsPath);
-			}
-		} catch {
-			// Ignore malformed optional settings.
-		}
+	for (const file of readSettingsFiles(piSettingsPaths(cwd))) {
+		if (file.kind !== "parsed") continue;
+		const sessionDir = file.settings.sessionDir;
+		if (typeof sessionDir === "string" && sessionDir.trim()) configured = resolveSettingsRelativePath(sessionDir, file.path);
 	}
 	return configured;
 }

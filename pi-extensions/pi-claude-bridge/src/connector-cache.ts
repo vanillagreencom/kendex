@@ -35,7 +35,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { piUserDir } from "./config.js";
+import { piUserDir } from "./package-config.js";
 import { debug } from "./debug.js";
 import type { ConnectorEntry } from "./connector-inventory.js";
 

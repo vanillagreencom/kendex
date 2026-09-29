@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 0.1.3
+
+- Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again, and an unchanged file is not parsed again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk, and widgets and renderers read settings many times per repaint. The project root is found once per second instead of on every file read.
+
 ### 0.1.2
 
 - A session started below the home directory no longer takes a marked folder above home for its project root, so settings and the `AGENTS.md` walk use the project kendex renders into. The walk up stops at home; a `.kendex-lock.json` at home still makes home the project.

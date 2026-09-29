@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+
+import { expandHome, packageConfigIn, piSettingsPaths, projectSettingsTrustedForCwd, readSettingsFiles, settingsMemo, type SettingsRecord } from "./package-config.js";
 
 export const PACKAGE_ID = "@vanillagreen/pi-web-tools";
 export const WEB_PROVIDERS = ["auto", "exa", "perplexity", "gemini", "exa-mcp", "duckduckgo", "openai-native"] as const;
@@ -53,80 +54,6 @@ export const DEFAULT_SETTINGS: Omit<WebToolsSettings, "apiKeys" | "warnings" | "
 	video: { enabled: true },
 };
 
-type SettingsRecord = Record<string, unknown>;
-const settingsParseWarnings = new Map<string, string>();
-
-function expandHome(input: string): string {
-	if (input === "~") return homedir();
-	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
-	return input;
-}
-
-/** Root-anchored as `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`
- * means it, which `isAbsolute` is not: it calls a driveless `\root` absolute
- * where the renderer does not, putting the two on different roots. Hoisted, so
- * a circular import cannot reach it inside a temporal dead zone. */
-function rootAnchored(path: string, windows: boolean): boolean { return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/"); }
-
-export function piUserDir(): string {
-	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-	return resolve(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
-}
-
-export function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
-}
-
-const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
-
-interface ProjectTrustRegistry {
-	projectSettings?: Map<string, boolean>;
-}
-
-function projectTrustRegistry(): ProjectTrustRegistry {
-	const host = globalThis as unknown as Record<PropertyKey, ProjectTrustRegistry | undefined>;
-	const existing = host[PROJECT_TRUST_SYMBOL];
-	if (existing) return existing;
-	const created: ProjectTrustRegistry = {};
-	host[PROJECT_TRUST_SYMBOL] = created;
-	return created;
-}
-
-export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () => boolean }): void {
-	if (!ctx.cwd) return;
-	let trusted = true;
-	try {
-		trusted = ctx.isProjectTrusted?.() === true;
-	} catch {
-		trusted = false;
-	}
-	const registry = projectTrustRegistry();
-	if (!registry.projectSettings) registry.projectSettings = new Map();
-	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);
-}
-
-function projectSettingsTrusted(settingsPath: string): boolean {
-	return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
-}
-
-export function projectSettingsTrustedForCwd(cwd = process.cwd()): boolean {
-	return projectSettingsTrusted(projectSettingsPath(cwd));
-}
-
-export function piSettingsPaths(cwd = process.cwd()): string[] {
-	const user = join(piUserDir(), "settings.json");
-	const project = projectSettingsPath(cwd);
-	return projectSettingsTrustedForCwd(cwd) ? [user, project] : [user];
-}
-
 function asRecord(value: unknown): SettingsRecord | undefined {
 	return value && typeof value === "object" && !Array.isArray(value) ? (value as SettingsRecord) : undefined;
 }
@@ -141,32 +68,20 @@ function mergeDeep(target: SettingsRecord, source: SettingsRecord): SettingsReco
 	return target;
 }
 
-export function readPackageConfig(packageId: string, cwd?: string): SettingsRecord {
+/** This package's config, merged deeply: a nested object in a later file
+ * overrides the earlier file's key by key, not whole. */
+export function readRawkendexConfig(cwd?: string): SettingsRecord {
 	const merged: SettingsRecord = {};
-	for (const path of piSettingsPaths(cwd)) {
-		if (!existsSync(path)) continue;
-		try {
-			const parsed = JSON.parse(readFileSync(path, "utf8"));
-			settingsParseWarnings.delete(path);
-			const config = asRecord(asRecord(asRecord(parsed?.kendex)?.extensionManager)?.config)?.[packageId];
-			if (config && typeof config === "object" && !Array.isArray(config)) mergeDeep(merged, config as SettingsRecord);
-		} catch (error) {
-			settingsParseWarnings.set(path, error instanceof Error ? error.message : String(error));
-		}
+	for (const file of readSettingsFiles(piSettingsPaths(cwd))) {
+		if (file.kind !== "parsed") continue;
+		const config = packageConfigIn(file.settings, PACKAGE_ID);
+		if (config) mergeDeep(merged, config);
 	}
 	return merged;
 }
 
-export function readRawkendexConfig(cwd?: string): SettingsRecord {
-	return readPackageConfig(PACKAGE_ID, cwd);
-}
-
 export function settingsDiagnostics(cwd?: string): string[] {
-	readRawkendexConfig(cwd);
-	return piSettingsPaths(cwd).flatMap((path) => {
-		const warning = settingsParseWarnings.get(path);
-		return warning ? [`${path}: ${warning}`] : [];
-	});
+	return readSettingsFiles(piSettingsPaths(cwd)).flatMap((file) => (file.kind === "malformed" ? [`${file.path}: ${file.error}`] : []));
 }
 
 function boolSetting(raw: SettingsRecord, key: keyof typeof DEFAULT_SETTINGS): boolean {
@@ -227,16 +142,9 @@ function recordOfRecords(raw: SettingsRecord, key: string): Record<string, Recor
 	return output;
 }
 
-function readJsonFile(path: string): SettingsRecord {
-	if (!existsSync(path)) return {};
-	const parsed = JSON.parse(readFileSync(path, "utf8"));
-	return asRecord(parsed) ?? {};
-}
-
-function parseEnvFile(path: string): SettingsRecord {
-	if (!existsSync(path)) return {};
+function parseEnvFile(text: string): SettingsRecord {
 	const parsed: SettingsRecord = {};
-	for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
+	for (const line of text.split(/\r?\n/)) {
 		const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
 		if (!match) continue;
 		let value = match[2] ?? "";
@@ -256,10 +164,6 @@ function projectEnvFiles(cwd: string): string[] {
 	}
 }
 
-function readProjectEnvConfig(cwd: string): SettingsRecord {
-	if (!projectSettingsTrustedForCwd(cwd)) return {};
-	return projectEnvFiles(cwd).reduce((merged, path) => mergeDeep(merged, parseEnvFile(path)), {} as SettingsRecord);
-}
 
 function resolveConfigPath(raw: SettingsRecord): string | undefined {
 	const candidate = typeof raw.webToolsConfigFile === "string" ? raw.webToolsConfigFile : typeof raw.configFile === "string" ? raw.configFile : process.env.PI_WEB_TOOLS_CONFIG_FILE;
@@ -316,15 +220,79 @@ function resolveSecretRef(value: string | undefined, name: string, warnings: str
 	return resolved;
 }
 
-export function loadSettings(cwd = process.cwd()): WebToolsSettings {
+/** What a file read gave: its text, nothing where it does not exist, or the
+ * error that stopped the read. */
+type FileRead = { kind: "absent" } | { kind: "text"; text: string } | { kind: "failed"; error: string };
+
+function readFile(path: string): FileRead {
+	try {
+		return { kind: "text", text: readFileSync(path, "utf8") };
+	} catch (error) {
+		const code = (error as { code?: unknown } | null)?.code;
+		if (code === "ENOENT" || code === "ENOTDIR") return { kind: "absent" };
+		return { kind: "failed", error: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+/** Every input `loadSettings` resolves from, read raw: the merged package
+ * config, the settings-file diagnostics, the trusted project's `.env` files, the
+ * private config file. With the trust answer, the process cwd and the
+ * environment variables `loadSettings` keys on, two equal inputs resolve to the
+ * same settings. */
+interface SettingsInputs {
+	raw: SettingsRecord;
+	diagnostics: string[];
+	envFiles: FileRead[];
+	privateConfigFile: string | undefined;
+	privateConfig: FileRead | undefined;
+}
+
+const INPUT_ENV_KEYS = ["EXA_API_KEY", "PERPLEXITY_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "JINA_API_KEY", "PI_WEB_TOOLS_CONFIG_FILE", OP_READ_TIMEOUT_ENV] as const;
+
+function readSettingsInputs(cwd: string): SettingsInputs {
 	const raw = readRawkendexConfig(cwd);
-	const warnings = settingsDiagnostics(cwd);
-	const envFileConfig = readProjectEnvConfig(cwd);
 	const privateConfigFile = resolveConfigPath(raw);
+	return {
+		raw,
+		diagnostics: settingsDiagnostics(cwd),
+		envFiles: projectSettingsTrustedForCwd(cwd) ? projectEnvFiles(cwd).map(readFile) : [],
+		privateConfigFile,
+		privateConfig: privateConfigFile === undefined ? undefined : readFile(privateConfigFile),
+	};
+}
+
+/**
+ * The resolved settings for `cwd`. Every provider request asks, and resolving
+ * an `op://` key runs the 1Password CLI, so the resolved object is memoized:
+ * served for the settings window, then kept for as long as every raw input
+ * reads the same, and dropped with every other memoized setting on a settings
+ * change or a new session. The project's trust and the environment are read on
+ * every call and key the memo, so a change to either applies at once. Frozen,
+ * since every caller shares it.
+ */
+export function loadSettings(cwd = process.cwd()): WebToolsSettings {
+	const key = JSON.stringify(["web-tools-settings", cwd, projectSettingsTrustedForCwd(cwd), process.cwd(), INPUT_ENV_KEYS.map((name) => process.env[name] ?? null)]);
+	let inputs: SettingsInputs | undefined;
+	return settingsMemo(
+		key,
+		() => resolveSettings(inputs ?? readSettingsInputs(cwd)),
+		() => {
+			inputs = readSettingsInputs(cwd);
+			return JSON.stringify(inputs);
+		},
+	);
+}
+
+function resolveSettings(inputs: SettingsInputs): WebToolsSettings {
+	const { raw, privateConfigFile } = inputs;
+	const warnings = [...inputs.diagnostics];
+	const envFileConfig = inputs.envFiles.reduce((merged, read) => (read.kind === "text" ? mergeDeep(merged, parseEnvFile(read.text)) : merged), {} as SettingsRecord);
 	let privateConfig: SettingsRecord = {};
-	if (privateConfigFile) {
-		try { privateConfig = readJsonFile(privateConfigFile); }
+	if (privateConfigFile && inputs.privateConfig?.kind === "text") {
+		try { privateConfig = asRecord(JSON.parse(inputs.privateConfig.text)) ?? {}; }
 		catch (error) { warnings.push(`${privateConfigFile}: ${error instanceof Error ? error.message : String(error)}`); }
+	} else if (privateConfigFile && inputs.privateConfig?.kind === "failed") {
+		warnings.push(`${privateConfigFile}: ${inputs.privateConfig.error}`);
 	}
 	const githubClone = nested(raw, "githubClone");
 	const htmlExtraction = nested(raw, "htmlExtraction");
@@ -339,7 +307,7 @@ export function loadSettings(cwd = process.cwd()): WebToolsSettings {
 	const geminiKey = process.env.GEMINI_API_KEY || secretFrom(secrets, ["GEMINI_API_KEY", "geminiApiKey"]);
 	const openAiKey = process.env.OPENAI_API_KEY || secretFrom(secrets, ["OPENAI_API_KEY", "openaiApiKey"]);
 	const jinaKey = process.env.JINA_API_KEY || secretFrom(secrets, ["JINA_API_KEY", "jinaApiKey"]);
-	return {
+	return Object.freeze({
 		enabled: boolSetting(raw, "enabled"),
 		glyphStyle: glyphStyleSetting(raw),
 		autoEnable: boolSetting(raw, "autoEnable"),
@@ -380,5 +348,5 @@ export function loadSettings(cwd = process.cwd()): WebToolsSettings {
 		},
 		privateConfigFile,
 		warnings,
-	};
+	});
 }

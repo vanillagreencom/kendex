@@ -2,7 +2,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { type FSWatcher, statSync, watch } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-import { getBool, projectRoot, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
+import { getBool, projectRoot, readConfig, recordProjectTrust } from "./config.js";
+import { installSettingsCacheRefresh, projectTrusted } from "./package-config.js";
 import { agentLine, personLine, runHook, unreadableLine } from "./dispatch.js";
 import { runCommandAsync } from "./process.js";
 import { registeredHooks, TOOL_RESULT_LISTENER } from "./registry.js";
@@ -193,6 +194,7 @@ export default function laneMailWake(pi: ExtensionAPI): void {
 		}
 	};
 
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", async (_event, ctx: ExtensionContext) => {
 		closeWatch();
 		ctxRef = ctx;

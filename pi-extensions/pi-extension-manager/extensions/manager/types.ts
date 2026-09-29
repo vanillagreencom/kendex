@@ -1,6 +1,5 @@
 export const INSTALL_SYMBOL = Symbol.for("kendex.pi-extension-manager.installed");
 export const MANAGER_ID = "@vanillagreen/pi-extension-manager";
-export const SETTINGS_EVENT = "kendex:extension-settings-changed";
 export const DEFAULT_WIDTH = 124;
 export const DEFAULT_WIDTH_PERCENT = "92%";
 export const DEFAULT_MAX_HEIGHT = "85%";

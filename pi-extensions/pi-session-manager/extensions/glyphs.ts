@@ -1,4 +1,4 @@
-import { readPackageConfig } from "./paths.js";
+import { readPackageConfig } from "./package-config.js";
 
 export type GlyphStyle = "unicode" | "ascii";
 export type GlobalGlyphStyleOverride = "inherit" | GlyphStyle;

@@ -3,7 +3,8 @@ import { basename, resolve } from "node:path";
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { applyVisibleReplacements, buildVisibleMap, type VisibleReplacement } from "./ansi.js";
 import { IMAGE_EXTENSIONS, IMAGE_PATH_PATTERN } from "./constants.js";
-import { expandHome, settingBoolean } from "./settings.js";
+import { expandHome } from "./package-config.js";
+import { settingBoolean } from "./settings.js";
 
 function stripAtPrefix(path: string): string {
 	return path.startsWith("@") ? path.slice(1) : path;

@@ -8,6 +8,7 @@
 - The restore check no longer serializes the whole Pi history after each assistant message. Each stored message is serialized and hashed once per process. Summary, custom and edited messages are hashed again at each check. The check then hashes the list of per-message hashes. The check's format changed, so the first resume of a session saved by 4.0.5 or earlier rebuilds the Claude session from Pi history once.
 - A tool call's streamed arguments are parsed once, when the block completes, not again at each fragment.
 - With debugging off, the bridge no longer serializes a tool result, or lists or serializes any other collection, for a debug line it never writes. With `CLAUDE_BRIDGE_DEBUG=1` set, no debug line copies tool output or the text of the user's prompt into the log.
+- Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again, and an unchanged file is not parsed again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk, and widgets and renderers read settings many times per repaint. The bridge's own `claude-bridge.json` files are read the same way.
 
 ### 4.0.5
 

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "fs";
 import { dirname, join, resolve } from "path";
-import { isolatedFromEnv, piUserDir } from "./config.js";
+import { isolatedFromEnv } from "./config.js";
+import { piUserDir } from "./package-config.js";
 import { debug } from "./debug.js";
 
 export interface PromptContextSettings {

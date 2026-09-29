@@ -16,6 +16,7 @@ function fakePi() {
 		registerMessageRenderer() {},
 		registerTool(tool: { name: string }) { tools.push(tool); },
 		on(event: string, handler: (event: unknown, ctx: unknown) => unknown) { (handlers[event] ??= []).push(handler); },
+		events: { on: () => () => {} },
 		getActiveTools() { return activeTools; },
 		setActiveTools(next: string[]) { activeTools = next; this.activeTools = next; },
 	};

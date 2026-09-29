@@ -3,6 +3,7 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 import { getBool, projectRoot, readConfig, recordProjectTrust } from "./config.js";
+import { installSettingsCacheRefresh } from "./package-config.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-nested-agents-md.installed");
 
@@ -127,6 +128,7 @@ export default function nestedAgentsMd(pi: ExtensionAPI): void {
 	// being rebuilt, and what was attached before is not in it.
 	let attached = new Set<string>();
 
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", (_event, ctx: ExtensionContext) => {
 		recordProjectTrust(ctx);
 		attached = new Set<string>();

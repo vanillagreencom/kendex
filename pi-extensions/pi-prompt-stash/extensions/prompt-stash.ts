@@ -7,7 +7,7 @@ import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { frameGlyphs, glyphs } from "./glyphs.js";
-import { piUserDir, readPackageConfig, recordProjectTrust } from "./settings.js";
+import { installSettingsCacheRefresh, piUserDir, readPackageConfig, recordProjectTrust } from "./package-config.js";
 
 const PACKAGE_ID = "@vanillagreen/pi-prompt-stash";
 const DEFAULT_STORE_FILE = "prompt-stash.json";
@@ -462,6 +462,7 @@ export default function promptStash(pi: ExtensionAPI): void {
 	guard[INSTALL_SYMBOL] = true;
 	if (!settingBoolean("enabled", true)) return;
 
+	installSettingsCacheRefresh(pi);
 	pi.on("session_start", async (_event, ctx) => {
 		recordProjectTrust(ctx);
 	});
