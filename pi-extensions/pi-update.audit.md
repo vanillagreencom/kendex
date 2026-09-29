@@ -6,6 +6,23 @@ In scope since the previous marker: four releases, `0.86.0` (2026-09-19), `0.86.
 
 Behaviour was read from the installed Pi 0.87.1 (`dist/core/agent-session.js`, `dist/core/provider-composer.js`, `dist/core/model-runtime.js`, `dist/core/tools/*.js`) and from fixtures that load extension source into a real `createAgentSession` with a faux provider.
 
+## Verdict
+
+Verdict: `roll`.
+
+This section was added after the audit, under the blocking rule in `pi-extensions/AGENTS.md` (KEN-2129). Every `### Breaking Changes` entry in range was read against `pi-hooks/pi-contract.json`, across every source; the `ai` and `agent` entries repeat the `coding-agent` ones they are inherited from. `tui` and the other sources carry none.
+
+| Release | Entry | Names from the contract | Result |
+|---|---|---|---|
+| 0.87.0 | Runs requested from `agent_settled` handlers deferred until every settled handler finishes; handlers still read `ctx.isIdle() === true` | `agent_settled`, `ctx.isIdle` | Blocking. The pi-hooks change landed in KEN-2010 (`8b86d5ce`), the audit base; § Settled-handler deferral. |
+| 0.87.0 | `TurnEndEvent` expanded; `ExtensionRunner.emit()` no longer accepts `turn_end` | `turn_end` | Blocking. No pi-hooks change needed: its `turn_end` listener reads no event field and pi-hooks emits no event. `tests/lane-mail-wake.test.ts` loads that listener from the manifest in a real Pi 0.87.1 session. |
+| 0.87.0 | `shouldStopAfterTurn` removed | none | Not blocking. |
+| 0.87.0 | `ContextEditEntry` added to the `SessionEntry` union | none | Not blocking. |
+| 0.87.0 | `SessionManager` canonical for provider context | none; pi-hooks calls only `getSessionId` and `getSessionFile` on it | Not blocking. |
+| 0.86.0 | Provider stream inputs are `TranscriptContext` | none | Not blocking. |
+| 0.86.0 | `ToolCall.arguments` and `ToolResultMessage.details` restricted to JSON values | none | Not blocking. |
+| 0.86.0 | `user_bash` fails closed | none | Not blocking. |
+
 ## Counts
 
 | Bucket | Count |

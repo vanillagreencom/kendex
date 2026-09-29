@@ -103,6 +103,74 @@ test("Pi package manifests follow the Pi 0.75 package policy", () => {
 	}
 });
 
+function compareVersions(a, b) {
+	const [x, y] = [a, b].map((version) => version.split(".").map(Number));
+	return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+}
+
+// The highest Pi release a Pi peer floor may name is the one
+// pi-update.audit.md clears for lanes (pi-extensions/AGENTS.md): its
+// `Marker` line names the release it audited and the marker before it, and
+// its `Verdict:` line says `roll` or `hold`. A record for a release other than
+// the marker's is a missing record. Taking the manifests, marker and record as
+// arguments is what lets the controls below plant each defect.
+function auditRecord(audit) {
+	const [, previous, release] = audit.match(/^Marker `(\d+\.\d+\.\d+)` → `(\d+\.\d+\.\d+)`/m) ?? [];
+	return { previous, release, verdict: audit.match(/^Verdict: `(roll|hold)`/m)?.[1] };
+}
+
+function floorRefusals(pkgs, marker, audit) {
+	const { previous, release, verdict } = auditRecord(audit);
+	if (release !== marker.lastVersion) return [`pi-update.audit.md: no audit record for ${marker.lastVersion}, the release pi-update.state.json marks audited`];
+	if (verdict === undefined) return [`pi-update.audit.md: the record for ${release} names no verdict, \`roll\` or \`hold\``];
+	const ceiling = verdict === "roll" ? release : previous;
+	return pkgs.flatMap(({ dir, pkg }) =>
+		Object.entries(pkg.peerDependencies ?? {}).flatMap(([name, range]) => {
+			const floor = name.startsWith("@earendil-works/pi-") ? range.match(/^>=(\d+\.\d+\.\d+)$/)?.[1] : undefined;
+			return floor !== undefined && compareVersions(floor, ceiling) > 0
+				? [`${dir}: Pi peer ${name} floor ${floor} is above ${ceiling}, the last release pi-update.audit.md clears (verdict ${verdict} for ${release})`]
+				: [];
+		}),
+	);
+}
+
+const auditPath = join(root, "pi-update.audit.md");
+const markerPath = join(root, "pi-update.state.json");
+
+test("no Pi peer floor rises above the release the Pi update audit clears", () => {
+	const pkgs = packages();
+	const floors = pkgs.filter(({ pkg }) => Object.values(pkg.peerDependencies ?? {}).some((range) => range.startsWith(">=")));
+	assert.ok(floors.length > 0, "no package declares a >=X.Y.Z Pi peer floor: the manifest reader is broken");
+	assert.deepEqual(floorRefusals(pkgs, JSON.parse(readFileSync(markerPath, "utf8")), readFileSync(auditPath, "utf8")), []);
+});
+
+// Must-fail controls, one per rule floorRefusals holds: each plants one defect
+// in a copy of the real record, or one floor in a package of its own.
+test("a floor bump the audit record does not clear is refused", () => {
+	const marker = JSON.parse(readFileSync(markerPath, "utf8"));
+	const audit = readFileSync(auditPath, "utf8");
+	const { previous, release } = auditRecord(audit);
+	assert.ok(release, "the real record carries no Marker line: these controls plant nothing");
+	const [major, minor, patch] = release.split(".").map(Number);
+	const next = `${major}.${minor}.${patch + 1}`;
+	const pkgAt = (floor) => [{ dir: "planted", pkg: { peerDependencies: { "@earendil-works/pi-coding-agent": `>=${floor}` } } }];
+	const swap = (from, to) => {
+		assert.equal(audit.split(from).length, 2, `the real record holds ${from} other than once: this control plants nothing`);
+		return audit.replace(from, to);
+	};
+	const rows = [
+		{ name: "floor above the audited release", pkgs: pkgAt(next), marker, audit, refused: `planted: Pi peer @earendil-works/pi-coding-agent floor ${next} is above ${release}` },
+		{ name: "marker ahead of the record", pkgs: pkgAt(release), marker: { ...marker, lastVersion: next }, audit, refused: `no audit record for ${next}` },
+		{ name: "record without a verdict", pkgs: pkgAt(release), marker, audit: swap("Verdict: `roll`", "Verdict: pending"), refused: "names no verdict" },
+		{ name: "floor at a held release", pkgs: pkgAt(release), marker, audit: swap("Verdict: `roll`", "Verdict: `hold`"), refused: `floor ${release} is above ${previous}` },
+	];
+	for (const row of rows) {
+		const refusals = floorRefusals(row.pkgs, row.marker, row.audit);
+		assert.equal(refusals.length, 1, `${row.name}: ${JSON.stringify(refusals)}`);
+		assert.ok(refusals[0].includes(row.refused), `${row.name}: ${refusals[0]}`);
+	}
+});
+
 test("vendored append-system helpers stay identical", () => {
 	const hashes = [];
 	for (const { dir } of packages()) {

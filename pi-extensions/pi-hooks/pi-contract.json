@@ -1,0 +1,20 @@
+{
+  "uses": {
+    "extensions/config.ts": {
+      "events": [],
+      "calls": ["ctx.isProjectTrusted"]
+    },
+    "extensions/hooks.ts": {
+      "events": ["agent_settled", "session_start", "tool_call", "tool_result", "turn_end", "turn_start"],
+      "calls": ["ctx.isIdle", "ctx.ui.notify", "pi.sendMessage"]
+    },
+    "extensions/lane-mail-wake.ts": {
+      "events": ["agent_settled", "session_shutdown", "session_start"],
+      "calls": ["ctx.isIdle", "ctx.ui.notify", "pi.sendMessage", "pi.sendUserMessage"]
+    },
+    "extensions/vocab.ts": {
+      "events": [],
+      "calls": ["ctx.getContextUsage", "ctx.sessionManager.getSessionFile", "ctx.sessionManager.getSessionId"]
+    }
+  }
+}

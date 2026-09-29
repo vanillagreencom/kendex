@@ -71,6 +71,11 @@ State lives in `pi-extensions/pi-update.state.json` (committed source; not a dis
    - For a changed event, lifecycle or provider-input contract, feed our code what the installed Pi produces: load the extension into a real `createAgentSession` with a faux provider, as `pi-extensions/pi-hooks/tests/lane-mail-wake.test.ts` does, or pass it Pi's own normalized value. Package suites run on fake hosts and older pinned Pi versions, so they pass across such a change.
    - Decide: ship now, defer, or skip. Record reasoning.
 5. **For Non-impact items:** one-line justification each — enough that re-reading the audit later confirms it was considered.
+6. **Blocking entries.** Read `pi-extensions/pi-hooks/pi-contract.json`. Check every `### Breaking Changes` entry in scope, from every source, against the events and calls it lists; the rule for an entry that names one is in `pi-extensions/AGENTS.md`. List each Breaking Changes entry read in the record's `## Verdict` table with the listed names it carries.
+
+## Audit record
+
+Overwrite `pi-extensions/pi-update.audit.md` with this run's record: the ``Marker `<old>` → `<new>`.`` line, the sources fetched, every classified entry, and a `## Verdict` section whose first line is ``Verdict: `roll`.`` or ``Verdict: `hold`.``. `pi-extensions/package-policy.test.mjs` parses the Marker and Verdict lines to refuse a Pi peer floor above the release the record clears. The marker advances under either verdict. The change that lands the pi-hooks fix for a held release sets the verdict to `roll` and names its commit in the table.
 
 ## Apply fixes
 
@@ -90,6 +95,7 @@ Produce a structured summary:
 
 - **Releases covered:** `lastVersion` → newest processed version, with dates, and the source keys that carried new entries.
 - **Classified entries:** count per bucket (Required / Optional / Non-impact).
+- **Verdict:** `roll` or `hold`, with each blocking Breaking Changes entry and the pi-hooks change it waits for.
 - **Shipped:** commit hash + one-line subject for each commit; affected extensions; tests run with pass count.
 - **Deferred / skipped (with reason):** Optional items not taken, plus the reasoning (e.g. "Pi exposes unified `details.patch` string; our renderer needs `StructuredDiff` tokens for split view, no net simplification").
 - **Non-impact log:** bulleted list of entries with one-line justification.
