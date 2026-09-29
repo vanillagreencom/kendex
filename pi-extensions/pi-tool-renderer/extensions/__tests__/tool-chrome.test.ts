@@ -70,6 +70,8 @@ describe("tool chrome", () => {
 		expect(stripAnsi(changed[1]!)).toBe("● Bash $ echo bye");
 		const narrow = __test.renderToolChromeLines(component, ["● Bash $ echo bye"], 20);
 		expect(stripAnsi(narrow[0]!)).toBe("─".repeat(19));
+		__test.renderToolChromeLines(component, ["● Bash $ echo bye", "bye"], 20);
+		expect(__test.renderToolChromeLines(component, ["● Bash $ echo bye"], 20).map(stripAnsi)).not.toContain("bye");
 	});
 
 	test("transparent chrome still trims blank self-render shell rows without rules", () => {

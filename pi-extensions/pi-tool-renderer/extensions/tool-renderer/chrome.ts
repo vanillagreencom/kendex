@@ -164,20 +164,32 @@ function toolChromeThemeFor(component: any): any {
 }
 
 /** Last chrome output per component. Pi re-renders the whole tree on every
- * frame, and re-wrapping every tool block each time made long sessions spin. */
-const toolChromeCache = new WeakMap<object, { key: string; lines: string[] }>();
+ * frame, and re-wrapping every tool block each time made long sessions spin.
+ * The hit check compares line by line, never a joined copy: joining would
+ * scan and retain every block's full text on every frame. */
+type ToolChromeCacheEntry = { width: number; mode: ToolChromeMode; rule: string; rendered: string[]; lines: string[] };
+const toolChromeCache = new WeakMap<object, ToolChromeCacheEntry>();
+
+function toolChromeCacheHit(entry: ToolChromeCacheEntry | undefined, width: number, mode: ToolChromeMode, rule: string, rendered: string[]): entry is ToolChromeCacheEntry {
+	return entry !== undefined
+		&& entry.width === width
+		&& entry.mode === mode
+		&& entry.rule === rule
+		&& entry.rendered.length === rendered.length
+		&& rendered.every((line, i) => line === entry.rendered[i]);
+}
 
 function renderToolChromeLines(component: any, rendered: string[], width: number): string[] {
 	const effectiveCwd = component?.cwd ?? process.cwd();
 	const mode = toolChromeMode(effectiveCwd);
 	if (mode === "off") return rendered;
 	const rule = mode === "transparent" ? "" : mutedHorizontalRule(toolChromeThemeFor(component), width, effectiveCwd);
-	const key = `${stableRenderWidth(width, effectiveCwd)}\0${mode}\0${rule}\0${rendered.join("\n")}`;
+	const renderWidth = stableRenderWidth(width, effectiveCwd);
 	const cacheable = typeof component === "object" && component !== null;
 	const cached = cacheable ? toolChromeCache.get(component) : undefined;
-	if (cached?.key === key) return cached.lines;
+	if (toolChromeCacheHit(cached, renderWidth, mode, rule, rendered)) return cached.lines;
 	const lines = toolChromeLines(rendered, width, effectiveCwd, mode, rule);
-	if (cacheable) toolChromeCache.set(component, { key, lines });
+	if (cacheable) toolChromeCache.set(component, { width: renderWidth, mode, rule, rendered: rendered.slice(), lines });
 	return lines;
 }
 
