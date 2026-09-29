@@ -1,4 +1,4 @@
-# D012: A Copilot CLI session is measured by a kendex extension on its usage events, against the limit Copilot compacts at
+# D015: A Copilot CLI session is measured by a kendex extension on its usage events, against the limit Copilot compacts at
 
 [← Decision Index](INDEX.md)
 
