@@ -40,16 +40,16 @@
 #         that lifts at binding_resets_at; `burn_pct_per_lane_hour` and
 #         `projected_headroom_pct` beside it are the projection `pick` also
 #         drops a lane on.
-#         The STATUS words are `ok`; `rate_limited`, an endpoint that answered
-#         HTTP 429; `unreachable`, one that answered 5xx or that nothing could
-#         be read from at all, or a renewal another tool's credentials lock kept
-#         from being tried; `refused`, a usage endpoint that answered any
-#         other code outside 2xx, 401 and 403 included, which is a reading of
-#         the credential it was asked through and not a read that was never
-#         made; `expired`, a login proven dead, or a Codex login whose
-#         renewal ended in an `expired` outcome that "Why a Codex token is
-#         renewed by the Codex CLI" below lists, the one statement of what a
-#         failed Codex renewal reads and its remedy; `no_credentials`;
+#         Which STATUS word a failed Codex renewal reads, and its remedy, is
+#         stated once, under "Why a Codex token is renewed by the Codex CLI"
+#         below. The STATUS words are `ok`; `rate_limited`, an endpoint that
+#         answered HTTP 429; `unreachable`, one that answered 5xx or that
+#         nothing could be read from at all, or a renewal another tool's
+#         credentials lock kept from being tried; `refused`, a usage endpoint
+#         that answered any other code outside 2xx, 401 and 403 included, which
+#         is a reading of the credential it was asked through and not a read
+#         that was never made; `expired`, a login proven dead, or a failed
+#         Codex renewal that section lists as `expired`; `no_credentials`;
 #         `no_usage_data`, authenticated with no window to measure; `retired`;
 #         and `error`, a step this machine failed on its own, a renewal's
 #         included. A lane whose usage REFRESH met a 429 while the host still
