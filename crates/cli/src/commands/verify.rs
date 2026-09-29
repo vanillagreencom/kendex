@@ -178,8 +178,8 @@ impl Tally {
 /// the pass-over line and is never a gap.
 ///
 /// A missing or unreadable install record closes the run non-zero, except
-/// a missing one where the expansion reached every declaration and each is
-/// such a pass-over: apply writes no record there. The verb still weighs
+/// a missing one where the expansion reached every declaration and none
+/// needs an entry: apply writes no record there. The verb still weighs
 /// current manifest and render bytes, so a recovery decision has the
 /// measured rows and the original record failure together.
 ///
@@ -754,12 +754,13 @@ struct Declared {
 
 impl Declared {
     /// Whether apply writes no record for these declarations and is right
-    /// to: the expansion reached every one, and each installs on none of
-    /// the scope's tools by its own harnesses line. Plugins sit in
-    /// `wanted`, so a scope with one always owes a record.
+    /// to: the expansion reached every one, and none needs an entry. This
+    /// is the engine's no-entries, no-carrier case in `plan_lock_write`.
+    /// Plugins and Pi extensions sit in `wanted`, so a scope with one
+    /// always owes a record.
     fn owes_record_nothing(&self) -> bool {
         match self.status {
-            DeclarationStatus::Complete => self.wanted.is_empty() && !self.left_out.is_empty(),
+            DeclarationStatus::Complete => self.wanted.is_empty(),
             DeclarationStatus::Incomplete => false,
         }
     }

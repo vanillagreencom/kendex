@@ -14,9 +14,13 @@
 //!   entries, where both are gaps and neither is passed over;
 //! - the names verify was asked about: the row naming only `tidy`, which
 //!   prints no pass-over line;
-//! - a missing record excused only where every declaration is passed over:
-//!   the two rows declaring the hook alone, through a bundle and directly,
-//!   where apply writes no record and verify passes;
+//! - a missing record excused where apply writes none, which is where
+//!   nothing declared needs an entry: the two rows declaring the hook
+//!   alone, through a bundle and directly, and the row declaring a bundle
+//!   with no members, where verify passes;
+//! - and only where nothing declared needs an entry: the Codex row that
+//!   deletes the record apply wrote for the bundle's other members, which
+//!   verify refuses while it still prints the pass-over line;
 //! - and only where the expansion read every declaration: the row whose
 //!   second bundle comes from a source that is not there, which verify
 //!   still refuses for its missing record.
@@ -39,7 +43,7 @@ const GAP: &str = "listed and not in the install record";
 const CATALOG: &[(&str, &str)] = &[
     (
         "kendex.toml",
-        "is_source_catalog = true\n\n[bundles.workflow]\ndescription = \"the workflow set\"\nskills = [\"tidy\", \"claude-only\"]\nhooks = [\"claude-only\", \"everywhere\"]\n\n[bundles.lone]\ndescription = \"the Claude hook alone\"\nhooks = [\"claude-only\"]\n",
+        "is_source_catalog = true\n\n[bundles.workflow]\ndescription = \"the workflow set\"\nskills = [\"tidy\", \"claude-only\"]\nhooks = [\"claude-only\", \"everywhere\"]\n\n[bundles.lone]\ndescription = \"the Claude hook alone\"\nhooks = [\"claude-only\"]\n\n[bundles.empty]\ndescription = \"nothing yet\"\n",
     ),
     (
         "skills/tidy/SKILL.md",
@@ -63,14 +67,25 @@ const WORKFLOW: &str = "[bundles.workflow]\nsource = \"cat\"\n";
 const CODEX: &str = "[\"codex\"]";
 const CLAUDE_CODEX: &str = "[\"claude\", \"codex\"]";
 
+/// What a row does to the record apply wrote, before verify reads it.
+#[derive(Debug)]
+enum Edit {
+    /// Leaves it as apply wrote it.
+    Keep,
+    /// Deletes these entries.
+    Drop(&'static [&'static str]),
+    /// Deletes the record file.
+    Delete,
+}
+
 /// One consumer, what it does to its record, and what verify says.
 struct Case {
     /// The tools the consumer installs on.
     tools: &'static str,
     /// The consumer's declarations.
     declares: &'static str,
-    /// Record entries deleted between apply and verify.
-    drop: &'static [&'static str],
+    /// What the row does to the record between apply and verify.
+    edit: Edit,
     /// The package names verify is asked about.
     names: &'static [&'static str],
     /// Whether the record holds the hook on Claude; `None` for no record.
@@ -88,7 +103,7 @@ const CASES: &[Case] = &[
     Case {
         tools: CODEX,
         declares: WORKFLOW,
-        drop: &[],
+        edit: Edit::Keep,
         names: &[],
         recorded: Some(false),
         passes: true,
@@ -99,7 +114,7 @@ const CASES: &[Case] = &[
     Case {
         tools: CLAUDE_CODEX,
         declares: WORKFLOW,
-        drop: &[],
+        edit: Edit::Keep,
         names: &[],
         recorded: Some(true),
         passes: true,
@@ -110,7 +125,7 @@ const CASES: &[Case] = &[
     Case {
         tools: CLAUDE_CODEX,
         declares: WORKFLOW,
-        drop: &["hook:claude-only:claude"],
+        edit: Edit::Drop(&["hook:claude-only:claude"]),
         names: &[],
         recorded: Some(true),
         passes: false,
@@ -121,7 +136,7 @@ const CASES: &[Case] = &[
     Case {
         tools: CODEX,
         declares: WORKFLOW,
-        drop: &["skill:claude-only:codex", "hook:everywhere:codex"],
+        edit: Edit::Drop(&["skill:claude-only:codex", "hook:everywhere:codex"]),
         names: &[],
         recorded: Some(false),
         passes: false,
@@ -132,7 +147,7 @@ const CASES: &[Case] = &[
     Case {
         tools: CODEX,
         declares: WORKFLOW,
-        drop: &[],
+        edit: Edit::Keep,
         names: &["tidy"],
         recorded: Some(false),
         passes: true,
@@ -143,7 +158,7 @@ const CASES: &[Case] = &[
     Case {
         tools: CODEX,
         declares: "[bundles.lone]\nsource = \"cat\"\n",
-        drop: &[],
+        edit: Edit::Keep,
         names: &[],
         recorded: None,
         passes: true,
@@ -154,7 +169,7 @@ const CASES: &[Case] = &[
     Case {
         tools: CODEX,
         declares: "[hooks.claude-only]\nsource = \"cat\"\n",
-        drop: &[],
+        edit: Edit::Keep,
         names: &[],
         recorded: None,
         passes: true,
@@ -164,8 +179,30 @@ const CASES: &[Case] = &[
     },
     Case {
         tools: CODEX,
+        declares: WORKFLOW,
+        edit: Edit::Delete,
+        names: &[],
+        recorded: Some(false),
+        passes: false,
+        passed_over: true,
+        gap: &[],
+        refused: true,
+    },
+    Case {
+        tools: CODEX,
+        declares: "[bundles.empty]\nsource = \"cat\"\n",
+        edit: Edit::Keep,
+        names: &[],
+        recorded: None,
+        passes: true,
+        passed_over: false,
+        gap: &[],
+        refused: false,
+    },
+    Case {
+        tools: CODEX,
         declares: "[sources.gone]\npath = \"nowhere\"\n[bundles.lost]\nsource = \"gone\"\n[hooks.claude-only]\nsource = \"cat\"\n",
-        drop: &[],
+        edit: Edit::Keep,
         names: &[],
         recorded: None,
         passes: false,
@@ -203,7 +240,7 @@ fn check(case: &Case) {
         ),
     );
     fs::create_dir_all(project.join(".claude")).unwrap();
-    let at = format!("{} {} {:?}", case.tools, case.declares, case.drop);
+    let at = format!("{} {} {:?}", case.tools, case.declares, case.edit);
     let applied = kendex(&home, &project, &["apply", "-y", "--leave"]);
     assert!(applied.status.success(), "{at}: {}", said(&applied));
     let record = project.join(".kendex-lock.json");
@@ -218,11 +255,15 @@ fn check(case: &Case) {
                 recorded,
                 "{at}: {lock}"
             );
-            for key in case.drop {
-                assert!(entries.remove(*key).is_some(), "{at}: {key}");
-            }
-            if !case.drop.is_empty() {
-                fs::write(&record, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
+            match case.edit {
+                Edit::Keep => {}
+                Edit::Drop(keys) => {
+                    for key in keys {
+                        assert!(entries.remove(*key).is_some(), "{at}: {key}");
+                    }
+                    fs::write(&record, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
+                }
+                Edit::Delete => fs::remove_file(&record).unwrap(),
             }
         }
     }
