@@ -64,6 +64,8 @@ jq -n '{rate_limit: {primary_window: {used_percent: 80, reset_at: 1785000000, li
 WORK="$TMP_ROOT/work"
 mkdir -p "$WORK"
 git -C "$WORK" init -q
+git -C "$WORK" config gc.auto 0
+git -C "$WORK" config maintenance.auto false
 git -C "$WORK" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
 OVERSEER_BOX="$WORK/tmp/lane-mail/overseer"
 mkdir -p "$OVERSEER_BOX"
@@ -319,19 +321,26 @@ echo "=== a lane no claim names, a Copilot one, is read from its running record 
 # context reading its extension recorded in its mailbox, the capacity the limit Copilot
 # compacts at. A fleet of its own, so the claims above name none of it.
 COP_FLEET="$TMP_ROOT/copilot-fleet"
+# Beside it a running Claude Code record no claim names, a lane whose pane
+# died and took its claim: it is no row, its stale reading never read.
 COP_BOX="$TMP_ROOT/lanes/ken-108/tmp/lane-mail/KEN-108"
-mkdir -p "$COP_FLEET" "$COP_BOX"
+DEAD_BOX="$TMP_ROOT/lanes/ken-109/tmp/lane-mail/KEN-109"
+mkdir -p "$COP_FLEET" "$COP_BOX" "$DEAD_BOX"
 "$SCRIPTS_DIR/workflow-state" --state-dir "$COP_FLEET" init oversee >/dev/null
-"$SCRIPTS_DIR/workflow-state" --state-dir "$COP_FLEET" set oversee lanes "$(jq -nc --arg root "$TMP_ROOT/lanes/ken-108" '[
-  {item: "KEN-108", window: "fleet:ken-108", harness: "copilot", account: null, host: null, mail_root: $root, status: "running"}]')" >/dev/null
+"$SCRIPTS_DIR/workflow-state" --state-dir "$COP_FLEET" set oversee lanes "$(jq -nc --arg root "$TMP_ROOT/lanes/ken-108" --arg dead "$TMP_ROOT/lanes/ken-109" '[
+  {item: "KEN-108", window: "fleet:ken-108", harness: "copilot", account: null, host: null, mail_root: $root, status: "running"},
+  {item: "KEN-109", window: "fleet:ken-109", harness: "claude", account: null, host: null, mail_root: $dead, status: "running"}]')" >/dev/null
 bash -c 'source "$1/lib/lane-context.sh"; lane_context_record "$2" copilot 199000 220320 "" s1 "" "" "80% of tokenLimit"' \
   _ "$SCRIPTS_DIR" "$COP_BOX"
+record_reading "$DEAD_BOX" claude 950000 1000000 claude-opus-5-5
 COPILOT_OUT="$(CTX_FLEET="$COP_FLEET" run_ctx --json)"
 lanes_table "$COPILOT_OUT" \
   "a running Copilot lane record no claim names is a row, its pane the record's window|ken-108|status=ok harness=copilot pane=fleet:ken-108 server=null account=null context_tokens=199000 context_window=220320 context_used_pct=90" \
   "its reading past 90 percent of the compaction limit requires handoff|ken-108|context_handoff_due=true handoff_required=true"
 assert_eq "$(jq -r '.[] | select(.lane == "ken-108") | .context_capacity_source' <<<"$COPILOT_OUT")" \
   "80% of tokenLimit" "the row names where the capacity came from"
+assert_eq "$(jq -c '[.[].lane]' <<<"$COPILOT_OUT")" '["ken-108"]' \
+  "a running Claude Code record no claim names is no row, where a Copilot one is"
 rm -f -- "${COP_BOX:?}/context.json"
 lanes_table "$(CTX_FLEET="$COP_FLEET" run_ctx --json)" \
   "with no reading recorded the row is unrecorded, never room|ken-108|status=unrecorded context_tokens=null context_handoff_due=null handoff_required=false"
@@ -340,6 +349,10 @@ mutate_file "$RECORD_ROWS_CTRL/lanes" \
   'context_claims="$(context_record_claims "$context_claims" "$CONTEXT_LANES")" || die context-fleet oversee' ':'
 assert_eq "$(CTX_LANES="$RECORD_ROWS_CTRL/lanes" CTX_FLEET="$COP_FLEET" run_ctx --json | jq -c '[.[].lane]')" '[]' \
   "control: without the record rows a Copilot lane no claim names has no row"
+HARNESS_ROWS_CTRL="$(mutant_scripts mutant-harness-rows lanes)" || exit 1
+mutate_file "$HARNESS_ROWS_CTRL/lanes" '!= "" and (.harness // "") == "copilot")' '!= "")'
+assert_eq "$(CTX_LANES="$HARNESS_ROWS_CTRL/lanes" CTX_FLEET="$COP_FLEET" run_ctx --json | jq -c '[.[].lane]')" '["ken-108","ken-109"]' \
+  "control: without the harness rule a dead Claude Code lane's record is a row again"
 
 echo "=== the recorded provider decides both the read and its probe ==="
 # ambient|record|down|expected. A missing record and an unreachable host both
@@ -413,6 +426,8 @@ echo "=== a launch clears the reading its predecessor left ==="
 LAUNCH="$TMP_ROOT/launch"
 mkdir -p "$LAUNCH"
 git -C "$LAUNCH" init -q
+git -C "$LAUNCH" config gc.auto 0
+git -C "$LAUNCH" config maintenance.auto false
 git -C "$LAUNCH" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
 record_reading "$LAUNCH/tmp/lane-mail/KEN-201" claude 950000 1000000 claude-opus-5-5
 "$SCRIPTS_DIR/lane-marker" "$LAUNCH" KEN-201

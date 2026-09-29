@@ -124,7 +124,7 @@ case "\${1:-}" in
   exists) [[ -f "\$EXISTS_DIR/\${2:-}" ]] && echo true || echo false ;;
   merged) exit 1 ;;
   path) printf '%s\n' "\$d" ;;
-  create) mkdir -p "\$d"; git init -q "\$d"; printf '%s\n' "\$d" ;;
+  create) mkdir -p "\$d"; git init -q "\$d"; git -C "\$d" config gc.auto 0; git -C "\$d" config maintenance.auto false; printf '%s\n' "\$d" ;;
   *) echo "unexpected worktree stub call: \$*" >&2; exit 1 ;;
 esac
 EOF
@@ -141,6 +141,8 @@ cp -R "$SCRIPTS_DIR/copilot-lane-context" "$REPO/scripts/"
 orch_fixture_shared_libs "$REPO"
 chmod +x "$REPO/scripts/open-terminal"
 git -C "$REPO" init -q
+git -C "$REPO" config gc.auto 0
+git -C "$REPO" config maintenance.auto false
 OT="$REPO/scripts/open-terminal"
 WS="$REPO/scripts/workflow-state"
 STATE="$TMP_ROOT/state"
@@ -305,6 +307,8 @@ assert_eq "$(RUN_SESSION= RUN_PANE=%9 STUB_SESSION_NAME=other STUB_DEAD_SESSIONS
 NOFLEET_SESSION="$TMP_ROOT/nofleet-session"
 mkdir -p "$NOFLEET_SESSION"
 git -C "$NOFLEET_SESSION" init -q
+git -C "$NOFLEET_SESSION" config gc.auto 0
+git -C "$NOFLEET_SESSION" config maintenance.auto false
 : > "$TMUX_LOG"
 RUN_SESSION= RUN_PANE=%9 STUB_SESSION_NAME=own STUB_TMUX_LOG="$TMUX_LOG" RUN_TMUX=stub,1,0 \
   run_ot STATE_DIR= CWD="$NOFLEET_SESSION" --tmux --cmd true CC-105
@@ -518,6 +522,8 @@ assert_eq "rc=$RC started=$(grep -c '^open-terminal: host-started item=CC-65 hos
 # keeping it, beside links to its helpers in a git repo of its own.
 UNPAUSED_OT="$(mutant_scripts unpaused open-terminal)/open-terminal" || exit 1
 git -C "$TMP_ROOT/unpaused" init -q
+git -C "$TMP_ROOT/unpaused" config gc.auto 0
+git -C "$TMP_ROOT/unpaused" config maintenance.auto false
 orch_fixture_shared_libs "$TMP_ROOT/unpaused"
 mutate_file "$UNPAUSED_OT" '  else .pauses = ((.pauses // []) + [{from: .parked.at, to: $at, cause: "parked"}]) end) | del(.parked);'"'" '  else . end) | del(.parked);'"'"
 "$WS" --state-dir "$STATE" update oversee --arg at "$PARKED_AT" '(.lanes[] | select(.item == "CC-65")) |= (del(.pauses) | .status = "parked" | .parked = {pr: 65, head: "abc", repo: "o/r", at: $at})' >/dev/null
@@ -569,6 +575,8 @@ echo "=== --state-dir is the record's one address, wherever the launch runs from
 ELSEWHERE="$TMP_ROOT/elsewhere"
 mkdir -p "$ELSEWHERE"
 git -C "$ELSEWHERE" init -q
+git -C "$ELSEWHERE" config gc.auto 0
+git -C "$ELSEWHERE" config maintenance.auto false
 run_ot STATE_DIR= CWD="$ELSEWHERE" --ghostty "${FLEET_CMD[@]}" --state-dir "$TMP_ROOT/named" CC-50
 assert_eq "rc=$RC named=$(jq -r '[.lanes[] | select(.item == "CC-50")] | length' "$TMP_ROOT/named/workflow-state-oversee.json" 2>/dev/null || echo none) launch_dir=$([[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" \
   "rc=0 named=1 launch_dir=none" \
@@ -602,6 +610,8 @@ echo "=== a launch with no --state-dir names no fleet: no record, no state ==="
 NOFLEET="$TMP_ROOT/nofleet"
 mkdir -p "$NOFLEET"
 git -C "$NOFLEET" init -q
+git -C "$NOFLEET" config gc.auto 0
+git -C "$NOFLEET" config maintenance.auto false
 run_ot STATE_DIR= CWD="$NOFLEET" --ghostty --cmd true CC-90
 assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened item=CC-90 ' <<<"$OUT" || true) launch_dir=$([[ -e "$NOFLEET/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" \
   "rc=0 opened=1 launch_dir=none" \
@@ -637,6 +647,8 @@ fixture_copy() {
   cp -R "$SCRIPTS_DIR/lib/." "$dir/scripts/lib/"
   orch_fixture_shared_libs "$dir"
   git -C "$dir" init -q
+  git -C "$dir" config gc.auto 0
+  git -C "$dir" config maintenance.auto false
 }
 
 echo "=== a launcher with no workflow-state beside it refuses before any window opens ==="
@@ -652,6 +664,8 @@ echo "=== the must-fail control ==="
 # beside links to its helpers in a git repo of its own.
 UNWRITTEN_OT="$(mutant_scripts unwritten open-terminal)/open-terminal" || exit 1
 git -C "$TMP_ROOT/unwritten" init -q
+git -C "$TMP_ROOT/unwritten" config gc.auto 0
+git -C "$TMP_ROOT/unwritten" config maintenance.auto false
 orch_fixture_shared_libs "$TMP_ROOT/unwritten"
 mutate_file "$UNWRITTEN_OT" '    lane_record_write "$RECORD_MODE" "$wt_id" "$record_window" "$record_root" "$record_session" "$launched_at" || record_rc=$?' '    :'
 run_ot SCRIPT="$UNWRITTEN_OT" STATE_DIR="$TMP_ROOT/unwritten-state" --ghostty "${FLEET_CMD[@]}" CC-30
@@ -662,6 +676,8 @@ assert_eq "rc=$RC records=$("$WS" --state-dir "$TMP_ROOT/unwritten-state" get ov
 # launch time a relaunch keeps.
 UNSTAMPED_OT="$(mutant_scripts unstamped open-terminal)/open-terminal" || exit 1
 git -C "$TMP_ROOT/unstamped" init -q
+git -C "$TMP_ROOT/unstamped" config gc.auto 0
+git -C "$TMP_ROOT/unstamped" config maintenance.auto false
 orch_fixture_shared_libs "$TMP_ROOT/unstamped"
 mutate_file "$UNSTAMPED_OT" '  [[ "$status" != running ]] || running_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1' '  :'
 run_ot SCRIPT="$UNSTAMPED_OT" STATE_DIR="$TMP_ROOT/unstamped-state" --ghostty "${FLEET_CMD[@]}" CC-31
@@ -889,6 +905,8 @@ assert_eq "record=$(group_killed "$OT" CC-84)" "record=running prepare none" \
 busy_mutant() { # NAME OLD NEW — sets BUSY_MUTANT_OT
   BUSY_MUTANT_OT="$(mutant_scripts "$1" open-terminal)/open-terminal" || exit 1
   git -C "$TMP_ROOT/$1" init -q
+  git -C "$TMP_ROOT/$1" config gc.auto 0
+  git -C "$TMP_ROOT/$1" config maintenance.auto false
   orch_fixture_shared_libs "$TMP_ROOT/$1"
   mutate_file "$BUSY_MUTANT_OT" "$2" "$3"
 }

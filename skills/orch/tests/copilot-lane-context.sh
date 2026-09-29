@@ -54,6 +54,8 @@ REPO="$TMP_ROOT/repo"
 COP_HOME="$TMP_ROOT/copilot-home"
 USER_HOME="$TMP_ROOT/user-home"
 git init -q "$REPO"
+git -C "$REPO" config gc.auto 0
+git -C "$REPO" config maintenance.auto false
 mkdir -p "$USER_HOME"
 
 # The hook each run records: its scope, argument, directory, stdin, and
@@ -217,6 +219,9 @@ EXT="$TMP_ROOT/short-bound.mjs" run_ext timeout "$(events "$(event 0 1 100)")" F
 assert_eq "$TIMELINE" "warning kendex-lane-context: usage-signal=SIGTERM" "a hook that outlives the bound is stopped and named"
 
 echo "=== a reading handed on stands pending until it is recorded ==="
+# An unreadable root reading landing 500 ms in: after a run that exits at
+# once, and during one the hook's one-second sleep holds in flight.
+UNREADABLE_LATE='{"after_ms":500,"data":{"currentTokens":"many","tokenLimit":100}}'
 # `label|hook env|readings|marker at each run|marker after`
 while IFS='|' read -r label envs readings want_runs want_after; do
   clear_scopes
@@ -224,6 +229,7 @@ while IFS='|' read -r label envs readings want_runs want_after; do
   case "$readings" in
     one) evs="$(events "$(event 0 10 100)")" ;;
     queued) evs="$(events "$(event 0 1 100)" "$(event 100 2 100)")" ;;
+    unreadable-after) evs="$(events "$(event 0 1 100)" "$UNREADABLE_LATE")" ;;
   esac
   # shellcheck disable=SC2086
   run_ext pending "$evs" $envs
@@ -232,6 +238,8 @@ done <<ROWS
 a run that exits 0 finds the marker standing and removes it|FAKE_HOOK_EXIT=0|one|marked|unmarked
 a run that exits 2 leaves the marker standing|FAKE_HOOK_EXIT=2|one|marked|marked
 a run that exits 0 with a reading queued behind it leaves the marker for that reading|FAKE_HOOK_SLEEP=1|queued|marked marked|unmarked
+an unreadable root reading after a recorded one leaves the marker standing|FAKE_HOOK_EXIT=0|unreadable-after|marked|marked
+an unreadable root reading landing while a run is in flight leaves the marker past that run's exit 0|FAKE_HOOK_SLEEP=1|unreadable-after|marked|marked
 ROWS
 # The bound shortened as above: a run stopped by it leaves the marker.
 EXT="$TMP_ROOT/short-bound.mjs" run_ext pending-timeout "$(events "$(event 0 1 100)")" FAKE_HOOK_SLEEP=5
@@ -302,16 +310,22 @@ assert_eq "$(run_marks)" "unmarked" "control: without the marker a reading's run
 ext_ctrl clear-ctrl '      clearPending();' ''
 EXT="$EXT" run_ext clear-ctrl "$(events "$(event 0 10 100)")"
 assert_eq "$PENDING" "marked" "control: without the removal a recorded reading stays pending"
-ext_ctrl failed-ctrl '    } else if (queued === null) {' '    } if (queued === null) {'
+ext_ctrl failed-ctrl '    } else if (seq === latest) {' '    } if (seq === latest) {'
 EXT="$EXT" run_ext failed-ctrl "$(events "$(event 0 10 100)")" FAKE_HOOK_EXIT=2
 assert_eq "$PENDING" "unmarked" "control: removed whatever the run did, a failed reading is cleared"
 ext_ctrl notdir-ctrl '    if (error.code === "ENOTDIR") return;' ''
 EXT="$EXT" run_ext notdir-ctrl "$(events "$(event 0 10 100)")" HOME="$TMP_ROOT/blocked-home"
 assert_eq "$(printf '%s\n' "$TIMELINE" | grep -c 'pending-unremoved=' || true)" "1" \
   "control: without the no-directory rule a marker never written is reported as one left standing"
-ext_ctrl queued-ctrl '    } else if (queued === null) {' '    } else {'
+ext_ctrl queued-ctrl '    } else if (seq === latest) {' '    } else {'
 EXT="$EXT" run_ext queued-ctrl "$(events "$(event 0 1 100)" "$(event 100 2 100)")" FAKE_HOOK_SLEEP=1
 assert_eq "$(run_marks)" "marked unmarked" "control: removed with a reading queued, the queued reading runs unmarked"
+ext_ctrl unread-mark-ctrl '  if (scope === null) return;' '  if (scope === null || !readable) return;'
+EXT="$EXT" run_ext unread-mark-ctrl "$(events "$(event 0 1 100)" "$UNREADABLE_LATE")"
+assert_eq "$PENDING" "unmarked" "control: the reading check ahead of the marker leaves an unreadable reading unmarked"
+ext_ctrl latest-ctrl '    } else if (seq === latest) {' '    } else if (queued === null) {'
+EXT="$EXT" run_ext latest-ctrl "$(events "$(event 0 1 100)" "$UNREADABLE_LATE")" FAKE_HOOK_SLEEP=1
+assert_eq "$PENDING" "unmarked" "control: removed by any run with nothing queued, an unreadable reading in flight is cleared"
 
 ext_ctrl fleet-ctrl '    if (!fleetSession(root)) return null;' '    if (false) return null;'
 clear_scopes

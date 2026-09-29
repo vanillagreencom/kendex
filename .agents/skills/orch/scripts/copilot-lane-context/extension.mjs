@@ -32,19 +32,21 @@
 //
 // The hook runs apart from the session, so nothing orders its run before the
 // session's next agentStop, whose turn end would read the earlier record. So
-// each reading handed on first leaves the session's pending marker,
-// `~/.cache/lane-mail/copilot-usage/<session id>`, beside the lead records
-// lane-mail-check keeps under `~/.cache/lane-mail`, and the turn end judges a
-// session whose marker stands unmeasured, never its earlier record as room.
-// The marker is removed once a run exits 0 with no reading queued behind it;
-// a run that fails leaves it standing until a later reading is recorded.
+// every root event on a session whose hook scope resolves first leaves the
+// session's pending marker, `~/.cache/lane-mail/copilot-usage/<session id>`,
+// beside the lead records lane-mail-check keeps under `~/.cache/lane-mail`,
+// before any branch that can return, an unreadable reading included; the turn
+// end judges a session whose marker stands unmeasured, never its earlier
+// record as room. Only a run that exits 0 carrying the newest root event
+// removes the marker: a run that fails, or one a later event overtook,
+// readable or not, leaves it standing until a later reading is recorded.
 //
 // A gap is written to the session timeline at level warning, once per
 // distinct first line:
 //   kendex-lane-context: hooks-missing=<project scope>,<global scope>, only
 //   for a session that can be a fleet session (fleetSession); any other runs
 //   no hook and says nothing
-//   kendex-lane-context: reading=unreadable
+//   kendex-lane-context: reading=unreadable, with the marker left standing
 //   kendex-lane-context: pending-unwritten=<marker>, a marker that could not
 //   be written, so a turn end during the run reads the earlier record
 //   kendex-lane-context: pending-unremoved=<marker>, a marker that could not
@@ -150,11 +152,15 @@ function clearPending() {
 
 let running = false;
 let queued = null;
+// The number of root events on a resolved hook scope so far; the last one is
+// the event a run must carry to remove the marker.
+let latest = 0;
 
-// queued: {scope, reading}, the hook scope decided when the reading landed.
+// queued: {scope, reading, seq}, the hook scope decided when the reading
+// landed and the number of its event.
 function drain() {
   if (running || queued === null) return;
-  const { scope, reading } = queued;
+  const { scope, reading, seq } = queued;
   queued = null;
   running = true;
   const child = spawn("bash", [join(scope, "lane-mail-check.sh"), "usage"], {
@@ -181,7 +187,7 @@ function drain() {
         `the lane-mail-check hook did not finish within ${HOOK_TIMEOUT_MS} ms and was stopped, so this reading is not recorded`);
     } else if (code !== 0) {
       gap(stderr.trim() || `${KEY}: usage-exit=${code}\nthe lane-mail-check hook exited ${code} and wrote nothing`);
-    } else if (queued === null) {
+    } else if (seq === latest) {
       clearPending();
     }
     running = false;
@@ -197,14 +203,18 @@ session.on("session.usage_info", (event) => {
   // A subagent's window is its own, not the session's.
   if (event.agentId) return;
   const { currentTokens, tokenLimit } = event.data ?? {};
-  if (!whole(currentTokens) || !whole(tokenLimit) || tokenLimit === 0) {
-    gap(`${KEY}: reading=unreadable\n` +
-      "a session.usage_info event carried no whole currentTokens and tokenLimit, so it is not recorded");
-    return;
-  }
+  const readable = whole(currentTokens) && whole(tokenLimit) && tokenLimit !== 0;
   const scope = hookScope();
+  // No hook judges a session with no scope, so it has no marker to leave.
   if (scope === null) return;
   markPending();
-  queued = { scope, reading: { session_id: session.sessionId, cwd, current_tokens: currentTokens, token_limit: tokenLimit } };
+  latest += 1;
+  if (!readable) {
+    gap(`${KEY}: reading=unreadable\n` +
+      "a session.usage_info event carried no whole currentTokens and tokenLimit, so it is not recorded " +
+      "and the session's turn end judges it unmeasured until a later reading is recorded");
+    return;
+  }
+  queued = { scope, seq: latest, reading: { session_id: session.sessionId, cwd, current_tokens: currentTokens, token_limit: tokenLimit } };
   drain();
 });

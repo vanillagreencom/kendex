@@ -25,6 +25,8 @@ if [[ "${1:-}" == "create" ]]; then
   if [[ -n "${OT_WT_FIXED:-}" ]]; then d="$OT_WT_FIXED"; mkdir -p "$d"
   else d="$(mktemp -d "$(dirname "$OT_WT_LOG")/wt.XXXXXX")" || exit 1; fi
   git init -q "$d"
+  git -C "$d" config gc.auto 0
+  git -C "$d" config maintenance.auto false
   printf '%s\n' "$d" >> "${OT_WT_PATH:-/dev/null}"
   printf '%s\n' "$d"
   exit 0

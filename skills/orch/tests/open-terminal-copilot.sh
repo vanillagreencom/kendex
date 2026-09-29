@@ -82,7 +82,7 @@ set -euo pipefail
 if [[ "\${1:-}" == "create" ]]; then
   d="$TMP_ROOT/wt/\${2:-unknown}"
   mkdir -p "\$d"
-  [[ -d "\$d/.git" ]] || git init -q "\$d"
+  [[ -d "\$d/.git" ]] || { git init -q "\$d"; git -C "\$d" config gc.auto 0; git -C "\$d" config maintenance.auto false; }
   printf '%s\n' "\$d"
   exit 0
 fi
@@ -96,6 +96,8 @@ stage() {
   cp -R "$SCRIPTS_DIR/." "$1/scripts/"
   orch_fixture_shared_libs "$1"
   git -C "$1" init -q
+  git -C "$1" config gc.auto 0
+  git -C "$1" config maintenance.auto false
 }
 REPO="$TMP_ROOT/repo"
 stage "$REPO"

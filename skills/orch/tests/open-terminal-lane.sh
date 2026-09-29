@@ -80,7 +80,7 @@ printf '%s\n' "$*" >> "$OT_WT_LOG"
 n=0; [[ -f "$OWNED_COUNT" ]] && n="$(cat "$OWNED_COUNT")"
 n=$((n + 1)); printf '%s' "$n" > "$OWNED_COUNT"
 [[ "$n" -eq 1 ]] || exit 75
-d="$(mktemp -d "$OWNED_ROOT/wt.XXXXXX")"; git init -q "$d"; printf '%s\n' "$d"
+d="$(mktemp -d "$OWNED_ROOT/wt.XXXXXX")"; git init -q "$d"; git -C "$d" config gc.auto 0; git -C "$d" config maintenance.auto false; printf '%s\n' "$d"
 STUBEOF
 chmod +x "$OWNED_STUB"
 
@@ -112,14 +112,14 @@ TABBED="$TMP_ROOT/tab	lane"; mkdir -p "$TABBED"
 
 # Checkouts a row can run from: one holding a directory named like a lane
 # alias, one holding a bare directory no alias claims, one with no git at all.
-COLLIDE="$TMP_ROOT/collide"; mkdir -p "$COLLIDE/work"; git -C "$COLLIDE" init -q -b main
-BARE="$TMP_ROOT/bare"; mkdir -p "$BARE/somelane"; git -C "$BARE" init -q -b main
+COLLIDE="$TMP_ROOT/collide"; mkdir -p "$COLLIDE/work"; git -C "$COLLIDE" init -q -b main; git -C "$COLLIDE" config gc.auto 0; git -C "$COLLIDE" config maintenance.auto false
+BARE="$TMP_ROOT/bare"; mkdir -p "$BARE/somelane"; git -C "$BARE" init -q -b main; git -C "$BARE" config gc.auto 0; git -C "$BARE" config maintenance.auto false
 NOREPO="$TMP_ROOT/norepo"; mkdir -p "$NOREPO"
 # A git repository with no kendex settings of its own. A script copied outside
 # every checkout resolves no PROJECT_ROOT, and `lane-host resolve` then runs
 # from the working directory, which has to be a repository; this one carries no
 # settings for that script to pick up on the way.
-NOSETTINGS="$TMP_ROOT/nosettings"; mkdir -p "$NOSETTINGS"; git -C "$NOSETTINGS" init -q -b main
+NOSETTINGS="$TMP_ROOT/nosettings"; mkdir -p "$NOSETTINGS"; git -C "$NOSETTINGS" init -q -b main; git -C "$NOSETTINGS" config gc.auto 0; git -C "$NOSETTINGS" config maintenance.auto false
 
 standard_home home
 
@@ -1433,7 +1433,7 @@ assert_eq "$(observe "rc= launched=") invalid=$(said "open-terminal: host-line-i
   "a create line missing its remote prefix is host-line-invalid and opens no window"
 # lane-host create writes the hosted lane's marker on its host. A local one
 # would bind the caller's own checkout, which would then pose as a lane.
-HOSTCALLER="$TMP_ROOT/hostcaller"; mkdir -p "$HOSTCALLER"; git -C "$HOSTCALLER" init -q
+HOSTCALLER="$TMP_ROOT/hostcaller"; mkdir -p "$HOSTCALLER"; git -C "$HOSTCALLER" init -q; git -C "$HOSTCALLER" config gc.auto 0; git -C "$HOSTCALLER" config maintenance.auto false
 run_ot "cwd=$HOSTCALLER;$CHOICE_CMD" --host "$HOST_STUB" --harness claude --lane auto --repo o/r CC-47
 assert_eq "$(observe "rc= launched=") local_marker=$([[ -e "$HOSTCALLER/.git/lane-mail" ]] && echo present || echo absent)" "rc=0 launched=1 local_marker=absent" \
   "a hosted launch writes no lane marker into the caller's own checkout"
@@ -1615,7 +1615,12 @@ cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/
 cp -R "$SCRIPTS_DIR/lib/." "$SCRIPTREPO/scripts/lib/"
 orch_fixture_shared_libs "$SCRIPTREPO"
 chmod +x "$SCRIPTREPO/scripts/open-terminal" "$SCRIPTREPO/scripts/lanes" "$SCRIPTREPO/scripts/lane-marker"
-git -C "$SCRIPTREPO" init -q; git -C "$CALLERREPO" init -q
+git -C "$SCRIPTREPO" init -q
+git -C "$SCRIPTREPO" config gc.auto 0
+git -C "$SCRIPTREPO" config maintenance.auto false
+git -C "$CALLERREPO" init -q
+git -C "$CALLERREPO" config gc.auto 0
+git -C "$CALLERREPO" config maintenance.auto false
 ( cd "$CALLERREPO" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
   TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$TMP_ROOT/caller.tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.panes" \
   OT_WT_LOG="$TMP_ROOT/caller.worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
@@ -1659,6 +1664,8 @@ run_bad_repo() {
   local caller="$TMP_ROOT/$name-caller" log="$TMP_ROOT/$name.tmux.log"
   mkdir -p "$caller"
   git -C "$caller" init -q
+  git -C "$caller" config gc.auto 0
+  git -C "$caller" config maintenance.auto false
   ( cd "$caller" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     GH_REPO="$BAD_REPO" TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$log" OT_TMUX_SERVER_PID="$$" \
     OT_TMUX_PANES="$TMP_ROOT/$name.panes" OT_WT_LOG="$TMP_ROOT/$name.worktree.log" \
@@ -1699,6 +1706,8 @@ marked() {
   local script="$1" name="$2" runs="$TMP_ROOT/$2-runs" caller="$TMP_ROOT/$2-caller" out rc=0 wt marker=none box=none
   mkdir -p "$runs" "$caller"
   git -C "$caller" init -q
+  git -C "$caller" config gc.auto 0
+  git -C "$caller" config maintenance.auto false
   out="$( cd "$caller" && GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" \
     OT_TMUX_PANES="$runs/panes" OT_WT_LOG="$runs/worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$3" \
@@ -1727,6 +1736,8 @@ cat > "$TMPLINK_STUB" <<'STUBEOF'
 [[ "${1:-}" == "create" ]] || exit 0
 d="$(mktemp -d "$(dirname "$OT_WT_LOG")/wt.XXXXXX")"
 git init -q "$d"
+git -C "$d" config gc.auto 0
+git -C "$d" config maintenance.auto false
 scratch="$(mktemp -d "$(dirname "$OT_WT_LOG")/scratch.XXXXXX")"
 ln -s "$scratch" "$d/tmp"
 printf '%s\n' "$d"
@@ -1742,6 +1753,8 @@ cat > "$LINKED_STUB" <<'STUBEOF'
 [[ "${1:-}" == "create" ]] || exit 0
 d="$(mktemp -d "$(dirname "$OT_WT_LOG")/wt.XXXXXX")"
 git init -q "$d"
+git -C "$d" config gc.auto 0
+git -C "$d" config maintenance.auto false
 mkdir -p "$d/.git/lane-mail"
 ln -s "$(dirname "$OT_WT_LOG")/marker-target" "$d/.git/lane-mail/cc-40"
 printf '%s\n' "$d"
@@ -1898,6 +1911,8 @@ lane_launch() {
   launcher="$(basename -- "$lane")"; launcher="${launcher#.}"
   mkdir -p "$runs" "$caller"
   git -C "$caller" init -q
+  git -C "$caller" config gc.auto 0
+  git -C "$caller" config maintenance.auto false
   local gate=""
   [[ "$late" != late ]] || trigger="$runs/trigger"
   [[ "$late" != gated ]] || gate="$runs/gate"

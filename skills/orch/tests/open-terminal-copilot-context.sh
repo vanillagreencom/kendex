@@ -111,6 +111,8 @@ stage() {
   cp -R "$SCRIPTS_DIR/." "$1/scripts/"
   orch_fixture_shared_libs "$1"
   git -C "$1" init -q
+  git -C "$1" config gc.auto 0
+  git -C "$1" config maintenance.auto false
 }
 REPO="$TMP_ROOT/repo"
 stage "$REPO"

@@ -2736,10 +2736,13 @@ context_record_fetch() { # LANE CALLER
 	mailbox_file_fetch "$rec" "$LANE_CONTEXT_RECORD"
 }
 
-# CLAIMS with a row appended for every running fleet lane record LANES_JSON
-# holds whose window no claim names. A lane launched with no --lane takes no
-# claim, yet its turn end judges a reading recorded in its mailbox like any
-# lane's, so the sweep reads it from its record. The row names the
+# CLAIMS with a row appended for every running Copilot fleet lane record
+# LANES_JSON holds whose window no claim names. A Copilot launch takes no
+# --lane, so no claim, yet its turn end judges a reading recorded in its
+# mailbox like any lane's, so the sweep reads it from its record. Another
+# harness's lane is read through its claim alone: its claim goes when its pane
+# dies, its record can still read running, and a row from that record would
+# bring back the dead lane's stale reading. The row names the
 # record's account, or none, its window's name as the lane, no server, and
 # the window's whole `SESSION:WINDOW` as the pane, a target tmux takes where
 # it takes a pane id. Exit 1 where the records could not be read.
@@ -2747,7 +2750,7 @@ context_record_claims() { # CLAIMS LANES_JSON
 	local rows
 	rows="$(jq -r --arg claims "$1" '
 		($claims | split("\n") | map(split("\t") | .[1] // empty)) as $named
-		| .[] | select((.window // "") != "")
+		| .[] | select((.window // "") != "" and (.harness // "") == "copilot")
 		| (.window | sub("^[^:]*:"; "")) as $w
 		| select(any($named[]; . == $w) | not)
 		| [(.account // ""), $w, "", .window] | join("\t")' <<<"$2")" || return 1
