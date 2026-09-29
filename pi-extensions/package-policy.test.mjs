@@ -123,18 +123,25 @@ function auditRecord(audit) {
 	return { previous, release, verdict, cleared: verdict === "roll" ? release : previous };
 }
 
+// The Pi peer floors the audit gates: `>=X.Y.Z` ranges on `@earendil-works/pi-*`
+// peers only. Other peers, such as pi-extension-manager's `@oh-my-pi/*` floors,
+// are not Pi releases the audit reads.
+function piFloors(pkgs) {
+	return pkgs.flatMap(({ dir, pkg }) =>
+		Object.entries(pkg.peerDependencies ?? {}).flatMap(([name, range]) => {
+			const floor = name.startsWith("@earendil-works/pi-") ? range.match(/^>=(\d+\.\d+\.\d+)$/)?.[1] : undefined;
+			return floor === undefined ? [] : [{ dir, name, floor }];
+		}),
+	);
+}
+
 function floorRefusals(pkgs, marker, audit) {
 	const { release, verdict, cleared } = auditRecord(audit);
 	if (verdict === undefined) return [`pi-update.audit.md: the record names no verdict, \`roll\` or \`hold\``];
 	if (cleared !== marker.lastVersion) return [`pi-update.audit.md: no audit record clears ${marker.lastVersion}, the release pi-update.state.json marks audited (verdict ${verdict} for ${release} clears ${cleared})`];
-	return pkgs.flatMap(({ dir, pkg }) =>
-		Object.entries(pkg.peerDependencies ?? {}).flatMap(([name, range]) => {
-			const floor = name.startsWith("@earendil-works/pi-") ? range.match(/^>=(\d+\.\d+\.\d+)$/)?.[1] : undefined;
-			return floor !== undefined && compareVersions(floor, cleared) > 0
-				? [`${dir}: Pi peer ${name} floor ${floor} is above ${cleared}, the last release pi-update.audit.md clears (verdict ${verdict} for ${release})`]
-				: [];
-		}),
-	);
+	return piFloors(pkgs)
+		.filter(({ floor }) => compareVersions(floor, cleared) > 0)
+		.map(({ dir, name, floor }) => `${dir}: Pi peer ${name} floor ${floor} is above ${cleared}, the last release pi-update.audit.md clears (verdict ${verdict} for ${release})`);
 }
 
 const auditPath = join(root, "pi-update.audit.md");
@@ -142,8 +149,7 @@ const markerPath = join(root, "pi-update.state.json");
 
 test("no Pi peer floor rises above the release the Pi update audit clears", () => {
 	const pkgs = packages();
-	const floors = pkgs.filter(({ pkg }) => Object.values(pkg.peerDependencies ?? {}).some((range) => range.startsWith(">=")));
-	assert.ok(floors.length > 0, "no package declares a >=X.Y.Z Pi peer floor: the manifest reader is broken");
+	assert.ok(piFloors(pkgs).length > 0, "no package declares a >=X.Y.Z @earendil-works/pi-* peer floor: the manifest reader is broken");
 	assert.deepEqual(floorRefusals(pkgs, JSON.parse(readFileSync(markerPath, "utf8")), readFileSync(auditPath, "utf8")), []);
 });
 
