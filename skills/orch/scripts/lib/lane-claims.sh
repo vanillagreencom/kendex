@@ -272,10 +272,13 @@ lane_claim_reserve() {
 
 # The one answer to which oversee lane records are lanes in flight, as jq
 # definitions a caller prefixes to its own program: oversee-watch carries the
-# running records, and open-terminal counts the held ones against its fleet cap,
-# those plus the preparing records of hosted lanes handed to a background job,
-# whose window and host are taken before the lane runs. The watch and the cap
-# cannot describe two different fleets. Hand-appended entries that are not
-# objects are no lane.
+# running records; held adds the preparing records of hosted lanes handed to a
+# background job, whose window and host are taken before the lane runs; and
+# in_flight adds the parked records, whose lane waits on a stopped sandbox to
+# resume into the fleet slot it kept. open-terminal counts the in_flight
+# records against its fleet cap, so a resume never adds a lane. The watch and
+# the cap cannot describe two different fleets. Hand-appended entries that are
+# not objects are no lane.
 LANE_RUNNING_JQ='def running: type == "object" and .status == "running";
-def held: running or (type == "object" and .status == "preparing");'
+def held: running or (type == "object" and .status == "preparing");
+def in_flight: held or (type == "object" and .status == "parked");'

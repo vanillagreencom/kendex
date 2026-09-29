@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # open-terminal's fleet cap: a fresh launch under --state-dir is refused as
-# cap-reached where the fleet's running and preparing records plus its
+# cap-reached where the fleet's running, preparing and parked records plus its
 # unrecorded live claims reach ORCH_OVERSEER_LANES, judged under the fleet's
 # launch lock, held from the count through the reservation write, which
 # refuses the launch where it fails. No cap bounds the lanes on one account.
-# A relaunch meets the fleet cap where the item has no running or preparing
-# record. --over-cap admits one launch and records the cap it passed, and
+# A relaunch meets the fleet cap where the item has no running, preparing or
+# parked record. --over-cap admits one launch and records the cap it passed, and
 # --wait-slot waits for room instead of refusing.
 #
 # The suite runs a copy of open-terminal beside copies of workflow-state and
@@ -400,6 +400,11 @@ seed_running CC-9 preparing
 launch one 1 --lane "$LANE_A" CC-1
 assert_eq "rc=$(rc one) $(key one)" "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0" \
   "a preparing record with no claim beside it fills the fleet's only slot"
+row parked
+seed_running CC-9 parked
+launch one 1 --lane "$LANE_A" CC-1
+assert_eq "rc=$(rc one) $(key one)" "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0" \
+  "a parked record keeps the fleet's only slot, and a fresh launch beside it is refused"
 
 echo "=== a relaunch is judged on the lane it adds ==="
 # The same account's claim and the item's running record are the lane being
@@ -437,9 +442,23 @@ launch one 1 --lane "$LANE_A" CC-1
 rm -f -- "${CLAIMS:?}/claims"/*.claim
 seed_running CC-9
 launch two 1 --lane "$LANE_A" --relaunch CC-1
-assert_eq "rc=$(rc two) $(key two) running=$(running)" \
-  "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 running=CC-9" \
-  "a parked record holds no working-lane capacity: its relaunch adds a lane, and at the fleet cap it is refused"
+assert_eq "rc=$(rc two) cap-lines=$(key two | wc -l | tr -d ' ') running=$(running) over_cap=$(over_cap CC-1)" \
+  "rc=0 cap-lines=0 running=CC-1,CC-9 over_cap=null" \
+  "a parked record keeps its slot: its relaunch at the fleet cap proceeds and records no exception"
+# Control: a copy of lib/lane-claims.sh whose in_flight leaves parked records
+# out, so the same resume adds a lane and meets the cap.
+CTL_OT="$(mutant_scripts parked-control lib/lane-claims.sh)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/parked-control"
+mutate_file "$(dirname "$CTL_OT")/lib/lane-claims.sh" \
+  'def in_flight: held or (type == "object" and .status == "parked");' 'def in_flight: held;'
+row relaunch-parked-control
+OT="$CTL_OT" launch one 1 --lane "$LANE_A" CC-1
+"$WS" --state-dir "$STATE" update oversee '.lanes |= map(.status = "parked")' >/dev/null
+rm -f -- "${CLAIMS:?}/claims"/*.claim
+seed_running CC-9
+OT="$CTL_OT" launch two 1 --lane "$LANE_A" --relaunch CC-1
+assert_eq "rc=$(rc two) $(key two)" "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0" \
+  "control: with parked records out of the count the resume at the fleet cap is refused"
 row relaunch-preparing
 seed_running CC-1 preparing
 launch one 1 --lane "$LANE_A" --relaunch CC-1

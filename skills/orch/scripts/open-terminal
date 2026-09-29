@@ -2470,12 +2470,13 @@ launch_prepared() { # LOG
   ot_message lane-prepare-failed "item=$item" "reason=$reason" >&2
 }
 
-# The cap a fleet launch is judged on: ORCH_OVERSEER_LANES bounds the lanes the
-# fleet runs. No cap bounds the lanes one account carries: `lanes pick` chooses
-# the account by its headroom. A launch naming no fleet has no records to
-# count, and a wake rouses a lane the fleet already counts, so neither is
-# judged. A relaunch is judged where it adds a lane: where the item has no
-# running or preparing record.
+# The cap a fleet launch is judged on: ORCH_OVERSEER_LANES bounds the items the
+# fleet has in flight, its running, preparing and parked lanes. No cap bounds
+# the lanes one account carries: `lanes pick` chooses the account by its
+# headroom. A launch naming no fleet has no records to count, and a wake rouses
+# a lane the fleet already counts, so neither is judged. A relaunch is judged
+# where it adds a lane: where the item has no running, preparing or parked
+# record. A parked lane keeps its slot, so its resume never meets the cap.
 #
 # The count and the reservation write are one step under the fleet's launch
 # lock, taken per item and released once the reservation stands: two launchers

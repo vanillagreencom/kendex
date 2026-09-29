@@ -92,13 +92,15 @@ cap_take() { # ITEM
   return 1
 }
 
-# Sets CAP_RUNNING (records lib/lane-claims.sh's LANE_RUNNING_JQ calls held,
-# running or preparing), CAP_INFLIGHT (live claims and reservations naming this
-# fleet that are no held record's own: a lane whose pane outlived its record's
-# running status, or a launch not yet recorded), and CAP_ITEM_HELD (whether
-# KEY's own record is held). A claim of this fleet is a held record's own where
-# it names the record's window, so a relaunch onto another account is not a
-# second lane of the fleet. A record's window is `SESSION:WINDOW`, or bare
+# Sets CAP_RUNNING (records lib/lane-claims.sh's LANE_RUNNING_JQ calls
+# in_flight, running, preparing or parked, here called held), CAP_INFLIGHT
+# (live claims and reservations naming this fleet that are no held record's
+# own: a lane whose pane outlived its record's running status, or a launch not
+# yet recorded), and CAP_ITEM_HELD (whether KEY's own record is held). A claim
+# of this fleet is a held record's own where it names the record's window, so a
+# relaunch onto another account is not a second lane of the fleet, and a parked
+# lane's resume, whose reservation names the window its record kept, is counted
+# once. A record's window is `SESSION:WINDOW`, or bare
 # where written by hand, and a claim's is the bare name, so the two are
 # compared on the name. The records are this fleet's durable count: a GUI
 # launch writes no claim and a claim write can fail, and either lane still has
@@ -115,8 +117,8 @@ cap_count() { # ITEM KEY
   # keeps an empty window a field of its own.
   [[ "$rc" -eq 0 ]] && out="$(jq -r --arg key "$2" "$LANE_RUNNING_JQ"'
     ([.[] | objects | select(.item == $key)] | first) as $own
-    | (if $own == null then "absent" elif ($own | held) then "held" else "stopped" end),
-      (.[] | select(held) | ["held", (.window // "" | sub("^[^:]*:"; ""))] | join("\u001f"))' <<<"$lanes")" || rc=1
+    | (if $own == null then "absent" elif ($own | in_flight) then "held" else "stopped" end),
+      (.[] | select(in_flight) | ["held", (.window // "" | sub("^[^:]*:"; ""))] | join("\u001f"))' <<<"$lanes")" || rc=1
   [[ "$rc" -eq 0 ]] || { ot_message cap-unreadable "item=$1" "source=state" >&2; return 1; }
   { read -r CAP_ITEM_HELD; held="$(cat)"; } <<<"$out"
   CAP_RUNNING=0
@@ -139,7 +141,7 @@ cap_count() { # ITEM KEY
 # Returns 0 with the item's reservation written and the lock released when
 # this item may launch, and 1 having released it when it may not, its refusal
 # printed. A relaunch of a held record replaces its lane, so it is inside the
-# cap. --over-cap admits the launch past the cap and names it in CAP_PASSED;
+# cap: a parked lane's resume takes back the slot its record kept. --over-cap admits the launch past the cap and names it in CAP_PASSED;
 # --wait-slot counts again every WAIT_SLOT_POLL_SECS until the cap has room,
 # printing slot-waiting whenever the count it waits on changes, and judges the
 # lane again before the count that admits it.

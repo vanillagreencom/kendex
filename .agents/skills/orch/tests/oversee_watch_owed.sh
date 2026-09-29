@@ -290,7 +290,7 @@ while IFS='@' read -r setup name old new item want; do
   if [[ "$item" == notices ]]; then got="$(notices)"; else got="$(owed "$item")"; fi
   assert_eq "$got" "$want" "control: $name" "$ERR"
 done <<'ROWS'
-world@without the held exclusion an item with a running lane is owed@($rec | held)@false@KEN-1@owed KEN-1 state=in-progress priority=1 lane=running verdict=queue
+world@without the in-flight exclusion an item with a running lane is owed@($rec | in_flight | not)@true@KEN-1@owed KEN-1 state=in-progress priority=1 lane=running verdict=queue
 world@without the merged verdict a cycle record is judged for a wall@if [[ "$pr" != - ]]; then@if false; then@KEN-5@owed KEN-5 state=in-review priority=2 lane=done verdict=queue
 world@without the roster membership test a harness with no account is asked of pick@any(.[]; .harness == $h)@true@KEN-9@owed KEN-9 state=in-progress priority=- lane=stopped verdict=unjudged harness=pi
 world@without the record's model the pick judges the binding bucket@[[ "$model" == - ]] || args+=(--model "$model")@:@KEN-11@owed KEN-11 state=in-progress priority=1 lane=stopped verdict=queue

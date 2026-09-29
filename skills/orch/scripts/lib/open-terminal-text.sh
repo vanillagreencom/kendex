@@ -81,7 +81,7 @@ ot_message() { # REASON FIELD=VALUE...
     record-write-failed) text='The lane launched and its window stands, but its record could not be written to the oversee workflow state, so the watch cannot carry it. Fix what workflow-state names, then record the lane by hand per oversee.md § 3 Lane record, or close the window before relaunching the item with --relaunch.' ;;
     record-missing) text='No lane record names the item, so this launcher never launched it and the wake recorded nothing; the woken session runs. Record the lane per oversee.md § 3 Lane record, or close its window and relaunch the item with --relaunch.' ;;
     state-unwritable) text='The oversee workflow state could not be created, so no lane would be watched. Nothing launched; fix what workflow-state names.' ;;
-    cap-reached) text='A launch here would put the fleet over ORCH_OVERSEER_LANES. cap names that setting, running the lane records in the fleet state whose status is running or preparing, and claims the live launch claims and reservations this fleet wrote that name the window of no such record: a lane whose record is neither while its pane still runs, or a launch not yet recorded. Nothing was launched. Wait for a lane to close, launch with --wait-slot to wait for one here, or pass --over-cap for one deliberate exception.' ;;
+    cap-reached) text='A launch here would put the fleet over ORCH_OVERSEER_LANES. cap names that setting, running the lane records in the fleet state whose status is running, preparing or parked, and claims the live launch claims and reservations this fleet wrote that name the window of no such record: a lane whose record is neither while its pane still runs, or a launch not yet recorded. Nothing was launched. Wait for a lane to close, launch with --wait-slot to wait for one here, or pass --over-cap for one deliberate exception.' ;;
     cap-unreadable) text='The lanes in flight could not be counted, so the fleet cap cannot be judged. Nothing was launched. source=state is the fleet state named by --state-dir; source=claims is the claim store, whose own keyed lane-claims line above names what failed.' ;;
     cap-lock-failed) text='The fleet'"'"'s launch lock, which lock names, was not taken inside its bound, so the count and the reservation write cannot be one step. Nothing was launched. Another launch holds it; the lock line above names a stale mutex where flock is absent.' ;;
     cap-lock-unopenable) text='The fleet'"'"'s launch lock file, which lock names, could not be opened, so the count and the reservation write cannot be one step. Nothing was launched. The shell'"'"'s own line above names why: a directory at that path, a state directory this launch cannot write, or a read-only file system.' ;;
@@ -483,11 +483,9 @@ Options:
                     the create, since that is the sandbox's state from then
                     on, so a create that fails after it leaves a stopped
                     record, which a plain relaunch recovers with no start.
-                    A parked record is not a running or
-                    preparing one, so this relaunch is judged as adding a
-                    lane under --state-dir's fleet cap: at that cap it is
-                    refused as cap-reached until a lane closes, or admitted
-                    with --wait-slot or --over-cap.
+                    A parked record keeps its slot under --state-dir's fleet
+                    cap, so this relaunch replaces the lane it holds and is
+                    never refused as cap-reached.
   --wake            Wake an idle lane in its existing worktree: resume its
                     newest matching Claude, Codex or Copilot session in print
                     mode, a Copilot one as the value of -p, or
@@ -598,8 +596,9 @@ lock held prints lock-waiting and waits for it. The worktree and host creates
 run with no lock held. A reservation that cannot be written refuses the
 launch as cap-reserve-failed.
 The fleet cap, ORCH_OVERSEER_LANES (default 3), read through orch-env, counts
-the records whose status is running or preparing (a hosted lane handed to a
-background job, see --host) plus the live launch claims and reservations this
+the records whose status is running, preparing (a hosted lane handed to a
+background job, see --host) or parked (a hosted lane stopped by
+`lane-close --park`, whose resume takes back its slot) plus the live launch claims and reservations this
 fleet wrote that no such record names (a claim store several fleets share
 counts each fleet's own claims here); a launch that would pass it is refused
 as cap-reached, naming the cap, those records and the claims. No cap bounds
@@ -609,7 +608,8 @@ failed to write under --lane auto, whose re-pick reads claims, as
 claim-unrecorded. A store that cannot be read refuses as cap-unreadable, a
 lock file that cannot be opened as cap-lock-unopenable, and a lock another
 launch holds past the wait as cap-lock-failed. A --relaunch meets the fleet
-cap where the item has no running or preparing record. --wake is not judged.
+cap where the item has no running, preparing or parked record. --wake is not
+judged.
 Both flags below need --state-dir, and are refused as cap-option-unanchored
 without it:
   --wait-slot       Wait for room instead of refusing: count again every 5

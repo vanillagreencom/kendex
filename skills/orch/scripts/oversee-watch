@@ -3298,9 +3298,9 @@ check_report() {
 # read; with none, every open pull request in the item repository, the first
 # --repo, whose head is a GitHub item's branch, issue-N, read whole by a
 # listing of its own. A listing that reaches OWED_PR_LIMIT refuses rather than
-# pass a short set as the whole one. An item is owed nothing while a record
-# holds it (running or preparing, LANE_RUNNING_JQ's `held`) or while it is
-# parked, since the merged check carries a parked lane's pull request and
+# pass a short set as the whole one. An item is owed nothing while its record
+# is in flight (running, preparing or parked, LANE_RUNNING_JQ's `in_flight`):
+# the merged check carries a parked lane's pull request, and
 # parked_merged_owed names the record again at each heartbeat once it
 # merged. The queue and the records are the turn's own fleet_merge read,
 # FLEET_STATE, so the heartbeat judges the fleet the pass carried and reads no
@@ -3375,7 +3375,7 @@ owed_read() {
     | . as $item
     | select(any($queue[]; . == $item.id) | not)
     | ([$lanes[] | objects | select(.item == $item.id)] | last) as $rec
-    | select($rec == null or ((($rec | held) or $rec.status == "parked") | not))
+    | select($rec == null or ($rec | in_flight | not))
     | [$item.id, $item.state, ($item.priority | tostring),
        (if $rec == null then "none" else ($rec.status | token("status")) end),
        ($rec.host // null | if . == null or . == "" then "local" elif type == "string" then . else error("lane-field field=host value=\(tojson)") end),
