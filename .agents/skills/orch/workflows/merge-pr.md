@@ -144,7 +144,7 @@ Bot-specific signals — emoji reactions, sticky-comment prose, checklist text �
 
 ### 3.3 Thread Read
 
-Read the open review threads by [references/thread-read.md](../references/thread-read.md), which owns the read, its triage route and the list of what else reads a thread. § 3.2 runs it before its `not_approved` wait, and § 5 step 1 before every merge call. Zero returns to the step that ran it; a head its triage pushed returns to § 3.
+Read the open review threads by [references/thread-read.md](../references/thread-read.md), which owns the read, its triage route, its return points and the list of what else reads a thread. § 3.2 runs it before its `not_approved` wait and on that wait's `comments` answer, § 5 step 1 before every merge call, and the Recovery cycle's gate wait on a `comments` answer, and Late-findings triage at its step 2.
 
 ## 4. Prepare
 
