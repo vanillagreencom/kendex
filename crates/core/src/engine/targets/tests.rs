@@ -173,6 +173,13 @@ const COPILOT_ROWS: &[CopilotRow] = &[
         want: None,
     },
     CopilotRow {
+        label: "a refusal's whitespace-only stdout yields to the reason",
+        script: "cat >/dev/null\nprintf '  \\t\\n'\nprintf 'guard: refused=bare-cd\\n' >&2\nexit 2\n",
+        status: 2,
+        stderr: "guard: refused=bare-cd",
+        want: None,
+    },
+    CopilotRow {
         label: "an allowed call passes its stdout and status through",
         script: "cat\nexit 0\n",
         status: 0,
