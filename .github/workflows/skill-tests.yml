@@ -88,9 +88,9 @@ name: Skill Tests
 # fails inside the budget instead of running to the job ceiling, and their
 # compile steps carry their own for a cold cache; the shell shards answer to
 # the job `timeout-minutes` above their steps, 30 minutes on every macOS leg
-# and on the Linux `rest` leg that builds kendex-cli from the checkout first,
-# and 15 on every other Linux leg. The per-shard figures behind each budget
-# are in the comment above it.
+# and on the Linux `rest` and `orch-terminal` legs that build kendex-cli from
+# the checkout first, and 15 on every other Linux leg. The per-shard figures
+# behind each budget are in the comment above it.
 # Every pull request pays its selected shards on the pull request, the Linux
 # and macOS legs alike, and the merge queue stands them down where the proof
 # above holds, so the slowest of them is charged once per merge there. It is
@@ -459,24 +459,28 @@ jobs:
     # third runs this leg in roughly a third of that time. The three shards
     # this leg later held past ten minutes of every merge — guards to 1061s,
     # rest to 845s, orch-rest to 675s — are split again below.
-    # The Linux `rest` leg builds kendex-cli (debug) from the checkout ahead
-    # of its suites, and a cold cargo cache — the first run after a merge,
-    # and after each rustc release — pays the whole build. Its duration on a
-    # runner is unmeasured, so that leg takes the macOS ceiling until a
-    # figure is recorded here.
+    # The Linux `rest` and `orch-terminal` legs build kendex-cli (debug) from
+    # the checkout ahead of their suites, and a cold cargo cache — the first
+    # run after a merge, and after each rustc release — pays the whole build.
+    # Its duration on a runner is unmeasured, so those legs take the macOS
+    # ceiling until a figure is recorded here.
     # The `guards-hooks`, `guards-tools` and `guards-tools-tail` legs are cut
     # to the targets the file header states, eight minutes on Linux and
     # fourteen on macOS, which leave the 15- and 30-minute ceilings here a
     # margin; their figures are above their steps.
-    timeout-minutes: ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest') && 30 || 15 }}
+    timeout-minutes: ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'orch-terminal') && 30 || 15 }}
     # harness-ci's change-class suite skips its real-kendex rows where no
     # kendex is on PATH, and this turns that skip into a failure. It is set
     # for the whole job rather than beside the install step below, so the
     # shard that runs those suites must be one that installed a kendex
     # whatever the roster looks like later. The macOS legs keep the skip, for
     # the reason the install step gives.
+    # ORCH_REQUIRE_KENDEX does the same for the orch suite
+    # open-terminal-copilot-context.sh, whose disableAllHooks rows ask a real
+    # kendex hooks-off and which the `orch-terminal` shard runs.
     env:
       HARNESS_CI_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+      ORCH_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -701,6 +705,36 @@ jobs:
       # never in neither. Run 36195213656, PR #2902's own run with the split
       # in place, confirms it: both shards finished inside each leg's job
       # ceiling, by the per-suite paragraph above.
+      # kendex-cli, built from this checkout and put on PATH, for the two
+      # shards whose suites run a real kendex: `rest`, for harness-ci's
+      # change-class rows, whose comment at the `rest` shard's verify-document
+      # step says why the build is this checkout's and why Linux alone, and
+      # `orch-terminal`, for the disableAllHooks rows of
+      # open-terminal-copilot-context.sh, which ask the `hooks-off` verb this
+      # checkout ships. The macOS legs keep both suites' skips. A pull request
+      # restores the cache and never saves it.
+      - uses: dtolnay/rust-toolchain@stable
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal') && runner.os == 'Linux'
+      - uses: Swatinem/rust-cache@v2
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal') && runner.os == 'Linux'
+        with:
+          key: change-class-kendex
+          save-if: ${{ github.event_name != 'pull_request' }}
+      # The keychain store links dbus, as every cargo job below installs.
+      - name: System dependencies for the keychain store
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal') && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+      - name: kendex from this checkout
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal') && runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          cargo build -p kendex-cli --locked
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 target/debug/kendex "$HOME/.local/bin/kendex"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          installed="$(PATH="$HOME/.local/bin:$PATH" kendex --version)"
+          echo "installed: $installed"
+
       - name: tmux for pane delivery tests
         if: matrix.shard == 'orch-terminal' || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-oversee-succeed' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'node'
         run: |
@@ -1015,8 +1049,9 @@ jobs:
 
       # harness-ci's change-class suite drives a real consumer install and
       # refresh through a real kendex to say which refusal each one earns, and
-      # skips those rows where none is on PATH. No other step here puts one there, so that skip
-      # would be permanent and the rows would be proved on no runner at all.
+      # skips those rows where none is on PATH. Without the kendex build step
+      # above that skip would be permanent and the rows would be proved on no
+      # runner at all.
       # HARNESS_CI_REQUIRE_KENDEX turns the skip into a failure; it is set for
       # every Linux leg in the job's env: above, not here, so a later shard
       # split that moves harness-ci's suites off `rest` reds the shard that
@@ -1040,28 +1075,12 @@ jobs:
       # it, where the answer would be a refused render row. A debug build
       # is enough — the suite hands it a sandbox HOME with KENDEX_REAL_HOME
       # set, which is what takes a debug build out of its dev sandbox — and
-      # the cargo cache keyed below keeps the build warm across runs.
-      - uses: dtolnay/rust-toolchain@stable
-        if: matrix.shard == 'rest' && runner.os == 'Linux'
-      - uses: Swatinem/rust-cache@v2
-        if: matrix.shard == 'rest' && runner.os == 'Linux'
-        with:
-          key: change-class-kendex
-          save-if: ${{ github.event_name != 'pull_request' }}
-      # The keychain store links dbus, as every cargo job below installs.
-      - name: System dependencies for the keychain store
-        if: matrix.shard == 'rest' && runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
-      - name: kendex, for the change-class render rows
+      # the cargo cache keyed at the build step keeps the build warm across
+      # runs.
+      - name: the verify document the change-class render rows read
         if: matrix.shard == 'rest' && runner.os == 'Linux'
         run: |
           set -euo pipefail
-          cargo build -p kendex-cli --locked
-          mkdir -p "$HOME/.local/bin"
-          install -m 0755 target/debug/kendex "$HOME/.local/bin/kendex"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          installed="$(PATH="$HOME/.local/bin:$PATH" kendex --version)"
-          echo "installed: $installed"
           if ! PATH="$HOME/.local/bin:$PATH" kendex verify --help | grep -q -- '--json'; then
             echo "kendex-verify-document-missing: the built kendex answers no verify --json" >&2
             exit 1

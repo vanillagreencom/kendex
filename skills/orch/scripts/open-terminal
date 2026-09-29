@@ -788,10 +788,17 @@ copilot_context_configure() { # HOME
 # lane-mail-check. Copilot runs no hook and no extension the home does not
 # name, and a lane running with either missing would be reported measured
 # while nothing measured it. copilot_fleet_gate makes the home run the
-# extension, before any worktree. The project scope is the lane's worktree,
+# extension, or admits the fallback reader below, before any worktree. The project scope is the lane's worktree,
 # made from the item's base or kept from an earlier launch, never the caller's
 # checkout, so copilot_hooks_gate asks once that worktree stands and before the
-# harness starts in it.
+# harness starts in it. There it also asks whether Copilot runs those hooks at
+# all: `disableAllHooks` true in any settings layer Copilot reads for that home
+# and worktree switches every hook off, while the extension still records the
+# readings. kendex's Copilot settings reader owns those layers and which one
+# wins, so the gate asks it through `kendex hooks-off`, whose stdout is one
+# JSON object whose `switched_off_by` names the file or is null; a kendex that
+# is missing, fails or answers anything else refuses the lane, since an
+# unanswered question is not hooks that run.
 #
 # A home whose settings turn EXTENSIONS off (`detail=disabled`) runs no
 # extension, and that choice is the operator's. There the lane is admitted
@@ -823,11 +830,32 @@ copilot_fleet_gate() {
   return 1
 }
 copilot_hooks_gate() { # WORKTREE ITEM
-  local home
+  local home answer err query_rc=0 off=""
   home="$(copilot_launch_home)"
-  lane_context_copilot_hooks "$1" "$home" >/dev/null && return 0
-  ot_message unsupported-for-oversee harness=copilot reason=no-context-hooks "item=$2" \
-    "scope=$1/.github/hooks" "scope=$home/hooks" >&2
+  if ! lane_context_copilot_hooks "$1" "$home" >/dev/null; then
+    ot_message unsupported-for-oversee harness=copilot reason=no-context-hooks "item=$2" \
+      "scope=$1/.github/hooks" "scope=$home/hooks" >&2
+    return 1
+  fi
+  if ! err="$(mktemp)"; then
+    ot_message unsupported-for-oversee harness=copilot reason=hooks-unjudged "item=$2" exit=scratch >&2
+    return 1
+  fi
+  answer="$(kendex hooks-off --copilot-home "$home" --project "$1" 2>"$err")" || query_rc=$?
+  # `input` refuses an empty answer, which a bare filter would read as none.
+  [[ "$query_rc" -ne 0 ]] || off="$(jq -rn 'input
+    | if type == "object" and has("switched_off_by")
+        and ((.switched_off_by | type) as $t | $t == "string" or $t == "null")
+      then .switched_off_by // "" else error("no switched_off_by answer") end' <<<"$answer" 2>>"$err")" || query_rc=answer
+  if [[ "$query_rc" != 0 ]]; then
+    ot_message unsupported-for-oversee harness=copilot reason=hooks-unjudged "item=$2" "exit=$query_rc" >&2
+    cat -- "$err" >&2
+    rm -f -- "${err:?}"
+    return 1
+  fi
+  rm -f -- "${err:?}"
+  [[ -n "$off" ]] || return 0
+  ot_message unsupported-for-oversee harness=copilot reason=hooks-disabled "item=$2" "file=$off" >&2
   return 1
 }
 

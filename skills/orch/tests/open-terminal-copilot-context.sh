@@ -8,6 +8,15 @@
 # `unsupported-for-oversee harness=copilot` with reason=no-context-hooks or
 # reason=no-context-reader. The harness-gate suite holds the other harnesses.
 #
+# With the hooks in place, the gate asks `kendex hooks-off` whether a Copilot
+# settings file of that home and worktree switches every hook off, refusing as
+# reason=hooks-disabled where one does and reason=hooks-unjudged where kendex
+# cannot answer. Those rows run the real kendex on PATH, whose answer comes
+# from crates/cli/src/commands/hooks_off.rs over the reader in
+# crates/core/src/harness/copilot/settings.rs. Where no kendex there answers
+# hooks-off they are skipped by name, and ORCH_REQUIRE_KENDEX set turns that
+# skip into a failure. Every other row asks a stub that answers null.
+#
 # The hooks are judged in the item's worktree, which the stubbed worktree CLI
 # makes as a fresh copy of BASE, the item's base, or on --relaunch keeps as it
 # stands. That worktree is no git repository, so a launch the gate passes
@@ -52,6 +61,43 @@ esac
 STUB
 chmod +x "$BIN/term" "$BIN/gh" "$BIN/worktree-stub"
 
+# The real kendex the hooks-off rows ask, found on the PATH this suite was
+# started with and run in a home of its own, so it never writes the
+# developer's. KX_REAL is its directory, empty where no kendex there answers
+# hooks-off.
+REAL_KENDEX="$(command -v kendex || true)"
+KX_REAL=""
+if [[ -n "$REAL_KENDEX" ]]; then
+  mkdir -p "$TMP_ROOT/kendex-real" "$TMP_ROOT/kendex-home"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'export HOME=%q XDG_CONFIG_HOME=%q XDG_CACHE_HOME=%q XDG_DATA_HOME=%q KENDEX_BACKGROUND_REFRESH=off\n' \
+      "$TMP_ROOT/kendex-home" "$TMP_ROOT/kendex-home/.config" "$TMP_ROOT/kendex-home/.cache" "$TMP_ROOT/kendex-home/.local/share"
+    printf 'exec %q "$@"\n' "$REAL_KENDEX"
+  } > "$TMP_ROOT/kendex-real/kendex"
+  chmod +x "$TMP_ROOT/kendex-real/kendex"
+  # A kendex without the verb reads `hooks-off` as a source to add, and its
+  # --help as the whole program's, so the probe is a query of an empty home.
+  mkdir -p "$TMP_ROOT/kendex-probe"
+  if [[ "$("$TMP_ROOT/kendex-real/kendex" hooks-off --copilot-home "$TMP_ROOT/kendex-probe" \
+    --project "$TMP_ROOT/kendex-probe" 2>/dev/null)" == '{"switched_off_by":null}' ]]; then
+    KX_REAL="$TMP_ROOT/kendex-real"
+  fi
+fi
+# The stub every other row asks: null, or as OT_KENDEX says, a failure with
+# its own words, an empty answer, or an object without the key.
+mkdir -p "$TMP_ROOT/kendex-stub"
+cat > "$TMP_ROOT/kendex-stub/kendex" <<'STUB'
+#!/usr/bin/env bash
+case "${OT_KENDEX:-null}" in
+  null) printf '{"switched_off_by":null}\n' ;;
+  fail) echo "kendex-stub: settings unread" >&2; exit 3 ;;
+  empty) ;;
+  keyless) printf '{}\n' ;;
+esac
+STUB
+chmod +x "$TMP_ROOT/kendex-stub/kendex"
+
 # stage DIR — a copy of the orch scripts in a git repo of its own, so the
 # project root, and its project hook scope, are the fixture's.
 stage() {
@@ -80,12 +126,13 @@ BASE="$TMP_ROOT/base"
 WTS="$TMP_ROOT/wt"
 
 # launch NAME [ARG...] — a fleet launch of CC-1 on copilot under the home, in
-# the worktree WTS/NAME, with ARGs; OT names another copy. The gate's line
-# open-terminal wrote, or `passed`.
+# the worktree WTS/NAME, with ARGs; OT names another copy, and KENDEX_DIR the
+# directory of the kendex it asks, ahead of any other, the stub where unset.
+# The gate's line open-terminal wrote, or `passed`.
 launch() { # NAME [ARG...]
   local name="$1" line
   shift
-  ( cd "$REPO" && PATH="$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="$BIN/worktree-stub" \
+  ( cd "$REPO" && PATH="${KENDEX_DIR:-$TMP_ROOT/kendex-stub}:$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="$BIN/worktree-stub" \
     OT_BASE="$BASE" OT_WT="$WTS/$name" \
     OT_TERM_LOG="$TMP_ROOT/$name.term" TERMINAL=term TMUX="" COPILOT_HOME="$COP_HOME" \
     "${OT:-$REPO/scripts/open-terminal}" --ghostty --state-dir "$TMP_ROOT/fleet" --harness copilot \
@@ -210,6 +257,68 @@ assert_eq "$(OT="$TMP_ROOT/no-source/scripts/open-terminal" launch no-source)" \
   "open-terminal: unsupported-for-oversee harness=copilot reason=no-context-reader file=$TMP_ROOT/no-source/scripts/copilot-lane-context/extension.mjs detail=unreadable" \
   "an install missing the extension beside open-terminal is refused, naming the missing file"
 
+echo "=== a kendex that cannot say whether the hooks run refuses the lane ==="
+unjudged() { printf '%s' "open-terminal: unsupported-for-oversee harness=copilot reason=hooks-unjudged item=CC-1 exit=$1"; }
+# `label|stub answer|gate line`
+while IFS='|' read -r label answer want; do
+  copilot_world project -
+  assert_eq "$(OT_KENDEX="$answer" launch "unjudged-$answer")" "$want" "$label"
+done <<ROWS
+a kendex that fails the query is refused, naming its exit status|fail|$(unjudged 3)
+an empty answer is refused, never read as no file|empty|$(unjudged answer)
+an answer without switched_off_by is refused|keyless|$(unjudged answer)
+ROWS
+assert_eq "$(grep -c '^kendex-stub: settings unread$' "$TMP_ROOT/unjudged-fail.err" || true)" 1 \
+  "the failed query's own words follow its refusal"
+
+echo "=== disableAllHooks, as the real kendex reads it ==="
+if [[ -z "$KX_REAL" ]]; then
+  if [[ -n "${ORCH_REQUIRE_KENDEX:-}" ]]; then
+    fail "ORCH_REQUIRE_KENDEX is set and no kendex on PATH answers hooks-off"
+  else
+    printf '  skip  no kendex on PATH answers hooks-off; the disableAllHooks rows and their controls did not run\n'
+  fi
+else
+  disabled() { printf '%s' "open-terminal: unsupported-for-oversee harness=copilot reason=hooks-disabled item=CC-1 file=$1"; }
+  # real_world WHERE — the project hooks on the base, and disableAllHooks
+  # true in the home's settings.json (home), in the base's Claude Code
+  # settings (claude), or in the home and set false again by the base's
+  # Copilot settings, a later layer (cleared).
+  real_world() { # WHERE
+    copilot_world project -
+    case "$1" in
+      home) printf '{"disableAllHooks":true}\n' > "$COP_SETTINGS" ;;
+      claude) mkdir -p "$BASE/.claude" && printf '{"disableAllHooks":true}\n' > "$BASE/.claude/settings.json" ;;
+      cleared)
+        printf '{"disableAllHooks":true}\n' > "$COP_SETTINGS"
+        mkdir -p "$BASE/.github/copilot" && printf '{"disableAllHooks":false}\n' > "$BASE/.github/copilot/settings.json" ;;
+    esac
+  }
+  # `label|world|launch|gate line`
+  while IFS='|' read -r label world name want; do
+    real_world "$world"
+    assert_eq "$(KENDEX_DIR="$KX_REAL" launch "$name")" "$want" "$label"
+  done <<ROWS
+true in the home's settings is refused, naming that file|home|real-home|$(disabled "$COP_SETTINGS")
+true in the worktree's Claude Code settings is refused, naming the worktree's copy|claude|real-claude|$(disabled "$WTS/real-claude/.claude/settings.json")
+true in the home and false in the worktree's Copilot settings, a later layer, passes|cleared|real-cleared|passed
+ROWS
+  # real_ctrl NAME OLD NEW — a staged copy of open-terminal with OLD cut.
+  real_ctrl() { stage "$TMP_ROOT/$1" && mutate_file "$TMP_ROOT/$1/scripts/open-terminal" "$2" "$3"; }
+  real_ctrl off-ctrl '  [[ -n "$off" ]] || return 0' '  return 0'
+  real_world home
+  assert_eq "$(OT="$TMP_ROOT/off-ctrl/scripts/open-terminal" KENDEX_DIR="$KX_REAL" launch off-ctrl)" passed \
+    "control: without the hooks-disabled refusal a lane whose home switches every hook off passes"
+  real_ctrl project-ctrl 'hooks-off --copilot-home "$home" --project "$1"' 'hooks-off --copilot-home "$home" --project "$CLAIM_ROOT"'
+  real_world claude
+  assert_eq "$(OT="$TMP_ROOT/project-ctrl/scripts/open-terminal" KENDEX_DIR="$KX_REAL" launch project-ctrl)" passed \
+    "control: asked of the caller's checkout, the worktree's own switch is never read"
+  real_world cleared
+  assert_eq "$(OT="$TMP_ROOT/project-ctrl/scripts/open-terminal" KENDEX_DIR="$KX_REAL" launch project-ctrl-cleared)" \
+    "$(disabled "$COP_SETTINGS")" \
+    "control: asked of the caller's checkout, the worktree's later false never clears the home's true"
+fi
+
 echo "=== must-fail controls ==="
 # copilot_ctrl NAME OLD NEW HOOKS SETTINGS WANT LABEL — the rule OLD cut from
 # a staged copy of open-terminal, and what a launch in that world reads then.
@@ -222,10 +331,10 @@ copilot_ctrl() { # NAME OLD NEW HOOKS SETTINGS WANT LABEL
 copilot_ctrl admit-ctrl '    copilot) [[ "$LANE_HOST" == local ]] ||' '    copilot-x) [[ "$LANE_HOST" == local ]] ||' project - \
   "open-terminal: unsupported-for-oversee harness=copilot flag=none" \
   "control: without its admission a copilot fleet launch is refused as a harness nothing judges"
-copilot_ctrl hooks-ctrl '  lane_context_copilot_hooks "$1" "$home" >/dev/null && return 0' '  return 0' \
+copilot_ctrl hooks-ctrl '  if ! lane_context_copilot_hooks "$1" "$home" >/dev/null; then' '  if false; then' \
   none - "passed flag=true" "control: without the hook check a copilot fleet lane nothing would judge passes"
-copilot_ctrl caller-ctrl '  lane_context_copilot_hooks "$1" "$home" >/dev/null && return 0' \
-  '  lane_context_copilot_hooks "$CLAIM_ROOT" "$home" >/dev/null && return 0' \
+copilot_ctrl caller-ctrl '  if ! lane_context_copilot_hooks "$1" "$home" >/dev/null; then' \
+  '  if ! lane_context_copilot_hooks "$CLAIM_ROOT" "$home" >/dev/null; then' \
   caller - "passed flag=true" "control: judged in the caller's checkout, hooks the worktree lacks pass"
 stage "$TMP_ROOT/reuse-ctrl"
 mutate_file "$TMP_ROOT/reuse-ctrl/scripts/open-terminal" \
@@ -260,6 +369,12 @@ BEFORE="$(inode "$COP_EXT")"
 OT="$TMP_ROOT/cmp-ctrl/scripts/open-terminal" launch cmp-ctrl-same >/dev/null
 assert_eq "$([[ "$(inode "$COP_EXT")" == "$BEFORE" ]] && echo kept || echo rewritten)" "rewritten" \
   "control: without the content rule an identical copy is rewritten"
+OT_KENDEX=fail copilot_ctrl unjudged-ctrl '  if [[ "$query_rc" != 0 ]]; then' '  if false; then' project - "passed flag=true" \
+  "control: without the unjudged refusal a lane whose kendex failed the query passes"
+OT_KENDEX=empty copilot_ctrl empty-ctrl "  [[ \"\$query_rc\" -ne 0 ]] || off=\"\$(jq -rn 'input" "  [[ \"\$query_rc\" -ne 0 ]] || off=\"\$(jq -r '." \
+  project - "passed flag=true" "control: read with a bare filter, an empty answer passes as no file"
+OT_KENDEX=keyless copilot_ctrl keyless-ctrl '    | if type == "object" and has("switched_off_by")' '    | if type == "object"' \
+  project - "passed flag=true" "control: without the key rule an answer that names nothing passes as no file"
 copilot_ctrl source-ctrl '  [[ -r "$source" ]] || return 1' '  :' project - "passed flag=true" \
   "control: the source rule's copy launches as the world it replaces"
 rm -f -- "$TMP_ROOT/source-ctrl/scripts/copilot-lane-context/extension.mjs"

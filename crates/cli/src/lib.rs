@@ -212,6 +212,9 @@ enum Command {
     /// List the project paths each harness reads, as JSON
     #[command(name = "harness-paths")]
     HarnessPaths,
+    /// Name the Copilot settings file that switches every hook off, as JSON
+    #[command(name = "hooks-off")]
+    HooksOff(commands::hooks_off::HooksOffArgs),
     /// Find the AI model for a harness and performance tier
     #[command(name = "tier-model")]
     TierModel(commands::tier_model::TierModelArgs),
@@ -565,6 +568,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         Command::VersionCompare(args) => commands::version_compare::run(args)?,
         Command::TierModel(args) => commands::tier_model::run(args)?,
         Command::HarnessPaths => commands::harness_paths::run(&env)?,
+        Command::HooksOff(args) => commands::hooks_off::run(&env, args)?,
         Command::ReleaseMainBuild(args) => commands::update::release_main_build(args)?,
     }
     Ok(ExitCode::SUCCESS)

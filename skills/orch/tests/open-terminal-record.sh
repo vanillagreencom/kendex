@@ -65,6 +65,12 @@ printf '%s\n' "$STUB_GH_REPO"
 EOF
 printf '#!/usr/bin/env bash\ncase "${1:-}" in check) exit 0 ;; list) echo "[]" ;; esac\nexit 0\n' > "$BIN/lanes"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/claude"
+# kendex hooks-off, which a Copilot fleet launch asks whether Copilot's settings
+# switch its hooks off: nothing does here.
+cat > "$BIN/kendex" <<'EOF'
+#!/usr/bin/env bash
+printf '{"switched_off_by":null}\n'
+EOF
 cat > "$BIN/tmux" <<'EOF'
 #!/usr/bin/env bash
 t=none; prev=""
@@ -96,7 +102,7 @@ case "${1:-}" in
 esac
 exit 0
 EOF
-chmod +x "$BIN/ghostty" "$BIN/gh" "$BIN/lanes" "$BIN/claude" "$BIN/tmux"
+chmod +x "$BIN/ghostty" "$BIN/gh" "$BIN/lanes" "$BIN/claude" "$BIN/kendex" "$BIN/tmux"
 export TERMINAL=ghostty
 PROC_BIN="$TMP_ROOT/proc-bin"
 proc_table_install "$PROC_BIN"
@@ -220,8 +226,9 @@ assert_eq "rc=$RC repo=$(field "$(record issue-2711)" repo)" "rc=0 repo=o/resolv
   "a GitHub launch with no --repo records the repository its resolver answered"
 
 # A Copilot fleet lane is recorded as any other lane is, once its gate has its
-# hooks where the lane loads them and has made its home load the context
-# reader (open-terminal-copilot-context.sh holds those rules).
+# hooks where the lane loads them, no settings file switching them off, and
+# has made its home load the context reader (open-terminal-copilot-context.sh
+# holds those rules).
 COP_RECORD_HOME="$TMP_ROOT/copilot-home"
 mkdir -p "$COP_RECORD_HOME/hooks"
 for name in lane-mail-check lane-mail-compact; do : > "$COP_RECORD_HOME/hooks/$name.sh"; : > "$COP_RECORD_HOME/hooks/$name.json"; done

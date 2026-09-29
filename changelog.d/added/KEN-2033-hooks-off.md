@@ -1,0 +1,1 @@
+- CLI: `kendex hooks-off` names the Copilot settings file that switches every hook off for a Copilot home and project, and orch refuses a Copilot fleet lane whose hooks that file switches off.

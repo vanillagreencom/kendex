@@ -146,6 +146,78 @@ fn harness_paths_prints_the_adapters_paths_from_anywhere() {
     })));
 }
 
+/// The Copilot home and the project come from the flags, never from the
+/// caller's own home or folder, and the file named is the one whose
+/// `disableAllHooks` the later layers leave standing. A home that holds no
+/// settings answers null, the one form a launch passes on.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn hooks_off_names_the_copilot_settings_file_that_switched_every_hook_off() {
+    let tmp = fixture_home();
+    let home = tmp.path();
+    let folder = tempfile::tempdir().unwrap();
+    let root = rooted(&folder);
+    let copilot_home = root.join("copilot-home");
+    let project = root.join("worktree");
+    fs::create_dir_all(&copilot_home).unwrap();
+    fs::create_dir_all(project.join(".github/copilot")).unwrap();
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    let home_settings = copilot_home.join("settings.json");
+    let claude_settings = project.join(".claude/settings.json");
+    let repo_settings = project.join(".github/copilot/settings.json");
+    let ask = || {
+        let output = kendex(
+            home,
+            home,
+            &[
+                "hooks-off",
+                "--copilot-home",
+                copilot_home.to_str().unwrap(),
+                "--project",
+                project.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let named = |path: &Path| serde_json::json!({ "switched_off_by": path.to_str().unwrap() });
+    let none = serde_json::json!({ "switched_off_by": null });
+
+    // A label, the settings file the row writes with its text, and the
+    // answer; each write lands on top of the rows before it.
+    type Row<'a> = (&'a str, Option<(&'a Path, &'a str)>, serde_json::Value);
+    let rows: [Row; 4] = [
+        ("no settings anywhere", None, none.clone()),
+        (
+            "the home named by the flag switches them off",
+            Some((&home_settings, r#"{"disableAllHooks": true}"#)),
+            named(&home_settings),
+        ),
+        (
+            "a repository file, a later layer, switches them back on",
+            Some((&repo_settings, r#"{"disableAllHooks": false}"#)),
+            none.clone(),
+        ),
+        (
+            "Claude Code's project file sits below the repository file",
+            Some((&claude_settings, r#"{"disableAllHooks": true}"#)),
+            none,
+        ),
+    ];
+    for (label, write, want) in rows {
+        if let Some((path, text)) = write {
+            fs::write(path, text).unwrap();
+        }
+        assert_eq!(ask(), want, "{label}");
+    }
+    fs::remove_file(&repo_settings).unwrap();
+    assert_eq!(
+        ask(),
+        named(&claude_settings),
+        "with the repository file gone, the project's Claude Code file is the last word"
+    );
+}
+
 #[test]
 fn scope_project_outside_a_project_is_an_error() {
     let tmp = fixture_home();
