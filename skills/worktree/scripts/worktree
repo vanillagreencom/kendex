@@ -2570,8 +2570,8 @@ case "${1:-}" in
     # existing branch" semantics can never apply to it — it is always checked
     # out in the main checkout — and it is not issue-ownership evidence, so
     # base a fresh issue branch on it exactly like --from. With no default
-    # branch known, --base inspects the named branch, whose main-checkout
-    # guard refuses the default branch itself.
+    # branch known, --base opens the named branch like any other; the
+    # main-checkout guard refuses it only while it is checked out there.
     if [[ -z "$FROM" && -z "$PR" && -n "$BASE" ]] && resolve_default_branch optional; then
       case "$BASE" in
         "$DEFAULT_BRANCH" | "origin/$DEFAULT_BRANCH")

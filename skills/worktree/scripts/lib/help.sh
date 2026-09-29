@@ -781,7 +781,9 @@ record of origin's HEAD with a warning, worktree-default-branch-unreadable;
 create refuses only where git holds no record either,
 worktree-default-branch-unknown, and only in a mode that reads the branch:
 a plain create, --reuse or --restack of a tree on a branch, --transfer, or
-a positional branch name. --from, --pr and --base work without it.
+a positional branch name. --from and --pr work without it. So does --base:
+it then opens the named branch as it opens any other, and refuses it only
+while the main checkout has that branch checked out.
 EOF
 }
 

@@ -6,8 +6,8 @@
 # refuse where git holds none. The first table runs `merged`, whose forge
 # query carries the default branch as its --base; one `create` then starts a
 # tree from GitHub's default branch; a table with no default branch known
-# runs the create modes and the removal that need none beside those that
-# refuse; the last table runs `check`, which reports the default branch's
+# runs the create modes, the reuse and the removal that need none beside
+# those that refuse; the last table runs `check`, which reports the default branch's
 # unpushed commits.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
@@ -101,7 +101,10 @@ git -C "$MAIN" branch lonely
 # answer; `refusing` refuses on a failed GitHub read where the script falls
 # back to git's record; `uncalled` cuts check's resolve call; `eager-create`
 # and `eager-remove` resolve whatever create or remove was asked for; `loud`
-# prints the refusal where the caller works without the branch.
+# prints the refusal where the caller works without the branch; `lazy-remove`
+# cuts remove's resolve call, so the tree goes before the branch proof reads
+# the default branch; `eager-reuse` resolves before --reuse reads the tree's
+# branch.
 mutant() { # NAME FROM TO [NEXT]
   local script="$TMP_ROOT/$1/worktree/scripts/worktree" rc=0
   mkdir -p "$TMP_ROOT/$1"
@@ -134,6 +137,13 @@ mutant loud '    [[ "${1:-}" == optional ]] && return 1' '    :'
 # shellcheck disable=SC2016 # each line is the script's own text, not expanded
 mutant eager-remove '    [[ -z "$BRANCH" ]] || resolve_default_branch || exit 1' '    resolve_default_branch || exit 1' \
   '    if [[ -d "$WT_PATH" ]]; then'
+# shellcheck disable=SC2016 # each line is the script's own text, not expanded
+mutant lazy-remove '    [[ -z "$BRANCH" ]] || resolve_default_branch || exit 1' '    :' \
+  '    if [[ -d "$WT_PATH" ]]; then'
+# shellcheck disable=SC2016 # each line is the script's own text, not expanded
+mutant eager-reuse '      CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)' \
+  '      resolve_default_branch || exit 1; CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)' \
+  '      if [[ -n "$CURRENT_BRANCH" ]]; then'
 
 # --- the rows -------------------------------------------------------------------
 # Every row runs one verb in the main checkout with the row's environment and
@@ -189,13 +199,17 @@ assert_eq "$(git -C "$(cat "$TMP_ROOT/out")" rev-parse HEAD 2>/dev/null || true)
 
 # label|script|exit|stderr records|verb and arguments, {detached} the path
 # of a detached worktree; origin's inspect-a and inspect-b are branches
-# --base can inspect. gh names no GitHub repository and git holds no
-# record of origin's HEAD, so no default branch resolves, and only the create
-# modes and the removal that read one refuse.
+# --base can inspect; dev7's tree is detached and registered for its issue.
+# gh names no GitHub repository and git holds no record of origin's HEAD, so
+# no default branch resolves, and only the create modes and the removals that
+# read one refuse.
 echo "=== with no default branch, only what reads it refuses ==="
 git -C "$MAIN" remote set-head origin -d
 DETACHED="$TMP_ROOT/trees/detached"
 git -C "$MAIN" worktree add -q --detach "$DETACHED" main
+REUSED="$TMP_ROOT/trees/dev7"
+git -C "$MAIN" worktree add -q --detach "$REUSED" main
+printf 'dev7\n' >"$(git -C "$REUSED" rev-parse --absolute-git-dir)/kendex-issue"
 git -C "$MAIN" push -q origin main:refs/heads/inspect-a main:refs/heads/inspect-b
 while IFS='|' read -r label script rc err args; do
   [[ -z "$label" ]] && continue
@@ -210,8 +224,16 @@ create --base inspects the named branch without a refusal|real|0|-|create dev5 -
 must-fail: with the optional resolve refusing, create --base prints the refusal|loud|0|worktree-default-branch-unknown: <root>|create dev6 --base inspect-b
 must-fail: with remove resolving eagerly, a detached worktree is kept|eager-remove|1|worktree-default-branch-unknown: <root>|remove {detached}
 remove of a detached worktree removes it|real|0|-|remove {detached}
+remove of a worktree on a branch refuses before anything is removed|real|1|worktree-default-branch-unknown: <root>|remove dev2
+must-fail: with remove's resolve cut, a worktree on a branch is removed before the branch proof fails|lazy-remove|1|worktree-branch-delete-failed: inspect-a|remove dev5
+must-fail: with reuse resolving eagerly, --reuse of a detached tree refuses|eager-reuse|1|worktree-default-branch-unknown: <root>|create dev7 --reuse
+--reuse of a detached tree reads no default branch|real|0|-|create dev7 --reuse
 ROWS
 assert_eq "$([[ -e $DETACHED ]] && echo kept || echo gone)" gone "the detached worktree is gone"
+DEV2="$TMP_ROOT/trees/dev2"
+assert_eq "$([[ -d $DEV2 ]] && echo kept || echo gone)" kept "the refused removal keeps dev2's tree"
+assert_eq "$(git -C "$MAIN" worktree list --porcelain | grep -Fxc "worktree $DEV2" || true)" 1 \
+  "the refused removal keeps dev2's tree registered"
 git -C "$MAIN" remote set-head origin main
 
 # The main checkout's develop now holds one commit origin/develop lacks, and

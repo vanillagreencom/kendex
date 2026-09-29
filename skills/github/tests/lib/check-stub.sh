@@ -193,6 +193,8 @@ case "${1:-}" in
                     echo "missing effective token for post-merge GraphQL" >&2
                     exit 41
                 fi
+                # isCrossRepository answers only a query that names it, as
+                # GitHub answers only the fields a query selects.
                 jq -cn \
                     --arg state "${STUB_POST_STATE:-OPEN}" \
                     --arg head "${STUB_POST_HEAD:-${STUB_HEAD:-test-head}}" \
@@ -203,7 +205,8 @@ case "${1:-}" in
                     --argjson in_queue "${STUB_POST_IN_QUEUE:-false}" \
                     --argjson queue_entry "${STUB_POST_QUEUE_ENTRY_JSON:-null}" \
                     --argjson cross "${STUB_CROSS_REPOSITORY:-false}" \
-                    '{data:{repository:{pullRequest:{state:$state,headRefOid:$head,headRefName:$branch,isCrossRepository:$cross,mergeCommit:(if $commit == "" then null else {oid:$commit} end),autoMergeRequest:$auto,isInMergeQueue:$in_queue,mergeQueueEntry:$queue_entry}}}}'
+                    --argjson asked "$([[ "$*" == *isCrossRepository* ]] && echo true || echo false)" \
+                    '{data:{repository:{pullRequest:({state:$state,headRefOid:$head,headRefName:$branch,mergeCommit:(if $commit == "" then null else {oid:$commit} end),autoMergeRequest:$auto,isInMergeQueue:$in_queue,mergeQueueEntry:$queue_entry} + (if $asked then {isCrossRepository:$cross} else {} end))}}}'
                 exit 0
             fi
             # The thread mutations post-reply.sh and resolve-thread.sh send.

@@ -54,8 +54,9 @@ the fork answer holds when the post-merge read falls back to gh pr view|$DONE de
 # with no repository settings read; the pull_request narrowing
 # cut; the withheld settings read as a set that allows nothing; and the
 # delete_branch_on_merge check cut, so pr-merge deletes a branch GitHub
-# deletes itself; and the fork check cut, so a fork's head name is deleted
-# in this repository.
+# deletes itself; the fork check cut, so a fork's head name is deleted
+# in this repository; and isCrossRepository dropped from the post-merge
+# query, so no head is known to live in this repository and none is deleted.
 mutant_copy fixed '    local -a cmd=(pr merge "$pr_num" "--$method" --match-head-commit "$expected_head")' '    local -a cmd=(pr merge "$pr_num" --squash --match-head-commit "$expected_head")' >/dev/null || exit 2
 mutant_copy deaf '    answer=$(with_token "$token" kendex_github_merge_method '"'"'{owner}/{repo}'"'"' "$base" "$@") || rc=$?' '    answer=$(with_token "$token" kendex_github_merge_method '"'"'{owner}/{repo}'"'"' "$base" merge squash rebase) || rc=$?' >/dev/null || exit 2
 mutant_copy queueless '      | if ($queue | length) > 0 then' '      | if false then' lib/repo-settings.sh >/dev/null || exit 2
@@ -63,6 +64,7 @@ mutant_copy unnarrowed '          [$rules[] | select(.type == "pull_request") | 
 mutant_copy withheld '        elif ($s | type) != "array" or ($s | length) != 3 or any($s[]; type != "boolean") then "!settings"' '        elif false then "!settings"' lib/repo-settings.sh >/dev/null || exit 2
 mutant_copy deleter '            elif [ "$deletes" = false ] && [ -n "$branch" ]; then' '            elif [ -n "$branch" ]; then' >/dev/null || exit 2
 mutant_copy forker '            if ! cross=$(jq -r '"'"'.cross_repository'"'"' <<<"$post_snapshot") || [ "$cross" != false ]; then' '            if false; then' >/dev/null || exit 2
+mutant_copy unasked '        -f query='"'"'query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { state headRefOid headRefName isCrossRepository mergeCommit { oid } autoMergeRequest { enabledAt } isInMergeQueue mergeQueueEntry { state } } } }'"'"' \' '        -f query='"'"'query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { state headRefOid headRefName mergeCommit { oid } autoMergeRequest { enabledAt } isInMergeQueue mergeQueueEntry { state } } } }'"'"' \' >/dev/null || exit 2
 
 run_table "the must-fail controls" "\
 must-fail: with the method pinned, a merge-only repository is squashed|$DONE methods:merge|mutant:fixed:--keep-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
@@ -72,6 +74,7 @@ must-fail: with the narrowing cut, the rule's excluded squash is taken|$DONE met
 must-fail: with withheld settings read, the refusal names an empty set|$DONE repo:pushless|mutant:withheld:--keep-branch|1|-|pr-merge: merge-method allowed=none accepted=squash,merge,rebase|calls=$CHECK auth=<unset>
 must-fail: with the repository's setting not read, pr-merge deletes what GitHub deletes|$DONE deletes-on-merge:true|mutant:deleter:--delete-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue,delete:issue-123 auth=<unset>
 must-fail: with the fork check cut, a fork's head name is deleted in this repository|$DONE deletes-on-merge:false cross-repository|mutant:forker:--delete-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue,delete:issue-123 auth=<unset>
+must-fail: with isCrossRepository not asked for, this repository's head is kept|$DONE deletes-on-merge:false|mutant:unasked:--delete-branch|0|-|$MERGED;pr-merge: branch-kept branch=issue-123 cause=cross-repository-unreadable;GitHub did not say which repository holds the head branch, so it was not deleted.|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 "
 
 echo
