@@ -2,11 +2,15 @@
 # The restack cycle's validation wiring in merge-pr-restack.md: step 2's live
 # commands read the base branch, resolve the mode and start the range run
 # after the restack and before step 3's worktree-push, and executed as the
-# document writes them against a real worktree they run the range command
-# where the project sets DEV_VALIDATE_RANGE_CMD and nothing where it does not.
-# A live command is a line whose first text is [MAIN_REPO_ROOT]/, which a
-# commented or prose copy never is. Each pin has a control a moved or
-# commented decoy cannot satisfy. The runner itself is dev_validate_run.sh.
+# document writes them against a real worktree they run the range command.
+# Step 3's head read comes after the push and before step 4, and prints the
+# head= of the range run's record until a commit moves the branch. The
+# full-mode route is workflow prose no suite can make red; dev_validate_run.sh
+# RESOLVE_ROWS holds --resolve-mode's full answer with no run started.
+# A live command is a line whose first text is [MAIN_REPO_ROOT]/ or
+# git -C [WT_PATH], which a commented or prose copy never is. Each pin has a
+# control a moved, commented or altered decoy cannot satisfy. The runner
+# itself is dev_validate_run.sh.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,12 +29,14 @@ RESOLVE='dev-validate-run --resolve-mode --worktree [WT_PATH]'
 RANGE='dev-validate-run --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]'
 RECORD='dev-validate-run --record --run-dir [RUN_DIR]'
 PUSH='worktree-push --worktree [WT_PATH] --issue [ISSUE]'
+HEAD_READ='git -C [WT_PATH] rev-parse HEAD'
+LIVE='^[[:space:]]*(\\[MAIN_REPO_ROOT\\]/|git -C \\[WT_PATH\\] )'
 
 # command_at DOC NEEDLE — `LINE<tab>COMMAND` for the first live command line
 # holding NEEDLE, or nothing.
 command_at() {
-  awk -v needle="$2" '
-    /^[[:space:]]*\[MAIN_REPO_ROOT\]\// && index($0, needle) > 0 {
+  awk -v needle="$2" -v live="$LIVE" '
+    $0 ~ live && index($0, needle) > 0 {
       sub(/^[[:space:]]+/, ""); printf "%d\t%s\n", NR, $0; exit
     }
   ' "$1"
@@ -74,11 +80,35 @@ assert_eq "$(wiring_of "$MOVED")" "out-of-order: $RANGE" \
 assert_eq "$(wiring_of "$COMMENTED")" "missing: $RANGE" \
   "control: a commented range command is not a live command"
 
-echo "=== the live commands execute: range mode runs the range command, full mode runs nothing ==="
+echo "=== step 3's head read comes after its push and before step 4 ==="
+# head_read_of DOC — `placed` when step 3's head read is live after the push
+# and before step 4 opens; otherwise what is missing or out of place.
+head_read_of() {
+  local push at step4
+  push="$(command_at "$1" "$PUSH")"
+  at="$(command_at "$1" "$HEAD_READ")"
+  step4="$(awk '/^4\. / { print NR; exit }' "$1")"
+  [[ -n "$push" && -n "$at" && -n "$step4" ]] || { echo missing; return 0; }
+  (( ${at%%$'\t'*} > ${push%%$'\t'*} && ${at%%$'\t'*} < step4 )) || { echo out-of-order; return 0; }
+  echo placed
+}
+
+READ_BEFORE_PUSH="$TMP_ROOT/read-before-push.md"
+awk -v needle="$HEAD_READ" -v push="$PUSH" -v live="$LIVE" '
+  $0 ~ live && index($0, push) > 0 { print "   " needle }
+  $0 ~ live && index($0, needle) > 0 { next }
+  { print }
+' "$RESTACK_DOC" > "$READ_BEFORE_PUSH"
+assert_eq "$(head_read_of "$RESTACK_DOC")" "placed" \
+  "merge-pr-restack.md reads the pushed head between step 3's push and step 4"
+assert_eq "$(head_read_of "$READ_BEFORE_PUSH")" "out-of-order" \
+  "control: a head read moved before step 3's push fails the placement pin"
+
+echo "=== the live commands execute: the range run passes and step 3's head read matches its record ==="
 # A worktree whose base branch origin/main sits one commit behind HEAD, with a
-# full battery and, where the case sets one, a range command that each write
-# their own marker outside the worktree.
-make_worktree() { # NAME WITH_RANGE(yes|no)
+# full battery and a range command that each write their own marker outside
+# the worktree.
+make_worktree() { # NAME
   local wt="$TMP_ROOT/$1"
   git init -q -b ken-1 "$wt"
   git -C "$wt" config gc.auto 0
@@ -90,7 +120,7 @@ make_worktree() { # NAME WITH_RANGE(yes|no)
     printf '[env]\n'
     printf 'DEV_VALIDATE_CMD = "touch %s"\n' "$TMP_ROOT/$1-full-ran"
     printf 'DEV_VALIDATE_TIMEOUT_SECS = "20"\n'
-    [[ "$2" == no ]] || printf 'DEV_VALIDATE_RANGE_CMD = "printf %%s $DEV_VALIDATE_BASE > %s"\n' "$TMP_ROOT/$1-range-ran"
+    printf 'DEV_VALIDATE_RANGE_CMD = "printf %%s $DEV_VALIDATE_BASE > %s"\n' "$TMP_ROOT/$1-range-ran"
   } > "$wt/kendex.settings.toml"
   printf 'kendex.settings.toml\ntmp/\n' >> "$(git -C "$wt" rev-parse --path-format=absolute --git-path info/exclude)"
   printf '%s\n' "$wt"
@@ -115,35 +145,49 @@ live() {
     bash -c "$line"
 }
 
-# restack_validation NAME WITH_RANGE — step 2's route over a fixture: the base
-# read, the mode, and the range run and its record only where the mode is
-# range. Prints `mode=M verdict=V record=R`, `-` for a step the route skipped.
-restack_validation() {
-  local wt base mode out run_dir verdict=- record=-
-  wt="$(make_worktree "$1" "$2")"
-  base="$(live "$RESTACK_DOC" "$BASE_READ" "$wt" - -)" || return 1
-  mode="$(live "$RESTACK_DOC" "$RESOLVE" "$wt" "$base" -)" || return 1
-  if [[ "$mode" == validate-mode=range ]]; then
-    out="$(live "$RESTACK_DOC" "$RANGE" "$wt" "$base" -)" || true
-    verdict="$(sed -n 's/^state=done .*\(validate=[A-Za-z-]*\).*$/\1/p' <<<"$out")"
-    run_dir="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$out")"
-    record="$(live "$RESTACK_DOC" "$RECORD" "$wt" "$base" "$run_dir" | awk '{ print $1 }')" || return 1
-  fi
-  printf 'mode=%s verdict=%s record=%s\n' "${mode#validate-mode=}" "$verdict" "$record"
-}
+fixture_failed() { echo "merge-pr-restack-wiring: fixture=failed step=$1" >&2; exit 1; }
 
-assert_eq "$(restack_validation range yes)" "mode=range verdict=validate=pass record=validate-mode=range" \
+# Step 2's route over the fixture, each command as the document writes it.
+WT="$(make_worktree range)" || fixture_failed worktree
+BASE="$(live "$RESTACK_DOC" "$BASE_READ" "$WT" - -)" || fixture_failed base-read
+MODE="$(live "$RESTACK_DOC" "$RESOLVE" "$WT" "$BASE" -)" || fixture_failed resolve-mode
+OUT="$(live "$RESTACK_DOC" "$RANGE" "$WT" "$BASE" -)" || true
+VERDICT="$(sed -n 's/^state=done .*\(validate=[A-Za-z-]*\).*$/\1/p' <<<"$OUT")"
+RUN_DIR="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$OUT")"
+RECORD_LINE="$(live "$RESTACK_DOC" "$RECORD" "$WT" "$BASE" "$RUN_DIR")" || fixture_failed record
+RECORDED_HEAD="$(sed -n 's/^.* head=\([^ ]*\) .*$/\1/p' <<<"$RECORD_LINE")"
+
+assert_eq "mode=${MODE#validate-mode=} verdict=$VERDICT record=${RECORD_LINE%% *}" \
+  "mode=range verdict=validate=pass record=validate-mode=range" \
   "with DEV_VALIDATE_RANGE_CMD set the restack resolves range, runs the range command to a pass and records range"
 assert_eq "$(cat "$TMP_ROOT/range-range-ran" 2>/dev/null || echo absent)" \
-  "$(git -C "$TMP_ROOT/range" rev-parse origin/main)" \
+  "$(git -C "$WT" rev-parse origin/main)" \
   "the range command ran against the commit origin/[BASE_BRANCH] names"
 assert_eq "$([[ -e "$TMP_ROOT/range-full-ran" ]] && echo ran || echo absent)" "absent" \
   "and the full battery did not run in its place"
 
-assert_eq "$(restack_validation unset no)" "mode=full verdict=- record=-" \
-  "with DEV_VALIDATE_RANGE_CMD unset the restack resolves full and starts no run"
-assert_eq "$(find "$TMP_ROOT/unset" -maxdepth 2 -name 'dev-validate-*' | wc -l | tr -d ' ')|$([[ -e "$TMP_ROOT/unset-full-ran" ]] && echo ran || echo absent)" \
-  "0|absent" "no run directory exists and no command ran"
+# head_check DOC — `same` when DOC's step-3 head read, run in the fixture,
+# prints the head= of the range run's record; `differs` otherwise.
+head_check() {
+  local now
+  now="$(live "$1" "$HEAD_READ" "$WT" - -)" || fixture_failed head-read
+  [[ -n "$RECORDED_HEAD" && "$now" == "$RECORDED_HEAD" ]] && echo same || echo differs
+}
+
+PARENT_READ="$TMP_ROOT/parent-read.md"
+awk -v needle="$HEAD_READ" -v live="$LIVE" '
+  $0 ~ live && index($0, needle) > 0 { sub(/rev-parse HEAD$/, "rev-parse HEAD~1") }
+  { print }
+' "$RESTACK_DOC" > "$PARENT_READ"
+
+assert_eq "$(head_check "$RESTACK_DOC")" "same" \
+  "step 3's head read prints the head= the range run recorded while the branch holds still"
+assert_eq "$(head_check "$PARENT_READ")" "differs" \
+  "control: a head read of HEAD~1 keeps the matched text and fails the equality row"
+git -C "$WT" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m rebased \
+  || fixture_failed rebase-commit
+assert_eq "$(head_check "$RESTACK_DOC")" "differs" \
+  "a commit the push's rebase adds makes step 3's head read differ from the record, so the range run runs again"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

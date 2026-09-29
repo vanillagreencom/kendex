@@ -227,7 +227,7 @@ The accept paths, implement and fix alike, and the retry path for a structurally
 
 ### Store Validation Time
 
-Every artifact past the schema gate runs this subsection, implement and fix alike, before B or the retry reason routes the round, as [§ 3](#3-accept-the-round) states. [merge-pr-restack.md](merge-pr-restack.md) step 2 runs its write for a restack's range run, as kind `restack`. It is the one writer of `.validate_rounds`: the lane rewrites its status file's validation line from it, and `oversee-report`'s Validation row reads it.
+Every artifact past the schema gate runs this subsection, implement and fix alike, before B or the retry reason routes the round, as [§ 3](#3-accept-the-round) states. [merge-pr-restack.md](merge-pr-restack.md) runs its write for a restack's range run, as kind `restack`. It is the one writer of `.validate_rounds`: the lane rewrites its status file's validation line from it, and `oversee-report`'s Validation row reads it.
 
 `[VALIDATE_TIME]` is the artifact's `validate_time` as `dev-artifact-check` echoed it. On `null` the round named no run, or its run is unfinished, and there is no wall time to record: skip the write. A `no-verdict` run the timeout ended carries its time and is recorded like any other. Otherwise `[SECONDS]` is its `seconds`, `[VALIDATE_MODE]` the echoed `validate_mode`, and `[KIND]` the round's `implement` or `fix`. The write appends one entry per round and replaces an entry already carrying this round id, so a re-run of this step never counts a round twice.
 

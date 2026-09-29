@@ -346,7 +346,7 @@ GUARD_EXHAUSTED_FREE_MB = "512"
 # test run, cross-target checks, the documentation build, the Bash 3.2 parse,
 # the working-tree bot-instructions check, the decision-ID check, the
 # free-space floor above and the class lane selection.
-# A restack runs it over the whole branch before its push.
+# A restack also runs it, as skills/orch/workflows/merge-pr-restack.md sets out.
 # Submit reuses only the full run; CI runs what tools/ci-job-set selects.
 DEV_VALIDATE_RANGE_CMD = "tools/guard --range $DEV_VALIDATE_BASE"
 

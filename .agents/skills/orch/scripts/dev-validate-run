@@ -88,8 +88,8 @@
 # start:
 #   full   DEV_VALIDATE_CMD, the project's whole battery. The default.
 #   range  DEV_VALIDATE_RANGE_CMD, which validates the changes since --base REF
-#          and nothing else; a fix round's run, and a restack's run before
-#          its push. The command reads the base as
+#          and nothing else; a fix round's run, and a restack's run, as
+#          merge-pr-restack.md sets out. The command reads the base as
 #          DEV_VALIDATE_BASE, the commit REF resolved to when the run started,
 #          also recorded as the validate-base= line of start. A project that
 #          sets no DEV_VALIDATE_RANGE_CMD runs DEV_VALIDATE_CMD instead, and the
