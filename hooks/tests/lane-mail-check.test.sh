@@ -1813,8 +1813,11 @@ assert_eq "$(state_unread overseer_state_unread)" "RC=0 first=- record=600000 nu
 variant ungated-unrecorded -e '/^  \[ "\$OVERSEER_UNRECORDED" -eq 1 \] || return 0$/d'
 HOOK_SAVED="$HOOK"
 HOOK="$VARIANT_PATH"
-assert_eq "$(state_unread control_state_unread | cut -d' ' -f1)" "RC=1" \
-  "control: without the unrecorded gate a fleet state that cannot be read reaches the lost-overseer path"
+# The path's first read of RECORDED_KEY, unset by the failed read, stops the
+# hook on both shells; bash 3.2 then exits with its EXIT trap's 0, bash 5 with
+# 1, so the error line is the witness and the status is not.
+assert_eq "$(state_unread control_state_unread >/dev/null; grep -c ': RECORDED_KEY: unbound variable$' "$ERR_FILE")" "1" \
+  "control: without the unrecorded gate a fleet state that cannot be read reaches the lost-overseer path" "$ERR_FILE"
 HOOK="$HOOK_SAVED"
 
 # The mailbox rules are untouched: an overseer's checkout carries the fleet's
