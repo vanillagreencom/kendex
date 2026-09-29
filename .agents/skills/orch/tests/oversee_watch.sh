@@ -45,7 +45,9 @@
 #       parked-merged and closes nothing, its must-fail control being the
 #       close restored, the heartbeat names it again while the record still
 #       reads parked, its control being that repeat removed, and another
-#       merge on its branch hands nothing on
+#       merge on its branch, or none yet, hands nothing on at the merge or
+#       the heartbeat, its control being the heartbeat's membership test
+#       removed
 #   2b. handoff: an --item whose state carries `.handoff` with no
 #       `.resumed_at` fires once, with the record, read from the checkout's
 #       state directory even when the item has a worktree; a state
@@ -1233,6 +1235,19 @@ printf '[{"number": 3, "headRefName": "issue-2", "mergedAt": "2026-09-20T00:00:0
 parked_run --
 assert_eq "rc=$rc events=$EVENTS host=$HOST_VERBS note=$(grep -c '^oversee-watch: parked-merge-unmatched item=issue-2 recorded=owner/repo#2 seen=owner/repo#3$' "$err" || true)" "rc=0 events=merged 3 host= note=1" \
   "another pull request merged on the parked branch's name is reported, named as not the record's, and hands nothing on" "$err"
+# The heartbeat hands on only a record whose own key is in the merged row:
+# another number committed there is owed nothing.
+parked_run --
+assert_eq "events=$EVENTS" "events=heartbeat loops=2" \
+  "a record still parked with another pull request's merge committed on its branch is not handed on at the heartbeat" "$err"
+# The must-fail control: the heartbeat's membership test removed.
+OWED_MUTANT_DIR="$TMP_ROOT/parked-owed-mutant"
+OWED_MUTANT="$(mutant_scripts parked-owed-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$OWED_MUTANT_DIR/github"
+mutate_file "$OWED_MUTANT" '    [[ " $row " == *" ${PARKED_KEYS[$i]} "* ]] || continue' '    :'
+WATCH_BIN="$OWED_MUTANT" parked_run --
+assert_eq "events=$EVENTS" "events=parked-merged issue-2,heartbeat loops=2" \
+  "control: with the membership test removed another number's merge hands the parked record on at the heartbeat" "$err"
 # The record carries the repository as gh repo view spells it; the watch's
 # --repo set is lowercased on entry, and GitHub reads both the same.
 parked_fleet parked_mixed_case_repo
@@ -1247,6 +1262,22 @@ printf '[{"number": 2, "headRefName": "issue-2", "mergedAt": "2026-09-20T00:00:0
 parked_run -- --repo owner/repo --repo other/repo
 assert_eq "rc=$rc events=$EVENTS host=$HOST_VERBS" "rc=0 events=merged 2 host=" \
   "the same pull request number merged in another repository is reported and hands nothing on" "$err"
+parked_run -- --repo owner/repo --repo other/repo
+assert_eq "events=$EVENTS" "events=heartbeat loops=2" \
+  "a record still parked with its number merged in another repository is not handed on at the heartbeat" "$err"
+WATCH_BIN="$OWED_MUTANT" parked_run -- --repo owner/repo --repo other/repo
+assert_eq "events=$EVENTS" "events=parked-merged issue-2,heartbeat loops=2" \
+  "control: with the membership test removed another repository's merge hands the parked record on at the heartbeat" "$err"
+# A pull request still in the queue: nothing merged, nothing handed on.
+parked_fleet parked_queued
+printf '[]\n' > "$STUB_DIR/merged.json"
+parked_run --
+parked_run --
+assert_eq "events=$EVENTS" "events=heartbeat loops=2" \
+  "a record still parked while its pull request is queued is not handed on at the heartbeat" "$err"
+WATCH_BIN="$OWED_MUTANT" parked_run --
+assert_eq "events=$EVENTS" "events=parked-merged issue-2,heartbeat loops=2" \
+  "control: with the membership test removed a queued record is handed on at the heartbeat" "$err"
 
 custom_close_case() { # NAME
   local name="$1" custom
