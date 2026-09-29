@@ -1722,6 +1722,10 @@ overseer_gap_word() { # NAME TRANSCRIPT_LINE|- [INSTALL_DIR]
       '{sessionId:"s1", timestamp:1, cwd:"/w", stopReason:"end_turn", stop_hook_active:false}
         + (if $p == "" then {} else {transcriptPath:$p} end)')" \
       $(overseer_env)
+  elif [ "$2" = - ]; then
+    # A TRANSCRIPT_LINE of `-` is a Stop naming no transcript at all.
+    # shellcheck disable=SC2046
+    stop $(overseer_env)
   else
     # shellcheck disable=SC2046
     stop_at "$TRANSCRIPT" false $(overseer_env)
@@ -1736,26 +1740,36 @@ assert_eq "$(overseer_gap_word overseer_usage_absent '{"type":"user"}')" \
 assert_eq "$(overseer_gap_word overseer_usage_unread "$(usage_line unread 900000)")" \
   "record=null usage-unread $OVERSEER_SERVER $OVERSEER_PANE unread=1 unlisted=0" \
   "a usage object the adapter does not read writes the gap usage-unread and is reported under its own key" "$ERR_FILE"
-# An install whose harness no adapter reads, one naming none and Copilot's,
-# reports that under harness-unlisted and writes no gap: its context is never
-# read, so a gap would stand at every turn end for the session's life.
-# The harness is decided before the payload's transcript, so an agentStop
-# naming none writes no gap either, and says nothing: there is no transcript
-# to go unread.
+# An install naming no harness reports that under harness-unlisted and writes
+# no gap: its context is never read, so a gap would stand at every turn end
+# for the session's life. The harness is decided before the payload's
+# transcript, so a Stop naming none writes no gap either, and says nothing:
+# there is no transcript to go unread. A Copilot install's context is read
+# from its session record, so its turn end writes a gap like any read
+# harness: the transcript gate's reason where the payload names a transcript
+# under another home, and `session-record` where no record answers.
 while IFS='|' read -r name install line expected what; do
   assert_eq "$(overseer_gap_word "$name" "$line" "$install")" "$expected" \
-    "$what writes no gap record" "$ERR_FILE"
+    "$what" "$ERR_FILE"
 done <<INSTALLS
-overseer_unlisted_other|.other|$(usage_line claude 600000)|record=none unread=0 unlisted=1|an install naming no harness reports harness-unlisted and
-overseer_unlisted_github|.github|$(usage_line claude 600000)|record=none unread=0 unlisted=1|a Copilot install reports harness-unlisted and
-overseer_unlisted_untranscribed|.github|-|record=none unread=0 unlisted=0|a Copilot agentStop naming no transcript
+overseer_unlisted_other|.other|$(usage_line claude 600000)|record=none unread=0 unlisted=1|an install naming no harness reports harness-unlisted and writes no gap record
+overseer_unlisted_untranscribed|.other|-|record=none unread=0 unlisted=0|a Stop naming no transcript in an install naming no harness writes no gap record
+overseer_copilot_unowned|.github|$(usage_line claude 600000)|record=null home-mismatch $OVERSEER_SERVER $OVERSEER_PANE unread=0 unlisted=0|a Copilot install writes the transcript gate's gap
+overseer_copilot_unrecorded|.github|-|record=null session-record $OVERSEER_SERVER $OVERSEER_PANE unread=0 unlisted=0|a Copilot agentStop no session record answers writes the gap session-record
 INSTALLS
-variant unlisted-late -e '/^  if \[ -z "\$HARNESS" \] || \[ "\$HARNESS" = copilot \]; then$/,/^  fi$/d'
+variant unlisted-late -e '/^  if \[ -z "\$HARNESS" \]; then$/,/^  fi$/d'
 HOOK_SAVED="$HOOK"
 HOOK="$VARIANT_PATH"
-assert_eq "$(overseer_gap_word control_unlisted_late - .github)" \
+assert_eq "$(overseer_gap_word control_unlisted_late - .other)" \
   "record=null transcript-unnamed $OVERSEER_SERVER $OVERSEER_PANE unread=0 unlisted=0" \
-  "control: a hook that decides the harness after the transcript names a gap for Copilot at every turn end"
+  "control: a hook that decides the harness after the transcript names a gap for an unnamed harness at every turn end"
+HOOK="$HOOK_SAVED"
+variant no-session-record-gap -e '/^      READ_GAP=session-record$/d'
+HOOK_SAVED="$HOOK"
+HOOK="$VARIANT_PATH"
+assert_eq "$(overseer_gap_word control_session_record_gap - .github)" \
+  "record=none unread=0 unlisted=0" \
+  "control: a Copilot arm that names no gap leaves an unanswered session record unrecorded"
 HOOK="$HOOK_SAVED"
 variant no-overseer-unread -e 's/^          "\$LANE_CONTEXT_UNREAD") message usage-unread "\$TRANSCRIPT" ;;$/          "$LANE_CONTEXT_UNREAD") ;;/'
 HOOK_SAVED="$HOOK"
