@@ -46,9 +46,8 @@ blob sizes, so checkout conversion (eol=crlf, autocrlf) adds none, and an
 edit counts as growth once staged. REF is the tree the change is measured
 from: HEAD^1 of a pull request merge commit, or $(git merge-base HEAD BASE)
 for a branch checkout. A base branch tip that moved after the branch point
-charges its own edits to the change. The check runs at pull-request time
-and is not wired into a merge group: a byte ceiling is a context budget and
-must not eject a group.
+charges its own edits to the change. Which CI events to run it on:
+references/policy.md § Growth margin.
 No mode writes files or changes the index.
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):

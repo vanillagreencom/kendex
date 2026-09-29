@@ -2,11 +2,10 @@
 # Pins for doc-limits --against: a document the change grows into the margin
 # under its limit fails, and a run without --against judges the limit alone.
 #
-# Two pull requests that each grow one document pass their own runs and can
-# meet over its limit once both land. The pull request run passes --against
-# with the tree it is measured from, the merge commit's first parent, and
-# fails the growth while the document can still be split; no merge group run
-# is wired, because a byte ceiling is a budget and must not eject a group.
+# Two pull requests that each grow one document pass their own runs and meet
+# over its limit once both land on the base branch. The pull request
+# run passes --against with the tree it is measured from, the merge commit's
+# first parent, and fails the growth while the document can still be split.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 unset DOC_LIMITS_CLASSES DOC_LIMITS_DEFAULT_CLASSES DOC_LIMITS_EXCLUDES DOC_LIMITS_SETTINGS_FILE DOC_LIMITS_MARGIN_PCT

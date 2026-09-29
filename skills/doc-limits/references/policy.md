@@ -27,7 +27,7 @@
 - A document REF does not hold at its path counts as grown from 0 bytes, a renamed document included.
 - A document the change leaves unchanged or shrinks is judged on its limit alone.
 - REF is the tree the change is measured from, because every difference from REF counts as the change's growth. A pull request run in CI passes the merge commit's first parent, `HEAD^1`. A local run or a head-only checkout passes `$(git merge-base HEAD <base>)`, never a base branch tip that moved after the branch point.
-- The check runs at pull-request time and is not wired into a merge group: a byte ceiling is a context budget the pull request answers for, and a budget must not eject a group. Growth measured from REF cannot see a concurrent change to the classes or the exclusions, or another change's growth landing beside it, so a document can still land on the base branch over its limit; the next pull request's run names it.
+- Recommended CI wiring: run the `--against` check on pull requests and keep it out of a merge group job. A byte ceiling is a context budget the pull request answers for, and a budget should not eject a group. Growth measured from REF cannot see a concurrent change to the classes or the exclusions, or another change's growth landing beside it, so under this wiring a document can land on the base branch over its limit; the next pull request's run names it.
 
 ## Check result
 
