@@ -55,9 +55,12 @@ settings_consumer no-app 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_G
 settings_consumer bad-secret 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP-ID;9KEY;app_id"'
 CONSUMER="$TMP/consumer-full"
 
-# The matching world: the target layout. The organization rulesets 1 and 2
-# hold the shared rules, the repository ruleset 3 the merge queue and the
-# repository ruleset 4 the required checks.
+# The matching world: it matches the rows this suite exercises (rule
+# sources, required contexts by name, approvals, stale dismissal), not the
+# whole target, whose contexts are bound to their app and whose repository
+# rulesets name bypass actors. The organization rulesets 1 and 2 hold the
+# shared rules, the repository ruleset 3 the merge queue and the repository
+# ruleset 4 the required checks.
 cat >"$BASE/repository.json" <<'JSON'
 {"full_name": "acme/widgets", "default_branch": "main"}
 JSON
