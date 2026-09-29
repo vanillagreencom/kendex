@@ -54,6 +54,8 @@ Code standards are [`../code-quality/SKILL.md`](../code-quality/SKILL.md): corre
 
 Execute workflow sections in order; a "**Skip if**" condition is the workflow's decision, never your own scope assessment. Never push and never open a PR. The orchestrator does that after review passes. A finding on a mechanism this diff introduces or arms is a fix whatever the round, unless Step 0 of the disposition flow excludes it; a `Declined:` there takes one of the reason forms [`../orch/references/finding-disposition.md`](../orch/references/finding-disposition.md) § Decision flow sets out, never a label or a test count.
 
+A `Rules changed:` line in the delegation, one per file, names a skill or review-instruction file a restack changed under the branch. Read each again before the round's first step: a session keeps the text it loaded, so a reused session misses a rule that landed on the base under the branch until it reads the file again.
+
 **The completion artifact is the round.** `dev-return-write` writes it after the commit; never hand-author the JSON (schema: orch [`schemas/dev-return.md`](../orch/schemas/dev-return.md)).
 
 - `--issue` is the delegation's `Artifact Key:` line, the workflow-state key where one exists, or the `local-` key `workflow-state new-local-key` mints, per [`dev-return.md` § Identity: the round id](../orch/schemas/dev-return.md#identity-the-round-id); never the tracker-native `OWNER/REPO#N` or a bare number. `--round-id` is its `Round ID:` line.

@@ -260,6 +260,16 @@ Read the near-ceiling lines the last recorded round left, and render one `Near-c
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.near_ceiling // []'
 ```
 
+Read the rule files a restack changed under the branch, and render one `Rules changed:` line per entry in the delegation; with no restack since the last fix round, the read is `[]` and renders none. Clear the key after the read, so the next round does not carry the same paths again:
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.rules_changed // []'
+```
+
+```bash
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] 'del(.rules_changed)'
+```
+
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
 <delegation_format>
@@ -273,6 +283,7 @@ Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 [If the round may add files: "Adds: [REPO_RELATIVE_PATHS]"]
 [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
+[For each rules_changed path read from workflow state: "Rules changed: [PATH]"]
 
 Review items:
 [For each item in the fix set:]
