@@ -301,9 +301,11 @@ else
   # settings (claude), in the home and set false again by the base's
   # Copilot settings, a later layer (cleared), in the base's lane-mail-check
   # document (document), or false there (document-on); or that document no
-  # JSON (document-broken).
+  # JSON (document-broken); or the hooks in the home's global scope, with
+  # disableAllHooks true in lane-mail-start, the last document the gate names
+  # (global-document).
   real_world() { # WHERE
-    copilot_world project -
+    case "$1" in global-*) copilot_world global - ;; *) copilot_world project - ;; esac
     case "$1" in
       home) printf '{"disableAllHooks":true}\n' > "$COP_SETTINGS" ;;
       claude) mkdir -p "$BASE/.claude" && printf '{"disableAllHooks":true}\n' > "$BASE/.claude/settings.json" ;;
@@ -313,6 +315,7 @@ else
       document) printf '{"version":1,"disableAllHooks":true,"hooks":{}}\n' > "$BASE/.github/hooks/lane-mail-check.json" ;;
       document-on) printf '{"version":1,"disableAllHooks":false,"hooks":{}}\n' > "$BASE/.github/hooks/lane-mail-check.json" ;;
       document-broken) printf '{"version":1,\n' > "$BASE/.github/hooks/lane-mail-check.json" ;;
+      global-document) printf '{"version":1,"disableAllHooks":true,"hooks":{}}\n' > "$COP_HOME/hooks/lane-mail-start.json" ;;
     esac
   }
   # `label|world|launch|gate line`
@@ -325,6 +328,7 @@ true in the worktree's Claude Code settings is refused, naming the worktree's co
 true in the home and false in the worktree's Copilot settings, a later layer, passes|cleared|real-cleared|passed
 true in the worktree's lane-mail-check document is refused, naming that document|document|real-document|$(disabled "$WTS/real-document/.github/hooks/lane-mail-check.json")
 false in that document passes|document-on|real-document-on|passed
+true in the home's global lane-mail-start document is refused, naming that document|global-document|real-global-document|$(disabled "$COP_HOME/hooks/lane-mail-start.json")
 that document no JSON is refused as unjudged|document-broken|real-document-broken|open-terminal: unsupported-for-oversee harness=copilot reason=hooks-unjudged item=CC-1 exit=1
 ROWS
   assert_eq "$(grep -c "real-document-broken/.github/hooks/lane-mail-check.json: invalid JSON" "$TMP_ROOT/real-document-broken.err" || true)" 1 \
