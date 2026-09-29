@@ -12,9 +12,9 @@ Which pull requests draw GitHub's automatic Copilot review, and what to do when 
 | Re-review on a new head | the rule's `review_on_push` parameter |
 | Draft pull requests | the rule's `review_draft_pull_requests` parameter |
 
-Read a repo's own set with `gh api --paginate repos/<owner>/<repo>/rulesets`, then the detail of each `target: "branch"`, `enforcement: "active"` entry.
+Read a repo's own set with `gh api --paginate 'repos/<owner>/<repo>/rulesets?includes_parents=true'`, then the detail of each `target: "branch"`, `enforcement: "active"` entry through `gh api repos/<owner>/<repo>/rulesets/<id>`. An organization ruleset reaches that list only through `includes_parents=true`, and its entry reads `source_type: "Organization"`.
 
-The target set is per-repo configuration, not GitHub behaviour. In `vanillagreencom/kendex` it is ruleset `16519713`, "Copilot review for default branch", whose `conditions.ref_name.include` is `["~DEFAULT_BRANCH"]`. A pull request based on any branch other than `main` therefore draws no automatic review in this repo. A repo whose ruleset targets more branches reviews stacked pull requests.
+The target set is per-repo configuration, not GitHub behaviour. In `vanillagreencom/kendex` it is organization ruleset `24148602`, "main protections (zero-bypass)", whose `conditions.ref_name.include` is `["~DEFAULT_BRANCH"]`. A pull request based on any branch other than `main` therefore draws no automatic review in this repo. A repo whose ruleset targets more branches reviews stacked pull requests.
 
 ## When no review arrives
 
