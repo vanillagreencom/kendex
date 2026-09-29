@@ -656,8 +656,8 @@ a mixed install whose Copilot ran its own copy alone passes|mixed-hook|pass|and 
 the recorded payload carries the command|helper:payload|pass|its keys: toolName,toolArgs
 a hook and a tool call in the project root pass|helper:cwd|pass|both run in the project root
 the launch environment reaching both passes|helper:env|pass|reaches a hook and a tool call
-skill-load-check is excluded with its own cell's reason|hook:skill-load-check|excluded|installs no Copilot render: the Copilot route this describes is built but not installed
-and so is its carrier, with its own|hook:skill-load-record|excluded|installs no Copilot render: skill-load-check, the hook it requires, is not installed there"
+a subagent refused before its own load and passed after it passes|hook:skill-load-check|pass|its reply relaying 'skill-load-check: unloaded=linear'
+the calls after each agent's own load passing passes the carrier|hook:skill-load-record|pass|which only a load this hook recorded"
 dup_rows="$(awk '$1 == "copilot" { print $2 }' "$TMP/pkg-out" | sort | uniq -d)"
 if [ -z "$dup_rows" ] && [ "$(awk '$1 == "copilot" && $2 ~ /:/' "$TMP/pkg-out" | wc -l)" -gt 0 ]; then
   ok "every package row prints once"
@@ -787,16 +787,10 @@ plant "$STAND_SMOKE" 's/^  elif grep -qFx -- sub\/AGENTS.md <<<"\$root_sources";
 package_run "$STAND_SMOKE" STANDIN_NESTED_ROOT=1
 package_case "control: a nested reading that ignores the root listing differs where the root lists it" instruction:nested differs "for the working directory only"
 
-# The skill-load session runs only where the copilot cells of skill-load-check
-# and skill-load-record read enforced, which the committed table does not: the
-# stand-in table reads them enforced, so the session's verdicts are measured
-# here, before a passing live row lets the committed table say so.
+# The skill-load session's other verdicts, on the committed table, whose
+# copilot cells of skill-load-check and skill-load-record read enforced; the
+# first package run above holds its passing verdicts.
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
-plant "$STAND_TABLE" '/^| `skill-load-check` |/s/^\(|[^|]*|[^|]*|[^|]*|[^|]*|[^|]*| \)[^|]*|/\1enforced |/
-/^| `skill-load-record` |/s/^\(|[^|]*|[^|]*|[^|]*|[^|]*|[^|]*| \)[^|]*|/\1enforced |/'
-package_run "$STAND_SMOKE"
-package_table "a subagent refused before its own load and passed after it passes|hook:skill-load-check|pass|its reply relaying 'skill-load-check: unloaded=linear'
-the calls after each agent's own load passing passes the carrier|hook:skill-load-record|pass|which only a load this hook recorded"
 package_run "$STAND_SMOKE" STANDIN_HELD= STANDIN_LOAD_SAYS=NOT-REFUSED
 package_case "a subagent call the parent's load let through fails" hook:skill-load-check fail "the parent's load passed the subagent"
 package_run "$STAND_SMOKE" STANDIN_LOAD_SAYS=NOT-REFUSED
@@ -813,6 +807,13 @@ plant "$STAND_SMOKE" 's/^  ! grep -qF -- "\$PKG_SKILL_LOAD_REFUSAL" <<<"\$OUT" |
 package_run "$STAND_SMOKE" STANDIN_LOAD_SAYS=NOT-REFUSED
 package_case "control: a relay check that never reads the reply passes a refusal nobody saw" hook:skill-load-check pass "its reply relaying"
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
+# The session runs only where those cells read enforced: a table giving each
+# a reason there leaves both rows excluded with that reason, no session run.
+plant "$STAND_TABLE" '/^| `skill-load-check` |/s/^\(|[^|]*|[^|]*|[^|]*|[^|]*|[^|]*| \)[^|]*|/\1planted judge reason |/
+/^| `skill-load-record` |/s/^\(|[^|]*|[^|]*|[^|]*|[^|]*|[^|]*| \)[^|]*|/\1planted carrier reason |/'
+package_run "$STAND_SMOKE"
+package_table "a skill-load-check the table does not enforce is excluded with its cell's reason|hook:skill-load-check|excluded|installs no Copilot render: planted judge reason
+and so is its carrier, with its own|hook:skill-load-record|excluded|installs no Copilot render: planted carrier reason"
 cp "$STAND_TABLE.intact" "$STAND_TABLE"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"

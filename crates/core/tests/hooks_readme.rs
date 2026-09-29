@@ -254,6 +254,10 @@ fn regenerate_hooks_readme() {
         .expect("hooks/README.md is writable");
 }
 
+/// One planted defect: the hook it edits, the edit, and the keyed line
+/// that refuses it.
+type PlantedRow = (&'static str, fn(&mut HookSource), &'static str);
+
 /// Each rule refuses the one defect its row plants into this catalog's own
 /// hooks, and names it on its keyed line.
 #[test]
@@ -274,36 +278,53 @@ fn each_planted_defect_is_refused_on_its_keyed_line() {
         Some("hooks-readme: drift=hooks/README.md")
     );
 
-    let copilot_reason = "Not run on copilot: its subagentStop names the agent type `task`, the tool rather than the agent, and carries no `stop_hook_active`. ";
-    let antigravity_period = "carries no `stop_hook_active`.";
-    for (hook, planted, key) in [
-        // Its own harnesses line names copilot: only the companion rule reads
-        // its copilot reason.
+    let planted_rows: [PlantedRow; 3] = [
+        // skill-load-record names copilot on its own harnesses line and
+        // carries no copilot reason: dropping copilot from skill-load-check,
+        // the hook it requires, leaves only the companion rule to read one.
         (
-            "skill-load-record",
-            ("Not run on copilot: ", ""),
+            "skill-load-check",
+            |source| {
+                if let Some(harnesses) = source.harnesses.as_mut() {
+                    harnesses.retain(|id| id != "copilot");
+                }
+                source.description.push_str(" Not run on copilot: planted.");
+            },
             "hooks-readme: missing-reason=skill-load-record:copilot",
         ),
         (
             "reviewer-stop-check",
-            (copilot_reason, ""),
+            |source| {
+                source.description = source.description.replacen(
+                    "Not run on copilot: its subagentStop names the agent type `task`, the tool rather than the agent, and carries no `stop_hook_active`. ",
+                    "",
+                    1,
+                );
+            },
             "hooks-readme: missing-reason=reviewer-stop-check:copilot",
         ),
         (
             "lane-mail-check",
-            (antigravity_period, "carries no `stop_hook_active`"),
+            |source| {
+                source.description = source.description.replacen(
+                    "carries no `stop_hook_active`.",
+                    "carries no `stop_hook_active`",
+                    1,
+                );
+            },
             "hooks-readme: unterminated-reason=lane-mail-check:antigravity",
         ),
-    ] {
+    ];
+    for (hook, plant, key) in planted_rows {
         let mut planted_hooks = hooks.clone();
         let target = planted_hooks
             .iter_mut()
             .find(|source| source.name == hook)
             .unwrap_or_else(|| panic!("the catalog holds {hook}"));
-        let before = target.description.clone();
-        target.description = before.replacen(planted.0, planted.1, 1);
+        let before = target.clone();
+        plant(target);
         assert_ne!(
-            target.description, before,
+            *target, before,
             "the planted edit to {hook} changed nothing"
         );
         let findings = render(&world, &planted_hooks).expect_err("the planted hook is refused");
