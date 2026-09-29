@@ -128,25 +128,26 @@ ROWS
 echo "=== --lock-kendex says which kendex judges the install record ==="
 
 # UNSET assigns nothing in any layer, EMPTY assigns the empty string, and
-# every other value is assigned as written, in the environment. A refused
-# row reads the diagnostic key.
-while IFS='|' read -r label value want; do
+# every other value is assigned as written, in the environment. The class
+# policy column is UNSET or a value assigned the same way. A refused row
+# reads the diagnostic key.
+while IFS='|' read -r label value policy want; do
   LOCK_RC=0
+  lock_env=(-u REVIEW_GATE_LOCK_KENDEX)
+  policy_env=(-u REVIEW_GATE_CLASS_POLICY)
   [ "$value" != EMPTY ] || value=""
-  if [ "$value" = UNSET ]; then
-    LOCK="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_LOCK_KENDEX \
-      "$WHOLE/review-gate/scripts/review-policy" --lock-kendex 2>"$TMP/err")" || LOCK_RC=$?
-  else
-    LOCK="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE REVIEW_GATE_LOCK_KENDEX="$value" \
-      "$WHOLE/review-gate/scripts/review-policy" --lock-kendex 2>"$TMP/err")" || LOCK_RC=$?
-  fi
+  [ "$value" = UNSET ] || lock_env=(REVIEW_GATE_LOCK_KENDEX="$value")
+  [ "$policy" = UNSET ] || policy_env=(REVIEW_GATE_CLASS_POLICY="$policy")
+  LOCK="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE "${policy_env[@]}" "${lock_env[@]}" \
+    "$WHOLE/review-gate/scripts/review-policy" --lock-kendex 2>"$TMP/err")" || LOCK_RC=$?
   [ "$LOCK_RC" -eq 0 ] || LOCK="$(diagnostic_key)"
   assert_eq "$LOCK_RC:$LOCK" "$want" "$label"
 done <<'ROWS'
-no assignment leaves the install record to the pinned release|UNSET|0:review-policy-lock-kendex=off
-an empty assignment is the same|EMPTY|0:review-policy-lock-kendex=off
-main asks for the rolling main build|main|0:review-policy-lock-kendex=main
-any other value is refused|v1.2.0|2:policy-lock-kendex
+no assignment leaves the install record to the pinned release|UNSET|UNSET|0:review-policy-lock-kendex=off
+an empty assignment is the same|EMPTY|UNSET|0:review-policy-lock-kendex=off
+main asks for the rolling main build|main|UNSET|0:review-policy-lock-kendex=main
+a malformed class policy does not stand in for the lock setting|main|render:none|0:review-policy-lock-kendex=main
+any other value is refused|v1.2.0|UNSET|2:policy-lock-kendex
 ROWS
 
 echo "=== every shipped statement of the default is the default ==="

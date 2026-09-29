@@ -95,6 +95,21 @@ fail() { # CODE VALUE MESSAGE
 }
 
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+
+# Answered before the class policy is read: REVIEW_GATE_LOCK_KENDEX is a
+# setting of its own, and validate.sh reports this answer as that setting's
+# verdict, so a malformed class policy must not stand in for it.
+if [ "${1:-}" = "--lock-kendex" ]; then
+  [ "$#" -eq 1 ] || fail policy-arguments "$*" "--lock-kendex takes no other arguments"
+  LOCK_KENDEX="$(rg_setting REVIEW_GATE_LOCK_KENDEX "")" || exit 2
+  case "$LOCK_KENDEX" in
+    '') printf 'review-policy-lock-kendex=off\n' ;;
+    main) printf 'review-policy-lock-kendex=main\n' ;;
+    *) fail policy-lock-kendex "$LOCK_KENDEX" "REVIEW_GATE_LOCK_KENDEX must be empty or 'main'" ;;
+  esac
+  exit 0
+fi
+
 POLICY="$(rg_setting REVIEW_GATE_CLASS_POLICY "$DEFAULT_POLICY")" || exit 2
 
 # Normalize and validate once. Every active policy names the closed class set
@@ -149,17 +164,6 @@ if [ "${1:-}" = "--review-bots" ]; then
 $TRUSTED_N
 EOF_LOGINS
   printf 'review-bots=%s\n' "$BOTS"
-  exit 0
-fi
-
-if [ "${1:-}" = "--lock-kendex" ]; then
-  [ "$#" -eq 1 ] || fail policy-arguments "$*" "--lock-kendex takes no other arguments"
-  LOCK_KENDEX="$(rg_setting REVIEW_GATE_LOCK_KENDEX "")" || exit 2
-  case "$LOCK_KENDEX" in
-    '') printf 'review-policy-lock-kendex=off\n' ;;
-    main) printf 'review-policy-lock-kendex=main\n' ;;
-    *) fail policy-lock-kendex "$LOCK_KENDEX" "REVIEW_GATE_LOCK_KENDEX must be empty or 'main'" ;;
-  esac
   exit 0
 fi
 
