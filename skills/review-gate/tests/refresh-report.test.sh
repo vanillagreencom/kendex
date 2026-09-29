@@ -115,8 +115,15 @@ for overrides, extra in [({'KENDEX_ISSUES_TOKEN':''},{}), ({},{'deny':True})]:
  assert findings[0]['url'] in summary.read_text()
 # Permission recovery runs the same candidates even after earlier policy replies.
 reset(); run(overrides={'KENDEX_ISSUES_TOKEN':''}); assert len(run()['issues'])==1
-reset(); assert run(rows=[dict(findings[0],path='src/private.py')])['writes']==[]
-assert results==[{'root':10,'issue':None,'note':'Not a rendered file'}]
+# A path outside the inventory, like the lock, is a finding on the
+# render-proven pull request: filed with no package label for triage to route.
+unrouted_row=[dict(findings[0],path='.kendex-lock.json')]
+def unrouted(world):
+ issues=world['issues']
+ return (len(issues)==1 and issues[0]['labels']==['bug','agent:generalist']
+         and 'Package routing did not resolve' in issues[0]['body']
+         and results==[{'root':10,'issue':issues[0]['html_url'],'note':'Filed for upstream confirmation'}])
+reset(); assert unrouted(run(rows=unrouted_row))
 # A late merged-PR report must keep the recorded package route after removal
 # or replacement through the consumer's supported package commands.
 for drift in ('removed', 'replaced'):
@@ -124,24 +131,24 @@ for drift in ('removed', 'replaced'):
  if drift=='removed': current['entries']={}
  else: current['entries']['skill:review-gate:codex']['sourceRepo']='another/catalog'
  (root/'.kendex-lock.json').write_text(json.dumps(current))
- reset(); assert len(run()['issues'])==1, drift
+ reset(); assert run()['issues'][0]['labels']==['bug','ci-infra','agent:generalist'], drift
  assert len(run()['issues'])==1, drift
 # The current checkout is now foreign-owned. Removing historical isolation
-# must turn the report into fallback, even though its inventory is still valid.
+# must lose the package route, even though its inventory is still valid.
 source=(skill/'scripts/refresh-report.py').read_text()
 needle='cwd=project, env=consumer_env'
 assert source.count(needle)==1
 mutant=root/'current-checkout.py'
 mutant.write_text(source.replace(needle,'cwd=None if True else project, env=consumer_env'))
-reset(); assert run(mutant)['writes']==[]
-assert 'Package routing unresolved' in summary.read_text()
+reset(); assert unrouted(run(mutant))
 # Controls preserve matching text while removing each independent rule.
 source=(skill/'scripts/refresh-report.py').read_text()
 for needle,replacement,rows,expect in [
- ('if path not in records:', 'if True or path not in records:', findings, 'path'),
+ ('if record is not None:', 'if False and record is not None:', findings, 'unrouted'),
  ('if existing:', 'if False and existing:', findings, 'dedup'),
  ('[repo, path, finding["body"]]', '[repo, path, finding["body"], finding["url"]]', inline_pair, 'instance'),
- ('            ).stderr', '            ).stdout', findings, 'stream'),
+ ('            ).stderr', '            ).stdout', findings, 'unrouted'),
+ ('        if token:\n', '        if token and label:\n', unrouted_row, 'unfiled'),
 ]:
  assert source.count(needle)==1
  mutant=root/(expect+'.py'); mutant.write_text(source.replace(needle,replacement))
@@ -150,8 +157,10 @@ for needle,replacement,rows,expect in [
   run(mutant); assert len(run(mutant)['issues'])==2
  elif expect=='instance':
   run(mutant,rows=[rows[0]]); assert len(run(mutant,rows=[rows[1]])['issues'])==2
+ elif expect=='unrouted':
+  assert unrouted(run(mutant,rows=rows))
  else:
-  assert run(mutant,rows=rows)['writes']==[]
+  assert run(mutant,rows=rows)['writes']==[] and results[0]['issue'] is None
 # The filed issue is the rule refresh-reviews resolves on. An unfiled finding
 # reported with its filing link, and a finding reported under the evidence
 # comment rather than the issue, each turn a case above red.
@@ -165,6 +174,6 @@ for needle,replacement,overrides,runs in [
  for extra in runs: run(mutant,overrides=dict(overrides,**extra))
  assert results[0]['issue'] is not None and not results[0]['issue'].endswith('/issues/1')
 PY
-then ok 'reporter token isolation, render binding, labels, evidence, duplicate handling and permission fallback'; else bad 'reporter behavior and controls'; fi
+then ok 'reporter token isolation, render binding, unrouted filing, labels, evidence, duplicate handling and permission fallback'; else bad 'reporter behavior and controls'; fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

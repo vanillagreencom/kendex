@@ -19,7 +19,12 @@ if sys.argv[1:2] == ['classify']:
     path.write_text(json.dumps(world))
     if pr.get('class') == 'error':
         sys.exit(2)
-    print(pr.get('class', 'change_class=render'))
+    # change-class's stderr class: line carries measured= and the cause.
+    answer = pr.get('class', 'change_class=render')
+    measured = str(pr.get('measured', True)).lower()
+    print(f"class: class={answer.removeprefix('change_class=')} measured={measured} cause={pr.get('cause', 'fixture')}",
+          file=sys.stderr)
+    print(answer)
     sys.exit(0)
 
 args = sys.argv[1:]

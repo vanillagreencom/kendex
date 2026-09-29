@@ -36,9 +36,16 @@ rows=json.load(sys.stdin)
 w.setdefault('reports', []).extend(rows)
 p.write_text(json.dumps(w))
 unfiled=w.get('unfiled', [])
-json.dump([{'root': r['root'], 'note': 'Issues token unavailable' if r['root'] in unfiled else 'Filed',
-            'issue': None if r['root'] in unfiled else f"https://github.com/vanillagreencom/kendex/issues/{r['root']}"}
-           for r in rows], sys.stdout)
+# report={pr, mode} makes this pull request's reporter fail or misreport.
+fault=w.get('report', {})
+mode=fault.get('mode') if str(fault.get('pr'))==sys.argv[2] else None
+if mode=='error': sys.exit(1)
+out=[{'root': r['root'], 'note': 'Issues token unavailable' if r['root'] in unfiled else 'Filed',
+      'issue': None if r['root'] in unfiled else f"https://github.com/vanillagreencom/kendex/issues/{r['root']}"}
+     for r in rows]
+if mode=='missing-root': out=out[1:]
+if mode=='bad-issue': out=[dict(r, issue=5) for r in out]
+json.dump(out, sys.stdout)
 REPORT
 
 # The consumer checkout: one base commit and one head commit per pull request.
@@ -109,12 +116,38 @@ filed_and_resolved() {
     ' "$FIXTURE" >/dev/null
 }
 # A failed filing: PR 1's finding is not filed, so its thread gets no reply
-# and stays open, while PR 2's filed finding is answered and resolved.
+# and stays open, while PR 2's filed finding is answered and resolved. The
+# run then fails, with an annotation naming the open thread.
 unfiled_stays_open() {
-  [ "$RC" -eq 0 ] && jq -e '
+  [ "$RC" -ne 0 ] && jq -e '
     ([.writes[] | [.kind, .pr]] | sort) == [["reply",2],["resolve",2]]
     and (.prs[0].threads[0].resolved | not) and .prs[1].threads[0].resolved
-    ' "$FIXTURE" >/dev/null && grep -q '^upstream-unfiled pr=1 finding=10 ' <<<"$OUT"
+    ' "$FIXTURE" >/dev/null && grep -q '^upstream-unfiled pr=1 finding=10 ' <<<"$OUT" \
+    && grep -q '^::error::upstream-unfiled pr=1 thread=T1 finding=10 note=Issues token unavailable ' <<<"$OUT"
+}
+# A reporter failure on PR 1 holds that pull request alone: no write on it,
+# PR 2 still answered, the named error record and annotation, a failed run.
+report_held() { # KEY
+  [ "$RC" -ne 0 ] && jq -e '([.writes[] | select(.pr == 1)] | length) == 0
+    and ([.writes[] | select(.pr == 2) | .kind] | sort) == ["reply","resolve"]' "$FIXTURE" >/dev/null \
+    && grep -q "^refresh-reviews-error=$1 value=1\$" <<<"$OUT" \
+    && grep -q "^::error::refresh-reviews-error=$1 pr=1 " <<<"$OUT"
+}
+# An earlier PR-author reply without the filing prefix is no answer: the
+# resolved thread is filed and gets one filing reply, and no resolve.
+declined_refiled() {
+  [ "$RC" -eq 0 ] && jq -e '[.writes[] | select(.pr == 1) | .kind] == ["reply"]
+    and ([.writes[] | select(.pr == 1) | .body | startswith("Filed upstream as ")] == [true])
+    and any(.reports[]; .root == 10)' "$FIXTURE" >/dev/null
+}
+# An unmeasured classifier fallback on PR 1 is no verdict: nothing is filed or
+# written there, a warning names the cause, and PR 2 is still answered.
+unclassified_held() {
+  [ "$RC" -eq 0 ] && jq -e '([.writes[] | select(.pr == 1)] | length) == 0
+    and ([.writes[] | select(.pr == 2) | .kind] | sort) == ["reply","resolve"]
+    and ([.reports[].root] == [20])' "$FIXTURE" >/dev/null \
+    && grep -q '^refresh-reviews=unclassified pr=1 cause=render-proof-failed$' <<<"$OUT" \
+    && grep -q '^::warning::refresh-reviews=unclassified pr=1 cause=render-proof-failed ' <<<"$OUT"
 }
 
 # A second run over answered threads files, writes and classifies nothing.
@@ -157,6 +190,35 @@ if [ "$RC" -eq 0 ] && jq -e '(.writes | length) == 6 and ([.writes[-2:][] | [.ki
   ok 'a late merged finding is filed and answered alone'
 else bad 'late merged finding' "$OUT"; fi
 
+while IFS='|' read -r mode key; do
+  jq --arg mode "$mode" '.report={pr:1,mode:$mode}' "$BASE" >"$FIXTURE"
+  run_writer
+  if report_held "$key"; then
+    ok "reporter $mode holds its pull request alone and fails the run"
+  else bad "reporter $mode must hold its pull request" "$OUT"; fi
+done <<'REPORTS'
+error|report
+missing-root|report-shape
+bad-issue|report-shape
+REPORTS
+
+declined_fixture() {
+  jq '.prs[0].threads[0].resolved=true
+    | .prs[0].comments += [{id:500,in_reply_to_id:10,path:".agents/skill.sh",user:.prs[0].user,
+        body:"Declined: render class; the fix belongs in the kendex source catalog."}]' "$BASE" >"$FIXTURE"
+}
+declined_fixture
+run_writer
+if declined_refiled; then
+  ok 'a resolved thread with an earlier Declined reply is filed and answered once'
+else bad 'a Declined reply must not count as an answer' "$OUT"; fi
+
+jq '.prs[0] += {class:"change_class=standard",measured:false,cause:"render-proof-failed"}' "$BASE" >"$FIXTURE"
+run_writer
+if unclassified_held; then
+  ok 'an unmeasured classifier fallback is reported as unclassified and writes nothing'
+else bad 'unmeasured classifier fallback' "$OUT"; fi
+
 jq '.failure={kind:"resolve",mode:"error"}' "$BASE" >"$FIXTURE"
 run_writer
 if [ "$RC" -ne 0 ] && [ "$(jq '.writes | length' "$FIXTURE")" = 1 ]; then
@@ -197,13 +259,37 @@ if [ "$RC" -ne 0 ] && [ "$(jq '.writes | length' "$FIXTURE")" = 0 ] && grep -q '
   ok 'an unfetchable head stops before policy writes'
 else bad 'missing head must fail closed' "$OUT"; fi
 
+# A merged pull request's head survives only under refs/pull/N/head on the
+# origin. Each call pushes a fresh head the checkout lacks.
+ORIGIN="$TMP/origin.git"
+WORK="$TMP/work"
+git clone -q --bare "$REPO" "$ORIGIN"
+git clone -q "$ORIGIN" "$WORK"
+git -C "$REPO" remote add origin "$ORIGIN"
+pull_head_fixture() { # LABEL
+  git -C "$WORK" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "merged head $1"
+  PULL_HEAD="$(git -C "$WORK" rev-parse HEAD)" || return 1
+  git -C "$WORK" push -q -f origin HEAD:refs/pull/2/head || return 1
+  if git -C "$REPO" cat-file -e "$PULL_HEAD^{commit}" 2>/dev/null; then
+    echo "refresh-reviews: fixture=head-present value=$PULL_HEAD" >&2
+    return 1
+  fi
+  jq --arg sha "$PULL_HEAD" '.prs[1].head.sha=$sha' "$BASE" >"$FIXTURE"
+}
+pull_head_fixture real
+run_writer
+if filed_and_resolved && git -C "$REPO" cat-file -e "$PULL_HEAD^{commit}"; then
+  ok 'a merged head present only under its pull-request ref is fetched, classified, filed and resolved'
+else bad 'merged head fetch' "$OUT"; fi
+
 # Identical branch names and findings cannot turn another class into render
 # authority. Each row drives both an open and a merged PR.
 while IFS='|' read -r code class; do
   jq --arg class "$class" '.prs |= map(.class=$class)' "$BASE" >"$FIXTURE"
   run_writer
   if [ "$RC" -eq "$code" ] && [ "$(jq '.writes | length' "$FIXTURE")" = 0 ] \
-      && [ "$(jq '.reports // [] | length' "$FIXTURE")" = 0 ]; then
+      && [ "$(jq '.reports // [] | length' "$FIXTURE")" = 0 ] \
+      && { [ "$code" -ne 0 ] || grep -q '^refresh-reviews=not-render pr=1 ' <<<"$OUT"; }; then
     ok "class answer [$class] cannot authorize filing or writes"
   else bad "class answer [$class] must leave findings untouched" "$OUT"; fi
 done <<'CLASSES'
@@ -251,5 +337,45 @@ if [ "$RC" -ne 0 ] && [ "$(jq '.writes | length' "$FIXTURE")" = 0 ] && \
     grep -q 'refresh-reviews-error=class-proof' <<<"$OUT"; then
   ok 'must-fail control: exporting the upstream credential fails the classifier boundary'
 else bad 'upstream credential control missed the leak' "$OUT"; fi
+mutant prefix-mutant '(.body | startswith($prefix))' '(.body | (startswith($prefix) or true))'
+declined_fixture
+run_writer
+if ! declined_refiled; then
+  ok 'must-fail control: any PR-author reply read as an answer fails the Declined-reply case'
+else bad 'prefix control did not detect the planted defect' "$OUT"; fi
+mutant refspec-mutant 'refs/pull/$PR_NUMBER/head' 'refs/heads/kendex/refresh'
+pull_head_fixture control
+run_writer
+if ! filed_and_resolved; then
+  ok 'must-fail control: fetching the branch name instead of the pull-request ref fails the merged-head case'
+else bad 'refspec control did not detect the planted defect' "$OUT"; fi
+mutant measured-mutant "if [[ \" \$class_line \" == *' measured=true '* ]]; then" \
+  "if true || [[ \" \$class_line \" == *' measured=true '* ]]; then"
+jq '.prs[0] += {class:"change_class=standard",measured:false,cause:"render-proof-failed"}' "$BASE" >"$FIXTURE"
+run_writer
+if ! unclassified_held; then
+  ok 'must-fail control: reading a fallback as a verdict fails the unclassified case'
+else bad 'measured control did not detect the planted defect' "$OUT"; fi
+# Each reporter-hold rule has its own control: the reporter exit guard, the
+# output-shape guard (one row per sub-rule) and the per-PR containment.
+while IFS='|' read -r name needle replacement mode key; do
+  mutant "$name" "$needle" "$replacement"
+  jq --arg mode "$mode" '.report={pr:1,mode:$mode}' "$BASE" >"$FIXTURE"
+  run_writer
+  if ! report_held "$key"; then
+    ok "must-fail control: $name fails the reporter $mode case"
+  else bad "$name control did not detect the planted defect" "$OUT"; fi
+done <<'CONTROLS'
+report-mutant|hold report "$PR_NUMBER"|: hold report "$PR_NUMBER"|error|report
+shape-mutant|if ! jq -e --argjson findings|if false && jq -e --argjson findings|missing-root|report-shape
+shape-issue-mutant|if ! jq -e --argjson findings|if false && jq -e --argjson findings|bad-issue|report-shape
+containment-mutant|printf '::error::refresh-reviews-error=%s pr=%s %s\n' "$1" "$2" "$3"|printf '::error::refresh-reviews-error=%s pr=%s %s\n' "$1" "$2" "$3"; exit 1|error|report
+CONTROLS
+mutant exit-mutant '[ "$held" -eq 0 ] || exit 1' '[ "$held" -eq 0 ] || exit 0'
+jq '.unfiled=[10]' "$BASE" >"$FIXTURE"
+run_writer
+if ! unfiled_stays_open; then
+  ok 'must-fail control: a zero exit after an unfiled thread fails the failed-filing case'
+else bad 'end-of-run exit control did not detect the planted defect' "$OUT"; fi
 printf 'refresh-reviews: %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

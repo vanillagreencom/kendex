@@ -8,17 +8,27 @@
 # is executed.
 #
 # A thread whose first comment a Bot wrote is filed upstream through
-# refresh-report.py, answered with a reply naming that issue, then resolved. A
-# thread whose filing fails gets no reply and stays open. The reply is the
-# retry record: a thread that carries one is only resolved.
+# refresh-report.py, answered with a reply naming that issue, then resolved.
+# The reporter files every such finding, routed to a package or not; only a
+# missing Issues token or denied Issues access leaves one unfiled. An unfiled
+# thread gets no reply and stays open. The reply is the retry record: a thread
+# that carries one is only resolved.
 #
 # stdout records, one per line:
 #   refresh-reviews=already-answered pr=N
 #   refresh-reviews=not-render pr=N class=VALUE
+#   refresh-reviews=unclassified pr=N cause=CAUSE
 #   upstream-filed pr=N finding=ROOT issue=URL
 #   upstream-unfiled pr=N finding=ROOT note=NOTE
 #   refresh-reviews=answered pr=N unfiled=COUNT
-# A nonzero exit means a dependency could not be read or a write failed.
+# unclassified is the classifier's unmeasured fallback, not a verdict; it
+# writes nothing on that pull request and adds a ::warning:: line.
+#
+# A held pull request, one whose reporter failed (refresh-reviews-error=report
+# or report-shape on stderr) or that has an unfiled thread, gets an ::error::
+# line; the run answers the other pull requests, then exits 1. Any other
+# nonzero exit means a dependency could not be read or a write failed, and
+# stops the run where it happened.
 set -euo pipefail
 # The upstream credential belongs only to the reporter child. In particular,
 # the classifier must not inherit it.
@@ -28,10 +38,19 @@ fail() {
   printf 'refresh-reviews-error=%s value=%q\n%s\n' "$1" "$2" "$3" >&2
   exit 1
 }
+# A hold stops one pull request's writes and fails the run once every other
+# pull request is answered.
+held=0
+hold() { # KEY PR MESSAGE
+  printf 'refresh-reviews-error=%s value=%q\n%s\n' "$1" "$2" "$3" >&2
+  printf '::error::refresh-reviews-error=%s pr=%s %s\n' "$1" "$2" "$3"
+  held=$((held + 1))
+}
 if [ "$#" -eq 1 ] && [ "$1" = --help ]; then
   printf '%s\n' 'Usage: GH_REPO=owner/repo GH_TOKEN=app-token KENDEX_ISSUES_TOKEN=issues-token refresh-reviews.sh' \
     'Files automatic review threads on open and merged kendex/refresh pull requests upstream, replies with the issue and resolves them.' \
-    'The workflow also sets GitHub run/summary variables for the reporter. A thread whose filing fails stays open.'
+    'The workflow also sets GitHub run/summary variables for the reporter.' \
+    'Only a missing Issues token or denied Issues access leaves a finding unfiled; its thread stays open and the run exits 1.'
   exit 0
 fi
 [ "$#" -eq 0 ] || fail arguments "$#" 'No arguments are accepted.'
@@ -45,6 +64,8 @@ done
 CLASSIFIER="$script_dir/../../harness-ci/scripts/change-class"
 [ -x "$CLASSIFIER" ] || fail classifier "$CLASSIFIER" 'The harness-ci change classifier is not installed beside this package.'
 ROOT="$(git rev-parse --show-toplevel)" || fail checkout "$PWD" 'Run from the consumer checkout.'
+class_log="$(mktemp)" || fail scratch mktemp 'Could not create the classifier log.'
+trap 'rm -f -- "${class_log:?}"' EXIT
 
 # The prefix alone marks an answer. The reporter supplies the issue URL.
 REPLY_PREFIX='Filed upstream as '
@@ -134,11 +155,26 @@ while IFS= read -r pr; do
   # cannot authorize answers. The classifier is the trusted default-branch
   # copy, and it runs without the repository credential.
   if ! class="$(env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR "$CLASSIFIER" \
-    --event pull_request --base "$PR_BASE_SHA" --head "$HEAD_SHA" --repo "$ROOT")"; then
+    --event pull_request --base "$PR_BASE_SHA" --head "$HEAD_SHA" --repo "$ROOT" 2>"$class_log")"; then
+    cat -- "$class_log" >&2
     fail class-proof "$PR_NUMBER" 'The trusted change classifier could not classify this pull request.'
   fi
+  cat -- "$class_log" >&2
   if [ "$class" != change_class=render ]; then
-    printf 'refresh-reviews=not-render pr=%s class=%q\n' "$PR_NUMBER" "$class"
+    # change-class answers standard both as a verdict and as its fallback
+    # when a read fails; only its stderr class: line says which.
+    class_line=''
+    while IFS= read -r line; do
+      case "$line" in 'class: class='*) class_line="$line" ;; esac
+    done <"$class_log"
+    if [[ " $class_line " == *' measured=true '* ]]; then
+      printf 'refresh-reviews=not-render pr=%s class=%q\n' "$PR_NUMBER" "$class"
+    else
+      cause=unknown
+      [[ " $class_line " != *' cause='* ]] || { cause="${class_line#* cause=}"; cause="${cause%% *}"; }
+      printf 'refresh-reviews=unclassified pr=%s cause=%q\n' "$PR_NUMBER" "$cause"
+      printf '::warning::refresh-reviews=unclassified pr=%s cause=%s The classifier could not measure this pull request; its findings wait for a later run.\n' "$PR_NUMBER" "$cause"
+    fi
     continue
   fi
   # The proof is bound to immutable commits. A concurrent push or base move
@@ -154,14 +190,18 @@ while IFS= read -r pr; do
   findings="$(jq -c '[.[] | select(.answered | not) | {root, path, body, url}]' <<<"$actions")" || exit 1
   results='[]'
   if [ "$findings" != '[]' ]; then
-    results="$(printf '%s\n' "$findings" | KENDEX_ISSUES_TOKEN="${KENDEX_ISSUES_TOKEN:-}" \
-      python3 "$script_dir/refresh-report.py" "$HEAD_SHA" "$PR_NUMBER")" \
-      || fail report "$PR_NUMBER" 'The upstream reporter failed; no finding was answered.'
-    jq -e --argjson findings "$findings" 'type == "array"
-      and ([.[].root] | sort) == ([$findings[].root] | sort)
-      and all(.[]; (.issue == null or (.issue | type) == "string") and (.note | type) == "string")' \
-      <<<"$results" >/dev/null \
-      || fail report-shape "$PR_NUMBER" 'The upstream reporter did not return one result per finding.'
+    if ! results="$(printf '%s\n' "$findings" | KENDEX_ISSUES_TOKEN="${KENDEX_ISSUES_TOKEN:-}" \
+        python3 "$script_dir/refresh-report.py" "$HEAD_SHA" "$PR_NUMBER")"; then
+      hold report "$PR_NUMBER" 'The upstream reporter failed; no thread on this pull request was answered.'
+      continue
+    fi
+    if ! jq -e --argjson findings "$findings" 'type == "array"
+        and ([.[].root] | sort) == ([$findings[].root] | sort)
+        and all(.[]; (.issue == null or (.issue | type) == "string") and (.note | type) == "string")' \
+        <<<"$results" >/dev/null 2>&1; then
+      hold report-shape "$PR_NUMBER" 'The upstream reporter did not return one result per finding; no thread on this pull request was answered.'
+      continue
+    fi
   fi
 
   unfiled=0
@@ -177,7 +217,10 @@ while IFS= read -r pr; do
       if [ -z "$issue" ]; then
         note="$(jq -r --argjson root "$root_id" '.[] | select(.root == $root) | .note' <<<"$results")" || exit 1
         printf 'upstream-unfiled pr=%s finding=%s note=%q\n' "$PR_NUMBER" "$root_id" "$note"
+        printf '::error::upstream-unfiled pr=%s thread=%s finding=%s note=%s The thread stays open and holds the pull request.\n' \
+          "$PR_NUMBER" "$thread_id" "$root_id" "$note"
         unfiled=$((unfiled + 1))
+        held=$((held + 1))
         continue
       fi
       printf 'upstream-filed pr=%s finding=%s issue=%s\n' "$PR_NUMBER" "$root_id" "$issue"
@@ -200,3 +243,4 @@ while IFS= read -r pr; do
   done <<<"$action_lines"
   printf 'refresh-reviews=answered pr=%s unfiled=%s\n' "$PR_NUMBER" "$unfiled"
 done <<<"$pr_lines"
+[ "$held" -eq 0 ] || exit 1

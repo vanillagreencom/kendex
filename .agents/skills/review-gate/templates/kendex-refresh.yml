@@ -83,8 +83,9 @@ jobs:
           owner: vanillagreencom
           repositories: kendex
           permission-issues: write
-      # A finding is resolved only once it is filed upstream. Without this
-      # token every finding stays an open thread.
+      # A finding is resolved only once it is filed upstream. Only a missing
+      # token or denied Issues access leaves one unfiled: its thread stays
+      # open and this step fails.
       - name: File rendered-file findings upstream and resolve them
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}

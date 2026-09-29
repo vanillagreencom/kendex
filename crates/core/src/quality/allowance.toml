@@ -54,7 +54,7 @@ message = "this line pipes a download straight into a shell from `https://raw.gi
 
 [[package.file]]
 path = "templates/kendex-refresh.yml"
-hash = "1c0ac9a1b66ada7f0488e2423c47b4e0a68d80be8644197f9694af0cbacec154"
+hash = "2ff788a56916dcc440c9c7d5cb6f8240ba42c32d1439611b65f809ad8067d448"
 
 [[package.file.finding]]
 rule = "rce"
