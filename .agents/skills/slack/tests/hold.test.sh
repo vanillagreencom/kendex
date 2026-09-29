@@ -6,12 +6,11 @@
 # channel shows open, a notice Slack refused before the hold and one written
 # after the file went stale, never a held notice, and journals which asks
 # it posted; a removed file ends the hold at the last poll that found it
-# fresh, and with no record of that the mailbox's newest envelope does. A
-# notice written before the touch posts on the resume though the relay first
-# saw the hold a poll later or failed to read the channel in between. An
-# absent file or an empty setting posts as before, SLACK_MASTER_MAX_AGE
-# bounds the hold, and a file whose age cannot be read refuses the post
-# step alone. Compaction keeps a standing hold and the resumes inside the
+# fresh. A notice written before the touch posts on the resume though the
+# relay first saw the hold a poll later or failed to read the channel in
+# between. An absent file or an empty setting posts as before,
+# SLACK_MASTER_MAX_AGE bounds the hold, and a file whose age cannot be read
+# refuses the post step alone. Compaction keeps a standing hold and the resumes inside the
 # horizon. The controls plant one mutant per rule.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
@@ -98,22 +97,14 @@ sk_poll "$ROOT" "$HOLD"
 assert_eq "$RC=$(count "$CH" 'Held until removed.')=$(count "$CH" 'After the removal.')" "0=0=1" \
   "a removed file resumes: the held notice never posts, one written after the removal does"
 
-# --- with no record of the hold's end, the mailbox's newest envelope stands in -----
-fresh
-sk_poll "$ROOT" "$HOLD"
-notice "$ROOT" n8 'Held, record lost.'
-rm -f -- "$MASTER" "$ROOT/tmp/slack/status.json"
-sk_poll "$ROOT" "$HOLD"
-assert_eq "$RC=$(count "$CH" 'Held, record lost.')" "0=0" "with no record of when the hold ended, a held notice still never posts"
-
 # --- an absent file or an empty setting posts as before ---------------------------
 notice "$ROOT" n3 'No file.'
 sk_poll "$ROOT" "$HOLD"
-assert_eq "$RC=$(count "$CH" 'No file.')=$(holds "$ROOT")" "0=1=hold resume hold resume hold resume " "an absent master file holds nothing"
+assert_eq "$RC=$(count "$CH" 'No file.')=$(holds "$ROOT")" "0=1=hold resume hold resume " "an absent master file holds nothing"
 fresh
 notice "$ROOT" n4 'No setting.'
 sk_poll "$ROOT"
-assert_eq "$RC=$(count "$CH" 'No setting.')=$(holds "$ROOT")" "0=1=hold resume hold resume hold resume " "an empty setting holds nothing"
+assert_eq "$RC=$(count "$CH" 'No setting.')=$(holds "$ROOT")" "0=1=hold resume hold resume " "an empty setting holds nothing"
 
 # --- SLACK_MASTER_MAX_AGE bounds the hold -------------------------------------------
 aged 900
@@ -139,12 +130,12 @@ sk_poll "$ROOT"
 fresh
 sk_poll "$ROOT" "$HOLD"
 sk_run -- compact --root "$ROOT"
-assert_eq "$RC=$(holds "$ROOT")" "0=resume resume resume resume hold " "compaction drops each closed hold line and keeps the standing one"
+assert_eq "$RC=$(holds "$ROOT")" "0=resume resume resume hold " "compaction drops each closed hold line and keeps the standing one"
 aged 1000000000
 sk_poll "$ROOT" "$HOLD"
 assert_eq "$(old_resumes "$ROOT")" "1" "a file touched long ago ends its hold then"
 sk_run -- compact --root "$ROOT"
-assert_eq "$RC=$(holds "$ROOT")" "0=resume resume resume resume " "compaction drops a resume whose end is past the horizon"
+assert_eq "$RC=$(holds "$ROOT")" "0=resume resume resume " "compaction drops a resume whose end is past the horizon"
 
 # --- a notice written before the touch posts, whatever the relay's polls missed ------
 # before_touch ROOT [fault] — a notice posted, then one written before the
@@ -201,7 +192,7 @@ held "$GAMMA"
 assert_eq "$(holds "$GAMMA")" "hold hold " "control: the transition rule gone, every held poll journals a hold"
 sk_bin_reset
 
-sk_mutant window relay.py 'route = "skip" if any\(within\(w, at, env_id\) for w in state\.holds\) else "notice"' 'route = "notice"'
+sk_mutant window relay.py 'route = "skip" if any\(within\(w, at\) for w in state\.holds\) else "notice"' 'route = "notice"'
 DELTA="$(sk_new_root delta)"
 held "$DELTA"
 sk_age_envelope "$DELTA" "$(last_id "$DELTA")" 5
@@ -212,7 +203,7 @@ sk_bin_reset
 
 # The pending notice is moved twenty seconds back, before the hold's start
 # and in a second before the hold's end.
-sk_mutant from relay.py 'return at > at_epoch\(window\.from_at\) and ' 'return '
+sk_mutant from relay.py 'return at_epoch\(window\.from_at\) < at < ' 'return at < '
 EPSILON="$(sk_new_root epsilon)"
 sk_bind "$EPSILON"
 sk_poll "$EPSILON" "$HOLD"
@@ -246,22 +237,22 @@ before_touch "$MU" fault
 assert_eq "$(count "$(sk_channel "$MU")" 'Before the touch in mu.')" "0" "control: the start taken from the relay's posts, a notice before a refused read and the touch is dropped"
 sk_bin_reset
 
-sk_mutant stale relay.py 'at, ids = format_at\(touched \+ self\.settings\.master_max_age\), \[\]' 'at, ids = newest(events)'
+sk_mutant stale relay.py 'at = format_at\(touched \+ self\.settings\.master_max_age\)' 'at = format_at(self.clock() + self.settings.master_max_age)'
 ETA="$(sk_new_root eta)"
 held "$ETA"
 stale
 notice "$ETA" ne2 'After stale in eta.'
 sk_poll "$ETA" "$HOLD"
-assert_eq "$(count "$(sk_channel "$ETA")" 'After stale in eta.')" "0" "control: the stale file's end gone, a notice after it is held"
+assert_eq "$(count "$(sk_channel "$ETA")" 'After stale in eta.')" "0" "control: the stale file's end taken from the poll, not the touch, a notice after it is held"
 sk_bin_reset
 
 sk_mutant seen relay.py 'elif self\.master_seen is not None:' 'elif False:'
 THETA="$(sk_new_root theta)"
 held "$THETA"
+sk_age_envelope "$THETA" "$(last_id "$THETA")" 5
 rm -f -- "$MASTER"
-notice "$THETA" nt 'After removal in theta.'
 sk_poll "$THETA" "$HOLD"
-assert_eq "$(count "$(sk_channel "$THETA")" 'After removal in theta.')" "0" "control: the last fresh poll gone, a notice after the removal is held"
+assert_eq "$(count "$(sk_channel "$THETA")" 'Held in theta.')" "1" "control: the last fresh poll gone, a held notice posts after the removal"
 sk_bin_reset
 
 sk_mutant age settings.py '_positive_int\("SLACK_MASTER_MAX_AGE", DEFAULT_MASTER_MAX_AGE\)' 'DEFAULT_MASTER_MAX_AGE'
@@ -298,7 +289,7 @@ sk_run -- compact --root "$ROOT"
 assert_has "$(holds "$ROOT")" "hold" "control: every hold line kept, compaction leaves a closed one"
 sk_bin_reset
 
-sk_mutant compact-resume store.py 'drop = aged or line\["at"\] == ""' 'drop = False'
+sk_mutant compact-resume store.py 'kind == "resume":\n            drop = aged' 'kind == "resume":\n            drop = False'
 fresh
 sk_poll "$ROOT" "$HOLD"
 aged 1000000000

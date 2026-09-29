@@ -97,17 +97,17 @@ def newest(events: List[Dict]) -> Tuple[str, List[str]]:
 
 
 def before(floor_at: str, floor_ids: Set[str], at: float, env_id: str) -> bool:
-    """Whether an envelope stamped `at` is at or before a journaled floor."""
+    """Whether an envelope stamped `at` is at or before the `start` floor."""
     if not floor_at:
         return False
     floor = at_epoch(floor_at)
     return at < floor or at == floor and env_id in floor_ids
 
 
-def within(window: Window, at: float, env_id: str) -> bool:
+def within(window: Window, at: float) -> bool:
     """Whether an envelope stamped `at` was written during a closed hold: in a
-    later second than its start and at or before its end."""
-    return at > at_epoch(window.from_at) and before(window.at, window.ids, at, env_id)
+    later second than its start and an earlier one than its end."""
+    return at_epoch(window.from_at) < at < at_epoch(window.at)
 
 
 def mention(binding: Binding) -> str:
@@ -282,17 +282,18 @@ class RootRelay:
         """The end of a hold, journaled as the window no notice posts from:
         past the hold's start, up to when the hold ended. A stale file ended
         it SLACK_MASTER_MAX_AGE after its last touch, an absent one at the
-        last poll that found it fresh; a time names no ids, so a notice in
-        that second posts. With neither known, the mailbox's newest envelope
-        stands in. `asks` names the open asks this resume posts."""
+        last poll that found it fresh. `asks` names the open asks this
+        resume posts."""
         if touched is not None:
-            at, ids = format_at(touched + self.settings.master_max_age), []
+            at = format_at(touched + self.settings.master_max_age)
         elif self.master_seen is not None:
-            at, ids = format_at(self.master_seen), []
+            at = format_at(self.master_seen)
         else:
-            at, ids = newest(events)
+            # A crash between the `hold` line and status.json loses
+            # master_seen: the hold's own start, an empty window, drops none.
+            at = self.state.hold_at
         asks = [str(e["id"]) for e, route in self.routes(events) if route == "ask"]
-        self.journal.append(t="resume", from_at=self.state.hold_at, at=at, ids=ids, asks=asks)
+        self.journal.append(t="resume", from_at=self.state.hold_at, at=at, asks=asks)
 
     def routes(self, events: List[Dict]) -> List[Tuple[Dict, str]]:
         """Each envelope not yet carried and what it takes: `ask`, `notice`,
@@ -318,7 +319,7 @@ class RootRelay:
             elif before(state.start_at, state.start_ids, at, env_id):
                 route = "skip"
             elif owner and kind == "notice":
-                route = "skip" if any(within(w, at, env_id) for w in state.holds) else "notice"
+                route = "skip" if any(within(w, at) for w in state.holds) else "notice"
             elif box == "to-lane" and kind == "answer":
                 route = "answer"
             else:

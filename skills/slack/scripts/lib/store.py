@@ -106,11 +106,10 @@ class Thread:
 @dataclass
 class Window:
     """One closed master hold: from the second of SLACK_MASTER_FILE's mtime
-    its first poll read, to a mailbox floor as a `start` line records one."""
+    its first poll read, to the second the hold ended."""
 
     from_at: str
     at: str
-    ids: Set[str]
 
 
 @dataclass
@@ -144,7 +143,7 @@ class State:
             self.hold_at = str(line["at"])
         elif kind == "resume":
             self.held = False
-            self.holds.append(Window(str(line["from_at"]), str(line["at"]), {str(i) for i in line["ids"]}))
+            self.holds.append(Window(str(line["from_at"]), str(line["at"])))
         elif kind == "in":
             ts = str(line["ts"])
             if line["kind"] == "ignored":
@@ -234,7 +233,7 @@ def compact(root: Path, cutoff_ts: float) -> int:
     upload older than it, every history position but the last, every hold
     line but a standing one, and every resume line whose end is older than
     the cutoff; keep every open thread. Returns the lines dropped. An `out`
-    line and a `resume` line are judged by an envelope `at`, the age
+    line and a `resume` line are judged by the `at` they journal, the age
     `post_events` never posts past, so what they name can never post
     again."""
     path = root_dir(root) / JOURNAL
@@ -251,14 +250,14 @@ def compact(root: Path, cutoff_ts: float) -> int:
     for index, (raw, line) in enumerate(zip(raws, lines)):
         kind = line.get("t")
         old = "ts" in line and _ts_float(str(line["ts"])) < cutoff_ts
-        aged = kind in ("out", "resume") and line["at"] != "" and parse_at(str(line["at"])) < cutoff_ts
+        aged = kind in ("out", "resume") and parse_at(str(line["at"])) < cutoff_ts
         drop = False
         if kind == "seen":
             drop = index != last_seen
         elif kind == "hold":
             drop = index != last_hold
         elif kind == "resume":
-            drop = aged or line["at"] == ""
+            drop = aged
         elif kind == "in" and old:
             thread = state.threads.get(str(line.get("thread", "")))
             drop = line["kind"] == "ignored" or thread is None or not thread.open
