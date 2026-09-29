@@ -6,7 +6,8 @@ use kendex_core::attest::{
     self, Document, Floor, Foreign, Placed, Reading, Row, Stale, Standing, State,
 };
 use kendex_core::engine::{
-    DriftState, EngineReport, Installation, Owns, Position, ShimStanding, planned_declarations,
+    DeclarationStatus, DriftState, EngineReport, Installation, Owns, Position, ShimStanding,
+    planned_closure,
 };
 use kendex_core::env::Env;
 use kendex_core::lock::lock_path;
@@ -149,31 +150,38 @@ impl Tally {
 /// Drift check over lock entries; non-zero exit on any failing row — this
 /// is the signal consuming repos compose in shell pipelines.
 ///
-/// Eight things are named beside the rows without changing the count,
+/// Nine things are named beside the rows without changing the count,
 /// which is a count of lock entries and nothing else: content nothing
-/// manages, what a scope declares that its record does not hold, the
-/// instruction shims the scope owes, a repository effect kendex recorded
-/// arming that the package no longer stands behind, the two files a
-/// project commits about itself — the record and the inventory, each held
-/// to what this pass would write — each adopted workflow copy, held to
-/// its template's bytes, and each path an agent the project declares names
-/// as tracked output that the project's repository ignores. Each of the
-/// last six is printed as a row of its own where it fails, counted after
-/// the lock entries on the closing line, and a failing one closes the run
-/// non-zero like a failing lock row. The arming check and the ignore check
-/// fail closed: a recorded arming whose check could not be taken is a row
-/// nothing measured, never a clean one, and a git that cannot say whether
-/// it ignores a declared path fails the run.
+/// manages, what a scope declares that its record does not hold, what a
+/// scope declares that installs on none of its tools by the package's own
+/// harnesses line, the instruction shims the scope owes, a repository
+/// effect kendex recorded arming that the package no longer stands behind,
+/// the two files a project commits about itself — the record and the
+/// inventory, each held to what this pass would write — each adopted
+/// workflow copy, held to its template's bytes, and each path an agent the
+/// project declares names as tracked output that the project's repository
+/// ignores. Each of the last six is printed as a row of its own where it
+/// fails, counted after the lock entries on the closing line, and a
+/// failing one closes the run non-zero like a failing lock row. The
+/// arming check and the ignore check fail closed: a recorded arming whose
+/// check could not be taken is a row nothing measured, never a clean one,
+/// and a git that cannot say whether it ignores a declared path fails the
+/// run.
 ///
 /// A recorded entry nothing in the scope declares fails its row, and a
 /// declared installation the record does not hold is a gap, for every
 /// kind: the row set is closed against the declarations in both
 /// directions, so a record edit that moves an entry's kind, harness or
-/// name is a failed row and a gap rather than a passing row.
+/// name is a failed row and a gap rather than a passing row. The one
+/// exception is a declaration its own harnesses line leaves off every tool
+/// the scope installs on: apply records nothing for it, so it is named on
+/// the pass-over line and is never a gap.
 ///
-/// A missing or unreadable install record closes the run non-zero. The verb
-/// still weighs current manifest and render bytes, so a recovery decision has
-/// the measured rows and the original record failure together.
+/// A missing or unreadable install record closes the run non-zero, except
+/// a missing one where the expansion reached every declaration and each is
+/// such a pass-over: apply writes no record there. The verb still weighs
+/// current manifest and render bytes, so a recovery decision has the
+/// measured rows and the original record failure together.
 ///
 /// `--json` prints one document on stdout after the human rows: every row
 /// above with its state and the positions the engine resolved for it,
@@ -252,7 +260,11 @@ fn check_scope(
     let records = kendex_core::ownership::read(env, &scope);
     let fallback = records.fallback;
     let manifest = records.manifest.as_deref();
-    if records.record_problem.is_some() || fallback && manifest.is_some_and(declares_items) {
+    // A missing record owes an answer only once the plan says what the
+    // scope installs; an unreadable one is a failure whatever it declares.
+    let absent =
+        fallback && records.record_problem.is_none() && manifest.is_some_and(declares_items);
+    if records.record_problem.is_some() {
         report_record_problem(style, &scope, &path, records.record_problem.as_deref());
         tally.recordless = true;
     }
@@ -266,15 +278,24 @@ fn check_scope(
         tally.recordless = true;
         return Ok(());
     }
-    let audited =
-        match kendex_core::ownership::audit(env, &scope, &records, &reading.plan_options()) {
-            Ok(audited) => audited,
-            Err(error) => {
-                scope_refusal(style, &scope, &error);
-                tally.recordless = true;
-                return Ok(());
-            }
-        };
+    let audited = kendex_core::ownership::audit(env, &scope, &records, &reading.plan_options());
+    // A failed audit leaves the declarations unread, which owes a record.
+    let declared = match (&audited, manifest) {
+        (Ok(audited), Some(manifest)) => declared_packages(env, &scope, manifest, &audited.report),
+        _ => Declared::default(),
+    };
+    if absent && !declared.owes_record_nothing() {
+        report_record_problem(style, &scope, &path, None);
+        tally.recordless = true;
+    }
+    let audited = match audited {
+        Ok(audited) => audited,
+        Err(error) => {
+            scope_refusal(style, &scope, &error);
+            tally.recordless = true;
+            return Ok(());
+        }
+    };
     let lock = audited.matching;
     let report = audited.report;
     tally
@@ -290,9 +311,7 @@ fn check_scope(
             .filter(|row| named(&row.name))
             .cloned(),
     );
-    declaration_rows(
-        env, &scope, manifest, &lock, &report, &placer, &named, tally,
-    );
+    declaration_rows(&scope, declared, &lock, &report, &placer, &named, tally);
     for (key, entry) in &lock.entries {
         if !named(&entry.name) {
             continue;
@@ -467,30 +486,18 @@ fn tracked_output_rows(
     }
 }
 
-/// Both directions the record can fall short of the scope, as rows and as
-/// the names the gap line prints: an installation the pass derived that
-/// the record holds no entry for, and a declaration the record holds no
-/// entry for at all — one the pass could place nowhere, which no
-/// installation carries. Whatever else the record holds, either is a gap.
-/// Named once each, in the order the scope declares them, with the
-/// installations the declarations did not account for after.
 /// One scope's declarations held to its record, into the tally: what it
 /// declares and the record does not hold, and what installs on none of
 /// its tools and so owes the record nothing.
-#[allow(clippy::too_many_arguments)]
 fn declaration_rows(
-    env: &Env,
     scope: &Scope,
-    manifest: Option<&Manifest>,
+    declared: Declared,
     lock: &kendex_core::lock::Lock,
     report: &EngineReport,
     placer: &Placer,
     named: &dyn Fn(&str) -> bool,
     tally: &mut Tally,
 ) {
-    let declared = manifest
-        .map(|manifest| declared_packages(env, scope, manifest, report))
-        .unwrap_or_default();
     let left_out: Vec<(ItemKind, String)> = declared
         .left_out
         .into_iter()
@@ -512,6 +519,13 @@ fn declaration_rows(
     }
 }
 
+/// Both directions the record can fall short of the scope, as rows and as
+/// the names the gap line prints: an installation the pass derived that
+/// the record holds no entry for, and a declaration the record holds no
+/// entry for at all — one the pass could place nowhere, which no
+/// installation carries. Whatever else the record holds, either is a gap.
+/// Named once each, in the order the scope declares them, with the
+/// installations the declarations did not account for after.
 fn gap_rows(
     declared: &[(ItemKind, String)],
     lock: &kendex_core::lock::Lock,
@@ -705,11 +719,10 @@ fn declared_packages(
     manifest: &Manifest,
     report: &EngineReport,
 ) -> Declared {
-    let (left_out, wanted): (Vec<_>, Vec<_>) = planned_declarations(env, scope, manifest)
-        .into_iter()
-        .partition(|declared| {
-            report.left_out_by_own_line(declared.kind, &declared.name, &declared.harnesses)
-        });
+    let (planned, status) = planned_closure(env, scope, manifest);
+    let (left_out, wanted): (Vec<_>, Vec<_>) = planned.into_iter().partition(|declared| {
+        report.left_out_by_own_line(declared.kind, &declared.name, &declared.harnesses)
+    });
     let pair = |declared: kendex_core::engine::PlannedDeclaration| (declared.kind, declared.name);
     Declared {
         wanted: wanted
@@ -723,6 +736,7 @@ fn declared_packages(
             )
             .collect(),
         left_out: left_out.into_iter().map(pair).collect(),
+        status,
     }
 }
 
@@ -733,6 +747,22 @@ struct Declared {
     wanted: Vec<(ItemKind, String)>,
     /// What installs on none of the scope's tools, by its own harnesses line.
     left_out: Vec<(ItemKind, String)>,
+    /// Whether the expansion reached every declaration. An incomplete one
+    /// may have missed a package the record must hold.
+    status: DeclarationStatus,
+}
+
+impl Declared {
+    /// Whether apply writes no record for these declarations and is right
+    /// to: the expansion reached every one, and each installs on none of
+    /// the scope's tools by its own harnesses line. Plugins sit in
+    /// `wanted`, so a scope with one always owes a record.
+    fn owes_record_nothing(&self) -> bool {
+        match self.status {
+            DeclarationStatus::Complete => self.wanted.is_empty() && !self.left_out.is_empty(),
+            DeclarationStatus::Incomplete => false,
+        }
+    }
 }
 
 /// Whether the scope's manifest asks for anything at all — every
@@ -741,7 +771,9 @@ struct Declared {
 /// The refusal binds to this rather than to the expanded plan. An
 /// expansion asks a catalog what a bundle holds and what a skill requires,
 /// and every way that read can come back short is a way the refusal would
-/// stop firing on a scope that is still missing its record.
+/// stop firing on a scope that is still missing its record. The expansion
+/// only excuses a missing record, and only when it reports itself complete
+/// ([`Declared::owes_record_nothing`]).
 ///
 /// `Manifest::declared` covers six kinds; bundles and plugins each declare
 /// through a table of their own and are asked for here.
