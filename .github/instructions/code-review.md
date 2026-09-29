@@ -18,9 +18,9 @@ Open every review comment on this repository with the line `read: .github/instru
 
 Mark a finding as blocking only if it must stop the merge. Mark other findings as suggestions. Group suggestions together. Omit suggestions when a repeat review covers a one-line fix. Match severity and confidence to the evidence. Name the user-visible consequence in every finding.
 
-Approve the pull request when the review reports no finding, and when every finding it reports is a suggestion or a nit. Withhold approval only for a blocking finding, and name that finding in the review. Do not withhold approval for a concern you cannot state as a finding. A rule that another reviewer, a person included, must also approve is not a reason either: the repo's merge rules enforce that rule. On a later review, a finding the author answered under the reply contract does not block approval unless the code it names changed after the answer.
+Approve the pull request when the review reports no finding, and when every finding it reports is a suggestion or a nit. Withhold approval only for a blocking finding, and name that finding in the review. Do not withhold approval for a concern you cannot state as a finding. On a later review, a finding the author answered under the reply contract does not block approval unless the code it names changed after the answer.
 
-Copilot code review reviews a head again only on a push or a re-request, and it does not see an author reply. When the author answers every finding at a head under the reply contract, in its thread or in a `Dispositions at <sha>` comment, an approval from the `vanillagreen-overseer` GitHub App closes that head, per `docs/plans/review-gate-platform.md` § Copilot-down fallback.
+Copilot code review reviews a head again only on a push or a re-request, and it does not see an author reply. When no review bot approves a head, for example because Copilot reviewed it as a comment and the author answered its findings under the reply contract, in their threads or in a `Dispositions at <sha>` comment, the overseer approves that head as the `vanillagreen-overseer` GitHub App. That approval satisfies the one approval the ruleset requires, as Use 1 of `docs/plans/review-gate-platform.md` § Copilot-down fallback states.
 
 ## no-preferences
 
