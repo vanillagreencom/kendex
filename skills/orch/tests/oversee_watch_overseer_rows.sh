@@ -224,13 +224,22 @@ iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-
 # sandbox whose context record was written RECORD_OFFSET seconds after ROW_AT,
 # naming the pane key CTX_KEY, with GAP as its gap or `-` for a reading, and a
 # clock NOW_OFFSET seconds after ROW_AT; then one long pass. CONTEXT_EVENT is
-# the context event it printed, or none.
+# the context event it printed, or none. CTX_FLEET_HARNESS, where set, is the
+# harness the fleet record names for this pane.
 CTX_KEY="7000 $PANE"
+CTX_FLEET_HARNESS=""
+# A start in the same pane naming a new session, as a session opened there by
+# hand, or a /clear, writes.
+RESTART="$(row SessionStart claude source=startup model=claude-fable-5-1 session_id=9a1b)"
 context_case() { # NAME PANE_STATE RECORD_OFFSET NOW_OFFSET GAP ROW...
   local name="$1" pane_state="$2" at now="$((ROW_AT + $4))" gap="$5"
   at="$(iso "$((ROW_AT + $3))")"
   shift 5
   rows_case "$name" "$pane_state" "$@"
+  if [[ -n "$CTX_FLEET_HARNESS" ]]; then
+    jq --arg h "$CTX_FLEET_HARNESS" '.overseer.harness = $h' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/state.tmp" \
+      && mv -- "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
+  fi
   printf '%s\n' "$now" > "$STUB_DIR/now.epoch"
   if [[ "$gap" == - ]]; then
     jq -cn --arg at "$at" --arg key "$CTX_KEY" '{harness: "claude", model: "claude-fable-5-1", tokens: 300000, window: 1000000,
@@ -242,7 +251,7 @@ context_case() { # NAME PANE_STATE RECORD_OFFSET NOW_OFFSET GAP ROW...
   run TMUX_PANE="$PANE" -- --max-loops 1
   CONTEXT_EVENT="$(grep '^EVENT overseer-context-' <<<"$OUT" || echo none)"
 }
-while IFS='|' read -r name key pane record_offset now_offset gap rows expected; do
+while IFS='|' read -r name key fleet pane record_offset now_offset gap rows expected; do
   set -f
   # shellcheck disable=SC2086  # the row names split into the row list.
   set -- $rows
@@ -251,6 +260,7 @@ while IFS='|' read -r name key pane record_offset now_offset gap rows expected; 
   for r in "$@"; do
     case "$r" in
       start) row_args+=("$START") ;;
+      restart) row_args+=("$RESTART") ;;
       overloaded) row_args+=("$OVERLOADED") ;;
       wall) row_args+=("$FAILURE") ;;
       stop) row_args+=("$STOP") ;;
@@ -258,19 +268,23 @@ while IFS='|' read -r name key pane record_offset now_offset gap rows expected; 
       *) echo "unknown row $r" >&2; exit 1 ;;
     esac
   done
-  CTX_KEY="7000 $key" context_case "$name" "$pane" "$record_offset" "$now_offset" "$gap" ${row_args[@]+"${row_args[@]}"}
+  CTX_KEY="7000 $key" CTX_FLEET_HARNESS="${fleet#-}" context_case "$name" "$pane" "$record_offset" "$now_offset" "$gap" ${row_args[@]+"${row_args[@]}"}
   assert_eq "$CONTEXT_EVENT" "$expected" "$name" "$ERR"
 done <<ROWS
-context_gap|$PANE|blank|-60|0|home-unnamed|start|EVENT overseer-context-unmeasured $PANE gap=home-unnamed
-context_gap_unrecorded|$PANE|blank|-60|0|pane-unrecorded|start|EVENT overseer-context-unmeasured $PANE gap=pane-unrecorded
-context_gap_other_pane|%4|blank|-60|0|home-unnamed|start|none
-context_stale_stop|$PANE|blank|-600|7200|-|start stop|EVENT overseer-context-stale $PANE age=7800
-context_stale_lifted|$PANE|blank|-600|7200|-|start wall stop|EVENT overseer-context-stale $PANE age=7800
-context_stale_failure|$PANE|blank|-600|7200|-|start overloaded|none
-context_stale_screen|$PANE|limit_text|-600|7200|-|-|none
-context_stale_no_turn|$PANE|blank|-600|7200|-|start|none
-context_turn_before|$PANE|blank|60|7200|-|start stop|none
-context_fresh|$PANE|blank|-10|60|-|start stop|none
+context_gap|$PANE|-|blank|-60|0|home-unnamed|start|EVENT overseer-context-unmeasured $PANE gap=home-unnamed
+context_gap_same_harness|$PANE|claude|blank|-60|0|home-unnamed|start|EVENT overseer-context-unmeasured $PANE gap=home-unnamed
+context_gap_unrecorded|$PANE|-|blank|-60|0|pane-unrecorded|start|EVENT overseer-context-unmeasured $PANE gap=pane-unrecorded
+context_gap_other_pane|%4|-|blank|-60|0|home-unnamed|start|none
+context_gap_copilot|$PANE|copilot|idle|-60|0|home-unnamed|-|none
+context_gap_new_session|$PANE|-|blank|-60|0|home-unnamed|start restart|none
+context_stale_stop|$PANE|-|blank|-600|7200|-|start stop|EVENT overseer-context-stale $PANE age=7800
+context_stale_lifted|$PANE|-|blank|-600|7200|-|start wall stop|EVENT overseer-context-stale $PANE age=7800
+context_stale_new_session|$PANE|-|blank|-600|7200|-|start restart stop|none
+context_stale_failure|$PANE|-|blank|-600|7200|-|start overloaded|none
+context_stale_screen|$PANE|-|limit_text|-600|7200|-|-|none
+context_stale_no_turn|$PANE|-|blank|-600|7200|-|start|none
+context_turn_before|$PANE|-|blank|60|7200|-|start stop|none
+context_fresh|$PANE|-|blank|-10|60|-|start stop|none
 ROWS
 # No record is a session that has not ended a turn under the hook: nothing to
 # report. A record the hook does not write is noted and settles nothing.
@@ -347,7 +361,8 @@ assert_eq "$ONE_PASS" "rc=0 walled=0 marks=1 launched=0" \
   "control: without the zero-mark wall the pass only reports the mark and succeeds nothing" "$ERR"
 
 # The context record's controls, one per rule: the gap read, the age bound,
-# the Stop-since test and the pane test each removed in turn.
+# the Stop-since test, the pane test, the harness test and the session test
+# each removed in turn.
 context_control() { # NAME OLD NEW CASE_NAME PANE RECORD_OFFSET NOW_OFFSET GAP EXPECTED ROW...
   local ctl name="$1" old="$2" new="$3" case_name="$4" pane="$5" record_offset="$6" now_offset="$7" gap="$8" expected="$9"
   shift 9
@@ -365,6 +380,12 @@ context_control turn-ctl '  (( row_at > at )) || return 0' '  :' \
   context_no_turn_mutant blank -600 7200 - "EVENT overseer-context-stale $PANE age=7800" "$START"
 CTX_KEY="7000 %4" context_control pane-ctl '  [[ "$LANE_CTX_PANE_KEY" == "$identity" ]] || return 0' '  :' \
   context_other_pane_mutant blank -60 0 home-unnamed "EVENT overseer-context-unmeasured $PANE gap=home-unnamed" "$START"
+CTX_FLEET_HARNESS=copilot context_control harness-ctl \
+  '  [[ -z "$OVERSEER_RECORD_HARNESS" || "$LANE_CTX_HARNESS" == "$OVERSEER_RECORD_HARNESS" ]] || return 0' '  :' \
+  context_copilot_mutant idle -60 0 home-unnamed "EVENT overseer-context-unmeasured $PANE gap=home-unnamed"
+context_control session-ctl \
+  '  [[ -z "$started" || -z "$LANE_CTX_SESSION" || "$started" == "$LANE_CTX_SESSION" ]] || return 0' '  :' \
+  context_new_session_mutant blank -60 0 home-unnamed "EVENT overseer-context-unmeasured $PANE gap=home-unnamed" "$START" "$RESTART"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -133,27 +133,32 @@ overseer_command_record() {
 }
 
 # overseer_record_read SERVER PANE — the fleet state's overseer record as the
-# two questions this watch asks of it, into OVERSEER_RECORD_KEY and
-# OVERSEER_RECORD_LINE: the record's own `<server> <pane>` key, empty where
-# the state holds no record, and the line a death of SERVER PANE would
-# replay, a standing `pending.launch_line` ahead of `launch_line`, only where
-# the record names that pane on that server by `ol_names`, and empty
-# otherwise. One reader for the start's `held=` field and check_overseer's
+# three questions this watch asks of it, into OVERSEER_RECORD_KEY,
+# OVERSEER_RECORD_LINE and OVERSEER_RECORD_HARNESS: the record's own
+# `<server> <pane>` key, empty where the state holds no record; the line a
+# death of SERVER PANE would replay, a standing `pending.launch_line` ahead of
+# `launch_line`; and the harness the record names for that session. The last
+# two only where the record names that pane on that server by `ol_names`, and
+# empty otherwise. One reader for the start's `held=` field and check_overseer's
 # relaunch, so the two cannot disagree about which line a death replays.
 # SERVER and PANE are spelled into the filter: every caller matched them
 # against `^[0-9]+$` and `^%[0-9]+$` first, and the `get` verb takes no
 # binding. Returns 1 where the state could not be read, with the reader's
 # words on stderr.
-OVERSEER_RECORD_KEY="" OVERSEER_RECORD_LINE=""
+OVERSEER_RECORD_KEY="" OVERSEER_RECORD_LINE="" OVERSEER_RECORD_HARNESS=""
 overseer_record_read() { # SERVER PANE
   local out sep=$'\x1f'
-  OVERSEER_RECORD_KEY="" OVERSEER_RECORD_LINE=""
+  OVERSEER_RECORD_KEY="" OVERSEER_RECORD_LINE="" OVERSEER_RECORD_HARNESS=""
   out="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
     get oversee "$OL_JQ_DEFS"'
       .overseer as $o
+      | ($o | ol_names("'"$1"'"; "'"$2"'")) as $mine
       | [ (if ($o | type) == "object" then (($o.server // "") + " " + ($o.pane // $o.session // "")) else "" end),
-          (if ($o | ol_names("'"$1"'"; "'"$2"'")) then ($o.pending.launch_line // $o.launch_line // "") else "" end) ]
+          (if $mine then ($o.harness // "") else "" end),
+          (if $mine then ($o.pending.launch_line // $o.launch_line // "") else "" end) ]
       | join("\u001f")')" || return 1
   OVERSEER_RECORD_KEY="${out%%"$sep"*}"
+  out="${out#*"$sep"}"
+  OVERSEER_RECORD_HARNESS="${out%%"$sep"*}"
   OVERSEER_RECORD_LINE="${out#*"$sep"}"
 }

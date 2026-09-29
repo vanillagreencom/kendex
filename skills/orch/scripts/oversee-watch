@@ -2456,9 +2456,13 @@ overseer_mark_check() { # ROWS IDENTITY PANE
 # judged each long pass a working overseer is read, so a record that stopped
 # advancing, or advances with no reading, reaches the overseer instead of
 # passing for a context mark that is watching: the hook judges that mark at a
-# turn end and nowhere else. A record naming another pane is another
-# session's, a predecessor's until this one's first turn end, and says
-# nothing of this one.
+# turn end and nowhere else. A record another session wrote, a predecessor's
+# until this one's first turn end, says nothing of this one: one naming
+# another pane, a harness other than the one the fleet record names for this
+# pane (check_overseer's OVERSEER_RECORD_HARNESS), which is what separates a
+# Copilot overseer, writing neither rows nor records, from a predecessor in
+# the same pane, or a session other than the one the pane's latest SessionStart
+# row names.
 #
 # `overseer-context-unmeasured` where the record carries a gap, the reason the
 # hook took no reading; `overseer-context-stale` where the record's `at` is
@@ -2471,14 +2475,21 @@ overseer_mark_check() { # ROWS IDENTITY PANE
 # nothing. Reads the state overseer_pane_read left and never runs inside it.
 OVERSEER_CONTEXT_STALE_SECS=3600
 overseer_context_check() { # PANE IDENTITY
-  local pane="$1" identity="$2" file record at age rows row_at
+  local pane="$1" identity="$2" file record at age rows row_at started
   file="$(lane_context_overseer_box "$PROJECT_ROOT")/$LANE_CONTEXT_RECORD"
+  rows="$(session_rows_overseer_file "$PROJECT_ROOT" "${identity%% *}" "$pane")"
   [[ -e "$file" ]] || return 0
   if ! record="$(cat -- "$file" 2>/dev/null)" || ! lane_context_record_fields "$record"; then
     overseer_note overseer-context-unread "path=$file"
     return 0
   fi
   [[ "$LANE_CTX_PANE_KEY" == "$identity" ]] || return 0
+  [[ -z "$OVERSEER_RECORD_HARNESS" || "$LANE_CTX_HARNESS" == "$OVERSEER_RECORD_HARNESS" ]] || return 0
+  if ! session_rows_last "$rows" SessionStart || ! started="$(jq -r '.session_id // ""' <<<"${SESSION_ROW:-null}")"; then
+    overseer_note overseer-context-unread "path=$rows"
+    return 0
+  fi
+  [[ -z "$started" || -z "$LANE_CTX_SESSION" || "$started" == "$LANE_CTX_SESSION" ]] || return 0
   if [[ -n "$LANE_CTX_GAP" ]]; then
     echo "EVENT overseer-context-unmeasured $pane gap=$LANE_CTX_GAP"
     PASS_EVENT=1
@@ -2490,7 +2501,6 @@ overseer_context_check() { # PANE IDENTITY
   fi
   age=$((PASS_NOW - at))
   (( age > OVERSEER_CONTEXT_STALE_SECS )) || return 0
-  rows="$(session_rows_overseer_file "$PROJECT_ROOT" "${identity%% *}" "$pane")"
   if ! session_rows_last "$rows" Stop || ! row_at="$(jq -r '.at // 0' <<<"${SESSION_ROW:-null}")"; then
     overseer_note overseer-context-unread "path=$rows"
     return 0

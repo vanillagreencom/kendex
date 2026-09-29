@@ -267,13 +267,13 @@ assert_eq "$(jq -c 'del(.at)' "$BOX/context.json")" \
   "a gap record names the reason and the session and pane, with no reading"
 # shellcheck disable=SC2016  # expanded by the child shell.
 fields() { bash -c 'source "$1"; if lane_context_record_fields "$2"; then
-    printf "rc=0 harness=%s tokens=%s pane=%s gap=%s at=%s\n" "$LANE_CTX_HARNESS" "${LANE_CTX_TOKENS:-none}" "$LANE_CTX_PANE_KEY" "${LANE_CTX_GAP:-none}" "${LANE_CTX_AT:+set}"
+    printf "rc=0 harness=%s tokens=%s pane=%s session=%s gap=%s at=%s\n" "$LANE_CTX_HARNESS" "${LANE_CTX_TOKENS:-none}" "$LANE_CTX_PANE_KEY" "${LANE_CTX_SESSION:-none}" "${LANE_CTX_GAP:-none}" "${LANE_CTX_AT:+set}"
   else echo "rc=$?"; fi' _ "$LIB" "$1"; }
 while IFS='|' read -r record expected what; do
   assert_eq "$(fields "$record")" "$expected" "$what"
 done <<ROWS
-$(cat "$BOX/context.json")|rc=0 harness=claude tokens=none pane=7000 %9 gap=home-unnamed at=set|a gap record parses with its gap and no tokens
-{"harness":"claude","tokens":5,"gap":null,"pane_key":"k","at":"t"}|rc=0 harness=claude tokens=5 pane=k gap=none at=set|a reading parses with no gap
+$(cat "$BOX/context.json")|rc=0 harness=claude tokens=none pane=7000 %9 session=s1 gap=home-unnamed at=set|a gap record parses with its gap, its session and no tokens
+{"harness":"claude","tokens":5,"gap":null,"pane_key":"k","at":"t"}|rc=0 harness=claude tokens=5 pane=k session=none gap=none at=set|a reading parses with no gap
 {"harness":"claude","tokens":null,"gap":null,"pane_key":"k"}|rc=1|a record with neither a reading nor a gap is no record
 {"harness":"claude","tokens":5,"gap":"home-unnamed","pane_key":"k"}|rc=1|a record carrying both a reading and a gap is no record
 ROWS
@@ -379,7 +379,7 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
   control gap-written lane-context.sh 'gap: ($gap | nul), at: $at}' 'at: $at}' \
     'a gap record names the reason and the session and pane, with no reading'
   control gap-parsed lane-context.sh 'or (.tokens == null and (.gap | type)' 'or (false and (.gap | type)' \
-    'a gap record parses with its gap and no tokens'
+    'a gap record parses with its gap, its session and no tokens'
   control gap-judged lane-context.sh '[ -z "$LANE_CTX_GAP" ] || return 1' ':' \
     "the report's judge refuses a gap record as no reading"
   control owned-binding-missing lane-context.sh 'if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then' 'if false; then' \

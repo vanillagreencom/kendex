@@ -293,18 +293,19 @@ lane_context_record() { # BOX HARNESS TOKENS WINDOW MODEL [SESSION] [PANE_KEY] [
 
 # lane_context_record_fields RECORD — one record split into LANE_CTX_HARNESS,
 # LANE_CTX_TOKENS, LANE_CTX_WINDOW, LANE_CTX_MODEL, LANE_CTX_PANE_KEY,
-# LANE_CTX_GAP and LANE_CTX_AT, each empty where the record holds none. A
+# LANE_CTX_SESSION, LANE_CTX_GAP and LANE_CTX_AT, each empty where the record
+# holds none. A
 # reading carries a token count and no gap; a gap record carries the gap and
 # no token count. Exit 1, every field empty, where RECORD is neither shape
 # lane_context_record writes.
 lane_context_record_fields() { # RECORD
   local fields rest
   LANE_CTX_HARNESS="" LANE_CTX_TOKENS="" LANE_CTX_WINDOW=""
-  LANE_CTX_MODEL="" LANE_CTX_PANE_KEY="" LANE_CTX_GAP="" LANE_CTX_AT=""
+  LANE_CTX_MODEL="" LANE_CTX_PANE_KEY="" LANE_CTX_SESSION="" LANE_CTX_GAP="" LANE_CTX_AT=""
   fields=$(jq -er 'select(type == "object" and (((.tokens | type) == "number" and .gap == null)
       or (.tokens == null and (.gap | type) == "string" and .gap != "")))
     | [(.harness // ""), (.tokens // "" | tostring), (.window // "" | tostring),
-       (.model // ""), (.pane_key // ""), (.gap // ""), (.at // "")] | join("\t")' <<<"${1:-}" 2>/dev/null) || return 1
+       (.model // ""), (.pane_key // ""), (.session_id // ""), (.gap // ""), (.at // "")] | join("\t")' <<<"${1:-}" 2>/dev/null) || return 1
   # Split by hand for the reason lane_context_collect gives: an empty field
   # would otherwise collapse into its neighbour.
   rest="$fields"
@@ -313,6 +314,7 @@ lane_context_record_fields() { # RECORD
   LANE_CTX_WINDOW="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
   LANE_CTX_MODEL="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
   LANE_CTX_PANE_KEY="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+  LANE_CTX_SESSION="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
   LANE_CTX_GAP="${rest%%$'\t'*}"
   LANE_CTX_AT="${rest#*$'\t'}"
 }

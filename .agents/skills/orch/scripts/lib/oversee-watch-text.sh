@@ -134,7 +134,11 @@ The long pass's events, checked and reported in this order:
                              description lists. Its context mark is judged at
                              that turn end alone, so it is not being judged.
                              The route per gap is references/oversee-events.md
-                             § Event kinds. Emitted every long pass it stands
+                             § Event kinds. Emitted every long pass it stands.
+                             A record another session wrote, naming another
+                             pane, a harness other than the fleet record's or
+                             a session other than the pane's latest start,
+                             prints neither context event
   EVENT overseer-context-stale <pane> age=<seconds>
                              this overseer's context record is more than an
                              hour old and a turn end its hook dated with a
