@@ -245,7 +245,9 @@ mkdir -p "$STAND/.git/objects/info"
 printf '%s\n' "$REPO_OBJECTS" >"$STAND/.git/objects/info/alternates"
 printf '%s\n' "$REPO_HEAD" >"$STAND/.git/shallow"
 git -C "$STAND" update-ref HEAD "$REPO_HEAD"
-cp "$SMOKE" "$STAND/tools/harness-smoke"
+STAND_SMOKE="$STAND/tools/harness-smoke"
+cp "$SMOKE" "$STAND_SMOKE"
+cp "$STAND_SMOKE" "$STAND_SMOKE.intact"
 cp "$REPO/hooks/lane-mail-check.sh" "$REPO/hooks/README.md" "$STAND/hooks/"
 STAND_TABLE="$STAND/hooks/README.md"
 STAND_HOOK="$STAND/hooks/lane-mail-check.sh"
@@ -253,16 +255,25 @@ cp "$STAND_TABLE" "$STAND_TABLE.intact"
 cp "$STAND_HOOK" "$STAND_HOOK.intact"
 printf '#!/bin/sh\nexit 0\n' >"$ROWS_BIN/claude"
 chmod +x "$ROWS_BIN/claude"
+# The kendex a stand-in run finds first: a build of the stand-in's HEAD, except
+# where a build row below stubs another and then puts this one back.
+BUILD_BIN="$TMP/build-bin"
+mkdir -p "$BUILD_BIN"
+kendex_stub "$BUILD_BIN/kendex" "kendex 0.0.0+git.$REPO_HEAD"
 
-stand_case() { # LABEL WANT-STATUS WANT-FIRST
-  local rc=0 said=""
-  (cd "$ROWS_REPO" && PATH="$ROWS_BIN:$PATH" "$BASH" "$STAND/tools/harness-smoke" \
-    --only claude --dir "$TMP/stand-dir" >"$TMP/stand-out" 2>&1) || rc=$?
+# Exit 1 is the run's verdict once rows have run, and also any early death, so
+# a status-1 row counts only where the run printed the row table's header,
+# which comes after every refusal.
+stand_case() { # LABEL WANT-STATUS WANT-FIRST [ARG...] — ARGs follow --only claude, so an --only among them wins
+  local rc=0 said="" reached=""
+  (cd "$ROWS_REPO" && PATH="$BUILD_BIN:$ROWS_BIN:$PATH" "$BASH" "$STAND_SMOKE" \
+    --only claude --dir "$TMP/stand-dir" "${@:4}" >"$TMP/stand-out" 2>&1) || rc=$?
   said="$(sed -n '1s/^harness-smoke: //p' "$TMP/stand-out")"
-  if [ "$rc" = "$2" ] && [ "${said:--}" = "$3" ]; then
+  [ "$rc" != 1 ] || grep -qE '^harness +row +result +evidence' "$TMP/stand-out" || reached=" before the row table"
+  if [ "$rc" = "$2" ] && [ "${said:--}" = "$3" ] && [ -z "$reached" ]; then
     ok "$1 (exit $rc, first ${said:--})"
   else
-    bad "$1" "want rc=$2 first=$3, got rc=$rc first=${said:--}"
+    bad "$1" "want rc=$2 first=$3, got rc=$rc first=${said:--}$reached"
   fi
 }
 plant() { # FILE SED-SCRIPT — an edit that has to change the file
@@ -294,62 +305,55 @@ cp "$STAND_HOOK.intact" "$STAND_HOOK"
 # HEAD, a build of AHEAD is a newer one. A build that passes reaches the rows,
 # as the committed table and hook do above.
 echo "=== a kendex that is not a build containing HEAD is refused before any row ==="
-BUILD_BIN="$TMP/build-bin"
-mkdir -p "$BUILD_BIN"
-STAND_SCRIPT="$STAND/tools/harness-smoke"
-cp "$STAND_SCRIPT" "$STAND_SCRIPT.intact"
 AHEAD="$(git -C "$STAND" -c user.name=harness-smoke -c user.email=harness-smoke@kendex.invalid \
-  commit-tree -p "$REPO_HEAD" -m ahead "$REPO_HEAD^{tree}")" ||
+  -c commit.gpgSign=false commit-tree -p "$REPO_HEAD" -m ahead "$REPO_HEAD^{tree}")" ||
   { echo "harness-smoke.test: the stand-in's AHEAD commit could not be made" >&2; exit 1; }
 NOWHERE="$(printf 'd%.0s' $(seq 40))"
-build_case() { # LABEL VERSION-LINE ARGS WANT-STATUS WANT-FIRST
-  local rc=0 said="" a
-  local -a argv=()
-  for a in $3; do [ "$a" = - ] || argv+=("$a"); done
-  kendex_stub "$BUILD_BIN/kendex" "$2"
-  (cd "$ROWS_REPO" && PATH="$BUILD_BIN:$ROWS_BIN:$PATH" "$BASH" "$STAND_SCRIPT" \
-    --only claude --dir "$TMP/stand-dir" ${argv[@]+"${argv[@]}"} >"$TMP/stand-out" 2>&1) || rc=$?
-  said="$(sed -n '1s/^harness-smoke: //p' "$TMP/stand-out")"
-  if [ "$rc" = "$4" ] && [ "${said:--}" = "$5" ]; then
-    ok "$1 (exit $rc, first ${said:--})"
-  else
-    bad "$1" "want rc=$4 first=$5, got rc=$rc first=${said:--}"
-  fi
-}
 
 git -C "$STAND" update-ref HEAD "$AHEAD"
-build_case "a build of HEAD reaches the rows" "kendex 1.2.0+git.$AHEAD" - 1 -
-build_case "a CI build of HEAD reaches the rows" "kendex 1.2.0+main.410.$AHEAD" - 1 -
-build_case "a build older than HEAD is refused, naming both commits" \
-  "kendex 1.2.0+main.410.$REPO_HEAD" - 2 "stale-kendex=$REPO_HEAD head=$AHEAD"
-build_case "a build naming no commit is refused" "kendex 1.2.0" - 2 "stale-kendex=none head=$AHEAD"
-build_case "a build of a commit the checkout does not hold is refused" \
-  "kendex 1.2.0+git.$NOWHERE" - 2 "stale-kendex=$NOWHERE head=$AHEAD"
-build_case "--allow-stale runs on an older build and says so first" \
-  "kendex 1.2.0+main.410.$REPO_HEAD" --allow-stale 1 "allowed-stale=$REPO_HEAD head=$AHEAD"
-plant "$STAND_SCRIPT" 's/merge-base --is-ancestor "\$HEAD_COMMIT" "\$INSTALLED_COMMIT"/merge-base --is-ancestor "$INSTALLED_COMMIT" "$HEAD_COMMIT"/'
-build_case "control: a check asking whether HEAD contains the build passes an older build" \
-  "kendex 1.2.0+main.410.$REPO_HEAD" - 1 -
-plant "$STAND_SCRIPT" 's/\\2\/p/\\1\/p/'
-build_case "control: a reader that takes the build kind for its commit refuses a build of HEAD" \
-  "kendex 1.2.0+git.$AHEAD" - 2 "stale-kendex=git head=$AHEAD"
-plant "$STAND_SCRIPT" 's/^    INSTALLED_COMMIT=none$/    kendex_build=current/'
-build_case "control: a reader that passes a build naming no commit reaches the rows" "kendex 1.2.0" - 1 -
-plant "$STAND_SCRIPT" 's/^    --allow-stale) ALLOW_STALE=1; shift ;;$/    --allow-stale) ALLOW_STALE=0; shift ;;/'
-build_case "control: an --allow-stale that sets nothing refuses the older build" \
-  "kendex 1.2.0+main.410.$REPO_HEAD" --allow-stale 2 "stale-kendex=$REPO_HEAD head=$AHEAD"
-plant "$STAND_SCRIPT" 's/^  note allowed-stale /  : note allowed-stale /'
-build_case "control: an --allow-stale run that says nothing reaches the rows unannounced" \
-  "kendex 1.2.0+main.410.$REPO_HEAD" --allow-stale 1 -
-cp "$STAND_SCRIPT.intact" "$STAND_SCRIPT"
+kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+git.$AHEAD"
+stand_case "a build of HEAD reaches the rows" 1 -
+plant "$STAND_SMOKE" 's/\\2\/p/\\1\/p/'
+stand_case "control: a reader that takes the build kind for its commit refuses a build of HEAD" \
+  2 "stale-kendex=git head=$AHEAD"
+cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
+kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+main.410.$AHEAD"
+stand_case "a CI build of HEAD reaches the rows" 1 -
+kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+git.$NOWHERE"
+stand_case "a build of a commit the checkout does not hold is refused" 2 "stale-kendex=$NOWHERE head=$AHEAD"
+kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0"
+stand_case "a build naming no commit is refused" 2 "stale-kendex=none head=$AHEAD"
+plant "$STAND_SMOKE" 's/^    INSTALLED_COMMIT=none$/    kendex_build=current/'
+stand_case "control: a reader that passes a build naming no commit reaches the rows" 1 -
+cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
+kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+main.410.$REPO_HEAD"
+stand_case "a build older than HEAD is refused, naming both commits" 2 "stale-kendex=$REPO_HEAD head=$AHEAD"
+stand_case "--allow-stale runs on an older build and says so first" \
+  1 "allowed-stale=$REPO_HEAD head=$AHEAD" --allow-stale
+plant "$STAND_SMOKE" 's/merge-base --is-ancestor "\$HEAD_COMMIT" "\$INSTALLED_COMMIT"/merge-base --is-ancestor "$INSTALLED_COMMIT" "$HEAD_COMMIT"/'
+stand_case "control: a check asking whether HEAD contains the build passes an older build" 1 -
+plant "$STAND_SMOKE" 's/^    --allow-stale) ALLOW_STALE=1; shift ;;$/    --allow-stale) ALLOW_STALE=0; shift ;;/'
+stand_case "control: an --allow-stale that sets nothing refuses the older build" \
+  2 "stale-kendex=$REPO_HEAD head=$AHEAD" --allow-stale
+plant "$STAND_SMOKE" 's/^  note allowed-stale /  : note allowed-stale /'
+stand_case "control: an --allow-stale run that says nothing reaches the rows unannounced" 1 - --allow-stale
+cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 
 git -C "$STAND" update-ref HEAD "$REPO_HEAD"
-build_case "a build of a commit that contains HEAD reaches the rows" "kendex 1.2.0+git.$AHEAD" - 1 -
-plant "$STAND_SCRIPT" 's/merge-base --is-ancestor "\$HEAD_COMMIT" "\$INSTALLED_COMMIT"/merge-base --is-ancestor "$INSTALLED_COMMIT" "$HEAD_COMMIT"/'
-build_case "control: a check asking whether HEAD contains the build refuses a newer build" \
-  "kendex 1.2.0+git.$AHEAD" - 2 "stale-kendex=$AHEAD head=$REPO_HEAD"
-cp "$STAND_SCRIPT.intact" "$STAND_SCRIPT"
-rm -f -- "$STAND_SCRIPT.intact"
+kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+git.$AHEAD"
+stand_case "a build of a commit that contains HEAD reaches the rows" 1 -
+plant "$STAND_SMOKE" 's/merge-base --is-ancestor "\$HEAD_COMMIT" "\$INSTALLED_COMMIT"/merge-base --is-ancestor "$INSTALLED_COMMIT" "$HEAD_COMMIT"/'
+stand_case "control: a check asking whether HEAD contains the build refuses a newer build" \
+  2 "stale-kendex=$AHEAD head=$REPO_HEAD"
+cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
+kendex_stub "$BUILD_BIN/kendex" "kendex 0.0.0+git.$REPO_HEAD"
+
+# A copy of the script outside every repository has no HEAD to hold a build
+# to. The stand-in with its .git moved aside is that copy: the scratch
+# precondition above puts everything under TMP outside every repository.
+mv -- "$STAND/.git" "$STAND/.git.away"
+stand_case "a script whose checkout has no HEAD is refused, naming that checkout" 2 "checkout-head=$STAND"
+mv -- "$STAND/.git.away" "$STAND/.git"
 
 # The keyed line being first is half the claim; the cause the dependency gave
 # has to survive under it.
@@ -440,8 +444,6 @@ verdict_case "a lane that moved the cursor and answered with no announcement fai
 # The controls run a copy of the script in the stand-in tree, which reaches
 # lane-mail through its own skills directory, with one guard changed.
 ln -s -- "$REPO/skills" "$STAND/skills"
-STAND_SMOKE="$STAND/tools/harness-smoke"
-cp "$STAND_SMOKE" "$STAND_SMOKE.intact"
 plant "$STAND_SMOKE" 's/^WAKE_ANNOUNCED="lane-mail: mail=\$WAKE_ITEM new=1"$/WAKE_ANNOUNCED="lane-mail: mail=$MAIL_ITEM new=1"/'
 verdict_case "control: an announcement guard that misses the real announcement fails the monitored delivery" \
   mail-wake "$STAND_SMOKE" STANDIN_ECHO=1 fail "'lane-mail: mail=SMOKE-1 new=1'"
@@ -512,21 +514,10 @@ cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 # for, is refused before any row. The stand-in tree has hooks and, by the link
 # above, skills; it has no agents directory until one is linked.
 echo "=== the Copilot package table refuses a checkout it cannot list ==="
-copilot_stand_case() { # LABEL WANT-FIRST
-  local rc=0 said=""
-  (cd "$ROWS_REPO" && PATH="$ROWS_BIN:$PATH" "$BASH" "$STAND_SMOKE" \
-    --only copilot --dir "$TMP/stand-dir" >"$TMP/stand-out" 2>&1) || rc=$?
-  said="$(sed -n '1s/^harness-smoke: //p' "$TMP/stand-out")"
-  if [ "$rc" = 2 ] && [ "${said:--}" = "$2" ]; then
-    ok "$1 (exit $rc, first $said)"
-  else
-    bad "$1" "want rc=2 first=$2, got rc=$rc first=${said:--}"
-  fi
-}
-copilot_stand_case "a checkout with no agents is refused" "packages=$STAND/agents"
+stand_case "a checkout with no agents is refused" 2 "packages=$STAND/agents" --only copilot
 ln -s -- "$REPO/agents" "$STAND/agents"
 printf '#!/usr/bin/env bash\n' >"$STAND/hooks/zz-unlisted.sh"
-copilot_stand_case "a hook the delivery table has no copilot cell for is refused" "package-cell=zz-unlisted"
+stand_case "a hook the delivery table has no copilot cell for is refused" 2 "package-cell=zz-unlisted" --only copilot
 rm -f -- "$STAND/hooks/zz-unlisted.sh" "$STAND/agents"
 
 # A Copilot stand-in answers each package question from the run's STANDIN_*

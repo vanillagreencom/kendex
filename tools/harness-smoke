@@ -74,9 +74,10 @@
 # hang on its login flow).
 #
 # Exit 0 when every row passed (advisory, skipped, differs and excluded
-# included), 1 when any row failed, 2 when the kendex on PATH is not a build
-# of this checkout's HEAD or of a commit that contains it, when the fixture
-# could not be installed or `kendex verify` refused it, 3 when nothing failed but a row was
+# included), 1 when any row failed, 2 when it refuses before any row (among
+# those refusals: this script's checkout has no HEAD commit, or the kendex on
+# PATH is not a build of that HEAD or of a commit that contains it) or when the
+# fixture could not be installed or `kendex verify` refused it, 3 when nothing failed but a row was
 # unanswerable or pending, so a harness that died on the render never reads
 # as a clean run. Model turns: eight on claude, three on codex, two on
 # antigravity, five on pi, one on gemini, six on copilot (seven where the

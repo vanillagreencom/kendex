@@ -7,7 +7,7 @@ Desktop app and thin CLI (Rust + Tauri + React) for managing AI coding-harness c
 - `tools/setup`: arms the commit chain in a fresh clone, beside the commit-guards commit-msg gate. A stray commit-msg hook in the git hooks directory calling a repo-local lane this repository lacks blocks every commit; delete it and run `tools/setup` again.
 - `tools/guard`: the last lane of the pre-commit chain, named by `COMMIT_GUARDS_PRE_COMMIT_LOCAL`; read the script, it is the list of repo-specific rules.
 - `npm ci --prefix ui`: installs the UI, in the main checkout only.
-- `cargo build --release -p kendex-cli`: the self-install; copy the binary to `~/.cargo/bin/kendex` before running `kendex apply` or `kendex verify` on this tree.
+- `KENDEX_SOURCE_COMMIT=$(git rev-parse HEAD) cargo build --release -p kendex-cli`: the self-install; copy the binary to `~/.cargo/bin/kendex` before running `kendex apply` or `kendex verify` on this tree.
 - `cargo test -p kendex-app -- --ignored regenerate_bindings`: regenerates `ui/src/bindings.ts` after a command-surface change.
 
 ## Conventions
