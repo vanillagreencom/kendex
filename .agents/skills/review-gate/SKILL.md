@@ -100,7 +100,7 @@ Then add the validate step to the repo's CI as its own job, with no `needs`, no 
       - run: .agents/skills/review-gate/scripts/validate.sh
 ```
 
-Finish with the repo-side wiring of ruleset and merge queue, with no standing bypass actor, and delete the local machinery the writer supersedes, in the same PR: [references/adoption.md](references/adoption.md).
+Finish with the repo-side wiring of ruleset and merge queue, with a bypass actor only where the standard admits one, and delete the local machinery the writer supersedes, in the same PR: [references/adoption.md](references/adoption.md).
 
 ## 3. Decide and repair
 
@@ -114,7 +114,7 @@ Keys a repo decides: [references/adoption.md](references/adoption.md) § Keys a 
 
 **Reviewers are down / nothing is reviewing.** Run the internal review loop: fix findings, resolve every thread, then post the override status with a real reason. It cannot bypass an objection or an open thread.
 
-**A PR that repairs the gate itself.** The writer always runs the merged engine, so the repair cannot turn its own gate context green, and no ruleset carries a standing bypass actor to merge it past that. Break-glass: for the repair session the owner adds one bypass entry to the organization merge-queue ruleset (the Organization admin role, or a one-member break-glass team holding only the owner where another organization admin exists), merges the repair PR directly under that bypass, outside the queue, and removes the entry in the same session. The repair's commit message names the entry. No required context is changed, so no other repository loses its gate.
+**A PR that repairs the gate itself.** The writer always runs the merged engine, so the repair cannot turn its own gate context green. The overseer merges it on its verified head under the overseer's own GitHub App, the one actor the standard admits in pull-request mode on both the required-checks and the merge-queue rulesets, and posts a notice naming the PR, the head, the broken check and the reason. The same route serves any required check that cannot pass: broken CI, a GitHub outage. A lane never takes it. The ruleset holding the approval and thread rules has no bypass actor, so both still hold. An organization with no such app adds one bypass entry for its owner to those two rulesets for the repair session, merges the repair directly, and removes both entries in the same session; the repair's commit message names them. No required context is changed, so no other repository loses its gate.
 
 **A settings-change PR** is judged by the OLD config. A PR adding a trusted login cannot have its own gate honor it. Merge it through normal review.
 

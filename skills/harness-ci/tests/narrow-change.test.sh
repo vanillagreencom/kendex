@@ -263,12 +263,15 @@ queue_of() { # STDERR
 
 # One row per `queue` entry, each touching one path that entry alone names,
 # in the source or the render spelling; a queue path beside others; a path
-# git quotes, alone and beside a product file; and the control, a diff of
-# paths no entry names. A row's path is the edit's own.
-# label | expected queue-only line | edits
+# git quotes, alone and beside a product file; a path the repository's own
+# HARNESS_CI_QUEUE_PATHS names; and the control, a diff of paths no entry
+# names, which is queue-only where the repository declares no list of its
+# own and not where it declares one, empty or not. A row's path is the edit's
+# own.
+# label | expected queue-only line | edits | environment
 queue_rows=0
 queue_paths=""
-while IFS='|' read -r label expected edits; do
+while IFS='|' read -r label expected edits ROW_ENV; do
   queue_rows=$((queue_rows + 1))
   # shellcheck disable=SC2086
   assert_eq "$label" "$expected" "$(queue_of "$(run_row "$CHANGE_CLASS" $edits)")"
@@ -301,12 +304,42 @@ the bot-instruction render rules' render are queue-only|queue_only=true cause=qu
 the Copilot instruction file is queue-only|queue_only=true cause=queue-path path=.github/copilot-instructions.md glob=.github/copilot-instructions.md|.github/copilot-instructions.md=2
 a review-bot instruction file is queue-only|queue_only=true cause=queue-path path=.github/instructions/code-review.md glob=.github/instructions/*|.github/instructions/code-review.md=2
 a queue path beside a product file is queue-only|queue_only=true cause=queue-path path=tools/ci-aggregate glob=tools/ci-aggregate|runtime/product.ts=2 tools/ci-aggregate=2
-a diff no entry names is not queue-only|queue_only=false cause=no-queue-path|docs/guide.md=2 runtime/product.ts=2 skills/orch/tests/added.test.sh=30
-a refusal raised after the paths were read carries their class|queue_only=false cause=no-queue-path|inventory-invalid runtime/product.ts=2
+a diff no entry names is not queue-only where the repository declares an empty list|queue_only=false cause=no-queue-path|docs/guide.md=2 runtime/product.ts=2 skills/orch/tests/added.test.sh=30|HARNESS_CI_QUEUE_PATHS=
+a diff no entry names is not queue-only where the repository's list names none of it|queue_only=false cause=no-queue-path|docs/guide.md=2 runtime/product.ts=2|HARNESS_CI_QUEUE_PATHS=scripts/ci/* tools/aggregate
+a diff no entry names is queue-only where the repository declares no list|queue_only=true cause=queue-list-undeclared|docs/guide.md=2 runtime/product.ts=2
+a path the repository's own list names is queue-only|queue_only=true cause=repository-queue-path path=scripts/ci/run.sh glob=scripts/ci/*|runtime/product.ts=2 scripts/ci/run.sh=2|HARNESS_CI_QUEUE_PATHS=tools/aggregate scripts/ci/*
+a refusal raised after the paths were read carries their class|queue_only=false cause=no-queue-path|inventory-invalid runtime/product.ts=2|HARNESS_CI_QUEUE_PATHS=
 a workflow path git quotes is queue-only|queue_only=true cause=path-quoted path=".github/workflows/we\"ird.yml"|.github/workflows/we"ird.yml=2
 a quoted workflow path beside a product file is queue-only|queue_only=true cause=path-quoted path=".github/workflows/we\"ird.yml"|runtime/product.ts=2 .github/workflows/we"ird.yml=2
 ROWS
+ROW_ENV=""
 require_rows queue-only "$queue_rows"
+
+# The repository's list as its base commit's settings declare it, and a base
+# whose settings the loader rejects, which reads queue-only. Each base is a
+# commit of the fixture repository, and the diff edits the same script.
+settings_base() { # CONTENT -> prints the base commit
+  reset_case
+  printf '%s\n' "$1" >"$repo/kendex.settings.toml"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "settings base"
+  git -C "$repo" rev-parse HEAD
+}
+settings_queue() { # CLASSIFIER BASE -> the queue-only line
+  git -C "$repo" checkout -q -B settings-case "$2"
+  write_lines scripts/ci/run.sh 2
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "settings row"
+  queue_of "$("$1" --repo "$repo" --event pull_request --base "$2" --head HEAD 2>&1 >/dev/null)" || true
+}
+declared_base="$(settings_base $'[env]\nHARNESS_CI_QUEUE_PATHS = "scripts/ci/*"')"
+rejected_base="$(settings_base $'[env]\nHARNESS_CI_QUEUE_PATHS = ""\nHARNESS_CI_QUEUE_PATHS = ""')"
+assert_eq "the base commit's settings declare the repository's list" \
+  "queue_only=true cause=repository-queue-path path=scripts/ci/run.sh glob=scripts/ci/*" \
+  "$(settings_queue "$CHANGE_CLASS" "$declared_base")"
+assert_eq "a base whose settings the loader rejects reads queue-only" \
+  "queue_only=true cause=queue-settings-unreadable" \
+  "$(settings_queue "$CHANGE_CLASS" "$rejected_base")"
 
 # Every `queue` entry of the shipped list has a row above, read off the list
 # itself. The floor and the one required entry say the reader found the
@@ -387,7 +420,13 @@ assert_eq "an orch with no list reads queue-only" \
 # one that reads a missing list as not queue-only answers so on the listless
 # orch; one that judges the class after harness-only's refusals, as it once
 # did, answers paths-unread on a refusal raised after the paths were read.
+# One that reads an undeclared repository list as not queue-only, one that
+# never matches the repository's list, one that never reads the base's
+# settings and one that reads unreadable settings as not queue-only each let
+# through the row that rule holds. The shipped-list controls run where the
+# repository declares an empty list, so only the rule under control answers.
 CONTROL_READ=queue_of
+ROW_ENV="HARNESS_CI_QUEUE_PATHS="
 control "a classifier that never matches the queue group lets a workflow through" \
   "queue_only=false cause=no-queue-path" .github/workflows/ci.yml=2 \
   queue-match change-class '  if path_matches any; then' '  if false; then'
@@ -418,6 +457,28 @@ order_mutant="$(mutant queue-order change-class '  queue_only_of_paths' '  :' \
 assert_eq "a classifier that judges the class after the refusals loses it on a refusal" \
   "queue_only=true cause=paths-unread" \
   "$(queue_of "$(run_row "$order_mutant" inventory-invalid runtime/product.ts=2)")"
+ROW_ENV=""
+control "a classifier that reads an undeclared list as not queue-only lets an unlisted diff through" \
+  "queue_only=false cause=queue-list-undeclared" runtime/product.ts=2 \
+  queue-undeclared change-class \
+  '    QUEUE_CAUSE="cause=queue-list-undeclared"' \
+  '    QUEUE_ONLY=false QUEUE_CAUSE="cause=queue-list-undeclared"'
+ROW_ENV="HARNESS_CI_QUEUE_PATHS=scripts/ci/*"
+control "a classifier that never matches the repository's list lets its path through" \
+  "queue_only=false cause=no-queue-path" scripts/ci/run.sh=2 \
+  queue-repository change-class '  if ! path_matches any; then' '  if true; then'
+ROW_ENV=""
+base_mutant="$(mutant queue-base-settings change-class \
+  '  if [ -z "${HARNESS_CI_QUEUE_PATHS+x}" ] && ! base_settings; then' '  if false; then')"
+assert_eq "a classifier that never reads the base's settings loses the declared list" \
+  "queue_only=true cause=queue-list-undeclared" \
+  "$(settings_queue "$base_mutant" "$declared_base")"
+rejected_mutant="$(mutant queue-settings-unreadable change-class \
+  '    QUEUE_CAUSE="cause=queue-settings-unreadable"' \
+  '    QUEUE_ONLY=false QUEUE_CAUSE="cause=queue-settings-unreadable"')"
+assert_eq "a classifier that reads rejected settings as not queue-only lets the diff through" \
+  "queue_only=false cause=queue-settings-unreadable" \
+  "$(settings_queue "$rejected_mutant" "$rejected_base")"
 CONTROL_READ=verdict_of
 
 report narrow-change

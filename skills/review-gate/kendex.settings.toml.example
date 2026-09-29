@@ -168,6 +168,17 @@ REVIEW_GATE_STANDARD_SECRETS = ""
 # is set.
 REVIEW_GATE_STANDARD_CONTEXTS = ""
 
+# The bypass actors the organization standard admits on a ruleset that holds
+# the merge queue rule alone, separated by semicolons. Each is written
+# TYPE:ID:MODE, as GitHub names the actor: its type (Integration for an
+# app), its id, and its bypass mode (always, pull_request or exempt). Empty
+# admits none, so the check reports any bypass actor on that ruleset.
+REVIEW_GATE_STANDARD_QUEUE_BYPASS = ""
+
+# The same, for a ruleset that holds the required status checks rule alone.
+# Every other ruleset admits no bypass actor.
+REVIEW_GATE_STANDARD_CHECKS_BYPASS = ""
+
 # Seconds to wait for a review before the waiting step gives up. Whole
 # seconds only, at most nine digits; anything else fails loudly. The
 # orchestration package reads the same number.

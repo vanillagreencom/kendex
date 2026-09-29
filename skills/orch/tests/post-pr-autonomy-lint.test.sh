@@ -26,9 +26,9 @@ rule_fenced "ci-fix reads the decision mode" "$CI" "## 3. Classify And Route" 'o
 rule_fenced "ci-fix spends the ci-fix budget" "$CI" "## 5. Verify" 'head-budget take' 'ci-fix'
 rule_fenced "ci-fix records its cycle cap" "$CI" "## 5. Verify" 'post-pr-stop record' 'ci-fix-cap'
 rule_fenced "merge renders its stops into a bound path" "$MERGE" "## 1. Identify Candidates" 'post-pr-stop record' '[MAIN_REPO_ROOT]/tmp/post-pr-stop-[STATE_KEY].md'
-# The admin route is retired (kendex decision D003): no workflow sets a merge
-# mode or passes --admin to pr-merge.
-forbid "the retired admin merge route stays gone" \
+# pr-merge alone decides whether a merge takes --admin (its --help § Merge
+# route): no workflow sets a merge mode or passes --admin to it.
+forbid "no workflow asks pr-merge for the admin route" \
   'merge_mode|pr-merge [^`]*--admin([^-]|$)' \
   'run `pr-merge [PR_NUMBER] --admin` with `merge_mode: admin`.' \
   "$SKILL_DIR"/*.md "$SKILL_DIR/workflows"/*.md "$SKILL_DIR/references"/*.md

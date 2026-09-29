@@ -18,7 +18,7 @@ Held-back jobs report `skipped`, and GitHub counts skipped as satisfied.
 3. **Add the validate job** to the repo's CI (below).
 4. **Set the repo's `REVIEW_GATE_*` keys** in `kendex.settings.toml` (decision axes below; full key table in [settings.md](settings.md)).
 5. **Delete everything the writer supersedes in the same PR** — gate jobs that read the predicate to condition CI, rerun/refire/sweep workflows and scripts, local predicate copies, duplicated gate steps.
-6. **Repo-side wiring** (below): rulesets and merge queue, with no standing bypass actor.
+6. **Repo-side wiring** (below): rulesets and merge queue, with a bypass actor only where the standard admits one.
 7. **Reviewer instruction for the vendored tree** — wire the remedy-locus rule from [vendored-paths.md](vendored-paths.md), never a reviewer path exclusion.
 
 ## Recommended CI shape — the fast/full split
@@ -67,7 +67,7 @@ A repository reaches this shape in one order. The workflow change that reports `
 - **Approvals**: the organization ruleset's pull-request rule requires at least 1 approval (`standard-required-approvals`) and dismisses a stale approval on push (`standard-stale-dismissal`).
 - **Thread resolution**: a pull-request rule requires every review thread resolved.
 - **Copilot review**: a rule requests a Copilot review, which holds no merge.
-- **No bypass actor**: no ruleset carries one, a Repository-admin actor included, so every merge goes through the merge queue. A gate-repair PR takes the break-glass procedure in [../SKILL.md](../SKILL.md#4-operations); a settings-change PR takes normal review.
+- **Bypass actors, per ruleset**: the ruleset holding the pull-request, deletion and force-push rules carries none. A ruleset holding the merge-queue rule alone may carry the actors `REVIEW_GATE_STANDARD_QUEUE_BYPASS` names: a lane holding one merges a green pull request that is not queue-only past the queue, and GitHub still holds it to every other ruleset (the github skill's `pr-merge --help` § Merge route). A ruleset holding the required checks alone may carry the actors `REVIEW_GATE_STANDARD_CHECKS_BYPASS` names, which merge a gate repair ([../SKILL.md](../SKILL.md#4-operations)). Any other actor, a Repository-admin actor included, is a departure `standard-bypass-actors` reports. A settings-change PR takes normal review.
 - **No classic branch protection** beside the rulesets.
 - **Required checks never include the writer's own job names.** Whether the gate context is required is the Required contexts bullet above.
 - **App-secret environment**: the organization owner runs `.agents/skills/review-gate/scripts/provision-environment.sh --org ORG` from their own machine, in a checkout that declares items 1 to 3 above: the app, the environment and the secrets. It creates the environment `REVIEW_GATE_STANDARD_ENVIRONMENT` names, with a default-branch-only deployment policy and the secrets `REVIEW_GATE_STANDARD_SECRETS` names, in every repository of the organization that is not archived; run it again for a new repository. An adoption never creates the environment.
@@ -169,6 +169,7 @@ Concrete per-consumer values are tracked on the org adoption issue, not here. Ev
 | `REVIEW_GATE_WRITER` | `required`. `optional`, with `REVIEW_GATE_MODE = "off"`, only in a repository that runs the automatic refresh and posts no gate status. |
 | `REVIEW_GATE_STANDARD_APP`, `REVIEW_GATE_STANDARD_ENVIRONMENT`, `REVIEW_GATE_STANDARD_SECRETS` | The organization's app, app-secret environment and secret names (§ Repo-side wiring). No default. `validate-standard.sh` and `provision-environment.sh` refuse on each unset key. `validate-standard.sh --environment-only` reads the environment and secret keys only. Refresh adoption reads none of them. |
 | `REVIEW_GATE_STANDARD_CONTEXTS` | The repository's required contexts (§ Repo-side wiring). No default. `validate-standard.sh` reports an unset list as a failed `standard-required-contexts` row. Its readers and its refusals are its row in [settings.md](settings.md). |
+| `REVIEW_GATE_STANDARD_QUEUE_BYPASS`, `REVIEW_GATE_STANDARD_CHECKS_BYPASS` | The bypass actors a merge-queue-only and a checks-only ruleset admit, as `TYPE:ID:MODE` (§ Repo-side wiring). Empty admits none. Read by `validate-standard.sh` alone. |
 
 ## Repair by verdict line
 

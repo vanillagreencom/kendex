@@ -45,7 +45,15 @@ settings_consumer() { # NAME [ASSIGNMENT...]
   printf '[env]\n' >"$dir/kendex.settings.toml"
   [ "$#" -eq 0 ] || printf '%s\n' "$@" >>"$dir/kendex.settings.toml"
 }
-settings_consumer full 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' 'REVIEW_GATE_STANDARD_CONTEXTS = "Cargo (workspace tests); CI"'
+# `full` also admits bypass actors on a ruleset holding one rule type alone:
+# two apps on the queue ruleset, one of them in pull-request mode on the
+# checks ruleset. `no-bypass` declares the rest and admits none.
+QUEUE_BYPASS='REVIEW_GATE_STANDARD_QUEUE_BYPASS = "Integration:4925608:always; Integration:5115517:pull_request"'
+CHECKS_BYPASS='REVIEW_GATE_STANDARD_CHECKS_BYPASS = "Integration:5115517:pull_request"'
+CONTEXTS='REVIEW_GATE_STANDARD_CONTEXTS = "Cargo (workspace tests); CI"'
+settings_consumer full 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' "$CONTEXTS" "$QUEUE_BYPASS" "$CHECKS_BYPASS"
+settings_consumer no-bypass 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' "$CONTEXTS"
+settings_consumer bad-bypass 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' "$CONTEXTS" 'REVIEW_GATE_STANDARD_QUEUE_BYPASS = "Integration:4925608:always;lanes-app;Integration:5115517:bypass"'
 settings_consumer no-contexts 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"'
 settings_consumer gated 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' 'REVIEW_GATE_STANDARD_CONTEXTS = "Cargo (workspace tests);CI;Review gate"'
 settings_consumer none
@@ -209,9 +217,10 @@ stale approvals kept on push~~rules.json~.[2].parameters.dismiss_stale_reviews_o
 a laxer second organization pull-request rule~~rules.json~. += [{"type": "pull_request", "parameters": {"required_approving_review_count": 0, "dismiss_stale_reviews_on_push": false}, "ruleset_source_type": "Organization", "ruleset_id": 2}]~
 threads need no resolution~~rules.json~.[2].parameters.required_review_thread_resolution = false~standard-conversation-resolution=false
 no Copilot review~~rules.json~del(.[3])~standard-ruleset-source=missing:copilot_code_review^standard-copilot-review=absent
-a bypass actor on each ruleset adds up~~org-ruleset-1.json,org-ruleset-2.json~.bypass_actors = [{"actor_type": "RepositoryRole", "actor_id": 5}]~standard-bypass-actors=2
+a bypass actor on each ruleset is named on each~~org-ruleset-1.json,org-ruleset-2.json~.bypass_actors = [{"actor_type": "RepositoryRole", "actor_id": 5}]~standard-bypass-actors=1=RepositoryRole:5:always\,2=RepositoryRole:5:always
+an admitted queue actor on the ruleset holding every other rule is a departure~~org-ruleset-1.json~.bypass_actors = [{"actor_type": "Integration", "actor_id": 5115517, "bypass_mode": "pull_request"}]~standard-bypass-actors=1=Integration:5115517:pull_request
 bypass actors withheld from the token~~org-ruleset-1.json~del(.bypass_actors)~standard-bypass-actors=unreadable:1
-a repository ruleset's actors read through the repository endpoint~~rules.json~.[3].ruleset_source_type = "Repository"~standard-ruleset-source=Repository:2:copilot_code_review\,missing:copilot_code_review^standard-bypass-actors=1
+a repository ruleset's actors read through the repository endpoint~~rules.json~.[3].ruleset_source_type = "Repository"~standard-ruleset-source=Repository:2:copilot_code_review\,missing:copilot_code_review^standard-bypass-actors=2=RepositoryRole:9:always
 a ruleset source with no ruleset read is unreadable~~rules.json~.[3].ruleset_source_type = "Enterprise"~standard-ruleset-source=Enterprise:2:copilot_code_review\,missing:copilot_code_review^standard-bypass-actors=unreadable:2
 a repository deletion rule on the second page~~rules.page2.json~[{"type": "deletion", "ruleset_source_type": "Repository", "ruleset_id": 1}]~standard-ruleset-source=Repository:1:deletion
 classic protection beside the rulesets~~branch.json~.protection.enabled = true~standard-classic-protection=on
@@ -290,6 +299,36 @@ a repository that declares no context list~no-contexts~~standard-required-contex
 a required gate context the repository also declares~gated~.[5].parameters.required_status_checks += [{"context": "Review gate"}]~standard-required-contexts=gate-required:CI\;Cargo\ \(workspace\ tests\)\;Review\ gate
 ROWS
 
+echo "=== a ruleset holding one rule type admits the standard's actors there ==="
+# The matching world's repository rulesets, the merge queue in ruleset 3
+# alone and the required checks in ruleset 4 alone, each carrying the same
+# actors. The inverse of the admitted row is the
+# same world read by a consumer that admits none.
+bypass_row() { # LABEL CONSUMER ACTORS_JSON WANT_RC WANT_LINE
+  local dir="$TMP/case-split-$((PASS + FAIL))" id
+  cp -R "$BASE" "$dir"
+  for id in 3 4; do
+    printf '{"id": %s, "bypass_actors": %s}\n' "$id" "$3" >"$dir/ruleset-$id.json"
+  done
+  CONSUMER="$TMP/consumer-$2"
+  run "$dir" ""
+  CONSUMER="$TMP/consumer-full"
+  got="$(grep 'check=standard-bypass-actors ' <<<"$OUT" || true)"
+  if [ "$RC" -eq "$4" ] && [ "$got" = "$5" ]; then ok "$1"; else bad "$1 (rc=$RC, want $4)" "$got
+$RAW"; fi
+}
+OVERSEER='[{"actor_type": "Integration", "actor_id": 5115517, "bypass_mode": "pull_request"}]'
+bypass_row "the overseer app in pull-request mode on the queue and checks rulesets is admitted" full "$OVERSEER" 0 \
+  'ok check=standard-bypass-actors value=2'
+bypass_row "a consumer that admits no actor reads the same actors as departures" no-bypass "$OVERSEER" 1 \
+  'FAIL check=standard-bypass-actors value=3=Integration:5115517:pull_request\,4=Integration:5115517:pull_request'
+bypass_row "the lanes app is admitted on the queue ruleset and a departure on the checks ruleset" full \
+  '[{"actor_type": "Integration", "actor_id": 4925608, "bypass_mode": "always"}]' 1 \
+  'FAIL check=standard-bypass-actors value=4=Integration:4925608:always'
+bypass_row "an admitted app in another bypass mode is a departure" full \
+  '[{"actor_type": "Integration", "actor_id": 5115517, "bypass_mode": "always"}]' 1 \
+  'FAIL check=standard-bypass-actors value=3=Integration:5115517:always\,4=Integration:5115517:always'
+
 echo "=== a failed read is unreadable, never a match ==="
 run "$BASE" rules
 want="$(expected_listing 'standard-ruleset-source=unreadable^standard-merge-queue=unreadable^standard-required-contexts=unreadable^standard-required-approvals=unreadable^standard-stale-dismissal=unreadable^standard-conversation-resolution=unreadable^standard-copilot-review=unreadable^standard-bypass-actors=unreadable')"
@@ -366,6 +405,7 @@ a consumer holding the package's empty seed~~~seeded~~review-gate-error=standard
 a secret list of separators alone~~~no-secrets~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_SECRETS
 a consumer with no app~~~no-app~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_APP
 a secret name outside uppercase letters, digits and underscores~~~bad-secret~~review-gate-error=standard-secret-invalid~9KEY\;APP-ID\;app_id
+a bypass entry that is not TYPE:ID:MODE~~~bad-bypass~~review-gate-error=standard-bypass-invalid~Integration:5115517:bypass\;lanes-app
 environment-only reads no app, only the environment keys~~~none~--environment-only~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
 the organization values inline in the manifest are not read~~{"ci_context": "CI", "gate_context": "Review gate", "app": "lanes-app", "environment": "kendex", "environment_secrets": ["APP_ID", "APP_KEY"]}~none~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
 an argument~~~full~--repo~review-gate-error=unknown-arguments~

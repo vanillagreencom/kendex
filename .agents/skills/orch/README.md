@@ -79,6 +79,6 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 
 Launch settings and Codex compaction limits: [skill-rules.md](references/skill-rules.md#coordination), Compaction.
 
-Every lane merges its own pull request through the merge queue. Retired merge settings are refused while set: `pr-merge --help` § Retired settings.
+Every lane merges its own pull request, past the merge queue or through it, as the github skill's `pr-merge --help` § Merge route says. `ORCH_MERGE_BYPASS`, `ORCH_ADMIN_MERGE_GH_CONFIG_DIR` and `ORCH_ADMIN_MERGE_CLASSES` are retired.
 
 Maintainer notes and test entry point: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/orch/DEVELOPMENT.md).

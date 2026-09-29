@@ -25,7 +25,10 @@
 # one `queue-only: queue_only=true|false cause=<name> [path=<p> glob=<g>]`
 # line on stderr, ahead of the `class:` line: true where a changed path
 # matches a `queue` line of orch's narrow-change.conf, which is the list of
-# paths a change must run in a merge group for; where a changed path is one
+# paths a change must run in a merge group for, or a glob of the repository's
+# own HARNESS_CI_QUEUE_PATHS (cause=repository-queue-path); where that setting
+# is unset (cause=queue-list-undeclared) or the settings holding it could not
+# be read (cause=queue-settings-unreadable); where a changed path is one
 # git quoted (cause=path-quoted), where the diff is empty
 # (cause=no-changed-paths), and where the paths were not read
 # (cause=paths-unread) or the list was not (cause=queue-list-unreadable,
@@ -112,8 +115,10 @@
 # diff being judged writes all of them, so trusting one fails open on exactly
 # the diffs that most want to pass. For the same reason the judged tree's own
 # configuration decides nothing here, and no script out of that tree is run.
-# ORCH_SIZE_RENDER_ROOTS, ORCH_SIZE_TEST_PATHS and both HARNESS_CI_TRIVIAL_*
-# settings come from this process's environment, else from the [env] tables of
+# ORCH_SIZE_RENDER_ROOTS, ORCH_SIZE_TEST_PATHS, both HARNESS_CI_TRIVIAL_*
+# settings and HARNESS_CI_QUEUE_PATHS (the repository's own queue globs,
+# blank-separated, set empty where the shipped list is the whole list) come
+# from this process's environment, else from the [env] tables of
 # kendex.settings.toml and .kendex/settings.toml, the second winning, as the
 # base endpoint's commit holds them. The private env file is never read.
 # A caller that acts on the verdict without review runs the DEFAULT BRANCH's
@@ -344,6 +349,71 @@ list_globs() { # KEYWORD
   ' "$NARROW_CONF"
 }
 
+# The measurement settings and the repository's queue list, read from the
+# [env] tables of the settings files the base endpoint's commit holds, never
+# from the judged tree: a branch cannot choose the ceilings or the roots its
+# own size is scored against, nor the paths that keep it in the queue, and a
+# settings file the branch changes answers standard as a configuration source
+# and is queue-only. That commit is the one --base names, the pull request's base tip or
+# a merge group's base, never the merge base, which the author picks by
+# choosing where to fork. The tables are parsed by orch's kendex-env.sh, the
+# same reader branch-size-check's settings ladder uses, in that ladder's order,
+# so .kendex/settings.toml outranks kendex.settings.toml; nothing is sourced,
+# so the private env file its KENDEX_ENV_FILE names never reaches this script.
+# A key this process's environment carries keeps that value, as it does on the
+# ladder. The load runs in a subshell and hands back these keys alone.
+BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS'
+BASE_SETTINGS_FILES='kendex.settings.toml .kendex/settings.toml'
+base_settings() {
+  local settings_rev listed kind blob file files=() n=0 loaded key value
+  if ! settings_rev="$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}" 2>/dev/null)" ||
+    [ -z "$settings_rev" ]; then
+    MEASURE_CAUSE="cause=base-settings-unreadable base=$base"
+    return 1
+  fi
+  for file in $BASE_SETTINGS_FILES; do
+    if ! listed="$(git -C "$repo" ls-tree "$settings_rev" -- "$file" 2>/dev/null)"; then
+      MEASURE_CAUSE="cause=base-settings-unreadable base=$settings_rev path=$file"
+      return 1
+    fi
+    [ -n "$listed" ] || continue
+    kind="${listed#* }"
+    kind="${kind%% *}"
+    blob="${listed%%"$TAB"*}"
+    blob="${blob##* }"
+    n=$((n + 1))
+    if [ "$kind" != blob ] ||
+      ! git -C "$repo" cat-file blob "$blob" >"$work/base-settings-$n" 2>/dev/null; then
+      MEASURE_CAUSE="cause=base-settings-unreadable base=$settings_rev path=$file"
+      return 1
+    fi
+    files=("${files[@]+"${files[@]}"}" "$work/base-settings-$n")
+  done
+  [ "$n" -gt 0 ] || return 0
+  if ! loaded="$(
+    exec 3>&1 1>&2
+    # shellcheck disable=SC2086
+    unset $BASE_SETTINGS_KEYS
+    # shellcheck source=../../orch/scripts/lib/kendex-env.sh
+    . "$ORCH_DIR/scripts/lib/kendex-env.sh" || exit 1
+    for file in "${files[@]}"; do
+      kendex_load_settings_file "$file" || exit 1
+    done
+    for key in $BASE_SETTINGS_KEYS; do
+      [ -z "${!key+x}" ] || printf '%s=%s\n' "$key" "${!key}" >&3
+    done
+  )"; then
+    MEASURE_CAUSE="cause=base-settings-unreadable base=$settings_rev"
+    return 1
+  fi
+  while IFS= read -r value; do
+    [ -n "$value" ] || continue
+    key="${value%%=*}"
+    [ -z "${!key+x}" ] || continue
+    printf -v "$key" '%s' "${value#*=}"
+  done <<<"$loaded"
+}
+
 # The queue-only class, from the whole changed-path set before any rule below
 # trims it, so every verdict from here on carries it. A list this script
 # cannot read, or one from before the `queue` group, keeps the unreadable
@@ -370,8 +440,26 @@ queue_only_of_paths() {
     QUEUE_CAUSE="cause=queue-path $PATH_MATCH_HIT"
     return
   fi
-  QUEUE_ONLY=false
-  QUEUE_CAUSE="cause=no-queue-path"
+  # The shipped list names this catalog's own CI inputs. A repository's own,
+  # its test harness or its aggregator outside .github/, are its
+  # HARNESS_CI_QUEUE_PATHS, and a repository that declares none, the key
+  # unset, has named no list the shipped one can be judged complete against:
+  # queue-only. Set, even empty, the declaration is the rest of the list.
+  if [ -z "${HARNESS_CI_QUEUE_PATHS+x}" ] && ! base_settings; then
+    QUEUE_CAUSE="cause=queue-settings-unreadable"
+    return
+  fi
+  if [ -z "${HARNESS_CI_QUEUE_PATHS+x}" ]; then
+    QUEUE_CAUSE="cause=queue-list-undeclared"
+    return
+  fi
+  set_globs "$HARNESS_CI_QUEUE_PATHS"
+  if ! path_matches any; then
+    QUEUE_ONLY=false
+    QUEUE_CAUSE="cause=no-queue-path"
+    return
+  fi
+  QUEUE_CAUSE="cause=repository-queue-path $PATH_MATCH_HIT"
 }
 
 # The changed paths harness-only read, and the queue-only class judged on
@@ -678,70 +766,6 @@ set_globs "$REGISTRY_GLOBS"
 set_globs 'CLAUDE.md */CLAUDE.md'
 ! path_matches any ||
   answer standard "cause=instruction-pointer $PATH_MATCH_HIT" measured
-
-# The measurement settings, read from the [env] tables of the settings files
-# the base endpoint's commit holds, never from the judged tree: a branch cannot
-# choose the ceilings or the roots its own size is scored against, and a
-# settings file the branch changes answers standard above as a configuration
-# source. That commit is the one --base names, the pull request's base tip or
-# a merge group's base, never the merge base, which the author picks by
-# choosing where to fork. The tables are parsed by orch's kendex-env.sh, the
-# same reader branch-size-check's settings ladder uses, in that ladder's order,
-# so .kendex/settings.toml outranks kendex.settings.toml; nothing is sourced,
-# so the private env file its KENDEX_ENV_FILE names never reaches this script.
-# A key this process's environment carries keeps that value, as it does on the
-# ladder. The load runs in a subshell and hands back these keys alone.
-BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS'
-BASE_SETTINGS_FILES='kendex.settings.toml .kendex/settings.toml'
-base_settings() {
-  local settings_rev listed kind blob file files=() n=0 loaded key value
-  if ! settings_rev="$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}" 2>/dev/null)" ||
-    [ -z "$settings_rev" ]; then
-    MEASURE_CAUSE="cause=base-settings-unreadable base=$base"
-    return 1
-  fi
-  for file in $BASE_SETTINGS_FILES; do
-    if ! listed="$(git -C "$repo" ls-tree "$settings_rev" -- "$file" 2>/dev/null)"; then
-      MEASURE_CAUSE="cause=base-settings-unreadable base=$settings_rev path=$file"
-      return 1
-    fi
-    [ -n "$listed" ] || continue
-    kind="${listed#* }"
-    kind="${kind%% *}"
-    blob="${listed%%"$TAB"*}"
-    blob="${blob##* }"
-    n=$((n + 1))
-    if [ "$kind" != blob ] ||
-      ! git -C "$repo" cat-file blob "$blob" >"$work/base-settings-$n" 2>/dev/null; then
-      MEASURE_CAUSE="cause=base-settings-unreadable base=$settings_rev path=$file"
-      return 1
-    fi
-    files=("${files[@]+"${files[@]}"}" "$work/base-settings-$n")
-  done
-  [ "$n" -gt 0 ] || return 0
-  if ! loaded="$(
-    exec 3>&1 1>&2
-    # shellcheck disable=SC2086
-    unset $BASE_SETTINGS_KEYS
-    # shellcheck source=../../orch/scripts/lib/kendex-env.sh
-    . "$ORCH_DIR/scripts/lib/kendex-env.sh" || exit 1
-    for file in "${files[@]}"; do
-      kendex_load_settings_file "$file" || exit 1
-    done
-    for key in $BASE_SETTINGS_KEYS; do
-      [ -z "${!key+x}" ] || printf '%s=%s\n' "$key" "${!key}" >&3
-    done
-  )"; then
-    MEASURE_CAUSE="cause=base-settings-unreadable base=$settings_rev"
-    return 1
-  fi
-  while IFS= read -r value; do
-    [ -n "$value" ] || continue
-    key="${value%%=*}"
-    [ -z "${!key+x}" ] || continue
-    printf -v "$key" '%s' "${value#*=}"
-  done <<<"$loaded"
-}
 
 # The measurement's library, sourced from orch beside this package, and the
 # render roots it pairs a mirror against. MEASURE_CAUSE names a failure.

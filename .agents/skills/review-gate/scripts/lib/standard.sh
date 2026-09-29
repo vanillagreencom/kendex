@@ -15,7 +15,13 @@
 # keys of the one before it and more:
 #   environment  validate-standard.sh --environment-only: those two keys
 #   provision    provision-environment.sh: also WANT_APP
-#                (REVIEW_GATE_STANDARD_APP)
+#                (REVIEW_GATE_STANDARD_APP) and the bypass actors a ruleset
+#                holding one rule type alone may carry, one TYPE:ID:MODE per
+#                line: WANT_QUEUE_BYPASS (REVIEW_GATE_STANDARD_QUEUE_BYPASS,
+#                for a ruleset holding only merge_queue) and
+#                WANT_CHECKS_BYPASS (REVIEW_GATE_STANDARD_CHECKS_BYPASS, for
+#                one holding only required_status_checks), each empty where
+#                the key is
 #   full         validate-standard.sh's full mode: also WANT_CONTEXTS
 #                (REVIEW_GATE_STANDARD_CONTEXTS, sorted, `;`-joined)
 # A key a scope does not read is left empty and never resolved, so a
@@ -25,10 +31,10 @@
 # whatever key it resolves. An empty WANT_CONTEXTS is no
 # refusal: the standard-required-contexts row reports it. With no jq on
 # PATH, a missing, unreadable or malformed manifest, an unreadable setting
-# the scope reads, a key the scope reads unset or empty, or a secret name
+# the scope reads, a key the scope reads unset or empty, a secret name
 # that is not uppercase letters, digits and underscores starting with no
-# digit, it prints the refusal to stderr and returns 1; the caller exits
-# with its could-not-run status.
+# digit, or a bypass entry that is not TYPE:ID:MODE, it prints the refusal
+# to stderr and returns 1; the caller exits with its could-not-run status.
 rg_standard_load() { # MANIFEST SCOPE
   local secrets contexts invalid missing="" rc=0
   case "$2" in
@@ -65,9 +71,13 @@ rg_standard_load() { # MANIFEST SCOPE
 
   WANT_APP=""
   WANT_CONTEXTS=""
+  WANT_QUEUE_BYPASS=""
+  WANT_CHECKS_BYPASS=""
   if [ "$2" != environment ]; then
     WANT_APP="$(rg_setting REVIEW_GATE_STANDARD_APP "")" || return 1
     [ -n "$WANT_APP" ] || missing=REVIEW_GATE_STANDARD_APP
+    WANT_QUEUE_BYPASS="$(rg_standard_actors REVIEW_GATE_STANDARD_QUEUE_BYPASS)" || return 1
+    WANT_CHECKS_BYPASS="$(rg_standard_actors REVIEW_GATE_STANDARD_CHECKS_BYPASS)" || return 1
   fi
   if [ "$2" = full ]; then
     contexts="$(rg_setting REVIEW_GATE_STANDARD_CONTEXTS "")" || return 1
@@ -106,6 +116,34 @@ rg_standard_load() { # MANIFEST SCOPE
       return 1
       ;;
   esac
+}
+
+# The bypass actors the setting KEY admits, one TYPE:ID:MODE per line, the
+# spelling validate-standard.sh reads each actor of a ruleset in: GitHub's
+# actor_type, its actor_id (empty for an actor GitHub gives none, such as
+# OrganizationAdmin) and its bypass_mode. An unset or empty key admits none.
+# An entry of any other shape is refused: it would never match an actor.
+rg_standard_actors() { # KEY
+  local raw actors invalid rc=0
+  raw="$(rg_setting "$1" "")" || return 1
+  actors="$(rg_pack "$raw" ';' | LC_ALL=C sort -u)" || {
+    rg_message error standard-read "$1" "could not split the bypass actors" >&2
+    return 1
+  }
+  [ -n "$actors" ] || return 0
+  invalid="$(LC_ALL=C grep -vxE -- '[A-Za-z]+:[0-9]*:(always|pull_request|exempt)' <<<"$actors")" || rc=$?
+  case "$rc" in
+    0)
+      rg_message error standard-bypass-invalid "${invalid//$'\n'/;}" "$1 holds these entries, which are not bypass actors: an entry is TYPE:ID:MODE, GitHub's actor_type, actor_id and bypass_mode (always, pull_request or exempt)" >&2
+      return 1
+      ;;
+    1) ;;
+    *)
+      rg_message error standard-read "$1" "could not check the bypass actors" >&2
+      return 1
+      ;;
+  esac
+  printf '%s\n' "$actors"
 }
 
 # The names among WANT_SECRETS present in the newline list LISTED, one per

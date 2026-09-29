@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-25
 
-**Status**: Active
+**Status**: Active (one merge path, zero bypass → D013)
 
 **Research**: —
 

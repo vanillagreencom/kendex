@@ -5,11 +5,12 @@
 # READ-ONLY: every GitHub call below is a GET. It answers whether the
 # repository's GitHub-side settings match the organization standard. The
 # standard's values come from lib/standard.sh: the CI and gate contexts from
-# ../standard.json, the app, environment and secret names and the required
-# contexts from the review-gate settings this repository declares. The rows
+# ../standard.json, the app, environment and secret names, the required
+# contexts and the bypass actors a ruleset holding one rule type alone may
+# carry from the review-gate settings this repository declares. The rows
 # that hold no value (rule sources, merge queue, approvals, stale-approval
-# dismissal, thread resolution, Copilot review, no classic protection, zero
-# bypass actors) are fixed here. Its subject is GitHub
+# dismissal, thread resolution, Copilot review, no classic protection) are
+# fixed here. Its subject is GitHub
 # state, not the checkout, so validate.sh does not run it: CI's token
 # cannot read bypass actors, installations or secret names, and every such
 # row would be unreadable there. The permission each row's reads need is in
@@ -43,13 +44,16 @@ organization standard. standard.json in the skill holds the CI and gate
 contexts. The organization's values are review-gate settings, resolved from
 the current directory like every other: REVIEW_GATE_STANDARD_APP,
 REVIEW_GATE_STANDARD_ENVIRONMENT and REVIEW_GATE_STANDARD_SECRETS. The
-repository's own required contexts are REVIEW_GATE_STANDARD_CONTEXTS, read
-the same way. The repository is the one `gh` resolves: GH_REPO when set,
-else the checkout's remote.
+repository's own required contexts are REVIEW_GATE_STANDARD_CONTEXTS, and
+the bypass actors its merge-queue and required-checks rulesets admit the
+optional REVIEW_GATE_STANDARD_QUEUE_BYPASS and
+REVIEW_GATE_STANDARD_CHECKS_BYPASS, each empty by default, read the same
+way. The repository is the one `gh` resolves: GH_REPO when set, else the
+checkout's remote.
 
 --environment-only reports the environment policy and its secret names, and
-reads neither REVIEW_GATE_STANDARD_APP, REVIEW_GATE_STANDARD_CONTEXTS nor
-any ruleset. Refresh
+reads neither REVIEW_GATE_STANDARD_APP, REVIEW_GATE_STANDARD_CONTEXTS, the
+two bypass keys nor any ruleset. Refresh
 adoption uses this mode, with the refresh template's environment and secret
 names set as process values, which outrank the settings files.
 
@@ -84,8 +88,19 @@ One verdict line per row, VALUE being what was observed:
   standard-conversation-resolution  a pull-request rule requires every review
                                     thread resolved
   standard-copilot-review           a rule requests a Copilot review
-  standard-bypass-actors            no ruleset behind those rules has a bypass
-                                    actor
+  standard-bypass-actors            every bypass actor of a ruleset behind
+                                    those rules is one the standard admits
+                                    there: on a ruleset whose rules are
+                                    merge_queue alone, an entry of
+                                    REVIEW_GATE_STANDARD_QUEUE_BYPASS; on one
+                                    whose rules are required_status_checks
+                                    alone, an entry of
+                                    REVIEW_GATE_STANDARD_CHECKS_BYPASS; on any
+                                    other, none. An entry is TYPE:ID:MODE,
+                                    GitHub's actor_type, actor_id and
+                                    bypass_mode. VALUE is the count of actors,
+                                    or on a FAIL each departure as
+                                    RULESET=TYPE:ID:MODE
   standard-classic-protection       the default branch has no classic branch
                                     protection beside the rulesets
   standard-ci-context               an Actions job named the standard's
@@ -312,13 +327,28 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
   # ruleset and omits the field otherwise, so a missing field is
   # unreadable and never zero. Each ruleset is read at the level that owns
   # it: an organization owner sees an organization ruleset's actors through
-  # the organization endpoint, not through the repository one.
+  # the organization endpoint, not through the repository one. A ruleset
+  # whose rules on the branch are merge_queue alone may carry the actors
+  # REVIEW_GATE_STANDARD_QUEUE_BYPASS admits, and one whose rules are
+  # required_status_checks alone those REVIEW_GATE_STANDARD_CHECKS_BYPASS
+  # admits: bypassing either skips only the queue or only the checks, while
+  # every other rule stays on a ruleset nobody bypasses. Any other actor on
+  # any ruleset is a departure.
   actors=0
+  unadmitted=""
   unreadable=""
   causes=""
   owned="$(rules '[.[] | select(.ruleset_id != null) | "\(.ruleset_source_type) \(.ruleset_id)"] | unique | .[]')"
   while read -r source id; do
     [ -n "$id" ] || continue
+    case "$id" in
+      *[!0-9]*)
+        unreadable="${unreadable:+$unreadable,}$id"
+        causes="${causes:+$causes
+}$id: not a ruleset id"
+        continue
+        ;;
+    esac
     case "$source" in
       Organization) endpoint="orgs/$OWNER/rulesets/$id" ;;
       Repository) endpoint="repos/$FULL/rulesets/$id" ;;
@@ -329,27 +359,39 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
         continue
         ;;
     esac
-    if ! read_api "$endpoint" 'if has("bypass_actors") then (.bypass_actors | length | tostring) else "withheld" end'; then
+    if ! read_api "$endpoint" 'if has("bypass_actors") then "actors:" + (.bypass_actors | map("\(.actor_type):\(.actor_id // ""):\(.bypass_mode // "always")") | join(";")) else "withheld" end'; then
       unreadable="${unreadable:+$unreadable,}$id"
       causes="${causes:+$causes
 }$id: $READ_ERR"
+      continue
     elif [ "$READ_OUT" = withheld ]; then
       unreadable="${unreadable:+$unreadable,}$id"
       causes="${causes:+$causes
 }$id: bypass_actors withheld, which GitHub does without write access to the ruleset"
-    else
-      actors=$((actors + READ_OUT))
+      continue
     fi
+    case "$(rules "[.[] | select(.ruleset_id == $id) | .type] | unique | join(\",\")")" in
+      merge_queue) admitted="$WANT_QUEUE_BYPASS" ;;
+      required_status_checks) admitted="$WANT_CHECKS_BYPASS" ;;
+      *) admitted="" ;;
+    esac
+    listed="$(rg_pack "${READ_OUT#actors:}" ';')" ||
+      die rules-query "$id" "could not split the bypass actors of this ruleset"
+    while IFS= read -r actor; do
+      [ -n "$actor" ] || continue
+      actors=$((actors + 1))
+      grep -qxF -- "$actor" <<<"$admitted" || unadmitted="${unadmitted:+$unadmitted,}$id=$actor"
+    done <<<"$listed"
   done <<EOF_OWNED
 $owned
 EOF_OWNED
   if [ -n "$unreadable" ]; then
     bad standard-bypass-actors "unreadable:$unreadable" "the bypass actors of these rulesets could not be read:
 $causes"
-  elif [ "$actors" -eq 0 ]; then
-    ok standard-bypass-actors 0 "no ruleset on $BRANCH has a bypass actor"
+  elif [ -n "$unadmitted" ]; then
+    bad standard-bypass-actors "$unadmitted" "these bypass actors, as RULESET=TYPE:ID:MODE, are ones the standard does not admit on that ruleset; a ruleset holding merge_queue alone admits REVIEW_GATE_STANDARD_QUEUE_BYPASS, one holding required_status_checks alone REVIEW_GATE_STANDARD_CHECKS_BYPASS, and any other none"
   else
-    bad standard-bypass-actors "$actors" "rulesets on $BRANCH carry $actors bypass actor(s); the standard has none"
+    ok standard-bypass-actors "$actors" "every bypass actor on $BRANCH's rulesets is one the standard admits there"
   fi
 else
   why="${READ_ERR:-the response is not an array of rule objects}"

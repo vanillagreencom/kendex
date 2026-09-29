@@ -5,10 +5,12 @@
 # STUB_CALL_LOG when set; the state lookup's failures through
 # STUB_STATE_STDERR, STUB_STATE_EXIT, STUB_STATE_SILENT_FAIL, STUB_PR_MISSING
 # and STUB_STATE_FAIL_ONCE, a marker path the first lookup of a run creates;
-# the branch-rule reads' failures through STUB_RULES_EXIT and
-# STUB_BRANCH_EXIT). STUB_POST_GRAPHQL_PARTIAL makes the post-merge read a
-# GraphQL 200 carrying an errors array beside data, and STUB_POST_VIEW_FAIL
-# fails its pr-view fallback. STUB_BASE_OID is the base end of the pull
+# the branch-rule reads' failures through STUB_RULES_EXIT, narrowed by
+# STUB_RULES_EXIT_JQ to the reads whose --jq filter holds that text, and
+# STUB_BRANCH_EXIT; a ruleset read's answer through STUB_RULESET_JSON and its
+# failure through STUB_RULESET_EXIT). STUB_POST_GRAPHQL_PARTIAL makes the
+# post-merge read a GraphQL 200 carrying an errors array beside data, and
+# STUB_POST_VIEW_FAIL fails its pr-view fallback. STUB_BASE_OID is the base end of the pull
 # request's range, whose head end is STUB_HEAD, and STUB_RANGE_FAIL fails that
 # read. STUB_REVIEW_DECISION and STUB_REVIEW_LATEST are the readiness check's
 # reviewDecision and latestReviews, and STUB_REQUIRE_TOKEN refuses a
@@ -127,6 +129,23 @@ case "${1:-}" in
                 exit 0
                 ;;
             'repos/{owner}/{repo}/rules/branches/'*/* | 'repos/{owner}/{repo}/branches/'*/*) ;;
+            # A ruleset the merge route reads for current_user_can_bypass.
+            'repos/{owner}/{repo}/rulesets/'*)
+                if [[ "${STUB_RULESET_EXIT:-0}" != "0" ]]; then
+                    echo "gh: Not Found (HTTP 404)" >&2
+                    exit "$STUB_RULESET_EXIT"
+                fi
+                # The bypass answer is the caller's own, so it is read with
+                # the merge's token or not at all.
+                if [[ "${STUB_REQUIRE_TOKEN:-false}" == "true" && "${GH_TOKEN:-}" != "ghp_test_token" ]]; then
+                    echo "missing effective token for the ruleset read" >&2
+                    exit 41
+                fi
+                ruleset='{}'
+                [[ -z "${STUB_RULESET_JSON:-}" ]] || ruleset="$STUB_RULESET_JSON"
+                jq -r "$jq_filter" <<<"$ruleset"
+                exit 0
+                ;;
             # The repository, by gh's placeholder or by the slug `repo view`
             # answers: the allowed merge methods are STUB_MERGE_METHODS, and
             # STUB_REPO_PUSHLESS drops every setting GitHub withholds from a
@@ -151,7 +170,7 @@ case "${1:-}" in
             # A merge queue on STUB_QUEUE_BRANCH with STUB_QUEUE_METHOD, and
             # a pull_request rule allowing STUB_RULE_METHODS, join the rules.
             'repos/{owner}/{repo}/rules/branches/'*)
-                if [[ "${STUB_RULES_EXIT:-0}" != "0" ]]; then
+                if [[ "${STUB_RULES_EXIT:-0}" != "0" && "$jq_filter" == *"${STUB_RULES_EXIT_JQ:-}"* ]]; then
                     echo "gh: Not Found (HTTP 404)" >&2
                     exit "$STUB_RULES_EXIT"
                 fi

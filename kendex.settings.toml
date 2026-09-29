@@ -306,6 +306,21 @@ REVIEW_GATE_STANDARD_SECRETS = "FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY"
 # gate" leaves it: the CI jobs the ruleset lists, by name.
 REVIEW_GATE_STANDARD_CONTEXTS = "Cargo (workspace tests);Skill suites (shell + node);macOS cargo (workspace tests);Windows cargo (core and CLI targets compile);Windows cargo (workspace tests);Preflight (diff-scoped deterministic checks);Markdown (format + references)"
 
+# The bypass actors this organization's standard admits, as TYPE:ID:MODE
+# (docs/decisions/D013-admin-merge-green-prs.md, and the overseer app of
+# docs/plans/review-gate-platform.md § Copilot-down fallback): on the merge
+# queue ruleset the lanes app, always, and the overseer app in pull-request
+# mode; on the required checks ruleset the overseer app alone.
+REVIEW_GATE_STANDARD_QUEUE_BYPASS = "Integration:4925608:always;Integration:5115517:pull_request"
+REVIEW_GATE_STANDARD_CHECKS_BYPASS = "Integration:5115517:pull_request"
+
+# This repository's own queue-only paths beyond the list harness-ci ships
+# (orch's references/narrow-change.conf, which already names this catalog's
+# CI inputs). Set empty: the shipped list is the whole list here. Unset, the
+# change classifier reads every pull request as queue-only, so pr-merge never
+# takes the admin route.
+HARNESS_CI_QUEUE_PATHS = ""
+
 # ── Skill settings ───────────────────────────────────────────────────────
 # What the installed skills read for repo-specific names, paths and commands.
 
