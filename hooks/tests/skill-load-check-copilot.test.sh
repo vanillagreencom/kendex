@@ -34,7 +34,9 @@ LIBRARY="$(cd "$TEST_DIR/../.." && pwd)/skills/commit-guards/scripts/lib/command
 
 PASS=0
 FAIL=0
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "skill-load-check-copilot: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "skill-load-check-copilot: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "skill-load-check-copilot: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 BASH_BIN="$(command -v bash)"
 ERR_FILE="$TMP_ROOT/stderr"
