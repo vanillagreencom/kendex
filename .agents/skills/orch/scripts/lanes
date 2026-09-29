@@ -46,13 +46,14 @@
 #         from being tried; `refused`, a usage endpoint that answered any
 #         other code outside 2xx, 401 and 403 included, which is a reading of
 #         the credential it was asked through and not a read that was never
-#         made; `expired`, a login no renewal on this machine brought back;
+#         made; `expired`, a login proven dead;
 #         `no_credentials`;
 #         `no_usage_data`, authenticated with no window to measure; `retired`;
 #         and `error`, a step this machine failed on its own, a renewal's
 #         included. Which of these a failed Codex renewal reads, and its
 #         remedy, is stated once, under "Why a Codex token is renewed by the
-#         Codex CLI" in this script's header. A lane whose usage REFRESH met a 429 while the host still
+#         Codex CLI" below. A lane whose usage REFRESH met a 429 while the
+#         host still
 #         holds a figure for it younger than the 5-hour session window reports
 #         `rate_limited` ON that figure, with its age in the AGE column, and is
 #         judged on it; with no such figure it carries no window. Only `ok`
@@ -611,7 +612,8 @@
 #   - a live expiry but no access token after the run: `expired`, remedy run
 #     codex once;
 #   - a run directory this machine could not create: `error`.
-#   A held credentials lock reads `unreachable`, as for Claude.
+#   A held credentials lock reads `unreachable`, as for Claude; a lock file
+#   it cannot open, `error`.
 #
 # Credentials never reach argv: `ps` and journald can read /proc/<pid>/cmdline,
 # which on Linux is world-readable while /proc/<pid>/environ is not. Bearer
