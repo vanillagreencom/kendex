@@ -79,8 +79,8 @@ Attention kinds:
                      answered malformed data) — fail LOUD, never silently
                      skipped
 
-REVIEW_REQUIRED inside the quiet period, and an approved PR with auto-merge
-armed or queued, are healthy states and emit NOTHING — silence on stdout
+REVIEW_REQUIRED inside the quiet period, and a PR approved or needing no
+review on its base with auto-merge armed or queued, are healthy states and emit NOTHING — silence on stdout
 means "nothing needs you", which is what makes the exit code a cheap
 loop/cron predicate.
 

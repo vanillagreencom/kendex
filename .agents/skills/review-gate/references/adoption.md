@@ -110,7 +110,7 @@ The template delta that split the writer into a relay and a converge leg:
 
 - A `request-converge` job (the relay) runs every PR-attached leg; the `write` job's `if:` is narrowed to `workflow_dispatch`/`schedule`.
 - **Permissions**: the relay holds `actions: write` and nothing else — no `contents`, no `statuses`, no `issues`. `actions: write` authorizes dispatching **any** workflow in the repo plus cancelling, re-running and deleting runs, logs and artifacts. The relay checks nothing out and executes no PR-controlled code — never add a checkout to this job. The `write` job holds no `actions` scope.
-- **The relay files no rolling escalation issue.** That stays on the `write` job. A sustained dispatch outage is detected through **gate staleness**, which the cron floor converges. Each relay run's log carries a `::warning::`. For a louder signal, add it to staleness monitoring, not to the relay's scope.
+- **The relay files no rolling escalation issue.** That stays on the `write` job. During a sustained dispatch outage the 15-minute cron floor converges each stale gate. No reducer reports gate staleness. Each relay run's log carries a `::warning::`.
 - **`workflow_dispatch` must stay in `on:`** — it is the dispatch target. Dropping it strips every event-fast path down to the cron floor.
 - The opt-in `check_run` trigger ships commented out. To enable it, uncomment the two trigger lines and set the repository variable `REVIEW_GATE_CHECK_RUN_NAME` to the reviewer's check name — the relay's `if:` already reads it, so no expression is hand-edited. An unset variable matches no check name, so the trigger without the variable relays nothing. The step separately refuses to dispatch on a `check_run` naming one of its own three jobs; that refusal is a literal list of the three job `name:` values — if you rename a job in your copy, rename it in the list too.
 - **Check the ruleset first** if it ever named a writer JOB (rather than the gate status context): a required `Evaluate and write the review gate` would block every PR. Require the status context only.
@@ -202,7 +202,7 @@ export GH_REPO=your-org/your-repo
 
 (The `export` is its own line, not a command prefix.)
 
-Exit 0 = silence (healthy); exit 1 = attention lines on stdout (threads to triage — queued PRs annotated with the dequeue-first warning — objections, an approved PR nothing will merge, no approval past the quiet period, or `head-moved` when a push landed mid-reduction — re-run); exit 2 = a PR could not be read (fail loud, never skipped). The orch skill's waiters are the single-PR *foreground* waits; pr-watch is the multi-PR *background* reducer over OPEN PRs only.
+Exit 0 = silence (healthy); exit 1 = attention lines on stdout (threads to triage — queued PRs annotated with the dequeue-first warning — objections, a PR approved or needing no review on its base that nothing will merge, no approval past the quiet period, or `head-moved` when a push landed mid-reduction — re-run); exit 2 = a PR could not be read (fail loud, never skipped). The orch skill's waiters are the single-PR *foreground* waits; pr-watch is the multi-PR *background* reducer over OPEN PRs only.
 
 `--awaiting-after SECS` replaces the `PR_REVIEW_WAIT_SECS` threshold.
 

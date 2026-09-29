@@ -62,10 +62,10 @@
 # timeout-minutes would still be a CANCELLED check on the PR head — which
 # is why every wait in the step below is bounded. The relay's own dispatch
 # failure exits GREEN and WARNS instead of reddening; it raises no alarm of
-# its own, and a sustained outage is detected as GATE STALENESS (the cron
-# floor plus pr-watch --heal), never by this job. A PR-attached cancellation
-# is classified by whether the run executed steps: only a never-started run
-# proves the split regressed.
+# its own. During a sustained outage the 15-minute cron floor converges
+# every stale gate, and no reducer reports gate staleness. A PR-attached
+# cancellation is classified by whether the run executed steps: only a
+# never-started run proves the split regressed.
 #
 # NO dispatch loop: the relay's if: excludes the two legs it dispatches
 # into, so a converge run can never re-enter the relay. (workflow_dispatch
@@ -129,8 +129,8 @@ name: Review gate writer
   schedule:
     - cron: "*/15 * * * *"
   # The CONVERGE leg the relay dispatches into — and the same entry point
-  # `pr-watch.sh --heal` and a manual kick already use. Removing this
-  # trigger silently strips every event-fast path down to the cron floor.
+  # a manual kick uses. Removing this trigger silently strips every
+  # event-fast path down to the cron floor.
   workflow_dispatch: {}
   # check_run is a per-repo OPT-IN, shipped commented out: every ordinary
   # CI job completion fires check_run events, and each one that reaches a
@@ -524,18 +524,14 @@ jobs:
           # an oversight. See THE INVARIANT above for why a red here would
           # cost more than the fault it reports.
           #
-          # A sustained outage appears as GATE STALENESS because this job is
+          # A sustained outage raises no red check because this job is
           # deliberately not a red check. The write job owns escalation because
-          # it holds issues:write. Every event
-          # then falls to the cron floor, so gates sit unconverged longer
-          # than the floor's period — which is precisely what
-          # `pr-watch.sh --heal` reduces on (gate-stale -> one writer
-          # dispatch per invocation, plus a heal-dispatched line). Each relay
-          # run's log carries the warning below as its only per-run trace;
-          # the detector of record is the staleness reducer that already runs
-          # against every open PR.
+          # it holds issues:write. Every event then falls to the 15-minute
+          # cron floor, whose next run converges each stale gate; no reducer
+          # reports gate staleness. Each relay run's log carries the warning
+          # below as its only per-run trace.
           printf 'review-gate-notice=relay-dispatch-exhausted value=%q\n' "$rc"
-          echo "::warning::could not request a converge pass after two attempts ($workflow_file on $dispatch_ref): $(why "$rc"); this event converges on the cron floor instead (sustained failure surfaces as gate staleness — pr-watch --heal)"
+          echo "::warning::could not request a converge pass after two attempts ($workflow_file on $dispatch_ref): $(why "$rc"); this event converges on the 15-minute cron floor instead"
   write:
     # ONE job-level writer group, cancel-in-progress: false. This is a
     # WASTE reducer, not the correctness mechanism: single-writer runs can

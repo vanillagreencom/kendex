@@ -180,7 +180,8 @@ isInMergeQueue or a mergeQueueEntry, or, outside the queue, auto-merge is
 armed on it and it reads mergeStateStatus CLEAN, which is GitHub reporting
 every required check green on the current head and nothing else blocking; and
 it gets no attention line from the review-gate reducer pr-watch.sh, whose
-silence is its healthy state: approved, no unresolved thread, armed or queued.
+silence is its healthy state: approved or needing no review on its base, no
+unresolved thread, armed or queued.
 A queued pull request is admitted on the queue's own judgement, since GitHub
 admits nothing to the queue before every required check is green on its head,
 and its arm has converted to the queue entry by then, so autoMergeRequest is
@@ -519,9 +520,10 @@ tracker_terminal() {
 # away, the queue's own membership standing for every required check green
 # since nothing enters it otherwise, and mergeStateStatus CLEAN saying the
 # same for an armed pull request outside the queue; and the review-gate
-# reducer, whose silence for a pull request is its healthy state: approved, no
-# unresolved thread, armed or queued. Nothing here counts a check or a thread
-# itself. Each refusal names the condition it stopped on and changes nothing.
+# reducer, whose silence for a pull request is its healthy state: approved or
+# needing no review on its base, no unresolved thread, armed or queued.
+# Nothing here counts a check or a thread itself. Each refusal names the
+# condition it stopped on and changes nothing.
 # PARK_HEAD and PARK_REPO carry what the record will hold.
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SCRIPT_DIR/../../review-gate/scripts/pr-watch.sh}"
 PARK_QUEUE_QUERY='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { isInMergeQueue mergeQueueEntry { position } } } }'
