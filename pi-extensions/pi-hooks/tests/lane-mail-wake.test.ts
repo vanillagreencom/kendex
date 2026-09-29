@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -47,9 +47,10 @@ afterAll(() => rmSync(world, { recursive: true, force: true }));
  * A launched lane as `lane-marker` records one, with the orch scripts and the
  * project-scope lane-mail hooks a kendex install renders, and a user scope
  * whose `Stop` hook says its piece once and stands down on the settle it
- * caused, as doc-drift-check does.
+ * caused, as doc-drift-check does. `stands` is the nearest directory to the
+ * lane's mailbox that the lane holds when its session starts.
  */
-function laneWorld(name: string, mailbox: boolean, enabled: boolean): { lane: string; agentDir: string } {
+function laneWorld(name: string, stands: Stands, enabled: boolean): { lane: string; agentDir: string } {
 	const lane = join(world, name);
 	mkdirSync(lane, { recursive: true });
 	runGit(["init", "-q", "-b", ITEM.toLowerCase()], lane);
@@ -59,7 +60,8 @@ function laneWorld(name: string, mailbox: boolean, enabled: boolean): { lane: st
 	runGit(["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"], lane);
 	mkdirSync(join(lane, ".agents", "skills", "orch"), { recursive: true });
 	symlinkSync(ORCH_SCRIPTS, join(lane, ".agents", "skills", "orch", "scripts"));
-	if (mailbox) mkdirSync(join(lane, "tmp", "lane-mail", ITEM), { recursive: true });
+	if (stands === "mailbox") mkdirSync(join(lane, "tmp", "lane-mail", ITEM), { recursive: true });
+	if (stands === "tmp") mkdirSync(join(lane, "tmp"));
 	mkdirSync(join(lane, ".git", "lane-mail"), { recursive: true });
 	writeFileSync(join(lane, ".git", "lane-mail", ITEM.toLowerCase()), `${lane}\n`);
 	mkdirSync(join(lane, ".pi", "kendex", "hooks"), { recursive: true });
@@ -105,6 +107,25 @@ function send(lane: string, mail: "directive" | "answer"): string {
 	return id;
 }
 
+/**
+ * The extension entries a row loads. The control's copy keeps the watch above
+ * a missing mailbox directory standing and drops the re-arm its changes call.
+ */
+function entryPaths(entries: Row["entries"], name: string): string[] {
+	if (entries === "manifest") return [PACKAGE];
+	if (entries === "carrier") return [join(PACKAGE, "extensions", "hooks.ts")];
+	const copy = join(world, `${name}-extensions`);
+	cpSync(join(PACKAGE, "extensions"), copy, { recursive: true });
+	const wake = join(copy, "lane-mail-wake.ts");
+	const source = readFileSync(wake, "utf8");
+	const rearm = ": watch(dir, { persistent: false }, () => arm(root, true));";
+	if (source.split(rearm).length !== 2) throw new Error(`lane-mail-wake.ts holds the ancestor re-arm ${source.split(rearm).length - 1} times, not once`);
+	const mutant = source.replace(rearm, ": watch(dir, { persistent: false }, () => {});");
+	if (mutant === source) throw new Error("the ancestor re-arm edit changed nothing");
+	writeFileSync(wake, mutant);
+	return [join(copy, "hooks.ts"), wake];
+}
+
 /** The lane's model: it runs the command an opening `RUN: ` prompt names, and ends every other turn at once. */
 function scriptedModel(pi: ExtensionAPI, prompts: string[]): void {
 	const core = createFauxCore({ api: "lane-wake-faux", provider: "lane-wake-faux", models: [{ id: "lane", contextWindow: 200_000, maxTokens: 1_000 }] });
@@ -125,11 +146,18 @@ function scriptedModel(pi: ExtensionAPI, prompts: string[]): void {
 	});
 }
 
+/** The nearest directory to a lane's mailbox that stands when its session starts. */
+type Stands = "mailbox" | "tmp" | "root";
+
 /**
+ * - `entries` is what Pi loads: the package from its manifest, the carrier
+ *   alone, or both entries from a copy whose watch above a missing mailbox
+ *   directory stands but never re-arms, the control for that watch.
  * - `mail` is what the overseer sends and when: after the session is idle, or
  *   during the opening turn's one tool call, which runs on past the append.
- * - `mailbox: false` is a lane whose mailbox directory is made only after its
- *   session started, so no watch stands and only a settle can judge it.
+ *   The send makes the lane's mailbox directory where it does not stand.
+ * - `stands` defaults to the mailbox. `tmp` or `root` is a lane whose mailbox
+ *   directory its session started without, which the directive's send makes.
  * - The user scope turns the session-start drift report off: it runs the
  *   machine's own kendex, which is not the subject.
  * - `unsafe` puts a directory where the lane's `to-lane.jsonl` belongs, which
@@ -142,9 +170,9 @@ function scriptedModel(pi: ExtensionAPI, prompts: string[]): void {
  */
 interface Row {
 	name: string;
-	entries: "manifest" | "carrier";
+	entries: "manifest" | "carrier" | "no-ancestor-watch";
 	mail: "directive" | "answer" | "busy-directive" | "none";
-	mailbox?: false;
+	stands?: Stands;
 	unsafe?: true;
 	enabled?: false;
 	subagent?: true;
@@ -161,21 +189,24 @@ const rows: Row[] = [
 	{ name: "a directive landing while the session is busy", entries: "manifest", mail: "busy-directive", want: { wakes: 0, state: "directive-read", steered: true } },
 	{ name: "a directive to a subagent's session", entries: "manifest", mail: "directive", subagent: true, want: { wakes: 0, state: "directive-unread", steered: false } },
 	{ name: "a directive with the package switched off", entries: "manifest", mail: "directive", enabled: false, want: { wakes: 0, state: "directive-unread", steered: false } },
-	// The judge refuses the missing mailbox once, the watch never stands, and the settle after the directive hands it over.
-	{ name: "a directive to a lane whose mailbox was made after its session started", entries: "manifest", mail: "directive", mailbox: false, prompts: [NEXT], want: { wakes: 2, state: "directive-read", steered: true } },
+	// The judge refuses the missing mailbox at the first settle, one wake; the
+	// send that makes the directory wakes the idle session with no prompt.
+	{ name: "a directive whose send makes the mailbox, tmp standing", entries: "manifest", mail: "directive", stands: "tmp", want: { wakes: 2, state: "directive-read", steered: true } },
+	{ name: "a directive whose send makes the mailbox and tmp", entries: "manifest", mail: "directive", stands: "root", want: { wakes: 2, state: "directive-read", steered: true } },
+	{ name: "a directive whose send makes the mailbox, the watch above it never re-arming", entries: "no-ancestor-watch", mail: "directive", stands: "root", want: { wakes: 1, state: "directive-unread", steered: true } },
 	{ name: "a mailbox the judge refuses at every settle", entries: "manifest", mail: "none", unsafe: true, prompts: [NEXT, NEXT], want: { wakes: 1, state: undefined, steered: true } },
 ];
 
 for (const row of rows) {
 	test(`mail to a Pi lane: ${row.name}`, async () => {
 		const name = row.name.replace(/[^a-z]+/g, "-");
-		const { lane, agentDir } = laneWorld(name, row.mailbox !== false, row.enabled !== false);
+		const { lane, agentDir } = laneWorld(name, row.stands ?? "mailbox", row.enabled !== false);
 		if (row.unsafe) mkdirSync(join(lane, "tmp", "lane-mail", ITEM, "to-lane.jsonl"));
 		const prompts: string[] = [];
 		const saved = { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PI_SUBAGENT_CHILD_AGENT: process.env.PI_SUBAGENT_CHILD_AGENT };
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		if (row.subagent) process.env.PI_SUBAGENT_CHILD_AGENT = "reviewer-correctness";
-		const paths = row.entries === "manifest" ? [PACKAGE] : [join(PACKAGE, "extensions", "hooks.ts")];
+		const paths = entryPaths(row.entries, name);
 		const resourceLoader = new DefaultResourceLoader({
 			cwd: lane,
 			agentDir,
@@ -215,7 +246,6 @@ for (const row of rows) {
 				const lines = readFileSync(join(lane, "tmp", "lane-mail", ITEM, "to-lane.jsonl"), "utf8").trim().split("\n");
 				id = (JSON.parse(lines.at(-1)!) as { id: string }).id;
 			} else if (row.mail !== "none") {
-				mkdirSync(join(lane, "tmp", "lane-mail", ITEM), { recursive: true });
 				id = send(lane, row.mail);
 			}
 			const measure = () => ({
@@ -229,11 +259,13 @@ for (const row of rows) {
 			// the read alone ends nothing: the wait holds until the turn the
 			// row expects has reached the model, or the interval is out. The
 			// turn is running once the model saw it, so waitForIdle then
-			// waits for it. A row that expects no wake waits the interval out,
-			// since only then is a wake that never came told from a late one,
-			// and a row with prompts to come is judged after them.
+			// waits for it. Only a row that expects a wake to read its mail
+			// ends early; any other waits the interval out, since only then is
+			// a wake that never came told from a late one, and a row with
+			// prompts to come is judged after them.
 			const deadline = Date.now() + MAIL_INTERVAL_MS;
-			const settled = () => row.prompts === undefined && row.want.wakes > 0 && Bun.deepEquals(measure(), row.want);
+			const settled = () =>
+				row.prompts === undefined && row.want.wakes > 0 && row.want.state === "directive-read" && Bun.deepEquals(measure(), row.want);
 			while (!settled() && Date.now() < deadline) await Bun.sleep(100);
 			await session.waitForIdle();
 			for (const prompt of row.prompts ?? []) {

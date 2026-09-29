@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { type FSWatcher, watch } from "node:fs";
-import { basename, join } from "node:path";
+import { type FSWatcher, statSync, watch } from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 import { getBool, projectRoot, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
 import { agentLine, personLine, runHook, unreadableLine } from "./dispatch.js";
@@ -20,6 +20,21 @@ const DELIVER_HOOK = "lane-mail-deliver";
  */
 function watchFailed(dir: string, cause: unknown): string {
 	return `lane-mail-wake: watch-failed=${dir}\nMail that lands while this session is idle starts no turn until the session next settles.\n${String(cause)}`;
+}
+
+/**
+ * Whether a directory stands at `dir`. Nothing there, or a file where a
+ * directory above it belongs, is a directory not made yet; any other failure
+ * to read it is thrown for the watch to report.
+ */
+function standing(dir: string): boolean {
+	try {
+		return statSync(dir).isDirectory();
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "ENOENT" || code === "ENOTDIR") return false;
+		throw error;
+	}
 }
 
 /**
@@ -58,8 +73,11 @@ function deliveredContext(stdout: string): string {
  *
  * Two triggers ask for the judgement: a change to any mailbox's `to-lane.jsonl`
  * under the checkout's `tmp/lane-mail`, the overseer's included, and each
- * `agent_settled`. A session
- * without that directory arms no watch. A busy session is left to the
+ * `agent_settled`. Until that directory stands, the nearest directory above it
+ * that does, `tmp` or else the checkout root, is watched instead, and once it
+ * appears the mailbox watch replaces it and the mail is judged at once, since the
+ * `lane-mail send` that made it may have appended before that watch stood.
+ * A busy session is left to the
  * lane-mail hooks at its next tool call and turn end. The package lists this
  * entry after `hooks.ts`, and Pi runs handlers in load order, so the settle
  * check runs once the `Stop` registrations have handed over what they will.
@@ -138,6 +156,43 @@ export default function laneMailWake(pi: ExtensionAPI): void {
 		return tail;
 	};
 
+	/**
+	 * Watches the checkout's mailbox directory, or, while it does not stand,
+	 * the nearest directory above it that does, whose every change re-arms
+	 * here, so the watch moves down once the directory below appears. Presence is read before each watch, since
+	 * Node's recursive watch on a missing directory throws nothing and never
+	 * fires. `appeared` is an arming the mailbox directory's own appearance
+	 * caused, whose mail no watch saw land.
+	 */
+	const arm = (root: string, appeared: boolean) => {
+		closeWatch();
+		const boxes = join(root, "tmp", "lane-mail");
+		const levels = [boxes, dirname(boxes), root];
+		let dir = boxes;
+		try {
+			const at = levels.findIndex(standing);
+			if (at === -1) throw new Error(`no directory stands at ${root}, the checkout root git named`);
+			dir = levels[at]!;
+			const below = levels[at - 1];
+			watcher = below === undefined
+				? watch(boxes, { persistent: false, recursive: true }, (_kind, name) => {
+					if (name == null || basename(name.toString()) === TO_LANE) void check();
+				})
+				: watch(dir, { persistent: false }, () => arm(root, true));
+			const failed = dir;
+			watcher.on("error", (error) => {
+				closeWatch();
+				record(watchFailed(failed, error));
+			});
+			// The directory below may have appeared before this watch stood.
+			if (below !== undefined && standing(below)) arm(root, true);
+			else if (below === undefined && appeared) void check();
+		} catch (error) {
+			closeWatch();
+			record(watchFailed(dir, error));
+		}
+	};
+
 	pi.on("session_start", async (_event, ctx: ExtensionContext) => {
 		closeWatch();
 		ctxRef = ctx;
@@ -145,22 +200,9 @@ export default function laneMailWake(pi: ExtensionAPI): void {
 		const git = await runCommandAsync("git", ["-C", ctx.cwd, "rev-parse", "--show-toplevel"], ctx.cwd, 10_000);
 		// No repository holds no lane; the judge still runs at each settle.
 		if (git.exitCode !== 0) return;
-		const boxes = join(git.stdout.trim(), "tmp", "lane-mail");
-		try {
-			watcher = watch(boxes, { persistent: false, recursive: true }, (_kind, name) => {
-				if (name == null || basename(name.toString()) === TO_LANE) void check();
-			});
-		} catch (error) {
-			// No mailbox directory is a checkout no launch reached.
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") record(watchFailed(boxes, error));
-			return;
-		}
-		watcher.on("error", (error) => {
-			closeWatch();
-			record(watchFailed(boxes, error));
-		});
 		// Mail already waiting is judged at the first settle: a launch and a
 		// relaunch both open on a prompt, and a wake sent beside it would race it.
+		arm(git.stdout.trim(), false);
 	});
 
 	// Awaited, so the session reads idle only once the settle's own

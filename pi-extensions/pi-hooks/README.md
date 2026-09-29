@@ -48,6 +48,7 @@ The other hook events cannot stop anything in Pi, so the extension delivers what
 ## Lane mail wake
 
 - The extension watches every mailbox under the checkout's `tmp/lane-mail`, the overseer mailbox included, and checks again each time the session settles.
+- A checkout with no `tmp/lane-mail` yet is watched from the nearest directory above it, `tmp` or the checkout root. The first mail makes that directory, and that mail wakes an idle session too.
 - While the session is idle it runs the installed `lane-mail-deliver` hook, the hook that hands mail over after a tool call. That hook decides which mailbox this session reads and what in it is unread: an orch lane's own mailbox, or, for a lead session that is no lane, the checkout's overseer mailbox where the hook names it.
 - What the hook hands over starts one turn, and the hook marks that mail read. An answer is left to the `lane-mail wait` that asked for it.
 - A session that is busy gets its mail from the lane-mail hooks at its next tool call or turn end.
