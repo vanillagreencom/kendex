@@ -16,9 +16,7 @@
 
 set -euo pipefail
 
-# A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which would point every
-# git call at the real repository instead of the row's.
-unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+. "$(dirname "${BASH_SOURCE[0]}")/git-env.bash"
 
 # The harness running this suite must not be visible to the script: its markers
 # are unset here, its process tree is hidden by the row's `ps`, and the settings

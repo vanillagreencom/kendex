@@ -25,10 +25,8 @@ TMP_ROOT="$(mktemp -d)" || { echo "startup: scratch=mktemp-failed" >&2; exit 1; 
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "startup: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
-# A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which would point every
-# git call at the real repository instead of the row's; the harness markers
-# would decide what a detect answers.
-unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+. "$TEST_DIR/lib/git-env.bash"
+# The harness markers would decide what a detect answers.
 unset CLAUDECODE CLAUDE_CODE CLAUDE_PROJECT_DIR CODEX_SANDBOX \
       CODEX_SANDBOX_NETWORK_DISABLED PI_CODING_AGENT_DIR OPENCODE \
       CURSOR_AGENT CURSOR_TRACE_ID

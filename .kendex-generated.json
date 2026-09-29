@@ -1262,6 +1262,7 @@
   ".agents/skills/second-opinion/tests/detached-run.test.sh",
   ".agents/skills/second-opinion/tests/harness-identity.test.sh",
   ".agents/skills/second-opinion/tests/lane-scratch-durability.test.sh",
+  ".agents/skills/second-opinion/tests/lib/git-env.bash",
   ".agents/skills/second-opinion/tests/lib/install.bash",
   ".agents/skills/second-opinion/tests/lib/lane-world.bash",
   ".agents/skills/second-opinion/tests/lib/path-farm.bash",
