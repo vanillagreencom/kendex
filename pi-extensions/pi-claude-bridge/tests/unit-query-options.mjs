@@ -111,10 +111,10 @@ describe("bridge query options: the substituted built-ins follow the bridged too
 	});
 });
 
-// One session outside any repository, with the style in the Pi agent-dir
-// AGENTS.md: a connectors session loads Claude user settings, whose output
-// style already carries it, so the forwarded prompt must not carry it again.
-describe("bridge query options: the Pi agent-dir AGENTS.md reaches the child once", () => {
+// One session outside any repository, with a marker in the Pi agent-dir
+// AGENTS.md: a connectors session loads Claude user settings, whose user level
+// is then the only source of global instructions, so the append omits the file.
+describe("bridge query options: the Pi agent-dir AGENTS.md is forwarded once without Claude user settings and not with them", () => {
 	const rows = [
 		{ why: "connectors off keeps SDK isolation", provider: {}, settingSources: undefined, forwarded: 1 },
 		{ why: "connectors on loads Claude user settings", provider: { enableConnectors: true }, settingSources: ["user"], forwarded: 0 },

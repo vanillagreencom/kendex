@@ -22,10 +22,11 @@
 // its own change, not in per-directory override parity.
 //
 // The <piUserDir> fallback is skipped when the query loads Claude user settings
-// (settingSources includes "user"), for the reason CLAUDE.md is: the subprocess
-// then loads the user level natively (user CLAUDE.md, output style), so forwarding
-// the Pi agent-dir file as well would apply the global instructions twice. The
-// cwd-ancestor file is forwarded either way.
+// (settingSources includes "user"). The subprocess then loads Claude's own user
+// level (user CLAUDE.md, output style), and that level is the only source of
+// global instructions for the session: the bridge compares no text with it and
+// has no setting to forward the Pi agent-dir file as well. The cwd-ancestor file
+// is forwarded either way.
 //
 // In isolated mode (CLAUDE_BRIDGE_ISOLATED=1), all AGENTS.md discovery is
 // disabled. Embedding hosts provide their instruction surface explicitly.
