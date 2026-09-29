@@ -16,6 +16,10 @@
 # green for a platform where the case never ran.
 set -euo pipefail
 
+# A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which would point every
+# git call at the real repository instead of the case's.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 . "$TEST_DIR/lib/install.bash"

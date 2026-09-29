@@ -16,6 +16,10 @@
 
 set -euo pipefail
 
+# A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which would point every
+# git call at the real repository instead of the row's.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 # The harness running this suite must not be visible to the script: its markers
 # are unset here, its process tree is hidden by the row's `ps`, and the settings
 # the roster reads are unset so only the row's world supplies them.
