@@ -11,6 +11,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::env::Env;
+use crate::error::{CoreError, Result};
 use crate::harness::HarnessAdapter;
 use crate::model::{ItemKind, Scope};
 
@@ -69,11 +70,13 @@ fn layers(env: &Env, scope: &Scope) -> Vec<PathBuf> {
 
 /// The file that switched every hook off, or `None` when none did. Only
 /// what is on disk is observable, so callers say how things are configured
-/// and never claim what a run will do.
-pub fn hooks_switched_off_by(env: &Env, scope: &Scope) -> Option<PathBuf> {
+/// and never claim what a run will do. An absent layer is skipped; a layer
+/// that is there but cannot be read or is no JSON is an error naming it,
+/// since Copilot may read a switch there that this answer would leave out.
+pub fn hooks_switched_off_by(env: &Env, scope: &Scope) -> Result<Option<PathBuf>> {
     let mut off = None;
     for path in layers(env, scope) {
-        let Some(value) = json(&path) else {
+        let Some(value) = settings_json(&path)? else {
             continue;
         };
         match value.get("disableAllHooks").and_then(|v| v.as_bool()) {
@@ -82,7 +85,7 @@ pub fn hooks_switched_off_by(env: &Env, scope: &Scope) -> Option<PathBuf> {
             None => {}
         }
     }
-    off
+    Ok(off)
 }
 
 /// The settings key holding the names of the kind Copilot has switched off.
@@ -109,7 +112,7 @@ pub fn disabled_above(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> O
 }
 
 fn names_in(path: &Path, key: &str) -> Vec<String> {
-    let Some(value) = json(path) else {
+    let Ok(Some(value)) = settings_json(path) else {
         return Vec::new();
     };
     value
@@ -198,9 +201,18 @@ fn glob_matches(pattern: &str, value: &str) -> bool {
     }
 }
 
-fn json(path: &Path) -> Option<serde_json::Value> {
-    let text = crate::fs::read_if_exists(path).ok().flatten()?;
-    serde_json::from_str(&text).ok()
+/// A settings file's document: `None` where the file is absent, and an error
+/// naming the path where it cannot be read or does not parse as JSON.
+fn settings_json(path: &Path) -> Result<Option<serde_json::Value>> {
+    let Some(text) = crate::fs::read_if_exists(path)? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|e| CoreError::JsonParse {
+            path: path.to_path_buf(),
+            message: e.to_string(),
+        })
 }
 
 #[cfg(test)]
@@ -227,11 +239,11 @@ mod tests {
         let Scope::Project { root } = &scope else {
             unreachable!("fixture scope is a project");
         };
-        assert_eq!(hooks_switched_off_by(&env, &scope), None);
+        assert_eq!(hooks_switched_off_by(&env, &scope).unwrap(), None);
 
         let claude = root.join(".claude/settings.json");
         std::fs::write(&claude, r#"{"disableAllHooks": true}"#).unwrap();
-        assert_eq!(hooks_switched_off_by(&env, &scope), Some(claude));
+        assert_eq!(hooks_switched_off_by(&env, &scope).unwrap(), Some(claude));
 
         // The repository file is the later layer, so its answer is the one
         // Copilot ends up with.
@@ -240,7 +252,32 @@ mod tests {
             r#"{"disableAllHooks": false}"#,
         )
         .unwrap();
-        assert_eq!(hooks_switched_off_by(&env, &scope), None);
+        assert_eq!(hooks_switched_off_by(&env, &scope).unwrap(), None);
+    }
+
+    /// A layer that is there and cannot be judged fails the answer, naming
+    /// it, even where a later layer would switch the hooks back on; a layer
+    /// that is absent is no layer at all.
+    #[test]
+    fn a_settings_layer_that_is_no_json_is_an_error_and_an_absent_one_is_not() {
+        let (_tmp, env, scope) = fixture();
+        let Scope::Project { root } = &scope else {
+            unreachable!("fixture scope is a project");
+        };
+        assert!(!user_settings_file(&env).exists());
+        assert_eq!(hooks_switched_off_by(&env, &scope).unwrap(), None);
+
+        let claude = root.join(".claude/settings.json");
+        std::fs::write(&claude, "// a comment\n{\"disableAllHooks\": true}").unwrap();
+        std::fs::write(
+            root.join(".github/copilot/settings.json"),
+            r#"{"disableAllHooks": false}"#,
+        )
+        .unwrap();
+        match hooks_switched_off_by(&env, &scope) {
+            Err(CoreError::JsonParse { path, .. }) => assert_eq!(path, claude),
+            other => panic!("expected the malformed layer as a JSON error, got {other:?}"),
+        }
     }
 
     #[test]

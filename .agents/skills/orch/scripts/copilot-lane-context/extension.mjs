@@ -20,11 +20,11 @@
 // The hook is the one in the Copilot hook scope the session loads, the rule
 // orch lib/lane-context.sh states as lane_context_copilot_hooks and
 // open-terminal's launch gate asks: `<git root>/.github/hooks` where it holds
-// both lane-mail-check and lane-mail-compact, each `<name>.sh` beside its
-// `<name>.json`, else `${COPILOT_HOME:-$HOME/.copilot}/hooks`. It is spelled
-// again here because this copy runs from the Copilot home with no orch install
-// beside it to ask; skills/orch/tests/copilot-lane-context.sh holds the two
-// spellings to the same answers.
+// lane-mail-check, lane-mail-compact and lane-mail-start, each `<name>.sh`
+// beside its `<name>.json`, else `${COPILOT_HOME:-$HOME/.copilot}/hooks`.
+// It is spelled again here because this copy runs from the Copilot home with
+// no orch install beside it to ask; skills/orch/tests/copilot-lane-context.sh
+// holds the two spellings to the same answers.
 //
 // At most one hook run is in flight, bounded by HOOK_TIMEOUT_MS, so a slow
 // hook never stalls the session and readings never pile up: a reading that
@@ -46,7 +46,10 @@ import { join } from "node:path";
 import { joinSession } from "@github/copilot-sdk/extension";
 
 const KEY = "kendex-lane-context";
-const HOOKS = ["lane-mail-check", "lane-mail-compact"];
+// lane-mail-start is here for the lead record it writes at sessionStart, which
+// lane-mail-check needs before it takes a reading this file hands it as the
+// lead's.
+const HOOKS = ["lane-mail-check", "lane-mail-compact", "lane-mail-start"];
 // The lane-mail-check hook's own timeout: the longest a run of it is budgeted.
 const HOOK_TIMEOUT_MS = 30000;
 
@@ -87,7 +90,7 @@ function fleetSession(root) {
   }
 }
 
-// The hook scope this session loads, or null with no scope holding both hooks.
+// The hook scope this session loads, or null with no scope holding every hook.
 function hookScope() {
   const scopes = [];
   const git = spawnSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], { encoding: "utf8" });
@@ -98,8 +101,8 @@ function hookScope() {
   if (scope === undefined) {
     if (!fleetSession(root)) return null;
     gap(`${KEY}: hooks-missing=${scopes.join(",")}\n` +
-      "no Copilot hook scope this session loads holds lane-mail-check and lane-mail-compact, " +
-      "so its context is not recorded and its turn end judges it unmeasured; install both hooks in one of these scopes");
+      "no Copilot hook scope this session loads holds lane-mail-check, lane-mail-compact and lane-mail-start, " +
+      "so its context is not recorded and its turn end judges it unmeasured; install all three hooks in one of these scopes");
     return null;
   }
   return scope;

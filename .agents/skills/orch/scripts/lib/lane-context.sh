@@ -381,19 +381,22 @@ lane_context_compaction_flagged() { # BOX SESSION
   esac
 }
 
-# The two hooks a Copilot CLI fleet session is judged by, in the form kendex
+# The three hooks a Copilot CLI fleet session is judged by, in the form kendex
 # renders a Copilot hook (crates/core/src/engine/targets.rs, copilot_hook):
 # `<name>.sh` beside the registry document `<name>.json` Copilot loads it
 # from. lane-mail-check judges the turn end and records the context readings
 # the orch copilot-lane-context extension hands it, which spells this rule
 # again, being a copy in the Copilot home with no orch install beside it;
-# lane-mail-compact flags the automatic compaction.
-LANE_CONTEXT_COPILOT_HOOKS="lane-mail-check lane-mail-compact"
+# lane-mail-compact flags the automatic compaction; lane-mail-start records
+# the session as the lead at its sessionStart, the record lane-mail-check
+# needs before it takes a usage reading or a compaction flag as the lead's,
+# which otherwise waits for the first turn end.
+LANE_CONTEXT_COPILOT_HOOKS="lane-mail-check lane-mail-compact lane-mail-start"
 
 # lane_context_copilot_hooks ROOT HOME — the hook directory a Copilot CLI
 # session working in the repository ROOT under the Copilot home HOME loads
-# both of LANE_CONTEXT_COPILOT_HOOKS from: ROOT/.github/hooks, the project
-# scope, else HOME/hooks, the global one. Exit 1 where neither holds both, an
+# all of LANE_CONTEXT_COPILOT_HOOKS from: ROOT/.github/hooks, the project
+# scope, else HOME/hooks, the global one. Exit 1 where neither holds all, an
 # empty ROOT or HOME naming no scope.
 lane_context_copilot_hooks() { # ROOT HOME
   local dir name held

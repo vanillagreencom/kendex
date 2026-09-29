@@ -218,6 +218,46 @@ fn hooks_off_names_the_copilot_settings_file_that_switched_every_hook_off() {
     );
 }
 
+/// A settings file that is there but is no JSON is a layer the answer
+/// cannot judge, so the verb fails naming it and prints no answer, and
+/// `open-terminal` refuses the lane instead of reading null.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn hooks_off_fails_naming_a_copilot_settings_file_it_cannot_parse() {
+    let tmp = fixture_home();
+    let home = tmp.path();
+    let folder = tempfile::tempdir().unwrap();
+    let root = rooted(&folder);
+    let copilot_home = root.join("copilot-home");
+    let project = root.join("worktree");
+    fs::create_dir_all(&copilot_home).unwrap();
+    fs::create_dir_all(&project).unwrap();
+    let home_settings = copilot_home.join("settings.json");
+    fs::write(
+        &home_settings,
+        "// a comment\n{\"disableAllHooks\": true}\n",
+    )
+    .unwrap();
+    let output = kendex(
+        home,
+        home,
+        &[
+            "hooks-off",
+            "--copilot-home",
+            copilot_home.to_str().unwrap(),
+            "--project",
+            project.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!("{}: invalid JSON", home_settings.display())),
+        "{stderr}"
+    );
+}
+
 #[test]
 fn scope_project_outside_a_project_is_an_error() {
     let tmp = fixture_home();

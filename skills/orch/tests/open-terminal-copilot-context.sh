@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # The Copilot arm of open-terminal's fleet gate: a Copilot fleet launch runs
-# only where the lane-mail-check and lane-mail-compact hooks are in a Copilot
-# hook scope the lane loads, and where the launch can make the lane's
-# COPILOT_HOME run the kendex-lane-context extension, its context reader:
+# only where the lane-mail-check, lane-mail-compact and lane-mail-start hooks
+# are in a Copilot hook scope the lane loads, and where the launch can make
+# the lane's COPILOT_HOME run the kendex-lane-context extension, its context reader:
 # the extension copied into that home's extensions/kendex-lane-context/ and
 # its settings.json turning enabledFeatureFlags.EXTENSIONS on. Refusals are
 # `unsupported-for-oversee harness=copilot` with reason=no-context-hooks or
-# reason=no-context-reader. The harness-gate suite holds the other harnesses.
+# reason=no-context-reader, and a COPILOT_HOME that is no absolute path is
+# refused as reason=relative-home. The harness-gate suite holds the other
+# harnesses.
 #
 # With the hooks in place, the gate asks `kendex hooks-off` whether a Copilot
 # settings file of that home and worktree switches every hook off, refusing as
@@ -126,15 +128,16 @@ BASE="$TMP_ROOT/base"
 WTS="$TMP_ROOT/wt"
 
 # launch NAME [ARG...] — a fleet launch of CC-1 on copilot under the home, in
-# the worktree WTS/NAME, with ARGs; OT names another copy, and KENDEX_DIR the
-# directory of the kendex it asks, ahead of any other, the stub where unset.
+# the worktree WTS/NAME, with ARGs; OT names another copy, KENDEX_DIR the
+# directory of the kendex it asks, ahead of any other, the stub where unset,
+# and LAUNCH_HOME the COPILOT_HOME it runs under, the home where unset.
 # The gate's line open-terminal wrote, or `passed`.
 launch() { # NAME [ARG...]
   local name="$1" line
   shift
   ( cd "$REPO" && PATH="${KENDEX_DIR:-$TMP_ROOT/kendex-stub}:$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="$BIN/worktree-stub" \
     OT_BASE="$BASE" OT_WT="$WTS/$name" \
-    OT_TERM_LOG="$TMP_ROOT/$name.term" TERMINAL=term TMUX="" COPILOT_HOME="$COP_HOME" \
+    OT_TERM_LOG="$TMP_ROOT/$name.term" TERMINAL=term TMUX="" COPILOT_HOME="${LAUNCH_HOME:-$COP_HOME}" \
     "${OT:-$REPO/scripts/open-terminal}" --ghostty --state-dir "$TMP_ROOT/fleet" --harness copilot \
       --launch-flags '--model claude-opus-5 --reasoning-effort high' "$@" CC-1 ) \
     >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err" || :
@@ -142,12 +145,12 @@ launch() { # NAME [ARG...]
   printf '%s' "${line:-passed}"
 }
 
-# copilot_world HOOKS SETTINGS — HOOKS is where the two Copilot hooks are
+# copilot_world HOOKS SETTINGS — HOOKS is where the three Copilot hooks are
 # (project: on the item's base; caller: only in the caller's checkout; global;
 # half: lane-mail-check alone on the base; none); SETTINGS the home's
 # settings.json, `-` for no file. No worktree stands.
 copilot_world() { # HOOKS SETTINGS
-  local dir="" names="lane-mail-check lane-mail-compact" name
+  local dir="" names="lane-mail-check lane-mail-compact lane-mail-start" name
   chmod -R u+rwx -- "$COP_HOME" 2>/dev/null || :
   rm -rf -- "${REPO:?}/.github" "${COP_HOME:?}" "${BASE:?}" "${WTS:?}"
   mkdir -p "$COP_HOME" "$BASE"
@@ -187,7 +190,7 @@ while IFS='|' read -r label hooks settings want flag ext; do
   copilot_world "$hooks" "$settings"
   assert_eq "$(launch row) flag=$(flag_after) ext=$(ext_after)" "$want flag=$flag ext=$ext" "$label"
 done <<ROWS
-no hook scope holding the two hooks is refused, naming the worktree's and the global|none|-|$NO_HOOKS|true|shipped
+no hook scope holding the three hooks is refused, naming the worktree's and the global|none|-|$NO_HOOKS|true|shipped
 a scope holding lane-mail-check alone is refused the same way|half|-|$NO_HOOKS|true|shipped
 hooks in the caller's checkout alone, not on the base the worktree is made from, are refused|caller|-|$NO_HOOKS|true|shipped
 the project hooks on the base pass, and the home is made to load the extension|project|-|passed|true|shipped
@@ -204,6 +207,14 @@ copilot_world global '{"banner":"never","enabledFeatureFlags":{"AUTO_APPROVAL":t
 launch keep >/dev/null
 assert_eq "$(jq -c . "$COP_SETTINGS")" '{"banner":"never","enabledFeatureFlags":{"AUTO_APPROVAL":true,"EXTENSIONS":true}}' \
   "the settings already there are kept beside the flag"
+
+echo "=== a relative Copilot home is refused before anything is made ==="
+# open-terminal runs in the caller's checkout, REPO, and the lane's Copilot
+# would read the same relative value from its worktree.
+RELATIVE="open-terminal: unsupported-for-oversee harness=copilot reason=relative-home home=rel-home"
+copilot_world project -
+assert_eq "$(LAUNCH_HOME=rel-home launch relative) made=$([[ -e "$REPO/rel-home" || -e "$WTS/relative" ]] && echo yes || echo no)" \
+  "$RELATIVE made=no" "a relative COPILOT_HOME is refused, and neither a home in the caller's checkout nor a worktree is made"
 
 echo "=== a relaunch is judged on the worktree it keeps ==="
 # The base carries the hooks now; the kept worktree predates them.
@@ -344,6 +355,12 @@ copilot_world project -
 mkdir -p "$WTS/reuse-ctrl"
 assert_eq "$(OT="$TMP_ROOT/reuse-ctrl/scripts/open-terminal" launch reuse-ctrl --relaunch)" "passed" \
   "control: without the relaunch's check a kept worktree that lacks the hooks passes"
+stage "$TMP_ROOT/relative-ctrl"
+mutate_file "$TMP_ROOT/relative-ctrl/scripts/open-terminal" '  if [[ "$home" != /* ]]; then' '  if false; then'
+copilot_world project -
+assert_eq "$(OT="$TMP_ROOT/relative-ctrl/scripts/open-terminal" LAUNCH_HOME=rel-home launch relative-ctrl) ext=$([[ -e "$REPO/rel-home/extensions/kendex-lane-context/extension.mjs" ]] && echo caller || echo none)" \
+  "passed ext=caller" "control: without the absolute-home rule a relative home is configured in the caller's checkout and the lane passes"
+rm -rf -- "${REPO:?}/rel-home"
 copilot_ctrl reader-ctrl '  copilot_context_configure "$home" && return 0' '  return 0' \
   project '{"enabledFeatureFlags":{"EXTENSIONS":false}}' "passed flag=false" \
   "control: without the reader's refusal a copilot fleet lane whose home loads no extension passes unmeasured"

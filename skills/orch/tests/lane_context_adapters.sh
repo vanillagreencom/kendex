@@ -347,10 +347,11 @@ render_hooks() { # DIR NAME...
     esac
   done
 }
-render_hooks "$SCOPES/repo/.github/hooks" lane-mail-check lane-mail-compact
-render_hooks "$SCOPES/home/hooks" lane-mail-check lane-mail-compact
+render_hooks "$SCOPES/repo/.github/hooks" lane-mail-check lane-mail-compact lane-mail-start
+render_hooks "$SCOPES/home/hooks" lane-mail-check lane-mail-compact lane-mail-start
 render_hooks "$SCOPES/half/.github/hooks" lane-mail-check
-render_hooks "$SCOPES/bare/.github/hooks" lane-mail-check lane-mail-compact.sh
+render_hooks "$SCOPES/nostart/.github/hooks" lane-mail-check lane-mail-compact
+render_hooks "$SCOPES/bare/.github/hooks" lane-mail-check lane-mail-compact.sh lane-mail-start
 # `root|home|want`, `-` naming none.
 while IFS='|' read -r root home want; do
   [ "$root" != - ] || root=""
@@ -361,6 +362,8 @@ repo|home|rc=0 repo/.github/hooks
 half|home|rc=0 home/hooks
 bare|home|rc=0 home/hooks
 half|-|rc=1 
+nostart|home|rc=0 home/hooks
+nostart|-|rc=1 
 bare|-|rc=1 
 -|home|rc=0 home/hooks
 -|-|rc=1 
@@ -432,6 +435,8 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'another session is not'
   control scope-registry lane-context.sh '[ -f "$dir/$name.sh" ] && [ -f "$dir/$name.json" ]' '[ -f "$dir/$name.sh" ]' \
     'scope bare under none'
+  control scope-start lane-context.sh 'LANE_CONTEXT_COPILOT_HOOKS="lane-mail-check lane-mail-compact lane-mail-start"' 'LANE_CONTEXT_COPILOT_HOOKS="lane-mail-check lane-mail-compact"' \
+    'scope nostart under none'
   control first-reading adapters/claude.sh '| last // empty' '| first // empty' \
     'claude reads claude-last as'
   control no-synthetic-skip adapters/claude.sh ' and .model != "<synthetic>"' '' \

@@ -73,8 +73,8 @@ chmod +x "$FAKE_HOOK"
 # hooks_in DIR [NAMES] — DIR as a Copilot hook scope holding NAMES, each
 # `<name>.sh` beside `<name>.json`; `sh-only` leaves the documents out.
 hooks_in() { # DIR [NAMES|sh-only]
-  local name names="${2:-lane-mail-check lane-mail-compact}" json=1
-  [[ "$names" != sh-only ]] || { names="lane-mail-check lane-mail-compact"; json=0; }
+  local name names="${2:-lane-mail-check lane-mail-compact lane-mail-start}" json=1
+  [[ "$names" != sh-only ]] || { names="lane-mail-check lane-mail-compact lane-mail-start"; json=0; }
   mkdir -p "$1"
   for name in $names; do
     cp "$FAKE_HOOK" "$1/$name.sh"
@@ -133,6 +133,7 @@ while IFS='|' read -r label project global want; do
 done <<ROWS
 the project scope wins where both hold the hooks|both|both|@/.github/hooks
 a project scope holding lane-mail-check alone gives way to the global one|lane-mail-check|both|$COP_HOME/hooks
+a project scope without lane-mail-start gives way to the global one|lane-mail-check lane-mail-compact|both|$COP_HOME/hooks
 a project scope with no registry documents gives way to the global one|sh-only|both|$COP_HOME/hooks
 ROWS
 clear_scopes
@@ -142,15 +143,16 @@ assert_eq "$(run_scope)" "$USER_HOME/.copilot/hooks" "with COPILOT_HOME empty th
 
 # The same worlds asked of lib/lane-context.sh's lane_context_copilot_hooks,
 # the rule's owner: the two spellings answer alike, `none` where neither scope
-# holds both hooks.
+# holds every hook; a comma stands for a space in a world's names.
 lib_scope() { bash -c 'source "$1/lib/lane-context.sh"; lane_context_copilot_hooks "$2" "$3" || echo none' _ "$SCRIPTS_DIR" "$REPO" "$COP_HOME"; }
 ext_scope() {
   run_ext agree "$(events "$(event 0 10 100)")"
   if [[ -n "$HOOK_RUNS" ]]; then run_scope; else echo none; fi
 }
-for world in both:both both:- lane-mail-check:both sh-only:both -:both -:- lane-mail-check:lane-mail-compact -:sh-only; do
+for world in both:both both:- lane-mail-check:both sh-only:both -:both -:- lane-mail-check:lane-mail-compact -:sh-only \
+  lane-mail-check,lane-mail-compact:both lane-mail-check,lane-mail-compact:-; do
   clear_scopes
-  project="${world%%:*}" global="${world#*:}"
+  project="${world%%:*}" global="${world#*:}" project="${project//,/ }"
   [[ "$project" == - ]] || hooks_in "$REPO/.github/hooks" "${project/both/}"
   [[ "$global" == - ]] || hooks_in "$COP_HOME/hooks" "${global/both/}"
   assert_eq "$(ext_scope)" "$(lib_scope)" "the extension and the library pick one scope for project=$project global=$global"
@@ -243,6 +245,13 @@ hooks_in "$REPO/.github/hooks"
 hooks_in "$COP_HOME/hooks"
 EXT="$EXT" run_ext project-ctrl "$(events "$(event 0 10 100)")"
 assert_eq "$(run_scope)" "$COP_HOME/hooks" "control: without the project scope the global one is run over it"
+ext_ctrl start-ctrl 'const HOOKS = ["lane-mail-check", "lane-mail-compact", "lane-mail-start"];' \
+  'const HOOKS = ["lane-mail-check", "lane-mail-compact"];'
+clear_scopes
+hooks_in "$REPO/.github/hooks" "lane-mail-check lane-mail-compact"
+hooks_in "$COP_HOME/hooks"
+EXT="$EXT" run_ext start-ctrl "$(events "$(event 0 10 100)")"
+assert_eq "$(run_scope)" "$REPO/.github/hooks" "control: without lane-mail-start in the set a scope that cannot record the lead is run"
 
 ext_ctrl fleet-ctrl '    if (!fleetSession(root)) return null;' '    if (false) return null;'
 clear_scopes

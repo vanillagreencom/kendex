@@ -781,8 +781,9 @@ copilot_context_configure() { # HOME
 }
 
 # A Copilot fleet lane is judged by what its own Copilot loads: the
-# lane-mail-check hook at its turn end and lane-mail-compact at its automatic
-# compaction, from the project or the global hook scope
+# lane-mail-check hook at its turn end, lane-mail-compact at its automatic
+# compaction and lane-mail-start at its start, from the project or the global
+# hook scope
 # (lib/lane-context.sh § lane_context_copilot_hooks), and the context reading
 # the copilot-lane-context extension of the lane's Copilot home hands
 # lane-mail-check. Copilot runs no hook and no extension the home does not
@@ -798,7 +799,13 @@ copilot_context_configure() { # HOME
 # wins, so the gate asks it through `kendex hooks-off`, whose stdout is one
 # JSON object whose `switched_off_by` names the file or is null; a kendex that
 # is missing, fails or answers anything else refuses the lane, since an
-# unanswered question is not hooks that run.
+# unanswered question is not hooks that run. A settings file there that it
+# cannot read or parse as JSON fails it, naming the file.
+#
+# The home must be an absolute path. A relative one is configured and judged
+# here against this launcher's directory, the caller's checkout, while the
+# Copilot process starts in the lane's worktree and reads the same value from
+# there: the lane would pass the gate and run with no context reader.
 #
 # A home whose settings turn EXTENSIONS off (`detail=disabled`) runs no
 # extension, and that choice is the operator's. There the lane is admitted
@@ -817,6 +824,10 @@ copilot_fleet_gate() {
   local home
   [[ "$FLEET" == true && "$WAKE" != true && "$LAUNCH_HARNESS" == copilot ]] || return 0
   home="$(copilot_launch_home)"
+  if [[ "$home" != /* ]]; then
+    ot_message unsupported-for-oversee harness=copilot reason=relative-home "home=$home" >&2
+    return 1
+  fi
   copilot_context_configure "$home" && return 0
   if [[ "$COPILOT_CONTEXT_DETAIL" != disabled ]]; then
     ot_message unsupported-for-oversee harness=copilot reason=no-context-reader \

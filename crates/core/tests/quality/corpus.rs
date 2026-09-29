@@ -179,7 +179,7 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
     );
     for (fixture, lines) in [
         (open_terminal, 6),
-        (oversee_succeed, 14),
+        (oversee_succeed, 17),
         (overseer_watch, 1),
     ] {
         let rules: Vec<&str> = mentioned(fixture)

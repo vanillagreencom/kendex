@@ -10,6 +10,9 @@
 //! The answer is one JSON object on stdout, `{"switched_off_by": PATH}` or
 //! `{"switched_off_by": null}`, and `open-terminal` reads that key. Like the
 //! reader, it reports what the files on disk configure, never what a run did.
+//! A settings file that is there but cannot be read or is no JSON fails the
+//! verb, naming the file on stderr, so the gate refuses rather than read an
+//! unjudged layer as hooks that run.
 
 use std::path::PathBuf;
 
@@ -44,7 +47,7 @@ pub fn run(env: &Env, args: HooksOffArgs) -> CliResult {
     })?;
     let env = env.clone().with_var("COPILOT_HOME", home);
     let scope = Scope::Project { root: args.project };
-    let off = hooks_switched_off_by(&env, &scope);
+    let off = hooks_switched_off_by(&env, &scope)?;
     let document = serde_json::json!({
         "switched_off_by": off.map(|path| path.to_string_lossy().into_owned()),
     });

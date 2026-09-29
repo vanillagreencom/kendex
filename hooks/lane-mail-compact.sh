@@ -8,7 +8,7 @@
 # safety: Runs only the lane-mail-check hook installed in its own directory, whose safety line covers what it reads and the `compaction.json` it writes. A judge that is not there is reported on stderr, never run from elsewhere.
 # timeout: 30
 # harnesses: [copilot]
-# requires: [lane-mail-check]
+# requires: [lane-mail-check, lane-mail-start]
 # ---
 
 set -euo pipefail
