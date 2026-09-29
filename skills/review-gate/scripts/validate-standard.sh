@@ -363,7 +363,7 @@ fi
 if read_api "repos/$FULL/branches/$BRANCH_URI" '.protection.enabled | if type == "boolean" then (if . then "on" else "off" end) else error("protection.enabled is not a boolean") end'; then
   case "$READ_OUT" in
     off) ok standard-classic-protection off "$BRANCH has no classic branch protection" ;;
-    on) bad standard-classic-protection on "$BRANCH has classic branch protection beside the rulesets; the standard holds every rule in the organization rulesets, so remove it" ;;
+    on) bad standard-classic-protection on "$BRANCH has classic branch protection beside the rulesets; the standard holds every rule in rulesets, the shared rules in the organization's and the required checks and merge queue in the repository's, so remove it" ;;
     *) bad standard-classic-protection unreadable "the branch read answered neither on nor off" ;;
   esac
 else
