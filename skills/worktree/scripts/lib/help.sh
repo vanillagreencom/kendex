@@ -27,9 +27,9 @@ Commands:
   merged ID        Print the commit the issue tree's pull request merged as
   check            Pre-create git state check of the MAIN checkout (JSON:
                    uncommitted, unpushed); takes no arguments. A default
-                   branch the checkout lacks has nothing unpushed; one git
-                   cannot compare with origin refuses
-                   (worktree-unpushed-unreadable)
+                   branch only origin holds has nothing unpushed; one
+                   neither holds, or one git cannot compare with origin,
+                   refuses (worktree-unpushed-unreadable)
   push [ID|PATH]   Push the worktree branch, rebasing it where the base needs
                    it (push --help)
   fix-links        Restore configured symlinks in a worktree (fix-links --help)
