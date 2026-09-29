@@ -65,7 +65,9 @@ copilot_account() {
 }
 # pool ENTITLEMENT REMAINING [EXTRA_JSON] — a premium_interactions answer.
 pool() {
-  jq -nc --argjson e "$1" --argjson r "$2" --argjson x "${3:-{\}}" \
+  local extra='{}'
+  [[ $# -lt 3 ]] || extra="$3"
+  jq -nc --argjson e "$1" --argjson r "$2" --argjson x "$extra" \
     '{copilot_plan: "business", quota_reset_date_utc: "2026-10-01",
       quota_snapshots: {premium_interactions: ({entitlement: $e, remaining: $r, credits_used: ($e - $r),
         overage_permitted: true, overage_count: 0, unlimited: false, token_based_billing: true,
