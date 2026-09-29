@@ -28,8 +28,17 @@
 //! reads answered, a head GitHub never shows arms against it and fails the
 //! same way; with the stand-down's arm made without the read, the stand-down
 //! behind a lagging head fails the same way; with a read gh fails taken as
-//! a lagging head, that row exits 0 unarmed; and with the pull request's
-//! title and body left alone on an update, the push over it reddens.
+//! a lagging head, that row exits 0 unarmed; with the reads cut to two, the
+//! never-matches row counts two reads, not five; with the wait between
+//! reads cut to one second, the `sleep` stub's log reddens the rows; and
+//! with the unarmed warning annotation dropped, that row finds none. The
+//! update's title and body: left alone, the push over the pull request
+//! reddens; with a failed edit passed over, the failed-edit run exits 0;
+//! and with the edit made ahead of the arm, that run ends unarmed.
+//!
+//! `sleep` on the fixture's `PATH` is a stub that logs its argument and
+//! returns at once, so the arm's waits between reads cost the suite
+//! nothing and stay countable.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -63,7 +72,7 @@ fn said(output: &Output) -> String {
 }
 
 /// The fixture's `bin/` ahead of the host's `PATH`: the built kendex under
-/// its own name, and the `gh` stub.
+/// its own name, the `gh` stub and the `sleep` stub.
 #[allow(clippy::expect_used)]
 fn fixture_path(home: &Path) -> std::ffi::OsString {
     let mut paths = vec![home.join("bin")];
@@ -140,7 +149,7 @@ const STALE_HEAD: &str = "0000000000000000000000000000000000000000";
 /// arm matched against a head it does not show yet, and otherwise writes
 /// `state/armed`; `api graphql` answers the arming and queue read from `state/armed` and
 /// `state/queued` and removes each for its mutation. `GH_FAIL` names the
-/// one call that fails: `list`, `state` or `view` exit 1, and `disarm` or `dequeue`
+/// one call that fails: `list`, `state`, `view` or `edit` exit 1, and `disarm` or `dequeue`
 /// answer their mutation with an `errors` body and exit 0, as GitHub
 /// reports a mutation it refused. The repository reads answer what the
 /// github skill's filters would print: `repo view` names `acme/widgets`,
@@ -172,7 +181,9 @@ case \"$1 $2\" in
     n=$(cat \"$GH_STATE/next\")
     printf '%s\\n' \"$n\" > \"$GH_STATE/open\"; printf '%s\\n' $((n + 1)) > \"$GH_STATE/next\"
     printf 'https://example.test/pull/%s\\n' \"$n\"; exit 0 ;;
-  'pr edit') exit 0 ;;
+  'pr edit')
+    [ \"$GH_FAIL\" != edit ] || { echo 'gh stub: edit refused' >&2; exit 1; }
+    exit 0 ;;
   'pr view')
     [ \"$GH_FAIL\" != view ] || { echo 'gh stub: view refused' >&2; exit 1; }
     lag=$(cat \"$GH_STATE/lag\" 2>/dev/null || echo 0)
@@ -220,6 +231,12 @@ case \"$KENDEX_FAIL:$1\" in
     if [ ! -f \"$KENDEX_STATE/verified\" ]; then : > \"$KENDEX_STATE/verified\"; 'REAL' \"$@\"; exit 1; fi ;;
 esac
 exec 'REAL' \"$@\"
+";
+
+/// The `sleep` stub on the fixture's `PATH`: it appends its argument to
+/// `LOG` and returns at once.
+const SLEEP_STUB: &str = "#!/bin/sh
+printf '%s\\n' \"$*\" >> 'LOG'
 ";
 
 /// Where the consumer's package comes from.
@@ -289,6 +306,10 @@ fn world_with(source: Source, checkout: Checkout) -> World {
     let gh_state = home.join("gh-state");
     write(&gh_state.join("next"), "41\n");
     executable(&bin.join("gh"), &GH_STUB.replace("STALE", STALE_HEAD));
+    executable(
+        &bin.join("sleep"),
+        &SLEEP_STUB.replace("LOG", &home.join("sleep.log").display().to_string()),
+    );
 
     let seed = home.join("seed");
     let origin = home.join("origin.git");
@@ -382,7 +403,16 @@ impl World {
         kendex_fail: &str,
         env: &[(&str, &str)],
     ) -> Output {
-        Command::new("bash")
+        self.command(args, gh_fail, kendex_fail)
+            .envs(env.iter().copied())
+            .output()
+            .expect("bash runs the script")
+    }
+
+    /// The command `run` runs, for a row that sets more of its environment.
+    fn command(&self, args: &[&str], gh_fail: &str, kendex_fail: &str) -> Command {
+        let mut command = Command::new("bash");
+        command
             .arg(script())
             .args(args)
             .env_clear()
@@ -397,10 +427,8 @@ impl World {
             .env("GIT_AUTHOR_NAME", "t")
             .env("GIT_AUTHOR_EMAIL", "t@t")
             .env("GIT_COMMITTER_NAME", "t")
-            .env("GIT_COMMITTER_EMAIL", "t@t")
-            .envs(env.iter().copied())
-            .output()
-            .expect("bash runs the script")
+            .env("GIT_COMMITTER_EMAIL", "t@t");
+        command
     }
 
     /// The script against the checkout it judges, every `gh` read answered
@@ -612,6 +640,11 @@ impl World {
 
     fn gh_log(&self) -> String {
         fs::read_to_string(&self.gh_log).unwrap_or_default()
+    }
+
+    /// What the `sleep` stub was asked, one argument per line.
+    fn sleeps(&self) -> String {
+        fs::read_to_string(self.home.join("sleep.log")).unwrap_or_default()
     }
 
     /// A fresh clone of the origin's `main`, with its mirrors refreshed,
@@ -835,8 +868,8 @@ fn assert_stood_down(world: &World, before: &str, output: &str, rolling: &str) {
 
 /// One push over the open rolling pull request `41`, armed from an earlier
 /// run: disarmed first, the record re-recorded from `main`'s head, the
-/// pull request's title and body rewritten to that head, the pull request
-/// armed on the pushed head, and the judged checkout left as it was found.
+/// pull request armed on the pushed head and then its title rewritten to
+/// name that head, and the judged checkout left as it was found.
 fn assert_pushed_over(world: &World, output: &str) {
     let head = world.main_head();
     for line in [
@@ -855,12 +888,18 @@ fn assert_pushed_over(world: &World, output: &str) {
     );
     assert_eq!(parent.trim(), head, "{output}");
     let short = git_ok(&world.home, &world.main, &["rev-parse", "--short", &head]);
-    let edit = format!(
-        "pr edit 41 --title chore(lock): record the install record at {} --body tools/lock-record re-recorded .kendex-lock.json on main after the merges up to {head},",
-        short.trim()
-    );
     let log = world.gh_log();
-    assert!(log.contains(&edit), "{edit:?} missing:\n{log}");
+    let arm = log
+        .rfind(&format!(
+            "pr merge 41 --squash --auto --match-head-commit {rolling}\n"
+        ))
+        .unwrap_or_else(|| panic!("no arm on {rolling} in the gh log:\n{log}"));
+    let edit = log
+        .rfind("pr edit 41 --title ")
+        .unwrap_or_else(|| panic!("no title edit in the gh log:\n{log}"));
+    assert!(arm < edit, "the edit came before the arm:\n{log}");
+    let edited = log[edit..].lines().next().unwrap_or_default();
+    assert!(edited.contains(short.trim()), "{short} missing:\n{edited}");
     let status = git_ok(&world.home, &world.judged(), &["status", "--porcelain"]);
     assert_eq!(
         status, "",
@@ -1021,9 +1060,10 @@ const HEAD_READS: &[HeadRead] = &[
 /// GitHub shows a force push on the pull request's head a moment after it
 /// lands and refuses an arm matched against a head it does not show yet:
 /// the arm reads the head until it is the pushed revision and arms on it,
-/// and where it never is, the record still lands, the pull request is left
-/// unarmed with both revisions named, and the run exits 0; a read gh fails
-/// leaves it unarmed and exits 1.
+/// two seconds apart and five reads at most, and where it never is, the
+/// record still lands, the pull request is left unarmed with both
+/// revisions named and a warning annotation for the Actions run, and the
+/// run exits 0; a read gh fails leaves it unarmed and exits 1.
 #[test]
 fn the_arm_after_a_push_waits_for_github_to_show_the_pushed_head() {
     assert!(!HEAD_READS.is_empty(), "the head-read table is empty");
@@ -1039,7 +1079,11 @@ fn assert_head_read(row: &HeadRead) {
     assert!(merged.status.success(), "{}", said(&merged));
     write(&world.gh_state.join("lag"), &format!("{}\n", row.lag));
     let main = world.main.display().to_string();
-    let run = world.run(&["--repo", &main, "--base", "main"], row.gh_fail, "");
+    let run = world
+        .command(&["--repo", &main, "--base", "main"], row.gh_fail, "")
+        .env("GITHUB_ACTIONS", "true")
+        .output()
+        .unwrap_or_else(|error| panic!("bash runs the script: {error}"));
     let output = said(&run);
     let lag = row.lag;
     let code = match row.arm {
@@ -1056,6 +1100,21 @@ fn assert_head_read(row: &HeadRead) {
     let reads = log.matches(HEAD_READ).count();
     let armed = world.gh_state.join("armed").exists();
     let stderr = String::from_utf8_lossy(&run.stderr);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    let warnings: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.starts_with("::warning title=lock-record unarmed::"))
+        .collect();
+    let sleeps = world.sleeps();
+    assert!(
+        sleeps.lines().all(|line| line == "2"),
+        "lag {lag}: {sleeps}"
+    );
+    assert_eq!(
+        sleeps.lines().count(),
+        reads.saturating_sub(1),
+        "lag {lag}: a wait between each two reads, none after the last:\n{sleeps}"
+    );
     match row.arm {
         Arm::Armed => {
             assert_eq!(reads, 2, "lag {lag}: {log}");
@@ -1069,11 +1128,17 @@ fn assert_head_read(row: &HeadRead) {
             );
             assert!(log.rfind(HEAD_READ) < Some(arm), "lag {lag}: {log}");
             assert!(armed, "lag {lag}: {output}");
+            assert!(warnings.is_empty(), "lag {lag}: {output}");
         }
         Arm::Unarmed => {
-            assert!(reads > 1, "lag {lag}: {log}");
+            assert_eq!(reads, 5, "lag {lag}: {log}");
             let unarmed = format!("lock-record: unarmed=41 pushed={rolling} head={STALE_HEAD}\n");
             assert!(stderr.contains(&unarmed), "lag {lag}: {output}");
+            assert_eq!(warnings.len(), 1, "lag {lag}: {output}");
+            assert!(
+                warnings[0].contains(rolling.as_str()) && warnings[0].contains(STALE_HEAD),
+                "lag {lag}: {output}"
+            );
             assert!(
                 !output.contains("lock-record: armed="),
                 "lag {lag}: {output}"
@@ -1089,8 +1154,41 @@ fn assert_head_read(row: &HeadRead) {
             );
             assert!(!log.contains("pr merge"), "lag {lag}: {log}");
             assert!(!armed, "lag {lag}: {output}");
+            assert!(warnings.is_empty(), "lag {lag}: {output}");
         }
     }
+}
+
+/// A push over the open rolling pull request whose title and body gh then
+/// fails to rewrite: the pull request is armed on the pushed head first,
+/// and the run names the failed edit and exits 1.
+#[test]
+fn a_failed_title_edit_after_a_push_leaves_the_pull_request_armed_and_exits_nonzero() {
+    let world = world();
+    world.branch("a", "ship");
+    world.branch("b", "roll");
+    assert!(world.queue_merge("a").status.success());
+    let first = world.lock_record();
+    assert_eq!(first.status.code(), Some(0), "{}", said(&first));
+    assert!(world.queue_merge("b").status.success());
+    let main = world.main.display().to_string();
+    let run = world.run(&["--repo", &main, "--base", "main"], "edit", "");
+    let output = said(&run);
+    assert_eq!(run.status.code(), Some(1), "{output}");
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("lock-record: pull-request-edit=41\n"),
+        "{output}"
+    );
+    assert!(output.contains("lock-record: armed=41\n"), "{output}");
+    let rolling = world.rolling_head();
+    let parent = git_ok(
+        &world.home,
+        &world.main,
+        &["rev-parse", &format!("{rolling}^")],
+    );
+    assert_eq!(parent.trim(), world.main_head(), "{output}");
+    assert!(world.gh_state.join("armed").exists(), "{output}");
 }
 
 /// The workflow's checkout holds the head alone, so the judge has no
