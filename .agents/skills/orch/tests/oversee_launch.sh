@@ -158,6 +158,25 @@ run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
   "1|oversee: overseer-live session=$SESSION server=$SOCKET generation=1|1|1" \
   "a launch beside a live recorded overseer refuses naming it and opens nothing"
+# A record carrying no server start, the shape a writer that recorded none
+# left, names no session, but its pane live on the recorded server pid may be
+# the running overseer, so the launch refuses rather than open a second one.
+cp -- "$FLEET_STATE" "$TMP_ROOT/state.live"
+jq 'del(.overseer.server_start)' "$TMP_ROOT/state.live" > "$FLEET_STATE" || exit 1
+run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
+  "1|oversee: overseer-live session=$SESSION server=$SOCKET generation=1|1|1" \
+  "a launch beside a live pane a record with no server start names refuses and opens nothing"
+# Its control: a liveness check that takes a startless record as naming no
+# session opens a second overseer beside the first.
+STARTLESSCTL="$(mutant_scripts startlessctl oversee)" || exit 1
+mutate_file "$STARTLESSCTL/oversee" \
+  'if .server_start == null then .server_start = $start else . end' 'if .server_start == null then . else . end'
+OVERSEE_BIN="$STARTLESSCTL/oversee" run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(overseers)" "0|2" \
+  "control: a launch that judges a startless record as naming no session opens a second overseer"
+tm kill-window -t "$(recorded window)"
+mv -- "$TMP_ROOT/state.live" "$FLEET_STATE"
 # A tmux that answers every call but the server start read
 # (lib/tmux-server.sh § tmux_server_start) of the pane the nostart-pane file
 # names, for the rows where that read fails.

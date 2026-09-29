@@ -558,7 +558,9 @@ ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
 # started at its `server_start`, since after a tmux restart a new server may be
 # handed the recorded pid and numbers its panes from %0 again, and a record
 # carrying none names no session.
-# lib/watch-overseer-record.sh takes `ol_names` for the watch start.
+# lib/watch-overseer-record.sh takes `ol_names` for the watch start, and
+# `oversee launch` for its liveness refusal, there judging a record carrying
+# no start on the server and pane alone.
 OL_JQ_DEFS='def ol_identity: {harness, account, home, model, effort, cwd};
   def ol_names($server; $start; $session): type == "object" and (.server // "") == $server
     and ((.pane // .session // "") == $session)

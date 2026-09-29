@@ -1,1 +1,1 @@
-- oversee: an overseer record written before the tmux server start was recorded names no overseer until the next `oversee-watch` start, `oversee launch` or `oversee register`.
+- oversee: after upgrading, run `oversee register` in the overseer's pane or `oversee launch --predecessor` on it; until then no session reads its mail, and a watch start drops its launch identity.

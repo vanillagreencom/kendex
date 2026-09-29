@@ -115,10 +115,11 @@ overseer_command_record() {
   # own, runtime, generation and the launch identity (harness, account, home,
   # model, effort and cwd), stay only where the prior names THIS pane on THIS
   # server, started when this one was: another pane's record is another
-  # session's, and so is one an earlier server handed the same pid wrote, and a
-  # start there has no launch identity to record, which leaves its readers on
-  # the pane and the environment until a launcher or `oversee register` writes
-  # one. A `pending`
+  # session's, and so is one an earlier server handed the same pid wrote, or
+  # one carrying no server start, even where it names this pane. A start there
+  # has no launch identity to record, which leaves its readers on the pane and
+  # the environment until a launcher or `oversee register` writes one. A
+  # `pending`
   # successor goes either way: the line this start records is the current
   # session's, as a start always replaced the pending line it met, so a
   # succession that died before its launch leaves nothing a later death would
