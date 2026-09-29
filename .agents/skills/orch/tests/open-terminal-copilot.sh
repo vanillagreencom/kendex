@@ -257,6 +257,24 @@ stderr_kept() {
 }
 assert_eq "$(stderr_kept "$REPO/scripts/open-terminal")" "1" \
   "a relaunch appending to a stderr file keeps the line written before it"
+# stderr_reopen — what a `2>/dev/stderr` redirect inside a command
+# substitution does to a stderr opened for append on a regular file, the
+# redirect the /dev/stderr control plants: `truncates` where the open reopens
+# the file (Linux, whose /dev/stderr resolves through /proc/self/fd),
+# `duplicates` where it copies the descriptor (macOS devfs), so the hazard
+# that control guards cannot occur. Any other result is printed as
+# `broken: CONTENT`.
+stderr_reopen() {
+  local probe="$TMP_ROOT/stderr-reopen.err" rc=0 held
+  printf 'probe-line\n' > "$probe"
+  # shellcheck disable=SC2034  # the assignment carries the substitution's exit status
+  ( answer="$(: 2>/dev/stderr)" ) 2>>"$probe" || rc=$?
+  held="$(cat -- "$probe")"
+  if [[ "$rc" -ne 0 ]]; then printf 'broken: rc=%s %s\n' "$rc" "$held"
+  elif [[ -z "$held" ]]; then echo truncates
+  elif [[ "$held" == probe-line ]]; then echo duplicates
+  else printf 'broken: %s\n' "$held"; fi
+}
 # The lane ran on copilot and is relaunched on claude: nothing in claude's
 # store names the item, so claude starts it afresh on its own brief.
 launch switched --relaunch --harness claude --launch-flags '--model opus --effort high' CC-738
@@ -315,11 +333,21 @@ OT="$TMP_ROOT/cwd-ctrl/scripts/open-terminal" launch cwd-ctrl --relaunch --harne
 assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-738'" \
   "control: without the record's directory the relaunch resumes nothing and starts afresh"
 # The retirement read handed /dev/stderr, which a relaunch whose stderr is a
-# regular file reopens and truncates, losing the line written before it.
+# regular file reopens and truncates, losing the line written before it. Only
+# where the box's /dev/stderr open reopens the file: where it duplicates the
+# descriptor, the mutant truncates nothing and the control stands down.
 stage "$TMP_ROOT/stderr-ctrl"
 mutate_file "$TMP_ROOT/stderr-ctrl/scripts/open-terminal" 'lane_handoff_standing "$3" "" ' 'lane_handoff_standing "$3" /dev/stderr '
-assert_eq "$(stderr_kept "$TMP_ROOT/stderr-ctrl/scripts/open-terminal")" "0" \
-  "control: a retirement read through /dev/stderr truncates the relaunch's stderr file"
+STDERR_REOPEN="$(stderr_reopen)"
+case "$STDERR_REOPEN" in
+  truncates)
+    assert_eq "$(stderr_kept "$TMP_ROOT/stderr-ctrl/scripts/open-terminal")" "0" \
+      "control: a retirement read through /dev/stderr truncates the relaunch's stderr file" ;;
+  duplicates)
+    pass "control stands down: a /dev/stderr open duplicates the descriptor here, so a retirement read through it truncates nothing" ;;
+  *)
+    fail "probe: a 2>/dev/stderr redirect neither truncated nor kept the stderr file" "$STDERR_REOPEN" ;;
+esac
 # The helper's empty ERR_FILE arm cut: the run is sent to a file named by the
 # empty string, fails, and the relaunch refuses rather than launching.
 stage "$TMP_ROOT/stderr-arm-ctrl"
