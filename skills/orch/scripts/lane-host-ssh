@@ -294,8 +294,9 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
         prefix = "exec env " + shlex.quote(name + "=" + remote_account) + " bash -lc"
     # The caller's folder trust and hook approval land where each harness reads
     # them; Claude's relative path resolves in the SSH session's remote home.
-    # A copilot lane places no file: its folder trust is the COPILOT_ALLOW_ALL
-    # its prefix sets.
+    # A copilot lane places no file: its prefix sets COPILOT_HOME alone, and its
+    # folder trust is the COPILOT_ALLOW_ALL=true its start command carries where
+    # it names --allow-all or --yolo (lib/lane-launch.sh lane_copilot_env).
     approval = {"claude": ".claude.json", "codex": "config.toml", "pi": "trust.json"}.get(args.harness)
     approval = account / "lane-host" / approval if approval else None
     if approval is not None and approval.exists():
