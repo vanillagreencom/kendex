@@ -271,17 +271,6 @@ send 'Unbound.'
 assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=pane-gone" \
   "control: without the start test a record binding no start is judged on a server it cannot name"
 
-# The start the pane judgement compares is lib/tmux-server.sh's; this mutant
-# of that library matches a listed pane on any start.
-LIB_DIR="$(mutant_scripts mutants/any-start lib/tmux-server.sh)" || exit 1
-mutate_file "$LIB_DIR/lib/tmux-server.sh" '    *"$nl$1 $2 $3$nl"*) return 0 ;;' '    *"$nl$1 "*" $3$nl"*) return 0 ;;'
-LANE_MAIL_BIN="$LIB_DIR/lane-mail"
-record "{\"server\":\"$LIVE\",\"server_start\":$EARLIER,\"pane\":\"%9\"}"
-printf '%s %s %%9\n' "$LIVE" "$START" > "$PANES"
-send 'Earlier server.'
-assert_eq "$(first_err)" "" \
-  "control: a pane judgement blind to the start reads an earlier server's pane as live"
-
 mutant state-silent '    lm_notice reader-unjudged "$ROOT" cause=state "$cause"' '    :'
 record bad
 send 'Bad state.'

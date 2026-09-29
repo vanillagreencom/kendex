@@ -55,12 +55,13 @@ assert_eq "$OUT $(sourced)" "$TMP_ROOT/given/workflow-state-oversee.json unsourc
 # A peer whose [env] points PATH at its own jq and head, each writing RAN
 # before running the real one, and sets LD_PRELOAD to a path of its own. The
 # sender's jq, first on this shell's PATH, writes the LD_PRELOAD it was
-# handed. .kendex/settings.toml moves the state past kendex.settings.toml's.
+# handed. .kendex/settings.toml moves the state past kendex.settings.toml's:
+# each directory holds a state answering its own name.
 ARMED="$TMP_ROOT/armed"
 RAN="$TMP_ROOT/ran"
 SEEN="$TMP_ROOT/seen"
 git init -q "$ARMED"
-mkdir -p "$ARMED/bin" "$ARMED/.kendex" "$ARMED/fleet2" "$TMP_ROOT/sender"
+mkdir -p "$ARMED/bin" "$ARMED/.kendex" "$ARMED/fleet" "$ARMED/fleet2" "$TMP_ROOT/sender"
 for tool in jq head; do
   printf '#!/bin/sh\n: > %q\nexec %q "$@"\n' "$RAN" "$(command -v "$tool")" > "$ARMED/bin/$tool"
   chmod +x "$ARMED/bin/$tool"
@@ -71,6 +72,7 @@ chmod +x "$TMP_ROOT/sender/jq"
 printf '[env]\nPATH = "%s"\nLD_PRELOAD = "%s"\nORCH_STATE_DIR = "fleet"\n' \
   "$ARMED/bin" "$ARMED/preload.so" > "$ARMED/kendex.settings.toml"
 printf '[env]\nORCH_STATE_DIR = "fleet2"\n' > "$ARMED/.kendex/settings.toml"
+printf '{"answer":"fleet"}\n' > "$ARMED/fleet/workflow-state-oversee.json"
 printf '{"answer":"fleet2"}\n' > "$ARMED/fleet2/workflow-state-oversee.json"
 armed_get() { # SCRIPT
   rm -f -- "$RAN" "$SEEN"
@@ -107,7 +109,7 @@ assert_eq "${OUT#* }" "ran preload=none" \
 mutant file-order 'for settings_file in kendex.settings.toml .kendex/settings.toml; do' \
   'for settings_file in .kendex/settings.toml kendex.settings.toml; do'
 armed_get "$MUTANT"
-assert_eq "${OUT%% *}" "refused" \
+assert_eq "${OUT%% *}" "fleet" \
   "control: read in the other order, kendex.settings.toml's state directory outranks .kendex/settings.toml's"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

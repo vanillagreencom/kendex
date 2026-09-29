@@ -131,5 +131,9 @@ mutant_lib start-any-server '  [ "${out%% *}" = "$2" ] || return 1' '  :'
 assert_eq "$(start_of "$MUTANT_LIB" "$LIVE" "4242 $S")" "$S/0" \
   "control: without the server test a start read off another server binds the record"
 
+mutant_lib start-any-shape "    '' | *[!0-9]*) return 1 ;;" "    '' | *[!0-9]*) ;;"
+assert_eq "$(start_of "$MUTANT_LIB" "$LIVE" "$LIVE ")" "/0" \
+  "control: without the digits test an empty start binds the record"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
