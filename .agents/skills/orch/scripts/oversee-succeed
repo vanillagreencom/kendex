@@ -181,7 +181,10 @@
 #        successor, `pi-handoff-unmarked`, whose settings leave compaction on
 #        or cannot be read, or whose pi-hooks carrier sends no window, read
 #        under the Pi root it runs on: the picked account's on the Copilot
-#        pool. An entry with no qualifying lane IS skipped.
+#        pool. An entry with no qualifying lane IS skipped, and so is a
+#        copilot entry whose picked account runs no copilot-statusline
+#        status line, after its pick, with `successor-status-line` on
+#        stderr.
 #        A named entry's LAUNCH carries the model and effort words its own row
 #        writes. A same-harness entry keeps the caller's permission words
 #        exactly. A cross-harness entry transfers only a full-bypass posture
