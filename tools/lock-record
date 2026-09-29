@@ -8,7 +8,8 @@
 #                  checkout this script sits in)
 # --base BRANCH    the branch the rolling pull request targets (default: the
 #                  repository's default branch, WORKTREE_DEFAULT_BRANCH when
-#                  set, else GitHub's)
+#                  the environment sets it, else GitHub's; no
+#                  kendex.settings.toml is read)
 # --remote NAME    the remote the rolling branch is pushed to (default origin)
 # --branch NAME    the rolling branch (default kendex/lock)
 # -h, --help       print this help
@@ -56,7 +57,7 @@
 #   dirty=<n>                   the checkout has n uncommitted paths; nothing was judged (exit 2)
 #   source-refresh=<status>     `kendex source refresh` failed (exit 1)
 #   current=<sha>               the record matches the tree at that head; nothing was written
-#   default-branch=<dir>        GitHub did not name the default branch of the repository the checkout resolves to; what it said is above (exit 1)
+#   default-branch=<dir>        the checkout resolves to no GitHub repository, or GitHub did not name that repository's default branch and what it said is above (exit 1)
 #   merge-method=<set>          the base allows none of squash, merge and rebase, the set it allows named; nothing pushed (exit 1)
 #   merge-method-unreadable=<cause>
 #                               the base's merge method could not be read: rules, settings or queue; nothing pushed (exit 1)
@@ -162,10 +163,11 @@ fi
 if [[ -z "$base" ]]; then
   rc=0
   base="$(cd -- "$repo" && kendex_github_default_branch "$repo")" || rc=$?
-  if [[ $rc -ne 0 ]]; then
-    say default-branch "$repo" "GitHub did not name the default branch of the repository $repo resolves to; pass --base, and nothing was pushed" >&2
-    exit 1
-  fi
+  case "$rc" in
+    0) ;;
+    3) say default-branch "$repo" "$repo resolves to no GitHub repository to read a default branch from; pass --base, and nothing was pushed" >&2; exit 1 ;;
+    *) say default-branch "$repo" "GitHub did not name the default branch of the repository $repo resolves to, for the reason above; pass --base, and nothing was pushed" >&2; exit 1 ;;
+  esac
 fi
 rc=0
 method="$(cd -- "$repo" && kendex_github_merge_method '{owner}/{repo}' "$base" squash merge rebase)" || rc=$?

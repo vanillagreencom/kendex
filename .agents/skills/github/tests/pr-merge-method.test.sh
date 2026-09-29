@@ -3,9 +3,10 @@
 # method the base branch allows (its merge queue's, else the repository's
 # allowed methods narrowed by its pull_request rules) chosen in the order the
 # caller accepts, the one-line refusal where none is allowed or the read
-# fails, and the head branch deleted only on --delete-branch where the
-# repository's delete_branch_on_merge is off. The row format and the world
-# words are lib/pr-merge-world.sh's.
+# fails, --dry-run naming the method and --check reading none, and the head
+# branch deleted only on --delete-branch where the repository's
+# delete_branch_on_merge is off. The row format and the world words are
+# lib/pr-merge-world.sh's.
 set -euo pipefail
 
 # shellcheck source=lib/pr-merge-world.sh
@@ -29,6 +30,11 @@ settings GitHub withholds from a token without push access refuse as unreadable|
 a base whose rules cannot be read refuses as unreadable|$DONE rules:fail|immediate|1|-|pr-merge: merge-method-unreadable cause=rules|calls=$CHECK auth=<unset>
 a pull request into develop takes develop's queue method|checks:ci-required post-queue base:develop queue-on:develop queue:MERGE methods:squash|auto|75|-|$QUEUED|calls=$PRE,merge:merge:auto,graphql:queue auth=<unset>
 a pull request into main does not take develop's queue|$DONE base:main queue-on:develop queue:MERGE methods:squash|immediate|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
+"
+
+run_table "what --dry-run and --check read" "\
+--dry-run names the method a merge-only repository allows|$DONE methods:merge|with:--dry-run|0|Would merge PR #123 (--merge, mode=immediate, delete_branch=false, token=not configured)|-|calls=$CHECK auth=<unset>
+--check never reads the method, so a repository allowing none still reports readiness|$DONE methods:-|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[]|mergeable;head-run: none|calls=$CHECK auth=<unset>
 "
 
 run_table "the head branch after a merge" "\

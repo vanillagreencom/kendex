@@ -33,11 +33,12 @@ Options:
   --label LABEL    Add label (repeatable: --label foo --label bar)
   --draft          Create as draft PR
   --force          Create even when the pre-create checks below fail — you
-                   can end up with a PR from main or an empty/unpushed branch
+                   can end up with a PR from the base branch or an
+                   empty/unpushed branch
   --dry-run        Show what would be created without creating
 
 Safety Checks (run by default):
-  1. Not creating PR from main/master branch
+  1. The head branch is not the base branch
   2. Head branch has commits ahead of base
   3. Branch has been pushed to remote
 
@@ -69,13 +70,13 @@ run_safety_checks() {
 
     echo "Running safety checks..." >&2
 
-    # 1. Check not creating from main/master
-    if [ "$head" = "main" ] || [ "$head" = "master" ]; then
-        echo "  ✗ ERROR: Cannot create PR from $head branch" >&2
+    # 1. Check the head is not the base itself
+    if [ "$head" = "$base" ]; then
+        echo "  ✗ ERROR: Cannot create PR from the base branch $base into itself" >&2
         echo "    Create a feature branch first: git checkout -b feature/my-feature" >&2
         all_passed=false
     else
-        echo "  ✓ Head branch is not main/master" >&2
+        echo "  ✓ Head branch is not the base branch $base" >&2
     fi
 
     # 2. Check branch has commits ahead of the base the PR will actually

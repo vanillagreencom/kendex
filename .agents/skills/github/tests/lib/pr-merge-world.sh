@@ -440,8 +440,11 @@ stdout_text() {
 }
 err_lines() {
   # The sandbox's own path is per-run, so a row that pins a child's diagnostic
-  # pins <tmp> rather than a directory no second run produces.
-  sed -e 's/^[[:space:]]*//' -e '/^$/d' -e 's/;/\\;/g' -e "s|$TMPDIR_PHYSICAL|<tmp>|g" -e "s|$TMPDIR|<tmp>|g" "$TMPDIR/stderr" | paste -s -d ';' -
+  # pins <tmp> rather than a directory no second run produces. An empty
+  # stderr is `-`, as stdout's is.
+  local text
+  text="$(sed -e 's/^[[:space:]]*//' -e '/^$/d' -e 's/;/\\;/g' -e "s|$TMPDIR_PHYSICAL|<tmp>|g" -e "s|$TMPDIR|<tmp>|g" "$TMPDIR/stderr" | paste -s -d ';' -)" || return 1
+  printf '%s' "${text:--}"
 }
 
 run() {

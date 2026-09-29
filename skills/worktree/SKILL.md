@@ -75,7 +75,7 @@ The layout table is data, one row per ecosystem, in `scripts/worktree-output-pru
 
 ## System Dependencies
 
-`git`; authenticated `gh` for reading the repository's default branch, for new-work PR ownership discovery and for proving a squash-merged branch merged in `cleanup` and `remove`; `flock` for repository-local per-issue claim serialization; Bash 3.2+ (macOS system bash is supported).
+`git`; authenticated `gh` for reading the repository's default branch (without it, git's record of origin's HEAD answers), for new-work PR ownership discovery and for proving a squash-merged branch merged in `cleanup` and `remove`; `flock` for repository-local per-issue claim serialization; Bash 3.2+ (macOS system bash is supported).
 
 ## Configuration
 

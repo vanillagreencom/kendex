@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # The default branch the worktree commands read: WORKTREE_DEFAULT_BRANCH when
 # set, else the repository's default branch on GitHub, read through the github
-# skill beside this package. A checkout with no GitHub repository takes git's
-# record of origin's HEAD and refuses where git holds none. The table runs
-# `merged`, whose forge query carries the default branch as its --base; one
-# `create` then starts a tree from GitHub's default branch.
+# skill beside this package. A checkout with no GitHub repository, and a
+# failed GitHub read with a warning, take git's record of origin's HEAD and
+# refuse where git holds none. The first table runs `merged`, whose forge
+# query carries the default branch as its --base; one `create` then starts a
+# tree from GitHub's default branch; the last table runs `check`, which
+# reports the default branch's unpushed commits.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
@@ -91,50 +93,77 @@ git -C "$MAIN" checkout -q main
 git -C "$MAIN" remote set-head origin main
 git -C "$MAIN" branch lonely
 
-# The must-fail control: a copy of the two packages whose worktree script
-# takes main in place of the github skill's answer.
-READ_LINE='    answer="$(kendex_github_default_branch "$PROJECT_ROOT" 2>&1)" || rc=$?'
-mkdir -p "$TMP_ROOT/pkg"
-cp -R "$PACKAGE_DIR" "$TMP_ROOT/pkg/worktree"
-cp -R "$SKILLS_DIR/github" "$TMP_ROOT/pkg/github"
-MUTANT="$TMP_ROOT/pkg/worktree/scripts/worktree"
-assert_eq "$(grep -cxF -- "$READ_LINE" "$MUTANT")" "1" "control: the default-branch read is one line"
-F="$READ_LINE" awk 'BEGIN { f = ENVIRON["F"] } $0 == f { $0 = "    answer=main" } { print }' "$MUTANT" >"$TMP_ROOT/mutant.edit"
-cat -- "$TMP_ROOT/mutant.edit" >"$MUTANT"
-assert_eq "$(grep -cxF -- "$READ_LINE" "$MUTANT")" "0" "control: the read was replaced"
+# The must-fail controls: copies of the two packages whose worktree script
+# has one whole line replaced, and, where NEXT is given, only the copy of that
+# line the line NEXT follows. `read` takes main in place of the github skill's
+# answer; `refusing` refuses on a failed GitHub read where the script falls
+# back to git's record; `uncalled` cuts check's resolve call.
+mutant() { # NAME FROM TO [NEXT]
+  local script="$TMP_ROOT/$1/worktree/scripts/worktree" rc=0
+  mkdir -p "$TMP_ROOT/$1"
+  cp -R "$PACKAGE_DIR" "$TMP_ROOT/$1/worktree"
+  cp -R "$SKILLS_DIR/github" "$TMP_ROOT/$1/github"
+  F="$2" T="$3" N="${4:-}" awk '
+    BEGIN { f = ENVIRON["F"]; t = ENVIRON["T"]; n = ENVIRON["N"] }
+    { line[NR] = $0 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        if (line[i] == f && (n == "" || line[i + 1] == n)) { line[i] = t; hits++ }
+        print line[i]
+      }
+      exit hits == 1 ? 0 : 3
+    }' "$WORKTREE_SCRIPT" >"$TMP_ROOT/$1.edit" || rc=$?
+  assert_eq "$rc" 0 "control: the $1 edit replaced exactly one line"
+  cat -- "$TMP_ROOT/$1.edit" >"$script"
+}
+# shellcheck disable=SC2016 # each line is the script's own text, not expanded
+mutant read '    answer="$(kendex_github_default_branch "$PROJECT_ROOT" 2>&1)" || rc=$?' '    answer=main'
+mutant refusing "        sed 's/^/  /' <<<\"\$answer\" >&2" "        sed 's/^/  /' <<<\"\$answer\" >&2; return 1"
+# shellcheck disable=SC2016 # each line is the script's own text, not expanded
+mutant uncalled '    resolve_default_branch || exit 1' '    :' \
+  '    UNPUSHED_COMMITS=$(git -C "$PROJECT_ROOT" log "origin/$DEFAULT_BRANCH..$DEFAULT_BRANCH" --oneline 2>/dev/null)'
 
 # --- the rows -------------------------------------------------------------------
-# label|script|environment|exit|stderr records|the --base merged asked about|
-# GitHub repository reads
+# Every row runs one verb in the main checkout with the row's environment and
+# reports its exit, its stderr records, and how many times GitHub was asked
+# for the repository. `-` is an empty field.
 
 records() {
-  message_records <"$1" | sed "s|$MAIN|<root>|g" | paste -s -d ';' -
+  local text
+  text="$(message_records <"$1" | sed "s|$MAIN|<root>|g" | paste -s -d ';' -)" || return 1
+  printf '%s' "${text:--}"
 }
 
-run_row() {
+run_verb() { # SCRIPT ENV_WORDS VERB [ARG...]
   local script="$1" env_words="$2" rc=0
+  shift 2
   : >"$GH_LOG"
-  [[ "$script" == mutant ]] && script="$MUTANT" || script="$WORKTREE_SCRIPT"
+  [[ "$script" == real ]] && script="$WORKTREE_SCRIPT" || script="$TMP_ROOT/$script/worktree/scripts/worktree"
   # shellcheck disable=SC2086 # the row's environment is words
   (cd "$MAIN" && env -u WORKTREE_DEFAULT_BRANCH -u GH_REPO PATH="$TMP_ROOT/bin:$PATH" GH_LOG="$GH_LOG" $env_words \
-    "$script" merged lonely >"$TMP_ROOT/out" 2>"$TMP_ROOT/err") || rc=$?
-  printf 'rc=%s err=%s base=%s reads=%s' "$rc" "$(records "$TMP_ROOT/err")" \
-    "$(sed -n 's/^pr list .*--base \([^ ]*\) .*/\1/p' "$GH_LOG" | paste -s -d , -)" \
-    "$(grep -c '^api repos/' "$GH_LOG" || true)"
+    "$script" "$@" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err") || rc=$?
+  printf 'rc=%s err=%s reads=%s' "$rc" "$(records "$TMP_ROOT/err")" "$(grep -c '^api repos/' "$GH_LOG" || true)"
 }
 
-echo "=== the default branch ==="
-while IFS='|' read -r label script env_words rc err base reads; do
-  [[ -n "$label" ]] || continue
+# label|script|environment|exit|stderr records|GitHub repository reads|the
+# --base merged asked the forge about. From the first `no record` row on,
+# git holds no record of origin's HEAD.
+echo "=== the default branch merged asks the forge about ==="
+while IFS='|' read -r label script env_words rc err reads base; do
+  [[ -z "$label" ]] && continue
   if [[ "$label" == *"no record"* ]]; then git -C "$MAIN" remote set-head origin -d; fi
-  assert_eq "$(run_row "$script" "$env_words")" "rc=$rc err=$err base=$base reads=$reads" "$label"
+  got="$(run_verb "$script" "$env_words" merged lonely)"
+  asked="$(sed -n 's/^pr list .*--base \([^ ]*\) .*/\1/p' "$GH_LOG" | paste -s -d , -)"
+  assert_eq "$got base=${asked:--}" "rc=$rc err=$err reads=$reads base=$base" "$label"
 done <<'ROWS'
-GitHub's default branch is the one the forge is asked about|real|GH_SLUG=acme/widgets GH_DEFAULT=develop|1|worktree-unmerged: lonely|develop|1
-must-fail: with the read replaced by main, develop's repository is asked about main|mutant|GH_SLUG=acme/widgets GH_DEFAULT=develop|1|worktree-unmerged: lonely|main|0
-WORKTREE_DEFAULT_BRANCH overrides, and GitHub is not asked|real|GH_SLUG=acme/widgets GH_DEFAULT=develop WORKTREE_DEFAULT_BRANCH=trunk|1|worktree-unmerged: lonely|trunk|0
-a default branch GitHub cannot name leaves the question unanswered|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|2|worktree-default-branch-unreadable: <root>||1
-a checkout with no GitHub repository takes git's record of origin's HEAD|real|GH_SLUG=- GH_DEFAULT=develop|1|worktree-unmerged: lonely|main|0
-a checkout with no GitHub repository and no record refuses|real|GH_SLUG=- GH_DEFAULT=develop|2|worktree-default-branch-unknown: <root>||0
+GitHub's default branch is the one the forge is asked about|real|GH_SLUG=acme/widgets GH_DEFAULT=develop|1|worktree-unmerged: lonely|1|develop
+must-fail: with the read replaced by main, develop's repository is asked about main|read|GH_SLUG=acme/widgets GH_DEFAULT=develop|1|worktree-unmerged: lonely|0|main
+WORKTREE_DEFAULT_BRANCH overrides, and GitHub is not asked|real|GH_SLUG=acme/widgets GH_DEFAULT=develop WORKTREE_DEFAULT_BRANCH=trunk|1|worktree-unmerged: lonely|0|trunk
+a default branch GitHub cannot name warns and takes git's record of origin's HEAD|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|1|worktree-default-branch-unreadable: <root>;worktree-unmerged: lonely|1|main
+must-fail: with the fallback cut, a failed GitHub read refuses where git holds a record|refusing|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|2|worktree-default-branch-unreadable: <root>|1|-
+a checkout with no GitHub repository takes git's record of origin's HEAD|real|GH_SLUG=- GH_DEFAULT=develop|1|worktree-unmerged: lonely|0|main
+a failed GitHub read with no record refuses|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|2|worktree-default-branch-unreadable: <root>;worktree-default-branch-unknown: <root>|1|-
+a checkout with no GitHub repository and no record refuses|real|GH_SLUG=- GH_DEFAULT=develop|2|worktree-default-branch-unknown: <root>|0|-
 ROWS
 git -C "$MAIN" remote set-head origin main
 
@@ -145,6 +174,37 @@ rc=0
 assert_eq "$rc" 0 "create exits 0"
 assert_eq "$(git -C "$(cat "$TMP_ROOT/out")" rev-parse HEAD 2>/dev/null || true)" "$DEVELOP" \
   "the new tree starts at origin/develop"
+
+# The main checkout's develop now holds one commit origin/develop lacks, and
+# its main none, so only a check that resolved develop reports it unpushed.
+git -C "$MAIN" checkout -q develop
+printf 'ahead\n' >"$MAIN/file.txt"
+git -C "$MAIN" commit -q -am ahead
+AHEAD="$(git -C "$MAIN" log -1 --format='%h ahead')"
+git -C "$MAIN" checkout -q main
+UNPUSHED="{\"uncommitted\": false, \"unpushed\": true, \"unpushed_commits\": [\"$AHEAD\"]}"
+
+# label|script|environment|git's record of origin's HEAD (- for none)|exit|
+# stderr records|GitHub repository reads|stdout (UNPUSHED or -)
+echo "=== check reads the default branch's unpushed commits ==="
+while IFS='|' read -r label script env_words record rc err reads out; do
+  [[ -z "$label" ]] && continue
+  if [[ "$record" == - ]]; then
+    git -C "$MAIN" remote set-head origin -d
+  else
+    git -C "$MAIN" remote set-head origin "$record"
+  fi
+  [[ "$out" != UNPUSHED ]] || out="$UNPUSHED"
+  got="$(run_verb "$script" "$env_words" check)"
+  printed="$(cat -- "$TMP_ROOT/out")"
+  assert_eq "$got out=${printed:--}" "rc=$rc err=$err reads=$reads out=$out" "$label"
+done <<'ROWS'
+GitHub's default branch develop holds the unpushed commit|real|GH_SLUG=acme/widgets GH_DEFAULT=develop|main|0|-|1|UNPUSHED
+must-fail: with check's resolve call cut, check dies on git's empty range and reports nothing|uncalled|GH_SLUG=acme/widgets GH_DEFAULT=develop|main|128|-|0|-
+a default branch GitHub cannot name warns and takes git's record of origin's HEAD|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|develop|0|worktree-default-branch-unreadable: <root>|1|UNPUSHED
+a failed GitHub read with no record refuses|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|-|1|worktree-default-branch-unreadable: <root>;worktree-default-branch-unknown: <root>|1|-
+ROWS
+git -C "$MAIN" remote set-head origin main
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -67,10 +67,15 @@ personal overrides):
                               segment in the issue-ID alphabet. Default: lane.
   WORKTREE_DEFAULT_BRANCH     Default branch name. Unset: the repository's
                               default branch on GitHub, read through the
-                              github skill; a checkout with no GitHub
-                              repository reads git's record of origin's HEAD
-                              and refuses where git holds none
-                              (worktree-default-branch-unknown).
+                              github skill. git's record of origin's HEAD
+                              answers instead for a checkout with no GitHub
+                              repository, where the github skill is not
+                              installed, and after a failed GitHub read,
+                              which warns first
+                              (worktree-default-branch-unreadable). Where git
+                              holds no record the command refuses
+                              (worktree-default-branch-unknown); set this
+                              to name the branch.
   WORKTREE_SYMLINKS           Space-separated paths symlinked from the main
                               checkout into each worktree. Point entries at
                               untracked runtime paths (an entry that shadows
@@ -770,6 +775,10 @@ instead, because a rebase is what they were asked for. create does not have
 merged's third answer: it rebases both on a not-merged answer and on a lookup
 that could not answer, recording the latter as worktree-merge-unverified,
 because refusing there would disable every reuse on a machine with no gh.
+For the same reason a default branch GitHub cannot name falls back to git's
+record of origin's HEAD with a warning, worktree-default-branch-unreadable;
+create refuses only where git holds no record either,
+worktree-default-branch-unknown.
 EOF
 }
 

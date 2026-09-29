@@ -123,6 +123,21 @@ a default branch GitHub cannot name refuses, nothing created|real|STUB_REPO_EXIT
 a checkout with no GitHub repository refuses, nothing created|real|STUB_NO_REPO=true|1|pr-create: base=unresolved root=CLONE|-|0
 ROWS
 
+# 1d. A head that is the base refuses on check 1 whatever the base is named:
+#     a develop one commit past origin/develop passes the ahead count, so
+#     check 1 alone decides the exit.
+git -C "$CLONE" checkout -qb develop origin/develop
+git -C "$CLONE" commit --allow-empty -qm "develop commit E"
+set +e
+out=$(run_pr_create --dry-run --base develop 2>&1)
+rc=$?
+set -e
+assert_eq "$rc" "1" "head equal to a develop base: safety checks fail"
+assert_contains "$out" "Commits-ahead: base=origin/develop count=1" \
+  "head equal to a develop base: the ahead count passes"
+assert_contains "$out" "✗ ERROR: Cannot create PR from the base branch develop into itself" \
+  "head equal to a develop base: check 1 refuses"
+
 # 2. Branch pointing at the origin/main tip has NO commits to submit. Against the
 #    stale local main it would look 2 ahead and wrongly pass; the hard
 #    failure must use the same remote base OID as the count.

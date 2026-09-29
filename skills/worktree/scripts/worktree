@@ -1003,14 +1003,13 @@ resolve_worktree_base_dir() {
 # Layout: project/main (repo) + configured parent dir (worktrees)
 TREES_DIR="$(resolve_worktree_base_dir)"
 
-# The branch new work starts from and merged work is proven against. With
-# the github skill beside this one, its answer: WORKTREE_DEFAULT_BRANCH when
-# set, else the repository's default branch on GitHub. A checkout with no
-# GitHub repository, or no github skill, takes WORKTREE_DEFAULT_BRANCH and
-# then git's record of origin's HEAD, the one answer a remote that is not
-# GitHub gives; git refreshes that record locally, never from the remote.
-# Only the commands that use the branch resolve it, so list, path and the
-# link repairs never wait on GitHub.
+# The branch new work starts from and merged work is proven against:
+# WORKTREE_DEFAULT_BRANCH when set, else the repository's default branch on
+# GitHub, read through the github skill beside this one. With no GitHub
+# repository, no github skill, or a failed GitHub read (a warning), git's
+# record of origin's HEAD answers; git refreshes it locally, never from the
+# remote. Only the commands that use the branch resolve it, so list, path
+# and the link repairs never wait on GitHub.
 DEFAULT_BRANCH=""
 resolve_default_branch() {
   local answer="" rc=0 recorded=""
@@ -1023,9 +1022,8 @@ resolve_default_branch() {
       0) DEFAULT_BRANCH="$answer"; return 0 ;;
       3) ;;
       *)
-        worktree_message default-branch-unreadable "$PROJECT_ROOT" "Error: GitHub did not name the repository's default branch; set WORKTREE_DEFAULT_BRANCH to name it." >&2
+        worktree_message default-branch-unreadable "$PROJECT_ROOT" "Warning: GitHub did not name the repository's default branch; git's record of origin's HEAD answers. Set WORKTREE_DEFAULT_BRANCH to name it." >&2
         sed 's/^/  /' <<<"$answer" >&2
-        return 1
         ;;
     esac
   elif [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then
@@ -1034,7 +1032,7 @@ resolve_default_branch() {
   fi
   recorded="$(git -C "$PROJECT_ROOT" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" || recorded=""
   if [[ "$recorded" != origin/?* ]]; then
-    worktree_message default-branch-unknown "$PROJECT_ROOT" "Error: no GitHub repository names the default branch and git holds no record of origin's HEAD; set WORKTREE_DEFAULT_BRANCH, or run: git -C \"$PROJECT_ROOT\" remote set-head origin --auto" >&2
+    worktree_message default-branch-unknown "$PROJECT_ROOT" "Error: GitHub named no default branch (no GitHub repository, no github skill, or a failed read) and git holds no record of origin's HEAD; set WORKTREE_DEFAULT_BRANCH, or run: git -C \"$PROJECT_ROOT\" remote set-head origin --auto" >&2
     return 1
   fi
   DEFAULT_BRANCH="${recorded#origin/}"
