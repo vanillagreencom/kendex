@@ -158,22 +158,22 @@ assert_contains "$CMD" "&& env COPILOT_HOME='$TMP_ROOT/.1copilot' $COP_WORDS cop
   "a --cmd launch under --lane carries the named account and the launch environment"
 
 # Folder trust rides the caller's own allow-all posture: COPILOT_ALLOW_ALL
-# approves every tool, so a command naming neither --allow-all nor --yolo gets
-# the shared skills alone and keeps its permission prompts.
-SKILLS_ONLY="env COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills'"
+# approves every tool, so a command naming neither --allow-all nor --yolo sets
+# it empty beside the shared skills and keeps its permission prompts.
+SKILLS_ONLY="env COPILOT_ALLOW_ALL= COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills'"
 launch no-allow --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high" cc-752
 assert_contains "$CMD" "&& $SKILLS_ONLY copilot " \
-  "a launch naming no allow-all spelling carries no COPILOT_ALLOW_ALL"
+  "a launch naming no allow-all spelling carries an empty COPILOT_ALLOW_ALL"
 assert_eq "$(grep -c '^open-terminal: permission-prompt ' <<<"$ERR" || true)" "1" \
   "and it still warns that the lane can stop at a permission prompt"
 launch yolo --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high --yolo" cc-753
 assert_contains "$CMD" "&& $COP_ENV copilot " "--yolo, the other full allow-all spelling, carries COPILOT_ALLOW_ALL"
 launch tools-only --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high --allow-all-tools" cc-754
 assert_contains "$CMD" "&& $SKILLS_ONLY copilot " \
-  "the tools-only --allow-all-tools leaves paths and URLs asking, so it carries no COPILOT_ALLOW_ALL"
+  "the tools-only --allow-all-tools leaves paths and URLs asking, so it carries an empty COPILOT_ALLOW_ALL"
 launch cmd-narrow --harness copilot --cmd "copilot --model claude-opus-5 --reasoning-effort high --no-ask-user -i start-{item}" CC-755
 assert_contains "$CMD" "&& $SKILLS_ONLY copilot --model claude-opus-5" \
-  "a --cmd template naming no allow-all spelling carries no COPILOT_ALLOW_ALL"
+  "a --cmd template naming no allow-all spelling carries an empty COPILOT_ALLOW_ALL"
 
 echo "=== a copilot relaunch resumes the session whose record names the lane's worktree ==="
 # session ID DIR STAMP [HOME [EVENTS]] — a session record as Copilot CLI
@@ -288,6 +288,18 @@ assert_eq "$CMD" "copilot --autopilot --max-autopilot-continues 3 --context long
   "the wake resumes the newest session that ran, by its id, its inbox line the value of -p"
 assert_eq "$(cat "$TMP_ROOT/wake.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS=$FLEET_HOME/.agents/skills GH_TOKEN=gh-fixture" \
   "the woken copilot runs under the launch environment and keeps the host's GitHub token"
+# A COPILOT_ALLOW_ALL the launching shell exports never widens a restrictive
+# launch: the woken copilot reads it empty, not true and not unset.
+# restrictive_wake NAME — a wake naming no allow-all spelling, run by the
+# open-terminal in OT, under an exported COPILOT_ALLOW_ALL=true.
+restrictive_wake() {
+  ROW_ENV=(COPILOT_ALLOW_ALL=true)
+  launch "$1" --wake --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high" CC-738
+  ROW_ENV=()
+}
+restrictive_wake wake-restrictive
+assert_eq "$(cat "$TMP_ROOT/wake-restrictive.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL= COPILOT_SKILLS_DIRS=$FLEET_HOME/.agents/skills GH_TOKEN=gh-fixture" \
+  "a restrictive wake under an exported COPILOT_ALLOW_ALL=true runs copilot with it empty"
 launch wake-none --wake --harness copilot --launch-flags "$FLAGS" CC-743
 assert_eq "${CMD:-none} $(grep -c '^open-terminal: session-missing item=CC-743 harness=copilot' <<<"$ERR" || true)" "none 1" \
   "a worktree whose only record holds no events has no session to wake, and nothing starts"
@@ -403,6 +415,13 @@ mutate_file "$TMP_ROOT/allow-ctrl/scripts/lib/lane-launch.sh" '  ! lane_copilot_
 OT="$TMP_ROOT/allow-ctrl/scripts/open-terminal" launch allow-ctrl --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high" cc-752
 assert_contains "$CMD" "&& $COP_ENV copilot " \
   "control: without the allow-all judge a launch naming no allow-all spelling carries COPILOT_ALLOW_ALL"
+# The restrictive path's empty assignment cut: an exported COPILOT_ALLOW_ALL=true
+# reaches the restrictive wake's copilot.
+stage "$TMP_ROOT/allow-empty-ctrl"
+mutate_file "$TMP_ROOT/allow-empty-ctrl/scripts/lib/lane-launch.sh" '  local allow="COPILOT_ALLOW_ALL= "' '  local allow=""'
+OT="$TMP_ROOT/allow-empty-ctrl/scripts/open-terminal" restrictive_wake allow-empty-ctrl
+assert_contains "$(cat "$TMP_ROOT/allow-empty-ctrl.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL=true " \
+  "control: without the empty assignment a restrictive wake inherits the exported COPILOT_ALLOW_ALL=true"
 # The route that hands a wake to the builder cut for the wake alone: the woken
 # copilot runs bare, which the stub's own environment shows.
 stage "$TMP_ROOT/wake-env-ctrl"

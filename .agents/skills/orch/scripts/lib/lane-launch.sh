@@ -1273,10 +1273,13 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
 #                  `true` also trusts the working directory without prompting,
 #                  loading its hooks and skills (`copilot help environment`,
 #                  1.0.88). So it adds folder trust to a posture the caller
-#                  already chose, never tool approval the caller left out; a
-#                  command without either spelling keeps its permission prompts
-#                  and its folder-trust dialog, as open-terminal's
-#                  permission-prompt warning says.
+#                  already chose, never tool approval the caller left out.
+#   COPILOT_ALLOW_ALL=  (empty) on every other CMD, so a COPILOT_ALLOW_ALL the
+#                  launching shell exports never reaches it: a command without
+#                  either spelling keeps its permission prompts and its
+#                  folder-trust dialog, as open-terminal's permission-prompt
+#                  warning says. An assignment a --cmd template writes itself
+#                  follows this one, and wins.
 #   COPILOT_SKILLS_DIRS  the shared skills under HOME, ~/.agents/skills, where
 #                  kendex installs a global skill for Copilot: any COPILOT_HOME
 #                  hides them, and this names them back (measured by
@@ -1288,7 +1291,7 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
 # value is written into a command.
 # Returns 1 where HOME is empty, with nothing to name the skills by.
 lane_copilot_env() { # CMD
-  local allow=""
+  local allow="COPILOT_ALLOW_ALL= "
   [[ -n "${HOME:-}" ]] || return 1
   ! lane_copilot_allows_all "$1" || allow="COPILOT_ALLOW_ALL=true "
   printf '%sCOPILOT_SKILLS_DIRS=%s\n' "$allow" "$(lane_single_quote "$HOME/.agents/skills")"
