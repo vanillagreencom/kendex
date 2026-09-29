@@ -253,7 +253,7 @@ REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"
 # Logins whose review objects at the exact head count as evidence. Empty =
 # any non-author — on repos with outside collaborators, set the list so a
 # drive-by review cannot satisfy the gate.
-REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-request-reviewer[bot];qodo-code-review[bot];chatgpt-codex-connector[bot];bmethod"
+REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-request-reviewer[bot];qodo-code-review[bot];chatgpt-codex-connector[bot];bmethod;vanillagreen-overseer[bot]"
 
 # "any", or "approved" (an APPROVED at head not withdrawn by a later
 # CHANGES_REQUESTED from the same login).
