@@ -12,8 +12,9 @@
 # envelope lost with its connection delivered by the history read of the
 # reconnect, journaled `disconnect` and `reconnect`, a reconnect whose history
 # read Slack refused delivering on a later poll, Slack's `disconnect` envelope
-# answered with a new connection and the doctor row back to `ok`, and a relay
-# that cannot reconnect shown reconnecting. The relay reads Slack's history
+# answered with a new connection and the doctor row back to `ok`, a relay
+# that cannot reconnect shown reconnecting, and a first start whose first poll
+# was refused after its connect seeding on the next start. The relay reads Slack's history
 # only on a connect or after a refused read or delivery, so between them a
 # message lands by its event alone. A positive row waits up to twenty
 # seconds; the `events`, `catch-up`, `re-arm` and `read-due` controls wait
@@ -22,8 +23,9 @@
 # the app token's scope no longer refusing the token, events unread, routing
 # by channel gone, an unbound channel's event routed to the first root, no
 # history read on reconnect, no history read after a refused delivery or a
-# refused read, the thread-age check gone from the event path, and the
-# connection error kept past a reconnect.
+# refused read, the thread-age check gone from the event path, the
+# connection error kept past a reconnect, and a journal of connection lines
+# alone read as seeded.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -227,6 +229,25 @@ assert_has "$(cat "$SK_TMP/relay.err")" "slack: slack-api-failed=conversations.h
 sk_relay_stop
 sk_ctl /_test/faults-reset >/dev/null
 
+# --- a first start refused after its connect: the next start still seeds ---------------------
+# refused_first ROOT — ROOT adopts C888, which holds owner messages from
+# before the binding; a relay connects and its first poll is refused, an
+# owner SLACK_OWNERS adds being unknown to Slack, then a poll with the bound
+# owners follows.
+for n in 1 2 3; do sk_inject C888 U001 "before the binding $n" >/dev/null; done
+refused_first() {
+  sk_run -- setup --root "$1" --take C888
+  relay "$1" SLACK_OWNERS="$OWNERS,nobody@example.test"
+  sk_relay_stop
+  FIRST_LINES="$(jq -r .t "$(sk_journal "$1")" | tr '\n' ' ')"
+  sk_poll "$1"
+}
+MU="$(sk_new_root mu)"
+refused_first "$MU"
+assert_eq "$FIRST_LINES" "connect " "the refused first poll leaves a journal of the connect line alone"
+assert_eq "$RC=$([ ! -f "$(sk_box "$MU")/to-lane.jsonl" ] || texts "$MU")" "0=" "the next start seeds, and the channel's earlier messages are not delivered"
+assert_eq "$(jq -r 'select(.t == "seen" or .t == "start") | .t' "$(sk_journal "$MU")" | tr '\n' ' ')" "seen start " "the next start journals both seeds"
+
 # --- controls, one mutant per rule -------------------------------------------------------------
 sk_mutant ack relay.py 'socket\.send_text\(json\.dumps\(\{"envelope_id": envelope\["envelope_id"\]\}\)\)' 'pass'
 DELTA="$(sk_new_root delta)"
@@ -302,6 +323,13 @@ relay "$BETA"
 OR2="$(sk_inject C002 U001 'late under the old one' "$OLD")"
 assert_eq "$(landed "$BETA" "C002:$OR2")" "late under the old one" "control: the thread-age check gone from events, a reply under the old thread lands"
 sk_relay_stop
+sk_bin_reset
+
+sk_mutant seeded relay.py 'if not self\.state\.seeded:' 'if not __import__("store").journal_exists(self.path):'
+NU="$(sk_new_root nu)"
+refused_first "$NU"
+assert_eq "$(texts "$NU")" "before the binding 1 before the binding 2 before the binding 3 " \
+  "control: any journal read as seeded, the channel's earlier messages are delivered"
 sk_bin_reset
 
 sk_mutant link-clear relay.py 'self\.set_connection\("connected"\)\n        self\.connection_error = ""' 'self.set_connection("connected")'

@@ -39,7 +39,9 @@ def api_for(settings: Settings) -> Slack:
 
 
 def setup(root: Path, name: Optional[str], take: Optional[str]) -> int:
-    settings = load()
+    # The relay a setup restarts starts with SLACK_APP_TOKEN or exits, so a
+    # setup that would restart one refuses without it before anything runs.
+    settings = load(need_app_token=unit_stands())
     api = api_for(settings)
     ids = resolve_owner_ids(api, settings.owners)
     if take:
@@ -86,10 +88,15 @@ def setup(root: Path, name: Optional[str], take: Optional[str]) -> int:
     return 0
 
 
+def unit_stands() -> bool:
+    """Whether the unit `install` wrote stands and systemctl can reach it."""
+    return (unit_dir() / UNIT).is_file() and shutil.which("systemctl") is not None
+
+
 def restart_unit() -> None:
     """A relay reads its settings at start, so a setup restarts the unit
-    `install` wrote, where one stands and systemctl can reach it."""
-    if not (unit_dir() / UNIT).is_file() or shutil.which("systemctl") is None:
+    `install` wrote, where `unit_stands`."""
+    if not unit_stands():
         return
     proc = subprocess.run(["systemctl", "--user", "try-restart", UNIT], check=False)
     if proc.returncode != 0:

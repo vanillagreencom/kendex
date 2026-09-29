@@ -4,9 +4,11 @@
 # daemon-reload, enable and restart that follow and the state read after
 # them, a reinstall over a running unit restarting it on the new roots, the
 # refusals for a missing or failing systemctl, a unit that did not stay
-# active, an unbound root and no root, and `setup` restarting the unit that
-# stands. Two controls, one per rule: a mutant whose ExecStart names no root,
-# and one whose setup no longer restarts the unit.
+# active, an unbound root and no root, `setup` restarting the unit that
+# stands, and `setup` refused with no SLACK_APP_TOKEN while the unit stands.
+# Three controls, one per rule: a mutant whose ExecStart names no root, one
+# whose setup no longer restarts the unit, and one whose setup no longer
+# needs SLACK_APP_TOKEN before a restart.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -50,17 +52,22 @@ assert_eq "$RC=$ERR1" "2=slack: unit-inactive=slack-listen.service state=activat
 
 # --- setup restarts the unit that stands, and only then ----------------------------------
 : > "$LOG"
-sk_run XDG_CONFIG_HOME="$CFG" PATH="$BIN:$PATH" -- setup --root "$ROOT"
+sk_run XDG_CONFIG_HOME="$CFG" PATH="$BIN:$PATH" SLACK_APP_TOKEN="$SK_APP_TOKEN" -- setup --root "$ROOT"
 assert_eq "$RC=$(printf '%s' "$OUT" | sed -n '2p')" "0=slack: restarted=slack-listen.service" "setup prints the unit it restarted"
 assert_eq "$(cat "$LOG")" "--user try-restart slack-listen.service" "setup restarts the installed unit"
 : > "$LOG"
 sk_run XDG_CONFIG_HOME="$SK_TMP/cfg-none" PATH="$BIN:$PATH" -- setup --root "$ROOT"
 assert_eq "$RC=$(cat "$LOG")" "0=" "with no unit installed, setup runs no systemctl"
-sk_run XDG_CONFIG_HOME="$CFG" PATH="$BIN:$PATH" FAKE_SYSTEMCTL_EXIT=1 -- setup --root "$ROOT"
+sk_run XDG_CONFIG_HOME="$CFG" PATH="$BIN:$PATH" SLACK_APP_TOKEN="$SK_APP_TOKEN" FAKE_SYSTEMCTL_EXIT=1 -- setup --root "$ROOT"
 assert_eq "$RC=$ERR1" "2=slack: systemctl-failed=systemctl --user try-restart slack-listen.service exit=1" \
   "a restart systemctl refuses is refused with its exit status"
 assert_eq "$(printf '%s' "$OUT" | sed -n '1p' | cut -d= -f1)=$(printf '%s' "$OUT" | grep -c 'restarted=')" "slack: bound=0" \
   "the binding stands and no restart is claimed"
+# The relay the restart starts would exit on the missing token.
+: > "$LOG"
+sk_run XDG_CONFIG_HOME="$CFG" PATH="$BIN:$PATH" -- setup --root "$ROOT"
+assert_eq "$RC=$ERR1=$(cat "$LOG")" "2=slack: setting-missing=SLACK_APP_TOKEN=" \
+  "with the unit standing and no SLACK_APP_TOKEN, setup is refused before it restarts the unit"
 
 # --- refusals, one row per rule ------------------------------------------------------------
 NOSYS="$(sk_path_without systemctl)"
@@ -85,8 +92,15 @@ sk_bin_reset
 
 sk_mutant restart verbs.py '"try-restart", UNIT' '"is-active", UNIT'
 : > "$LOG"
-sk_run XDG_CONFIG_HOME="$CFG" PATH="$BIN:$PATH" -- setup --root "$ROOT"
+sk_run XDG_CONFIG_HOME="$CFG" PATH="$BIN:$PATH" SLACK_APP_TOKEN="$SK_APP_TOKEN" -- setup --root "$ROOT"
 assert_eq "$(cat "$LOG")" "--user is-active slack-listen.service" "control: the restart replaced, setup restarts nothing"
+sk_bin_reset
+
+sk_mutant app-token verbs.py 'settings = load\(need_app_token=unit_stands\(\)\)' 'settings = load(need_app_token=False)'
+: > "$LOG"
+sk_run XDG_CONFIG_HOME="$CFG" PATH="$BIN:$PATH" -- setup --root "$ROOT"
+assert_eq "$RC=$(cat "$LOG")" "0=--user try-restart slack-listen.service" \
+  "control: SLACK_APP_TOKEN no longer needed, setup restarts the unit into a relay that exits"
 sk_bin_reset
 
 sk_summary

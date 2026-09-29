@@ -26,13 +26,15 @@ OLD_UNMARKED="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400
 OLD_UNMARKED_LOST="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400 + 150))')"
 OLD_AT="$(python3 -c 'import time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 9 * 86400)))')"
 YOUNG_AT="$(python3 -c 'import time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))')"
-# An old ask answered long ago, an old ignored non-owner line, an old bound
+# The first start's `start` line, which compaction keeps, then an old ask
+# answered long ago, an old ignored non-owner line, an old bound
 # notice, an old report's upload and its share, old read receipt marks, an old
 # history position, an old disconnect, an open ask and a young connect: only
-# the open ask and the young connect stay.
+# the start, the open ask and the young connect stay.
 JOURNAL="$(sk_journal "$ROOT")"
 mkdir -p "$(dirname "$JOURNAL")"
 cat > "$JOURNAL" <<EOF
+{"at": "", "ids": [], "t": "start"}
 {"at": "$OLD_AT", "channel": "C001", "id": "ASK-OLD", "kind": "ask", "state": "open", "t": "out", "thread": "$OLD_TS"}
 {"channel": "C001", "id": "ANS-OLD", "kind": "answer", "t": "in", "thread": "$OLD_TS", "ts": "$OLD_REPLY"}
 {"id": "ASK-OLD", "t": "resolved"}
@@ -54,8 +56,8 @@ BEFORE="$(wc -l < "$JOURNAL" | tr -d ' ')"
 sk_run -- compact --root "$ROOT"
 assert_eq "$RC=$OUT" "0=slack: compacted=$ROOT dropped=12" "compact prints the lines it dropped"
 assert_eq "$(jq -r '[.t, (.ts // .id // .at)] | join(":")' "$JOURNAL" | tr '\n' ' ')" \
-  "out:ASK-OPEN connect:$YOUNG_AT in:$YOUNG seen:$YOUNG mark:$YOUNG " \
-  "the open ask, the young connect, the young delivery, its mark and the last position stay; the resolved, ignored, uploaded, marked, superseded and old connection lines go"
+  "start: out:ASK-OPEN connect:$YOUNG_AT in:$YOUNG seen:$YOUNG mark:$YOUNG " \
+  "the start, the open ask, the young connect, the young delivery, its mark and the last position stay; the resolved, ignored, uploaded, marked, superseded and old connection lines go"
 assert_eq "$((BEFORE - $(wc -l < "$JOURNAL" | tr -d ' ')))" "12" "the file shrank by the lines reported"
 NEXT="$(sk_inject C001 U001 'after compaction')"
 sk_poll "$ROOT"

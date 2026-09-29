@@ -64,7 +64,7 @@ def root_dir(root: Path) -> Path:
 @dataclass
 class Binding:
     """The channel one checkout is bound to. `bound_at` is the moment of the
-    binding as a Slack stamp, the history position a start with no journal
+    binding as a Slack stamp, the history position a start with no seeds
     begins from."""
 
     channel: str
@@ -157,6 +157,9 @@ class State:
 
     seen_ts: str = "0"
     start_at: str = ""
+    # Whether a `start` line was replayed, the last line of the first
+    # start's seeds; connection lines alone leave it False.
+    seeded: bool = False
     start_ids: Set[str] = field(default_factory=set)
     held: bool = False
     hold_at: str = ""
@@ -179,6 +182,7 @@ class State:
         elif kind == "start":
             self.start_at = str(line["at"])
             self.start_ids = {str(i) for i in line["ids"]}
+            self.seeded = True
         elif kind == "hold":
             self.held = True
             self.hold_at = str(line["at"])

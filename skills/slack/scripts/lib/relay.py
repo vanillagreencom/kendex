@@ -13,7 +13,7 @@ mailbox posts or a 429 wait past Slack's three seconds is sent again, and
 the journal skips the repeat by its stamp.
 
 An event moves no position. It writes no `seen` or `thread` line; the
-catch-up writes both, and a start with no journal writes the `seen` line of
+catch-up writes both, and a start with no seeds writes the `seen` line of
 the binding moment. The catch-up runs on the first poll after every connect
 and reconnect, and on the next poll after an event whose delivery was
 refused. It reads the
@@ -38,8 +38,8 @@ to-lane.cursor passes it. Each mark is judged from the journal on every
 poll, never from the step that delivered the directive, so a stop between
 the delivery and its mark leaves the mark to the next poll.
 
-A start with no journal seeds both positions before it reads anything: Slack
-from the binding moment, so a channel's earlier history is never delivered,
+A start whose journal holds no `start` line seeds both positions before it
+reads anything: Slack from the binding moment, so a channel's earlier history is never delivered,
 and the mailbox from its newest envelope, so notices and answers already
 there are never re-posted. Open asks are posted whatever their age inside
 SLACK_THREAD_DAYS, since they still want an answer.
@@ -81,7 +81,6 @@ from store import (
     Window,
     compact,
     format_at,
-    journal_exists,
     parse_at,
     read_binding,
     read_journal,
@@ -182,7 +181,6 @@ class RootRelay:
         self.clock = clock
         self.mail = LaneMail(path)
         self.binding = read_binding(path)
-        self.fresh = not journal_exists(path)
         self.state: State = read_journal(path)
         self.journal = Journal(path, self.state)
         self.lock = RelayLock(path)
@@ -217,21 +215,23 @@ class RootRelay:
             write_binding(self.path, self.binding)
 
     def seed(self) -> None:
-        """The positions a start with no journal begins from, journaled so a
+        """The positions a start with no seeds begins from, journaled so a
         restart keeps them: Slack's history past the binding moment, and the
-        mailbox past its newest envelope."""
+        mailbox past its newest envelope. `start` goes last, so a stop
+        between the two lines seeds again."""
         self.journal.append(t="seen", ts=self.binding.bound_at)
         at, ids = newest(self.mail.events())
         self.journal.append(t="start", at=at, ids=ids)
-        self.fresh = False
 
     # -- inbound: Slack to the mailbox --------------------------------------
 
     def ready(self) -> None:
         """What every delivery needs first: the owners as the setting names
-        them, and the seeds of a start with no journal."""
+        them, and the seeds of a start whose journal holds none: a journal
+        of connection lines alone, which a connect writes before the first
+        poll, is not seeded."""
         self.owners_current()
-        if self.fresh:
+        if not self.state.seeded:
             self.seed()
 
     def poll(self, bot_user: str) -> None:

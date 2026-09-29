@@ -141,7 +141,7 @@ Settings go in the project's `kendex.settings.toml` under `[env]` and the tokens
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `SLACK_BOT_TOKEN` | The bot token of the Slack app; private env file or process environment only | unset: Slack is off |
-| `SLACK_APP_TOKEN` | The app-level token (`connections:write`) that opens the relay's Socket Mode connection; private env file or process environment only | unset: `listen` refuses |
+| `SLACK_APP_TOKEN` | The app-level token (`connections:write`) that opens the relay's Socket Mode connection; private env file or process environment only | unset: `listen` refuses, and so does `setup` while the unit `install` wrote stands |
 | `SLACK_OWNERS` | Comma-separated email addresses of those whose messages steer | `KENDEX_USER_EMAIL` |
 | `SLACK_POLL_SECONDS` | Seconds between two reads of each mailbox for posts and receipt marks | `15` |
 | `SLACK_THREAD_DAYS` | Days a thread stays open for replies | `7` |

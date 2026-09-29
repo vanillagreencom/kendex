@@ -16,7 +16,7 @@ What one checkout keeps under `tmp/slack/`. Every file but an owner's own under 
 |-------|-------|
 | `channel` | The Slack channel id the relay reads and posts to |
 | `channel_name` | The channel's name at binding time |
-| `bound_at` | The moment of the binding as a Slack stamp; a start with no journal reads the channel from here |
+| `bound_at` | The moment of the binding as a Slack stamp; a start whose journal holds no `start` line reads the channel from here |
 | `owners` | The `SLACK_OWNERS` list the ids were resolved from |
 | `owner_ids` | Email address to Slack user id, one entry per owner |
 
@@ -28,8 +28,8 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 
 | `t` | Fields | Meaning |
 |-----|--------|---------|
-| `seen` | `ts` | The channel's history is read past this stamp; `compact` keeps the last one. A message event never writes it: a history read does, and so does a start with no journal, which writes the binding moment |
-| `start` | `at`, `ids` | Written by a start with no journal: the mailbox's newest envelope `at` then, or empty with none, and the ids of the envelopes stamped in that second. A notice or answer before it, or in that second and named, is never posted; an open ask is |
+| `seen` | `ts` | The channel's history is read past this stamp; `compact` keeps the last one. A message event never writes it: a history read does, and so does a start whose journal holds no `start` line, which writes the binding moment |
+| `start` | `at`, `ids` | Written by a start whose journal holds no `start` line, after its `seen`, so connection lines alone never count as seeded: the mailbox's newest envelope `at` then, or empty with none, and the ids of the envelopes stamped in that second. A notice or answer before it, or in that second and named, is never posted; an open ask is |
 | `hold` | `at` | `SLACK_MASTER_FILE` turned fresh: no mailbox envelope is posted until the poll that ends the hold, whose posts precede its `resume` line. `at` is the hold's start, the second of the file's mtime the poll that found it fresh read, so a notice stamped in or before that second, one Slack refused among them, posts on the resume whatever the relay's own polls missed. Written on the transition alone; `compact` drops it once a `resume` follows |
 | `resume` | `from_at`, `at`, `asks` | The hold ended. `from_at` is its `hold` line's `at`; `at` its end: the second `SLACK_MASTER_MAX_AGE` past the file's last touch when it went stale, or of the last poll that found it fresh when it is gone. A notice stamped after the start's second and before the end's is never posted; `asks` are the ids of the open asks whose post landed on this resume, journaled after those posts, so one refused or lost there is not named. `compact` drops it once its `at` is older than `SLACK_THREAD_DAYS` |
 | `in` | `channel`, `ts`, `kind`, `id`, `thread` | A Slack message delivered to the mailbox: `kind` is `directive` or `answer`, `id` the envelope it landed as, `thread` the parent stamp it belongs to |
