@@ -4,6 +4,7 @@
 
 ### Unreleased
 
+- A session started below the home directory no longer takes a marked folder above home for its project, so it reads project hooks and settings from the same place kendex renders them. The walk up stops at home; a `.kendex-lock.json` at home still makes home the project.
 - The session-start drift report runs `kendex check --quiet --report-only`, so a session start no longer writes the project's `.kendex-lock.json` on any branch; a render the record has no row for is reported with its path and hashes, or the settings file a registration sits in, instead. It needs a kendex that knows the flag: an older one is reported as a check that could not run.
 - A global hook whose kendex declaration sets an `env` table is still recognised as the rendered hook it is once kendex resolves `bash` ahead of that environment, so a declared `PATH` no longer stops the hook from starting.
 - A `Stop` payload now carries `context_window`, the context window of the session's model as Pi reports it, where Pi reports a whole one. A turn-end hook can judge a session against its own window, which Pi's session file never names; orch's `lane-mail-check` hands a Pi lane off at a share of it.

@@ -65,9 +65,14 @@ pub fn may_be_a_project_root(dir: &Path, home: &Path) -> bool {
     dir != home.canonicalize().unwrap_or_else(|_| home.to_path_buf())
 }
 
-/// Current-project resolution: walk up from `start`; a `.kendex-lock.json`
-/// wins even at the home directory, otherwise the first directory carrying
-/// a harness marker — refusing home itself.
+/// Current-project resolution: walk up from `start` and stop at the home
+/// directory. A `.kendex-lock.json` wins, home's own included; otherwise
+/// the first directory below home carrying a harness marker.
+///
+/// Home is the boundary for the reason [`may_be_a_project_root`] refuses
+/// it: a project above home holds home, and with it the personal scope's
+/// own directories. So a marker above home never answers for a start
+/// below it. A start outside home walks to the filesystem root.
 ///
 /// The walk and the `home` test run in `std::fs::canonicalize`'s spelling,
 /// and `paths::reduced` speaks only for the answer. Reducing each end
@@ -83,7 +88,10 @@ pub fn project_root_from(start: &Path, home: &Path) -> Option<PathBuf> {
         if dir.join(crate::lock::LOCK_FILE).is_file() {
             return Some(crate::paths::reduced(dir));
         }
-        if may_be_a_project_root(dir, &home) && is_project(dir) {
+        if !may_be_a_project_root(dir, &home) {
+            return None;
+        }
+        if is_project(dir) {
             return Some(crate::paths::reduced(dir));
         }
         current = dir.parent();
@@ -350,23 +358,34 @@ mod tests {
         }
     }
 
+    /// The walk up from each start, and where it stops. The directory
+    /// above home carries `.claude` and `.agents`, the way a real home
+    /// does when `TMPDIR` sits inside it: a walk from below home that
+    /// climbed past it would answer with that directory, and only the
+    /// start outside home does.
     #[test]
-    fn project_root_walks_up_and_lock_file_wins_at_home() {
+    fn project_root_walks_up_to_home_and_lock_file_wins_at_home() {
         let app = "home/dev/app";
         let markers = ["kendex.toml", "../.kendex-lock.json"];
         for (start, marker_dir, files, expected) in [
-            ("home/dev/app/src/nested", ".claude", &[][..], app),
-            ("home/dev", "sub", &[][..], ""),
-            ("home/dev", "sub", &["../../.kendex-lock.json"][..], "home"),
-            ("home/dev/app/sub", "sub", &markers[..], app),
-            ("home/dev/app/sub", "sub", &markers[1..], "home/dev"),
+            ("home/dev/app/src/nested", ".claude", &[][..], Some(app)),
+            ("home/dev", "sub", &[][..], None),
+            ("home", "sub", &[][..], None),
+            ("outside/deep", "sub", &[][..], Some("")),
+            (
+                "home/dev",
+                "sub",
+                &["../../.kendex-lock.json"][..],
+                Some("home"),
+            ),
+            ("home/dev/app/sub", "sub", &markers[..], Some(app)),
+            ("home/dev/app/sub", "sub", &markers[1..], Some("home/dev")),
         ] {
             let tmp = tempfile::tempdir().unwrap();
             let root = crate::test_util::rooted(&tmp);
             let home = root.join("home");
-            // The private ancestor catches a walk past home before any
-            // real marker above the fixture can decide the answer.
             fs::create_dir_all(root.join(".claude")).unwrap();
+            fs::create_dir_all(root.join(".agents")).unwrap();
             fs::create_dir_all(home.join(".claude")).unwrap();
             fs::create_dir_all(root.join(app).join(marker_dir)).unwrap();
             fs::create_dir_all(root.join(start)).unwrap();
@@ -375,7 +394,7 @@ mod tests {
             }
             assert_eq!(
                 project_root_from(&root.join(start), &home),
-                Some(root.join(expected)),
+                expected.map(|dir| root.join(dir)),
                 "{start}, marker_dir={marker_dir}, files={files:?}",
             );
         }

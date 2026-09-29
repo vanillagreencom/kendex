@@ -131,33 +131,14 @@ fn skipped(reason: &str) {
     eprintln!("skipped: {reason}");
 }
 
-/// A folder under the fixture with no project anywhere above it, or
-/// nothing where this machine cannot offer one.
-///
-/// The rule is the binary's own, asked before the binary runs. A temporary
-/// directory that sits inside somebody's project — which is where a
-/// `TMPDIR` under a checkout puts it — makes the walk resolve that project,
-/// and an install would then write into it. `env -u TMPDIR` is what these
-/// cases are validated under, and the check is what stops a fixture from
-/// installing into a stranger's repository where they are not.
+/// A folder under the fixture home with no project in it. The walk up
+/// from it stops at that home, so no directory above the fixture, a
+/// `TMPDIR` inside a checkout or inside a real home, can answer for it.
 #[allow(clippy::unwrap_used)]
-fn fresh_folder(home: &Path, rel: &str) -> Option<PathBuf> {
+fn fresh_folder(home: &Path, rel: &str) -> PathBuf {
     let folder = home.join(rel);
     fs::create_dir_all(&folder).unwrap();
-    match kendex_core::discover::project_root_from(&folder, home) {
-        None => Some(folder),
-        // Said where it happens: a case that ended here asserted nothing,
-        // and a silent pass reads exactly like one that ran.
-        Some(above) => {
-            skipped(&format!(
-                "{} resolves the project {} above the fixture, so an install here would write \
-                 into it — re-run with `env -u TMPDIR`",
-                folder.display(),
-                above.display()
-            ));
-            None
-        }
-    }
+    folder
 }
 
 /// The install that reaches the registry, in the form every case here uses.
@@ -184,9 +165,7 @@ fn install(home: &Path, cwd: &Path, catalog: &Path) -> Output {
 #[allow(clippy::unwrap_used)]
 fn a_fresh_folder_is_the_destination_and_lands_on_the_projects_list() {
     let (_tmp, home, catalog) = world();
-    let Some(fresh) = fresh_folder(&home, "dev/vsys-view") else {
-        return;
-    };
+    let fresh = fresh_folder(&home, "dev/vsys-view");
 
     let output = install(&home, &fresh, &catalog);
 
@@ -245,9 +224,7 @@ fn a_repeat_install_is_a_success_with_one_entry_still_on_the_list() {
 #[allow(clippy::unwrap_used)]
 fn a_set_registers_its_destination_the_way_a_package_does() {
     let (_tmp, home, catalog) = world();
-    let Some(fresh) = fresh_folder(&home, "dev/fresh") else {
-        return;
-    };
+    let fresh = fresh_folder(&home, "dev/fresh");
 
     run(
         &home,
@@ -333,9 +310,7 @@ fn a_global_install_registers_nothing() {
 #[allow(clippy::unwrap_used)]
 fn a_refused_install_leaves_no_project_and_no_files() {
     let (_tmp, home, catalog) = world();
-    let Some(fresh) = fresh_folder(&home, "dev/fresh") else {
-        return;
-    };
+    let fresh = fresh_folder(&home, "dev/fresh");
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".agents")).unwrap();
 
@@ -376,9 +351,7 @@ fn a_refused_install_leaves_no_project_and_no_files() {
 #[allow(clippy::unwrap_used)]
 fn a_registry_that_refuses_after_the_files_landed_names_both_and_the_retry() {
     let (_tmp, home, catalog) = world();
-    let Some(fresh) = fresh_folder(&home, "dev/fresh") else {
-        return;
-    };
+    let fresh = fresh_folder(&home, "dev/fresh");
     // The settings write takes an exclusive lock on a file beside the
     // settings file. A directory in its place cannot be opened, so the
     // registration fails and nothing else in the run does.
@@ -412,18 +385,6 @@ fn an_install_typed_at_home_is_refused_and_leaves_home_alone() {
     // Home carries a harness directory, which is the ordinary state and
     // the one the walk above refuses as a project root.
     assert!(home.join(".claude").is_dir());
-    // Asked of the ground above the fixture, never of home itself: the
-    // home rule is what this case is about, so a guard that consulted it
-    // would end the case exactly where the rule had gone missing.
-    let above = home.parent().unwrap();
-    if let Some(found) = kendex_core::discover::project_root_from(above, &home) {
-        skipped(&format!(
-            "the project {} sits above the fixture home — re-run with `env -u TMPDIR`",
-            found.display()
-        ));
-        return;
-    }
-
     let refused = install(&home, &home, &catalog);
     let text = said(&refused);
 
@@ -446,9 +407,7 @@ fn an_install_typed_at_home_is_refused_and_leaves_home_alone() {
 #[allow(clippy::unwrap_used)]
 fn an_installer_that_fails_still_leaves_the_folder_on_the_projects_list() {
     let (_tmp, home, catalog) = world();
-    let Some(fresh) = fresh_folder(&home, "dev/fresh") else {
-        return;
-    };
+    let fresh = fresh_folder(&home, "dev/fresh");
     // A repository effect names what it writes under `.git`, so the
     // disclosure resolves a git directory before it offers anything.
     git(&fresh, &["init", "--quiet", "-b", "main"]);
@@ -491,9 +450,7 @@ fn an_installer_that_fails_still_leaves_the_folder_on_the_projects_list() {
 #[allow(clippy::unwrap_used)]
 fn a_registry_refusal_beside_an_installer_failure_keeps_its_own_lines() {
     let (_tmp, home, catalog) = world();
-    let Some(fresh) = fresh_folder(&home, "dev/fresh") else {
-        return;
-    };
+    let fresh = fresh_folder(&home, "dev/fresh");
     git(&fresh, &["init", "--quiet", "-b", "main"]);
     declare_a_failing_installer(&catalog);
     let mut lock = settings_file(&home).into_os_string();

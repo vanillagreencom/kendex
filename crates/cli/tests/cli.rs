@@ -814,8 +814,10 @@ fn every_writing_verb_prints_the_score_beside_the_write() {
 fn a_global_source_verb_runs_outside_every_project_and_a_scoped_one_refuses() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
-    let outside = tempfile::tempdir().unwrap();
-    let elsewhere = rooted(&outside);
+    // Under the fixture home, where the walk up stops: a folder beside it
+    // would climb into whatever holds the temporary directory.
+    let elsewhere = home.join("elsewhere");
+    fs::create_dir_all(&elsewhere).unwrap();
     for (args, passes) in [
         (&["--global", "source", "refresh"][..], true),
         (&["source", "refresh", "--global"], true),

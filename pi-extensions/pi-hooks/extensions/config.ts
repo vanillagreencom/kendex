@@ -93,10 +93,11 @@ function realpathOrResolve(path: string): string {
 /**
  * The project this session is in, or `undefined` where it is in none —
  * `crates/core/src/discover.rs::project_root_from`, which is what kendex asks
- * before it renders anything: a `.kendex-lock.json` wins wherever it stands,
- * home included, otherwise the nearest ancestor carrying a marker directory,
- * and home itself is not a project however else it is marked. Home carries
- * `.pi/` for nearly everyone, and Pi's own global root lives inside it.
+ * before it renders anything: the walk stops at home, a `.kendex-lock.json`
+ * wins, home's own included, otherwise the nearest ancestor below home carrying
+ * a marker directory. Home itself is not a project however else it is marked,
+ * and nothing above it answers for a start below it. Home carries `.pi/` for
+ * nearly everyone, and Pi's own global root lives inside it.
  *
  * Walking rather than taking `cwd` is what makes a session started in a
  * subdirectory read the same settings and run the same guards as one at the
@@ -108,9 +109,8 @@ export function projectRoot(cwd: string): string | undefined {
 	let current: string | undefined = realpathOrResolve(cwd);
 	while (current !== undefined) {
 		if (isFile(join(current, PROJECT_LOCK_FILE))) return current;
-		if (current !== home && PROJECT_MARKER_DIRS.some((marker) => isDir(join(current as string, marker)))) {
-			return current;
-		}
+		if (current === home) return undefined;
+		if (PROJECT_MARKER_DIRS.some((marker) => isDir(join(current as string, marker)))) return current;
 		const parent = dirname(current);
 		current = parent === current ? undefined : parent;
 	}

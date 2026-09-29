@@ -80,16 +80,17 @@ fn a_debug_build_writes_to_the_dev_home_not_the_one_it_was_given() {
 }
 
 /// A sandbox moves where this build writes, not where the person lives.
-/// Discovery walks up from the cwd and refuses to call the home itself a
-/// project; hand it the sandbox home instead and the real home stops being
-/// that boundary, so a `~/.claude` is all it takes for the home to look
-/// like a project and take every project write.
+/// Discovery walks up from the cwd and stops at the home, refusing to call
+/// it a project; hand it the sandbox home instead and the real home stops
+/// being that boundary, so a `~/.claude` is all it takes for the home to
+/// look like a project and take every project write.
 #[test]
 fn a_sandboxed_build_still_knows_the_real_home_is_not_a_project() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let project = test_util::rooted(&tmp);
     let home = project.join("home");
-    // A private ancestor catches the walk after it skips home, before it can reach the host.
+    // A private ancestor with a project of its own: a walk that climbed
+    // past home would install into it, before it could reach the host.
     std::fs::create_dir_all(project.join(".claude")).expect("ancestor marker");
     std::fs::create_dir_all(project.join("catalog/skills/ancestor")).expect("catalog skill");
     let skill = "---\nname: ancestor\ndescription: fixture skill\n---\nUse the ancestor project.\n";
@@ -115,14 +116,14 @@ fn a_sandboxed_build_still_knows_the_real_home_is_not_a_project() {
         .output()
         .expect("run kendex");
 
+    assert!(!out.status.success(), "{out:?}");
     assert!(
-        out.status.success(),
-        "the private ancestor was not selected: {out:?}"
+        String::from_utf8_lossy(&out.stderr).contains("not inside a project"),
+        "{out:?}"
     );
-    assert_eq!(
-        std::fs::read_to_string(project.join(".claude/skills/ancestor/SKILL.md"))
-            .expect("the ancestor project received its declared skill"),
-        skill
+    assert!(
+        !project.join(".claude/skills/ancestor").exists(),
+        "the walk climbed past the real home into the project above it"
     );
     assert!(
         !home.join("kendex.toml").exists(),

@@ -100,8 +100,9 @@ describe("pi-hooks root selection", () => {
 	// Pi's global root lives under home, so a marker there must not make home the
 	// project: that would spawn ~/.pi/kendex/hooks/<name>.sh, which kendex never
 	// renders, and merge ~/.pi/settings.json over the kendex global scope. The
-	// lock file is the one exception, and the renderer's exception too.
-	test("home markers yield to an ancestor, and a home lock overrides it", () => {
+	// walk stops at home, so a marked directory above it does not answer either.
+	// The lock file is the one exception, and the renderer's exception too.
+	test("the walk stops at home, and a home lock answers", () => {
 		const outer = mkdtempSync(join(tmpdir(), "pi-hooks-home-"));
 		const real = join(outer, "home");
 		mkdirSync(real);
@@ -116,8 +117,8 @@ describe("pi-hooks root selection", () => {
 			// dereference symlinks, so a spelling comparison would miss on any
 			// machine whose home path carries one.
 			for (const home of [real, link]) {
-				expect(projectRootUnder(home, join(home, "notes"))).toBe(realpathSync(outer));
-				expect(projectRootUnder(home, home)).toBe(realpathSync(outer));
+				expect(projectRootUnder(home, join(home, "notes"))).toBeNull();
+				expect(projectRootUnder(home, home)).toBeNull();
 			}
 
 			// The lock file wins wherever it stands, home included — the renderer's
