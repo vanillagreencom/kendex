@@ -283,7 +283,7 @@ Running:
 
 Validation:
 - KEN-2: no validation run recorded
-- KEN-3: 60 min over 2 rounds: implement full 55, fix range 5
+- KEN-3: 60 min over 2 runs: implement full 55, fix range 5
 
 Next:
 | issue | what it is | why it matters |
@@ -298,7 +298,7 @@ Waiting on you:
 - KEN-2 waits on red checks on #12: test, lint
 - KEN-3 waits on a stopped review gate, review-round-cap: one unresolved review thread"
 assert_eq "$RC|$OUT" "0|$WANT" \
-  "Landed holds only the fleet item merged since the last report, Running each live, preparing or parked lane with its PR, the parked one's from its record, Validation each running lane's minutes in total and per round, Next the queue, Waiting on you the open owner ask with its recommendation and deadline then each running lane's blockers"
+  "Landed holds only the fleet item merged since the last report, Running each live, preparing or parked lane with its PR, the parked one's from its record, Validation each running lane's minutes in total and per run, Next the queue, Waiting on you the open owner ask with its recommendation and deadline then each running lane's blockers"
 
 echo "=== render: Waiting on you reads the overseer mailbox and nothing else ==="
 seed_fleet owner_asks_mail
@@ -580,7 +580,7 @@ mkdir -p "$CASE/host/w/KEN-7" "$CASE/host/clone/tmp"
 echo "gitdir: /clone/.git/worktrees/KEN-7" > "$CASE/host/w/KEN-7/.git"
 echo '{"validate_rounds": [{"round_id": "r1", "kind": "implement", "mode": "full", "seconds": 89}]}' > "$CASE/host/clone/tmp/workflow-state-KEN-7.json"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(awk '/^Validation/ { on = 1; next } on && /^$/ { on = 0 } on' <<<"$OUT")" "0|- KEN-7: 1 min over 1 round: implement full 1" \
+assert_eq "$RC|$(awk '/^Validation/ { on = 1; next } on && /^$/ { on = 0 } on' <<<"$OUT")" "0|- KEN-7: 1 min over 1 run: implement full 1" \
   "a hosted lane's validation minutes are read from the clone its worktree's .git names"
 echo '{"validate_rounds": [{"round_id": "r1", "kind": "implement", "mode": "full", "seconds": "89"}]}' > "$CASE/host/clone/tmp/workflow-state-KEN-7.json"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
@@ -605,7 +605,7 @@ MARK="- KEN-8 mailbox unreadable (mail-read=KEN-8): lane-mail: host-unreachable=
 run -- render --state "$CASE/state.json" --repo owner/repo
 ROW10='| KEN-10 (#14, parked) | Title 10 | Outcome 10 \| kept |'
 ROW8='| KEN-8 (no PR, running) | Title 8 | Outcome 8 \| kept |'
-VAL3='- KEN-3: 60 min over 2 rounds: implement full 55, fix range 5'
+VAL3='- KEN-3: 60 min over 2 runs: implement full 55, fix range 5'
 VAL8='- KEN-8: validation unread, its host unreachable'
 WANT8="$(row10="$ROW10" row8="$ROW8" val3="$VAL3" val8="$VAL8" awk '{ print }
   $0 == ENVIRON["row10"] { print ENVIRON["row8"] } $0 == ENVIRON["val3"] { print ENVIRON["val8"] }' <<<"$WANT")"

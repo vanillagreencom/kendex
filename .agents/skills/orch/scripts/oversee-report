@@ -506,7 +506,7 @@ table() {
 # post-PR stop its state records, and red checks on its open pull request.
 # Each line names the item and what it waits on, so it reads apart from a
 # question for the user. VALIDATION gets one line per lane: the minutes its
-# recorded validation runs took, in total and per round.
+# recorded validation runs took, in total and per dev round or restack.
 BLOCKERS=""
 VALIDATION=""
 running_lanes() {
@@ -574,7 +574,7 @@ running_lanes() {
     elif ! minutes="$(jq -r --arg item "$item" 'def min: (. + 30) / 60 | floor;
       (if . == null then [] else .validate_rounds // [] end) as $rounds
       | if ($rounds | length) == 0 then "- \($item): no validation run recorded"
-        else "- \($item): \([$rounds[].seconds] | add | min) min over \($rounds | length) round\(if ($rounds | length) == 1 then "" else "s" end): \([$rounds[] | "\(.kind) \(.mode) \(.seconds | min)"] | join(", "))"
+        else "- \($item): \([$rounds[].seconds] | add | min) min over \($rounds | length) run\(if ($rounds | length) == 1 then "" else "s" end): \([$rounds[] | "\(.kind) \(.mode) \(.seconds | min)"] | join(", "))"
         end' <<<"${LANE_ITEM_STATE:-null}" 2>"$WORK_DIR/state.err")"; then
       refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
     fi

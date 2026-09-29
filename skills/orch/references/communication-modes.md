@@ -107,7 +107,7 @@ What do you want to work on? Reply with issue ids or describe it, or answer trac
 ```text
 Landed: [WHAT SHIPPED AND WHAT IT CHANGES FOR THE USER]
 Running: [WHAT IS IN FLIGHT AND WHEN IT LANDS]
-Validation: [EACH RUNNING LANE: MINUTES SPENT VALIDATING, IN TOTAL AND PER ROUND]
+Validation: [EACH RUNNING LANE: MINUTES SPENT VALIDATING, IN TOTAL AND PER ROUND OR RESTACK]
 Next: [WHAT STARTS AFTER THAT]
 Waiting on you: [EACH OPEN QUESTION, OR none]
 ```
