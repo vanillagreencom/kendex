@@ -105,11 +105,10 @@ class Thread:
 
 @dataclass
 class Window:
-    """One closed master hold, as two mailbox floors: a notice past the
-    first and at or before the second was written during it."""
+    """One closed master hold: from the second of SLACK_MASTER_FILE's mtime
+    its first poll read, to a mailbox floor as a `start` line records one."""
 
     from_at: str
-    from_ids: Set[str]
     at: str
     ids: Set[str]
 
@@ -123,7 +122,6 @@ class State:
     start_ids: Set[str] = field(default_factory=set)
     held: bool = False
     hold_at: str = ""
-    hold_ids: Set[str] = field(default_factory=set)
     holds: List[Window] = field(default_factory=list)
     carried: Set[str] = field(default_factory=set)
     delivered: Dict[str, str] = field(default_factory=dict)
@@ -144,11 +142,9 @@ class State:
         elif kind == "hold":
             self.held = True
             self.hold_at = str(line["at"])
-            self.hold_ids = {str(i) for i in line["ids"]}
         elif kind == "resume":
             self.held = False
-            from_ids = {str(i) for i in line["from_ids"]}
-            self.holds.append(Window(str(line["from_at"]), from_ids, str(line["at"]), {str(i) for i in line["ids"]}))
+            self.holds.append(Window(str(line["from_at"]), str(line["at"]), {str(i) for i in line["ids"]}))
         elif kind == "in":
             ts = str(line["ts"])
             if line["kind"] == "ignored":

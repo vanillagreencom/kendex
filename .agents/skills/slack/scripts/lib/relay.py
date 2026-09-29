@@ -15,9 +15,11 @@ SLACK_THREAD_DAYS, since they still want an answer.
 While SLACK_MASTER_FILE is younger than SLACK_MASTER_MAX_AGE a master session
 answers the overseer, and the relay posts no envelope from the mailbox;
 reading the channel and replying there go on. When the file goes stale or
-absent the relay resumes: a notice written during the hold never posts, one
-written before or after it does, open asks post, and a held answer still
-posts so the thread of an ask the channel shows open is closed.
+absent the relay resumes: a notice written after the file's mtime the hold's
+first poll read and before the hold ended never posts, any other does, open
+asks post, and a held answer still posts so the thread of an ask the channel
+shows open is closed. Neither end comes from what the relay posted, so a gap
+in its polls can post a notice the master saw, never drop one it did not.
 """
 
 from __future__ import annotations
@@ -103,8 +105,9 @@ def before(floor_at: str, floor_ids: Set[str], at: float, env_id: str) -> bool:
 
 
 def within(window: Window, at: float, env_id: str) -> bool:
-    """Whether an envelope stamped `at` was written during a closed hold."""
-    return not before(window.from_at, window.from_ids, at, env_id) and before(window.at, window.ids, at, env_id)
+    """Whether an envelope stamped `at` was written during a closed hold: in a
+    later second than its start and at or before its end."""
+    return at > at_epoch(window.from_at) and before(window.at, window.ids, at, env_id)
 
 
 def mention(binding: Binding) -> str:
@@ -131,13 +134,8 @@ class RootRelay:
         record = read_status(path) or {}
         self.polls = int(record.get("polls", 0))
         self.compacted_day: str = str(record.get("compacted_day", ""))
-        # A hold's two ends as this relay saw them: the mailbox's newest
-        # envelope at the last poll that posted, and the clock at the last
-        # poll that found SLACK_MASTER_FILE fresh. None when unknown.
-        posted_at = record.get("posted_at")
-        self.posted: Optional[Tuple[str, List[str]]] = (
-            None if posted_at is None else (str(posted_at), [str(i) for i in record.get("posted_ids", [])])
-        )
+        # The clock at the last poll that found SLACK_MASTER_FILE fresh, the
+        # end of a hold whose file is gone; None when unknown.
         seen = record.get("master_seen")
         self.master_seen: Optional[float] = None if seen is None else float(seen)
 
@@ -179,13 +177,11 @@ class RootRelay:
         if touched is not None and now - touched < self.settings.master_max_age:
             self.master_seen = now
             if not self.state.held:
-                at, ids = self.posted if self.posted is not None else newest(self.mail.events())
-                self.journal.append(t="hold", at=at, ids=ids)
+                self.journal.append(t="hold", at=format_at(touched))
         else:
             events = self.mail.events()
             if self.state.held:
                 self.resume(events, touched)
-            self.posted = newest(events)
             self.post_events(events)
         if self.post_failed is not None:
             raise self.post_failed
@@ -284,7 +280,7 @@ class RootRelay:
 
     def resume(self, events: List[Dict], touched: Optional[float]) -> None:
         """The end of a hold, journaled as the window no notice posts from:
-        past the hold's floor, up to when the hold ended. A stale file ended
+        past the hold's start, up to when the hold ended. A stale file ended
         it SLACK_MASTER_MAX_AGE after its last touch, an absent one at the
         last poll that found it fresh; a time names no ids, so a notice in
         that second posts. With neither known, the mailbox's newest envelope
@@ -296,8 +292,7 @@ class RootRelay:
         else:
             at, ids = newest(events)
         asks = [str(e["id"]) for e, route in self.routes(events) if route == "ask"]
-        from_ids = sorted(self.state.hold_ids)
-        self.journal.append(t="resume", from_at=self.state.hold_at, from_ids=from_ids, at=at, ids=ids, asks=asks)
+        self.journal.append(t="resume", from_at=self.state.hold_at, at=at, ids=ids, asks=asks)
 
     def routes(self, events: List[Dict]) -> List[Tuple[Dict, str]]:
         """Each envelope not yet carried and what it takes: `ask`, `notice`,
@@ -469,8 +464,6 @@ class RootRelay:
                 "calls_last_minute": self.api.calls_last_minute(),
                 "budget_per_minute": round(self.budget_per_minute(), 1),
                 "held_by": MASTER if self.state.held else "",
-                "posted_at": None if self.posted is None else self.posted[0],
-                "posted_ids": [] if self.posted is None else self.posted[1],
                 "master_seen": self.master_seen,
             },
         )
