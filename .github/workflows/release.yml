@@ -150,12 +150,11 @@ jobs:
       # GitHub's macOS runners after the app is built, signed and
       # notarized; one lost lane skips the main-channel publish. A failure
       # tauri reports as `error running bundle_dmg.sh` bundles once more;
-      # any other failure, or a second one, fails the step. Every macOS
-      # log names bundle_dmg.sh in its `Running bundle_dmg.sh` line, so
-      # only the error line tells the failure apart. The first attempt's
-      # output stays in the job log. Its bundle directory is removed first:
-      # a failed bundle_dmg.sh leaves its rw.<pid>.*.dmg scratch image
-      # there, and staging would publish it beside the real DMG.
+      # any other failure, or a second one, fails the step. The first
+      # attempt's output stays in the job log. Its bundle directory is
+      # removed first: a failed bundle_dmg.sh leaves its rw.<pid>.*.dmg
+      # scratch image there, and staging would publish it beside the real
+      # DMG.
       - name: Bundle the desktop app
         run: |
           log="$RUNNER_TEMP/tauri-build.log"
