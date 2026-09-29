@@ -92,8 +92,10 @@ format_issues_list() {
 # Output: Flat object (not wrapped in {issue: ...}). A response carrying
 # syncedWith, which the live `issues get` asks for and the cache never holds,
 # adds github_sync: the GitHub issues Linear's GitHub sync links the issue to,
-# each as OWNER/REPO#N. A read without it, the cache's, has no github_sync
-# rather than an empty one it cannot vouch for.
+# each as owner/repo#N, lowercased: GitHub reads owner and repository names
+# case-insensitively, and oversee-watch keys each --repo lowercased. A read
+# without it, the cache's, has no github_sync rather than an empty one it
+# cannot vouch for.
 format_issue_single() {
     local raw="$1"
     echo "$raw" | jq "$ISSUE_RELATION_JQ"'{
@@ -125,7 +127,8 @@ format_issue_single() {
         url: (.issue.url // "")
     } + (if (.issue | has("syncedWith")) then {
         github_sync: [(.issue.syncedWith // [])[] | (.metadata // {})
-            | select(.owner and .repo and .number) | "\(.owner)/\(.repo)#\(.number)"]
+            | select(.owner and .repo and .number)
+            | "\(.owner | ascii_downcase)/\(.repo | ascii_downcase)#\(.number)"]
     } else {} end)'
 }
 

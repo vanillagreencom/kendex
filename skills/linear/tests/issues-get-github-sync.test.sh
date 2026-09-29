@@ -11,6 +11,10 @@ source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 assert_tmpdir TMP_ROOT
 
+# GIT_DIR outranks -C, so where it is inherited `git -C "$TMP_ROOT" init` below
+# re-inits the ambient repository. All four go, per skills/AGENTS.md.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/.cache/linear"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 git -C "$TMP_ROOT" init -q -b main
@@ -52,6 +56,7 @@ while IFS='|' read -r label synced expected; do
   assert_jq "$label" "$(run_live "$fixture" issues get KEN-1)" ".github_sync == $expected"
 done <<'ROWS'
 a synced mirror names its GitHub issue|[{"metadata":{"owner":"vanillagreencom","repo":"kendex","number":3130}}]|["vanillagreencom/kendex#3130"]
+a mixed-case sync names its GitHub issue lowercased|[{"metadata":{"owner":"Acme","repo":"Tool","number":12}}]|["acme/tool#12"]
 an issue with no sync names none|[]|[]
 a sync to another service names none|[{"metadata":{}},{"metadata":null}]|[]
 ROWS
