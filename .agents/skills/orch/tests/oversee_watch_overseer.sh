@@ -443,7 +443,7 @@ WATCH_BIN="$ROWSREC_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1 --
 assert_eq "$(recorded session_rows)" "none" "control: a start that drops the field records no rows file" "$ERR"
 STARTREC_CTL="$(mutant_scripts startrec-ctl/orch lib/watch-overseer-record.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/startrec-ctl/github"
-mutate_file "$STARTREC_CTL/lib/watch-overseer-record.sh" 'server_start: ($start | ol_server_start)})' 'server_start: null})'
+mutate_file "$STARTREC_CTL/lib/watch-overseer-record.sh" 'server_start: ($start | tonumber)})' 'server_start: null})'
 overseer_case record_first_start_mutant idle
 printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
 printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
@@ -511,6 +511,7 @@ keeps_generation_run() { # NAME [WATCH_BIN]
       server_start: 1790000000, pending: {launch_line: "pending", account: "/home/me/.eclaude"}}}' \
     > "$STUB_DIR/oversee-state.json"
   printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+  [[ -z "${START_FAIL:-}" ]] || touch "$STUB_DIR/start-fail-$PANE"
   WATCH_BIN="${2:-}" run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
 }
 keeps_generation_run record_keeps_generation
@@ -520,6 +521,24 @@ assert_eq "runtime=$(recorded runtime) generation=$(recorded generation) account
 assert_eq "harness=$(recorded harness) home=$(recorded home) model=$(recorded model) effort=$(recorded effort) cwd=$(recorded cwd) pending=$(recorded pending)" \
   "harness=claude home=/home/me/.claude model=fable effort=high cwd=/home/me/kendex pending=none" \
   "and keeps its launch identity, dropping a pending successor as it replaces the line" "$ERR"
+# A start whose server start cannot be read writes nothing: judged as no
+# start, this pane's own bound record would read as another session's and
+# lose its generation and launch identity.
+START_FAIL=1 keeps_generation_run record_start_unread
+assert_eq "generation=$(recorded generation) harness=$(recorded harness) line=$(recorded launch_line) pending=$(recorded pending | jq -r .launch_line) notice=$(grep -c "^oversee-watch: overseer-unrecorded pane=$PANE step=server-start held=unread\$" "$ERR")" \
+  "generation=3 harness=claude line=old pending=pending notice=1" \
+  "a start whose server start cannot be read leaves the record as it stood and says so" "$ERR"
+# Its control: a start that takes an unread start as none drops this pane's
+# generation and launch identity.
+UNREADSTART_CTL="$(mutant_scripts unreadstart-ctl/orch lib/watch-overseer-record.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/unreadstart-ctl/github"
+mutate_file "$UNREADSTART_CTL/lib/watch-overseer-record.sh" \
+  '  if ! start="$(ol_session_start "$server" "$pane")"; then' '  if ! start="$(ol_session_start "$server" "$pane")" && false; then'
+mutate_file "$UNREADSTART_CTL/lib/watch-overseer-record.sh" \
+  'server_start: ($start | tonumber)})' 'server_start: (if $start == "" then null else $start | tonumber end)})'
+START_FAIL=1 keeps_generation_run record_start_unread_mutant "$UNREADSTART_CTL/oversee-watch"
+assert_eq "generation=$(recorded generation) harness=$(recorded harness)" "generation=none harness=none" \
+  "control: a start that takes an unread start as none drops this pane's generation and launch identity" "$ERR"
 # The record `oversee register` wrote before it recorded a launch identity
 # (2568a672^:skills/orch/scripts/oversee): runtime, server, window, generation,
 # account and pane, with no harness and no home. It takes the account as its
@@ -773,6 +792,29 @@ state_with "$LINE"
 WATCH_BIN="$DEADSTART_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "launched=$(succeed_calls --dead-pane)" "launched=0" \
   "control: a relaunch judged on no start never replays this pane's bound line" "$ERR"
+# A pane whose server start cannot be read settles nothing that pass: judged
+# on no start, its own bound record reads as another session's, and its death
+# is reported with no line and never relaunched.
+start_unread_dead_run() { # NAME [WATCH_BIN]
+  overseer_case "$1" exited
+  state_with "$LINE"
+  touch "$STUB_DIR/start-fail-$PANE"
+  WATCH_BIN="${2:-}" run TMUX_PANE="$PANE" -- --max-loops 2
+}
+start_unread_dead_run dead_start_unread
+assert_eq "event=$(grep -c '^EVENT overseer-dead' <<<"$OUT") launched=$(succeed_calls --dead-pane) noted=$(grep -c "^oversee-watch: overseer-unreadable pane=$PANE field=server-start\$" "$ERR")" \
+  "event=0 launched=0 noted=1" \
+  "a dead pane whose server start cannot be read is noted unreadable and neither reported nor relaunched" "$ERR"
+# Its control: a pane read that takes an unread start as none reports the
+# death against its own record as another session's.
+UNREADDEAD_CTL="$(mutant_scripts unreaddead-ctl/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/unreaddead-ctl/github"
+mutate_file "$UNREADDEAD_CTL/oversee-watch" \
+  '    || { overseer_note overseer-unreadable "pane=$pane" "field=server-start"; return 1; }' '    || OV_START=""'
+start_unread_dead_run dead_start_unread_mutant "$UNREADDEAD_CTL/oversee-watch"
+assert_eq "event=$(grep -c "^EVENT overseer-dead $PANE .* record=7000:$PANE\$" <<<"$OUT") launched=$(succeed_calls --dead-pane)" \
+  "event=1 launched=0" \
+  "control: a pane read that takes an unread start as none reports the death against another session's record" "$ERR"
 
 # A walled overseer whose start could not record it: the wall is read from
 # the pane and confirmed by the account judgement, and the recovery picks its

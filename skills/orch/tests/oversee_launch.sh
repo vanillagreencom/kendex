@@ -158,6 +158,43 @@ run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
   "1|oversee: overseer-live session=$SESSION server=$SOCKET generation=1|1|1" \
   "a launch beside a live recorded overseer refuses naming it and opens nothing"
+# A tmux that answers every call but the server start read
+# (lib/tmux-server.sh § tmux_server_start) of the pane the nostart-pane file
+# names, for the rows where that read fails.
+NOSTART_BIN="$TMP_ROOT/nostart-bin"
+mkdir -p "$NOSTART_BIN"
+REAL_TMUX="$(command -v tmux)"
+cat > "$NOSTART_BIN/tmux" <<STUB
+#!/bin/sh
+pane="\$(cat '$TMP_ROOT/nostart-pane')"
+start=0 target=0
+for a in "\$@"; do
+  [ "\$a" = '#{pid} #{start_time}' ] && start=1
+  [ "\$a" = "\$pane" ] && target=1
+done
+[ "\$start\$target" = 11 ] && exit 1
+exec '$REAL_TMUX' "\$@"
+STUB
+chmod +x "$NOSTART_BIN/tmux"
+NOSTART_PATH="$NOSTART_BIN:$BIN:$PATH"
+printf '%s\n' "$SESSION" > "$TMP_ROOT/nostart-pane"
+# A live recorded pane whose server start cannot be read may be that
+# overseer, so the launch refuses rather than open a second one beside it.
+run_oversee PATH="$NOSTART_PATH" -- launch --wait-secs 20
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
+  "1|oversee: launch-failed step=server-start session=$SESSION server=$SOCKET|1|1" \
+  "a launch beside a live recorded pane whose server start cannot be read refuses and opens nothing"
+# Its control: an unread start judged as no start reads the live overseer's
+# bound record as another session's and opens a second overseer.
+NOSTARTCTL="$(mutant_scripts nostartctl oversee)" || exit 1
+mutate_file "$NOSTARTCTL/oversee" \
+  '      || die launch-failed step=server-start "session=$live_pane" "server=$SERVER_SOCKET"' '      || live_start=""'
+cp -- "$FLEET_STATE" "$TMP_ROOT/state.live"
+OVERSEE_BIN="$NOSTARTCTL/oversee" run_oversee PATH="$NOSTART_PATH" -- launch --wait-secs 20
+assert_eq "$RC|$(overseers)" "0|2" \
+  "control: a launch that judges an unread start as none opens a second overseer beside the first"
+tm kill-window -t "$(recorded window)"
+mv -- "$TMP_ROOT/state.live" "$FLEET_STATE"
 # The must-fail control: a launcher that skips the liveness check opens a
 # second overseer beside the first.
 LIVECTL="$(mutant_scripts livectl oversee)" || exit 1
@@ -271,10 +308,31 @@ assert_eq "$RC|$(recorded harness)" "0|none" \
 # The start's control: a writer that records no server start leaves the
 # registered server told from no later one handed the same pid.
 STARTCTL="$(mutant_scripts startctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$STARTCTL/lib/overseer-launch.sh" 'server_start: ($start | ol_server_start)}' 'server_start: null}'
+mutate_file "$STARTCTL/lib/overseer-launch.sh" 'server_start: ($start | tonumber)}' 'server_start: null}'
 OVERSEE_BIN="$STARTCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
 assert_eq "$RC|$(recorded server_start)" "0|none" \
   "control: a register whose writer drops the server start records none"
+# A server start that cannot be read writes nothing: a record with no start
+# would name this pane on any later server handed the same pid.
+run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
+BOUND_RECORD="$(jq -c .overseer "$FLEET_STATE")"
+printf '%s\n' "$HAND" > "$TMP_ROOT/nostart-pane"
+run_oversee PATH="$NOSTART_PATH" TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
+assert_eq "$RC|$(keyed record-unwritten "$OUT" | sed -n 1p)|$(jq -c .overseer "$FLEET_STATE")" \
+  "1|oversee: record-unwritten field=overseer|$BOUND_RECORD" \
+  "a register whose server start cannot be read refuses and leaves the record as it stood"
+# Its control: a writer that takes an unread start as none records the pane
+# with no start.
+UNREADCTL="$(mutant_scripts unreadctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$UNREADCTL/lib/overseer-launch.sh" \
+  '    if ! start="$(ol_session_start "$4" "$2")"; then' '    if ! start="$(ol_session_start "$4" "$2")" && false; then'
+mutate_file "$UNREADCTL/lib/overseer-launch.sh" \
+  'server_start: ($start | tonumber)}' 'server_start: (if $start == "" then null else $start | tonumber end)}'
+cp -- "$FLEET_STATE" "$TMP_ROOT/state.bound"
+OVERSEE_BIN="$UNREADCTL/oversee" run_oversee PATH="$NOSTART_PATH" TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
+assert_eq "$RC|$(recorded server_start)" "0|none" \
+  "control: a register that takes an unread start as none records the pane unbound"
+mv -- "$TMP_ROOT/state.bound" "$FLEET_STATE"
 # register from the session's own SessionStart row (lib/session-rows.sh), in
 # the shape Claude Code 2.1.283's hook emits it: the harness, account and
 # model the row states, not the environment's, and the rows file recorded.

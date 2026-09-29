@@ -2550,7 +2550,7 @@ overseer_context_check() { # PANE IDENTITY
 
 # The overseer's own session as one reading: OV_WINDOW, OV_IDENTITY (`<server>
 # <pane>`, the key its rows are kept under), OV_START (its server's start,
-# empty where unread, which the record is judged against), OV_STATE, the word the shared
+# which the record is judged against), OV_STATE, the word the shared
 # judge would give it, and OV_SOURCE, what settled that word. The long pass
 # reads it before its checks and the mail pass before it takes any mail, so
 # both read one session the one way. A pane that cannot be read is noted once
@@ -2600,7 +2600,10 @@ overseer_pane_read() { # PANE
   OV_WINDOW="$OL_INSPECT_WINDOW"
   server="$OL_INSPECT_SERVER"
   OV_IDENTITY="$server $pane"
-  OV_START="$(ol_session_start "$server" "$pane")"
+  # Unread, the start would read this pane's own record as another session's,
+  # and a death judged on it is reported with no line to relaunch.
+  OV_START="$(ol_session_start "$server" "$pane")" \
+    || { overseer_note overseer-unreadable "pane=$pane" "field=server-start"; return 1; }
   [[ "$OL_INSPECT_STATE" != exited ]] || bare=1
   [[ ",$OL_INSPECT_CAUSE," != *,process-probe,* ]] || note_probe_unusable "$pane" "$OL_INSPECT_PROBE"
   # The rows file and the exit status the record holds for THIS pane on THIS

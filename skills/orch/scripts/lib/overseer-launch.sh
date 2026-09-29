@@ -557,21 +557,20 @@ ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
 # where it could not be read: a record carrying a `server_start` names the
 # session only on the server started then, since after a tmux restart a new
 # server may be handed the recorded pid and numbers its panes from %0 again,
-# and a record carrying none is judged on the pair alone. `ol_server_start`
-# is the `server_start` a tmux record holds for the start tmux_server_start
-# printed, null for none. lib/watch-overseer-record.sh takes the last two for
-# the watch start.
+# and a record carrying none is judged on the pair alone.
+# lib/watch-overseer-record.sh takes `ol_names` for the watch start.
 OL_JQ_DEFS='def ol_identity: {harness, account, home, model, effort, cwd};
   def ol_names($server; $start; $session): type == "object" and (.server // "") == $server
     and ((.pane // .session // "") == $session)
-    and (.server_start == null or (.server_start | tostring) == $start);
-  def ol_server_start: if . == "" then null else tonumber end;'
+    and (.server_start == null or (.server_start | tostring) == $start);'
 
 # ol_session_start SERVER SESSION — the start ol_names judges SESSION on
-# SERVER by: tmux_server_start's for a pane, nothing where it cannot be read,
-# which a record carrying a start never matches.
+# SERVER by: tmux_server_start's for a pane. Returns 1, printing nothing, where
+# it cannot be read, and each caller states what an unread start does: one
+# judged as no start would read a record bound to this very session as
+# another session's.
 ol_session_start() { # SERVER SESSION
-  tmux_server_start "$2" "$1" || true
+  tmux_server_start "$2" "$1"
 }
 
 # ol_identity HARNESS ACCOUNT HOME MODEL EFFORT CWD — the launch identity into
@@ -794,8 +793,10 @@ ol_record_get() {
 # event rows land in (lib/session-rows.sh), under the overseer mailbox of the
 # checkout the session starts in, IDENTITY's `cwd`, or this launcher's own
 # where that is unknown, and `server_start` is the server's start time read
-# off that pane (lib/tmux-server.sh § tmux_server_start), null where it could
-# not be read, so no start of another server's survives. `pending` is
+# off that pane (lib/tmux-server.sh § tmux_server_start), so no start of
+# another server's survives. A start that cannot be read writes nothing: a
+# record with no start is judged on the pair alone, so a later server handed
+# the same pid and pane id would read as this session. `pending` is
 # dropped: the successor it named is the session written here, or a launch
 # that never opened. `exit` is dropped: it is a session's that ended. The
 # prior's `launch_line` goes with it where LINE is empty: `oversee register`
@@ -812,7 +813,10 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
   if [[ "$1" == tmux ]]; then
     cwd="$(jq -r '.cwd // empty' <<<"$5" 2>"$DEP_ERR")" || return 1
     rows="$(session_rows_overseer_file "${cwd:-$PWD}" "$4" "$2")"
-    start="$(ol_session_start "$4" "$2")"
+    if ! start="$(ol_session_start "$4" "$2")"; then
+      printf 'the start of tmux server %s holding pane %s could not be read\n' "$4" "$2" > "$DEP_ERR"
+      return 1
+    fi
   fi
   record="$(jq -cn --argjson prior "$prior" --argjson identity "$5" --arg runtime "$1" \
     --arg session "$2" --arg window "$3" --arg server "$4" --arg line "${6:-}" --arg rows "$rows" \
@@ -823,7 +827,7 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
       | ($p | del(.pending, .exit, .launch_line)) + {runtime: $runtime, server: $server, window: $window, generation: $next}
       + $identity
       + (if $runtime == "tmux"
-         then {pane: $session, session_rows: $rows, server_start: ($start | ol_server_start)}
+         then {pane: $session, session_rows: $rows, server_start: ($start | tonumber)}
          else {session: $session} end)
       + (if $line == "" then {} else {launch_line: $line} end)' 2>"$DEP_ERR")" \
     || return 1
@@ -865,7 +869,9 @@ ol_record_current() { # SERVER PANE
   OL_CUR_HARNESS="" OL_CUR_ACCOUNT="" OL_CUR_HOME="" OL_CUR_MODEL="" OL_CUR_EFFORT="" OL_CUR_CWD=""
   "$SCRIPT_DIR/workflow-state" exists oversee >/dev/null 2>&1 || return 1
   record="$(ol_record_get)" || return 2
-  start="$(ol_session_start "$1" "$2")"
+  # Unread, the start names no record bound to one: the caller keeps its own
+  # readings, and nothing here acts on the record.
+  start="$(ol_session_start "$1" "$2")" || start=""
   fields="$(jq -r --arg server "$1" --arg start "$start" --arg pane "$2" --arg sep "$sep" "$OL_JQ_DEFS"'
       if ol_names($server; $start; $pane) then ol_identity | map(. // "" | tostring) | join($sep)
       else empty end' <<<"$record" 2>"$DEP_ERR")" || return 2
@@ -879,7 +885,9 @@ ol_record_current() { # SERVER PANE
 # its predecessor earned. Returns 1 with the writer's words in DEP_ERR.
 ol_record_exit_clear() { # SERVER PANE
   local start
-  start="$(ol_session_start "$1" "$2")"
+  # Unread, the start names no record bound to one, and the update leaves it
+  # as it stands.
+  start="$(ol_session_start "$1" "$2")" || start=""
   "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg start "$start" --arg pane "$2" "$OL_JQ_DEFS"'
       if (.overseer | ol_names($server; $start; $pane)) then .overseer |= del(.exit) else . end' \
     >/dev/null 2>"$DEP_ERR"
@@ -896,7 +904,8 @@ ol_record_exit_clear() { # SERVER PANE
 ol_record_exit() { # SERVER PANE STATUS
   local at start
   at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
-  start="$(ol_session_start "$1" "$2")"
+  # Unread, as ol_record_exit_clear reads it: no exit is written.
+  start="$(ol_session_start "$1" "$2")" || start=""
   "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg start "$start" --arg pane "$2" \
     --argjson status "$3" --arg at "$at" "$OL_JQ_DEFS"'
       if (.overseer | ol_names($server; $start; $pane)) then .overseer.exit = {status: $status, at: $at} else . end' \

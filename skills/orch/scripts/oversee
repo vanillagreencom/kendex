@@ -37,7 +37,9 @@
 #        naming a tmux session the adapter's `inspect` still finds on this
 #        server is a live overseer, and a second one is never opened beside
 #        it: `overseer-live` names
-#        it and its generation. Two overseers never act at once; a live one
+#        it and its generation. A live pane whose server start cannot be read
+#        refuses `launch-failed step=server-start`: whether it is the
+#        recorded overseer cannot be judged. Two overseers never act at once; a live one
 #        is replaced as the --predecessor this launch names, or through
 #        `oversee-succeed`, never launched over. --predecessor naming any
 #        session but that live one refuses `predecessor-not-live`, its `live`
@@ -136,6 +138,9 @@
 #            recorded as unknown. The generation is one past the record's,
 #            or the record's own where it already names this pane, so
 #            registering twice launches nothing and counts nothing twice.
+#            A server start that cannot be read refuses `record-unwritten`
+#            and writes nothing: a record with no start would name this
+#            pane on any later server handed the same pid.
 #            Prints `registered` naming the session and generation.
 #
 # Options:
@@ -457,7 +462,11 @@ if [[ -n "$live" ]]; then
   if [[ "$OL_INSPECT_STATE" == gone ]]; then
     live_pane=""
   else
-    live_start="$(ol_session_start "$OL_INSPECT_SERVER" "$live_pane")"
+    # A start that cannot be read cannot tell the recorded overseer from a
+    # session an earlier server's pid and pane id left, so nothing is opened
+    # beside a pane that may be it.
+    live_start="$(ol_session_start "$OL_INSPECT_SERVER" "$live_pane")" \
+      || die launch-failed step=server-start "session=$live_pane" "server=$SERVER_SOCKET"
     if ! live_named="$(jq -r --arg server "$OL_INSPECT_SERVER" --arg start "$live_start" --arg pane "$live_pane" \
       "$OL_JQ_DEFS"' ol_names($server; $start; $pane)' <<<"$OL_PRIOR" 2>"$DEP_ERR")"; then
       die state-unwritable field=overseer
