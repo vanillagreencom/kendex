@@ -14,7 +14,7 @@ A Pi extension for session controls, prompt editing and notifications. Users can
 source = "kendex"
 ```
 
-Requires Pi 0.85.0 or newer. Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
+Requires Pi 0.86.0 or newer. Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
 
 ## Features
 

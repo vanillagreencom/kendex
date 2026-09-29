@@ -7,6 +7,7 @@ import { renderStatusLine } from "../extensions/qol/statusline.ts";
 
 let workdir = "";
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+const originalChildAgent = process.env.PI_SUBAGENT_CHILD_AGENT;
 const theme = { fg: (_token: string, text: string) => text };
 const git = { dirty: false, inLinkedWorktree: false, projectName: "kendex" };
 const pi = { getThinkingLevel: () => "medium" } as ExtensionAPI;
@@ -29,6 +30,7 @@ beforeEach(() => {
 	workdir = mkdtempSync(join(tmpdir(), "qol-provider-"));
 	mkdirSync(join(workdir, ".pi"));
 	process.env.PI_CODING_AGENT_DIR = workdir;
+	delete process.env.PI_SUBAGENT_CHILD_AGENT;
 	config(true);
 });
 
@@ -36,6 +38,8 @@ afterEach(() => {
 	rmSync(workdir, { recursive: true, force: true });
 	if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+	if (originalChildAgent === undefined) delete process.env.PI_SUBAGENT_CHILD_AGENT;
+	else process.env.PI_SUBAGENT_CHILD_AGENT = originalChildAgent;
 });
 
 const rows = [
