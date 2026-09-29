@@ -282,6 +282,7 @@ the gate writer's engine is queue-only|queue_only=true cause=queue-path path=ski
 the gate writer template's render is queue-only|queue_only=true cause=queue-path path=.agents/skills/review-gate/templates/review-gate-writer.yml glob=*skills/review-gate/templates/*|.agents/skills/review-gate/templates/review-gate-writer.yml=2
 the organization standard is queue-only|queue_only=true cause=queue-path path=skills/review-gate/standard.json glob=*skills/review-gate/standard.json|skills/review-gate/standard.json=2
 the settings naming the gate's context are queue-only|queue_only=true cause=queue-path path=kendex.settings.toml glob=kendex.settings.toml|kendex.settings.toml=2
+the machine-local settings naming the gate's context are queue-only|queue_only=true cause=queue-path path=.kendex/settings.toml glob=.kendex/settings.toml|.kendex/settings.toml=2
 the classifier is queue-only|queue_only=true cause=queue-path path=skills/harness-ci/scripts/change-class glob=*skills/harness-ci/scripts/*|skills/harness-ci/scripts/change-class=2
 the classifier's list is queue-only|queue_only=true cause=queue-path path=skills/orch/references/narrow-change.conf glob=*skills/orch/references/narrow-change.conf|skills/orch/references/narrow-change.conf=2
 the branch measurement is queue-only|queue_only=true cause=queue-path path=skills/orch/scripts/branch-size-check glob=*skills/orch/scripts/branch-size-check|skills/orch/scripts/branch-size-check=2
