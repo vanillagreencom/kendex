@@ -481,7 +481,7 @@ cop_record 400000 1000000
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
   "RC=0 first=lane-mail-check: context=400000 decision=block" \
-  "a record at the 400000-token cap holds the turn end with the documented block answer"
+  "with no extension reading of the session, a fresh status-line record at the 400000-token cap holds the turn end with the documented block answer"
 cop_record 130000 200000
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: context=130000" \
@@ -496,6 +496,21 @@ mv -- "$TMP_ROOT/stale.json" "$COP_ACCOUNT/lane-status/s1.json"
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=reading-unrecorded=$LANE/tmp/lane-mail/KEN-204/context.json;session-record=stale;account=unmeasured" \
   "a record the status line stopped refreshing is unmeasured, never read as room"
+# The extension's reading is read first: one below the mark stands although
+# the status line's record of the same session is past it.
+# cop_extension_reading ITEM TOKENS CAPACITY: the reading the usage arm records
+# for s1 in the lane's mailbox, under the capacity source it writes.
+cop_extension_reading() { # ITEM TOKENS CAPACITY
+  bash -c 'set -euo pipefail; . "$1/lib/lane-context.sh"
+    lane_context_record "$2" copilot "$3" "$4" "" s1 "" "" "$LANE_CONTEXT_COPILOT_CAPACITY_SOURCE"' \
+    _ "$REPO_ROOT/skills/orch/scripts" "$LANE/tmp/lane-mail/$1" "$2" "$3"
+}
+cop_record 400000 1000000
+cop_extension_reading KEN-204 100000 800000
+copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
+assert_eq "RC=$RC keyed=$(cop_keys) decision=$(stdout_field .decision)" "RC=0 keyed=account=unmeasured decision=" \
+  "an extension reading below the mark is judged room, never overridden by a status-line record past it"
+rm -f -- "${LANE:?}/tmp/lane-mail/KEN-204/context.json"
 
 # The account mark on Copilot: the account the session runs on is measured
 # through `lanes`, and a pool at zero holds the turn end at the headroom mark.
@@ -904,6 +919,17 @@ cop_record 400000 1000000
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=" \
   "control: without the record read a Copilot lane at the cap ends its turn"
+# The extension's reading skipped: the status line's record past the mark
+# overrides a reading below it.
+mutant copilot-no-primary -e 's@^    copilot_context_read "\$1" && return 0$@    false \&\& return 0@'
+new_copilot_lane control_cop_primary ken-256 "$MUTANT_PATH"
+mkdir -p "$LANE/tmp/lane-mail/KEN-256"
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-256 >/dev/null)
+cop_record 400000 1000000
+cop_extension_reading KEN-256 100000 800000
+copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
+assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=block" \
+  "control: without the extension's reading read first a status-line record past the mark overrides one below it"
 # The account arm cut: a Copilot account at zero is reported unlisted and the
 # turn ends.
 mutant copilot-no-account -e 's@^    claude | codex | copilot) CFG=@    claude | codex) CFG=@'

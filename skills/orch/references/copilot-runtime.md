@@ -74,7 +74,7 @@ The overseer sends a Copilot lane no wake ([watch-delivery.md § Lane mailbox mo
 
 ## Overseer succession
 
-`oversee-succeed` builds a Copilot overseer's line in print mode, on the account its launch record names, through the same launch environment, and judges its marks on that account's session record and monthly pool (§ Measurement). A record that names no account refuses as `copilot-account-unknown`; `oversee register --account DIR` records one. A dead overseer pane relaunches from the recorded line: a fresh session that reads the overseer handoff, never a resume.
+`oversee-succeed` builds a Copilot overseer's line in print mode, on the account its launch record names, through the same launch environment, and judges its marks on the context reading its turn end hands it, the extension's where one stands and else that account's session record, and on its monthly pool (§ Measurement). A succession installs no extension, so it skips an account whose status line writes no session record. A record that names no account refuses as `copilot-account-unknown`; `oversee register --account DIR` records one. A dead overseer pane relaunches from the recorded line: a fresh session that reads the overseer handoff, never a resume.
 
 ## Pending live proofs
 

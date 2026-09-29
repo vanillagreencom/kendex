@@ -177,7 +177,10 @@ new_compact_overseer() { # NAME [JUDGE]
   install_hook "$TEST_DIR/../lane-mail-compact.sh" "$LANE/.github/hooks/lane-mail-compact.sh"
   install_hook "${2:-$HOOK}" "$LANE/.github/hooks/lane-mail-check.sh"
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
-  record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
+  # The fleet record names TMP_ROOT as the overseer's launch home, the
+  # Copilot home its transcript sits under, so the transcript ownership gate
+  # holds its turn end to its own session.
+  record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER" "$TMP_ROOT"
   BOX="$LANE/tmp/lane-mail/overseer"
   cop_clear_leads
   cop_lead_start "$LANE/.github/hooks/lane-mail-check.sh" s1

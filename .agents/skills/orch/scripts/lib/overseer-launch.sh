@@ -299,9 +299,10 @@ ol_account_id() { # DIR
 # (ol_entry_permitted), and skipped before its pick where it cannot be. A
 # Copilot entry's pick is skipped as successor-status-line where the account's
 # settings run no copilot-statusline (lib/adapters/copilot.sh §
-# lane_adapter_copilot_status_line): its context is measured only through the
-# record that status line writes, as a fleet lane on one is refused
-# (open-terminal). The rules a succession adds, each off while its setting is
+# lane_adapter_copilot_status_line): a succession installs no
+# kendex-lane-context extension, so the record that status line writes is the
+# one reading it can count on, the turn end's fallback where no extension
+# reading of the session stands. The rules a succession adds, each off while its setting is
 # empty or 0: each skip is a notice for the caller to print, one line of
 # tab-separated key and fields in OL_WALK_SKIPS.
 #   OL_WALK_REFUSE_ID       a pick naming this account (ol_account_id) is

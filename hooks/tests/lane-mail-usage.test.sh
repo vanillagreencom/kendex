@@ -220,7 +220,10 @@ new_usage_overseer() { # NAME [JUDGE]
   rm -f -- "${LANE:?}/.claude/hooks/lane-mail-check.sh"
   install_copilot_hooks "$LANE/.github/hooks" "${2:-$HOOK}"
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
-  record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
+  # The fleet record names TMP_ROOT as the overseer's launch home, the
+  # Copilot home its transcript sits under, so the transcript ownership gate
+  # holds its turn end to its own session.
+  record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER" "$TMP_ROOT"
   BOX="$LANE/tmp/lane-mail/overseer"
   JUDGE="$LANE/.github/hooks/lane-mail-check.sh"
   cop_clear_leads
@@ -249,7 +252,7 @@ assert_eq "$(quiet) record=$(record)" "RC=0 stdout= stderr=- record=none" \
 # again, its turn end reads that record as no reading, never as room.
 # overseer_named PANE: the fleet record names PANE as the overseer's.
 overseer_named() { # PANE
-  record_overseer "$1" "$OVERSEER_SERVER"
+  record_overseer "$1" "$OVERSEER_SERVER" "$TMP_ROOT"
 }
 # LOST is the lost turn end's first line and record; the run left is the
 # turn end after it.
@@ -348,7 +351,7 @@ expect 0 "lane-mail-check: reading-pending=$PENDING" \
 
 # The session rule at the turn end removed: a successor is judged on its
 # predecessor's reading.
-mutant usage-any-session -e 's@^  if \[ "\$LANE_CTX_SESSION" != "\$SESSION" \] || @  if @'
+mutant usage-any-session -e 's@^  if \[ "\$LANE_CTX_SESSION" != "\$SESSION" \] ||$@  if@'
 new_usage_lane control_session KEN-414 "$MUTANT_PATH"
 cop_lead_start "$JUDGE" s0
 usage 199000 272000 s0
@@ -380,12 +383,13 @@ usage 150000 272000
 assert_eq "RC=$RC record=$(record)" "RC=0 record=150000 217600 s1 null" \
   "control: without the harness assertion a claude copy records a Copilot reading"
 
-# The gap rule at the turn end removed: a gap record is read as a reading of
-# no figure, and the context goes unmeasured with nothing said.
-mutant usage-gap-read -e 's@ || \[ -n "\$LANE_CTX_GAP" \]; then$@; then@'
+# The capacity-source rule at the turn end removed: a gap record is read as
+# the extension's reading of no figure, and the context goes unmeasured with
+# nothing said.
+mutant usage-gap-read -e '/^copilot_context_read() {/,/^}$/ s@^  if \[ "\$LANE_CTX_SESSION" != "\$SESSION" \] ||$@  if [ "$LANE_CTX_SESSION" != "$SESSION" ]; then return 1; fi; if false \&\&@'
 lost_overseer control_gap_read "$MUTANT_PATH"
 assert_eq "unrecorded=$(grep -c '^lane-mail-check: reading-unrecorded=' "$ERR_FILE")" "unrecorded=0" \
-  "control: without the gap rule a gap record leaves the overseer's context unmeasured in silence"
+  "control: without the capacity-source rule a gap record leaves the overseer's context unmeasured in silence"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -1786,9 +1786,10 @@ context_read_and_record() { # BOX PANE_KEY
 # compacts at. 0 once either is taken; nothing is written here, since the
 # reader owns the record. 1 where no reading of the extension's stands for
 # this session: no record, one naming another session, a predecessor's in the
-# same mailbox included, a gap record, which the turn end of an overseer the
-# fleet record lost writes, and a reading the statusLine fallback recorded,
-# told apart by its capacity source. The caller then takes the statusLine
+# same mailbox included, and one whose capacity source is not the one the
+# usage arm writes, which a gap record, written by the turn end of an overseer
+# the fleet record lost, and a reading the statusLine fallback recorded both
+# are. The caller then takes the statusLine
 # fallback, and never reads that as room. A reading the extension handed on
 # and no run has recorded yet leaves the context unmeasured under
 # `reading-pending` (copilot_reading_pending), 0 with no fallback: the
@@ -1817,7 +1818,7 @@ copilot_context_read() { # BOX
     refuse_handoff record "$1/$LANE_CONTEXT_RECORD" "$(cat -- "$WORK_DIR/record.err")"
   lane_context_record_fields "$RECORD" ||
     refuse_handoff record "$1/$LANE_CONTEXT_RECORD" "it is neither a reading nor a gap record"
-  if [ "$LANE_CTX_SESSION" != "$SESSION" ] || [ -n "$LANE_CTX_GAP" ] ||
+  if [ "$LANE_CTX_SESSION" != "$SESSION" ] ||
     [ "$LANE_CTX_SOURCE" != "$LANE_CONTEXT_COPILOT_CAPACITY_SOURCE" ]; then
     return 1
   fi

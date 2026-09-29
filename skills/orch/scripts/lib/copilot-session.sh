@@ -6,11 +6,14 @@
 #
 # Copilot keeps no live context count anywhere a reader can open: its
 # `events.jsonl` transcript carries usage only in the event a session writes as
-# it ends, and the pane footer is a display. The status line command is the one
-# live producer. `copilot-statusline`, the script beside this library's
-# directory, is that command: it persists the JSON it received as a record bound
-# to the session, and lib/adapters/copilot.sh reads it back for the shared
-# context judge. Nothing here parses a pane or a screen.
+# it ends, and the pane footer is a display. Two commands receive a live count:
+# the orch copilot-lane-context extension, on Copilot's `session.usage_info`
+# event, whose reading a turn end reads first, and the status line command,
+# the fallback where no extension reading of the session stands.
+# `copilot-statusline`, the script beside this library's directory, is that
+# command: it persists the JSON it received as a record bound to the session,
+# and lib/adapters/copilot.sh reads it back for the shared context judge.
+# Nothing here parses a pane or a screen.
 #
 # One record per session, at `<COPILOT_HOME>/lane-status/<session_id>.json`,
 # under the account directory the session runs on. The record carries the CLI's
