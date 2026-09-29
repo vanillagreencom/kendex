@@ -13,11 +13,11 @@
 # (REVIEW_GATE_STANDARD_SECRETS, sorted, one per line). SCOPE `all` also
 # sets WANT_APP (REVIEW_GATE_STANDARD_APP); SCOPE `environment` leaves it
 # unread. With no jq on PATH, a missing, unreadable or malformed manifest, an
-# unreadable setting, or a key the scope reads unset or empty, it prints the
-# refusal to stderr and returns 1; the caller exits with its could-not-run
-# status.
+# unreadable setting, a key the scope reads unset or empty, or a secret name
+# outside the shell identifier grammar, it prints the refusal to stderr and
+# returns 1; the caller exits with its could-not-run status.
 rg_standard_load() { # MANIFEST SCOPE
-  local secrets missing=""
+  local secrets invalid missing="" rc=0
   case "$2" in
     all | environment) ;;
     *)
@@ -67,6 +67,21 @@ rg_standard_load() { # MANIFEST SCOPE
     rg_message error standard-setting-missing "$missing" "this repository declares no value for these review-gate settings; set each in the [env] table of kendex.settings.toml (references/settings.md names them)" >&2
     return 1
   fi
+  # provision-environment.sh reads each secret's value from the shell
+  # variable of its name, so a name bash cannot expand is refused here, not
+  # by bash. GitHub's secret-name grammar lies inside this one.
+  invalid="$(LC_ALL=C grep -vxE -- '[A-Za-z_][A-Za-z0-9_]*' <<<"$WANT_SECRETS")" || rc=$?
+  case "$rc" in
+    0)
+      rg_message error standard-secret-invalid "${invalid//$'\n'/;}" "REVIEW_GATE_STANDARD_SECRETS holds these names, which are not secret names: a name is letters, digits and underscores, and does not start with a digit" >&2
+      return 1
+      ;;
+    1) ;;
+    *)
+      rg_message error standard-read REVIEW_GATE_STANDARD_SECRETS "could not check the secret names" >&2
+      return 1
+      ;;
+  esac
 }
 
 # The names among WANT_SECRETS present in the newline list LISTED, one per

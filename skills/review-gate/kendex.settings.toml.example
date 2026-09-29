@@ -154,7 +154,8 @@ REVIEW_GATE_STANDARD_APP = ""
 REVIEW_GATE_STANDARD_ENVIRONMENT = ""
 
 # The names of the secrets that environment holds, separated by semicolons.
-# Names only: a value never goes in this file. The package ships no value;
+# Names only: a value never goes in this file. A name is letters, digits and
+# underscores, and does not start with a digit. The package ships no value;
 # the checks and the owner's provisioning refuse until it is set.
 REVIEW_GATE_STANDARD_SECRETS = ""
 

@@ -54,9 +54,9 @@ The organization rulesets carry this shape for every repository. Until they stan
 
 1. `REVIEW_GATE_STANDARD_APP`: the slug of the GitHub App the organization installs on every repository.
 2. `REVIEW_GATE_STANDARD_ENVIRONMENT`: the environment that holds that app's secrets.
-3. `REVIEW_GATE_STANDARD_SECRETS`: those secrets' names, `;`-separated. Never their values.
+3. `REVIEW_GATE_STANDARD_SECRETS`: those secrets' names, `;`-separated. Never their values. A name is letters, digits and underscores, and does not start with a digit.
 
-Each script exits 2 with one `standard-setting-missing` record naming every key it reads that is unset or empty. Refresh adoption reads none of these keys (§ Automatic consumer refresh).
+Each script exits 2 with one `standard-setting-missing` record naming every key it reads that is unset or empty, or with one `standard-secret-invalid` record naming every secret name outside that grammar. Refresh adoption reads none of these keys (§ Automatic consumer refresh).
 
 A repository reaches this shape in one order. The workflow change that reports `CI` on `pull_request` and `merge_group`, both under `on:`, and the ruleset change to exactly `CI` and `Review gate` apply back to back. Where the workflow change renames an existing aggregate, the ruleset changes first and the rename merges through the queue at once. After the first merge through the queue, `scripts/validate-standard.sh` runs: its `standard-ci-context` ok confirms the workflow change on both legs, and its `standard-required-contexts` and `standard-merge-queue` oks confirm the ruleset change.
 
