@@ -621,24 +621,36 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "--session beside --predecessor is refused, nothing opened"
 
 # The successor is the record's pending member before its window opens, read
-# here while its first turn never comes, and gone with the abandoned launch.
+# here while a tmux on the run's PATH holds the successor's new-window until
+# the row releases it, and gone with the abandoned launch, whose first turn
+# never comes.
 run_oversee -- launch --wait-secs 20
 PRED="$(recorded pane)"
 PRIOR_RECORD="$(jq -cS .overseer "$FLEET_STATE")"
 PRIOR_LINE="$(recorded launch_line)"
+HOLD_BIN="$TMP_ROOT/hold-create-bin"
+mkdir -p "$HOLD_BIN"
+cat > "$HOLD_BIN/tmux" <<STUB
+#!/bin/sh
+if [ "\$1" = new-window ]; then
+  : > '$TMP_ROOT/create-held'
+  while [ ! -e '$TMP_ROOT/create-released' ]; do sleep 0.1; done
+fi
+exec '$REAL_TMUX' "\$@"
+STUB
+chmod +x "$HOLD_BIN/tmux"
 pending_seen() { # [OVERSEE_BIN] — the pending line a --predecessor launch writes
   local pid seen=none
+  rm -f "$TMP_ROOT/create-held" "$TMP_ROOT/create-released"
   touch "$TMP_ROOT/idle"
-  OVERSEE_BIN="${1:-}" run_oversee -- launch --predecessor "$PRED" --wait-secs 4 &
+  OVERSEE_BIN="${1:-}" run_oversee PATH="$HOLD_BIN:$BIN:$PATH" -- launch --predecessor "$PRED" --wait-secs 4 &
   pid=$!
-  # A real wait, bounded by the launch itself, which --wait-secs ends: the
-  # line lands while that launch waits for a first turn, however long its
-  # walk took to get there.
-  while kill -0 "$pid" 2>/dev/null; do
-    seen="$(recorded pending.launch_line)"
-    [[ "$seen" == none ]] || break
-    sleep 0.1
-  done
+  # A real wait, for the launch to reach the successor's new-window, where the
+  # held tmux keeps it until the release below; a launch that ends first
+  # never reached that point and leaves none read.
+  while [[ ! -e "$TMP_ROOT/create-held" ]] && kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
+  [[ ! -e "$TMP_ROOT/create-held" ]] || seen="$(recorded pending.launch_line)"
+  touch "$TMP_ROOT/create-released"
   wait "$pid" || true
   rm -f "$TMP_ROOT/idle"
   PENDING_SEEN="$seen"
