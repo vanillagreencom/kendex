@@ -279,8 +279,8 @@ assert_eq "$(CTX_FLEET="$TMP_ROOT/no-fleet" CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=ov
 
 OWNERSHIP_CTRL="$(mutant_scripts mutant-ownership lib/lane-claims.sh)" || exit 1
 mutate_file "$OWNERSHIP_CTRL/lib/lane-claims.sh" \
-  'return (fleet == expected || fleet == "") && ((window "\t" account) in owned)' \
-  'return ((window "\t" account) in owned)'
+  '($5 == "" && (($2 "\t" $1) in owned))' \
+  '((($2 "\t" $1) in owned))'
 assert_eq "$(CTX_LANES="$OWNERSHIP_CTRL/lanes" run_ctx --json | jq -c '[.[] | select(.pane == "%42") | .context_tokens]')" \
   '[950000]' 'control: omitting fleet ownership attributes this fleet reading to the foreign claim'
 RESERVATION_CTRL="$(mutant_scripts mutant-context-reservation lanes)" || exit 1

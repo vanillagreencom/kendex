@@ -5,7 +5,7 @@
 # The fleet cap a fleet launch is judged on: the count, the launch lock, the
 # reservation and the gate. What the cap bounds is stated where open-terminal
 # decides whether a launch is judged. It reads open-terminal's globals
-# (CLAIM_ROOT, LANE_ENV, WORKFLOW_STATE, the cap setting and options) and calls
+# (CLAIM_ROOT, WORKFLOW_STATE, the cap setting and options) and calls
 # its ot_message and lane_rejudge, so it is loaded by that script alone.
 #
 # Sourced, never run.
@@ -42,10 +42,9 @@ cap_release() {
 # lock. Returns 1 with the refusal printed when it cannot be written: the next
 # count would not see this launch.
 cap_reserve() { # ITEM WINDOW
-  local lane_dir="" store
-  [[ -z "$LANE_ENV" ]] || lane_dir="${LANE_ENV#*=}"
+  local store
   store="$(lane_claims_dir "$CLAIM_ROOT")"
-  if ! lane_claim_reserve "$store" "$$" "$lane_dir" "$2" "$CAP_FLEET"; then
+  if ! lane_claim_reserve "$store" "$$" "$2" "$CAP_FLEET"; then
     cap_release
     ot_message cap-reserve-failed "item=$1" "store=$store" >&2
     return 1
@@ -66,21 +65,30 @@ cap_unreserve() {
 # Takes the fleet's launch lock, printing lock-waiting once when another launch
 # holds it, so a long wait reads as a wait. The first try's own diagnostic is
 # dropped: it is the one-second probe, and the bounded wait that follows
-# reports its own. A take that fails releases whatever it holds.
+# reports its own. A take that fails prints the refusal naming its cause and
+# releases whatever it holds: a fleet state whose path workflow-state could not
+# give, a lock file the shell could not open, or a lock another launch held
+# past the bound.
 cap_take() { # ITEM
   local state
   if [[ -z "$CAP_LOCK" ]]; then
-    state="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} path oversee)" || return 1
+    if ! state="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} path oversee)"; then
+      ot_message cap-unreadable "item=$1" "source=state" >&2
+      return 1
+    fi
     CAP_FLEET="$(lane_claims_canon "${state%/*}")/${state##*/}"
     CAP_LOCK="$CAP_FLEET.launch.lock"
   fi
-  CAP_HELD=true
-  if exec 7>"$CAP_LOCK"; then
-    orch_take_lock 7 "$CAP_LOCK" 1 2>/dev/null && return 0
-    ot_message lock-waiting "item=$1" "lock=$CAP_LOCK" "wait-s=$CAP_LOCK_WAIT_SECS"
-    orch_take_lock 7 "$CAP_LOCK" "$CAP_LOCK_WAIT_SECS" && return 0
+  if ! exec 7>"$CAP_LOCK"; then
+    ot_message cap-lock-unopenable "item=$1" "lock=$CAP_LOCK" >&2
+    return 1
   fi
+  CAP_HELD=true
+  orch_take_lock 7 "$CAP_LOCK" 1 2>/dev/null && return 0
+  ot_message lock-waiting "item=$1" "lock=$CAP_LOCK" "wait-s=$CAP_LOCK_WAIT_SECS"
+  orch_take_lock 7 "$CAP_LOCK" "$CAP_LOCK_WAIT_SECS" && return 0
   cap_release
+  ot_message cap-lock-failed "item=$1" "lock=$CAP_LOCK" >&2
   return 1
 }
 
@@ -139,7 +147,7 @@ cap_gate() { # ITEM KEY WINDOW
   local item="$1" key="$2" stale=false waited_on=""
   CAP_PASSED=""
   while :; do
-    cap_take "$item" || { ot_message cap-lock-failed "item=$item" "lock=$CAP_LOCK" >&2; return 1; }
+    cap_take "$item" || return 1
     cap_count "$item" "$key" || { cap_release; return 1; }
     if [[ "$RELAUNCH" == true && "$CAP_ITEM_HELD" == held ]] || (( CAP_RUNNING + CAP_INFLIGHT < FLEET_CAP )); then
       [[ "$stale" == true ]] || { cap_reserve "$item" "$3"; return; }

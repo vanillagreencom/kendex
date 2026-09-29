@@ -82,6 +82,7 @@ ot_message() { # REASON FIELD=VALUE...
     cap-reached) text='A launch here would put the fleet over ORCH_OVERSEER_LANES. cap names that setting, running the lane records in the fleet state whose status is running or preparing, and claims the live launch claims and reservations this fleet wrote that name the window of no such record: a lane whose record is neither while its pane still runs, or a launch not yet recorded. Nothing was launched. Wait for a lane to close, launch with --wait-slot to wait for one here, or pass --over-cap for one deliberate exception.' ;;
     cap-unreadable) text='The lanes in flight could not be counted, so the fleet cap cannot be judged. Nothing was launched. source=state is the fleet state named by --state-dir; source=claims is the claim store, whose own keyed lane-claims line above names what failed.' ;;
     cap-lock-failed) text='The fleet'"'"'s launch lock, which lock names, was not taken inside its bound, so the count and the reservation write cannot be one step. Nothing was launched. Another launch holds it; the lock line above names a stale mutex where flock is absent.' ;;
+    cap-lock-unopenable) text='The fleet'"'"'s launch lock file, which lock names, could not be opened, so the count and the reservation write cannot be one step. Nothing was launched. The shell'"'"'s own line above names why: a directory at that path, a state directory this launch cannot write, or a read-only file system.' ;;
     cap-reserve-failed) text='The reservation that holds this launch'"'"'s place in the count could not be written to the claim store that store names, so the next count would not see this launch. Nothing was launched. Check that directory: a store that cannot take a reservation cannot take the claim that follows it either.' ;;
     reserve-unremoved) text='The reservation this launch wrote could not be removed. Until the lane record is written the count holds this lane twice; after the lane stops, the reservation still counts as a lane in flight until this launcher exits, when it lapses.' ;;
     cap-option-unanchored) text='This option answers the fleet cap, which a launch meets only where --state-dir names its fleet. Nothing was launched. Pass --state-dir, or drop the option.' ;;
@@ -591,10 +592,12 @@ as cap-reached, naming the cap, those records and the claims. No cap bounds
 the lanes on one account: `--lane auto` chooses the account by its headroom
 through `lanes pick`. A refusal stops the batch, and so does a claim this run
 failed to write under --lane auto, whose re-pick reads claims, as
-claim-unrecorded. A store that cannot be read refuses as cap-unreadable, and
-a lock not taken as cap-lock-failed. A --relaunch meets the fleet cap where
-the item has no running or preparing record. --wake is not judged. Both flags
-below need --state-dir, and are refused as cap-option-unanchored without it:
+claim-unrecorded. A store that cannot be read refuses as cap-unreadable, a
+lock file that cannot be opened as cap-lock-unopenable, and a lock another
+launch holds past the wait as cap-lock-failed. A --relaunch meets the fleet
+cap where the item has no running or preparing record. --wake is not judged.
+Both flags below need --state-dir, and are refused as cap-option-unanchored
+without it:
   --wait-slot       Wait for room instead of refusing: count again every 5
                     seconds, holding no lock between counts, and count and
                     reserve under the lock once the cap has room. The lane

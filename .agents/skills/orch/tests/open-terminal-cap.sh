@@ -211,7 +211,7 @@ race() {
 }
 
 # key TAG — the first line of every open-terminal cap line on TAG's output.
-key() { grep -hE '^open-terminal: (cap-reached|over-cap-admitted|slot-waiting|cap-unreadable|cap-lock-failed|cap-option-unanchored|over-cap-items|claim-unrecorded|lane-model-walled|cap-reserve-failed) ' "$ROW/$1.out" "$ROW/$1.err" || true; }
+key() { grep -hE '^open-terminal: (cap-reached|over-cap-admitted|slot-waiting|cap-unreadable|cap-lock-unopenable|cap-lock-failed|cap-option-unanchored|over-cap-items|claim-unrecorded|lane-model-walled|cap-reserve-failed) ' "$ROW/$1.out" "$ROW/$1.err" || true; }
 # lock_waits TAG — how many lock-waiting lines TAG printed.
 lock_waits() { grep -c '^open-terminal: lock-waiting' "$ROW/$1.out" || true; }
 # reservations — the reservation files the row's claim store holds.
@@ -332,7 +332,7 @@ row reserve-dead
 DEAD=$!
 wait "$DEAD"
 mkdir -p "$CLAIMS/claims"
-printf '%s\t-\t%s\tCC-8\t2026-01-01T00:00:00Z\t%s\n' "$DEAD" "$LANE_A" "$STATE/workflow-state-oversee.json" \
+printf '%s\t-\t\tCC-8\t2026-01-01T00:00:00Z\t%s\n' "$DEAD" "$STATE/workflow-state-oversee.json" \
   > "$CLAIMS/claims/claim.dead.reserve"
 launch one 1 --lane "$LANE_A" CC-1
 assert_eq "rc=$(rc one) running=$(running) reservations=$(reservations) $(key one)" "rc=0 running=CC-1 reservations=0 " \
@@ -630,7 +630,7 @@ row lock-unopenable
 mkdir -p "$STATE/workflow-state-oversee.json.launch.lock"
 launch one 5 --lane "$LANE_A" CC-1
 assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
-  "rc=1 open-terminal: cap-lock-failed item=CC-1 lock=$STATE/workflow-state-oversee.json.launch.lock opened=no" \
+  "rc=1 open-terminal: cap-lock-unopenable item=CC-1 lock=$STATE/workflow-state-oversee.json.launch.lock opened=no" \
   "a launch lock that cannot be opened refuses the launch rather than counting unlocked"
 
 echo "=== refusals ahead of any count ==="

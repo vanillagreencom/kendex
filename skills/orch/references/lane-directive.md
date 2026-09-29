@@ -55,7 +55,7 @@ A `--cmd` launch's brief travels as a file. Write it under `tmp/` with the harne
 The fleet cap refuses a launch before its worktree; a `--relaunch` meets it only where it adds a lane. No cap bounds the lanes on one account: `lanes pick` chooses the account by its headroom.
 
 - `cap-reached`: launch once a lane closes.
-- `cap-unreadable`, `cap-lock-failed`, `cap-reserve-failed`, `claim-unrecorded`: fix what the line names; never launch around it.
+- `cap-unreadable`, `cap-lock-unopenable`, `cap-lock-failed`, `cap-reserve-failed`, `claim-unrecorded`: fix what the line names; never launch around it.
 
 A launch queued behind the cap, such as a chain script, passes `--wait-slot`, which waits for room; the overseer writes no counting loop. `--over-cap` admits one deliberate exception, recorded as the lane record's `over_cap`.
 

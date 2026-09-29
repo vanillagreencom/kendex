@@ -2526,8 +2526,7 @@ for raw in "${ITEMS[@]}"; do
     failed=$((failed + 1))
     break
   fi
-  # Judged once the lane is settled, since the reservation names that lane,
-  # and before the worktree, so a refused item leaves no tree behind. A
+  # Judged before the worktree, so a refused item leaves no tree behind. A
   # refusal stops the batch: the count it refused on stands for every later
   # item.
   if [[ "$CAP_GATED" == true ]] && ! cap_gate "$item" "$wt_id" "$title"; then

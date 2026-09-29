@@ -25,15 +25,16 @@
 # only its own fleet's claims, while `lanes pick` charges an account with
 # whatever fleet's claims name it. A claim with an empty fleet, written by a
 # launch naming no fleet or before claims carried one, counts toward its
-# account and toward no fleet's cap, and it is the lane of a fleet's running
-# or preparing record whose window and account it names, as that fleet's own
-# claims are.
+# account and toward no fleet's cap; a fleet's report (lane_claims_for_fleet)
+# takes it as the lane of that fleet's running or preparing record whose window
+# and account it names.
 #
 # A reservation is the same record under `.reserve`, with the launcher's pid as
 # its server and `-` as its pane: the place in the count a judged launch holds
 # from its count until its claim or record stands, or the item ends, live while
-# that launcher runs. Its config dir is empty for a launch naming no lane. Only
-# the count form of lane_claims_read carries reservations; every other reader
+# that launcher runs. Its config dir is empty: only the count form of
+# lane_claims_read carries reservations, and the fleet cap that reads it judges
+# a reservation by its window and fleet, never its account. Every other reader
 # reads claims alone.
 set -euo pipefail
 
@@ -193,13 +194,6 @@ lane_claims_read() {
   return "$rc"
 }
 
-# The ownership condition of fleet reports. `owned` maps
-# each held record's bare window plus canonical account. A claim of this fleet
-# or of no named fleet is that record's own only when both fields match.
-LANE_CLAIM_OWNERSHIP_AWK='function lane_claim_owned(fleet, expected, window, account, owned) {
-  return (fleet == expected || fleet == "") && ((window "\t" account) in owned)
-}'
-
 # Select context claims from the fleet-field form, emitting the normal four
 # fields. Explicit fleet identity owns even an in-flight claim with no record;
 # an empty identity needs a held record's window and canonical account.
@@ -215,13 +209,13 @@ lane_claims_for_fleet() { # CLAIMS FLEET LANES_JSON
     account=$(lane_claims_canon "$account") || return 1
     owned+="$window"$'\t'"$account"$'\n'
   done <<<"$rows"
-  CLAIM_OWNED="$owned" CLAIM_FLEET="$2" awk -F'\t' "$LANE_CLAIM_OWNERSHIP_AWK"'
+  CLAIM_OWNED="$owned" CLAIM_FLEET="$2" awk -F'\t' '
     BEGIN {
       OFS = "\t"
       n = split(ENVIRON["CLAIM_OWNED"], rows, "\n")
       for (i = 1; i <= n; i++) if (rows[i] != "") owned[rows[i]] = 1
     }
-    NF && ($5 == ENVIRON["CLAIM_FLEET"] || lane_claim_owned($5, ENVIRON["CLAIM_FLEET"], $2, $1, owned)) {
+    NF && ($5 == ENVIRON["CLAIM_FLEET"] || ($5 == "" && (($2 "\t" $1) in owned))) {
       print $1, $2, $3, $4
     }' <<<"$1"
 }
@@ -270,10 +264,10 @@ lane_claim_write() {
   lane_claim_put "$1" claim "$2" "$3" "$4" "$5" "${6:-}"
 }
 
-# Record one reservation, its path left in LANE_CLAIM_PATH. $1: claims dir,
-# $2: the launcher's pid, $3: config dir, empty for none, $4: window, $5: fleet.
+# Record one reservation, its path left in LANE_CLAIM_PATH, with an empty
+# config dir. $1: claims dir, $2: the launcher's pid, $3: window, $4: fleet.
 lane_claim_reserve() {
-  lane_claim_put "$1" reserve "$2" - "$3" "$4" "$5"
+  lane_claim_put "$1" reserve "$2" - "" "$3" "$4"
 }
 
 # The one answer to which oversee lane records are lanes in flight, as jq
