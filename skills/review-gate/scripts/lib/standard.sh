@@ -14,8 +14,8 @@
 # sets WANT_APP (REVIEW_GATE_STANDARD_APP); SCOPE `environment` leaves it
 # unread. With no jq on PATH, a missing, unreadable or malformed manifest, an
 # unreadable setting, a key the scope reads unset or empty, or a secret name
-# outside the shell identifier grammar, it prints the refusal to stderr and
-# returns 1; the caller exits with its could-not-run status.
+# outside the uppercase shell identifier grammar, it prints the refusal to
+# stderr and returns 1; the caller exits with its could-not-run status.
 rg_standard_load() { # MANIFEST SCOPE
   local secrets invalid missing="" rc=0
   case "$2" in
@@ -69,11 +69,14 @@ rg_standard_load() { # MANIFEST SCOPE
   fi
   # provision-environment.sh reads each secret's value from the shell
   # variable of its name, so a name bash cannot expand is refused here, not
-  # by bash. GitHub's secret-name grammar lies inside this one.
-  invalid="$(LC_ALL=C grep -vxE -- '[A-Za-z_][A-Za-z0-9_]*' <<<"$WANT_SECRETS")" || rc=$?
+  # by bash. GitHub stores every secret name uppercase and the name lists
+  # rg_standard_held and rg_standard_missing read are that stored form, so a
+  # lowercase letter is refused too: an accepted name is the stored name, and
+  # two names differing only in case cannot both be declared.
+  invalid="$(LC_ALL=C grep -vxE -- '[A-Z_][A-Z0-9_]*' <<<"$WANT_SECRETS")" || rc=$?
   case "$rc" in
     0)
-      rg_message error standard-secret-invalid "${invalid//$'\n'/;}" "REVIEW_GATE_STANDARD_SECRETS holds these names, which are not secret names: a name is letters, digits and underscores, and does not start with a digit" >&2
+      rg_message error standard-secret-invalid "${invalid//$'\n'/;}" "REVIEW_GATE_STANDARD_SECRETS holds these names, which are not secret names: a name is uppercase letters, digits and underscores, and does not start with a digit; GitHub stores every secret name uppercase" >&2
       return 1
       ;;
     1) ;;

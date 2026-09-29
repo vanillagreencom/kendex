@@ -50,7 +50,7 @@ settings_consumer none
 settings_consumer seeded 'REVIEW_GATE_STANDARD_APP = ""' 'REVIEW_GATE_STANDARD_ENVIRONMENT = ""' 'REVIEW_GATE_STANDARD_SECRETS = ""'
 settings_consumer no-secrets 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = " ; "'
 settings_consumer no-app 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"'
-settings_consumer bad-secret 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP-ID;9KEY"'
+settings_consumer bad-secret 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP-ID;9KEY;app_id"'
 CONSUMER="$TMP/consumer-full"
 
 # The matching world.
@@ -320,7 +320,7 @@ a consumer that declares nothing~~~none~~review-gate-error=standard-setting-miss
 a consumer holding the package's empty seed~~~seeded~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
 a secret list of separators alone~~~no-secrets~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_SECRETS
 a consumer with no app~~~no-app~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_APP
-a secret name no shell variable can hold~~~bad-secret~~review-gate-error=standard-secret-invalid~9KEY\;APP-ID
+a secret name that is not an uppercase shell variable name~~~bad-secret~~review-gate-error=standard-secret-invalid~9KEY\;APP-ID\;app_id
 environment-only reads no app, only the environment keys~~~none~--environment-only~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
 the organization values inline in the manifest are not read~~{"ci_context": "CI", "gate_context": "Review gate", "app": "lanes-app", "environment": "kendex", "environment_secrets": ["APP_ID", "APP_KEY"]}~none~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
 an argument~~~full~--repo~review-gate-error=unknown-arguments~
@@ -414,7 +414,7 @@ cp "$TMP/standard-script.keep" "$SKILL/scripts/validate-standard.sh"
 # The secret-name rule's control widens the copy's grammar to any name: the
 # bad names reach the GitHub reads, and the run no longer refuses.
 cp "$SKILL/scripts/lib/standard.sh" "$TMP/standard-lib.keep"
-file_edit "$SKILL" scripts/lib/standard.sh 1 "grep -vxE -- '\\[A-Za-z_\\]\\[A-Za-z0-9_\\]\\*'" 's/\[A-Za-z_\]\[A-Za-z0-9_\]\*/.*/'
+file_edit "$SKILL" scripts/lib/standard.sh 1 "grep -vxE -- '\\[A-Z_\\]\\[A-Z0-9_\\]\\*'" 's/\[A-Z_\]\[A-Z0-9_\]\*/.*/'
 RC=0
 RAW="$(cd "$TMP/consumer-bad-secret" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$BASE" \
   "$SKILL/scripts/validate-standard.sh" 2>&1)" || RC=$?
