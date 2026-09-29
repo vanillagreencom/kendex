@@ -230,7 +230,7 @@ Use the output as `MAIN_REPO_ROOT`.
    It also resolves the gate mode the prepared base sets:
 
    ```bash
-   .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
+   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
    ```
 
    A `[MICRO_ENTRY]` run continues only where the `item-tier` answer is `tier=micro`, the gate mode is `approval`, AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`: the class is measured over both endpoints, and a retarget can change the class, or move the pull request onto a base that requires no approval, without moving the head. The fresh answers carry the micro tier, and the head says it is the same run. A micro run has no internal review, so a base that requires no approval would merge it unreviewed. Any other answer arms nothing and escapes by micro.md condition 9. Read workflow state `pr.size_check` for `[STATE_KEY]`, and use it only when its `head_sha` equals `[PREPARED_HEAD]`, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.

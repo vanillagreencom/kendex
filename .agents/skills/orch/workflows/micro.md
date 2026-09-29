@@ -165,7 +165,7 @@ The accepted answer is `tier=micro`: the classifier measured `render`, `trivial`
 Resolve the gate mode the pull request's base sets ([references/gates.md](../references/gates.md)):
 
 ```bash
-[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
+env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
 ```
 
 Continue only on `approval`. This tier runs no internal review, so a GitHub approval is the one review the pull request gets: § 5 step 1's arm leaves it to GitHub, which holds the merge until the approval lands. `off` or a non-zero exit escapes (§ Escape condition 7): on such a base the pull request would merge with no reviewer at all.
