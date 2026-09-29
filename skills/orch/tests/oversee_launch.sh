@@ -98,6 +98,7 @@ tm set-option -g renumber-windows off
 tm set-option -g default-shell /bin/sh
 tm set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
 SERVER_PID="$(tm display-message -p '#{pid}')"
+SERVER_START="$(tm display-message -p '#{start_time}')"
 SOCKET="$TMUX_DIR/tmux-$(id -u)/default"
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 
@@ -140,9 +141,9 @@ SESSION="$(field "$LAUNCHED" session)"
 assert_eq "$RC|$(sed -n 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=%N/p' <<<"$LAUNCHED")|$(layout)|$(recorded_argv)" \
   "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|1 overseer;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
   "a first launch from outside tmux opens the overseer at the end of the named session and records it"
-assert_eq "$(recorded runtime)|$(recorded server)|$(recorded pane)|$(recorded window)|$(recorded account)|$(recorded generation)|$(recorded launch_line)" \
-  "tmux|$SERVER_PID|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high $BYPASS $(printf '%q' "$COMPACT") $(printf '%q' "$QUESTION_OFF") '$BRIEF'" \
-  "the session record names the runtime, server, pane, window, account, line and generation"
+assert_eq "$(recorded runtime)|$(recorded server)|$(recorded server_start)|$(recorded pane)|$(recorded window)|$(recorded account)|$(recorded generation)|$(recorded launch_line)" \
+  "tmux|$SERVER_PID|$SERVER_START|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high $BYPASS $(printf '%q' "$COMPACT") $(printf '%q' "$QUESTION_OFF") '$BRIEF'" \
+  "the session record names the runtime, server and its start, pane, window, account, line and generation"
 WORK_REAL="$(cd "$TMP_ROOT/work" && pwd -P)"
 identity() { printf '%s|' "$(recorded harness)" "$(recorded account)" "$(recorded home)" "$(recorded model)" "$(recorded effort)" "$(recorded cwd)"; }
 assert_eq "$(identity)" "claude|$H/.claude|$H/.claude|fable|high|$WORK_REAL|" \
@@ -244,9 +245,9 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
 HAND="$(tm new-window -d -t fleet:4 -n hand -P -F '#{pane_id}' "exec '$BIN/hclaude' 100000")"
 PRIOR_LINE="$(recorded launch_line)"
 run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(keyed registered "$OUT" | sed -n 1p)|$(recorded runtime)|$(recorded account)|$(recorded launch_line)" \
-  "0|oversee: identity-fallback session=$HAND cause=no-start-row|oversee: registered session=$HAND window=$(tm display-message -p -t "$HAND" '#{window_id}') server=$SERVER_PID generation=4 account=$H/.eclaude|tmux|$H/.eclaude|none" \
-  "register with no SessionStart row reads the pane as the named fallback, says so, writes the record one generation past it, and drops the launch line the record held"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(keyed registered "$OUT" | sed -n 1p)|$(recorded runtime)|$(recorded account)|$(recorded launch_line)|$(recorded server_start)" \
+  "0|oversee: identity-fallback session=$HAND cause=no-start-row|oversee: registered session=$HAND window=$(tm display-message -p -t "$HAND" '#{window_id}') server=$SERVER_PID generation=4 account=$H/.eclaude|tmux|$H/.eclaude|none|$SERVER_START" \
+  "register with no SessionStart row reads the pane as the named fallback, says so, writes the record one generation past it with its server's start, and drops the launch line the record held"
 # The line's control: a writer that keeps the prior's fields whole leaves the
 # launched session's line on the hand-opened one, and a death of the latter
 # would replay the former's command. The line the real register just dropped
@@ -267,6 +268,13 @@ mutate_file "$REGCTL/oversee" '    claude) harness=claude ;;' '    claude) ;;'
 OVERSEE_BIN="$REGCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
 assert_eq "$RC|$(recorded harness)" "0|none" \
   "control: a register that reads no harness records none"
+# The start's control: a writer that records no server start leaves the
+# registered server told from no later one handed the same pid.
+STARTCTL="$(mutant_scripts startctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$STARTCTL/lib/overseer-launch.sh" 'server_start: ($start | ol_server_start)}' 'server_start: null}'
+OVERSEE_BIN="$STARTCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
+assert_eq "$RC|$(recorded server_start)" "0|none" \
+  "control: a register whose writer drops the server start records none"
 # register from the session's own SessionStart row (lib/session-rows.sh), in
 # the shape Claude Code 2.1.283's hook emits it: the harness, account and
 # model the row states, not the environment's, and the rows file recorded.

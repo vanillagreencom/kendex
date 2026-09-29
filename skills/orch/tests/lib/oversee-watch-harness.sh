@@ -249,6 +249,17 @@ case "${1:-}" in
       else printf '@7\n'; fi
       exit 0
     done
+    # `-p -t <pane> '#{pid} #{start_time}'` asks for the pane's server and
+    # that server's start, the start the overseer record binds its server by:
+    # the pid the pane-key file names, default 7000, and 1790000000.
+    for a in "$@"; do
+      [[ "$a" == '#{pid} #{start_time}' ]] || continue
+      lane="$(dash_t "$@")"
+      if [[ -f "$STUB_DIR/pane-key-$lane.txt" ]]; then
+        awk '{ print $1 " 1790000000"; exit }' "$STUB_DIR/pane-key-$lane.txt"
+      else printf '7000 1790000000\n'; fi
+      exit 0
+    done
     # `-p -t <lane> '#{pid} #{pane_id}'` asks for the pane's liveness key.
     for a in "$@"; do
       [[ "$a" == *'#{pane_id}'* ]] || continue

@@ -429,16 +429,26 @@ assert_eq "server=$(recorded server) pane=$(recorded pane) window=$(recorded win
 assert_eq "$(recorded launch_line)" "$LINE" "and the line a successor of it would run" "$ERR"
 ROWS_PATH="$CASE_REPO_ROOT/tmp/lane-mail/overseer/session-7000-${PANE#%}.jsonl"
 assert_eq "$(recorded session_rows)" "$ROWS_PATH" "and the file its session rows land in" "$ERR"
-# The control: a start that records no rows file leaves a hand-started
-# overseer judged from its pane alone.
+assert_eq "$(recorded server_start)" "1790000000" "and the start of the server holding the pane" "$ERR"
+# The controls: a start that records no rows file leaves a hand-started
+# overseer judged from its pane alone, and one that records no server start
+# leaves its server told from no later one handed the same pid.
 ROWSREC_CTL="$(mutant_scripts rowsrec-ctl/orch lib/watch-overseer-record.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/rowsrec-ctl/github"
-mutate_file "$ROWSREC_CTL/lib/watch-overseer-record.sh" ', session_rows: $rows})' '})'
+mutate_file "$ROWSREC_CTL/lib/watch-overseer-record.sh" 'launch_line: $line, session_rows: $rows,' 'launch_line: $line,'
 overseer_case record_first_start_mutant idle
 printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
 printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
 WATCH_BIN="$ROWSREC_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
 assert_eq "$(recorded session_rows)" "none" "control: a start that drops the field records no rows file" "$ERR"
+STARTREC_CTL="$(mutant_scripts startrec-ctl/orch lib/watch-overseer-record.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/startrec-ctl/github"
+mutate_file "$STARTREC_CTL/lib/watch-overseer-record.sh" 'server_start: ($start | ol_server_start)})' 'server_start: null})'
+overseer_case record_first_start_mutant idle
+printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
+printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+WATCH_BIN="$STARTREC_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
+assert_eq "$(recorded server_start)" "none" "control: a start that drops the server start records none" "$ERR"
 overseer_case record_first_start idle
 printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
 printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"

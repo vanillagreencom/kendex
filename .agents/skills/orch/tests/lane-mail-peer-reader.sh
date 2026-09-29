@@ -2,7 +2,7 @@
 # lane-mail peer send and peer ask: whether the peer checkout's overseer
 # mailbox has a reader, the notice written on stderr once the line lands. The
 # reader is the one session the peer's fleet record names by tmux server and
-# pane; each row builds a sender and a peer checkout, writes the peer's
+# pane, bound to the server by its start time; each row builds a sender and a peer checkout, writes the peer's
 # record, and drives the real script with a tmux stub whose pane list the row
 # sets. What the pane judgement itself answers is tmux-pane-live.sh's subject,
 # and what workflow-state --no-private-env reads is
@@ -28,8 +28,9 @@ source "$TEST_DIR/lib/growth-state.sh"
 
 echo "=== lane-mail peer send and peer ask: reader ==="
 
-# `list-panes -a` answers the file PANES holds; with no file, tmux has no
-# server to ask.
+# `list-panes -a` answers the file PANES holds, `<pid> <start> <pane>` rows;
+# with no file, tmux has no server to ask. START is the running server's
+# start time, and EARLIER an earlier server's that was handed the same pid.
 STUB_BIN="$TMP_ROOT/bin"
 PANES="$TMP_ROOT/panes"
 mkdir -p "$STUB_BIN"
@@ -50,6 +51,8 @@ LIVE=$!
 sleep 0 &
 GONE=$!
 wait "$GONE" || :
+START=1790000000
+EARLIER=1780000000
 
 checkout() { # NAME
   mkdir -p "$TMP_ROOT/$1"
@@ -105,8 +108,8 @@ err_lines() { wc -l < "$TMP_ROOT/err" | tr -d ' '; }
 fix_lines() { grep -c '^fix=.*oversee register' "$TMP_ROOT/err" || :; }
 sourced() { if [ -e "$SENTINEL" ]; then echo sourced; else echo unsourced; fi; }
 live_record() {
-  record "{\"server\":\"$LIVE\",\"pane\":\"%9\"}"
-  printf '%s %%9\n' "$LIVE" > "$PANES"
+  record "{\"server\":\"$LIVE\",\"server_start\":$START,\"pane\":\"%9\"}"
+  printf '%s %s %%9\n' "$LIVE" "$START" > "$PANES"
 }
 
 # RECORD|LISTING|FIRST STDERR LINE|FIX LINES|LABEL. LISTING `-` is no server
@@ -122,12 +125,15 @@ while IFS='|' read -r rec listing first fix label; do
 done <<EOF
 none|-|lane-mail: no-reader=$PEER cause=unnamed|1|a peer with no fleet state names no reader
 {"window":"@1"}|-|lane-mail: no-reader=$PEER cause=unnamed|1|a record naming no server and pane names no reader
-{"server":"$LIVE","pane":"9"}|$LIVE %9|lane-mail: no-reader=$PEER cause=unnamed|1|a pane not spelled %N names no reader
-{"server":"a$LIVE","pane":"%9"}|$LIVE %9|lane-mail: no-reader=$PEER cause=unnamed|1|a server not spelled as a pid names no reader
-{"server":"$GONE","pane":"%9"}|$LIVE %9|lane-mail: no-reader=$PEER cause=pane-gone|1|a record naming a gone server names a pane that no longer runs
-{"server":"$LIVE","pane":"%4"}|$LIVE %9|lane-mail: no-reader=$PEER cause=pane-gone|1|a record naming a pane its server no longer lists names no reader
-{"server":"$LIVE","pane":"%9"}|$LIVE %9|-|0|a record naming a live pane says nothing
-{"server":"$LIVE","pane":"%9"}|4242 %9|lane-mail: reader-unjudged=$PEER cause=server|0|a pane on a server this shell cannot ask is unjudged
+{"server":"$LIVE","server_start":$START,"pane":"9"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=unnamed|1|a pane not spelled %N names no reader
+{"server":"a$LIVE","server_start":$START,"pane":"%9"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=unnamed|1|a server not spelled as a pid names no reader
+{"server":"$GONE","server_start":$START,"pane":"%9"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=pane-gone|1|a record naming a gone server names a pane that no longer runs
+{"server":"$LIVE","server_start":$START,"pane":"%4"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=pane-gone|1|a record naming a pane its server no longer lists names no reader
+{"server":"$LIVE","server_start":$EARLIER,"pane":"%9"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=pane-gone|1|a record naming an earlier server handed the same pid and pane names no reader
+{"server":"$LIVE","server_start":$START,"pane":"%9"}|$LIVE $START %9|-|0|a record naming a live pane says nothing
+{"server":"$LIVE","pane":"%9"}|$LIVE $START %9|lane-mail: reader-unjudged=$PEER cause=unbound|0|a record binding its server to no start is unjudged
+{"server":"$LIVE","server_start":null,"pane":"%9"}|$LIVE $START %9|lane-mail: reader-unjudged=$PEER cause=unbound|0|a record whose start could not be read is unjudged
+{"server":"$LIVE","server_start":$START,"pane":"%9"}|4242 $START %9|lane-mail: reader-unjudged=$PEER cause=server|0|a pane on a server this shell cannot ask is unjudged
 bad|-|lane-mail: reader-unjudged=$PEER cause=state|0|a fleet state its reader cannot parse is unjudged
 bad-settings|-|lane-mail: reader-unjudged=$PEER cause=state|0|peer settings their loader refuses are unjudged
 EOF
@@ -242,21 +248,39 @@ assert_eq "$(first_err)" "lane-mail: reader-unjudged=$PEER cause=state" \
   "control: without the state file test a peer with no fleet state reads as a state it could not read"
 
 mutant no-pair-test '  if [ -z "$server" ] || [ -z "$pane" ]; then' '  if false; then'
-record '{"window":"@1"}'
+record "{\"window\":\"@1\",\"server_start\":$START}"
 send 'No pair.'
 assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=pane-gone" \
   "control: without the pair test a record naming no pane is judged as a pane"
 
 mutant gone-silent '    1) lm_notice no-reader "$ROOT" cause=pane-gone ;;' '    1) ;;'
-record "{\"server\":\"$GONE\",\"pane\":\"%9\"}"
+record "{\"server\":\"$GONE\",\"server_start\":$START,\"pane\":\"%9\"}"
 send 'Gone.'
 assert_eq "$(first_err)" "" "control: without the pane-gone notice a record naming a gone pane says nothing"
 
 mutant server-silent '    *) lm_notice reader-unjudged "$ROOT" cause=server ;;' '    *) ;;'
-record "{\"server\":\"$LIVE\",\"pane\":\"%9\"}"
-printf '4242 %%9\n' > "$PANES"
+record "{\"server\":\"$LIVE\",\"server_start\":$START,\"pane\":\"%9\"}"
+printf '4242 %s %%9\n' "$START" > "$PANES"
 send 'Other server.'
 assert_eq "$(first_err)" "" "control: without the server notice a pane nothing here can ask says nothing"
+
+mutant unbound-judged '  if [ -z "$start" ]; then' '  if false; then'
+record "{\"server\":\"$LIVE\",\"pane\":\"%9\"}"
+printf '%s %s %%9\n' "$LIVE" "$START" > "$PANES"
+send 'Unbound.'
+assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=pane-gone" \
+  "control: without the start test a record binding no start is judged on a server it cannot name"
+
+# The start the pane judgement compares is lib/tmux-server.sh's; this mutant
+# of that library matches a listed pane on any start.
+LIB_DIR="$(mutant_scripts mutants/any-start lib/tmux-server.sh)" || exit 1
+mutate_file "$LIB_DIR/lib/tmux-server.sh" '    *"$nl$1 $2 $3$nl"*) return 0 ;;' '    *"$nl$1 "*" $3$nl"*) return 0 ;;'
+LANE_MAIL_BIN="$LIB_DIR/lane-mail"
+record "{\"server\":\"$LIVE\",\"server_start\":$EARLIER,\"pane\":\"%9\"}"
+printf '%s %s %%9\n' "$LIVE" "$START" > "$PANES"
+send 'Earlier server.'
+assert_eq "$(first_err)" "" \
+  "control: a pane judgement blind to the start reads an earlier server's pane as live"
 
 mutant state-silent '    lm_notice reader-unjudged "$ROOT" cause=state "$cause"' '    :'
 record bad

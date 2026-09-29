@@ -1391,11 +1391,13 @@ Global options (before the subcommand):
                                 flag over the ORCH_STATE_DIR=… env prefix from
                                 worktree sessions: orch's shell rule takes no
                                 env prefix.
-  --no-private-env              Read the project's settings files and never
-                                source its private env file (.env.local, or
-                                the file KENDEX_ENV_FILE names): for a caller
-                                reading another checkout's state, which that
-                                checkout's shell must not run in.
+  --no-private-env              Take ORCH_STATE_DIR alone from the project's
+                                settings files, read as data, set no other
+                                [env] key and never source its private env
+                                file (.env.local, or the file KENDEX_ENV_FILE
+                                names): for a caller reading another
+                                checkout's state, whose code must not run in
+                                the caller.
 
 Commands:
   init <issue_id> [options]     Create new state file
@@ -1683,13 +1685,28 @@ source "$SCRIPT_DIR/lib/watch-pid.sh"
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 # --no-private-env is for a caller reading another checkout's state: the
-# settings files are parsed as data, and the private env file, which is
-# sourced as shell, would run that checkout's code in the caller.
+# private env file, which is sourced as shell, would run that checkout's code
+# in the caller, and so would any other [env] key it sets, PATH or a loader
+# variable reaching the jq every verb runs. So each settings file is loaded in
+# a subshell of its own, whose loop runs builtins alone once a key is set,
+# and ORCH_STATE_DIR is the one value that leaves it: `=VALUE` where the file
+# sets it, nothing where it does not. Later files outrank earlier ones, as in
+# kendex_load_project_env.
+settings_state_dir() { # FILE
+    (
+        unset ORCH_STATE_DIR
+        kendex_load_settings_file "$1" || exit 1
+        [[ -z "${ORCH_STATE_DIR+set}" ]] || printf '=%s' "$ORCH_STATE_DIR"
+    )
+}
 if [[ "$parse_rc" -eq 9 ]]; then
     kendex_load_project_env "$PROJECT_ROOT"
 else
-    kendex_load_settings_file "$PROJECT_ROOT/kendex.settings.toml"
-    kendex_load_settings_file "$PROJECT_ROOT/.kendex/settings.toml"
+    for settings_file in kendex.settings.toml .kendex/settings.toml; do
+        settings_dir="$(settings_state_dir "$PROJECT_ROOT/$settings_file")" || exit 1
+        [[ -z "$settings_dir" ]] || export ORCH_STATE_DIR="${settings_dir#=}"
+    done
+    unset settings_file settings_dir
 fi
 unset parse_rc
 

@@ -68,6 +68,9 @@
 # names its siblings.
 # shellcheck source=session-rows.sh
 source "${BASH_SOURCE[0]%/*}/session-rows.sh"
+# The start time the record binds its tmux server by is lib/tmux-server.sh's.
+# shellcheck source=tmux-server.sh
+source "${BASH_SOURCE[0]%/*}/tmux-server.sh"
 
 # The runtime the caller launches into, resolved once per process.
 OL_RUNTIME=""
@@ -549,11 +552,14 @@ ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
 # spells either question a second time: `ol_identity` is the launch identity
 # an object carries, its six fields in their one order, and `ol_names($server;
 # $session)` is whether a record names that session on that server, the pane
-# on tmux and the session elsewhere. lib/watch-overseer-record.sh takes the
-# second for the watch start.
+# on tmux and the session elsewhere, and `ol_server_start` is the
+# `server_start` a tmux record holds for the start tmux_server_start printed,
+# null for none. lib/watch-overseer-record.sh takes the last two for the watch
+# start.
 OL_JQ_DEFS='def ol_identity: {harness, account, home, model, effort, cwd};
   def ol_names($server; $session): type == "object" and (.server // "") == $server
-    and ((.pane // .session // "") == $session);'
+    and ((.pane // .session // "") == $session);
+  def ol_server_start: if . == "" then null else tonumber end;'
 
 # ol_identity HARNESS ACCOUNT HOME MODEL EFFORT CWD — the launch identity into
 # OL_IDENTITY as the JSON object the record carries, null for each field the
@@ -774,7 +780,9 @@ ol_record_get() {
 # already read it under, and `session_rows` names the file that pane's own
 # event rows land in (lib/session-rows.sh), under the overseer mailbox of the
 # checkout the session starts in, IDENTITY's `cwd`, or this launcher's own
-# where that is unknown. `pending` is
+# where that is unknown, and `server_start` is the server's start time read
+# off that pane (lib/tmux-server.sh § tmux_server_start), null where it could
+# not be read, so no start of another server's survives. `pending` is
 # dropped: the successor it named is the session written here, or a launch
 # that never opened. `exit` is dropped: it is a session's that ended. The
 # prior's `launch_line` goes with it where LINE is empty: `oversee register`
@@ -786,20 +794,24 @@ ol_record_get() {
 # words in DEP_ERR.
 OL_GENERATION=""
 ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
-  local prior="${OL_PRIOR:-null}" record cwd rows="" generation
+  local prior="${OL_PRIOR:-null}" record cwd rows="" start="" generation
   OL_GENERATION=""
   if [[ "$1" == tmux ]]; then
     cwd="$(jq -r '.cwd // empty' <<<"$5" 2>"$DEP_ERR")" || return 1
     rows="$(session_rows_overseer_file "${cwd:-$PWD}" "$4" "$2")"
+    start="$(tmux_server_start "$2" "$4")" || start=""
   fi
   record="$(jq -cn --argjson prior "$prior" --argjson identity "$5" --arg runtime "$1" \
-    --arg session "$2" --arg window "$3" --arg server "$4" --arg line "${6:-}" --arg rows "$rows" "$OL_JQ_DEFS"'
+    --arg session "$2" --arg window "$3" --arg server "$4" --arg line "${6:-}" --arg rows "$rows" \
+    --arg start "$start" "$OL_JQ_DEFS"'
       ($prior // {}) as $p
       | (($p.generation // 0) | if type == "number" then . else 0 end) as $g
       | (if ($p | ol_names($server; $session)) and $g > 0 then $g else $g + 1 end) as $next
       | ($p | del(.pending, .exit, .launch_line)) + {runtime: $runtime, server: $server, window: $window, generation: $next}
       + $identity
-      + (if $runtime == "tmux" then {pane: $session, session_rows: $rows} else {session: $session} end)
+      + (if $runtime == "tmux"
+         then {pane: $session, session_rows: $rows, server_start: ($start | ol_server_start)}
+         else {session: $session} end)
       + (if $line == "" then {} else {launch_line: $line} end)' 2>"$DEP_ERR")" \
     || return 1
   generation="$(jq -r '.generation' <<<"$record" 2>"$DEP_ERR")" || return 1
