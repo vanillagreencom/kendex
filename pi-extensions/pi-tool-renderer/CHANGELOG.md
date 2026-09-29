@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.0.4
+
+- Long sessions no longer hold Pi's main thread at full CPU under the renderer. Extension settings are read from disk at most once per second for each package and working directory, and each tool block keeps its drawn lines until its content, width, chrome mode or rule changes. A hand edit to `settings.json` now applies within one second; changes made through the extension manager and project trust changes still apply on the next render (#2837).
+
 ### 2.0.3
 
 - Bash commands and `tool_batch` children run through the renderer keep Pi's session and model metadata: `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL` and `PI_REASONING_LEVEL` reach the command instead of arriving empty. The replacement tools and batch child calls forward Pi's execution context to the built-in tool unchanged (#3101).

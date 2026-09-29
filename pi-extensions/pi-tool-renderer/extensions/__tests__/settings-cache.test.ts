@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,31 +7,41 @@ import { CONFIG_ID, readPackageConfig, recordProjectTrust, SETTINGS_RECHECK_MS }
 
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 
+/** The cache window reads `performance.now()`; each case moves this value instead of waiting. */
+let monotonicNow = 0;
+let monotonicClock: ReturnType<typeof spyOn> | undefined;
+
+beforeEach(() => {
+	monotonicNow = 0;
+	monotonicClock = spyOn(performance, "now").mockImplementation(() => monotonicNow);
+});
+
 afterEach(() => {
+	monotonicClock?.mockRestore();
 	setSystemTime();
 	if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 });
 
-/** One user dir + one trusted project whose settings.json carries `config` at a pinned mtime. Returns the project cwd. */
-function project(config: Record<string, unknown>, mtime = new Date(1000)): string {
+function writeConfig(settingsPath: string, config: Record<string, unknown>): void {
+	writeFileSync(settingsPath, JSON.stringify({ kendex: { extensionManager: { config: { [CONFIG_ID]: config } } } }));
+}
+
+/** One user dir + one trusted project whose settings.json carries `config`. Returns the project cwd. */
+function project(config: Record<string, unknown>): string {
 	const root = mkdtempSync(join(tmpdir(), "kendex-settings-cache-"));
 	const agentDir = join(root, "agent");
 	const dotPi = join(root, "project", ".pi");
 	mkdirSync(agentDir, { recursive: true });
 	mkdirSync(dotPi, { recursive: true });
-	const settingsPath = join(dotPi, "settings.json");
-	writeFileSync(settingsPath, JSON.stringify({ kendex: { extensionManager: { config: { [CONFIG_ID]: config } } } }));
-	utimesSync(settingsPath, mtime, mtime);
+	writeConfig(join(dotPi, "settings.json"), config);
 	recordProjectTrust({ cwd: join(root, "project"), isProjectTrusted: () => true });
 	process.env.PI_CODING_AGENT_DIR = agentDir;
 	return join(root, "project");
 }
 
 describe("readPackageConfig memoization", () => {
-	test("two roots with identical stat metadata read their own configs", () => {
-		// Same byte length and pinned mtime: only the path tells the two
-		// projects apart, or the second root inherits the first's config.
+	test("two roots read their own configs", () => {
 		const a = project({ commandPreviewChars: 100 });
 		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(100);
 		const b = project({ commandPreviewChars: 200 });
@@ -40,24 +50,31 @@ describe("readPackageConfig memoization", () => {
 		expect(readPackageConfig(CONFIG_ID, b).commandPreviewChars).toBe(200);
 	});
 
-	test("a real edit re-merges; a rewrite under the old mtime serves the cache", () => {
+	test("an edit is served from the cache inside the window and read from disk after it", () => {
 		const a = project({ commandPreviewChars: 100 });
-		const settingsPath = join(a, ".pi", "settings.json");
 		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(100);
-
-		// Content rewrite with the old mtime pinned back: fingerprint unchanged, memoized merge served.
-		writeFileSync(settingsPath, JSON.stringify({ kendex: { extensionManager: { config: { [CONFIG_ID]: { commandPreviewChars: 300 } } } } }));
-		utimesSync(settingsPath, new Date(1000), new Date(1000));
+		writeConfig(join(a, ".pi", "settings.json"), { commandPreviewChars: 300 });
+		monotonicNow = SETTINGS_RECHECK_MS - 1;
 		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(100);
-
-		// A real edit moves the fingerprint; lookups inside the recheck window
-		// still serve the cache, the first one after it re-merges.
-		const now = Date.now();
-		setSystemTime(now);
-		readPackageConfig(CONFIG_ID, a);
-		utimesSync(settingsPath, new Date(2000), new Date(2000));
-		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(100);
-		setSystemTime(now + SETTINGS_RECHECK_MS);
+		monotonicNow = SETTINGS_RECHECK_MS;
 		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(300);
+	});
+
+	test("a backward wall-clock step does not extend the window", () => {
+		const wallClock = Date.now();
+		setSystemTime(wallClock);
+		const a = project({ commandPreviewChars: 100 });
+		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(100);
+		writeConfig(join(a, ".pi", "settings.json"), { commandPreviewChars: 300 });
+		setSystemTime(wallClock - 60 * 60 * 1000);
+		monotonicNow = SETTINGS_RECHECK_MS;
+		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(300);
+	});
+
+	test("a project trust change is applied inside the window", () => {
+		const a = project({ commandPreviewChars: 100 });
+		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(100);
+		recordProjectTrust({ cwd: a, isProjectTrusted: () => false });
+		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBeUndefined();
 	});
 });
