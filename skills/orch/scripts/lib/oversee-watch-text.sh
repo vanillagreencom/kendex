@@ -212,7 +212,7 @@ The long pass's events, checked and reported in this order:
                              its worktree gone: `lane-close` succeeded; the
                              provider's output follows, then `kept=none` when
                              that output has no `kept=` line because the close
-                             archived nothing. A lane exiting while its
+                             kept no archive. A lane exiting while its
                              worktree stands is not closed
   EVENT lane-close-refused <item>
                              the same close exited 3: its clone or worktree

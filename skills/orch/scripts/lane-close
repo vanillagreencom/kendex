@@ -10,6 +10,7 @@ LANE_HOST="$SCRIPT_DIR/lane-host"
 LANE_MAIL="$SCRIPT_DIR/lane-mail"
 DEV_VALIDATE_RUN="$SCRIPT_DIR/dev-validate-run"
 LINEAR="$SCRIPT_DIR/../../linear/scripts/linear.sh"
+WORKTREE="$SCRIPT_DIR/../../worktree/scripts/worktree"
 LANES="$SCRIPT_DIR/lanes"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 source "$SCRIPT_DIR/lib/lane-host-slots.sh"
@@ -73,6 +74,7 @@ message() { # REASON FIELD=VALUE...
     validate-stop-failed) printf '%s\n' "A validation run in the lane's worktree could not be ended. The window and record are unchanged; dev-validate-run's own words are on the lines above this one." ;;
     item-files-failed) printf '%s\n' "The item's files in the state directory could not all be removed. The host, window and record are unchanged, and a second close retries the removal. workflow-state's own words are on the lines above this one." ;;
     item-files-kept) printf '%s\n' "The item is not finished, or its tracker did not answer, so its files in the state directory stay for a relaunch. cause is open for an item the tracker holds open, and otherwise names the read that did not answer, as tracker-read-failed does. How long they stay is the prune's keep list, as workflow-state prune --help states." ;;
+    merged-unjudged) printf '%s\n' "The record carries no cycle of a merge, and worktree merged could not say whether the item's pull request merged. status is its exit, its own words on the lines above this one; cause=worktree-missing is a worktree skill not installed beside this one, and cause=stderr-unsaved a mktemp that could not make the file its words are read from. The host close goes on without --merged, so the provider keeps the whole archive." ;;
     helper-missing) printf '%s\n' 'The required helper is not executable. Close-out changed nothing.' ;;
     park-refused)
       printf '%s\n' \
@@ -151,6 +153,15 @@ record unchanged. An exited, stopped or preparing lane's
 tracker is read for that alone: an item it holds open, or a read that does not
 answer, keeps the files and prints item-files-kept with the cause, and the
 close goes on.
+That hosted close of a finished item passes --merged to lane-host close where
+the item's pull request merged: the record carries the cycle oversee-cycle
+writes at a merge, or worktree merged ITEM, asked from this checkout, exits 0.
+The flag lets the provider cut the item's archive to one evidence file, or to
+none, so it is never passed for an item the tracker holds open: a record keeps
+its cycle across a relaunch, and the lane's later work may not have merged.
+worktree merged answers only where this checkout holds the item's branch; an
+exit other than 0 or 1 prints merged-unjudged and the close goes on without the
+flag, which keeps the whole archive.
 
 --park --pr N parks a hosted lane's clean merge wait: the lane sits in its
 queue wait doing nothing while its pull request N waits for the merge queue,
@@ -392,13 +403,38 @@ refuse_unanswered_ask() {
   exit 1
 }
 
+# Whether the item's pull request merged, which a full close of a finished
+# item tells the provider through close --merged. Two readings, in order: the
+# record's cycle, which oversee-cycle writes at the merge and which is the
+# usual evidence for a hosted lane, whose branch this checkout does not hold;
+# then worktree merged, the one judge of a branch's merge, which proves it by
+# the branch tip this checkout holds. Status 0 merged, 1 not shown merged.
+# worktree merged's exit 1 is the ordinary answer and its record stays
+# quiet; any other exit is a lookup that did not answer, whose words are
+# relayed with the notice naming it.
+item_merged() {
+  local err rc=0
+  jq -e '.cycle.pr? | numbers' <<<"$record" >/dev/null 2>&1 && return 0
+  [[ -x "$WORKTREE" ]] || { message merged-unjudged "item=$ITEM" "cause=worktree-missing"; return 1; }
+  err="$(mktemp)" || { message merged-unjudged "item=$ITEM" "cause=stderr-unsaved"; return 1; }
+  "$WORKTREE" merged "$ITEM" >/dev/null 2>"$err" || rc=$?
+  [[ "$rc" -eq 0 || "$rc" -eq 1 ]] || cat -- "$err" >&2
+  rm -f -- "${err:?}"
+  case "$rc" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) message merged-unjudged "item=$ITEM" "status=$rc"; return 1 ;;
+  esac
+}
+
 close_host() {
-  local rc=0 out err
+  local rc=0 out err args=(close --item "$ITEM")
   [[ -n "$host" ]] || return 0
   [[ -x "$LANE_HOST" ]] || { message record-invalid "item=$ITEM" "field=lane-host" >&2; return 1; }
+  if [[ "$ITEM_FINISHED" == true ]] && item_merged; then args+=(--merged); fi
   out="$(mktemp)" || return 1
   err="$(mktemp)" || { rm -f -- "$out"; return 1; }
-  ORCH_LANE_HOST="$host" "$LANE_HOST" close --item "$ITEM" >"$out" 2>"$err" || rc=$?
+  ORCH_LANE_HOST="$host" "$LANE_HOST" "${args[@]}" >"$out" 2>"$err" || rc=$?
   cat -- "$out"
   cat -- "$err" >&2
   if [[ "$rc" -eq 0 ]] && ! grep -q '^kept=' "$out"; then printf 'kept=none\n'; fi
@@ -591,14 +627,15 @@ stop_validations() {
 # before the host close, so a close that fails before the host close retries
 # whole, the removal included, which an idempotent remove allows. One that
 # fails after the host close does not: the ssh provider's close takes the item
-# marker, and a second close is refused as unowned.
+# marker, and a second close is refused as unowned. A terminal answer read here
+# sets ITEM_FINISHED, which the host close's --merged judgement reads.
 ITEM_FINISHED=false
 remove_item_files() {
   local rc=0
   if [[ "$ITEM_FINISHED" == false ]]; then
     tracker_terminal || rc=$?
     case "$rc" in
-      0) ;;
+      0) ITEM_FINISHED=true ;;
       1) message item-files-kept "item=$ITEM" "cause=open"; return 0 ;;
       *) message item-files-kept "item=$ITEM" "cause=$TRACKER_CAUSE"; return 0 ;;
     esac

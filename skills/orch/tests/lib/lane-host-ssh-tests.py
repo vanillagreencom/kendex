@@ -1084,6 +1084,34 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
                 if state == "present":
                     self.assertIn("before-delete:" + line, (self.root / "calls").read_text())
 
+    def test_close_accepts_merged_and_keeps_the_whole_archive(self):
+        # lane-close passes --merged on a merged full close; a static host cuts
+        # nothing, so every tmp record stays in the archive. The control is the
+        # parser without the flag, which refuses the close.
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        worktree = Path(self.row["clone"] + "-worktree")
+        for directory in (clone / "tmp", worktree / "tmp"):
+            directory.mkdir(exist_ok=True)
+        (clone / "tmp/clone.json").write_bytes(b'"clone-record"\n')
+        (worktree / "tmp/return.json").write_bytes(b'"worktree-record"\n')
+        original = self.script.read_text()
+        flag = '        if verb == "close":\n            action.add_argument("--merged", action="store_true")\n'
+        self.assertEqual(original.count(flag), 1)
+        self.script.write_text(original.replace(flag, ""))
+        mutant = self.call("close", "--item", "TEST-1", "--merged")
+        self.assertEqual(mutant.returncode, 2, mutant.stderr)
+        self.script.write_text(original)
+        closed = self.call("close", "--item", "TEST-1", "--merged")
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        line = closed.stdout.decode().strip()
+        self.assertTrue(line.startswith("kept="), line)
+        with tarfile.open(line.removeprefix("kept=")) as saved:
+            self.assertEqual(saved.extractfile(str(clone / "tmp/clone.json").lstrip("/")).read(), b'"clone-record"\n')
+            self.assertEqual(saved.extractfile(str(worktree / "tmp/return.json").lstrip("/")).read(),
+                             b'"worktree-record"\n')
+        self.assertFalse(worktree.exists())
+
     def test_archive_failures_preserve_remote_records(self):
         for failure in ("tar", "storage"):
             with self.subTest(failure=failure):

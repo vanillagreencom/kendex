@@ -448,6 +448,8 @@ and worktree/tmp directories under FLEET_DIR/archive/REPO/ITEM/tmp-STAMP.tgz
 close. An already removed worktree's tmp cannot be recovered. No remaining tmp
 means no archive and no kept line. Archives contain paths relative to / and
 follow symlinks, so linked records remain in the archive after their target is gone.
+close --merged, the caller's word that the item's pull request merged, is
+accepted and changes nothing: a static host keeps the whole archive.
 list prints repo/item, state, age, name as tab-separated fields. Age is '-' for
 static hosts. touch probes SSH; static hosts have no idle expiry.
 """, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -463,6 +465,8 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
         action.add_argument("--item", required=True)
         if verb in ("cat", "put", "append"):
             action.add_argument("path")
+        if verb == "close":
+            action.add_argument("--merged", action="store_true")
     stopping = sub.add_parser("stop")
     stopping.add_argument("--item", required=True)
     stopping.add_argument("--harness", required=True, choices=("claude", "codex", "pi"))
