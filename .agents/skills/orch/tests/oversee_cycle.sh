@@ -324,11 +324,16 @@ gate_timeline() {
 # pauses PAUSES PARKED: the lane record's pauses, `from-to` pairs in seconds
 # past T0, and a park standing since PARKED, `-` for none of either.
 pauses() { # ITEM PAUSES PARKED
-  edit_json "$CASE/state/workflow-state-oversee.json" "$(jq -rn --argjson t0 "$T0" --arg item "$1" --arg p "$2" --arg k "$3" '
+  # The program sits in a variable, never inside a double-quoted command
+  # substitution: Bash 3.2 brace-expands the {..,..} object in that position.
+  local program filter
+  program='
     def iso: tonumber + $t0 | todate;
     "(.lanes[] | select(.item == \($item | tojson))) |= (.pauses = \([$p | split(" ")[] | select(. != "-") | split("-")
        | {from: (.[0] | iso), to: (.[1] | iso), cause: "walled"}] | tojson)"
-    + (if $k == "-" then ")" else " | .parked = {at: \($k | iso | tojson)})" end)')"
+    + (if $k == "-" then ")" else " | .parked = {at: \($k | iso | tojson)})" end)'
+  filter="$(jq -rn --argjson t0 "$T0" --arg item "$1" --arg p "$2" --arg k "$3" "$program")"
+  edit_json "$CASE/state/workflow-state-oversee.json" "$filter"
 }
 # One row per rule: the wait a push opens, the wait a bot review opens, a
 # pause taken out of the wait it falls in, pauses overlapping one another and
