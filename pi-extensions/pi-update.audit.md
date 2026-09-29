@@ -10,6 +10,11 @@ Behaviour was read from the installed Pi 0.87.1 (`dist/core/agent-session.js`, `
 
 Verdict: `roll`.
 
+- Target release: `0.87.1`, npm `@earendil-works/pi-coding-agent@0.87.1` integrity `sha512-m8ArJUtVcQMSe1lLE/Ei7vX/JV7O39sWmWBsXV2NOU70F0qCp8GubA24pT3LnwTmM6LL2xV80/h6sQg85n69ew==`, upstream source commit `f07218c4d4bbc12bef056a7058c3dd49dfe41abe` (tag `v0.87.1` in `earendil-works/pi`).
+- Entries examined: every released entry of `0.86.0`, `0.86.1`, `0.87.0` and `0.87.1` across the sources above; the eight `### Breaking Changes` entries are the table below.
+- Tested extension commit: `143beaa3c5cd87ab25bd31362bfd12d83c941e4d`, the merge of this audit's change, whose `pi-extensions` tree is that of the pull request head `91590ab0bca5899804394c7246bbe03ce5412176` its CI ran.
+- Evidence: the real Pi 0.87.1 session fixtures in § Settled-handler deferral; `pi-hooks/tests/lane-mail-wake.test.ts`; `pi-tool-renderer/extensions/__tests__/tool-execution-context.test.ts`.
+
 Every `### Breaking Changes` entry in range was read against `pi-hooks/pi-contract.json`, across every source; the `ai` and `agent` entries repeat the `coding-agent` ones they are inherited from. `tui` and the other sources carry none.
 
 | Release | Entry | Names from the contract | Result |
@@ -27,7 +32,7 @@ Every `### Breaking Changes` entry in range was read against `pi-hooks/pi-contra
 
 | Bucket | Count |
 |---|---:|
-| Required parity fix (shipped) | 2 |
+| Required parity fix (shipped) | 3 |
 | Required parity fix (open) | 1 |
 | Optional improvement (deferred) | 5 |
 | Non-impact | grouped below, not tallied |
@@ -66,13 +71,15 @@ The `pi-agents-tmux` child inbox poller is not a settled handler; its settle beh
 
 The `pi-tool-renderer` fix is not live-tested inside Pi; it is proven at the registration surface, and against the installed Pi 0.87.1 each of the four replacements now carries `{ type: "json_schema", strict: "prefer" }`.
 
-## Open: Codex provider shim and the transcript contract (0.86.0)
+## Codex provider shim and the transcript contract (0.86.0)
 
-Pi 0.86.0 passes a provider's `streamSimple` a normalized `TranscriptContext`: the system prompt and tool declarations live in transcript system messages, and `context.systemPrompt` and `context.tools` are absent. `pi-codex-minimal-tools` registers `openai-codex` with its own `streamSimple` when `enabled` and `nativeProviderTools` are on, the defaults. Its `buildRequestBody` in `src/provider-shim.ts` still reads `context.systemPrompt` into `instructions` and `context.tools` into `tools`, and its vendored `convertResponsesMessages` has no branch for a `system` message. Fed the normalized context Pi 0.87.1 builds, the request carries no `instructions` and no tools; fed the raw context, it carries both.
+Pi 0.86.0 passes a provider's `streamSimple` a normalized `TranscriptContext`: the system prompt and tool declarations live in transcript system messages, and `context.systemPrompt` and `context.tools` are absent. `pi-codex-minimal-tools` registers `openai-codex` with its own `streamSimple` when `enabled` and `nativeProviderTools` are on, the defaults. Before KEN-2176 its `buildRequestBody` in `src/provider-shim.ts` read `context.systemPrompt` into `instructions` and `context.tools` into `tools`, and its vendored `convertResponsesMessages` had no branch for a `system` message. Fed the normalized context Pi 0.87.1 builds, the request carried no `instructions` and no tools; fed the raw context, it carried both.
 
-Impact: every `openai-codex` request through the shim on Pi 0.86.0 or later reaches the model without the system prompt and with no tools. Likelihood: certain for any session on the Codex provider with the package installed and its defaults.
+Impact until the fix: every `openai-codex` request through the shim on Pi 0.86.0 or later reached the model without the system prompt and with no tools. Likelihood: certain for any session on the Codex provider with the package installed and its defaults.
 
-Not fixed in this audit. Pi's own `openai-codex-responses` now resolves the transcript per model (`resolveTranscript`, `resolveTranscriptTools`, mid-conversation system messages, additive tools and tool search) and the shim vendors an older converter; porting it is its own change, as the `pi-claude-bridge` move to the same contract was (KEN-1634). The port also takes the shim's other drift in range: Pi sends the model's Off reasoning effort instead of omitting it (0.86.0, [#9191](https://github.com/earendil-works/pi/issues/9191)), which the shim still omits.
+Fixed after this audit in KEN-2176: `buildRequestBody` and the vendored converter read the prompt and the tool set through Pi's `getCurrentSystemPrompt` and `getCurrentTools`, which fold later system messages in, and send no system message as an input item. The package's Pi peer floor is `0.86.0`. `pi-codex-minimal-tools/tests/transcript-context.test.ts` sends a real Pi session through the shim and fails on the old code. Pi's own `openai-codex-responses` keeps later system messages in place and adds tools where they appear, when the model supports it (`resolveTranscript`, `resolveTranscriptTools`); the shim sends the folded prompt and the full current tool set instead, which is correct and forgoes that cached-prefix saving.
+
+Still open: Pi sends the model's Off reasoning effort instead of omitting it (0.86.0, [#9191](https://github.com/earendil-works/pi/issues/9191)), which the shim still omits.
 
 ## Deferred (Optional)
 
@@ -97,7 +104,7 @@ Already protected or inherited beneath us:
 - **`user_bash` fails closed (0.86.0, [#9068](https://github.com/earendil-works/pi/issues/9068))**: `pi-background-tasks` returns `undefined` or `{ result }`, both valid.
 - **Extension tools without parameter schemas rejected (0.86.0, [#9300](https://github.com/earendil-works/pi/issues/9300))**: every `registerTool` definition in the tree carries `parameters`, the factory-built ones in `pi-codex-minimal-tools` and `pi-web-tools` included.
 - **`ToolCall.arguments` and `ToolResultMessage.details` restricted to JSON values (0.86.0)**: type-level; our tool details are plain data.
-- **Provider stream input is `TranscriptContext` (0.86.0)**: `pi-claude-bridge` moved to it in KEN-1634; `pi-codex-minimal-tools` is the open item above.
+- **Provider stream input is `TranscriptContext` (0.86.0)**: `pi-claude-bridge` moved to it in KEN-1634; `pi-codex-minimal-tools` moved to it in KEN-2176, § Codex provider shim.
 - **Compaction, branch-summary and retry spinners embedded in the editor border (0.86.0)**: `pi-qol` adopted the embedded indicator for 0.86.0 (KEN-1978).
 - **Split-turn compaction summaries refused by Claude Fable 5.1 (0.87.1, [#9908](https://github.com/earendil-works/pi/pull/9908))**: Pi's default summarizer prompt. `pi-qol`'s own summary prompt already wraps the transcript in `<conversation>` tags and asks for a continuation summary.
 - **Missing or invalid `--mode` now exits nonzero (0.87.1, [#9045](https://github.com/earendil-works/pi/issues/9045))**: `pi-agents-tmux` launches with `--mode json`.
@@ -118,5 +125,5 @@ Host, SDK and platform:
 - **Built-in extensions (`mcp`, `llama.cpp`, `codemode`, `tool-search`) named `builtin:<name>`; `--no-extensions` also disables them; `defaultTools` accepts `+name`/`-name`**: check `pi-extension-manager`'s listing when this releases.
 - **Tool calls without a custom call renderer show their arguments**: `pi-tool-renderer` renders every tool it replaces; the rest gain the default.
 - **Managed git packages no longer install Pi peers; a warning for host modules in `dependencies`**: no package lists a Pi host module in `dependencies`.
-- **OpenAI Responses streams with unfinished tool calls end with an error**: the Codex shim vendors its own stream processor; fold into the transcript port.
+- **OpenAI Responses streams with unfinished tool calls end with an error**: the Codex shim vendors its own stream processor; check it in the next audit.
 - **`provider_stream_event` extension event**: additive; no extension needs it.

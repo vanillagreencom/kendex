@@ -1,4 +1,5 @@
 import { calculateCost, type Api, type AssistantMessage, type Context, type Model, type Tool, type Usage } from "@earendil-works/pi-ai";
+import * as piAi from "@earendil-works/pi-ai";
 import type { ResponseCreateParamsStreaming, ResponseInput, ResponseStreamEvent, Tool as OpenAITool } from "openai/resources/responses/responses.js";
 import type { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import {
@@ -15,6 +16,20 @@ export { createGrammarToolInputProperties, splitDeferredTools } from "./openai-r
 
 type MessageRole = Context["messages"][number]["role"];
 type Message = Context["messages"][number];
+
+/**
+ * Pi's replay of a normalized transcript. Since Pi 0.86 a provider receives a
+ * `TranscriptContext`: the system prompt and the tool declarations live in its
+ * `system` messages, and `Context.systemPrompt` and `Context.tools` are absent.
+ * These read the current prompt and tool set after every system message, as Pi's
+ * own providers do for a model without mid-conversation system messages. They
+ * are read off the host namespace, never named-imported, so a host below 0.86
+ * still loads the package's tools and fails only a Codex request.
+ */
+export const transcript = piAi as unknown as {
+	getCurrentSystemPrompt(messages: readonly { role: string }[]): string;
+	getCurrentTools(messages: readonly { role: string }[]): Tool[];
+};
 
 interface ImageGenerationCallItem {
 	type: "image_generation_call";
@@ -292,10 +307,14 @@ export function convertResponsesMessages<TApi extends Api>(
 		return `${normalizedCallId}|${normalizedItemId}`;
 	};
 
-	const transformedMessages = transformMessages(context.messages, model as Model<Api>, normalizeToolCallId as never);
+	// System messages carry the prompt and the tool declarations, which reach
+	// the request as its instructions and tools, never as input items.
+	const conversation = context.messages.filter((msg) => msg.role !== "system");
+	const transformedMessages = transformMessages(conversation, model as Model<Api>, normalizeToolCallId as never);
 	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
-	if (includeSystemPrompt && context.systemPrompt) {
-		messages.push({ role: model.reasoning ? "developer" : "system", content: sanitizeSurrogates(context.systemPrompt) });
+	const systemPrompt = includeSystemPrompt ? transcript.getCurrentSystemPrompt(context.messages) : "";
+	if (systemPrompt) {
+		messages.push({ role: model.reasoning ? "developer" : "system", content: sanitizeSurrogates(systemPrompt) });
 	}
 
 	let msgIndex = 0;

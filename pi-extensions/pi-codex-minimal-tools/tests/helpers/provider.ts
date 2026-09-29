@@ -1,4 +1,4 @@
-import type { AssistantMessage, AssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { normalizeContext, type AssistantMessage, type AssistantMessageEventStream, type Context } from "@earendil-works/pi-ai";
 import assert from "node:assert/strict";
 import { setImmediate } from "node:timers/promises";
 import type { TestContext } from "node:test";
@@ -57,6 +57,7 @@ export async function runCodexProvider(
 	modelOverrides: Record<string, unknown> = {},
 	contextOverrides: Record<string, unknown> = {},
 ): Promise<AssistantMessage> {
+	// Pi hands a provider the normalized transcript, never the raw Context.
 	const provider = createCodexProvider();
 	const stream = provider.streamSimple(
 		{
@@ -70,12 +71,12 @@ export async function runCodexProvider(
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			...modelOverrides,
 		},
-		{
+		normalizeContext({
 			systemPrompt: "",
-			messages: [{ role: "user", content: "hello" }],
+			messages: [{ role: "user", content: "hello", timestamp: 0 }],
 			tools: [],
 			...contextOverrides,
-		},
+		} as Context),
 		{ apiKey: codexJwt(), transport: "sse", ...streamOptions },
 	);
 	return stream.result();

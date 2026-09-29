@@ -114,13 +114,26 @@ function compareVersions(a, b) {
 // it read, and its `Verdict:` line says `roll` or `hold`. A `roll` clears the
 // new marker; a `hold` clears only the old one, and pi-update.state.json stays
 // there so the next audit reads the held release again. A record that clears a
-// release other than the state marker's is a missing record. Taking the
-// manifests, marker and record as arguments is what lets the controls below
-// plant each defect.
+// release other than the state marker's is a missing record. A `roll` also
+// names, in its `## Verdict` section, the release it tested (npm version,
+// package integrity, upstream source commit) and the full extension commit the
+// run proved; a roll without them clears nothing. Taking the manifests, marker
+// and record as arguments is what lets the controls below plant each defect.
 function auditRecord(audit) {
 	const [, previous, release] = audit.match(/^Marker `(\d+\.\d+\.\d+)` → `(\d+\.\d+\.\d+)`/m) ?? [];
-	const verdict = audit.match(/^Verdict: `(roll|hold)`/m)?.[1];
-	return { previous, release, verdict, cleared: verdict === "roll" ? release : previous };
+	const verdictSection = audit.match(/^## Verdict\n([\s\S]*?)(?=^## |(?![\s\S]))/m)?.[1] ?? "";
+	const verdict = verdictSection.match(/^Verdict: `(roll|hold)`/m)?.[1];
+	const target = verdictSection.match(/^- Target release: `(\d+\.\d+\.\d+)`.* integrity `sha512-[A-Za-z0-9+/]+={0,2}`.* upstream source commit `[0-9a-f]{40}`/m)?.[1];
+	const tested = verdictSection.match(/^- Tested extension commit: `([0-9a-f]{40})`/m)?.[1];
+	return { previous, release, verdict, target, tested, cleared: verdict === "roll" ? release : previous };
+}
+
+function rollRefusals({ release, verdict, target, tested }) {
+	if (verdict !== "roll") return [];
+	const refusals = [];
+	if (target !== release) refusals.push(`pi-update.audit.md: the \`roll\` for ${release} names no target release ${release} with its npm integrity and upstream source commit in § Verdict (found ${target ?? "none"})`);
+	if (tested === undefined) refusals.push(`pi-update.audit.md: the \`roll\` for ${release} names no full tested extension commit in § Verdict`);
+	return refusals;
 }
 
 // The Pi peer floors the audit gates: `>=X.Y.Z` ranges on `@earendil-works/pi-*`
@@ -136,8 +149,11 @@ function piFloors(pkgs) {
 }
 
 function floorRefusals(pkgs, marker, audit) {
-	const { release, verdict, cleared } = auditRecord(audit);
+	const record = auditRecord(audit);
+	const { release, verdict, cleared } = record;
 	if (verdict === undefined) return [`pi-update.audit.md: the record names no verdict, \`roll\` or \`hold\``];
+	const incomplete = rollRefusals(record);
+	if (incomplete.length > 0) return incomplete;
 	if (cleared !== marker.lastVersion) return [`pi-update.audit.md: no audit record clears ${marker.lastVersion}, the release pi-update.state.json marks audited (verdict ${verdict} for ${release} clears ${cleared})`];
 	return piFloors(pkgs)
 		.filter(({ floor }) => compareVersions(floor, cleared) > 0)
@@ -154,11 +170,15 @@ test("no Pi peer floor rises above the release the Pi update audit clears", () =
 });
 
 // One row per rule floorRefusals holds, over records built here in the shape
-// .pi/prompts/pi-update.md § Audit record has the audit write, so a correct
+// .agents/skills/pi-update/SKILL.md § Audit record has the audit write, so a correct
 // live record under either verdict leaves these rows standing. An accept row
 // expects no refusal; a refuse row expects one naming its defect.
 test("the audit record gates Pi peer floors under both verdicts", () => {
-	const record = (verdict) => `# Pi package update audit\n\nMarker \`0.85.1\` → \`0.87.1\`. Sources fetched: every changelog.\n\n## Verdict\n\n${verdict}\n`;
+	const integrity = "sha512-m8ArJUtVcQMSe1lLE/Ei7vX/JV7O39sWmWBsXV2NOU70F0qCp8GubA24pT3LnwTmM6LL2xV80/h6sQg85n69ew==";
+	const targetLine = (version) => `- Target release: \`${version}\`, npm \`@earendil-works/pi-coding-agent@${version}\` integrity \`${integrity}\`, upstream source commit \`${"f".repeat(40)}\`.`;
+	const testedLine = `- Tested extension commit: \`${"a".repeat(40)}\`.`;
+	const fullSummary = [targetLine("0.87.1"), testedLine].join("\n");
+	const record = (verdict, summary = fullSummary) => `# Pi package update audit\n\nMarker \`0.85.1\` → \`0.87.1\`. Sources fetched: every changelog.\n\n## Verdict\n\n${verdict}\n\n${summary}\n\n## Counts\n\n- Tested extension commit: \`${"b".repeat(40)}\`.\n`;
 	const pkgAt = (floor, otherPeers) => [{ dir: "planted", pkg: { peerDependencies: { "@earendil-works/pi-coding-agent": `>=${floor}`, ...otherPeers } } }];
 	const floor = (version) => `planted: Pi peer @earendil-works/pi-coding-agent floor ${version} is above`;
 	const rows = [
@@ -170,9 +190,15 @@ test("the audit record gates Pi peer floors under both verdicts", () => {
 		{ name: "hold: floor at the held release", verdict: "Verdict: `hold`.", lastVersion: "0.85.1", floor: "0.87.1", refused: `${floor("0.87.1")} 0.85.1` },
 		{ name: "hold: state marker advanced past the held release", verdict: "Verdict: `hold`.", lastVersion: "0.87.1", floor: "0.85.1", refused: "no audit record clears 0.87.1" },
 		{ name: "record without a verdict", verdict: "Verdict: pending", lastVersion: "0.87.1", floor: "0.87.1", refused: "names no verdict" },
+		{ name: "roll: no target release", verdict: "Verdict: `roll`.", summary: testedLine, lastVersion: "0.87.1", floor: "0.87.1", refused: "names no target release 0.87.1" },
+		{ name: "roll: target release is not the marker's new release", verdict: "Verdict: `roll`.", summary: [targetLine("0.87.0"), testedLine].join("\n"), lastVersion: "0.87.1", floor: "0.87.1", refused: "(found 0.87.0)" },
+		{ name: "roll: target release without its integrity", verdict: "Verdict: `roll`.", summary: [targetLine("0.87.1").replace(integrity, "pending"), testedLine].join("\n"), lastVersion: "0.87.1", floor: "0.87.1", refused: "names no target release 0.87.1" },
+		{ name: "roll: no tested extension commit, one outside § Verdict ignored", verdict: "Verdict: `roll`.", summary: targetLine("0.87.1"), lastVersion: "0.87.1", floor: "0.87.1", refused: "names no full tested extension commit" },
+		{ name: "roll: abbreviated tested extension commit", verdict: "Verdict: `roll`.", summary: [targetLine("0.87.1"), "- Tested extension commit: `aaaaaaaa`."].join("\n"), lastVersion: "0.87.1", floor: "0.87.1", refused: "names no full tested extension commit" },
+		{ name: "hold: needs no target release or tested commit", verdict: "Verdict: `hold`.", summary: "", lastVersion: "0.85.1", floor: "0.85.1", refused: undefined },
 	];
 	for (const row of rows) {
-		const refusals = floorRefusals(pkgAt(row.floor, row.otherPeers), { lastVersion: row.lastVersion }, record(row.verdict));
+		const refusals = floorRefusals(pkgAt(row.floor, row.otherPeers), { lastVersion: row.lastVersion }, record(row.verdict, row.summary));
 		if (row.refused === undefined) {
 			assert.deepEqual(refusals, [], row.name);
 			continue;

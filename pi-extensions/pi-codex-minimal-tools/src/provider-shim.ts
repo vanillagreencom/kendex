@@ -30,6 +30,7 @@ import {
 	convertResponsesTools,
 	processResponsesStream,
 	splitDeferredTools,
+	transcript,
 } from "./providers/openai-responses-shared.js";
 
 const DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
@@ -525,8 +526,9 @@ export function buildRequestBody<TApi extends Api>(model: Model<TApi>, context: 
 	const supportsStrictMode = (model.compat as { supportsStrictMode?: boolean } | undefined)?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = (model.compat as { supportsOpenAIGrammarTools?: boolean } | undefined)?.supportsOpenAIGrammarTools ?? false;
 	const supportsToolSearch = (model.compat as { supportsToolSearch?: boolean } | undefined)?.supportsToolSearch ?? false;
-	const grammarToolInputProperties = createGrammarToolInputProperties(context.tools, supportsOpenAIGrammarTools);
-	const toolPlacement = splitDeferredTools(context, supportsToolSearch);
+	const tools = transcript.getCurrentTools(context.messages);
+	const grammarToolInputProperties = createGrammarToolInputProperties(tools, supportsOpenAIGrammarTools);
+	const toolPlacement = splitDeferredTools({ messages: context.messages, tools }, supportsToolSearch);
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,
 		grammarToolInputProperties,
@@ -539,7 +541,7 @@ export function buildRequestBody<TApi extends Api>(model: Model<TApi>, context: 
 		model: model.id,
 		store: false,
 		stream: true,
-		instructions: context.systemPrompt,
+		instructions: transcript.getCurrentSystemPrompt(context.messages),
 		input: messages,
 		text: { verbosity: ((options as { textVerbosity?: string } | undefined)?.textVerbosity ?? "low") as string },
 		include: ["reasoning.encrypted_content"],
@@ -1658,7 +1660,7 @@ function createCodexStream<TApi extends Api>(
 
 		try {
 			grammarToolInputProperties = createGrammarToolInputProperties(
-				context.tools,
+				transcript.getCurrentTools(context.messages),
 				(model.compat as { supportsOpenAIGrammarTools?: boolean } | undefined)?.supportsOpenAIGrammarTools ?? false,
 			);
 			const apiKey = options?.apiKey || await getEnvApiKeyCompat(model.provider) || "";

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import { buildRequestBody } from "../src/provider-shim.js";
 import { model } from "./helpers/responses.js";
 
@@ -8,7 +9,7 @@ for (const row of [
 	{ name: "strict unsupported", strict: true, supported: false, code: "STRICT_SAMPLING_UNSUPPORTED" },
 ]) {
 	test(`request constrained sampling: ${row.name}`, () => {
-		const build = () => buildRequestBody({ ...model, compat: { supportsStrictMode: row.supported } } as never, { messages: [], tools: [{ name: "strict_tool", description: "Strict tool", parameters: { type: "object", properties: { value: { type: "string" } }, required: ["value"] }, constrainedSampling: { type: "json_schema", strict: "require" } }] } as never);
+		const build = () => buildRequestBody({ ...model, compat: { supportsStrictMode: row.supported } } as never, normalizeContext({ messages: [], tools: [{ name: "strict_tool", description: "Strict tool", parameters: { type: "object", properties: { value: { type: "string" } }, required: ["value"] }, constrainedSampling: { type: "json_schema", strict: "require" } }] } as never));
 		if (row.code) assert.throws(build, { code: row.code });
 		else assert.equal((build().tools?.[0] as { strict: boolean }).strict, true);
 	});
@@ -23,7 +24,7 @@ for (const row of [
 ]) {
 	test(`request grammar: ${row.name}`, () => {
 		const parameters = row.malformed ? { type: "object", properties: { first: { type: "string" }, second: { type: "string" } }, required: ["first", "second"] } : { type: "object", properties: { query: { type: "string" } }, required: ["query"] };
-		const build = () => buildRequestBody({ ...model, compat: { supportsOpenAIGrammarTools: row.supported } } as never, { messages: [], tools: [{ name: "sql", description: "Generate SQL", parameters, constrainedSampling: { type: "grammar", variants: { [row.variant]: row.definition } } }] } as never);
+		const build = () => buildRequestBody({ ...model, compat: { supportsOpenAIGrammarTools: row.supported } } as never, normalizeContext({ messages: [], tools: [{ name: "sql", description: "Generate SQL", parameters, constrainedSampling: { type: "grammar", variants: { [row.variant]: row.definition } } }] } as never));
 		if (row.malformed) assert.throws(build, { code: "GRAMMAR_SCHEMA", tool: "sql" });
 		else if (row.supported) assert.deepEqual(build().tools?.[0], { type: "custom", name: "sql", description: "Generate SQL", format: { type: "grammar", syntax: row.syntax, definition: row.definition } });
 		else assert.equal((build().tools?.[0] as { type: string }).type, "function");
@@ -31,13 +32,13 @@ for (const row of [
 }
 
 test("Codex request body forwards required tool choice", () => {
-	const body = buildRequestBody(model, { messages: [], tools: [] } as any, { toolChoice: "required" } as any);
+	const body = buildRequestBody(model, normalizeContext({ messages: [], tools: [] } as any), { toolChoice: "required" } as any);
 	assert.equal(body.tool_choice, "required");
 });
 test("Codex request body places dynamically added tools at transcript load point", () => {
 	const loader = { name: "search_tools", description: "Search", parameters: { type: "object", properties: {} } };
 	const deferred = { name: "special_tool", description: "Special", parameters: { type: "object", properties: {} } };
-	const body = buildRequestBody({ ...model, compat: { supportsToolSearch: true } }, {
+	const body = buildRequestBody({ ...model, compat: { supportsToolSearch: true } }, normalizeContext({
 		tools: [loader, deferred],
 		messages: [{
 			role: "toolResult",
@@ -48,7 +49,7 @@ test("Codex request body places dynamically added tools at transcript load point
 			isError: false,
 			timestamp: Date.now(),
 		}],
-	} as any);
+	} as any));
 	assert.deepEqual((body.tools ?? []).map((tool: any) => tool.name), ["search_tools"]);
 	const searchOutput = body.input.find((item: any) => item.type === "tool_search_output") as any;
 	assert.ok(searchOutput);
@@ -66,14 +67,14 @@ test("Codex deferred tool loading emits each definition once", () => {
 		isError: false,
 		timestamp: Date.now(),
 	});
-	const body = buildRequestBody({ ...model, compat: { supportsToolSearch: true } }, {
+	const body = buildRequestBody({ ...model, compat: { supportsToolSearch: true } }, normalizeContext({
 		tools: [deferred],
 		messages: [toolResult("call_1"), toolResult("call_2")],
-	} as any);
+	} as any));
 	assert.equal(body.input.filter((item: any) => item.type === "tool_search_output").length, 1);
 });
 test("Codex cache retention none suppresses session cache key", () => {
-	const body = buildRequestBody(model, { messages: [], tools: [] } as any, {
+	const body = buildRequestBody(model, normalizeContext({ messages: [], tools: [] } as any), {
 		cacheRetention: "none",
 		sessionId: "session-123",
 	} as any);
