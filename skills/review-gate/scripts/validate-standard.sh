@@ -453,7 +453,7 @@ ci_context_row() {
   pr_jobs="$LEG_JOBS"
   pr_list="$(leg_list "$pr_jobs")"
   if ! grep -qxF -- "$WANT_CI" <<<"$pr_jobs"; then
-    bad standard-ci-context "ci-context-missing:pull_request:$pr_list" "$FULL reported no $WANT_CI job for pull request #$number on its head $pr_sha, so the ruleset's required $WANT_CI context never reports and no pull request merges. Give the job that aggregates every lane the name $WANT_CI: .agents/skills/harness-ci/references/wiring.md § The CI context"
+    bad standard-ci-context "ci-context-missing:pull_request:$pr_list" "$FULL reported no $WANT_CI job for pull request #$number on its head $pr_sha, and the standard has every repository report $WANT_CI on the pull_request and merge_group legs. Give the job that aggregates every lane the name $WANT_CI: .agents/skills/harness-ci/references/wiring.md § The CI context"
     return 0
   fi
 
@@ -464,7 +464,7 @@ ci_context_row() {
   if [ "$LEG_RUNS" -eq 0 ]; then
     bad standard-ci-context "merge-group-unobserved:$pr_list" "$FULL reported $WANT_CI for pull request #$number on $pr_sha. No merge_group run ran on $head, the head of $BRANCH, so the head did not come through the merge queue, and the merge_group leg is unconfirmed until the next merge through the queue."
   elif ! grep -qxF -- "$WANT_CI" <<<"$LEG_JOBS"; then
-    bad standard-ci-context "ci-context-missing:merge_group:$(leg_list "$LEG_JOBS")" "$FULL reported no $WANT_CI job for the merge group on $head, the head of $BRANCH, so the merge queue waits on a $WANT_CI context nothing reports: .agents/skills/harness-ci/references/wiring.md § The CI context"
+    bad standard-ci-context "ci-context-missing:merge_group:$(leg_list "$LEG_JOBS")" "$FULL reported no $WANT_CI job for the merge group on $head, the head of $BRANCH, and the standard has every repository report $WANT_CI on the pull_request and merge_group legs: .agents/skills/harness-ci/references/wiring.md § The CI context"
   else
     ok standard-ci-context "$pr_list" "$FULL reported $WANT_CI for pull request #$number on $pr_sha and for its merge group on $head"
   fi

@@ -486,7 +486,8 @@ plant "$WORKFLOW" "$DOC_LIMITS --against HEAD^1" "$DOC_LIMITS" "$TMP/wf-no-again
 check "must-fail: a doc-limits step without --against passes no flag" "" "$(doc_limits_argv "$TMP/wf-no-against.yml")"
 
 # --- 2a. The one context ---------------------------------------------------
-# `CI` is the context the organization ruleset requires beside `Review gate`.
+# `CI` is the aggregate context the organization standard has every repository
+# report, checked by review-gate's standard-ci-context row.
 # Every job reports into it but the aggregators, which run tools/ci-aggregate
 # as it does; it runs on both gated events whatever its needs did, and the
 # classifier it reads runs on both.

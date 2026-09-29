@@ -6,7 +6,7 @@ How a repo wires the shared engine: the writer workflow, the validate step, rule
 
 The gate never polices CI. A repo must satisfy ONE of these:
 
-1. **A merge queue** whose required contexts include the repo's `CI` aggregate (recommended).
+1. **A merge queue** whose required contexts cover every job the repo's CI runs, through the `CI` aggregate or the jobs' own names (recommended).
 2. **No held-back jobs** — every required check runs on every push.
 
 Held-back jobs report `skipped`, and GitHub counts skipped as satisfied.
@@ -55,14 +55,14 @@ An organization ruleset carries the shared rules for every repository: the pull-
 1. `REVIEW_GATE_STANDARD_APP`: the slug of the GitHub App the organization installs on every repository.
 2. `REVIEW_GATE_STANDARD_ENVIRONMENT`: the environment that holds that app's secrets.
 3. `REVIEW_GATE_STANDARD_SECRETS`: those secrets' names, `;`-separated. Never their values. A name is uppercase letters, digits and underscores, and does not start with a digit. GitHub stores every secret name uppercase.
-4. `REVIEW_GATE_STANDARD_CONTEXTS`: the contexts the repository's required-checks ruleset requires, `;`-separated. Only `validate-standard.sh` without `--environment-only` reads it; `provision-environment.sh` does not.
+4. `REVIEW_GATE_STANDARD_CONTEXTS`: the contexts the repository's required-checks ruleset requires, `;`-separated. `validate-standard.sh` compares it to that ruleset as its `standard-required-contexts` row. Its readers and its refusals are its row in [settings.md](settings.md).
 
 Each script exits 2 with one `standard-setting-missing` record naming every key among the first three it reads that is unset or empty, or with one `standard-secret-invalid` record naming every secret name outside that grammar. An unset `REVIEW_GATE_STANDARD_CONTEXTS` is no refusal: `validate-standard.sh` reports it as a failed `standard-required-contexts` row. Refresh adoption reads none of these keys (§ Automatic consumer refresh).
 
 A repository reaches this shape in one order. The workflow change that reports `CI` on `pull_request` and `merge_group`, both under `on:`, and the change to the required-checks ruleset apply back to back. Where the workflow change renames an existing aggregate, the ruleset changes first and the rename merges through the queue at once. After the first merge through the queue, `scripts/validate-standard.sh` runs: its `standard-ci-context` ok confirms the workflow change on both legs, and its `standard-required-contexts` and `standard-merge-queue` oks confirm the ruleset change.
 
 - **Rule sources**: the pull-request, Copilot review, deletion and force-push rules come from an organization ruleset. A repository ruleset holds only the required checks or the merge queue. `standard-ruleset-source` reports any other source.
-- **Required contexts**: exactly the list `REVIEW_GATE_STANDARD_CONTEXTS` declares, and never the `gate_context` of the skill's `standard.json`, `Review gate`: the approval rule replaces it. `CI` is the aggregate [harness-ci wiring.md § The CI context](../../harness-ci/references/wiring.md#the-ci-context) describes.
+- **Required contexts**: the required-checks ruleset requires exactly the contexts `REVIEW_GATE_STANDARD_CONTEXTS` declares (`standard-required-contexts`), and never the `gate_context` of the skill's `standard.json`, `Review gate`: the approval rule replaces it. The list need not hold `CI`. Every repository reports the aggregate `CI` context on both the `pull_request` and the `merge_group` leg (`standard-ci-context`), whatever its list holds; [harness-ci wiring.md § The CI context](../../harness-ci/references/wiring.md#the-ci-context) says how.
 - **Merge queue**: required on the default branch. The writer's `merge_group` leg posts the gate context on queue shas unconditionally.
 - **Approvals**: the organization ruleset's pull-request rule requires at least 1 approval (`standard-required-approvals`) and dismisses a stale approval on push (`standard-stale-dismissal`).
 - **Thread resolution**: a pull-request rule requires every review thread resolved.
@@ -168,7 +168,7 @@ Concrete per-consumer values are tracked on the org adoption issue, not here. Ev
 | `REVIEW_GATE_MODE` | `enforce`. `off` disables an inactive or `current` class policy and attests rather than evaluates. A `bot` class still requires review. |
 | `REVIEW_GATE_WRITER` | `required`. `optional`, with `REVIEW_GATE_MODE = "off"`, only in a repository that runs the automatic refresh and posts no gate status. |
 | `REVIEW_GATE_STANDARD_APP`, `REVIEW_GATE_STANDARD_ENVIRONMENT`, `REVIEW_GATE_STANDARD_SECRETS` | The organization's app, app-secret environment and secret names (§ Repo-side wiring). No default. `validate-standard.sh` and `provision-environment.sh` refuse on each unset key. `validate-standard.sh --environment-only` reads the environment and secret keys only. Refresh adoption reads none of them. |
-| `REVIEW_GATE_STANDARD_CONTEXTS` | The repository's required contexts (§ Repo-side wiring). No default. `validate-standard.sh` reports an unset list as a failed `standard-required-contexts` row; neither `--environment-only` nor `provision-environment.sh` reads it. |
+| `REVIEW_GATE_STANDARD_CONTEXTS` | The repository's required contexts (§ Repo-side wiring). No default. `validate-standard.sh` reports an unset list as a failed `standard-required-contexts` row. Its readers and its refusals are its row in [settings.md](settings.md). |
 
 ## Repair by verdict line
 

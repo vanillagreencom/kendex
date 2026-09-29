@@ -18,8 +18,11 @@
 #                (REVIEW_GATE_STANDARD_APP)
 #   full         validate-standard.sh's full mode: also WANT_CONTEXTS
 #                (REVIEW_GATE_STANDARD_CONTEXTS, sorted, `;`-joined)
-# A key a scope does not read is left empty and never resolved, so its
-# value cannot refuse that scope's run. An empty WANT_CONTEXTS is no
+# A key a scope does not read is left empty and never resolved, so a
+# .env.local or process value of it cannot refuse that scope's run. A
+# malformed assignment to it in a settings file's [env] table still
+# refuses: settings.sh's rg_setting judges each present table whole,
+# whatever key it resolves. An empty WANT_CONTEXTS is no
 # refusal: the standard-required-contexts row reports it. With no jq on
 # PATH, a missing, unreadable or malformed manifest, an unreadable setting
 # the scope reads, a key the scope reads unset or empty, or a secret name

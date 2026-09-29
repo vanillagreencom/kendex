@@ -402,6 +402,21 @@ else
   bad "environment-only baseline (rc=$RC)" "$RAW"
 fi
 
+# adopt-refresh.sh runs this mode on every consumer refresh, so a contexts
+# value the settings reader refuses must not stop it. The value sits in
+# .env.local, which the reader judges one key at a time; a
+# kendex.settings.toml [env] table it judges whole.
+settings_consumer env-contexts 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"'
+printf '%s\n' 'REVIEW_GATE_STANDARD_CONTEXTS="CI"x' >"$TMP/consumer-env-contexts/.env.local"
+CONSUMER="$TMP/consumer-env-contexts"
+run "$ENV_BASE" '' --environment-only
+CONSUMER="$TMP/consumer-full"
+if [ "$RC" -eq 0 ] && [ "$OUT" = "$ENV_BASELINE" ]; then
+  ok 'environment-only never resolves an unreadable REVIEW_GATE_STANDARD_CONTEXTS'
+else
+  bad "environment-only with unreadable contexts (rc=$RC)" "$RAW"
+fi
+
 while IFS='~' read -r name fail file edit overrides; do
   [ -n "$name" ] || continue
   dir="$TMP/env-$name"

@@ -34,7 +34,7 @@ Required-context aggregators call `scripts/aggregate-needs`. Pass the full `toJS
 
 ## This package never edits a workflow
 
-Nothing here writes `.github/`. Wire the one step yourself, once, from [references/wiring.md](references/wiring.md). A repository whose ruleset requires the one `CI` context copies [templates/ci.yml](templates/ci.yml) to `.github/workflows/ci.yml`, or names its own workflow's aggregate job `CI`, per [references/wiring.md § The CI context](references/wiring.md#the-ci-context).
+Nothing here writes `.github/`. Wire the one step yourself, once, from [references/wiring.md](references/wiring.md). A repository under the organization standard reports the aggregate `CI` context: it copies [templates/ci.yml](templates/ci.yml) to `.github/workflows/ci.yml`, or names its own workflow's aggregate job `CI`, per [references/wiring.md § The CI context](references/wiring.md#the-ci-context).
 
 ## The rules to hold when wiring it
 
