@@ -252,16 +252,26 @@ function rustFormats(body: string, what: string): string[] {
 	for (let call = body.indexOf("format!("); call >= 0; call = body.indexOf("format!(", call + 1)) {
 		const literal = /"((?:[^"\\]|\\[\s\S])*)"/.exec(body.slice(call));
 		if (literal === null) throw new Error(`no format template in ${what}`);
-		templates.push(literal[1]!
-			// A trailing backslash continues a Rust literal onto the next line,
-			// swallowing that line's indentation with it.
-			.replace(/\\\n\s*/g, "")
-			.replaceAll('\\"', '"')
+		templates.push(rustUnescape(literal[1]!, what)
 			.replaceAll("{{", "\u0001")
 			.replaceAll("}}", "\u0002"));
 	}
 	if (templates.length === 0) throw new Error(`no format! call in ${what}`);
 	return templates;
+}
+
+/** What a Rust string literal's escapes stand for, decoded in one pass so an
+ * escaped backslash is never read as the start of another escape. A trailing
+ * backslash continues the literal onto the next line, swallowing that line's
+ * indentation with it. Any escape not decoded here throws, so the rendering
+ * cannot drift from the Rust unseen. */
+function rustUnescape(literal: string, what: string): string {
+	const escapes: Record<string, string> = { "\\": "\\", '"': '"', "'": "'", n: "\n", t: "\t", r: "\r", "0": "\0" };
+	return literal.replace(/\\(\n\s*|[\s\S])/g, (escape, next: string) => {
+		if (next.startsWith("\n")) return "";
+		if (!Object.hasOwn(escapes, next)) throw new Error(`${what}'s template holds the escape ${escape}, which this rendering does not decode`);
+		return escapes[next]!;
+	});
 }
 
 /** The template of the one `format!` call in `body`. */
