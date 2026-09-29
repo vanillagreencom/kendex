@@ -1,4 +1,4 @@
-# D011: A lane's parked and walled time is kept on its fleet record as `pauses`, written where each stretch ends
+# D012: A lane's parked and walled time is kept on its fleet record as `pauses`, written where each stretch ends
 
 [← Decision Index](INDEX.md)
 
