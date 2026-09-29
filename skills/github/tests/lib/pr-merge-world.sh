@@ -45,7 +45,8 @@
 #     route:<true|false|-|fail|range-fail>  the classifier stub's queue-only
 #     line for the pull request's range: queue_only=true on a CI workflow,
 #     queue_only=false, no line, a classifier that fails, or a range read
-#     that fails
+#     that fails; head-moved:<sha> after it, the head every read but the
+#     range's answers
 #     queue-rule:<value|absent|fail|unnamed>  a merge_queue rule on the base
 #     from ruleset 20569265, beside a required check from ruleset 24148610
 #     that answers never, whose read answers current_user_can_bypass
@@ -226,6 +227,9 @@ word() {
     route:fail) W_ENV+=("STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD") ;;
     route:-) W_ENV+=("STUB_CLASS=standard" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     route:true) W_ENV+=("STUB_CLASS=standard" "STUB_QUEUE_LINE=$QUEUE_TRUE" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
+    # The head every read but the range's answers, the range still at the
+    # head the classifier measured.
+    head-moved:*) W_ENV+=("STUB_RANGE_HEAD=$RANGE_HEAD" "STUB_HEAD=$v") ;;
     route:false) W_ENV+=("STUB_CLASS=standard" "STUB_QUEUE_LINE=$QUEUE_FALSE" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     # The base's merge_queue rule and the answer its ruleset read gives.
     queue-rule:unnamed) W_ENV+=("STUB_GATE_RULES=$(jq -c '[.[] | if .type == "merge_queue" then del(.ruleset_id) else . end]' <<<"$QUEUE_RULES")" "$CHECKS_NEVER") ;;

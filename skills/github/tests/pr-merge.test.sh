@@ -233,7 +233,8 @@ done
 # copy of the scripts tree with that rule's line cut and the classifier stub
 # beside it: every merge-queue ruleset judged, not the first; a queue ruleset
 # holding another rule; another ruleset the token may bypass; classic
-# protection; and the arm at creation's route read. --unless-admin without
+# protection; the classified head being the pinned head; and the arm at
+# creation's route read. --unless-admin without
 # --auto is refused, and its control cuts that refusal.
 route_mutant() { # NAME FROM TO
   mutant_copy "$@" >/dev/null || exit 2
@@ -245,8 +246,9 @@ route_mutant route-mixed '    if [ -n "$mixed" ]; then' '    if false; then'
 route_mutant route-other '        elif [ "$bypass" != never ]; then' '        elif false; then'
 route_mutant route-classic '    false) ;;' '    false | true) ;;'
 mutant_copy route-autoless '    if [ "$unless_admin" = true ] && [ "$auto" != true ]; then' '    if false; then' >/dev/null
+route_mutant route-head '        if [ "$head_sha" != "$pinned" ]; then' '        if false; then'
 route_mutant route-arm '    if [ "$dry_run" != true ] && { [ "$auto" != true ] || [ "$unless_admin" = true ]; }; then' '    if [ "$dry_run" != true ] && [ "$auto" != true ]; then'
-ROUTE_PRE="$CHECK,view:range,view:head"
+ROUTE_PRE="$PRE,view:range"
 QUEUED="QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}"
 run_table "the merge route past the queue" "\
 a token that may always bypass the queue ruleset admin-merges a PR that is not queue-only|checks:ci-required queue-rule:always route:false post:MERGED merge-commit:merged-oid|immediate-classified|0|-|merge-route: admin ruleset=20569265 bypass=always;$QUEUE_FALSE;{no-token};MERGED PR #123|calls=$ROUTE_PRE,merge:squash:admin,graphql:queue auth=<unset>
@@ -273,7 +275,9 @@ must-fail: with the other-ruleset check cut, a ruleset the token may bypass is a
 classic branch protection takes the queue|checks:ci-required queue-rule:always protection:on route:false post-queue|immediate-classified|75|-|merge-route: queue cause=classic-protection;{route-queue:classic};{no-token};$QUEUED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 a protection answer with no enabled field takes the queue|checks:ci-required queue-rule:always protection:unknown route:false post-queue|immediate-classified|75|-|merge-route: queue cause=protection-unreadable;{route-queue:protection};{no-token};$QUEUED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 must-fail: with the classic check cut, classic protection is admin-merged past|checks:ci-required queue-rule:always protection:on route:false post:MERGED merge-commit:merged-oid|route-mutant:route-classic|0|-|merge-route: admin ruleset=20569265 bypass=always;$QUEUE_FALSE;{no-token};MERGED PR #123|calls=$ROUTE_PRE,merge:squash:admin,graphql:queue auth=<unset>
-the arm at creation on an unapproved PR arms nothing where the route reads admin, the route its first stderr line|checks:none queue-rule:always route:false post-entry review:none|auto-unless-admin-classified|1|-|merge-route: admin ruleset=20569265 bypass=always;$QUEUE_FALSE;{arm-admin}|calls=$CHECK,view:range auth=<unset>
+a head that moved between the head read and the class read takes the queue, naming both|checks:ci-required queue-rule:always route:false head-moved:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb post-queue|immediate-classified|75|-|merge-route: queue cause=queue-only;{route-queue:queue-only};cause=head-moved classified=$RANGE_HEAD pinned=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;{no-token};$QUEUED|calls=$ROUTE_PRE,merge:squash,graphql:queue auth=<unset>
+must-fail: with the head comparison cut, a head nobody classified is admin-merged|checks:ci-required queue-rule:always route:false head-moved:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb post:MERGED merge-commit:merged-oid|route-mutant:route-head|0|-|merge-route: admin ruleset=20569265 bypass=always;$QUEUE_FALSE;{no-token};MERGED PR #123|calls=$ROUTE_PRE,merge:squash:admin,graphql:queue auth=<unset>
+the arm at creation on an unapproved PR arms nothing where the route reads admin, the route its first stderr line|checks:none queue-rule:always route:false post-entry review:none|auto-unless-admin-classified|1|-|merge-route: admin ruleset=20569265 bypass=always;$QUEUE_FALSE;{arm-admin}|calls=$ROUTE_PRE auth=<unset>
 the arm at creation arms where the route reads queue|checks:none queue-rule:never route:false post-entry|auto-unless-admin-classified|75|-|merge-route: queue cause=no-bypass ruleset=20569265 bypass=never;{route-queue:no-bypass};Warnings:;⚠ ci_unconfigured: No status checks configured;{no-token};$QUEUED|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
 must-fail: with the arm's route read cut, the arm queues a PR the admin route would take|checks:none queue-rule:always route:false post-entry review:none|auto-route-mutant:route-arm|75|-|Warnings:;⚠ ci_unconfigured: No status checks configured;⚠ not_approved: Review status is '';{no-token};$QUEUED|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
 --auto without --unless-admin reads no route and never passes --admin, whatever the token may bypass|checks:ci-required queue-rule:always route:false post-entry|auto-classified|75|-|{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>

@@ -171,7 +171,8 @@ Merge route:
   not readable, and it is checked again. Its stderr
   `queue-only: queue_only=true|false` line is the class, and change-class
   --help states when it reads true. No classifier, an unreadable range, a
-  failed classifier and a missing line all read queue-only.
+  range whose head is not the head the merge is pinned to (cause=head-moved),
+  a failed classifier and a missing line all read queue-only.
 
 Merge method:
   The merge modes and --dry-run read the method from GitHub, never --check. A
@@ -821,8 +822,8 @@ route_queue() { # FIELDS WHY
     echo "merge-route: queue $1" >&2
     echo "  $2 The merge call passes no --admin." >&2
 }
-merge_route() { # PR TOKEN
-    local pr_num="$1" token="$2" base rules queue_ids ids id bypass bypasses="" rulesets="" unnamed mixed enabled
+merge_route() { # PR TOKEN HEAD
+    local pr_num="$1" token="$2" head="$3" base rules queue_ids ids id bypass bypasses="" rulesets="" unnamed mixed enabled
     MERGE_ROUTE=queue
     if ! base=$(with_token "$token" gh pr view "$pr_num" --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$base" ] \
         || ! base=$(jq -nr --arg v "$base" '$v | @uri') \
@@ -885,7 +886,7 @@ merge_route() { # PR TOKEN
         return 0
         ;;
     esac
-    read_queue_only "$pr_num"
+    read_queue_only "$pr_num" "$head"
     if [ "$QUEUE_ONLY" = true ]; then
         route_queue "cause=queue-only" "A queue-only change runs in a merge group before it lands."
         echo "  $QUEUE_ONLY_DETAIL" >&2
@@ -897,9 +898,9 @@ merge_route() { # PR TOKEN
     echo "  $QUEUE_ONLY_DETAIL" >&2
 }
 
-# The merge-route class of one pull request, from harness-ci's change-class
-# beside this scripts tree, else change-class on PATH: asked about the pull
-# request's own range, it prints `queue-only: queue_only=true|false cause=...`
+# The merge-route class of one pull request at HEAD, the head the merge is
+# pinned to, from harness-ci's change-class beside this scripts tree, else
+# change-class on PATH: asked about the pull request's own range, it prints `queue-only: queue_only=true|false cause=...`
 # on stderr. This command asks; it never matches a path itself. Sets
 # QUEUE_ONLY to true or false, QUEUE_ONLY_DETAIL to the classifier's line or
 # the reason it was not read, and QUEUE_ONLY_NOTES to the diagnostics of a
@@ -909,8 +910,8 @@ merge_route() { # PR TOKEN
 QUEUE_ONLY=""
 QUEUE_ONLY_DETAIL=""
 QUEUE_ONLY_NOTES=""
-read_queue_only() { # PR
-    local pr_num="$1" classifier root notes range base_sha head_sha line status=0
+read_queue_only() { # PR HEAD
+    local pr_num="$1" pinned="$2" classifier root notes range base_sha head_sha line status=0
     QUEUE_ONLY=true
     QUEUE_ONLY_NOTES=""
     classifier=$(sibling_script harness-ci change-class) || classifier=""
@@ -931,7 +932,11 @@ read_queue_only() { # PR
     else
         base_sha="${range% *}"
         head_sha="${range#* }"
-        if ! pr_range_materialize "$root" "$base_sha" "$head_sha" 2>"$notes"; then
+        # A push between the head read and this range read would classify a
+        # head the merge is not pinned to.
+        if [ "$head_sha" != "$pinned" ]; then
+            QUEUE_ONLY_DETAIL="cause=head-moved classified=$head_sha pinned=$pinned"
+        elif ! pr_range_materialize "$root" "$base_sha" "$head_sha" 2>"$notes"; then
             QUEUE_ONLY_DETAIL="cause=range-absent base=$base_sha head=$head_sha"
         else
             run_checkout_child "$notes" "$root" "$classifier" --event pull_request \
@@ -1079,6 +1084,21 @@ main() {
     local method
     method=$(merge_method "$pr_num" "$token" ${accepted[@]+"${accepted[@]}"}) || exit 1
 
+    # Resolve and guard the exact head before mutating merge state. This prevents
+    # a review/CI race from queuing or merging a newer, unverified commit.
+    # It prints nothing unless it refuses, so it keeps the arm's first line.
+    local expected_head="" current_head
+    if [ "$dry_run" != true ]; then
+        if ! current_head=$(with_token "$token" gh pr view "$pr_num" --json headRefOid --jq '.headRefOid' 2>/dev/null) || [ -z "$current_head" ]; then
+            echo "BLOCKED PR #$pr_num — could not resolve exact head SHA for guarded merge" >&2
+            exit 1
+        fi
+        expected_head="${supplied_head:-$current_head}"
+        if [ "$current_head" != "$expected_head" ]; then
+            echo "BLOCKED PR #$pr_num — prepared head changed before merge attempt (expected=$expected_head, actual=$current_head)" >&2; exit 1
+        fi
+    fi
+
     # The route is read-only. The arm at creation, the one --auto that passes
     # --unless-admin, reads it too: an arm there would queue a PR the
     # immediate merge takes past the queue, and GitHub enqueues an armed PR
@@ -1086,7 +1106,7 @@ main() {
     # callers route on that arm's refusal's first line.
     local route=plain
     if [ "$dry_run" != true ] && { [ "$auto" != true ] || [ "$unless_admin" = true ]; }; then
-        merge_route "$pr_num" "$token"
+        merge_route "$pr_num" "$token" "$expected_head"
         route="$MERGE_ROUTE"
     fi
     if [ "$auto" = true ] && [ "$route" = admin ]; then
@@ -1108,18 +1128,6 @@ main() {
         [ "$auto" = true ] && mode="auto-merge fallback"
         echo "Would merge PR #$pr_num (--$method, mode=$mode, delete_branch=$delete_branch, token=$token_status)"
         exit 0
-    fi
-
-    # Resolve and guard the exact head before mutating merge state. This prevents
-    # a review/CI race from queuing or merging a newer, unverified commit.
-    local expected_head current_head
-    if ! current_head=$(with_token "$token" gh pr view "$pr_num" --json headRefOid --jq '.headRefOid' 2>/dev/null) || [ -z "$current_head" ]; then
-        echo "BLOCKED PR #$pr_num — could not resolve exact head SHA for guarded merge" >&2
-        exit 1
-    fi
-    expected_head="${supplied_head:-$current_head}"
-    if [ "$current_head" != "$expected_head" ]; then
-        echo "BLOCKED PR #$pr_num — prepared head changed before merge attempt (expected=$expected_head, actual=$current_head)" >&2; exit 1
     fi
 
 
