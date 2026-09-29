@@ -129,9 +129,10 @@ EXPLAIN = {
     "file-unreadable": "The file to send could not be read.",
     "file-not-fetched": (
         "A file of an owner's message was not downloaded; the value names"
-        " the HTTP status, or the sign-in page Slack sends when the app"
-        " lacks files:read. The relay delivers the message with this line"
-        " in place of the file's path."
+        " the HTTP status, the sign-in page Slack sends when the app lacks"
+        " files:read, or a download that ended short of its length. The"
+        " relay delivers the message with this line in place of the file's"
+        " path."
     ),
     "master-file-unreadable": (
         "SLACK_MASTER_FILE names a path whose age cannot be read, for a"
@@ -140,8 +141,10 @@ EXPLAIN = {
         " the setting is emptied; owner messages are still delivered."
     ),
     "lane-mail-failed": (
-        "lane-mail refused a write the relay needed; the value is its first"
-        " line. The Slack message is read again on the next poll."
+        "lane-mail refused a call the relay needed; the value is its first"
+        " line. After a refused write the Slack message is read again on the"
+        " next poll; after a refused receipts read each :eyes: mark waits for"
+        " the next poll, and the poll goes on."
     ),
     "unit-unwritable": "The systemd unit file could not be written at the path named.",
     "systemctl-missing": (

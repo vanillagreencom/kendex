@@ -8,7 +8,7 @@ What one checkout keeps under `tmp/slack/`. Every file but an owner's own under 
 | `journal.jsonl` | The relay | The transport ledger, one JSON object per line |
 | `status.json` | The relay, every poll | The record `listen --status` reads |
 | `listen.lock` | The relay | The OS lock; its text is the holder's pid |
-| `files/<file id>-<name>` | The relay | A file an owner sent, as Slack served it; the directory mode 700, each file 600. Every byte of `<file id>-<name>` outside `A-Z a-z 0-9 . _ -` is `_` |
+| `files/<file id>-<name>` | The relay | A file an owner sent, as Slack served it; the directory mode 700, each file 600. Every character of `<file id>-<name>` outside `A-Z a-z 0-9 . _ -` is `_`, and the name is cut to its first 200 characters |
 
 ## The binding
 

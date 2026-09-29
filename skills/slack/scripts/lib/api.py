@@ -9,19 +9,22 @@ A network failure is one of two keys, by where urllib raised it. urllib wraps
 every error of the request phase, the connect, the TLS handshake and the
 write of the body, in `URLError`: Slack never read the request, so the call
 is `slack-unreachable` and is safe to make again. An error raised bare comes
-from the response phase, after the request was written: Slack may have acted
-on it, so the call is `slack-response-lost`. The relay journals an envelope
+from the response phase, after the request was written, and so does
+http.client's own `HTTPException`, a response cut short or malformed: Slack
+may have acted on it, so the call is `slack-response-lost`. The relay journals an envelope
 post lost this way as unknown and never repeats it; a read is made again on
 the next poll.
 
 A file download is no API method: Slack answers it with the file, an HTTP
-status, or, when the app lacks `files:read`, its sign-in page with 200.
+status, or, when the app lacks `files:read`, its sign-in page with 200. A
+body that ends short of its Content-Length reads as a clean end in
+http.client, so the download counts the bytes itself.
 """
 
 from __future__ import annotations
 
+import http.client
 import json
-import shutil
 import time
 import urllib.error
 import urllib.parse
@@ -35,6 +38,7 @@ AUTH_ERRORS = {"invalid_auth", "not_authed", "account_inactive", "token_revoked"
 RETRIES = 3
 TIMEOUT_SECONDS = 30
 AUTH_FIX = "fix=set a live SLACK_BOT_TOKEN and restart the relay"
+COPY_BYTES = 64 * 1024
 
 
 class Slack:
@@ -69,7 +73,7 @@ class Slack:
             raise
         except urllib.error.URLError as err:
             raise Refusal("slack-unreachable", f"{label} ({err.reason})") from err
-        except OSError as err:
+        except (OSError, http.client.HTTPException) as err:
             raise Refusal("slack-response-lost", f"{label} ({err})") from err
 
     def _request(self, req: urllib.request.Request, method: str) -> Dict:
@@ -124,13 +128,23 @@ class Slack:
 
     def download(self, url: str, mimetype: str, out: BinaryIO) -> None:
         """A message's file from its `url_private_download`, streamed into
-        `out`. Refused `file-not-fetched` with the HTTP status, or with the
-        sign-in page Slack sends in place of any file but an HTML one."""
+        `out`. Refused `file-not-fetched` with the HTTP status, with the
+        sign-in page Slack sends in place of any file but an HTML one, or
+        with the bytes of a body that ended short of its Content-Length."""
 
         def copy(resp) -> None:
             if resp.headers.get_content_type() == "text/html" and mimetype != "text/html":
                 raise Refusal("file-not-fetched", f"HTTP {resp.status} sign-in page, the app needs files:read")
-            shutil.copyfileobj(resp, out)
+            declared = resp.headers.get("Content-Length")
+            copied = 0
+            while True:
+                chunk = resp.read(COPY_BYTES)
+                if not chunk:
+                    break
+                out.write(chunk)
+                copied += len(chunk)
+            if declared is not None and declared.strip().isdigit() and copied != int(declared):
+                raise Refusal("file-not-fetched", f"truncated {copied} of {declared.strip()} bytes")
 
         req = urllib.request.Request(url)
         req.add_header("Authorization", f"Bearer {self.token}")

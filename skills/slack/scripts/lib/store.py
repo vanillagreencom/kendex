@@ -29,9 +29,9 @@ JOURNAL = "journal.jsonl"
 STATUS = "status.json"
 LOCK = "listen.lock"
 FILES = "files"
-# A name's bytes past this are cut, so `<id>-<name>` stays inside the 255
-# bytes a file name may take.
-NAME_BYTES = 200
+# `<id>-<name>` is cut to this many characters, each ASCII once substituted,
+# so it stays inside the 255 bytes a file name may take.
+NAME_CHARS = 200
 LINE_KINDS = {"seen", "start", "hold", "resume", "in", "out", "resolved", "bound", "thread", "mark"}
 AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -102,13 +102,14 @@ def write_binding(root: Path, binding: Binding) -> None:
 
 def save_file(root: Path, file_id: str, name: str, fill: Callable[[BinaryIO], None]) -> Path:
     """An owner's file at tmp/slack/files/<id>-<name>, the directory 700 and
-    the file 600. Every byte outside [A-Za-z0-9._-] becomes `_`, so the name
-    is one path component. `fill` writes a temporary beside it, renamed only
-    once complete, so the path never names part of a file."""
+    the file 600. Every character outside [A-Za-z0-9._-] becomes `_`, so the
+    name is one path component, cut to NAME_CHARS. `fill` writes a temporary
+    beside it, renamed only once `fill` returns, so the path never names part
+    of a file: `fill` raises on a download that ended short."""
     directory = root_dir(root) / FILES
     directory.mkdir(parents=True, exist_ok=True)
     os.chmod(directory, 0o700)
-    target = directory / re.sub(r"[^A-Za-z0-9._-]", "_", f"{file_id}-{name}")[:NAME_BYTES]
+    target = directory / re.sub(r"[^A-Za-z0-9._-]", "_", f"{file_id}-{name}")[:NAME_CHARS]
     fd, tmp = tempfile.mkstemp(dir=str(directory), prefix=".part-")
     try:
         with os.fdopen(fd, "wb") as out:

@@ -298,11 +298,16 @@ class RootRelay:
 
     def mark_read(self) -> None:
         """Swap SEEN for READ on every directive the overseer has read. A
-        swap Slack refused is made again on the next poll."""
+        swap Slack refused, or a receipts read lane-mail refused, is made
+        again on the next poll."""
         seen = [ts for ts, name in self.state.marks.items() if name == SEEN]
         if not seen:
             return
-        read = self.mail.read_directives()
+        try:
+            read = self.mail.read_directives()
+        except Refusal as err:
+            print_refusal(err)
+            return
         for ts in seen:
             if self.state.delivered.get(ts) not in read:
                 continue
