@@ -123,20 +123,27 @@ lane_adapter_pi_carrier_sends() { # ROOT...
 # turn in an idle lane when its overseer's mail lands: 0 where the installed
 # carrier, the project's or else the user's, lists the lane mail wake among
 # the extensions its package.json gives Pi to load, 1 where none installed
-# does or its package.json does not read. A Pi lane arms no mailbox monitor,
-# so a carrier without the wake leaves it reading no mail while it is idle.
+# does or its package.json does not read. A lane on a carrier with the wake
+# arms no mailbox monitor; one without it arms the lane-mail watch.
 lane_adapter_pi_mail_wake() { # DIR
   lane_adapter_pi_carrier_wakes "$1/.pi/packages" "$(lane_adapter_pi_agent_dir)/packages"
 }
 
 # The same answer over the package roots ROOT..., the first holding a carrier
-# deciding, as lane_adapter_pi_carrier_sends reads them.
+# deciding, as lane_adapter_pi_carrier_sends reads them. The deciding
+# carrier's package.json version lands in LANE_ADAPTER_PI_CARRIER_VERSION,
+# `none` where no carrier is installed and `unread` where its package.json
+# names none or does not read.
+LANE_ADAPTER_PI_CARRIER_VERSION=none
 lane_adapter_pi_carrier_wakes() { # ROOT...
-  local root
+  local root manifest
+  LANE_ADAPTER_PI_CARRIER_VERSION=none
   for root in "$@"; do
     [ -d "$root/@vanillagreen/pi-hooks/extensions" ] || continue
-    jq -e '(.pi.extensions // []) | index("./extensions/lane-mail-wake.ts") != null' \
-      "$root/@vanillagreen/pi-hooks/package.json" >/dev/null 2>&1 && return 0
+    manifest="$root/@vanillagreen/pi-hooks/package.json"
+    LANE_ADAPTER_PI_CARRIER_VERSION=$(jq -r '.version | strings' "$manifest" 2>/dev/null) || LANE_ADAPTER_PI_CARRIER_VERSION=""
+    LANE_ADAPTER_PI_CARRIER_VERSION=${LANE_ADAPTER_PI_CARRIER_VERSION:-unread}
+    jq -e '(.pi.extensions // []) | index("./extensions/lane-mail-wake.ts") != null' "$manifest" >/dev/null 2>&1 && return 0
     return 1
   done
   return 1

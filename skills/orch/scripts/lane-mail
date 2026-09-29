@@ -249,8 +249,8 @@ to-lane.watch, `at=<epoch> interval=<s>` rewritten by `watch` at every poll,
 is no older than twice its interval plus five seconds by the sender's clock,
 so a monitor is polling that mailbox and wakes its lane; it is `none`
 otherwise, and a Claude Code or Codex lane needs a wake while a lane on
-another harness takes none. A Pi lane runs no watch and always reads none: the
-pi-hooks package wakes it when mail lands. A Copilot lane's `none` is a `watch --once` that
+another harness takes none. A Pi lane whose pi-hooks has the mail wake runs no
+watch and always reads none: that package wakes it when mail lands. A Copilot lane's `none` is a `watch --once` that
 announced and is not yet re-armed, and the re-armed watch announces what
 still stands unread; the orch watch-delivery reference says what the
 overseer does where that watch's exit does not wake the lane. A `peer send` writes a peer's overseer mailbox, so

@@ -165,7 +165,7 @@ assert_eq "rc=$RC ssh=$(grep -cxF "clear; ssh 'lane.example'" "$RUN/tmux.log") h
 QUOTE_OT="$(mutant_scripts brief-double-quoted open-terminal)/open-terminal" || exit 1
 git -C "$TMP_ROOT/brief-double-quoted" init -q
 orch_fixture_shared_libs "$TMP_ROOT/brief-double-quoted"
-mutate_file "$QUOTE_OT" 'quoted="$(lane_single_quote "$BRIEF_TEXT")"' 'quoted="\"$BRIEF_TEXT\""'
+mutate_file "$QUOTE_OT" 'quoted="$(lane_single_quote "$brief")"' 'quoted="\"$brief\""'
 run_ot "$QUOTE_OT" "TMUX=" --ghostty --harness claude --cmd "$CMD" --brief-file "$BRIEF_FILE" CC-4
 line="$(gui_line)" || line=""
 assert_eq "rc=$RC harness=$(received "$line")" "rc=0 harness=altered" \

@@ -977,19 +977,13 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=
 # the variable Qopus, which under `set -u` empties the whole substitution the
 # expectation was built in and leaves the row comparing against nothing.
 Q="'\\''"
-# A claude lane's line also re-arms its mailbox monitor; a pi lane, named by
-# the second argument, arms none.
-hosted_line() { # ITEM [pi]
-  local rearm=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item $1 through your harness background wake"
-  [ "${2:-}" != pi ] || rearm=""
-  printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item %s first and act on every directive it prints%s.' "$1" "$1" "$rearm"
-}
+hosted_line() { printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item %s first and act on every directive it prints, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item %s through your harness background wake.' "$1" "$1" "$1"; }
 HOSTED_LINE="$(hosted_line CC-41)"
 run_ot "$CHOICE" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch CC-41
 assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude $Q--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}$Q $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q --continue $Q$HOSTED_LINE$Q'")" \
   "rc=0 creates=nolog launched=1 calls=accounts;create,--item,CC-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,CC-41,/srv/lane/.git;put,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;cat,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;put,--item,CC-41,/srv/lane/tmp/lane-mail/CC-41/context.json remote=1" \
   "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line"
-HOSTED_LINE="$(hosted_line CC-48 pi)"
+HOSTED_LINE="$(hosted_line CC-48)"
 # The unattended words a Pi continuation line closes on, the text read from
 # lib/lane-launch.sh, which renders and judges them.
 PI_UNATTENDED_TEXT="$( source "$SCRIPTS_DIR/lib/lane-launch.sh" && launch_choice_unattended pi )"

@@ -913,14 +913,15 @@ no_session() { # HARNESS ROW — ROW is lane-mail or lane-question
 # directive over at the turn's end instead, and on an item of its own, so
 # neither row reads the other's cursor. Codex has no row to run: Codex starts
 # no turn for output that arrives after a turn ended, and a Codex lane is
-# reached by `open-terminal --wake`. Nor has Pi: a Pi lane arms no monitor,
-# the pi-hooks package starts its turn, and print mode ends with its turn, so
-# pi-hooks' own suite runs a whole Pi session through that wake instead.
+# reached by `open-terminal --wake`. Nor has Pi: a Pi lane on the pi-hooks this
+# tree carries arms no monitor, the package starts its turn, and print mode
+# ends with its turn, so pi-hooks' own suite runs a whole Pi session through
+# that wake instead. A lane on an older pi-hooks arms the watch under bg_task.
 WAKE_ITEM=SMOKE-2
 WAKE_DELAY=30
 WAKE_READER="$SELF/skills/orch/scripts/lane-mail"
 WAKE_SKIPPED='Codex starts no turn for output that arrives after a turn ended; a Codex lane is reached by open-terminal --wake'
-WAKE_PI_SKIPPED='a Pi lane arms no monitor: the pi-hooks mailbox wake starts its turn, and pi-extensions/pi-hooks/tests/lane-mail-wake.test.ts runs a Pi session through it'
+WAKE_PI_SKIPPED='a Pi lane on the pi-hooks this tree carries arms no monitor: its mailbox wake starts the turn, and pi-extensions/pi-hooks/tests/lane-mail-wake.test.ts runs a Pi session through it'
 WAKE_ANNOUNCED="lane-mail: mail=$WAKE_ITEM new=1"
 WAKE_ARMED='smoke-wake: monitor-armed'
 printf 'Reply with exactly two lines and nothing else: %s, then the first line of the monitor event that woke you.\n' \
