@@ -6,7 +6,7 @@ Two advisory scores over an item's own bytes: safety answers "is this dangerous"
 
 ## Boundaries
 
-- Rules read typed per-kind inputs and say when they cannot read: a skill carries its whole tree, a hook its registration and script, an MCP server its command, args, env and headers, a plugin its manifest and lifecycle scripts; a rule whose bytes are not in the input reports itself not applicable. Enforced by `crates/core/tests/quality/kinds.rs` and `crates/core/tests/quality/reading.rs`.
+- Rules read typed per-kind inputs and say when they cannot read: a skill carries its rendered tree, without the top-level entries a render leaves out ([generated-paths.md § Boundaries](generated-paths.md#boundaries)), a hook its registration and script, an MCP server its command, args, env and headers, a plugin its manifest and lifecycle scripts; a rule whose bytes are not in the input reports itself not applicable. Enforced by `crates/core/tests/quality/kinds.rs` and `crates/core/tests/quality/reading.rs`.
 - The outcome is a function of exactly kind, path and name (`quality::observe::same_reading`), plus the harness for a hook in a shared config file whose parser is the harness's; no rule reads the harness. Not mechanically enforced beyond the signature.
 
 ## Invariants

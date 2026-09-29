@@ -6,8 +6,9 @@ use std::path::{Path, PathBuf};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::{ItemKind, Scope};
+use crate::source_read::ItemBytes;
 
-use super::{Bytes, ImportOutcome, ImportSelection, ResolvedSelection};
+use super::{ImportOutcome, ImportSelection, ResolvedSelection};
 
 mod write;
 use write::write_all;
@@ -98,7 +99,7 @@ fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelecti
         })
     };
     match (selection.kind, &mut answer.bytes) {
-        (ItemKind::Skill, Bytes::Tree(files)) => {
+        (ItemKind::Skill, ItemBytes::Tree(files)) => {
             for (rel, bytes) in files
                 .iter_mut()
                 .filter(|(rel, _)| crate::render::skill::carries_name(rel))
@@ -107,7 +108,7 @@ fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelecti
                 *bytes = renamed(bytes, &at)?;
             }
         }
-        (ItemKind::Agent, Bytes::File(bytes)) => *bytes = renamed(bytes, &origin)?,
+        (ItemKind::Agent, ItemBytes::File(bytes)) => *bytes = renamed(bytes, &origin)?,
         // Named rather than fallen through to, because "nothing to
         // declare" and "a shape we did not expect" are different answers
         // and only one of them is safe to be silent about. Their bytes go
@@ -233,8 +234,8 @@ fn occupies(
 /// catalog offers as two items.
 fn writes_into(outer: &ResolvedSelection, outer_dest: &Path, inner: &[String]) -> bool {
     match &outer.bytes {
-        Bytes::File(_) => true,
-        Bytes::Tree(files) => files
+        ItemBytes::File(_) => true,
+        ItemBytes::Tree(files) => files
             .iter()
             .any(|(rel, _)| folded(&outer_dest.join(rel)).starts_with(inner)),
     }

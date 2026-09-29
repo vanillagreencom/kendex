@@ -13,8 +13,9 @@
 # ends in any state but code is not extractable: every comment after the
 # opener would otherwise be swallowed and the file counted clean. It is not
 # a parser: what it does not model is stated in ../../CHECKS.md § comments,
-# and the controls in tests/comments.test.sh hold each stated limit to its
-# statement.
+# and the controls in the catalog's tests/comments.test.sh
+# (https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/tests/comments.test.sh)
+# hold each stated limit to its statement.
 #
 # Bash 3.2-safe, like its parent; the awk inside is POSIX awk — no interval
 # expressions, no gensub, no IGNORECASE.

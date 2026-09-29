@@ -10,9 +10,9 @@ use crate::error::{CoreError, Result};
 use crate::library::Origin;
 use crate::manifest::{INPLACE_SOURCE_NAME, Manifest, ManifestFile};
 use crate::model::{ItemKind, Scope};
-use crate::source_read::SealedSource;
+use crate::source_read::{ItemBytes, SealedSource};
 
-use super::{Bytes, CandidateGroup, ImportSelection, ResolvedSelection, license_recognized};
+use super::{CandidateGroup, ImportSelection, ResolvedSelection, license_recognized};
 
 mod notices;
 mod offer;
@@ -59,7 +59,7 @@ pub(super) struct OriginRead {
     pub group: CandidateGroup,
     /// The bytes, or `None` where there are none to offer: a marketplace
     /// nobody fetched, or an origin [`offered`] refuses.
-    pub bytes: Option<Bytes>,
+    pub bytes: Option<ItemBytes>,
     /// Where the bytes were read from, said the way kendex says a path:
     /// [`crate::paths::slashed`], because callers match on it
     /// (`.agents/skills/…`) and a `\` there matches nothing.
@@ -202,7 +202,12 @@ fn marketplace_origins(
     let Some(bytes) = read_bytes(&sealed, package.kind, &path) else {
         return unreachable(license);
     };
-    let source_hash = bytes.hash();
+    // What an unedited install holds, which for a skill is less than the
+    // package: its render leaves out the top-level tests, evaluation sets
+    // and maintainer notes. The origin still imports the whole package.
+    let Some(source_hash) = installed_hash(&sealed, package.kind, &path) else {
+        return unreachable(license);
+    };
     let mut origins = vec![OriginRead {
         group: CandidateGroup::Marketplace {
             source: source.to_owned(),
@@ -253,7 +258,7 @@ fn catalog_bytes(
     root: &Path,
     provenance: &str,
     row: &crate::library::ProvenanceRow,
-) -> Option<(Bytes, String, PathBuf)> {
+) -> Option<(ItemBytes, String, PathBuf)> {
     let sealed = SealedSource::open(root).ok()?;
     let config = crate::source::source_config_for(&sealed, provenance).ok()?;
     // A catalog holds this under the name it was declared as.
@@ -264,18 +269,33 @@ fn catalog_bytes(
     Some((bytes, location, path))
 }
 
-pub(super) fn read_bytes(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Option<Bytes> {
+/// The bytes an import of the package at `path` writes: a skill's whole
+/// tree, tests and maintainer notes included, or any other kind's file.
+pub(super) fn read_bytes(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Option<ItemBytes> {
     match kind {
-        ItemKind::Skill => {
-            let dir = match sealed.is_dir(path) {
-                true => path.to_path_buf(),
-                // A one-skill repo hands the SKILL.md itself.
-                false => path.parent()?.to_path_buf(),
-            };
-            let files = sealed.collect_skill_tree(&dir).ok()?;
-            Some(Bytes::Tree(files))
-        }
-        _ => Some(Bytes::File(sealed.read(path).ok()?)),
+        ItemKind::Skill => Some(ItemBytes::Tree(
+            sealed
+                .collect_skill_tree(&package_path(sealed, kind, path)?)
+                .ok()?,
+        )),
+        _ => Some(ItemBytes::File(sealed.read(path).ok()?)),
+    }
+}
+
+/// The hash of what an unedited install of the package at `path` holds
+/// ([`SealedSource::rendered_item`]), the side an installed copy is
+/// compared against to say whether someone edited it.
+fn installed_hash(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Option<String> {
+    let path = package_path(sealed, kind, path)?;
+    Some(sealed.rendered_item(kind, &path).ok()?.hash())
+}
+
+/// Where a package's bytes sit: a skill's directory, whichever file a
+/// one-skill repo handed; any other kind's own path.
+fn package_path(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Option<PathBuf> {
+    match kind == ItemKind::Skill && !sealed.is_dir(path) {
+        true => Some(path.parent()?.to_path_buf()),
+        false => Some(path.to_path_buf()),
     }
 }
 

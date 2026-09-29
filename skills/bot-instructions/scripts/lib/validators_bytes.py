@@ -7,7 +7,8 @@ format this package writes. The structure is in hand before it is serialised —
 `render.Build.data` — so the same question costs a dictionary lookup.
 
 Each names the silent failure it exists to catch in `schemas/validators.md`.
-Every rejection clause here has one red control in `tests/`, asserting on the
+Every rejection clause here has one red control in the catalog's tests/
+(https://github.com/vanillagreencom/kendex/tree/main/skills/bot-instructions/tests), asserting on the
 validator's own identity rather than on the run's exit code.
 """
 

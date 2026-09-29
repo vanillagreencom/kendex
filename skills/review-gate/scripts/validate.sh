@@ -472,8 +472,9 @@ fi
 # A departure from the default is legal only when the repository names the
 # tracked decision record behind it.
 #
-# Every branch of this block carries one row in tests/validate.test.sh that
-# goes red when the branch is removed.
+# Every branch of this block carries one row in
+# https://github.com/vanillagreencom/kendex/blob/main/skills/review-gate/tests/validate.test.sh
+# that goes red when the branch is removed.
 choice_rc=0
 policy_choice="$("${scrub[@]}" "$SKILL_DIR/scripts/review-policy" --check-choice 2>"$SCRATCH/err")" || choice_rc=$?
 if [ "$choice_rc" -ne 0 ]; then

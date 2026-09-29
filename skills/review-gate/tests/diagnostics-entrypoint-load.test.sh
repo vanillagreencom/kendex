@@ -12,7 +12,6 @@ mkdir -p "$TMP/scripts/lib"
 cp "$SKILL_DIR/scripts/review-writer.sh" \
   "$SKILL_DIR/scripts/pr-watch.sh" \
   "$SKILL_DIR/scripts/review-predicate.sh" \
-  "$SKILL_DIR/scripts/review-predicate-selftest.sh" \
   "$SKILL_DIR/scripts/validate.sh" \
   "$SKILL_DIR/scripts/validate-workflow.sh" "$TMP/scripts/"
 cp "$SKILL_DIR/scripts/lib/settings.sh" "$TMP/scripts/lib/"
@@ -37,7 +36,6 @@ done <<'CASES'
 review-writer.sh|1
 pr-watch.sh|2
 review-predicate.sh|2
-review-predicate-selftest.sh|1
 validate.sh|2
 validate-workflow.sh|2
 CASES

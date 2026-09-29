@@ -317,7 +317,7 @@ fn push_installs(
         name: group.installed.clone(),
         paths,
     });
-    let source = Some(ctx.source(&artifact)?);
+    let source = Some(ctx.source(ItemKind::Skill, &artifact)?);
     for harness in &group.members {
         // An in-place tree is the person's source: kendex writes no render
         // of it, so no rendered hash anchors an edit, and the inputs it

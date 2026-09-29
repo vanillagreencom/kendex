@@ -10,11 +10,12 @@ trap 'rm -rf -- "${TMP:?}"' EXIT
 cp -R "$SKILL_DIR/scripts" "$TMP/"
 mkdir -p "$TMP/tests"
 cp -R "$SKILL_DIR/tests/lib" "$TMP/tests/"
+cp "$SKILL_DIR/tests/review-predicate-selftest.sh" "$TMP/tests/"
 
-missing="$TMP/scripts/../tests/lib/predicate-selftest/predicate-fixture-integrity.sh"
+missing="$TMP/tests/lib/predicate-selftest/predicate-fixture-integrity.sh"
 rm -- "$TMP/tests/lib/predicate-selftest/predicate-fixture-integrity.sh"
 rc=0
-output="$(REVIEW_GATE_SETTINGS_FILE=/dev/null "$TMP/scripts/review-predicate-selftest.sh" 2>&1)" || rc=$?
+output="$(REVIEW_GATE_SETTINGS_FILE=/dev/null "$TMP/tests/review-predicate-selftest.sh" 2>&1)" || rc=$?
 diagnostic="$(printf '%s\n' "$output" | grep '^review-gate-error=selftest-table-load ' | head -1)"
 printf -v expected_path '%q' "$missing"
 expected="review-gate-error=selftest-table-load value=$expected_path"

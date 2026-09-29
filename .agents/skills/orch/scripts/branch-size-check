@@ -73,8 +73,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # reaches execution as an argument, run inside branch-growth.sh, so no walk of
 # invocation syntax finds it; the Linear CLI read for the allowance and the
 # workflow-state write for the verdict are outside the rule. The
-# narrow-change.conf boundary group is held to this list by harness-ci's
-# tests/narrow-boundary.test.sh.
+# narrow-change.conf boundary group is held to this list by
+# https://github.com/vanillagreencom/kendex/blob/main/skills/harness-ci/tests/narrow-boundary.test.sh.
 # measures-with: skills/orch/scripts/branch-size-check
 # measures-with: skills/orch/scripts/lib/branch-growth.sh
 # measures-with: skills/orch/scripts/lib/kendex-env.sh

@@ -74,7 +74,7 @@ pub fn package_preview(
         // The same tree scoring and install read: a repo-root skill's
         // `.git`, `node_modules` and build output are not its files, and
         // neither are the top-level entries a render leaves out.
-        for (rel, bytes) in browsed.sealed.collect_rendered_skill_tree(&path)? {
+        for (rel, bytes) in browsed.sealed.rendered_item(kind, &path)?.into_files() {
             files.push(file_row(&rel, bytes.len()));
         }
         browsed
@@ -194,7 +194,8 @@ pub fn package_file(
     let offered = if browsed.sealed.is_dir(&path) {
         browsed
             .sealed
-            .collect_rendered_skill_tree(&path)?
+            .rendered_item(kind, &path)?
+            .into_files()
             .into_iter()
             .any(|(tree_rel, _)| file_row(&tree_rel, 0).path == rel)
     } else {

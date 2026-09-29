@@ -178,7 +178,7 @@ Comment text is extracted per family, by extension or, for a path with none, by 
 | Dash | `sql` `lua` | `--` to end of line; SQL `/* */` and Lua `--[[ ]]` across lines | `"…"` `'…'` with escapes |
 | Markup | `html` `htm` `xml` `svg` `vue` `svelte` | `<!-- -->` across lines | none |
 
-The scanner is a character walk, not a parser. Its limits, each pinned by a control in `tests/comments.test.sh`:
+The scanner is a character walk, not a parser. Its limits, each pinned by a control in [`tests/comments.test.sh`](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/tests/comments.test.sh):
 
 - A `//` inside a JavaScript regex literal, a `#` glued to a Python or TOML value (`x = 1#c`), and a `--` inside a Lua long string `[[…]]` are read by the rules above, not the language's.
 - A JavaScript template literal is one string to its closing backtick; a nested template inside `${…}` is not tracked.

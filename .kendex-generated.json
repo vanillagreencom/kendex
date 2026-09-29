@@ -726,7 +726,6 @@
   ".agents/skills/review-gate/scripts/refresh-report.py",
   ".agents/skills/review-gate/scripts/refresh-reviews.sh",
   ".agents/skills/review-gate/scripts/review-policy",
-  ".agents/skills/review-gate/scripts/review-predicate-selftest.sh",
   ".agents/skills/review-gate/scripts/review-predicate.sh",
   ".agents/skills/review-gate/scripts/review-writer.sh",
   ".agents/skills/review-gate/scripts/validate-standard.sh",

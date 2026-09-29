@@ -20,6 +20,7 @@ use specta::Type;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::{ItemKind, Scope};
+use crate::source_read::ItemBytes;
 
 /// One importable package, with every byte origin that offers it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -151,25 +152,10 @@ pub struct ImportOutcome {
     pub already_present: Vec<String>,
 }
 
-/// The bytes of one origin: a single file or a whole skill tree.
-pub(super) enum Bytes {
-    File(Vec<u8>),
-    Tree(Vec<(PathBuf, Vec<u8>)>),
-}
-
-impl Bytes {
-    pub(super) fn hash(&self) -> String {
-        match self {
-            Bytes::File(bytes) => crate::hash::hash_bytes(bytes),
-            Bytes::Tree(files) => crate::hash::hash_files(files),
-        }
-    }
-}
-
 /// One selection's bytes re-resolved at apply time, with the provenance
 /// that governs it and the licence evidence files that travel with it.
 pub(super) struct ResolvedSelection {
-    pub bytes: Bytes,
+    pub bytes: ItemBytes,
     pub group: CandidateGroup,
     /// Root-level LICENSE/NOTICE/COPYING files of a licensed origin's
     /// catalog — copied beside the bytes, provenance retained.
@@ -405,8 +391,8 @@ pub fn resolve(env: &Env, scopes: &[Scope], selection: &ImportSelection) -> Resu
     let answer = resolve_selection(env, scopes, selection)?;
     license_gate(selection, &answer.group)?;
     let files = match answer.bytes {
-        Bytes::Tree(files) => files,
-        Bytes::File(bytes) => {
+        ItemBytes::Tree(files) => files,
+        ItemBytes::File(bytes) => {
             let leaf = answer
                 .read_from
                 .as_deref()

@@ -26,10 +26,8 @@ unset ORCH_LANE_MAX_PCT ORCH_HANDOFF_HEADROOM_PCT
 # developer runs a different suite from CI, where a baseline expired-token row
 # renews, or a row reaches a live helper or the real token endpoint.
 unset ORCH_LANES_CLAUDE_CLIENT_ID ORCH_LANES_TOKEN_CMD ORCH_LANES_CLAUDE_TOKEN_URL
-# Resolve siblings from the TEST directory, never from a repo root: the CLI
-# integration check runs this same suite from an INSTALLED layout
-# (.agents/skills/orch/tests/...), where a `<root>/skills/orch/...` path does not
-# exist.
+# Resolve siblings from the TEST directory, never from a repo root, so the
+# suite reads the scripts beside it wherever the catalog is checked out.
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 LANES="$SCRIPTS_DIR/lanes"

@@ -2340,6 +2340,7 @@ dependencies = [
  "kendex-core",
  "rustix",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
  "toml 1.1.4+spec-1.1.0",
  "url",

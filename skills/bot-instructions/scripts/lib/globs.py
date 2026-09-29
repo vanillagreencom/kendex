@@ -112,7 +112,9 @@ def _translate(pattern, where=None):
 
     A trailing `/**` keeps its slash, so `a/**` matches every path under `a`
     and never a tracked file named `a` — which is what `git ls-files --
-    ':(glob)a/**'` answers. `tests/globs.test.sh` measures the pair against
+    ':(glob)a/**'` answers. The catalog's tests/globs.test.sh
+    (https://github.com/vanillagreencom/kendex/blob/main/skills/bot-instructions/tests/globs.test.sh)
+    measures the pair against
     git's wildmatch, which `renders.md` names as the engine the dialect
     targets.
 

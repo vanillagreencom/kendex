@@ -5,8 +5,9 @@
 //! about where bytes live: the rest of the module finds them, and this
 //! decides whether a catalog could hold what was found.
 
-use super::{Bytes, OriginRead};
+use super::OriginRead;
 use crate::model::ItemKind;
+use crate::source_read::ItemBytes;
 
 /// Why these bytes are not the markdown a catalog's agent slot holds, when
 /// they are not.
@@ -32,13 +33,13 @@ use crate::model::ItemKind;
 /// Asked of the bytes, never of the extension. Cursor writes `.mdc` and a
 /// switched-off agent is parked at `.md.disabled`; both are frontmatter,
 /// and the spellings do not end.
-fn agent_shape_problem(kind: ItemKind, bytes: &Bytes) -> Option<&'static str> {
+fn agent_shape_problem(kind: ItemKind, bytes: &ItemBytes) -> Option<&'static str> {
     if kind != ItemKind::Agent {
         return None;
     }
     // A tree is unconstructible for an agent: `read_bytes` makes a skill a
     // tree and every other kind a file.
-    let Bytes::File(bytes) = bytes else {
+    let ItemBytes::File(bytes) = bytes else {
         return None;
     };
     let Ok(text) = std::str::from_utf8(bytes) else {

@@ -108,7 +108,9 @@ fn with_instructions(
     source_dir: &Path,
     instructions: Option<&str>,
 ) -> Result<(Rendered, SkillText)> {
-    let mut files = sealed.collect_rendered_skill_tree(source_dir)?;
+    let mut files = sealed
+        .rendered_item(crate::model::ItemKind::Skill, source_dir)?
+        .into_files();
     let mut read_as = SkillText::Exact;
     for (rel, bytes) in &mut files {
         if rel == Path::new(SKILL_FILE) {
@@ -285,5 +287,14 @@ mod tests {
             .find(|(p, _)| p.ends_with("run.sh"))
             .unwrap();
         assert_eq!(script.1, b"#!/bin/sh\n");
+        // The catalog records the item by the tree a render carries, so the
+        // publisher's own render reads as the catalog's bytes unchanged.
+        let authored = render_authored(&sealed, &src).unwrap();
+        assert_eq!(
+            crate::hash::hash_files(&authored),
+            sealed
+                .catalog_hash(crate::model::ItemKind::Skill, &src)
+                .unwrap()
+        );
     }
 }

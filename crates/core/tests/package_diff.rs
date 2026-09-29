@@ -274,23 +274,41 @@ fn a_diff_in_an_unregistered_project_keeps_what_its_lock_names() {
 #[allow(clippy::unwrap_used)]
 fn installed_vs_version_shows_the_local_edit() {
     let w = world();
-    write_gh(&w, &[("SKILL.md", V1.as_bytes())]);
+    // The package's tests, evaluation sets and maintainer notes never reach
+    // an install, so they are not a difference from one.
+    write_gh(
+        &w,
+        &[
+            ("SKILL.md", V1.as_bytes()),
+            ("tests/run.test.sh", b"#!/bin/sh\n"),
+            ("evals/cases.json", b"[]\n"),
+            ("DEVELOPMENT.md", b"# notes\n"),
+        ],
+    );
     let first = commit(&w.upstream, "one");
     install_gh(&w);
+    let against_installed = || {
+        package_diff(
+            &w.env,
+            &w.scope,
+            ItemKind::Skill,
+            "gh",
+            &VersionSel::Commit(first.clone()),
+            &VersionSel::Installed,
+            None,
+        )
+        .unwrap()
+    };
+    let unedited = against_installed();
+    assert!(unedited.files.is_empty(), "{:?}", unedited.files);
+
     let installed = w.home.join("app/.agents/skills/gh/SKILL.md");
     let text = fs::read_to_string(&installed).unwrap();
     fs::write(&installed, text.replace("line two", "my edited line")).unwrap();
 
-    let diff = package_diff(
-        &w.env,
-        &w.scope,
-        ItemKind::Skill,
-        "gh",
-        &VersionSel::Commit(first),
-        &VersionSel::Installed,
-        None,
-    )
-    .unwrap();
+    let diff = against_installed();
+    let paths: Vec<&str> = diff.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, ["SKILL.md"]);
     let skill = diff
         .files
         .iter()

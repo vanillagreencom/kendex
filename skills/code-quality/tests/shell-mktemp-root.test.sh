@@ -4,8 +4,7 @@
 # is a data-flow question a text scan cannot answer (skills/AGENTS.md states
 # the choice). So this suite holds the prose to its spelling and its behaviour
 # instead. ../SKILL.md § Language Discipline must carry the four prescribed
-# lines and, in the catalog tree, the shell-suite rules beside it must cite that
-# section; neither may carry the hazard line, `mktemp -d` nested inside `cd`.
+# lines and the catalog's shell-suite rules beside it must cite that section; neither may carry the hazard line, `mktemp -d` nested inside `cd`.
 # The lines SKILL.md fences are then run from inside a scratch caller
 # directory, with a working and with a failing `mktemp`: they exit non-zero on
 # the failure and the caller directory survives every row. The nested shape
@@ -229,39 +228,30 @@ else
 fi
 judge_doc "$SKILL_DIR/SKILL.md"
 
-# The catalog's shell-suite rules sit beside the skill only in the source tree;
-# an installed copy has no sibling AGENTS.md, and the row says so rather than
-# passing on nothing.
-if [ -f "$CATALOG_RULES" ]; then
-  status=0
-  judge_text "$CATALOG_RULES" "$CITATION" || status=$?
-  if [ "$status" -eq 0 ]; then
-    pass "cites the checked root lines: $CATALOG_RULES"
-  else
-    fail "does not cite the checked root lines (status $status): $CATALOG_RULES" "expected the link $CITATION and no hazard line"
-  fi
+# The catalog's shell-suite rules sit beside the skill; a missing file is a
+# failure, never a row passed on nothing.
+status=0
+judge_text "$CATALOG_RULES" "$CITATION" || status=$?
+if [ "$status" -eq 0 ]; then
+  pass "cites the checked root lines: $CATALOG_RULES"
 else
-  printf '  note  catalog rules not judged: no AGENTS.md beside %s (installed copy)\n' "$SKILL_DIR"
+  fail "does not cite the checked root lines (status $status): $CATALOG_RULES" "expected the link $CITATION and no hazard line"
 fi
 
-# The tree scan runs where a git work tree tracks this suite, from that tree's
-# root. An installed copy no work tree tracks says so rather than passing on
-# nothing; a tracked suite whose scan fails is a failure, never a clean tree.
+# The tree scan runs from the root of the work tree that tracks this suite; a
+# scan that fails is a failure, never a clean tree.
 SUITE_FILE="$(basename -- "${BASH_SOURCE[0]}")"
-if git -C "$TEST_DIR" ls-files --error-unmatch -- "$SUITE_FILE" >/dev/null 2>&1; then
-  if ! REPO_ROOT="$(git -C "$TEST_DIR" rev-parse --show-toplevel)"; then
-    fail "tree scan: the work tree tracking $SUITE_FILE names no top level" "$TEST_DIR"
-  else
-    status=0
-    hits="$(scan_tree "$REPO_ROOT")" || status=$?
-    case "$status" in
-      0) pass "tree scan: no tracked file under $REPO_ROOT nests mktemp -d inside cd" ;;
-      1) fail "tree scan: tracked files nest mktemp -d inside cd" "$(printf '%s\n' "$hits" | tr '\n' ' ')" ;;
-      *) fail "tree scan: git grep failed (status $status)" "$REPO_ROOT" ;;
-    esac
-  fi
+if ! git -C "$TEST_DIR" ls-files --error-unmatch -- "$SUITE_FILE" >/dev/null 2>&1 \
+  || ! REPO_ROOT="$(git -C "$TEST_DIR" rev-parse --show-toplevel)"; then
+  fail "tree scan: no git work tree tracks $SUITE_FILE" "$TEST_DIR"
 else
-  printf '  note  tree not scanned: no git work tree tracks %s (installed copy)\n' "$TEST_DIR/$SUITE_FILE"
+  status=0
+  hits="$(scan_tree "$REPO_ROOT")" || status=$?
+  case "$status" in
+    0) pass "tree scan: no tracked file under $REPO_ROOT nests mktemp -d inside cd" ;;
+    1) fail "tree scan: tracked files nest mktemp -d inside cd" "$(printf '%s\n' "$hits" | tr '\n' ' ')" ;;
+    *) fail "tree scan: git grep failed (status $status)" "$REPO_ROOT" ;;
+  esac
 fi
 
 # --- controls: each judge turns red on a mutant copy of SKILL.md -------------

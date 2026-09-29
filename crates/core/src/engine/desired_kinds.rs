@@ -42,7 +42,7 @@ pub(super) fn declared(
             harness,
         )?,
         rendered_hash: artifact.rendered_hash(),
-        source: Some(ctx.source(&artifact)?),
+        source: Some(ctx.source(kind, &artifact)?),
         upstream_skills: None,
         emitted: None,
         reasons: ctx.reasons_for(harness),

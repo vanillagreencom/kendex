@@ -9,8 +9,8 @@
 # to scripts/, the one private copy, which the caller mutates with
 # mutate_file. With no FILE every entry is a link: the live scripts, placed
 # where a stand-in such as the Linear CLI can sit beside their skill. The
-# shipped scripts are the ones beside this tests/ directory, so a suite run
-# from an installed layout mutates its own. Prints the scripts directory;
+# shipped scripts are the ones beside this tests/ directory. Prints the
+# scripts directory;
 # callers need TMP_ROOT. Callers take the path through a command
 # substitution, where errexit does not reach, so every setup step refuses on
 # its own before the path is printed: a tree missing a sibling would kill the

@@ -566,10 +566,10 @@ impl ItemCtx<'_> {
     /// against the shape the catalog holds — a tree for a directory, a
     /// file otherwise — so a rendering that changes the shape (a command
     /// wrapped into a skill tree) reads as changed, which it is.
-    pub(super) fn source(&self, artifact: &Artifact) -> Result<CatalogSource> {
+    pub(super) fn source(&self, kind: ItemKind, artifact: &Artifact) -> Result<CatalogSource> {
         Ok(CatalogSource {
             path: self.sealed.catalog_path(self.item_path),
-            verbatim: self.sealed.catalog_hash(self.item_path)? == artifact.disk_hash(),
+            verbatim: self.sealed.catalog_hash(kind, self.item_path)? == artifact.disk_hash(),
             tree: self.sealed.is_dir(self.item_path),
         })
     }

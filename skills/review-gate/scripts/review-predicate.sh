@@ -140,7 +140,8 @@ control's own label — at a count not spelled N/N, and at a label spelled out
 as a sentence. No SET of names is read: a repo names its files after the
 words it writes reasons in, so a set of them bans ordinary prose.
 
-THE CORPUS IS THE CONTRACT, NOT THIS LIST. tests/corpus/ holds what the gate
+THE CORPUS IS THE CONTRACT, NOT THIS LIST. The catalog's tests/corpus/
+(https://github.com/vanillagreencom/kendex/tree/main/skills/review-gate/tests/corpus) holds what the gate
 must catch, what it must pass, and that KNOWN LIMIT. Add a label by writing
 the reply THERE first, as a person types it, then widen `reason_left` until
 the suite is green. Write the punctuated spelling: normalization turns it to
@@ -1462,7 +1463,8 @@ fi
 # substitutes for MISSING review evidence only — changes-requested and
 # unresolved threads still fail closed. SECURITY: deliberate, bounded
 # relaxation; trusted-publisher model identical to the trusted status
-# contexts above. See orch DEVELOPMENT.md "Reviewer-outage recognition".
+# contexts above. The context's name and reason rule: references/settings.md,
+# REVIEW_GATE_OVERRIDE_CONTEXT.
 outageok=0
 outage_reason=""
 if [ -n "$OUTAGE_CONTEXT" ]; then
@@ -1925,7 +1927,8 @@ fi
 # second reduction subtracts. `reason_left` strips the reply form, the
 # non-reason tokens and the words carrying no content alone; a reply whose
 # reason strips to nothing is counted, which is what leaves a token INSIDE a
-# real reason harmless. Widen this list from tests/corpus/, never alone.
+# real reason harmless. Widen this list from the catalog's tests/corpus/
+# (https://github.com/vanillagreencom/kendex/tree/main/skills/review-gate/tests/corpus), never alone.
 # Punctuation normalization keeps every letter and number, not only ASCII:
 # the word lists are ASCII, so a reason written in another script survives
 # whole, and surviving text is residue, which is a stated reason.
@@ -1949,7 +1952,8 @@ fi
 # leaves "lifecycle", and a decline this term exists to red walks through the
 # gate by appending a count. The rule is one rule — a word the term deletes
 # never shields the name behind it — and each list has its own section of
-# tests/corpus/declines-unreasoned.txt and its own must-fail probe.
+# https://github.com/vanillagreencom/kendex/blob/main/skills/review-gate/tests/corpus/declines-unreasoned.txt
+# and its own must-fail probe.
 #
 # The punctuation pass therefore runs ahead of both lists, so the lists read
 # normalized text; but it HOLDS a dot, underscore or hyphen sitting between
@@ -1980,13 +1984,17 @@ fi
 # The space padded onto the END is how a word in the last position meets that
 # one-character boundary; nothing is asked of the left, and the closing trim
 # takes both pads back. Anything included here has to compile under both
-# engines, and tests/predicate-re2-engine.test.sh is what says so.
+# engines, and
+# https://github.com/vanillagreencom/kendex/blob/main/skills/review-gate/tests/predicate-re2-engine.test.sh
+# is what says so.
 #
 # Position is the only thing that separates a suite name from prose — both
 # are ordinary English, so any SET of names is a word ban on whatever the
 # repo happens to name its files after, and "the guard refuses this path" is
 # a real reason written in three of them. What position does not reach is
-# pinned in tests/corpus/declines-known-limit.txt: a name standing after the
+# pinned in
+# https://github.com/vanillagreencom/kendex/blob/main/skills/review-gate/tests/corpus/declines-known-limit.txt:
+# a name standing after the
 # count, a count not spelled N/N, a path whose own segments are listed words,
 # and a slash written inside a multi-word entry.
 REPLY_FORMS_DEF='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|declined:)"; "i");

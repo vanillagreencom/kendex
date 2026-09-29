@@ -528,13 +528,7 @@ pub fn installation_hash(
     name: &str,
     harness: HarnessId,
 ) -> Result<String> {
-    let files = if kind == ItemKind::Skill {
-        sealed.collect_rendered_skill_tree(source_tree)?
-    } else if sealed.is_dir(source_tree) {
-        sealed.collect_tree(source_tree, &[])?
-    } else {
-        vec![(Path::new("").to_path_buf(), sealed.read(source_tree)?)]
-    };
+    let files = sealed.rendered_item(kind, source_tree)?.into_files();
     let mut hasher = Sha256::new();
     hasher.update(portable_source_hash(source_tree, &files));
     hasher.update(relevant_sections(manifest, kind, name, harness).as_bytes());

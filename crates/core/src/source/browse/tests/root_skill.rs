@@ -10,12 +10,16 @@ use crate::error::CoreError;
 use crate::model::ItemKind;
 
 /// A repository that is one skill at its root, carrying the directories a
-/// repository has and a skill does not.
+/// repository has and a skill does not, and the package's own tests and
+/// maintainer notes, which no install of it holds.
 fn root_skill_fixture() -> (tempfile::TempDir, Env, Catalog) {
     let tmp = tempfile::tempdir().unwrap();
     let upstream = tmp.path().join("base/owner/rootskill");
     fs::create_dir_all(upstream.join("node_modules/dep")).unwrap();
     fs::create_dir_all(upstream.join("target")).unwrap();
+    fs::create_dir_all(upstream.join("tests")).unwrap();
+    fs::write(upstream.join("tests/run.test.sh"), "#!/bin/sh\n").unwrap();
+    fs::write(upstream.join("DEVELOPMENT.md"), "# notes\n").unwrap();
     fs::write(
         upstream.join("SKILL.md"),
         "---\nname: root\ndescription: lives at the root\n---\nbody\n",
@@ -44,12 +48,7 @@ fn a_repo_root_skill_lists_and_reads_only_its_own_tree() {
     let preview = package_preview(&env, &catalog, ItemKind::Skill, "root", None).unwrap();
     let listed: Vec<&str> = preview.files.iter().map(|f| f.path.as_str()).collect();
     assert!(listed.contains(&"notes.md"), "{listed:?}");
-    assert!(
-        listed
-            .iter()
-            .all(|p| !p.starts_with("node_modules/") && !p.starts_with("target/")),
-        "{listed:?}"
-    );
+    assert_eq!(listed, ["SKILL.md", "notes.md"]);
 
     assert_eq!(
         package_file(&env, &catalog, ItemKind::Skill, "root", "notes.md")
@@ -57,7 +56,13 @@ fn a_repo_root_skill_lists_and_reads_only_its_own_tree() {
             .content,
         "kept\n"
     );
-    for hidden in ["node_modules/dep/index.js", "target/out.txt", ".git/config"] {
+    for hidden in [
+        "node_modules/dep/index.js",
+        "target/out.txt",
+        ".git/config",
+        "tests/run.test.sh",
+        "DEVELOPMENT.md",
+    ] {
         let refused = package_file(&env, &catalog, ItemKind::Skill, "root", hidden).unwrap_err();
         assert!(
             matches!(refused, CoreError::SourceEscape { .. }),

@@ -10,6 +10,9 @@
 //! command with `--yes`. It settles after consent, and never by running a
 //! process: a package whose install runs npm is the person's to install
 //! through `update-pi`.
+//!
+//! A consumer's first refresh after upgrading kendex starts from a tree an
+//! earlier version rendered and recorded, and settles it the same way.
 
 use crate::test_util;
 use test_util::rooted;
@@ -311,6 +314,97 @@ fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
         assert_eq!(recorded.kind, kendex_core::model::ItemKind::PiExtension);
         assert_eq!(recorded.rendered_hash, Some(recorded.source_hash.clone()));
     }
+}
+
+/// A consumer's first refresh after upgrading kendex, over a render an
+/// earlier kendex wrote with the package's tests and maintainer notes in
+/// it and a record whose hashes read that whole tree. The render on disk is
+/// the recorded one, so the refresh replaces it rather than holding it as a
+/// local edit, and the entries a render now leaves out go from the tree
+/// and from the inventory.
+#[cfg(not(windows))]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refresh_removes_the_tests_an_earlier_render_wrote() {
+    use sha2::{Digest, Sha256};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = committed_consumer(&home, NO_DEPENDENCIES);
+    let left_out = ["DEVELOPMENT.md", "tests/run.test.sh"];
+    let package = project.join("catalog/skills/deploy");
+    let render = project.join(".agents/skills/deploy");
+    for rel in left_out {
+        write(&package.join(rel), &format!("{rel}\n"));
+        write(&render.join(rel), &format!("{rel}\n"));
+    }
+
+    // The record the earlier kendex wrote: both hashes over the whole tree,
+    // and the source hash the SHA-256 of that tree's hash, since the
+    // manifest gives this skill no instructions.
+    let sealed = kendex_core::source_read::SealedSource::open(&project.join("catalog")).unwrap();
+    let whole = sealed
+        .collect_skill_tree(&sealed.root().join("skills/deploy"))
+        .unwrap();
+    let source_hash = |files: &[(PathBuf, Vec<u8>)]| -> String {
+        Sha256::digest(kendex_core::hash::hash_files(files).as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    };
+    let rendered = kendex_core::hash::RenderedIdentity::from_path(&render, false).unwrap();
+    let lock_path = project.join(".kendex-lock.json");
+    let mut lock = kendex_core::lock::load(&lock_path).unwrap();
+    let mut recorded = 0;
+    for entry in lock
+        .entries
+        .values_mut()
+        .filter(|entry| entry.name == "deploy")
+    {
+        // The construction reproduces what this kendex records over the
+        // tree it reads, so the earlier record is that over the whole tree.
+        let reduced: Vec<_> = whole
+            .iter()
+            .filter(|(rel, _)| rel == Path::new("SKILL.md"))
+            .cloned()
+            .collect();
+        assert_eq!(entry.source_hash, source_hash(&reduced));
+        entry.source_hash = source_hash(&whole);
+        entry.rendered_hash = Some(rendered.persisted().to_owned());
+        recorded += 1;
+    }
+    assert_eq!(recorded, 1, "{:?}", lock.entries.keys());
+    kendex_core::lock::save(&lock_path, &lock).unwrap();
+    let inventory = project.join(".kendex-generated.json");
+    let mut listed: Vec<String> =
+        serde_json::from_str(&fs::read_to_string(&inventory).unwrap()).unwrap();
+    listed.extend(left_out.map(|rel| format!(".agents/skills/deploy/{rel}")));
+    listed.sort();
+    write(
+        &inventory,
+        &format!("{}\n", serde_json::to_string(&listed).unwrap()),
+    );
+    git(&home, &project, &["add", "-A"]);
+    git(&home, &project, &["commit", "-q", "-m", "earlier render"]);
+
+    let refreshed = kendex(
+        &home,
+        &project,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    let output = said(&refreshed);
+    assert_eq!(refreshed.status.code(), Some(0), "{output}");
+    assert!(!output.contains("conflict"), "{output}");
+    for rel in left_out {
+        assert!(!render.join(rel).exists(), "{rel}: {output}");
+    }
+    assert!(!render.join("tests").exists(), "{output}");
+    assert!(render.join("SKILL.md").is_file(), "{output}");
+    let listed = fs::read_to_string(&inventory).unwrap();
+    assert!(!listed.contains("DEVELOPMENT.md"), "{listed}");
+    assert!(!listed.contains("tests/"), "{listed}");
+    let verified = kendex(&home, &project, &["verify"]);
+    assert_eq!(verified.status.code(), Some(0), "{}", said(&verified));
 }
 
 /// A consumer can commit newer catalog bytes without refreshing its render.

@@ -161,8 +161,10 @@ fn edited_rendering(
     Ok(edited)
 }
 
-/// The edited bytes in source form: a skill's whole tree, an agent's one
-/// file. A disabled rendering carries its SKILL.md under the `.disabled`
+/// The edited bytes in source form: a skill's rendered tree, an agent's one
+/// file. A render leaves out the catalog's top-level `tests/`, `evals/` and
+/// `DEVELOPMENT.md`, so a skill's fork holds none of them; the plan's
+/// capture line says so. A disabled rendering carries its SKILL.md under the `.disabled`
 /// name; the local source holds source form, and the declaration's
 /// `enabled` keeps the fork off when it renders — a tree copied verbatim
 /// would be a skill source discovery cannot see.
@@ -330,20 +332,30 @@ fn into_local_source(
             },
         });
     }
-    let capture = match captured {
-        Capture::Tree(files) => Op::WriteTree {
-            root: local_item,
-            files,
-            pre: Pre::Absent,
-        },
-        Capture::File(bytes) => Op::WriteFile {
-            path: local_item,
-            bytes,
-            pre: Pre::Absent,
-        },
+    let kept = format!("keep the edited {} {name} as a local fork", kind.name());
+    let (description, capture) = match captured {
+        Capture::Tree(files) => (
+            format!(
+                "{kept}: its rendered files, without the top-level tests/, evals/ and \
+                 DEVELOPMENT.md a render leaves out"
+            ),
+            Op::WriteTree {
+                root: local_item,
+                files,
+                pre: Pre::Absent,
+            },
+        ),
+        Capture::File(bytes) => (
+            kept,
+            Op::WriteFile {
+                path: local_item,
+                bytes,
+                pre: Pre::Absent,
+            },
+        ),
     };
     ops.push(PlannedOp {
-        description: format!("keep the edited {} {name} as a local fork", kind.name()).into(),
+        description: description.into(),
         op: capture,
     });
     Ok(ops)

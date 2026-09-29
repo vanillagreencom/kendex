@@ -170,7 +170,7 @@ pub(super) fn desired_agent(
                 harness,
             )?,
             rendered_hash: artifact.rendered_hash(),
-            source: Some(ctx.source(&artifact)?),
+            source: Some(ctx.source(ItemKind::Agent, &artifact)?),
             upstream_skills: Some(skills.upstream_now.clone()),
             emitted: None,
             reasons: ctx.reasons_for(harness),

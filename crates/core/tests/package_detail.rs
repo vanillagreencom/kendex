@@ -89,6 +89,11 @@ fn install(w: &World) -> String {
     fs::write(dir.join("readme.md"), "lowercase readme").unwrap();
     fs::write(dir.join("README.md"), "# The readme\n").unwrap();
     fs::write(dir.join("references/deep.md"), "deep file").unwrap();
+    // The package's own tests and maintainer notes, which no install holds
+    // and so no file list names.
+    fs::create_dir_all(dir.join("tests")).unwrap();
+    fs::write(dir.join("tests/run.test.sh"), "#!/bin/sh\n").unwrap();
+    fs::write(dir.join("DEVELOPMENT.md"), "# notes\n").unwrap();
     let commit = commit(&w.upstream, "one");
     git(&w.upstream, &["tag", "v1"]);
     let path = manifest::manifest_path(&w.env, &w.scope);

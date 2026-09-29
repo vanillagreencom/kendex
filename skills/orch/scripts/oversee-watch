@@ -393,7 +393,8 @@ fi
 # of events inside one overseer's context. The default holds the measured
 # Claude Code dialogs and the Codex trust dialog whole; the Codex model
 # picker's slice is longer and keeps its bottom 12 lines
-# (tests/fixtures/oversee-watch). What the cap trims is gone from the event,
+# (https://github.com/vanillagreencom/kendex/tree/main/skills/orch/tests/fixtures/oversee-watch).
+# What the cap trims is gone from the event,
 # and only a larger cap brings it back.
 WATCH_TAIL_LINES="${ORCH_WATCH_TAIL_LINES:-12}"
 [[ "$WATCH_TAIL_LINES" =~ ^[1-9][0-9]*$ ]] || die tail-lines-invalid "" "value=$WATCH_TAIL_LINES"

@@ -12,7 +12,7 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::paths::slashed;
-use crate::source_read::SealedSource;
+use crate::source_read::{ItemBytes, SealedSource};
 
 /// One side of the comparison.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -125,9 +125,11 @@ fn side(
     }
 }
 
-/// The package's source subtree at one commit, read through the sealed
-/// reader — a historical commit of a catalog is still a catalog, budgets
-/// and symlink refusals included.
+/// The package's source subtree at one commit as an install holds it
+/// ([`SealedSource::rendered_item`]), so an unedited install diffs empty
+/// against the commit it came from. Read through the sealed reader — a
+/// historical commit of a catalog is still a catalog, budgets and symlink
+/// refusals included.
 fn commit_tree(env: &Env, scope: &Scope, kind: ItemKind, name: &str, commit: &str) -> Result<Tree> {
     // A commit id from IPC is joined into cache paths; a value like
     // `../other-key/<sha>` would resolve to a different repository's
@@ -181,16 +183,19 @@ fn commit_tree(env: &Env, scope: &Scope, kind: ItemKind, name: &str, commit: &st
         });
     };
     let mut tree = Tree::new();
-    if sealed.is_dir(&item_path) {
-        for (rel, bytes) in sealed.collect_tree(&item_path, &[])? {
-            tree.insert(slashed(&rel), bytes);
+    match sealed.rendered_item(kind, &item_path)? {
+        ItemBytes::Tree(files) => {
+            for (rel, bytes) in files {
+                tree.insert(slashed(&rel), bytes);
+            }
         }
-    } else {
-        let file = item_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| name.to_owned());
-        tree.insert(file, sealed.read(&item_path)?);
+        ItemBytes::File(bytes) => {
+            let file = item_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| name.to_owned());
+            tree.insert(file, bytes);
+        }
     }
     Ok(tree)
 }

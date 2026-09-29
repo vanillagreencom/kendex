@@ -13,7 +13,7 @@ use crate::error::{CoreError, Result};
 use crate::manifest::Manifest;
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::paths::slashed;
-use crate::source_read::SealedSource;
+use crate::source_read::{ItemBytes, SealedSource};
 
 /// One file inside the package, path relative to the package root with
 /// forward slashes whatever the platform.
@@ -149,7 +149,8 @@ fn is_readme(path: &str) -> bool {
         && (path.eq_ignore_ascii_case("README.md") || path.eq_ignore_ascii_case("README"))
 }
 
-/// Every file the package ships at its effective revision, sorted by path.
+/// Every file an install of the package holds at its effective revision
+/// ([`SealedSource::rendered_item`]), sorted by path.
 pub fn package_files(
     env: &Env,
     scope: &Scope,
@@ -158,26 +159,28 @@ pub fn package_files(
 ) -> Result<Vec<PackageFile>> {
     let (sealed, item_path) = effective_item(env, scope, kind, name)?;
     let mut files = Vec::new();
-    if sealed.is_dir(&item_path) {
-        for (rel, bytes) in sealed.collect_tree(&item_path, &[])? {
-            let path = slashed(&rel);
+    match sealed.rendered_item(kind, &item_path)? {
+        ItemBytes::Tree(tree) => {
+            for (rel, bytes) in tree {
+                let path = slashed(&rel);
+                files.push(PackageFile {
+                    is_readme: is_readme(&path),
+                    size: bytes.len().min(u32::MAX as usize) as u32,
+                    path,
+                });
+            }
+        }
+        ItemBytes::File(bytes) => {
+            let path = item_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| name.to_owned());
             files.push(PackageFile {
-                is_readme: is_readme(&path),
+                is_readme: false,
                 size: bytes.len().min(u32::MAX as usize) as u32,
                 path,
             });
         }
-    } else {
-        let bytes = sealed.read(&item_path)?;
-        let path = item_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| name.to_owned());
-        files.push(PackageFile {
-            is_readme: false,
-            size: bytes.len().min(u32::MAX as usize) as u32,
-            path,
-        });
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)

@@ -146,7 +146,8 @@ CLAUDE_FOOTER_RE='\? for shortcuts'
 # Both harnesses, deliberately: keyed on the Claude markers alone this answered
 # no for every idle Codex pane, and a caller that treats no as "wait longer"
 # then spent its whole bound on a pane that was up all along. Measured on the
-# fixtures under orch/tests/fixtures/oversee-watch, where all 7 Codex captures
+# fixtures under https://github.com/vanillagreencom/kendex/tree/main/skills/orch/tests/fixtures/oversee-watch,
+# where all 7 Codex captures
 # answer yes and only codex-working.txt is a turn in flight.
 #
 # A Claude Code screen held by a dialog answers NO: its permission rows are

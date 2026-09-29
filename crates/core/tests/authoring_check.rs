@@ -329,6 +329,32 @@ fn a_safety_finding_is_reported_and_fails_nothing() {
     assert_eq!(report.failing(true), 0, "advisory under --strict too");
 }
 
+/// The check scores what an install holds: a finding in a file the render
+/// leaves out is in no consumer's copy and goes unreported, and the same
+/// file anywhere the render carries it is reported.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_finding_in_a_file_no_install_holds_is_not_reported() {
+    for (rel, reported) in [
+        ("tests/fixture.sh", false),
+        ("evals/fixture.sh", false),
+        ("scripts/fixture.sh", true),
+    ] {
+        let (_tmp, root) = repo();
+        skill_at(&root, "skills", "quiet");
+        let file = root.join("skills/quiet").join(rel);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, "TOKEN=ghp_0123456789abcdef0123456789abcdef0123\n").unwrap();
+        let sealed = SealedSource::open(&root).unwrap();
+        let report = check(&sealed, "repo").unwrap();
+        let secrets = report
+            .findings()
+            .filter(|finding| finding.rule.as_deref() == Some("plaintext-secrets"))
+            .count();
+        assert_eq!(secrets > 0, reported, "{rel}: {secrets} secret findings");
+    }
+}
+
 /// Every `[bundles.<name>]` body shape this reader will not read is that
 /// set's breakage: a plain check fails on it, naming the set and the part it
 /// could not read, while the set beside it and every item the catalog offers

@@ -43,6 +43,9 @@ toml.workspace = true
 # Fixtures serve the release feed off disk, and a `file://` URL for a host
 # path is a grammar, not a substitution. Already in the tree under tauri.
 url = "2"
+# Fixtures lay down the install record an earlier kendex wrote, whose
+# source hash is a SHA-256 over bytes this one no longer reads.
+sha2.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]
 # The effective uid, read straight from the syscall so a suite can say why

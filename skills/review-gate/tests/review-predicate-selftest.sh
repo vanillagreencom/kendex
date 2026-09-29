@@ -3,8 +3,7 @@
 # touching the network. This is the engine's proof, run in the catalog
 # repository in a deliberately UNGATED job (a broken predicate approves
 # nothing, so a selftest behind the gate could never run when it matters).
-# Its tables live under ../tests/, which a consumer render does not carry,
-# so a rendered copy stops at selftest-table-load, exit 1.
+# It drives the engine under ../scripts/ with the tables under lib/.
 #
 # Why this exists: the predicate is the single thing standing between
 # "reviewed" and "merged", it is only ever exercised in production, and every
@@ -27,14 +26,17 @@
 # Mechanism: a `gh` shim prior on PATH answers from fixtures and applies any
 # `--jq` filter with real jq, so the predicate runs unmodified. Run:
 #
-#   skills/review-gate/scripts/review-predicate-selftest.sh
+#   skills/review-gate/tests/review-predicate-selftest.sh
 #
 # Exit 0 = all cases pass. Any failure prints the case, the expectation and
 # what the predicate actually said.
 set -u
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+tests_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The engine's directory: the tables read the predicate and its libraries
+# from `$here`.
+here="$tests_dir/../scripts"
 predicate="$here/review-predicate.sh"
 if [ ! -r "$here/lib/diagnostics.sh" ]; then
   printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$here/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
@@ -128,13 +130,13 @@ mkdir -p "$fixtures" "$shim"
 #                          so the `jq -s` page merges are actually driven
 # Every request URL is appended to .urls.log so cases can pin read shapes
 # (per_page, endpoints skipped).
-cp "$here/../tests/lib/gh-shim.sh" "$shim/gh"
+cp "$tests_dir/lib/gh-shim.sh" "$shim/gh"
 chmod +x "$shim/gh"
 
 # ------------------------------------------------------------------ helpers ---
-# The fixture writers, shared with the suites under tests/. They
+# The fixture writers, shared with the suites beside this runner. They
 # write into $fixtures and bind to $HEAD, both set above.
-. "$here/../tests/lib/selftest-fixtures.sh"
+. "$tests_dir/lib/selftest-fixtures.sh"
 
 cases=0
 failures=0
@@ -355,7 +357,7 @@ for selftest_table in \
   predicate-pagination.sh predicate-author.sh predicate-read-shapes.sh \
   predicate-snapshot.sh predicate-request-shape.sh predicate-mode.sh \
   predicate-carry.sh predicate-suppressed.sh predicate-configured.sh; do
-  selftest_table_path="$here/../tests/lib/predicate-selftest/$selftest_table"
+  selftest_table_path="$tests_dir/lib/predicate-selftest/$selftest_table"
   if [ ! -r "$selftest_table_path" ]; then
     rg_message error selftest-table-load "$selftest_table_path" "Could not load predicate selftest table $selftest_table." >&2
     exit 1

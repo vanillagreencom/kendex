@@ -198,7 +198,8 @@ trap 'exit 143' TERM
 # CARGO_TARGET_DIR — answers the next run with the last run's test binary.
 #
 # A caller whose --build shares no cache has nothing to outrank, and
-# tests/mutation-stability.test.sh is one: it drives every case with a stub
+# https://github.com/vanillagreencom/kendex/blob/main/skills/reviewer/tests/mutation-stability.test.sh
+# is one: it drives every case with a stub
 # build. MUTATION_STABILITY_SETTLE=0 is how such a caller says so.
 outrank_last_build() { [ "$SETTLE" -eq 0 ] || sleep "$SETTLE"; }
 

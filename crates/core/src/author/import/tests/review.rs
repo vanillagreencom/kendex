@@ -95,6 +95,38 @@ fn an_edited_install_shows_beside_the_marketplace_original() {
     assert!(copied.contains("my edited bytes"));
 }
 
+/// An unedited install of a skill whose package carries tests and
+/// maintainer notes holds less than the package, since the render leaves
+/// those out. It is the marketplace copy, not an edit: one origin, and
+/// importing it writes the whole package.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unedited_install_of_a_skill_with_tests_is_one_origin() {
+    let (tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    let package = tmp.path().join("catalog/skills/gh");
+    fs::create_dir_all(package.join("tests")).unwrap();
+    fs::write(package.join("tests/run.test.sh"), "#!/bin/sh\n").unwrap();
+    fs::write(package.join("DEVELOPMENT.md"), "# notes\n").unwrap();
+    skill(&root.join(".claude/skills"), "gh", "market bytes");
+    let scopes = [scope.clone()];
+    let candidates = inventory(&env, &scopes).unwrap();
+    let gh = find(&candidates, "gh");
+    assert_eq!(gh.origins.len(), 1, "{:?}", gh.origins);
+    assert!(
+        matches!(gh.origins[0].group, CandidateGroup::Marketplace { .. }),
+        "{:?}",
+        gh.origins
+    );
+
+    let target = target(&env, &tmp, "mine-whole");
+    apply(&env, &scopes, &target, &[selection(gh, true)]).unwrap();
+    assert!(target.join("skills/gh/tests/run.test.sh").is_file());
+    assert!(target.join("skills/gh/DEVELOPMENT.md").is_file());
+}
+
 /// A licence kendex does not recognize as redistributable cannot be
 /// checkbox-confirmed — it needs a stated basis, like no licence at all.
 #[test]

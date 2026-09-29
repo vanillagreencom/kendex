@@ -242,7 +242,8 @@ pub enum Content {
     Document {
         text: String,
     },
-    /// A skill's whole tree.
+    /// A skill's tree as an install holds it, without the package's
+    /// top-level tests, evaluation sets and maintainer notes.
     SkillTree {
         files: Vec<TreeFile>,
     },

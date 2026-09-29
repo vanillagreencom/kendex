@@ -219,7 +219,8 @@ fn a_nested_skill_excludes_tool_caches_but_keeps_authored_build_dirs() {
 /// A render leaves out the package's own tests, evaluation sets and
 /// maintainer notes, and only at the skill's top level: a template or an
 /// example that carries one of those names deeper in the tree is content.
-/// The whole tree, which a copy of the package keeps, still holds them.
+/// The whole tree, which a copy of the package keeps, still holds them, and
+/// so does an install of any directory that is not a skill.
 #[test]
 fn a_rendered_skill_tree_leaves_out_top_level_tests_evals_and_development_notes() {
     let (_tmp, sealed) = fixture();
@@ -244,8 +245,13 @@ fn a_rendered_skill_tree_leaves_out_top_level_tests_evals_and_development_notes(
             .collect()
     };
 
+    let installed = |kind: ItemKind| match sealed.rendered_item(kind, &dir).expect("tree") {
+        ItemBytes::Tree(files) => names(files),
+        ItemBytes::File(_) => panic!("a directory read as one file"),
+    };
+
     assert_eq!(
-        names(sealed.collect_rendered_skill_tree(&dir).expect("tree")),
+        installed(ItemKind::Skill),
         [
             "SKILL.md",
             "examples/app/tests/case.ice",
@@ -258,6 +264,12 @@ fn a_rendered_skill_tree_leaves_out_top_level_tests_evals_and_development_notes(
     for rel in paths {
         assert!(whole.contains(&rel.to_owned()), "{rel} left the whole tree");
     }
+    assert_eq!(installed(ItemKind::PiExtension), whole);
+    let file = dir.join("SKILL.md");
+    assert_eq!(
+        sealed.rendered_item(ItemKind::Skill, &file).expect("file"),
+        ItemBytes::File(b"---\nname: gh\n---\n".to_vec())
+    );
 }
 
 #[test]

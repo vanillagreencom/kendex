@@ -4,8 +4,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::{CoreError, Result};
+use crate::source_read::ItemBytes;
 
-use super::super::{Bytes, ImportOutcome, ImportSelection, ResolvedSelection};
+use super::super::{ImportOutcome, ImportSelection, ResolvedSelection};
 
 /// One file this copy will write: where it goes, its bytes, and the
 /// package the outcome names it under.
@@ -50,10 +51,10 @@ pub(super) fn write_all(
         fold_collision(dest, &selection.destination)?;
         if dest.symlink_metadata().is_ok() {
             let same = match &answer.bytes {
-                Bytes::File(bytes) => std::fs::read(dest)
+                ItemBytes::File(bytes) => std::fs::read(dest)
                     .map(|existing| existing == *bytes)
                     .unwrap_or(false),
-                Bytes::Tree(files) => {
+                ItemBytes::Tree(files) => {
                     crate::hash::hash_tree(dest).unwrap_or_default()
                         == crate::hash::hash_files(files)
                 }
@@ -65,8 +66,8 @@ pub(super) fn write_all(
             continue;
         }
         match &answer.bytes {
-            Bytes::File(bytes) => planned.push(Write::new(dest.clone(), bytes, &label)),
-            Bytes::Tree(files) => {
+            ItemBytes::File(bytes) => planned.push(Write::new(dest.clone(), bytes, &label)),
+            ItemBytes::Tree(files) => {
                 for (rel, bytes) in files {
                     planned.push(Write::new(dest.join(rel), bytes, &label));
                 }

@@ -51,7 +51,7 @@ Work the chain in this order:
 
 ## Waiter auth ladder
 
-All three waiters share `scripts/lib/gh-auth.sh`, wrapping the GitHub skill's helpers: env-first, each candidate source probed at most once (an env token check killed at its bound is asked again once), exit `3` on hard auth failure. Summary in each `--help`; full ladder in `DEVELOPMENT.md`.
+All three waiters share `scripts/lib/gh-auth.sh`, wrapping the GitHub skill's helpers: env-first, each candidate source probed at most once (an env token check killed at its bound is asked again once), exit `3` on hard auth failure. Summary in each `--help`; full ladder in [DEVELOPMENT.md § GitHub auth ladder](https://github.com/vanillagreencom/kendex/blob/main/skills/orch/DEVELOPMENT.md#github-auth-ladder).
 
 ## Multi-PR watching
 
