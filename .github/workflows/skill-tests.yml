@@ -52,9 +52,16 @@ name: Skill Tests
 # skills/orch/tests/run-all.sh now runs a shard's suites `nproc` at a time
 # and prints one `suite=<name> seconds=<n>` line per suite, so their next CI
 # run re-measures them, and the comment above the orch shard steps holds
-# run 36195213656's figures. `guards-tools` on both runners, `worktree` on
-# macOS, and `linear` and `rest` on Linux do not run through run-all.sh and
-# stand past their figure pending a split.
+# run 36195213656's figures. `worktree` on macOS, and `linear` and `rest` on
+# Linux do not run through run-all.sh and stand past their figure pending a
+# split.
+#
+# THE `guards-hooks`, `guards-tools` AND `guards-tools-tail` SHARDS carry a
+# stated target: eight minutes of summed suite time on Linux and fourteen on
+# macOS, the figures they were cut to. The comment above their steps gives
+# each shard's figure.
+# Each target sits under its leg's job ceiling below, so a shard that grows
+# past its target is split again before the ceiling cancels it.
 #
 # A SPLIT GOES AS FAR AS ITS SEAM REACHES and no further — a name partition, a
 # scans-against-suites cut, a package boundary with its slowest tail moved
@@ -76,11 +83,10 @@ name: Skill Tests
 # measured maximum of the step they bound, with headroom, so a hang there
 # fails inside the budget instead of running to the job ceiling, and their
 # compile steps carry their own for a cold cache; the shell shards answer to
-# the job `timeout-minutes` above their steps, 45 minutes on the macOS
-# `guards-tools` leg and 30 on every other macOS leg, 30 on the Linux `rest`
-# leg that builds kendex-cli from the checkout first and on the Linux
-# `guards-tools` leg, and 15 on every other Linux leg. The per-shard figures
-# behind each budget are in the comment above it.
+# the job `timeout-minutes` above their steps, 30 minutes on every macOS leg
+# and on the Linux `rest` leg that builds kendex-cli from the checkout first,
+# and 15 on every other Linux leg. The per-shard figures behind each budget
+# are in the comment above it.
 # Every pull request pays its selected Linux shards on the pull request, and
 # the merge queue stands them down where the proof above holds, so the
 # slowest of them is charged once per merge there. It is charged twice where
@@ -338,7 +344,7 @@ jobs:
         working-directory: candidate
         run: skills/commit-guards/scripts/todo-ban
 
-  # SHARDED: fourteen shards bound wall time at the slowest shard and give
+  # SHARDED: sixteen shards bound wall time at the slowest shard and give
   # suite growth per-shard headroom instead of a shared cliff. `orch` and
   # `rest` were one `shell` shard whose halves ran serially and bounded every
   # queue run; `pi-claude-bridge` was the node shard's hottest step; `guards`
@@ -366,6 +372,9 @@ jobs:
   # `worktree`, 382s over 22 files, keeping 57 files at 398s. `orch-rest` ran
   # 675s over 64 files and gave the lane, workflow-state and round-artifact
   # suites to `orch-state`, 382s over 30 files, keeping 34 at 293s.
+  # `guards-tools` later grew past both legs' ceilings and splits in three,
+  # `guards-hooks` and `guards-tools-tail` beside it, as the comment above
+  # their steps records.
   #
   # THE macOS LEG runs the selected shell shards of the twelve a second time,
   # in the merge group, on the runner whose /bin/bash is 3.2.57, the shell
@@ -416,7 +425,7 @@ jobs:
         # SHARDS spells it, and runs where the classifier published nothing.
         # The job stands down where the list is empty, so no empty matrix
         # expands.
-        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-tools", "linear", "worktree", "rest", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
+        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-tools", "guards-tools-tail", "linear", "worktree", "rest", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         # The macOS leg is the SECOND run of these suites, under Bash 3.2 and
         # the BSD userland, over the same selected shards. A job-level `if:`
         # cannot reach `matrix`, so the leg is dropped from the matrix rather
@@ -453,13 +462,11 @@ jobs:
     # and after each rustc release — pays the whole build. Its duration on a
     # runner is unmeasured, so that leg takes the macOS ceiling until a
     # figure is recorded here.
-    # The `guards-tools` shard's finished Linux legs ran 10m49s to 14m59s on
-    # 2026-09-29, and the 15-minute ceiling cancelled that leg in merge
-    # groups, so it takes the 30-minute ceiling as well. Its finished macOS
-    # legs ran 22m35s to 29m27s that day, and the 30-minute ceiling cancelled
-    # macOS legs at 30m17s to 30m20s in merge groups, so that leg takes 45
-    # minutes.
-    timeout-minutes: ${{ (matrix.os == 'macos-latest' && matrix.shard == 'guards-tools') && 45 || (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'guards-tools') && 30 || 15 }}
+    # The `guards-hooks`, `guards-tools` and `guards-tools-tail` legs are cut
+    # to the targets the file header states, eight minutes on Linux and
+    # fourteen on macOS, which leave the 15- and 30-minute ceilings here a
+    # margin; their figures are above their steps.
+    timeout-minutes: ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest') && 30 || 15 }}
     # harness-ci's change-class suite skips its real-kendex rows where no
     # kendex is on PATH, and this turns that skip into a failure. It is set
     # for the whole job rather than beside the install step below, so the
@@ -728,28 +735,50 @@ jobs:
       # FAILED SUITES block at the end — the tail of a red job must name the
       # culprits instead of showing only the later suites passing. Every shell
       # shard below runs its suites through this one loop.
-      # ---- shards: guards-scans, guards-commit, guards-tools — the
-      # repository-wide scans and the guard packages' own suites, in three.
-      # One `guards` shard held all of it and ran 901-1061s on the macOS leg
-      # against roughly a third of that on Linux. `guards-scans` is the scans
-      # below, each one pass over a tracked-file roster or the shell roster;
-      # the document-set and work-marker scans run in the bot-instructions
-      # job instead, which every class runs, on a pull request. The 68 suite files after them are
-      # the other two shards' work, and the ruff install rides with `guards-commit` because the suite
-      # that needs it, commit-guards' own py-names.test.sh, runs there.
+      # ---- shards: guards-scans, guards-commit, guards-hooks, guards-tools,
+      # guards-tools-tail — the repository-wide scans and the guard packages'
+      # own suites, in five. One `guards` shard held all of it and ran
+      # 901-1061s on the macOS leg against roughly a third of that on Linux.
+      # `guards-scans` is the scans below, each one pass over a tracked-file
+      # roster or the shell roster; the document-set and work-marker scans run
+      # in the bot-instructions job instead, which every class runs, on a pull
+      # request. The suite files after them are the other four shards' work,
+      # and the ruff install rides with the two shards that run a suite
+      # needing it: commit-guards' own py-names.test.sh in `guards-commit`,
+      # and its install-git-hooks.test.sh in `guards-hooks`.
       #
-      # THE SEAM BETWEEN THOSE TWO is the package boundary — commit-guards' own
-      # 36 suites against the 32 files under tools/ and hooks/ — with the two
-      # slowest commit-guards suites moved across it to level the seconds. On
-      # the macOS leg of run 35467869265 the undivided step spent 974s: 673s in
+      # THE FIRST SEAM is the package boundary — commit-guards' own 36 suites
+      # against the 32 files under tools/ and hooks/ — with the two slowest
+      # commit-guards suites moved across it to level the seconds. On the macOS
+      # leg of run 35467869265 the undivided step spent 974s: 673s in
       # commit-guards against 301s under tools/ and hooks/, so the 36/32 file
       # count was a 69/31 split of the time. install-git-hooks at 121s and
-      # md-refs at 53s therefore run in `guards-tools`, giving 34 files at 499s
+      # md-refs at 53s therefore left `guards-commit`, giving 34 files at 499s
       # against 34 at 475s; on the Linux leg that is 226s against 233s of the
-      # undivided 459s. The `guards-tools` step spells both moved suites as
+      # undivided 459s. The `guards-hooks` step spells both moved suites as
       # paths and the `guards-commit` step reads this file for them, the way
       # `rest` reads it for the roster `worktree` claims, so dropping either
       # path runs that suite in `guards-commit` rather than in no shard.
+      #
+      # THE SECOND SEAM cut the tools/, hooks/ and moved commit-guards step in
+      # three, to targets of eight minutes on Linux and fourteen on macOS. On
+      # the merge groups of runs 36522803055, 36523768409, 36525040329,
+      # 36527004308 and 36527005559 that step's Linux leg summed 777s on the
+      # one run that finished, the 15-minute ceiling cancelling the other four,
+      # and its macOS leg 1385-1693s. The package boundary between tools/ and
+      # hooks/ is the cut, and the two slowest tools/ suites move across a
+      # second one to level the seconds: harness-smoke at 205-252s on Linux and
+      # 302-330s on macOS, and orch-shard-partition at 63-89s and 187-287s. Per
+      # suite sums over those legs, Linux then macOS:
+      #   guards-tools       the rest of tools/tests   326-372s   533-674s
+      #   guards-tools-tail  those two tools/ suites    269-341s   488-617s
+      #   guards-hooks       hooks/tests and the two    183-216s   364-463s
+      #                      moved commit-guards suites
+      # md-refs, the step's last suite, was cut short on the four cancelled
+      # Linux legs, so their `guards-hooks` figure is a floor. The
+      # `guards-tools-tail` step spells its two suites as paths and the
+      # `guards-tools` step reads this file for them, the fallback the
+      # `guards-commit` step carries.
       # tools/tests/orch-shard-partition.test.sh owns that invariant: it runs
       # every roster step below over a copy of this file and reds on a suite
       # claimed twice or claimed by none. -----------------------------------
@@ -794,7 +823,7 @@ jobs:
       # because pipx leaves an existing install in place, and the version check
       # because PATH may still pick another ruff.
       - name: ruff for the py-names suite
-        if: matrix.shard == 'guards-commit' || matrix.shard == 'guards-tools'
+        if: matrix.shard == 'guards-commit' || matrix.shard == 'guards-hooks'
         run: |
           pipx install --force ruff==0.16.2
           test "$(ruff --version)" = "ruff 0.16.2"
@@ -803,7 +832,7 @@ jobs:
       # fallback: each is skipped only where another step RUNS it, and runs
       # here otherwise. `claims` is this file with its comment lines dropped,
       # so a path that survives only in prose proves nothing — without that
-      # drop, moving a path from the `guards-tools` loop into the comment
+      # drop, moving a path from the `guards-hooks` loop into the comment
       # above it would leave both shards skipping the suite and both green,
       # which the aggregator cannot see because it asserts job success and
       # not suite count.
@@ -845,13 +874,65 @@ jobs:
         if: matrix.shard == 'guards-tools'
         run: tools/installer-pin --check
 
-      - name: tools, hook and moved commit-guards suites
+      # The two names below are `guards-tools-tail`'s roster, and this shard
+      # is their fallback in the way the `guards-commit` step above is for
+      # its moved tail.
+      - name: tools suites
         if: matrix.shard == 'guards-tools'
+        run: |
+          set -u
+          wf=.github/workflows/skill-tests.yml
+          claims="$(grep -v '^[[:space:]]*#' "$wf")"
+          fail=0
+          failed=""
+          for t in tools/tests/*.test.sh; do
+            case "${t##*/}" in
+              harness-smoke.test.sh | orch-shard-partition.test.sh)
+                if printf '%s\n' "$claims" | grep -qF "$t"; then
+                  continue
+                fi
+                echo "no other shard names $t — running it here"
+                ;;
+            esac
+            echo "=== $t"
+            if ! bash "$t"; then
+              echo "FAILED: $t"
+              fail=1
+              failed="$failed $t"
+            fi
+          done
+          if [ "$fail" != 0 ]; then
+            echo "FAILED SUITES:$failed"
+          fi
+          exit "$fail"
+
+      - name: the two slowest tools suites
+        if: matrix.shard == 'guards-tools-tail'
         run: |
           set -u
           fail=0
           failed=""
-          for t in tools/tests/*.test.sh hooks/tests/*.sh \
+          for t in tools/tests/harness-smoke.test.sh \
+            tools/tests/orch-shard-partition.test.sh; do
+            echo "=== $t"
+            if ! bash "$t"; then
+              echo "FAILED: $t"
+              fail=1
+              failed="$failed $t"
+            fi
+          done
+          if [ "$fail" != 0 ]; then
+            echo "FAILED SUITES:$failed"
+          fi
+          exit "$fail"
+
+      - name: hook and moved commit-guards suites
+        if: matrix.shard == 'guards-hooks'
+        run: |
+          set -u
+          fail=0
+          failed=""
+          for t in hooks/tests/*.sh \
             skills/commit-guards/tests/install-git-hooks.test.sh \
             skills/commit-guards/tests/md-refs.test.sh; do
             echo "=== $t"
@@ -930,7 +1011,7 @@ jobs:
       # a deleted step sends its package here rather than to no shard.
       #
       # THE NEEDLE IS THE OWNING LOOP'S GLOB, not the package's directory
-      # prefix: `guards-tools` spells two commit-guards paths of its own, so
+      # prefix: `guards-hooks` spells two commit-guards paths of its own, so
       # the prefix `skills/commit-guards/tests/` now appears three times and
       # would keep this step skipping the package's other thirty-four suites
       # after the step that runs them was deleted. Each glob below appears

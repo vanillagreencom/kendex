@@ -198,10 +198,10 @@ fi
 
 # --- 3. The shell shards' partition over every suite FILE -------------------
 # Section 2 judges one seam, the orch battery's name filters. The rest of the
-# workflow is a second seam and a coarser one: six steps loop over rosters of
-# suite files, and since two of them name individual paths inside a package a
-# third one globs, the file-level partition can no longer be read off the
-# globs. Each of the six also carries a fallback that runs a suite here when
+# workflow is a second seam and a coarser one: eight steps loop over rosters
+# of suite files, and since two of them name individual paths inside a package
+# another one globs, the file-level partition can no longer be read off the
+# globs. Each of the eight also carries a fallback that runs a suite here when
 # no other step claims it, and a fallback satisfied by a path written in a
 # COMMENT would let two shards both skip the same suite and both exit 0. The
 # aggregator asserts job success, never suite count, so nothing downstream
@@ -346,12 +346,12 @@ check "exactly one run block claims the linear package by glob" \
 # Each arm mutates a copy of the workflow, and the section above must name the
 # damage. An arm that stays clean means the section reports nothing.
 
-# A roster no fallback covers, dropped. No skip list points at tools/tests, so
-# its files land in no shard at all.
+# A roster no fallback covers, dropped. No skip list points at the tools/tests
+# glob, so the files it alone claims land in no shard at all.
 wf_drop="$TMP/wf-roster-dropped.yml"
 awk '{
-  if (index($0, "for t in tools/tests/*.test.sh hooks/tests/*.sh"))
-    sub(/tools\/tests\/\*\.test\.sh /, "")
+  if (index($0, "for t in tools/tests/*.test.sh; do"))
+    sub(/tools\/tests\/\*\.test\.sh/, "")
   print
 }' "$WORKFLOW" > "$wf_drop"
 claims_file "$wf_drop" "$TMP/claims-drop"
@@ -375,38 +375,50 @@ else
   bad "must-fail: a repeated roster produced no duplicate, so the overlap check proves nothing"
 fi
 
-# A moved path left only in a comment. The fallback in `guards-commit` reads
-# run-block text, so it reclaims the suite and the partition holds; with that
-# filter removed it reads the comment instead, skips the suite, and the suite
-# runs in no shard. The pair is one arm: the first half says the fallback
-# fires, the second says this section is what catches it when it does not.
-wf_prose="$TMP/wf-path-in-comment.yml"
-awk '{
-  if ($0 ~ /^ *skills\/commit-guards\/tests\/install-git-hooks\.test\.sh \\$/) next
-  if (index($0, "for t in tools/tests/*.test.sh hooks/tests/*.sh"))
-    print "          # skills/commit-guards/tests/install-git-hooks.test.sh"
-  print
-}' "$WORKFLOW" > "$wf_prose"
-claims_file "$wf_prose" "$TMP/claims-prose"
-check "a moved path left only in a comment is reclaimed by its fallback shard" \
-  "" "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-prose"))"
+# A moved path left only in a comment. The fallback in the step that globs the
+# path's package reads run-block text, so it reclaims the suite and the
+# partition holds; with that filter removed it reads the comment instead,
+# skips the suite, and the suite runs in no shard. Each row is one arm: the
+# first check says the fallback fires, the second says this section is what
+# catches it when it does not. A row is `path|loop`, the moved path and the
+# first line of the loop that spells it, above which the comment goes so the
+# loop's continuation lines stay whole.
+prose_rows=0
+while IFS='|' read -r moved loop; do
+  prose_rows=$((prose_rows + 1))
+  wf_prose="$TMP/wf-path-in-comment-$prose_rows.yml"
+  awk -v moved="$moved" -v loop="$loop" '
+    index($0, loop) { print "          # " moved; hits++ }
+    (i = index($0, moved " \\")) { $0 = substr($0, 1, i - 1) substr($0, i + length(moved) + 1); cut++ }
+    { print }
+    END { exit !(hits == 1 && cut == 1) }
+  ' "$WORKFLOW" > "$wf_prose" ||
+    { bad "the prose arm for $moved found its loop or its path other than once in $WORKFLOW"; continue; }
+  claims_file "$wf_prose" "$TMP/claims-prose"
+  check "a moved path left only in a comment is reclaimed by its fallback shard: $moved" \
+    "" "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-prose"))"
 
-wf_open="$TMP/wf-path-in-comment-fallback-open.yml"
-awk '{
-  if ($0 ~ /claims="\$\(grep -v/) { print "          claims=\"$(cat \"$wf\")\""; next }
-  print
-}' "$wf_prose" > "$wf_open"
-claims_file "$wf_open" "$TMP/claims-open"
-if [[ -n "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-open"))" ]]; then
-  ok "must-fail: with the comment filter removed, the prose-only path runs in no shard and is named"
-else
-  bad "must-fail: a fallback matching comment text left nothing unclaimed, so the filter is unproven"
-fi
+  wf_open="$TMP/wf-path-in-comment-fallback-open-$prose_rows.yml"
+  awk '{
+    if ($0 ~ /claims="\$\(grep -v/) { print "          claims=\"$(cat \"$wf\")\""; next }
+    print
+  }' "$wf_prose" > "$wf_open"
+  claims_file "$wf_open" "$TMP/claims-open"
+  if grep -qxF -- "$moved" <<< "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-open"))"; then
+    ok "must-fail: with the comment filter removed, the prose-only $moved runs in no shard and is named"
+  else
+    bad "must-fail: a fallback matching comment text left $moved claimed, so the filter is unproven"
+  fi
+done <<'ROWS'
+skills/commit-guards/tests/install-git-hooks.test.sh|for t in hooks/tests/*.sh
+tools/tests/harness-smoke.test.sh|for t in tools/tests/harness-smoke.test.sh
+ROWS
+[[ "$prose_rows" -eq 2 ]] || bad "the prose arm table read $prose_rows rows, not 2"
 
 # The step that globs a package, deleted. `rest` skips a package only where
 # this file still runs it, and the needle it looks for is the owning loop's
 # glob, which leaves with that loop; the package's suites come back here
-# instead of going nowhere. The two paths `guards-tools` spells stay, so they
+# instead of going nowhere. The two paths `guards-hooks` spells stay, so they
 # are claimed twice, which costs time and loses no suite. With the needle
 # reverted to the package's DIRECTORY PREFIX the two surviving paths answer
 # for the whole package and its other suites run in no shard, which is the

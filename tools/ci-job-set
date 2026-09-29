@@ -37,8 +37,8 @@
 #     `tools/`, `hooks/` (its renders under `.claude/hooks/`, `.codex/hooks/`
 #     and `.pi/kendex/hooks/` included), or a Pi package under
 #     `pi-extensions/`. A changed package selects the shards whose steps run
-#     its suites. A changed skill also selects `guards-tools`, whose tools/
-#     and hooks/ suites read skills' scripts, some by glob.
+#     its suites. A changed skill also selects the shards that run the
+#     tools/ and hooks/ suites, which read skills' scripts, some by glob.
 #   - Who reads a change is searched for, not listed. Every tracked file a
 #     shard runs, as consumers() maps it to a package, is searched for each
 #     changed skill's name and for the path of each changed file outside
@@ -51,8 +51,8 @@
 #     want_package states: pi-hooks runs hooks by name, so hooks/ also
 #     selects `node`.
 #   - A changed file citing a shard by name in backticks selects
-#     `guards-tools`, whose orch-shard-partition suite holds every citation
-#     to the roster.
+#     `guards-tools-tail`, whose orch-shard-partition suite holds every
+#     citation to the roster.
 #   - `guards-scans` runs where a path under skills/, hooks/ or tools/
 #     changed, the trees its scans read. `rest` also runs where a build input
 #     changed, because it builds kendex-cli from the checkout for harness-ci's
@@ -141,7 +141,7 @@ LEGS="linux macos"
 JOBS="ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows cargo_windows_check"
 LANES="shell_shards shell_os $JOBS"
 # The shell shards, in the order of the skill-tests.yml matrix list.
-SHARDS="review-gate orch-terminal orch-oversee orch-oversee-succeed orch-state orch-rest guards-scans guards-commit guards-tools linear worktree rest node pi-claude-bridge"
+SHARDS="review-gate orch-terminal orch-oversee orch-oversee-succeed orch-state orch-rest guards-scans guards-commit guards-hooks guards-tools guards-tools-tail linear worktree rest node pi-claude-bridge"
 # The shards the matrix never runs on macOS, nothing in them being bash: its
 # `exclude:` rows, which tools/tests/orch-shard-partition.test.sh holds to
 # this list. A macOS leg over these alone would expand to no combination.
@@ -365,15 +365,15 @@ want_package() { # PACKAGE
   case "$1" in
     skills/orch) want_shard orch-terminal orch-oversee orch-oversee-succeed orch-state orch-rest ;;
     skills/review-gate) want_shard review-gate ;;
-    skills/commit-guards) want_shard guards-commit guards-tools ;;
+    skills/commit-guards) want_shard guards-commit guards-hooks ;;
     skills/linear | skills/bot-instructions | skills/preflight) want_shard linear ;;
     skills/worktree) want_shard worktree ;;
     skills/deep-research) want_shard node ;;
     skills/*) want_shard rest ;;
-    tools) want_shard guards-tools ;;
+    tools) want_shard guards-tools guards-tools-tail ;;
     # pi-hooks' suite runs real hooks by a path it builds from each hook's
     # name, which no search for the path can find.
-    hooks) want_shard guards-tools node ;;
+    hooks) want_shard guards-hooks node ;;
     pi-extensions/pi-claude-bridge) want_shard node pi-claude-bridge ;;
     pi-extensions) want_shard node ;;
   esac
@@ -422,7 +422,10 @@ select_shards() { # BUILD(true|false)
         skill="${skill#skills/}"
         reach_skill "${skill%%/*}"
         # tools/ and hooks/ suites read every skill's scripts, some by glob.
+        # hooks/ is named by its shard alone: the package's `node` is there
+        # for pi-hooks, which runs hooks by name.
         want_package tools
+        want_shard guards-hooks
         ;;
       tools/*) want_package tools ;;
       hooks/* | .claude/hooks/* | .codex/hooks/* | .pi/kendex/hooks/*) want_package hooks ;;
@@ -449,7 +452,7 @@ $path" ;;
     cited=0
     grep -qE -- "$SHARD_CITATION" "$@" || cited=$?
     case "$cited" in
-      0) want_shard guards-tools ;;
+      0) want_shard guards-tools-tail ;;
       1) ;;
       *) die "citation-read-failed" "the changed files could not be read for shard citations" ;;
     esac
