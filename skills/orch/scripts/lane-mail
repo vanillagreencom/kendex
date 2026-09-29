@@ -61,8 +61,8 @@ Lane side, rooted at the lane's own git worktree:
               `lane-mail: ack-clamped=<count acknowledged> asked=<N>` on
               stderr, so a line written later stays unread; a cursor already
               past the lines present comes down to the count acknowledged.
-              Each lowering prints `lane-mail: cursor-lowered=<count>
-              was=<cursor>` on stderr
+              A lowering by --peek or --ack prints
+              `lane-mail: cursor-lowered=<count> was=<cursor>` on stderr
   watch --item ITEM [--root ROOT] [--interval S] [--once]
               the lane's standing mailbox monitor, run under its harness's
               background wake. Every --interval, when envelopes `inbox` would
@@ -1267,8 +1267,8 @@ lm_inbox_objects() { # FILE
 }
 
 # Replaced by rename, so a reader never meets a half-written count.
-# lm_cursor_put answers with its status alone, for the one caller that must
-# not refuse; lm_cursor_write refuses where it fails.
+# lm_cursor_put answers with its status alone, for the --peek reads, which
+# must not refuse; lm_cursor_write refuses where it fails.
 lm_cursor_put() { # COUNT
   printf '%s\n' "$1" >"$WORK_DIR/cursor" && mv -- "$WORK_DIR/cursor" "$CURSOR"
 }
