@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.0.5
 
 - Pi 0.86.0 parity: the replacement `read`, `bash`, `edit` and `write` tools carry Pi's `constrainedSampling` setting from the wrapped tool, so their requests keep Pi's strict-prefer JSON-schema sampling with the renderer active. Every replacement tool now forwards the wrapped tool's description, parameters, `constrainedSampling` and `prepareArguments`.
 
