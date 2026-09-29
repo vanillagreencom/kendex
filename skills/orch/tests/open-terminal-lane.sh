@@ -311,7 +311,7 @@ observe() {
         value="${value:-none}"
         ;;
       statusline)
-        value="$(awk '$1 == "open-terminal:" && $2 == "unsupported-for-oversee" && $4 == "reason=status-line" { print $5 "," $6; exit }' <<<"$OUT")"
+        value="$(awk '$1 == "open-terminal:" && $2 == "unsupported-for-oversee" && $4 == "reason=no-context-reader" { print $5 "," $6 "," $7; exit }' <<<"$OUT")"
         value="${value:-none}"
         ;;
       pickrefusal)
@@ -671,25 +671,38 @@ assert_eq "$(observe "launched=2 pi_root=pi1,pi2 compactionon=none")" "launched=
   "control: a re-pick that keeps the first root launches the second item on an account nobody gated"
 rm -f -- "${H:?}/.pi1/settings.json" "${H:?}/.pi2/settings.json"
 
-# The same re-pick on the Copilot pool is gated on the second account's status
-# line: copilot1 (10) takes the first item, its claim moves the second onto
-# copilot2 (20), which has no settings file, so the second is refused. Its
-# control drops the re-pick's gate, and the second item launches with no status
-# line to write its session record.
-mkdir -p "$H/.copilot1" "$H/.copilot2"
+# The same re-pick on the Copilot pool is gated on the second account's own
+# context reader: copilot1 (10) takes the first item, the extension reader
+# installed in its home and the hooks in its global scope, and its claim moves
+# the second onto copilot2 (20), whose settings turn extensions off and run no
+# status line for the fallback reader, so the second is refused. Its control
+# drops the re-pick's gate, and the second item launches with neither reader.
+# Both homes hold the hooks in their global scope and the kendex stub answers
+# the hooks gate that none is switched off, so the context reader is the one
+# gate the two accounts differ on.
+mkdir -p "$H/.copilot1/hooks" "$H/.copilot2/hooks"
 printf '{}\n' > "$H/.copilot1/config.json"
 printf '{}\n' > "$H/.copilot2/config.json"
-printf '{"statusLine":{"type":"command","command":"%s","refreshInterval":30}}\n' "$SCRIPTS_DIR/copilot-statusline" > "$H/.copilot1/settings.json"
+for hook in lane-mail-check lane-mail-compact lane-mail-start; do
+  for home in "$H/.copilot1" "$H/.copilot2"; do
+    printf '#!/bin/sh\n' > "$home/hooks/$hook.sh"
+    printf '{"version":1,"hooks":{}}\n' > "$home/hooks/$hook.json"
+  done
+done
+printf '{"enabledFeatureFlags":{"EXTENSIONS":false}}\n' > "$H/.copilot2/settings.json"
+printf '#!/bin/sh\nprintf '"'"'{"switched_off_by":null}\\n'"'"'\n' > "$OT_STUB_BIN/kendex"
+chmod +x "$OT_STUB_BIN/kendex"
 CP_BATCH="ORCH_LANE_COPILOT_POOL=$H/.copilot1=100000/1000000,$H/.copilot2=200000/1000000;cmd=true --model claude-sonnet-5 --reasoning-effort high"
 run_ot "$CP_BATCH" --harness copilot --lane auto --state-dir "$TMP_ROOT/cp-fleet-1" CC-1680 CC-1681
-assert_eq "$(observe "launched=1 copilot_home=copilot1 statusline=cause=settings-missing,file=$H/.copilot2/settings.json")" \
-  "launched=1 copilot_home=copilot1 statusline=cause=settings-missing,file=$H/.copilot2/settings.json" \
-  "a Copilot batch's re-pick onto a second pool account is gated on that account's own status line"
+assert_eq "$(observe "launched=1 copilot_home=copilot1 statusline=file=$H/.copilot2/settings.json,detail=disabled,cause=no-status-line")" \
+  "launched=1 copilot_home=copilot1 statusline=file=$H/.copilot2/settings.json,detail=disabled,cause=no-status-line" \
+  "a Copilot batch's re-pick onto a second pool account is gated on that account's own context reader"
 pi_control ctl-copilot-repick open-terminal 'pi_lane_root_apply && copilot_fleet_gate || return 1; }' \
   'pi_lane_root_apply || return 1; }' "$CP_BATCH" --harness copilot --lane auto --state-dir "$TMP_ROOT/cp-fleet-2" CC-1680 CC-1681
 assert_eq "$(observe "launched=2 copilot_home=copilot1,copilot2 statusline=none")" "launched=2 copilot_home=copilot1,copilot2 statusline=none" \
-  "control: a re-pick with no Copilot gate launches the second item on an account whose status line nobody read"
+  "control: a re-pick with no Copilot gate launches the second item on an account whose context reader nobody set up"
 rm -rf -- "${H:?}/.copilot1" "${H:?}/.copilot2"
+rm -f -- "${OT_STUB_BIN:?}/kendex"
 
 echo "=== a Pi launch on a pi-claude model is judged on the Claude seat it spends ==="
 # pi-claude-bridge runs Claude Code on the Claude seat CLAUDE_CONFIG_DIR names,
