@@ -1349,18 +1349,13 @@ cmd_prune() {
 # `removed kept=ARCHIVE`, or `removed kept=none` where nothing was archived.
 # Where no fleet state stands, no overseer prunes the directory, so the
 # close-out runs the prune too and prints its lines after its own.
-# `remove --help` or `-h` prints the remove entry of cmd_help and touches no
-# state; any other key that starts with `-` is refused before any state is
+# parse_global_opts answers `remove --help` and `-h` before the loader runs;
+# any other key that starts with `-` is refused here before any state is
 # read, so a flag is never taken as an item key.
 cmd_remove() {
-    local item="${1:-}" sd unit err now_epoch archive=none field=archive entry
+    local item="${1:-}" sd unit err now_epoch archive=none field=archive
     local -a extra=() targets=() evidence=()
     case "$item" in
-        --help|-h)
-            if ! entry=$(awk 'index($0, "  remove ") == 1 { p = 1; print; next } p && !/^    / { exit } p { print }' <<<"$(cmd_help)"); then return 1; fi
-            [[ -n "$entry" ]] || { state_message help-entry-missing "$@" >&2; return 1; }
-            printf '%s\n' "$entry"
-            return 0 ;;
         '') state_message remove-issue "$@" >&2; return 2 ;;
         -*) state_message remove-issue-dash "$@" >&2; return 2 ;;
     esac
@@ -1633,6 +1628,15 @@ Dependencies:
 EOF
 }
 
+# The remove entry of cmd_help, from its `  remove ` line to the next line
+# indented less than its continuation lines. `remove --help` and `-h` print it.
+remove_help() {
+    local entry
+    if ! entry=$(awk 'index($0, "  remove ") == 1 { p = 1; print; next } p && !/^    / { exit } p { print }' <<<"$(cmd_help)"); then return 1; fi
+    [[ -n "$entry" ]] || { state_message help-entry-missing >&2; return 1; }
+    printf '%s\n' "$entry"
+}
+
 # The one parser for the global options that may precede the subcommand, and
 # for the help forms. --state-dir <path> (or --state-dir=<path>) overrides the
 # state directory for EVERY subcommand and takes precedence over
@@ -1673,6 +1677,10 @@ parse_global_opts() {
 
     case "${1:-help}" in
         help|--help|-h) cmd_help; exit 0 ;;
+        remove)
+            case "${2:-}" in
+                --help|-h) remove_help; exit $? ;;
+            esac ;;
     esac
 }
 

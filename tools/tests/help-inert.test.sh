@@ -189,6 +189,9 @@ orch	scripts/workflow-state	Usage: workflow-state	--help
 orch	scripts/workflow-state	Usage: workflow-state	-h
 orch	scripts/workflow-state	Usage: workflow-state	help
 orch	scripts/workflow-state	Usage: workflow-state	--state-dir tmp --help
+orch	scripts/workflow-state	  remove <issue_id>	remove --help
+orch	scripts/workflow-state	  remove <issue_id>	remove -h
+orch	scripts/workflow-state	  remove <issue_id>	--state-dir tmp remove --help
 second-opinion	scripts/second-opinion	Cross-model second opinion	--help
 second-opinion	scripts/second-opinion	Cross-model second opinion	-h
 second-opinion	scripts/second-opinion	Cross-model second opinion	review --help

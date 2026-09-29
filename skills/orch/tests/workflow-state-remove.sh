@@ -333,9 +333,9 @@ archive_only_run targets-only "$TARGETS_ONLY" KEN-5 tree/tmp
   || fail "control: an archive decided by the removed paths alone drops a worktree's tmp/" "got=$ARCHIVE_ONLY"
 
 # The help rule's must-fail control: the help flags no longer matched, so
-# --help reaches the key rules and prints no usage.
+# --help passes the parser and reaches the key rules and prints no usage.
 NO_HELP="$(mutant_scripts no-help workflow-state)/workflow-state" || exit 1
-mutate_file "$NO_HELP" '        --help|-h)' '        --help-off|-h-off)'
+mutate_file "$NO_HELP" ' --help|-h) remove_help' ' --help-off|-h-off) remove_help'
 help_run no-help "$NO_HELP" --help
 [[ "$HELP" != "rc=0 first=  remove <issue_id> [--archive PATH]... state=untouched" ]] \
   && pass "control: without the help match remove --help prints no usage" \
