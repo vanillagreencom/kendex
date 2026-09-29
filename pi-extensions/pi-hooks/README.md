@@ -1,6 +1,6 @@
 # @vanillagreen/pi-hooks
 
-A Pi extension that runs hooks installed by kendex. It checks tool calls, hands hook output to the agent after a tool call, at the end of a turn and at session start, and can report Rust errors and installation drift to the agent. In an orch lane it also starts a turn when the overseer's mail lands while the session is idle.
+A Pi extension that runs hooks installed by kendex. It checks tool calls, hands hook output to the agent after a tool call, at the end of a turn and at session start, and can report Rust errors and installation drift to the agent. It also starts a turn in an idle session that the lane-mail hooks hand mail to: an orch lane when its overseer's mail lands, or a session reading its checkout's overseer mailbox.
 
 ## Install
 
@@ -22,7 +22,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 - Run configured custom hooks.
 - Report clippy errors after Rust edits.
 - Report installation drift when a session starts.
-- Wake an idle orch lane when its overseer sends it mail.
+- Wake an idle session the lane-mail hooks hand mail to.
 
 ## How it works
 
@@ -47,8 +47,8 @@ The other hook events cannot stop anything in Pi, so the extension delivers what
 
 ## Lane mail wake
 
-- The extension watches the lane mailboxes under the checkout's `tmp/lane-mail`, and checks again each time the session settles.
-- While the session is idle it runs the installed `lane-mail-deliver` hook, the hook that hands a lane its mail after a tool call, and that hook decides whether this session is a lane and what it has unread.
+- The extension watches every mailbox under the checkout's `tmp/lane-mail`, the overseer mailbox included, and checks again each time the session settles.
+- While the session is idle it runs the installed `lane-mail-deliver` hook, the hook that hands mail over after a tool call. That hook decides which mailbox this session reads and what in it is unread: an orch lane's own mailbox, or, for a lead session that is no lane, the checkout's overseer mailbox where the hook names it.
 - What the hook hands over starts one turn, and the hook marks that mail read. An answer is left to the `lane-mail wait` that asked for it.
 - A session that is busy gets its mail from the lane-mail hooks at its next tool call or turn end.
 - A subagent is never woken, and the `enabled` setting turns the wake off with the hooks.

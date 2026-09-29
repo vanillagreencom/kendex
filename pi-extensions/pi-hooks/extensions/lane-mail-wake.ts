@@ -39,11 +39,13 @@ function deliveredContext(stdout: string): string {
 }
 
 /**
- * Starts a turn in an idle orch lane when its overseer's mail lands, the way an
- * idle Claude Code lane is woken by its `lane-mail watch` monitor.
+ * Starts a turn in an idle session when mail the lane-mail hooks hand it
+ * lands, the way an idle Claude Code lane is woken by its `lane-mail watch`
+ * monitor: an orch lane's own mail, or, for a lead session that is no lane,
+ * its checkout's overseer mailbox where the hook names it.
  *
- * Whether this session is a lane, which mailbox is its own, and what in it is
- * unread and not an answer are the lane-mail-check hook's to judge, run through
+ * Which mailbox this session reads, and what in it is unread and not an
+ * answer, are the lane-mail-check hook's to judge, run through
  * the `lane-mail-deliver` registration kendex renders for Pi, the judge that
  * hands a working lane its mail after each tool call. The wake runs that same
  * judge while the session is idle, with the lead's session fields and no tool
@@ -54,8 +56,9 @@ function deliveredContext(stdout: string): string {
  * the last one's is not sent again, so a mailbox the judge keeps refusing, or
  * a halt the lane has not yet read, starts one turn and not one per settle.
  *
- * Two triggers ask for the judgement: a change to any lane's `to-lane.jsonl`
- * under the checkout's `tmp/lane-mail`, and each `agent_settled`. A session
+ * Two triggers ask for the judgement: a change to any mailbox's `to-lane.jsonl`
+ * under the checkout's `tmp/lane-mail`, the overseer's included, and each
+ * `agent_settled`. A session
  * without that directory arms no watch. A busy session is left to the
  * lane-mail hooks at its next tool call and turn end. The package lists this
  * entry after `hooks.ts`, and Pi runs handlers in load order, so the settle

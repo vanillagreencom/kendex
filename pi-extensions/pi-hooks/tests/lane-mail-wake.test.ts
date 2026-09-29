@@ -218,20 +218,29 @@ for (const row of rows) {
 				mkdirSync(join(lane, "tmp", "lane-mail", ITEM), { recursive: true });
 				id = send(lane, row.mail);
 			}
+			const measure = () => ({
+				wakes: prompts.filter((line) => line.startsWith("user: lane-mail-check:")).length,
+				state: row.mail === "directive" || row.mail === "busy-directive" ? directiveState(lane, id!) : undefined,
+				steered: prompts.some((line) => line.includes("doc-drift: handle each")),
+			});
 			// Real time: the wake is a filesystem event and a spawned judge,
 			// and the bound is the interval a live monitor answers within.
+			// The judge marks the mail read before the wake's turn starts, so
+			// the read alone ends nothing: the wait holds until the turn the
+			// row expects has reached the model, or the interval is out. The
+			// turn is running once the model saw it, so waitForIdle then
+			// waits for it. A row that expects no wake waits the interval out,
+			// since only then is a wake that never came told from a late one,
+			// and a row with prompts to come is judged after them.
 			const deadline = Date.now() + MAIL_INTERVAL_MS;
-			while ((row.mail !== "directive" || directiveState(lane, id!) === "directive-unread") && Date.now() < deadline) await Bun.sleep(100);
+			const settled = () => row.prompts === undefined && row.want.wakes > 0 && Bun.deepEquals(measure(), row.want);
+			while (!settled() && Date.now() < deadline) await Bun.sleep(100);
 			await session.waitForIdle();
 			for (const prompt of row.prompts ?? []) {
 				await session.prompt(prompt);
 				await session.waitForIdle();
 			}
-			expect({
-				wakes: prompts.filter((line) => line.startsWith("user: lane-mail-check:")).length,
-				state: row.mail === "directive" || row.mail === "busy-directive" ? directiveState(lane, id!) : undefined,
-				steered: prompts.some((line) => line.includes("doc-drift: handle each")),
-			}).toEqual(row.want);
+			expect(measure()).toEqual(row.want);
 		} finally {
 			session.dispose();
 			for (const [key, value] of Object.entries(saved)) {
