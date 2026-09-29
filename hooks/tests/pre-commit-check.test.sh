@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
 # Tests for the pre-commit-check hook. Three things decide a verdict: whether
-# a simple command of the command has `git` as its command word and a later
-# `commit` word, whether the working directory's git hooks are armed, and
-# whether a word of that simple command is --no-verify or a short cluster
-# holding -n, or a word of the whole command carries a core.hooksPath key.
+# the working directory's git hooks are armed; where they are not, whether a
+# simple command of the command has `git` as its command word and a later
+# `commit` word; and where they are, whether a word from a git word with a
+# later `commit` word onward is --no-verify or a short cluster holding -n, or
+# a word of the whole command carries a core.hooksPath key.
 #
 # One rewrite runs first: every metacharacter bash(1) lists that is not
 # whitespace (| & ; ( ) < >) separates here as it separates in bash, the five
-# that end a simple command becoming newlines and the two that redirect
-# becoming spaces, and each line is then one simple command. Nothing is
-# deleted. A word is therefore seen only where the command already spells it,
-# so a bypass the shell would join, unquote or expand into the word is not
-# seen here and reaches git. A `commit` word outside a git call, a message, a
-# heredoc body, a printf of a note or the arguments of xargs, is no commit;
-# a split that reads no quoting still cuts a quoted line in two, and the
-# stated-limits section holds what that costs. The two expectation columns
-# are where the armed and unarmed answers differ.
+# that end a simple command and the backtick becoming newlines and the two
+# that redirect becoming arrow words, and each line is then one simple
+# command. Nothing is deleted. A word is therefore seen only where the command
+# already spells it, so a bypass the shell would join, unquote or expand into
+# the word is not seen here and reaches git. Where nothing is armed, a `commit`
+# word outside a git call, a message, a heredoc body, a printf of a note or
+# the arguments of xargs or env, is no commit. Where the hooks are armed, the
+# flag's reach is the line, or the rest of the whole command where it holds
+# quoting, escaping or expansion; the stated-limits section holds what that
+# costs. The two expectation columns are where the armed and unarmed answers
+# differ.
 #
 # Every refusal opens with `pre-commit-check: <key>=<value>`, the fixed set
 # hooks/AGENTS.md names, and a row pins that line whole in both fixtures beside
@@ -79,12 +82,13 @@ ARMED="$(new_repo armed)"; arm "$ARMED" pre-commit commit-msg
 
 echo "a git call with a later commit word is the commit"
 
-# The two characters of the git word's prefix strip that still decide a row: a
-# path and a backtick, neither of which the substitution above separates. It
-# does separate a `$(`, so a command substitution already arrives as a `git`
-# word and asks the strip for nothing — the `$` and `(` in the strip class are
-# what keeps these rows green in a build where that substitution is not there,
-# and they stay for that reason rather than because a row needs them.
+# The one character of the git word's prefix strip that still decides a row:
+# a path, which the substitution above does not separate. It does separate a
+# backtick and a `$(`, so a command substitution already arrives as a `git`
+# word and asks the strip for nothing — the backtick, `$` and `(` in the strip
+# class are what keeps these rows green in a build where that substitution is
+# not there, and they stay for that reason rather than because a row needs
+# them.
 both_table '0|2|-|a plain commit|git commit -m test
 0|2|-|a bare commit|git commit
 0|2|-|a commit on the next line|cargo fmt\ngit commit -m x
@@ -98,6 +102,16 @@ both_table '0|2|-|a plain commit|git commit -m test
 0|2|-|a commit in a brace group|{ git commit -m x; }
 0|2|-|a commit as an if condition|if git commit -m x; then :; fi
 0|2|-|a negated commit|! git commit -m x
+0|2|-|a commit in a backtick substitution behind an assignment|x=`git commit -m x`
+2|2|-n|the flag in a backtick substitution behind an assignment|x=`git commit -n -m x`
+0|2|-|a commit in a backtick substitution as an argument|echo `git commit -m x`
+0|2|-|a timed commit with the portable-format option|time -p git commit -m x
+0|2|-|a coprocess commit, its keyword a JSON escape for the Bash 3.2 lint|\u0063oproc git commit -m x
+0|2|-|a commit behind a leading redirection|>log git commit -m x
+0|2|-|a commit behind a leading descriptor redirection|2>/dev/null git commit -m x
+0|2|-|a commit behind a leading heredoc|<<EOF git commit -F -\nx\nEOF
+2|2|-n|the flag in a then branch|if true; then git commit -n -m x; fi
+2|2|-n|the flag in a loop body|for f in a; do git commit -n -m x; done
 '
 
 echo
@@ -190,15 +204,17 @@ both_table '0|0|-|a read-only pipeline whose -n is grep own|git diff | grep -n x
 '
 
 echo
-echo "the no-verify flag is read in the commit's own simple command"
+echo "the no-verify flag is read from the git word of the commit"
 
 # git skips its armed hooks over that flag only where git is the program
-# reading it, so the flag is read in the commit's own simple command alone,
-# whatever quoting the rest of the command holds; the passing rows are the -n
-# of another program beside the commit. A reserved word bash reads before a
+# reading it, so the flag is read from the git word a commit word follows to
+# the end of its simple command, whatever quoting the words before that git
+# word hold; the passing rows are the -n of another program beside the
+# commit. A program that runs git with its own arguments (env, command,
+# timeout) is no commit where nothing is armed, and the flag behind it still
+# counts where the hooks are armed. A reserved word bash reads before a
 # command is no program, so a flag in a git call behind one still counts.
-both_table '0|0|-|a read-only pipeline whose -n is head own|git log --oneline | grep commit | head -n 3
-0|2|-|-n belonging to another program beside the commit|sed -n 1,5p f && git commit -m x
+both_table '0|2|-|-n belonging to another program beside the commit|sed -n 1,5p f && git commit -m x
 0|2|-|-n beside a commit whose message is quoted|sed -n 1,5p f && git commit -m \"x\"
 0|2|-|-n of tail before a commit with a quoted message|tail -n 3 tmp/log; git commit -m \"x\"
 0|2|-|-n of bash before an add and a commit from a file|bash -n tools/guard && git add . && git commit -F tmp/msg
@@ -206,9 +222,8 @@ both_table '0|0|-|a read-only pipeline whose -n is head own|git log --oneline | 
 0|2|-|-n in a call before an or-list|sed -n 1p f || git commit -m x
 0|2|-|a piped short flag before a later list member|sed -n 1p f | cat && git commit -m x
 0|2|-|-n in a git call that is not the commit|git log -n 3 && git commit -m x
-0|0|-|-n in a later stage of the pipeline|ps aux | grep git | grep commit | tail -n 5
+0|2|-|-n in a git call that is not the commit, in a quoted command|git log -n 3 && git commit -m \"x\"
 0|2|-|-n in a stage the commit pipes into|git commit -m x | tail -n 5
-0|0|-|-n in a git stage piped into a later commit word|git log -n 3 | grep commit
 0|2|-|-n beside a commit behind an assignment|X=1 git commit -m x && sed -n 1p f
 2|2|-n|the flag in a commit behind an assignment|GIT_DIR=.git git commit -n -m x
 2|2|-n|the flag in a commit that pipes into another stage|git commit -n -m x | tail -n 5
@@ -223,6 +238,38 @@ both_table '0|0|-|a read-only pipeline whose -n is head own|git log --oneline | 
 2|2|-n|the flag in a brace group|{ git commit -n -m x; }
 2|2|NOVERIFY|the flag in an if condition|if git commit NOVERIFY -m x; then :; fi
 2|2|-n|the flag behind a negation|! git commit -n -m x
+2|0|NOVERIFY|the flag in a git call env runs|env git commit NOVERIFY -m x
+2|0|-n|the flag in a git call command runs|command git commit -n -m x
+2|0|NOVERIFY|the flag in a git call timeout runs|timeout 60 git commit NOVERIFY -m x
+'
+
+echo
+echo "the trust gate"
+
+# The split decides the flag's reach only in a command free of quoting,
+# escaping and expansion, with no process substitution; in every other command
+# the reach runs from the commit's git word to the end of the whole command.
+# This table is the one place the gate's controls live: one row per character
+# of the SPLIT_TRUSTED bracket class and per process substitution, in its
+# order, each a form where bash still hands the flag to git commit.
+both_table '2|2|-n|a single-quoted separator in the message|git commit -m '"'"'a;b'"'"' -n
+2|2|-n|a double-quoted separator in the message|git commit -m \"a;b\" -n
+2|2|-n|a line continuation|git commit -m x \\\n -n
+2|2|-n|a backtick substitution holding a separator|git commit -m `true;echo x` -n
+2|2|-n|a parameter expansion holding a separator|git commit -m ${X:-a;b} -n
+2|2|-n|an input process substitution|git commit -F <(echo x) -n
+2|2|-n|an output process substitution|git commit -m x > >(cat) -n
+'
+
+# More forms the gate sends to the reach to the end of the command, each a
+# message a commit really writes with the flag after it.
+both_table '2|2|-n|a single quote of one kind nested in the other|git commit -m \"'"'"'\" -m '"'"'a;b'"'"' -m \"'"'"'\" -n
+2|2|NOVERIFY|escaped double quotes around a separator|git commit -m \"fix \\\"foo; bar\\\"\" NOVERIFY
+2|2|-n|legacy arithmetic holding a pipe|git commit -m $[1|2] -n
+2|2|NOVERIFY|a conventional header with a scope|git commit -m \"fix(KEN-1): x\" NOVERIFY
+2|2|NOVERIFY|a double-quoted semicolon and a space|git commit -m \"fix: a; b\" NOVERIFY
+2|2|-n|a single-quoted semicolon and a space|git commit -m '"'"'a; b'"'"' -n
+2|2|NOVERIFY|a heredoc message template|git commit -m \"$(cat <<'"'"'EOF'"'"'\nfix: x\nEOF\n)\" NOVERIFY
 '
 
 echo
@@ -230,34 +277,41 @@ echo "a commit word outside a git call is not a commit"
 
 # A commit word is read only in a simple command whose command word is git.
 # Each row spells git and commit where no git call holds the commit: a note, a
-# message, a comment tail, another program's arguments. These are the notes
-# the whole-command reading refused where nothing was armed.
+# message, a comment tail, another program's arguments. The last four also
+# hold a -n where the flag read finds no git word with a later commit word in
+# the same simple command, or finds the -n in front of the git word.
 both_table '0|0|-|a heredoc body|cat >tmp/note.md <<EOF\nThe hook refused git commit in a note.\nEOF
-0|0|-|a quoted heredoc delimiter|cat <<'"'"'EOF'"'"' >tmp/note.md\nPlease run git commit NOVERIFY later.\nEOF
-0|0|-|a quoted message spelling git commit|notify -m \"run git commit -n after the fix\"
+0|0|-|a quoted heredoc delimiter|cat <<'"'"'EOF'"'"' >tmp/note.md\nPlease run git commit later.\nEOF
+0|0|-|a quoted message spelling git commit|notify -m \"run git commit after the fix\"
 0|0|-|a printf of a note|printf %s \"git commit was refused\" >tmp/note
 0|0|-|a comment tail|ls # git commit
 0|0|-|xargs launching git commit|printf %s x | xargs git commit -m x
 0|0|-|a commit word standing beside a git word in prose|git log | grep commit
 0|0|-|a commit word inside quoted parentheses|git log --oneline \"(commit)\"
+0|0|-|git and commit in separate stages, -n of head|git log --oneline | grep commit | head -n 3
+0|0|-|git and commit in separate stages, -n of tail|ps aux | grep git | grep commit | tail -n 5
+0|0|-|git and commit in separate stages, -n of git log|git log -n 3 | grep commit
+0|0|-|the -n of xargs in front of the git word|printf %s x | xargs -n 1 git commit -m x
 '
 
 echo
 echo "the stated limits"
 
 # Reading words rather than shell costs in both directions, and both costs are
-# rows. The split reads no quoting, so a separator inside quotes, a line
-# continuation or a substitution ends a line too: a line of quoted text or of
-# a heredoc body that leads with git and holds commit reads as a commit, and a
-# flag behind such a separator is cut off from the commit's line. A word the
-# commit's own call spells counts wherever it stands, its message included, and
-# a word the shell would assemble is not read at all. A program that launches
-# git is no commit here, so a flag it hands git from a pipe, a heredoc or a
-# file reaches git unseen, and git's armed hooks are the only control there.
+# rows. The commit read takes the split lines, which read no quoting, so a line
+# of quoted text or of a heredoc body that leads with git and holds commit
+# reads as a commit where nothing is armed. The flag read takes any git word
+# with a later commit word, so a note that spells git, commit and the flag is
+# refused where the hooks are armed, and in a command holding quoting the
+# flag's reach runs to the end of the command. A word the shell would assemble
+# is not read at all. A program that launches git with words from a pipe, a
+# heredoc or a file hands it a flag unseen, and git's armed hooks are the only
+# control there.
 both_table '2|2|NOVERIFY|the flag inside the commit own quoted message|git commit -m \"explain why NOVERIFY is banned\"
+2|0|NOVERIFY|a quoted note spelling git commit and the flag|notify -m \"run git commit NOVERIFY after the fix\"
+2|0|-n|a heredoc note spelling git commit and the flag|cat >tmp/note.md <<EOF\nPlease run git commit -n later.\nEOF
+2|2|-n|-n in a stage a commit with a quoted message pipes into|git commit -m \"x\" | tail -n 5
 0|2|-|a flag reached through a variable|F=NOVERIFY; git commit $F -m x
-0|2|-|a flag behind a quoted separator|git commit -m '"'"'a;b'"'"' -n
-0|2|-|a flag behind a line continuation|git commit -m x \\\n -n
 0|2|-|a heredoc body line leading with git commit|cat >tmp/note.md <<EOF\ngit commit -F tmp/msg\nEOF
 0|2|-|quoted text with a separator ahead of git commit|echo \"done; git commit next\"
 0|0|-|the flag piped into xargs|printf %s NOVERIFY | xargs git commit -m x

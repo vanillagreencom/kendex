@@ -1,0 +1,1 @@
+- `pre-commit-check`, where git hooks are armed, reads the no-verify flag from the commit's git word on: a `-n` of tail or xargs in front of it passes, and a flag xargs reads from a pipe is unseen.
