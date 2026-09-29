@@ -15,6 +15,8 @@
 # A row is `label|world|argv|rc|out|err|state`; the world's words are the stub
 # world's (lib/stub-cli-world.bash) plus:
 #   layout:<full|evil|dash|botrender>  the reviewed repository's instruction files
+#   committed                a committed file, the world's edit left uncommitted
+#   bigdiff                  a staged file whose diff runs past the inline cap
 #   settings:<globs>         the project settings' SECOND_OPINION_REVIEW_INSTRUCTIONS
 #   bsd                      sed, head, stat, cat, basename and dirname refusing `--`
 # The state adds:
@@ -101,6 +103,20 @@ suite_word() {
       mkdir -p "$WORK/.github/instructions"
       printf 'RULE-GOLF: rendered review rule\n' >"$WORK/.github/instructions/code-review.md"
       ;;
+    # a committed change a range can name, beside the world's own uncommitted
+    # edit, so the range's diff and the working tree's differ
+    committed)
+      printf 'committed\n' >"$WORK/pinned.txt"
+      git -C "$WORK" add pinned.txt
+      git -C "$WORK" -c commit.gpgsign=false commit -q -m pinned
+      HEAD_SHA="$(git -C "$WORK" rev-parse HEAD)"
+      ;;
+    # a diff past the inline cap: an added line, one line long enough to cross
+    # the cap, and a line after it
+    bigdiff)
+      { printf 'first\n'; head -c 140000 /dev/zero | tr '\0' x; printf '\nlast\n'; } >"$WORK/zbig.txt"
+      git -C "$WORK" add zbig.txt
+      ;;
     settings:*) printf '[env]\nSECOND_OPINION_REVIEW_INSTRUCTIONS = "%s"\n' "${1#settings:}" >"$PROJ/kendex.settings.toml" ;;
     bsd) W_ENV+=("PATH=$BSDBIN:$TMP_ROOT/psbin:$TMP_ROOT/bin:$PATH") ;;
     *) echo "UNKNOWN-WORD: $1" >&2; exit 2 ;;
@@ -169,10 +185,11 @@ reports() {
   printf 'miss=%s none=%s' "${miss:--}" "${none:--}"
 }
 
-# The embedded diff: its added lines, `+++` headers aside.
+# The embedded diff: its added lines, `+++` headers aside, and its truncation
+# marker.
 inline_diff() {
   local added
-  added="$(sed -n '/^--- begin diff ---$/,/^--- end diff ---$/{/^+[^+]/p;}' "$1" | paste -s -d ',' -)"
+  added="$(sed -n '/^--- begin diff ---$/,/^--- end diff ---$/{/^+[^+]/p;/^\[diff truncated/p;}' "$1" | paste -s -d ',' -)"
   printf '%s' "${added:--}"
 }
 
@@ -202,7 +219,8 @@ the project settings' globs reach the run|layout:full settings:review-bots.md|re
 the caller's empty setting beats the project's|layout:full settings:review-bots.md env:SECOND_OPINION_REVIEW_INSTRUCTIONS=|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=- none=- head=<head> diff=-
 a symlinked file and a file through a symlinked directory are refused by name, the regular file beside them appended|layout:evil|review|0|<out>|header:review skip-link:review-bots.md skip-outside:.github/instructions/leak.instructions.md written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- lenses=$L skip=$SKIP schema=$SCHEMA instr=.github/copilot-instructions.md(RULE-ECHO) miss=AGENTS.md,.github/instructions/code-review.md none=- head=<head> diff=-
 a changed path under a dash-leading directory finds its AGENTS.md|layout:dash|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=-svc/AGENTS.md(RULE-DASHDIR) miss=$ALLMISS none=- head=<head> diff=-
-a target set to inline its diff gets the pinned range's diff in its scope block, the prompt otherwise the same|env:SECOND_OPINION_CLAUDE_INLINE_DIFF=1|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=+world
+a target set to inline its diff gets the pinned range's diff in its scope block, not the working tree's, the prompt otherwise the same|committed env:SECOND_OPINION_CLAUDE_INLINE_DIFF=1|review --range HEAD~1...HEAD|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=+committed
+a diff past the cap is cut at its last whole line inside it and ends with a marker naming what was omitted|bigdiff env:SECOND_OPINION_CLAUDE_INLINE_DIFF=1|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=+world,+first,[diff truncated at the 131072-byte cap: the remaining 140008 of its 140258 bytes are omitted; read the changed files listed above that this diff does not reach, and the one it stops inside, with your read tools]
 another target's setting leaves this target's prompt without the diff|env:SECOND_OPINION_CODEX_INLINE_DIFF=1|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=-
 BSD utilities that refuse -- still build the whole prompt|layout:full bsd|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=$FULL miss=.github/instructions/code-review.md none=- head=<head> diff=-
 "

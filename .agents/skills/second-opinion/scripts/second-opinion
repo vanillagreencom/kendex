@@ -151,19 +151,25 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              check passed. Exit 0 is room, and each stdout line
                              is a NAME=value assignment the target command
                              runs under, the account it judged: the env prefix
-                             `lanes pick` prints (orch skill). Any other exit,
-                             or a stdout line that is no assignment, skips the
-                             target with its reason, and the walk goes on to
+                             `lanes pick` prints (orch skill). Any other exit
+                             skips the target, the check's first non-empty
+                             stderr line its reason; a stdout line that is no
+                             assignment skips it too. The walk goes on to
                              the next entry, so a walled target is passed over
                              for one whose account has room and is taken
                              again once its check reads room
   SECOND_OPINION_<NAME>_INLINE_DIFF
                              Set to 1 for a target that cannot run git, such
                              as a reviewer on read-only file tools: review
-                             mode then embeds the full git diff of the pinned
+                             mode then embeds the git diff of the pinned
                              range in that target's scope block, the prompt
                              otherwise unchanged (default: unset, the target
-                             runs the diff command itself)
+                             runs the diff command itself). The embedded copy
+                             is capped at 131072 bytes: a longer diff is cut
+                             at its last whole line inside the cap and ends
+                             with a marker naming the bytes omitted and
+                             telling the reviewer to read the remaining
+                             changed files with its read tools
   SECOND_OPINION_TARGET      Force one target; still subject to self-exclusion
   SECOND_OPINION_TIMEOUT     Timeout in seconds (default: 1080), per
                              invocation: review/audit's one retry on a
@@ -211,7 +217,7 @@ Review scope (review mode only):
   The wrapper derives the review scope from the worktree before invoking the
   external CLI — current branch, diff range (--range or origin/BASE...HEAD),
   diffstat, and the changed-file list are embedded in the prompt, and the
-  full diff too for a target set to SECOND_OPINION_<NAME>_INLINE_DIFF=1. audit
+  diff, capped, for a target set to SECOND_OPINION_<NAME>_INLINE_DIFF=1. audit
   derives no scope: it reads only its supplied --prompt file and ignores
   --range. review stamps qa_metadata.reviewed_head — the reviewed range's
   endpoint commit, captured when the scope is derived (before the model
@@ -1027,21 +1033,30 @@ target_available() {
 # prints exactly that, and `lanes pick --json` prints a record, which is
 # refused rather than exported. Any other exit is the check refusing, for a
 # wall to wait out, a setting or read to fix, or a check that could not run;
-# the command's own stderr, passed through, says which. Run
+# the command's own stderr, passed through, says which, and its first non-empty
+# line rides in the skip reason so the refusal's candidates carry the cause
+# wherever they are relayed: `lanes pick` puts its keyed reason first and its
+# candidate table after it. Run
 # from the project root, where a relative path in its settings file resolves,
 # with stdin closed: the roster walk reads its remaining entries from stdin, and
 # under a forced target it is the caller's, where a prompt may still wait.
 ROOM_ENV=""
 target_room() {
-  local t="$1" var cmd out rc=0 line shown=""
+  local t="$1" var cmd out rc=0 line shown="" err cause=""
   ROOM_ENV=""
   var="$(target_var "$t" ROOM_CMD)"
   cmd="${!var:-}"
   [[ -n "$cmd" ]] || return 0
+  err=$(so_tmpfile)
   # shellcheck disable=SC2086
-  out="$(cd -- "${PROJECT_ROOT:-.}" && $cmd </dev/null)" || rc=$?
+  out="$(cd -- "${PROJECT_ROOT:-.}" && $cmd </dev/null 2>"$err")" || rc=$?
+  cat "$err" >&2
+  while IFS= read -r line; do
+    [[ -z "$line" ]] || { cause="$line"; break; }
+  done <"$err"
+  rm -f -- "$err"
   if [[ "$rc" -ne 0 ]]; then
-    skip_target "$t" "room check refused — $var exited $rc; its own reason is on stderr above"
+    skip_target "$t" "room check refused — $var exited $rc: ${cause:-it printed no reason on stderr}"
     return 1
   fi
   while IFS= read -r line; do
@@ -1638,22 +1653,43 @@ REVIEW_HEAD_SHA=""
 # The full diff of the pinned range, for a target whose
 # SECOND_OPINION_<NAME>_INLINE_DIFF is 1: a reviewer with read-only file tools
 # and no shell cannot run the diff command the prompt names, and would
-# otherwise review only the file list. Empty for every other target.
+# otherwise review only the file list. Empty for every other target. Capped at
+# REVIEW_DIFF_CAP bytes, as each instruction file is capped: a branch carrying
+# a skill change and its render runs to hundreds of KB, which would overrun the
+# model's context and lose the review. A longer diff is cut at its last whole
+# line inside the cap and ends with a marker sending the reviewer to read the
+# rest with its file tools.
 REVIEW_DIFF=""
+REVIEW_DIFF_CAP=131072
 
 derive_review_diff() {
-  local cwd="$1" var git_err
+  local cwd="$1" var git_err diff_file size shown
   var="$(target_var "$TARGET_CLI" INLINE_DIFF)"
   [[ "${!var:-}" == 1 ]] || return 0
   git_err=$(so_tmpfile)
+  diff_file=$(so_tmpfile)
   # shellcheck disable=SC2086
-  if ! REVIEW_DIFF=$(git -C "$cwd" -c core.quotePath=false diff --no-color --no-ext-diff $REVIEW_RANGE 2>"$git_err"); then
+  if ! git -C "$cwd" -c core.quotePath=false diff --no-color --no-ext-diff $REVIEW_RANGE >"$diff_file" 2>"$git_err"; then
     jq -n --arg range "$REVIEW_RANGE" --arg cwd "$cwd" --arg detail "$(head -5 "$git_err")" \
       '{error: "Cannot derive review scope: git diff failed for range \($range)", cwd: $cwd, detail: $detail}' >&2
-    rm -f -- "$git_err"
+    rm -f -- "$git_err" "$diff_file"
     exit "$EXIT_NO_SCOPE"
   fi
   rm -f -- "$git_err"
+  size=$(wc -c <"$diff_file")
+  size=$((size))
+  if [[ "$size" -le "$REVIEW_DIFF_CAP" ]]; then
+    REVIEW_DIFF=$(cat "$diff_file")
+  else
+    REVIEW_DIFF=$(head -c "$REVIEW_DIFF_CAP" "$diff_file")
+    # Drop the cut line: half a hunk line, or half a multibyte character.
+    REVIEW_DIFF="${REVIEW_DIFF%$'\n'*}"
+    shown=$(printf '%s\n' "$REVIEW_DIFF" | wc -c)
+    shown=$((shown))
+    REVIEW_DIFF="$REVIEW_DIFF
+[diff truncated at the $REVIEW_DIFF_CAP-byte cap: the remaining $((size - shown)) of its $size bytes are omitted; read the changed files listed above that this diff does not reach, and the one it stops inside, with your read tools]"
+  fi
+  rm -f -- "$diff_file"
 }
 
 derive_review_scope() {

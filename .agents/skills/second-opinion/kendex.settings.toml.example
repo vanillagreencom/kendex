@@ -52,7 +52,8 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reas
 # SECOND_OPINION_PI_COPILOT_ROOM_CMD = ".agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/gpt-6-astra"
 
 # A reviewer that cannot run git, such as Pi on read-only file tools, is sent
-# the change itself: set to 1, its review prompt carries the full diff.
+# the change itself: set to 1, its review prompt carries the diff, up to the cap
+# `second-opinion --help` names.
 # SECOND_OPINION_PI_COPILOT_INLINE_DIFF = "1"
 
 # Seconds to wait for a reviewer to answer before giving up on it.
