@@ -14,7 +14,7 @@ Compliance criteria come from the project's architecture docs. Do not invent des
 
 - **Module boundaries and layering**: components respecting documented boundaries; cross-cutting leaks; dependency-rule violations.
 - **Abstraction quality**: interfaces minimal and cohesive; anti-patterns; over-engineering.
-- **Integration with another system**: a change that reads text, a status line, a pane or internal files of another system names the documented interface it stands in for and why that interface cannot serve, the rule `.agents/skills/code-quality/SKILL.md` § Over-Engineering states. A change that omits either is a blocker.
+- **Integration with another system**: a change that derives another system's state indirectly (scrapes its screen or pane, reads a status line, parses output text the system does not document as an interface, or reads its internal files) names the documented interface it stands in for and why that interface cannot serve, the rule `.agents/skills/code-quality/SKILL.md` § Over-Engineering states. A change that omits either is a blocker. Reading a documented interface, text or JSON output included, is not this finding.
 - **Spec/proposal review.** When the change is a design document, audit the proposed mechanism itself: race windows (TOCTOU between pin and use), trust-boundary holes (who can alter the inputs a decision reads), enforcement-surface coverage (does the path/tier map reach every surface that can weaken a guard), and failure semantics (does a persistently missing dependency stay green forever).
 - **Technical debt**: accumulated debt worth naming, prioritized by impact; architecture docs drifting from actual structure.
 
@@ -22,7 +22,7 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 
 ## Output
 
-Architecture violations, boundary breaches, spec holes, an indirect read of another system that names no interface or no reason → `blockers[]`. Tech debt observations, minor improvements → `suggestions[]`.
+Architecture violations, boundary breaches, spec holes, an indirect read of another system's state (not a read of its documented interface, text or JSON output included) that names no interface or no reason → `blockers[]`. Tech debt observations, minor improvements → `suggestions[]`.
 
 ## Required Skills
 
