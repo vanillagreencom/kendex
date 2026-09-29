@@ -96,6 +96,12 @@
 # which a row's evidence names.
 set -euo pipefail
 
+# The paths a kendex-cli build reads besides the toolchain itself: the crates,
+# the workspace manifest and lock, and the toolchain pin and cargo config.
+# ORCH_POST_MERGE_CMD in kendex.settings.toml skips its rebuild over the same
+# paths, and tools/tests/harness-smoke.test.sh fails when the two differ.
+BUILD_INPUTS=(crates/ Cargo.toml Cargo.lock rust-toolchain.toml .cargo)
+
 usage() {
   printf '%s\n' 'usage: tools/harness-smoke [--only h1,h2,...] [--keep] [--dir DIR] [--allow-stale]' \
     '  --only    run these harnesses (claude codex opencode cursor pi gemini copilot antigravity); the rest print skipped' \
@@ -105,7 +111,8 @@ usage() {
     'The --dir, or with no --dir this checkout, must not sit under a .scratch folder or a temporary folder' \
     '(the platform temp dir, /tmp, /var/tmp): kendex add refuses to register a project there, so the first install is refused and the run exits 2.' \
     'The kendex on PATH must be a build of a commit INSTALLED, the one `kendex --version` ends in, that this checkout' \
-    'holds and that either contains this checkout'"'"'s HEAD or has HEAD'"'"'s crates/ (git diff --quiet INSTALLED HEAD -- crates/):' \
+    'holds and that either contains this checkout'"'"'s HEAD or has HEAD'"'"'s build inputs' \
+    "(git diff --quiet INSTALLED HEAD -- ${BUILD_INPUTS[*]}):" \
     'otherwise the run exits 2 before any row, naming both commits and the rebuild.'
 }
 
@@ -126,12 +133,13 @@ message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
       echo "the scratch project and logs were left in place by --keep." ;;
     stale-kendex)
       printf 'the kendex on PATH, %s, is a build of a commit that neither contains this checkout'"'"'s HEAD\n' "$KENDEX_PATH"
-      echo "nor has HEAD's crates/, or of one this checkout does not hold, or its --version names no commit (none),"
+      echo "nor has HEAD's build inputs (${BUILD_INPUTS[*]}), or of one this checkout does not hold,"
+      echo "or its --version names no commit (none),"
       echo "so the rows would measure another build's renders."
       printf 'Rebuild it in %s with KENDEX_SOURCE_COMMIT=$(git rev-parse HEAD) cargo build --release -p kendex-cli,\n' "$SELF"
       printf 'then copy target/release/kendex to %s; or pass --allow-stale to run on it anyway.\n' "$KENDEX_PATH" ;;
     allowed-stale)
-      printf 'this run goes on under --allow-stale with %s, whose build neither contains this checkout'"'"'s HEAD nor has its crates/;\n' "$KENDEX_PATH"
+      printf 'this run goes on under --allow-stale with %s, a build that fails the build check --help states;\n' "$KENDEX_PATH"
       echo "a failed row may be that build's and not this checkout's." ;;
     checkout-head)
       echo "that directory has no HEAD commit, so which kendex build it describes is unknown." ;;
@@ -221,11 +229,11 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null) ||
 SELF=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 
 # Every row measures what the kendex on PATH renders, so that binary has to be
-# a build of a commit that contains SELF's HEAD, or of one whose crates/ equal
-# HEAD's: an older build with other crates/ fails rows this checkout passes.
-# crates/ is the same proxy ORCH_POST_MERGE_CMD in kendex.settings.toml reads
-# to skip its rebuild, so the binary it leaves after a merge that changes no
-# crate, or on a branch that changes none, gets past. Its commit is the one
+# a build of a commit that contains SELF's HEAD, or of one whose BUILD_INPUTS
+# equal HEAD's: an older build with other inputs fails rows this checkout
+# passes. BUILD_INPUTS are the paths ORCH_POST_MERGE_CMD reads to skip its
+# rebuild, so the binary it leaves after a merge that changes none of them,
+# or on a branch that changes none, gets past. Its commit is the one
 # `kendex --version` ends in, `+main.<run>.<commit>` from CI or
 # `+git.<commit>` under KENDEX_SOURCE_COMMIT
 # (crates/cli/build.rs::build_version_from_values). A plain cargo build names
@@ -242,7 +250,7 @@ if stale_cause=$(kendex --version 2>&1); then
     INSTALLED_COMMIT=none
     stale_cause=${stale_cause%%$'\n'*}
   elif stale_cause=$(git -C "$SELF" merge-base --is-ancestor "$HEAD_COMMIT" "$INSTALLED_COMMIT" 2>&1) ||
-    stale_cause=$(git -C "$SELF" diff --quiet "$INSTALLED_COMMIT" "$HEAD_COMMIT" -- crates/ 2>&1); then
+    stale_cause=$(git -C "$SELF" diff --quiet "$INSTALLED_COMMIT" "$HEAD_COMMIT" -- "${BUILD_INPUTS[@]}" 2>&1); then
     kendex_build=current
   fi
 fi

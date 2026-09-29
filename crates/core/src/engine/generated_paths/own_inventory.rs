@@ -150,8 +150,9 @@ fn refusal(finding: &Finding) -> String {
             // finding standing.
             text.push_str(
                 "the installed kendex that wrote it lays the set out this way, so install \
-                 this checkout's own CLI first (AGENTS.md § Commands: `cargo build --release \
-                 -p kendex-cli`, then copy the binary to `~/.cargo/bin/kendex`), then\n",
+                 this checkout's own CLI first (AGENTS.md § Commands: \
+                 `KENDEX_SOURCE_COMMIT=$(git rev-parse HEAD) cargo build --release -p kendex-cli`, \
+                 then copy the binary to `~/.cargo/bin/kendex`), then\n",
             );
             text.push_str(&rewrite());
         }

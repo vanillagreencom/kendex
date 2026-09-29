@@ -104,9 +104,10 @@ ORCH_MERGE_AUTONOMY = "auto"
 # Execute the audit's accepted creations and cancellations without a question.
 PM_CREATE_AUTONOMY = "auto"
 
-# Rebuild the installed CLI only when the synchronized range changes crates,
-# with the commit it was built from in its --version, which tools/harness-smoke reads.
-ORCH_POST_MERGE_CMD = "if git diff --quiet $ORCH_POST_MERGE_BEFORE $ORCH_POST_MERGE_AFTER -- crates/; then exit 0; else rc=$?; [ $rc -eq 1 ] || exit $rc; fi; KENDEX_SOURCE_COMMIT=$(git rev-parse HEAD) cargo build --release -p kendex-cli && cp -f target/release/kendex ~/.cargo/bin/kendex"
+# Rebuild the installed CLI only when the synchronized range changes a build
+# input, with the commit it was built from in its --version. tools/harness-smoke
+# reads that commit, and its BUILD_INPUTS must name the same paths as this diff.
+ORCH_POST_MERGE_CMD = "if git diff --quiet $ORCH_POST_MERGE_BEFORE $ORCH_POST_MERGE_AFTER -- crates/ Cargo.toml Cargo.lock rust-toolchain.toml .cargo; then exit 0; else rc=$?; [ $rc -eq 1 ] || exit $rc; fi; KENDEX_SOURCE_COMMIT=$(git rev-parse HEAD) cargo build --release -p kendex-cli && cp -f target/release/kendex ~/.cargo/bin/kendex"
 
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
