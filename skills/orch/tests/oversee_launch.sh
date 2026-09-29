@@ -4,8 +4,9 @@
 # record for a session a person opened by hand. Run over a real tmux server at
 # the person's default socket under a private TMUX_TMPDIR, so a run with no
 # $TMUX and ORCH_TMUX_SESSION set reaches it the way lib/tmux-server.sh says a
-# verb outside tmux reaches the person's own server. claude and codex are
-# stubs on PATH, and `lanes pick` answers from the lanes-fixture usage bodies.
+# verb outside tmux reaches the person's own server. claude, codex and
+# copilot are stubs on PATH, and `lanes pick` answers from the lanes-fixture
+# usage bodies.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/lanes-fixture.sh
@@ -444,24 +445,43 @@ pi_first_row "$PIFIRSTCTL/oversee"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT" | awk '{print $2, $3}')|$(overseers)" "1|launch-choice-failed entry=pi:openai/gpt-5:high|0" \
   "control: a first launch that chooses the pi entry refuses and opens nothing"
 
-# A copilot entry ahead of a claude entry with room: nothing reads a Copilot
-# overseer's context or judges its handoff, so the first launch skips it
-# before its pick, says so, and opens on the claude entry.
+# A first launch on a copilot entry: `lanes pick --harness copilot` judges a
+# Copilot account on its monthly pool, so the overseer opens on the account
+# the pick names, under COPILOT_HOME, with the model and effort the entry
+# names and copilot's full-bypass word. The account's status line writes the
+# session record the overseer's context is read from.
+cat > "$BIN/copilot" <<STUB
+#!/bin/sh
+{ printf 'home=%s\n' "\${COPILOT_HOME:-}"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.copilot"
+echo 'esc to interrupt'
+exec sleep 100000
+STUB
+chmod +x "$BIN/copilot"
+COP_SL="$TMP_ROOT/sl/copilot-statusline"
+mkdir -p "$TMP_ROOT/sl" "$H/.1copilot"
+printf '#!/bin/sh\n' > "$COP_SL"
+chmod +x "$COP_SL"
+printf '{"copilot_tokens":"gho_fixture"}\n' > "$H/.1copilot/config.json"
+printf '{"statusLine":{"type":"command","command":"%s","refreshInterval":30}}\n' "$COP_SL" > "$H/.1copilot/settings.json"
+printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":900}}}' > "$FIXTURE_DIR/.1copilot.json"
 copilot_first_row() { # [OVERSEE_BIN]
-  OVERSEE_BIN="${1:-}" LAUNCH_PREF='copilot:gpt-5.3-codex:high,claude:fable:high' run_oversee -- launch --wait-secs 20
+  OVERSEE_BIN="${1:-}" LAUNCH_PREF='copilot:gpt-5.3-codex:high' \
+    run_oversee ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.1copilot" -- launch --wait-secs 20
 }
 copilot_first_row
-assert_eq "$RC|$(keyed entry-harness-unhandled "$OUT" | sed -n 1p)|$(recorded harness)|$(recorded model)" \
-  "0|oversee: entry-harness-unhandled entry=copilot:gpt-5.3-codex:high harness=copilot|claude|fable" \
-  "a first launch skips a copilot entry and opens on the claude entry after it"
+assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded model)|$(recorded effort)|$(sed -n 1p "$TMP_ROOT/argv.copilot" 2>/dev/null)|$(grep -cx -e --model -e gpt-5.3-codex -e --reasoning-effort -e high -e "$(launch_choice_permission_write copilot)" "$TMP_ROOT/argv.copilot" 2>/dev/null)" \
+  "0|copilot|$H/.1copilot|gpt-5.3-codex|high|home=$H/.1copilot|5" \
+  "a first launch on a copilot entry opens on the picked copilot account with its model and effort"
 tm kill-window -t "$(recorded window)"
-# Its control: a walk that takes the copilot entry never opens the claude
-# entry after it.
+# Its control: a preference parse naming no copilot refuses the entry and
+# opens nothing.
 COPILOTFIRSTCTL="$(mutant_scripts copilotfirstctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$COPILOTFIRSTCTL/lib/overseer-launch.sh" '      if [[ "$OL_HARNESS" == copilot ]]; then' '      if false; then'
+mutate_file "$COPILOTFIRSTCTL/lib/overseer-launch.sh" \
+  '    [[ "$entry" =~ ^(claude|codex|copilot):[a-z][a-z0-9.-]*:[a-z]+$ \' \
+  '    [[ "$entry" =~ ^(claude|codex):[a-z][a-z0-9.-]*:[a-z]+$ \'
 copilot_first_row "$COPILOTFIRSTCTL/oversee"
-assert_eq "$(keyed entry-harness-unhandled "$OUT" | sed -n 1p)|$(overseers)" "|0" \
-  "control: a first launch that takes the copilot entry opens no claude overseer"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT" | awk '{print $2, $3}')|$(overseers)" "1|invalid-preference entry=copilot:gpt-5.3-codex:high|0" \
+  "control: a preference parse naming no copilot refuses the copilot entry and opens nothing"
 
 # The writer's control: a record write that leaves the launch identity out,
 # over a fleet with no prior record, records a session nothing says the

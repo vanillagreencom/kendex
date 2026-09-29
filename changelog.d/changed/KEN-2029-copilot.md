@@ -1,1 +1,0 @@
-- orch: the overseer walk skips a `copilot:MODEL:EFFORT` preference entry with `entry-harness-unhandled`, since nothing reads a Copilot overseer's context or judges its handoff.

@@ -273,8 +273,8 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # it; on pi it is the thinking level. An entry that names no model stops the
 # launch. A tier rank is no model: write the model the rank named, so
 # claude:1:high becomes claude:fable:high. The model name is not checked
-# before launch, so a misspelled codex or pi model opens the new overseer on
-# that name. Which entries a first launch and a succession skip is in
+# before launch, so a misspelled codex, copilot or pi model opens the new
+# overseer on that name. Which entries a first launch and a succession skip is in
 # oversee --help and oversee-succeed --help. Change the order here when
 # models change; no code holds another order. Empty names no entries.
 # ORCH_OVERSEER_PREFERENCE = "claude:fable:high,claude:claude-opus-5-5:high,codex:gpt-6-astra:high,codex:gpt-5.6-sol:high"

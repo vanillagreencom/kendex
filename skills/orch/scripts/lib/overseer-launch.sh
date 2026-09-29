@@ -114,8 +114,7 @@ ol_preference() {
 # kendex.settings.toml.example § Fleet states for the operator: a model
 # starts with a letter, so an entry naming no model, an empty field or a bare
 # number, is outside the shape. An entry outside the shape returns 1 with it in OL_BAD_ENTRY. An
-# empty VALUE is no entries and no refusal. A copilot entry is in the shape
-# and ol_walk skips it.
+# empty VALUE is no entries and no refusal.
 OL_ENTRIES=()
 OL_NAMED=0
 OL_BAD_ENTRY=""
@@ -286,15 +285,6 @@ ol_account_id() { # DIR
 # An entry spending no account `lanes` measures takes no pick and no lane
 # (ol_pick_lane).
 #
-# A copilot entry is skipped before its pick, with entry-harness-unhandled in
-# OL_WALK_SKIPS, on a first launch and a succession alike: `lanes` measures no
-# Copilot CLI account (lib/lane-launch.sh § lane_pick_harness), nothing here
-# reads a Copilot session's context, and its launch row names no switch that
-# turns Copilot compaction off, so a Copilot overseer would compact with no
-# handoff mark and could never hand over.
-# `oversee-succeed` refuses a Copilot caller for the same reason
-# (copilot-unmeasured).
-#
 # The entry `caller` is a predecessor's own, as OL_WALK_CALLER_* describe it:
 # its harness, its lane, the model and effort its record pairs, empty where
 # the record names no model, and the model its pick is judged on, the one the
@@ -353,10 +343,6 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
       ol_entry_model "$entry"
       OL_HARNESS="$OL_ENTRY_HARNESS" OL_MODEL="$OL_ENTRY_MODEL" OL_EFFORT="$OL_ENTRY_EFFORT"
       OL_PICK_MODEL="$OL_ENTRY_MODEL"
-      if [[ "$OL_HARNESS" == copilot ]]; then
-        OL_WALK_SKIPS+=("entry-harness-unhandled${tab}entry=$entry${tab}harness=$OL_HARNESS")
-        continue
-      fi
       ol_entry_permitted "$entry" || continue
     fi
     rc=0
@@ -500,8 +486,7 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
 # names: pi's is claude's, which the pi-claude bridge reads, and
 # PI_CODING_AGENT_DIR on the Copilot pool. An empty LANE_DIR, which ol_walk
 # hands on for a pi model on a provider no lane measures (ol_pick_lane),
-# launches the command bare; the walk skips every copilot entry before its
-# pick, so none arrives here.
+# launches the command bare.
 #
 # A codex session reads folder trust for LAUNCH_DIR before it reads its own
 # arguments, and the pane it opens in has nobody at it, so the entry is made

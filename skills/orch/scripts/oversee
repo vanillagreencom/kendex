@@ -59,13 +59,12 @@
 #        file's ol_walk, and `lanes pick` names
 #        the lane, judged on the bucket that
 #        walls that model and held to the reading the session will take of
-#        itself (lib/overseer-launch.sh § ol_pick_lane). A copilot entry is
-#        skipped before its pick, with `entry-harness-unhandled` on stderr:
-#        nothing reads a Copilot overseer's context or judges its handoff,
-#        so it could never hand over. An entry with no
+#        itself (lib/overseer-launch.sh § ol_pick_lane). An entry with no
 #        qualifying lane is skipped, and so is one whose harness row names no
 #        full-bypass word to launch it under, pi's, before its pick, with
-#        `entry-permission-unwritable` on stderr; a preference set to empty
+#        `entry-permission-unwritable` on stderr, and a copilot entry whose
+#        picked account runs no copilot-statusline status line, with
+#        `successor-status-line` on stderr; a preference set to empty
 #        refuses `preference-empty`, because a first launch has no caller
 #        whose own harness and lane could stand in; a walk that ends empty
 #        refuses `no-lane-qualifies` at exit 3 with the counts each sweep found.
@@ -204,14 +203,14 @@ message() { # KEY FIELD=VALUE...
     predecessor-not-live) text='The session --predecessor names is not the live overseer the fleet state records on this server. The live field names that overseer, or none where no live one is recorded. A record carrying no server start names none: run oversee register in its pane first. A succession only ever stops the recorded overseer; nothing was opened.' ;;
     option-conflict) text='--predecessor is a launch option, and a successor opens beside its predecessor rather than in the tmux session --session names, so the two are never given together.' ;;
     close-failed) text='The predecessor could not be stopped, so the successor was closed and the record put back; the predecessor keeps running.' ;;
-    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex, copilot or pi, model the model that harness launches, on pi a provider/id, and effort the level as that harness spells it, each in the characters kendex.settings.toml.example § Fleet in the orch skill states. An entry naming no model is refused. A first launch skips pi and copilot entries.' ;;
+    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex, copilot or pi, model the model that harness launches, on pi a provider/id, and effort the level as that harness spells it, each in the characters kendex.settings.toml.example § Fleet in the orch skill states. An entry naming no model is refused. A first launch skips pi entries.' ;;
     preference-empty) text='A first launch has no caller whose own harness and lane could stand in, so ORCH_OVERSEER_PREFERENCE must name at least one entry.' ;;
     invalid-headroom-trigger) text='ORCH_OVERSEER_HEADROOM_PCT takes a whole number of percent from 0 to 100.' ;;
     invalid-question-tool) text='ORCH_QUESTION_TOOL takes off or overseer.' ;;
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     no-lane-qualifies) text='No lane of any harness the preference names is above the headroom trigger; nothing was launched. entries counts the preference entries walked; walled and unmeasured are the accounts the sweeps refused and the accounts nothing could measure.' ;;
     entry-permission-unwritable) text='The launch flag table names no full-bypass permission word for this entry'\''s harness, so a first launch there would stop at its first approval prompt with nobody at the pane. The entry is skipped and the walk goes on; oversee-succeed takes such an entry for a caller of the same harness.' ;;
-    entry-harness-unhandled) text='Nothing reads a Copilot CLI overseer'\''s context or judges its handoff: lanes measures no Copilot account, and no launch switch turns Copilot compaction off. An overseer there would compact with no handoff mark and could never hand over. The entry is skipped and the walk goes on to the next one.' ;;
+    successor-status-line) text='The pick named a Copilot account whose settings.json does not run copilot-statusline as its status line often enough for its session record to stay fresh, so an overseer opened there would run with its context unmeasured. cause names what failed (lib/adapters/copilot.sh). The entry is skipped and the walk goes on to the next one.' ;;
     launch-choice-failed) text='The launch flag table cannot state this harness'\''s model, effort or permission words. Nothing was launched.' ;;
     model-window-unknown) text='The claude adapter names no context window for the model this entry names, and an overseer runs with its compaction off, so it would reach its wall with no handoff mark. Nothing was launched. Name a claude model the window table in lib/adapters/claude.sh names.' ;;
     launch-trust-missing) text='The folder-trust entry for the launch directory could not be made in the config this session would read, so nothing was launched; the reason field is lib/lane-launch.sh'\''s.' ;;
@@ -511,8 +510,7 @@ ol_preference_entries "$(ol_preference)" || die invalid-preference "entry=$OL_BA
 # ol_launch_flags, the ones `oversee-succeed` takes. A launch here has no
 # caller entry and no predecessor flags to carry, so every entry is a
 # preference entry and every command writes the table's words alone; the
-# walk skips a copilot entry and an entry whose harness row names no
-# full-bypass word, pi's.
+# walk skips an entry whose harness row names no full-bypass word, pi's.
 rc=0
 ol_walk "$HEADROOM_TRIGGER" "" "${OL_ENTRIES[@]}" || rc=$?
 for skip in ${OL_WALK_SKIPS[@]+"${OL_WALK_SKIPS[@]}"}; do
