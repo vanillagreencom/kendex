@@ -41,6 +41,7 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 | `resolved` | `id` | The ask with this envelope id is closed; its thread is read every tenth poll while its parent is younger than `SLACK_THREAD_DAYS` |
 | `bound` | `file`, `id`, `ts` | The share message Slack made for an uploaded file; its thread now carries the notice's envelope |
 | `thread` | `ts`, `seen` | The thread under `ts` is read past the reply stamp `seen` |
+| `mark` | `ts`, `name` | The directive's message at `ts` carries the reaction `name`: `eyes` once delivered, `white_check_mark` once the overseer's `to-lane.cursor` passes the directive. An `eyes` line with no later `white_check_mark` line is checked every poll; `compact` drops a mark line once `ts` is past `SLACK_THREAD_DAYS` |
 
 Stamps (`ts`, `thread`, `seen`) are Slack message stamps, seconds with six decimals; `at` is the UTC second `lane-mail` writes. Every inbound delivery hands `lane-mail` the key `channel:ts`. Every `out` line carries its envelope's `at`. An envelope whose `at` is older than `SLACK_THREAD_DAYS` is never posted, and `compact` judges an `out` line by that same `at`, never by its `thread`, so a line it drops is one whose envelope can never post again.
 

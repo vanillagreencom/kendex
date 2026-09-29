@@ -32,7 +32,7 @@ FILES = "files"
 # A name's bytes past this are cut, so `<id>-<name>` stays inside the 255
 # bytes a file name may take.
 NAME_BYTES = 200
-LINE_KINDS = {"seen", "start", "hold", "resume", "in", "out", "resolved", "bound", "thread"}
+LINE_KINDS = {"seen", "start", "hold", "resume", "in", "out", "resolved", "bound", "thread", "mark"}
 AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
@@ -159,6 +159,7 @@ class State:
     pending_files: Dict[str, str] = field(default_factory=dict)
     refused: Dict[str, str] = field(default_factory=dict)
     ignored: Set[str] = field(default_factory=set)
+    marks: Dict[str, str] = field(default_factory=dict)
 
     def apply(self, line: Dict) -> None:
         kind = line.get("t")
@@ -217,6 +218,8 @@ class State:
             thread = self.threads.get(str(line["ts"]))
             if thread is not None:
                 thread.seen = str(line["seen"])
+        elif kind == "mark":
+            self.marks[str(line["ts"])] = str(line["name"])
         else:
             raise KeyError(kind)
 
@@ -259,12 +262,12 @@ class Journal:
 
 def compact(root: Path, cutoff_ts: float) -> int:
     """Drop resolved and ignored lines older than the cutoff, every report
-    upload older than it, every history position but the last, every hold
-    line but a standing one, and every resume line whose end is older than
-    the cutoff; keep every open thread. Returns the lines dropped. An `out`
-    line and a `resume` line are judged by the `at` they journal, the age
-    `post_events` never posts past, so what they name can never post
-    again."""
+    upload and receipt mark older than it, every history position but the
+    last, every hold line but a standing one, and every resume line whose
+    end is older than the cutoff; keep every open thread. Returns the lines
+    dropped. An `out` line and a `resume` line are judged by the `at` they
+    journal, the age `post_events` never posts past, so what they name can
+    never post again."""
     path = root_dir(root) / JOURNAL
     state = read_journal(root)
     if not path.is_file():
@@ -301,6 +304,8 @@ def compact(root: Path, cutoff_ts: float) -> int:
         elif kind in ("bound", "thread") and old:
             thread = state.threads.get(str(line["ts"]))
             drop = thread is None or not thread.open
+        elif kind == "mark" and old:
+            drop = True
         if drop:
             dropped += 1
         else:

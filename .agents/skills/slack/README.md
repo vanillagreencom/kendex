@@ -16,6 +16,7 @@ Requires Python 3.8 or newer and the orch skill, which the install adds as a dep
 - Post an overseer's question to the channel with an @mention, and record the first reply in its thread as the answer.
 - Deliver any other owner message to the overseer as a directive.
 - Save the files an owner sends under `tmp/slack/files/` and name each saved path in the directive.
+- Mark each directive's message with :eyes: once it reaches the overseer's mailbox, and with :white_check_mark: once the overseer has read it.
 - Post the overseer's notices and rulings, and upload its progress reports with the notice as the comment.
 - Post an alert or a file to any channel from a script, with `--mention` for the owners.
 - Refuse any text or file that matches the secret-value pattern.
@@ -27,6 +28,7 @@ Requires Python 3.8 or newer and the orch skill, which the install adds as a dep
 - `slack listen --root A --root B` is one process for one person. Every `SLACK_POLL_SECONDS` it reads each channel's new messages, the thread of every open question, and every tenth poll the other threads younger than `SLACK_THREAD_DAYS`.
 - An owner's message reaches the overseer through the checkout's `lane-mail`, keyed by the Slack message id, so a message the relay carried once is never carried twice.
 - Each file on an owner's message is downloaded with the bot token to `tmp/slack/files/<file id>-<name>` in the checkout, the directory mode 700 and the file mode 600. The message reaches the overseer with one line per file after its text: the saved path, or `file <id> not fetched: <why>`, such as `HTTP 403`. A download that fails never holds the message back.
+- A directive's message gets an :eyes: reaction in the poll that delivers it. Once the overseer's mailbox read passes that directive, the relay swaps it for :white_check_mark:. Neither mark posts a message. A mark Slack refuses is printed and delivery goes on; a refused swap is made again on the next poll.
 - The mailbox's new envelopes for the owner are posted to the channel: a question with its options, recommendation and deadline, a notice in the thread of the message it answers, a report as an uploaded file. An envelope older than `SLACK_THREAD_DAYS` is never posted.
 - The relay's first run reads Slack from the moment of the binding and the mailbox from its newest envelope, so neither side's past is replayed. Open questions are posted whatever their age inside `SLACK_THREAD_DAYS`.
 - While `SLACK_MASTER_FILE` is younger than `SLACK_MASTER_MAX_AGE`, a master session answers the overseer and the relay posts no questions, notices, reports or answers from the mailbox; owner messages in the channel still reach the overseer, the relay's replies to them still post, and `slack listen --status` shows `held-by=master`. When the file goes stale or is gone, the relay posts the questions still open and the answer to a question the channel shows open. A notice stamped after the second of the file mtime the relay first read and before the second the hold ended, `SLACK_MASTER_MAX_AGE` past the last touch or the last poll that found a removed file fresh, never posts; any other notice posts, so one the master already saw can.
@@ -54,6 +56,7 @@ oauth_config:
       - groups:history
       - groups:read
       - groups:write
+      - reactions:write
       - users:read
       - users:read.email
 settings:
@@ -70,6 +73,7 @@ settings:
 | `groups:history` | Read a private channel and its threads |
 | `groups:read` | Find a private channel by name or id |
 | `groups:write` | Create a private channel and invite the owners |
+| `reactions:write` | Mark a directive's message as delivered and as read |
 | `users:read`, `users:read.email` | Resolve an owner's email address to a user |
 
 An app made from an earlier copy of this manifest lacks the scopes added since. Add each missing scope under the app's OAuth settings and reinstall the app to the workspace.
@@ -100,7 +104,7 @@ What an owner's message in the channel does:
 
 | Where you write | What happens |
 |-----------------|--------------|
-| Top-level | The overseer receives it as a directive |
+| Top-level | The overseer receives it as a directive; :eyes: marks it delivered, :white_check_mark: read |
 | In a question's thread, first reply | Your words are the answer; the relay replies "Recorded as your answer" |
 | In a question's thread, later reply | The overseer receives it as a directive; the relay says the question was already answered |
 | In the thread of a notice or report younger than `SLACK_THREAD_DAYS` | The overseer receives it as a directive, within ten polls |

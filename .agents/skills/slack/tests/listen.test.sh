@@ -8,7 +8,10 @@
 # a report uploaded and its thread bound from the share, a non-owner and an
 # empty message answered once and not routed, an owner's files saved and
 # named in the envelope, a refused download, Slack's sign-in page and a
-# file with no download url each named by file id, catch-up over pages, the crash
+# file with no download url each named by file id, a directive's eyes mark
+# swapped for a check once the cursor passes it, a refused mark printed
+# without failing the poll, a refused swap completed on the next poll,
+# catch-up over pages, the crash
 # between the mailbox append and the journal mark, the second relay refused
 # by the lock, two roots bound to one channel refused at start, a reply
 # under a thread past SLACK_THREAD_DAYS left unrouted,
@@ -25,7 +28,8 @@
 # exclusive, two roots on one channel accepted, the thread-age horizon
 # removed, the owner gate open, the no-text gate open, the files unread,
 # the sign-in check gone, the file name kept whole, the files directory
-# mode unset, the outbound text
+# mode unset, the seen mark gone, the cursor unread, a refused mark raised,
+# no Slack answer settled, the outbound text
 # and the report bytes unchecked, the post failure swallowed, the envelope
 # horizon removed, the start horizon removed, the history seed at zero, a
 # posted line aged by its thread, and a refused connection read as a lost
@@ -384,6 +388,41 @@ assert_eq "$RC=$ERR1" "2=slack: channel-shared=$PAIR_CH roots=$PAIR_A,$PAIR_B fi
 assert_eq "$([ -e "$(sk_journal "$PAIR_A")" ] || [ -e "$(sk_journal "$PAIR_B")" ] && echo polled || echo untouched)" "untouched" \
   "the refusal comes before any poll"
 
+# --- receipt marks: eyes once a directive lands, a check once the overseer reads it ---
+reactions() { sk_state "[.messages.${1}[] | select(.ts == \"$2\") | (.reactions // [])[].name] | join(\",\")"; } # CHANNEL TS
+IOTA="$(sk_new_root iota)"
+sk_bind "$IOTA"
+IOTA_CH="$(sk_channel "$IOTA")"
+M1="$(sk_inject "$IOTA_CH" U001 'first note')"
+M2="$(sk_inject "$IOTA_CH" U001 'second note')"
+sk_poll "$IOTA"
+assert_eq "$RC $(reactions "$IOTA_CH" "$M1") $(reactions "$IOTA_CH" "$M2")" "0 eyes eyes" "each directive's message is marked eyes in the poll that lands it"
+sk_lm "$IOTA" inbox --item overseer --ack 1 >/dev/null
+sk_poll "$IOTA"
+assert_eq "$(reactions "$IOTA_CH" "$M1") $(reactions "$IOTA_CH" "$M2")" "white_check_mark eyes" \
+  "the directive the cursor passed swaps eyes for a check; the unread one keeps eyes"
+sk_lm "$IOTA" inbox --item overseer >/dev/null
+sk_poll "$IOTA"
+assert_eq "$(reactions "$IOTA_CH" "$M2")" "white_check_mark" "an inbox read swaps the rest"
+sk_ctl /_test/fault '{"method": "reactions.add", "error": "missing_scope"}' >/dev/null
+M3="$(sk_inject "$IOTA_CH" U001 'third note')"
+sk_poll "$IOTA"
+assert_eq "$RC=$ERR1" "0=slack: slack-api-failed=reactions.add error=missing_scope" "a mark Slack refuses is printed and fails no poll"
+assert_eq "$(text_of "$IOTA" "$IOTA_CH:$M3")|$(reactions "$IOTA_CH" "$M3")|$(jq -r "select(.t == \"mark\" and .ts == \"$M3\") | .name" "$(sk_journal "$IOTA")")" \
+  "third note||" "the directive lands unmarked and no mark is journaled"
+M4="$(sk_inject "$IOTA_CH" U001 'fourth note')"
+sk_poll "$IOTA"
+sk_lm "$IOTA" inbox --item overseer >/dev/null
+sk_ctl /_test/fault '{"method": "reactions.add", "error": "internal_error"}' >/dev/null
+sk_poll "$IOTA"
+assert_eq "$RC $(reactions "$IOTA_CH" "$M4")" "0 " "a swap whose check Slack refused leaves the message unmarked for that poll"
+sk_poll "$IOTA"
+assert_eq "$(reactions "$IOTA_CH" "$M4")" "white_check_mark" "the next poll completes the swap"
+assert_eq "$(sk_state "[.messages.${IOTA_CH}[] | select(.user == \"UBOT\")] | length")" "0" "no mark posts a message"
+sk_ctl /_test/calls-reset >/dev/null
+sk_poll "$IOTA"
+assert_eq "$(sk_state '[.calls[] | select(startswith("reactions."))] | length')" "0" "a completed swap is not made again"
+
 # --- controls, one mutant per rule ------------------------------------------------------------
 sk_mutant delivery mailbox.py '"--delivery-id", delivery_id, "--file"' '"--delivery-id", delivery_id + "." + str(os.getpid()), "--file"'
 DELTA="$(sk_new_root delta)"
@@ -465,6 +504,38 @@ sk_mutant file-mode store.py 'os\.chmod\(directory, 0o700\)' 'os.chmod(directory
 sk_inject "$ZETA_CH" U001 '' '' "\"files\": [$(sk_file F914 f.png image/png 'f')]" >/dev/null
 sk_poll "$ZETA"
 assert_eq "$(sk_mode "$ZETA_FILES")" "755" "control: the directory mode unset, the files directory is readable by others"
+sk_bin_reset
+
+sk_mutant mark-seen relay.py 'if self\.react\("reactions\.add", ts, SEEN\):' 'if False and self.react("reactions.add", ts, SEEN):'
+MC1="$(sk_inject "$ZETA_CH" U001 'mark me')"
+sk_poll "$ZETA"
+assert_eq "$(reactions "$ZETA_CH" "$MC1")" "" "control: the seen mark gone, a delivered directive carries no reaction"
+sk_bin_reset
+
+sk_mutant mark-cursor relay.py 'if self\.state\.delivered\.get\(ts\) not in read:' 'if False:'
+MC2="$(sk_inject "$ZETA_CH" U001 'unread')"
+sk_poll "$ZETA"
+assert_eq "$(reactions "$ZETA_CH" "$MC2")" "white_check_mark" "control: the cursor unread, an unread directive is marked read"
+sk_bin_reset
+
+sk_mutant mark-fatal relay.py 'print_refusal\(err\)\n                return False' 'raise err'
+sk_ctl /_test/fault '{"method": "reactions.add", "error": "missing_scope"}' >/dev/null
+sk_inject "$ZETA_CH" U001 'scope missing' >/dev/null
+sk_poll "$ZETA"
+assert_eq "$RC" "1" "control: a refused mark raised, the poll fails"
+sk_bin_reset
+
+sk_mutant mark-settled relay.py 'MARK_SETTLED = \{"already_reacted", "no_reaction", "message_not_found"\}' 'MARK_SETTLED = set()'
+KAPPA="$(sk_new_root kappa)"
+sk_bind "$KAPPA"
+KAPPA_CH="$(sk_channel "$KAPPA")"
+MC3="$(sk_inject "$KAPPA_CH" U001 'swap me')"
+sk_poll "$KAPPA"
+sk_lm "$KAPPA" inbox --item overseer >/dev/null
+sk_ctl /_test/fault '{"method": "reactions.add", "error": "internal_error"}' >/dev/null
+sk_poll "$KAPPA"
+sk_poll "$KAPPA"
+assert_eq "$(reactions "$KAPPA_CH" "$MC3")" "" "control: no Slack answer settled, a swap cut after the removal never completes"
 sk_bin_reset
 
 sk_mutant text-check relay.py 'secret_check\(text\.encode\(\), f"id=\{env_id\}"\)' 'secret_check(b"", f"id={env_id}")'

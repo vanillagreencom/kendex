@@ -260,6 +260,32 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True, "ts": params["ts"]})
         self.send_json({"ok": False, "error": "message_not_found"})
 
+    def reacted(self, params):
+        """The message a reactions call names and its reaction names, or
+        None when the channel holds no such message."""
+        for message in self.ws.messages.get(params["channel"], []):
+            if message["ts"] == params["timestamp"]:
+                return message, [r["name"] for r in message.setdefault("reactions", [])]
+        return None, []
+
+    def m_reactions_add(self, params):
+        message, names = self.reacted(params)
+        if message is None:
+            return self.send_json({"ok": False, "error": "message_not_found"})
+        if params["name"] in names:
+            return self.send_json({"ok": False, "error": "already_reacted"})
+        message["reactions"].append({"name": params["name"], "users": [BOT], "count": 1})
+        self.send_json({"ok": True})
+
+    def m_reactions_remove(self, params):
+        message, names = self.reacted(params)
+        if message is None:
+            return self.send_json({"ok": False, "error": "message_not_found"})
+        if params["name"] not in names:
+            return self.send_json({"ok": False, "error": "no_reaction"})
+        message["reactions"] = [r for r in message["reactions"] if r["name"] != params["name"]]
+        self.send_json({"ok": True})
+
     def m_files_getUploadURLExternal(self, params):
         file_id = f"F{len(self.ws.uploads) + 1:03d}"
         self.ws.uploads[file_id] = b""

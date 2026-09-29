@@ -3,8 +3,13 @@
 Each poll, per root: re-resolve the owners when the setting moved, read the
 channel's history since the journal's position, follow every parent whose
 replies moved, read every open ask's thread, every tenth poll read the other
-bound threads younger than SLACK_THREAD_DAYS, then read the mailbox's events
-and post every owner-bound envelope not yet carried.
+bound threads younger than SLACK_THREAD_DAYS, swap the receipt mark of every
+directive the overseer has read since, then read the mailbox's events and
+post every owner-bound envelope not yet carried.
+
+A directive's Slack message carries a receipt mark, a reaction and never a
+message: SEEN once it lands in the mailbox, READ once the overseer's
+to-lane.cursor passes it.
 
 A start with no journal seeds both positions before it reads anything: Slack
 from the binding moment, so a channel's earlier history is never delivered,
@@ -60,6 +65,11 @@ NOT_OWNER = "Only the channel's owners steer this session; this message is not r
 NO_TEXT = "Only text and files are routed; this message has neither."
 RECORDED = "Recorded as your answer."
 ALREADY = "This question was already answered; delivered as a directive instead."
+SEEN = "eyes"
+READ = "white_check_mark"
+# Slack's answer when the reaction is already as the call would leave it, or
+# its message is gone: nothing is left to mark.
+MARK_SETTLED = {"already_reacted", "no_reaction", "message_not_found"}
 
 
 def at_epoch(at: str) -> float:
@@ -173,6 +183,7 @@ class RootRelay:
             self.seed()
         self.read_history(bot_user)
         self.read_threads(bot_user)
+        self.mark_read()
         now = self.clock()
         touched = self.master_touched()
         if touched is not None and now - touched < self.settings.master_max_age:
@@ -266,6 +277,35 @@ class RootRelay:
             self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts, text=ALREADY)
         envelope = self.mail.send_directive(text, delivery)
         self.journal.append(t="in", channel=self.channel, ts=ts, kind="directive", id=envelope, thread=thread_ts)
+        if self.react("reactions.add", ts, SEEN):
+            self.journal.append(t="mark", ts=ts, name=SEEN)
+
+    def react(self, method: str, ts: str, name: str) -> bool:
+        """One reaction on the message at `ts`; False when Slack refused it,
+        the refusal printed. A mark is a courtesy: its failure fails no poll
+        and holds no delivery back, and a dead token still stops the relay."""
+        try:
+            self.api.post(method, channel=self.channel, timestamp=ts, name=name)
+        except Refusal as err:
+            if err.key == "slack-auth-failed":
+                raise
+            if err.error not in MARK_SETTLED:
+                print_refusal(err)
+                return False
+        return True
+
+    def mark_read(self) -> None:
+        """Swap SEEN for READ on every directive the overseer has read. A
+        swap Slack refused is made again on the next poll."""
+        seen = [ts for ts, name in self.state.marks.items() if name == SEEN]
+        if not seen:
+            return
+        read = self.mail.read_directives()
+        for ts in seen:
+            if self.state.delivered.get(ts) not in read:
+                continue
+            if self.react("reactions.remove", ts, SEEN) and self.react("reactions.add", ts, READ):
+                self.journal.append(t="mark", ts=ts, name=READ)
 
     def fetch_files(self, message: Dict) -> List[str]:
         """One line per file of an owner's message: the path it was saved
