@@ -103,14 +103,18 @@ write_stub() {
 
 # run_lines DOC MODE: run DOC's fenced lines under `set -euo pipefail` with
 # NAME as `probe`, from a fresh caller directory holding a sentinel, and judge
-# the row. TMPDIR is reached through a symlink so the resolved root differs
-# from mktemp's spelling, the case the resolution exists for.
+# the row. TMPDIR is reached through a symlink so the root GNU mktemp spells
+# differs from its resolved form, the case the resolution exists for. BSD
+# mktemp on macOS ignores TMPDIR and answers under `/var`, itself a symlink,
+# so the `real` row judges the root's parent resolved wherever mktemp put it.
 ROW=0
 # REMOVED counts rows whose caller directory did not survive; control 3 reads it.
 REMOVED=0
+# UNRESOLVED counts rows whose root was not resolved; control 5 reads it.
+UNRESOLVED=0
 run_lines() {
   local doc="$1" mode="$2" want_status="$3" want_key="$4"
-  local lines row caller stub tmpdir out err status last root
+  local lines row caller stub tmpdir out err status last root parent resolved
   ROW=$((ROW + 1))
   row="$TMP_ROOT/run-$ROW"
   caller="$row/caller"
@@ -148,10 +152,20 @@ printf 'root=%s\n' \"\$TMP_ROOT\"" >"$row/out" 2>"$row/err") || status=$?
   case "$want_key" in
     -)
       root="${out#root=}"
+      parent="${root%/*}"
       case "$root" in
-        "$tmpdir"/*) ;;
-        *) fail "$mode: root not resolved under $tmpdir" "stdout: $out"; return 0 ;;
+        /*/?*) ;;
+        *) fail "$mode: root is not an absolute path below /" "stdout: $out"; return 0 ;;
       esac
+      if ! resolved="$(cd -- "$parent" && pwd -P)"; then
+        fail "$mode: the root's parent cannot be resolved" "stdout: $out"
+        return 0
+      fi
+      if [[ $resolved != "$parent" ]]; then
+        UNRESOLVED=$((UNRESOLVED + 1))
+        fail "$mode: root not resolved, its parent resolves to $resolved" "stdout: $out"
+        return 0
+      fi
       if [[ -e $root ]]; then
         fail "$mode: the EXIT trap left the root" "$root"
         return 0
@@ -331,6 +345,21 @@ elif [ "$hits" != "$want" ]; then
   fail "control: the tree scan named the wrong lines" "got: $(printf '%s' "$hits" | tr '\n' ' ') want: $(printf '%s' "$want" | tr '\n' ' ')"
 else
   pass "control: the tree scan names each planted line in both spellings"
+fi
+
+# Control 5, the resolve line removed from the fence (control 1's mutant): the
+# `real` row must report the root not resolved, on GNU and BSD mktemp alike.
+mutant="$MUTANTS/no-resolve.md"
+before_fail="$FAIL"
+before_pass="$PASS"
+UNRESOLVED=0
+run_lines "$mutant" real 0 - >/dev/null 2>&1
+PASS="$before_pass"
+FAIL="$before_fail"
+if [ "$UNRESOLVED" -ne 1 ]; then
+  fail "control: the run judge did not report the root unresolved for a fence without the resolve line" "$mutant"
+else
+  pass "control: the run judge reports the root unresolved for a fence without the resolve line"
 fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
