@@ -115,12 +115,13 @@
 # diff being judged writes all of them, so trusting one fails open on exactly
 # the diffs that most want to pass. For the same reason the judged tree's own
 # configuration decides nothing here, and no script out of that tree is run.
-# ORCH_SIZE_RENDER_ROOTS, ORCH_SIZE_TEST_PATHS, both HARNESS_CI_TRIVIAL_*
-# settings and HARNESS_CI_QUEUE_PATHS (the repository's own queue globs,
-# blank-separated, set empty where the shipped list is the whole list) come
-# from this process's environment, else from the [env] tables of
+# ORCH_SIZE_RENDER_ROOTS, ORCH_SIZE_TEST_PATHS and both HARNESS_CI_TRIVIAL_*
+# settings come from this process's environment, else from the [env] tables of
 # kendex.settings.toml and .kendex/settings.toml, the second winning, as the
-# base endpoint's commit holds them. The private env file is never read.
+# base endpoint's commit holds them. HARNESS_CI_QUEUE_PATHS (the repository's
+# own queue globs, blank-separated, set empty where the shipped list is the
+# whole list) comes from those tables alone, never from the environment. The
+# private env file is never read.
 # A caller that acts on the verdict without review runs the DEFAULT BRANCH's
 # copy of this script against the pull request's tree; the branch can change
 # this file too.
@@ -361,7 +362,11 @@ list_globs() { # KEYWORD
 # so .kendex/settings.toml outranks kendex.settings.toml; nothing is sourced,
 # so the private env file its KENDEX_ENV_FILE names never reaches this script.
 # A key this process's environment carries keeps that value, as it does on the
-# ladder. The load runs in a subshell and hands back these keys alone.
+# ladder, save the queue list: a caller's environment is its own checkout's
+# settings, which github.sh's router exports from the working tree, so the
+# list is dropped from it and the base's alone decides. The load runs in a
+# subshell and hands back these keys alone.
+unset HARNESS_CI_QUEUE_PATHS
 BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS'
 BASE_SETTINGS_FILES='kendex.settings.toml .kendex/settings.toml'
 base_settings() {
@@ -445,7 +450,7 @@ queue_only_of_paths() {
   # HARNESS_CI_QUEUE_PATHS, and a repository that declares none, the key
   # unset, has named no list the shipped one can be judged complete against:
   # queue-only. Set, even empty, the declaration is the rest of the list.
-  if [ -z "${HARNESS_CI_QUEUE_PATHS+x}" ] && ! base_settings; then
+  if ! base_settings; then
     QUEUE_CAUSE="cause=queue-settings-unreadable"
     return
   fi

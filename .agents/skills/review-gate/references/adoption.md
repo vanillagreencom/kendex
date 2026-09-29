@@ -169,7 +169,7 @@ Concrete per-consumer values are tracked on the org adoption issue, not here. Ev
 | `REVIEW_GATE_WRITER` | `required`. `optional`, with `REVIEW_GATE_MODE = "off"`, only in a repository that runs the automatic refresh and posts no gate status. |
 | `REVIEW_GATE_STANDARD_APP`, `REVIEW_GATE_STANDARD_ENVIRONMENT`, `REVIEW_GATE_STANDARD_SECRETS` | The organization's app, app-secret environment and secret names (§ Repo-side wiring). No default. `validate-standard.sh` and `provision-environment.sh` refuse on each unset key. `validate-standard.sh --environment-only` reads the environment and secret keys only. Refresh adoption reads none of them. |
 | `REVIEW_GATE_STANDARD_CONTEXTS` | The repository's required contexts (§ Repo-side wiring). No default. `validate-standard.sh` reports an unset list as a failed `standard-required-contexts` row. Its readers and its refusals are its row in [settings.md](settings.md). |
-| `REVIEW_GATE_STANDARD_QUEUE_BYPASS`, `REVIEW_GATE_STANDARD_CHECKS_BYPASS` | The bypass actors a merge-queue-only and a checks-only ruleset admit, as `TYPE:ID:MODE` (§ Repo-side wiring). Empty admits none. Read by `validate-standard.sh` alone. |
+| `REVIEW_GATE_STANDARD_QUEUE_BYPASS`, `REVIEW_GATE_STANDARD_CHECKS_BYPASS` | The bypass actors a merge-queue-only and a checks-only ruleset admit, as `TYPE:ID:MODE` (§ Repo-side wiring). Empty admits none. Read by `validate-standard.sh`, and by `provision-environment.sh`, which refuses a malformed entry with `standard-bypass-invalid`. |
 
 ## Repair by verdict line
 

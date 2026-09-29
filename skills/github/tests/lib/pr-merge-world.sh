@@ -47,9 +47,15 @@
 #     queue_only=false, no line, a classifier that fails, or a range read
 #     that fails
 #     queue-rule:<value|absent|fail|unnamed>  a merge_queue rule on the base
-#     from ruleset 20569265, beside a required check, whose read answers
-#     current_user_can_bypass <value>, carries no such field, fails, or a
-#     merge_queue rule naming no ruleset id
+#     from ruleset 20569265, beside a required check from ruleset 24148610
+#     that answers never, whose read answers current_user_can_bypass
+#     <value>, carries no such field, fails, or a merge_queue rule naming no
+#     ruleset id; after it, queue-mixed puts a pull_request rule in the
+#     queue ruleset, other-bypass:<value> is the checks ruleset's answer, and
+#     protection:on turns classic branch protection on, protection:unknown
+#     answers a protection object with no enabled field
+#     queue-two:<a>,<b>  two merge_queue rulesets, 20569265 answering <a> and
+#     20569266 answering <b>, beside the checks ruleset answering never
 #     env:NAME=value  the caller's environment
 #   argv   check | auto | immediate | with:<flag+flag> (the flags alone,
 #          `+` a space, no --keep-branch) | mutant:<name>:<flag+flag> (the
@@ -63,7 +69,11 @@
 #          pr-merge.test.sh builds as $MIRROR) | immediate-classless (the
 #          immediate merge from that suite's mirror with no harness-ci
 #          sibling, $CLASSLESS_PR_MERGE, on $CLASSLESS_PATH, which holds no
-#          change-class)
+#          change-class) | auto-unless-admin (--auto --unless-admin, the arm
+#          at creation) | auto-unless-admin-classified (the same, from
+#          $MIRROR) | route-mutant:<name> | auto-route-mutant:<name> (the
+#          immediate merge, or the arm at creation, from the copy mutant_copy
+#          built as <name>, with the classifier stub beside it)
 #   out    check: `merge=<bool> transient=<bool> state=<S> mergeable=<M>
 #          at=<mergedAt|-> runs=<ids|-> issues=[a;b] warnings=[c]
 #          keys=[<the JSON's keys>]`; otherwise stdout, `-` when empty
@@ -218,10 +228,17 @@ word() {
     route:true) W_ENV+=("STUB_CLASS=standard" "STUB_QUEUE_LINE=$QUEUE_TRUE" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     route:false) W_ENV+=("STUB_CLASS=standard" "STUB_QUEUE_LINE=$QUEUE_FALSE" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     # The base's merge_queue rule and the answer its ruleset read gives.
-    queue-rule:unnamed) W_ENV+=("STUB_GATE_RULES=$(jq -c '[.[] | del(.ruleset_id)]' <<<"$QUEUE_RULES")") ;;
+    queue-rule:unnamed) W_ENV+=("STUB_GATE_RULES=$(jq -c '[.[] | if .type == "merge_queue" then del(.ruleset_id) else . end]' <<<"$QUEUE_RULES")" "$CHECKS_NEVER") ;;
     queue-rule:fail) W_ENV+=("STUB_GATE_RULES=$QUEUE_RULES" "STUB_RULESET_EXIT=1") ;;
-    queue-rule:absent) W_ENV+=("STUB_GATE_RULES=$QUEUE_RULES" 'STUB_RULESET_JSON={"id":20569265}') ;;
-    queue-rule:*) W_ENV+=("STUB_GATE_RULES=$QUEUE_RULES" "STUB_RULESET_JSON={\"id\":20569265,\"current_user_can_bypass\":\"$v\"}") ;;
+    queue-rule:absent) W_ENV+=("STUB_GATE_RULES=$QUEUE_RULES" 'STUB_RULESET_JSON_20569265={"id":20569265}' "$CHECKS_NEVER") ;;
+    queue-rule:*) W_ENV+=("STUB_GATE_RULES=$QUEUE_RULES" "$(ruleset_answer 20569265 "$v")" "$CHECKS_NEVER") ;;
+    queue-mixed) W_ENV+=("STUB_GATE_RULES=$(jq -c '. + [{type: "pull_request", ruleset_id: 20569265}]' <<<"$QUEUE_RULES")") ;;
+    other-bypass:absent) W_ENV+=('STUB_RULESET_JSON_24148610={"id":24148610}') ;;
+    other-bypass:*) W_ENV+=("$(ruleset_answer 24148610 "$v")") ;;
+    protection:on) W_ENV+=('STUB_CLASSIC_JSON={"protection":{"enabled":true,"required_status_checks":{"contexts":[],"checks":[]}}}') ;;
+    protection:unknown) W_ENV+=('STUB_CLASSIC_JSON={"protection":{"required_status_checks":{"contexts":[],"checks":[]}}}') ;;
+    queue-two:*) W_ENV+=("STUB_GATE_RULES=$(jq -c '[.[0], (.[0] | .ruleset_id = 20569266)] + .[1:]' <<<"$QUEUE_RULES")" \
+      "$(ruleset_answer 20569265 "${v%,*}")" "$(ruleset_answer 20569266 "${v#*,}")" "$CHECKS_NEVER") ;;
     post-graphql:partial) W_ENV+=("STUB_POST_GRAPHQL_PARTIAL=true") ;;
     cwd:*) RUN_DIR="$TMPDIR/settings-$v" ;;
     env:*) W_ENV+=("$v") ;;
@@ -263,6 +280,10 @@ argv_for() {
     admin) printf '%s\n' "$PR_MERGE" 123 --admin --keep-branch ;;
     expected:*) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch --expected-head "${1#expected:}" ;;
     auto-mutant:*) printf '%s\n' "$TMPDIR/${1#auto-mutant:}/skills/github/scripts/commands/pr-merge.sh" 123 --auto --keep-branch ;;
+    auto-unless-admin) printf '%s\n' "$PR_MERGE" 123 --auto --unless-admin --keep-branch ;;
+    auto-unless-admin-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --unless-admin --keep-branch ;;
+    route-mutant:*) printf '%s\n' "$TMPDIR/${1#route-mutant:}/skills/github/scripts/commands/pr-merge.sh" 123 --keep-branch ;;
+    auto-route-mutant:*) printf '%s\n' "$TMPDIR/${1#auto-route-mutant:}/skills/github/scripts/commands/pr-merge.sh" 123 --auto --unless-admin --keep-branch ;;
     admin-credential) printf '%s\n' "$PR_MERGE" 123 --admin-credential --keep-branch ;;
     router-in:*) printf '%s\n' "$GITHUB" -C "$TMPDIR/settings-${1#router-in:}" pr-merge 123 --auto --keep-branch ;;
     router:*) printf '%s\n' "$GITHUB" -C "$REPO" pr-merge 123 "${1#router:}" --keep-branch ;;
@@ -391,9 +412,14 @@ err_macro() {
     # names the why.
     route-queue:*) printf '%s The merge call passes no --admin.' "$(err_macro "route-why:${1#route-queue:}")" ;;
     route-why:rules) printf "The base branch's rules could not be read, so no bypass is proven." ;;
-    route-why:unnamed) printf 'A merge_queue rule on the base branch names no ruleset id (null).' ;;
-    route-why:ruleset) printf 'The merge-queue ruleset could not be read, so no bypass is proven.' ;;
+    route-why:unnamed) printf 'A merge_queue rule on the base branch names no ruleset, so no bypass is proven.' ;;
+    route-why:ruleset) printf 'The ruleset could not be read, so no bypass is proven.' ;;
     route-why:no-bypass) printf 'This token may not bypass the merge-queue ruleset.' ;;
+    route-why:mixed) printf 'The merge-queue ruleset holds another rule, which --admin would skip too.' ;;
+    route-why:other-bypass) printf 'This token may bypass another ruleset on the base, which --admin would skip too.' ;;
+    route-why:classic) printf 'The base branch has classic branch protection, which --admin would skip too.' ;;
+    route-why:protection) printf "The base branch's classic protection could not be read, so no bypass is proven." ;;
+    arm-admin) printf 'Nothing armed: the immediate merge takes this PR past the queue once its gates pass, and an arm now would queue it first.' ;;
     route-why:queue-only) printf 'A queue-only change runs in a merge group before it lands.' ;;
     auto-remedy) printf 'Nothing mutated. Enable auto-merge on the repository.' ;;
     approval-remedy) printf "Nothing mutated. No ruleset on the base branch requires an approval, so GitHub would merge the armed PR before review\\; require at least 1 approval, thread resolution and stale-approval dismissal in its pull_request rule." ;;
@@ -445,6 +471,12 @@ KEYS="keys=[can_merge,issues,warnings,mergeable,review,transient,state,merged_at
 # The classifier's queue-only lines, as harness-ci's change-class prints them.
 QUEUE_TRUE="queue_only=true cause=queue-path path=.github/workflows/ci.yml glob=.github/workflows/*"
 QUEUE_FALSE="queue_only=false cause=no-queue-path"
-# The base's rules: a merge_queue rule from ruleset 20569265 beside a required
-# check and the default world's pull_request rule.
-QUEUE_RULES='[{"type":"merge_queue","ruleset_id":20569265,"parameters":{"merge_method":"SQUASH"}},{"type":"required_status_checks"},{"type":"pull_request","parameters":{"required_approving_review_count":1,"required_review_thread_resolution":true,"dismiss_stale_reviews_on_push":true}}]'
+# The base's rules: a merge_queue rule from ruleset 20569265, and a required
+# check and the default world's pull_request rule from ruleset 24148610, and
+# the answer of that checks ruleset for a token that may not bypass it.
+QUEUE_RULES='[{"type":"merge_queue","ruleset_id":20569265,"parameters":{"merge_method":"SQUASH"}},{"type":"required_status_checks","ruleset_id":24148610},{"type":"pull_request","ruleset_id":24148610,"parameters":{"required_approving_review_count":1,"required_review_thread_resolution":true,"dismiss_stale_reviews_on_push":true}}]'
+CHECKS_NEVER='STUB_RULESET_JSON_24148610={"id":24148610,"current_user_can_bypass":"never"}'
+# The environment word for a ruleset read answering current_user_can_bypass.
+ruleset_answer() { # ID VALUE
+  printf 'STUB_RULESET_JSON_%s={"id":%s,"current_user_can_bypass":"%s"}' "$1" "$1" "$2"
+}

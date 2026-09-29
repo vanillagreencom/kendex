@@ -46,6 +46,10 @@ Options:
                    threads below.
   --expected-head SHA
                    Bind GitHub's match-head merge guard to prepared SHA.
+  --unless-admin   With --auto only: read the merge route first (see Merge
+                   route), and where it reads admin, arm nothing. The arm
+                   right after a PR opens passes it, so a PR the immediate
+                   merge takes past the queue is left unarmed for it.
   --dry-run        Show what would happen without merging
 
 Modes:
@@ -64,6 +68,9 @@ Merge-mode exit codes:
        Classic auto-merge is armed until protection clears.
   1    BLOCKED PR #N
        The requested operation failed; a pre-existing queue entry or auto-merge request may remain active.
+  1    merge-route: admin ruleset=<ids> bypass=<values>
+       --auto --unless-admin armed nothing: the immediate merge takes this PR
+       past the queue, and an arm would queue it first.
   1    arm: no-merge-gate=<allow_auto_merge|required_approval|required_thread_resolution|dismiss_stale_reviews|unverified> repo=<owner/repo>
        --auto refused, nothing mutated. allow_auto_merge: the repository has
        auto-merge off. required_approval: no ruleset on the base branch
@@ -117,36 +124,47 @@ Approvals and review threads:
 Merge route:
   The immediate merge takes one of two routes past a merge queue, and reads
   which before its merge call, under the merge's own token, since GitHub
-  answers the bypass question per caller. It reads the base branch's rules,
-  takes each ruleset holding a merge_queue rule, and reads that ruleset's
-  current_user_can_bypass. It names the route on stderr, ahead of the merge
-  call:
+  answers the bypass question per caller. GitHub applies --admin to every
+  rule the token may bypass, not to the queue alone, so the route reads the
+  base branch's rules and each ruleset they name, current_user_can_bypass
+  included, and the branch's classic protection. It names the route on
+  stderr, ahead of the merge call:
 
     merge-route: admin ruleset=<ids> bypass=<values>
-        Every such ruleset answers always, pull_requests_only or exempt,
-        and the PR is not queue-only. The merge call adds --admin, bound to
-        the verified head by --match-head-commit, and exits 0 once merged.
-        --admin skips only what this token may bypass: GitHub still refuses
-        the merge unless every ruleset it cannot bypass, the required checks,
-        thread resolution and approvals among them, passes on that head. The
-        next line is the classifier's queue-only line.
-    merge-route: queue cause=<cause> [ruleset=<id>] [bypass=<value>]
+        Every ruleset holding a merge_queue rule holds no other rule and
+        answers always, pull_requests_only or exempt; every other ruleset on
+        the base answers never; the base has no classic protection; and the
+        PR is not queue-only. The merge call adds --admin, bound to the
+        verified head by --match-head-commit, and exits 0 once merged. So the
+        queue is all --admin skips: GitHub still refuses the merge unless
+        every other ruleset, the required checks, thread resolution and
+        approvals among them, passes on that head. ids and values name the
+        merge-queue rulesets, comma-joined. The next line is the
+        classifier's queue-only line.
+    merge-route: queue cause=<cause> [ruleset=<id>] [rule=<type>] [bypass=<value>]
         The merge call passes no --admin, so GitHub enrolls the PR in the
         queue (exit 75). cause is rules-unreadable (the base branch's rules
-        could not be read), ruleset-unreadable (that ruleset could not be
-        read), no-bypass (that ruleset answered another value for this
-        token, named as bypass=) or queue-only (the next lines are the
+        could not be read, or a rule names no ruleset), ruleset-unreadable
+        (that ruleset could not be read), queue-ruleset-mixed (that
+        merge-queue ruleset also holds the rule named as rule=), no-bypass
+        (that merge-queue ruleset answered another value for this token,
+        named as bypass=), other-bypass (that ruleset without the queue
+        answered a value other than never), classic-protection (the base has
+        classic branch protection), protection-unreadable (the branch's
+        protection could not be read) or queue-only (the next lines are the
         classifier's queue-only line or the cause it was not read, and its
         diagnostics).
 
   A base whose rules hold no merge_queue rule prints no route line: there is
   no queue to bypass, and the merge call is the plain one. --auto, --check
-  and --dry-run read no route and never pass --admin, so the arm at creation
-  never merges past review.
+  and --dry-run never pass --admin. Of them only --auto with --unless-admin,
+  the arm at creation, reads the route: where it reads
+  admin, the arm arms nothing and exits 1 on the admin line above, so the
+  immediate merge keeps that route; otherwise it arms.
 
-  The queue-only class is read only once every queue ruleset answers a
-  bypass, from <skills>/harness-ci/scripts/change-class, else change-class
-  on PATH, over the PR's base and head. The classifier takes a merge-base
+  The queue-only class is read only once the rulesets and the protection
+  allow the admin route, from <skills>/harness-ci/scripts/change-class, else
+  change-class on PATH, over the PR's base and head. The classifier takes a merge-base
   diff, so both commits AND an ancestor they share must be in this
   checkout, and baseRefOid is the base branch's current tip: the two SHAs
   are fetched from origin (no tags, no FETCH_HEAD rewrite) when the range is
@@ -789,52 +807,84 @@ BYPASS_VALUES=" always pull_requests_only exempt "
 
 # The immediate merge's route past the base branch's merge queue, read under
 # the merge's own token and named on stderr: MERGE_ROUTE is admin, queue, or
-# plain where no ruleset on the base holds a merge_queue rule. Any read that
+# plain where no ruleset on the base holds a merge_queue rule. GitHub applies
+# --admin to every rule the token may bypass, not to the queue alone, so the
+# admin route needs the queue to be all it skips: each merge-queue ruleset
+# holds that one rule and answers a bypass, every other ruleset on the base
+# answers never, and the base has no classic branch protection. Any read that
 # fails is the queue, never the admin route: the queue is the route GitHub
 # takes when --admin is absent, so a failure costs a queue wait, not a merge
-# past a gate. The queue-only class is read last, and only where every queue
-# ruleset answers a bypass.
+# past a gate. The queue-only class is read last, and only where the rulesets
+# and the protection allow the admin route.
 MERGE_ROUTE=""
 route_queue() { # FIELDS WHY
     echo "merge-route: queue $1" >&2
     echo "  $2 The merge call passes no --admin." >&2
 }
 merge_route() { # PR TOKEN
-    local pr_num="$1" token="$2" base ids id bypass bypasses="" rulesets=""
+    local pr_num="$1" token="$2" base rules queue_ids ids id bypass bypasses="" rulesets="" unnamed mixed enabled
     MERGE_ROUTE=queue
     if ! base=$(with_token "$token" gh pr view "$pr_num" --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$base" ] \
         || ! base=$(jq -nr --arg v "$base" '$v | @uri') \
-        || ! ids=$(with_token "$token" gh api "repos/{owner}/{repo}/rules/branches/$base" --paginate \
-            --jq '[.[] | select(.type == "merge_queue") | .ruleset_id] | unique | .[] | tostring' 2>/dev/null); then
+        || ! rules=$(with_token "$token" gh api "repos/{owner}/{repo}/rules/branches/$base" --paginate \
+            --jq '.[] | "\(.ruleset_id // "-") \(.type)"' 2>/dev/null) \
+        || ! queue_ids=$(awk '$2 == "merge_queue" && !seen[$1]++ { print $1 }' <<<"$rules") \
+        || ! unnamed=$(awk '$1 !~ /^[0-9]+$/ { print $2; exit }' <<<"$rules") \
+        || ! mixed=$(awk '$2 == "merge_queue" { queue[$1] = 1 } { rule[NR] = $0 }
+            END { for (i = 1; i <= NR; i++) { split(rule[i], f, " "); if ((f[1] in queue) && f[2] != "merge_queue") { print rule[i]; exit } } }' <<<"$rules") \
+        || ! ids=$(awk '!seen[$1]++ { print $1 }' <<<"$rules"); then
         route_queue "cause=rules-unreadable" "The base branch's rules could not be read, so no bypass is proven."
         return 0
     fi
-    if [ -z "$ids" ]; then
+    if [ -z "$queue_ids" ]; then
         MERGE_ROUTE=plain
         return 0
     fi
+    if [ -n "$unnamed" ]; then
+        route_queue "cause=rules-unreadable" "A $unnamed rule on the base branch names no ruleset, so no bypass is proven."
+        return 0
+    fi
+    if [ -n "$mixed" ]; then
+        route_queue "cause=queue-ruleset-mixed ruleset=${mixed%% *} rule=${mixed#* }" "The merge-queue ruleset holds another rule, which --admin would skip too."
+        return 0
+    fi
     while IFS= read -r id; do
-        case "$id" in
-        '' | *[!0-9]*)
-            route_queue "cause=rules-unreadable" "A merge_queue rule on the base branch names no ruleset id ($id)."
-            return 0
-            ;;
-        esac
         if ! bypass=$(with_token "$token" gh api "repos/{owner}/{repo}/rulesets/$id" --jq '.current_user_can_bypass // "absent"' 2>/dev/null) \
             || [ -z "$bypass" ]; then
-            route_queue "cause=ruleset-unreadable ruleset=$id" "The merge-queue ruleset could not be read, so no bypass is proven."
+            route_queue "cause=ruleset-unreadable ruleset=$id" "The ruleset could not be read, so no bypass is proven."
             return 0
         fi
-        case "$BYPASS_VALUES" in
-        *" $bypass "*) ;;
-        *)
-            route_queue "cause=no-bypass ruleset=$id bypass=$bypass" "This token may not bypass the merge-queue ruleset."
+        if grep -qxF -- "$id" <<<"$queue_ids"; then
+            case "$BYPASS_VALUES" in
+            *" $bypass "*) ;;
+            *)
+                route_queue "cause=no-bypass ruleset=$id bypass=$bypass" "This token may not bypass the merge-queue ruleset."
+                return 0
+                ;;
+            esac
+            rulesets="${rulesets:+$rulesets,}$id"
+            bypasses="${bypasses:+$bypasses,}$bypass"
+        elif [ "$bypass" != never ]; then
+            route_queue "cause=other-bypass ruleset=$id bypass=$bypass" "This token may bypass another ruleset on the base, which --admin would skip too."
             return 0
-            ;;
-        esac
-        rulesets="${rulesets:+$rulesets,}$id"
-        bypasses="${bypasses:+$bypasses,}$bypass"
+        fi
     done <<<"$ids"
+    # The branch object's protection.enabled is classic protection alone:
+    # rulesets set its protected field, never this one.
+    if ! enabled=$(with_token "$token" gh api "repos/{owner}/{repo}/branches/$base" --jq '.protection.enabled' 2>/dev/null); then
+        enabled=unreadable
+    fi
+    case "$enabled" in
+    false) ;;
+    true)
+        route_queue "cause=classic-protection" "The base branch has classic branch protection, which --admin would skip too."
+        return 0
+        ;;
+    *)
+        route_queue "cause=protection-unreadable" "The base branch's classic protection could not be read, so no bypass is proven."
+        return 0
+        ;;
+    esac
     read_queue_only "$pr_num"
     if [ "$QUEUE_ONLY" = true ]; then
         route_queue "cause=queue-only" "A queue-only change runs in a merge group before it lands."
@@ -905,7 +955,7 @@ read_queue_only() { # PR
 main() {
     local pr_num="" delete_branch=false
     local -a accepted=()
-    local check_only=false dry_run=false auto=false supplied_head=""
+    local check_only=false dry_run=false auto=false supplied_head="" unless_admin=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -930,6 +980,10 @@ main() {
             shift
             ;;
         --expected-head) supplied_head="${2:-}"; shift 2 ;;
+        --unless-admin)
+            unless_admin=true
+            shift
+            ;;
         --dry-run)
             dry_run=true
             shift
@@ -955,6 +1009,9 @@ main() {
     fi
     if [ -n "$supplied_head" ] && ! [[ "$supplied_head" =~ ^[0-9a-fA-F]{40}$ ]]; then
         echo "Error: --expected-head must be a 40-character commit SHA" >&2; exit 1
+    fi
+    if [ "$unless_admin" = true ] && [ "$auto" != true ]; then
+        echo "Error: --unless-admin gates the --auto arm and needs --auto" >&2; exit 1
     fi
 
     if [ "$check_only" = true ]; then
@@ -1052,11 +1109,18 @@ main() {
 
     # The route is read-only and the last step before the mutation: every
     # refusal above has had its say, and the head is the one the merge is
-    # pinned to.
+    # pinned to. The arm at creation, the one --auto that passes
+    # --unless-admin, reads it too: an arm there would queue a PR the
+    # immediate merge takes past the queue, and GitHub enqueues an armed PR
+    # the moment its checks pass.
     local route=plain
-    if [ "$auto" != true ]; then
+    if [ "$auto" != true ] || [ "$unless_admin" = true ]; then
         merge_route "$pr_num" "$token"
         route="$MERGE_ROUTE"
+    fi
+    if [ "$auto" = true ] && [ "$route" = admin ]; then
+        echo "  Nothing armed: the immediate merge takes this PR past the queue once its gates pass, and an arm now would queue it first." >&2
+        exit 1
     fi
 
     local -a cmd=(pr merge "$pr_num" "--$method" --match-head-commit "$expected_head")

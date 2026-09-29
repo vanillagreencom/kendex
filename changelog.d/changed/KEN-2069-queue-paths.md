@@ -1,1 +1,1 @@
-- **Breaking:** harness-ci reads every change as queue-only until `[env]` sets `HARNESS_CI_QUEUE_PATHS`, the repository's own CI inputs outside `.github/`; set it empty for none.
+- **Breaking:** harness-ci reads every change as queue-only until the base commit's `[env]` sets `HARNESS_CI_QUEUE_PATHS`; set it empty for none.

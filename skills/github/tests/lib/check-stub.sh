@@ -7,8 +7,8 @@
 # and STUB_STATE_FAIL_ONCE, a marker path the first lookup of a run creates;
 # the branch-rule reads' failures through STUB_RULES_EXIT, narrowed by
 # STUB_RULES_EXIT_JQ to the reads whose --jq filter holds that text, and
-# STUB_BRANCH_EXIT; a ruleset read's answer through STUB_RULESET_JSON and its
-# failure through STUB_RULESET_EXIT). STUB_POST_GRAPHQL_PARTIAL makes the
+# STUB_BRANCH_EXIT; a ruleset read's answer through STUB_RULESET_JSON_<id>,
+# per ruleset id, and its failure through STUB_RULESET_EXIT). STUB_POST_GRAPHQL_PARTIAL makes the
 # post-merge read a GraphQL 200 carrying an errors array beside data, and
 # STUB_POST_VIEW_FAIL fails its pr-view fallback. STUB_BASE_OID is the base end of the pull
 # request's range, whose head end is STUB_HEAD, and STUB_RANGE_FAIL fails that
@@ -105,7 +105,7 @@ case "${1:-}" in
         # A slash after branches/ is an unencoded branch name: no answer.
         rules='[{"type":"required_status_checks"},{"type":"pull_request","parameters":{"required_approving_review_count":1,"required_review_thread_resolution":true,"dismiss_stale_reviews_on_push":true}}]'
         [[ -z "${STUB_GATE_RULES:-}" ]] || rules="$STUB_GATE_RULES"
-        classic='{"protection":{"required_status_checks":{"contexts":[],"checks":[]}}}'
+        classic='{"protection":{"enabled":false,"required_status_checks":{"contexts":[],"checks":[]}}}'
         [[ -z "${STUB_CLASSIC_JSON:-}" ]] || classic="$STUB_CLASSIC_JSON"
         jq_filter=""
         prev=""
@@ -141,8 +141,9 @@ case "${1:-}" in
                     echo "missing effective token for the ruleset read" >&2
                     exit 41
                 fi
+                ruleset_var="STUB_RULESET_JSON_${2##*/}"
                 ruleset='{}'
-                [[ -z "${STUB_RULESET_JSON:-}" ]] || ruleset="$STUB_RULESET_JSON"
+                [[ -z "${!ruleset_var:-}" ]] || ruleset="${!ruleset_var}"
                 jq -r "$jq_filter" <<<"$ruleset"
                 exit 0
                 ;;
@@ -184,13 +185,14 @@ case "${1:-}" in
                 exit 0
                 ;;
             # The required-context read takes the whole branch object and
-            # filters in-shell.
+            # filters in-shell; the merge route's classic-protection read
+            # filters with --jq.
             'repos/{owner}/{repo}/branches/'*)
                 if [[ "${STUB_BRANCH_EXIT:-0}" != "0" ]]; then
                     echo "gh: Not Found (HTTP 404)" >&2
                     exit "$STUB_BRANCH_EXIT"
                 fi
-                printf '%s\n' "$classic"
+                if [[ -n "$jq_filter" ]]; then jq -r "$jq_filter" <<<"$classic"; else printf '%s\n' "$classic"; fi
                 exit 0
                 ;;
         esac

@@ -51,6 +51,10 @@ be set and non-empty:
   REVIEW_GATE_STANDARD_APP          the app installed on every repository
   REVIEW_GATE_STANDARD_ENVIRONMENT  the environment's name
   REVIEW_GATE_STANDARD_SECRETS      its secret names, `;`-separated
+It also reads REVIEW_GATE_STANDARD_QUEUE_BYPASS and
+REVIEW_GATE_STANDARD_CHECKS_BYPASS, the bypass actors validate-standard.sh
+admits, and refuses an entry that is not TYPE:ID:MODE with
+standard-bypass-invalid (exit 2).
 ORG must have that app installed on all of its repositories, the
 installation validate-standard.sh's standard-app row requires; any other
 installation is refused, since this command cannot list a selection. The repository list must hold as many repositories,
@@ -112,7 +116,7 @@ Exit codes:
   1  at least one repository failed; the others were still provisioned
   2  nothing was attempted (bad arguments, a missing secret value, jq
      missing, a missing or malformed standard.json, a standard setting
-     unset or empty, the installation, the organization or the
+     unset or empty, a malformed bypass entry, the installation, the organization or the
      repositories could not be read, the app not installed on all
      repositories, a repository list shorter than the organization's
      count, or no repository that is not archived)

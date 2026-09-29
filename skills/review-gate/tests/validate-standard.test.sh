@@ -460,6 +460,27 @@ if [ "$RC" -eq 0 ] && [ "$OUT" = "$ENV_BASELINE" ]; then
 else
   bad "environment-only with unreadable contexts (rc=$RC)" "$RAW"
 fi
+# The environment scope reads neither bypass key: a consumer whose queue
+# bypass entry is malformed still validates its environment, as adopt-refresh
+# runs it. The control reads the provision scope's keys in every scope, and
+# the same consumer is refused on the entry.
+CONSUMER="$TMP/consumer-bad-bypass"
+run "$ENV_BASE" '' --environment-only
+if [ "$RC" -eq 0 ] && [ "$OUT" = "$ENV_BASELINE" ] && ! grep -q 'standard-bypass-invalid' <<<"$RAW"; then
+  ok 'environment-only reads no bypass key: a malformed entry refuses nothing'
+else
+  bad "environment-only on a malformed bypass entry (rc=$RC)" "$RAW"
+fi
+cp "$SKILL/scripts/lib/standard.sh" "$TMP/standard-scope.keep"
+file_edit "$SKILL" scripts/lib/standard.sh 1 '^  if \[ "\$2" != environment \]; then$' 's/^  if \[ "\$2" != environment \]; then$/  if true; then/'
+run "$ENV_BASE" '' --environment-only
+if [ "$RC" -eq 2 ] && grep -q '^review-gate-error=standard-bypass-invalid ' <<<"$RAW"; then
+  ok 'control: the provision scope read in every scope refuses the environment run on the entry'
+else
+  bad "control: bypass keys in every scope (rc=$RC)" "$RAW"
+fi
+cp "$TMP/standard-scope.keep" "$SKILL/scripts/lib/standard.sh"
+CONSUMER="$TMP/consumer-full"
 
 while IFS='~' read -r name fail file edit overrides; do
   [ -n "$name" ] || continue

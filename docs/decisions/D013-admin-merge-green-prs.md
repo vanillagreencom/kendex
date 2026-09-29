@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-28
 
-**Status**: Active (the by-hand merge of item 2 → D015)
+**Status**: Active (item 1's zero-bypass required-checks ruleset and the by-hand merge of item 2 → D015)
 
 **Research**: —
 
