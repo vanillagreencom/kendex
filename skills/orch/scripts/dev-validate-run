@@ -62,7 +62,8 @@
 #       session escapes, as under setsid. --stop ends an attached run by its
 #       group. The child forks through the github skill's group-leader
 #       prefix: an install without that skill beside orch is refused as
-#       group-leader-missing before the run starts.
+#       group-leader-missing, and a host without perl, which that prefix
+#       runs, as missing-command commands=perl, both before the run starts.
 #   dev-validate-run --wait --run-dir PATH [--budget SECS]
 #       Poll a run the start path already launched. Claude Code's foreground
 #       poll, repeated while it exits 3.
@@ -215,7 +216,7 @@ die() {
       ancestry-unreadable) printf 'Git could not say whether the base is on the branch.\n' ;;
       unreadable-setting) printf 'The setting could not be read.\n' ;;
       invalid-seconds) printf 'The value must be a whole number of seconds above zero.\n' ;;
-      missing-command) printf 'Install it: without it the run carries no bound and no waiter can end.\n' ;;
+      missing-command) printf 'Install it: the run needs it, so no run was started.\n' ;;
       group-leader-missing) printf 'Install the github skill beside orch: --attached starts its run through that skill'\''s process-group leader prefix.\n' ;;
       no-run) printf 'Start a run with --worktree before polling it.\n' ;;
       sentinel-unreadable) printf 'The sentinel does not carry a guard-exit value.\n' ;;

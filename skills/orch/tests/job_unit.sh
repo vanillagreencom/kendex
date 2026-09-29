@@ -130,6 +130,24 @@ rm -rf -- "${TMP_ROOT:?}/mutants/no-leader-refusal/github"
 assert_eq "$(attach_state "$MUTANT" attached-lone-unrefused | cut -d'|' -f3)" "runner=attached;line=runner=attached;" \
   "control: without that refusal the start goes ahead with no prefix and writes its record"
 
+# A host with no perl cannot run the prefix: attach refuses by name, and
+# neither records nor runs anything.
+NO_PERL="$TMP_ROOT/no-perl"
+mkdir -p "$NO_PERL"
+for name in bash mv; do
+  ln -sf "$(command -v "$name")" "$NO_PERL/$name"
+done
+no_perl_attach() { # SCRIPT NAME — exit, stderr and whether a record was written
+  local record="$TMP_ROOT/$2.record"
+  run env PATH="$NO_PERL" "$1" attach "$record" -- /bin/true
+  printf '%s|%s|%s' "$RC" "$ERR" "$([[ -f "$record" ]] && echo recorded || echo unrecorded)"
+}
+assert_eq "$(no_perl_attach "$JOB_UNIT" attached-no-perl)" "2|job-unit: missing-command commands=perl|unrecorded" \
+  "attach on a host with no perl exits 2 as missing-command naming perl and starts nothing"
+mutant no-perl-refusal 'command -v perl >/dev/null 2>&1 || { job_unit_fail missing-command commands=perl 2; return; }' ':'
+assert_eq "$(no_perl_attach "$MUTANT" attached-no-perl-unrefused | cut -d'|' -f1,3)" "0|recorded" \
+  "control: without that refusal the start exits 0 and records a job that never ran"
+
 # --- The unit name shape ---------------------------------------------------------
 # name|pid|unit name
 NAME_ROWS=(

@@ -69,8 +69,8 @@
 #       external program and the host needs perl.
 #       Exit 0 the job ran and ended, whatever its own status; 1 RECORD could
 #       not be written (record-unwritable), and nothing started; 2 that
-#       prefix's lib is not beside this skill (group-leader-missing), and
-#       nothing started; 3 usage.
+#       prefix's lib is not beside this skill (group-leader-missing) or no
+#       perl is installed (missing-command), and nothing started; 3 usage.
 #   job-unit.sh end RECORD LEADER_PID
 #       The job's own last call. Under setsid or attached, tear down the
 #       process group LEADER_PID leads, the caller being a member; under a
@@ -335,6 +335,9 @@ job_unit_attach() { # RECORD -- ARGV...
   lib="${self%/*}/../../../github/scripts/lib/group-leader.sh"
   # shellcheck source=../../../github/scripts/lib/group-leader.sh
   source "$lib" 2>/dev/null || { job_unit_fail group-leader-missing "path=$lib" 2; return; }
+  # The prefix runs perl; without it the fork would fail after the record
+  # names a started job, and the caller would wait on a job that never ran.
+  command -v perl >/dev/null 2>&1 || { job_unit_fail missing-command commands=perl 2; return; }
   JOB_UNIT_RUNNER=attached
   JOB_UNIT_NAME=""
   JOB_UNIT_LINE="runner=attached"
