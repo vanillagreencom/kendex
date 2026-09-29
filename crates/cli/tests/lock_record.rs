@@ -22,6 +22,14 @@
 //! of a repository whose default branch is `develop` is listed and opened
 //! against `main`, and with the arm's method pinned to `--squash` a
 //! repository allowing merge commits alone is armed with `--squash`.
+//! The arm's head read: with the arm made at once, with no read, a head
+//! GitHub shows on the second read ends the run on the stub's head-mismatch
+//! refusal, the failure the read prevents; with the arm made whatever the
+//! reads answered, a head GitHub never shows arms against it and fails the
+//! same way; with the stand-down's arm made without the read, the stand-down
+//! behind a lagging head fails the same way; with a read gh fails taken as
+//! a lagging head, that row exits 0 unarmed; and with the pull request's
+//! title and body left alone on an update, the push over it reddens.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -118,12 +126,21 @@ fn at(log: &str, needle: &str) -> usize {
         .unwrap_or_else(|| panic!("{needle:?} is not in the gh log:\n{log}"))
 }
 
+/// A head GitHub shows on the pull request while it has not caught up to
+/// the push.
+const STALE_HEAD: &str = "0000000000000000000000000000000000000000";
+
 /// The `gh` stub. `pr list` prints the open pull request's number and node
 /// id from `state/open` or nothing; `pr create` writes that file from the
-/// `state/next` counter and prints a URL; `pr merge` writes `state/armed`;
-/// `api graphql` answers the arming and queue read from `state/armed` and
+/// `state/next` counter and prints a URL; `pr edit` answers as GitHub does;
+/// `pr view` answers the pull request's head as the origin's rolling branch
+/// holds it, or `STALE_HEAD` while the `state/lag` count of reads GitHub has
+/// not caught up in lasts, spending one per read; `pr merge` refuses with
+/// GitHub's head-mismatch error while that count lasts, as GitHub refuses an
+/// arm matched against a head it does not show yet, and otherwise writes
+/// `state/armed`; `api graphql` answers the arming and queue read from `state/armed` and
 /// `state/queued` and removes each for its mutation. `GH_FAIL` names the
-/// one call that fails: `list` or `state` exit 1, and `disarm` or `dequeue`
+/// one call that fails: `list`, `state` or `view` exit 1, and `disarm` or `dequeue`
 /// answer their mutation with an `errors` body and exit 0, as GitHub
 /// reports a mutation it refused. The repository reads answer what the
 /// github skill's filters would print: `repo view` names `acme/widgets`,
@@ -155,7 +172,21 @@ case \"$1 $2\" in
     n=$(cat \"$GH_STATE/next\")
     printf '%s\\n' \"$n\" > \"$GH_STATE/open\"; printf '%s\\n' $((n + 1)) > \"$GH_STATE/next\"
     printf 'https://example.test/pull/%s\\n' \"$n\"; exit 0 ;;
-  'pr merge') : > \"$GH_STATE/armed\"; exit 0 ;;
+  'pr edit') exit 0 ;;
+  'pr view')
+    [ \"$GH_FAIL\" != view ] || { echo 'gh stub: view refused' >&2; exit 1; }
+    lag=$(cat \"$GH_STATE/lag\" 2>/dev/null || echo 0)
+    if [ \"$lag\" -gt 0 ]; then
+      printf '%s\\n' $((lag - 1)) > \"$GH_STATE/lag\"; printf '%s\\n' STALE; exit 0
+    fi
+    git ls-remote --exit-code origin refs/heads/kendex/lock > \"$GH_STATE/head\" || exit 98
+    cut -f1 \"$GH_STATE/head\"; exit 0 ;;
+  'pr merge')
+    lag=$(cat \"$GH_STATE/lag\" 2>/dev/null || echo 0)
+    if [ \"$lag\" -gt 0 ]; then
+      echo 'GraphQL: Failed to add PR: expected head oid does not match the current head oid (enablePullRequestAutoMerge)' >&2; exit 1
+    fi
+    : > \"$GH_STATE/armed\"; exit 0 ;;
   'api graphql')
     case \"$*\" in
       *isInMergeQueue*)
@@ -257,7 +288,7 @@ fn world_with(source: Source, checkout: Checkout) -> World {
     let gh_log = home.join("gh.log");
     let gh_state = home.join("gh-state");
     write(&gh_state.join("next"), "41\n");
-    executable(&bin.join("gh"), GH_STUB);
+    executable(&bin.join("gh"), &GH_STUB.replace("STALE", STALE_HEAD));
 
     let seed = home.join("seed");
     let origin = home.join("origin.git");
@@ -804,8 +835,8 @@ fn assert_stood_down(world: &World, before: &str, output: &str, rolling: &str) {
 
 /// One push over the open rolling pull request `41`, armed from an earlier
 /// run: disarmed first, the record re-recorded from `main`'s head, the
-/// pull request updated and armed on the pushed head, and the judged
-/// checkout left as it was found.
+/// pull request's title and body rewritten to that head, the pull request
+/// armed on the pushed head, and the judged checkout left as it was found.
 fn assert_pushed_over(world: &World, output: &str) {
     let head = world.main_head();
     for line in [
@@ -823,6 +854,13 @@ fn assert_pushed_over(world: &World, output: &str) {
         &["rev-parse", &format!("{rolling}^")],
     );
     assert_eq!(parent.trim(), head, "{output}");
+    let short = git_ok(&world.home, &world.main, &["rev-parse", "--short", &head]);
+    let edit = format!(
+        "pr edit 41 --title chore(lock): record the install record at {} --body tools/lock-record re-recorded .kendex-lock.json on main after the merges up to {head},",
+        short.trim()
+    );
+    let log = world.gh_log();
+    assert!(log.contains(&edit), "{edit:?} missing:\n{log}");
     let status = git_ok(&world.home, &world.judged(), &["status", "--porcelain"]);
     assert_eq!(
         status, "",
@@ -857,19 +895,24 @@ fn a_merge_that_moves_no_record_leaves_the_open_rolling_pull_request_untouched()
     let asked = asked.strip_prefix(&before).unwrap_or(&asked);
     assert_eq!(asked.lines().count(), 4, "{asked}");
 
-    // The same, with the arm gone (a cancelled run, or a queue removal):
-    // the stand-down arms the rolling head it judged current.
+    // The same, with the arm gone (a cancelled run, or a queue removal) and
+    // GitHub a read behind on the pull request's head: the stand-down reads
+    // the head until it is the rolling head it judged current, then arms it.
     let merged = world.queue_merge("d");
     assert!(merged.status.success(), "{}", said(&merged));
     fs::remove_file(world.gh_state.join("armed")).unwrap();
+    write(&world.gh_state.join("lag"), "1\n");
     let before = world.gh_log();
     let third = world.lock_record();
     let output = said(&third);
     assert_eq!(third.status.code(), Some(0), "{output}");
     assert_stood_down(&world, &before, &output, &rolling);
     assert!(output.contains("lock-record: armed=41\n"), "{output}");
+    let asked = world.gh_log();
+    let asked = asked.strip_prefix(&before).unwrap_or(&asked);
+    assert_eq!(asked.matches(HEAD_READ).count(), 2, "{asked}");
     assert!(
-        world.gh_log().contains(&format!(
+        asked.contains(&format!(
             "pr merge 41 --squash --auto --match-head-commit {rolling}\n"
         )),
         "{output}"
@@ -932,6 +975,122 @@ fn a_push_over_an_armed_and_queued_rolling_pull_request_disarms_and_dequeues_fir
     assert!(!asked.contains("pr create"), "{asked}");
     assert!(world.gh_state.join("armed").exists(), "{asked}");
     assert!(!world.gh_state.join("queued").exists(), "{asked}");
+}
+
+/// The read the arm makes of pull request `41`'s head, as the stub logs it.
+const HEAD_READ: &str = "pr view 41 --json headRefOid --jq .headRefOid\n";
+
+/// What the arm after a push comes to.
+#[derive(Clone, Copy)]
+enum Arm {
+    /// Armed on the pushed head, once GitHub showed it.
+    Armed,
+    /// Left unarmed, GitHub never having shown the pushed head.
+    Unarmed,
+    /// Left unarmed, gh having failed to read the head.
+    ReadFailed,
+}
+
+/// One push the arm follows: how many reads GitHub stays behind on the
+/// pull request's head, the `gh` call that fails, and what the arm comes
+/// to.
+struct HeadRead {
+    lag: u32,
+    gh_fail: &'static str,
+    arm: Arm,
+}
+
+const HEAD_READS: &[HeadRead] = &[
+    HeadRead {
+        lag: 1,
+        gh_fail: "",
+        arm: Arm::Armed,
+    },
+    HeadRead {
+        lag: 99,
+        gh_fail: "",
+        arm: Arm::Unarmed,
+    },
+    HeadRead {
+        lag: 0,
+        gh_fail: "view",
+        arm: Arm::ReadFailed,
+    },
+];
+
+/// GitHub shows a force push on the pull request's head a moment after it
+/// lands and refuses an arm matched against a head it does not show yet:
+/// the arm reads the head until it is the pushed revision and arms on it,
+/// and where it never is, the record still lands, the pull request is left
+/// unarmed with both revisions named, and the run exits 0; a read gh fails
+/// leaves it unarmed and exits 1.
+#[test]
+fn the_arm_after_a_push_waits_for_github_to_show_the_pushed_head() {
+    assert!(!HEAD_READS.is_empty(), "the head-read table is empty");
+    for row in HEAD_READS {
+        assert_head_read(row);
+    }
+}
+
+fn assert_head_read(row: &HeadRead) {
+    let world = world();
+    world.branch("a", "ship");
+    let merged = world.queue_merge("a");
+    assert!(merged.status.success(), "{}", said(&merged));
+    write(&world.gh_state.join("lag"), &format!("{}\n", row.lag));
+    let main = world.main.display().to_string();
+    let run = world.run(&["--repo", &main, "--base", "main"], row.gh_fail, "");
+    let output = said(&run);
+    let lag = row.lag;
+    let code = match row.arm {
+        Arm::Armed | Arm::Unarmed => 0,
+        Arm::ReadFailed => 1,
+    };
+    assert_eq!(run.status.code(), Some(code), "lag {lag}: {output}");
+    assert!(
+        output.contains("lock-record: pull-request=41 action=opened\n"),
+        "lag {lag}: {output}"
+    );
+    let rolling = world.rolling_head();
+    let log = world.gh_log();
+    let reads = log.matches(HEAD_READ).count();
+    let armed = world.gh_state.join("armed").exists();
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    match row.arm {
+        Arm::Armed => {
+            assert_eq!(reads, 2, "lag {lag}: {log}");
+            assert!(
+                output.contains("lock-record: armed=41\n"),
+                "lag {lag}: {output}"
+            );
+            let arm = at(
+                &log,
+                &format!("pr merge 41 --squash --auto --match-head-commit {rolling}\n"),
+            );
+            assert!(log.rfind(HEAD_READ) < Some(arm), "lag {lag}: {log}");
+            assert!(armed, "lag {lag}: {output}");
+        }
+        Arm::Unarmed => {
+            assert!(reads > 1, "lag {lag}: {log}");
+            let unarmed = format!("lock-record: unarmed=41 pushed={rolling} head={STALE_HEAD}\n");
+            assert!(stderr.contains(&unarmed), "lag {lag}: {output}");
+            assert!(
+                !output.contains("lock-record: armed="),
+                "lag {lag}: {output}"
+            );
+            assert!(!log.contains("pr merge"), "lag {lag}: {log}");
+            assert!(!armed, "lag {lag}: {output}");
+        }
+        Arm::ReadFailed => {
+            assert_eq!(reads, 1, "lag {lag}: {log}");
+            assert!(
+                stderr.contains("lock-record: head-read=41\n"),
+                "lag {lag}: {output}"
+            );
+            assert!(!log.contains("pr merge"), "lag {lag}: {log}");
+            assert!(!armed, "lag {lag}: {output}");
+        }
+    }
 }
 
 /// The workflow's checkout holds the head alone, so the judge has no

@@ -32,11 +32,17 @@
 # rolling branch from the checkout's head, force-pushed, and put up as one
 # pull request the merge queue takes; a pull request already open on the
 # branch is disarmed and dequeued before the push, as
-# skills/orch/workflows/merge-pr-restack.md step 1 does, and armed again
-# after it. The arm passes the merge method the base branch allows, read
-# from GitHub like the default branch. Nothing here pushes to the default
-# branch: the organization ruleset takes every change to it through the
-# merge queue
+# skills/orch/workflows/merge-pr-restack.md step 1 does, its title and body
+# rewritten to the head just recorded, and armed again after it. The arm
+# passes the merge method the base branch allows, read from GitHub like the
+# default branch. GitHub shows a force push on the pull request's head a
+# moment after the push lands, and refuses an arm whose --match-head-commit
+# names a head it does not show yet: every arm, on the stand-down and after
+# the push, first reads the pull request's head until it is the revision
+# armed, and a head GitHub never shows within those reads leaves the pull
+# request unarmed, which the next run arms. Nothing here pushes to the
+# default branch: the organization ruleset takes every change to it through
+# the merge queue
 # (docs/decisions/D003-one-merge-path.md), and the record takes the same
 # route (docs/decisions/D007-lock-record-on-main.md). The rule a branch
 # follows is skills/AGENTS.md.
@@ -77,12 +83,41 @@
 #   pushed=<remote>/<branch>    the branch reached the remote
 #   pull-request=<n> action=<opened|updated>
 #   armed=<n|already>           auto-merge enabled on it for its head, or found enabled on a stand-down
+#   head-read=<n>               gh could not read the pull request's head after the push or on the stand-down, so it was not armed (exit 1)
+#   unarmed=<n> pushed=<sha> head=<sha>
+#                               GitHub still showed the other head on the pull request after every read, so it was not armed; the record landed, and the next run arms it
 set -euo pipefail
 
 say() { # KEY VALUE [LINE...] — the keyed line, then each explanation line
   printf 'lock-record: %s=%s\n' "$1" "$2"
   shift 2
   for line in "$@"; do printf '%s\n' "$line"; done
+}
+# Arm pull request NUMBER on REVISION once GitHub shows REVISION as its
+# head: an arm matched against a head GitHub has not caught up to is
+# refused. The reads stop at five, two seconds apart, so the wait is bounded
+# at eight seconds; a failed arm on the matched head ends the run with what
+# gh printed.
+arm() { # NUMBER REVISION
+  local number="$1" revision="$2" seen="" reads=1
+  while :; do
+    if ! seen="$(cd -- "$repo" && gh pr view "$number" --json headRefOid --jq .headRefOid)"; then
+      say head-read "$number" "gh could not read pull request $number's head, so it was not armed; the record is on the branch" >&2
+      exit 1
+    fi
+    if [[ "$seen" == "$revision" || $reads -ge 5 ]]; then
+      break
+    fi
+    reads=$((reads + 1))
+    sleep 2
+  done
+  if [[ "$seen" != "$revision" ]]; then
+    say unarmed "$number pushed=$revision head=$seen" \
+      "GitHub still showed $seen as pull request $number's head after $reads reads, not the pushed $revision, so it was not armed; the record is on the branch, and the next run arms it" >&2
+    return 0
+  fi
+  (cd -- "$repo" && gh pr merge "$number" "--$method" --auto --match-head-commit "$revision")
+  say armed "$number"
 }
 count_lines() { # TEXT — how many lines it holds, none for the empty string
   if [[ -z "$1" ]]; then printf '0\n'; else printf '%s\n' "$1" | wc -l | tr -d ' '; fi
@@ -233,8 +268,7 @@ if [[ -n "$rolling" && -n "$number" ]]; then
     if [[ "$armed" == true ]]; then
       say armed already
     else
-      (cd -- "$repo" && gh pr merge "$number" "--$method" --auto --match-head-commit "$rolling")
-      say armed "$number"
+      arm "$number" "$rolling"
     fi
     exit 0
   fi
@@ -268,6 +302,8 @@ if [[ -z "$changed" ]]; then
 fi
 count="$(count_lines "$changed")"
 short="$(git -C "$repo" rev-parse --short "$head")"
+title="chore(lock): record the install record at $short"
+body="tools/lock-record re-recorded .kendex-lock.json on $base after the merges up to $head, with a kendex built from that tree. Paths: $count. The record is recorded here and never on a branch: skills/AGENTS.md."
 
 # An armed pull request re-enters the queue the moment its checks pass,
 # and a push onto a queued one ejects it: disarm first, then dequeue, then
@@ -289,23 +325,22 @@ fi
 
 git -C "$repo" checkout -q -B "$branch"
 git -C "$repo" commit -q \
-  -m "chore(lock): record the install record at $short" \
+  -m "$title" \
   -m "kendex refresh, built from $head, wrote these paths on $base after the merges up to that head. The record is recorded here and never on a branch: skills/AGENTS.md states the rule, docs/decisions/D007-lock-record-on-main.md the reason."
+recorded="$(git -C "$repo" rev-parse HEAD)"
 say recorded "$head paths=$count" "$changed"
 
 git -C "$repo" push --quiet --force "$remote" "refs/heads/$branch:refs/heads/$branch"
 say pushed "$remote/$branch"
 
 if [[ -n "$number" ]]; then
+  (cd -- "$repo" && gh pr edit "$number" --title "$title" --body "$body")
   action=updated
 else
-  url="$(cd -- "$repo" && gh pr create --base "$base" --head "$branch" \
-    --title "chore(lock): record the install record at $short" \
-    --body "tools/lock-record re-recorded .kendex-lock.json on $base after the merges up to $head, with a kendex built from that tree. Paths: $count. The record is recorded here and never on a branch: skills/AGENTS.md.")"
+  url="$(cd -- "$repo" && gh pr create --base "$base" --head "$branch" --title "$title" --body "$body")"
   number="${url##*/}"
   action=opened
 fi
 say pull-request "$number action=$action"
 
-(cd -- "$repo" && gh pr merge "$number" "--$method" --auto --match-head-commit "$(git -C "$repo" rev-parse HEAD)")
-say armed "$number"
+arm "$number" "$recorded"
