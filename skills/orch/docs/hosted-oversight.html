@@ -85,7 +85,7 @@
 
 <h2>Mail</h2>
 
-<p>A mailbox is two append-only files under a worktree's <code>tmp/lane-mail/&lt;item&gt;/</code>: <code>to-overseer.jsonl</code> and <code>to-lane.jsonl</code>, each line one message with an id, a kind and a sender. The overseer's own inbox is the <code>overseer</code> item in its checkout. Every write appends one line under a lock. A plain <code>inbox</code> read advances the reader's cursor, so a directive handed over once is never handed over twice; <code>inbox --peek</code> reads without moving it. A hosted mailbox is appended through the provider's <code>append</code> verb and read through <code>cat</code>.</p>
+<p>A mailbox is two append-only files under a worktree's <code>tmp/lane-mail/&lt;item&gt;/</code>: <code>to-overseer.jsonl</code> and <code>to-lane.jsonl</code>, each line one message with an id, a kind and a sender. The overseer's own inbox is the <code>overseer</code> item in its checkout. Every write appends one line under a lock. A plain <code>inbox</code> read advances the reader's cursor, so a directive handed over once is never handed over twice; <code>inbox --peek</code> reads without moving it, except to bring down a cursor that stands past the lines the file holds, so the next message is not marked read before it arrives. A hosted mailbox is appended through the provider's <code>append</code> verb and read through <code>cat</code>.</p>
 
 <table>
 <tr><th>Who</th><th>Verb</th><th>What it does</th></tr>

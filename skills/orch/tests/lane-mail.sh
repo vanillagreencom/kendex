@@ -369,54 +369,66 @@ answered_lane() { # NAME
 answered_lane pending_after_answer
 assert_eq "$PENDING_DIRECTIVE" "Unread." "pending lists a directive past an answer the lane read"
 
-# A Stop hook peeks, then a workflow wait point hands a later line over, then
-# the hook acknowledges its older count. ACK_CURSOR is what that leaves.
-stale_ack() { # NAME
+# The inbox cursor under --peek, --ack and a plain read, one row per sequence.
+# cursor_steps runs OPS in a fresh lane, each step a word: d sends a directive
+# and h a halt, both carrying their line number as text; cN plants cursor N; p
+# peeks; aN acknowledges N; r reads. STEPS records each inbox step: its first
+# stderr line, then for p the header count, the cursor and the texts printed,
+# for aN the exit and the cursor, for r the texts printed.
+cursor_steps() { # NAME OPS
+  local op line=0 box
   new_lane "$1"
-  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'First.')"
-  LANE_MAIL_BIN="$LANE_MAIL" lm inbox --item KEN-1 --peek
-  PEEKED="$(count_line)"
-  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Second.')"
-  LANE_MAIL_BIN="$LANE_MAIL" lm inbox --item KEN-1
-  lm inbox --item KEN-1 --ack "${PEEKED#count=}"
-  ACK_CURSOR="$RC=$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")"
+  box="$LANE/tmp/lane-mail/KEN-1"
+  STEPS=""
+  for op in $2; do
+    case "$op" in
+      d | h)
+        line=$((line + 1))
+        LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" \
+          "$([ "$op" = h ] && echo --halt || echo --directive)" --file "$(text d "$line")"
+        ;;
+      c*) printf '%s\n' "${op#c}" >"$box/to-lane.cursor" ;;
+      p)
+        lm inbox --item KEN-1 --peek
+        STEPS+=" p:$ERR:$(count_line):$(cat "$box/to-lane.cursor"):$(tail -n +2 <<<"$OUT" | jq -r '.text' | paste -sd, -)"
+        ;;
+      a*)
+        lm inbox --item KEN-1 --ack "${op#a}"
+        STEPS+=" $op:$ERR:$RC:$(cat "$box/to-lane.cursor")"
+        ;;
+      r)
+        lm inbox --item KEN-1
+        STEPS+=" r:$ERR:$(jq -r '.text' <<<"$OUT" | paste -sd, -)"
+        ;;
+    esac
+  done
+  STEPS="${STEPS# }"
 }
-stale_ack inbox_ack
-assert_eq "$PEEKED=$ACK_CURSOR" "count=1=0=2" "an --ack older than the cursor never moves it back"
-
-# An --ack one past the lines present, then a line lands. OVER_ACK is the ack's
-# exit and keyed line, the cursor it left, and what a later inbox prints.
-over_ack() { # NAME
-  new_lane "$1"
-  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'First.')"
-  lm inbox --item KEN-1 --ack 2
-  OVER_ACK="$RC=$ERR=$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")"
-  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Landed later.')"
-  LANE_MAIL_BIN="$LANE_MAIL" lm inbox --item KEN-1
-  OVER_ACK+=" $(jq -r '.text' <<<"$OUT" | tr '\n' '|')"
+# NAME | OPS | STEPS | what the row holds
+CURSOR_ROWS=(
+  "stale_ack|d p d r a1|p::count=1:0:1 r::1,2 a1::0:2|an --ack older than the cursor never moves it back, and one at the line count lowers nothing"
+  "over_ack|d a2 d r|a2:lane-mail: ack-clamped=1 asked=2:0:1 r::2|an --ack past the lines present stops at them, so a line that lands later is still handed over"
+  "halt_clamp|d h d a5|a5:lane-mail: ack-clamped=1 asked=5:0:1|an --ack past the lines present names the count it acknowledged, the line before an unread halt"
+  "peek_lowers|d c2 p d p r p|p:lane-mail: cursor-lowered=1 was=2:count=1:1: p::count=2:1:2 r::2 p::count=2:2:|a peek brings a cursor past the lines present down to them before any --ack, so a line that lands later is handed over"
+  "ack_lowers|d c3 d a1 r|a1:lane-mail: cursor-lowered=1 was=3:0:1 r::2|an --ack lowers a cursor past the lines present to the count acknowledged, not to a line that landed after the peek"
+)
+# cursor_control NAME — the row NAME's OPS run under the current mutant.
+cursor_control() {
+  local row ops
+  for row in "${CURSOR_ROWS[@]}"; do
+    [ "${row%%|*}" = "$1" ] || continue
+    IFS='|' read -r _ ops _ <<<"$row"
+    cursor_steps "control_$1" "$ops"
+    return 0
+  done
+  echo "lane-mail.sh: cursor-row=$1 missing" >&2
+  exit 1
 }
-over_ack inbox_over_ack
-assert_eq "$OVER_ACK" "0=lane-mail: ack-clamped=1 asked=2=1 Landed later.|" \
-  "an --ack past the lines present stops at them, so a line that lands later is still handed over"
-
-# A cursor an --ack left past the lines before the clamp, then the hooks' peek
-# and ack, then a line lands. HIGH_CURSOR is the ack's exit and keyed line, the
-# cursor it left, and what a later inbox prints.
-high_cursor() { # NAME
-  new_lane "$1"
-  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'First.')"
-  printf '2\n' >"$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
-  LANE_MAIL_BIN="$LANE_MAIL" lm inbox --item KEN-1 --peek
-  PEEKED="$(count_line)"
-  lm inbox --item KEN-1 --ack "${PEEKED#count=}"
-  HIGH_CURSOR="$RC=$ERR=$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")"
-  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Landed later.')"
-  LANE_MAIL_BIN="$LANE_MAIL" lm inbox --item KEN-1
-  HIGH_CURSOR+=" $(jq -r '.text' <<<"$OUT" | tr '\n' '|')"
-}
-high_cursor inbox_high_cursor
-assert_eq "$HIGH_CURSOR" "0=lane-mail: cursor-lowered=1 was=2=1 Landed later.|" \
-  "an --ack brings a cursor already past the lines present down to them, so a line that lands later is handed over"
+for row in "${CURSOR_ROWS[@]}"; do
+  IFS='|' read -r name ops steps why <<<"$row"
+  LANE_MAIL_BIN="$LANE_MAIL" cursor_steps "inbox_$name" "$ops"
+  assert_eq "$STEPS" "$steps" "$why"
+done
 
 new_lane concurrent
 printf 'parallel\n' > "$TMP_ROOT/p.txt"
@@ -1203,15 +1215,30 @@ lm inbox --item KEN-1
 assert_eq "$(jq -r '.text' <<<"$OUT")" "twice" \
   "control: without the cursor advance a second inbox hands the same line over again"
 
-mutant ack-unclamped 'if [ "$ACK" -gt "$COUNT" ]; then' 'if false; then'
-over_ack control_over_ack
-assert_eq "$OVER_ACK" "0==2 " \
+mutant ack-unclamped '[ "$ACK" -le "$COUNT" ] || ACK="$COUNT"' ':'
+cursor_control over_ack
+assert_eq "$STEPS" "a2:lane-mail: ack-clamped=2 asked=2:0:2 r::" \
   "control: without the line-count clamp an --ack past the lines present hides the line that lands later"
 
-mutant cursor-kept-high 'if [ "$SEEN" -gt "$COUNT" ]; then' 'if false; then'
-high_cursor control_high_cursor
-assert_eq "$HIGH_CURSOR" "0==2 " \
-  "control: without the lowering a cursor already past the lines present hides the line that lands later"
+mutant ack-notice-early '[ "$ASKED" -le "$COUNT" ] || lm_notice ack-clamped "$ACK"' '[ "$ASKED" -le "$COUNT" ] || lm_notice ack-clamped "$COUNT"'
+cursor_control halt_clamp
+assert_eq "$STEPS" "a5:lane-mail: ack-clamped=3 asked=5:0:1" \
+  "control: a notice taking the line count names a count the halt clamp did not acknowledge"
+
+mutant peek-kept-high '[ "$PEEK" -eq 1 ] && [ "$SEEN" -gt "$COUNT" ] &&' 'false &&'
+cursor_control peek_lowers
+assert_eq "$STEPS" "p::count=1:2: p::count=2:2: r:: p::count=2:2:" \
+  "control: without the peek's lowering a cursor past the lines present hides the line that lands later"
+
+mutant ack-kept-high 'if [ "$SEEN" -gt "$COUNT" ]; then' 'if false; then'
+cursor_control ack_lowers
+assert_eq "$STEPS" "a1::0:3 r::" \
+  "control: without the --ack's lowering a cursor past the lines present hides the line that lands later"
+
+mutant ack-lowered-to-count 'lm_notice cursor-lowered "$ACK" "was=$SEEN"' 'ACK="$COUNT"; lm_notice cursor-lowered "$COUNT" "was=$SEEN"'
+cursor_control ack_lowers
+assert_eq "$STEPS" "a1:lane-mail: cursor-lowered=2 was=3:0:2 r::" \
+  "control: an --ack lowering to the line count marks read a line that landed after the peek"
 LANE_MAIL_BIN=""
 
 mutant directives-alone 'foreach inputs as $raw (0; . + 1;' 'foreach (inputs | select(test("directive"))) as $raw (0; . + 1;'
