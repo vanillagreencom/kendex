@@ -176,6 +176,18 @@ git -C "$REPO" init -q
 OT="$REPO/scripts/open-terminal"
 CMD_ARGS=(--cmd 'echo {item}')
 
+# await_file FILE — block until the launcher's record FILE exists, 30 seconds
+# of wall time at most, and fail the row by name when it never does. The
+# launcher starts the terminal stub detached, so the record lands some time
+# after run_case returns. The bound is wall time, never a count of polls: a
+# count spins out in milliseconds on a fast runner, before the stub has
+# written anything, and the row then reads an empty capture.
+await_file() {
+  local end=$((SECONDS + 30))
+  while [[ ! -f "$1" ]] && (( SECONDS < end )); do sleep 0.05; done
+  [[ -f "$1" ]] || fail "the launcher recorded ${1##*/}" "no record within 30 s"
+}
+
 # run_case <name> -- ITEM...   (stub exit codes pre-seeded in $EXIT_DIR)
 run_case() {
   local name="$1"; shift; shift
@@ -365,6 +377,20 @@ occurrences() { local rest="${1//"$2"/}"; printf '%s\n' "$(( (${#1} - ${#rest}) 
 # since Codex starts no turn for a monitor's output.
 RELAUNCH_LINE="Resume the orch workflow for CC-1 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 first and act on every directive it prints"
 REARM=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item CC-1 through your harness background wake"
+# Control: a launcher whose record lands late. Its writer holds until the gate
+# opens, so the order is the same on every runner. The pass-counted spin this
+# suite used to wait with returns while the record is still absent, and the
+# empty capture it then reads is what failed the macOS rows; await_file holds
+# until the record exists and reads the recorded line whole.
+LATE="$TMP_ROOT/late.cmd"
+( while [[ ! -e "$LATE.gate" ]]; do sleep 0.05; done; printf '%s\n' "$RELAUNCH_LINE" >"$LATE.part" && mv -- "$LATE.part" "$LATE" ) &
+LIVE_PIDS="$LIVE_PIDS $!"
+for _ in {1..10000}; do [[ -f "$LATE" ]] && break; done
+assert_eq "$(cat "$LATE" 2>/dev/null || true)" "" \
+  "control: the pass-counted spin returns before a late launcher records its line, and reads it empty"
+: >"$LATE.gate"
+await_file "$LATE"
+assert_eq "$(cat "$LATE" 2>/dev/null || true)" "$RELAUNCH_LINE" "the wait bounded by time reads a late launcher's recorded line whole"
 CONTEXT_FILE="$TMP_ROOT/wt/CC-1/tmp/lane-mail/CC-1/context.json"
 mkdir -p "${CONTEXT_FILE%/*}"
 for row in "claude|claude -n CC-1 $CLAUDE_QUESTION_OFF --resume $CLAUDE222|$REARM|$CLAUDE222|" "codex|codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $CODEX444||$CODEX444|" "pi|pi $PI_QUESTION_OFF --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl|$REARM|$PI_SESSION_ID| $PI_UNATTENDED_TEXT"; do
@@ -373,7 +399,7 @@ for row in "claude|claude -n CC-1 $CLAUDE_QUESTION_OFF --resume $CLAUDE222|$REAR
   printf '%s\n' "$context_record" > "$CONTEXT_FILE"
   capture="$TMP_ROOT/resume-$harness.cmd"
   OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "resume-$harness" -- --relaunch --harness "$harness" CC-1
-  for _ in {1..10000}; do [[ -f "$capture" ]] && break; done; assert_contains "$(cat "$capture")" "$expected '$RELAUNCH_LINE$rearm.$unattended'" "$harness relaunch resumes with the continuation line"
+  await_file "$capture"; assert_contains "$(cat "$capture")" "$expected '$RELAUNCH_LINE$rearm.$unattended'" "$harness relaunch resumes with the continuation line"
   assert_eq "rc=$RC context=$(cat "$CONTEXT_FILE" 2>/dev/null || true)" "rc=0 context=$context_record" \
     "$harness relaunch keeps the selected session's exact context reading"
   for lifetime in different fresh; do
@@ -396,18 +422,18 @@ OT="$CONTEXT_CONTROL" LANES_HOME="$SESSION_HOME" run_case context-control -- --r
 assert_eq "rc=$RC context=$([[ -e "$CONTEXT_FILE" ]] && echo present || echo absent)" "rc=0 context=absent" \
   "control: dropping the selected identity loses the matching resumed reading"
 OT_CAPTURE="$TMP_ROOT/fresh.cmd" LANES_HOME="$SESSION_HOME" run_case fresh -- --relaunch --harness codex CC-9
-for _ in {1..10000}; do [[ -f "$TMP_ROOT/fresh.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/fresh.cmd")" "execute the orch start workflow for CC-9" "a relaunch with no matching session uses the fresh brief"
+await_file "$TMP_ROOT/fresh.cmd"; assert_contains "$(cat "$TMP_ROOT/fresh.cmd")" "execute the orch start workflow for CC-9" "a relaunch with no matching session uses the fresh brief"
 assert_not_contains "$(cat "$TMP_ROOT/fresh.cmd")" "Resume the orch workflow" "the fresh brief carries no continuation line to repeat itself"
 # The startup update prompt answers the first paste a lane receives by
 # installing the update and exiting the session, so every codex command carries
 # the setting that suppresses it exactly once: a fresh launch, a relaunch's
 # resume form, and the fresh brief a relaunch falls back to.
 OT_CAPTURE="$TMP_ROOT/launch-codex.cmd" LANES_HOME="$SESSION_HOME" run_case launch-codex -- --harness codex CC-7
-for _ in {1..10000}; do [[ -f "$TMP_ROOT/launch-codex.cmd" ]] && break; done
+await_file "$TMP_ROOT/launch-codex.cmd"
 # Launch flags that already name the setting do not add a second copy.
 OT_CAPTURE="$TMP_ROOT/launch-codex-flagged.cmd" LANES_HOME="$SESSION_HOME" run_case launch-codex-flagged -- \
   --harness codex --launch-flags "-c check_for_update_on_startup=false" CC-10
-for _ in {1..10000}; do [[ -f "$TMP_ROOT/launch-codex-flagged.cmd" ]] && break; done
+await_file "$TMP_ROOT/launch-codex-flagged.cmd"
 for capture in launch-codex launch-codex-flagged resume-codex fresh; do
   assert_eq "$(occurrences "$(cat "$TMP_ROOT/$capture.cmd")" "$CODEX_SETTINGS")" "1" \
     "a codex command ($capture) carries check_for_update_on_startup=false exactly once"
@@ -417,7 +443,7 @@ done
 CMD_TEMPLATE_CODEX="codex -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false {issue}"
 OT_CAPTURE="$TMP_ROOT/launch-codex-cmd.cmd" LANES_HOME="$SESSION_HOME" run_case launch-codex-cmd -- \
   --harness codex --cmd "$CMD_TEMPLATE_CODEX" CC-11
-for _ in {1..10000}; do [[ -f "$TMP_ROOT/launch-codex-cmd.cmd" ]] && break; done
+await_file "$TMP_ROOT/launch-codex-cmd.cmd"
 LAUNCH_CODEX_CMD="$(cat "$TMP_ROOT/launch-codex-cmd.cmd")"
 assert_eq "${LAUNCH_CODEX_CMD##* && }" \
   "env CODEX_HOME='$(lane_codex_home_path "$SESSION_HOME/.codex" "$TMP_ROOT/wt/CC-11")' ORCH_COMPACTION_OVERRIDES='' codex -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false CC-11" \
@@ -426,7 +452,7 @@ assert_eq "${LAUNCH_CODEX_CMD##* && }" \
 OLD_CODEX="$SESSION_HOME/.old-codex"; CROSS_CODEX=55555555-5555-5555-5555-555555555555; mkdir -p "$OLD_CODEX/sessions/2026"
 printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CROSS_CODEX\"}}" '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-2"}}' >"$OLD_CODEX/sessions/2026/cross.jsonl"
 CODEX_INVENTORY="$(jq -nc --arg d "$OLD_CODEX" '[{config_dir:$d}]')"; OT_CAPTURE="$TMP_ROOT/resume-codex-cross.cmd" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case resume-codex-cross -- --relaunch --harness codex CC-2
-for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-codex-cross.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-codex-cross.cmd")" "codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $CROSS_CODEX" "codex relaunch finds a session in another account store"
+await_file "$TMP_ROOT/resume-codex-cross.cmd"; assert_contains "$(cat "$TMP_ROOT/resume-codex-cross.cmd")" "codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $CROSS_CODEX" "codex relaunch finds a session in another account store"
 assert_eq "$(cat "$SESSION_HOME/.selected-codex/sessions/2026/cross.jsonl")" "$(cat "$OLD_CODEX/sessions/2026/cross.jsonl")" "the destination account can read the discovered transcript"
 
 # A relaunch run from INSIDE a private launch home carries that home in
@@ -440,26 +466,26 @@ printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$LAUNCH_HOME_COD
 OT_CAPTURE="$TMP_ROOT/resume-codex-home.cmd" LANES_HOME="$SESSION_HOME" \
   CODEX_HOME_OVERRIDE="$(lane_codex_home_path "$SESSION_HOME/.selected-codex" "$TMP_ROOT/wt/CC-6")" \
   run_case resume-codex-home -- --relaunch --harness codex CC-6
-for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-codex-home.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-codex-home.cmd")" "codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $LAUNCH_HOME_CODEX" "a codex relaunch from inside a private launch home scans the account's own transcript store"
+await_file "$TMP_ROOT/resume-codex-home.cmd"; assert_contains "$(cat "$TMP_ROOT/resume-codex-home.cmd")" "codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $LAUNCH_HOME_CODEX" "a codex relaunch from inside a private launch home scans the account's own transcript store"
 
 PI_ABSOLUTE="$TMP_ROOT/pi-absolute"; mkdir -p "$PI_ABSOLUTE" "$SESSION_HOME/.pi/agent"
 printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-3"}}' >"$PI_ABSOLUTE/session.jsonl"
 printf '{"sessionDir":"%s"}\n' "$PI_ABSOLUTE" >"$SESSION_HOME/.pi/agent/settings.json"
 OT_CAPTURE="$TMP_ROOT/resume-pi-absolute.cmd" LANES_HOME="$SESSION_HOME" run_case resume-pi-absolute -- --relaunch --harness pi CC-3
-for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-pi-absolute.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-pi-absolute.cmd")" "pi $PI_QUESTION_OFF --session $PI_ABSOLUTE/session.jsonl" "pi relaunch reads an absolute sessionDir from global settings"
+await_file "$TMP_ROOT/resume-pi-absolute.cmd"; assert_contains "$(cat "$TMP_ROOT/resume-pi-absolute.cmd")" "pi $PI_QUESTION_OFF --session $PI_ABSOLUTE/session.jsonl" "pi relaunch reads an absolute sessionDir from global settings"
 
 PI_WORKTREE="$TMP_ROOT/wt/CC-4"; PI_RELATIVE="$PI_WORKTREE/pi-sessions"; mkdir -p "$PI_WORKTREE/.pi" "$PI_RELATIVE"
 printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-4"}}' >"$PI_RELATIVE/session.jsonl"
 printf '%s\n' '{"sessionDir":"pi-sessions"}' >"$PI_WORKTREE/.pi/settings.json"
 jq -nc --arg p "$(cd "$PI_WORKTREE" && pwd -P)" '{($p):true}' >"$SESSION_HOME/.pi/agent/trust.json"
 OT_CAPTURE="$TMP_ROOT/resume-pi-relative.cmd" LANES_HOME="$SESSION_HOME" run_case resume-pi-relative -- --relaunch --harness pi CC-4
-for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-pi-relative.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-pi-relative.cmd")" "pi $PI_QUESTION_OFF --session $PI_RELATIVE/session.jsonl" "pi relaunch resolves a project sessionDir from the launched worktree"
+await_file "$TMP_ROOT/resume-pi-relative.cmd"; assert_contains "$(cat "$TMP_ROOT/resume-pi-relative.cmd")" "pi $PI_QUESTION_OFF --session $PI_RELATIVE/session.jsonl" "pi relaunch resolves a project sessionDir from the launched worktree"
 
 PI_UNTRUSTED="$TMP_ROOT/wt/CC-5"; mkdir -p "$PI_UNTRUSTED/.pi" "$PI_UNTRUSTED/pi-sessions"
 printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-5"}}' >"$PI_UNTRUSTED/pi-sessions/session.jsonl"
 printf '%s\n' '{"sessionDir":"pi-sessions"}' >"$PI_UNTRUSTED/.pi/settings.json"
 OT_CAPTURE="$TMP_ROOT/resume-pi-untrusted.cmd" LANES_HOME="$SESSION_HOME" run_case resume-pi-untrusted -- --relaunch --harness pi CC-5
-for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-pi-untrusted.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-pi-untrusted.cmd")" "pi $PI_QUESTION_OFF '/skill:orch start CC-5 $PI_UNATTENDED_TEXT'" "pi relaunch ignores an untrusted project sessionDir"
+await_file "$TMP_ROOT/resume-pi-untrusted.cmd"; assert_contains "$(cat "$TMP_ROOT/resume-pi-untrusted.cmd")" "pi $PI_QUESTION_OFF '/skill:orch start CC-5 $PI_UNATTENDED_TEXT'" "pi relaunch ignores an untrusted project sessionDir"
 
 # --wake hands the lane's own session the line that reads its inbox, through
 # the harness's native resume, from a detached command.
@@ -760,12 +786,13 @@ EOF
 # exists; the two assertions are the row's precondition, and they name the
 # fixture rather than letting a process that never started read as a verdict.
 live_claude_wake() {
-  local ready="$TMP_ROOT/live-ready" pid n=0
+  local ready="$TMP_ROOT/live-ready" pid end
   rm -rf -- "${LIVE_CONFIG:?}" "${ready:?}"; mkdir -p "$LIVE_CONFIG/sessions"
   (cd "$WT_CC1" && export CLAUDE_CONFIG_DIR="$LIVE_CONFIG" && exec "$LIVE_BIN/claude" "$TMP_ROOT/live-session.sh" "$ready" "$TMP_ROOT/never") &
   pid=$!
   LIVE_PIDS="$pid"
-  while [[ ! -e "$ready" && "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
+  end=$((SECONDS + 30))
+  while [[ ! -e "$ready" ]] && (( SECONDS < end )); do sleep 0.05; done
   assert_eq "$([[ -s "$LIVE_CONFIG/sessions/$pid.json" ]] && echo wrote || echo missing)" "wrote" \
     "fixture: the live claude session wrote its status file before the wake"
   if proc_table_readable; then

@@ -54,9 +54,11 @@ esac
 exit 0
 EOF
 # stub_step STEP HOLD — marks that the launch reached STEP, then, where HOLD
-# names a file, holds it there until that file exists, 10 seconds at most:
-# a launch held for as long as the row needs it rather than for a guessed
-# time. The steps are count (the read of a claim store that exists, under the
+# names a file, holds it there until that file exists, 120 seconds of wall
+# time at most: a launch held for as long as the row needs it rather than for
+# a guessed time. Every bound in this suite is wall time, never a count of
+# polls, and a hold outlasts every wait below, so a loaded runner slows a row
+# down but does not release a hold before the row opens it. The steps are count (the read of a claim store that exists, under the
 # launch lock), recheck (the second pane listing of one launch, which the
 # claims reader takes when a claim names the listed server and a pane it did
 # not list), create (the worktree create), window (the new window, ahead of
@@ -65,9 +67,9 @@ EOF
 STUB_STEP="$TMP_ROOT/stub-step.sh"
 cat > "$STUB_STEP" <<'EOF'
 stub_step() {
-  local n=0
+  local end=$((SECONDS + 120))
   [[ -z "${STUB_MARK:-}" ]] || : > "$STUB_MARK.$1.$STUB_TAG"
-  while [[ -n "${2:-}" && ! -e "$2" ]] && (( n < 100 )); do sleep 0.1; n=$((n + 1)); done
+  while [[ -n "${2:-}" && ! -e "$2" ]] && (( SECONDS < end )); do sleep 0.1; done
 }
 EOF
 cat > "$BIN/tmux" <<EOF
@@ -159,30 +161,32 @@ launch() {
   printf '%s\n' "$rc" > "$ROW/$tag.rc"
 }
 
-# await_step TAG STEP — block until launch TAG has reached STEP.
+# await_step TAG STEP — block until launch TAG has reached STEP, 60 seconds at
+# most.
 await_step() {
-  local n=0
-  while [[ ! -e "$ROW/reached.$2.$1" ]] && (( n < 100 )); do sleep 0.1; n=$((n + 1)); done
-  [[ -e "$ROW/reached.$2.$1" ]] || { echo "launch $1 never reached $2" >&2; exit 1; }
+  local end=$((SECONDS + 60))
+  while [[ ! -e "$ROW/reached.$2.$1" ]] && (( SECONDS < end )); do sleep 0.1; done
+  [[ -e "$ROW/reached.$2.$1" ]] || { echo "launch $1 never reached $2 in 60 s" >&2; exit 1; }
 }
 
 # await_line TAG PATTERN [COUNT] — block until TAG's stdout holds COUNT lines
-# matching PATTERN.
+# matching PATTERN, 60 seconds at most.
 await_line() {
-  local n=0 want="${3:-1}" got=0
-  while (( n < 100 )); do
+  local end=$((SECONDS + 60)) want="${3:-1}" got=0
+  while :; do
     got="$(grep -cE -- "$2" "$ROW/$1.out" 2>/dev/null || true)"
     (( got < want )) || return 0
-    sleep 0.1; n=$((n + 1))
+    (( SECONDS < end )) || break
+    sleep 0.1
   done
-  echo "launch $1 printed $got of $want lines matching $2" >&2; exit 1
+  echo "launch $1 printed $got of $want lines matching $2 in 60 s" >&2; exit 1
 }
 
 # await_exit PID — block until a backgrounded launch exits, bounded: a waiter
 # that never sees room is killed and fails the suite rather than hanging it.
 await_exit() {
-  local n=0
-  while kill -0 "$1" 2>/dev/null && (( n < 200 )); do sleep 0.1; n=$((n + 1)); done
+  local end=$((SECONDS + 90))
+  while kill -0 "$1" 2>/dev/null && (( SECONDS < end )); do sleep 0.1; done
   if kill -0 "$1" 2>/dev/null; then kill "$1" 2>/dev/null || true; echo "launch $1 never finished waiting" >&2; exit 1; fi
   wait "$1" || true
 }
@@ -385,15 +389,15 @@ LANE_HOST_STUB_LOG="$ROW/host.log" LANE_HOST_STUB_WAIT_GATE="$ROW/gate" LANE_HOS
   launch one 1 --lane "$LANE_A" --host "$HOST_STUB" --repo o/r CC-1
 launch two 1 --lane "$LANE_B" CC-2 &
 SECOND=$!
-n=0
-while kill -0 "$SECOND" 2>/dev/null && ! grep -q '^open-terminal: lock-waiting' "$ROW/two.out" 2>/dev/null && (( n < 50 )); do sleep 0.1; n=$((n + 1)); done
+end=$((SECONDS + 60))
+while kill -0 "$SECOND" 2>/dev/null && ! grep -q '^open-terminal: lock-waiting' "$ROW/two.out" 2>/dev/null && (( SECONDS < end )); do sleep 0.1; done
 : > "$ROW/gate"
 await_exit "$SECOND"
 assert_eq "one=$(rc one) handed=$(grep -c '^open-terminal: lane-preparing item=CC-1 ' "$ROW/one.out" || true) two=$(rc two) lock-waits=$(grep -c '^open-terminal: lock-waiting' "$ROW/two.out" || true) $(key two)" \
   "one=0 handed=1 two=1 lock-waits=0 open-terminal: cap-reached item=CC-2 cap=1 running=1 claims=0" \
   "the next launch finds the lock free while the job waits on the host, and the preparing lane fills the fleet's only slot"
-n=0
-while [[ "$(status_of CC-1)" == preparing ]] && (( n < 200 )); do sleep 0.1; n=$((n + 1)); done
+end=$((SECONDS + 60))
+while [[ "$(status_of CC-1)" == preparing ]] && (( SECONDS < end )); do sleep 0.1; done
 assert_eq "$(status_of CC-1)" stopped "the job ends on the host's failed preparation, recording the lane stopped"
 row preparing
 seed_running CC-9 preparing
