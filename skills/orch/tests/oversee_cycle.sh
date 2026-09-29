@@ -113,13 +113,13 @@ new_case() {
 # are PR_ROUNDS, none by default.
 timeline() {
   jq -n --arg merge "$MERGE" --arg fc "$(at 60)" --arg cr "$(at 120)" --arg gate "$(at 300)" \
-    --arg ci "$(at 360)" --arg armed "$(at 420)" --arg merged "$(at "$1")" \
+    --arg ci "$(at 360)" --arg armed "$(at 420)" --arg merged "$(at "$1")" --argjson open "$(($1 - 120))" \
     --arg fg "$(at "${2:-300}")" --arg push "$(at "${3:-110}")" --argjson rounds "${PR_ROUNDS:-[]}" \
     '{pr: 7, repo: "owner/repo", state: "MERGED", head: "h", merge_commit: $merge,
       stamps: {first_commit: $fc, created: $cr, last_push: $push, first_bot_review: null,
                first_gate_met: $fg, gate_met: $gate, ci_green: $ci, armed: $armed,
                queued: null, merged: $merged},
-      ci_head_secs: 60, ci_merge_group_secs: null, open_secs: null, bot_reviews: 0,
+      ci_head_secs: 60, ci_merge_group_secs: null, open_secs: $open, bot_reviews: 0,
       push_times: [$push], bot_review_times: [], rounds: $rounds}' > "$CASE/timeline.json"
 }
 edit_json() { jq "$2" "$1" > "$1.new" && mv -- "$1.new" "$1"; } # FILE FILTER
@@ -170,7 +170,7 @@ echo "=== the verdict reads open to merge, not launch to merge ==="
 new_case open-span
 printf micro > "$CASE/class"
 timeline 2000
-edit_json "$CASE/timeline.json" ".stamps.created = \"$(at 900)\""
+edit_json "$CASE/timeline.json" ".stamps.created = \"$(at 900)\" | .open_secs = 1100"
 got="$(record KEN-1 micro)"
 assert_eq "$(field actual "$got") $(field open "$got") $(field verdict "$got")" "actual=2000 open=1100 verdict=met" \
   "a slow launch to PR opened is no miss while open to merge meets the target"
@@ -316,7 +316,7 @@ assert_eq "$(field verdict "$got") $(field actual "$got") $(field open "$got") $
 new_case no-open
 printf small > "$CASE/class"
 timeline 1100
-edit_json "$CASE/timeline.json" '.stamps.created = null'
+edit_json "$CASE/timeline.json" '.stamps.created = null | .open_secs = null'
 got="$(record KEN-1 standard)"
 assert_eq "$(field verdict "$got") $(field open "$got") $(field missing "$got")" "verdict=unmeasured open=- missing=pr_opened" \
   "a PR with no open stamp is unmeasured, never met"
@@ -326,7 +326,7 @@ new_case phase
 printf small > "$CASE/class"
 jq -n --arg merge "$MERGE" --arg fc "$(at 900)" --arg cr "$(at 960)" --arg gate "$(at 1000)" --arg ci "$(at 1010)" --arg m "$(at 1100)" \
   '{pr: 7, merge_commit: $merge, stamps: {first_commit: $fc, created: $cr, last_push: $cr, first_gate_met: null,
-    gate_met: $gate, ci_green: $ci, armed: null, queued: $gate, merged: $m}, push_times: [], bot_review_times: []}' > "$CASE/timeline.json"
+    gate_met: $gate, ci_green: $ci, armed: null, queued: $gate, merged: $m}, open_secs: 140, push_times: [], bot_review_times: []}' > "$CASE/timeline.json"
 assert_eq "$(record KEN-3 micro)" \
   "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1800 actual=1100 open=140 verdict=met phase=merged phase_secs=90 cause=- bot_wait=40 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true refixed=-" \
   "launch to first commit, the lane's longest gap, is outside the open span and names no phase; queued stands in for armed, a micro tier merged small escaped, and no gate pass leaves refixed unknown, a timeline with no rounds no pr_rounds"
@@ -342,8 +342,8 @@ gate_timeline() {
     'def times($s): [$s | split(" ")[] | select(. != "-" and . != "") | tonumber + $t0 | todate];
      {push_times: (if $p == "null" then null else times($p) end), bot_review_times: times($r)}')"
   jq -n --arg merge "$MERGE" --arg fc "$(at 60)" --arg cr "$(at 120)" --arg gate "$(at 3000)" \
-    --arg ci "$(at 3060)" --arg armed "$(at 3100)" --arg merged "$(at "$3")" --argjson lists "$lists" \
-    '{pr: 7, merge_commit: $merge,
+    --arg ci "$(at 3060)" --arg armed "$(at 3100)" --arg merged "$(at "$3")" --argjson open "$(($3 - 120))" --argjson lists "$lists" \
+    '{pr: 7, merge_commit: $merge, open_secs: $open,
       stamps: {first_commit: $fc, created: $cr, last_push: $cr, first_gate_met: $gate, gate_met: $gate,
                ci_green: $ci, armed: $armed, queued: null, merged: $merged}} + $lists' > "$CASE/timeline.json"
 }
@@ -418,9 +418,9 @@ assert_eq "$(state '[.lanes[] | has("cycle")] | any')" "false" "and no refusal w
 # conjunct has a row it alone decides, and a control below that plants its
 # removal against that row.
 #   m   a miss at 5000 s, its longest gap ending at merged
-#   p   a miss whose longest gap is 1860 s from first commit at 600 s to the
-#       PR opening at 2460 s; the longest gap after the PR opens ends at
-#       gate_green
+#   p   a miss whose CI went green at 700 s, before the PR opened at 2460 s,
+#       so the longest gap before the PR opens is 1760 s from CI green to
+#       the opening; the longest gap after it ends at gate_green
 #   n   a miss with CI green absent, so no phase is named
 #   ok  a met record at 800 s, its phase merged too
 #   g   a miss on gate_green whose longest wait is the thread fix
@@ -435,8 +435,8 @@ repeat_row() { # CASE SEQUENCE — prints the bar lines the last record printed
     case "$kind" in
       m) timeline 5000 ;;
       p) timeline 4360
-         edit_json "$CASE/timeline.json" ".stamps |= (.first_commit = \"$(at 600)\" | .created = \"$(at 2460)\"
-           | .gate_met = \"$(at 3400)\" | .ci_green = \"$(at 3700)\" | .armed = \"$(at 3800)\")" ;;
+         edit_json "$CASE/timeline.json" ".stamps |= (.first_commit = \"$(at 600)\" | .ci_green = \"$(at 700)\"
+           | .created = \"$(at 2460)\" | .gate_met = \"$(at 3400)\" | .armed = \"$(at 3800)\") | .open_secs = 1900" ;;
       n) timeline 5000; edit_json "$CASE/timeline.json" '.stamps.ci_green = null' ;;
       ok) timeline 800 ;;
       g) gate_timeline "100 1400" "400 1500 2000" 3200 ;;
@@ -521,13 +521,13 @@ assert_eq "$(field verdict "$(record KEN-1 standard)")" "verdict=met" \
 
 control m-open oversee-cycle 'elif $open > $target then "miss"' 'elif $actual > $target then "miss"'
 new_case c-open; printf micro > "$CASE/class"; timeline 2000
-edit_json "$CASE/timeline.json" ".stamps.created = \"$(at 900)\""
+edit_json "$CASE/timeline.json" ".stamps.created = \"$(at 900)\" | .open_secs = 1100"
 assert_eq "$(field verdict "$(record KEN-1 micro)")" "verdict=miss" \
   "control: judged on launch to merge, a slow launch to PR opened records a miss"
 
-control m-phase oversee-cycle 'select(.key | IN("launched", "first_commit") | not)' 'select(true)'
+control m-phase oversee-cycle '| select(.at >= $o)]' '| select(.name | IN("launched", "first_commit") | not)]'
 assert_eq "$(repeat_row c-phase "p:1 p:2 p:3")" "repeat-miss phase=pr_opened items=KEN-1,KEN-2,KEN-3 causes=-,-,-" \
-  "control: read over the whole lane, a miss is charged to first commit to PR opened"
+  "control: selected by name, a CI green before the PR opened charges the miss to CI green to PR opened"
 
 control m-rollup oversee-cycle '| if $n == 0 then "-" else $a[(($n * $p) | ceil) - 1] end;' '| if $n == 0 then "-" else $a[(($n * $p) | floor) - 1] end;'
 new_case c-rollup
