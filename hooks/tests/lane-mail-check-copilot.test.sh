@@ -462,14 +462,14 @@ cop_record() { # TOKENS WINDOW [TRANSCRIPT]
       context_window:{current_context_tokens:$n, context_window_size:$w}}' |
     COPILOT_HOME="$COP_ACCOUNT" "$REPO_ROOT/skills/orch/scripts/copilot-statusline" >/dev/null
 }
-cop_recorded() { # the reading the hook recorded in the lane's mailbox
+cop_context_recorded() { # the reading the hook recorded in the lane's mailbox
   jq -c '[.harness, .tokens, .window, .model]' "$LANE/tmp/lane-mail/KEN-204/context.json" 2>/dev/null || echo none
 }
 # COPILOT_HOME names the account, which `lanes` lists and reads no stored login in:
 # the account is unmeasured until the login row below.
 cop_record 100000 1000000
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
-assert_eq "RC=$RC keyed=$(cop_keys) recorded=$(cop_recorded)" \
+assert_eq "RC=$RC keyed=$(cop_keys) recorded=$(cop_context_recorded)" \
   'RC=0 keyed=account=unmeasured recorded=["copilot",100000,800000,"claude-opus-5"]' \
   "a Copilot lane's fresh record is read, recorded with the compaction point as capacity, and judged room"
 cop_record 400000 1000000
