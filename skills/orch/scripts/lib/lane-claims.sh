@@ -282,3 +282,16 @@ lane_claim_reserve() {
 LANE_RUNNING_JQ='def running: type == "object" and .status == "running";
 def held: running or (type == "object" and .status == "preparing");
 def in_flight: held or (type == "object" and .status == "parked");'
+
+# lane_running_record LANES WINDOW HARNESS — the first running record of a
+# HARNESS lane whose window part is WINDOW's, compact on stdout, nothing where
+# none is: the one lookup of a lane's record by the window a reader holds, for
+# `lanes state` and oversee-watch. LANES is the fleet state's `lanes` array, or
+# the state object holding it, and empty is no fleet. Non-zero where LANES is
+# not JSON.
+lane_running_record() { # LANES WINDOW HARNESS
+  jq -c --arg w "${2#*:}" --arg h "$3" "$LANE_RUNNING_JQ"'
+    (if type == "object" then .lanes // [] else . end)
+    | map(select(running and .harness == $h and ((.window // "") | sub("^.*:"; "")) == $w)) | first // empty' \
+    <<<"$1" 2>/dev/null
+}

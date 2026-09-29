@@ -164,8 +164,11 @@ copilot_session_fields() { # RECORD
 # can block the allow-all mode, and the CLI refreshes them each hour, so a
 # session launched with `--allow-all` can lose it mid-run; every tool call then
 # waits on a permission prompt nobody at the pane answers. That is a stop with
-# its own cause, never a quiet lane. Prints the cause, 0; prints nothing, 1,
-# where the record says allow-all is on, does not say, or is not JSON.
+# its own cause, never a quiet lane. A session launched without allow-all
+# reports false as well: the record alone cannot tell the two apart, so a
+# reader that knows the launch holds the cause to it (copilot_session_lane_note
+# below). Prints the cause, 0; prints nothing, 1, where the record says
+# allow-all is on, does not say, or is not JSON.
 copilot_session_stop_cause() { # RECORD
   copilot_session_fields "$1" || return 1
   [ "$CS_ALLOW_ALL" = false ] || return 1
@@ -206,41 +209,32 @@ copilot_session_in_worktree() { # HOME WORKTREE
   printf '%s\n' "$best"
 }
 
-# copilot_session_lane_note LANES WINDOW NOW — what a Copilot lane's session
-# record says about a stop, for a reader outside the session, which holds no
-# payload naming it: `lanes state` and oversee-watch. Into COPILOT_SESSION_NOTE
-# as one `key=value` word, empty where the record names no cause:
+# copilot_session_lane_note HOME SESSION_ID WORKTREE GRANTED NOW — what the
+# session record of a Copilot lane on the account HOME says about a stop, for a
+# reader outside the session, which holds no payload naming it: `lanes state`
+# and oversee-watch, through lib/lane-context.sh lane_context_copilot_note.
+# Into COPILOT_SESSION_NOTE as one `key=value` word, empty where the record
+# names no cause:
 #   stop-cause=<cause>       copilot_session_stop_cause's cause
 #   session-record=<reason>  no record answered: copilot_session_read's reason,
-#                            `worktree-unmatched` for a record naming no
-#                            session and no worktree a session with events ran
-#                            in, or `store-unreadable` for a worktree or a
-#                            session store that could not be read
-# LANES is the fleet state's `lanes` array, or the state object holding it; the
-# lane is its running record (lib/lane-claims.sh LANE_RUNNING_JQ) whose harness
-# is copilot and whose window part is WINDOW's, and no such record leaves the
-# note empty. The store read is this machine's: a fleet refuses a hosted
-# Copilot lane (open-terminal, `unsupported-for-oversee reason=hosted`). The
-# account is the record's `account`, else the one a launch with no --lane runs
-# on (lib/lane-context.sh lane_context_caller_cfg). The session is the record's
-# `session_id`, which a relaunch or a wake writes, else the one
-# copilot_session_in_worktree names for the record's `mail_root`. 0 with the
-# note; 2 where LANES could not be read.
+#                            `worktree-unmatched` for no SESSION_ID and no
+#                            WORKTREE a session with events ran in, or
+#                            `store-unreadable` for a WORKTREE or a session
+#                            store that could not be read
+# GRANTED is `true` for a lane whose launch granted the full allow-all mode,
+# `--allow-all` or `--yolo` (lib/lane-launch.sh lane_copilot_allows_all). Only
+# such a lane has an allow-all a policy can take: a lane launched without it
+# reads allow_all_enabled false as well, and waits on its prompts by design, so
+# any other GRANTED leaves the note empty and reads nothing. The session is
+# SESSION_ID, else the one copilot_session_in_worktree names for WORKTREE.
+# Always 0.
 COPILOT_SESSION_NOTE=""
-copilot_session_lane_note() { # LANES WINDOW NOW
-  local rec home session worktree file rc=0
+copilot_session_lane_note() { # HOME SESSION_ID WORKTREE GRANTED NOW
+  local home="$1" session="$2" file rc=0
   COPILOT_SESSION_NOTE=""
-  rec="$(jq -r --arg w "${2#*:}" "${LANE_RUNNING_JQ:?}"'
-    (if type == "object" then .lanes // [] else . end)
-    | map(select(running and .harness == "copilot" and ((.window // "") | sub("^.*:"; "")) == $w)) | first // empty
-    | [.account, .session_id, .mail_root] | map(strings // "") | join("\t")' <<<"$1" 2>/dev/null)" || return 2
-  [ -n "$rec" ] || return 0
-  home="${rec%%	*}"; rec="${rec#*	}"
-  session="${rec%%	*}"
-  worktree="${rec#*	}"
-  [ -n "$home" ] || home="$(lane_context_caller_cfg copilot)" || return 2
+  [ "$4" = true ] || return 0
   if [ -z "$session" ]; then
-    if [ -z "$worktree" ]; then rc=1; else file="$(copilot_session_in_worktree "$home" "$worktree")" || rc=$?; fi
+    if [ -z "$3" ]; then rc=1; else file="$(copilot_session_in_worktree "$home" "$3")" || rc=$?; fi
     [ "$rc" -ne 0 ] || session="$(copilot_session_id "$file")" || rc=2
     case "$rc" in
       0) ;;
@@ -248,7 +242,7 @@ copilot_session_lane_note() { # LANES WINDOW NOW
       *) COPILOT_SESSION_NOTE=session-record=store-unreadable; return 0 ;;
     esac
   fi
-  if ! copilot_session_read "$home" "$session" "" "$3"; then
+  if ! copilot_session_read "$home" "$session" "" "$5"; then
     COPILOT_SESSION_NOTE="session-record=$COPILOT_SESSION_REASON"
   elif COPILOT_SESSION_NOTE="$(copilot_session_stop_cause "$COPILOT_SESSION_RECORD")"; then
     COPILOT_SESSION_NOTE="stop-cause=$COPILOT_SESSION_NOTE"

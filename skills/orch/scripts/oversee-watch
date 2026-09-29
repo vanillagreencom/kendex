@@ -2884,6 +2884,13 @@ check_overseer() {
   return 1
 }
 
+# COPILOT_SESSION_NOTE for a lane's line (lib/lane-context.sh).
+lane_note() { # LANE
+  local r
+  r="$(lane_running_record "$FLEET_STATE" "$1" copilot)" && lane_context_copilot_note "$r" "$PASS_NOW" ||
+    die state-invalid "" "option=--state" "path=$STATE_FILE"
+}
+
 check_lanes() {
   # No lane to watch still leaves the items: a handoff is read from state.
   [[ ${#LANES[@]} -gt 0 ]] || { check_handoff; return 0; }
@@ -2900,8 +2907,8 @@ check_lanes() {
   # `states` and classifies nothing of its own.
   #
   # The sixth argument, the harness process read through /proc, is empty here:
-  # the watch's whole vantage point is the tmux pane, and a hosted lane's
-  # harness runs on another machine anyway. With it empty the judge answers
+  # the watch's one vantage point is the tmux pane, and a hosted lane's
+  # harness runs on another machine. With it empty the judge answers
   # `unjudged` for a screen its pane rungs cannot settle, where the wake, which
   # does pass it, can still answer. The eighth is a Pi lane's rows verdict,
   # which observe_lanes read and which answers for that lane in place of its
@@ -2918,10 +2925,10 @@ check_lanes() {
     fi
     # The judge exits 2 on exactly one condition, a banner scan that failed,
     # and observe_lanes already ran that scan over this slice of this capture
-    # file and died `limit-scan-failed` on it. So this refuses the same
-    # condition under the same reason rather than inventing a second one, and
-    # in an ordinary pass it is unreachable: the status is checked because a
-    # verdict nothing looked at is how a lane gets read as having no news.
+    # file and died `limit-scan-failed` on it. So this refuses it under the
+    # same reason, and in an ordinary pass it is unreachable: the status is
+    # checked because a verdict nothing looked at is how a lane gets read as
+    # having no news.
     lane_state state "$window" "$cmd" "$pid" "$pane" "" "" "${LANE_ROWS[$i]:-}" \
       || die limit-scan-failed "" "lane=$lane"
     # A probe that could not run is not an answer: the judge falls through to
@@ -3104,7 +3111,7 @@ check_lanes() {
     fi
     asking_state="$(lane_row_set lane-asking "$asking_state" "$lane" "$fingerprint")"
     if [[ "$fingerprint" == "$prior" ]]; then continue; fi
-    copilot_session_lane_note "$FLEET_STATE" "$lane" "$PASS_NOW" || die state-invalid "" "option=--state" "path=$STATE_FILE"
+    lane_note "$lane"
     echo "EVENT lane-asking $lane${COPILOT_SESSION_NOTE:+ $COPILOT_SESSION_NOTE}"
     # The dialog, which is what gets answered. It is the bottom of the slice
     # the question was found in, so the cap trims the turn above it and not
@@ -3177,7 +3184,7 @@ check_lanes() {
       # ended, and the cap keeps its last lines. Unfiltered: the dead-worktree
       # prompt noise is drawn by a shell that has the terminal back, and a
       # lane whose shell is drawing prompts reads exited, not idle.
-      copilot_session_lane_note "$FLEET_STATE" "$lane" "$PASS_NOW" || die state-invalid "" "option=--state" "path=$STATE_FILE"
+      lane_note "$lane"
       echo "EVENT idle-after-return $lane${COPILOT_SESSION_NOTE:+ $COPILOT_SESSION_NOTE}"
       bounded_tail "$below"
       PASS_EVENT=1

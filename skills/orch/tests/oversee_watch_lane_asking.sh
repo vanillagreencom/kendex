@@ -160,18 +160,19 @@ assert_contains "$(cat "$err")" "oversee-watch: state-target-invalid path=$STATE
   "the baseline write failure names its target" "$err"
 
 echo "=== a Copilot lane's session record rides its lane-asking and idle lines ==="
-# copilot_lane ALLOW SCREEN — gh-2 is a running Copilot fleet lane on an account
-# whose one session ran in the lane's worktree, its record saying
-# allow_all_enabled ALLOW, the watch's clock at the record's stamp, and its
-# pane showing SCREEN: a permission prompt, or an idle composer.
+# copilot_lane ALLOW SCREEN [GRANT] — gh-2 is a running Copilot fleet lane,
+# launched with allow_all GRANT (true unless named), on an account whose one
+# session ran in the lane's worktree, its record saying allow_all_enabled
+# ALLOW, the watch's clock at the record's stamp, and its pane showing SCREEN:
+# a permission prompt, or an idle composer.
 copilot_lane() {
   local account="$STUB_DIR/.1copilot" wt="$STUB_DIR/wt"
   mkdir -p "$wt" "$account/session-state/cop-1"
   printf 'id: cop-1\ncwd: %s\n' "$(cd "$wt" && pwd -P)" > "$account/session-state/cop-1/workspace.yaml"
   printf '{"type":"session.start"}\n' > "$account/session-state/cop-1/events.jsonl"
-  jq -cn --arg a "$account" --arg root "$wt" \
+  jq -cn --arg a "$account" --arg root "$wt" --argjson g "${3:-true}" \
     '{issue_id: "oversee", triaged: [], lanes: [{item: "gh-2", window: "gh-2", harness: "copilot",
-      account: $a, mail_root: $root, status: "running"}]}' > "$STUB_DIR/state.json"
+      account: $a, mail_root: $root, status: "running", allow_all: $g}]}' > "$STUB_DIR/state.json"
   jq -cn --argjson a "$1" '{session_id: "cop-1", allow_all_enabled: $a}' \
     | COPILOT_HOME="$account" "$REPO_ROOT/skills/orch/scripts/copilot-statusline" >/dev/null
   jq -r '.written_at' "$account/lane-status/cop-1.json" > "$STUB_DIR/now.epoch"
@@ -185,17 +186,18 @@ copilot_events() {
   WATCH_BIN="${COPILOT_WATCH:-}" run_watch -- --state "$STUB_DIR/state.json" 2>"$STUB_DIR/err" </dev/null \
     | grep '^EVENT lane-asking\|^EVENT idle-after-return' | paste -sd '|' - || true
 }
-# ALLOW|SCREEN|WANT
-while IFS='|' read -r allow screen want; do
-  [[ -n "$allow" ]] || continue
-  new_case "copilot_${allow}_$screen"
-  copilot_lane "$allow" "$screen"
+# GRANT|ALLOW|SCREEN|WANT
+while IFS='|' read -r grant allow screen want; do
+  [[ -n "$grant" ]] || continue
+  new_case "copilot_${grant}_${allow}_$screen"
+  copilot_lane "$allow" "$screen" "$grant"
   assert_eq "$(copilot_events)" "$want" \
-    "a Copilot lane whose record says allow_all_enabled $allow, at a $screen pane" "$STUB_DIR/err"
+    "a Copilot lane launched with allow_all $grant whose record says allow_all_enabled $allow, at a $screen pane" "$STUB_DIR/err"
 done <<'ROWS'
-false|prompt|EVENT lane-asking gh-2 stop-cause=allow-all-blocked-by-policy
-true|prompt|EVENT lane-asking gh-2
-false|idle|EVENT idle-after-return gh-2 stop-cause=allow-all-blocked-by-policy
+true|false|prompt|EVENT lane-asking gh-2 stop-cause=allow-all-blocked-by-policy
+true|true|prompt|EVENT lane-asking gh-2
+true|false|idle|EVENT idle-after-return gh-2 stop-cause=allow-all-blocked-by-policy
+false|false|prompt|EVENT lane-asking gh-2
 ROWS
 # The control: a watch whose lane-asking line drops the note reports a
 # policy-blocked lane as a plain dialog to answer.

@@ -267,10 +267,10 @@ The long pass's events, checked and reported in this order:
   EVENT lane-asking <lane> [<copilot note>]
                              a question or selection prompt differs from the
                              last one emitted for this lane; the dialog follows.
-                             A Copilot lane's line carries
-                             stop-cause=<cause> or session-record=<reason>
-                             where its session record names one
-                             (lib/copilot-session.sh
+                             A Copilot lane launched with allow-all
+                             carries stop-cause=<cause> or
+                             session-record=<reason> where its session
+                             record names one (lib/copilot-session.sh
                              copilot_session_lane_note)
   EVENT model-capacity <lane>
                              a Codex turn ended because its selected model is
