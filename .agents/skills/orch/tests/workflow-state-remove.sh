@@ -250,6 +250,7 @@ while IFS='|' read -r case_name want_rc want label; do
     absent) got="$(remove "$WS" "$TMP_ROOT/none" KEN-1 2>&1)" || rc=$? ;;
     absent-key) got="$(remove "$WS" "$cp_dir" KEN-404 2>&1)" || rc=$? ;;
     no-item) got="$( (cd "$TMP_ROOT" && bash "$WS" --state-dir "$cp_dir" remove) 2>&1)" || rc=$? ;;
+    dash-key) got="$( (cd "$TMP_ROOT" && bash "$WS" --state-dir "$cp_dir" remove -KEN-1) 2>&1)" || rc=$? ;;
     no-archive-path) got="$( (cd "$TMP_ROOT" && bash "$WS" --state-dir "$cp_dir" remove KEN-1 --archive) 2>&1)" || rc=$? ;;
     rm-fails) got="$( (cd "$TMP_ROOT" && PATH="$RM_BIN:$PATH" FLEET_DIR="$cp_dir.fleet" bash "$WS" --state-dir "$cp_dir" remove KEN-1) 2>&1 >/dev/null)" || rc=$? ;;
   esac
@@ -261,11 +262,31 @@ done <<ROWS
 absent|0|removed kept=none|a state directory that is not there removes nothing, archives nothing and creates none
 absent-key|0|removed kept=none|a key no entry names removes nothing and archives nothing
 no-item|2|workflow-state: remove-issue command=remove|a remove with no item is refused
+dash-key|2|workflow-state: remove-issue-dash key=-KEN-1|a key that starts with a dash is refused, never taken as a key
 no-archive-path|2|workflow-state: archive-value option=--archive|an --archive with no path is refused
 rm-fails|1|workflow-state: remove-failed path=$TMP_ROOT/case-rm-fails/completion-summary-KEN-1.md kept=$TMP_ROOT/case-rm-fails.fleet/*.tgz|a removal that fails is refused naming the path and the archive holding it
 ROWS
 grep -qxF 'rm: planted failure' <<<"$got" \
   && pass "the removal refusal carries rm's own words" || fail "the removal refusal carries rm's own words" "got=$got"
+
+# `remove --help` and `-h` over a directory with no fleet state, where a key
+# taken as an item would run the close-out's prune and take waiter.abc. HELP
+# reads, for SCRIPT and FLAG, the status, the first line printed and whether
+# the state directory and the fleet directory stand as they did.
+help_run() { # NAME SCRIPT FLAG
+  local hp="$TMP_ROOT/help-$1" before out rc=0
+  build "$hp"
+  rm -f -- "${hp:?}/workflow-state-oversee.json"
+  before="$(find "$hp" | LC_ALL=C sort)"
+  out="$(remove "$2" "$hp" "$3" 2>&1)" || rc=$?
+  HELP="rc=$rc first=$(head -n 1 <<<"$out") state=$([[ "$(find "$hp" | LC_ALL=C sort)" == "$before" && ! -e "$hp.fleet" ]] && echo untouched || echo touched)"
+}
+for flag in --help -h; do
+  help_run "shipped$flag" "$WS" "$flag"
+  [[ "$HELP" == "rc=0 first=  remove <issue_id> [--archive PATH]... state=untouched" ]] \
+    && pass "remove $flag prints the remove usage, exits 0 and touches no state" \
+    || fail "remove $flag prints the remove usage, exits 0 and touches no state" "$HELP"
+done
 
 # The suite's one must-fail control: the item match dropped, so another
 # item's file is removed with the item's own.
@@ -310,6 +331,27 @@ archive_only_run targets-only "$TARGETS_ONLY" KEN-5 tree/tmp
 [[ "$ARCHIVE_ONLY" == "rc=0 kept=none" ]] \
   && pass "control: an archive decided by the removed paths alone drops a worktree's tmp/" \
   || fail "control: an archive decided by the removed paths alone drops a worktree's tmp/" "got=$ARCHIVE_ONLY"
+
+# The help rule's must-fail control: the help flags no longer matched, so
+# --help reaches the key rules and prints no usage.
+NO_HELP="$(mutant_scripts no-help workflow-state)/workflow-state" || exit 1
+mutate_file "$NO_HELP" '        --help|-h)' '        --help-off|-h-off)'
+help_run no-help "$NO_HELP" --help
+[[ "$HELP" != "rc=0 first=  remove <issue_id> [--archive PATH]... state=untouched" ]] \
+  && pass "control: without the help match remove --help prints no usage" \
+  || fail "control: without the help match remove --help prints no usage" "$HELP"
+
+# The dash rule's must-fail control: a dash-led key no longer refused, so it
+# is taken as an item key and the close-out runs.
+DASH_KEY="$(mutant_scripts dash-key workflow-state)/workflow-state" || exit 1
+mutate_file "$DASH_KEY" '        -*) state_message remove-issue-dash' '        -*-off) state_message remove-issue-dash'
+dp="$TMP_ROOT/m-dash-key"
+build "$dp"
+rc=0
+out="$(remove "$DASH_KEY" "$dp" -KEN-1 2>&1)" || rc=$?
+[[ "$rc" -eq 0 && "$out" == "removed kept=none" ]] \
+  && pass "control: without the dash refusal a dash-led key runs the close-out" \
+  || fail "control: without the dash refusal a dash-led key runs the close-out" "rc=$rc out=$out"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

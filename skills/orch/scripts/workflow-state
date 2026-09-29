@@ -230,6 +230,14 @@ state_message() {
       printf 'workflow-state: remove-issue command=%s\n' "remove"
       printf '%s\n' "Error: remove requires an issue_id"
       ;;
+    remove-issue-dash)
+      printf 'workflow-state: remove-issue-dash key=%s\n' "$item"
+      printf '%s\n' "Error: remove: an issue_id never starts with '-': $item"
+      ;;
+    help-entry-missing)
+      printf 'workflow-state: help-entry-missing command=%s\n' "remove"
+      printf '%s\n' "Error: the help text holds no remove entry"
+      ;;
     remove-failed)
       printf 'workflow-state: remove-failed path=%s kept=%s\n' "$unit" "$archive"
       printf '%s\n' "Error: remove: $unit could not be removed; every path before it is gone, and the archive holds it and them"
@@ -1341,10 +1349,21 @@ cmd_prune() {
 # `removed kept=ARCHIVE`, or `removed kept=none` where nothing was archived.
 # Where no fleet state stands, no overseer prunes the directory, so the
 # close-out runs the prune too and prints its lines after its own.
+# `remove --help` or `-h` prints the remove entry of cmd_help and touches no
+# state; any other key that starts with `-` is refused before any state is
+# read, so a flag is never taken as an item key.
 cmd_remove() {
-    local item="${1:-}" sd unit err now_epoch archive=none field=archive
+    local item="${1:-}" sd unit err now_epoch archive=none field=archive entry
     local -a extra=() targets=() evidence=()
-    [[ -n "$item" ]] || { state_message remove-issue "$@" >&2; return 2; }
+    case "$item" in
+        --help|-h)
+            if ! entry=$(awk 'index($0, "  remove ") == 1 { p = 1; print; next } p && !/^    / { exit } p { print }' <<<"$(cmd_help)"); then return 1; fi
+            [[ -n "$entry" ]] || { state_message help-entry-missing "$@" >&2; return 1; }
+            printf '%s\n' "$entry"
+            return 0 ;;
+        '') state_message remove-issue "$@" >&2; return 2 ;;
+        -*) state_message remove-issue-dash "$@" >&2; return 2 ;;
+    esac
     shift
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -1532,7 +1551,10 @@ EOF
                                 "removed kept=ARCHIVE", or "removed kept=none"
                                 where nothing was archived; absent is success.
                                 Where no fleet state exists it then runs prune
-                                and prints its lines
+                                and prints its lines. remove --help or -h
+                                prints this entry and touches no state; any
+                                other key that starts with - is refused as
+                                remove-issue-dash
   fleet-log takeover|audit      Print fleet_log rows of the oversee state, one
                                 JSON object per line: takeover the last rows
                                 of every kind but cycle, as many as the
