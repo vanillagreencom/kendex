@@ -266,7 +266,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   start-stalled<TAB><item><TAB><running_at epoch>|<passes since reported, or seen>
 #   lane-failed<TAB><item><TAB><the last lane-local failure the long pass reported>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
-#   outside-contribution<TAB><repo>#<number><TAB><pr|issue>
+#   outside-contribution<TAB><repo>#<number><TAB><pr HEAD_SHA|issue>
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->
 # And in the mail pass's file:
 #   lane-mail<TAB><item>[@clone]<TAB><to-overseer.jsonl lines already drained> <first id>
