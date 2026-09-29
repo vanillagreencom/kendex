@@ -447,9 +447,11 @@ jobs:
     # and after each rustc release — pays the whole build. Its duration on a
     # runner is unmeasured, so that leg takes the macOS ceiling until a
     # figure is recorded here.
-    # The `guards-tools` shard ran 13m04s to 15m15s on Linux and 24m05s on
-    # macOS on 2026-09-29, and the 15-minute ceiling cancelled its Linux leg
-    # in merge groups, so that leg takes the 30-minute ceiling as well.
+    # The `guards-tools` shard's finished Linux legs ran 10m49s to 14m59s on
+    # 2026-09-29, and the 15-minute ceiling cancelled that leg in merge
+    # groups, so it takes the 30-minute ceiling as well. Its finished macOS
+    # legs ran 22m35s to 29m27s that day, and some macOS legs reached their
+    # own 30-minute ceiling.
     timeout-minutes: ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'guards-tools') && 30 || 15 }}
     # harness-ci's change-class suite skips its real-kendex rows where no
     # kendex is on PATH, and this turns that skip into a failure. It is set
