@@ -6,7 +6,7 @@ For automated reviewers on this repository. These rules govern review comments o
 
 ## scope
 
-Raise a defect only in changed lines or code those lines directly break. Report correctness defects, security defects, data loss, and fail-open paths in gates, guards, or CI. Do not report unrelated defects. Do not question the inclusion of a file that the PR body explicitly includes in its scope. Report an input only after establishing that a shipped producer emits it in normal use; a full disk or a value past 2^53 is not one. A change that reads text, a status line, a pane or internal files of another system must name the documented interface it stands in for and why that interface cannot serve. Report a change that omits either as a blocking finding. This holds for a text or phrase match on another program's output, a scraped terminal pane, and a read of another tool's own state files.
+Raise a defect only in changed lines or code those lines directly break. Report correctness defects, security defects, data loss, fail-open paths in gates, guards, or CI, and an unnamed indirect read of another system. Do not report unrelated defects. Do not question the inclusion of a file that the PR body explicitly includes in its scope. Report an input only after establishing that a shipped producer emits it in normal use; a full disk or a value past 2^53 is not one. A change that reads text, a status line, a pane or internal files of another system must name the documented interface it stands in for and why that interface cannot serve. Report a change that omits either as a blocking finding. This holds for a text or phrase match on another program's output, a scraped terminal pane, and a read of another tool's own state files.
 
 ## rounds
 

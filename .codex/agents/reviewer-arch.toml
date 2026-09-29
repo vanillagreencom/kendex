@@ -22,7 +22,7 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 
 ## Output
 
-Architecture violations, boundary breaches, spec holes, an indirect read of another system that names no interface → `blockers[]`. Tech debt observations, minor improvements → `suggestions[]`.
+Architecture violations, boundary breaches, spec holes, an indirect read of another system that names no interface or no reason → `blockers[]`. Tech debt observations, minor improvements → `suggestions[]`.
 
 ## Required Skills
 

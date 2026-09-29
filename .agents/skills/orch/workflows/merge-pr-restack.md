@@ -36,11 +36,7 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
    git -C [WT_PATH] diff --name-only [PRE_RESTACK_HEAD] HEAD -- .agents/skills/ .github/instructions/
    ```
 
-   A session keeps the skill text it loaded, so a rule that landed on the base under the branch stays unseen until the file is read again. An empty list needs nothing. Otherwise read again now each listed file this session has loaded, and record the list for the next fix round, whose delegation names each path on a `Rules changed:` line so a reused dev session reads it again too. `[PATHS_JSON]` is the list as a JSON array of strings:
-
-   ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE] --argjson paths '[PATHS_JSON]' '.rules_changed = ((.rules_changed // []) + $paths | unique)'
-   ```
+   A session keeps the skill text it loaded, so a rule that landed on the base under the branch stays unseen until the file is read again. An empty list needs nothing. Otherwise, before its next round, the lane reads again `[WT_PATH]/<path>` for each listed path its session loaded, or states the rule change in its round notes. A dev session reused after the restack finds the same list itself, by [dev SKILL.md § Round Contract](../../dev/SKILL.md#round-contract).
 
    Then validate the restacked head before step 3 pushes it. Where a run is made, the head that leaves step 3 is always a head a passing run recorded, and step 3 holds that across its push. Bind the base branch the restack rebased onto as `[BASE_BRANCH]`, and read the mode a range run in the worktree records:
 

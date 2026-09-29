@@ -96,16 +96,6 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.near_ceiling // []'
    ```
 
-   Read the rule files a restack changed under the branch, and render one `Rules changed:` line per entry in the delegation; with no restack since the last fix round, the read is `[]` and renders none. Clear the key after the read, so the next round does not carry the same paths again:
-
-   ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.rules_changed // []'
-   ```
-
-   ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] 'del(.rules_changed)'
-   ```
-
    Decide whether this fix round may add protected files. [`../schemas/dev-round.md` § Protected additions](../schemas/dev-round.md#protected-additions) is the sole scope definition. The default is none.
 
    When the list is non-empty, pass those exact repository-relative paths to the writer as one blank-separated `--adds` value, and render the same list after `Adds:` in the delegation — one path is `Adds: tools/one-helper.sh`, several are `Adds: tools/one-helper.sh skills/x/scripts/check`. A blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one — check for that before you write the line.
@@ -143,7 +133,6 @@ Cancel ends the workflow; a selection goes to § 2.
    QA: [QA_AGENT]
    [If the round may add files: "Adds: [REPO_RELATIVE_PATHS]"]
    [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
-   [For each rules_changed path read from workflow state: "Rules changed: [PATH]"]
 
    Decisions:
    [For each verified decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]

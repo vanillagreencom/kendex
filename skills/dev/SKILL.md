@@ -54,7 +54,7 @@ Code standards are [`../code-quality/SKILL.md`](../code-quality/SKILL.md): corre
 
 Execute workflow sections in order; a "**Skip if**" condition is the workflow's decision, never your own scope assessment. Never push and never open a PR. The orchestrator does that after review passes. A finding on a mechanism this diff introduces or arms is a fix whatever the round, unless Step 0 of the disposition flow excludes it; a `Declined:` there takes one of the reason forms [`../orch/references/finding-disposition.md`](../orch/references/finding-disposition.md) § Decision flow sets out, never a label or a test count.
 
-A `Rules changed:` line in the delegation, one per file, names a skill or review-instruction file a restack changed under the branch. Read each again before the round's first step: a session keeps the text it loaded, so a reused session misses a rule that landed on the base under the branch until it reads the file again.
+A session keeps the rule text it loaded, and a push, `worktree create --reuse` or a restack can rebase the branch onto a base that changed that text. A session that already ran a round on this branch lists what changed before the round's first step, `[PREVIOUS_ROUND_COMMIT]` being the commit its last round reported: `git diff --name-only [PREVIOUS_ROUND_COMMIT] HEAD -- .agents/skills/ .github/instructions/`. It reads again each listed file it loaded, or states the rule change in the round's notes, its return summary.
 
 **The completion artifact is the round.** `dev-return-write` writes it after the commit; never hand-author the JSON (schema: orch [`schemas/dev-return.md`](../orch/schemas/dev-return.md)).
 
