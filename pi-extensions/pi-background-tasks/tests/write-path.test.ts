@@ -103,8 +103,10 @@ test("a task that exits while its last log write is in flight shows closed at on
 			expected: { stopMessage: "bg-1 is already completed (exit 0).", timeoutArmed: false, outcome: completed, logsAtWake: ["final line\n"] },
 		},
 		{ name: "shutdown", during: "shutdown", expected: { stopMessage: null, timeoutArmed: null, outcome: completed, logsAtWake: [] } },
-		// A cleared task is forgotten: no wake, and no persist brings it back.
-		{ name: "clear", during: "clear", expected: { stopMessage: null, timeoutArmed: null, outcome: {}, logsAtWake: [] } },
+		// A cleared task is forgotten: no wake, no persist brings it back, and
+		// its log is deleted after the held write lands instead of that write
+		// creating it again.
+		{ name: "clear", during: "clear", expected: { stopMessage: null, timeoutArmed: null, outcome: {}, logsAtWake: [], log: null } },
 	];
 	expect.assertions(rows.length + 1);
 	expect(rows.length, "exit window table must contain cases").toBeGreaterThan(0);
@@ -112,7 +114,7 @@ test("a task that exits while its last log write is in flight shows closed at on
 		const result = runSpawnFixture("write-path-extension.ts", { mode: "exit-held", during: row.during });
 		expect(result, row.name).toStrictEqual({
 			heldAppends: 1, widgetBeforeClose: { running: 1, finished: 0 }, widgetAtClose: { running: 0, finished: 1 },
-			...row.expected, signals: [], childSignals: [], log: "final line\n", unexpected: [],
+			log: "final line\n", ...row.expected, signals: [], childSignals: [], unexpected: [],
 		});
 	}
 }, SPAWN_FIXTURE_TIMEOUT_MS * 4);

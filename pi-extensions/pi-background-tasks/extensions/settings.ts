@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 
@@ -31,7 +31,7 @@ export function settingEnum<T extends string>(key: string, allowed: readonly T[]
 	return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
 }
 
-function taskDir(): string {
+export function taskDir(): string {
 	const configured = settingString("taskDir", "");
 	return process.env.PI_BG_TASK_DIR?.trim() || (configured ? resolve(expandHome(configured)) : join(tmpdir(), "kendex-pi-bg"));
 }
@@ -40,10 +40,14 @@ function safeLabel(input: string): string {
 	return input.replaceAll(/[^a-z0-9-]+/gi, "-").replaceAll(/^-+|-+$/g, "").slice(0, 48) || "task";
 }
 
-export function logFilePath(id: string, now: number = Date.now()): string {
-	const dir = taskDir();
-	mkdirSync(dir, { recursive: true, mode: 0o700 });
-	return join(dir, `${safeLabel(id)}-${now}.log`);
+/** The log file for task `id`, in the lane directory `laneDir`. */
+export function logFilePath(laneDir: string, id: string, now: number = Date.now()): string {
+	return join(laneDir, `${safeLabel(id)}-${now}.log`);
+}
+
+/** The directory one session's task logs live in, under the task directory. */
+export function taskLaneDir(sessionId: string): string {
+	return join(taskDir(), sessionId.replace(/[^\w.-]+/g, "_"));
 }
 
 export function taskEnv(): NodeJS.ProcessEnv {

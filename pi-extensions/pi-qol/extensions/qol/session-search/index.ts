@@ -22,6 +22,7 @@ import type { QolSessionPaletteAction, QolSessionSearchResult } from "./types.js
 export {
 	qolSessionSearchPendingActions,
 	refreshQolSessionSearchCache,
+	releaseQolSessionSearchCache,
 	sessionSearchShortcut,
 } from "./cache.js";
 export { renderSessionSearchContextMessage } from "./context.js";

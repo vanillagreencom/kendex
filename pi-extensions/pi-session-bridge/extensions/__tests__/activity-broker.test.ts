@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 
 import {
+	ACTIVITY_RECENT_MAX_AGE_MS,
+	ACTIVITY_RECENT_MAX_CHARS,
 	getPiActivityBroker,
 	installPiActivityBridgePublisher,
 	publishPiActivity,
@@ -23,6 +25,8 @@ function event(overrides: Partial<PiActivityEvent> = {}): PiActivityEvent {
 beforeEach(() => {
 	delete (globalThis as unknown as Record<PropertyKey, unknown>)[BROKER_SYMBOL];
 });
+
+afterEach(() => setSystemTime());
 
 describe("Pi activity broker", () => {
 	test("publish and subscribe round-trip", () => {
@@ -48,6 +52,29 @@ describe("Pi activity broker", () => {
 		expect(recent).toHaveLength(100);
 		expect(recent[0]?.type).toBe("pi.event.104");
 		expect(recent.at(-1)?.type).toBe("pi.event.5");
+	});
+
+	test("the recent list holds at most ACTIVITY_RECENT_MAX_CHARS of events, newest kept", () => {
+		const broker = getPiActivityBroker();
+		const body = "b".repeat(Math.ceil(ACTIVITY_RECENT_MAX_CHARS / 10));
+		for (let index = 0; index < 30; index += 1) broker.publish(event({ body, type: `pi.event.${index}` }));
+		const recent = broker.recent(200);
+		expect(JSON.stringify(recent).length).toBeLessThanOrEqual(ACTIVITY_RECENT_MAX_CHARS);
+		expect(recent[0]?.type).toBe("pi.event.29");
+		expect(recent.length).toBeLessThan(30);
+	});
+
+	test("an event older than ACTIVITY_RECENT_MAX_AGE_MS leaves the recent list", () => {
+		const broker = getPiActivityBroker();
+		setSystemTime(new Date("2026-01-01T00:00:00Z"));
+		broker.publish(event({ type: "pi.event.old" }));
+		setSystemTime(new Date(Date.parse("2026-01-01T00:00:00Z") + ACTIVITY_RECENT_MAX_AGE_MS + 1));
+		broker.publish(event({ type: "pi.event.new" }));
+		// The publish itself drops the expired event; nothing has to read the list.
+		expect((broker as unknown as { _events: PiActivityEvent[] })._events.map((item) => item.type)).toEqual(["pi.event.new"]);
+		expect(broker.recent(10).map((item) => item.type)).toEqual(["pi.event.new"]);
+		setSystemTime(new Date(Date.parse("2026-01-01T00:00:00Z") + 2 * ACTIVITY_RECENT_MAX_AGE_MS + 2));
+		expect(broker.recent(10)).toEqual([]);
 	});
 
 	test("recent returns newest first with requested limit", () => {

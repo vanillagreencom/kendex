@@ -1,15 +1,147 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { clearMemoryForTests, getWebContent, restoreStoredContent, storeWebContent } from "../src/storage.js";
+import { LANE_FILE_MAX_AGE_MS } from "../scripts/lane-retention.js";
+import { beginWebContentSession, endWebContentSession, getWebContent, MEMORY_MAX_CHARS, storeWebContent } from "../src/storage.js";
+import { createGetWebContentToolDefinition } from "../src/tools/get-web-content.js";
+import { buildWebFetchToolResult } from "../src/tools/web-fetch.js";
 
-test("stored content can be restored from session custom entries", (t) => {
-	clearMemoryForTests();
-	t.after(clearMemoryForTests);
-	const appended: any[] = [];
+type Appended = { type: string; data: any };
+
+/** A Pi user directory and a lane working directory, both owned by the case. */
+function world(t: { after(fn: () => void): void }) {
+	const raw = mkdtempSync(join(tmpdir(), "pi-web-tools-storage-"));
+	const root = realpathSync(raw);
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = join(root, "agent");
+	const cwd = join(root, "lane");
+	mkdirSync(cwd);
+	t.after(() => {
+		endWebContentSession();
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+		rmSync(root, { recursive: true, force: true });
+	});
+	const appended: Appended[] = [];
 	const pi = { appendEntry(type: string, data: unknown) { appended.push({ type, data }); } } as any;
-	const stored = storeWebContent(pi, { title: "T", url: "https://example.com", content: "Body" });
-	const contentBeforeRestore = getWebContent(stored.id)?.content;
-	clearMemoryForTests();
-	restoreStoredContent({ sessionManager: { getEntries: () => appended.map((entry) => ({ type: "custom", customType: entry.type, data: entry.data })) } } as any);
-	assert.deepEqual({ contentBeforeRestore, urlAfterRestore: getWebContent(stored.id)?.url }, { contentBeforeRestore: "Body", urlAfterRestore: "https://example.com" });
+	const ctx = (sessionId: string, laneCwd = cwd) => ({
+		cwd: laneCwd,
+		sessionManager: {
+			getSessionId: () => sessionId,
+			getEntries: () => appended.map((entry) => ({ type: "custom", customType: entry.type, data: entry.data })),
+		},
+	}) as any;
+	const contentDir = (sessionId: string) => join(root, "agent", "kendex", "sessions", sessionId, "pi-web-tools", "content");
+	return { root, cwd, pi, ctx, appended, contentDir };
+}
+
+test("a session record and tool details carry the stored id, never the text", (t) => {
+	const w = world(t);
+	beginWebContentSession(w.ctx("s1"));
+	const stored = storeWebContent(w.pi, { title: "T", url: "https://example.com", content: "Body text" });
+	const fetchDetails = buildWebFetchToolResult([stored], "http").details.stored;
+	assert.deepEqual({
+		record: w.appended.map((entry) => entry.data),
+		fetchDetails,
+	}, {
+		record: [{ id: stored.id, title: "T", url: "https://example.com", createdAt: stored.createdAt, contentLength: 9 }],
+		fetchDetails: [{ id: stored.id, title: "T", url: "https://example.com", createdAt: stored.createdAt, contentLength: 9 }],
+	});
+});
+
+test("get_web_content details carry no text", async (t) => {
+	const w = world(t);
+	beginWebContentSession(w.ctx("s1"));
+	const stored = storeWebContent(w.pi, { title: "T", url: "https://example.com", content: "Body text" });
+	const result = await createGetWebContentToolDefinition().execute("call", { id: stored.id });
+	assert.equal("content" in result.details, false);
+	assert.equal(result.details.contentLength, 9);
+});
+
+test("a restarted session reads stored text back from disk by id", (t) => {
+	const w = world(t);
+	beginWebContentSession(w.ctx("s1"));
+	const stored = storeWebContent(w.pi, { title: "T", url: "https://example.com", content: "Body" });
+	endWebContentSession();
+	assert.equal(getWebContent(stored.id), undefined);
+	beginWebContentSession(w.ctx("s1"));
+	assert.deepEqual({ content: getWebContent(stored.id)?.content, url: getWebContent(stored.id)?.url }, { content: "Body", url: "https://example.com" });
+});
+
+test("a new session holds none of the previous session's items", (t) => {
+	const w = world(t);
+	beginWebContentSession(w.ctx("s1"));
+	const stored = storeWebContent(w.pi, { title: "T", content: "Body" });
+	w.appended.length = 0;
+	beginWebContentSession(w.ctx("s2"));
+	assert.equal(getWebContent(stored.id), undefined);
+});
+
+test("memory holds at most MEMORY_MAX_CHARS of text, dropping the least recently used", (t) => {
+	const w = world(t);
+	beginWebContentSession(w.ctx("s1"));
+	const chunk = "x".repeat(Math.ceil(MEMORY_MAX_CHARS / 4));
+	const first = storeWebContent(w.pi, { title: "first", content: chunk });
+	const rest = Array.from({ length: 4 }, (_, i) => storeWebContent(w.pi, { title: `n${i}`, content: chunk }));
+	// With its file gone, an item still in memory is still served; a dropped one is not.
+	unlinkSync(join(w.contentDir("s1"), `${first.id}.json`));
+	unlinkSync(join(w.contentDir("s1"), `${rest.at(-1)!.id}.json`));
+	assert.deepEqual([getWebContent(first.id) === undefined, getWebContent(rest.at(-1)!.id)?.title], [true, "n3"]);
+});
+
+test("a lane's stored text is gone once its working directory is gone", (t) => {
+	const w = world(t);
+	const merged = join(w.root, "merged-worktree");
+	mkdirSync(merged);
+	beginWebContentSession(w.ctx("merged", merged));
+	storeWebContent(w.pi, { title: "T", content: "Body" });
+	endWebContentSession();
+	rmSync(merged, { recursive: true });
+	beginWebContentSession(w.ctx("next"));
+	assert.equal(existsSync(w.contentDir("merged")), false);
+});
+
+test("a stored file older than five days is removed on the next session start", (t) => {
+	const w = world(t);
+	beginWebContentSession(w.ctx("s1"));
+	const old = storeWebContent(w.pi, { title: "old", content: "old" });
+	const fresh = storeWebContent(w.pi, { title: "fresh", content: "fresh" });
+	const past = (Date.now() - LANE_FILE_MAX_AGE_MS - 60_000) / 1000;
+	utimesSync(join(w.contentDir("s1"), `${old.id}.json`), past, past);
+	beginWebContentSession(w.ctx("s2"));
+	assert.deepEqual(readdirSync(w.contentDir("s1")).sort(), [".lane-cwd", `${fresh.id}.json`].sort());
+});
+
+test("a lane directory with nothing left in it is removed", (t) => {
+	const w = world(t);
+	const dir = w.contentDir("idle");
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, ".lane-cwd"), w.cwd);
+	const past = (Date.now() - LANE_FILE_MAX_AGE_MS - 60_000) / 1000;
+	utimesSync(join(dir, ".lane-cwd"), past, past);
+	beginWebContentSession(w.ctx("s1"));
+	assert.equal(existsSync(dir), false);
+});
+
+test("the extension starts the store on session_start and releases it on session_shutdown", async (t) => {
+	const w = world(t);
+	const { default: webTools } = await import("../src/index.js");
+	const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+	const pi = {
+		...w.pi,
+		on: (name: string, handler: (event: unknown, ctx: unknown) => unknown) => handlers.set(name, handler),
+		registerTool() {},
+		registerCommand() {},
+		getActiveTools: () => [],
+		setActiveTools() {},
+	};
+	webTools(pi as any);
+	const ctx = { ...w.ctx("s1"), hasUI: false, isProjectTrusted: () => true };
+	await handlers.get("session_start")!({ type: "session_start" }, ctx);
+	const stored = storeWebContent(w.pi, { title: "T", content: "Body" });
+	assert.equal(existsSync(join(w.contentDir("s1"), `${stored.id}.json`)), true);
+	await handlers.get("session_shutdown")!({ type: "session_shutdown" }, ctx);
+	assert.equal(getWebContent(stored.id), undefined);
 });

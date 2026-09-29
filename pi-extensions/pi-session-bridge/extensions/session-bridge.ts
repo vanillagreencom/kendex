@@ -960,8 +960,22 @@ function sendResponse(client: BridgeClient, id: unknown, command: string, succes
 	send(client, toJsonable({ type: "response", id, command, success, data, error }));
 }
 
+/** Bytes the bridge holds unsent for one client. A client that leaves that
+ *  much unread is stalled: it is disconnected, never buffered for further. */
+export const CLIENT_QUEUE_MAX_BYTES = 8 * 1024 * 1024;
+
 function send(client: BridgeClient, payload: unknown) {
-	client.socket.write(`${JSON.stringify(toJsonable(payload))}\n`);
+	const socket = client.socket;
+	if (socket.destroyed) return;
+	const line = `${JSON.stringify(toJsonable(payload))}\n`;
+	// `writableLength` is what write() has accepted and not yet flushed: the
+	// backlog a false return from write() reports.
+	const queued = socket.writableLength + Buffer.byteLength(line, "utf8");
+	if (queued > CLIENT_QUEUE_MAX_BYTES) {
+		socket.destroy(new Error(`bridge-client-stalled=${queued}\nThe client left more than ${CLIENT_QUEUE_MAX_BYTES} bytes unread; it was disconnected.`));
+		return;
+	}
+	socket.write(line);
 }
 
 function normalizeDelivery(value: unknown, fallback: Delivery): Delivery {

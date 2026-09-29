@@ -59,14 +59,7 @@ export function buildFrontmatterBlock(skill: SkillEntry): string {
 	return ["---", ...lines, "---"].join("\n");
 }
 
-export function buildSkillDocument(skill: SkillEntry): string {
-	const frontmatter = buildFrontmatterBlock(skill);
-	const content = skill.content.trim();
-	return content ? `${frontmatter}\n\n${content}\n` : `${frontmatter}\n`;
-}
-
-export function buildEditableSkillDocument(skill: SkillEntry, raw?: string): string {
-	const source = raw ?? buildSkillDocument(skill);
+export function buildEditableSkillDocument(source: string): string {
 	const parsed = parseFrontmatter<Record<string, unknown>>(source);
 	const frontmatter = { ...parsed.frontmatter };
 	delete frontmatter.name;
@@ -75,12 +68,19 @@ export function buildEditableSkillDocument(skill: SkillEntry, raw?: string): str
 	return content ? `${editableBlock}\n\n${content}\n` : `${editableBlock}\n`;
 }
 
+/** The skill file as it is on disk; a file that cannot be read gives its
+ *  frontmatter with an empty body. */
 export function readSkillDocument(skill: SkillEntry): string {
 	try {
 		return readFileSync(skill.path, "utf8");
 	} catch {
-		return buildSkillDocument(skill);
+		return `${buildFrontmatterBlock(skill)}\n`;
 	}
+}
+
+/** The body of one skill, read when it is shown. */
+export function readSkillBody(skill: SkillEntry): string {
+	return stripFrontmatter(readSkillDocument(skill)).trim();
 }
 
 export function frontmatterToRaw(frontmatter: Record<string, unknown>, content: string): string {
@@ -113,5 +113,5 @@ export function parseEditableSkillDocument(raw: string, expectedName: string): P
 }
 
 export function toUpdatedSkill(skill: SkillEntry, parsed: ParsedSkillDocument): SkillEntry {
-	return { ...skill, name: parsed.name, description: parsed.description, content: parsed.content, frontmatter: parsed.frontmatter };
+	return { ...skill, name: parsed.name, description: parsed.description, frontmatter: parsed.frontmatter };
 }

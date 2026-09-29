@@ -21,6 +21,9 @@ export const DEFAULT_TIMEOUT_MS = 0;
 export const DEFAULT_OUTPUT_SETTLE_MS = 1_500;
 export const DEFAULT_FORCE_KILL_GRACE_MS = 5_000;
 export const DEFAULT_OUTPUT_BUFFER_MAX_CHARS = 1_000_000;
+// Finished tasks kept in the task list. Past it the oldest finished task whose
+// exit was delivered is removed with its log, as `clear` removes it.
+export const MAX_FINISHED_TASKS = 50;
 // Inline tail bytes attached to each wake message. Wakes are delivered as
 // custom steer messages (pi.sendMessage), which bypass pi-output-policy, so
 // the cap directly bounds how much of the transcript a single output wake

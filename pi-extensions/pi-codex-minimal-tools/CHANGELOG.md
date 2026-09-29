@@ -2,6 +2,11 @@
 
 ## Consumer-impacting changes
 
+### 2.1.0
+
+- A WebSocket response may queue at most 33,554,432 characters of received events ahead of the reader. Past that the response stops with an error whose first line starts `codex-websocket-queue-overflow=`.
+- Generated-image previews are read from disk in the background the first time a message shows them, instead of inside the render, and appear on the next redraw. At most 16,777,216 characters of base64 preview data are cached, least recently shown dropped first.
+
 ### 2.0.4
 
 - The declared `undici` range starts at 7.29.1, so an install can no longer resolve an `undici` release that carries the published security advisories fixed in 7.29.1, two of them high. The proxy transport that routes the Codex WebSocket through `HTTPS_PROXY` or `HTTP_PROXY` uses `undici`.

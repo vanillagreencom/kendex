@@ -37079,7 +37079,8 @@ var QueryContext = class {
    *  poisoning mismatch reports, kept CONSUMABLE for a handler that fires later:
    *  Pi delivers a turn's results in one callback while the SDK staggers handler
    *  invocations past the next message boundary, so a boundary never proves that
-   *  no consumer will come. Query-scoped, bounded by the query's tool-call count. */
+   *  no consumer will come. Query-scoped, bounded by the query's tool-call count,
+   *  and released by teardownQuery once the query settles. */
   reapedResults = /* @__PURE__ */ new Map();
   /** Every tool-call id this query has handed to Pi inside an ENDED turn — the
    *  set endToolUseTurn stamps from the turn's content. A forwarded id is one Pi
@@ -37110,7 +37111,7 @@ var QueryContext = class {
    * result stranded there outlives the message that named it. Without this map a
    * teardown report can only say "1 queued" with empty toolNames and 0/0
    * counters — an unactionable record. Bounded by the number of tool calls in
-   * one query.
+   * one query, and released by teardownQuery once the query settles.
    */
   queryToolNames = /* @__PURE__ */ new Map();
   /** id → last-known arguments, query-scoped like queryToolNames and for the
@@ -37875,6 +37876,9 @@ function teardownQuery(queryCtx, sdkQuery, cause, cwd, isReentrant) {
   queryCtx.pendingResults.clear();
   const unobserved = flushConnectorCallAudit(queryCtx, cause);
   if (unobserved > 0) debug(`provider: query teardown recorded ${unobserved} connector call(s) with no observed result (cause=${cause})`);
+  queryCtx.queryToolNames.clear();
+  queryCtx.queryToolArgs.clear();
+  queryCtx.reapedResults.clear();
   if (isReentrant) {
     if (!popContextFor(queryCtx)) debug("provider: query teardown found context already popped; skipping pop");
   } else {

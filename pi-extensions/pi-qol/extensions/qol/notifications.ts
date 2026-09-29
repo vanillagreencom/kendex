@@ -22,6 +22,9 @@ export interface QolNotificationService {
 	notifyQuestionOpened(ctx: ExtensionContext | undefined, event: QuestionOpenedEventLike): boolean;
 }
 
+/** Last send time per notification key, for the cooldown. An entry older than
+ *  the cooldown suppresses nothing, so each send drops those; question keys
+ *  carry a request id, so without the drop the map grows per question. */
 const lastNotificationAt = new Map<string, number>();
 const lastQuestionNotificationAt = new Map<string, number>();
 let tmuxMarkedTarget: string | undefined;
@@ -315,7 +318,10 @@ export function sendQolNotification(pi: QolNotificationExec, ctx: ExtensionConte
 	const now = Date.now();
 	const last = lastNotificationAt.get(key) ?? 0;
 	if (cooldownMs > 0 && now - last < cooldownMs) return Promise.resolve();
-	lastNotificationAt.set(key, now);
+	for (const [storedKey, sentAt] of lastNotificationAt) {
+		if (now - sentAt >= cooldownMs) lastNotificationAt.delete(storedKey);
+	}
+	if (cooldownMs > 0) lastNotificationAt.set(key, now);
 
 	const title = sanitizeNotificationPart(settingString("notification.title", DEFAULT_NOTIFICATION_TITLE, cwd), 80) || DEFAULT_NOTIFICATION_TITLE;
 	const text = sanitizeNotificationPart(body, Math.max(40, Math.floor(settingNumber("notification.bodyMaxChars", DEFAULT_NOTIFICATION_BODY_MAX_CHARS, cwd))));

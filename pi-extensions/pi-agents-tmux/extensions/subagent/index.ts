@@ -94,8 +94,11 @@ import {
 	completionPath,
 	doneDir,
 	inboxDir,
+	piPackageRuntimeRoots,
 	processingDir,
+	transcriptDir,
 } from "./paths.js";
+import { laneDirsUnder, openLaneDir, pruneLaneDirs } from "../../scripts/lane-retention.js";
 import { randomHex } from "./random.js";
 import {
 	createAgentEndWatchdog,
@@ -184,6 +187,7 @@ import {
 	recordTaskDispatchFailure,
 	refreshTaskDiagnostics,
 	taskNeedsSummaryBackfill,
+	resetPaneCompletionDedup,
 	updateTaskRegistry,
 	upsertTaskRecord,
 	writePaneRegistry,
@@ -209,6 +213,7 @@ import {
 	INSTALL_SYMBOL,
 	MAX_CONCURRENCY,
 	type PaneCompletionMessageDetails,
+	PACKAGE_ID,
 	type PaneRegistry,
 	type PaneTaskRegistry,
 	type PaneTaskRecord,
@@ -1378,6 +1383,14 @@ export default function (pi: ExtensionAPI) {
 
 		const runtimeRoot = runtimeDirForContext(ctx);
 		retryMarkerRuntimeRoot = runtimeRoot;
+		// Transcripts follow the lane retention rule. The session that owns the
+		// runtime root records its working directory; a child agent shares the
+		// root and records nothing.
+		if (!childAgentName) {
+			const pruned = pruneLaneDirs(piPackageRuntimeRoots().flatMap((root) => laneDirsUnder(root, PACKAGE_ID, "transcripts")));
+			for (const failure of pruned.failed) console.warn(`pi-agents-tmux transcript-prune-failed=${failure.path}\n${failure.error}`);
+			openLaneDir(transcriptDir(runtimeRoot), ctx.cwd);
+		}
 
 		if (childAgentName) {
 			if (!childOwnsVisiblePane) {
@@ -1687,6 +1700,7 @@ export default function (pi: ExtensionAPI) {
 		transcriptTails.clear();
 		taskRegistryReader.clear();
 		appliedRegistryRecords.clear();
+		resetPaneCompletionDedup();
 
 		idleStallWatchdog.stop();
 		currentRuntimeRoot = undefined;

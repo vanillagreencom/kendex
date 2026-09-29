@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 4.0.8
+
+- The tool names, full tool arguments and parked tool results of a Claude Code query are released when the query ends, instead of staying in memory until the next query or session end.
+
 ### 4.0.7
 
 - This release changes no shipped code, no declared dependency range and no behaviour, and fixes no security advisory for an installed bridge. The package's own lock, which `npm audit` and Dependabot read, now resolves fast-uri 3.1.8, hono 4.13.11, ip-address 10.7.2 and qs 6.16.0, the releases that fix their published advisories. Those four packages reach the bridge only through the MCP SDK (`@modelcontextprotocol/sdk`), a development dependency that a kendex or Pi install omits. The Claude Agent SDK, which the bundle inlines, carries its own copy of fast-uri, older than 3.1.8; no Claude Agent SDK release through 0.3.285 updates that copy.

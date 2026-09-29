@@ -286,7 +286,8 @@ export class QueryContext {
 	 *  poisoning mismatch reports, kept CONSUMABLE for a handler that fires later:
 	 *  Pi delivers a turn's results in one callback while the SDK staggers handler
 	 *  invocations past the next message boundary, so a boundary never proves that
-	 *  no consumer will come. Query-scoped, bounded by the query's tool-call count. */
+	 *  no consumer will come. Query-scoped, bounded by the query's tool-call count,
+	 *  and released by teardownQuery once the query settles. */
 	reapedResults = new Map<string, McpResult>();
 	/** Every tool-call id this query has handed to Pi inside an ENDED turn — the
 	 *  set endToolUseTurn stamps from the turn's content. A forwarded id is one Pi
@@ -317,7 +318,7 @@ export class QueryContext {
 	 * result stranded there outlives the message that named it. Without this map a
 	 * teardown report can only say "1 queued" with empty toolNames and 0/0
 	 * counters — an unactionable record. Bounded by the number of tool calls in
-	 * one query.
+	 * one query, and released by teardownQuery once the query settles.
 	 */
 	queryToolNames = new Map<string, string>();
 	/** id → last-known arguments, query-scoped like queryToolNames and for the

@@ -30,6 +30,11 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 The extension checks the selected model and enables supported tools. An image request goes to the configured provider and saves the result in the output directory. An image-view request reads a local file into the model context. A patch request updates workspace files and reports the changes.
 
+## Memory use
+
+- A WebSocket response may queue at most 33,554,432 characters of received events ahead of the reader. Past that the response stops with an error whose first line starts `codex-websocket-queue-overflow=`.
+- Generated-image previews are read from disk in the background the first time a message shows them, and appear on the next redraw. At most 16,777,216 characters of base64 preview data are cached; the least recently shown previews are dropped. The cache is cleared when a session starts or ends.
+
 ## Settings
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-codex-minimal-tools"]`.

@@ -4,11 +4,11 @@ import { join } from "node:path";
 import test, { beforeEach, afterEach } from "node:test";
 import { CALL_BYTE_BUDGET, IN_FLIGHT_BYTE_BUDGET, PDF_READ_BYTE_LIMIT, TEXT_READ_BYTE_LIMIT } from "../src/extract/byte-budget.js";
 import { createWebFetchToolDefinition } from "../src/tools/web-fetch.js";
-import { clearMemoryForTests } from "../src/storage.js";
+import { endWebContentSession, getWebContent } from "../src/storage.js";
 import { tempDir } from "./fixtures.js";
 
-beforeEach(clearMemoryForTests);
-afterEach(clearMemoryForTests);
+beforeEach(endWebContentSession);
+afterEach(endWebContentSession);
 
 interface FailureDetails { failures?: Array<{ url: string; provider: string; error: string }> }
 
@@ -50,7 +50,7 @@ test("web_fetch stores transcripts beyond the Exa cap without calling Exa", asyn
 	}, undefined, undefined, { cwd: process.cwd() } as any);
 	assert.deepEqual({
 		exceedsProviderCap: Boolean(transcript.length > 6000),
-		content: stored.content,
+		content: getWebContent(stored.id)?.content,
 		provider: (result as any).details.provider,
 		"exaCalls": exaCalls,
 	}, {
@@ -200,8 +200,8 @@ test("web_fetch returns successes when Exa fallback also fails", async () => {
 });
 
 test("web_fetch extracts local PDF file paths into session storage", async (t) => {
-	clearMemoryForTests();
-	t.after(clearMemoryForTests);
+	endWebContentSession();
+	t.after(endWebContentSession);
 	const dir = tempDir(t);
 	const path = join(dir, "local.pdf");
 	writeFileSync(path, "%PDF-1.4\nBT\n(Local PDF) Tj\nET");
@@ -243,7 +243,7 @@ for (const row of [
 		const tool = createWebFetchToolDefinition({ appendEntry() {} } as any, () => webFetchSettings(), "web_fetch", { createExaClient: () => ({ contents: async () => ({ results: row.results, raw: { statuses: row.statuses } }) }) as any });
 		const result = await tool.execute("test", { urls: row.urls, provider: "exa" }, undefined, undefined, { cwd: process.cwd() } as any);
 		const stored = result.details.stored;
-		assert.deepEqual({ urls: stored.map((item) => item.url), content: stored.map((item) => item.content), failures: (result.details as typeof result.details & FailureDetails).failures?.map((item) => item.url) }, row.expected);
+		assert.deepEqual({ urls: stored.map((item) => item.url), content: stored.map((item) => getWebContent(item.id)?.content), failures: (result.details as typeof result.details & FailureDetails).failures?.map((item) => item.url) }, row.expected);
 	});
 }
 

@@ -101,7 +101,6 @@ async function saveCreatedSkill(ctx: ExtensionContext, answers: SkillCreationAns
 		name: parsed.name,
 		description: parsed.description,
 		path: targetPath,
-		content: parsed.content,
 		frontmatter: parsed.frontmatter,
 		scope: answers.location === "global" ? "user" : "project",
 		origin: "top-level",

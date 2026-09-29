@@ -2,6 +2,12 @@
 
 ## Consumer-impacting changes
 
+### 3.2.0
+
+- A one-shot result keeps its last 20 assistant messages, without thinking blocks and with tool-call arguments cut to the tool-details bound, and the last 65,536 characters of the child's stderr. Tool-result and user messages are no longer held in the result; the transcript still records every event.
+- Transcript records hold each event once: a record with an `event` no longer repeats it as a `raw` string. When more than 8 MiB of records wait to be written, the extension stops reading the child's output until the writer catches up.
+- Transcripts follow the lane retention rule: a session's transcript directory is deleted once its working directory is gone (a merged worktree), and any transcript older than 5 days is deleted, when the next session starts. Completion deduplication keys are cleared when a session ends.
+
 ### 3.1.1
 
 - The agent dashboard no longer rereads child transcripts while it draws: the widget render reads no transcript file, where before every frame read up to 96 KB per working row. Each working row's activity line and usage come from a per-transcript cache, which the usage poll advances by only the bytes a transcript gained since its last read; before, the poll parsed each growing transcript from its first byte. The activity line now moves at the poll interval (`completionPollMs`) instead of every frame, and a half-written transcript line no longer shows as raw JSON. The dashboard's registry sync re-reads the task registry only when the file's version changed, and skips finished task records that have not changed since it last applied them.

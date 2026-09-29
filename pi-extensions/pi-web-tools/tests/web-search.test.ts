@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { clearMemoryForTests } from "../src/storage.js";
+import { endWebContentSession } from "../src/storage.js";
 import test, { beforeEach, afterEach } from "node:test";
 import { createWebSearchToolDefinition } from "../src/tools/web-search.js";
 import { DEFAULT_SETTINGS } from "../src/settings.js";
 import type { StoredWebContent } from "../src/storage.js";
 
-beforeEach(clearMemoryForTests);
-afterEach(clearMemoryForTests);
+beforeEach(endWebContentSession);
+afterEach(endWebContentSession);
 
 for (const row of [
 	{ name: "default result cap", fallback: false, count: 8, expectedCount: 5 },

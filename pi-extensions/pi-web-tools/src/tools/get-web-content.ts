@@ -1,6 +1,6 @@
 import { Type, type Static } from "typebox";
 import { sourceCutNote } from "../extract/byte-budget.js";
-import { getWebContent } from "../storage.js";
+import { getWebContent, toStoredRef } from "../storage.js";
 import { truncateText } from "../utils/format.js";
 import { accent, emptyComponent, errorSummary, firstText, muted, providerDisplayName, providerLabel, successSummary, textComponent, tree, webCallText } from "../utils/render.js";
 
@@ -97,7 +97,7 @@ export function createGetWebContentToolDefinition(name = "get_web_content") {
 			const maxCharacters = params.maxCharacters ?? DEFAULT_GET_WEB_CONTENT_CHARACTERS;
 			const { text, truncated } = truncateText(item.content, maxCharacters);
 			const notes = [truncated ? "Use a larger maxCharacters value for more." : undefined, sourceCutNote(item.metadata)].filter(Boolean).map((note) => `\n\n[${note}]`).join("");
-			return { content: [{ type: "text", text: `${displayTitle(item)}\n${item.url ?? ""}\n\n${text}${notes}` }], details: { ...item, truncated, maxCharacters, contentLength: item.content.length } };
+			return { content: [{ type: "text", text: `${displayTitle(item)}\n${item.url ?? ""}\n\n${text}${notes}` }], details: { ...toStoredRef(item), truncated, maxCharacters } };
 		},
 	};
 }

@@ -208,6 +208,7 @@ function request(target, command, options = {}) {
 		const socket = net.createConnection(target.socketPath);
 		let buffer = "";
 		let settled = false;
+		let paused = false;
 		const wantId = command.id;
 
 		socket.setEncoding("utf8");
@@ -225,7 +226,16 @@ function request(target, command, options = {}) {
 				if (!line) continue;
 
 				if (options.stream) {
-					process.stdout.write(`${line}\n`);
+					// Read no more from the bridge than stdout can take: a slow reader
+					// of this CLI must not grow its memory, or the bridge's.
+					if (!process.stdout.write(`${line}\n`) && !paused) {
+						paused = true;
+						socket.pause();
+						process.stdout.once("drain", () => {
+							paused = false;
+							socket.resume();
+						});
+					}
 					continue;
 				}
 

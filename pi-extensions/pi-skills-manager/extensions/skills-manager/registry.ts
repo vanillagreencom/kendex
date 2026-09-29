@@ -5,7 +5,6 @@ import {
 	getAgentDir,
 	parseFrontmatter,
 	SettingsManager,
-	stripFrontmatter,
 	type ExtensionContext,
 	type ResolvedResource,
 } from "@earendil-works/pi-coding-agent";
@@ -20,7 +19,7 @@ function compareSkills(a: SkillEntry, b: SkillEntry): number {
 	return a.name.localeCompare(b.name);
 }
 
-function parseSkillFile(path: string): Pick<SkillEntry, "name" | "description" | "content" | "frontmatter"> | null {
+function parseSkillFile(path: string): Pick<SkillEntry, "name" | "description" | "frontmatter"> | null {
 	try {
 		const raw = readFileSync(path, "utf8");
 		const { frontmatter } = parseFrontmatter<Record<string, unknown>>(raw);
@@ -30,7 +29,6 @@ function parseSkillFile(path: string): Pick<SkillEntry, "name" | "description" |
 		return {
 			name,
 			description,
-			content: stripFrontmatter(raw).trim(),
 			frontmatter: Object.fromEntries(Object.entries(frontmatter).filter(([, value]) => value !== undefined)),
 		};
 	} catch {
@@ -44,7 +42,6 @@ function toSkillEntry(resource: ResolvedResource): SkillEntry | null {
 	return {
 		name: parsed.name,
 		description: parsed.description,
-		content: parsed.content,
 		frontmatter: parsed.frontmatter,
 		path: resource.path,
 		scope: resource.metadata.scope as SkillScope,

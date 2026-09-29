@@ -216,8 +216,9 @@ try {
 			await execute({ action: "clear" });
 			signals = [...native.signals];
 			native.releaseAppends();
-			await settleUntil(() => logBytes(logFile) > 0);
-			// The write's settle and the wake it releases run on the turns after the bytes land.
+			// clear deletes the task's log once the held write has landed.
+			await settleUntil(() => !existsSync(logFile));
+			// A wake the write's settle could release runs on the turns after the bytes land.
 			await settle();
 			await settle();
 		} else {
@@ -230,7 +231,7 @@ try {
 		}
 		result = {
 			heldAppends, widgetBeforeClose, widgetAtClose, stopMessage, timeoutArmed, signals, childSignals: native.childSignals,
-			outcome: persistedOutcome("bg-1"), logsAtWake, log: readFileSync(logFile, "utf8"),
+			outcome: persistedOutcome("bg-1"), logsAtWake, log: existsSync(logFile) ? readFileSync(logFile, "utf8") : null,
 		};
 	} else if (input.mode === "log-stall") {
 		const { LOG_MAX_PENDING_BYTES, LOG_WRITE_NOW_BYTES, LOG_WRITE_STALL_MS, stalledLogMarker } = await import("../../extensions/log-writer.js");

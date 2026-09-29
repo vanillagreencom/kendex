@@ -14,7 +14,7 @@ import { deleteSkill, loadSkillRegistry } from "./skills-manager/registry.js";
 import { settingBoolean, updatePackageConfig } from "./skills-manager/settings.js";
 import { patchInteractiveModeStartupSkillsBlock, setStartupHideEnabled } from "./skills-manager/startup.js";
 import { setSkillEnabled } from "./skills-manager/toggle.js";
-import { EMPTY_REGISTRY, type SkillEntry, type SkillRegistry } from "./skills-manager/types.js";
+import type { SkillEntry } from "./skills-manager/types.js";
 
 function errorMessage(error: unknown): string {
 	const message = error instanceof Error ? error.message : String(error);
@@ -33,7 +33,6 @@ export default function skillsManager(pi: ExtensionAPI): void {
 	patchInteractiveModeStartupSkillsBlock();
 	setStartupHideEnabled(settingBoolean("enabled", true) && settingBoolean("hideStartupSkillsBlock", true));
 
-	let registry: SkillRegistry = EMPTY_REGISTRY;
 	const enabledAtLoad = settingBoolean("enabled", true);
 
 	if (!enabledAtLoad) {
@@ -59,21 +58,11 @@ export default function skillsManager(pi: ExtensionAPI): void {
 		return;
 	}
 
-	async function refreshRegistry(cwd: string): Promise<SkillRegistry> {
-		registry = await loadSkillRegistry(cwd);
-		return registry;
-	}
-
-	async function prepareSession(ctx: ExtensionContext): Promise<boolean> {
+	// The inventory is loaded when /skill opens the manager and dropped when it
+	// closes, so a session that never opens it, headless or not, holds none.
+	function prepareSession(ctx: ExtensionContext): void {
 		recordProjectTrust(ctx);
 		setStartupHideEnabled(settingBoolean("enabled", true, ctx.cwd) && settingBoolean("hideStartupSkillsBlock", true, ctx.cwd));
-		try {
-			await refreshRegistry(ctx.cwd);
-		} catch (error) {
-			registry = EMPTY_REGISTRY;
-			ctx.ui.notify(`Skills Manager failed to load registry: ${errorMessage(error)}`, "error");
-		}
-		return false;
 	}
 
 	pi.registerCommand("skill", {
@@ -99,8 +88,9 @@ export default function skillsManager(pi: ExtensionAPI): void {
 				ctx.ui.notify("/skill manager requires interactive mode", "warning");
 				return;
 			}
+			let registry;
 			try {
-				await refreshRegistry(ctx.cwd);
+				registry = await loadSkillRegistry(ctx.cwd);
 			} catch (error) {
 				ctx.ui.notify(`Failed to load skills list: ${errorMessage(error)}`, "error");
 				return;
@@ -109,12 +99,12 @@ export default function skillsManager(pi: ExtensionAPI): void {
 				onCreate: async (answers, signal) => await createSkillFromAnswers(ctx, answers, { thinkingLevel: pi.getThinkingLevel(), signal }),
 				onDelete: async (skill) => await deleteSkill(ctx, skill),
 				onToggle: async (skill, enabled) => await setSkillEnabled(ctx.cwd, skill, enabled),
-				onRefresh: async () => await refreshRegistry(ctx.cwd),
+				onRefresh: async () => await loadSkillRegistry(ctx.cwd),
 			});
 			if (selection) insertNativeSkillCommand(ctx, selection);
 		},
 	});
 
 	installSettingsCacheRefresh(pi);
-	pi.on("session_start", async (_event, ctx) => { await prepareSession(ctx); });
+	pi.on("session_start", (_event, ctx) => { prepareSession(ctx); });
 }

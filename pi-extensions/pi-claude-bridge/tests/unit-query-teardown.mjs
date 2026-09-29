@@ -57,6 +57,21 @@ describe("teardownQuery", () => {
 		assert.equal(result.isError, true);
 	});
 
+	it("releases the query-scoped tool names, arguments and parked results a settled query can no longer read", () => {
+		const queryCtx = ctx();
+		const sdkQuery = { id: "sdk-query" };
+		queryCtx.activeQuery = sdkQuery;
+		for (let i = 0; i < 1000; i++) {
+			queryCtx.recordToolCall(`call-${i}`, "write", { path: `f${i}`, content: "x".repeat(64) });
+			queryCtx.resetToolTracking();
+		}
+		queryCtx.reapedResults.set("call-999", { content: [], isError: false });
+		assert.deepEqual([queryCtx.queryToolNames.size, queryCtx.queryToolArgs.size, queryCtx.reapedResults.size], [1000, 1000, 1]);
+
+		assert.equal(teardownQuery(queryCtx, sdkQuery, "query-end", "/tmp", false), true);
+		assert.deepEqual([queryCtx.queryToolNames.size, queryCtx.queryToolArgs.size, queryCtx.reapedResults.size], [0, 0, 0]);
+	});
+
 	it("no-ops when the query is no longer the context's active one", () => {
 		const queryCtx = ctx();
 		const replacement = { id: "continuation" };

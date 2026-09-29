@@ -74,7 +74,18 @@ export const DEFAULT_SESSION_SEARCH_PREVIEW_SNIPPETS = 6;
 export const DEFAULT_SESSION_SEARCH_SHORTCUT = "f2";
 export const DEFAULT_SESSION_SEARCH_SUMMARY_INPUT_CHARS = 180_000;
 export const DEFAULT_SESSION_SEARCH_SUMMARY_MAX_TOKENS = 4096;
-export const DEFAULT_SESSION_SEARCH_CACHE_TTL_SECONDS = 0;
+/** How long a loaded session-search index is kept. Past it the index is
+ *  released, and the next search loads it again. */
+export const DEFAULT_SESSION_SEARCH_CACHE_TTL_SECONDS = 300;
+/** Characters of one session's message text the search index keeps. */
+export const SESSION_SEARCH_TEXT_MAX_CHARS_PER_SESSION = 32_768;
+/** Characters of message text the whole search index keeps, newest session
+ *  first; sessions past it are searched by name, path and first prompt only. */
+export const SESSION_SEARCH_TEXT_MAX_CHARS = 8_388_608;
+/** Sessions whose user prompts the search overlay keeps parsed. */
+export const SESSION_SEARCH_USER_MESSAGES_MAX_SESSIONS = 64;
+/** Finished thinking blocks whose time a redrawn message can show again. */
+export const THINKING_TIMER_MAX_DURATIONS = 256;
 export const SESSION_SEARCH_OVERLAY_HEIGHT_RATIO = 0.9;
 
 export const DEFAULT_AUTO_RENAME_MODEL = "openai-codex/gpt-5.4-mini";

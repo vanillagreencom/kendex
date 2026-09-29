@@ -16,11 +16,12 @@ export type CreateTextStepId = "name" | "description";
 export type CreateChoiceStepId = "location";
 export type CreateStepId = CreateTextStepId | CreateChoiceStepId;
 
+/** One skill in the inventory. The body is not held here: the preview reads
+ *  it from `path` for the one skill it shows. */
 export interface SkillEntry {
 	name: string;
 	description: string;
 	path: string;
-	content: string;
 	frontmatter?: Record<string, unknown>;
 	scope: SkillScope;
 	origin: SkillOrigin;
@@ -94,12 +95,6 @@ export interface SkillsManagerOptions {
 	onToggle: (skill: SkillEntry, enabled: boolean) => Promise<void>;
 	onRefresh: () => Promise<SkillRegistry>;
 }
-
-export const EMPTY_REGISTRY: SkillRegistry = {
-	skills: [],
-	allSkills: [],
-	byName: new Map(),
-};
 
 export const LOCATION_OPTIONS: CreateChoiceOption[] = [
 	{ value: "project", label: "Project", description: "Save in this project's .pi/skills directory." },

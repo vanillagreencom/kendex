@@ -8,6 +8,9 @@ import {
 	DEFAULT_SESSION_SEARCH_SHORTCUT,
 	SESSION_SEARCH_PENDING_SYMBOL,
 	SESSION_SEARCH_STATUS_KEY,
+	SESSION_SEARCH_TEXT_MAX_CHARS,
+	SESSION_SEARCH_TEXT_MAX_CHARS_PER_SESSION,
+	SESSION_SEARCH_USER_MESSAGES_MAX_SESSIONS,
 } from "../constants.js";
 import { expandHome, piSettingsPaths, readSettingsFiles } from "../package-config.js";
 import { settingBoolean, settingNumber, settingString, settingStringAllowEmpty } from "../settings.js";
@@ -24,6 +27,9 @@ import type {
 let qolSessionSearchCache: QolSessionSearchSession[] = [];
 let qolSessionSearchLoadedAt = 0;
 let qolSessionSearchLoading: Promise<QolSessionSearchSession[]> | undefined;
+let qolSessionSearchReleaseTimer: ReturnType<typeof setTimeout> | undefined;
+/** Parsed user prompts per session path, oldest insertion first; at most
+ *  SESSION_SEARCH_USER_MESSAGES_MAX_SESSIONS entries. */
 const qolSessionUserMessagesCache = new Map<string, QolSessionUserMessage[]>();
 export const qolSessionSearchPendingActions = new Map<string, QolSessionPaletteAction>();
 let qolSessionSearchPendingActionCounter = 0;
@@ -108,16 +114,40 @@ export function defaultSessionSearchScope(cwd?: string): QolSessionSearchScope {
 	return settingString("sessionSearch.defaultScope", "current", cwd).toLowerCase() === "all" ? "all" : "current";
 }
 
+/** Cap the message text the index keeps: each session's text at the per-session
+ *  limit, and the sum at the index limit, filled newest session first. */
+export function capSessionSearchText(sessions: QolSessionSearchSession[]): QolSessionSearchSession[] {
+	let budget = SESSION_SEARCH_TEXT_MAX_CHARS;
+	const newestFirst = [...sessions].sort((a, b) => b.modified.getTime() - a.modified.getTime());
+	for (const session of newestFirst) {
+		const kept = session.allMessagesText.slice(0, Math.min(SESSION_SEARCH_TEXT_MAX_CHARS_PER_SESSION, budget));
+		budget -= kept.length;
+		session.allMessagesText = kept;
+	}
+	return sessions;
+}
+
 async function loadQolSessionSearchSessions(ctx: ExtensionContext, onProgress?: (loaded: number, total: number) => void): Promise<QolSessionSearchSession[]> {
 	const customSessionDir = configuredSessionDir(ctx.cwd);
 	const infos = customSessionDir
 		? await SessionManager.list(ctx.cwd, customSessionDir, onProgress)
 		: await SessionManager.listAll(onProgress);
-	return infos.map(sessionInfoToSearchSession).filter((session): session is QolSessionSearchSession => session !== undefined);
+	return capSessionSearchText(infos.map(sessionInfoToSearchSession).filter((session): session is QolSessionSearchSession => session !== undefined));
+}
+
+/** Drop the loaded index and the parsed prompts. Runs when the index outlives
+ *  its TTL and on session shutdown; the next search loads the index again. */
+export function releaseQolSessionSearchCache(): void {
+	if (qolSessionSearchReleaseTimer) clearTimeout(qolSessionSearchReleaseTimer);
+	qolSessionSearchReleaseTimer = undefined;
+	qolSessionSearchCache = [];
+	qolSessionSearchLoadedAt = 0;
+	qolSessionUserMessagesCache.clear();
 }
 
 export async function refreshQolSessionSearchCache(ctx: ExtensionContext, options?: { force?: boolean; quiet?: boolean }): Promise<QolSessionSearchSession[]> {
 	const ttlMs = Math.max(0, settingNumber("sessionSearch.cacheTtlSeconds", DEFAULT_SESSION_SEARCH_CACHE_TTL_SECONDS, ctx.cwd) * 1000);
+	// A TTL of 0 keeps the index until session shutdown.
 	const fresh = qolSessionSearchCache.length > 0 && (ttlMs === 0 || Date.now() - qolSessionSearchLoadedAt < ttlMs);
 	if (!options?.force && fresh) return qolSessionSearchCache;
 	if (qolSessionSearchLoading) return qolSessionSearchLoading;
@@ -126,9 +156,13 @@ export async function refreshQolSessionSearchCache(ctx: ExtensionContext, option
 	qolSessionSearchLoading = loadQolSessionSearchSessions(ctx, (loaded, total) => {
 		if (!options?.quiet && ctx.hasUI) ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, `Loading sessions ${loaded}/${total}`);
 	}).then((sessions) => {
+		releaseQolSessionSearchCache();
 		qolSessionSearchCache = sessions;
 		qolSessionSearchLoadedAt = Date.now();
-		qolSessionUserMessagesCache.clear();
+		if (ttlMs > 0) {
+			qolSessionSearchReleaseTimer = setTimeout(releaseQolSessionSearchCache, ttlMs);
+			qolSessionSearchReleaseTimer.unref?.();
+		}
 		return sessions;
 	}).finally(() => {
 		qolSessionSearchLoading = undefined;
@@ -182,6 +216,10 @@ export function sessionUserMessages(sessionPath: string): QolSessionUserMessage[
 		// Ignore unreadable sessions; callers fall back to SessionInfo.firstMessage.
 	}
 	qolSessionUserMessagesCache.set(sessionPath, messages);
+	for (const oldest of qolSessionUserMessagesCache.keys()) {
+		if (qolSessionUserMessagesCache.size <= SESSION_SEARCH_USER_MESSAGES_MAX_SESSIONS) break;
+		qolSessionUserMessagesCache.delete(oldest);
+	}
 	return messages;
 }
 

@@ -4,6 +4,7 @@
 
 ### 2.0.6
 
+- Long sessions no longer grow in memory with every read, bash, grep, find and ls call. Grouped tool calls are tracked only while `stackToolCalls` is on, at most 256 are kept (in groups of at most 64), each keeps at most 16,384 characters of its result, and all of them are cleared when a session starts or ends. A tool display Pi no longer shows is not kept alive for the settings refresh.
 - A project trust answer that another kendex Pi extension records now applies on the next settings read. Before, it applied only after the one-second window in which settings are answered from memory.
 
 ### 2.0.5

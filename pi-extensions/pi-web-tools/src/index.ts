@@ -5,7 +5,7 @@ import { rewriteNativeOpenAiWebSearch } from "./native-openai.js";
 import { resolveWebProvider } from "./provider-selection.js";
 import { installSettingsCacheRefresh, recordProjectTrust } from "./package-config.js";
 import { loadSettings, WEB_PROVIDERS, type WebProvider, type WebToolsSettings } from "./settings.js";
-import { restoreStoredContent } from "./storage.js";
+import { beginWebContentSession, endWebContentSession } from "./storage.js";
 import { createCodeSearchToolDefinition } from "./tools/code-search.js";
 import { createGetWebContentToolDefinition } from "./tools/get-web-content.js";
 import { createWebAnswerToolDefinition } from "./tools/web-answer.js";
@@ -127,8 +127,16 @@ export default function webTools(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		recordProjectTrust(ctx);
 		registerConfiguredCompatibilityTools(pi, ctx.cwd);
-		restoreStoredContent(ctx);
+		const pruned = beginWebContentSession(ctx);
+		if (pruned.failed.length > 0) {
+			const lines = pruned.failed.map((failure) => `web-tools: lane-prune-failed=${failure.path}\n${failure.error}`);
+			if (ctx.hasUI) ctx.ui.notify(lines.join("\n"), "warning");
+			else console.error(lines.join("\n"));
+		}
 		syncActiveTools(pi, ctx);
+	});
+	pi.on("session_shutdown", () => {
+		endWebContentSession();
 	});
 	pi.on("model_select", async (_event, ctx) => {
 		recordProjectTrust(ctx);

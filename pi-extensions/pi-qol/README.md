@@ -29,6 +29,12 @@ Requires Pi 0.86.0 or newer. Restart Pi after installation. Use `kendex update-p
 
 The extension reads your enabled features when Pi starts. It adds their editor controls, commands and event handlers. Session actions update the session or queue messages for the agent. Notifications report events through your selected channels. Compaction settings control when long conversations are summarized.
 
+## Memory use
+
+- A session without a UI loads no session-search index. With a UI, the index is loaded shortly after start and kept for `sessionSearch.cacheTtlSeconds` (default 300 seconds; 0 keeps it until the session ends).
+- The index keeps at most 32,768 characters of message text per session and 8,388,608 characters in total, newest session first. A session past the total is searched by name, path and first prompt only.
+- Parsed prompts are kept for at most 64 sessions, and finished thinking times for at most 256 blocks. Thinking labels are released at the end of each agent run, and notification cooldown entries once their cooldown has passed.
+
 ## Settings
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-qol"]`.

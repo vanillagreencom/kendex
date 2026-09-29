@@ -1,7 +1,6 @@
 // Pi retry classification consumes HTTP status prefixes in errorMessage.
 // withHttpStatusPrefix preserves an existing HTTP <status> prefix verbatim.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readFileSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { arch, platform, release } from "node:os";
 import { dirname, join, normalize, relative } from "node:path";
@@ -10,7 +9,8 @@ import { constants as zlibConstants, zstdCompress } from "node:zlib";
 import { glyphs, treeGlyph } from "./glyphs.js";
 import { loadSettings } from "./settings.js";
 import { saveBase64Image } from "./utils/images.js";
-import { Box, Container, getCapabilities, getImageDimensions, Image, Spacer, Text } from "@earendil-works/pi-tui";
+import { Box, Container, getCapabilities, Image, Spacer, Text, type Component } from "@earendil-works/pi-tui";
+import { ImagePreviewCache, makeCachedImagePreview, type CachedImagePreview } from "./image-preview-cache.js";
 import {
 	createAssistantMessageEventStream,
 	appendAssistantMessageDiagnostic,
@@ -118,14 +118,6 @@ interface QueuedWebSearchActivity {
 }
 
 type PendingActivity = QueuedImageActivity | QueuedWebSearchActivity;
-
-interface CachedImagePreview {
-	data: string;
-	mimeType: string;
-	bytes: number;
-	widthPx?: number;
-	heightPx?: number;
-}
 
 interface WebSocketLike {
 	readyState?: number;
@@ -1026,8 +1018,17 @@ function buildCachedWebSocketRequestBody(entry: SessionWebSocketCacheEntry, body
 	};
 }
 
+/** Characters of received WebSocket events waiting for the stream consumer.
+ *  A WebSocket cannot be paused, so past this the response fails instead of
+ *  buffering without limit. */
+export const WEBSOCKET_QUEUE_MAX_CHARS = 32 * 1024 * 1024;
+
 async function* parseWebSocket(socket: WebSocketLike, signal: AbortSignal | undefined): AsyncIterable<StreamEventShape> {
 	const queue: StreamEventShape[] = [];
+	/** Decoded length of each queued event, in queue order. */
+	const queuedChars: number[] = [];
+	let queuedTotal = 0;
+	let overflowed = false;
 	let pending: (() => void) | null = null;
 	let done = false;
 	let failed: Error | null = null;
@@ -1052,6 +1053,13 @@ async function* parseWebSocket(socket: WebSocketLike, signal: AbortSignal | unde
 				if (!text) return;
 				try {
 					const parsed = JSON.parse(text) as StreamEventShape;
+					if (overflowed) return;
+					if (queuedTotal + text.length > WEBSOCKET_QUEUE_MAX_CHARS) {
+						overflowed = true;
+						failed = new Error(`codex-websocket-queue-overflow=${queuedTotal + text.length}\nThe response arrived faster than it was consumed, past the ${WEBSOCKET_QUEUE_MAX_CHARS}-character WebSocket queue bound; the response was stopped.`);
+						done = true;
+						return;
+					}
 					const type = typeof parsed.type === "string" ? parsed.type : "";
 					if (type === "response.completed" || type === "response.done" || type === "response.incomplete") {
 						sawCompletion = true;
@@ -1059,6 +1067,8 @@ async function* parseWebSocket(socket: WebSocketLike, signal: AbortSignal | unde
 						done = true;
 					}
 					queue.push(parsed);
+					queuedChars.push(text.length);
+					queuedTotal += text.length;
 				} catch {
 					// ignore malformed websocket messages
 				}
@@ -1108,7 +1118,10 @@ async function* parseWebSocket(socket: WebSocketLike, signal: AbortSignal | unde
 			if (signal?.aborted) {
 				throw new Error("Request was aborted");
 			}
+			// The queued events are dropped with the response they belong to.
+			if (overflowed) break;
 			if (queue.length > 0) {
+				queuedTotal -= queuedChars.shift() ?? 0;
 				yield queue.shift() as StreamEventShape;
 				continue;
 			}
@@ -1509,26 +1522,6 @@ export function buildWebSearchSummaryText(searches: SurfacedWebSearch[]): string
 	return searches.length === 1 ? "Searched the web once" : `Searched the web ${searches.length} times`;
 }
 
-function makeCachedImagePreview(data: string, mimeType: string, bytes?: number): CachedImagePreview {
-	const dimensions = getImageDimensions(data, mimeType) ?? undefined;
-	return { data, mimeType, bytes: bytes ?? Buffer.from(data, "base64").byteLength, widthPx: dimensions?.widthPx, heightPx: dimensions?.heightPx };
-}
-
-function loadCachedImagePreview(savedImage: SavedGeneratedImage, imagePreviewCache: Map<string, CachedImagePreview>): CachedImagePreview | undefined {
-	const cached = imagePreviewCache.get(savedImage.absolutePath);
-	if (cached) return cached;
-	try {
-		const buffer = readFileSync(savedImage.absolutePath);
-		const data = buffer.toString("base64");
-		const mimeType = `image/${savedImage.outputFormat}`;
-		const preview = makeCachedImagePreview(data, mimeType, buffer.byteLength);
-		imagePreviewCache.set(savedImage.absolutePath, preview);
-		return preview;
-	} catch {
-		return undefined;
-	}
-}
-
 function formatImageBytes(bytes: number | undefined): string | undefined {
 	if (!Number.isFinite(bytes) || !bytes) return undefined;
 	if (bytes < 1024) return `${bytes} B`;
@@ -1551,9 +1544,44 @@ function shouldRenderInlineImage(): { ok: boolean; reason?: string } {
 	return { ok: true };
 }
 
-function renderImageGenerationMessage(savedImage: SavedGeneratedImage | undefined, messageContent: unknown, options: any, theme: any, imagePreviewCache: Map<string, CachedImagePreview>): Container {
+/**
+ * An image-generation message. Its preview comes from the cache; a render that
+ * finds none starts the file read in the background and shows the message
+ * without the image, and the first render after the read shows it.
+ */
+class ImageGenerationMessage implements Component {
+	private built: Container | undefined;
+	private builtWithPreview = false;
+	private readonly savedImage: SavedGeneratedImage | undefined;
+	private readonly messageContent: unknown;
+	private readonly options: any;
+	private readonly theme: any;
+	private readonly previews: ImagePreviewCache;
+	constructor(savedImage: SavedGeneratedImage | undefined, messageContent: unknown, options: any, theme: any, previews: ImagePreviewCache) {
+		this.savedImage = savedImage;
+		this.messageContent = messageContent;
+		this.options = options;
+		this.theme = theme;
+		this.previews = previews;
+	}
+
+	render(width: number): string[] {
+		const preview = this.savedImage && !this.builtWithPreview ? this.previews.get(this.savedImage.absolutePath) : undefined;
+		if (this.savedImage && !this.builtWithPreview && !preview) void this.previews.load(this.savedImage.absolutePath, `image/${this.savedImage.outputFormat}`);
+		if (!this.built || preview) {
+			this.built = buildImageGenerationContainer(this.savedImage, this.messageContent, this.options, this.theme, preview);
+			this.builtWithPreview = Boolean(preview);
+		}
+		return this.built.render(width);
+	}
+
+	invalidate(): void {
+		this.built?.invalidate();
+	}
+}
+
+function buildImageGenerationContainer(savedImage: SavedGeneratedImage | undefined, messageContent: unknown, options: any, theme: any, preview: CachedImagePreview | undefined): Container {
 	const container = new Container();
-	const preview = savedImage ? loadCachedImagePreview(savedImage, imagePreviewCache) : undefined;
 	const type = savedImage?.outputFormat?.toUpperCase() ?? preview?.mimeType?.replace(/^image\//, "").toUpperCase() ?? "IMAGE";
 	const dimensions = preview?.widthPx && preview?.heightPx ? `${preview.widthPx}x${preview.heightPx}` : undefined;
 	const size = formatImageBytes(preview?.bytes);
@@ -1833,7 +1861,7 @@ function createCodexStream<TApi extends Api>(
 
 export function registerOpenAICodexCustomProvider(pi: ExtensionAPI, options: { getCurrentCwd: () => string }): void {
 	const pendingActivities: PendingActivity[] = [];
-	const imagePreviewCache = new Map<string, CachedImagePreview>();
+	const imagePreviewCache = new ImagePreviewCache();
 	let pendingFlushTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const flushPendingMessages = () => {
@@ -1924,7 +1952,7 @@ export function registerOpenAICodexCustomProvider(pi: ExtensionAPI, options: { g
 					.filter((item) => item.type === "text")
 					.map((item) => item.text)
 					.join("\n");
-		return renderImageGenerationMessage(savedImage, textContent, options, theme, imagePreviewCache);
+		return new ImageGenerationMessage(savedImage, textContent, options, theme, imagePreviewCache);
 	});
 
 	pi.registerMessageRenderer<{ searches?: SurfacedWebSearch[] }>(WEB_SEARCH_ACTIVITY_MESSAGE_TYPE, (message, options, theme) => {

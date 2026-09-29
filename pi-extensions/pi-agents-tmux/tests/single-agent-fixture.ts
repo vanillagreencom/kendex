@@ -52,13 +52,16 @@ export function testAgent(): AgentConfig {
 }
 
 export function installMockSpawn(scenarios: Array<{ code?: number | null; delayMs?: number; error?: Error | string; signal?: string; stderr?: string; stdout?: string }>) {
-	const calls: Array<{ args: string[]; kills: string[] }> = [];
+	const calls: Array<{ args: string[]; kills: string[]; stdoutFlow: string[] }> = [];
 	setSingleAgentSpawnForTests(((command: string, args: string[]) => {
 		void command;
-		const call = { args, kills: [] as string[] };
+		const call = { args, kills: [] as string[], stdoutFlow: [] as string[] };
 		calls.push(call);
 		const proc = new EventEmitter() as any;
 		proc.stdout = new EventEmitter();
+		// A readable's flow control, recorded rather than enforced.
+		proc.stdout.pause = () => { call.stdoutFlow.push("pause"); };
+		proc.stdout.resume = () => { call.stdoutFlow.push("resume"); };
 		proc.stderr = new EventEmitter();
 		proc.killed = false;
 		proc.kill = (signal?: string) => {

@@ -11,7 +11,7 @@ import { extractPdfTextBest } from "../extract/pdf.js";
 import { looksLikeScannedPdf, rasterizePdfPages, type PdfPageImage } from "../extract/pdf-pages.js";
 import { ExaClient } from "../providers/exa.js";
 import type { WebToolsSettings } from "../settings.js";
-import { storeWebContent, type StoredWebContent } from "../storage.js";
+import { storeWebContent, toStoredRef, type StoredWebContent } from "../storage.js";
 import { truncateText } from "../utils/format.js";
 import { accent, emptyComponent, errorSummary, firstText, muted, providerLabel, successSummary, textComponent, tree, webCallText } from "../utils/render.js";
 
@@ -389,7 +389,7 @@ export function buildWebFetchToolResult(
 	for (const image of pageImages) content.push({ type: "image", mimeType: image.mimeType, data: image.data });
 	return {
 		content,
-		details: { provider, stored, preview, pageImageCount: pageImages.length },
+		details: { provider, stored: stored.map(toStoredRef), preview, pageImageCount: pageImages.length },
 	};
 }
 

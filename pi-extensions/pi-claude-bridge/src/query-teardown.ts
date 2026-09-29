@@ -50,6 +50,14 @@ export function teardownQuery(
 	const unobserved = flushConnectorCallAudit(queryCtx, cause);
 	if (unobserved > 0) debug(`provider: query teardown recorded ${unobserved} connector call(s) with no observed result (cause=${cause})`);
 
+	// The SDK query has settled, so no MCP handler of it can fire again: the
+	// query-scoped stores only a late handler reads (full tool arguments, parked
+	// results) have no reader left. Released here rather than at the next fresh
+	// query, so an idle lane holds none of the last query's tool arguments.
+	queryCtx.queryToolNames.clear();
+	queryCtx.queryToolArgs.clear();
+	queryCtx.reapedResults.clear();
+
 	if (isReentrant) {
 		// Merges deferred messages and restores/repairs the stack. popContextFor
 		// (not popContext): a live subagent context may sit above this one.

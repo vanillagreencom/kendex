@@ -34,6 +34,10 @@ Fable 5.1 requires [Claude Code 2.1.255 or later](https://code.claude.com/docs/e
 - When Claude Code calls a tool, Pi runs the tool and sends the result back to Claude Code.
 - Pi shows the reply and remembers which Claude Code conversation it belongs to, so your next message continues it.
 
+## Memory use
+
+- The tool names, full tool arguments and parked tool results of one Claude Code query are released when that query ends, so an idle session holds none of them.
+
 ## Settings
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-claude-bridge"]`.

@@ -2,6 +2,12 @@
 
 ## Consumer-impacting changes
 
+### 2.3.0
+
+- A session without a UI (`pi -p`, headless lanes) no longer loads the session-search index at startup.
+- The session-search index is released after `sessionSearch.cacheTtlSeconds`, whose default is now 300 seconds instead of 0 (0 still keeps the index until the session ends). The index keeps at most 32,768 characters of message text per session and 8,388,608 characters in total, newest session first; a session past that total is searched by name, path and first prompt only.
+- Parsed session prompts are kept for at most 64 sessions and finished thinking times for at most 256 blocks. Thinking labels are released at the end of each agent run, and notification cooldown entries once their cooldown has passed.
+
 ### 2.2.1
 
 - Turn-end notifications no longer freeze Pi when tmux is slow. Each tmux call now stops after 1 second and runs in the background. Each notification reads Pi's tmux pane, window and session in one call, so the window mark follows a pane that `break-pane` or `join-pane` moved. A terminal that does not accept output, such as a tmux client behind a dropped SSH link, is skipped at once, so later notifications still arrive. The window mark and the tmux message no longer wait for terminal writes, and a mark cleared by your input while its notification is still in flight is not set.

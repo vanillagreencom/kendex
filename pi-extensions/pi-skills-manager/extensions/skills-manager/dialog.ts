@@ -170,7 +170,7 @@ class SkillsManagerDialog implements Focusable {
 	private openEditor(): void {
 		const skill = this.getCurrentSkill();
 		if (!skill || !isDeletableSkill(skill)) return;
-		this.editorView = new SkillEditorView(skill, this.theme, this.tui, buildEditableSkillDocument(skill, readSkillDocument(skill)), (value) => { void this.saveEditedSkill(value); }, () => this.closeEditor());
+		this.editorView = new SkillEditorView(skill, this.theme, this.tui, buildEditableSkillDocument(readSkillDocument(skill)), (value) => { void this.saveEditedSkill(value); }, () => this.closeEditor());
 		this.mode = "edit"; this.syncFocus(); this.requestRender();
 	}
 	private closeEditor(): void { this.editorView = undefined; this.mode = "preview"; this.syncFocus(); this.requestRender(); }

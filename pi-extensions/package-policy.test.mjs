@@ -224,16 +224,21 @@ test("the audit record gates Pi peer floors under both verdicts", () => {
 	}
 });
 
-test("vendored append-system helpers stay identical", () => {
-	const hashes = [];
-	for (const { dir } of packages()) {
-		const script = join(root, dir, "scripts", "append-system.mjs");
-		if (!existsSync(script)) continue;
-		hashes.push([dir, createHash("sha256").update(readFileSync(script)).digest("hex")]);
-	}
-	assert.ok(hashes.length > 0, "expected append-system helper copies");
-	assert.equal(new Set(hashes.map(([, hash]) => hash)).size, 1, `append-system helpers differ: ${JSON.stringify(hashes)}`);
-});
+// Each helper is vendored into several packages under `scripts/`, because a
+// published package cannot import another's source. A copy edited alone would
+// give one package a different rule, so every copy must match.
+for (const helper of ["append-system.mjs", "lane-retention.ts"]) {
+	test(`vendored ${helper} helpers stay identical`, () => {
+		const hashes = [];
+		for (const { dir } of packages()) {
+			const script = join(root, dir, "scripts", helper);
+			if (!existsSync(script)) continue;
+			hashes.push([dir, createHash("sha256").update(readFileSync(script)).digest("hex")]);
+		}
+		assert.ok(hashes.length > 1, `expected more than one ${helper} copy; found ${JSON.stringify(hashes)}`);
+		assert.equal(new Set(hashes.map(([, hash]) => hash)).size, 1, `${helper} helpers differ: ${JSON.stringify(hashes)}`);
+	});
+}
 
 // The settings reader every package vendors: one `package-config.ts` per
 // package, the same bytes in each. Taking the copies as an argument is what lets

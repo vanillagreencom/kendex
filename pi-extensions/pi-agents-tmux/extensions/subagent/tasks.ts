@@ -713,7 +713,12 @@ export function formatCompletionGroup(completions: PaneCompletionDetails[]): str
 }
 
 const paneCompletionPollLocks = new Set<string>();
+/** Completion keys this session already emitted; cleared when it ends. */
 const emittedPaneCompletionKeys = new Set<string>();
+
+export function resetPaneCompletionDedup(): void {
+	emittedPaneCompletionKeys.clear();
+}
 let afterCompletionArchiveForTests: ((context: { archivePath: string; filePath: string; runtimeRoot: string; taskId: string }) => Promise<void> | void) | undefined;
 let beforeCompletionRegistryUpdateForTests: ((context: { filePath: string; runtimeRoot: string; taskId: string }) => Promise<void> | void) | undefined;
 

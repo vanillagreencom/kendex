@@ -30,6 +30,10 @@ interface InternalActivityBroker extends PiActivityBroker {
 
 const ACTIVITY_BROKER_SYMBOL = Symbol.for("kendex.pi.activity");
 const DEFAULT_RECENT_LIMIT = 100;
+/** Characters of serialized events the recent list holds; past it the oldest go. */
+export const ACTIVITY_RECENT_MAX_CHARS = 1024 * 1024;
+/** How long an event stays in the recent list. */
+export const ACTIVITY_RECENT_MAX_AGE_MS = 60 * 60 * 1000;
 const warnedBridgePublisherFailures = new Set<string>();
 
 export function getPiActivityBroker(): PiActivityBroker {
@@ -60,6 +64,16 @@ function ensureActivityBroker(): InternalActivityBroker {
 
 	const listeners = new Set<(event: PiActivityEvent) => void>();
 	const events: PiActivityEvent[] = [];
+	/** Serialized size and arrival time of each held event. */
+	const held = new WeakMap<PiActivityEvent, { chars: number; at: number }>();
+	let heldChars = 0;
+	const dropOldest = () => {
+		const oldest = events.shift();
+		if (oldest) heldChars -= held.get(oldest)?.chars ?? 0;
+	};
+	const expire = (now: number) => {
+		while (events.length > 0 && now - (held.get(events[0]!)?.at ?? 0) > ACTIVITY_RECENT_MAX_AGE_MS) dropOldest();
+	};
 	const bridgePublishers = new Map<string, BridgePublisher>();
 	const broker: InternalActivityBroker = {
 		_bridgePublishers: bridgePublishers,
@@ -68,8 +82,13 @@ function ensureActivityBroker(): InternalActivityBroker {
 		publish(input: PiActivityEvent): void {
 			try {
 				const event = normalizeActivityEvent(input);
+				const now = Date.now();
+				const chars = serializedChars(event);
+				held.set(event, { chars, at: now });
 				events.push(event);
-				if (events.length > DEFAULT_RECENT_LIMIT) events.splice(0, events.length - DEFAULT_RECENT_LIMIT);
+				heldChars += chars;
+				expire(now);
+				while (events.length > DEFAULT_RECENT_LIMIT || (heldChars > ACTIVITY_RECENT_MAX_CHARS && events.length > 1)) dropOldest();
 				for (const listener of [...listeners]) {
 					try { listener(event); } catch { /* listener failures are isolated */ }
 				}
@@ -81,6 +100,7 @@ function ensureActivityBroker(): InternalActivityBroker {
 			}
 		},
 		recent(limit = DEFAULT_RECENT_LIMIT): PiActivityEvent[] {
+			expire(Date.now());
 			const safeLimit = Math.max(0, Math.floor(Number.isFinite(limit) ? limit : DEFAULT_RECENT_LIMIT));
 			return events.filter(isRecentActivityEvent).slice(-safeLimit).reverse();
 		},
@@ -123,6 +143,16 @@ function normalizeActivityEvent(input: PiActivityEvent): PiActivityEvent {
 		...(input.details && typeof input.details === "object" && !Array.isArray(input.details) ? { details: input.details } : {}),
 		ts,
 	};
+}
+
+/** An event's serialized length; one that cannot be serialized (a cycle in
+ *  its details) counts as the whole budget, so it is the only event held. */
+function serializedChars(event: PiActivityEvent): number {
+	try {
+		return JSON.stringify(event).length;
+	} catch {
+		return ACTIVITY_RECENT_MAX_CHARS;
+	}
 }
 
 function requiredString(value: unknown, field: string): string {

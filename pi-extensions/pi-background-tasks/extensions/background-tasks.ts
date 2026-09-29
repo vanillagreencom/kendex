@@ -13,7 +13,8 @@ import {
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { laneDirsUnder, openLaneDir, pruneLaneDirs } from "../scripts/lane-retention.js";
 
 import { shouldAdoptActiveContext } from "./active-context.js";
 import {
@@ -35,12 +36,14 @@ import {
 	DEFAULT_FORCE_KILL_GRACE_MS,
 	DEFAULT_FORCED_BACKGROUND_WINDOW_MS,
 	DEFAULT_OUTPUT_ALERT_MAX_CHARS,
+	DEFAULT_OUTPUT_BUFFER_MAX_CHARS,
 	DEFAULT_OUTPUT_SETTLE_MS,
 	DEFAULT_OUTPUT_WAKE_BUDGET_MAX_BYTES,
 	DEFAULT_OUTPUT_WAKE_BUDGET_MAX_WAKES,
 	DEFAULT_TIMEOUT_MS,
 	DEFAULT_WIDGET_FINISHED_RETENTION_MS,
 	DEFAULT_WIDGET_TOGGLE_SHORTCUT,
+	MAX_FINISHED_TASKS,
 	WIDGET_COMPACT_TASKS,
 } from "./constants.js";
 
@@ -71,7 +74,7 @@ import { applyCustomEntryWithBarrier, createPersistence, sessionIdForContext, si
 import { mapWithConcurrency, PROBE_CONCURRENCY } from "./probes.js";
 import { defaultSystemdUnitActive, planResourceControlledSpawn, stopResourceControlledTask } from "./resource-control.js";
 import { installSettingsCacheRefresh, recordProjectTrust } from "./package-config.js";
-import { logFilePath, settingBoolean, settingEnum, settingNumber, settingString, taskEnv } from "./settings.js";
+import { logFilePath, settingBoolean, settingEnum, settingNumber, settingString, taskDir, taskEnv, taskLaneDir } from "./settings.js";
 import { applyBgToolResultTasksWithBarrier } from "./tool-result-details.js";
 import {
 	defaultReadProcessIdentity,
@@ -248,14 +251,73 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 	const sortedTasks = (): ManagedTask[] => [...tasks.values()].sort((a, b) => b.startedAt - a.startedAt);
 
+	// A finished task's output lives in its log only; read back as much of the
+	// end as the in-memory buffer would have held. The dashboard asks on every
+	// redraw, so the last tail read is reused while its log is unchanged.
+	let lastLogTail: { logFile: string; size: number; mtimeMs: number; text: string } | undefined;
+	const readLogTail = (logFile: string): string => {
+		const maxChars = settingNumber("outputBufferMaxChars", DEFAULT_OUTPUT_BUFFER_MAX_CHARS);
+		let fd: number | undefined;
+		try {
+			fd = openSync(logFile, "r");
+			const { size, mtimeMs } = fstatSync(fd);
+			if (lastLogTail?.logFile === logFile && lastLogTail.size === size && lastLogTail.mtimeMs === mtimeMs) return lastLogTail.text;
+			const length = Math.min(size, maxChars);
+			const buffer = Buffer.alloc(length);
+			readSync(fd, buffer, 0, length, size - length);
+			// A cut through a multi-byte character decodes to U+FFFD at the start.
+			const text = buffer.toString("utf8").replace(/^\uFFFD+/, "");
+			lastLogTail = { logFile, size, mtimeMs, text };
+			return text;
+		} catch {
+			return "";
+		} finally {
+			if (fd !== undefined) closeSync(fd);
+		}
+	};
+
 	const getTaskOutput = (task: ManagedTask): string => {
 		if (task.output.length > 0) return task.output;
 		if (!existsSync(task.logFile)) return "";
-		try {
-			return readFileSync(task.logFile, "utf8");
-		} catch {
-			return "";
+		return readLogTail(task.logFile);
+	};
+
+	// A write the log writer still holds for the file would create it again,
+	// so the removal waits for the file's writes to settle.
+	const removeTaskLog = (task: ManagedTask) => {
+		const remove = () => {
+			try {
+				rmSync(task.logFile, { force: true });
+			} catch (error) {
+				logBackgroundDiagnostic("task log removal failed", { id: task.id, logFile: task.logFile, error: error instanceof Error ? error.message : String(error) });
+			}
+		};
+		const written = taskLogs.flush(task.logFile);
+		if (written) void written.then(remove);
+		else remove();
+	};
+
+	const forgetFinishedTask = (task: ManagedTask) => {
+		voidPendingTaskWakes(task, "clear", logWakeDiagnostic);
+		clearTaskTimers(task);
+		tasks.delete(task.id);
+		forgetSnapshot(task.id);
+		removeTaskLog(task);
+	};
+
+	// Keep at most MAX_FINISHED_TASKS finished tasks, dropping the oldest whose
+	// exit the agent was already told about (or never asked to hear).
+	const boundFinishedTasks = (): number => {
+		const finished = [...tasks.values()].filter((task) => task.status !== "running");
+		const excess = finished.length - MAX_FINISHED_TASKS;
+		let removed = 0;
+		for (const task of finished.sort((a, b) => a.updatedAt - b.updatedAt)) {
+			if (removed >= excess) break;
+			if (task.notifyOnExit && !task.exitNotified) continue;
+			forgetFinishedTask(task);
+			removed += 1;
 		}
+		return removed;
 	};
 
 	const clearTaskTimers = (task: ManagedTask) => {
@@ -516,17 +578,24 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	// timeout or shutdown after the child exits signals nothing. The exit wake
 	// names the log file as the task's full output, so it waits for the log's
 	// flush to release. A task cleared or replaced meanwhile gets no wake.
+	// Once the log holds the output, the process handle and the in-memory
+	// output are released: an exited process has nothing left to report.
 	const finalizeTask = (task: ManagedTask, exitCode: number | null, statusOverride?: BackgroundTaskStatus): void => {
 		if (!closeTaskLifecycle(task, exitCode, lifecycleHooks, statusOverride)) return;
+		task.child = null;
 		refreshUi();
-		const written = taskLogs.flush(task.logFile);
-		if (!written) {
+		const settle = () => {
+			if (tasks.get(task.id) !== task) return;
 			sendExitWakeLifecycle(task, lifecycleHooks);
-			return;
-		}
-		void written.then(() => {
-			if (tasks.get(task.id) === task) sendExitWakeLifecycle(task, lifecycleHooks);
-		});
+			if (existsSync(task.logFile)) {
+				task.output = "";
+				task.lastAnnouncedLength = 0;
+			}
+			if (boundFinishedTasks() > 0) persistSnapshots();
+		};
+		const written = taskLogs.flush(task.logFile);
+		if (written) void written.then(settle);
+		else settle();
 	};
 
 	// Orphan-running tasks (status=
@@ -674,7 +743,8 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		const now = Date.now();
 		const timeoutSeconds = typeof options.timeoutSeconds === "number" ? options.timeoutSeconds : settingNumber("defaultTimeoutSeconds", DEFAULT_TIMEOUT_MS / 1_000, cwd);
 		const expiresAt = timeoutSeconds > 0 ? now + timeoutSeconds * 1_000 : null;
-		const logFile = logFilePath(id, now);
+		const laneDir = openLaneDir(taskLaneDir(activeSessionId ?? `ephemeral-${process.pid}`), activeCtx?.cwd ?? cwd);
+		const logFile = logFilePath(laneDir, id, now);
 		writeFileSync(logFile, "");
 
 		const { shell, args } = getShellConfig();
@@ -838,12 +908,9 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 	const clearFinishedTasks = (): number => {
 		let removed = 0;
-		for (const [id, task] of tasks) {
+		for (const task of [...tasks.values()]) {
 			if (task.status === "running") continue;
-			voidPendingTaskWakes(task, "clear", logWakeDiagnostic);
-			clearTaskTimers(task);
-			tasks.delete(id);
-			forgetSnapshot(id);
+			forgetFinishedTask(task);
 			removed += 1;
 		}
 		persistSnapshots();
@@ -906,8 +973,11 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		shuttingDown = false;
 		recordProjectTrust(ctx);
 		activeCtx = ctx;
+		const pruned = pruneLaneDirs(laneDirsUnder(taskDir()));
+		for (const failure of pruned.failed) logBackgroundDiagnostic("task log prune failed", { path: failure.path, error: failure.error });
 		await restoreSnapshots(ctx);
 		replayMissedExits();
+		if (boundFinishedTasks() > 0) persistSnapshots();
 		// Restore just probed every task the watcher would check, so the first
 		// pass waits one poll interval.
 		ensureOrphanWatcher();
@@ -955,6 +1025,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		}
 		persistSnapshots();
 		clearWidget();
+		lastLogTail = undefined;
 		activeCtx = null;
 		await taskLogs.drain();
 	});

@@ -25,6 +25,12 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 The parent Pi session selects an agent file and sends it a task. The extension starts a separate Pi process with that agent's instructions. Agents configured for panes appear in tmux; other agents run in the background. The child returns its result to the parent. The dashboard shows the task state and saved transcript.
 
+## Memory and disk use
+
+- A one-shot result keeps its last 20 assistant messages, without thinking blocks and with tool-call arguments cut to the tool-details bound, and the last 65,536 characters of the child's stderr. Its transcript keeps every event.
+- Each transcript record holds its event once. When more than 8 MiB of transcript records wait to be written, the extension stops reading the child's output until the writer catches up.
+- Transcripts live in `~/.pi/agent/kendex/sessions/<session>/pi-agents-tmux/transcripts/`. That directory is deleted once the session's working directory is gone (a merged worktree), and any transcript older than 5 days is deleted. Pi applies both rules when a session starts.
+
 ## Settings
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-agents-tmux"]`.

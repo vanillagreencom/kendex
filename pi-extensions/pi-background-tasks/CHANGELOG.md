@@ -2,6 +2,11 @@
 
 ## Consumer-impacting changes
 
+### 2.1.0
+
+- Task logs move into one directory per session under the task directory. A session's log directory is deleted once its working directory is gone (a merged worktree), and any log older than 5 days is deleted, when the next session starts.
+- A task's process handle and in-memory output are released when it exits; `log` and exit wakes read the end of the log file instead. At most 50 finished tasks are kept: past that, the oldest finished task whose exit was already reported is removed with its log. `clear` now deletes the logs of the tasks it removes.
+
 ### 2.0.4
 
 - A task that prints a lot no longer makes Pi write the task log synchronously, save the full task state and redraw the widget for every output chunk. Slow task log writes no longer block Pi; the task waits on its output instead.

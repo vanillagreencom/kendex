@@ -14,7 +14,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
-import { buildFrontmatterBlock } from "./format.js";
+import { buildFrontmatterBlock, readSkillBody } from "./format.js";
 import { glyphs } from "./glyphs.js";
 import { isDeletableSkill } from "./registry.js";
 import {
@@ -100,12 +100,14 @@ export class ScrollableSkillPreview implements Component {
 	private skill: SkillEntry;
 	private readonly theme: Theme;
 	private readonly getTerminalRows: () => number;
+	private body: string;
 	constructor(skill: SkillEntry, theme: Theme, getTerminalRows: () => number) {
 		this.skill = skill;
+		this.body = readSkillBody(skill);
 		this.theme = theme;
 		this.getTerminalRows = getTerminalRows;
 	}
-	setSkill(skill: SkillEntry): void { this.skill = skill; this.scrollOffset = 0; this.lastContentLines = []; }
+	setSkill(skill: SkillEntry): void { this.skill = skill; this.body = readSkillBody(skill); this.scrollOffset = 0; this.lastContentLines = []; }
 	invalidate(): void { this.lastContentLines = []; }
 	private maxHeight(): number { return Math.max(10, Math.floor(this.getTerminalRows() * 0.78)); }
 	private buildContentLines(innerWidth: number): string[] {
@@ -123,7 +125,7 @@ export class ScrollableSkillPreview implements Component {
 		content.addChild(new Spacer(1));
 		content.addChild(new Text(this.theme.fg("muted", this.theme.bold("Content")), 0, 0));
 		content.addChild(new Spacer(1));
-		content.addChild(new Markdown(this.skill.content || this.theme.fg("dim", "(empty skill body)"), 0, 0, getMarkdownTheme()));
+		content.addChild(new Markdown(this.body || this.theme.fg("dim", "(empty skill body)"), 0, 0, getMarkdownTheme()));
 		const lines = content.render(innerWidth);
 		this.lastInnerWidth = innerWidth;
 		this.lastContentLines = lines;

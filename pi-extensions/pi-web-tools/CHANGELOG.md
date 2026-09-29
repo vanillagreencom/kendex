@@ -2,6 +2,12 @@
 
 ## Consumer-impacting changes
 
+### 4.0.0
+
+- **Breaking**: fetched and searched text is stored once, on disk, under `~/.pi/agent/kendex/sessions/<session>/pi-web-tools/content/`. The session record, the `web_fetch` details (`stored`) and the `get_web_content` details now carry the id, title, URL, metadata and `contentLength`, not the text. Text stored in a session by an earlier version cannot be read with `get_web_content`.
+- At most 8,388,608 characters of stored text are held in memory, least recently read dropped first; a dropped item is read from disk again when requested. Memory is cleared when a session starts or ends.
+- A session's stored text is deleted once the session's working directory is gone (a merged worktree), and any stored file older than 5 days is deleted, when the next session starts.
+
 ### 3.1.0
 
 - `web_fetch` streams each page, GitHub file, README and Jina Reader body and stops reading at 8 MB. The stored item then carries `bodyTruncatedAtBytes` and `bodyTruncatedBy` in its metadata, the preview reads `source cut at N bytes`, and `get_web_content` labels the item `source cut at N bytes` instead of `full` and names the cut in the text it returns. A PDF over 32 MB is refused with its size named instead of being loaded whole.
