@@ -384,6 +384,21 @@ stale_ack() { # NAME
 stale_ack inbox_ack
 assert_eq "$PEEKED=$ACK_CURSOR" "count=1=0=2" "an --ack older than the cursor never moves it back"
 
+# An --ack one past the lines present, then a line lands. OVER_ACK is the ack's
+# exit and keyed line, the cursor it left, and what a later inbox prints.
+over_ack() { # NAME
+  new_lane "$1"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'First.')"
+  lm inbox --item KEN-1 --ack 2
+  OVER_ACK="$RC=$ERR=$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Landed later.')"
+  LANE_MAIL_BIN="$LANE_MAIL" lm inbox --item KEN-1
+  OVER_ACK+=" $(jq -r '.text' <<<"$OUT" | tr '\n' '|')"
+}
+over_ack inbox_over_ack
+assert_eq "$OVER_ACK" "0=lane-mail: ack-clamped=1 asked=2=1 Landed later.|" \
+  "an --ack past the lines present stops at them, so a line that lands later is still handed over"
+
 new_lane concurrent
 printf 'parallel\n' > "$TMP_ROOT/p.txt"
 for i in 1 2 3 4 5 6 7 8; do
@@ -1168,6 +1183,12 @@ assert_eq "$(jq -r '.text' <<<"$OUT")" "twice" "control: the frozen-cursor mutan
 lm inbox --item KEN-1
 assert_eq "$(jq -r '.text' <<<"$OUT")" "twice" \
   "control: without the cursor advance a second inbox hands the same line over again"
+
+mutant ack-unclamped 'if [ "$ACK" -gt "$COUNT" ]; then' 'if false; then'
+over_ack control_over_ack
+assert_eq "$OVER_ACK" "0==2 " \
+  "control: without the line-count clamp an --ack past the lines present hides the line that lands later"
+LANE_MAIL_BIN=""
 
 mutant directives-alone 'foreach inputs as $raw (0; . + 1;' 'foreach (inputs | select(test("directive"))) as $raw (0; . + 1;'
 answered_lane control_pending_answer
