@@ -496,8 +496,8 @@ test("unexpected session dispatch failure names the listener", async () => {
  * Below Pi 0.87.0 Pi fires no `agent_before_settle`, so every `Stop` and
  * `TaskCompleted` registration is skipped, and neither kendex nor Pi checks
  * the peer range that says so. The carrier reads the host's `VERSION` export
- * once, when Pi loads it, so each row loads a carrier against a host module
- * reporting its version; the 0.87.0 row is the control.
+ * at each fresh session start, so each row starts a session against a host
+ * module reporting its version; the 0.87.0 row is the control.
  */
 describe("a Pi without the Stop listener is named at session start", () => {
 	const HOST = "@earendil-works/pi-coding-agent";
@@ -514,9 +514,26 @@ describe("a Pi without the Stop listener is named at session start", () => {
 			try {
 				const carrier = installCarrier();
 				const notified: [string, string][] = [];
-				const ui = { notify: (content: string, level: string) => notified.push([content, level]) };
+				let warned!: () => void;
+				const warning = new Promise<void>((resolve) => { warned = resolve; });
+				const ui = {
+					notify: (content: string, level: string) => {
+						notified.push([content, level]);
+						if (level === "warning") warned();
+					},
+				};
 				carrier.handler(SESSION_START_LISTENER)({ type: "session_start", reason: "startup" }, trusted(project, { hasUI: true, ui }));
 				await settle();
+				// The host version is read behind a dynamic import the carrier does
+				// not hand back, so a row that is named waits for its warning, and
+				// the control resolves the same module here and waits one timer turn
+				// for the carrier's own read of it to finish.
+				if (row.said !== undefined) {
+					await warning;
+				} else {
+					await import(HOST);
+					await Bun.sleep(0);
+				}
 				const spoken = carrier.sent.map((call) => call.message.content.split("\n")[0]);
 				const shown = notified.map(([content, level]) => `${level} ${content.split("\n")[0]}`);
 				if (row.said === undefined) {

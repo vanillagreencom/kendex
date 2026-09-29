@@ -5,7 +5,6 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { VERSION } from "@earendil-works/pi-coding-agent";
 import { isAbsolute, resolve } from "node:path";
 
 import { getBool, getNumber, projectRoot, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
@@ -56,8 +55,19 @@ export function toolCallVerdict(result: HookResult, ctx: ExtensionContext): Verd
  * first `@earendil-works` release, to 0.86.x. Remove it once no Pi below
  * 0.87.0 can load this package. A version that does not parse as
  * `major.minor` is not called old.
+ *
+ * The host's `VERSION` is read here, at a fresh start, and not when this
+ * module loads: inside Pi the package name resolves through Pi's own loader,
+ * and a load outside Pi, such as kendex's carrier test under bare bun, has no
+ * such package to resolve. There this names nothing.
  */
-function unsupportedHostLine(version: string): string | undefined {
+async function unsupportedHostLine(): Promise<string | undefined> {
+	let version: string;
+	try {
+		({ VERSION: version } = await import("@earendil-works/pi-coding-agent"));
+	} catch {
+		return undefined;
+	}
 	const [major, minor] = version.split(".").map(Number);
 	if (major === 0 && minor !== undefined && minor < 87) {
 		return `hook-host-unsupported=pi ${version}\nStop and TaskCompleted hooks do not run on this Pi. Upgrade Pi to 0.87.0 or later.`;
@@ -79,7 +89,6 @@ export default function piHooks(pi: ExtensionAPI): void {
 	guard[INSTALL_SYMBOL] = true;
 
 	let turn = freshTurnState();
-	const hostLine = unsupportedHostLine(VERSION);
 
 	pi.on("turn_start", () => {
 		turn = freshTurnState();
@@ -174,10 +183,11 @@ export default function piHooks(pi: ExtensionAPI): void {
 		if (event.reason === "reload" || event.reason === "resume") return;
 		// A fresh start alone, as the drift report below: a resumed session
 		// already carries the line.
-		if (hostLine !== undefined) {
+		void unsupportedHostLine().then((hostLine) => {
+			if (hostLine === undefined) return;
 			deliver(speak, hostLine);
 			deliver(notify(ctx, "warning"), hostLine);
-		}
+		});
 		if (!getBool(cfg, "sessionDriftCheck")) return;
 
 		void deliverDrift(
