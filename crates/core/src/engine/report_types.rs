@@ -398,6 +398,37 @@ impl EngineReport {
             tracked_outputs: BTreeMap::new(),
         }
     }
+
+    /// Whether the plan writes this package on none of the tools it is
+    /// planned for, each one left out by the hook's own harnesses line
+    /// alone ([`ExcludedHook`]). Nothing is recorded for such a package,
+    /// so a reader holding the record to the declarations passes it over.
+    ///
+    /// A package planned for no tool at all is not left out by its own
+    /// line, and answers `false`: that is a declaration nothing can hold,
+    /// which the plan reports on its own.
+    pub fn left_out_by_own_line(
+        &self,
+        kind: ItemKind,
+        name: &str,
+        harnesses: &[HarnessId],
+    ) -> bool {
+        let hook = match kind {
+            ItemKind::Hook => true,
+            ItemKind::Agent
+            | ItemKind::Skill
+            | ItemKind::Command
+            | ItemKind::McpServer
+            | ItemKind::PiExtension
+            | ItemKind::Plugin => false,
+        };
+        hook && !harnesses.is_empty()
+            && harnesses.iter().all(|harness| {
+                self.excluded_hooks
+                    .iter()
+                    .any(|excluded| excluded.name == name && excluded.harness == *harness)
+            })
+    }
 }
 
 /// The settings edits registrations are, by the lock entry key of the

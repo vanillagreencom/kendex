@@ -6,7 +6,7 @@ use kendex_core::attest::{
     self, Document, Floor, Foreign, Placed, Reading, Row, Stale, Standing, State,
 };
 use kendex_core::engine::{
-    DriftState, Installation, Owns, Position, ShimStanding, planned_declarations,
+    DriftState, EngineReport, Installation, Owns, Position, ShimStanding, planned_declarations,
 };
 use kendex_core::env::Env;
 use kendex_core::lock::lock_path;
@@ -108,6 +108,9 @@ struct Tally {
     /// reaches the count, and a count printed without them covers less
     /// than the scope does.
     gaps: Vec<(Scope, Vec<(ItemKind, String)>)>,
+    /// What each scope declares that installs on none of its tools, by the
+    /// package's own harnesses line: said once at the end, never a gap.
+    left_out: Vec<(Scope, Vec<(ItemKind, String)>)>,
     /// Whether any scope's record was unavailable; the run already said
     /// which scope it was, where it found it.
     recordless: bool,
@@ -207,6 +210,7 @@ pub fn run(
         check_scope(env, scope, &names, &output, &mut tally, &style)?;
     }
     print_unmanaged(&tally.unmanaged);
+    print_left_out(&style, &tally.left_out);
     print_gaps(&style, &tally.gaps);
     let clean = tally.clean();
     ui::stderr(&style.summary(
@@ -286,13 +290,9 @@ fn check_scope(
             .filter(|row| named(&row.name))
             .cloned(),
     );
-    let declared = manifest
-        .map(|manifest| declared_packages(env, &scope, manifest))
-        .unwrap_or_default();
-    let gap = gap_rows(&declared, &lock, &report, &placer, &named, &mut tally.rows);
-    if !gap.is_empty() {
-        tally.gaps.push((scope.clone(), gap));
-    }
+    declaration_rows(
+        env, &scope, manifest, &lock, &report, &placer, &named, tally,
+    );
     for (key, entry) in &lock.entries {
         if !named(&entry.name) {
             continue;
@@ -474,6 +474,44 @@ fn tracked_output_rows(
 /// installation carries. Whatever else the record holds, either is a gap.
 /// Named once each, in the order the scope declares them, with the
 /// installations the declarations did not account for after.
+/// One scope's declarations held to its record, into the tally: what it
+/// declares and the record does not hold, and what installs on none of
+/// its tools and so owes the record nothing.
+#[allow(clippy::too_many_arguments)]
+fn declaration_rows(
+    env: &Env,
+    scope: &Scope,
+    manifest: Option<&Manifest>,
+    lock: &kendex_core::lock::Lock,
+    report: &EngineReport,
+    placer: &Placer,
+    named: &dyn Fn(&str) -> bool,
+    tally: &mut Tally,
+) {
+    let declared = manifest
+        .map(|manifest| declared_packages(env, scope, manifest, report))
+        .unwrap_or_default();
+    let left_out: Vec<(ItemKind, String)> = declared
+        .left_out
+        .into_iter()
+        .filter(|(_, name)| named(name))
+        .collect();
+    if !left_out.is_empty() {
+        tally.left_out.push((scope.clone(), left_out));
+    }
+    let gap = gap_rows(
+        &declared.wanted,
+        lock,
+        report,
+        placer,
+        named,
+        &mut tally.rows,
+    );
+    if !gap.is_empty() {
+        tally.gaps.push((scope.clone(), gap));
+    }
+}
+
 fn gap_rows(
     declared: &[(ItemKind, String)],
     lock: &kendex_core::lock::Lock,
@@ -655,17 +693,46 @@ fn head(checked: usize, failed: usize, named: bool, beside: usize) -> String {
 /// agent installs and stays tracked — so the flag is not this function's
 /// to read, and the engine's own predicate for keeping a record does not
 /// read it either.
-fn declared_packages(env: &Env, scope: &Scope, manifest: &Manifest) -> Vec<(ItemKind, String)> {
-    planned_declarations(env, scope, manifest)
+///
+/// A package the plan writes on none of its tools because its own
+/// harnesses line leaves each one out is not asked for here: apply records
+/// nothing for it, so it goes to `left_out` and never to the gap. The
+/// engine's report answers which those are
+/// ([`EngineReport::left_out_by_own_line`]).
+fn declared_packages(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    report: &EngineReport,
+) -> Declared {
+    let (left_out, wanted): (Vec<_>, Vec<_>) = planned_declarations(env, scope, manifest)
         .into_iter()
-        .map(|declared| (declared.kind, declared.name))
-        .chain(
-            manifest
-                .plugins
-                .keys()
-                .map(|name| (ItemKind::Plugin, name.clone())),
-        )
-        .collect()
+        .partition(|declared| {
+            report.left_out_by_own_line(declared.kind, &declared.name, &declared.harnesses)
+        });
+    let pair = |declared: kendex_core::engine::PlannedDeclaration| (declared.kind, declared.name);
+    Declared {
+        wanted: wanted
+            .into_iter()
+            .map(pair)
+            .chain(
+                manifest
+                    .plugins
+                    .keys()
+                    .map(|name| (ItemKind::Plugin, name.clone())),
+            )
+            .collect(),
+        left_out: left_out.into_iter().map(pair).collect(),
+    }
+}
+
+/// A scope's declarations, split by whether the record owes them an entry.
+#[derive(Default)]
+struct Declared {
+    /// What the record must hold.
+    wanted: Vec<(ItemKind, String)>,
+    /// What installs on none of the scope's tools, by its own harnesses line.
+    left_out: Vec<(ItemKind, String)>,
 }
 
 /// Whether the scope's manifest asks for anything at all — every
@@ -684,6 +751,35 @@ fn declares_items(manifest: &Manifest) -> bool {
         .any(|kind| !manifest.declared(*kind).is_empty())
         || !manifest.bundles.is_empty()
         || !manifest.plugins.is_empty()
+}
+
+/// What each scope declares that installs on none of its tools, one line
+/// per scope: a notice, not a failure, since apply records nothing for it.
+fn print_left_out(style: &Style, scopes: &[(Scope, Vec<(ItemKind, String)>)]) {
+    for (scope, items) in scopes {
+        let named: Vec<String> = items
+            .iter()
+            .map(|(kind, name)| format!("{} {name}", kind.name()))
+            .collect();
+        ui::stderr(&style.report_row(
+            Status::Notice,
+            &[Span::Prose(&format!(
+                "{}: {} package{} on no tool here, {} own harnesses line names none of them: {}",
+                scope_label(scope),
+                items.len(),
+                match items.len() {
+                    1 => " installs",
+                    _ => "s install",
+                },
+                match items.len() {
+                    1 => "its",
+                    _ => "their",
+                },
+                named.join(", ")
+            ))],
+            "",
+        ));
+    }
 }
 
 /// What each scope declares that its record does not hold, said once at
