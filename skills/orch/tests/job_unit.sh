@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for lib/job-unit.sh through its executable interface, the contract a
-# markdown recipe calls: --help, name, launch, end, stop, kill-group and
-# stop-job. The
+# markdown recipe calls: --help, name, launch, attach, end, stop, kill-group
+# and stop-job. The
 # containment each runner gives, the fallbacks behind a failing systemd-run,
 # and each rule --stop applies are pinned through dev-validate-run, which
 # sources the same functions, in dev_validate_run.sh.
@@ -24,6 +24,10 @@ export PATH="$TMP_ROOT/linger:$PATH"
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
+# orch_fixture_shared_libs: attach forks through the github skill's
+# group-leader prefix, which a copy of the executable reaches beside it.
+# shellcheck source=lib/shared-skill-libs.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 
 OUT=""
 ERR=""
@@ -38,10 +42,13 @@ run() { # SCRIPT ARG...
 
 # A copy of the executable with one literal substitution applied, for the
 # controls: one per rule a row below pins, the kill_sites reading among them.
-# The counts are the edit's proof.
+# The copy sits in an installed layout, the github skill's libs beside it. The
+# counts are the edit's proof.
 MUTANT=""
 mutant() { # NAME OLD NEW
-  MUTANT="$TMP_ROOT/$1.sh"
+  mkdir -p "$TMP_ROOT/mutants/$1/orch/scripts/lib"
+  orch_fixture_shared_libs "$TMP_ROOT/mutants/$1/orch"
+  MUTANT="$TMP_ROOT/mutants/$1/orch/scripts/lib/job-unit.sh"
   assert_eq "$(grep -c -F -- "$2" "$JOB_UNIT")" "1" "control $1 finds one line to mutate"
   awk -v old="$2" -v new="$3" '{
     i = index($0, old)
@@ -57,7 +64,7 @@ echo "=== job-unit executable ==="
 run "$JOB_UNIT" --help
 assert_eq "$RC $(sed -n '1s/ — .*$//p' <<<"$OUT")" "0 job-unit.sh" \
   "--help prints the header, which opens on the script's name, and exits 0"
-assert_eq "$(grep -c -E '^  job-unit\.sh (name|launch|end|stop|kill-group|stop-job) ' <<<"$OUT")" "6" \
+assert_eq "$(grep -c -E '^  job-unit\.sh (name|launch|attach|end|stop|kill-group|stop-job) ' <<<"$OUT")" "7" \
   "and names every subcommand"
 run "$JOB_UNIT" launch validate-x
 assert_eq "$RC $ERR" "3 job-unit: usage subcommand=launch" "a launch missing its arguments is refused as usage"
@@ -73,6 +80,55 @@ validate-x $TMP_ROOT/usage.record --cap -- true|a cap with no number is refused 
 validate-x $TMP_ROOT/usage.record --|a launch with no command is refused as usage
 validate-x $TMP_ROOT/usage.record --memory-max 0 -- true|a zero memory bound is refused as usage
 ROWS
+
+# --- An attached start -------------------------------------------------------
+# attach arguments|label
+while IFS='|' read -r args label; do
+  # shellcheck disable=SC2086 # the arguments column is words
+  run "$JOB_UNIT" attach $args
+  assert_eq "$RC $ERR" "3 job-unit: usage subcommand=attach" "$label"
+done <<ROWS
+$TMP_ROOT/usage.record|an attach missing its command is refused as usage
+$TMP_ROOT/usage.record true|an attach with no -- before its command is refused as usage
+ROWS
+
+# The job writes its pid and its process group; a leader's are one number.
+ATTACH_JOB='echo "$$ $(ps -o pgid= -p $$)" > "$0"'
+# What an attach answers: exit and stderr, the record, and whether the job
+# ran as the leader of its own group.
+attach_state() { # SCRIPT NAME
+  local record="$TMP_ROOT/$2.record" ran="$TMP_ROOT/$2.ran" pid pgid
+  run "$1" attach "$record" -- bash -c "$ATTACH_JOB" "$ran"
+  if [[ ! -s "$ran" ]]; then
+    ran=not-run
+  else
+    read -r pid pgid < "$ran"
+    if [[ "$pid" == "$pgid" ]]; then ran=leader; else ran=not-leader; fi
+  fi
+  if [[ -f "$record" ]]; then record="$(tr '\n' ';' < "$record")"; else record=unrecorded; fi
+  printf '%s|%s|%s|%s' "$RC" "$ERR" "$record" "$ran"
+}
+assert_eq "$(attach_state "$JOB_UNIT" attached)" "0||runner=attached;line=runner=attached;|leader" \
+  "attach records the attached runner, runs the job as the leader of its own group, and says nothing on stderr"
+mutant no-attach-dispatch '    attach) [[ $# -ge 3 ]] || rc=3 ;;' ''
+assert_eq "$(attach_state "$MUTANT" attached-undispatched)" "3|job-unit: usage subcommand=attach|unrecorded|not-run" \
+  "control: with no attach in the dispatch the start is refused as usage and nothing runs"
+mutant no-group-leader '"${KENDEX_GROUP_LEADER[@]}" "$@"' '"$@"'
+assert_eq "$(attach_state "$MUTANT" attached-unled)" "0||runner=attached;line=runner=attached;|not-leader" \
+  "control: without the group-leader prefix the job runs in the caller's group"
+
+# A copy with no github skill beside it has no group-leader prefix to fork
+# through: attach refuses, and neither records nor runs anything.
+LONE="$TMP_ROOT/lone/orch/scripts/lib"
+mkdir -p "$LONE"
+cp -- "$JOB_UNIT" "$LONE/job-unit.sh"
+assert_eq "$(attach_state "$LONE/job-unit.sh" attached-lone)" \
+  "2|job-unit: group-leader-missing path=$LONE/../../../github/scripts/lib/group-leader.sh|unrecorded|not-run" \
+  "attach with no github skill beside it exits 2 as group-leader-missing and starts nothing"
+mutant no-leader-refusal ' || { job_unit_fail group-leader-missing "path=$lib" 2; return; }' ''
+rm -rf -- "${TMP_ROOT:?}/mutants/no-leader-refusal/github"
+assert_eq "$(attach_state "$MUTANT" attached-lone-unrefused | cut -d'|' -f3)" "runner=attached;line=runner=attached;" \
+  "control: without that refusal the start goes ahead with no prefix and writes its record"
 
 # --- The unit name shape ---------------------------------------------------------
 # name|pid|unit name

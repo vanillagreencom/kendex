@@ -18,6 +18,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
+# orch_fixture_shared_libs: an attached start forks through the github skill's
+# group-leader prefix, which a mutant's copy of the scripts reaches beside it.
+# shellcheck source=lib/shared-skill-libs.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
@@ -111,6 +115,7 @@ in_tree() { # PROJ
 MUTANT=""
 mutant() { # NAME FILE OLD NEW
   MUTANT="$(mutant_scripts "$1" "$2")" || exit 1
+  orch_fixture_shared_libs "$TMP_ROOT/$1" || { echo "dev_validate_run_attached: shared-libs=copy-failed mutant=$1" >&2; exit 1; }
   mutate_file "$MUTANT/$2" "$3" "$4"
   MUTANT="$MUTANT/dev-validate-run"
 }
@@ -127,6 +132,24 @@ mutant mutant-attached-dropped dev-validate-run \
 run_script "$MUTANT" --wait --run-dir "$TMP_ROOT/no-run" --attached
 assert_eq "rc=$RC $(sed -n 1p "$ERR")" "rc=2 dev-validate-run: no-run path=$TMP_ROOT/no-run/start" \
   "control: without that refusal the flag is dropped and the poll runs on" "$ERR"
+
+# --- An attached start needs the github skill beside orch -------------------
+# The start forks through that skill's group-leader prefix; a copy of the
+# scripts with no github skill beside it refuses under the key job-unit.sh
+# names, and starts nothing.
+lone_start() { # SCRIPTS_DIR PROJ
+  run_script "$1/dev-validate-run" --worktree "$2" --poll 1 --attached
+  printf 'rc=%s %s' "$RC" "$(grep -F 'dev-validate-run: ' "$ERR" | sed -n 1p)"
+}
+LONE="$(mutant_scripts lone/orch)" || exit 1
+proj="$(make_proj proj-lone "exit 0" 20)"
+assert_eq "$(lone_start "$LONE" "$proj")" \
+  "rc=2 dev-validate-run: group-leader-missing path=$LONE/lib/../../../github/scripts/lib/group-leader.sh" \
+  "an attached start with no github skill beside orch is refused as group-leader-missing" "$ERR"
+LONE="$(mutant_scripts lone-setsid/orch dev-validate-run)" || exit 1
+mutate_file "$LONE/dev-validate-run" '2) die "$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR" ;;' '2) die missing-command commands=setsid ;;'
+assert_eq "$(lone_start "$LONE" "$proj")" "rc=2 dev-validate-run: missing-command commands=setsid" \
+  "control: a start that reads every exit 2 as the detached runner's names setsid instead"
 
 # --- The run stays in the caller's tree, under its own bound and class --------
 proj="$(make_proj proj-pass "bash chain.sh" 20)"

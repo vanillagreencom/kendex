@@ -64,8 +64,13 @@
 #         line=runner=attached
 #       Nothing bounds the job but its own bound, and a job the caller's
 #       harness kills before `end` leaves its group as a setsid job does.
+#       The job forks through the github skill's KENDEX_GROUP_LEADER prefix
+#       (skills/github/scripts/lib/group-leader.sh), so ARGV names an
+#       external program and the host needs perl.
 #       Exit 0 the job ran and ended, whatever its own status; 1 RECORD could
-#       not be written (record-unwritable), and nothing started; 3 usage.
+#       not be written (record-unwritable), and nothing started; 2 that
+#       prefix's lib is not beside this skill (group-leader-missing), and
+#       nothing started; 3 usage.
 #   job-unit.sh end RECORD LEADER_PID
 #       The job's own last call. Under setsid or attached, tear down the
 #       process group LEADER_PID leads, the caller being a member; under a
@@ -310,25 +315,32 @@ job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
   setsid -f "$@" </dev/null >/dev/null 2>&1 || job_unit_fail launch-failed "status=$?" 4
 }
 
-# Monitor mode is what gives a job started with & a process group of its own,
-# and with it the job keeps the caller's INT and QUIT dispositions rather than
-# the ignore a non-interactive shell gives an async job. It is on for that one
-# start and restored at once.
+# The job forks through the github skill's KENDEX_GROUP_LEADER prefix: the
+# child makes itself a process-group leader before it execs ARGV, and resets
+# INT and QUIT to their default, which a non-interactive shell's async job
+# would otherwise ignore. Job control would make the same group from the
+# parent side, racing the child's exec and printing that race's failure onto
+# the caller's stderr; group-leader.sh holds the reasoning. The prefix execs,
+# so ARGV names an external program. The lib is reached by the layout every
+# install gives, the github skill beside this one, resolved by expansion from
+# this file's own path; only this start needs it, so a caller that never
+# attaches runs without it.
 job_unit_attach() { # RECORD -- ARGV...
-  local record="${1:-}" pid monitor=off
+  local record="${1:-}" self="${BASH_SOURCE[0]}" lib pid
   JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
   [[ -n "$record" && $# -ge 3 && "$2" == -- ]] \
     || { job_unit_fail usage subcommand=attach 3; return; }
   shift 2
+  case "$self" in */*) ;; *) self="./$self" ;; esac
+  lib="${self%/*}/../../../github/scripts/lib/group-leader.sh"
+  # shellcheck source=../../../github/scripts/lib/group-leader.sh
+  source "$lib" 2>/dev/null || { job_unit_fail group-leader-missing "path=$lib" 2; return; }
   JOB_UNIT_RUNNER=attached
   JOB_UNIT_NAME=""
   JOB_UNIT_LINE="runner=attached"
   job_unit_record "$record" || { job_unit_fail record-unwritable "path=$record" 1; return; }
-  [[ "$-" != *m* ]] || monitor=on
-  set -m
-  "$@" </dev/null >/dev/null &
+  "${KENDEX_GROUP_LEADER[@]}" "$@" </dev/null >/dev/null &
   pid=$!
-  [[ "$monitor" == on ]] || set +m
   wait "$pid" || :
 }
 
