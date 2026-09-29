@@ -46,7 +46,7 @@ case "\${1:-}" in
   exists) echo false ;;
   merged) exit 1 ;;
   path) printf '%s\n' "\$d" ;;
-  create) mkdir -p "\$d"; git init -q "\$d"; printf '%s\n' "\$d" ;;
+  create) mkdir -p "\$d"; git init -q "\$d"; git -C "\$d" config gc.auto 0; git -C "\$d" config maintenance.auto false; printf '%s\n' "\$d" ;;
   *) exit 1 ;;
 esac
 STUB
