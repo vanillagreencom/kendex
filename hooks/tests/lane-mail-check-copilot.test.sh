@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # lane-mail-check on Copilot: the lane-mail hooks installed where kendex
 # renders them for Copilot, run with the payloads Copilot's hooks reference
-# gives, and a Copilot call reaching the Claude copy `.claude/settings.json`
-# registers, which Copilot also runs. The shared world is
+# gives, and a Copilot call reaching a Claude copy registered by hand in
+# `.claude/settings.json`, which Copilot also runs. The shared world is
 # lib/lane-mail-world.sh; lane-mail-check.test.sh holds every other harness's
 # rows. HOOK_UNDER_TEST overrides the script the must-fail controls at the end
 # run against.
@@ -452,11 +452,13 @@ assert_eq "RC=$RC keyed=$(cop_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keye
 : > "$COP_TRANSCRIPT"
 
 # --- a Copilot call reaching the Claude copy ------------------------------
-# Copilot also runs the hooks `.claude/settings.json` registers, under their
-# PascalCase names, and hands those the snake_case format its reference gives
-# for them: `hook_event_name`, an ISO 8601 `timestamp` and the Claude tool
-# name. Each row installs both copies, the Claude one the settings file names
-# and the Copilot one under `.github/hooks`, and runs the Claude one. FORMAT
+# Copilot runs a Claude copy registered by hand in `.claude/settings.json`,
+# kendex's own registration exiting before the script (docs/adapters/claude.md
+# § Cross-reads), under its PascalCase name, and hands it the snake_case format
+# its reference gives: `hook_event_name`, an ISO 8601 `timestamp` and the
+# Claude tool name. Each row installs both copies, the Claude one under
+# `.claude/hooks` and the Copilot one under `.github/hooks`, and runs the
+# Claude script as that registration would. FORMAT
 # pascal is that referenced format; camel is Copilot's own format with no
 # `timestamp`, which only the `sessionId` spelling marks as Copilot's.
 install_claude_copy() { # [JUDGE]

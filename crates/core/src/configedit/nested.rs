@@ -36,12 +36,10 @@ pub(super) fn handler(command: &str, timeout: Option<u32>) -> Value {
 
 // engine::targets::project_command puts the owned script operand before its walker.
 // A Claude Code command is the same registration with or without the opening
-// engine::targets::CLAUDE_OUTSIDE_COPILOT, so a refresh replaces an entry
-// written without it rather than leaving it to run beside the new one.
+// Copilot skip, so a refresh replaces an entry written without it rather than
+// leaving it to run beside the new one.
 fn hook_key(command: &str) -> &str {
-    let command = command
-        .strip_prefix(crate::engine::targets::CLAUDE_OUTSIDE_COPILOT)
-        .unwrap_or(command);
+    let command = crate::engine::targets::without_copilot_skip(command);
     command
         .split_once("';")
         .filter(|(p, _)| p.starts_with("p='.codex/hooks/") || p.starts_with("p='.pi/kendex/hooks/"))

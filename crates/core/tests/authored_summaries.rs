@@ -274,6 +274,30 @@ fn an_installed_hook_with_a_declared_environment_keeps_its_words() {
     );
 }
 
+/// A Claude Code entry kendex wrote before its commands opened with the
+/// Copilot skip runs the same script, and Claude Code keeps it until a
+/// refresh rewrites it; its row reads the script's words meanwhile.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_claude_registration_without_the_copilot_skip_keeps_its_words() {
+    let f = fixture("[hooks.guard]\nsource = \"cat\"\n");
+    apply_now(&f);
+    // The entry as it stood before the skip, spelled out rather than cut
+    // from what this build registers.
+    let before = "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\"";
+    let settings = f.project.join(".claude/settings.json");
+    fs::remove_file(&settings).unwrap();
+    add_registration(&settings, before);
+
+    let hooks = scanned(&f, ItemKind::Hook);
+    let row = hooks.first().expect("the registration was scanned");
+    assert_eq!(row.action.as_deref(), Some(before));
+    assert_eq!(
+        row.summary.as_deref(),
+        Some("Stops shell commands your project has ruled out.")
+    );
+}
+
 /// A registration kendex did not write says nothing about a package,
 /// however close its command looks.
 ///

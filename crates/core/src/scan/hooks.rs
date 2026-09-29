@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::RawEntry;
 use super::readers::read_json;
-use crate::engine::targets::{HookTarget, hook_target};
+use crate::engine::targets::{HookTarget, hook_target, without_copilot_skip};
 use crate::env::Env;
 use crate::hook::command_stem;
 use crate::model::{HarnessId, Scope};
@@ -111,11 +111,12 @@ fn rows(registrations: Vec<Registration>) -> Vec<RawEntry> {
 /// from [`command_stem`], the one reader of a command line this crate has,
 /// and the renderer that places hook scripts is then asked what it would
 /// register for a hook of that name here. Only when that command is the
-/// one observed is the script it names this registration's — so a command
-/// kendex did not write resolves to nothing rather than to a guess about
-/// somebody else's file. Nothing is executed and nothing is expanded. The
-/// environment a declaration sets is part of what kendex registered, so the
-/// renderer is asked with the scope's own declaration of that name.
+/// one observed, its Copilot skip aside ([`without_copilot_skip`]), is the
+/// script it names this registration's — so a command kendex did not write
+/// resolves to nothing rather than to a guess about somebody else's file.
+/// Nothing is executed and nothing is expanded. The environment a
+/// declaration sets is part of what kendex registered, so the renderer is
+/// asked with the scope's own declaration of that name.
 pub(crate) fn authored_summary(
     env: &Env,
     scope: &Scope,
@@ -137,7 +138,7 @@ pub(crate) fn authored_summary(
     else {
         return None;
     };
-    if registered != command {
+    if without_copilot_skip(&registered) != without_copilot_skip(command) {
         return None;
     }
     let text = crate::fs::read_if_exists(&path).ok()??;

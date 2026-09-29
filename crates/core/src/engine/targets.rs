@@ -194,8 +194,21 @@ while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || {{ r=${{r%
 ///
 /// The prefix names no path, so [`crate::hook::command_stem`] still names the
 /// hook by its script. A registry entry is identified with or without it
-/// (`configedit::nested::hook_key`).
+/// ([`without_copilot_skip`]).
 pub(crate) const CLAUDE_OUTSIDE_COPILOT: &str = "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; ";
+
+/// `command` with an opening [`CLAUDE_OUTSIDE_COPILOT`] taken off, and any
+/// other command as it is. Claude Code keeps an entry written before the
+/// prefix until a refresh rewrites it, and that entry runs the same script:
+/// a reader comparing a registry entry with what this build renders compares
+/// through this (`configedit::nested::hook_key`,
+/// `scan::hooks::authored_summary`). A reader matching the lock's recorded
+/// command compares exactly, since one apply writes the lock and the entry.
+pub(crate) fn without_copilot_skip(command: &str) -> &str {
+    command
+        .strip_prefix(CLAUDE_OUTSIDE_COPILOT)
+        .unwrap_or(command)
+}
 
 /// A command naming its script outright, `bash "<path>"`, where `path` is
 /// already fit to stand inside double quotes. A declared environment binds the
