@@ -224,14 +224,18 @@ notice() { # KEY VALUE
       # (crates/core/src/install_channel.rs::for_cli): a copy a package
       # manager owns gets that manager's command, a copy inside the desktop
       # app is sent to the app's Update now, a copy it owns is replaced, and
-      # a copy it cannot place is refused with no route. The installer would
-      # put a second copy beside a package-managed one, so it is no keyed
-      # route; it is named only in the sentence for that refusal, which
-      # install.sh answers by picking the same directory on PATH again. The
-      # hook does not judge the owner itself: `kendex update` is that judge.
+      # a copy it cannot place is refused with no route: one it cannot write,
+      # or one under a package manager's prefix whose manager it cannot name.
+      # The installer would put a second copy beside a package-managed one,
+      # so it is no keyed route; it is named only in the sentence for that
+      # refusal. install.sh writes into the first of ~/.local/bin or
+      # /usr/local/bin on PATH, not where the old copy is, so the user checks
+      # the version a new shell runs. The hook does not judge the owner
+      # itself: `kendex update` is that judge.
       printf 'session-drift-check: install=kendex update\n'
       printf 'This kendex predates the check --report-only flag this hook runs, so drift status is unknown. Update kendex with the command above, then start a new session.\n'
-      printf 'If kendex update answers that it cannot tell how this copy was installed, run the kendex installer for this platform again, which replaces that same copy in place: %s\n' "$INSTALL_ROUTE"
+      printf 'If kendex update answers that it cannot tell how this copy was installed, run the kendex installer for this platform again: %s\n' "$INSTALL_ROUTE"
+      printf 'Then check that kendex --version in a new shell shows the new version before you start a new session.\n'
       printf 'What kendex said:\n%s\n' "$OUTPUT"
       ;;
     check=incomplete)
