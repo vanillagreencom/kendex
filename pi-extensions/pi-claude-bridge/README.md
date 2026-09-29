@@ -58,7 +58,7 @@ Maintainer notes, the embedding and account-router contracts, and the test suite
 
 ## Prompt context
 
-The bridge sends the nearest context file and Pi's skills list with the prompt. It checks `AGENTS.override.md`, `AGENTS.md` and `AGENTS.MD` while walking up from the working directory. With no context file found, it falls back to the one in the Pi agent directory (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`). A session that loads Claude user settings skips that fallback: connectors are on, or `provider.settingSources` includes `user`. In that session Claude Code's own user level, its user `CLAUDE.md` and output style, carries the global instructions. Claude Code loads its own CLAUDE.md files. Use the prompt settings above to forward other Pi extension instructions.
+The bridge sends the nearest context file and Pi's skills list with the prompt. It checks `AGENTS.override.md`, `AGENTS.md` and `AGENTS.MD` while walking up from the working directory. With no context file found, it falls back to the one in the Pi agent directory (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`), except in a connectors session that loads Claude user settings (see [Connectors](#connectors)). There Claude Code's own user `CLAUDE.md` and output style carry the global instructions. Claude Code loads its own CLAUDE.md files. Use the prompt settings above to forward other Pi extension instructions.
 
 ## Connectors
 

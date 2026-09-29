@@ -4,7 +4,7 @@
 
 ### 4.0.5
 
-- A session that loads Claude user settings no longer forwards the Pi agent-dir `AGENTS.md` (`~/.pi/agent/AGENTS.md`, or the file under `PI_CODING_AGENT_DIR`) when no `AGENTS.md` is found from the working directory up. A connectors session loads Claude user settings, and so does a session whose `provider.settingSources` list includes `user`. In that session Claude Code loads the user's own instructions from its user level, so global instructions for it belong in `~/.claude/CLAUDE.md` (or the `CLAUDE.md` in the account's Claude config directory) or in a Claude output style. Instructions kept only in the Pi agent-dir file no longer reach such a session outside a repository. A session without Claude user settings still forwards the agent-dir file, and a repository `AGENTS.md` is forwarded as before.
+- A connectors session that loads Claude user settings (the default; the README's Connectors section says how `provider.settingSources` changes that) no longer forwards the Pi agent-dir `AGENTS.md` (`~/.pi/agent/AGENTS.md`, or the file under `PI_CODING_AGENT_DIR`) when no `AGENTS.md` is found from the working directory up. Global instructions for such a session belong in Claude's user level: `~/.claude/CLAUDE.md`, the `CLAUDE.md` in the account's Claude config directory, or a Claude output style. Instructions kept only in the Pi agent-dir file no longer reach it outside a repository. Other sessions, and a repository `AGENTS.md`, are unchanged.
 
 ### 4.0.4
 
