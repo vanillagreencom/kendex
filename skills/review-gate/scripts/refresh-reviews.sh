@@ -9,12 +9,13 @@
 #
 # A thread whose first comment a Bot wrote is filed upstream through
 # refresh-report.py, answered with a reply naming that issue, then resolved.
-# The reporter files a finding in vanillagreencom/kendex with its package
-# label, or with none when routing does not resolve to one kendex package. It
-# leaves a finding unfiled when kendex report routes the package to another
-# owner, which its note names, or when the Issues token or Issues access is
-# missing. An unfiled thread gets no reply and stays open for the operator.
-# The reply is the retry record: a thread that carries one is only resolved.
+# The reporter files a finding in vanillagreencom/kendex only where kendex
+# report routes its one package there with a package label. Every other
+# finding, and one without the Issues token or Issues access, is unfiled, and
+# the reporter's note says why. An unfiled thread gets no reply. While it is
+# open it holds the pull request; the operator reports the finding where it
+# belongs and resolves the thread by hand, which ends the hold. The reply is
+# the retry record: a thread that carries one is only resolved.
 #
 # stdout records, one per line:
 #   refresh-reviews=already-answered pr=N
@@ -22,13 +23,14 @@
 #   refresh-reviews=unclassified pr=N cause=CAUSE
 #   upstream-filed pr=N finding=ROOT issue=URL
 #   upstream-unfiled pr=N finding=ROOT note=NOTE
+#   upstream-unfiled-resolved pr=N finding=ROOT note=NOTE
 #   refresh-reviews=answered pr=N unfiled=COUNT
 # unclassified is the classifier's unmeasured fallback, not a verdict; it
 # writes nothing on that pull request and adds a ::warning:: line.
 #
 # A held pull request, one whose reporter failed (refresh-reviews-error=report
-# or report-shape on stderr) or that has an unfiled thread, gets an ::error::
-# line; the run answers the other pull requests, then exits 1. Any other
+# or report-shape on stderr) or that has an open unfiled thread, gets an
+# ::error:: line; the run answers the other pull requests, then exits 1. Any other
 # nonzero exit means a dependency could not be read or a write failed, and
 # stops the run where it happened.
 set -euo pipefail
@@ -52,7 +54,8 @@ if [ "$#" -eq 1 ] && [ "$1" = --help ]; then
   printf '%s\n' 'Usage: GH_REPO=owner/repo GH_TOKEN=app-token KENDEX_ISSUES_TOKEN=issues-token refresh-reviews.sh' \
     'Files automatic review threads on open and merged kendex/refresh pull requests upstream, replies with the issue and resolves them.' \
     'The workflow also sets GitHub run/summary variables for the reporter.' \
-    'A finding whose package another owner routes, or one filed without Issues access, stays unfiled; its thread stays open and the run exits 1.'
+    'A finding kendex report does not route to vanillagreencom/kendex, or one without Issues access, stays unfiled.' \
+    'While its thread is open the run exits 1; resolving the thread by hand ends that.'
   exit 0
 fi
 [ "$#" -eq 0 ] || fail arguments "$#" 'No arguments are accepted.'
@@ -218,6 +221,12 @@ while IFS= read -r pr; do
       issue="$(jq -r --argjson root "$root_id" '.[] | select(.root == $root) | .issue // ""' <<<"$results")" || exit 1
       if [ -z "$issue" ]; then
         note="$(jq -r --argjson root "$root_id" '.[] | select(.root == $root) | .note' <<<"$results")" || exit 1
+        # GitHub's thread-resolution rule holds only an open thread, so only
+        # an open one holds the run. Resolving by hand is the remedy.
+        if [ "$resolved" = true ]; then
+          printf 'upstream-unfiled-resolved pr=%s finding=%s note=%q\n' "$PR_NUMBER" "$root_id" "$note"
+          continue
+        fi
         printf 'upstream-unfiled pr=%s finding=%s note=%q\n' "$PR_NUMBER" "$root_id" "$note"
         printf '::error::upstream-unfiled pr=%s thread=%s finding=%s note=%s The thread stays open and holds the pull request.\n' \
           "$PR_NUMBER" "$thread_id" "$root_id" "$note"

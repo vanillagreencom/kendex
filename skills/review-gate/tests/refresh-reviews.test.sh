@@ -125,6 +125,14 @@ unfiled_stays_open() {
     ' "$FIXTURE" >/dev/null && grep -q '^upstream-unfiled pr=1 finding=10 ' <<<"$OUT" \
     && grep -q '^::error::upstream-unfiled pr=1 thread=T1 finding=10 note=Issues token unavailable ' <<<"$OUT"
 }
+# A not-filed finding on a thread already resolved by hand holds nothing:
+# no write on PR 1, a plain record, no annotation and a passing run.
+unfiled_resolved_clear() {
+  [ "$RC" -eq 0 ] && jq -e '([.writes[] | select(.pr == 1)] | length) == 0
+    and ([.writes[] | select(.pr == 2) | .kind] | sort) == ["reply","resolve"]' "$FIXTURE" >/dev/null \
+    && grep -q '^upstream-unfiled-resolved pr=1 finding=10 ' <<<"$OUT" \
+    && ! grep -q '^::error::' <<<"$OUT"
+}
 # A reporter failure on PR 1 holds that pull request alone: no write on it,
 # PR 2 still answered, the named error record and annotation, a failed run.
 report_held() { # KEY
@@ -177,6 +185,11 @@ if [ "$RC" -eq 0 ] && jq -e '([.writes[] | select(.pr == 1) | .kind] | sort) == 
     and ([.writes[] | select(.pr == 2)] | length) == 2 and .prs[0].threads[0].resolved' "$FIXTURE" >/dev/null; then
   ok 'a later successful filing answers and resolves the open thread once'
 else bad 'retry after a failed filing' "$OUT"; fi
+jq '.unfiled=[10] | .prs[0].threads[0].resolved=true' "$BASE" >"$FIXTURE"
+run_writer
+if unfiled_resolved_clear; then
+  ok 'a not-filed finding on a thread resolved by hand neither annotates nor fails the run'
+else bad 'a resolved not-filed thread must not hold the run' "$OUT"; fi
 
 # A late thread on a merged PR is filed alone; the answered one stays quiet.
 cp "$BASE" "$FIXTURE"
@@ -379,5 +392,11 @@ run_writer
 if ! unfiled_stays_open; then
   ok 'must-fail control: a zero exit after an unfiled thread fails the failed-filing case'
 else bad 'end-of-run exit control did not detect the planted defect' "$OUT"; fi
+mutant resolved-mutant 'if [ "$resolved" = true ]; then' 'if false; then # resolved'
+jq '.unfiled=[10] | .prs[0].threads[0].resolved=true' "$BASE" >"$FIXTURE"
+run_writer
+if ! unfiled_resolved_clear; then
+  ok 'must-fail control: holding on a resolved thread fails the resolved not-filed case'
+else bad 'resolved-thread control did not detect the planted defect' "$OUT"; fi
 printf 'refresh-reviews: %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
