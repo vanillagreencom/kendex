@@ -421,6 +421,8 @@ assert_eq "$(state '[.lanes[] | has("cycle")] | any')" "false" "and no refusal w
 #   p   a miss whose CI went green at 700 s, before the PR opened at 2460 s,
 #       so the longest gap before the PR opens is 1760 s from CI green to
 #       the opening; the longest gap after it ends at gate_green
+#   a   a miss at 5000 s whose CI went green at 10000 s, after the merge,
+#       a gap longer than any in the span; its phase is still merged
 #   n   a miss with CI green absent, so no phase is named
 #   ok  a met record at 800 s, its phase merged too
 #   g   a miss on gate_green whose longest wait is the thread fix
@@ -437,6 +439,7 @@ repeat_row() { # CASE SEQUENCE — prints the bar lines the last record printed
       p) timeline 4360
          edit_json "$CASE/timeline.json" ".stamps |= (.first_commit = \"$(at 600)\" | .ci_green = \"$(at 700)\"
            | .created = \"$(at 2460)\" | .gate_met = \"$(at 3400)\" | .armed = \"$(at 3800)\") | .open_secs = 1900" ;;
+      a) timeline 5000; edit_json "$CASE/timeline.json" ".stamps.ci_green = \"$(at 10000)\"" ;;
       n) timeline 5000; edit_json "$CASE/timeline.json" '.stamps.ci_green = null' ;;
       ok) timeline 800 ;;
       g) gate_timeline "100 1400" "400 1500 2000" 3200 ;;
@@ -452,6 +455,7 @@ met-record|m:1 m:2 m:3 ok:4|
 met-not-counted|ok:1 m:2 m:3|
 other-phase|m:1 m:2 p:3|
 pre-open|p:1 p:2 p:3|repeat-miss phase=gate_green items=KEN-1,KEN-2,KEN-3 causes=bot_wait,bot_wait,bot_wait
+post-merge|a:1 a:2 a:3|repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3 causes=-,-,-
 unnamed-phase|n:1 n:2 n:3|
 recorded-again|m:1 m:2 m:3 m:3|
 fourth|m:1 m:2 m:3 m:4|
@@ -525,9 +529,13 @@ edit_json "$CASE/timeline.json" ".stamps.created = \"$(at 900)\" | .open_secs = 
 assert_eq "$(field verdict "$(record KEN-1 micro)")" "verdict=miss" \
   "control: judged on launch to merge, a slow launch to PR opened records a miss"
 
-control m-phase oversee-cycle '| select(.at >= $o)]' '| select(.name | IN("launched", "first_commit") | not)]'
+control m-phase oversee-cycle '| select(.at >= $o and .at <= $m)]' '| select(.at <= $m)]'
 assert_eq "$(repeat_row c-phase "p:1 p:2 p:3")" "repeat-miss phase=pr_opened items=KEN-1,KEN-2,KEN-3 causes=-,-,-" \
-  "control: selected by name, a CI green before the PR opened charges the miss to CI green to PR opened"
+  "control: without the lower bound, a CI green before the PR opened charges the miss to CI green to PR opened"
+
+control m-phase-end oversee-cycle '| select(.at >= $o and .at <= $m)]' '| select(.at >= $o)]'
+assert_eq "$(repeat_row c-phase-end "a:1 a:2 a:3")" "repeat-miss phase=ci_green items=KEN-1,KEN-2,KEN-3 causes=-,-,-" \
+  "control: without the upper bound, a CI green after the merge charges the miss to merged to CI green"
 
 control m-rollup oversee-cycle '| if $n == 0 then "-" else $a[(($n * $p) | ceil) - 1] end;' '| if $n == 0 then "-" else $a[(($n * $p) | floor) - 1] end;'
 new_case c-rollup

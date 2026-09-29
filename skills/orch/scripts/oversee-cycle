@@ -43,11 +43,12 @@
 #   verdict   met, miss (open over target), unmeasured (open null), or
 #             unclassified (the classifier gave no class)
 #   phase     the longest gap between two consecutive stamps in time order
-#             among pr_opened and the stamps at or after it in time, the span
-#             the verdict judges, named by the stamp that ends it; the
-#             earliest wins a tie. A stamp before pr_opened, such as a
-#             ci_green whose checks finished before the PR opened, enters no
-#             gap. Null while a stamp other than launched and first_commit is
+#             among the stamps at or after pr_opened and at or before merged
+#             in time, the span the verdict judges, named by the stamp that
+#             ends it; the earliest wins a tie. A stamp outside that span
+#             enters no gap: a ci_green whose checks finished before the PR
+#             opened, or one an optional check completes after the merge.
+#             Null while a stamp other than launched and first_commit is
 #             missing: a missing stamp has no time, and one that could fall
 #             in the span joins two gaps
 #   gate waits  the gap that ends at gate_green, split into the waits it
@@ -64,7 +65,8 @@
 #             it opened, bot_wait where there is neither
 #             pushes and bot reviews are pr-timeline's `push_times`, the
 #             head branch's push log, and `bot_review_times`. Null while any
-#             stamp is missing, or where pr-timeline's `push_times` is null:
+#             stamp is missing, where gate_green falls outside the span, or
+#             where pr-timeline's `push_times` is null:
 #             no head branch named, or no push in its log for the life the
 #             PR opened in
 #   cause     the largest gate wait, the earlier of bot_wait, thread_fix and
@@ -331,7 +333,8 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
   | $t.open_secs as $open
   | [$stamps | to_entries[] | select(.value == null) | .key] as $missing
   | (if $missing - ["launched", "first_commit"] != [] then null else ($stamps.pr_opened | fromdate) as $o
-     | [$stamps | to_entries[] | select(.value != null) | {name: .key, at: (.value | fromdate)} | select(.at >= $o)]
+     | ($stamps.merged | fromdate) as $m
+     | [$stamps | to_entries[] | select(.value != null) | {name: .key, at: (.value | fromdate)} | select(.at >= $o and .at <= $m)]
      | sort_by(.at) end) as $seq
   | (if $seq == null then {phase: null, secs: null} else
        [range(1; $seq | length) as $i | {phase: $seq[$i].name, secs: ($seq[$i].at - $seq[$i - 1].at)}]
