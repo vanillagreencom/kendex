@@ -16,7 +16,8 @@
 //! row without its failed line; its warning branch counting into
 //! `outputs_failed`, which fails the warned run and the consumer refresh;
 //! `head` dropping the warning count, which leaves the warned closing line
-//! without it; its error branch dropping the `outputs_failed` count, which
+//! without it; `State::Warning` or `State::Failed` serialized under another
+//! name, which leaves the row's wire `state` off its version-1 literal; its error branch dropping the `outputs_failed` count, which
 //! leaves the unjudged row clean; the engine recording an agent it placed
 //! nowhere, which gives the unplaced row a tracked-output row; and
 //! `--strict` added to the verify line of `refresh-consumer.sh`, which
@@ -93,6 +94,21 @@ fn one_row(rows: &[&Row], state: State, detail: &str) {
     );
 }
 
+/// The `state` of every tracked-output row as the JSON spells it, read
+/// apart from [`State`] so a renamed variant cannot move the version-1
+/// wire value unnoticed.
+#[allow(clippy::unwrap_used)]
+fn wire_states(stdout: &[u8]) -> Vec<String> {
+    let document: serde_json::Value = serde_json::from_slice(stdout).unwrap();
+    document["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] == "tracked-output")
+        .map(|row| row["state"].as_str().unwrap().to_owned())
+        .collect()
+}
+
 const IGNORED: &str = "tracked output docs/plans/<slug>.md is ignored (.gitignore:1:docs/plans/)";
 
 #[test]
@@ -154,6 +170,7 @@ fn an_ignored_tracked_output_warns_and_fails_only_under_strict() {
                 assert!(output.status.success(), "{declared}: {}", said(&output));
                 assert!(document.clean, "{declared}");
                 one_row(&rows, State::Warning, detail);
+                assert_eq!(wire_states(&output.stdout), ["warning"]);
                 assert!(
                     stderr.contains(&format!("warning: agent planner: {detail}")),
                     "{stderr}"
@@ -164,6 +181,7 @@ fn an_ignored_tracked_output_warns_and_fails_only_under_strict() {
                 assert!(!output.status.success(), "{declared}: {}", said(&output));
                 assert!(!document.clean, "{declared}");
                 one_row(&rows, State::Failed, detail);
+                assert_eq!(wire_states(&output.stdout), ["failed"]);
                 assert!(
                     stderr.contains(&format!("✗ agent planner: {detail}")),
                     "{stderr}"
