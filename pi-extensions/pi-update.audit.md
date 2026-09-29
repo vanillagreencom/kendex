@@ -38,7 +38,7 @@ Fixture evidence, Pi 0.87.1, real `pi-qol` extension with a 1-token budget, a se
 
 The control shows the fixture detects a handler that waits on its own run; the QOL handler does not. The second compaction in the middle row is the wake turn crossing the 1-token budget again.
 
-Residual: the `pi-agents-tmux` child inbox poller gates on `ctx.isIdle()`, which reads true during a settle. A task it picks up inside a settle has its prompt deferred, and a dispatch that fails after the deferral throws out of Pi's settle instead of reaching the poller's `recordTaskDispatchFailure` path. It needs a poll inside a settle window and a failing dispatch together.
+The `pi-agents-tmux` child inbox poller is not a settled handler; its settle behaviour is under § Non-impact.
 
 ## Shipped
 
@@ -76,6 +76,7 @@ Already protected or inherited beneath us:
 - **`SessionManager` canonical for provider context (0.87.0)**: no extension assigns `agent.state.messages`.
 - **`TurnEndEvent` expanded, `ExtensionRunner.emit()` refuses `turn_end` (0.87.0)**: the `pi-hooks` `turn_end` handler returns `undefined`; `pi-session-bridge` republishes the event and constructs none.
 - **`shouldStopAfterTurn` removed (0.87.0)**: no extension sets it.
+- **Child inbox task picked up during a settle (0.87.0)**: the `pi-agents-tmux` child inbox poller gates on `ctx.isIdle()`, which reads true while settled handlers run, so it can take a task inside a settle. Pi defers that task's prompt and runs it after the last settled handler returns. `pi.sendUserMessage` does not wait for the prompt on any Pi version from 0.84.1 on: the runtime starts it and sends a rejection to `runner.emitError`. The poller's `recordTaskDispatchFailure` path therefore receives only the synchronous throw of a stale or uninitialized extension runtime, which comes before the prompt starts and still arrives inside a settle. The only 0.87 change is where a deferred prompt failure goes: out of `AgentSession._emitAgentSettled`, whose deferred loop has no `catch`, not to `runner.emitError`.
 - **`user_bash` fails closed (0.86.0, [#9068](https://github.com/earendil-works/pi/issues/9068))**: `pi-background-tasks` returns `undefined` or `{ result }`, both valid.
 - **Extension tools without parameter schemas rejected (0.86.0, [#9300](https://github.com/earendil-works/pi/issues/9300))**: every `registerTool` definition in the tree carries `parameters`, the factory-built ones in `pi-codex-minimal-tools` and `pi-web-tools` included.
 - **`ToolCall.arguments` and `ToolResultMessage.details` restricted to JSON values (0.86.0)**: type-level; our tool details are plain data.
