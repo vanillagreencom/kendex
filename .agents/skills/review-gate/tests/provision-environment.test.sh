@@ -279,5 +279,25 @@ repositories unreadable~organization-repositories~~~yes~~--org acme~review-gate-
 every repository archived~~organization-repositories.json~map(.archived = true)~yes~~--org acme~review-gate-error=repositories-none
 ROWS
 
+# The secret reader's control reads the copy's value from the shell
+# namespace, as the former indirect lookup did: BASH_VERSION, a shell
+# variable the environment lacks, then reads as set, the run no longer
+# refuses, and the shell's own value is written as the secret.
+. "$TEST_DIR/lib/workflow-edit.sh"
+cp "$SKILL/scripts/lib/standard.sh" "$TMP/standard-lib.keep"
+file_edit "$SKILL" scripts/lib/standard.sh 1 'printenv -- "\$1"' 's/printenv -- "\$1"/echo "${!1:-}"/'
+dir="$TMP/control-secret-value"
+world "$dir" "" "" ""
+RC=0
+RAW="$(cd "$TMP/consumer-shell" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$dir" GH_SHIM_FAIL="" \
+  APP_ID=4242 "$SKILL/scripts/provision-environment.sh" --org acme 2>&1)" || RC=$?
+if [ "$RC" -ne 2 ] && ! grep -q '^review-gate-error=secret-value-missing ' <<<"$RAW" &&
+  grep -q '^secret-set repo=acme/done env=kendex name=BASH_VERSION ' "$dir/.writes.log" 2>/dev/null; then
+  ok 'control: a reader of shell variables writes BASH_VERSION as a secret'
+else
+  bad "control: secret value reader (rc=$RC)" "$RAW"
+fi
+cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

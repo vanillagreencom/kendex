@@ -425,6 +425,20 @@ else
 fi
 cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
 
+# The missing-setting rule's control keeps the copy's refusal and never takes
+# it: a consumer that declares nothing is no longer refused for its settings,
+# and the run goes on to the checks after it.
+file_edit "$SKILL" scripts/lib/standard.sh 1 '^  if \[ -n "\$missing" \]; then$' 's/^  if \[ -n "\$missing" \]; then$/  if [ -n "$missing" ] \&\& false; then/'
+RC=0
+RAW="$(cd "$TMP/consumer-none" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$BASE" \
+  "$SKILL/scripts/validate-standard.sh" 2>&1)" || RC=$?
+if ! grep -q '^review-gate-error=standard-setting-missing ' <<<"$RAW"; then
+  ok 'control: a skipped missing-setting refusal lets a consumer that declares nothing through'
+else
+  bad "control: missing-setting refusal (rc=$RC)" "$RAW"
+fi
+cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
+
 [ "$rows" -gt 0 ] || { bad "the drift table ran no row" ""; }
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
