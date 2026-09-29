@@ -20,14 +20,14 @@ The owner's words: "we have to use copilot and pi and we have to get it done as 
 
 - The merge queue over the day before the decision: 148 merge-group Skill Tests runs created between 2026-09-27 17:00Z and 2026-09-28 17:40Z, 86 success, 51 failure, 11 cancelled, a median run of about 28 minutes (`gh run list -R vanillagreencom/kendex --event merge_group --workflow 'Skill Tests'` over that window, read 2026-09-28 19:03Z).
 - Owner correction 1790623442 gives the record since the rule went on: five admin merges, kendex pull requests 3074, 3072, 3081 and 3089 and fleet pull request 486, one of them run by a lane, each green at its head.
-- Owner note 1790633650 moved the admin-merge conditions into GitHub, as the Decision states. The overseer verified the shape on `repos/vanillagreencom/kendex/rules/branches/main`.
+- Owner note 1790633650 moved the admin-merge conditions into GitHub, as the Decision states. Who may bypass the queue is closed by the bypass list of ruleset 20569265, the queue ruleset.
 - Fleet decision D066, items 2 to 4, says the same for the fleet repository.
 
 ## Decision
 
 1. On vanillagreencom/kendex the `main` rules sit in two rulesets. Ruleset 20569265 (main merge queue) holds only the `merge_queue` rule, and the lanes app, `vanillagreen-fleet-lanes` (integration 4925608), is its bypass actor. Ruleset 20569268 (main checks and review threads) has no bypass actor; it holds `pull_request` with review-thread resolution required, `required_status_checks` (the `Review gate` and the CI jobs), `non_fast_forward` and `deletion`. An admin merge therefore skips only the queue, and GitHub refuses it unless CI, the `Review gate` and every review thread are green on the current head, whoever runs it.
 2. Any holder of the lanes identity, a lane or the overseer, merges a green pull request with `gh pr merge N --squash --admin` instead of waiting in the queue, the Copilot and Pi chain first. No tooling route wraps the merge and no lane is barred from it. GitHub itself refuses a merge whose current head is not green.
-3. The queue stays for a pull request that changes CI, a ruleset input or the shared test harness. Whether a pull request is one of those is the overseer's judgement.
+3. The queue stays for a pull request that changes CI, a ruleset input or the shared test harness. That class is derived from the paths a change touches (owner decision 1790634126 item 4); KEN-2064 lands it in the harness-ci classifier, which merge-pr and pr-merge read. Until KEN-2064 lands, the overseer's judgement stands in for it.
 
 ## Rationale
 

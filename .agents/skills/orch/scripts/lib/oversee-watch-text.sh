@@ -153,13 +153,21 @@ The long pass's events, checked and reported in this order:
                              --repo. A parked record's item is an --item for
                              this check alone, and the merge of the pull
                              request its record names, in that repository,
-                             runs the close below at once: nothing wakes a
-                             parked sandbox. Another pull request on the
-                             branch's name is reported and closes nothing,
-                             under a parked-merge-unmatched note on stderr
-                             naming the recorded key and the keys seen; the
-                             repository is matched in lower case, GitHub's
-                             names being case-insensitive
+                             is followed by parked-merged below. Another pull
+                             request on the branch's name is reported and
+                             hands nothing on, under a parked-merge-unmatched
+                             note on stderr naming the recorded key and the
+                             keys seen; the repository is matched in lower
+                             case, GitHub's names being case-insensitive
+  EVENT parked-merged <item> pr=<N> repo=<owner/repo>
+                             the pull request a parked record names merged in
+                             that repository, repo= in lower case: the
+                             sandbox stays stopped, the record stays parked
+                             and nothing is closed, since nothing here wakes a
+                             parked sandbox and the record carries no launch
+                             flags. The overseer relaunches the lane, which
+                             runs its own post-merge. Printed once per merge,
+                             as merged is
   EVENT triage <item>        an item created at or after --since that is absent
                              from the first repository's persisted baseline
   EVENT lane-ready <item>    a lane open-terminal handed to a background job
@@ -198,21 +206,11 @@ The long pass's events, checked and reported in this order:
                              lane watched
   EVENT lane-closed <item>   under a lane-exited whose window watches a --hosted
                              item already reported merged, once the pass finds
-                             its worktree gone, or under the merged event of a
-                             parked record, whose sandbox is stopped and whose
-                             close needs no pane: `lane-close` succeeded;
-                             the provider's output follows, then `kept=none`
-                             when that output has no `kept=` line because the
-                             close archived nothing. A lane exiting while its
-                             worktree stands is not closed. A parked close
-                             that fails is lane-close-failed on stderr and
-                             drops the parked pull request's key alone from
-                             its merged row, committed at once, so the next
-                             pass reports that merge again and retries the
-                             close, while the pass's other merges stay
-                             delivered and this pass runs on to its remaining
-                             checks and exits 2 at its end; lane-close-refused
-                             commits it and is never retried
+                             its worktree gone: `lane-close` succeeded; the
+                             provider's output follows, then `kept=none` when
+                             that output has no `kept=` line because the close
+                             archived nothing. A lane exiting while its
+                             worktree stands is not closed
   EVENT lane-close-refused <item>
                              the same close exited 3: its clone or worktree
                              has user-owned changes. Generated whole-file render
@@ -570,7 +568,8 @@ Options:
                       pane is gone and its mailbox and state are on a stopped
                       disk, so no other check reads it, and the merge of the
                       pull request its `parked` names, in that repository,
-                      runs the hosted close in the same pass.
+                      prints parked-merged in the same pass and closes
+                      nothing.
                       The set is noted on stderr as fleet-read whenever a
                       read changes what the reader last carried, with the
                       count of records whose status is not running, so a
@@ -802,7 +801,7 @@ ow_message() { # REASON FIELD=VALUE...
     owed-wall-unjudged) text='lanes pick could not judge the wall for this host, harness and model, so the owed items on them read unjudged this heartbeat. Its own words follow.' ;;
     handoff-read-failed) text='The handoff record could not be read.' ;;
     lane-close-failed) text='lane-close failed before it completed the close. The next run reports the exit again and retries.' ;;
-    parked-merge-unmatched) text='A pull request merged on the parked item'"'"'s branch name, reported above as merged, is not the one its record names, so the parked sandbox stays stopped: recorded= is the record'"'"'s <repo>#<number> in lower case and seen= the merged keys this pass found. The lane closes when the recorded pull request merges in that repository.' ;;
+    parked-merge-unmatched) text='A pull request merged on the parked item'"'"'s branch name, reported above as merged, is not the one its record names, so no parked-merged follows it and the parked sandbox stays stopped: recorded= is the record'"'"'s <repo>#<number> in lower case and seen= the merged keys this pass found. parked-merged follows when the recorded pull request merges in that repository.' ;;
     hosted-invalid) text='Spell --hosted as ITEM=REMOTE_ROOT, with the item in letters, digits, dot, underscore and hyphen.' ;;
     hosted-unknown-item) text='The --hosted item is not one this run watches. Name it with --item, or drop the entry.' ;;
     root-invalid) text='Spell --root as ITEM=PATH, with the item in letters, digits, dot, underscore and hyphen.' ;;

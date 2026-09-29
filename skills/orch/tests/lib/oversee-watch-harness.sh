@@ -58,8 +58,6 @@ CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
 #                 when no --repo is given (default: owner/repo)
 #   auth-fail     present → keyring `auth status` fails
 #   list-fail     present → every `pr list` fails
-#   list-fail-head.txt
-#                 branch names, one per line, whose `pr list --head` fails
 #   noisy         present → every successful `pr list` also writes to stderr
 # Every `auth status` and `pr list` call is logged to gh.calls.
 # `api user` (env-token preflight) succeeds for any token except one
@@ -93,9 +91,6 @@ case "${1:-} ${2:-}" in
       shift
     done
     slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
-    if [[ -n "$head" && -f "$STUB_DIR/list-fail-head.txt" ]] && grep -qxF -- "$head" "$STUB_DIR/list-fail-head.txt"; then
-      echo "HTTP 502: bad gateway" >&2; exit 1
-    fi
     if [[ "$state" == "merged" ]]; then
       src="$STUB_DIR/merged.$slug.json"
       [[ -f "$src" ]] || src="$STUB_DIR/merged.json"

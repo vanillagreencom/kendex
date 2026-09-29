@@ -95,7 +95,7 @@ message() { # REASON FIELD=VALUE...
         '  provider          the lane host stop-sandbox verb exited with status; its own words are on the lines above this one. A provider without the verb answers 2.' \
         '  answer-unparsed   the verb succeeded without its sandbox-stopped item=ID line, so nothing here confirms the sandbox is down.' \
         'A stopped record is what --keep-sandbox leaves: a relaunch recovers it, and lane-close --park --pr N on it retries the stop from the record alone.' ;;
-    parked) printf '%s\n' 'The lane window closed, its harness ended and its sandbox stopped with its disk kept. The record reads parked and names the pull request and head it was judged on; the watch keeps its merged check.' ;;
+    parked) printf '%s\n' 'The lane window closed, its harness ended and its sandbox stopped with its disk kept. The record reads parked and names the pull request and head it was judged on; the watch keeps its merged check, which hands that merge to the overseer as parked-merged.' ;;
     stopped) printf '%s\n' 'The lane window closed and its sandbox was kept.' ;;
     closed) printf '%s\n' 'The lane, sandbox and fleet record closed.' ;;
   esac
@@ -178,7 +178,9 @@ harness by signal as a close does,
 whatever the lane is doing, waits for its pane to read exited, closes the
 window, then stops the sandbox through lane-host stop-sandbox and requires its
 sandbox-stopped item=ID line. The record then reads parked and carries
-{pr, head, repo, at}, the pull request and head it was judged on. A stop the
+{pr, head, repo, at}, the pull request and head it was judged on. The merge of
+that pull request closes nothing: oversee-watch prints parked-merged, and the
+overseer's relaunch resumes the lane, which runs its own post-merge. A stop the
 provider refuses, or answers without that line, leaves the record stopped,
 what --keep-sandbox leaves, and refuses as park-failed: the harness is gone
 and the sandbox still up, which that status says. --park on a stopped record

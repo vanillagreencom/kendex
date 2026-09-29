@@ -521,7 +521,7 @@ check_root_entries() { # KIND ENTRY...
   done
 }
 
-# Whether the item is a parked record's, for the merged check's close, with
+# Whether the item is a parked record's, for the merged check's hand, with
 # PARKED_KEY the `<repo>#<number>` of the pull request its park judged.
 PARKED_KEY=""
 item_parked() { # ITEM
@@ -620,12 +620,13 @@ PREPARE_ROWS=""
 
 # The parked records, one per line as item and `<repo>#<number>`: a lane
 # lane-close --park stopped with its disk kept, and the pull request its park
-# judged, whose merge alone the merged check closes it on. Nothing else reads
-# it: its pane is gone and its mailbox is on a stopped disk. The repository
-# is lowercased here, the one spelling check_repo_set gives every --repo, so
-# the key meets the merged side's whatever case the record's writer used:
-# GitHub reads owner and repository names case-insensitively, and a record
-# carries the spelling gh repo view or the launch's --repo gave it.
+# judged, whose merge alone the merged check hands on as parked-merged.
+# Nothing else reads it: its pane is gone and its mailbox is on a stopped
+# disk. The repository is lowercased here, the one spelling check_repo_set
+# gives every --repo, so the key meets the merged side's whatever case the
+# record's writer used: GitHub reads owner and repository names
+# case-insensitively, and a record carries the spelling gh repo view or the
+# launch's --repo gave it.
 PARKED_ROWS_FILTER='
   (.lanes // [])[] | select(type == "object" and .status == "parked")
   | if ((.item? | type) != "string" or (.item | length) == 0) then error("lane-field field=item value=\(.item | tojson)")
@@ -1288,21 +1289,17 @@ MAIL_STATE_FILE="$(pw_state_file "${REPOS[0]}").mail"
 # delivered, so a merged item still in --item on a re-run is not news again,
 # while a further PR on the branch, in any repo, is. The rows are committed
 # once, after the lines are out.
-# A parked item's merge closes its sandbox here, in the pass that reports it:
-# the lane has no pane to exit and nothing wakes a parked sandbox. The close
+# A parked item's merge is handed to the overseer as parked-merged, in the
+# pass that reports it: the lane has no pane to exit and nothing wakes a
+# parked sandbox, and the record carries no launch flags, so the resume is the
+# overseer's relaunch, after which the lane runs its own post-merge. The hand
 # is owed to the pull request its park judged, in the repository it read it
 # in, and to no other pull request on the branch's name, which is reported as
-# any item's is and closes nothing. The merged row is committed before the
-# close, which cannot be undone, so a run that stops after the close never
-# closes the lane twice; a close that fails drops the parked key alone from
-# the row, the pass's other merges staying delivered, and commits it at once,
-# before the next item's reads can end the pass, so the next pass reports
-# that merge again and retries, and this pass fails as a whole at its end
-# while its remaining checks still run. A refused close, exit 3, keeps
-# its row: the user settles that checkout, and nothing retries it.
+# any item's is and hands nothing. The record stays parked and nothing is
+# closed here: the relaunched lane's own completion is what closes it.
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
-  local errf="$WORK_DIR/merged.err" item branch repo list hit hits prior keys fresh key line retry state="${PW_SEEN[0]}"
+  local errf="$WORK_DIR/merged.err" item branch repo list hit hits prior keys fresh key line state="${PW_SEEN[0]}"
   for item in "${MERGED_ITEMS[@]}"; do
     branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
     hits=""
@@ -1339,15 +1336,7 @@ check_merged() {
       ow_message parked-merge-unmatched "item=$item" "recorded=$PARKED_KEY" "seen=${fresh// /,}" >&2
       continue
     fi
-    lane_row_commit "$state"
-    if ! close_hosted_lane "$item"; then
-      retry=" $keys "; retry="${retry/ $PARKED_KEY / }"; retry="${retry# }"; retry="${retry% }"
-      if [[ -n "$retry" ]]; then state="$(lane_row_set merged "$state" "$item" "$retry")"
-      else state="$(lane_row_clear merged "$state" "$item")"; fi
-      lane_row_commit "$state"
-      PASS_FAILED=1
-    fi
-    [[ -z "$CLOSE_TERMED" ]] || { lane_row_commit "$state"; exit 143; }
+    echo "EVENT parked-merged $item pr=${PARKED_KEY##*#} repo=${PARKED_KEY%#*}"
   done
   state="$(lane_row_prune merged "$state" "${MERGED_ITEMS[@]}")"
   lane_row_commit "$state"
