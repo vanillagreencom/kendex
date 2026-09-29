@@ -74,8 +74,9 @@
 # hang on its login flow).
 #
 # Exit 0 when every row passed (advisory, skipped, differs and excluded
-# included), 1 when any row failed, 2 when the fixture could not be installed
-# or `kendex verify` refused it, 3 when nothing failed but a row was
+# included), 1 when any row failed, 2 when the kendex on PATH is not a build
+# of this checkout's HEAD or of a commit that contains it, when the fixture
+# could not be installed or `kendex verify` refused it, 3 when nothing failed but a row was
 # unanswerable or pending, so a harness that died on the render never reads
 # as a clean run. Model turns: eight on claude, three on codex, two on
 # antigravity, five on pi, one on gemini, six on copilot (seven where the
@@ -95,12 +96,15 @@
 set -euo pipefail
 
 usage() {
-  printf '%s\n' 'usage: tools/harness-smoke [--only h1,h2,...] [--keep] [--dir DIR]' \
+  printf '%s\n' 'usage: tools/harness-smoke [--only h1,h2,...] [--keep] [--dir DIR] [--allow-stale]' \
     '  --only    run these harnesses (claude codex opencode cursor pi gemini copilot antigravity); the rest print skipped' \
     '  --keep    leave the scratch project and logs in place' \
     '  --dir     parent of the scratch directory this run makes (default: tmp/ in this checkout)' \
+    '  --allow-stale  run on a kendex that is not a build of this checkout, and say so' \
     'The --dir, or with no --dir this checkout, must not sit under a .scratch folder or a temporary folder' \
-    '(the platform temp dir, /tmp, /var/tmp): kendex add refuses to register a project there, so the first install is refused and the run exits 2.'
+    '(the platform temp dir, /tmp, /var/tmp): kendex add refuses to register a project there, so the first install is refused and the run exits 2.' \
+    'The kendex on PATH must be a build of this checkout'"'"'s HEAD or of a commit that contains it, the commit' \
+    '`kendex --version` ends in: otherwise the run exits 2 before any row, naming both commits and the rebuild.'
 }
 
 message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
@@ -118,6 +122,16 @@ message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
       echo "the scratch directory for this run could not be made under that parent." ;;
     kept)
       echo "the scratch project and logs were left in place by --keep." ;;
+    stale-kendex)
+      printf 'the kendex on PATH, %s, is not a build of this checkout'"'"'s HEAD or of a commit that contains it,\n' "$KENDEX_PATH"
+      echo "or its --version names no commit (none), so the rows would measure another build's renders."
+      printf 'Rebuild it in %s with KENDEX_SOURCE_COMMIT=$(git rev-parse HEAD) cargo build --release -p kendex-cli,\n' "$SELF"
+      printf 'then copy target/release/kendex to %s; or pass --allow-stale to run on it anyway.\n' "$KENDEX_PATH" ;;
+    allowed-stale)
+      printf 'this run goes on under --allow-stale with %s, which is not a build of this checkout'"'"'s HEAD;\n' "$KENDEX_PATH"
+      echo "a failed row may be that build's and not this checkout's." ;;
+    checkout-head)
+      echo "that directory has no HEAD commit, so which kendex build it describes is unknown." ;;
     add)
       printf 'kendex add did not install for %s; %s says why.\n' "$2" "$3" ;;
     mail-frontmatter)
@@ -170,6 +184,7 @@ refuse_cause() { # KEY VALUE CAUSE — CAUSE is the failing command's own words
 HARNESSES="claude codex opencode cursor pi gemini copilot antigravity"
 ONLY="$HARNESSES"
 KEEP=0
+ALLOW_STALE=0
 DIR=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -181,6 +196,7 @@ while [ "$#" -gt 0 ]; do
       done
       shift 2 ;;
     --keep) KEEP=1; shift ;;
+    --allow-stale) ALLOW_STALE=1; shift ;;
     --dir)
       [ "$#" -ge 2 ] || refuse argument --dir
       DIR=$2; shift 2 ;;
@@ -200,6 +216,33 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null) ||
 # The catalog the lane-mail row installs from is this script's own checkout,
 # which is the one whose hook it measures; ROOT is wherever the run stands.
 SELF=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+
+# Every row measures what the kendex on PATH renders, so that binary has to be
+# a build of SELF's HEAD or of a commit that contains it: an older build fails
+# rows this checkout passes. Its commit is the one `kendex --version` ends in,
+# `+main.<run>.<commit>` from CI or `+git.<commit>` under KENDEX_SOURCE_COMMIT
+# (crates/cli/build.rs::build_version_from_values). A plain cargo build names
+# none, and a build that names none, or a commit this checkout does not hold,
+# cannot be shown to contain HEAD, so it is refused the same way.
+KENDEX_PATH=$(command -v kendex)
+HEAD_COMMIT=$(git -C "$SELF" rev-parse --verify HEAD 2>/dev/null) ||
+  refuse_cause checkout-head "$SELF" "$(git -C "$SELF" rev-parse --verify HEAD 2>&1 >/dev/null)"
+INSTALLED_COMMIT=none
+kendex_build=stale
+if stale_cause=$(kendex --version 2>&1); then
+  if ! INSTALLED_COMMIT=$(LC_ALL=C sed -nE '1s/^kendex .*[+.](main\.[0-9]+|git)\.([0-9a-f]{40})$/\2/p' <<<"$stale_cause") ||
+    [ -z "$INSTALLED_COMMIT" ]; then
+    INSTALLED_COMMIT=none
+    stale_cause=${stale_cause%%$'\n'*}
+  elif stale_cause=$(git -C "$SELF" merge-base --is-ancestor "$HEAD_COMMIT" "$INSTALLED_COMMIT" 2>&1); then
+    kendex_build=current
+  fi
+fi
+if [ "$kendex_build" = stale ]; then
+  [ "$ALLOW_STALE" -eq 1 ] || refuse_cause stale-kendex "$INSTALLED_COMMIT head=$HEAD_COMMIT" "$stale_cause"
+  note allowed-stale "$INSTALLED_COMMIT head=$HEAD_COMMIT"
+fi
+
 # The run owns a fresh subtree under the parent it was given, and the
 # cleanup below removes that subtree alone: --dir tmp must not empty tmp/.
 PARENT=${DIR:-$ROOT/tmp}

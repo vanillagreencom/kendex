@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # tools/harness-smoke's refusals, which are everything it decides before it
-# installs anything: the arguments it takes, the commands it needs, and the
-# repository it places its scratch under. The rows past that point drive eight
+# installs anything: the arguments it takes, the commands it needs, the
+# repository it places its scratch under, and the kendex build it runs on. The
+# rows past that point drive eight
 # harnesses and a model turn each and are not run here.
 #
 # Every refusal is read as `rc=<status> first=<key>=<value>` — LINE 1 of the
@@ -31,6 +32,8 @@ SMOKE="$REPO/tools/harness-smoke"
 TMP="$(mktemp -d)" || { echo "harness-smoke.test: mktemp -d failed" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo "harness-smoke.test: resolving the scratch directory failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
+REPO_HEAD="$(git -C "$REPO" rev-parse --verify HEAD)" ||
+  { echo "harness-smoke.test: this checkout has no HEAD commit" >&2; exit 1; }
 
 PASS=0
 FAIL=0
@@ -145,8 +148,17 @@ ROWS_REPO="$TMP/rows-repo"
 ROWS_BIN="$TMP/rows-bin"
 ROWS_CFG="$TMP/rows-cfg"
 mkdir -p "$ROWS_REPO" "$ROWS_BIN" "$ROWS_CFG"
-printf '#!/bin/sh\nexit 0\n' >"$ROWS_BIN/kendex"
-chmod +x "$ROWS_BIN/kendex"
+kendex_stub() { # FILE VERSION-LINE — a kendex whose --version prints that line and whose every other verb answers
+  cat >"$1" <<EOF
+#!/bin/sh
+[ "\$1" != --version ] || { printf '%s\n' '$2'; exit 0; }
+exit 0
+EOF
+  chmod +x "$1"
+}
+# A build of this checkout's HEAD, which every run of this checkout's script
+# and of the stand-in below, whose HEAD is the same commit, gets past.
+kendex_stub "$ROWS_BIN/kendex" "kendex 0.0.0+git.$REPO_HEAD"
 git -C "$ROWS_REPO" init -q
 git -C "$ROWS_REPO" config user.email harness-smoke@kendex.invalid
 git -C "$ROWS_REPO" config user.name harness-smoke
@@ -223,6 +235,16 @@ fi
 echo "=== a delivery table or hook event it cannot read refuses before any row ==="
 STAND="$TMP/stand-in"
 mkdir -p "$STAND/tools" "$STAND/hooks"
+# A repository whose HEAD is this checkout's HEAD, borrowing its objects, and
+# cut there as a shallow root: a shallow CI clone holds no parent of it, and
+# the build rows below walk no further back than the one commit made on it.
+git init -q "$STAND"
+REPO_OBJECTS="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/objects" ||
+  { echo "harness-smoke.test: this checkout's object directory could not be found" >&2; exit 1; }
+mkdir -p "$STAND/.git/objects/info"
+printf '%s\n' "$REPO_OBJECTS" >"$STAND/.git/objects/info/alternates"
+printf '%s\n' "$REPO_HEAD" >"$STAND/.git/shallow"
+git -C "$STAND" update-ref HEAD "$REPO_HEAD"
 cp "$SMOKE" "$STAND/tools/harness-smoke"
 cp "$REPO/hooks/lane-mail-check.sh" "$REPO/hooks/README.md" "$STAND/hooks/"
 STAND_TABLE="$STAND/hooks/README.md"
@@ -264,6 +286,70 @@ cp "$STAND_TABLE.intact" "$STAND_TABLE"
 plant "$STAND_HOOK" 's/^# event: .*$/# matcher:/'
 stand_case "a hook whose frontmatter gives no event is refused" 2 "mail-frontmatter=$STAND_HOOK"
 cp "$STAND_HOOK.intact" "$STAND_HOOK"
+
+# The kendex on PATH has to be a build of the checkout's HEAD or of a commit
+# that contains it, read from the commit its --version ends in. AHEAD is a
+# commit on top of the stand-in's HEAD: with the stand-in at AHEAD, a build of
+# this checkout's HEAD is an older one, and with the stand-in back at that
+# HEAD, a build of AHEAD is a newer one. A build that passes reaches the rows,
+# as the committed table and hook do above.
+echo "=== a kendex that is not a build containing HEAD is refused before any row ==="
+BUILD_BIN="$TMP/build-bin"
+mkdir -p "$BUILD_BIN"
+STAND_SCRIPT="$STAND/tools/harness-smoke"
+cp "$STAND_SCRIPT" "$STAND_SCRIPT.intact"
+AHEAD="$(git -C "$STAND" -c user.name=harness-smoke -c user.email=harness-smoke@kendex.invalid \
+  commit-tree -p "$REPO_HEAD" -m ahead "$REPO_HEAD^{tree}")" ||
+  { echo "harness-smoke.test: the stand-in's AHEAD commit could not be made" >&2; exit 1; }
+NOWHERE="$(printf 'd%.0s' $(seq 40))"
+build_case() { # LABEL VERSION-LINE ARGS WANT-STATUS WANT-FIRST
+  local rc=0 said="" a
+  local -a argv=()
+  for a in $3; do [ "$a" = - ] || argv+=("$a"); done
+  kendex_stub "$BUILD_BIN/kendex" "$2"
+  (cd "$ROWS_REPO" && PATH="$BUILD_BIN:$ROWS_BIN:$PATH" "$BASH" "$STAND_SCRIPT" \
+    --only claude --dir "$TMP/stand-dir" ${argv[@]+"${argv[@]}"} >"$TMP/stand-out" 2>&1) || rc=$?
+  said="$(sed -n '1s/^harness-smoke: //p' "$TMP/stand-out")"
+  if [ "$rc" = "$4" ] && [ "${said:--}" = "$5" ]; then
+    ok "$1 (exit $rc, first ${said:--})"
+  else
+    bad "$1" "want rc=$4 first=$5, got rc=$rc first=${said:--}"
+  fi
+}
+
+git -C "$STAND" update-ref HEAD "$AHEAD"
+build_case "a build of HEAD reaches the rows" "kendex 1.2.0+git.$AHEAD" - 1 -
+build_case "a CI build of HEAD reaches the rows" "kendex 1.2.0+main.410.$AHEAD" - 1 -
+build_case "a build older than HEAD is refused, naming both commits" \
+  "kendex 1.2.0+main.410.$REPO_HEAD" - 2 "stale-kendex=$REPO_HEAD head=$AHEAD"
+build_case "a build naming no commit is refused" "kendex 1.2.0" - 2 "stale-kendex=none head=$AHEAD"
+build_case "a build of a commit the checkout does not hold is refused" \
+  "kendex 1.2.0+git.$NOWHERE" - 2 "stale-kendex=$NOWHERE head=$AHEAD"
+build_case "--allow-stale runs on an older build and says so first" \
+  "kendex 1.2.0+main.410.$REPO_HEAD" --allow-stale 1 "allowed-stale=$REPO_HEAD head=$AHEAD"
+plant "$STAND_SCRIPT" 's/merge-base --is-ancestor "\$HEAD_COMMIT" "\$INSTALLED_COMMIT"/merge-base --is-ancestor "$INSTALLED_COMMIT" "$HEAD_COMMIT"/'
+build_case "control: a check asking whether HEAD contains the build passes an older build" \
+  "kendex 1.2.0+main.410.$REPO_HEAD" - 1 -
+plant "$STAND_SCRIPT" 's/\\2\/p/\\1\/p/'
+build_case "control: a reader that takes the build kind for its commit refuses a build of HEAD" \
+  "kendex 1.2.0+git.$AHEAD" - 2 "stale-kendex=git head=$AHEAD"
+plant "$STAND_SCRIPT" 's/^    INSTALLED_COMMIT=none$/    kendex_build=current/'
+build_case "control: a reader that passes a build naming no commit reaches the rows" "kendex 1.2.0" - 1 -
+plant "$STAND_SCRIPT" 's/^    --allow-stale) ALLOW_STALE=1; shift ;;$/    --allow-stale) ALLOW_STALE=0; shift ;;/'
+build_case "control: an --allow-stale that sets nothing refuses the older build" \
+  "kendex 1.2.0+main.410.$REPO_HEAD" --allow-stale 2 "stale-kendex=$REPO_HEAD head=$AHEAD"
+plant "$STAND_SCRIPT" 's/^  note allowed-stale /  : note allowed-stale /'
+build_case "control: an --allow-stale run that says nothing reaches the rows unannounced" \
+  "kendex 1.2.0+main.410.$REPO_HEAD" --allow-stale 1 -
+cp "$STAND_SCRIPT.intact" "$STAND_SCRIPT"
+
+git -C "$STAND" update-ref HEAD "$REPO_HEAD"
+build_case "a build of a commit that contains HEAD reaches the rows" "kendex 1.2.0+git.$AHEAD" - 1 -
+plant "$STAND_SCRIPT" 's/merge-base --is-ancestor "\$HEAD_COMMIT" "\$INSTALLED_COMMIT"/merge-base --is-ancestor "$INSTALLED_COMMIT" "$HEAD_COMMIT"/'
+build_case "control: a check asking whether HEAD contains the build refuses a newer build" \
+  "kendex 1.2.0+git.$AHEAD" - 2 "stale-kendex=$AHEAD head=$REPO_HEAD"
+cp "$STAND_SCRIPT.intact" "$STAND_SCRIPT"
+rm -f -- "$STAND_SCRIPT.intact"
 
 # The keyed line being first is half the claim; the cause the dependency gave
 # has to survive under it.
