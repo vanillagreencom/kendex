@@ -98,7 +98,9 @@ usage() {
   printf '%s\n' 'usage: tools/harness-smoke [--only h1,h2,...] [--keep] [--dir DIR]' \
     '  --only    run these harnesses (claude codex opencode cursor pi gemini copilot antigravity); the rest print skipped' \
     '  --keep    leave the scratch project and logs in place' \
-    '  --dir     parent of the scratch directory this run makes (default: tmp/ in this checkout)'
+    '  --dir     parent of the scratch directory this run makes (default: tmp/ in this checkout)' \
+    'The --dir, or with no --dir this checkout, must not sit under a .scratch folder or a temporary folder' \
+    '(the platform temp dir, /tmp, /var/tmp): kendex add refuses to register a project there, so every install fails.'
 }
 
 message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
