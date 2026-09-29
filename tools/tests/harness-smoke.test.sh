@@ -237,7 +237,7 @@ STAND="$TMP/stand-in"
 mkdir -p "$STAND/tools" "$STAND/hooks"
 # A repository whose HEAD is this checkout's HEAD, borrowing its objects, and
 # cut there as a shallow root: a shallow CI clone holds no parent of it, and
-# the build rows below walk no further back than the one commit made on it.
+# the build rows below walk no further back than the commits made on it.
 git init -q "$STAND"
 REPO_OBJECTS="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/objects" ||
   { echo "harness-smoke.test: this checkout's object directory could not be found" >&2; exit 1; }
@@ -298,53 +298,75 @@ plant "$STAND_HOOK" 's/^# event: .*$/# matcher:/'
 stand_case "a hook whose frontmatter gives no event is refused" 2 "mail-frontmatter=$STAND_HOOK"
 cp "$STAND_HOOK.intact" "$STAND_HOOK"
 
-# The kendex on PATH has to be a build of the checkout's HEAD or of a commit
-# that contains it, read from the commit its --version ends in. AHEAD is a
-# commit on top of the stand-in's HEAD: with the stand-in at AHEAD, a build of
+# The kendex on PATH has to be a build of a commit that contains the checkout's
+# HEAD or has HEAD's crates/, read from the commit its --version ends in.
+# OUTSIDE and CRATES are commits on top of the stand-in's HEAD that add one
+# file, outside crates/ and inside it: with the stand-in at either, a build of
 # this checkout's HEAD is an older one, and with the stand-in back at that
-# HEAD, a build of AHEAD is a newer one. A build that passes reaches the rows,
+# HEAD, a build of CRATES is a newer one. A build that passes reaches the rows,
 # as the committed table and hook do above.
-echo "=== a kendex that is not a build containing HEAD is refused before any row ==="
-AHEAD="$(git -C "$STAND" -c user.name=harness-smoke -c user.email=harness-smoke@kendex.invalid \
-  -c commit.gpgSign=false commit-tree -p "$REPO_HEAD" -m ahead "$REPO_HEAD^{tree}")" ||
-  { echo "harness-smoke.test: the stand-in's AHEAD commit could not be made" >&2; exit 1; }
+echo "=== a kendex that neither contains HEAD nor has its crates/ is refused before any row ==="
+probe_commit() { # PATH — a commit on this checkout's HEAD whose tree adds that one file
+  local blob tree
+  rm -f -- "${TMP:?}/probe-index"
+  GIT_INDEX_FILE="$TMP/probe-index" git -C "$STAND" read-tree "$REPO_HEAD" || return
+  blob="$(printf 'probe\n' | git -C "$STAND" hash-object -w --stdin)" || return
+  GIT_INDEX_FILE="$TMP/probe-index" git -C "$STAND" update-index --add --cacheinfo "100644,$blob,$1" || return
+  tree="$(GIT_INDEX_FILE="$TMP/probe-index" git -C "$STAND" write-tree)" || return
+  git -C "$STAND" -c user.name=harness-smoke -c user.email=harness-smoke@kendex.invalid \
+    -c commit.gpgSign=false commit-tree -p "$REPO_HEAD" -m "probe $1" "$tree"
+}
+OUTSIDE="$(probe_commit tools/stale-probe)" ||
+  { echo "harness-smoke.test: the stand-in's OUTSIDE commit could not be made" >&2; exit 1; }
+CRATES="$(probe_commit crates/stale-probe)" ||
+  { echo "harness-smoke.test: the stand-in's CRATES commit could not be made" >&2; exit 1; }
 NOWHERE="$(printf 'd%.0s' $(seq 40))"
 
-git -C "$STAND" update-ref HEAD "$AHEAD"
-kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+git.$AHEAD"
+git -C "$STAND" update-ref HEAD "$OUTSIDE"
+kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+git.$OUTSIDE"
 stand_case "a build of HEAD reaches the rows" 1 -
 plant "$STAND_SMOKE" 's/\\2\/p/\\1\/p/'
 stand_case "control: a reader that takes the build kind for its commit refuses a build of HEAD" \
-  2 "stale-kendex=git head=$AHEAD"
+  2 "stale-kendex=git head=$OUTSIDE"
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
-kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+main.410.$AHEAD"
+kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+main.410.$OUTSIDE"
 stand_case "a CI build of HEAD reaches the rows" 1 -
 kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+git.$NOWHERE"
-stand_case "a build of a commit the checkout does not hold is refused" 2 "stale-kendex=$NOWHERE head=$AHEAD"
+stand_case "a build of a commit the checkout does not hold is refused" 2 "stale-kendex=$NOWHERE head=$OUTSIDE"
 kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0"
-stand_case "a build naming no commit is refused" 2 "stale-kendex=none head=$AHEAD"
+stand_case "a build naming no commit is refused" 2 "stale-kendex=none head=$OUTSIDE"
 plant "$STAND_SMOKE" 's/^    INSTALLED_COMMIT=none$/    kendex_build=current/'
 stand_case "control: a reader that passes a build naming no commit reaches the rows" 1 -
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+main.410.$REPO_HEAD"
-stand_case "a build older than HEAD is refused, naming both commits" 2 "stale-kendex=$REPO_HEAD head=$AHEAD"
-stand_case "--allow-stale runs on an older build and says so first" \
-  1 "allowed-stale=$REPO_HEAD head=$AHEAD" --allow-stale
+stand_case "an older build whose crates/ match HEAD's reaches the rows" 1 -
+plant "$STAND_SMOKE" 's|"\$HEAD_COMMIT" -- crates/ 2>&1)|"$HEAD_COMMIT" -- 2>\&1)|'
+stand_case "control: a diff over the whole tree refuses an older build that differs outside crates/" \
+  2 "stale-kendex=$REPO_HEAD head=$OUTSIDE"
+cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
+
+git -C "$STAND" update-ref HEAD "$CRATES"
+stand_case "an older build whose crates/ differ from HEAD's is refused, naming both commits" \
+  2 "stale-kendex=$REPO_HEAD head=$CRATES"
+stand_case "--allow-stale runs on that build and says so first" \
+  1 "allowed-stale=$REPO_HEAD head=$CRATES" --allow-stale
+plant "$STAND_SMOKE" 's/ diff --quiet "\$INSTALLED_COMMIT"/ diff --stat "$INSTALLED_COMMIT"/'
+stand_case "control: a crates/ diff read for its output, not its status, passes that build" 1 -
 plant "$STAND_SMOKE" 's/merge-base --is-ancestor "\$HEAD_COMMIT" "\$INSTALLED_COMMIT"/merge-base --is-ancestor "$INSTALLED_COMMIT" "$HEAD_COMMIT"/'
-stand_case "control: a check asking whether HEAD contains the build passes an older build" 1 -
+stand_case "control: a check asking whether HEAD contains the build passes that build" 1 -
 plant "$STAND_SMOKE" 's/^    --allow-stale) ALLOW_STALE=1; shift ;;$/    --allow-stale) ALLOW_STALE=0; shift ;;/'
-stand_case "control: an --allow-stale that sets nothing refuses the older build" \
-  2 "stale-kendex=$REPO_HEAD head=$AHEAD" --allow-stale
+stand_case "control: an --allow-stale that sets nothing refuses that build" \
+  2 "stale-kendex=$REPO_HEAD head=$CRATES" --allow-stale
 plant "$STAND_SMOKE" 's/^  note allowed-stale /  : note allowed-stale /'
 stand_case "control: an --allow-stale run that says nothing reaches the rows unannounced" 1 - --allow-stale
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 
 git -C "$STAND" update-ref HEAD "$REPO_HEAD"
-kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+git.$AHEAD"
-stand_case "a build of a commit that contains HEAD reaches the rows" 1 -
+kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+git.$CRATES"
+stand_case "a newer build that contains HEAD, with other crates/, reaches the rows" 1 -
 plant "$STAND_SMOKE" 's/merge-base --is-ancestor "\$HEAD_COMMIT" "\$INSTALLED_COMMIT"/merge-base --is-ancestor "$INSTALLED_COMMIT" "$HEAD_COMMIT"/'
-stand_case "control: a check asking whether HEAD contains the build refuses a newer build" \
-  2 "stale-kendex=$AHEAD head=$REPO_HEAD"
+stand_case "control: a check asking whether HEAD contains the build refuses that newer build" \
+  2 "stale-kendex=$CRATES head=$REPO_HEAD"
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 kendex_stub "$BUILD_BIN/kendex" "kendex 0.0.0+git.$REPO_HEAD"
 

@@ -76,7 +76,7 @@
 # Exit 0 when every row passed (advisory, skipped, differs and excluded
 # included), 1 when any row failed, 2 when it refuses before any row (among
 # those refusals: this script's checkout has no HEAD commit, or the kendex on
-# PATH is not a build of that HEAD or of a commit that contains it) or when the
+# PATH fails the build check `--help` states) or when the
 # fixture could not be installed or `kendex verify` refused it, 3 when nothing failed but a row was
 # unanswerable or pending, so a harness that died on the render never reads
 # as a clean run. Model turns: eight on claude, three on codex, two on
@@ -101,11 +101,12 @@ usage() {
     '  --only    run these harnesses (claude codex opencode cursor pi gemini copilot antigravity); the rest print skipped' \
     '  --keep    leave the scratch project and logs in place' \
     '  --dir     parent of the scratch directory this run makes (default: tmp/ in this checkout)' \
-    '  --allow-stale  run on a kendex that is not a build of this checkout, and say so' \
+    '  --allow-stale  run on a kendex that fails the build check below, and say so' \
     'The --dir, or with no --dir this checkout, must not sit under a .scratch folder or a temporary folder' \
     '(the platform temp dir, /tmp, /var/tmp): kendex add refuses to register a project there, so the first install is refused and the run exits 2.' \
-    'The kendex on PATH must be a build of this checkout'"'"'s HEAD or of a commit that contains it, the commit' \
-    '`kendex --version` ends in: otherwise the run exits 2 before any row, naming both commits and the rebuild.'
+    'The kendex on PATH must be a build of a commit INSTALLED, the one `kendex --version` ends in, that this checkout' \
+    'holds and that either contains this checkout'"'"'s HEAD or has HEAD'"'"'s crates/ (git diff --quiet INSTALLED HEAD -- crates/):' \
+    'otherwise the run exits 2 before any row, naming both commits and the rebuild.'
 }
 
 message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
@@ -124,12 +125,13 @@ message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
     kept)
       echo "the scratch project and logs were left in place by --keep." ;;
     stale-kendex)
-      printf 'the kendex on PATH, %s, is not a build of this checkout'"'"'s HEAD or of a commit that contains it,\n' "$KENDEX_PATH"
-      echo "or its --version names no commit (none), so the rows would measure another build's renders."
+      printf 'the kendex on PATH, %s, is a build of a commit that neither contains this checkout'"'"'s HEAD\n' "$KENDEX_PATH"
+      echo "nor has HEAD's crates/, or of one this checkout does not hold, or its --version names no commit (none),"
+      echo "so the rows would measure another build's renders."
       printf 'Rebuild it in %s with KENDEX_SOURCE_COMMIT=$(git rev-parse HEAD) cargo build --release -p kendex-cli,\n' "$SELF"
       printf 'then copy target/release/kendex to %s; or pass --allow-stale to run on it anyway.\n' "$KENDEX_PATH" ;;
     allowed-stale)
-      printf 'this run goes on under --allow-stale with %s, which is not a build of this checkout'"'"'s HEAD;\n' "$KENDEX_PATH"
+      printf 'this run goes on under --allow-stale with %s, whose build neither contains this checkout'"'"'s HEAD nor has its crates/;\n' "$KENDEX_PATH"
       echo "a failed row may be that build's and not this checkout's." ;;
     checkout-head)
       echo "that directory has no HEAD commit, so which kendex build it describes is unknown." ;;
@@ -219,12 +221,16 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null) ||
 SELF=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 
 # Every row measures what the kendex on PATH renders, so that binary has to be
-# a build of SELF's HEAD or of a commit that contains it: an older build fails
-# rows this checkout passes. Its commit is the one `kendex --version` ends in,
-# `+main.<run>.<commit>` from CI or `+git.<commit>` under KENDEX_SOURCE_COMMIT
+# a build of a commit that contains SELF's HEAD, or of one whose crates/ equal
+# HEAD's: an older build with other crates/ fails rows this checkout passes.
+# crates/ is the same proxy ORCH_POST_MERGE_CMD in kendex.settings.toml reads
+# to skip its rebuild, so the binary it leaves after a merge that changes no
+# crate, or on a branch that changes none, gets past. Its commit is the one
+# `kendex --version` ends in, `+main.<run>.<commit>` from CI or
+# `+git.<commit>` under KENDEX_SOURCE_COMMIT
 # (crates/cli/build.rs::build_version_from_values). A plain cargo build names
 # none, and a build that names none, or a commit this checkout does not hold,
-# cannot be shown to contain HEAD, so it is refused the same way.
+# cannot be compared with HEAD, so it is refused the same way.
 KENDEX_PATH=$(command -v kendex)
 HEAD_COMMIT=$(git -C "$SELF" rev-parse --verify HEAD 2>/dev/null) ||
   refuse_cause checkout-head "$SELF" "$(git -C "$SELF" rev-parse --verify HEAD 2>&1 >/dev/null)"
@@ -235,7 +241,8 @@ if stale_cause=$(kendex --version 2>&1); then
     [ -z "$INSTALLED_COMMIT" ]; then
     INSTALLED_COMMIT=none
     stale_cause=${stale_cause%%$'\n'*}
-  elif stale_cause=$(git -C "$SELF" merge-base --is-ancestor "$HEAD_COMMIT" "$INSTALLED_COMMIT" 2>&1); then
+  elif stale_cause=$(git -C "$SELF" merge-base --is-ancestor "$HEAD_COMMIT" "$INSTALLED_COMMIT" 2>&1) ||
+    stale_cause=$(git -C "$SELF" diff --quiet "$INSTALLED_COMMIT" "$HEAD_COMMIT" -- crates/ 2>&1); then
     kendex_build=current
   fi
 fi
