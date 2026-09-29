@@ -209,16 +209,29 @@ assert_eq "a failed rename fails the resolve loudly and hands out no cache path"
   "$(call "$SETTINGS" "PATH=$ROOT/nomv:\$PATH; $RESOLVE")"
 
 # The staged copy is malformed and the worktree copy is not, so the refusal
-# can only come from the cache file, and it must still name the source.
-new_repo settings-label
-printf '[env]\nCOMMIT_GUARDS_TP = "v"\n' >"$R/kendex.settings.toml"
-commit_all base
-printf '[env]\nCOMMIT_GUARDS_TP = "v"\nUNRELATED = "a"b"\n' >"$R/kendex.settings.toml"
-git -C "$R" add kendex.settings.toml
-printf '[env]\nCOMMIT_GUARDS_TP = "v"\n' >"$R/kendex.settings.toml"
-assert_eq "a staged malformed value is named by the settings file, never the cache copy" \
-  "rc=1 probe: settings-string=kendex.settings.toml:3:UNRELATED" \
-  "$(call "$SETTINGS" 'gg_settings_index_mode; gg_setting COMMIT_GUARDS_TP dflt')"
+# can only come from the cache file, and it must still name the source. The
+# byte-order-mark refusal runs before the table parse, so it takes its own row.
+fx_settings_label() { # NAME STAGED — STAGED (printf format) staged over a clean committed and worktree copy
+  new_repo "$1"
+  printf '[env]\nCOMMIT_GUARDS_TP = "v"\n' >"$R/kendex.settings.toml"
+  commit_all base
+  # shellcheck disable=SC2059 # STAGED is the row's printf format
+  printf "$2" >"$R/kendex.settings.toml"
+  git -C "$R" add kendex.settings.toml
+  printf '[env]\nCOMMIT_GUARDS_TP = "v"\n' >"$R/kendex.settings.toml"
+}
+
+echo "=== a staged settings refusal names the settings file, never the cache copy ==="
+# label | name | staged | expect
+rows=(
+  "a staged malformed value|settings-label|[env]\\nCOMMIT_GUARDS_TP = \"v\"\\nUNRELATED = \"a\"b\"\\n|rc=1 probe: settings-string=kendex.settings.toml:3:UNRELATED"
+  "a staged leading byte-order mark|settings-bom|\\357\\273\\277[env]\\nCOMMIT_GUARDS_TP = \"v\"\\n|rc=1 probe: settings-bom=kendex.settings.toml"
+)
+for row in "${rows[@]}"; do
+  IFS='|' read -r label name staged expect <<<"$row"
+  fx_settings_label "$name" "$staged"
+  assert_eq "$label" "$expect" "$(call "$SETTINGS" 'gg_settings_index_mode; gg_setting COMMIT_GUARDS_TP dflt')"
+done
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
