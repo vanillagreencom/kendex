@@ -30,7 +30,7 @@ if name=="git":
  assert os.environ["GH_TOKEN"]=="consumer"
  if sys.argv[1]=="fetch": sys.exit(0)
  if sys.argv[-1].endswith(".kendex-generated.json"):
-  print(json.dumps([".agents/skills/review-gate/scripts/test.sh"]))
+  print(json.dumps([".agents/skills/review-gate/scripts/test.sh",".kendex-generated.json",".kendex-lock.json"]))
  else: print(Path(os.environ["HISTORICAL_LOCK"]).read_text())
 elif name=="kendex":
  assert os.environ["GH_TOKEN"]=="consumer"
@@ -39,8 +39,9 @@ elif name=="kendex":
   os.execv(os.environ["REAL_KENDEX"], ["kendex",*sys.argv[1:]])
  lock=json.loads(Path(".kendex-lock.json").read_text())
  owned=any(e.get("sourceRepo")=="vanillagreencom/kendex" for e in lock["entries"].values())
- route="--repo vanillagreencom/kendex --label ci-infra" if owned else "--repo acme/repo"
- print("would run: gh issue create "+route+" --title test",file=sys.stderr)
+ # The CLI names --repo only for a kendex-owned package.
+ route=" --repo vanillagreencom/kendex --label ci-infra" if owned else ""
+ print("would run: gh issue create"+route+" --title test",file=sys.stderr)
 else:
  assert name=="gh" and os.environ["GH_TOKEN"]=="upstream"
  assert sys.argv[1]=="api" and sys.argv[2].startswith("repos/vanillagreencom/kendex/issues")
@@ -75,9 +76,12 @@ findings=[{'root':10,'path':'.agents/skills/review-gate/scripts/test.sh','body':
 results=[]
 def reset(**extra):
  world.write_text(json.dumps(dict(issues=[],writes=[],**extra))); summary.write_text('')
-def run(driver=skill/'scripts/refresh-report.py', rows=findings, overrides=None):
+def run(driver=skill/'scripts/refresh-report.py', rows=findings, overrides=None, fails=False):
  result=subprocess.run(['python3',str(driver),'a'*40,'1'],input=json.dumps(rows),text=True,
                        capture_output=True,env=dict(env,**(overrides or {})),cwd=root)
+ if fails:
+  assert result.returncode!=0,result.stdout
+  return json.loads(world.read_text())
  assert result.returncode==0,result.stderr
  results[:]=json.loads(result.stdout)
  return json.loads(world.read_text())
@@ -115,15 +119,26 @@ for overrides, extra in [({'KENDEX_ISSUES_TOKEN':''},{}), ({},{'deny':True})]:
  assert findings[0]['url'] in summary.read_text()
 # Permission recovery runs the same candidates even after earlier policy replies.
 reset(); run(overrides={'KENDEX_ISSUES_TOKEN':''}); assert len(run()['issues'])==1
-# A path outside the inventory, like the lock, is a finding on the
-# render-proven pull request: filed with no package label for triage to route.
+# The lock is an inventory path no package claims, and a path outside the
+# inventory binds to no package: each is filed with no package label.
 unrouted_row=[dict(findings[0],path='.kendex-lock.json')]
-def unrouted(world):
+def unrouted(world, kind='Rendered'):
  issues=world['issues']
  return (len(issues)==1 and issues[0]['labels']==['bug','agent:generalist']
          and 'Package routing did not resolve' in issues[0]['body']
+         and f'{kind} file: `' in issues[0]['body']
          and results==[{'root':10,'issue':issues[0]['html_url'],'note':'Filed for upstream confirmation'}])
 reset(); assert unrouted(run(rows=unrouted_row))
+reset(); assert unrouted(run(rows=[dict(findings[0],path='src/private.py')]),'Reviewed')
+# A package kendex report routes to another owner is theirs to fix: nothing is
+# filed and the note names the owner, so refresh-reviews keeps the thread open.
+foreign_lock=json.loads((root/'historical-lock.json').read_text())
+foreign_lock['entries']['skill:review-gate:codex']['sourceRepo']='another/catalog'
+(root/'foreign-lock.json').write_text(json.dumps(foreign_lock))
+def foreign(world):
+ return (world['writes']==[] and results[0]['issue'] is None
+         and results[0]['note'].startswith('Owned outside kendex: review-gate from another/catalog'))
+reset(); assert foreign(run(overrides={'HISTORICAL_LOCK':str(root/'foreign-lock.json')}))
 # A late merged-PR report must keep the recorded package route after removal
 # or replacement through the consumer's supported package commands.
 for drift in ('removed', 'replaced'):
@@ -134,21 +149,22 @@ for drift in ('removed', 'replaced'):
  reset(); assert run()['issues'][0]['labels']==['bug','ci-infra','agent:generalist'], drift
  assert len(run()['issues'])==1, drift
 # The current checkout is now foreign-owned. Removing historical isolation
-# must lose the package route, even though its inventory is still valid.
+# must route the package away from kendex, even though its inventory is valid.
 source=(skill/'scripts/refresh-report.py').read_text()
 needle='cwd=project, env=consumer_env'
 assert source.count(needle)==1
 mutant=root/'current-checkout.py'
 mutant.write_text(source.replace(needle,'cwd=None if True else project, env=consumer_env'))
-reset(); assert unrouted(run(mutant))
+reset(); w=run(mutant); assert w['writes']==[] and results[0]['note'].startswith('Owned outside kendex')
 # Controls preserve matching text while removing each independent rule.
 source=(skill/'scripts/refresh-report.py').read_text()
 for needle,replacement,rows,expect in [
- ('if record is not None:', 'if False and record is not None:', findings, 'unrouted'),
+ ('        if record is None:\n', '        if True or record is None:\n', findings, 'unrouted'),
  ('if existing:', 'if False and existing:', findings, 'dedup'),
  ('[repo, path, finding["body"]]', '[repo, path, finding["body"], finding["url"]]', inline_pair, 'instance'),
- ('            ).stderr', '            ).stdout', findings, 'unrouted'),
- ('        if token:\n', '        if token and label:\n', unrouted_row, 'unfiled'),
+ ('            ).stderr', '            ).stdout', findings, 'error'),
+ ('            files, url = True, fallback', '            files, url = outcome is Route.PACKAGE, fallback', unrouted_row, 'unfiled'),
+ ('            files, url = False, None', '            files, url = True, None', findings, 'foreign'),
 ]:
  assert source.count(needle)==1
  mutant=root/(expect+'.py'); mutant.write_text(source.replace(needle,replacement))
@@ -159,6 +175,10 @@ for needle,replacement,rows,expect in [
   run(mutant,rows=[rows[0]]); assert len(run(mutant,rows=[rows[1]])['issues'])==2
  elif expect=='unrouted':
   assert unrouted(run(mutant,rows=rows))
+ elif expect=='error':
+  assert run(mutant,rows=rows,fails=True)['writes']==[]
+ elif expect=='foreign':
+  assert not foreign(run(mutant,rows=rows,overrides={'HISTORICAL_LOCK':str(root/'foreign-lock.json')}))
  else:
   assert run(mutant,rows=rows)['writes']==[] and results[0]['issue'] is None
 # The filed issue is the rule refresh-reviews resolves on. An unfiled finding
@@ -174,6 +194,6 @@ for needle,replacement,overrides,runs in [
  for extra in runs: run(mutant,overrides=dict(overrides,**extra))
  assert results[0]['issue'] is not None and not results[0]['issue'].endswith('/issues/1')
 PY
-then ok 'reporter token isolation, render binding, unrouted filing, labels, evidence, duplicate handling and permission fallback'; else bad 'reporter behavior and controls'; fi
+then ok 'reporter token isolation, render binding, route outcomes, labels, evidence, duplicate handling and permission fallback'; else bad 'reporter behavior and controls'; fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

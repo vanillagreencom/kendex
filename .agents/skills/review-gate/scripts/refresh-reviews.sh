@@ -9,10 +9,12 @@
 #
 # A thread whose first comment a Bot wrote is filed upstream through
 # refresh-report.py, answered with a reply naming that issue, then resolved.
-# The reporter files every such finding, routed to a package or not; only a
-# missing Issues token or denied Issues access leaves one unfiled. An unfiled
-# thread gets no reply and stays open. The reply is the retry record: a thread
-# that carries one is only resolved.
+# The reporter files a finding in vanillagreencom/kendex with its package
+# label, or with none when routing does not resolve to one kendex package. It
+# leaves a finding unfiled when kendex report routes the package to another
+# owner, which its note names, or when the Issues token or Issues access is
+# missing. An unfiled thread gets no reply and stays open for the operator.
+# The reply is the retry record: a thread that carries one is only resolved.
 #
 # stdout records, one per line:
 #   refresh-reviews=already-answered pr=N
@@ -50,7 +52,7 @@ if [ "$#" -eq 1 ] && [ "$1" = --help ]; then
   printf '%s\n' 'Usage: GH_REPO=owner/repo GH_TOKEN=app-token KENDEX_ISSUES_TOKEN=issues-token refresh-reviews.sh' \
     'Files automatic review threads on open and merged kendex/refresh pull requests upstream, replies with the issue and resolves them.' \
     'The workflow also sets GitHub run/summary variables for the reporter.' \
-    'Only a missing Issues token or denied Issues access leaves a finding unfiled; its thread stays open and the run exits 1.'
+    'A finding whose package another owner routes, or one filed without Issues access, stays unfiled; its thread stays open and the run exits 1.'
   exit 0
 fi
 [ "$#" -eq 0 ] || fail arguments "$#" 'No arguments are accepted.'

@@ -356,21 +356,23 @@ run_writer
 if ! unclassified_held; then
   ok 'must-fail control: reading a fallback as a verdict fails the unclassified case'
 else bad 'measured control did not detect the planted defect' "$OUT"; fi
-# Each reporter-hold rule has its own control: the reporter exit guard, the
-# output-shape guard (one row per sub-rule) and the per-PR containment.
-while IFS='|' read -r name needle replacement mode key; do
-  mutant "$name" "$needle" "$replacement"
-  jq --arg mode "$mode" '.report={pr:1,mode:$mode}' "$BASE" >"$FIXTURE"
+# Each reporter-hold rule has its own control: the reporter exit guard, each
+# clause of the output-shape guard, and the per-PR containment.
+report_control() { # NAME NEEDLE REPLACEMENT MODE KEY
+  mutant "$1" "$2" "$3"
+  jq --arg mode "$4" '.report={pr:1,mode:$mode}' "$BASE" >"$FIXTURE"
   run_writer
-  if ! report_held "$key"; then
-    ok "must-fail control: $name fails the reporter $mode case"
-  else bad "$name control did not detect the planted defect" "$OUT"; fi
-done <<'CONTROLS'
-report-mutant|hold report "$PR_NUMBER"|: hold report "$PR_NUMBER"|error|report
-shape-mutant|if ! jq -e --argjson findings|if false && jq -e --argjson findings|missing-root|report-shape
-shape-issue-mutant|if ! jq -e --argjson findings|if false && jq -e --argjson findings|bad-issue|report-shape
-containment-mutant|printf '::error::refresh-reviews-error=%s pr=%s %s\n' "$1" "$2" "$3"|printf '::error::refresh-reviews-error=%s pr=%s %s\n' "$1" "$2" "$3"; exit 1|error|report
-CONTROLS
+  if ! report_held "$5"; then
+    ok "must-fail control: $1 fails the reporter $4 case"
+  else bad "$1 control did not detect the planted defect" "$OUT"; fi
+}
+report_control report-mutant 'hold report "$PR_NUMBER"' ': hold report "$PR_NUMBER"' error report
+report_control shape-root-mutant 'and ([.[].root] | sort) == ([$findings[].root] | sort)' \
+  'and (true or ([.[].root] | sort) == ([$findings[].root] | sort))' missing-root report-shape
+report_control shape-issue-mutant '(.issue == null or (.issue | type) == "string")' \
+  '(true or .issue == null or (.issue | type) == "string")' bad-issue report-shape
+report_control containment-mutant "printf '::error::refresh-reviews-error=%s pr=%s %s\\n' \"\$1\" \"\$2\" \"\$3\"" \
+  "printf '::error::refresh-reviews-error=%s pr=%s %s\\n' \"\$1\" \"\$2\" \"\$3\"; exit 1" error report
 mutant exit-mutant '[ "$held" -eq 0 ] || exit 1' '[ "$held" -eq 0 ] || exit 0'
 jq '.unfiled=[10]' "$BASE" >"$FIXTURE"
 run_writer
