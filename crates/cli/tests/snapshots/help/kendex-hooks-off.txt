@@ -1,0 +1,15 @@
+Name the Copilot file that turns all hooks off, as JSON
+
+Usage: kendex hooks-off --copilot-home <DIR> --project <DIR>
+
+Options:
+      --copilot-home <DIR>
+          The Copilot home the session runs under, the directory COPILOT_HOME
+          names
+
+      --project <DIR>
+          The project the session runs in, whose Copilot and Claude Code
+          settings files are layered over the home's
+
+  -h, --help
+          Print help
