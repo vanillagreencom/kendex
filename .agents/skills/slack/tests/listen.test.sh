@@ -10,34 +10,35 @@
 # the envelope, an HTML file saved, a long name cut to 200 characters, a
 # refused download, Slack's sign-in page, a file with no download url and a
 # body cut short under its Content-Length or inside a chunk each named by file
-# id, a directive's eyes mark swapped for a check once the cursor passes it, a
-# refused mark printed without failing the poll, a refused swap completed on
-# the next poll, each Slack answer a swap counts as settled, a receipts read
-# lane-mail refuses printed without failing the poll, each form of Slack's
-# escapes and tokens read back as typed, catch-up over pages, the crash
-# between the mailbox append and the journal mark, the second relay refused by
-# the lock, two roots bound to one channel refused at start, a reply under a
-# thread past SLACK_THREAD_DAYS left unrouted, a secret value refused, a 429
-# honoured, a post Slack refuses failing the poll and made again, a post whose
-# response was lost journaled unknown, a refused history read failing the
-# poll, a first start reading Slack from the binding moment and posting
-# nothing from the mailbox's past but open asks, an envelope past the horizon
-# never posted across the daily compaction, a journal reset re-posting open
-# asks alone, owners re-resolved from the setting, a report whose file matches
-# the pattern or is gone refused, and a notice under an owner message past the
-# horizon posted once across compaction. The controls at the end plant one
-# mutant per rule: the delivery id dropped, the ask thread no longer resolved,
-# the lock no longer exclusive, two roots on one channel accepted, the
-# thread-age horizon removed, the owner gate open, the no-text gate open, the
-# files unread, the sign-in check gone, the file name kept whole, the files
-# directory mode unset, an HTML file's type unread, the name uncut, the
-# length unchecked, http.client's own error uncaught, the seen mark gone, the
-# cursor unread, a refused mark raised, each settled Slack answer unsettled,
-# a refused receipts read raised, the markup unread, &amp; unescaped first,
-# the outbound text and the report bytes unchecked, the post failure
-# swallowed, the envelope horizon removed, the start horizon removed, the
-# history seed at zero, a posted line aged by its thread, and a refused
-# connection read as a lost response.
+# id, a whole chunked body with no Content-Length saved, a directive's eyes
+# mark swapped for a check once the cursor passes it, a refused mark printed
+# without failing the poll, a refused swap completed on the next poll, each
+# Slack answer a swap counts as settled, a receipts read lane-mail refuses
+# printed without failing the poll, each form of Slack's escapes and tokens
+# read back as typed, catch-up over pages, the crash between the mailbox
+# append and the journal mark, the second relay refused by the lock, two roots
+# bound to one channel refused at start, a reply under a thread past
+# SLACK_THREAD_DAYS left unrouted, a secret value refused, a 429 honoured, a
+# post Slack refuses failing the poll and made again, a post whose response
+# was lost journaled unknown, a refused history read failing the poll, a first
+# start reading Slack from the binding moment and posting nothing from the
+# mailbox's past but open asks, an envelope past the horizon never posted
+# across the daily compaction, a journal reset re-posting open asks alone,
+# owners re-resolved from the setting, a report whose file matches the pattern
+# or is gone refused, and a notice under an owner message past the horizon
+# posted once across compaction. The controls at the end plant one mutant per
+# rule: the delivery id dropped, the ask thread no longer resolved, the lock
+# no longer exclusive, two roots on one channel accepted, the thread-age
+# horizon removed, the owner gate open, the no-text gate open, the files
+# unread, the sign-in check gone, the file name kept whole, the files
+# directory mode unset, an HTML file's type unread, the name uncut, the length
+# unchecked, a missing length read as zero, http.client's own error uncaught
+# in the download, the seen mark gone, the cursor unread, a refused mark
+# raised, each settled Slack answer unsettled, a refused receipts read raised,
+# the markup unread, &amp; unescaped first, the outbound text and the report
+# bytes unchecked, the post failure swallowed, the envelope horizon removed,
+# the start horizon removed, the history seed at zero, a posted line aged by
+# its thread, and a refused connection read as a lost response.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -200,7 +201,12 @@ assert_eq "$RC=$(sed -n '1,2p' <<<"$FM7_TEXT")" "0=cut short
 file F907 not fetched: truncated 6 of 13 bytes" "a body short of its Content-Length is not saved, and its line counts the bytes"
 assert_has "$(sed -n '3p' <<<"$FM7_TEXT")" "file F908 not fetched: download (IncompleteRead(" \
   "a chunked body cut short is not saved, and the relay goes on"
-assert_eq "$(ls -A "$FILES_DIR" | sed 's/^F906-n*$/F906-long/' | tr '\n' ' ')" "F901-shots_shot_one.png F902-err.log F905-page.html F906-long " \
+sk_ctl /_test/fault '{"method": "download", "chunked": true}' >/dev/null
+FM8="$(sk_inject C001 U001 '' '' "\"files\": [$(sk_file F909 k.png image/png 'chunked bytes')]")"
+sk_poll "$ROOT"
+assert_eq "$RC=$(text_of "$ROOT" "C001:$FM8")|$(cat "$FILES_DIR/F909-k.png")" "0=$FILES_DIR/F909-k.png|chunked bytes" \
+  "a whole chunked body with no Content-Length is saved with the bytes Slack served"
+assert_eq "$(ls -A "$FILES_DIR" | sed 's/^F906-n*$/F906-long/' | tr '\n' ' ')" "F901-shots_shot_one.png F902-err.log F905-page.html F906-long F909-k.png " \
   "a download that failed or was cut leaves no file behind"
 
 # --- catch-up over pages -------------------------------------------------------------
@@ -629,7 +635,15 @@ assert_eq "$(text_of "$ZETA" "$ZETA_CH:$FC6")|$(cat "$ZETA_FILES/F917-i.png")" "
   "control: the length unchecked, a body cut short is saved as the file"
 sk_bin_reset
 
-sk_mutant http-exception api.py 'except \(OSError, http\.client\.HTTPException\) as err:' 'except OSError as err:'
+sk_mutant no-length api.py 'declared = resp\.headers\.get\("Content-Length"\)' 'declared = resp.headers.get("Content-Length", "0")'
+sk_ctl /_test/fault '{"method": "download", "chunked": true}' >/dev/null
+FC8="$(sk_inject "$ZETA_CH" U001 '' '' "\"files\": [$(sk_file F919 l.png image/png 'chunked bytes')]")"
+sk_poll "$ZETA"
+assert_eq "$(text_of "$ZETA" "$ZETA_CH:$FC8")" "file F919 not fetched: truncated 13 of 0 bytes" \
+  "control: a missing Content-Length read as zero, a whole chunked body is refused"
+sk_bin_reset
+
+sk_mutant http-exception api.py 'except http\.client\.HTTPException as err:' 'except LookupError as err:'
 sk_ctl /_test/fault '{"method": "download", "cut": "chunked"}' >/dev/null
 FC7="$(sk_inject "$ZETA_CH" U001 'chunks' '' "\"files\": [$(sk_file F918 j.png image/png 'cut bytes')]")"
 sk_poll "$ZETA"

@@ -15,7 +15,8 @@ response, or with `refuse` redirect to a port nothing listens on, which the
 client meets as a refused connection before its request is written, or with
 `signin` Slack's sign-in page, or with `cut` a body the connection closes
 halfway through: `length` under its full Content-Length, `chunked` inside
-its first chunk. A download's method is `download`.
+its first chunk, or with `chunked: true` the whole file in two chunks and
+no Content-Length. A download's method is `download`.
 """
 
 from __future__ import annotations
@@ -131,6 +132,18 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.flush()
         self.close_connection = True
 
+    def send_chunked(self, data: bytes, content_type: str) -> None:
+        """`data` whole in two chunks, with no Content-Length."""
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        half = len(data) // 2
+        for part in (data[:half], data[half:]):
+            if part:
+                self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part))
+        self.wfile.write(b"0\r\n\r\n")
+
     def body(self) -> bytes:
         length = int(self.headers.get("Content-Length", "0") or 0)
         return self.rfile.read(length) if length else b""
@@ -169,6 +182,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send_bytes(SIGNIN, "text/html; charset=utf-8")
                     if fault.get("cut"):
                         return self.send_cut(fault["cut"], self.ws.files[path[len("/_files/") :]][0])
+                    if fault.get("chunked"):
+                        return self.send_chunked(*self.ws.files[path[len("/_files/") :]])
                     if fault.get("status"):
                         return self.send_json({"ok": False}, fault["status"], {"Retry-After": str(fault.get("retry_after", 0))})
                     return self.send_json({"ok": False, "error": fault["error"]})

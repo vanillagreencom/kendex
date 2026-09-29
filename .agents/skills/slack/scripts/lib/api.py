@@ -9,16 +9,17 @@ A network failure is one of two keys, by where urllib raised it. urllib wraps
 every error of the request phase, the connect, the TLS handshake and the
 write of the body, in `URLError`: Slack never read the request, so the call
 is `slack-unreachable` and is safe to make again. An error raised bare comes
-from the response phase, after the request was written, and so does
-http.client's own `HTTPException`, a response cut short or malformed: Slack
-may have acted on it, so the call is `slack-response-lost`. The relay journals an envelope
+from the response phase, after the request was written: Slack may have acted
+on it, so the call is `slack-response-lost`. The relay journals an envelope
 post lost this way as unknown and never repeats it; a read is made again on
 the next poll.
 
 A file download is no API method: Slack answers it with the file, an HTTP
 status, or, when the app lacks `files:read`, its sign-in page with 200. A
 body that ends short of its Content-Length reads as a clean end in
-http.client, so the download counts the bytes itself.
+http.client, so the download counts the bytes itself. A chunked body cut
+short raises http.client's own `HTTPException`, which the download alone
+refuses as `file-not-fetched`; every other call leaves it uncaught.
 """
 
 from __future__ import annotations
@@ -73,7 +74,7 @@ class Slack:
             raise
         except urllib.error.URLError as err:
             raise Refusal("slack-unreachable", f"{label} ({err.reason})") from err
-        except (OSError, http.client.HTTPException) as err:
+        except OSError as err:
             raise Refusal("slack-response-lost", f"{label} ({err})") from err
 
     def _request(self, req: urllib.request.Request, method: str) -> Dict:
@@ -129,8 +130,9 @@ class Slack:
     def download(self, url: str, mimetype: str, out: BinaryIO) -> None:
         """A message's file from its `url_private_download`, streamed into
         `out`. Refused `file-not-fetched` with the HTTP status, with the
-        sign-in page Slack sends in place of any file but an HTML one, or
-        with the bytes of a body that ended short of its Content-Length."""
+        sign-in page Slack sends in place of any file but an HTML one, with
+        the bytes of a body that ended short of its Content-Length, or with
+        http.client's error on a chunked body cut short."""
 
         def copy(resp) -> None:
             if resp.headers.get_content_type() == "text/html" and mimetype != "text/html":
@@ -152,6 +154,8 @@ class Slack:
             self._open(req, "download", copy)
         except urllib.error.HTTPError as err:
             raise Refusal("file-not-fetched", f"HTTP {err.code}") from err
+        except http.client.HTTPException as err:
+            raise Refusal("file-not-fetched", f"download ({err})") from err
 
     def upload(self, filename: str, data: bytes, channel: str, comment: str, thread_ts: Optional[str]) -> str:
         """The three-step external upload; returns the file id."""
