@@ -201,11 +201,12 @@ fi
 # workflow is a second seam and a coarser one: eight steps loop over rosters
 # of suite files, and since two of them name individual paths inside a package
 # another one globs, the file-level partition can no longer be read off the
-# globs. Each of the eight also carries a fallback that runs a suite here when
-# no other step claims it, and a fallback satisfied by a path written in a
-# COMMENT would let two shards both skip the same suite and both exit 0. The
-# aggregator asserts job success, never suite count, so nothing downstream
-# sees the loss.
+# globs. Three of the eight, the commit-guards, tools and rest steps, also
+# carry a fallback: each runs a suite another step claims only while that
+# step's path or glob is missing from the workflow's run text. A fallback
+# satisfied by a path written in a COMMENT would let two shards both skip the
+# same suite and both exit 0. The aggregator asserts job success, never
+# suite count, so nothing downstream sees the loss.
 #
 # Rosters are taken by RUNNING each step's run block against a `bash` that
 # does nothing, in a sandbox whose workflow is the copy under test and whose

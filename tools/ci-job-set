@@ -47,9 +47,10 @@
 #     it under `dependencies.required` in its SKILL.md, carries the change
 #     on: that skill counts as changed and is searched for in turn, until no
 #     search finds a new one. A reference the search cannot see, a path a
-#     script assembles at run time, is outside this rule, save the one
+#     script assembles at run time, is outside this rule, save the two
 #     want_package states: pi-hooks runs hooks by name, so hooks/ also
-#     selects `node`.
+#     selects `node`, and harness-smoke reads hooks/*.sh by glob, so
+#     hooks/ also selects `guards-tools-tail`.
 #   - A changed file citing a shard by name in backticks selects
 #     `guards-tools-tail`, whose orch-shard-partition suite holds every
 #     citation to the roster.
@@ -372,8 +373,9 @@ want_package() { # PACKAGE
     skills/*) want_shard rest ;;
     tools) want_shard guards-tools guards-tools-tail ;;
     # pi-hooks' suite runs real hooks by a path it builds from each hook's
-    # name, which no search for the path can find.
-    hooks) want_shard guards-hooks node ;;
+    # name, and tools/tests/harness-smoke.test.sh reads every hooks/*.sh by
+    # glob; no search for the path can find either.
+    hooks) want_shard guards-hooks guards-tools-tail node ;;
     pi-extensions/pi-claude-bridge) want_shard node pi-claude-bridge ;;
     pi-extensions) want_shard node ;;
   esac

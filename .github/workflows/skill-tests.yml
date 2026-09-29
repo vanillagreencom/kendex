@@ -52,16 +52,15 @@ name: Skill Tests
 # skills/orch/tests/run-all.sh now runs a shard's suites `nproc` at a time
 # and prints one `suite=<name> seconds=<n>` line per suite, so their next CI
 # run re-measures them, and the comment above the orch shard steps holds
-# run 36195213656's figures. `worktree` on macOS, and `linear` and `rest` on
-# Linux do not run through run-all.sh and stand past their figure pending a
-# split.
+# run 36195213656's figures. `worktree` on macOS, `linear` and `rest` on
+# Linux, and `guards-tools` and `guards-tools-tail` on both runners do not
+# run through run-all.sh and stand past their figure pending a split.
 #
-# THE `guards-hooks`, `guards-tools` AND `guards-tools-tail` SHARDS carry a
-# stated target: eight minutes of summed suite time on Linux and fourteen on
-# macOS, the figures they were cut to. The comment above their steps gives
-# each shard's figure.
-# Each target sits under its leg's job ceiling below, so a shard that grows
-# past its target is split again before the ceiling cancels it.
+# THE `guards-hooks`, `guards-tools` AND `guards-tools-tail` SHARDS were cut
+# to eight minutes of summed suite time on Linux and fourteen on macOS, under
+# the 15- and 30-minute job ceilings below. No step measures those sums: they
+# are the figures to re-measure against when one of those legs nears its
+# ceiling. The comment above their steps gives each shard's figure.
 #
 # A SPLIT GOES AS FAR AS ITS SEAM REACHES and no further — a name partition, a
 # scans-against-suites cut, a package boundary with its slowest tail moved
@@ -358,7 +357,7 @@ jobs:
   # review-gate 58s, orch 250s, node 101s, pi-claude-bridge 45s; after it the
   # shell shards are guards ~230s, linear ~205s, rest ~170s.
   #
-  # THE THREE `guards-` SHARDS, `orch-state` AND `worktree` came from the
+  # THE FIRST `guards-` SPLIT, `orch-state` AND `worktree` came from the
   # macOS leg passing its ten-minute ceiling: guards ran 901-1061s there, rest
   # 735-845s and orch-rest 567-675s. Each of the three splits divides its
   # roster by MEASURED SECONDS rather than by file count, so a shard is half
@@ -376,9 +375,9 @@ jobs:
   # `guards-hooks` and `guards-tools-tail` beside it, as the comment above
   # their steps records.
   #
-  # THE macOS LEG runs the selected shell shards of the twelve a second time,
-  # in the merge group, on the runner whose /bin/bash is 3.2.57, the shell
-  # every skill claims to support (skills/AGENTS.md). tools/bash32-lint
+  # THE macOS LEG runs the selected shell shards a second time, in the merge
+  # group, on the runner whose /bin/bash is 3.2.57, the shell every skill
+  # claims to support (skills/AGENTS.md). tools/bash32-lint
   # scans the source for that claim; this leg runs it, which is the only way
   # to reach what a text scan cannot — a quoted builtin name, a construct
   # assembled at runtime. The image's only
@@ -828,9 +827,9 @@ jobs:
           pipx install --force ruff==0.16.2
           test "$(ruff --version)" = "ruff 0.16.2"
 
-      # The two names below are the moved tail, and this shard is their
-      # fallback: each is skipped only where another step RUNS it, and runs
-      # here otherwise. `claims` is this file with its comment lines dropped,
+      # This shard is the fallback for the moved tail: a suite of the glob is
+      # skipped only where another step RUNS it by path, and runs here
+      # otherwise. `claims` is this file with its comment lines dropped,
       # so a path that survives only in prose proves nothing — without that
       # drop, moving a path from the `guards-hooks` loop into the comment
       # above it would leave both shards skipping the suite and both green,
@@ -845,14 +844,9 @@ jobs:
           fail=0
           failed=""
           for t in skills/commit-guards/tests/*.sh; do
-            case "${t##*/}" in
-              install-git-hooks.test.sh | md-refs.test.sh)
-                if printf '%s\n' "$claims" | grep -qF "$t"; then
-                  continue
-                fi
-                echo "no other shard names $t — running it here"
-                ;;
-            esac
+            if printf '%s\n' "$claims" | grep -qF "$t"; then
+              continue
+            fi
             echo "=== $t"
             if ! bash "$t"; then
               echo "FAILED: $t"
@@ -874,9 +868,8 @@ jobs:
         if: matrix.shard == 'guards-tools'
         run: tools/installer-pin --check
 
-      # The two names below are `guards-tools-tail`'s roster, and this shard
-      # is their fallback in the way the `guards-commit` step above is for
-      # its moved tail.
+      # This shard is the fallback for `guards-tools-tail`'s roster in the way
+      # the `guards-commit` step above is for its moved tail.
       - name: tools suites
         if: matrix.shard == 'guards-tools'
         run: |
@@ -886,14 +879,9 @@ jobs:
           fail=0
           failed=""
           for t in tools/tests/*.test.sh; do
-            case "${t##*/}" in
-              harness-smoke.test.sh | orch-shard-partition.test.sh)
-                if printf '%s\n' "$claims" | grep -qF "$t"; then
-                  continue
-                fi
-                echo "no other shard names $t — running it here"
-                ;;
-            esac
+            if printf '%s\n' "$claims" | grep -qF "$t"; then
+              continue
+            fi
             echo "=== $t"
             if ! bash "$t"; then
               echo "FAILED: $t"

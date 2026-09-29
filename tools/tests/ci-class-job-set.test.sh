@@ -31,7 +31,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERIFY_LANES="${VERIFY_ROW% shards=*}"
 # The fixture checkouts' rows, where no script or suite reads a path: a
 # build input runs `rest`, which builds kendex-cli for harness-ci's rows, and
-# a tools/ path its suites' shard and the scans.
+# a tools/ path its suites' two shards and the scans.
 BUILD_ROW="$(measured linux false true true '["rest"]')"
 TOOL_ROW="$(measured linux false true false '["guards-scans","guards-tools","guards-tools-tail"]')"
 # Where a shard runs, and where none does.
@@ -95,7 +95,7 @@ micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|$ORCH
 micro|false|skills/orch/scripts/lanes|$SHARD_CODE|$ORCH_ALL +guards-scans +guards-tools +rest
 standard|false|skills/orch/scripts/lanes tools/guard|$SHARD_CODE|$ORCH_ALL +guards-tools +rest
 micro|false|tools/tests/example.test.sh|$SHARD_CODE|+guards-scans +guards-tools +guards-tools-tail -guards-hooks $NO_SKILL
-micro|false|hooks/lane-mail-check|$SHARD_CODE|+guards-scans +guards-hooks
+micro|false|hooks/lane-mail-check|$SHARD_CODE|+guards-scans +guards-hooks +guards-tools-tail
 micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL +guards-tools
 micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL -guards-scans
 micro|false|skills/orch/scripts/lane-mail|$SHARD_CODE|+guards-tools
@@ -106,8 +106,8 @@ micro|false|skills/github/scripts/lib/gh-auth.sh|$SHARD_CODE|+rest +worktree
 micro|false|skills/orch/scripts/lib/branch-growth.sh|$SHARD_CODE|+review-gate +rest
 micro|false|$SETTINGS_TOML|$SHARD_CODE|+guards-tools
 micro|false|$LOCAL_TOML|$SHARD_CODE|+guards-tools
-micro|false|$DISCOVER_RS|$SHARD_BUILD|+guards-hooks +rest
-micro|false|.claude/hooks/lane-mail-check|$SHARD_CODE|+guards-hooks
+micro|false|$DISCOVER_RS|$SHARD_BUILD|+guards-hooks +guards-tools-tail +rest
+micro|false|.claude/hooks/lane-mail-check|$SHARD_CODE|+guards-hooks +guards-tools-tail
 micro|false|pi-extensions/pi-qol/src/x.ts|$SHARD_CODE|+node -pi-claude-bridge
 micro|false|pi-extensions/pi-claude-bridge/src/x.ts|$SHARD_CODE|+node +pi-claude-bridge
 micro|false|hooks/block-bare-cd.sh|$SHARD_CODE|+node
@@ -295,8 +295,8 @@ CONTROLS
 #   worktree's script sources github's lib, and orch declares worktree;
 #   harness-ci's script sources orch's lib, and review-gate declares
 #   harness-ci;
-#   commit-guards' suite runs preflight, and doc-limits and worktree declare
-#   commit-guards;
+#   commit-guards' suites run preflight and read docs/guard/refs.md, and
+#   doc-limits and worktree declare commit-guards;
 #   a tools/ suite reads kendex.settings.toml and names atomic-install.sh and
 #   README.md; hooks/ suites read crates/demo/src/discover.rs and
 #   docs/x/policy.md; a Pi package's suite runs tools/demo-tool;
@@ -326,6 +326,7 @@ skill price-handling ''
 printf '. "$(dirname "$0")/../../github/scripts/lib/gh-auth.sh"\n' >"$SEL_WORLD/skills/worktree/scripts/worktree"
 printf '. "$HERE/../../orch/scripts/lib/branch-growth.sh"\n' >"$SEL_WORLD/skills/harness-ci/scripts/change-class"
 printf 'run "$R/.agents/skills/preflight/scripts/preflight"\n' >"$SEL_WORLD/skills/commit-guards/tests/scope.test.sh"
+printf 'refs "$ROOT/docs/guard/refs.md"\n' >"$SEL_WORLD/skills/commit-guards/tests/refs.test.sh"
 printf 'read "$ROOT/kendex.settings.toml" lib/atomic-install.sh README.md\n' >"$SEL_WORLD/tools/tests/settings.test.sh"
 printf 'DISCOVER="$TEST_DIR/../../crates/demo/src/discover.rs"\n' >"$SEL_WORLD/hooks/tests/discover.test.sh"
 printf 'policy "$ROOT/docs/x/policy.md"\n' >"$SEL_WORLD/hooks/tests/policy.test.sh"
@@ -348,11 +349,12 @@ skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-hooks
 kendex.settings.toml|["guards-tools","guards-tools-tail"]
 install.sh|[]
 README.md|[]
-crates/demo/src/discover.rs|["guards-hooks","rest","node"]
-.claude/hooks/lane-mail-check|["guards-hooks","node"]
-.pi/kendex/hooks/lane-mail-check|["guards-hooks","node"]
-hooks/block-bare-cd.sh|["guards-scans","guards-hooks","node"]
-docs/x/policy.md|["guards-hooks","node"]
+crates/demo/src/discover.rs|["guards-hooks","guards-tools-tail","rest","node"]
+.claude/hooks/lane-mail-check|["guards-hooks","guards-tools-tail","node"]
+.pi/kendex/hooks/lane-mail-check|["guards-hooks","guards-tools-tail","node"]
+hooks/block-bare-cd.sh|["guards-scans","guards-hooks","guards-tools-tail","node"]
+docs/x/policy.md|["guards-hooks","guards-tools-tail","node"]
+docs/guard/refs.md|["guards-commit","guards-hooks"]
 tools/demo-tool|["guards-scans","guards-tools","guards-tools-tail","node"]
 skills/AGENTS.md|["guards-scans","guards-tools-tail"]
 docs/cite.md|["guards-tools-tail"]
@@ -361,7 +363,7 @@ agents/reviewer.md|[]
 .kendex-lock.json|[]
 skills/CLAUDE.md|["guards-scans"]
 ROWS
-[ "$world_rows" -ge 19 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
+[ "$world_rows" -ge 20 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
 
 # The shard selection's rules, each removed from a copy run over the fixture
 # world: the copy must answer its path other than the script does. Fields
@@ -392,7 +394,9 @@ s/^\$path" ;;$/" ;;/@kendex.settings.toml
 /^      \*\.md | \*\.markdown) ;;$/d@README.md
 s/^      \*\/\*) pending="\$pending$/      *.md | *.markdown) ;; *\/*) pending="$pending/@docs/x/policy.md
 s/0) want_shard guards-tools-tail ;;/0) ;;/@docs/cite.md
-s/hooks) want_shard guards-hooks node ;;/hooks) want_shard guards-hooks ;;/@hooks/block-bare-cd.sh
+s/hooks) want_shard guards-hooks guards-tools-tail node ;;/hooks) want_shard guards-hooks guards-tools-tail ;;/@hooks/block-bare-cd.sh
+s/hooks) want_shard guards-hooks guards-tools-tail node ;;/hooks) want_shard guards-hooks node ;;/@hooks/block-bare-cd.sh
+s/skills\/commit-guards) want_shard guards-commit guards-hooks ;;/skills\/commit-guards) want_shard guards-commit ;;/@docs/guard/refs.md
 /^  \/\^pi-extensions\\\/\/ { package = "pi-extensions" }$/d@tools/demo-tool
 s/^\.\.\/\$1\/"$/"/@skills/orch/scripts/lib/branch-growth.sh
 s/^        want_package tools$/        :/@skills/price-handling/scripts/x
