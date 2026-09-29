@@ -36,7 +36,7 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
    git -C [WT_PATH] diff --name-only [PRE_RESTACK_HEAD] HEAD -- .agents/skills/ .github/instructions/
    ```
 
-   A session keeps the skill text it loaded, so a rule that landed on the base under the branch stays unseen until the file is read again. An empty list needs nothing. Otherwise, before its next round, the lane reads again `[WT_PATH]/<path>` for each listed path its session loaded, or states the rule change in its round notes. A dev session reused after the restack finds the same list itself, by [dev SKILL.md § Round Contract](../../dev/SKILL.md#round-contract).
+   A session keeps the skill text it loaded, so a rule that landed on the base under the branch stays unseen until the file is read again. An empty list needs nothing. Otherwise read again now `[WT_PATH]/<path>` for each listed path this session has loaded, before the validation run below and step 3. A dev session reused after the restack finds the same list itself, by [dev SKILL.md § Round Contract](../../dev/SKILL.md#round-contract).
 
    Then validate the restacked head before step 3 pushes it. Where a run is made, the head that leaves step 3 is always a head a passing run recorded, and step 3 holds that across its push. Bind the base branch the restack rebased onto as `[BASE_BRANCH]`, and read the mode a range run in the worktree records:
 
