@@ -686,8 +686,8 @@ fn head(checked: usize, failed: usize, named: bool, beside: usize) -> String {
 
 /// What a scope asks to have installed, by kind and name.
 ///
-/// [`planned_declarations`] is the engine's own answer to that question,
-/// so a bundle counts as the members it brings in rather than as a name
+/// [`planned_closure`] is the engine's own answer to that question, with
+/// whether its expansion reached every declaration, so a bundle counts as the members it brings in rather than as a name
 /// the manifest happens to hold, and a scope whose only declaration is a
 /// bundle is not read as asking for nothing. It costs one expansion pass,
 /// which is less than the `audit` this verb already runs on every scope.
