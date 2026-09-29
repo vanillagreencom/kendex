@@ -466,9 +466,9 @@ new_copilot_named() { # NAME [JUDGE]
   record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
 }
 # shellcheck disable=SC2207
-COP_OTHER_ENV=($(overseer_env %3))
+COP_OTHER_ENV=("HOME=$COP_HOME" $(overseer_env %3))
 # shellcheck disable=SC2207
-COP_NAMED_ENV=($(overseer_env))
+COP_NAMED_ENV=("HOME=$COP_HOME" $(overseer_env))
 new_copilot_named copilot_overseer
 peer_send 'For the named session.'
 CALL_ENV=("${COP_OTHER_ENV[@]}")
@@ -481,14 +481,14 @@ for arm in start prompt deliver stop; do
   assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") stderr=$(first_line)" "RC=0 stdout= stderr=-" \
     "$arm: a second Copilot session in another pane is handed nothing from the overseer mailbox"
 done
-CALL_ENV=()
+CALL_ENV=("HOME=$COP_HOME")
 assert_eq "$(overseer_unread 'For the named session.')" "1" "and the note stays unread for the named session"
 CALL_ENV=("${COP_NAMED_ENV[@]}")
 copilot_context start
 assert_eq "RC=$RC context=$(stdout_field '.additionalContext' | head -n 1) carried=$(stdout_field '.additionalContext' | grep -cF 'For the named session.')" \
   "RC=0 context=lane-mail-check: unread=1 carried=1" "the named Copilot session is handed the note at its session start"
 copilot_context prompt
-CALL_ENV=()
+CALL_ENV=("HOME=$COP_HOME")
 assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") unread=$(overseer_unread 'For the named session.')" "RC=0 stdout= unread=0" \
   "and marks it read, so its next prompt is handed nothing"
 
@@ -583,7 +583,7 @@ peer_send 'Taken by another pane.'
 CALL_ENV=("${COP_OTHER_ENV[@]}")
 copilot_context prompt
 # shellcheck disable=SC2034 # run_payload in lib/lane-mail-world.sh reads it
-CALL_ENV=()
+CALL_ENV=("HOME=$COP_HOME")
 assert_eq "RC=$RC context=$(stdout_field '.additionalContext' | head -n 1)" "RC=0 context=lane-mail-check: unread=1" \
   "control: without the record test a second Copilot session is handed the named session's note at its prompt"
 
