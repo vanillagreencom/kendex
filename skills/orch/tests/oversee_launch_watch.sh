@@ -31,7 +31,9 @@ BYPASS="$(launch_choice_permission_write claude)" || { echo "fixture: no claude 
 QUESTION_OFF="$(launch_choice_question_off claude)"
 COMPACT="$(launch_choice_compaction_off claude)"
 
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "oversee_launch_watch: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "oversee_launch_watch: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "oversee_launch_watch: scratch=resolve-failed" >&2; exit 1; }
 TMUX_DIR="$TMP_ROOT/tmux"
 mkdir -p "$TMUX_DIR"
 cleanup() {
@@ -54,6 +56,8 @@ BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN" "$TMP_ROOT/work/tmp" "$TMP_ROOT/fixture"
 # A checkout, which the real watch's mailbox reads resolve their root in.
 git init -q "$TMP_ROOT/work"
+git -C "$TMP_ROOT/work" config gc.auto 0
+git -C "$TMP_ROOT/work" config maintenance.auto false
 # The harness: it shows a running turn and holds its pane until its sleep,
 # whose pid it writes under its pane's number, is killed, which returns the
 # pane to the shell the launch line was typed into.
