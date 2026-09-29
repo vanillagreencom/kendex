@@ -120,8 +120,9 @@ reset(); run(overrides={'KENDEX_ISSUES_TOKEN':''}); assert len(run()['issues'])=
 reset(); assert run(rows=[dict(findings[0],path='src/private.py')])['writes']==[]
 assert results==[{'root':10,'issue':None,'note':'Not a rendered file'}]
 # Only a kendex report route to kendex with a package label files. The lock and
-# an agent render are inventory paths no package claims, and a package routed
-# elsewhere is not kendex's: none is filed, and the note says why.
+# a Copilot agent render are inventory paths no package claims, and a package
+# routed elsewhere is not kendex's: none is filed, the note says why, and the
+# summary row carries the evidence but no kendex filing link.
 foreign_lock=json.loads((root/'historical-lock.json').read_text())
 foreign_lock['entries']['skill:review-gate:codex']['sourceRepo']='another/catalog'
 (root/'foreign-lock.json').write_text(json.dumps(foreign_lock))
@@ -133,8 +134,9 @@ not_filed_rows=[
  ('elsewhere', findings[0], {'HISTORICAL_LOCK':str(root/'foreign-lock.json')}, elsewhere),
 ]
 def not_filed(driver, row, overrides, note):
- reset(); world=run(driver,rows=[row],overrides=overrides)
- return world['writes']==[] and results==[{'root':10,'issue':None,'note':note}]
+ reset(); world=run(driver,rows=[row],overrides=overrides); text=summary.read_text()
+ return (world['writes']==[] and results==[{'root':10,'issue':None,'note':note}]
+         and row['url'] in text and 'issues/new' not in text)
 for name, row, overrides, note in not_filed_rows:
  assert not_filed(skill/'scripts/refresh-report.py', row, overrides, note), name
 # A late merged-PR report must keep the recorded package route after removal
@@ -184,12 +186,16 @@ for needle,replacement,overrides,runs in [
  reset()
  for extra in runs: run(mutant,overrides=dict(overrides,**extra))
  assert results[0]['issue'] is not None and not results[0]['issue'].endswith('/issues/1')
-# Filing without a kendex route and package label turns every not-filed row red.
-needle='        if token and label:\n'
-assert source.count(needle)==1
-mutant=root/'label.py'; mutant.write_text(source.replace(needle,'        if token and (label or True):\n'))
-for name, row, overrides, note in not_filed_rows:
- assert not not_filed(mutant, row, overrides, note), name
+# Filing, or offering the filing link, without a kendex route and package
+# label turns every not-filed row red.
+for needle,replacement in [
+ ('        if token and label:\n', '        if token and (label or True):\n'),
+ ('url = fallback if label else None', 'url = fallback if label or True else None'),
+]:
+ assert source.count(needle)==1
+ mutant=root/'label.py'; mutant.write_text(source.replace(needle,replacement))
+ for name, row, overrides, note in not_filed_rows:
+  assert not not_filed(mutant, row, overrides, note), (name, replacement)
 PY
 then ok 'reporter token isolation, render binding, labels, evidence, duplicate handling and permission fallback'; else bad 'reporter behavior and controls'; fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
