@@ -1018,7 +1018,9 @@ resolve_default_branch() { # [optional]
   if declare -F kendex_github_default_branch >/dev/null 2>&1; then
     # The reader writes stderr only when it fails, so one capture holds the
     # branch or its diagnostic, which goes under this script's own record.
-    answer="$(kendex_github_default_branch "$PROJECT_ROOT" 2>&1)" || rc=$?
+    # It answers for this checkout, as merged_pr_for_branch does: an inherited
+    # GH_REPO would name another repository's default branch.
+    answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?
     case "$rc" in
       0) DEFAULT_BRANCH="$answer"; return 0 ;;
       3) ;;

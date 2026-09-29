@@ -43,7 +43,8 @@ assert_eq() {
 # --- the forge ----------------------------------------------------------------
 # GH_SLUG is what `gh repo view` names, `-` for a checkout gh finds no GitHub
 # repository for; GH_DEFAULT is the repository's default_branch, FAIL for a
-# read GitHub refuses. No merged pull request carries any branch.
+# read GitHub refuses; any other repository's default_branch is foreign. No
+# merged pull request carries any branch.
 mkdir -p "$TMP_ROOT/bin"
 cat >"$TMP_ROOT/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -58,11 +59,14 @@ case "${1:-}:${2:-}" in
     printf '%s\n' "$GH_SLUG"
     ;;
   api:repos/*)
-    if [[ "$GH_DEFAULT" == FAIL ]]; then
+    if [[ "$2" != "repos/$GH_SLUG" ]]; then
+      printf 'foreign\n'
+    elif [[ "$GH_DEFAULT" == FAIL ]]; then
       echo "gh: Not Found (HTTP 404)" >&2
       exit 1
+    else
+      printf '%s\n' "$GH_DEFAULT"
     fi
-    printf '%s\n' "$GH_DEFAULT"
     ;;
 esac
 exit 0
@@ -77,6 +81,8 @@ GH_LOG="$TMP_ROOT/gh.log"
 MAIN="$TMP_ROOT/main"
 mkdir -p "$MAIN"
 git -C "$MAIN" init -q -b main
+git -C "$MAIN" config gc.auto 0
+git -C "$MAIN" config maintenance.auto false
 git -C "$MAIN" config user.email test@example.com
 git -C "$MAIN" config user.name Test
 git -C "$MAIN" config commit.gpgsign false
@@ -85,6 +91,8 @@ git -C "$MAIN" add file.txt
 git -C "$MAIN" commit -q -m base
 printf 'WORKTREE_BASE_DIR="../trees"\n' >"$MAIN/.env.local"
 git init -q --bare "$TMP_ROOT/origin.git"
+git -C "$TMP_ROOT/origin.git" config gc.auto 0
+git -C "$TMP_ROOT/origin.git" config maintenance.auto false
 git -C "$MAIN" remote add origin "$TMP_ROOT/origin.git"
 git -C "$MAIN" push -q -u origin main
 git -C "$MAIN" checkout -q -b develop
@@ -99,7 +107,7 @@ git -C "$MAIN" branch lonely
 # The must-fail controls: copies of the two packages whose worktree script
 # has one whole line replaced, and, where NEXT is given, only the copy of that
 # line the line NEXT follows. `read` takes main in place of the github skill's
-# answer; `refusing` refuses on a failed GitHub read where the script falls
+# answer; `inherited` reads it under the caller's GH_REPO; `refusing` refuses on a failed GitHub read where the script falls
 # back to git's record; `uncalled` cuts check's resolve call; `eager-create`
 # and `eager-remove` resolve whatever create or remove was asked for; `loud`
 # prints the refusal where the caller works without the branch; `lazy-remove`
@@ -127,7 +135,10 @@ mutant() { # NAME FROM TO [NEXT]
   cat -- "$TMP_ROOT/$1.edit" >"$script"
 }
 # shellcheck disable=SC2016 # each line is the script's own text, not expanded
-mutant read '    answer="$(kendex_github_default_branch "$PROJECT_ROOT" 2>&1)" || rc=$?' '    answer=main'
+mutant read '    answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?' '    answer=main'
+# shellcheck disable=SC2016 # each line is the script's own text, not expanded
+mutant inherited '    answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?' \
+  '    answer="$( (cd "$PROJECT_ROOT" && kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?'
 mutant refusing "        sed 's/^/  /' <<<\"\$answer\" >&2" "        sed 's/^/  /' <<<\"\$answer\" >&2; return 1"
 # shellcheck disable=SC2016 # each line is the script's own text, not expanded
 mutant uncalled '    resolve_default_branch || exit 1' '    :' \
@@ -190,6 +201,8 @@ while IFS='|' read -r label script env_words rc err reads base; do
 done <<'ROWS'
 GitHub's default branch is the one the forge is asked about|real|GH_SLUG=acme/widgets GH_DEFAULT=develop|1|worktree-unmerged: lonely|1|develop
 must-fail: with the read replaced by main, develop's repository is asked about main|read|GH_SLUG=acme/widgets GH_DEFAULT=develop|1|worktree-unmerged: lonely|0|main
+a GH_REPO naming another repository still reads this checkout's default branch|real|GH_SLUG=acme/widgets GH_DEFAULT=develop GH_REPO=other/elsewhere|1|worktree-unmerged: lonely|1|develop
+must-fail: with GH_REPO kept, the other repository's default branch is asked about|inherited|GH_SLUG=acme/widgets GH_DEFAULT=develop GH_REPO=other/elsewhere|1|worktree-unmerged: lonely|1|foreign
 WORKTREE_DEFAULT_BRANCH overrides, and GitHub is not asked|real|GH_SLUG=acme/widgets GH_DEFAULT=develop WORKTREE_DEFAULT_BRANCH=trunk|1|worktree-unmerged: lonely|0|trunk
 a default branch GitHub cannot name warns and takes git's record of origin's HEAD|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|1|worktree-default-branch-unreadable: <root>;worktree-unmerged: lonely|1|main
 must-fail: with the fallback cut, a failed GitHub read refuses where git holds a record|refusing|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|2|worktree-default-branch-unreadable: <root>|1|-
