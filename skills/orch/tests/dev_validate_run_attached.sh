@@ -51,6 +51,8 @@ fi
 make_proj() { # NAME CMD TIMEOUT_SECS
   local dir="$TMP_ROOT/$1"
   git init -q -b main "$dir"
+  git -C "$dir" config gc.auto 0
+  git -C "$dir" config maintenance.auto false
   git -C "$dir" config user.email test@example.com
   git -C "$dir" config user.name Test
   git -C "$dir" config commit.gpgsign false
