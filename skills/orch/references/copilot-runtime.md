@@ -47,7 +47,7 @@ The first three rows are launch settings. A caller's copy of any one of them, ty
 ## Measurement
 
 - Context: `scripts/lib/adapters/copilot.sh` reads the session record, held to the session id, transcript, account and a freshness bound by `scripts/lib/copilot-session.sh`, and hands the shared judge the window's documented compaction point as capacity ([oversee-events.md](oversee-events.md#judgement-rules), Hand off a lane). The record is no credit source.
-- Credits: `lanes` reads the monthly pool through `scripts/lib/copilot-credits.sh`; the record it produces is [schemas/copilot-credits.md](../schemas/copilot-credits.md). A Pi root on a `github-copilot/` model is judged on its stated `ORCH_LANE_COPILOT_POOL` reading, since nothing here reads a Pi root's Copilot login.
+- Credits: `lanes` reads the monthly pool through `scripts/lib/copilot-credits.sh`; the record it produces is [schemas/copilot-credits.md](../schemas/copilot-credits.md). Nothing here reads a Pi root's Copilot login, so a Pi root on a `github-copilot/` model is judged on the lane host's `harness=pi` accounts row for it ([lane-host.md](../schemas/lane-host.md)), or on its stated `ORCH_LANE_COPILOT_POOL` override where no row reads it.
 
 ## Recovery
 

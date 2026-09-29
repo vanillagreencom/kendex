@@ -1,6 +1,6 @@
 # Copilot credit record
 
-The record `lanes` produces for one Copilot account's monthly AI credit pool, read from GitHub's usage endpoint with the account's stored login by [`scripts/lib/copilot-credits.sh`](../scripts/lib/copilot-credits.sh), which owns the endpoint, the login layout and the rules for zero, overage and unlimited. A Pi root on a `github-copilot/` model yields the same record from its stated `ORCH_LANE_COPILOT_POOL` reading.
+The record `lanes` produces for one Copilot account's monthly AI credit pool, read from GitHub's usage endpoint with the account's stored login by [`scripts/lib/copilot-credits.sh`](../scripts/lib/copilot-credits.sh), which owns the endpoint, the login layout and the rules for zero, overage and unlimited. A Pi root on a `github-copilot/` model yields the same record from the lane host's `harness=pi` accounts row for that root ([lane-host.md](lane-host.md)), or, where no row reads it, from its stated `ORCH_LANE_COPILOT_POOL` override.
 
 ## Where it is
 

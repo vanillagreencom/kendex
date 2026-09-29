@@ -20,7 +20,7 @@
 #   lanes pick --lane <config-dir> [--harness claude|codex|copilot|pi]
 #              [--max-pct N | --min-headroom-pct N] [--model NAME]
 #              [--binding-floor] [--projected] [--no-cache] [--json]
-#   lanes host-accounts [--harness claude|codex|copilot|all] [--no-cache] [--json]
+#   lanes host-accounts [--harness claude|codex|copilot|pi|all] [--no-cache] [--json]
 #   lanes context [--json]
 #   lanes check <config-dir|name>
 #   lanes state <item> [--json]
@@ -78,7 +78,9 @@
 #         same dropped row for a field nothing can parse. This is the only
 #         reader of the `accounts` protocol, so a caller asking whether the host
 #         holds an account inherits that validation instead of matching the
-#         provider's bytes for itself. Tab-separated `config-dir` and `harness`
+#         provider's bytes for itself. `all` is the claude, codex and copilot
+#         rows; a Pi root's Copilot pool row comes back under --harness pi
+#         alone. Tab-separated `config-dir` and `harness`
 #         by default, `@tsv`-escaped, so a value carrying a tab, newline or
 #         backslash is printed escaped; --json prints the whole records, each
 #         marked `measured_through: "host"`, and is the exact form a caller
@@ -268,14 +270,21 @@
 #                    that model in every respect, its prefix CLAUDE_CONFIG_DIR.
 #                    A `github-copilot/` model spends the Copilot pool rather
 #                    than any Claude or Codex window, and is judged on that
-#                    pool alone, as ORCH_LANE_COPILOT_POOL states it. Its
-#                    candidates are the accounts that setting names; with no
-#                    entry at all the pick exits 5 as `copilot-pool-unstated`,
-#                    a setting to state rather than a window to wait out, and
-#                    under --lane a directory it names no reading for is
-#                    unmeasured (exit 5), never unlisted. A walled pool stays
-#                    walled until the owner states a new reading. Its records
-#                    say `measured_through: "stated"`, its printed prefix is
+#                    pool alone. The pool is read live where ORCH_LANE_HOST
+#                    names a provider: its `accounts` verb's harness=pi row for
+#                    a Pi root carries the pool as `monthly-pct` and its reset
+#                    as `monthly-resets`, which reach the record as
+#                    `binding_resets_at` (schemas/lane-host.md). The
+#                    ORCH_LANE_COPILOT_POOL setting is the override, judged
+#                    only for a Pi root no provider row reads. Its candidates
+#                    are the Pi roots either names; with neither the pick
+#                    exits 5 as `copilot-pool-unstated`, whose `fix=` line
+#                    names the read that failed and its repair, and under
+#                    --lane a directory neither reads is unmeasured (exit 5),
+#                    never unlisted. A provider row says
+#                    `measured_through: "host"` and a stated reading "stated";
+#                    a stated pool that is walled stays walled until the owner
+#                    states a new reading. The printed prefix is
 #                    PI_CODING_AGENT_DIR, and `list` does not show them. Any
 #                    other provider, and a Pi pick naming no model, exits 5 as
 #                    `pick-provider-unmeasured` in both forms, before any lane
@@ -431,17 +440,19 @@
 #                      waiting: the cache covers a listing or a pick, not a
 #                      read that asked to ask the provider now.
 #   ORCH_LANE_COPILOT_POOL  Comma-separated `<account dir>=<used>/<granted>`
-#                      entries: the owner's reading of the Copilot credits
-#                      each Pi account's pool has used of its monthly grant,
+#                      entries: the override for a Pi account's Copilot pool,
+#                      judged where no provider `accounts` row reads that Pi
+#                      root, the row replacing it where one does (--harness).
+#                      Each entry is the owner's reading of the Copilot credits
+#                      that pool has used of its monthly grant,
 #                      the account dir an absolute path to the Pi root a lane
 #                      on that pool is launched on, as its PI_CODING_AGENT_DIR. `pick --harness pi`
 #                      on a `github-copilot/` model judges it as a `monthly`
 #                      bucket at the used share,
 #                      rounded up, against --max-pct; a pool at or past its
 #                      grant is walled, whatever overage the account permits.
-#                      No provider or endpoint is asked: the reading is what
-#                      the setting says, and an account it names none for is
-#                      unmeasured. A malformed entry, or a second one for an
+#                      No endpoint is asked for an entry: the reading is what
+#                      the setting says. A malformed entry, or a second one for an
 #                      account already stated, refuses that pick. A Copilot
 #                      account dir may be stated too: its reading stands only
 #                      where the account's stored login does not read, the
@@ -673,7 +684,7 @@ message() {
       ;;
     invalid-harness)
       printf 'lanes: invalid-harness option=%s\n' "--harness"
-      printf '%s\n' "--harness must be claude, codex, copilot, or all"
+      printf '%s\n' "--harness must be claude, codex, copilot, or all; host-accounts also takes pi"
       ;;
     invalid-pick-harness)
       printf 'lanes: invalid-pick-harness option=%s\n' "--harness"
@@ -685,7 +696,8 @@ message() {
       ;;
     copilot-pool-unstated)
       printf 'lanes: copilot-pool-unstated model=%s setting=%s\n' "$1" "ORCH_LANE_COPILOT_POOL"
-      printf '%s\n' "no Pi account has a stated Copilot pool reading, so nothing measures what this launch spends, and an unmeasured pool is not an empty one"
+      printf '%s\n' "no lane host row and no ORCH_LANE_COPILOT_POOL entry reads a Copilot pool for any Pi account, so nothing measures what this launch spends, and an unmeasured pool is not an empty one"
+      lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}"
       ;;
     invalid-copilot-pool)
       printf 'lanes: invalid-copilot-pool entry=%s\n' "$1"
@@ -966,8 +978,9 @@ configured_lane_dirs() {
 # the value is the account as it stands.
 lane_dirs() {
 	local configured="" home="${LANES_HOME:-$HOME}" d
-	# A Pi account on the Copilot pool is one the owner states a reading for:
-	# nothing on this machine is discovered as one. The same setting also
+	# A Pi account on the Copilot pool this machine knows is one the owner
+	# states a reading for: nothing here is discovered as one, and a provider's
+	# harness=pi rows join the pick as host rows. The same setting also
 	# states a Copilot CLI account's fallback reading, and such an account is
 	# no Pi root: an entry the copilot inventory lists is left out, so a Pi
 	# launch never opens on a Copilot home holding no Pi login.
@@ -1295,11 +1308,12 @@ copilot_pool_entries() {
 # ORCH_LANE_COPILOT_POOL reading for DIR as a `monthly` bucket, judged by
 # lib/lane-model.sh like every other window, its counts as `credits`, and
 # `measured_through` `stated`: neither this machine nor a provider read it. A
-# Pi root, whose Copilot login nothing here reads, always lands here, and so
-# does a Copilot account whose stored login does not read, WHY naming that
-# cause. Where the setting states nothing for DIR the account is unmeasured,
-# never room: a Pi root `no_usage_data`, a Copilot account `no_credentials`
-# under WHY.
+# Pi root, whose Copilot login nothing on this machine reads, lands here
+# unless a provider's row reads its pool (host_row_or_local), and so does a
+# Copilot account whose stored login does not read, WHY naming that cause.
+# Where the setting states nothing for DIR the account is unmeasured, never
+# room: a Pi root `no_usage_data`, a Copilot account `no_credentials` under
+# WHY.
 measure_copilot_pool() { # ALIAS HARNESS DIR WHY
 	local entries target d pct used limit
 	entries="$(copilot_pool_entries)" || return 1
@@ -1313,7 +1327,7 @@ measure_copilot_pool() { # ALIAS HARNESS DIR WHY
 		return
 	done <<<"$entries"
 	if [[ "$2" == pi ]]; then
-		emit_lane "$1" pi "$3" no_usage_data "ORCH_LANE_COPILOT_POOL states no Copilot pool reading for this account" "" '{}' null false stated
+		emit_lane "$1" pi "$3" no_usage_data "no lane host row and no ORCH_LANE_COPILOT_POOL entry reads a Copilot pool for this account" "" '{}' null false stated
 	else
 		emit_lane "$1" "$2" "$3" no_credentials "$4, and ORCH_LANE_COPILOT_POOL states no reading for this account" "" '{}'
 	fi
@@ -2186,10 +2200,17 @@ collect_lanes() {
 # now. A figure 0 seconds old is the one this run's own fetch returned, which
 # no window is shorter than: a TTL of 0 serves nothing and fetches every run,
 # and that fetch's figure stands.
+#
+# A Pi root is judged on another rule, because its Copilot pool is one reading
+# whichever copy of the seat makes it, and the local record is the
+# ORCH_LANE_COPILOT_POOL override, which carries no age. A HOSTROW that reads
+# the pool replaces the override; one that reads nothing, whatever its status,
+# leaves the override standing where it states a reading, and stands itself,
+# with the provider's status and detail, where it states none.
 host_row_or_local() { # HARNESS DIR HOSTROW
-	local status local_record="" age tmp
-	status="$(jq -r '.status' <<<"$3")" || return 1
-	if [[ "$status" != unreachable ]]; then
+	local trigger local_record="" age tmp
+	trigger="$(jq -r --arg h "$1" 'if $h == "pi" then .headroom_pct == null else .status == "unreachable" end' <<<"$3")" || return 1
+	if [[ "$trigger" != true ]]; then
 		printf '%s\n' "$3"
 		return 0
 	fi
@@ -2208,11 +2229,14 @@ host_row_or_local() { # HARNESS DIR HOSTROW
 	exec 7>&-
 	IFS= read -r local_record <&6 || { exec 6<&-; return 1; }
 	exec 6<&-
-	age="$(jq -r --argjson bound "$(usage_serve_max_age)" '
-		if .headroom_pct != null and (.usage_age_s | type) == "number"
-		   and (.usage_age_s == 0 or .usage_age_s < $bound)
+	age="$(jq -r --arg h "$1" --argjson bound "$(usage_serve_max_age)" '
+		if .headroom_pct == null then empty
+		elif $h == "pi" then "stated"
+		elif (.usage_age_s | type) == "number" and (.usage_age_s == 0 or .usage_age_s < $bound)
 		then .usage_age_s else empty end' <<<"$local_record")" || return 1
-	if [[ -n "$age" ]]; then
+	if [[ "$age" == stated ]]; then
+		printf '%s\n' "$local_record"
+	elif [[ -n "$age" ]]; then
 		message pick-local-reading "$2" "$ORCH_LANE_HOST" "$age" >&2
 		printf '%s\n' "$local_record"
 	else
@@ -2278,8 +2302,11 @@ host_lane_rows() { # HARNESS [READINGS]
 # field, the harness match and the dropped invalid row are decided once.
 #
 # Fields: `account` and `harness`, plus the optional `status`, `detail`,
-# `session-5h-pct`, `weekly-pct`, `model-pct`, `model-label`,
-# `session-resets`, `weekly-resets` and `model-resets`. A percentage the row
+# `session-5h-pct`, `weekly-pct`, `model-pct`, `monthly-pct`, `model-label`,
+# `session-resets`, `weekly-resets`, `model-resets` and `monthly-resets`. A
+# `harness=pi` row names a Pi root and carries that root's Copilot pool as
+# `monthly-pct`; `all` leaves it out, as it leaves Pi out of collect_lanes,
+# and only a caller naming `pi` gets it. A percentage the row
 # omits is a window the provider did not measure, which emit_lane reports as
 # no_usage_data rather than as an idle account. `detail` is the provider's own
 # words for the row's status, carried into the record's `detail` as written,
@@ -2361,7 +2388,7 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE]
 			esac
 		done < <(printf '%s\n' "$line" | tr '\t' '\n')
 		[[ -n "$account" ]] || bad="${bad:-account}"
-		[[ "$harness" =~ ^(claude|codex|copilot)$ ]] || bad="${bad:-harness}"
+		[[ "$harness" =~ ^(claude|codex|copilot|pi)$ ]] || bad="${bad:-harness}"
 		if [[ -n "$bad" ]]; then
 			message host-account-invalid "${account:-<unnamed>}" "$bad" >&2
 			continue
@@ -2370,6 +2397,9 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE]
 		# whichever harness a caller asked for: a provider emitting a malformed
 		# row says so once, not only to the caller that wanted that harness.
 		[[ "$want" == all || "$harness" == "$want" ]] || continue
+		# The cache holds the whole answer, Pi rows included, for every harness
+		# a later read asks for.
+		[[ "$want:$harness" != all:pi || "$mode" == cache ]] || continue
 		[[ "$mode" != readings || -n "$said" ]] || continue
 		# The same two settings that remove a local lane remove a hosted row, and
 		# for the same reason: they are the operator saying the account is not
@@ -2701,10 +2731,9 @@ render_table() {
 # only the second has a remedy, and only that one leaves an account whose
 # copy on another host may still be live.
 # The provider rows both pick forms judge HARNESS on, host_lane_rows' readings.
-# A Pi pick is judged on the Copilot pool the owner states, which no provider
-# copy measures, so it asks no provider and gets none.
+# For a Pi pick these are the provider's harness=pi rows, each a Pi root's
+# Copilot pool, which host_row_or_local sets against the stated override.
 pick_host_rows() { # HARNESS
-	if [[ "$1" == pi ]]; then printf '[]\n'; return 0; fi
 	host_lane_rows "$1" readings
 }
 
@@ -2875,17 +2904,12 @@ omitted_seats() { # HARNESS HOSTED
 cmd_pick() {
 	local harness="$1" max_pct="$2" as_json="$3" model="$4" binding_floor="$5" exclude="$6" for_overseer="$7" burn="$8"
 	local lanes hosted judged chosen walled unmeasured omitted="" seats=0 seat
-	# A Pi account on the Copilot pool is one the setting names, so with no
-	# entry at all nothing measures this launch: exit 5, which is a setting
-	# to state and never a window to wait out. Entries that exclusion removed
-	# are a pick with no candidate, answered as one below.
-	local pool_entries
+	# A Pi account on the Copilot pool is a Pi root the provider reports a
+	# harness=pi row for or the override names. The override is refused here
+	# when nobody can parse it, before anything is read.
+	local pool_entries=""
 	if [[ "$harness" == pi ]]; then
 		pool_entries="$(copilot_pool_entries)" || return 1
-		if [[ -z "$pool_entries" ]]; then
-			message copilot-pool-unstated "${model:-none}" >&2
-			return 5
-		fi
 	fi
 	load_lane_claims fleet
 	# An unreadable claim store reads as "no launches in flight", which is the
@@ -2898,6 +2922,14 @@ cmd_pick() {
 	fi
 	# After the claim load: emit_lane counts claims on every host row it writes.
 	hosted="$(pick_host_rows "$harness")"
+	# With neither a provider row nor an override entry nothing measures this
+	# Pi launch: exit 5, a read to repair and never a window to wait out.
+	# Entries that exclusion removed are a pick with no candidate, answered as
+	# one below.
+	if [[ "$harness" == pi && -z "$pool_entries" && "$hosted" == "[]" ]]; then
+		message copilot-pool-unstated "${model:-none}" >&2
+		return 5
+	fi
 	lanes="$(collect_lanes "$harness" "$exclude"$'\n'"$SEATS" "$hosted")"
 	# PARTITIONED on lib/lane-model.sh's verdict, never filtered on a predicate
 	# written out again here: the named form reads the same definition, so the
@@ -3291,7 +3323,7 @@ case "$SUB" in
 		;;
 	host-accounts)
 		HARNESS="${HARNESS:-all}"
-		[[ "$HARNESS" =~ ^(claude|codex|copilot|all)$ ]] || die invalid-harness "$@"
+		[[ "$HARNESS" =~ ^(claude|codex|copilot|pi|all)$ ]] || die invalid-harness "$@"
 		validate_lane_settings
 		# `local` names no provider, so there is no host copy to report. Refused
 		# rather than answered as 2: the dispatcher's own refusal of a provider

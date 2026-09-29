@@ -369,6 +369,101 @@ assert_eq "$(rate_row "$CTL_RATE/lanes")" '["monthly","one-sample",null]' \
 ROW_ENV=()
 LANES_BIN=""
 
+echo "=== a Pi pick reads the Copilot pool from the provider's harness=pi row ==="
+# The provider's accounts verb, the fixture lane host answering a file, carries
+# a Pi root's pool as a harness=pi row. The row with a reading replaces the
+# ORCH_LANE_COPILOT_POOL override for its root; one with none leaves the
+# override standing; with neither the pick refuses with a fix= line naming the
+# read that failed. `pi_row NAME PCT [STATUS]` writes one row for $H/.pi1.
+new_home pihost
+mkdir -p "$H/.pi1"
+PI_MODEL=(--harness pi --model github-copilot/gpt-5)
+pi_row() { # NAME PCT [STATUS]
+  if [[ -n "$2" ]]; then
+    printf 'account=%s\tharness=pi\tmonthly-pct=%s\tmonthly-resets=2026-10-07T00:00:00Z\n' "$H/.pi1" "$2"
+  else
+    printf 'account=%s\tharness=pi\tstatus=%s\tdetail=http-403-forbidden\n' "$H/.pi1" "$3"
+  fi > "$TMP_ROOT/pi-$1.tsv"
+}
+pi_row room 40
+pi_row walled 97
+pi_row refused "" refused
+: > "$TMP_ROOT/pi-none.tsv"
+PI_HOST="ORCH_LANE_HOST=$TEST_DIR/fixtures/lane-host"
+# pi_run ROWS SETTING ARGS... — `lanes` under the fixture host answering
+# ROWS (`-` for no provider) and SETTING as ORCH_LANE_COPILOT_POOL (`-` for
+# none); OUT, RC, ERR.
+pi_run() {
+  local rows="$1" setting="$2"
+  shift 2
+  ROW_ENV=()
+  [[ "$rows" == - ]] || ROW_ENV+=("$PI_HOST" "LANE_HOST_STUB_LOG=$TMP_ROOT/pi-host.log" "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pi-$rows.tsv")
+  [[ "$setting" == - ]] || ROW_ENV+=("ORCH_LANE_COPILOT_POOL=$H/.pi1=$setting")
+  run_lanes "$@"
+  ROW_ENV=()
+}
+pi_fields() { # JQ — one compact reading of the printed record
+  jq -c "$1" <<<"$OUT" 2>/dev/null || echo unparseable
+}
+fix_line() { # the fix= line on stderr, the host path shortened
+  local line
+  line="$(grep '^fix=' <<<"$ERR" | sed -n 1p)"
+  printf '%s' "${line//$TEST_DIR\/fixtures\/lane-host/HOST}"
+}
+PI_READ='[.config_dir, .measured_through, .monthly_pct, .binding_bucket, .binding_resets_at]'
+pi_run room - pick "${PI_MODEL[@]}" --json
+assert_eq "rc=$RC $(pi_fields "$PI_READ")" "rc=0 [\"$H/.pi1\",\"host\",40,\"monthly\",\"2026-10-07T00:00:00Z\"]" \
+  "a provider row alone is a candidate, with no hand-set number, its reset as binding_resets_at"
+pi_run room 99/100 pick "${PI_MODEL[@]}" --json
+assert_eq "rc=$RC $(pi_fields '[.measured_through, .monthly_pct]')" 'rc=0 ["host",40]' \
+  "the provider's reading replaces a walled override for the same root"
+pi_run walled 1/100 pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
+assert_eq "rc=$RC $(pi_fields '[.measured_through, .wall, .binding_resets_at]')" 'rc=3 ["host",97,"2026-10-07T00:00:00Z"]' \
+  "a walled provider row refuses the named form even where the override has room, dated by its reset"
+pi_run refused 10/100 pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
+assert_eq "rc=$RC $(pi_fields '[.measured_through, .monthly_pct]')" 'rc=0 ["stated",10]' \
+  "a provider row with no reading leaves the override standing"
+pi_run refused - pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
+assert_eq "rc=$RC $(pi_fields '[.status, .detail]')" 'rc=5 ["refused","http-403-forbidden"]' \
+  "with no override the provider's refused row stands, carrying its detail"
+pi_run none - pick "${PI_MODEL[@]}"
+assert_eq "rc=$RC key=$(sed -n 1p <<<"$ERR" | cut -d' ' -f2)" "rc=5 key=copilot-pool-unstated" \
+  "a provider naming no Pi root and no override is unstated"
+assert_eq "$(fix_line)" "fix=no Copilot pool reading for any Pi root: the accounts verb of lane host HOST carried no harness=pi row with monthly-pct for it, and ORCH_LANE_COPILOT_POOL states none; store the Copilot seat on that provider so its accounts row reads the pool (lanes host-accounts --harness pi --no-cache prints what it answers), or state the override ORCH_LANE_COPILOT_POOL=<Pi root>=<credits used>/<credits granted>" \
+  "the unstated refusal under a provider names the accounts read and its repair"
+pi_run - - pick "${PI_MODEL[@]}"
+assert_eq "rc=$RC $(fix_line | cut -d: -f2 | cut -d, -f1)" "rc=5  ORCH_LANE_HOST=local asks no lane host" \
+  "the unstated refusal with no provider names the host setting as the read that was not made"
+pi_run room - list --json
+assert_eq "$(pi_fields '[.[] | select(.harness == "pi")] | length')" 0 "list shows no Pi row"
+pi_run room - host-accounts --json
+assert_eq "$(pi_fields 'length')" 0 "host-accounts under all leaves the Pi row out"
+pi_run room - host-accounts --harness pi --json
+assert_eq "$(pi_fields '[.[] | [.harness, .monthly_pct]]')" '[["pi",40]]' "host-accounts --harness pi prints the Pi row"
+
+echo "=== must-fail controls: the Pi pool read ==="
+lanes_control ctl-pi-rows lanes '[[ "$harness" =~ ^(claude|codex|copilot|pi)$ ]]' '[[ "$harness" =~ ^(claude|codex|copilot)$ ]]'
+pi_run room - pick "${PI_MODEL[@]}" --json
+assert_eq "rc=$RC" rc=5 "control: without harness=pi admitted the provider row is dropped and the pick is unstated"
+lanes_control ctl-pi-unstated lanes '[[ "$harness" == pi && -z "$pool_entries" && "$hosted" == "[]" ]]' '[[ "$harness" == pi && -z "$pool_entries" ]]'
+pi_run room - pick "${PI_MODEL[@]}" --json
+assert_eq "rc=$RC" rc=5 "control: an unstated check that skips the provider rows refuses a pool the provider read"
+lanes_control ctl-pi-replace lanes 'if $h == "pi" then .headroom_pct == null' 'if $h == "pi" then true'
+pi_run room 99/100 pick "${PI_MODEL[@]}" --json
+assert_eq "rc=$RC walled=$(pi_fields .walled)" 'rc=3 walled=1' \
+  "control: an override that outranks the provider row walls a pool the provider read with room"
+lanes_control ctl-pi-override lanes 'if $h == "pi" then .headroom_pct == null' 'if $h == "pi" then .status == "unreachable"'
+pi_run refused 10/100 pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
+assert_eq "rc=$RC $(pi_fields '.measured_through')" 'rc=5 "host"' \
+  "control: under the unreachable rule a refused Pi row hides the override"
+lanes_control ctl-pi-all lanes '		[[ "$want:$harness" != all:pi || "$mode" == cache ]] || continue' ''
+pi_run room - list --json
+assert_eq "$(pi_fields '[.[] | select(.harness == "pi")] | length')" 1 "control: without the all filter list shows the Pi row"
+lanes_control ctl-pi-fix lanes '      lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}"' ':'
+pi_run none - pick "${PI_MODEL[@]}"
+assert_eq "rc=$RC fix=$(fix_line)" "rc=5 fix=" "control: without the fix call the unstated refusal names no repair"
+LANES_BIN=""
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

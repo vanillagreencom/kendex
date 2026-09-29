@@ -95,6 +95,23 @@ lane_pick_harness() { # HARNESS MODEL
   esac
 }
 
+# The `fix=` line for a Pi launch on the Copilot pool that nothing measured,
+# for the Pi root DIR, or for every Pi root where DIR is empty. Two reads can
+# measure that pool: the lane host's `accounts` row for the root, harness=pi
+# with monthly-pct (schemas/lane-host.md), and the ORCH_LANE_COPILOT_POOL
+# override. HOST is the ORCH_LANE_HOST the pick ran under, which says whether
+# the first read was made. Printed by `lanes` under copilot-pool-unstated and
+# by open-terminal under that refusal and under lane-model-unreadable, so each
+# names the same repair.
+lane_copilot_pool_fix() { # HOST [DIR]
+  local root="${2:-any Pi root}" dir="${2:-<Pi root>}"
+  if [[ "$1" == local ]]; then
+    printf 'fix=no Copilot pool reading for %s: ORCH_LANE_HOST=local asks no lane host, and ORCH_LANE_COPILOT_POOL states none; state the override ORCH_LANE_COPILOT_POOL=%s=<credits used>/<credits granted>, or launch through a lane host whose accounts verb carries a harness=pi row for that root\n' "$root" "$dir"
+  else
+    printf 'fix=no Copilot pool reading for %s: the accounts verb of lane host %s carried no harness=pi row with monthly-pct for it, and ORCH_LANE_COPILOT_POOL states none; store the Copilot seat on that provider so its accounts row reads the pool (lanes host-accounts --harness pi --no-cache prints what it answers), or state the override ORCH_LANE_COPILOT_POOL=%s=<credits used>/<credits granted>\n' "$root" "$1" "$dir"
+  fi
+}
+
 # How each harness spells the two choices a lane launch must make, for every
 # caller that READS a launch's flags and every caller that WRITES them: the
 # launcher that refuses a launch naming neither, and the successor builder in
