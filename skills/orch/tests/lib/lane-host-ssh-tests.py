@@ -240,9 +240,10 @@ exec git "$@"
                  ' "$COPILOT_HOME" "$COPILOT_SKILLS_DIRS" "$COPILOT_ALLOW_ALL"')
         words = ""
         if library:
-            # The launch policy's one owner, as open-terminal's hosted arm calls it.
-            words = subprocess.run(["bash", "-c", '. "$1" && lane_copilot_env "$2"', "_",
-                                    str(library), '"$HOME/.agents/skills"'],
+            # The launch policy's one owner, as open-terminal's hosted arm calls it
+            # for a command carrying --allow-all.
+            words = subprocess.run(["bash", "-c", '. "$1" && lane_copilot_env "$2" "$3"', "_",
+                                    str(library), "copilot --allow-all", '"$HOME/.agents/skills"'],
                                    check=True, capture_output=True).stdout.decode().strip() + " "
         command = "cd / && exec " + words + "sh -c " + shlex.quote(probe)
         return subprocess.run(["bash", "-c", fields["remote-prefix"] + " " + shlex.quote(command)],

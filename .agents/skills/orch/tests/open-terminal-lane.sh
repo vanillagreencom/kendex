@@ -1071,7 +1071,7 @@ assert_eq "$(observe "rc=0 launched=1") create=$(host_call | tr ';' '\n' | grep 
 COPILOT_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-copilot-host/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-copilot-host/orch"
-mutate_file "$OPEN_TERMINAL" '! "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ) ]]; then' '! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then'
+mutate_file "$OPEN_TERMINAL" '"$LANE_ENV" || ! "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ) ]]; then' '"$LANE_ENV" || ! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then'
 run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copilot" --repo o/r CC-1935
 assert_eq "$(observe "rc=1 launched=nolog") invalid=$(awk '$2 == "host-invalid" { print $NF }' <<<"$OUT")" "rc=1 launched=nolog invalid=harness=copilot" \
   "control: without copilot in the host protocol's harnesses a hosted copilot launch is host-invalid"

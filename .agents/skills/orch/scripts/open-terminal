@@ -2383,6 +2383,10 @@ launch_finish() {
     fi
     if lane_trust_prepare "$HARNESS" "$launch_home" "$wt"; then
       launch_home="$LANE_TRUST_HOME"
+      # A copilot command without a full allow-all spelling carries an empty
+      # COPILOT_ALLOW_ALL (lib/lane-launch.sh § lane_copilot_env): nothing
+      # trusts its folder, as the permission-prompt warning has said.
+      [[ "$LANE_TRUST_ROUTE" != allow-all-env ]] || lane_copilot_allows_all "$cmd" || LANE_TRUST_ROUTE=none
       [[ "$LANE_TRUST_ROUTE" == none ]] ||
         ot_message launch-trusted "item=$item" "route=$LANE_TRUST_ROUTE" "home=$launch_home"
     else

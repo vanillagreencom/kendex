@@ -928,8 +928,9 @@ lane_codex_recorded() { # DIR CONFIG...
 #
 #   LANE_TRUST_ROUTE   `none` for a harness that asks no such question,
 #                      `allow-all-env` for copilot, whose folder trust the
-#                      launch line grants through COPILOT_ALLOW_ALL=true
-#                      (lane_launch_line), so nothing is written for it,
+#                      launch line grants through COPILOT_ALLOW_ALL=true where
+#                      the command carries a full allow-all spelling
+#                      (lane_copilot_env), so nothing is written for it,
 #                      `preapproved` where the account's own config already
 #                      trusts the directory, `launch-home` where the codex arm
 #                      built a private home carrying the entry, and

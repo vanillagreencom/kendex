@@ -33,7 +33,7 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 FLEET_HOME="$TMP_ROOT/fleet-home"
 mkdir -p "$FLEET_HOME"
 # HOME is the fleet home too, since every copilot command names the shared
-# skills under it, and GH_TOKEN a fixture a launched command must keep.
+# skills under it, and GH_TOKEN a fixture every launched command clears.
 LAUNCH_ENV=(LANES_HOME="$FLEET_HOME" HOME="$FLEET_HOME" COPILOT_HOME= GH_TOKEN=gh-fixture)
 
 # shellcheck source=lib/assertions.sh
@@ -100,8 +100,9 @@ REPO="$TMP_ROOT/repo"
 stage "$REPO"
 
 # launch NAME ARGS... — the command CC's launch composed, in CMD, or empty with
-# its stderr in ERR. ROW_ENV holds assignments a row adds to LAUNCH_ENV.
-CMD="" ERR=""
+# its stderr in ERR; its stdout in OUT. ROW_ENV holds assignments a row adds to
+# LAUNCH_ENV.
+CMD="" ERR="" OUT=""
 ROW_ENV=()
 launch() { # NAME ARGS...
   local name="$1" i rc=0
@@ -109,8 +110,9 @@ launch() { # NAME ARGS...
   rm -f -- "$TMP_ROOT/$name.cap"
   ( cd "$REPO" && env "${LAUNCH_ENV[@]}" ${ROW_ENV[@]+"${ROW_ENV[@]}"} OT_CAPTURE="$TMP_ROOT/$name.cap" ORCH_STATE_DIR="$TMP_ROOT/state" \
       PATH="$BIN:$PROC_BIN:$PATH" WORKTREE_CLI="$STUB" "${OT:-$REPO/scripts/open-terminal}" --ghostty "$@" ) \
-    >/dev/null 2>"$TMP_ROOT/$name.err" || rc=$?
+    >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err" || rc=$?
   ERR="$(cat "$TMP_ROOT/$name.err")"
+  OUT="$(cat "$TMP_ROOT/$name.out")"
   CMD=""
   [[ "$rc" -eq 0 ]] || return 0
   # The stubbed terminal is started in the background, so its capture lands
@@ -127,16 +129,18 @@ FLAGS='--model claude-opus-5 --reasoning-effort high --allow-all'
 # quotes each flag: the launch settings, then the question-off word, then the
 # caller's flags.
 LEAD="'--autopilot' '--max-autopilot-continues' '3' '--context' 'long_context' '--no-auto-update' '--no-ask-user' '--model' 'claude-opus-5' '--reasoning-effort' 'high' '--allow-all'"
-# The environment every copilot command carries, after the account where one
-# is named.
-COP_WORDS="COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills'"
-COP_ENV="env $COP_WORDS"
+# The environment every copilot command carries, ahead of the account, and
+# the account a launch naming no lane runs on: the default copilot home.
+COP_ENV="env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL=true"
+COP_AMBIENT="COPILOT_HOME='$FLEET_HOME/.copilot'"
 
 echo "=== a copilot lane starts with its brief as the value of -i ==="
 launch linear --harness copilot --launch-flags "$FLAGS" cc-737
-assert_contains "$CMD" "&& $COP_ENV copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-737'" \
+assert_contains "$CMD" "&& $COP_ENV $COP_AMBIENT copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-737'" \
   "linear:copilot emits the prose kickoff after its launch settings, question-off word and flags, under its launch environment and the pane's own account"
 assert_not_contains "$CMD" '$' "the linear:copilot command contains no \$"
+assert_eq "$(grep -c '^open-terminal: launch-trusted .*route=allow-all-env' <<<"$OUT" || true)" "1" \
+  "an allow-all launch reports its folder trusted through COPILOT_ALLOW_ALL"
 launch github --tracker github --repo acme/widgets --harness copilot --launch-flags "$FLAGS" 42
 assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github acme/widgets#42'" \
   "github:copilot emits the same kickoff carrying repo#item"
@@ -147,27 +151,29 @@ launch dedup --harness copilot --launch-flags "$FLAGS --context long_context" cc
 assert_eq "$(grep -o "'--context'" <<<"$CMD" | wc -l | tr -d '[:space:]')" "1" \
   "a caller's --context long_context is dropped for the row's own copy, never carried twice"
 # A --cmd template is the caller's own command, and it runs under the launch
-# environment all the same, with a named account or without one.
+# environment all the same, on a named account or the default one.
 CMD_T="copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-{item}"
 launch cmd-bare --harness copilot --cmd "$CMD_T" CC-750
-assert_contains "$CMD" "&& $COP_ENV copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-CC-750" \
-  "a --cmd launch naming no account carries the launch environment"
+assert_contains "$CMD" "&& $COP_ENV $COP_AMBIENT copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-CC-750" \
+  "a --cmd launch naming no lane carries the launch environment on the default account"
 mkdir -p "$TMP_ROOT/.1copilot"
 launch cmd-lane --harness copilot --lane "$TMP_ROOT/.1copilot" --cmd "$CMD_T" CC-751
-assert_contains "$CMD" "&& env COPILOT_HOME='$TMP_ROOT/.1copilot' $COP_WORDS copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-CC-751" \
+assert_contains "$CMD" "&& $COP_ENV COPILOT_HOME='$TMP_ROOT/.1copilot' copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-CC-751" \
   "a --cmd launch under --lane carries the named account and the launch environment"
 
 # Folder trust rides the caller's own allow-all posture: COPILOT_ALLOW_ALL
 # approves every tool, so a command naming neither --allow-all nor --yolo sets
 # it empty beside the shared skills and keeps its permission prompts.
-SKILLS_ONLY="env COPILOT_ALLOW_ALL= COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills'"
+SKILLS_ONLY="env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL= $COP_AMBIENT"
 launch no-allow --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high" cc-752
 assert_contains "$CMD" "&& $SKILLS_ONLY copilot " \
   "a launch naming no allow-all spelling carries an empty COPILOT_ALLOW_ALL"
 assert_eq "$(grep -c '^open-terminal: permission-prompt ' <<<"$ERR" || true)" "1" \
   "and it still warns that the lane can stop at a permission prompt"
+assert_eq "$(grep -c '^open-terminal: launch-trusted ' <<<"$OUT" || true)" "0" \
+  "and it reports no folder trust, which its empty COPILOT_ALLOW_ALL does not grant"
 launch yolo --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high --yolo" cc-753
-assert_contains "$CMD" "&& $COP_ENV copilot " "--yolo, the other full allow-all spelling, carries COPILOT_ALLOW_ALL"
+assert_contains "$CMD" "&& $COP_ENV $COP_AMBIENT copilot " "--yolo, the other full allow-all spelling, carries COPILOT_ALLOW_ALL"
 launch tools-only --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high --allow-all-tools" cc-754
 assert_contains "$CMD" "&& $SKILLS_ONLY copilot " \
   "the tools-only --allow-all-tools leaves paths and URLs asking, so it carries an empty COPILOT_ALLOW_ALL"
@@ -216,7 +222,7 @@ session 44444444-dddd-4ddd-8ddd-444444444444 "$TMP_ROOT/wt/CC-741" 200001010300 
 launch relaunch-lane --relaunch --harness copilot --lane "$TMP_ROOT/.1copilot" --launch-flags "$FLAGS" CC-741
 assert_contains "$CMD" "--resume=44444444-dddd-4ddd-8ddd-444444444444 -i" \
   "a relaunch under --lane resumes from that account's own session store"
-assert_contains "$CMD" "&& env COPILOT_HOME='$TMP_ROOT/.1copilot' $COP_WORDS copilot $LEAD --resume=" \
+assert_contains "$CMD" "&& $COP_ENV COPILOT_HOME='$TMP_ROOT/.1copilot' copilot $LEAD --resume=" \
   "the resume runs under the named account and the launch environment"
 session 55555555-eeee-4eee-8eee-555555555555 "$TMP_ROOT/wt/CC-742" 200001010400 "$TMP_ROOT/.envcopilot"
 ROW_ENV=(COPILOT_HOME="$TMP_ROOT/.envcopilot")
@@ -286,8 +292,8 @@ echo "=== a copilot wake resumes the lane's session in print mode, and only an i
 launch wake --wake --harness copilot --launch-flags "$FLAGS" CC-738
 assert_eq "$CMD" "copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --no-ask-user --model claude-opus-5 --reasoning-effort high --allow-all --resume=22222222-bbbb-4bbb-8bbb-222222222222 -p Run .agents/skills/orch/scripts/lane-mail inbox --item CC-738 and act on every directive it prints." \
   "the wake resumes the newest session that ran, by its id, its inbox line the value of -p"
-assert_eq "$(cat "$TMP_ROOT/wake.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS=$FLEET_HOME/.agents/skills GH_TOKEN=gh-fixture" \
-  "the woken copilot runs under the launch environment and keeps the host's GitHub token"
+assert_eq "$(cat "$TMP_ROOT/wake.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS=$FLEET_HOME/.agents/skills GH_TOKEN=unset" \
+  "the woken copilot runs under the launch environment, the host's GitHub token cleared"
 # A COPILOT_ALLOW_ALL the launching shell exports never widens a restrictive
 # launch: the woken copilot reads it empty, not true and not unset.
 # restrictive_wake NAME — a wake naming no allow-all spelling, run by the
@@ -298,7 +304,7 @@ restrictive_wake() {
   ROW_ENV=()
 }
 restrictive_wake wake-restrictive
-assert_eq "$(cat "$TMP_ROOT/wake-restrictive.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL= COPILOT_SKILLS_DIRS=$FLEET_HOME/.agents/skills GH_TOKEN=gh-fixture" \
+assert_eq "$(cat "$TMP_ROOT/wake-restrictive.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL= COPILOT_SKILLS_DIRS=$FLEET_HOME/.agents/skills GH_TOKEN=unset" \
   "a restrictive wake under an exported COPILOT_ALLOW_ALL=true runs copilot with it empty"
 launch wake-none --wake --harness copilot --launch-flags "$FLAGS" CC-743
 assert_eq "${CMD:-none} $(grep -c '^open-terminal: session-missing item=CC-743 harness=copilot' <<<"$ERR" || true)" "none 1" \
@@ -340,6 +346,7 @@ echo "=== every local copilot launch runs under its account's environment ==="
 # probe standing in for what it starts, under every ambient token.
 POLICY="env -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL=true"
 mkdir -p "$TMP_ROOT/.2copilot"
+cp -- "$BIN/copilot" "$TMP_ROOT/copilot-capture"
 PROBE='#!/bin/sh\nprintf "%%s|%%s|%%s|%%s\\n" "${COPILOT_GITHUB_TOKEN-unset}" "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" "$COPILOT_ALLOW_ALL"\n'
 # shellcheck disable=SC2059  # the probe's own format, written as a script.
 printf "$PROBE" > "$BIN/copilot"
@@ -383,7 +390,7 @@ COPILOT_GITHUB_TOKEN|placeholder|unset|unset|true
 GH_TOKEN|unset|app-token|unset|true
 GITHUB_TOKEN|unset|unset|actions-token|true
 ROWS
-rm -f -- "$BIN/copilot"
+mv -- "$TMP_ROOT/copilot-capture" "$BIN/copilot"
 printf '#!/bin/sh\n' > "$BIN/1copilot"
 
 echo "=== must-fail controls ==="
@@ -441,7 +448,7 @@ assert_contains "$CMD" "--resume=22222222-bbbb-4bbb-8bbb-222222222222 -i" \
 # Copilot cut from the wake's harness gate: the wake is refused before any
 # session is read.
 stage "$TMP_ROOT/wake-gate-ctrl"
-mutate_file "$TMP_ROOT/wake-gate-ctrl/scripts/open-terminal" '! "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ) ]]; then' '! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then'
+mutate_file "$TMP_ROOT/wake-gate-ctrl/scripts/open-terminal" '"$LANE_HOST" != local || ! "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ) ]]; then' '"$LANE_HOST" != local || ! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then'
 OT="$TMP_ROOT/wake-gate-ctrl/scripts/open-terminal" launch wake-gate-ctrl --wake --harness copilot --launch-flags "$FLAGS" CC-738
 assert_eq "${CMD:-none} $(grep -c '^open-terminal: wake-invalid option=--wake harness=copilot' <<<"$ERR" || true)" "none 1" \
   "control: without copilot in the wake gate a copilot wake is wake-invalid"
@@ -452,36 +459,37 @@ mutate_file "$TMP_ROOT/wake-print-ctrl/scripts/open-terminal" "%s--resume=%q -p%
 OT="$TMP_ROOT/wake-print-ctrl/scripts/open-terminal" launch wake-print-ctrl --wake --harness copilot --launch-flags "$FLAGS" CC-738
 assert_contains "$CMD" "--resume=22222222-bbbb-4bbb-8bbb-222222222222 -i Run" \
   "control: without the print-mode arm the wake line is an interactive turn"
-# The launch environment cut from the builder, then the route that hands a
-# launch naming no account to it: either way the command runs bare.
+# The launch environment cut from the builder: the command runs bare.
 stage "$TMP_ROOT/env-ctrl"
-mutate_file "$TMP_ROOT/env-ctrl/scripts/lib/lane-launch.sh" '    copilot) extra="$(lane_copilot_env "$cmd")" || return 1 ;;' '    copilot) ;;'
+mutate_file "$TMP_ROOT/env-ctrl/scripts/lib/lane-launch.sh" '  env_words="$(lane_copilot_env "$cmd" ' '  env_words="env" #'
 OT="$TMP_ROOT/env-ctrl/scripts/open-terminal" launch env-ctrl --harness copilot --launch-flags "$FLAGS" cc-737
 assert_eq "$(grep -c 'COPILOT_ALLOW_ALL=true' <<<"$CMD" || true)" "0" \
   "control: without the builder's copilot words the command carries no launch environment"
-stage "$TMP_ROOT/route-ctrl"
-mutate_file "$TMP_ROOT/route-ctrl/scripts/open-terminal" '  elif [[ "$HARNESS" == copilot ]]; then' '  elif false; then'
-OT="$TMP_ROOT/route-ctrl/scripts/open-terminal" launch route-ctrl --harness copilot --launch-flags "$FLAGS" cc-737
-assert_contains "$CMD" "&& copilot $LEAD -i" \
-  "control: without the no-account route a launch naming no account runs copilot bare"
 # The allow-all judge cut: every command carries COPILOT_ALLOW_ALL, approving
 # every tool for a caller that named no allow-all posture.
 stage "$TMP_ROOT/allow-ctrl"
-mutate_file "$TMP_ROOT/allow-ctrl/scripts/lib/lane-launch.sh" '  ! lane_copilot_allows_all "$1" || allow="COPILOT_ALLOW_ALL=true "' '  allow="COPILOT_ALLOW_ALL=true "'
+mutate_file "$TMP_ROOT/allow-ctrl/scripts/lib/lane-launch.sh" '  ! lane_copilot_allows_all "$1" || allow="COPILOT_ALLOW_ALL=true"' '  allow="COPILOT_ALLOW_ALL=true"'
 OT="$TMP_ROOT/allow-ctrl/scripts/open-terminal" launch allow-ctrl --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high" cc-752
-assert_contains "$CMD" "&& $COP_ENV copilot " \
+assert_contains "$CMD" "&& $COP_ENV $COP_AMBIENT copilot " \
   "control: without the allow-all judge a launch naming no allow-all spelling carries COPILOT_ALLOW_ALL"
+# The route's allow-all judge cut: a launch naming no allow-all spelling
+# reports a folder trust nothing granted.
+stage "$TMP_ROOT/trust-route-ctrl"
+mutate_file "$TMP_ROOT/trust-route-ctrl/scripts/open-terminal" ' || lane_copilot_allows_all "$cmd" || LANE_TRUST_ROUTE=none' ' || :'
+OT="$TMP_ROOT/trust-route-ctrl/scripts/open-terminal" launch trust-route-ctrl --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high" cc-752
+assert_eq "$(grep -c '^open-terminal: launch-trusted .*route=allow-all-env' <<<"$OUT" || true)" "1" \
+  "control: without the allow-all judge a restrictive launch reports its folder trusted"
 # The restrictive path's empty assignment cut: an exported COPILOT_ALLOW_ALL=true
 # reaches the restrictive wake's copilot.
 stage "$TMP_ROOT/allow-empty-ctrl"
-mutate_file "$TMP_ROOT/allow-empty-ctrl/scripts/lib/lane-launch.sh" '  local allow="COPILOT_ALLOW_ALL= "' '  local allow=""'
+mutate_file "$TMP_ROOT/allow-empty-ctrl/scripts/lib/lane-launch.sh" '  local allow="COPILOT_ALLOW_ALL="' '  local allow=""'
 OT="$TMP_ROOT/allow-empty-ctrl/scripts/open-terminal" restrictive_wake allow-empty-ctrl
 assert_contains "$(cat "$TMP_ROOT/allow-empty-ctrl.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL=true " \
   "control: without the empty assignment a restrictive wake inherits the exported COPILOT_ALLOW_ALL=true"
 # The route that hands a wake to the builder cut for the wake alone: the woken
 # copilot runs bare, which the stub's own environment shows.
 stage "$TMP_ROOT/wake-env-ctrl"
-mutate_file "$TMP_ROOT/wake-env-ctrl/scripts/open-terminal" '  elif [[ "$HARNESS" == copilot ]]; then' '  elif [[ "$HARNESS" == copilot && "$WAKE" != true ]]; then'
+mutate_file "$TMP_ROOT/wake-env-ctrl/scripts/open-terminal" '|| "$HARNESS" == codex || "$HARNESS" == copilot ]]; then' '|| "$HARNESS" == codex || "$HARNESS" == copilot && "$WAKE" != true ]]; then'
 OT="$TMP_ROOT/wake-env-ctrl/scripts/open-terminal" launch wake-env-ctrl --wake --harness copilot --launch-flags "$FLAGS" CC-738
 assert_contains "$(cat "$TMP_ROOT/wake-env-ctrl.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL=unset" \
   "control: without the wake's route to the builder the woken copilot has no launch environment"
