@@ -312,6 +312,14 @@ REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standa
 # build instead, as D007 § Revisit Outcome (2026-09-29) records.
 REVIEW_GATE_LOCK_KENDEX = "main"
 
+# This organization's standard, which validate-standard.sh checks and
+# provision-environment.sh provisions: the lanes app, and the environment
+# that holds its two secrets in every repository
+# (docs/decisions/D003-one-merge-path.md).
+REVIEW_GATE_STANDARD_APP = "vanillagreen-fleet-lanes"
+REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"
+REVIEW_GATE_STANDARD_SECRETS = "FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY"
+
 # ── Skill settings ───────────────────────────────────────────────────────
 # What the installed skills read for repo-specific names, paths and commands.
 

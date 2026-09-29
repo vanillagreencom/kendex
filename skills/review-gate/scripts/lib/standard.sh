@@ -1,16 +1,30 @@
 # shellcheck shell=bash
-# The organization standard's values, read from the skill's standard.json.
+# The organization standard's values, from two sources. The skill's
+# standard.json holds the package's own: the CI and gate contexts. The
+# consumer's review-gate settings hold the organization's: the app, the
+# environment and its secret names, which no package can know.
 # validate-standard.sh reads GitHub against them and provision-environment.sh
-# writes the environment half of them; both load the manifest here, so its
-# shape is judged in one place. Requires diagnostics.sh loaded first.
+# writes the environment half of them; both load them here, so their shape
+# is judged in one place. Requires settings.sh loaded first.
 
 # Sets WANT_CONTEXTS (the required contexts, the CI and gate contexts,
-# sorted, `;`-joined), WANT_CI (the CI context), WANT_APP,
-# WANT_ENV and WANT_SECRETS (the environment's secret names, sorted, one per
-# line). With no jq on PATH, or a missing, unreadable or malformed
-# manifest, it prints the refusal to stderr and returns 1; the caller exits
-# with its could-not-run status.
-rg_standard_load() { # MANIFEST
+# sorted, `;`-joined) and WANT_CI (the CI context) from MANIFEST, and from
+# settings WANT_ENV (REVIEW_GATE_STANDARD_ENVIRONMENT) and WANT_SECRETS
+# (REVIEW_GATE_STANDARD_SECRETS, sorted, one per line). SCOPE `all` also
+# sets WANT_APP (REVIEW_GATE_STANDARD_APP); SCOPE `environment` leaves it
+# unread. With no jq on PATH, a missing, unreadable or malformed manifest, an
+# unreadable setting, or a key the scope reads unset or empty, it prints the
+# refusal to stderr and returns 1; the caller exits with its could-not-run
+# status.
+rg_standard_load() { # MANIFEST SCOPE
+  local secrets missing=""
+  case "$2" in
+    all | environment) ;;
+    *)
+      rg_message error standard-scope "$2" "rg_standard_load: the scope is all or environment" >&2
+      return 1
+      ;;
+  esac
   if ! command -v jq >/dev/null 2>&1; then
     rg_message error jq-missing jq "jq is not on PATH; the standard manifest is read with it, so install jq" >&2
     return 1
@@ -23,11 +37,8 @@ rg_standard_load() { # MANIFEST
     (.ci_context | type == "string" and length > 0)
     and (.gate_context | type == "string" and length > 0)
     and .ci_context != .gate_context
-    and (.app | type == "string" and length > 0)
-    and (.environment | type == "string" and length > 0)
-    and (.environment_secrets | type == "array" and length > 0 and all(.[]; type == "string" and length > 0))
   ' "$1" >/dev/null 2>&1; then
-    rg_message error standard-malformed "$1" "the standard manifest does not parse, or lacks a non-empty ci_context, gate_context distinct from it, app, environment or environment_secrets" >&2
+    rg_message error standard-malformed "$1" "the standard manifest does not parse, or lacks a non-empty ci_context and a gate_context distinct from it" >&2
     return 1
   fi
   WANT_CONTEXTS="$(jq -r '[.ci_context, .gate_context] | unique | join(";")' "$1")" || {
@@ -38,18 +49,24 @@ rg_standard_load() { # MANIFEST
     rg_message error standard-read "$1" "could not read ci_context" >&2
     return 1
   }
-  WANT_APP="$(jq -r '.app' "$1")" || {
-    rg_message error standard-read "$1" "could not read app" >&2
+
+  WANT_APP=""
+  if [ "$2" = all ]; then
+    WANT_APP="$(rg_setting REVIEW_GATE_STANDARD_APP "")" || return 1
+    [ -n "$WANT_APP" ] || missing=REVIEW_GATE_STANDARD_APP
+  fi
+  WANT_ENV="$(rg_setting REVIEW_GATE_STANDARD_ENVIRONMENT "")" || return 1
+  [ -n "$WANT_ENV" ] || missing="${missing:+$missing,}REVIEW_GATE_STANDARD_ENVIRONMENT"
+  secrets="$(rg_setting REVIEW_GATE_STANDARD_SECRETS "")" || return 1
+  WANT_SECRETS="$(rg_pack "$secrets" ';' | LC_ALL=C sort -u)" || {
+    rg_message error standard-read REVIEW_GATE_STANDARD_SECRETS "could not split the secret names" >&2
     return 1
   }
-  WANT_ENV="$(jq -r '.environment' "$1")" || {
-    rg_message error standard-read "$1" "could not read environment" >&2
+  [ -n "$WANT_SECRETS" ] || missing="${missing:+$missing,}REVIEW_GATE_STANDARD_SECRETS"
+  if [ -n "$missing" ]; then
+    rg_message error standard-setting-missing "$missing" "this repository declares no value for these review-gate settings; set each in the [env] table of kendex.settings.toml (references/settings.md names them)" >&2
     return 1
-  }
-  WANT_SECRETS="$(jq -r '.environment_secrets | unique | .[]' "$1")" || {
-    rg_message error standard-read "$1" "could not read environment_secrets" >&2
-    return 1
-  }
+  fi
 }
 
 # The names among WANT_SECRETS present in the newline list LISTED, one per

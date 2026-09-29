@@ -28,14 +28,29 @@ cp -R "$SKILL_DIR/scripts" "$SKILL/scripts"
 cat >"$SKILL/standard.json" <<'JSON'
 {
   "ci_context": "CI",
-  "gate_context": "Review gate",
-  "app": "lanes-app",
-  "environment": "kendex",
-  "environment_secrets": ["APP_ID", "APP_KEY"]
+  "gate_context": "Review gate"
 }
 JSON
 cp "$TEST_DIR/lib/gh-shim.sh" "$BIN/gh"
 chmod +x "$BIN/gh"
+
+# The consumer checkouts the script runs from, each declaring the
+# organization's values in its own kendex.settings.toml or not. `full` is the
+# consumer every case uses unless it names another; its secret names are out
+# of order, so the sorted value below is the loader's.
+settings_consumer() { # NAME [ASSIGNMENT...]
+  local dir="$TMP/consumer-$1"
+  shift
+  mkdir -p "$dir"
+  printf '[env]\n' >"$dir/kendex.settings.toml"
+  [ "$#" -eq 0 ] || printf '%s\n' "$@" >>"$dir/kendex.settings.toml"
+}
+settings_consumer full 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"'
+settings_consumer none
+settings_consumer seeded 'REVIEW_GATE_STANDARD_APP = ""' 'REVIEW_GATE_STANDARD_ENVIRONMENT = ""' 'REVIEW_GATE_STANDARD_SECRETS = ""'
+settings_consumer no-secrets 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = " ; "'
+settings_consumer no-app 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"'
+CONSUMER="$TMP/consumer-full"
 
 # The matching world.
 cat >"$BASE/repository.json" <<'JSON'
@@ -130,7 +145,7 @@ run() { # FIXTURES SHIM_FAIL [ARGS...] — sets OUT (verdict lines) and RC
   local fixtures="$1" shim_fail="$2"
   shift 2
   RC=0
-  RAW="$(env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$fixtures" GH_SHIM_FAIL="$shim_fail" \
+  RAW="$(cd "$CONSUMER" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$fixtures" GH_SHIM_FAIL="$shim_fail" \
     "$SKILL/scripts/validate-standard.sh" "$@" 2>&1)" || RC=$?
   OUT="$(grep -E '^(ok|FAIL) check=' <<<"$RAW" || true)"
 }
@@ -277,35 +292,42 @@ else
 fi
 
 echo "=== the check could not run ==="
-# name ~ shim failure ~ manifest replacement (empty keeps the test's) ~ argument ~ first error line
-while IFS='~' read -r name fail manifest arg key; do
+# name ~ shim failure ~ manifest replacement (empty keeps the test's) ~
+# consumer ~ argument ~ first error line ~ its value (empty: not compared)
+while IFS='~' read -r name fail manifest consumer arg key value; do
   [ -n "$name" ] || continue
   cp "$SKILL/standard.json" "$TMP/standard.keep"
   [ -z "$manifest" ] || printf '%s\n' "$manifest" >"$SKILL/standard.json"
   RC=0
-  RAW="$(env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$BASE" GH_SHIM_FAIL="$fail" \
+  RAW="$(cd "$TMP/consumer-$consumer" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$BASE" GH_SHIM_FAIL="$fail" \
     "$SKILL/scripts/validate-standard.sh" ${arg:+"$arg"} 2>&1)" || RC=$?
   mv "$TMP/standard.keep" "$SKILL/standard.json"
   first="${RAW%%
 *}"
-  if [ "$RC" -eq 2 ] && [ "${first%% value=*}" = "$key" ] && ! grep -qE '^(ok|FAIL) check=' <<<"$RAW"; then
+  if [ "$RC" -eq 2 ] && [ "${first%% value=*}" = "$key" ] &&
+    { [ -z "$value" ] || [ "${first#* value=}" = "$value" ]; } && ! grep -qE '^(ok|FAIL) check=' <<<"$RAW"; then
     ok "$name"
   else
     bad "$name (rc=$RC)" "$RAW"
   fi
 done <<'ROWS'
-the repository unreadable~repository~~~review-gate-error=repository-read
-a manifest without an app~~{"ci_context": "CI", "gate_context": "Review gate", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
-a manifest without a gate context~~{"ci_context": "CI", "app": "a", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
-a manifest without a CI context~~{"gate_context": "Review gate", "app": "a", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
-a manifest whose two contexts are one~~{"ci_context": "CI", "gate_context": "CI", "app": "a", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
-an argument~~~--repo~review-gate-error=unknown-arguments
+the repository unreadable~repository~~full~~review-gate-error=repository-read~
+a manifest without a gate context~~{"ci_context": "CI"}~full~~review-gate-error=standard-malformed~
+a manifest without a CI context~~{"gate_context": "Review gate"}~full~~review-gate-error=standard-malformed~
+a manifest whose two contexts are one~~{"ci_context": "CI", "gate_context": "CI"}~full~~review-gate-error=standard-malformed~
+a consumer that declares nothing~~~none~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
+a consumer holding the package's empty seed~~~seeded~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
+a secret list of separators alone~~~no-secrets~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_SECRETS
+a consumer with no app~~~no-app~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_APP
+environment-only reads no app, only the environment keys~~~none~--environment-only~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
+the organization values inline in the manifest are not read~~{"ci_context": "CI", "gate_context": "Review gate", "app": "lanes-app", "environment": "kendex", "environment_secrets": ["APP_ID", "APP_KEY"]}~none~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
+an argument~~~full~--repo~review-gate-error=unknown-arguments~
 ROWS
 
 # The shipped manifest passes the same shape check: with the repository
 # read failing, the first refusal is the read, not the manifest.
 RC=0
-RAW="$(env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$BASE" GH_SHIM_FAIL=repository \
+RAW="$(cd "$CONSUMER" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$BASE" GH_SHIM_FAIL=repository \
   "$SKILL_DIR/scripts/validate-standard.sh" 2>&1)" || RC=$?
 if [ "$RC" -eq 2 ] && [ "${RAW%% value=*}" = "review-gate-error=repository-read" ]; then
   ok "the shipped standard.json is well-formed"
@@ -327,7 +349,10 @@ EXPECTED_URLS='repos/{owner}/{repo}
 repos/acme/widgets/environments
 repos/acme/widgets/environments/kendex/deployment-branch-policies
 repos/acme/widgets/environments/kendex/secrets'
+# A consumer that declares no app validates its environment.
+CONSUMER="$TMP/consumer-no-app"
 run "$ENV_BASE" '' --environment-only
+CONSUMER="$TMP/consumer-full"
 if [ "$RC" -eq 0 ] && [ "$OUT" = "$ENV_BASELINE" ] && [ "$(cat "$ENV_BASE/.urls.log")" = "$EXPECTED_URLS" ]; then
   ok 'environment-only reads only repository identity, policy, and secret names'
 else

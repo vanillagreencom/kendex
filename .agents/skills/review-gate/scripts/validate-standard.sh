@@ -4,10 +4,11 @@
 #
 # READ-ONLY: every GitHub call below is a GET. It answers whether the
 # repository's GitHub-side settings match the organization standard. The
-# standard's values (the CI and gate contexts, app, environment, secret names)
-# live in ../standard.json; the rows that hold no value (organization
-# source, merge queue, thread resolution, Copilot review, no classic
-# protection, zero bypass actors) are fixed here. Its subject is GitHub
+# standard's values come from lib/standard.sh: the CI and gate contexts from
+# ../standard.json, the app, environment and secret names from the review-gate
+# settings this repository declares. The rows that hold no value
+# (organization source, merge queue, thread resolution, Copilot review, no
+# classic protection, zero bypass actors) are fixed here. Its subject is GitHub
 # state, not the checkout, so validate.sh does not run it: CI's token
 # cannot read bypass actors, installations or secret names, and every such
 # row would be unreadable there. The permission each row's reads need is in
@@ -37,12 +38,16 @@ print_usage() {
 Usage: validate-standard.sh [--environment-only | --help]   (no positional arguments)
 
 Reports, read-only, whether THIS repository's GitHub settings match the
-organization standard. standard.json in the skill holds its values. The
+organization standard. standard.json in the skill holds the CI and gate
+contexts. The organization's values are review-gate settings, resolved from
+the current directory like every other: REVIEW_GATE_STANDARD_APP,
+REVIEW_GATE_STANDARD_ENVIRONMENT and REVIEW_GATE_STANDARD_SECRETS. The
 repository is the one `gh` resolves: GH_REPO when set, else the checkout's
 remote.
 
---environment-only reports the environment policy and its secret names.
-Adoption uses this mode without requiring organization ruleset access.
+--environment-only reports the environment policy and its secret names, and
+reads neither REVIEW_GATE_STANDARD_APP nor organization rulesets. Adoption
+uses this mode.
 
 One verdict line per row, VALUE being what was observed:
   standard-ruleset-source           every effective default-branch rule comes
@@ -69,12 +74,13 @@ One verdict line per row, VALUE being what was observed:
                                     pull_request leg ran CI and the head did
                                     not come through the merge queue),
                                     no-associated-pull-request or unreadable
-  standard-app                      the standard's app is installed on every
+  standard-app                      REVIEW_GATE_STANDARD_APP is installed on every
                                     repository of the organization
-  standard-environment              the standard's environment exists and
-                                    deploys from the default branch only
-  standard-environment-secrets      that environment holds every secret the
-                                    standard names (names only)
+  standard-environment              REVIEW_GATE_STANDARD_ENVIRONMENT exists
+                                    and deploys from the default branch only
+  standard-environment-secrets      that environment holds every secret
+                                    REVIEW_GATE_STANDARD_SECRETS names
+                                    (names only)
   standard-secrets-outside          no other secret carries one of those names:
                                     repository Actions secrets, every
                                     organization Actions secret (shared with
@@ -126,7 +132,8 @@ Exit codes:
   0  every row matched
   1  at least one FAIL line
   2  the check could not run at all (bad arguments, jq missing, a missing
-     or malformed standard.json, the repository itself could not be read)
+     or malformed standard.json, a standard setting unset or empty, the
+     repository itself could not be read)
 USAGE
 }
 
@@ -149,10 +156,16 @@ die() { # CODE VALUE MESSAGE
   exit 2
 }
 
+[ -r "$SCRIPT_DIR/lib/settings.sh" ] || die settings-load "$SCRIPT_DIR/lib/settings.sh" "could not load the settings library"
+. "$SCRIPT_DIR/lib/settings.sh" || exit 2
 if [ ! -r "$SCRIPT_DIR/lib/standard.sh" ] || ! . "$SCRIPT_DIR/lib/standard.sh" 2>/dev/null; then
   die standard-lib-load "$SCRIPT_DIR/lib/standard.sh" "could not load the standard library"
 fi
-rg_standard_load "$SCRIPT_DIR/../standard.json" || exit 2
+if [ "$ENVIRONMENT_ONLY" -eq 1 ]; then
+  rg_standard_load "$SCRIPT_DIR/../standard.json" environment || exit 2
+else
+  rg_standard_load "$SCRIPT_DIR/../standard.json" all || exit 2
+fi
 
 SCRATCH="$(mktemp -d)" || die scratch "${TMPDIR:-/tmp}" "could not create a scratch directory"
 trap 'rm -rf -- "$SCRATCH"' EXIT

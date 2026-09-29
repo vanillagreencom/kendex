@@ -143,6 +143,21 @@ REVIEW_GATE_MODE = "enforce"
 # values: required | optional
 REVIEW_GATE_WRITER = "required"
 
+# The GitHub App the organization standard installs on every repository,
+# by its slug. The organization owner's check of a repository reads it; the
+# package ships no value, so the check refuses until it is set.
+REVIEW_GATE_STANDARD_APP = ""
+
+# The deployment environment that holds the standard's app secrets in every
+# repository, deploying from the default branch only. The package ships no
+# value; the checks and the owner's provisioning refuse until it is set.
+REVIEW_GATE_STANDARD_ENVIRONMENT = ""
+
+# The names of the secrets that environment holds, separated by semicolons.
+# Names only: a value never goes in this file. The package ships no value;
+# the checks and the owner's provisioning refuse until it is set.
+REVIEW_GATE_STANDARD_SECRETS = ""
+
 # Seconds to wait for a review before the waiting step gives up. Whole
 # seconds only, at most nine digits; anything else fails loudly. The
 # orchestration package reads the same number.

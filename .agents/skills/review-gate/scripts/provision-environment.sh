@@ -3,14 +3,15 @@
 # standard. Shipped by the kendex review-gate skill, vendored at
 # .agents/skills/review-gate/scripts/.
 #
-# It converges the standard's environment (standard.json: its name and
-# secret names) in every repository of one organization: the environment
-# exists, deploys from the repository's default branch only, and holds each
-# secret the standard names. Creating an environment needs Administration
-# write and setting an environment secret needs Environments write, which no
-# lane credential may hold, so this runs from the organization owner's own
-# machine under the owner's `gh` credential and never in CI or on a lane
-# host. validate-standard.sh is the read-only half that reports the result.
+# It converges the standard's environment in every repository of one
+# organization: the environment exists, deploys from the repository's
+# default branch only, and holds each secret the standard names. Its name
+# and secret names are the REVIEW_GATE_STANDARD_ENVIRONMENT and
+# REVIEW_GATE_STANDARD_SECRETS settings, read through lib/standard.sh.
+# Creating an environment needs Administration write and setting an
+# environment secret needs Environments write, which no lane credential may
+# hold, so this runs from the organization owner's own machine under the
+# owner's `gh` credential and never in CI or on a lane host. validate-standard.sh is the read-only half that reports the result.
 #
 # A secret is set only where the environment lacks its name: GitHub never
 # returns a secret's value, so a present name is current. A re-run changes
@@ -43,12 +44,16 @@ print_usage() {
 Usage: provision-environment.sh --org ORG [--dry-run]
        provision-environment.sh --help
 
-Creates or corrects the organization standard's environment (standard.json
-in the skill names it and its secrets) in every repository of ORG that is
-not archived. ORG must have the standard's app installed on all of its
-repositories, the installation validate-standard.sh's standard-app row
-requires; any other installation is refused, since this command cannot
-list a selection. The repository list must hold as many repositories,
+Creates or corrects the organization standard's environment in every
+repository of ORG that is not archived. Three review-gate settings, resolved
+from the current directory like every other, name the standard; each must
+be set and non-empty:
+  REVIEW_GATE_STANDARD_APP          the app installed on every repository
+  REVIEW_GATE_STANDARD_ENVIRONMENT  the environment's name
+  REVIEW_GATE_STANDARD_SECRETS      its secret names, `;`-separated
+ORG must have that app installed on all of its repositories, the
+installation validate-standard.sh's standard-app row requires; any other
+installation is refused, since this command cannot list a selection. The repository list must hold as many repositories,
 archived ones included, as the organization reports owning; a credential
 that sees fewer is refused before any write.
 
@@ -67,9 +72,10 @@ Per repository it:
     GitHub and run this again.
 
 Secret values come from the environment of this command: each secret the
-standard names is read from the variable of the same name, for example
-  FLEET_GH_APP_ID=123456 \
-  FLEET_GH_APP_PRIVATE_KEY="$(cat app.private-key.pem)" \
+standard names is read from the variable of the same name, for example,
+with REVIEW_GATE_STANDARD_SECRETS = "APP_ID;APP_PRIVATE_KEY",
+  APP_ID=123456 \
+  APP_PRIVATE_KEY="$(cat app.private-key.pem)" \
   provision-environment.sh --org my-org
 A run that is not --dry-run refuses before any write when one is unset or
 empty.
@@ -104,10 +110,11 @@ Exit codes:
   0  every repository is provisioned (or, under --dry-run, was read)
   1  at least one repository failed; the others were still provisioned
   2  nothing was attempted (bad arguments, a missing secret value, jq
-     missing, a missing or malformed standard.json, the installation, the
-     organization or the repositories could not be read, the app not
-     installed on all repositories, a repository list shorter than the
-     organization's count, or no repository that is not archived)
+     missing, a missing or malformed standard.json, a standard setting
+     unset or empty, the installation, the organization or the
+     repositories could not be read, the app not installed on all
+     repositories, a repository list shorter than the organization's
+     count, or no repository that is not archived)
 USAGE
 }
 
@@ -136,10 +143,12 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$ORG" ] || die org-missing "" "--org names the organization to provision (run --help)"
 
+[ -r "$SCRIPT_DIR/lib/settings.sh" ] || die settings-load "$SCRIPT_DIR/lib/settings.sh" "could not load the settings library"
+. "$SCRIPT_DIR/lib/settings.sh" || exit 2
 if [ ! -r "$SCRIPT_DIR/lib/standard.sh" ] || ! . "$SCRIPT_DIR/lib/standard.sh" 2>/dev/null; then
   die standard-lib-load "$SCRIPT_DIR/lib/standard.sh" "could not load the standard library"
 fi
-rg_standard_load "$SCRIPT_DIR/../standard.json" || exit 2
+rg_standard_load "$SCRIPT_DIR/../standard.json" all || exit 2
 
 if [ "$DRY_RUN" -eq 0 ]; then
   for name in $WANT_SECRETS; do

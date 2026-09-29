@@ -30,14 +30,17 @@ cp -R "$SKILL_DIR/scripts" "$SKILL/scripts"
 cat >"$SKILL/standard.json" <<'JSON'
 {
   "ci_context": "CI",
-  "gate_context": "Review gate",
-  "app": "lanes-app",
-  "environment": "kendex",
-  "environment_secrets": ["APP_ID", "APP_KEY"]
+  "gate_context": "Review gate"
 }
 JSON
 cp "$TEST_DIR/lib/gh-shim.sh" "$BIN/gh"
 chmod +x "$BIN/gh"
+# The owner's checkouts the script runs from: `full` declares the
+# organization's values in its kendex.settings.toml, `none` declares none.
+mkdir -p "$TMP/consumer-full" "$TMP/consumer-none"
+printf '%s\n' '[env]' 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' \
+  'REVIEW_GATE_STANDARD_SECRETS = "APP_ID;APP_KEY"' >"$TMP/consumer-full/kendex.settings.toml"
+printf '[env]\n' >"$TMP/consumer-none/kendex.settings.toml"
 
 cat >"$BASE/installations.json" <<'JSON'
 {"installations": [{"app_slug": "other-app", "repository_selection": "selected"}, {"app_slug": "lanes-app", "repository_selection": "all"}]}
@@ -85,7 +88,7 @@ run() { # FIXTURES SHIM_FAIL SECRETS ARGS...
   shift 3
   RC=0
   rm -f -- "$fixtures/.writes.log"
-  RAW="$(env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$fixtures" GH_SHIM_FAIL="$fail" \
+  RAW="$(cd "$TMP/consumer-full" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$fixtures" GH_SHIM_FAIL="$fail" \
     ${secrets:+APP_ID=4242} ${secrets:+"APP_KEY=$KEY"} "$SKILL/scripts/provision-environment.sh" "$@" 2>&1)" || RC=$?
   REPORT="$(grep -E '^(provision(-total)? |  step=)' <<<"$RAW" || true)"
   WRITES=""
@@ -230,8 +233,9 @@ mkdir -p "$NOJQ"
 ln -s "$(command -v bash)" "$NOJQ/bash"
 ln -s "$(command -v dirname)" "$NOJQ/dirname"
 # name ~ shim failure ~ fixture files ~ jq edits ~ secret values (yes or
-# no) ~ PATH ~ arguments (space-separated) ~ first error line
-while IFS='~' read -r name fail files edits values path args key; do
+# no) ~ PATH ~ arguments (space-separated) ~ first error line ~ consumer
+# (empty: full) ~ its value (empty: not compared)
+while IFS='~' read -r name fail files edits values path args key consumer value; do
   [ -n "$name" ] || continue
   dir="$TMP/refuse-$name"
   world "$dir" "" "$files" "$edits"
@@ -240,11 +244,12 @@ while IFS='~' read -r name fail files edits values path args key; do
   RC=0
   rm -f -- "$dir/.writes.log"
   # shellcheck disable=SC2086
-  RAW="$(env -i PATH="${path:-$BIN:/usr/bin:/bin}" HOME="$TMP" GH_SHIM_FIXTURES="$dir" GH_SHIM_FAIL="$fail" \
+  RAW="$(cd "$TMP/consumer-${consumer:-full}" && env -i PATH="${path:-$BIN:/usr/bin:/bin}" HOME="$TMP" GH_SHIM_FIXTURES="$dir" GH_SHIM_FAIL="$fail" \
     ${secrets:+APP_ID=4242} ${secrets:+"APP_KEY=$KEY"} "$SKILL/scripts/provision-environment.sh" $args 2>&1)" || RC=$?
   first="${RAW%%
 *}"
-  if [ "$RC" -eq 2 ] && [ "${first%% value=*}" = "$key" ] && [ ! -e "$dir/.writes.log" ] && ! grep -qE '^provision(-total)? ' <<<"$RAW"; then
+  if [ "$RC" -eq 2 ] && [ "${first%% value=*}" = "$key" ] && { [ -z "$value" ] || [ "${first#* value=}" = "$value" ]; } &&
+    [ ! -e "$dir/.writes.log" ] && ! grep -qE '^provision(-total)? ' <<<"$RAW"; then
     ok "$name"
   else
     bad "$name (rc=$RC)" "$RAW"
@@ -253,6 +258,7 @@ done <<ROWS
 no organization~~~~yes~~--dry-run~review-gate-error=org-missing
 an unknown argument~~~~yes~~--org acme --repo acme/done~review-gate-error=unknown-argument
 a secret value unset~~~~no~~--org acme~review-gate-error=secret-value-missing
+an owner checkout that declares nothing~~~~yes~~--org acme --dry-run~review-gate-error=standard-setting-missing~none~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
 no jq~~~~yes~$NOJQ~--org acme --dry-run~review-gate-error=jq-missing
 the app on selected repositories~~installations.json~.installations[1].repository_selection = "selected"~yes~~--org acme~review-gate-error=app-selection
 the app not installed~~installations.json~.installations |= [.[0]]~yes~~--org acme~review-gate-error=app-absent
