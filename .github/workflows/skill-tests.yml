@@ -1191,6 +1191,7 @@ jobs:
         working-directory: pi-extensions/pi-codex-minimal-tools
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.87.1 @earendil-works/pi-coding-agent@0.87.1 @earendil-works/pi-tui@0.87.1 typebox 'undici@^7.25.0'
+          npm run typecheck
           npm test
 
       # pi-questions unit tests are dependency-free by design (question-model

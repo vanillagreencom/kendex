@@ -3,9 +3,10 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { zstdDecompressSync } from "node:zlib";
+import * as piAi from "@earendil-works/pi-ai";
 import { normalizeContext } from "@earendil-works/pi-ai";
 import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { buildRequestBody } from "../src/provider-shim.js";
+import { buildRequestBody, registerOpenAICodexCustomProvider, type TranscriptReplayHost } from "../src/provider-shim.js";
 import { providerWorld, successSseResponse } from "./helpers/provider.js";
 import { model } from "./helpers/responses.js";
 
@@ -59,6 +60,18 @@ test("a real Pi session sends its system prompt and tools through the shim", asy
 		additionalExtensionPaths: [join(import.meta.dirname, "..", "src", "index.ts")],
 	});
 	await resourceLoader.reload();
+	const loaded = resourceLoader.getExtensions();
+	assert.deepEqual(loaded.errors, []);
+	// Pi's built-in openai-codex provider sends the same prompt and tools, so
+	// the request alone cannot show the shim served it: count its calls.
+	const registration = loaded.runtime.pendingProviderRegistrations.find((entry) => entry.name === "openai-codex");
+	const shimStream = registration?.config.streamSimple;
+	assert.ok(registration && shimStream, "the package registered no openai-codex provider");
+	let shimCalls = 0;
+	registration.config.streamSimple = (...args) => {
+		shimCalls++;
+		return shimStream(...args);
+	};
 	const { session } = await createAgentSession({
 		cwd: fixture.cwd,
 		agentDir: fixture.agent,
@@ -74,7 +87,23 @@ test("a real Pi session sends its system prompt and tools through the shim", asy
 	await session.setModel(codex);
 	await session.prompt("hello");
 
+	assert.equal(shimCalls, 1, "the shim served the request");
 	assert.equal(bodies.length, 1, "the shim sent one request");
 	assert.match(String(bodies[0].instructions), /^Session prompt/);
 	assert.ok(((bodies[0].tools ?? []) as { name?: string }[]).some((entry) => entry.name === "bash"), JSON.stringify(bodies[0].tools));
 });
+
+const { getCurrentSystemPrompt, getCurrentTools } = piAi;
+for (const row of [
+	{ name: "a Pi 0.86 host", root: { getCurrentSystemPrompt, getCurrentTools }, registered: ["openai-codex"], reason: undefined },
+	{ name: "a host below Pi 0.86", root: {}, registered: [], reason: "native_provider_shim=unregistered missing=getCurrentSystemPrompt,getCurrentTools" },
+	{ name: "a host with only the prompt helper", root: { getCurrentSystemPrompt }, registered: [], reason: "native_provider_shim=unregistered missing=getCurrentTools" },
+] satisfies { name: string; root: TranscriptReplayHost; registered: string[]; reason: string | undefined }[]) {
+	test(`the Codex override registers only where Pi replays the transcript: ${row.name}`, () => {
+		const registered: string[] = [];
+		const pi = { registerProvider: (name: string) => registered.push(name), on() {}, registerMessageRenderer() {} };
+		const result = registerOpenAICodexCustomProvider(pi as never, { getCurrentCwd: () => "/", root: row.root });
+		assert.deepEqual(registered, row.registered);
+		assert.equal(result.kind === "unsupported" ? result.reason.split("\n")[0] : undefined, row.reason);
+	});
+}

@@ -58,7 +58,7 @@ Write the candidate record under `tmp/pi-update/`. The committed `pi-update.audi
   - Required parity fix: Pi changed a behaviour, event shape, provider input or setting that an extension overrides, mirrors, reads or copied.
   - Optional improvement: a new Pi field, helper or event that could simplify an extension that is still correct.
   - Non-impact: outside every extension surface. One line of reason each.
-- **Triage by source.** `coding-agent` reaches nearly every package. `ai` matters only where an extension registers or overrides a provider (`pi-codex-minimal-tools`, `pi-claude-bridge`): grep the provider id first. `agent` → `pi-agents-tmux`, `pi-session-bridge`; `server` → `pi-session-bridge`, `pi-web-tools`; `session-backends/*` → `pi-session-manager`, `pi-session-bridge`, `pi-prompt-stash`; `tui` → `pi-tool-renderer`, `pi-qol`, `pi-extension-manager`, `pi-skills-manager`. Any other source is Non-impact unless an extension imports it.
+- **Triage by import.** A source reaches every package that imports its npm package (`coding-agent` is `@earendil-works/pi-coding-agent`, `ai` is `@earendil-works/pi-ai`, `agent` is `@earendil-works/pi-agent-core`, `tui` is `@earendil-works/pi-tui`, and so on). Find them on each run, never from a stored list: `grep -rlE "['\"]@earendil-works/pi-<name>['\"/]" pi-extensions/*/ --include='*.ts' --include='*.mjs' --include='*.js' --exclude-dir=node_modules --exclude-dir=tests --exclude-dir=__tests__`. For an `ai` entry that names a provider, also grep `pi-extensions/*/` for that provider id: a package that registers the provider is in reach. A source that no package imports is Non-impact.
 - For each Required or Optional entry, cite the affected `path::symbol` and read the Pi source when a field name is unclear.
 
 ## 3. Apply the blocking rule
@@ -95,10 +95,10 @@ When a behaviour cannot be exercised inside Pi, the record says so; it never ass
 
 ## 7. Notify and publish
 
-- Send the result to the fleet overseer as a notice, naming the Pi release, the verdict and the tested extension commit:
+- Send the result to the fleet overseer as a peer directive, naming the Pi release, the verdict and the tested extension commit:
 
   ```bash
-  .agents/skills/orch/scripts/lane-mail peer send --repo fleet --file tmp/pi-update/notice.md
+  .agents/skills/orch/scripts/lane-mail peer send --repo fleet --file tmp/pi-update/result.md
   ```
 
 - Publication is the `npm-deploy` skill, run as linked work: a Linear item related to this one. A failed publish leaves that item open. It does not block fleet rollout, and it does not block the next compatibility run. Add no publication recovery step.
@@ -116,7 +116,7 @@ Verdict: `roll`.
 - Evidence: <the fixtures, tests and CI runs step 4 and step 6 ran>.
 ```
 
-The Breaking Changes table follows. A `roll` clears `<new>`; a `hold` clears `<old>`. `pi-extensions/package-policy.test.mjs` refuses a `roll` without the target release, its integrity, its upstream source commit or a full tested commit, and the other record rules `pi-extensions/AGENTS.md` lists.
+The Breaking Changes table follows. A `roll` clears `<new>`; a `hold` clears `<old>`. What `pi-extensions/package-policy.test.mjs` refuses in the record is the Pi update audit bullet of `pi-extensions/AGENTS.md`.
 
 ## Final report
 
