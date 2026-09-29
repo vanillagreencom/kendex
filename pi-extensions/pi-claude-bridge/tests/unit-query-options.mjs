@@ -8,7 +8,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ALWAYS_DENIED_BUILTIN_TOOLS, DISALLOWED_BUILTIN_TOOLS, SUBSTITUTED_BUILTIN_TOOLS } from "../src/index.ts";
@@ -109,4 +109,44 @@ describe("bridge query options: the substituted built-ins follow the bridged too
 		assert.ok(built.queryOptions.disallowedTools.includes("Bash"), "the file and shell built-ins stay denied");
 		assert.ok(built.queryOptions.hooks.PreToolUse.length > 0, "and the runtime allowlist hook stays wired");
 	});
+});
+
+// One session outside any repository, with the style in the Pi agent-dir
+// AGENTS.md: a connectors session loads Claude user settings, whose output
+// style already carries it, so the forwarded prompt must not carry it again.
+describe("bridge query options: the Pi agent-dir AGENTS.md reaches the child once", () => {
+	const rows = [
+		{ why: "connectors off keeps SDK isolation", provider: {}, settingSources: undefined, forwarded: 1 },
+		{ why: "connectors on loads Claude user settings", provider: { enableConnectors: true }, settingSources: ["user"], forwarded: 0 },
+	];
+	for (const row of rows) {
+		it(`forwards it ${row.forwarded} time(s) when ${row.why}`, () => {
+			const dir = mkdtempSync(join(tmpdir(), "bridge-agents-md-"));
+			const outsideRepo = join(dir, "outside");
+			const agentDir = join(dir, "agent");
+			mkdirSync(outsideRepo, { recursive: true });
+			mkdirSync(agentDir, { recursive: true });
+			writeFileSync(join(agentDir, "AGENTS.md"), "# global style marker\n");
+			const saved = Object.fromEntries(["PI_CODING_AGENT_DIR", "CLAUDE_BRIDGE_ISOLATED", "CLAUDE_BRIDGE_ENABLE_CONNECTORS"].map((key) => [key, process.env[key]]));
+			const oldCwd = process.cwd();
+			try {
+				process.env.PI_CODING_AGENT_DIR = agentDir;
+				delete process.env.CLAUDE_BRIDGE_ISOLATED;
+				delete process.env.CLAUDE_BRIDGE_ENABLE_CONNECTORS;
+				process.chdir(outsideRepo);
+				const built = build({ bridgeConfig: { provider: row.provider } });
+
+				assert.deepEqual(built.queryOptions.settingSources, row.settingSources);
+				const append = built.queryOptions.systemPrompt.append ?? "";
+				assert.equal(append.split("global style marker").length - 1, row.forwarded);
+			} finally {
+				process.chdir(oldCwd);
+				for (const [key, value] of Object.entries(saved)) {
+					if (value === undefined) delete process.env[key];
+					else process.env[key] = value;
+				}
+				rmSync(dir, { recursive: true, force: true });
+			}
+		});
+	}
 });

@@ -208,6 +208,42 @@ describe("resolveAgentsMdPath isolation", () => {
 		}
 	}));
 
+	// Claude Code loads the user level natively whenever "user" is among the query's
+	// setting sources, so only then is the piUserDir fallback dropped. The cwd file
+	// is forwarded under every row.
+	it("the piUserDir fallback follows whether the query loads Claude user settings", () => withTempDir((dir) => {
+		const outsideRepo = join(dir, "outside");
+		const inRepo = join(dir, "repo");
+		const agentDir = join(dir, "agent");
+		mkdirSync(outsideRepo, { recursive: true });
+		mkdirSync(inRepo, { recursive: true });
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(join(inRepo, "AGENTS.md"), "# repo instructions\n");
+		writeFileSync(join(agentDir, "AGENTS.md"), "# global instructions\n");
+		const global = resolve(join(agentDir, "AGENTS.md"));
+		const repo = join(resolve(inRepo), "AGENTS.md");
+		const rows = [
+			{ cwd: outsideRepo, settingSources: undefined, expected: global },
+			{ cwd: outsideRepo, settingSources: [], expected: global },
+			{ cwd: outsideRepo, settingSources: ["project"], expected: global },
+			{ cwd: outsideRepo, settingSources: ["user"], expected: undefined },
+			{ cwd: outsideRepo, settingSources: ["user", "project"], expected: undefined },
+			{ cwd: inRepo, settingSources: undefined, expected: repo },
+			{ cwd: inRepo, settingSources: ["user"], expected: repo },
+		];
+		const oldCwd = process.cwd();
+		try {
+			for (const row of rows) {
+				process.chdir(row.cwd);
+				withEnv({ CLAUDE_BRIDGE_ISOLATED: undefined, PI_CODING_AGENT_DIR: agentDir }, () => {
+					assert.equal(resolveAgentsMdPath(row.settingSources), row.expected, JSON.stringify(row));
+				});
+			}
+		} finally {
+			process.chdir(oldCwd);
+		}
+	}));
+
 	it("isolated mode suppresses cwd and shared piUserDir AGENTS.md", () => withTempDir((dir) => {
 		const cwdDir = join(dir, "cwd");
 		const agentDir = join(dir, "agent");

@@ -105,12 +105,6 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 	// before the CLI has fetched them.
 	const connectorServers = enableCloudMcp ? connectorServersSnapshot(accountScope.claudeConfigDir) : {};
 	const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
-	const agentsAppend = appendSystemPrompt ? extractAgentsAppend() : undefined;
-	const skillsAppend = appendSystemPrompt ? extractSkillsBlock(systemPrompt) : undefined;
-	const promptContextAppend = buildPromptContextAppend(systemPrompt, cwd, bridgeConfig.promptContext ?? {});
-	const appendParts = [agentsAppend, skillsAppend, promptContextAppend.text].filter((part): part is string => Boolean(part));
-	const systemPromptAppend = appendParts.length > 0 ? appendParts.join("\n\n") : undefined;
-
 	// MCP auto-loading suppression: with appendSystemPrompt=true (default), the
 	// SDK uses isolation mode and avoids filesystem settings. If users turn that
 	// off, load user/project settings but pass --strict-mcp-config so Claude Code
@@ -120,6 +114,12 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 	// a hostile checkout. Full rationale on settingSourcesForQuery.
 	const settingSources: SettingSource[] | undefined = settingSourcesForQuery(
 		enableCloudMcp, appendSystemPrompt, providerSettings.settingSources);
+	const agentsAppend = appendSystemPrompt ? extractAgentsAppend(settingSources) : undefined;
+	const skillsAppend = appendSystemPrompt ? extractSkillsBlock(systemPrompt) : undefined;
+	const promptContextAppend = buildPromptContextAppend(systemPrompt, cwd, bridgeConfig.promptContext ?? {});
+	const appendParts = [agentsAppend, skillsAppend, promptContextAppend.text].filter((part): part is string => Boolean(part));
+	const systemPromptAppend = appendParts.length > 0 ? appendParts.join("\n\n") : undefined;
+
 	const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
 	// Prefer the model's own thinkingLevelMap when present (pi-ai 0.72+ ships
 	// per-model overrides — e.g. opus-4-7 wants xhigh→xhigh, not xhigh→max).

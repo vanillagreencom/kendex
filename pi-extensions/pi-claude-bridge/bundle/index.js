@@ -54867,10 +54867,11 @@ function contextFileInDir(dir) {
   }
   return void 0;
 }
-function resolveAgentsMdPath() {
+function resolveAgentsMdPath(settingSources) {
   if (isolatedFromEnv()) return void 0;
   const fromCwd = findAgentsMdInParents(process.cwd());
   if (fromCwd) return fromCwd;
+  if (settingSources?.includes("user")) return void 0;
   return contextFileInDir(piUserDir());
 }
 function findAgentsMdInParents(startDir) {
@@ -54884,8 +54885,8 @@ function findAgentsMdInParents(startDir) {
   }
   return void 0;
 }
-function extractAgentsAppend() {
-  const agentsPath = resolveAgentsMdPath();
+function extractAgentsAppend(settingSources) {
+  const agentsPath = resolveAgentsMdPath(settingSources);
   if (!agentsPath) return void 0;
   try {
     const content = readFileSync7(agentsPath, "utf-8").trim();
@@ -55065,16 +55066,16 @@ function buildClaudeQueryOptions(input) {
   const builtinIsolationApplied = bridgedToolsPresent || piOneShot === true || enableCloudMcp;
   const connectorServers = enableCloudMcp ? connectorServersSnapshot(accountScope.claudeConfigDir) : {};
   const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
-  const agentsAppend = appendSystemPrompt ? extractAgentsAppend() : void 0;
-  const skillsAppend = appendSystemPrompt ? extractSkillsBlock(systemPrompt) : void 0;
-  const promptContextAppend = buildPromptContextAppend(systemPrompt, cwd, bridgeConfig.promptContext ?? {});
-  const appendParts = [agentsAppend, skillsAppend, promptContextAppend.text].filter((part) => Boolean(part));
-  const systemPromptAppend = appendParts.length > 0 ? appendParts.join("\n\n") : void 0;
   const settingSources = settingSourcesForQuery(
     enableCloudMcp,
     appendSystemPrompt,
     providerSettings.settingSources
   );
+  const agentsAppend = appendSystemPrompt ? extractAgentsAppend(settingSources) : void 0;
+  const skillsAppend = appendSystemPrompt ? extractSkillsBlock(systemPrompt) : void 0;
+  const promptContextAppend = buildPromptContextAppend(systemPrompt, cwd, bridgeConfig.promptContext ?? {});
+  const appendParts = [agentsAppend, skillsAppend, promptContextAppend.text].filter((part) => Boolean(part));
+  const systemPromptAppend = appendParts.length > 0 ? appendParts.join("\n\n") : void 0;
   const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
   const requestedEffort = reasoning ? queryModel.thinkingLevelMap?.[reasoning] ?? REASONING_TO_EFFORT[reasoning] : void 0;
   const effort = resolveConfiguredEffort(queryModel.id, requestedEffort, providerSettings);
