@@ -61,12 +61,15 @@ SMALL_MAX="$(conf_value small_max_production)"
   exit 1
 }
 
-# The first stdout line's tier, brief and cause key, and the exit status.
+# The first stdout line's tier, brief and cause key, the class= token that
+# follows the cause where there is one, and the exit status. The class= token
+# is what separates render, trivial and micro, which all answer tier=micro,
+# and review-pr.md skips the review on class=trivial alone.
 run_tier() { # CLASS ARG...
   local class="$1" out rc=0
   shift
   out="$(STUB_CLASS="$class" "${TIER_BIN:-$TIER}" --repo "$TMP_ROOT" "$@" 2>/dev/null)" || rc=$?
-  out="$(sed -n '1s/^\(tier=[a-z]* brief=[a-z]* cause=[a-z-]*\).*/\1/p' <<<"$out")"
+  out="$(sed -n '1s/^\(tier=[a-z]* brief=[a-z]* cause=[a-z-]*\( class=[a-z]*\)\{0,1\}\).*/\1/p' <<<"$out")"
   printf '%s' "${out:+$out }rc=$rc"
 }
 
@@ -80,10 +83,10 @@ ROWS=(
   "-|--production $((MICRO_MAX + 1))|tier=small brief=small cause=estimate-within-small rc=0|an estimate one past the micro ceiling is small"
   "-|--production $SMALL_MAX|tier=small brief=small cause=estimate-within-small rc=0|an estimate at the small ceiling is small"
   "-|--production $((SMALL_MAX + 1))|tier=standard brief=start cause=estimate-past-small rc=0|an estimate one past the small ceiling is standard"
-  "small|--production 1 --base b --head h|tier=small brief=small cause=classifier rc=0|a micro estimate on a small branch takes the wider class"
+  "small|--production 1 --base b --head h|tier=small brief=small cause=classifier class=small rc=0|a micro estimate on a small branch takes the wider class"
   "micro|--production $SMALL_MAX --base b --head h|tier=small brief=small cause=estimate-within-small rc=0|a small estimate on a micro branch takes the wider class"
-  "trivial|--floor small --base b --head h|tier=small brief=small cause=floor rc=0|a floor holds over a narrower branch"
-  "standard|--floor small --base b --head h|tier=standard brief=start cause=classifier rc=0|a branch past its floor escapes to its class"
+  "trivial|--floor small --base b --head h|tier=small brief=small cause=floor class=small rc=0|a floor holds over a narrower branch"
+  "standard|--floor small --base b --head h|tier=standard brief=start cause=classifier class=standard rc=0|a branch past its floor escapes to its class"
   "exit-2|--floor small --base b --head h|tier=standard brief=start cause=classifier-failed rc=0|a classifier that cannot answer is standard"
   "-|--production 1 --path $PR_MERGE|tier=standard brief=start cause=excluded-path rc=0|a merge-gate Location is never micro whatever the estimate"
   "-|--production 1 --path skills/orch/workflows/review-pr.md|tier=micro brief=micro cause=estimate-within-micro rc=0|a Location off the list leaves the estimate's class"
@@ -94,8 +97,10 @@ ROWS=(
   "-|--production $((SMALL_MAX + 1)) --path skills/x/SKILL.md|tier=standard brief=start cause=estimate-past-small rc=0|an instruction Location leaves a wider estimate alone"
   "unmeasured|--floor micro --base b --head h|tier=standard brief=start cause=classifier-unmeasured rc=0|a standard the classifier did not measure says so"
   "nomarker|--floor micro --base b --head h|tier=standard brief=start cause=classifier-unmeasured rc=0|a class with no measured marker is standard"
-  "docs|--floor micro --base b --head h|tier=standard brief=start cause=classifier-unreadable rc=0|a classifier word outside the classes is standard"
-  "render|--base b --head h|tier=micro brief=micro cause=classifier rc=0|a render branch counts as micro"
+  "docs|--floor micro --base b --head h|tier=standard brief=start cause=classifier-unreadable class=docs rc=0|a classifier word outside the classes is standard"
+  "render|--base b --head h|tier=micro brief=micro cause=classifier class=render rc=0|a render branch counts as micro"
+  "trivial|--base b --head h|tier=micro brief=micro cause=classifier class=trivial rc=0|a trivial branch is micro and names its class"
+  "micro|--base b --head h|tier=micro brief=micro cause=classifier class=micro rc=0|a micro branch is micro and names its class, not trivial"
   "-|--production $SMALL_MAX --floor small|tier=small brief=small cause=estimate-within-small rc=0|of two inputs naming one class the first names the cause"
   "-||rc=2|no input is a usage error"
   "-|--production 1x|rc=2|a malformed estimate is a usage error"

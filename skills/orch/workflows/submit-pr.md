@@ -228,7 +228,7 @@ Resolve the gate mode the pull request's base sets:
 .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
 ```
 
-The printed value is `GATE_MODE`, `approval` or `off`: GitHub's own approval rule on the base decides it (full semantics: [references/gates.md](../references/gates.md)); never re-derive it here. A non-zero exit is no mode: report it and do not guess one. This gate reads only GitHub-native review state, from any reviewer, human or bot; bot-specific signals are never parsed.
+The printed value is `GATE_MODE`, `approval` or `off`: GitHub's approval requirement on the base decides it, read from the base's rulesets through `rules/branches` and from the pull request's `reviewDecision`, which also reflects classic branch protection (full semantics: [references/gates.md](../references/gates.md)); never re-derive it here. A non-zero exit is no mode: report it and do not guess one. This gate reads only GitHub-native review state, from any reviewer, human or bot; bot-specific signals are never parsed.
 
 Record the resolved mode as a bare word (never pre-quoted):
 
@@ -427,7 +427,7 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 |--------|-------|
 | PR | #[PR_NUMBER] |
 | CI | ✅ passing / ❌ failing |
-| Review gate | ✅ approved / ⏳ pending / forced / off (the base requires no approval) |
+| Review gate | ✅ approved / ⏳ pending / forced / off (the base's rulesets require no approval and the pull request's `reviewDecision` is empty) |
 | Unresolved threads | [N] |
 | Comment iterations | [N] |
 | Fixes applied | [N] |

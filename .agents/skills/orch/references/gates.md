@@ -4,14 +4,14 @@ Cross-script routing behind the gate-mode summary and the `approval-wait` / `ci-
 
 ## Gate-mode routing
 
-Read the effective reviewer-gate mode ONLY through `approval-wait <PR#> --resolve-mode`, never re-derive it, and never auto-detect the mode from the requested-reviewer list. GitHub's approval rule on the pull request's base decides it: the resolver reads the base from the pull request, then every rule GitHub applies to that branch, organization rulesets included. A non-zero exit is no mode: report it and stop rather than pick one. It prints:
+Read the effective reviewer-gate mode ONLY through `approval-wait <PR#> --resolve-mode`, never re-derive it, and never auto-detect the mode from the requested-reviewer list. GitHub's approval requirement on the pull request's base decides it, read two ways: the resolver reads the base and the pull request's `reviewDecision` in one `gh pr view` call, then every ruleset rule GitHub applies to that branch through `rules/branches`, organization rulesets included. That rules read does not show classic branch protection; the `reviewDecision` does, since GitHub sets it only where the base requires a review. A non-zero exit is no mode: report it and stop rather than pick one. It prints:
 
 | `GATE_MODE` | Meaning | Route |
 |-------------|---------|-------|
-| `approval` | the base's `pull_request` rules require at least one approval | `approval-wait` |
-| `off` | the base requires no approval, or has no `pull_request` rule | skip the wait; record the gate not-applicable |
+| `approval` | the base's `pull_request` rules require at least one approval, or the pull request's `reviewDecision` is non-empty | `approval-wait` |
+| `off` | the base's rulesets require no approval (no `pull_request` rule, or one requiring 0) and the pull request's `reviewDecision` is empty | skip the wait; record the gate not-applicable |
 
-Under `off`, open review threads still stop the merge: submit-pr's gate 3 applies, and so do the readers [thread-read.md § What reads an open thread](thread-read.md#what-reads-an-open-thread) lists. Required CI checks, commit guards, exact-head checks and conflict refusal are untouched in both modes, and the merge path still refuses a `CHANGES_REQUESTED` review at its readiness check. In `approval` mode an unresolved thread holds the wait at `comments` even beside an approval, because the base's rule refuses the merge while one stands.
+Under `off`, open review threads still stop the merge: submit-pr's gate 3 applies, and so do the readers [thread-read.md § What reads an open thread](thread-read.md#what-reads-an-open-thread) lists. Required CI checks, commit guards, exact-head checks and conflict refusal are untouched in both modes, and the merge path still refuses a `CHANGES_REQUESTED` review at its readiness check. In `approval` mode an unresolved thread holds the wait at `comments` even beside an approval, because orch's own merge gates refuse an open thread: submit-pr's gate 3 and merge-pr's thread read ([thread-read.md](thread-read.md)). A base rule refuses one too where it requires thread resolution.
 
 The reviewer-gate settings, `PR_REVIEW_ON_TIMEOUT` and `PR_REVIEW_WAIT_SECS`, live in `kendex.settings.toml` `[env]`; semantics and defaults are in `approval-wait --help`. The gate predicate, writer, and engine-side `REVIEW_GATE_*` keys belong to the review-gate skill (its SKILL.md and `.agents/skills/review-gate/references/settings.md`).
 

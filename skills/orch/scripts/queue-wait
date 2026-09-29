@@ -875,8 +875,10 @@ guard_fire() {
 
 # One rate-limited guard probe. ANY unresolved thread observed while
 # queued/armed fires guard_fire — no baseline, because an unresolved thread in
-# the queue is unsafe whenever it appeared, and enqueue does not prove threads
-# were zero (approval mode emits `approved` on the verdict alone).
+# the queue is unsafe whenever it appeared. An `approved` verdict from
+# approval-wait implies zero unresolved threads at that poll, but enqueue does
+# not prove threads were zero on the proceeded, forced or off routes, and a
+# thread can open after any verdict.
 # Failed reads are absorbed rather than treated as a trigger: dequeuing on no
 # evidence would churn the queue on every transient API error. Blindness is
 # loud instead — every GUARD_FETCH_WARN_POLLS consecutive failures warn again,

@@ -5,8 +5,10 @@
 # notices a change from one to the other: "block" stops every session at a
 # reviewer that never shows, and "ask" stops it at every decision.
 #
-# Spelling is orch-env's to report and is not re-checked here. What is
-# checked is the resolved value, which a warning cannot cover.
+# A misspelled PR_REVIEW_ON_TIMEOUT is reported by approval-wait's
+# timeout-fallback warning, which falls back to "block"; no script reports a
+# misspelled ORCH_DECISION_MODE. What is checked here is the resolved value;
+# for ORCH_DECISION_MODE this assertion is the only check.
 #
 # Lives under tools/tests/, not skills/orch/tests/: that suite ships with the
 # orch skill to other projects, and this policy is kendex's alone. tools/tests

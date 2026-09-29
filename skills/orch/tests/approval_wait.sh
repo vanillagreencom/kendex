@@ -3,7 +3,8 @@
 # formal review verdicts (`gh pr view --json reviewDecision,latestReviews`)
 # and the unresolved review-thread count, never emoji reactions, sticky
 # comments or checklist prose; and it resolves its mode from the approval
-# count GitHub's rules require on the PR's base branch.
+# count GitHub's rulesets require on the PR's base branch and the PR's own
+# reviewDecision.
 #
 # One case per behaviour surface; shaped input is one table per case, one
 # asserted row per shape. A row's `expect` names the fields it pins; `observe`
@@ -45,8 +46,11 @@ git -C "$TMP_ROOT/repo" config user.name Test
 #   STUB_AUTHOR_COUNT_FILE), `pr view --json author`
 #   answers "app/pr-author", and the latestReviews rows spell the same
 #   account "pr-author".
-#   Mode resolution: `pr view --json baseRefName` answers STUB_BASE_REF
-#   (STUB_BASE_MODE=fail fails it, empty answers nothing); `api
+#   Mode resolution: `pr view --json baseRefName,reviewDecision` answers
+#   STUB_BASE_REF and STUB_BASE_DECISION (default empty, as GitHub answers a
+#   base that requires no review); STUB_BASE_MODE=fail fails it, empty
+#   answers an empty base, and not_string a reviewDecision that is no string;
+#   `api
 #   repos/*/rules/branches/<base>` answers one pull_request rule requiring
 #   STUB_REQUIRED_APPROVALS (default 1) beside a deletion rule, and appends
 #   the URL it was asked for to STUB_RULES_LOG. STUB_RULES_MODE=none answers
@@ -271,12 +275,14 @@ case "${1:-}" in
         printf '%s\n' "${STUB_CONFIRM_HEAD:-headsha1}"
         exit 0
       fi
-      # Mode resolution's base read: `--json baseRefName -q .baseRefName`.
-      if [[ "$*" == *"--json baseRefName "* ]]; then
+      # Mode resolution's read: `--json baseRefName,reviewDecision`.
+      if [[ "$*" == *"--json baseRefName,reviewDecision"* ]]; then
         case "${STUB_BASE_MODE:-ok}" in
           fail) echo "HTTP 404: Not Found (https://api.github.com/repos/owner/repo/pulls/1)" >&2; exit 1 ;;
-          empty) echo "" ;;
-          *) printf '%s\n' "${STUB_BASE_REF:-main}" ;;
+          empty) echo '{"baseRefName":"","reviewDecision":""}' ;;
+          not_string) jq -nc --arg base "${STUB_BASE_REF:-main}" '{baseRefName: $base, reviewDecision: 1}' ;;
+          *) jq -nc --arg base "${STUB_BASE_REF:-main}" --arg decision "${STUB_BASE_DECISION:-}" \
+               '{baseRefName: $base, reviewDecision: $decision}' ;;
         esac
         exit 0
       fi
@@ -328,6 +334,12 @@ case "${1:-}" in
             reviews='[{"author":{"login":"reviewer1"},"state":"APPROVED"},{"author":{"login":"colleague"},"state":"COMMENTED"}]'
             ;;
           changes)
+            reviews='[{"author":{"login":"reviewer1"},"state":"CHANGES_REQUESTED"},{"author":{"login":"colleague"},"state":"APPROVED"}]'
+            ;;
+          approved_with_changes)
+            # A request GitHub does not count, from a reviewer without write
+            # access, beside a decision that approves.
+            decision="APPROVED"
             reviews='[{"author":{"login":"reviewer1"},"state":"CHANGES_REQUESTED"},{"author":{"login":"colleague"},"state":"APPROVED"}]'
             ;;
           commented_only)
@@ -471,19 +483,23 @@ table() {
 APPROVAL='1 1 3 --json --mode approval'
 RESOLVE='1 --resolve-mode'
 
-echo "=== --resolve-mode: the approval count the base's rules require decides ==="
-# GitHub's approval rule on the PR's base is the whole answer: at least one
-# required approval is approval, none or no pull_request rule is off, and the
-# largest count over every page wins. A read that fails, answers nothing,
-# answers a non-list or a count that is not a number is no mode: exit 2, a
-# diagnostic naming the branch, and nothing on stdout, never an off that
-# would skip the wait. The base is read from the PR, and a branch holding a
-# slash is sent URL-encoded.
+echo "=== --resolve-mode: the base's rulesets and the PR's reviewDecision decide ==="
+# At least one approval the base's rulesets require is approval, and the
+# largest count over every page wins. The rules read does not show classic
+# branch protection, so a non-empty reviewDecision, which GitHub sets only
+# where the base requires a review, is approval too. Off needs both: no
+# required approval in the rules and an empty reviewDecision. A read that
+# fails, answers nothing, answers a non-list or a count that is not a number
+# is no mode: exit 2, a diagnostic naming the branch, and nothing on stdout,
+# never an off that would skip the wait. The base is read from the PR, and a
+# branch holding a slash is sent URL-encoded.
 table "$RESOLVE" \
   'rules requiring 1 approval resolve approval||STUB_REQUIRED_APPROVALS=1|rc=0 mode=approval rules_reads=1' \
   'rules requiring 2 approvals resolve approval||STUB_REQUIRED_APPROVALS=2|rc=0 mode=approval' \
   'rules requiring 0 approvals resolve off||STUB_REQUIRED_APPROVALS=0|rc=0 mode=off' \
   'a base with no pull_request rule resolves off||STUB_RULES_MODE=none|rc=0 mode=off' \
+  'rules requiring 0 beside a REVIEW_REQUIRED decision resolve approval, as classic protection reads||STUB_REQUIRED_APPROVALS=0,STUB_BASE_DECISION=REVIEW_REQUIRED|rc=0 mode=approval' \
+  'no pull_request rule beside an APPROVED decision resolves approval||STUB_RULES_MODE=none,STUB_BASE_DECISION=APPROVED|rc=0 mode=approval' \
   'a count on a later page is read, and the largest wins||STUB_RULES_MODE=paged,STUB_REQUIRED_APPROVALS=0,STUB_REQUIRED_APPROVALS_PAGE2=1|rc=0 mode=approval' \
   'the base is the one the PR names, URL-encoded||STUB_BASE_REF=release/1.x|rc=0 mode=approval rules_url=repos/owner/repo/rules/branches/release%2F1.x' \
   'a failed rules read is no mode||STUB_RULES_MODE=fail|rc=2 stdout=empty stderr_line=approval-wait:+rules-unreadable+branch=main+repo=owner/repo' \
@@ -493,6 +509,7 @@ table "$RESOLVE" \
   'a count that is not a whole number is a failed read||STUB_RULES_MODE=fraction|rc=2 stdout=empty' \
   'a failed base read is no mode, and no rules are read||STUB_BASE_MODE=fail|rc=2 stdout=empty rules_reads=0 stderr_line=approval-wait:+base-unreadable+pr=1+repo=owner/repo' \
   'an empty base is a failed read||STUB_BASE_MODE=empty|rc=2 stdout=empty rules_reads=0' \
+  'a reviewDecision that is no string is a failed read||STUB_BASE_MODE=not_string|rc=2 stdout=empty rules_reads=0 stderr_line=approval-wait:+base-unreadable+pr=1+repo=owner/repo' \
   'an auth failure is no mode and prints nothing on stdout||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 stdout=empty'
 
 echo "=== a wait without --mode resolves the mode the same way ==="
@@ -509,14 +526,16 @@ echo "=== approval mode: the verdict rule over the pr view payload and the threa
 # A reviewDecision decides; with none, the latest review per reviewer does,
 # and REVIEW_REQUIRED means the rule still wants more. COMMENTED is never a
 # verdict. An open thread holds every head at comments, approved or not,
-# since the base's rule refuses the merge while one stands; a standing
-# CHANGES_REQUESTED without an approval outranks it. A later poll picks up a
-# verdict the first missed.
+# since orch's own merge gates refuse an open thread; a standing
+# CHANGES_REQUESTED without an approval outranks it, and one an APPROVED
+# decision overrides does not. A later poll picks up a verdict the first
+# missed.
 table "$APPROVAL" \
   'reviewDecision APPROVED approves||STUB_APPROVAL_MODE=approved_decision|rc=0 status=approved review_decision=APPROVED approvals=1' \
   'no reviewDecision, a latest APPROVED approves via latestReviews||STUB_APPROVAL_MODE=approved_latest|rc=0 status=approved review_decision= approvals=1' \
   'a latest CHANGES_REQUESTED blocks beside another approval||STUB_APPROVAL_MODE=changes|rc=1 status=changes_requested changes_requested=1' \
   'a CHANGES_REQUESTED outranks open threads||STUB_APPROVAL_MODE=changes,STUB_THREADS_UNRESOLVED=2|rc=1 status=changes_requested' \
+  'a CHANGES_REQUESTED the APPROVED decision overrides leaves open threads at comments||STUB_APPROVAL_MODE=approved_with_changes,STUB_THREADS_UNRESOLVED=1|rc=1 status=comments review_decision=APPROVED changes_requested=1' \
   'COMMENTED-only latest reviews are no verdict||STUB_APPROVAL_MODE=commented_only|rc=1 status=timeout approvals=0' \
   'open threads with no verdict return comments before the deadline||STUB_APPROVAL_MODE=none,STUB_THREADS_UNRESOLVED=2|rc=1 status=comments unresolved_count=2 early=true' \
   'nothing at the deadline is a timeout||STUB_APPROVAL_MODE=none|rc=1 status=timeout' \
@@ -655,15 +674,24 @@ echo "=== unread lane mail ends the wait early ==="
 table "$APPROVAL" \
   "a directive written mid-wait returns the keyed line with exit 5|1 30 30 --json --mode approval --item KEN-2|STUB_APPROVAL_MODE=none,STUB_MAIL_TO=$TMP_ROOT/repo/tmp/lane-mail/KEN-2/to-lane.jsonl|rc=5 mail=1"
 
-echo "=== must-fail controls: each resolution rule and the thread-first route ==="
+echo "=== must-fail controls: each resolution rule and the route's two orderings ==="
 # Each control edits a copy of approval-wait in a project of its own, never
 # the tracked file, and asserts its substitution matched exactly once. The
 # mutant keeps the matched line and removes one rule, so the row that rule
 # decides answers otherwise:
-#   threshold-up    the approval branch needs 2, so 1 required answers off
-#   threshold-down  the approval branch needs 0, so 0 required answers approval
-#   fail-open       a failed rules read yields a count of 0 and answers off
-#   approved-first  an approval no longer waits for its threads to resolve
+#   threshold-up           the approval branch needs 2, so 1 required
+#                          answers off
+#   threshold-down         the approval branch needs 0, so 0 required
+#                          answers approval
+#   decision-ignored       the reviewDecision is dropped, so 0 required
+#                          beside REVIEW_REQUIRED answers off
+#   fail-open              a failed rules read yields a count of 0 and
+#                          answers off
+#   approved-first         an approval no longer waits for its threads to
+#                          resolve
+#   changes-over-approval  a CHANGES_REQUESTED review blocks beside an
+#                          APPROVED decision, so an approved head with a
+#                          thread answers changes_requested, not comments
 # The same project's unmutated copy answers each row first, so a control
 # reddens its row through its mutation alone.
 MUTANT_REPO="$TMP_ROOT/mutant"
@@ -701,11 +729,17 @@ control() {
 }
 
 # shellcheck disable=SC2016 # the lines are matched literally, unexpanded
-control threshold-up '  if [ "$required" -ge 1 ]; then' '  if [ "$required" -ge 2 ]; then' \
+control threshold-up '  if [ "$required" -ge 1 ] || [ -n "$decision" ]; then' \
+  '  if [ "$required" -ge 2 ] || [ -n "$decision" ]; then' \
   "$RESOLVE" 'STUB_REQUIRED_APPROVALS=1' 'rc=0 mode=approval'
 # shellcheck disable=SC2016 # the lines are matched literally, unexpanded
-control threshold-down '  if [ "$required" -ge 1 ]; then' '  if [ "$required" -ge 0 ]; then' \
+control threshold-down '  if [ "$required" -ge 1 ] || [ -n "$decision" ]; then' \
+  '  if [ "$required" -ge 0 ] || [ -n "$decision" ]; then' \
   "$RESOLVE" 'STUB_REQUIRED_APPROVALS=0' 'rc=0 mode=off'
+# shellcheck disable=SC2016 # the lines are matched literally, unexpanded
+control decision-ignored '  if [ "$required" -ge 1 ] || [ -n "$decision" ]; then' \
+  '  if [ "$required" -ge 1 ]; then' \
+  "$RESOLVE" 'STUB_REQUIRED_APPROVALS=0,STUB_BASE_DECISION=REVIEW_REQUIRED' 'rc=0 mode=approval'
 # shellcheck disable=SC2016 # the lines are matched literally, unexpanded
 control fail-open '  if ! required=$(read_required_approvals "$RULES_BRANCH"); then' \
   '  if ! required=$(read_required_approvals "$RULES_BRANCH" || echo 0); then' \
@@ -714,6 +748,9 @@ control fail-open '  if ! required=$(read_required_approvals "$RULES_BRANCH"); t
 control approved-first '  if [ "$approved" = true ] && [ "$last_unresolved" -eq 0 ]; then' \
   '  if [ "$approved" = true ]; then' \
   "$APPROVAL" 'STUB_APPROVAL_MODE=approved_decision,STUB_THREADS_UNRESOLVED=1' 'rc=1 status=comments'
+# shellcheck disable=SC2016,SC1003 # the lines are matched literally, unexpanded; each ends in a backslash
+control changes-over-approval '  if [ "$approved" = false ] \' '  if [ "$approved" = true ] \' \
+  "$APPROVAL" 'STUB_APPROVAL_MODE=approved_with_changes,STUB_THREADS_UNRESOLVED=1' 'rc=1 status=comments'
 
 echo "=== a failed emit_result never reports a successful gate ==="
 # emit_result builds the --json object with `jq -n`, so this stub fails

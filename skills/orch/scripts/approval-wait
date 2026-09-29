@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Wait for the reviewer-gate verdict on a PR, or print the gate mode its base
-# branch's rules set with --resolve-mode. The authoritative contract — modes,
+# Wait for the reviewer-gate verdict on a PR, or print with --resolve-mode the
+# gate mode read from its base branch's rulesets (rules/branches) and the PR's
+# own reviewDecision. The authoritative contract — modes,
 # mode resolution, settings, JSON output, auth, exit codes — is print_usage
 # below: run with --help.
 # --resolve-mode stdout is the approval|off enum consumed by submit-pr,
@@ -40,7 +41,7 @@ approval_message() {
       ;;
     base-unreadable)
       printf 'approval-wait: base-unreadable pr=%s repo=%s\n' "$PR_NUM" "$REPO"
-      printf '%s\n' "approval-wait: could not read the base branch of PR #$PR_NUM in $REPO, so no gate mode is available"
+      printf '%s\n' "approval-wait: could not read the base branch and review decision of PR #$PR_NUM in $REPO, so no gate mode is available"
       ;;
     rules-unreadable)
       printf 'approval-wait: rules-unreadable branch=%q repo=%s\n' "$RULES_BRANCH" "$REPO"
@@ -88,7 +89,7 @@ approval_message() {
       ;;
     gate-off)
       printf 'approval-wait: gate-off mode=%s branch=%q\n' "$MODE" "$RULES_BRANCH"
-      printf '%s\n' "approval-wait: the rules on branch '$RULES_BRANCH' require no approval, so no verdict is available to wait for"
+      printf '%s\n' "approval-wait: neither the rulesets on branch '$RULES_BRANCH' nor the PR's review decision require an approval, so no verdict is available to wait for"
       ;;
     timeout-fallback)
       printf 'approval-wait: timeout-fallback value=%q fallback=%s\n' "$ON_TIMEOUT" "block"
@@ -151,12 +152,13 @@ vs proceeded deterministically (kendex#538, kendex#642).
   --on-timeout   block | proceed — overrides the PR_REVIEW_ON_TIMEOUT
                  setting
   --item ID      the lane whose new mail exits 5; no mail check without it
-  --resolve-mode print the gate mode the PR's base branch sets
-                 (approval | off) and exit — see Mode resolution
+  --resolve-mode print the gate mode the PR's base branch sets, read from
+                 its rulesets and the PR's reviewDecision (approval |
+                 off), and exit — see Mode resolution
 
 Approval mode reads GitHub-native review state ONLY, on either signal:
-  - reviewDecision == "APPROVED" (the aggregate the base's approval rule
-    computes), or
+  - reviewDecision == "APPROVED" (the aggregate GitHub computes from the
+    base's review requirement), or
   - when reviewDecision is empty/null: at least one reviewer whose LATEST
     review is APPROVED and no reviewer whose latest review is
     CHANGES_REQUESTED.
@@ -165,19 +167,26 @@ Approval mode reads GitHub-native review state ONLY, on either signal:
   parsed. A reviewDecision of REVIEW_REQUIRED never falls back to
   latestReviews: the rule is still waiting on required approvals.
   An unresolved review thread holds the verdict at "comments", approval or
-  not: the base's rule refuses the merge while any thread stands open, so
-  the caller triages it first. A CHANGES_REQUESTED without an approval
-  reports "changes_requested" ahead of the thread count.
+  not: orch's own merge gates (submit-pr's gate 3, merge-pr's thread read)
+  refuse an open thread, as does a base rule where it requires thread
+  resolution, so the caller triages it first. A CHANGES_REQUESTED without an
+  approval reports "changes_requested" ahead of the thread count.
 
-Mode resolution: GitHub's approval rule decides. --resolve-mode, and a wait
-without --mode, read the PR's base branch (gh pr view --json baseRefName) and
-then every rule GitHub applies to that branch, organization rulesets included
-(repos/<repo>/rules/branches/<base>, every page). A base whose pull_request
-rules require at least one approval prints "approval"; a base with no
-pull_request rule, or one requiring 0, prints "off". A failed read of either,
-or a rule whose required_approving_review_count is not a whole number, is no
-mode: exit 2 with a diagnostic and nothing on stdout. A default wait whose
-base resolves off exits 2 as well (gate-off): there is no verdict to wait for.
+Mode resolution: GitHub's approval requirement decides, read two ways.
+--resolve-mode, and a wait without --mode, read the PR's base branch and
+reviewDecision in one call (gh pr view --json baseRefName,reviewDecision),
+then every ruleset rule GitHub applies to that branch, organization rulesets
+included (repos/<repo>/rules/branches/<base>, every page). That rules read
+does not show classic branch protection; the reviewDecision does, since
+GitHub sets it only where the base requires a review, whether a ruleset or
+classic protection asks for it. "approval" prints when the base's
+pull_request rules require at least one approval OR the reviewDecision is
+non-empty; "off" prints only when both say no approval is required (no
+pull_request rule or one requiring 0, and an empty reviewDecision). A failed
+read of the base, the reviewDecision or the rules, or a rule whose
+required_approving_review_count is not a whole number, is no mode: exit 2
+with a diagnostic and nothing on stdout. A default wait whose base resolves
+off exits 2 as well (gate-off): there is no verdict to wait for.
 Callers read the mode only through this resolution, and never auto-detect it
 from the requested-reviewer list.
 
@@ -613,13 +622,16 @@ fi
 OWNER="${REPO%%/*}"
 REPO_NAME="${REPO#*/}"
 
-# --- gate mode: GitHub's approval rule on the PR's base branch ---
-# The mode is what the base's own rules require, so the wait and GitHub's merge
+# --- gate mode: GitHub's approval requirement on the PR's base branch ---
+# The mode is what GitHub requires of the base, so the wait and GitHub's merge
 # refusal cannot disagree about whether an approval is needed. rules/branches
-# answers every active rule that applies to the branch, organization rulesets
-# included, which a repository ruleset listing does not show. Each read is
-# checked: a failed or unparseable answer is no mode, never "off", since off
-# skips the wait.
+# answers every active ruleset rule that applies to the branch, organization
+# rulesets included, which a repository ruleset listing does not show; it does
+# not answer classic branch protection. The PR's reviewDecision covers that
+# case: GitHub sets it only where the base requires a review, classic
+# protection included, and reading it needs no admin permission, which the
+# classic protection endpoint does. Each read is checked: a failed or
+# unparseable answer is no mode, never "off", since off skips the wait.
 
 # Print the largest required_approving_review_count among BRANCH's
 # pull_request rules, 0 when it has none. Returns 1 on a failed read, a
@@ -637,13 +649,17 @@ read_required_approvals() { # BRANCH
     else error("the rules answer is not a set of pages") end' <<<"$raw" 2>/dev/null
 }
 
-# Set GATE_MODE to approval or off for this PR's base. Returns 1, the
-# diagnostic already on stderr, when the base or its rules cannot be read.
+# Set GATE_MODE to approval or off for this PR's base: approval when either
+# the rules or the reviewDecision says an approval is required, off only when
+# both say none is. Returns 1, the diagnostic already on stderr, when the base,
+# the reviewDecision or the rules cannot be read.
 GATE_MODE=""
 resolve_gate_mode() {
-  local required
-  if ! RULES_BRANCH=$(gh pr view "$PR_NUM" --repo "$REPO" --json baseRefName -q '.baseRefName' 2>"$GH_ERR_FILE") \
-    || [ -z "$RULES_BRANCH" ]; then
+  local required base_json decision
+  if ! base_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json baseRefName,reviewDecision 2>"$GH_ERR_FILE") \
+    || ! RULES_BRANCH=$(jq -er '.baseRefName | strings | select(length > 0)' <<<"$base_json" 2>/dev/null) \
+    || ! decision=$(jq -er '.reviewDecision // "" | strings' <<<"$base_json" 2>/dev/null); then
+    RULES_BRANCH=""
     approval_message base-unreadable >&2
     return 1
   fi
@@ -651,7 +667,7 @@ resolve_gate_mode() {
     approval_message rules-unreadable >&2
     return 1
   fi
-  if [ "$required" -ge 1 ]; then
+  if [ "$required" -ge 1 ] || [ -n "$decision" ]; then
     GATE_MODE=approval
   else
     GATE_MODE=off
@@ -968,8 +984,9 @@ while true; do
   # --- route ---
   # An approval is reviewDecision APPROVED, or, with no reviewDecision, an
   # approving latest review and no standing CHANGES_REQUESTED. An open thread
-  # holds an approved head at "comments": the base's rule refuses the merge
-  # while any thread stands unresolved, so the caller triages before it arms.
+  # holds an approved head at "comments": orch's own merge gates (submit-pr's
+  # gate 3, merge-pr's thread read) refuse an open thread, as does a base rule
+  # where it requires thread resolution, so the caller triages before it arms.
   approved=false
   if [ "$last_review_decision" = "APPROVED" ] \
     || { [ -z "$last_review_decision" ] && [ "$last_approvals" -gt 0 ] && [ "$last_changes" -eq 0 ]; }; then
