@@ -6,7 +6,8 @@ license: MIT
 user-invocable: true
 argument-hint: "report [query] --output findings.md"
 dependencies:
-  optional: [decider, code-quality]
+  required: [code-quality]
+  optional: [decider]
 metadata:
   author: vanillagreen
   source: kendex

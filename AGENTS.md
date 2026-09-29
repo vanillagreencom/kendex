@@ -16,6 +16,7 @@ Desktop app and thin CLI (Rust + Tauri + React) for managing AI coding-harness c
 - Open work lives in Linear (team KEN); scratch goes to `tmp/` (gitignored), never `/tmp`.
 - A change under `crates/` or `ui/` ships a changelog fragment, one consumer-facing list item in `changelog.d/<section>/<name>.md` per `changelog.d/README.md`, or says `[no-changelog]` in the subject; the commit-guards commit-msg gate holds it, and `changelog-entries --collate` folds the fragments in at release.
 - A source with a tracked render (`skills/`, `agents/<n>.md`, `hooks/<n>`) lands the render in the same commit; the rule is in `skills/AGENTS.md`.
+- `kendex-local.toml` is this repository's own manifest. A rule for kendex alone, not for every install of a catalog skill, goes in its `[skill-instructions]`, which the render writes into `.agents/skills/<name>/SKILL.md`; `skills/` ships to every install.
 - Review bots follow `.github/instructions/code-review.md`, which Code Review Rules below points them at, and `.github/instructions/*.instructions.md`; engineering rules are the code-quality skill, round scope the dev skill, finding dispositions `skills/orch/references/finding-disposition.md`.
 
 ## Read next
