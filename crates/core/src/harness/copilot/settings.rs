@@ -295,6 +295,20 @@ mod tests {
     #[test]
     fn a_personal_disable_is_visible_from_a_project_and_a_global_scope_has_nothing_above_it() {
         let (_tmp, env, scope) = fixture();
+        // Copilot writes `config.json` with a `//` header, and the list in it
+        // still counts.
+        let legacy = legacy_user_settings_file(&env);
+        std::fs::write(
+            &legacy,
+            "// User settings belong in settings.json.\n{\"disabledSkills\": [\"deploy\"],}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            disabled_above(&env, &scope, ItemKind::Skill, "deploy"),
+            Some(legacy.clone())
+        );
+        std::fs::remove_file(&legacy).unwrap();
+
         std::fs::write(
             user_settings_file(&env),
             r#"{"disabledSkills": ["deploy"], "disabledMcpServers": ["gh"]}"#,
