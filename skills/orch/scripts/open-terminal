@@ -800,7 +800,7 @@ copilot_context_configure() { # HOME
 # JSON object whose `switched_off_by` names the file or is null; a kendex that
 # is missing, fails or answers anything else refuses the lane, since an
 # unanswered question is not hooks that run. A settings file there that it
-# cannot read or parse as JSON fails it, naming the file.
+# cannot read or parse as commented JSON fails it, naming the file.
 #
 # The home must be an absolute path. A relative one is configured and judged
 # here against this launcher's directory, the caller's checkout, while the

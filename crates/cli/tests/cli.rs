@@ -162,6 +162,7 @@ fn hooks_off_names_the_copilot_settings_file_that_switched_every_hook_off() {
     fs::create_dir_all(&copilot_home).unwrap();
     fs::create_dir_all(project.join(".github/copilot")).unwrap();
     fs::create_dir_all(project.join(".claude")).unwrap();
+    let home_config = copilot_home.join("config.json");
     let home_settings = copilot_home.join("settings.json");
     let claude_settings = project.join(".claude/settings.json");
     let repo_settings = project.join(".github/copilot/settings.json");
@@ -186,8 +187,16 @@ fn hooks_off_names_the_copilot_settings_file_that_switched_every_hook_off() {
     // A label, the settings file the row writes with its text, and the
     // answer; each write lands on top of the rows before it.
     type Row<'a> = (&'a str, Option<(&'a Path, &'a str)>, serde_json::Value);
-    let rows: [Row; 4] = [
+    let rows: [Row; 5] = [
         ("no settings anywhere", None, none.clone()),
+        (
+            "the home's config.json, under the header Copilot writes, switches them off",
+            Some((
+                &home_config,
+                "// User settings belong in settings.json.\n{\"disableAllHooks\": true}\n",
+            )),
+            named(&home_config),
+        ),
         (
             "the home named by the flag switches them off",
             Some((&home_settings, r#"{"disableAllHooks": true}"#)),
@@ -218,8 +227,8 @@ fn hooks_off_names_the_copilot_settings_file_that_switched_every_hook_off() {
     );
 }
 
-/// A settings file that is there but is no JSON is a layer the answer
-/// cannot judge, so the verb fails naming it and prints no answer, and
+/// A settings file that is there but is no JSON once its comments are
+/// stripped is a layer the answer cannot judge, so the verb fails naming it and prints no answer, and
 /// `open-terminal` refuses the lane instead of reading null.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -233,11 +242,7 @@ fn hooks_off_fails_naming_a_copilot_settings_file_it_cannot_parse() {
     fs::create_dir_all(&copilot_home).unwrap();
     fs::create_dir_all(&project).unwrap();
     let home_settings = copilot_home.join("settings.json");
-    fs::write(
-        &home_settings,
-        "// a comment\n{\"disableAllHooks\": true}\n",
-    )
-    .unwrap();
+    fs::write(&home_settings, "// a comment\n{\"disableAllHooks\": true\n").unwrap();
     let output = kendex(
         home,
         home,

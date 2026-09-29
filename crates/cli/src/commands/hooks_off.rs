@@ -10,9 +10,9 @@
 //! The answer is one JSON object on stdout, `{"switched_off_by": PATH}` or
 //! `{"switched_off_by": null}`, and `open-terminal` reads that key. Like the
 //! reader, it reports what the files on disk configure, never what a run did.
-//! A settings file that is there but cannot be read or is no JSON fails the
-//! verb, naming the file on stderr, so the gate refuses rather than read an
-//! unjudged layer as hooks that run.
+//! A settings file that is there but cannot be read, or is no JSON once its
+//! comments are stripped, fails the verb, naming the file on stderr, so the
+//! gate refuses rather than read an unjudged layer as hooks that run.
 
 use std::path::PathBuf;
 
