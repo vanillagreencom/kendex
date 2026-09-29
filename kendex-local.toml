@@ -15,6 +15,10 @@ code-quality = '''
 
 - A store selector returns a stable reference: never mint an array, object or Set inside one, since a fresh value re-renders forever and blanks the page.
 - An effect that positions or measures rendered content takes what is drawn as its trigger, not a list of state names; the exhaustive-dependencies lint checks only what the effect reads.
+
+### Platform rules
+
+Enforce a rule on the platform where it can hold it (GitHub settings and rulesets, a harness's own settings). Keep a hook, script or instruction guard only where it cannot, and state why at the guard.
 '''
 project-management = '''
 ### Project taxonomy

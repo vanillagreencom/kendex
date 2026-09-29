@@ -27,6 +27,10 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 - A store selector returns a stable reference: never mint an array, object or Set inside one, since a fresh value re-renders forever and blanks the page.
 - An effect that positions or measures rendered content takes what is drawn as its trigger, not a list of state names; the exhaustive-dependencies lint checks only what the effect reads.
 
+### Platform rules
+
+Enforce a rule on the platform where it can hold it (GitHub settings and rulesets, a harness's own settings). Keep a hook, script or instruction guard only where it cannot, and state why at the guard.
+
 <!-- kendex:project-instructions:end -->
 
 # Code Quality
@@ -63,9 +67,7 @@ Build only what was asked. No speculative abstractions, no extension point for a
 
 One judge per question: never re-implement a decision (classify, validate, parse, detect state) another component or language already owns; delegate. When real consumers would each make the same decision, one shared owner makes it; caller count neither justifies nor removes that owner. A decision re-derived at each use site in one file is the same defect: compute it once and let each site match on the result. A second spelling is a defect even when both copies agree.
 
-Integrate through the system's own interface. Before building on another system (a service, an API, a CLI, an agent harness), list the extension points its current documentation provides, in this order: SDK, extension or plugin API, event stream or RPC, then hooks, then settings; use the first that serves the purpose. The design names each one checked, with its doc link, and why the chosen one serves. Deriving its state indirectly (reading a status line, parsing a file or screen text, scraping a pane, reading its internal files, or re-implementing a feature it already offers) is a last resort the design justifies against that list, and the code names it as the fallback, the interface it stands in for, and why that interface cannot serve.
-
-Enforce a rule where the platform enforces it. When a platform the project runs on can hold a rule itself (repository and organization settings, branch rulesets, required checks, permissions, a harness's own settings), configure it there instead of holding agents to it with a hook, script, workflow step or instruction. A guard is kept only where the platform cannot enforce the rule, a plan without rulesets for example: it states that reason where it is defined, and stands down wherever the platform setting already enforces the rule.
+Integrate through the system's own interface. Before building on another system (a service, an API, a CLI, an agent harness), read its current documentation and use the interface it provides for the purpose. Check the system's documented extension points in this order: SDK, extension or plugin API, events or RPC, hooks, settings; name the one used and why. Deriving its state indirectly (reading a status line, parsing a file or screen text, scraping a pane, reading its internal files, or re-implementing a feature it already offers) is a last resort: the code names it as the fallback, the interface it stands in for, and why that interface cannot serve.
 
 ## Prove Your Guards
 
