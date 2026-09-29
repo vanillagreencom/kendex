@@ -329,9 +329,10 @@ Options:
                     record reads stopped. A launch run in the foreground
                     writes stopped only once the close succeeds; one the
                     background job ran writes it whatever the close answered.
-                    A relaunch whose record reads preparing or stopped keeps
-                    the harness, model, account and session of the last
-                    launch that took, which the next relaunch is judged on.
+                    A relaunch that writes the record preparing or stopped,
+                    not yet taken, keeps the harness, model, account and
+                    session of the last launch that took, which the next
+                    relaunch is judged on.
                     WHICH CREDENTIAL RUNS THE LANE: the copy the provider
                     installed on the host. `create` receives the lane's config
                     dir as --account on every call, a relaunch included, and
