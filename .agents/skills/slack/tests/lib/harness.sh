@@ -101,11 +101,12 @@ sk_inject() {
 }
 
 # sk_file ID NAME MIMETYPE CONTENT — the fake serves CONTENT as file ID, typed
-# MIMETYPE; prints the file object a message's files[] carries for it
+# MIMETYPE; prints the file object a message's files[] carries for it, its
+# size CONTENT's byte count as Slack gives it
 sk_file() {
   sk_ctl /_test/file "$(jq -cn --arg id "$1" --arg t "$3" --arg c "$4" '{id: $id, type: $t, content: $c}')" >/dev/null
-  jq -cn --arg id "$1" --arg name "$2" --arg type "$3" --arg url "$SK_URL/_files/$1" \
-    '{id: $id, name: $name, mimetype: $type, url_private_download: $url}'
+  jq -cn --arg id "$1" --arg name "$2" --arg type "$3" --arg url "$SK_URL/_files/$1" --arg c "$4" \
+    '{id: $id, name: $name, mimetype: $type, size: ($c | utf8bytelength), url_private_download: $url}'
 }
 sk_mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$1"; } # PATH — its permission bits
 
@@ -154,6 +155,7 @@ sk_relay_stop() { kill "$SK_BG_PIDS" 2>/dev/null; wait "$SK_BG_PIDS" 2>/dev/null
 sk_poll() { local root="$1"; shift; sk_run "$@" -- listen --root "$root" --once; } # ROOT [VAR=VALUE]...
 sk_polls() { local n="$2"; while [ "$n" -gt 0 ]; do sk_poll "$1"; n=$((n - 1)); done; } # ROOT N — N polls
 sk_channel() { jq -r .channel "$1/tmp/slack/binding.json"; }   # ROOT — the bound channel
+sk_reactions() { sk_state "[.messages.${1}[] | select(.ts == \"$2\") | (.reactions // [])[].name] | join(\",\")"; } # CHANNEL TS — its reaction names
 # sk_rebind_at ROOT TS — the binding's moment moved to TS, so a first start
 # reads the channel from there.
 sk_rebind_at() {

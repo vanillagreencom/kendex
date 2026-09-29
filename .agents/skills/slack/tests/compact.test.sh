@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # `slack compact`: lines resolved or ignored longer ago than SLACK_THREAD_DAYS,
-# an old report's upload, an old receipt mark, and every history position
-# but the last leave the journal; every open ask and every young line stay,
-# the relay reads the compacted file as before, and a running relay's lock
-# refuses the verb. Four controls, one per rule: a mutant that drops no old
-# line, one that keeps every receipt mark, one that keeps every history
-# position, and one that takes no lock.
+# an old report's upload, an old read directive's receipt marks, and every
+# history position but the last leave the journal; every open ask, every
+# young line, and an old directive still marked eyes with its delivery stay,
+# the relay reads the compacted file as before and swaps that directive's
+# mark once it is read, and a running relay's lock refuses the verb. Five
+# controls, one per rule: a mutant that drops no old line, one that keeps
+# every receipt mark, one that keeps no unread directive, one that keeps
+# every history position, and one that takes no lock.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -19,7 +21,7 @@ OLD_REPLY="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400 + 
 OLD_SHARE="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400 + 120))')"
 OLD_AT="$(python3 -c 'import time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 9 * 86400)))')"
 # An old ask answered long ago, an old ignored non-owner line, an old bound
-# notice, an old report's upload and its share, an old receipt mark, an old
+# notice, an old report's upload and its share, old read receipt marks, an old
 # history position, and an open ask: only the open ask stays.
 JOURNAL="$(sk_journal "$ROOT")"
 mkdir -p "$(dirname "$JOURNAL")"
@@ -34,21 +36,42 @@ cat > "$JOURNAL" <<EOF
 {"file": "F-OLD", "id": "REPORT-OLD", "t": "bound", "ts": "$OLD_SHARE"}
 {"at": "$OLD_AT", "channel": "C001", "id": "ASK-OPEN", "kind": "ask", "state": "open", "t": "out", "thread": "$OLD_REPLY"}
 {"name": "eyes", "t": "mark", "ts": "$OLD_REPLY"}
+{"name": "white_check_mark", "t": "mark", "ts": "$OLD_REPLY"}
 {"t": "seen", "ts": "$OLD_REPLY"}
 EOF
 YOUNG="$(sk_inject C001 U001 'young')"
 sk_poll "$ROOT"
 BEFORE="$(wc -l < "$JOURNAL" | tr -d ' ')"
 sk_run -- compact --root "$ROOT"
-assert_eq "$RC=$OUT" "0=slack: compacted=$ROOT dropped=10" "compact prints the lines it dropped"
+assert_eq "$RC=$OUT" "0=slack: compacted=$ROOT dropped=11" "compact prints the lines it dropped"
 assert_eq "$(jq -r '[.t, (.ts // .id)] | join(":")' "$JOURNAL" | tr '\n' ' ')" \
-  "out:ASK-OPEN in:$YOUNG mark:$YOUNG seen:$YOUNG " \
+  "out:ASK-OPEN in:$YOUNG seen:$YOUNG mark:$YOUNG " \
   "the open ask, the young delivery, its mark and the last position stay; the resolved, ignored, uploaded, marked and superseded old lines go"
-assert_eq "$((BEFORE - $(wc -l < "$JOURNAL" | tr -d ' ')))" "10" "the file shrank by the lines reported"
+assert_eq "$((BEFORE - $(wc -l < "$JOURNAL" | tr -d ' ')))" "11" "the file shrank by the lines reported"
 NEXT="$(sk_inject C001 U001 'after compaction')"
 sk_poll "$ROOT"
 assert_eq "$RC=$(jq -r 'select(.t == "in") | .ts' "$JOURNAL" | tr '\n' ' ')" "0=$YOUNG $NEXT " \
   "the relay reads the compacted journal and goes on from its last position"
+# A directive read long ago leaves with its marks; one still marked eyes
+# keeps its delivery and its mark whatever its age, and swaps once read.
+GAMMA="$(sk_new_root gamma)"
+sk_bind "$GAMMA"
+sk_rebind_at "$GAMMA" "$(python3 -c 'import time; print("%.6f" % (time.time() - 10 * 86400))')"
+GAMMA_CH="$(sk_channel "$GAMMA")"
+READ_OLD="$(sk_inject "$GAMMA_CH" U001 'read long ago' '' "\"ts\": \"$OLD_TS\"")"
+sk_poll "$GAMMA"
+sk_lm "$GAMMA" inbox --item overseer >/dev/null
+sk_poll "$GAMMA"
+UNREAD_OLD="$(sk_inject "$GAMMA_CH" U001 'still unread' '' "\"ts\": \"$OLD_REPLY\"")"
+sk_poll "$GAMMA"
+receipts() { jq -r 'select(.t == "in" or .t == "mark") | [.t, .ts, (.name // .kind)] | join(":")' "$(sk_journal "$1")" | tr '\n' ' '; } # ROOT
+assert_eq "$RC $(sk_reactions "$GAMMA_CH" "$READ_OLD") $(sk_reactions "$GAMMA_CH" "$UNREAD_OLD")" "0 white_check_mark eyes" "one old directive is read and one is not"
+sk_run -- compact --root "$GAMMA"
+assert_eq "$RC=$(receipts "$GAMMA")" "0=in:$UNREAD_OLD:directive mark:$UNREAD_OLD:eyes " \
+  "the old unread directive keeps its delivery and its eyes mark; the old read one keeps neither"
+sk_lm "$GAMMA" inbox --item overseer >/dev/null
+sk_poll "$GAMMA"
+assert_eq "$RC $(sk_reactions "$GAMMA_CH" "$UNREAD_OLD")" "0 white_check_mark" "the kept directive swaps to a check once the overseer reads it"
 sk_run SLACK_THREAD_DAYS=0 -- compact --root "$ROOT"
 assert_eq "$RC=$ERR1" "2=slack: setting-invalid=SLACK_THREAD_DAYS=0" "a thread-days value under 1 is refused"
 sk_run -- compact --root "$SK_TMP/nowhere"
@@ -87,12 +110,22 @@ assert_eq "$RC=$(jq -r 'select(.t == "seen") | .ts' "$JOURNAL" | wc -l | tr -d '
   "control: the position rule gone, every history position stays"
 sk_bin_reset
 
-sk_mutant marks store.py 'elif kind == "mark" and old:\n            drop = True' 'elif kind == "mark" and old:\n            drop = False'
+sk_mutant marks store.py 'elif kind == "mark" and old:\n            drop = not unread' 'elif kind == "mark" and old:\n            drop = False'
 cat >> "$JOURNAL" <<EOF
-{"name": "eyes", "t": "mark", "ts": "$OLD_TS"}
+{"name": "white_check_mark", "t": "mark", "ts": "$OLD_TS"}
 EOF
 sk_run -- compact --root "$ROOT"
 assert_eq "$RC=$(jq -r 'select(.t == "mark") | .ts' "$JOURNAL" | tr '\n' ' ')" "0=$YOUNG $NEXT $OLD_TS " "control: the mark rule gone, an old receipt mark stays"
 sk_bin_reset
+
+sk_mutant unread store.py 'unread = kind in \("in", "mark"\) and state\.marks\.get\(str\(line\["ts"\]\)\) == SEEN' 'unread = False'
+UNREAD_LOST="$(sk_inject "$GAMMA_CH" U001 'unread and lost' '' "\"ts\": \"$OLD_SHARE\"")"
+sk_run -- listen --root "$GAMMA" --once
+sk_run -- compact --root "$GAMMA"
+sk_bin_reset
+sk_lm "$GAMMA" inbox --item overseer >/dev/null
+sk_poll "$GAMMA"
+assert_eq "$(receipts "$GAMMA" | grep -c "$UNREAD_LOST")|$(sk_reactions "$GAMMA_CH" "$UNREAD_LOST")" "0|eyes" \
+  "control: the unread rule gone, an old eyes directive loses its lines and never swaps"
 
 sk_summary

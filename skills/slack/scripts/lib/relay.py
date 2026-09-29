@@ -3,13 +3,16 @@
 Each poll, per root: re-resolve the owners when the setting moved, read the
 channel's history since the journal's position, follow every parent whose
 replies moved, read every open ask's thread, every tenth poll read the other
-bound threads younger than SLACK_THREAD_DAYS, swap the receipt mark of every
-directive the overseer has read since, then read the mailbox's events and
-post every owner-bound envelope not yet carried.
+bound threads younger than SLACK_THREAD_DAYS, mark every delivered directive
+the journal holds no mark for, swap the receipt mark of every directive the
+overseer has read since, then read the mailbox's events and post every
+owner-bound envelope not yet carried.
 
 A directive's Slack message carries a receipt mark, a reaction and never a
 message: SEEN once it lands in the mailbox, READ once the overseer's
-to-lane.cursor passes it.
+to-lane.cursor passes it. Each mark is judged from the journal on every
+poll, never from the step that delivered the directive, so a stop between
+the delivery and its mark leaves the mark to the next poll.
 
 A start with no journal seeds both positions before it reads anything: Slack
 from the binding moment, so a channel's earlier history is never delivered,
@@ -43,6 +46,8 @@ from secret import check as secret_check
 from secret import checked_file
 from settings import MASTER, Settings
 from store import (
+    READ,
+    SEEN,
     Binding,
     Journal,
     RelayLock,
@@ -66,8 +71,6 @@ NOT_OWNER = "Only the channel's owners steer this session; this message is not r
 NO_TEXT = "Only text and files are routed; this message has neither."
 RECORDED = "Recorded as your answer."
 ALREADY = "This question was already answered; delivered as a directive instead."
-SEEN = "eyes"
-READ = "white_check_mark"
 # Slack's answer when the reaction is already as the call would leave it, or
 # its message is gone: nothing is left to mark.
 MARK_SETTLED = {"already_reacted", "no_reaction", "message_not_found"}
@@ -185,6 +188,7 @@ class RootRelay:
             self.seed()
         self.read_history(bot_user)
         self.read_threads(bot_user)
+        self.mark_seen()
         self.mark_read()
         now = self.clock()
         touched = self.master_touched()
@@ -279,13 +283,12 @@ class RootRelay:
             self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts, text=ALREADY)
         envelope = self.mail.send_directive(text, delivery)
         self.journal.append(t="in", channel=self.channel, ts=ts, kind="directive", id=envelope, thread=thread_ts)
-        if self.react("reactions.add", ts, SEEN):
-            self.journal.append(t="mark", ts=ts, name=SEEN)
 
     def react(self, method: str, ts: str, name: str) -> bool:
         """One reaction on the message at `ts`; False when Slack refused it,
-        the refusal printed. A mark is a courtesy: its failure fails no poll
-        and holds no delivery back, and a dead token still stops the relay."""
+        the refusal printed and the mark left to the next poll. A mark is a
+        courtesy: its failure fails no poll and holds no delivery back, and a
+        dead token still stops the relay."""
         try:
             self.api.post(method, channel=self.channel, timestamp=ts, name=name)
         except Refusal as err:
@@ -295,6 +298,15 @@ class RootRelay:
                 print_refusal(err)
                 return False
         return True
+
+    def mark_seen(self) -> None:
+        """Mark SEEN every delivered directive no mark line names: one this
+        poll delivered, one whose mark Slack refused, and one a stop left
+        unmarked. A stop after Slack took the reaction and before its line
+        is answered already_reacted, which settles it."""
+        for ts in sorted(self.state.directives.difference(self.state.marks), key=float):
+            if self.react("reactions.add", ts, SEEN):
+                self.journal.append(t="mark", ts=ts, name=SEEN)
 
     def mark_read(self) -> None:
         """Swap SEEN for READ on every directive the overseer has read. A
@@ -342,10 +354,11 @@ class RootRelay:
             if not url:
                 lines.append(f"file {file_id} not fetched: no download url")
                 continue
-            mimetype = str(item.get("mimetype") or "")
+            given = item.get("size")
+            size = given if isinstance(given, int) else None
             try:
                 saved = save_file(
-                    self.path, file_id, str(item.get("name") or ""), lambda out: self.api.download(url, mimetype, out)
+                    self.path, file_id, str(item.get("name") or ""), lambda out: self.api.download(url, size, out)
                 )
             except Refusal as err:
                 lines.append(f"file {file_id} not fetched: {err.value}")

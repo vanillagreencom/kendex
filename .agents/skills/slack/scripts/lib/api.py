@@ -127,16 +127,17 @@ class Slack:
             if not cursor:
                 return
 
-    def download(self, url: str, mimetype: str, out: BinaryIO) -> None:
+    def download(self, url: str, size: Optional[int], out: BinaryIO) -> None:
         """A message's file from its `url_private_download`, streamed into
-        `out`. Refused `file-not-fetched` with the HTTP status, with the
-        sign-in page Slack sends in place of any file but an HTML one, with
-        the bytes of a body that ended short of its Content-Length, or with
-        http.client's error on a chunked body cut short."""
+        `out`; `size` is the byte count the message's `files[]` entry gives,
+        None when it gives none. Refused `file-not-fetched` with the HTTP
+        status, with the bytes of a body that ended short of its
+        Content-Length, with http.client's error on a chunked body cut
+        short, or with the sign-in page Slack sends in place of the file: an
+        HTML answer of any length but `size`, so an HTML file the owner sent
+        is saved whatever its type, and one of unknown size is not."""
 
         def copy(resp) -> None:
-            if resp.headers.get_content_type() == "text/html" and mimetype != "text/html":
-                raise Refusal("file-not-fetched", f"HTTP {resp.status} sign-in page, the app needs files:read")
             declared = resp.headers.get("Content-Length")
             copied = 0
             while True:
@@ -147,6 +148,8 @@ class Slack:
                 copied += len(chunk)
             if declared is not None and declared.strip().isdigit() and copied != int(declared):
                 raise Refusal("file-not-fetched", f"truncated {copied} of {declared.strip()} bytes")
+            if resp.headers.get_content_type() == "text/html" and copied != size:
+                raise Refusal("file-not-fetched", f"HTTP {resp.status} sign-in page, the app needs files:read")
 
         req = urllib.request.Request(url)
         req.add_header("Authorization", f"Bearer {self.token}")
