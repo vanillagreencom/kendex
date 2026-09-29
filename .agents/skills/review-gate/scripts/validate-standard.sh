@@ -5,10 +5,11 @@
 # READ-ONLY: every GitHub call below is a GET. It answers whether the
 # repository's GitHub-side settings match the organization standard. The
 # standard's values come from lib/standard.sh: the CI and gate contexts from
-# ../standard.json, the app, environment and secret names from the review-gate
-# settings this repository declares. The rows that hold no value
-# (organization source, merge queue, thread resolution, Copilot review, no
-# classic protection, zero bypass actors) are fixed here. Its subject is GitHub
+# ../standard.json, the app, environment and secret names and the required
+# contexts from the review-gate settings this repository declares. The rows
+# that hold no value (rule sources, merge queue, approvals, stale-approval
+# dismissal, thread resolution, Copilot review, no classic protection, zero
+# bypass actors) are fixed here. Its subject is GitHub
 # state, not the checkout, so validate.sh does not run it: CI's token
 # cannot read bypass actors, installations or secret names, and every such
 # row would be unreadable there. The permission each row's reads need is in
@@ -42,20 +43,44 @@ organization standard. standard.json in the skill holds the CI and gate
 contexts. The organization's values are review-gate settings, resolved from
 the current directory like every other: REVIEW_GATE_STANDARD_APP,
 REVIEW_GATE_STANDARD_ENVIRONMENT and REVIEW_GATE_STANDARD_SECRETS. The
-repository is the one `gh` resolves: GH_REPO when set, else the checkout's
-remote.
+repository's own required contexts are REVIEW_GATE_STANDARD_CONTEXTS, read
+the same way. The repository is the one `gh` resolves: GH_REPO when set,
+else the checkout's remote.
 
 --environment-only reports the environment policy and its secret names, and
-reads neither REVIEW_GATE_STANDARD_APP nor organization rulesets. Refresh
+reads neither REVIEW_GATE_STANDARD_APP, REVIEW_GATE_STANDARD_CONTEXTS nor
+any ruleset. Refresh
 adoption uses this mode, with the refresh template's environment and secret
 names set as process values, which outrank the settings files.
 
 One verdict line per row, VALUE being what was observed:
-  standard-ruleset-source           every effective default-branch rule comes
-                                    from an organization ruleset
+  standard-ruleset-source           pull_request, copilot_code_review,
+                                    deletion and non_fast_forward each come
+                                    from an organization ruleset, and every
+                                    effective default-branch rule comes from
+                                    one, except required_status_checks and
+                                    merge_queue, which a repository ruleset
+                                    may hold. VALUE is the source types the
+                                    rules come from; a FAIL value lists each
+                                    departure, SOURCE:ID:TYPE for a rule from
+                                    a source its type may not use and
+                                    missing:TYPE for a type no organization
+                                    ruleset holds, or none for no rule
   standard-merge-queue              the default branch requires the merge queue
   standard-required-contexts        the required contexts are exactly the
-                                    standard's ci_context and gate_context
+                                    REVIEW_GATE_STANDARD_CONTEXTS list, and
+                                    the standard's gate_context is not among
+                                    them. VALUE is the required contexts; a
+                                    FAIL value may be undeclared:CONTEXTS
+                                    (the repository declares no list) or
+                                    gate-required:CONTEXTS
+  standard-required-approvals       an organization ruleset's pull-request
+                                    rule requires at least 1 approval. VALUE
+                                    is the highest count such a rule
+                                    requires, or absent
+  standard-stale-dismissal          an organization ruleset's pull-request
+                                    rule dismisses stale approvals on push.
+                                    VALUE is true, false or absent
   standard-conversation-resolution  a pull-request rule requires every review
                                     thread resolved
   standard-copilot-review           a rule requests a Copilot review
@@ -92,8 +117,10 @@ One verdict line per row, VALUE being what was observed:
 A failed read reports its row as FAIL with `unreadable` in the value, never
 as a match. The permission each row's reads need, as GitHub App permissions:
   ruleset-source, merge-queue,      the branch's rules: Metadata read
-  required-contexts, conversation-
-  resolution, copilot-review
+  required-contexts, required-
+  approvals, stale-dismissal,
+  conversation-resolution,
+  copilot-review
   bypass-actors                     each ruleset, read where it lives
                                     (orgs/OWNER/rulesets/ID for an
                                     organization ruleset,
@@ -210,7 +237,7 @@ bad() { FAILED=$((FAILED + 1)); rg_report FAIL "$@"; }
 if [ "$ENVIRONMENT_ONLY" -eq 0 ]; then
 # ------------------------------------------------------ default branch ---
 
-RULE_ROWS="standard-ruleset-source standard-merge-queue standard-required-contexts standard-conversation-resolution standard-copilot-review standard-bypass-actors"
+RULE_ROWS="standard-ruleset-source standard-merge-queue standard-required-contexts standard-required-approvals standard-stale-dismissal standard-conversation-resolution standard-copilot-review standard-bypass-actors"
 RULES=""
 if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
   RULES="$(printf '%s' "$READ_OUT" | jq -s '.' 2>/dev/null)" &&
@@ -219,11 +246,18 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
   # here is this script's own fault.
   rules() { jq -r "$1" <<<"$RULES" || die rules-query "$1" "jq could not evaluate a query over the parsed rules"; }
 
-  sources="$(rules 'if length == 0 then "none" else ([.[] | select(.ruleset_source_type != "Organization") | "\(.ruleset_source_type):\(.ruleset_id)"] | unique | join(",")) end')"
-  case "$sources" in
-    "") ok standard-ruleset-source Organization "every rule on $BRANCH comes from an organization ruleset" ;;
+  # The organization ruleset holds the review, deletion and force-push rules
+  # every repository shares. A repository keeps its own required checks and
+  # merge queue in its own rulesets. Any other source for a rule is a
+  # departure, and so is a shared rule no organization ruleset holds.
+  departures="$(rules 'if length == 0 then "none" else (
+    [.[] | select(.ruleset_source_type != "Organization" and ((.ruleset_source_type == "Repository" and (.type == "required_status_checks" or .type == "merge_queue")) | not)) | "\(.ruleset_source_type):\(.ruleset_id):\(.type)"]
+    + (["pull_request", "copilot_code_review", "deletion", "non_fast_forward"] - [.[] | select(.ruleset_source_type == "Organization") | .type] | map("missing:\(.)"))
+    | unique | join(",")) end')"
+  case "$departures" in
+    "") ok standard-ruleset-source "$(rules '[.[].ruleset_source_type] | unique | join(",")')" "$BRANCH takes its shared rules from an organization ruleset, and only its required checks and merge queue from a repository ruleset" ;;
     none) bad standard-ruleset-source none "no ruleset applies to $BRANCH" ;;
-    *) bad standard-ruleset-source "$sources" "rules on $BRANCH come from rulesets that are not the organization's; the standard deletes each per-repository ruleset" ;;
+    *) bad standard-ruleset-source "$departures" "these rules on $BRANCH depart from the standard's sources: pull_request, copilot_code_review, deletion and non_fast_forward come from an organization ruleset, and a repository ruleset holds only required_status_checks and merge_queue" ;;
   esac
 
   if [ "$(rules 'any(.[]; .type == "merge_queue")')" = true ]; then
@@ -232,11 +266,33 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
     bad standard-merge-queue absent "$BRANCH has no merge-queue rule"
   fi
 
-  if contexts="$(rules '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context] | unique | join(";")')" &&
-    [ "$contexts" = "$WANT_CONTEXTS" ]; then
-    ok standard-required-contexts "$contexts" "$BRANCH requires exactly the standard's contexts"
+  contexts="$(rules '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context] | unique | join(";")')"
+  gated="$(jq -r --arg gate "$WANT_GATE" 'any(.[]; .type == "required_status_checks" and any(.parameters.required_status_checks[]?; .context == $gate))' <<<"$RULES")" ||
+    die rules-query gate-context "jq could not evaluate a query over the parsed rules"
+  if [ -z "$WANT_CONTEXTS" ]; then
+    bad standard-required-contexts "undeclared:$contexts" "this repository declares no REVIEW_GATE_STANDARD_CONTEXTS, so $BRANCH's required contexts have nothing to match; set it in the [env] table of kendex.settings.toml to the contexts $BRANCH should require"
+  elif [ "$gated" = true ]; then
+    bad standard-required-contexts "gate-required:$contexts" "$BRANCH requires $WANT_GATE; the standard's approval rule replaces it, so remove it from the required contexts and from REVIEW_GATE_STANDARD_CONTEXTS"
+  elif [ "$contexts" = "$WANT_CONTEXTS" ]; then
+    ok standard-required-contexts "$contexts" "$BRANCH requires exactly the contexts this repository declares"
   else
-    bad standard-required-contexts "$contexts" "$BRANCH requires these contexts; the standard requires exactly: $WANT_CONTEXTS"
+    bad standard-required-contexts "$contexts" "$BRANCH requires these contexts; REVIEW_GATE_STANDARD_CONTEXTS declares exactly: $WANT_CONTEXTS"
+  fi
+
+  # GitHub enforces the strictest of several pull-request rules, so the
+  # highest count and any dismissal decide. A repository ruleset's rule is
+  # the ruleset-source row's departure and counts for nothing here.
+  approvals="$(rules '[.[] | select(.type == "pull_request" and .ruleset_source_type == "Organization") | .parameters.required_approving_review_count] | if length == 0 then "absent" else (max | tostring) end')"
+  case "$approvals" in
+    "" | *[!0-9]* | 0) bad standard-required-approvals "$approvals" "no organization pull-request rule on $BRANCH requires an approval; the standard requires at least 1" ;;
+    *) ok standard-required-approvals "$approvals" "$BRANCH requires $approvals approval(s) from an organization ruleset" ;;
+  esac
+
+  if stale="$(rules '[.[] | select(.type == "pull_request" and .ruleset_source_type == "Organization") | .parameters.dismiss_stale_reviews_on_push] | if length == 0 then "absent" elif any(.[]; . == true) then "true" else "false" end')" &&
+    [ "$stale" = true ]; then
+    ok standard-stale-dismissal true "$BRANCH dismisses a stale approval on push"
+  else
+    bad standard-stale-dismissal "$stale" "no organization pull-request rule on $BRANCH dismisses a stale approval on push, so an approval outlives the head it approved"
   fi
 
   if [ "$(rules 'any(.[]; .type == "pull_request" and .parameters.required_review_thread_resolution == true)')" = true ]; then

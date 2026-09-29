@@ -48,20 +48,23 @@ Value rules come from the engine, not from a copy of it: the settings half calls
 
 ## Repo-side wiring
 
-The organization rulesets carry this shape for every repository. Until they stand, the repository's own ruleset carries it. `scripts/validate-standard.sh` reports each part of it.
+An organization ruleset carries the shared rules for every repository: the pull-request rule, the Copilot review, and the deletion and force-push rules. Each repository keeps two rulesets of its own, one for its required checks and one for its merge queue, and no other. `scripts/validate-standard.sh` reports each part of it.
 
 `validate-standard.sh` and `provision-environment.sh` read the organization's own values from settings, since the package ships none. Before either runs, declare in the `[env]` table of the repository's `kendex.settings.toml` ([settings.md](settings.md)):
 
 1. `REVIEW_GATE_STANDARD_APP`: the slug of the GitHub App the organization installs on every repository.
 2. `REVIEW_GATE_STANDARD_ENVIRONMENT`: the environment that holds that app's secrets.
 3. `REVIEW_GATE_STANDARD_SECRETS`: those secrets' names, `;`-separated. Never their values. A name is uppercase letters, digits and underscores, and does not start with a digit. GitHub stores every secret name uppercase.
+4. `REVIEW_GATE_STANDARD_CONTEXTS`: the contexts the repository's required-checks ruleset requires, `;`-separated. `validate-standard.sh` alone reads it.
 
-Each script exits 2 with one `standard-setting-missing` record naming every key it reads that is unset or empty, or with one `standard-secret-invalid` record naming every secret name outside that grammar. Refresh adoption reads none of these keys (§ Automatic consumer refresh).
+Each script exits 2 with one `standard-setting-missing` record naming every key among the first three it reads that is unset or empty, or with one `standard-secret-invalid` record naming every secret name outside that grammar. An unset `REVIEW_GATE_STANDARD_CONTEXTS` is no refusal: `validate-standard.sh` reports it as a failed `standard-required-contexts` row. Refresh adoption reads none of these keys (§ Automatic consumer refresh).
 
-A repository reaches this shape in one order. The workflow change that reports `CI` on `pull_request` and `merge_group`, both under `on:`, and the ruleset change to exactly `CI` and `Review gate` apply back to back. Where the workflow change renames an existing aggregate, the ruleset changes first and the rename merges through the queue at once. After the first merge through the queue, `scripts/validate-standard.sh` runs: its `standard-ci-context` ok confirms the workflow change on both legs, and its `standard-required-contexts` and `standard-merge-queue` oks confirm the ruleset change.
+A repository reaches this shape in one order. The workflow change that reports `CI` on `pull_request` and `merge_group`, both under `on:`, and the change to the required-checks ruleset apply back to back. Where the workflow change renames an existing aggregate, the ruleset changes first and the rename merges through the queue at once. After the first merge through the queue, `scripts/validate-standard.sh` runs: its `standard-ci-context` ok confirms the workflow change on both legs, and its `standard-required-contexts` and `standard-merge-queue` oks confirm the ruleset change.
 
-- **Required contexts**: exactly two, `CI` and `Review gate`, the `ci_context` and `gate_context` of the skill's `standard.json`. `Review gate` is the repo's `REVIEW_GATE_CONTEXT` value. `CI` is the aggregate [harness-ci wiring.md § The CI context](../../harness-ci/references/wiring.md#the-ci-context) describes.
+- **Rule sources**: the pull-request, Copilot review, deletion and force-push rules come from an organization ruleset. A repository ruleset holds only the required checks or the merge queue. `standard-ruleset-source` reports any other source.
+- **Required contexts**: exactly the list `REVIEW_GATE_STANDARD_CONTEXTS` declares, and never the `gate_context` of the skill's `standard.json`, `Review gate`: the approval rule replaces it. `CI` is the aggregate [harness-ci wiring.md § The CI context](../../harness-ci/references/wiring.md#the-ci-context) describes.
 - **Merge queue**: required on the default branch. The writer's `merge_group` leg posts the gate context on queue shas unconditionally.
+- **Approvals**: the organization ruleset's pull-request rule requires at least 1 approval (`standard-required-approvals`) and dismisses a stale approval on push (`standard-stale-dismissal`).
 - **Thread resolution**: a pull-request rule requires every review thread resolved.
 - **Copilot review**: a rule requests a Copilot review, which holds no merge.
 - **No bypass actor**: no ruleset carries one, a Repository-admin actor included, so every merge goes through the merge queue. A gate-repair PR takes the break-glass procedure in [../SKILL.md](../SKILL.md#4-operations); a settings-change PR takes normal review.
@@ -165,6 +168,7 @@ Concrete per-consumer values are tracked on the org adoption issue, not here. Ev
 | `REVIEW_GATE_MODE` | `enforce`. `off` disables an inactive or `current` class policy and attests rather than evaluates. A `bot` class still requires review. |
 | `REVIEW_GATE_WRITER` | `required`. `optional`, with `REVIEW_GATE_MODE = "off"`, only in a repository that runs the automatic refresh and posts no gate status. |
 | `REVIEW_GATE_STANDARD_APP`, `REVIEW_GATE_STANDARD_ENVIRONMENT`, `REVIEW_GATE_STANDARD_SECRETS` | The organization's app, app-secret environment and secret names (§ Repo-side wiring). No default. `validate-standard.sh` and `provision-environment.sh` refuse on each unset key. `validate-standard.sh --environment-only` reads the environment and secret keys only. Refresh adoption reads none of them. |
+| `REVIEW_GATE_STANDARD_CONTEXTS` | The repository's required contexts (§ Repo-side wiring). No default. `validate-standard.sh` reports an unset list as a failed `standard-required-contexts` row; `--environment-only` does not read it. |
 
 ## Repair by verdict line
 

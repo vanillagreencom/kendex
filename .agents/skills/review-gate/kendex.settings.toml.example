@@ -160,6 +160,14 @@ REVIEW_GATE_STANDARD_ENVIRONMENT = ""
 # the owner's provisioning refuse until it is set.
 REVIEW_GATE_STANDARD_SECRETS = ""
 
+# The status checks this repository's own required-checks ruleset requires,
+# separated by semicolons: each job name exactly as the ruleset lists it.
+# The organization owner's check of the repository compares the branch's
+# required checks to this list. Never list "Review gate": the approval rule
+# replaces it. The package ships no value; the check fails its row until it
+# is set.
+REVIEW_GATE_STANDARD_CONTEXTS = ""
+
 # Seconds to wait for a review before the waiting step gives up. Whole
 # seconds only, at most nine digits; anything else fails loudly. The
 # orchestration package reads the same number.

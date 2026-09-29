@@ -45,7 +45,9 @@ settings_consumer() { # NAME [ASSIGNMENT...]
   printf '[env]\n' >"$dir/kendex.settings.toml"
   [ "$#" -eq 0 ] || printf '%s\n' "$@" >>"$dir/kendex.settings.toml"
 }
-settings_consumer full 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"'
+settings_consumer full 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' 'REVIEW_GATE_STANDARD_CONTEXTS = "Cargo (workspace tests); CI"'
+settings_consumer no-contexts 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"'
+settings_consumer gated 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' 'REVIEW_GATE_STANDARD_CONTEXTS = "Cargo (workspace tests);CI;Review gate"'
 settings_consumer none
 settings_consumer seeded 'REVIEW_GATE_STANDARD_APP = ""' 'REVIEW_GATE_STANDARD_ENVIRONMENT = ""' 'REVIEW_GATE_STANDARD_SECRETS = ""'
 settings_consumer no-secrets 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = " ; "'
@@ -53,25 +55,31 @@ settings_consumer no-app 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_G
 settings_consumer bad-secret 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP-ID;9KEY;app_id"'
 CONSUMER="$TMP/consumer-full"
 
-# The matching world.
+# The matching world: the target layout. The organization rulesets 1 and 2
+# hold the shared rules, the repository ruleset 3 the merge queue and the
+# repository ruleset 4 the required checks.
 cat >"$BASE/repository.json" <<'JSON'
 {"full_name": "acme/widgets", "default_branch": "main"}
 JSON
 cat >"$BASE/rules.json" <<'JSON'
 [
-  {"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}, "ruleset_source_type": "Organization", "ruleset_id": 1},
-  {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "Review gate"}, {"context": "CI"}]}, "ruleset_source_type": "Organization", "ruleset_id": 1},
-  {"type": "pull_request", "parameters": {"required_review_thread_resolution": true}, "ruleset_source_type": "Organization", "ruleset_id": 1},
-  {"type": "copilot_code_review", "parameters": {"review_on_push": true}, "ruleset_source_type": "Organization", "ruleset_id": 2}
+  {"type": "deletion", "ruleset_source_type": "Organization", "ruleset_id": 1},
+  {"type": "non_fast_forward", "ruleset_source_type": "Organization", "ruleset_id": 1},
+  {"type": "pull_request", "parameters": {"required_approving_review_count": 1, "dismiss_stale_reviews_on_push": true, "required_review_thread_resolution": true}, "ruleset_source_type": "Organization", "ruleset_id": 1},
+  {"type": "copilot_code_review", "parameters": {"review_on_push": true}, "ruleset_source_type": "Organization", "ruleset_id": 2},
+  {"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}, "ruleset_source_type": "Repository", "ruleset_id": 3},
+  {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "CI"}, {"context": "Cargo (workspace tests)"}]}, "ruleset_source_type": "Repository", "ruleset_id": 4}
 ]
 JSON
-# Every baseline rule is organization-sourced, so its ruleset is read
-# through the organization endpoint. The repository-endpoint copy of ruleset
-# 2 carries an actor, so a read through the wrong endpoint reports 1.
+# Each ruleset is read through the endpoint of the level that owns it. The
+# repository-endpoint copy of ruleset 2 carries an actor, so a read through
+# the wrong endpoint reports 1.
 printf '{"id": 1, "bypass_actors": []}\n' >"$BASE/org-ruleset-1.json"
 printf '{"id": 2, "bypass_actors": []}\n' >"$BASE/org-ruleset-2.json"
 printf '{"id": 1, "bypass_actors": []}\n' >"$BASE/ruleset-1.json"
 printf '{"id": 2, "bypass_actors": [{"actor_type": "RepositoryRole", "actor_id": 9}]}\n' >"$BASE/ruleset-2.json"
+printf '{"id": 3, "bypass_actors": []}\n' >"$BASE/ruleset-3.json"
+printf '{"id": 4, "bypass_actors": []}\n' >"$BASE/ruleset-4.json"
 cat >"$BASE/installations.json" <<'JSON'
 {"installations": [{"app_slug": "other-app", "repository_selection": "selected"}, {"app_slug": "lanes-app", "repository_selection": "all"}]}
 JSON
@@ -109,9 +117,11 @@ printf '{"jobs": [{"name": "writer"}]}\n' >"$BASE/jobs-8.json"
 printf '{"workflow_runs": [{"id": 9}]}\n' >"$BASE/workflow-runs-merge-group.json"
 printf '{"jobs": [{"name": "lint-typecheck"}, {"name": "build"}, {"name": "CI"}]}\n' >"$BASE/jobs-9.json"
 
-BASELINE='ok check=standard-ruleset-source value=Organization
+BASELINE='ok check=standard-ruleset-source value=Organization\,Repository
 ok check=standard-merge-queue value=present
-ok check=standard-required-contexts value=CI\;Review\ gate
+ok check=standard-required-contexts value=CI\;Cargo\ \(workspace\ tests\)
+ok check=standard-required-approvals value=1
+ok check=standard-stale-dismissal value=true
 ok check=standard-conversation-resolution value=true
 ok check=standard-copilot-review value=present
 ok check=standard-bypass-actors value=0
@@ -181,18 +191,23 @@ $RAW"
   fi
 done <<'ROWS'
 a repository matching the standard~~~~
-a per-repository rule~~rules.json~.[1].ruleset_source_type = "Repository"~standard-ruleset-source=Repository:1
-no ruleset at all~~rules.json~[]~standard-ruleset-source=none^standard-merge-queue=absent^standard-required-contexts=''^standard-conversation-resolution=false^standard-copilot-review=absent
-no merge queue~~rules.json~del(.[0])~standard-merge-queue=absent
-an extra required context~~rules.json~.[1].parameters.required_status_checks += [{"context": "Cargo"}]~standard-required-contexts=CI\;Cargo\;Review\ gate
-a missing required context~~rules.json~.[1].parameters.required_status_checks = [{"context": "Review gate"}]~standard-required-contexts=Review\ gate
+a pull-request rule from a repository ruleset~~rules.json~.[2].ruleset_source_type = "Repository"~standard-ruleset-source=Repository:1:pull_request\,missing:pull_request^standard-required-approvals=absent^standard-stale-dismissal=absent
+no deletion rule~~rules.json~del(.[0])~standard-ruleset-source=missing:deletion
+no ruleset at all~~rules.json~[]~standard-ruleset-source=none^standard-merge-queue=absent^standard-required-contexts=''^standard-required-approvals=absent^standard-stale-dismissal=absent^standard-conversation-resolution=false^standard-copilot-review=absent
+no merge queue~~rules.json~del(.[4])~standard-merge-queue=absent
+an extra required context~~rules.json~.[5].parameters.required_status_checks += [{"context": "Other"}]~standard-required-contexts=CI\;Cargo\ \(workspace\ tests\)\;Other
+a missing required context~~rules.json~.[5].parameters.required_status_checks = [{"context": "CI"}]~standard-required-contexts=CI
+the gate context required~~rules.json~.[5].parameters.required_status_checks += [{"context": "Review gate"}]~standard-required-contexts=gate-required:CI\;Cargo\ \(workspace\ tests\)\;Review\ gate
+no approval required~~rules.json~.[2].parameters.required_approving_review_count = 0~standard-required-approvals=0
+stale approvals kept on push~~rules.json~.[2].parameters.dismiss_stale_reviews_on_push = false~standard-stale-dismissal=false
+a laxer second organization pull-request rule~~rules.json~. += [{"type": "pull_request", "parameters": {"required_approving_review_count": 0, "dismiss_stale_reviews_on_push": false}, "ruleset_source_type": "Organization", "ruleset_id": 2}]~
 threads need no resolution~~rules.json~.[2].parameters.required_review_thread_resolution = false~standard-conversation-resolution=false
-no Copilot review~~rules.json~del(.[3])~standard-copilot-review=absent
+no Copilot review~~rules.json~del(.[3])~standard-ruleset-source=missing:copilot_code_review^standard-copilot-review=absent
 a bypass actor on each ruleset adds up~~org-ruleset-1.json,org-ruleset-2.json~.bypass_actors = [{"actor_type": "RepositoryRole", "actor_id": 5}]~standard-bypass-actors=2
 bypass actors withheld from the token~~org-ruleset-1.json~del(.bypass_actors)~standard-bypass-actors=unreadable:1
-a repository ruleset's actors read through the repository endpoint~~rules.json~.[3].ruleset_source_type = "Repository"~standard-ruleset-source=Repository:2^standard-bypass-actors=1
-a ruleset source with no ruleset read is unreadable~~rules.json~.[3].ruleset_source_type = "Enterprise"~standard-ruleset-source=Enterprise:2^standard-bypass-actors=unreadable:2
-a per-repository rule on the second page~~rules.page2.json~[{"type": "deletion", "ruleset_source_type": "Repository", "ruleset_id": 1}]~standard-ruleset-source=Repository:1
+a repository ruleset's actors read through the repository endpoint~~rules.json~.[3].ruleset_source_type = "Repository"~standard-ruleset-source=Repository:2:copilot_code_review\,missing:copilot_code_review^standard-bypass-actors=1
+a ruleset source with no ruleset read is unreadable~~rules.json~.[3].ruleset_source_type = "Enterprise"~standard-ruleset-source=Enterprise:2:copilot_code_review\,missing:copilot_code_review^standard-bypass-actors=unreadable:2
+a repository deletion rule on the second page~~rules.page2.json~[{"type": "deletion", "ruleset_source_type": "Repository", "ruleset_id": 1}]~standard-ruleset-source=Repository:1:deletion
 classic protection beside the rulesets~~branch.json~.protection.enabled = true~standard-classic-protection=on
 the branch unreadable~branch~~~standard-classic-protection=unreadable
 the app on selected repositories~~installations.json~.installations[1].repository_selection = "selected"~standard-app=selected
@@ -245,9 +260,33 @@ run "$dir" ""
 want="$(expected_listing 'standard-environment=absent^standard-environment-secrets=absent')"
 if [ "$RC" -eq 1 ] && [ "$OUT" = "$want" ]; then ok "an absent environment"; else bad "an absent environment (rc=$RC)" "$RAW"; fi
 
+# The contexts row against consumers other than the table's: the list the
+# repository declares is the other half of its comparison.
+echo "=== the required contexts against the repository's declared list ==="
+# name ~ consumer ~ jq edit of rules.json ~ overrides
+while IFS='~' read -r name consumer edit overrides; do
+  [ -n "$name" ] || continue
+  dir="$TMP/case-contexts-$consumer"
+  cp -R "$BASE" "$dir"
+  [ -z "$edit" ] || { jq "$edit" "$dir/rules.json" >"$dir/r" && mv "$dir/r" "$dir/rules.json"; }
+  CONSUMER="$TMP/consumer-$consumer"
+  run "$dir" ""
+  CONSUMER="$TMP/consumer-full"
+  want="$(expected_listing "$overrides")"
+  if [ "$RC" -eq 1 ] && [ "$OUT" = "$want" ]; then
+    ok "$name"
+  else
+    bad "$name (rc=$RC)" "$(diff <(printf '%s\n' "$want") <(printf '%s\n' "$OUT") || true)
+$RAW"
+  fi
+done <<'ROWS'
+a repository that declares no context list~no-contexts~~standard-required-contexts=undeclared:CI\;Cargo\ \(workspace\ tests\)
+a required gate context the repository also declares~gated~.[5].parameters.required_status_checks += [{"context": "Review gate"}]~standard-required-contexts=gate-required:CI\;Cargo\ \(workspace\ tests\)\;Review\ gate
+ROWS
+
 echo "=== a failed read is unreadable, never a match ==="
 run "$BASE" rules
-want="$(expected_listing 'standard-ruleset-source=unreadable^standard-merge-queue=unreadable^standard-required-contexts=unreadable^standard-conversation-resolution=unreadable^standard-copilot-review=unreadable^standard-bypass-actors=unreadable')"
+want="$(expected_listing 'standard-ruleset-source=unreadable^standard-merge-queue=unreadable^standard-required-contexts=unreadable^standard-required-approvals=unreadable^standard-stale-dismissal=unreadable^standard-conversation-resolution=unreadable^standard-copilot-review=unreadable^standard-bypass-actors=unreadable')"
 if [ "$RC" -eq 1 ] && [ "$OUT" = "$want" ]; then ok "the effective rules unreadable"; else bad "the effective rules unreadable (rc=$RC)" "$RAW"; fi
 run "$BASE" environments
 want="$(expected_listing 'standard-environment=unreadable^standard-environment-secrets=unreadable^standard-secrets-outside=unreadable:environments')"
