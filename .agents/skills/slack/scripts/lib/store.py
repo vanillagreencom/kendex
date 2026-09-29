@@ -272,11 +272,12 @@ def compact(root: Path, cutoff_ts: float) -> int:
     upload and receipt mark older than it, every history position but the
     last, every hold line but a standing one, and every resume line whose
     end is older than the cutoff; keep every open thread, and the `in` and
-    `mark` lines of a directive still marked SEEN, which the relay swaps
-    for READ once the overseer reads it, whatever its age. Returns the lines
-    dropped. An `out` line and a `resume` line are judged by the `at` they
-    journal, the age `post_events` never posts past, so what they name can
-    never post again."""
+    `mark` lines of a directive not yet marked READ, whatever its age: one
+    with no mark, which the relay marks SEEN on its next poll, and one
+    marked SEEN, which it swaps for READ once the overseer reads it.
+    Returns the lines dropped. An `out` line and a `resume` line are judged
+    by the `at` they journal, the age `post_events` never posts past, so
+    what they name can never post again."""
     path = root_dir(root) / JOURNAL
     state = read_journal(root)
     if not path.is_file():
@@ -292,7 +293,7 @@ def compact(root: Path, cutoff_ts: float) -> int:
         kind = line.get("t")
         old = "ts" in line and _ts_float(str(line["ts"])) < cutoff_ts
         aged = kind in ("out", "resume") and parse_at(str(line["at"])) < cutoff_ts
-        unread = kind in ("in", "mark") and state.marks.get(str(line["ts"])) == SEEN
+        pending = kind in ("in", "mark") and str(line["ts"]) in state.directives and state.marks.get(str(line["ts"])) != READ
         drop = False
         if kind == "seen":
             drop = index != last_seen
@@ -302,7 +303,7 @@ def compact(root: Path, cutoff_ts: float) -> int:
             drop = aged
         elif kind == "in" and old:
             thread = state.threads.get(str(line.get("thread", "")))
-            drop = line["kind"] == "ignored" or not (unread or thread is not None and thread.open)
+            drop = line["kind"] == "ignored" or not (pending or thread is not None and thread.open)
         elif aged and line["state"] == "file":
             drop = True
         elif aged and line["state"] in ("open", "resolved"):
@@ -315,7 +316,7 @@ def compact(root: Path, cutoff_ts: float) -> int:
             thread = state.threads.get(str(line["ts"]))
             drop = thread is None or not thread.open
         elif kind == "mark" and old:
-            drop = not unread
+            drop = not pending
         if drop:
             dropped += 1
         else:
