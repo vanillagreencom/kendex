@@ -52,11 +52,15 @@
 #       and run directory, and with the same sentinel and record. A host whose
 #       agent warden kills detached jobs needs it. The started line comes
 #       before the run rather than after the launch, and the log's runner line
-#       is runner=attached. A harness that cuts the call off leaves the run to
-#       finish, and --wait resumes it; a child killed before its verdict is a
-#       lost run. What the command leaves in the child's group ends with the
-#       run, and a process that starts its own session escapes, as under
-#       setsid. --stop ends an attached run by its group.
+#       is runner=attached. Give the call a harness timeout above the printed
+#       cap-secs and never cut it off: a harness that kills the call's process
+#       group kills only this parent, and on a warden host the warden reaps
+#       the orphaned child before its verdict. --wait then reports state=lost,
+#       which there is a cut-off run, not a failing battery; it takes a new
+#       attached run, not a code fix. The --wait resume holds only on a host
+#       without such a warden. What the command leaves in the child's group
+#       ends with the run, and a process that starts its own session escapes,
+#       as under setsid. --stop ends an attached run by its group.
 #   dev-validate-run --wait --run-dir PATH [--budget SECS]
 #       Poll a run the start path already launched. Claude Code's foreground
 #       poll, repeated while it exits 3.
