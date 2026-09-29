@@ -21,7 +21,16 @@
 # `standard` because something could not be read. Only `standard` is ever
 # measured=false, and only this script can tell the two apart: the cause alone
 # does not, so a consumer that must not treat a fallback as a class reads the
-# marker rather than a list of causes of its own. The render proof runs `kendex verify --scope
+# marker rather than a list of causes of its own. Every verdict also prints
+# one `queue-only: queue_only=true|false cause=<name> [path=<p> glob=<g>]`
+# line on stderr, ahead of the `class:` line: true where a changed path
+# matches a `queue` line of orch's narrow-change.conf, which is the list of
+# paths a change must run in a merge group for, and where the paths were not
+# read (cause=paths-unread) or the list was not (cause=queue-list-unreadable,
+# cause=queue-list-missing). It is judged on every changed path, before any
+# rule below sets a path aside, and no class changes it. A wiring error
+# prints no such line, and a reader takes its absence as queue_only=true.
+# The render proof runs `kendex verify --scope
 # project --json` in that private checkout, with `--base` set to the base-rev:
 # line harness-only printed and `--at-record` beside it, and reads its
 # document. The classes, first match winning:
@@ -171,6 +180,10 @@ head="HEAD"
 repo="."
 output="${GITHUB_OUTPUT:-}"
 changed=""
+# The queue-only class. Until the changed paths are read, the diff is
+# unreadable, and an unreadable diff reads queue-only.
+QUEUE_ONLY=true
+QUEUE_CAUSE="cause=paths-unread"
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 
@@ -233,6 +246,7 @@ answer() { # CLASS FIELDS [measured]
         "could not append the verdict to '$output'"
     fi
   fi
+  printf 'queue-only: queue_only=%s %s\n' "$QUEUE_ONLY" "$QUEUE_CAUSE" >&2
   printf 'class: class=%s measured=%s %s\n' "$1" "$measured" "$2" >&2
   printf 'change_class=%s\n' "$1"
   exit 0
@@ -341,6 +355,42 @@ path_matches() { # MODE(every|any) — against GLOB_LIST
   done <<<"$changed"
   [ "$1" = every ]
 }
+
+# orch's list, as `KEYWORD GLOB` lines. A `superseded` line names a `path`
+# line kept for a reader from before the list's extglob grammar, which reads
+# an extglob as literal text; this reader drops that line and reads the
+# narrower lines beside it.
+list_globs() { # KEYWORD
+  awk -v kind="$1" '
+    $1 == "superseded" { drop[$2] = 1 }
+    $1 == kind { glob[++n] = $2 }
+    END { for (i = 1; i <= n; i++) if (!(glob[i] in drop)) print glob[i] }
+  ' "$NARROW_CONF"
+}
+
+# The queue-only class, from the whole changed-path set before any rule below
+# trims it, so every verdict from here on carries it. A list this script
+# cannot read, or one from before the `queue` group, keeps the unreadable
+# default: queue_only=true.
+queue_only_of_paths() {
+  local globs
+  if [ ! -r "$NARROW_CONF" ] || ! globs="$(list_globs queue)"; then
+    QUEUE_CAUSE="cause=queue-list-unreadable"
+    return
+  fi
+  if [ -z "$globs" ]; then
+    QUEUE_CAUSE="cause=queue-list-missing"
+    return
+  fi
+  set_globs "$globs"
+  if path_matches any; then
+    QUEUE_CAUSE="cause=queue-path $PATH_MATCH_HIT"
+    return
+  fi
+  QUEUE_ONLY=false
+  QUEUE_CAUSE="cause=no-queue-path"
+}
+queue_only_of_paths
 
 # Two groups, refused at two places. First, ahead of everything, kendex's own
 # configuration, with .gemini/settings.json beside it: the shim row kendex
@@ -727,17 +777,6 @@ case "$inventory_change" in
     fi ;;
 esac
 
-# orch's list, as `KEYWORD GLOB` lines. A `superseded` line names a `path`
-# line kept for a reader from before the list's extglob grammar, which reads
-# an extglob as literal text; this reader drops that line and reads the
-# narrower lines beside it.
-list_globs() { # KEYWORD
-  awk -v kind="$1" '
-    $1 == "superseded" { drop[$2] = 1 }
-    $1 == kind { glob[++n] = $2 }
-    END { for (i = 1; i <= n; i++) if (!(glob[i] in drop)) print glob[i] }
-  ' "$NARROW_CONF"
-}
 [ -r "$NARROW_CONF" ] || answer standard "cause=narrow-change-list-unreadable"
 if ! excluded="$(list_globs path)" ||
   ! instruction_globs="$(list_globs instruction)"; then

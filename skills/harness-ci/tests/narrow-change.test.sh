@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # What change-class reads orch's narrow-change list against: the files a
 # package's risk sits in and not the package whole, the render inventory only
-# where its change is more than the names the same diff adds or deletes, and
-# an agent instruction file held to small where it would earn trivial or
-# micro.
+# where its change is more than the names the same diff adds or deletes, an
+# agent instruction file held to small where it would earn trivial or micro,
+# and the `queue` group that makes a change queue-only.
 #
 # The list is the real references/narrow-change.conf beside the script under
 # test, so a row follows the shipped list rather than a copy of it. No row
@@ -181,8 +181,11 @@ control() { # LABEL EXPECTED EDIT NAME SCRIPT LINE REPLACEMENT...
     assert_eq "$label: the control is an edit" edited "not edited"
     return
   fi
-  assert_eq "$label" "$expected" "$(verdict_of "$(run_row "$planted" "$edit")")"
+  assert_eq "$label" "$expected" "$("$CONTROL_READ" "$(run_row "$planted" "$edit")")"
 }
+# What a control reads off the planted copy's stderr: the class line, or the
+# queue-only line for the queue group's controls.
+CONTROL_READ=verdict_of
 
 MICRO="class=micro measured=true cause=production-within-micro"
 
@@ -250,5 +253,103 @@ cp "$(dirname "$CHANGE_CLASS")/harness-only" "$(dirname "$CHANGE_CLASS")/change-
 assert_eq "a list with no floor is refused" \
   "class=standard measured=false cause=narrow-change-floor-missing" \
   "$(verdict_of "$(run_row "$SANDBOX/floorless/harness-ci/scripts/change-class" AGENTS.md=10)")"
+
+# The queue-only line: its value, its cause key and the path and glob that
+# answered, where one did.
+queue_of() { # STDERR
+  sed -n 's/^queue-only: //p' <<<"$1"
+}
+
+# One row per `queue` entry, each touching one path that entry alone names,
+# in the source or the render spelling; a queue path beside others; and the
+# control, a diff of paths no entry names. A row's path is the edit's own.
+# label | expected queue-only line | edits
+queue_rows=0
+queue_paths=""
+while IFS='|' read -r label expected edits; do
+  queue_rows=$((queue_rows + 1))
+  # shellcheck disable=SC2086
+  assert_eq "$label" "$expected" "$(queue_of "$(run_row "$CHANGE_CLASS" $edits)")"
+  case "$expected" in
+    "queue_only=true cause=queue-path path="*) queue_paths="$queue_paths${edits%%=*}"$'\n' ;;
+  esac
+done <<'ROWS'
+a CI workflow is queue-only|queue_only=true cause=queue-path path=.github/workflows/ci.yml glob=.github/workflows/*|.github/workflows/ci.yml=2
+a CI action is queue-only|queue_only=true cause=queue-path path=.github/actions/change-class/classify glob=.github/actions/*|.github/actions/change-class/classify=2
+the gate writer's engine is queue-only|queue_only=true cause=queue-path path=skills/review-gate/scripts/review-predicate.sh glob=*skills/review-gate/scripts/*|skills/review-gate/scripts/review-predicate.sh=2
+the gate writer template's render is queue-only|queue_only=true cause=queue-path path=.agents/skills/review-gate/templates/review-gate-writer.yml glob=*skills/review-gate/templates/*|.agents/skills/review-gate/templates/review-gate-writer.yml=2
+the default review policy is queue-only|queue_only=true cause=queue-path path=skills/review-gate/standard.json glob=*skills/review-gate/standard.json|skills/review-gate/standard.json=2
+the settings naming the gate's context are queue-only|queue_only=true cause=queue-path path=kendex.settings.toml glob=kendex.settings.toml|kendex.settings.toml=2
+the classifier is queue-only|queue_only=true cause=queue-path path=skills/harness-ci/scripts/aggregate-needs glob=*skills/harness-ci/scripts/*|skills/harness-ci/scripts/aggregate-needs=2
+the classifier's list is queue-only|queue_only=true cause=queue-path path=skills/orch/references/narrow-change.conf glob=*skills/orch/references/narrow-change.conf|skills/orch/references/narrow-change.conf=2
+the job selection is queue-only|queue_only=true cause=queue-path path=tools/ci-job-set glob=tools/ci-job-set|tools/ci-job-set=2
+a skill's test library is queue-only|queue_only=true cause=queue-path path=skills/orch/tests/lib/git-env.sh glob=*skills/*/tests/lib/*|skills/orch/tests/lib/git-env.sh=2
+a tools suite is queue-only|queue_only=true cause=queue-path path=tools/tests/ci-aggregate.test.sh glob=tools/tests/*|tools/tests/ci-aggregate.test.sh=2
+the CI test aggregator is queue-only|queue_only=true cause=queue-path path=tools/ci-aggregate glob=tools/ci-aggregate|tools/ci-aggregate=2
+kendex.toml is queue-only|queue_only=true cause=queue-path path=kendex.toml glob=kendex.toml|kendex.toml=2
+this repository's manifest is queue-only|queue_only=true cause=queue-path path=kendex-local.toml glob=kendex-local.toml|kendex-local.toml=2
+the bot-instruction doctrine is queue-only|queue_only=true cause=queue-path path=skills/bot-instructions/SKILL.md glob=*skills/bot-instructions/SKILL.md|skills/bot-instructions/SKILL.md=2
+the bot-instruction render rules' render are queue-only|queue_only=true cause=queue-path path=.agents/skills/bot-instructions/schemas/renders.md glob=*skills/bot-instructions/schemas/renders.md|.agents/skills/bot-instructions/schemas/renders.md=2
+the Copilot instruction file is queue-only|queue_only=true cause=queue-path path=.github/copilot-instructions.md glob=.github/copilot-instructions.md|.github/copilot-instructions.md=2
+a review-bot instruction file is queue-only|queue_only=true cause=queue-path path=.github/instructions/code-review.md glob=.github/instructions/*|.github/instructions/code-review.md=2
+a queue path beside a product file is queue-only|queue_only=true cause=queue-path path=tools/ci-aggregate glob=tools/ci-aggregate|runtime/product.ts=2 tools/ci-aggregate=2
+a diff no entry names is not queue-only|queue_only=false cause=no-queue-path|docs/guide.md=2 runtime/product.ts=2 skills/orch/tests/added.test.sh=30
+ROWS
+require_rows queue-only "$queue_rows"
+
+# Every `queue` entry of the shipped list has a row above, read off the list
+# itself. The floor and the one required entry say the reader found the
+# group; a reader that found nothing has broken, not found an empty list.
+queue_globs="$(sed -n 's/^queue //p' "$ORCH_PACKAGE/references/narrow-change.conf")"
+assert_eq "the queue group is read" 1 \
+  "$(grep -cxF '.github/workflows/*' <<<"$queue_globs" || true)"
+while IFS= read -r glob; do
+  [ -n "$glob" ] || continue
+  hit=""
+  while IFS= read -r path; do
+    # shellcheck disable=SC2254
+    case "$path" in $glob) hit="$path"; break ;; esac
+  done <<<"$queue_paths"
+  assert_eq "the queue entry $glob has a row" covered "${hit:+covered}"
+done <<<"$queue_globs"
+
+# A diff whose paths were never read is queue-only: an unknown base is
+# refused before the changed paths are.
+unread_err="$("$CHANGE_CLASS" --repo "$repo" --event pull_request \
+  --base 0123456789abcdef0123456789abcdef01234567 --head HEAD 2>&1 >/dev/null)" || true
+assert_eq "a diff whose paths were not read is queue-only" \
+  "queue_only=true cause=paths-unread" "$(queue_of "$unread_err")"
+
+# A list with no `queue` group is one from before it, and reads queue-only.
+queueless="$SANDBOX/queueless"
+mkdir -p "$queueless/harness-ci/scripts"
+cp -R "$ORCH_PACKAGE" "$queueless/orch"
+grep -v '^queue ' "$ORCH_PACKAGE/references/narrow-change.conf" \
+  >"$queueless/orch/references/narrow-change.conf"
+cp "$(dirname "$CHANGE_CLASS")/harness-only" "$(dirname "$CHANGE_CLASS")/change-class" \
+  "$queueless/harness-ci/scripts/"
+assert_eq "a list with no queue group reads queue-only" \
+  "queue_only=true cause=queue-list-missing" \
+  "$(queue_of "$(run_row "$queueless/harness-ci/scripts/change-class" docs/guide.md=2)")"
+
+# One must-fail control per queue rule. A classifier that never matches the
+# group answers not queue-only on a CI workflow; one whose default before the
+# paths are read is false answers not queue-only on an unread diff; one that
+# reads an empty group as a list answers not queue-only on the queueless list.
+CONTROL_READ=queue_of
+control "a classifier that never matches the queue group lets a workflow through" \
+  "queue_only=false cause=no-queue-path" .github/workflows/ci.yml=2 \
+  queue-match change-class '  if path_matches any; then' '  if false; then'
+unread_mutant="$(mutant queue-default change-class 'QUEUE_ONLY=true' 'QUEUE_ONLY=false')"
+unread_err="$("$unread_mutant" --repo "$repo" --event pull_request \
+  --base 0123456789abcdef0123456789abcdef01234567 --head HEAD 2>&1 >/dev/null)" || true
+assert_eq "a classifier whose unread default is false lets an unread diff through" \
+  "queue_only=false cause=paths-unread" "$(queue_of "$unread_err")"
+missing_mutant="$(mutant queue-missing change-class '  if [ -z "$globs" ]; then' '  if false; then')"
+cp "$missing_mutant" "$queueless/harness-ci/scripts/change-class"
+assert_eq "a classifier that reads an empty queue group lets the queueless list through" \
+  "queue_only=false cause=no-queue-path" \
+  "$(queue_of "$(run_row "$queueless/harness-ci/scripts/change-class" docs/guide.md=2)")"
+CONTROL_READ=verdict_of
 
 report narrow-change

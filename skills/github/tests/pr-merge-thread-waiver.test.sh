@@ -4,6 +4,8 @@
 # else's, the policy answers that refuse rather than waive, and the merge
 # route resolving each waived thread — one reply, one resolve, under the
 # merge's token and on the head the class was measured at — before it arms.
+# And the admin request, refused on the queue-only class the same classifier
+# prints for the same range.
 # The row format and the world words are lib/pr-merge-world.sh's.
 set -euo pipefail
 
@@ -57,6 +59,8 @@ done
 # or the classifier fell back to standard. review-policy reads it and refuses
 # an answer marked unmeasured, so a row can turn a waiver into a refusal
 # without changing the class on stdout.
+# The queue-only line, where the row names one; pr-merge's --admin reads it.
+[[ -z "${STUB_QUEUE_LINE:-}" ]] || printf 'queue-only: %s\n' "$STUB_QUEUE_LINE" >&2
 if [[ "${STUB_MARKER:-yes}" == yes ]]; then
   printf 'class: class=%s measured=%s cause=stub\n' "$STUB_CLASS" "${STUB_MEASURED:-true}" >&2
 fi
@@ -138,6 +142,18 @@ the immediate merge runs beside a review gate with no waiver rule when no thread
 a head that moved after the class was measured blocks before any thread is touched|checks:ci-required threads:bot class-policy:trivial head-moved:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb post-entry|auto-classified|1|-|Warnings:;⚠ {waived:1};BLOCKED PR #123 — the class policy waived its bot threads at $RANGE_HEAD, not at the head being merged (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)|calls=$MERGE_PRE auth=<unset>
 a failed reply blocks with nothing armed, and names the thread|checks:ci-required threads:two-bots class-policy:trivial reply:fail post-entry|auto-classified|1|-|Warnings:;⚠ {waived:2};BLOCKED PR #123 — the reply on waived bot thread PRRT_bot_a failed;{\"error\":\"reply refused\"}|calls=$MERGE_PRE,graphql:reply(PRRT_bot_a:trivial$AT) auth=<unset>
 a failed resolve blocks with nothing armed, and names the thread|checks:ci-required threads:bot class-policy:trivial resolve:fail post-entry|auto-classified|1|-|Warnings:;⚠ {waived:1};BLOCKED PR #123 — resolving waived bot thread PRRT_post_merge_bot failed;{\"error\":\"resolve refused\"};{\"success\":false,\"resolved\":[],\"failed\":[\"PRRT_post_merge_bot\"]}|calls=$MERGE_PRE,graphql:reply(PRRT_post_merge_bot:trivial$AT),graphql:resolve(PRRT_post_merge_bot) auth=<unset>
+"
+
+# --admin reads the queue-only class off the classifier and refuses, naming
+# it: a queue-only PR, and a class nothing could read, keep the queue; every
+# other PR meets the retired admin route. The not-queue-only row is the
+# inverse of the queue-only one. No row reaches a merge call.
+run_table "the admin request" "\
+a queue-only PR refuses --admin, naming the class and the path that made it|route:true|admin-classified|1|-|pr-merge: admin-refused class=queue-only pr=123;$QUEUE_TRUE;{admin-queue}|calls=view:policy-range auth=<unset>
+any other PR meets the retired admin route, its class named|route:false|admin-classified|1|-|pr-merge: admin-retired class=not-queue-only pr=123;$QUEUE_FALSE;{admin-retired}|calls=view:policy-range auth=<unset>
+a classifier that prints no queue-only line reads queue-only|route:-|admin-classified|1|-|pr-merge: admin-refused class=queue-only pr=123;cause=classifier-unreadable;{admin-queue}|calls=view:policy-range auth=<unset>
+a classifier that fails reads queue-only|route:fail|admin-classified|1|-|pr-merge: admin-refused class=queue-only pr=123;cause=classifier-exit-1;{admin-queue}|calls=view:policy-range auth=<unset>
+an unreadable pull request range reads queue-only|route:range-fail|admin-classified|1|-|pr-merge: admin-refused class=queue-only pr=123;cause=range-unreadable;{admin-queue}|calls=view:policy-range auth=<unset>
 "
 
 echo

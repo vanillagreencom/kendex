@@ -47,6 +47,9 @@ Options:
                    set the CI gate uses. The arm right after a PR opens passes
                    the review gate's context, so nothing merges before review.
   --dry-run        Show what would happen without merging
+  --admin          Ask for the admin route. It is never taken: the PR's
+                   queue-only class is read and the request refused, naming
+                   it. See Merge route below.
 
 Modes:
   (default)        Run checks, block if critical issues, merge if pass
@@ -70,6 +73,13 @@ Merge-mode exit codes:
        rules read that failed, which proves no gate.
   1    CLOSED (not merged) PR #N
        The PR is closed unmerged. Nothing was attempted.
+  1    pr-merge: admin-refused class=queue-only pr=<N>
+       --admin on a queue-only PR, or on one whose class could not be read.
+       The next line is the classifier's queue-only line or the cause it was
+       not read. Nothing was merged or armed.
+  1    pr-merge: admin-retired class=not-queue-only pr=<N>
+       --admin on any other PR: the admin route is retired (D003). Nothing
+       was merged or armed.
   1    pr-merge: retired-setting key=<NAME>
        A retired merge setting is set. Every mode, --check included, refuses
        before any pull-request read or merge call; see Retired settings below.
@@ -91,6 +101,15 @@ Merge route:
   requires one. No mode passes --admin to GitHub, so GitHub enrolls the PR
   in the queue (exit 75) rather than merging past it, under whatever token the
   auth ladder selected: in a lane sandbox, the lanes app's installation token.
+
+  The route input is the PR's queue-only class, read only for --admin from
+  <skills>/harness-ci/scripts/change-class, else change-class on PATH, over
+  the PR's base and head, fetched as the class policy's range is (see
+  Review-thread gate). Its stderr `queue-only: queue_only=true|false` line
+  is the class; queue_only=true means the change touches a path of the
+  `queue` group in orch's references/narrow-change.conf. No classifier, an
+  unreadable range, a failed classifier and a missing line all read
+  queue-only.
 
 Retired settings:
   ORCH_ADMIN_MERGE_GH_CONFIG_DIR, ORCH_ADMIN_MERGE_CLASSES and
@@ -420,7 +439,7 @@ policy_range_materialize() { # ROOT BASE HEAD
     policy_range_present "$root" "$base_sha" "$head_sha" && return 0
     if ! err=$(git -C "$root" fetch --quiet --no-tags --no-write-fetch-head \
         origin "$base_sha" "$head_sha" 2>&1); then
-        echo "pr-merge: the class-policy range is not in this checkout and the fetch of its two commits from origin failed:" >&2
+        echo "pr-merge: the pull request's range is not in this checkout and the fetch of its two commits from origin failed:" >&2
         printf '%s\n' "$err" >&2
     fi
     policy_range_present "$root" "$base_sha" "$head_sha"
@@ -1056,8 +1075,85 @@ refuse_retired_settings() {
     exit 1
 }
 
+# The merge-route class of one pull request, from harness-ci's change-class
+# beside this scripts tree, else change-class on PATH: asked about the pull
+# request's own range, it prints `queue-only: queue_only=true|false cause=...`
+# on stderr. This command asks; it never matches a path itself. Sets
+# QUEUE_ONLY to true or false, QUEUE_ONLY_DETAIL to the classifier's line or
+# the reason it was not read, and QUEUE_ONLY_NOTES to the diagnostics of a
+# read that failed. Anything short of a readable line is queue-only: the
+# queue is the route that runs the change in a merge group before it lands.
+QUEUE_ONLY=""
+QUEUE_ONLY_DETAIL=""
+QUEUE_ONLY_NOTES=""
+read_queue_only() { # PR
+    local pr_num="$1" classifier root range_json base_sha head_sha err line status=0
+    QUEUE_ONLY=true
+    QUEUE_ONLY_NOTES=""
+    classifier="$SCRIPT_DIR/../../../harness-ci/scripts/change-class"
+    [ -x "$classifier" ] || classifier=$(command -v change-class 2>/dev/null) || classifier=""
+    if [ -z "$classifier" ]; then
+        QUEUE_ONLY_DETAIL="cause=classifier-absent"
+        return 0
+    fi
+    root=$(git rev-parse --show-toplevel 2>/dev/null) || root=$(pwd) || root=""
+    if [ -z "$root" ]; then
+        QUEUE_ONLY_DETAIL="cause=checkout-unreadable"
+        return 0
+    fi
+    if ! range_json=$(gh pr view "$pr_num" --json baseRefOid,headRefOid 2>/dev/null) ||
+        ! base_sha=$(jq -r '.baseRefOid // ""' <<<"$range_json" 2>/dev/null) ||
+        ! head_sha=$(jq -r '.headRefOid // ""' <<<"$range_json" 2>/dev/null) ||
+        [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
+        QUEUE_ONLY_DETAIL="cause=range-unreadable"
+        return 0
+    fi
+    if ! QUEUE_ONLY_NOTES=$(policy_range_materialize "$root" "$base_sha" "$head_sha" 2>&1); then
+        QUEUE_ONLY_DETAIL="cause=range-absent base=$base_sha head=$head_sha"
+        return 0
+    fi
+    if ! err=$(mktemp "${TMPDIR:-/tmp}/pr-merge-class.XXXXXX"); then
+        QUEUE_ONLY_DETAIL="cause=scratch-unavailable"
+        return 0
+    fi
+    (cd -- "$root" && env -u GH_CONFIG_DIR "$classifier" --event pull_request \
+        --base "$base_sha" --head "$head_sha" --repo . >/dev/null 2>"$err") || status=$?
+    line=$(sed -n 's/^queue-only: //p' "$err" | tail -1) || line=""
+    [ "$status" -eq 0 ] || QUEUE_ONLY_NOTES=$(cat -- "$err")
+    rm -f -- "${err:?}"
+    if [ "$status" -ne 0 ]; then
+        QUEUE_ONLY_DETAIL="cause=classifier-exit-$status"
+        return 0
+    fi
+    case "$line" in
+    "queue_only=true "*) QUEUE_ONLY_DETAIL="$line" ;;
+    "queue_only=false "*) QUEUE_ONLY=false; QUEUE_ONLY_DETAIL="$line" ;;
+    *) QUEUE_ONLY_DETAIL="cause=classifier-unreadable" ;;
+    esac
+}
+
+# --admin asks for the admin route, which this command does not take: it reads
+# the pull request's queue-only class and refuses, naming the class. A
+# queue-only change must run in a merge group; every other change meets the
+# retirement of the admin route (kendex decision D003). Nothing is merged or
+# armed either way.
+refuse_admin_route() { # PR
+    read_queue_only "$1"
+    if [ "$QUEUE_ONLY" = true ]; then
+        echo "pr-merge: admin-refused class=queue-only pr=$1" >&2
+        echo "  $QUEUE_ONLY_DETAIL" >&2
+        [ -z "$QUEUE_ONLY_NOTES" ] || printf '%s\n' "$QUEUE_ONLY_NOTES" >&2
+        echo "  A queue-only change runs in a merge group before it lands: arm it with --auto and wait in the queue. Nothing was merged or armed." >&2
+    else
+        echo "pr-merge: admin-retired class=not-queue-only pr=$1" >&2
+        echo "  $QUEUE_ONLY_DETAIL" >&2
+        echo "  The admin route is retired (kendex decision D003): every merge goes through the merge queue, armed with --auto. Nothing was merged or armed." >&2
+    fi
+    exit 1
+}
+
 main() {
-    local pr_num="" method="--squash" delete_branch=true
+    local pr_num="" method="--squash" delete_branch=true admin=false
     local check_only=false dry_run=false auto=false supplied_head="" require_context=""
 
     while [ $# -gt 0 ]; do
@@ -1088,6 +1184,10 @@ main() {
             ;;
         --auto)
             auto=true
+            shift
+            ;;
+        --admin)
+            admin=true
             shift
             ;;
         --expected-head) supplied_head="${2:-}"; shift 2 ;;
@@ -1131,6 +1231,7 @@ main() {
     if [ -n "$require_context" ] && [ "$auto" != true ]; then
         echo "Error: --require-context gates the --auto arm and needs --auto" >&2; exit 1
     fi
+    [ "$admin" = false ] || refuse_admin_route "$pr_num"
 
     if [ "$check_only" = true ]; then
         local check_json

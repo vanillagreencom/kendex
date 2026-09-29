@@ -42,6 +42,10 @@
 #     review-gate class policy, and the classifier stub's answer for the
 #     pull request's range; head-moved:<sha> after it, the head every read
 #     but the policy's answers once the class was measured
+#     route:<true|false|-|fail|range-fail>  the classifier stub's queue-only
+#     line for the pull request's range: queue_only=true on a CI workflow,
+#     queue_only=false, no line, a classifier that fails, or a range read
+#     that fails
 #     env:NAME=value  the caller's environment
 #   argv   check | auto | immediate |
 #          expected:<sha> (--auto with --expected-head) | router:<flags> |
@@ -55,7 +59,7 @@
 #          $AUTOLESS_PR_MERGE, the copy whose needs-auto check is cut) |
 #          force | admin | admin-credential (the retired flags) | check-classified |
 #          auto-classified | immediate-classified | expected-classified:<sha> |
-#          dry-classified
+#          dry-classified | admin-classified (--admin)
 #          (run from the mirror tree whose harness-ci sibling is the classifier
 #          stub, which pr-merge-thread-waiver.test.sh builds as $MIRROR) |
 #          check-no-rule | immediate-no-rule (run from that suite's mirror
@@ -271,6 +275,12 @@ word() {
     # The head moved after the class was measured: the policy read its range
     # at the fixture head, and every later read answers this one.
     head-moved:*) W_ENV+=("STUB_POLICY_HEAD=$RANGE_HEAD" "STUB_HEAD=$v") ;;
+    # The classifier stub's queue-only line for the pull request's range.
+    route:range-fail) W_ENV+=("STUB_POLICY_RANGE_FAIL=true") ;;
+    route:fail) W_ENV+=("STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD") ;;
+    route:-) W_ENV+=("STUB_CLASS=standard" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
+    route:true) W_ENV+=("STUB_CLASS=standard" "STUB_QUEUE_LINE=$QUEUE_TRUE" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
+    route:false) W_ENV+=("STUB_CLASS=standard" "STUB_QUEUE_LINE=$QUEUE_FALSE" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     post-graphql:partial) W_ENV+=("STUB_POST_GRAPHQL_PARTIAL=true") ;;
     cwd:*) RUN_DIR="$TMPDIR/settings-$v" ;;
     env:*) W_ENV+=("$v") ;;
@@ -302,6 +312,7 @@ argv_for() {
     immediate-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --keep-branch ;;
     expected-classified:*) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --keep-branch --expected-head "${1#expected-classified:}" ;;
     dry-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --dry-run --keep-branch ;;
+    admin-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --admin --keep-branch ;;
     # The mirror whose review gate has no waiver rule beside its owner.
     check-no-rule) printf '%s\n' "$NO_RULE_PR_MERGE" 123 --check ;;
     immediate-no-rule) printf '%s\n' "$NO_RULE_PR_MERGE" 123 --keep-branch ;;
@@ -432,7 +443,7 @@ err_macro() {
     # under this command's fixed line. Pinned here, in one place, because the
     # point of the row is that git's account survives rather than being
     # flattened into one sentence; a git that rewords this moves this macro.
-    fetch-no-origin) printf "pr-merge: the class-policy range is not in this checkout and the fetch of its two commits from origin failed:;fatal: 'origin' does not appear to be a git repository;fatal: Could not read from remote repository.;Please make sure you have the correct access rights;and the repository exists." ;;
+    fetch-no-origin) printf "pr-merge: the pull request's range is not in this checkout and the fetch of its two commits from origin failed:;fatal: 'origin' does not appear to be a git repository;fatal: Could not read from remote repository.;Please make sure you have the correct access rights;and the repository exists." ;;
     hint-auto) printf 'Use --auto to queue for auto-merge.' ;;
     hint-await) printf 'Hint: github.sh await-mergeable 123 && retry' ;;
     volatile) printf 'NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently\\; follow orch merge-pr.md § 5 for PR #123;Block on .agents/skills/orch/scripts/queue-wait 123 --json once, with a poll interval and budget sized as orch merge-pr.md § 5 step 1 does\\; route its verdict by that same step, and never re-arm an unrecognized verdict. The fleet reducer is .agents/skills/review-gate/scripts/pr-watch.sh with GH_REPO set to the repository (not resolvable locally here)\\; repair what the cause names before re-arming with .agents/skills/github/scripts/github.sh pr-merge 123 --auto' ;;
@@ -443,6 +454,8 @@ err_macro() {
     fetch-failed) printf 'review_threads_fetch_failed: Failed to fetch actionable review threads from GitHub' ;;
     malformed) printf 'review_threads_fetch_failed: GitHub returned malformed review thread data' ;;
     retired:*) printf 'The overseer'"'"'s admin merge and the ORCH_MERGE_BYPASS fast path are retired (kendex decision D003): every merge goes through the merge queue, armed with --auto.;Remove %s from kendex.settings.toml [env], .kendex/settings.toml [env], the private env file (.env.local unless KENDEX_ENV_FILE names another) and the environment, then retry.' "$(printf '%s' "${1#retired:}" | tr '+' ' ')" ;;
+    admin-queue) printf 'A queue-only change runs in a merge group before it lands: arm it with --auto and wait in the queue. Nothing was merged or armed.' ;;
+    admin-retired) printf 'The admin route is retired (kendex decision D003): every merge goes through the merge queue, armed with --auto. Nothing was merged or armed.' ;;
     arm-remedy) printf 'Nothing mutated. Enable auto-merge and a required status check or review rule on the base branch.' ;;
     unverified-remedy) printf "Nothing mutated. The base branch's rules could not be read, so no merge gate is proven\\; retry once they read." ;;
     context-remedy:*) printf "Nothing mutated. The base branch does not require '%s'\\; require it in the repository's ruleset." "$(printf '%s' "${1#context-remedy:}" | tr '+' ' ')" ;;
@@ -498,3 +511,6 @@ TRUSTED_LOGINS="copilot-pull-request-reviewer[bot];review-bot[bot];bmethod"
 CHECK_POLICY="view:state,view:mergeable,checks,graphql:threads,view:policy-range,view:reviews"
 PRE="view:state,view:mergeable,checks,graphql:threads,view:reviews,view:head"
 OPEN="state=OPEN mergeable=MERGEABLE at=-"
+# The classifier's queue-only lines, as harness-ci's change-class prints them.
+QUEUE_TRUE="queue_only=true cause=queue-path path=.github/workflows/ci.yml glob=.github/workflows/*"
+QUEUE_FALSE="queue_only=false cause=no-queue-path"
