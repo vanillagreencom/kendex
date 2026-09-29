@@ -18,8 +18,9 @@
 #     require-token (the stub refuses a mutation without the bot token)
 #     repo:no-auto (allow_auto_merge=false), repo:no-rule (no ruleset rule),
 #     repo:classic (no ruleset, one classic required context)
-#     approvals:<n|null> a ruleset pull_request rule alone, requiring n
-#     approvals; null leaves the count out
+#     approvals:<n>/<t>[,<n>/<t>...] the ruleset pull_request rules alone,
+#     one per entry, each requiring n approvals and thread resolution t
+#     (true|false); null leaves that parameter out
 #     required:<context> a ruleset requiring that one context, `+` a space;
 #     classic:<context> no ruleset, classic protection naming it under
 #     checks[]; classic-contexts:<context> the same under the legacy
@@ -189,8 +190,7 @@ word() {
     require-token) W_ENV+=("STUB_REQUIRE_TOKEN=true") ;;
     repo:no-auto) W_ENV+=("STUB_ALLOW_AUTO_MERGE=false") ;;
     repo:no-rule) W_ENV+=("STUB_GATE_RULES=[]") ;;
-    approvals:null) W_ENV+=('STUB_GATE_RULES=[{"type":"pull_request"}]') ;;
-    approvals:*) W_ENV+=("STUB_GATE_RULES=$(jq -c --argjson n "$v" '[{type: "pull_request", parameters: {required_approving_review_count: $n}}]' <<<null)") ;;
+    approvals:*) W_ENV+=("STUB_GATE_RULES=$(jq -c --arg s "$v" '$s | split(",") | map(split("/") as [$n, $t] | {type: "pull_request", parameters: ((if $n == "null" then {} else {required_approving_review_count: ($n | tonumber)} end) + (if $t == "null" then {} else {required_review_thread_resolution: ($t | fromjson)} end))})' <<<null)") || exit 2 ;;
     repo:classic) W_ENV+=("STUB_GATE_RULES=[]" 'STUB_CLASSIC_JSON={"protection":{"required_status_checks":{"contexts":["CI Required"],"checks":[]}}}') ;;
     required:*) W_ENV+=("STUB_GATE_RULES=$(jq -c --arg c "$(printf '%s' "$v" | tr '+' ' ')" '[{type: "required_status_checks", parameters: {required_status_checks: [{context: $c}]}}]' <<<null)") ;;
     classic:*) W_ENV+=("STUB_GATE_RULES=[]" "STUB_CLASSIC_JSON=$(jq -c --arg c "$v" '{protection: {required_status_checks: {contexts: [], checks: [{context: $c}]}}}' <<<null)") ;;
@@ -384,7 +384,8 @@ err_macro() {
     admin-queue) printf 'A queue-only change runs in a merge group before it lands: arm it with --auto and wait in the queue. Nothing was merged or armed.' ;;
     admin-retired) printf 'The admin route is retired (kendex decision D003): every merge goes through the merge queue, armed with --auto. Nothing was merged or armed.' ;;
     auto-remedy) printf 'Nothing mutated. Enable auto-merge on the repository.' ;;
-    approval-remedy) printf "Nothing mutated. No ruleset on the base branch requires an approval, so GitHub would merge the armed PR before review\\; require at least 1 approval in its pull_request rule." ;;
+    approval-remedy) printf "Nothing mutated. No ruleset on the base branch requires an approval, so GitHub would merge the armed PR before review\\; require at least 1 approval and thread resolution in its pull_request rule." ;;
+    thread-remedy) printf "Nothing mutated. No ruleset on the base branch requires thread resolution, so GitHub would merge the armed PR on its first approval past open review threads\\; require review threads resolved in its pull_request rule." ;;
     unverified-remedy) printf "Nothing mutated. The base branch's rules could not be read, so no merge gate is proven\\; retry once they read." ;;
     *) printf 'UNKNOWN-MACRO:%s' "$1" ;;
   esac

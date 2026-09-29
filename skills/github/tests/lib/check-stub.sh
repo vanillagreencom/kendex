@@ -99,9 +99,9 @@ case "${1:-}" in
         # required-context read share these endpoints, so both fixtures serve
         # the caller's own --jq. The default world has auto-merge, a ruleset
         # check requiring no named context, and a pull_request rule requiring
-        # 1 approval.
+        # 1 approval and thread resolution.
         # A slash after branches/ is an unencoded branch name: no answer.
-        rules='[{"type":"required_status_checks"},{"type":"pull_request","parameters":{"required_approving_review_count":1}}]'
+        rules='[{"type":"required_status_checks"},{"type":"pull_request","parameters":{"required_approving_review_count":1,"required_review_thread_resolution":true}}]'
         [[ -z "${STUB_GATE_RULES:-}" ]] || rules="$STUB_GATE_RULES"
         classic='{"protection":{"required_status_checks":{"contexts":[],"checks":[]}}}'
         [[ -z "${STUB_CLASSIC_JSON:-}" ]] || classic="$STUB_CLASSIC_JSON"

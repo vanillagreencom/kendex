@@ -35,9 +35,9 @@ Every repository applies this policy to the class from the shared `harness-ci` c
 
 | Change class | Review evidence | Review threads | Objections and suppressed findings |
 |---|---|---|---|
-| `render` | Not required | Not read by the gate; the base branch's thread-resolution rule holds the merge on every open thread | Not read |
-| `trivial` | Not required | Not read by the gate; the base branch's thread-resolution rule holds the merge on every open thread | Not read |
-| `micro` | Not required | Not read by the gate; the base branch's thread-resolution rule holds the merge on every open thread | Not read |
+| `render` | Not required | Not read by the gate; the lane answers every open thread before the merge | Not read |
+| `trivial` | Not required | Not read by the gate; the lane answers every open thread before the merge | Not read |
+| `micro` | Not required | Not read by the gate; the lane answers every open thread before the merge | Not read |
 | `small` | One normal bot round | Enforced | Enforced |
 | `standard` | Current review-gate behavior | Current review-gate behavior | Current review-gate behavior |
 
@@ -45,7 +45,7 @@ Every repository applies this policy to the class from the shared `harness-ci` c
 
 A `none` row puts the pull request OUTSIDE the review gate: no review evidence, no thread wait, no standing objection and no suppressed finding is read for it, because a gate that cannot stop a bot from commenting must not run on a change it waives. What stays enforced is everything outside that gate — required CI checks, commit guards and merge conflicts — and the orch merge path still refuses a `CHANGES_REQUESTED` review at its readiness check, in every mode.
 
-Review threads still hold a `none` row's merge where the base branch's ruleset requires thread resolution: GitHub enforces that rule on every open thread, and nothing resolves a review bot's thread for the lane. The github skill's `pr-merge` once resolved those threads under a waiver and no longer does. The predicate counts a thread it resolved that way as open while that resolution is the thread's last word, by the rule in `scripts/lib/waiver.sh`.
+A `none` row's open threads still stop its merge: the orch merge path answers each thread its readiness check reads, and `queue-wait`'s late-findings guard dequeues the armed PR on any thread left open. Nothing resolves a review bot's thread for the lane. What GitHub itself holds on an open thread is `pr-merge --help` § Approvals and review threads. The predicate counts a thread the merge route resolved under its retired thread waiver as open while that resolution is the thread's last word, by the rule in `scripts/lib/waiver.sh`.
 
 The table is applied only where the shared classifier measured a class, which it says on its own answer. It needs both endpoints present in the checkout, an ancestor they share, a readable generated-file inventory at the base end, and the `orch` skill beside `harness-ci` for its `references/narrow-change.conf` list and its `scripts/lib/branch-growth.sh` measurer. Missing any of those, the classifier falls back to `standard` and marks the answer unmeasured, and `review-policy` exits 2 naming the reason rather than apply a row to a class nothing earned. Fix what the reason names, then ask again.
 
