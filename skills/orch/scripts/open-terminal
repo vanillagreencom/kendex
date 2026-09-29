@@ -1218,7 +1218,7 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   # argument parsing. A relaunch that matched no session renders the normal
   # brief below, which already says what to do.
   if [[ -n "$wake_dir" ]]; then
-    line=" 'Run .agents/skills/orch/scripts/lane-mail inbox --item $mail_id and act on every directive it prints.'"
+    line=" 'Run .agents/skills/orch/scripts/lane-mail inbox --item $mail_id and act on every directive it prints.$unattended'"
     exec="exec "
     print=" -p"
   elif [[ "$RELAUNCH" == true ]]; then

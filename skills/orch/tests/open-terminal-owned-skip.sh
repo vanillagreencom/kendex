@@ -476,7 +476,7 @@ exit "${WAKE_STUB_RC:-0}"
 EOF
 chmod +x "$BIN/claude"; ln -s claude "$BIN/codex"; ln -s claude "$BIN/pi-bridge"
 WAKE_LINE="Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 and act on every directive it prints."
-for row in "claude|claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE" "codex|codex exec resume -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE" "pi|pi-bridge send --cwd $TMP_ROOT/wt/CC-1 $WAKE_LINE"; do
+for row in "claude|claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE" "codex|codex exec resume -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE" "pi|pi-bridge send --cwd $TMP_ROOT/wt/CC-1 $WAKE_LINE $PI_UNATTENDED_TEXT"; do
   IFS='|' read -r harness expected <<<"$row"
   capture="$TMP_ROOT/wake-$harness.cmd"
   OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "wake-$harness" -- --wake --harness "$harness" CC-1
@@ -506,7 +506,7 @@ mkdir -p "$TMP_ROOT/wt/issue-2708"
 git -C "$TMP_ROOT/wt/issue-2708" init -q
 OT_CAPTURE="$TMP_ROOT/wake-gh.cmd" run_case wake-gh -- --wake --tracker github --repo o/r --harness pi 2708
 assert_eq "$(cat "$TMP_ROOT/wake-gh.cmd" 2>/dev/null)" \
-  "pi-bridge send --cwd $TMP_ROOT/wt/issue-2708 Run .agents/skills/orch/scripts/lane-mail inbox --item issue-2708 and act on every directive it prints." \
+  "pi-bridge send --cwd $TMP_ROOT/wt/issue-2708 Run .agents/skills/orch/scripts/lane-mail inbox --item issue-2708 and act on every directive it prints. $PI_UNATTENDED_TEXT" \
   "a GitHub wake names the worktree id its mailbox is bound under, never the bare issue number"
 
 OT_CAPTURE="$TMP_ROOT/wake-failed.cmd" WAKE_STUB_RC=3 run_case wake-failed -- --wake --harness pi CC-1
