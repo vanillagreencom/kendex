@@ -648,6 +648,9 @@ CLAIM_WRITE_FAILED=false
 # handed to a background job records with it; both empty for any other launch.
 LAUNCH_PANE=""
 LAUNCH_PREPARE=""
+# The pane of a launch whose open_tmux failed after its window opened, which
+# launch_finish sets on that failure alone; empty for every other outcome.
+UNTAKEN_PANE=""
 
 # One home for what a lane value may not contain, applied to the lane resolved
 # up front AND to every one a batch re-picks. Prints the reason and returns 0
@@ -2054,7 +2057,7 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   # the start brief after it, so the bound is one verification bound for each.
   # A pane that draws none is no launched lane, whether both exited or the
   # screen is one pane_harness_up does not know; under a fleet the launch loop
-  # closes its window through launch_stop before the record reads stopped.
+  # ends it through launch_stop.
   if [[ "$RELAUNCH_ROUTE" == resume-or-fresh ]]; then
     local harness_rc=0 harness_secs=$((TMUX_VERIFY_SECS * 2))
     tmux_wait_harness "$pane" "$harness_secs" || harness_rc=$?
@@ -2472,7 +2475,7 @@ launch_finish() {
   if [[ "$WAKE" == true ]]; then
     open_wake "$wt" "$title" "$cmd" || return 1
   elif [[ "$TERMINAL_MODE" == "tmux" ]]; then
-    open_tmux "$wt" "$title" "$cmd" "$brief" "$ssh_target" "$remote_path" || return 1
+    open_tmux "$wt" "$title" "$cmd" "$brief" "$ssh_target" "$remote_path" || { UNTAKEN_PANE="$LAUNCH_PANE"; return 1; }
   else
     open_gui "$wt" "$title" "$cmd" || return 1
   fi
@@ -2557,20 +2560,17 @@ launch_handoff() {
   ot_message lane-preparing "item=$item" "log=$log"
 }
 
-# Ends a hosted launch that did not take: its window closes first, which
-# retires its claim and ends whatever the pane still runs, and only then is the
-# record written stopped, so stopped never stands over a harness this launch
-# left running. A background job passes its LOG and REASON, which the record
-# carries as its preparation; a foreground launch passes neither, and its
-# record carries none.
-launch_stop() { # [LOG REASON]
-  tmux_window_close "$LAUNCH_PANE" "$title" || true
-  if [[ $# -gt 0 ]]; then
-    prepare_record_write stopped "$1" "$2"
-    return
-  fi
-  LAUNCH_PREPARE=""
-  lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$remote_path" "" "$launched_at" stopped && return 0
+# Ends a foreground hosted relaunch in a fleet whose open_tmux failed after its
+# window opened, UNTAKEN_PANE. The window closes first, which retires its claim
+# and ends whatever the pane runs, and the record is written stopped only once
+# that close succeeded: a close that failed returns 1 with the record as it
+# read, tmux-failed naming the cause. The write changes the status alone, so
+# the harness, model, account and session stay those of the last launch that
+# took, which the next relaunch's route is judged on.
+launch_stop() {
+  tmux_window_close "$UNTAKEN_PANE" "$title" || return 1
+  "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update oversee \
+    --arg item "$wt_id" '(.lanes[]? | objects | select(.item == $item) | .status) = "stopped"' >/dev/null && return 0
   ot_message record-stop-failed "item=$item" "state=oversee" >&2
   return 1
 }
@@ -2587,7 +2587,8 @@ launch_prepared() { # LOG
     reason=launch-failed
     if LAUNCH_PREPARE="$(prepare_record "$1")"; then launch_finish && return 0; fi
   fi
-  launch_stop "$1" "$reason" || return 1
+  tmux_window_close "$LAUNCH_PANE" "$title" || true
+  prepare_record_write stopped "$1" "$reason" || return 1
   ot_message lane-prepare-failed "item=$item" "reason=$reason" >&2
 }
 
@@ -2886,7 +2887,7 @@ for raw in "${ITEMS[@]}"; do
     fi
     wt="$CLAIM_ROOT"
   fi
-  LAUNCH_PANE="" LAUNCH_PREPARE=""
+  LAUNCH_PANE="" LAUNCH_PREPARE="" UNTAKEN_PANE=""
   # The launch time is read before the terminal opens. The first record's
   # launched_at is the floor the watch applies to merges and new issues, so a
   # stamp taken after the open and its verification would leave anything that
@@ -2921,11 +2922,11 @@ for raw in "${ITEMS[@]}"; do
       continue
     fi
     if ! launch_finish; then
-      # A hosted relaunch whose window opened and did not take ends through
-      # launch_stop, so its record reads stopped rather than carrying a dead
-      # pane as a live lane. One that failed before its window opened started
-      # nothing, and its record keeps what it read.
-      [[ "$HOST_RELAUNCH" != true || "$FLEET" != true || -z "$LAUNCH_PANE" ]] || launch_stop || true
+      # Only a hosted relaunch whose open_tmux failed after its window opened
+      # ends through launch_stop. Any other failure keeps its record as it
+      # read: a window that never opened started nothing, and one that opened
+      # and took, record-write-failed after it, stands.
+      [[ "$HOST_RELAUNCH" != true || "$FLEET" != true || -z "$UNTAKEN_PANE" ]] || launch_stop || true
       failed=$((failed + 1))
       continue
     fi

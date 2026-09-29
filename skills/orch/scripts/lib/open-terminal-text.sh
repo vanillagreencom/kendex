@@ -106,7 +106,7 @@ ot_message() { # REASON FIELD=VALUE...
     github-item-invalid) text='A GitHub work item must be an issue number.' ;;
     repo-missing) text='Specify a repository when GitHub cannot resolve it.' ;;
     claim-unrecorded) text='The previous claim is missing, so under --lane auto the next item cannot be spread off its account. The batch stops.' ;;
-    item-owned) text='Another session owns this work item. Its worktree was skipped. Where no session runs it, a dead lane or a hosted create that failed after its sandbox started, launch it again with --relaunch.' ;;
+    item-owned) text='Another session owns this work item. Its worktree was skipped. Where no session runs it, a dead lane or a hosted create that failed after its sandbox started, launch it again with --relaunch. A hosted codex or pi relaunch resumes natively with no start brief behind it, so where its sandbox holds no session of that harness, give --relaunch a --cmd carrying the full harness command with the start brief.' ;;
     worktree-failed) text='The worktree helper failed to create this item.' ;;
     worktree-reuse-merged) text='The item pull request merged, so its tree is kept as it stands and no rebase is attempted.' ;;
     worktree-links-failed) text='The kept tree has configured symlinks the repair could not restore, so the lane could not reach its own .agents scripts. The item was not launched.' ;;
@@ -133,8 +133,8 @@ ot_message() { # REASON FIELD=VALUE...
     session-resumed) text='The harness resumed the matching session.' ;;
     session-retired) text='The item'"'"'s handoff record stands, so its lane handed its work to that record and ended the session. The relaunch resumes no session: it starts the lane afresh, and the start workflow continues from the record.' ;;
     harness-switched) text='The lane record names another harness as the last one to run the lane, so no session this harness holds carries that work. The relaunch resumes no session: it starts the lane afresh on the start brief.' ;;
-    harness-screen-missing) text='The hosted relaunch showed no harness screen the launcher recognizes within seconds. The resume and the start brief behind it may both have exited, or the harness may be slow to start or show a screen the launcher does not know. The lane is not launched; under a fleet its window is closed and its record reads stopped. Relaunch; if this recurs, run the harness in the sandbox by hand to read its own words.' ;;
-    record-stop-failed) text='The hosted relaunch did not take, and its record could not be rewritten stopped, so the record keeps whatever status the launch last wrote. workflow-state names why above: fix it, then relaunch.' ;;
+    harness-screen-missing) text='The hosted relaunch showed no harness screen the launcher recognizes within seconds. The resume and the start brief behind it may both have exited, or the harness may be slow to start or show a screen the launcher does not know. The lane is not launched. Under a fleet its window is closed and only then does its record read stopped; a close that fails leaves the record as it read, tmux-failed naming the cause. Relaunch; if this recurs, run the harness in the sandbox by hand to read its own words.' ;;
+    record-stop-failed) text='The hosted relaunch did not take and its window is closed, but its record could not be rewritten stopped, so it still reads as it did before the relaunch. workflow-state names why above: fix it, then relaunch.' ;;
     handoff-unreadable) text='workflow-state handoff-standing, asked from the lane'"'"'s worktree, answered unreadable or gave no verdict, so nothing says whether the lane handed off and retired its session. Nothing was launched. Its own words are above. state is the item'"'"'s state file, or the item where even the path could not be read: repair it, then relaunch.' ;;
     wake-invalid) text='The wake option takes --harness claude, codex, pi or copilot, and no --cmd, --relaunch or lane host.' ;;
     session-missing) text='No session of this harness names the item. Nothing was started.' ;;
@@ -325,8 +325,10 @@ Options:
                     draws a harness screen within twice
                     ORCH_TMUX_VERIFY_SECS, one bound for each claude start; a
                     pane that draws none is harness-screen-missing, and under
-                    --state-dir its window is closed and the lane's fleet
-                    record reads stopped.
+                    --state-dir its window is closed and, once the close
+                    succeeds, the lane's fleet record reads stopped; the
+                    record's other fields stay as the last launch that took
+                    wrote them.
                     WHICH CREDENTIAL RUNS THE LANE: the copy the provider
                     installed on the host. `create` receives the lane's config
                     dir as --account on every call, a relaunch included, and
@@ -483,11 +485,15 @@ Options:
                     fleet record names another harness as the last one to run
                     the lane starts fresh too, hosted or local, reported as
                     harness-switched: no session this harness holds carries
-                    that work. A relaunch needs no --cmd, because the launcher
-                    runs the start brief itself where the resume finds no
-                    session. A --cmd relaunch renders its template verbatim:
-                    no session lookup, no harness-switch check and no start
-                    brief after it. Before the
+                    that work. A local relaunch and a hosted claude relaunch
+                    need no --cmd: the launcher runs the start brief itself
+                    where the resume finds no session. A hosted codex or pi
+                    relaunch resumes natively with no start brief behind it;
+                    into a sandbox that holds no session of that harness,
+                    relaunch with a --cmd carrying the full harness command
+                    with the start brief. A --cmd relaunch renders its
+                    template verbatim: no session lookup, no harness-switch
+                    check and no start brief after it. Before the
                     worktree step an existing tree is asked whether its pull
                     request merged (`worktree merged`). A merged item keeps its
                     tree as it stands and is reported as worktree-reuse-merged

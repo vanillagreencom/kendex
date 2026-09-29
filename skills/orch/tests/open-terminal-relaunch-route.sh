@@ -8,7 +8,7 @@
 # relaunch whose harness differs from the one the fleet record names renders the
 # start brief alone, whose brief check stands in for the harness-screen wait. A
 # pane that shows no harness screen is no launched lane: its window closes and
-# its fleet record reads stopped.
+# only then does its fleet record read stopped, its status alone rewritten.
 #
 # tmux, worktree and gh are the shared open-terminal stubs, and the host is the
 # lane-host fixture. The rendered remote command is also run for real, against
@@ -64,20 +64,24 @@ chmod +x "$HARNESS_BIN/claude"
 
 RUN_SEQ=0
 # run_ot RECORDED SCREEN HARNESS — one hosted relaunch of CC-1 on HARNESS into
-# a fleet whose record for CC-1 names RECORDED and reads running. SCREEN is the
-# harness screen file, `-` for a pane that never draws one. RUN_ENV holds any
-# further stub settings for the run. Sets OUT, RC and RUN.
-RUN_ENV=()
+# a fleet whose record for CC-1 names RECORDED and reads running, with the
+# entries SEED_LANES holds after it; RECORDED `-` runs on the fleet state the
+# previous run left. SCREEN is the harness screen file, `-` for a pane that
+# never draws one. RUN_ENV holds any further stub settings for the run. Sets
+# OUT, RC and RUN.
+RUN_ENV=() SEED_LANES='[]'
 run_ot() {
-  local recorded="$1" screen="$2" harness="$3" flags='--model opus --effort high'
+  local recorded="$1" screen="$2" harness="$3" flags='--model opus --effort high' prev="${RUN:-}"
   [[ "$harness" != codex ]] || flags='-m gpt-6-astra -c model_reasoning_effort=high'
   [[ "$screen" != - ]] || screen=""
   RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
-  mkdir -p "$RUN/state" "$RUN/remote/srv/lane"
+  mkdir -p "$RUN/remote/srv/lane"
   printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$RUN/remote/srv/lane/.git"
-  if ! "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" init oversee >/dev/null \
-    || ! "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" update oversee --arg h "$recorded" \
-      '.lanes = [{item: "CC-1", harness: $h, status: "running"}]' >/dev/null; then
+  if [[ "$recorded" == - ]]; then
+    cp -R "$prev/state" "$RUN/state" || { echo "open-terminal-relaunch-route: seed-failed run=$RUN" >&2; exit 1; }
+  elif ! mkdir -p "$RUN/state" || ! "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" init oversee >/dev/null \
+    || ! "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" update oversee --arg h "$recorded" --argjson extra "$SEED_LANES" \
+      '.lanes = [{item: "CC-1", harness: $h, status: "running"}] + $extra' >/dev/null; then
     echo "open-terminal-relaunch-route: seed-failed run=$RUN" >&2
     exit 1
   fi
@@ -95,7 +99,7 @@ remote() { grep -m1 '^exec bash -lc ' "$RUN/tmux.log" || echo none; }
 said() { grep -c -- "$1" <<<"$OUT" || true; }
 launched() { sed -n 's/.*summary launched=\([0-9]*\).*/\1/p' <<<"$OUT"; }
 closed() { grep -c '^kill-window ' "$RUN/tmux.log" || true; }
-status() { "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '[.lanes[]? | select(.item == "CC-1") | .status] | first // "none"'; }
+status() { "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '[.lanes[]? | objects | select(.item == "CC-1") | .status] | first // "none"'; }
 # replay RC — runs the typed remote command against the stub claude, its
 # `--continue` exiting RC, in a sandbox of its own, and prints each claude run
 # it made as `continue` or `fresh`, joined by `,`.
@@ -135,6 +139,20 @@ RUN_ENV=()
 assert_eq "rc=$RC launched=$(launched) failed=$(said '^open-terminal: tmux-failed operation=capture-pane item=CC-1') missing=$(said 'harness-screen-missing')" \
   "rc=1 launched=0 failed=1 missing=0" \
   "a harness-screen read that fails reports tmux-failed, not harness-screen-missing"
+# A window that cannot be closed may still run a harness, so its record keeps
+# what it read. A relaunch that took and could not be recorded keeps its window.
+RUN_ENV=(OT_TMUX_FAIL=kill-window)
+run_ot claude - claude
+RUN_ENV=()
+assert_eq "rc=$RC failed=$(said '^open-terminal: tmux-failed operation=kill-window item=CC-1') status=$(status)" \
+  "rc=1 failed=1 status=running" \
+  "a failed relaunch whose window close fails leaves its record running"
+SEED_LANES='[42]'
+run_ot claude "$HARNESS_SCREEN" claude
+SEED_LANES='[]'
+assert_eq "rc=$RC unrecorded=$(said '^open-terminal: record-write-failed item=CC-1 ') closed=$(closed) status=$(status)" \
+  "rc=1 unrecorded=1 closed=0 status=running" \
+  "a relaunch that took and could not be recorded keeps its window and its record"
 
 echo "=== a relaunch across a harness switch renders the start brief alone ==="
 run_ot codex "$HARNESS_SCREEN" claude
@@ -147,6 +165,11 @@ run_ot codex - claude
 assert_eq "rc=$RC launched=$(launched) stuck=$(said '^open-terminal: composer-stuck item=CC-1 ') closed=$(closed) status=$(status)" \
   "rc=1 launched=0 stuck=1 closed=1 status=stopped" \
   "a switched claude relaunch whose pane shows no harness fails its brief check, closed and stopped"
+# That claude never ran, so the record still names codex, and a codex
+# relaunch on the same state resumes codex's session.
+run_ot - "$HARNESS_SCREEN" codex
+assert_eq "switched=$(said 'harness-switched') resume=$(remote | grep -c 'resume --last')" "switched=0 resume=1" \
+  "a codex relaunch after a failed claude relaunch over a codex record resumes codex"
 # The same switch the other way reaches codex's start brief, never its
 # promptless resume or the note that resume owes a pasted line.
 run_ot claude "$HARNESS_SCREEN" codex
@@ -186,10 +209,25 @@ run_ot claude "$HARNESS_SCREEN" claude
 RUN_ENV=()
 assert_eq "missing=$(said 'harness-screen-missing')" "missing=1" \
   "control: without its own status a failed read reports as a pane with no harness screen"
-control stopped 'LAUNCH_PANE" ]] || launch_stop || true' 'LAUNCH_PANE" ]] || true'
+control stopped 'UNTAKEN_PANE" ]] || launch_stop || true' 'UNTAKEN_PANE" ]] || true'
 run_ot claude - claude
 assert_eq "closed=$(closed) status=$(status)" "closed=0 status=running" \
   "control: without the stop the window stays open and the record stays running behind the dead pane"
+control fields '| .status) = "stopped"' '| .status, .harness) = "stopped"'
+run_ot codex - claude
+run_ot - "$HARNESS_SCREEN" codex
+assert_eq "switched=$(said 'harness-switched')" "switched=1" \
+  "control: a stop that rewrites the harness turns the next codex relaunch into a harness switch"
+control close 'tmux_window_close "$UNTAKEN_PANE" "$title" || return 1' 'tmux_window_close "$UNTAKEN_PANE" "$title" || true'
+RUN_ENV=(OT_TMUX_FAIL=kill-window)
+run_ot claude - claude
+RUN_ENV=()
+assert_eq "status=$(status)" "status=stopped" "control: a stop past a failed close writes stopped over a live window"
+control untaken '|| -z "$UNTAKEN_PANE" ]]' '|| -z "${UNTAKEN_PANE:=$LAUNCH_PANE}" ]]'
+SEED_LANES='[42]'
+run_ot claude "$HARNESS_SCREEN" claude
+SEED_LANES='[]'
+assert_eq "closed=$(closed)" "closed=1" "control: a stop on every failure closes a relaunch that took"
 OPEN_TERMINAL="$SHIPPED"
 
 echo
