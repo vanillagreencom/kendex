@@ -448,7 +448,7 @@ while IFS="$TAB" read -r oid f limit class; do
     violations=$((violations + 1))
   elif [ -n "$AGAINST_OID" ] && [ "$stored" -gt "$prior" ] && [ "$n" -gt "$((limit - margin))" ]; then
     notice document-near-limit path "$f" "doc-limits FAIL: $f: stored size grown from $prior to $stored bytes; its $n bytes are within the $margin-byte margin under $limit bytes (class $class)"
-    printf '  another change landing beside this one could carry this document past the limit, though each passes alone\n'
+    printf '  without this margin, this change and another landing beside it could each pass alone yet together carry this document past the limit\n'
     remedy "$class"
     violations=$((violations + 1))
   fi
