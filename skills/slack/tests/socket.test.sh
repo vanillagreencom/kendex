@@ -4,7 +4,7 @@
 # bot token in SLACK_APP_TOKEN and an app-level token without
 # connections:write each stopping the relay, the first connection journaled
 # `connect` and shown connected, an owner message landing from its event
-# alone, its eyes mark set and every envelope acknowledged, the first reply in
+# alone, its eyes mark set and its envelope acknowledged, the first reply in
 # an ask's thread landing as the answer, a reply under a thread past
 # SLACK_THREAD_DAYS left unrouted, two roots on one relay each receiving its
 # own channel's events and neither an unbound channel's, an event whose
@@ -61,7 +61,13 @@ awaited() {
   return 0
 }
 opened_at_least() { [ "$(sk_state .opened)" -ge "$1" ] && echo yes; } # N
-unacked() { sk_state '(.sent - .acks) | length'; }
+# envelope CHANNEL TS — `sent=N unacked=M` over the envelopes that carried the
+# message CHANNEL:TS alone, so no envelope from outside a row reaches its count
+envelope() {
+  sk_ctl /_test/state | jq -r --arg c "$1" --arg t "$2" \
+    '[.sent[] | select(.channel == $c and .ts == $t) | .envelope_id] as $ids
+     | "sent=\($ids | length) unacked=\($ids - .acks | length)"'
+}
 field() { printf '%s\n' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p"; } # LINE KEY
 connection() { sk_run -- listen --status --root "$1"; field "$OUT" connection; } # ROOT
 state_link() { sk_run -- listen --status --root "$1"; printf '%s %s' "$(field "$OUT" state)" "$(field "$OUT" connection)"; } # ROOT
@@ -96,7 +102,7 @@ assert_has "$(cat "$SK_TMP/relay.out")" "slack: connected=" "the relay prints th
 TS1="$(sk_inject C001 U001 'Ship it now.')"
 assert_eq "$(landed "$ROOT" "C001:$TS1")" "Ship it now." "an owner message lands from its event, keyed channel:ts"
 assert_eq "$(awaited sk_reactions C001 "$TS1")" "eyes" "its eyes mark is set as it lands"
-assert_eq "$(sk_state '.sent | length')=$(unacked)" "$(sk_state '.sent | length')=0" "every envelope sent is acknowledged by its envelope_id"
+assert_eq "$(envelope C001 "$TS1")" "sent=1 unacked=0" "the message's envelope is acknowledged by its envelope_id"
 
 # --- an ask's thread: the first reply is the answer ------------------------------------
 sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text q 'Cut it?')" --options yes,no --recommend no >"$SK_TMP/ask.out"
@@ -256,7 +262,7 @@ DC="$(sk_channel "$DELTA")"
 relay "$DELTA"
 TS3="$(sk_inject "$DC" U001 'unacknowledged')"
 landed "$DELTA" "$DC:$TS3" >/dev/null
-assert_eq "$(unacked)" "1" "control: the acknowledgement gone, the envelope stays unacknowledged"
+assert_eq "$(envelope "$DC" "$TS3")" "sent=1 unacked=1" "control: the acknowledgement gone, the envelope stays unacknowledged"
 sk_relay_stop
 sk_bin_reset
 

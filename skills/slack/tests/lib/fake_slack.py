@@ -29,8 +29,9 @@ envelope and closes that connection with no close frame, as a network drop
 does; POST /_test/faults-reset drops every pending fault; POST /_test/socket
 with `disconnect: REASON` sends Slack's `disconnect` envelope. Each token
 used on a method of the other answers `not_allowed_token_type`, as Slack
-does. /_test/state carries `sent`, `acks` and `withheld` envelope ids and the
-count of connections `opened`.
+does. /_test/state carries `sent`, each envelope's `envelope_id` with the
+`channel` and `ts` of the message it carried, the `acks` and `withheld`
+envelope ids, and the count of connections `opened`.
 """
 
 from __future__ import annotations
@@ -174,7 +175,7 @@ class Workspace:
             "retry_attempt": 0,
             "payload": {"type": "event_callback", "event": event},
         }
-        self.sent.append(env_id)
+        self.sent.append({"envelope_id": env_id, "channel": channel, "ts": message["ts"]})
         live[-1].send(json.dumps(envelope))
 
 
