@@ -130,8 +130,8 @@ EXPLAIN = {
     "master-file-unreadable": (
         "SLACK_MASTER_FILE names a path whose age cannot be read, for a"
         " reason other than its absence; the value names the path and the"
-        " error. Nothing is posted until it can be read or the setting is"
-        " emptied; owner messages are still delivered."
+        " error. Nothing from the mailbox is posted until it can be read or"
+        " the setting is emptied; owner messages are still delivered."
     ),
     "lane-mail-failed": (
         "lane-mail refused a write the relay needed; the value is its first"

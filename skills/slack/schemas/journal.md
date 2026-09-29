@@ -29,8 +29,8 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 |-----|--------|---------|
 | `seen` | `ts` | The channel's history is read past this stamp; `compact` keeps the last one |
 | `start` | `at`, `ids` | Written by a start with no journal: the mailbox's newest envelope `at` then, or empty with none, and the ids of the envelopes stamped in that second. A notice or answer before it, or in that second and named, is never posted; an open ask is |
-| `hold` | | `SLACK_MASTER_FILE` turned fresh: nothing is posted from here until a `resume`. Written on the transition alone; `compact` keeps the last `hold` or `resume` |
-| `resume` | `at`, `ids`, `asks` | The hold ended: `at` and `ids` are the mailbox's newest envelope as a `start` line records them, and a notice at or before it is never posted; `asks` are the ids of the open asks this resume posts |
+| `hold` | `at`, `ids` | `SLACK_MASTER_FILE` turned fresh: no mailbox envelope is posted from here until a `resume`. `at` and `ids` are the hold's floor, the mailbox's newest envelope at the last poll that posted, as a `start` line records them, so a notice written before it, one Slack refused among them, posts on the resume. Written on the transition alone; `compact` drops it once a `resume` follows |
+| `resume` | `from_at`, `from_ids`, `at`, `ids`, `asks` | The hold ended. `from_at` and `from_ids` are its `hold` line's floor; `at` and `ids` its end: the second `SLACK_MASTER_MAX_AGE` past the file's last touch when it went stale, or of the last poll that found it fresh when it is gone, with no `ids`, so a notice stamped in that second posts; with neither known, the mailbox's newest envelope. A notice past the floor and at or before the end is never posted; `asks` are the ids of the open asks this resume posts. `compact` drops it once its `at` is older than `SLACK_THREAD_DAYS` |
 | `in` | `channel`, `ts`, `kind`, `id`, `thread` | A Slack message delivered to the mailbox: `kind` is `directive` or `answer`, `id` the envelope it landed as, `thread` the parent stamp it belongs to |
 | `in` | `channel`, `ts`, `kind` = `ignored`, `reason` | A message answered once and not routed: `reason` is `not-owner` or `no-text` |
 | `out` | `channel`, `id`, `kind`, `state`, `at`, `thread` | A mailbox envelope posted: `kind` is `ask`, `notice` or `answer`; `state` is `open` for an ask awaiting its answer, `resolved` otherwise; `thread` the stamp the post is under, the ask's own for an ask |
@@ -60,5 +60,7 @@ Stamps (`ts`, `thread`, `seen`) are Slack message stamps, seconds with six decim
 | `open_asks`, `unknown`, `refused` | Envelope ids: asks awaiting an answer, posts with a lost response, posts refused |
 | `calls_last_minute`, `budget_per_minute` | Slack calls made in the last minute, and the calls per minute the settings and open asks budget |
 | `held_by` | `master` while a hold stands, empty otherwise |
+| `posted_at`, `posted_ids` | The mailbox's newest envelope at the last poll that posted, or null; a hold that begins after a restart takes it as its floor |
+| `master_seen` | The clock at the last poll that found `SLACK_MASTER_FILE` fresh, or null; a resume after a restart with the file gone takes it as the hold's end |
 
 `listen --status` prints per root: `state` (`ok` inside two poll intervals plus five seconds of a successful poll, `failing` inside that of a refused one, `stale` past it, `never` with no record), `channel`, `last_poll_age`, `last_delivered_ts`, `open_asks`, `oldest_unknown`, `refused`, `calls_last_minute`, `budget_per_minute`, `held-by=master` while a hold stands, and `fix=` when the state is not `ok`: `last_error` for `failing`, a restart for `stale`, the start command for `never`.

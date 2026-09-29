@@ -13,9 +13,10 @@ there are never re-posted. Open asks are posted whatever their age inside
 SLACK_THREAD_DAYS, since they still want an answer.
 
 While SLACK_MASTER_FILE is younger than SLACK_MASTER_MAX_AGE a master session
-answers the overseer, and the relay posts nothing to the channel; reading the
-channel goes on. When the file goes stale or absent the relay resumes at the
-mailbox's newest envelope, as a start does, except that a held answer still
+answers the overseer, and the relay posts no envelope from the mailbox;
+reading the channel and replying there go on. When the file goes stale or
+absent the relay resumes: a notice written during the hold never posts, one
+written before or after it does, open asks post, and a held answer still
 posts so the thread of an ask the channel shows open is closed.
 """
 
@@ -38,7 +39,9 @@ from store import (
     Journal,
     RelayLock,
     State,
+    Window,
     compact,
+    format_at,
     journal_exists,
     parse_at,
     read_binding,
@@ -99,6 +102,11 @@ def before(floor_at: str, floor_ids: Set[str], at: float, env_id: str) -> bool:
     return at < floor or at == floor and env_id in floor_ids
 
 
+def within(window: Window, at: float, env_id: str) -> bool:
+    """Whether an envelope stamped `at` was written during a closed hold."""
+    return not before(window.from_at, window.from_ids, at, env_id) and before(window.at, window.ids, at, env_id)
+
+
 def mention(binding: Binding) -> str:
     return " ".join(f"<@{binding.owner_ids[o]}>" for o in binding.owners if o in binding.owner_ids)
 
@@ -123,6 +131,15 @@ class RootRelay:
         record = read_status(path) or {}
         self.polls = int(record.get("polls", 0))
         self.compacted_day: str = str(record.get("compacted_day", ""))
+        # A hold's two ends as this relay saw them: the mailbox's newest
+        # envelope at the last poll that posted, and the clock at the last
+        # poll that found SLACK_MASTER_FILE fresh. None when unknown.
+        posted_at = record.get("posted_at")
+        self.posted: Optional[Tuple[str, List[str]]] = (
+            None if posted_at is None else (str(posted_at), [str(i) for i in record.get("posted_ids", [])])
+        )
+        seen = record.get("master_seen")
+        self.master_seen: Optional[float] = None if seen is None else float(seen)
 
     @property
     def channel(self) -> str:
@@ -157,13 +174,18 @@ class RootRelay:
             self.seed()
         self.read_history(bot_user)
         self.read_threads(bot_user)
-        if self.master_live():
+        now = self.clock()
+        touched = self.master_touched()
+        if touched is not None and now - touched < self.settings.master_max_age:
+            self.master_seen = now
             if not self.state.held:
-                self.journal.append(t="hold")
+                at, ids = self.posted if self.posted is not None else newest(self.mail.events())
+                self.journal.append(t="hold", at=at, ids=ids)
         else:
             events = self.mail.events()
             if self.state.held:
-                self.resume(events)
+                self.resume(events, touched)
+            self.posted = newest(events)
             self.post_events(events)
         if self.post_failed is not None:
             raise self.post_failed
@@ -247,26 +269,35 @@ class RootRelay:
 
     # -- outbound: the mailbox to Slack --------------------------------------
 
-    def master_live(self) -> bool:
-        """Whether SLACK_MASTER_FILE is younger than SLACK_MASTER_MAX_AGE; an
-        empty setting or an absent file is no master."""
+    def master_touched(self) -> Optional[float]:
+        """SLACK_MASTER_FILE's mtime; None for an empty setting or an absent
+        file, which is no master."""
         path = self.settings.master_file
         if not path:
-            return False
+            return None
         try:
-            mtime = os.stat(path).st_mtime
+            return os.stat(path).st_mtime
         except FileNotFoundError:
-            return False
+            return None
         except OSError as err:
             raise Refusal("master-file-unreadable", f"{path} ({err.strerror})") from err
-        return self.clock() - mtime < self.settings.master_max_age
 
-    def resume(self, events: List[Dict]) -> None:
-        """The end of a hold: a floor at the mailbox's newest envelope, under
-        which no notice posts, and the open asks it posts named."""
-        at, ids = newest(events)
+    def resume(self, events: List[Dict], touched: Optional[float]) -> None:
+        """The end of a hold, journaled as the window no notice posts from:
+        past the hold's floor, up to when the hold ended. A stale file ended
+        it SLACK_MASTER_MAX_AGE after its last touch, an absent one at the
+        last poll that found it fresh; a time names no ids, so a notice in
+        that second posts. With neither known, the mailbox's newest envelope
+        stands in. `asks` names the open asks this resume posts."""
+        if touched is not None:
+            at, ids = format_at(touched + self.settings.master_max_age), []
+        elif self.master_seen is not None:
+            at, ids = format_at(self.master_seen), []
+        else:
+            at, ids = newest(events)
         asks = [str(e["id"]) for e, route in self.routes(events) if route == "ask"]
-        self.journal.append(t="resume", at=at, ids=ids, asks=asks)
+        from_ids = sorted(self.state.hold_ids)
+        self.journal.append(t="resume", from_at=self.state.hold_at, from_ids=from_ids, at=at, ids=ids, asks=asks)
 
     def routes(self, events: List[Dict]) -> List[Tuple[Dict, str]]:
         """Each envelope not yet carried and what it takes: `ask`, `notice`,
@@ -292,7 +323,7 @@ class RootRelay:
             elif before(state.start_at, state.start_ids, at, env_id):
                 route = "skip"
             elif owner and kind == "notice":
-                route = "skip" if before(state.resume_at, state.resume_ids, at, env_id) else "notice"
+                route = "skip" if any(within(w, at, env_id) for w in state.holds) else "notice"
             elif box == "to-lane" and kind == "answer":
                 route = "answer"
             else:
@@ -438,6 +469,9 @@ class RootRelay:
                 "calls_last_minute": self.api.calls_last_minute(),
                 "budget_per_minute": round(self.budget_per_minute(), 1),
                 "held_by": MASTER if self.state.held else "",
+                "posted_at": None if self.posted is None else self.posted[0],
+                "posted_ids": [] if self.posted is None else self.posted[1],
+                "master_seen": self.master_seen,
             },
         )
 
