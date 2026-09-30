@@ -95,6 +95,7 @@ import {
 	doneDir,
 	inboxDir,
 	piPackageRuntimeRoots,
+	openRuntimeLane,
 	processingDir,
 	RUNTIME_LANE_FOLDERS,
 	setRuntimeLaneCwd,
@@ -1385,14 +1386,25 @@ export default function (pi: ExtensionAPI) {
 		const runtimeRoot = runtimeDirForContext(ctx);
 		retryMarkerRuntimeRoot = runtimeRoot;
 		// Transcripts and saved full outputs follow the lane retention rule. The
-		// session that owns the runtime root records its working directory on
-		// each write; a child agent shares the root and records nothing.
+		// session that owns the runtime root is the one writer of each lane's
+		// record: it records every lane here, before a child agent sharing the
+		// root can write into one, and again on each of its own writes. A child
+		// records nothing, so a lane only a child writes to still holds the
+		// owner's record.
 		if (!childAgentName) {
 			setRuntimeLaneCwd(ctx.cwd);
 			for (const root of piPackageRuntimeRoots()) {
 				for (const folder of RUNTIME_LANE_FOLDERS) {
 					const pruned = pruneLanes(root, [PACKAGE_ID, folder]);
 					for (const failure of pruned.failed) console.warn(`pi-agents-tmux lane-prune-failed=${failure.path}\n${failure.error}`);
+				}
+			}
+			for (const folder of RUNTIME_LANE_FOLDERS) {
+				const lane = path.join(runtimeRoot, folder);
+				try {
+					openRuntimeLane(lane);
+				} catch (error) {
+					console.warn(`pi-agents-tmux lane-record-failed=${lane}\n${stringifyError(error)}`);
 				}
 			}
 		}

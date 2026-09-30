@@ -3,7 +3,9 @@ import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { settingNumber } from "./settings.js";
 import {
 	isStackableToolName,
+	newStackItem,
 	renderStackItemText,
+	setStackItemResultText,
 	stackItemCallText,
 	type StackableToolName,
 	type StackItem,
@@ -207,16 +209,9 @@ async function mapBatchWithConcurrency<TIn, TOut>(items: TIn[], concurrency: num
 }
 
 function batchStackItem(item: BatchToolItem): StackItem {
-	return {
-		args: item.args,
-		batchId: "tool-batch",
-		id: `tool-batch:${item.index}`,
-		isError: item.isError,
-		resultText: item.resultText,
-		status: item.isError ? "error" : "done",
-		toolName: item.toolName,
-		truncated: item.truncated,
-	};
+	const stackItem = newStackItem(item.toolName, `tool-batch:${item.index}`, item.args, "tool-batch");
+	setStackItemResultText(stackItem, item.resultText, item.isError, item.truncated);
+	return stackItem;
 }
 
 function renderToolBatchText(items: BatchToolItem[], theme: any, expanded: boolean, cwd?: string): string {
@@ -249,7 +244,7 @@ function renderToolBatchCallText(args: any, theme: any, cwd?: string): string {
 	const calls = normalizeBatchCalls(args?.calls);
 	const lines = [stackPrefix(theme) + toolLabel(theme, `Batch ${calls.length || 0} tool${calls.length === 1 ? "" : "s"} launching`)];
 	calls.slice(0, 12).forEach((call, index) => {
-		const item: StackItem = { args: call.args, batchId: "call", id: String(index), isError: false, resultText: "", status: "running", toolName: call.tool, truncated: false };
+		const item = newStackItem(call.tool, String(index), call.args, "call");
 		lines.push(`${treeConnector(theme, index === calls.length - 1 ? "└" : "├", cwd)}${stackItemCallText(item, theme, cwd)}`);
 	});
 	if (calls.length > 12) lines.push(`${treeConnector(theme, "└", cwd)}${theme.fg("muted", `… +${calls.length - 12} more`)}`);

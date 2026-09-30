@@ -90,7 +90,8 @@ function createStackBatch(firstId: string): StackBatch {
 	return batch;
 }
 
-function newStackItem(toolName: StackableToolName, id: string, args: any, batchId: string): StackItem {
+/** The one constructor of a StackItem: a running call with no result yet. */
+export function newStackItem(toolName: StackableToolName, id: string, args: any, batchId: string): StackItem {
 	return { args, batchId, id, isError: false, resultLines: 0, resultText: "", status: "running", toolName, truncated: false };
 }
 
@@ -157,16 +158,21 @@ function closeOpenStackBatches(): void {
 	renderedStackBatch = null;
 }
 
-/** Record a finished result on its item, capping the text it keeps. */
-function setStackItemResult(item: StackItem, result: any, isError: unknown): void {
-	const text = textContent(result);
+/** Record a finished result's text on its item, capping the text it keeps.
+ *  `truncated` is true when the producer already cut the text. */
+export function setStackItemResultText(item: StackItem, text: string, isError: boolean, truncated: boolean): void {
 	item.status = isError ? "error" : "done";
-	item.isError = Boolean(isError);
+	item.isError = isError;
 	item.resultLines = lineCount(text);
-	item.truncated = resultTruncated(result) || text.length > STACK_RESULT_MAX_CHARS;
+	item.truncated = truncated || text.length > STACK_RESULT_MAX_CHARS;
 	if (text.length <= STACK_RESULT_MAX_CHARS) item.resultText = text;
 	else if (item.toolName === "bash") item.resultText = text.slice(-STACK_RESULT_MAX_CHARS);
 	else item.resultText = text.slice(0, STACK_RESULT_MAX_CHARS);
+}
+
+/** Record a finished tool result on its item. */
+function setStackItemResult(item: StackItem, result: any, isError: unknown): void {
+	setStackItemResultText(item, textContent(result), Boolean(isError), resultTruncated(result));
 }
 
 /** Release every stack collection: the items, their batches and invalidators

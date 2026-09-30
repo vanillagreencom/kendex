@@ -8,7 +8,8 @@ import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import sessionBridge, { CLIENT_QUEUE_MAX_BYTES } from "../extensions/session-bridge.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import sessionBridge, { CLIENT_QUEUE_MAX_BYTES, CLIENT_STALLED_KEY } from "../extensions/session-bridge.ts";
 
 import { fakeCtx, fakePi, sendCommand, shutdownBridge, writeBridgeSettings, type EventHandler } from "./lib/bridge-fixture.ts";
 
@@ -45,7 +46,10 @@ test("a subscriber that stops reading is disconnected once its unsent bytes pass
 	const { pi, handlers } = fakePi();
 	activeHandlers = handlers;
 	sessionBridge(pi);
-	await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
+	// A session with a UI, so the user is told the stalled client was dropped.
+	const notices: Array<{ text: string; level: string }> = [];
+	const uiCtx = { ...fakeCtx(dir), hasUI: true, ui: { notify: (text: string, level: string) => { notices.push({ text, level }); }, setStatus: () => {} } } as unknown as ExtensionContext;
+	await handlers.get("session_start")?.({ reason: "test" }, uiCtx);
 
 	const socketPath = join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`);
 	const client = net.createConnection(socketPath);
@@ -61,7 +65,7 @@ test("a subscriber that stops reading is disconnected once its unsent bytes pass
 	const note = "x".repeat(7 * 1024);
 	let sentBytes = 0;
 	for (let index = 0; sentBytes < CLIENT_QUEUE_MAX_BYTES * 3; index++) {
-		await turnEnd({ type: "turn_end", turnIndex: index, note }, fakeCtx(dir));
+		await turnEnd({ type: "turn_end", turnIndex: index, note }, uiCtx);
 		sentBytes += note.length;
 	}
 
@@ -69,9 +73,12 @@ test("a subscriber that stops reading is disconnected once its unsent bytes pass
 	client.on("data", (chunk) => { received += chunk.length; });
 	client.resume();
 	const deadline = Date.now() + 10_000;
-	while (!closed && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+	while ((!closed || notices.length === 0) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
 	expect(closed).toBe(true);
 	expect(received).toBeLessThan(sentBytes);
+	const warnings = notices.filter((notice) => notice.level === "warning");
+	expect(warnings).toHaveLength(1);
+	expect(warnings[0]!.text).toStartWith(`Session bridge: ${CLIENT_STALLED_KEY}=`);
 }, 30_000);
 
 test("one response larger than the bound reaches a client that reads it", async () => {

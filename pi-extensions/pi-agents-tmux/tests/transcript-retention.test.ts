@@ -1,16 +1,48 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { LANE_FILE_MAX_AGE_MS } from "../scripts/lane-retention.js";
-import { writeFullOutputArtifact } from "../extensions/subagent/runner.js";
+import { setRuntimeLaneCwd } from "../extensions/subagent/paths.js";
+import { runSingleAgent, setSingleAgentSpawnForTests, writeFullOutputArtifact } from "../extensions/subagent/runner.js";
 import { createHarness, fakeCtx, type Harness, installExtension, teardown, withoutRealIntervals } from "./extension-fixture.js";
+import { bridgeStdout, installMockSpawn, makeDetails, mockPiEvents, testAgent } from "./single-agent-fixture.js";
 
 let harness: Harness | undefined;
 
 afterEach(() => {
 	if (harness) teardown(harness);
 	harness = undefined;
+	// No case runs session_shutdown, which clears the owner's record cwd.
+	setRuntimeLaneCwd(undefined);
 });
+
+function sessionRuntimeRoot(h: Harness, sessionId: string): string {
+	return join(h.piUserDir, "kendex", "sessions", sessionId, "pi-agents-tmux");
+}
+
+/** Run session_start for an owning session with id `sessionId`. */
+async function startOwnerSession(h: Harness, sessionId: string): Promise<void> {
+	const onSessionStart = await installExtension(h);
+	const ctx = fakeCtx(h);
+	ctx.sessionManager.getSessionId = () => sessionId;
+	await withoutRealIntervals(async () => {
+		await onSessionStart({}, ctx);
+	});
+}
+
+/** Run one one-shot agent that writes its transcript under `runtimeRoot`;
+ *  return the transcript path. */
+async function runOneShot(h: Harness, runtimeRoot: string): Promise<string> {
+	const agent = testAgent();
+	installMockSpawn([{ code: 0, stdout: bridgeStdout([]) }]);
+	try {
+		const result = await runSingleAgent(h.cwd, runtimeRoot, [agent], agent.name, "retention task", undefined, undefined, undefined, undefined, mockPiEvents([]), undefined, undefined, makeDetails);
+		expect(typeof result.transcriptPath).toBe("string");
+		return result.transcriptPath!;
+	} finally {
+		setSingleAgentSpawnForTests();
+	}
+}
 
 /** Lanes a previous run left under each retained folder: one whose worktree is
  *  gone, and a live one whose record and one file are past five days. */
@@ -62,16 +94,37 @@ for (const row of [
 	});
 }
 
-test("a saved full output records the owning session's lane before it is written", async () => {
-	harness = createHarness({});
-	const onSessionStart = await installExtension(harness);
-	await withoutRealIntervals(async () => {
-		await onSessionStart({}, fakeCtx(harness!));
+for (const row of [
+	{ folder: "transcripts", write: (h: Harness, root: string) => runOneShot(h, root) },
+	{ folder: "outputs", write: async (_h: Harness, root: string) => (await writeFullOutputArtifact(root, "scout", "label", "full text")).path },
+]) {
+	test(`the owning session records its ${row.folder} lane at session_start, and again on a write after the lane was pruned`, async () => {
+		harness = createHarness({});
+		const root = sessionRuntimeRoot(harness, "owner");
+		const record = () => readFileSync(join(root, row.folder, ".lane-cwd"), "utf8");
+		await startOwnerSession(harness, "owner");
+		const atStart = record();
+		// The prune removes a lane that was idle past five days.
+		rmSync(join(root, row.folder), { recursive: true, force: true });
+		const written = await row.write(harness, root);
+		expect({
+			atStart,
+			writtenInLane: typeof written === "string" && dirname(dirname(written)) === join(root, row.folder),
+			afterWrite: record(),
+		}).toEqual({ atStart: harness.cwd, writtenInLane: true, afterWrite: harness.cwd });
 	});
-	const runtimeRoot = join(harness.piUserDir, "kendex", "sessions", "test-session-id", "pi-agents-tmux");
-	const saved = await writeFullOutputArtifact(runtimeRoot, "scout", "label", "full text");
-	expect({
-		saved: typeof saved.path === "string" && dirname(dirname(saved.path)) === join(runtimeRoot, "outputs"),
-		record: readFileSync(join(runtimeRoot, "outputs", ".lane-cwd"), "utf8"),
-	}).toEqual({ saved: true, record: harness.cwd });
+}
+
+test("a transcript only a child agent wrote into its parent's root is pruned by a later session after five days", async () => {
+	harness = createHarness({});
+	const parentRoot = sessionRuntimeRoot(harness, "parent");
+	await startOwnerSession(harness, "parent");
+	// The child agent is a separate process, and it never sets a record cwd.
+	setRuntimeLaneCwd(undefined);
+	const transcript = await runOneShot(harness, parentRoot);
+	const written = existsSync(transcript);
+	const past = (Date.now() - LANE_FILE_MAX_AGE_MS - 60_000) / 1000;
+	utimesSync(transcript, past, past);
+	await startOwnerSession(harness, "later");
+	expect({ written, kept: existsSync(transcript) }).toEqual({ written: true, kept: false });
 });

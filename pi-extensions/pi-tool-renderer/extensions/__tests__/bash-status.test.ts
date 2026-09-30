@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from "bun:test";
 import type { ExtensionAPI, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { renderStackItemText } from "../tool-renderer/stack.js";
+import { newStackItem, renderStackItemText, setStackItemResultText } from "../tool-renderer/stack.js";
 import { commandExit } from "../tool-renderer/text.js";
 import { registerBash } from "../tool-renderer/tools.js";
 import { useWorld } from "./helpers/world.js";
@@ -33,10 +33,9 @@ for (const row of cases) {
 		expect(output).toContain(`[${row.isError ? "error" : "success"}]${row.status}[/]`);
 	});
 	test(`grouped status: ${row.name}`, () => {
-		const output = renderStackItemText({
-			args: { command: "probe" }, batchId: "batch", id: row.name, isError: row.isError,
-			resultText: row.text, status: row.isError ? "error" : "done", toolName: "bash", truncated: false,
-		}, theme, false, world().cwd);
+		const item = newStackItem("bash", row.name, { command: "probe" }, "batch");
+		setStackItemResultText(item, row.text, row.isError, false);
+		const output = renderStackItemText(item, theme, false, world().cwd);
 		expect(output).toContain(row.isError ? "[error]failed[/]" : "[success]exit 0[/]");
 	});
 }

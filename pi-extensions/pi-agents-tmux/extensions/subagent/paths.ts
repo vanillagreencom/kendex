@@ -26,9 +26,10 @@ export function fullOutputDir(runtimeRoot: string): string {
 export const RUNTIME_LANE_FOLDERS = ["transcripts", "outputs"] as const;
 
 /** The working directory recorded for this process's runtime lanes; set only
- *  while the session that owns the runtime root is live. A child agent shares
- *  its parent's root and never sets it, so it never rewrites the parent's
- *  record. */
+ *  while the session that owns the runtime root is live. That session records
+ *  every lane at session_start, so a lane a child writes to already holds its
+ *  record. A child agent shares its parent's root and never sets this, so it
+ *  never writes a record. */
 let runtimeLaneCwd: string | undefined;
 
 export function setRuntimeLaneCwd(cwd: string | undefined): void {
