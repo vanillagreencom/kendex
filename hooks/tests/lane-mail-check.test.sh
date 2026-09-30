@@ -1279,16 +1279,33 @@ assert_eq "RC=$RC keys=$(hook_keys)" \
   "a record that is a directory is reported as unreadable and as unwritable, and the turn ends"
 # A hold the record cannot take is not made: one with no record would be made
 # again on every turn it continued. A mailbox directory the hook cannot write
-# in leaves a readable record unwritable.
-new_handoff_lane idle_hold_unrecorded KEN-78
-REPORT_ITEM=""
-printf '0\n' > "$LANE/tmp/lane-mail/KEN-78/sent-count"
-chmod 555 "$LANE/tmp/lane-mail/KEN-78"
-stop
-chmod 755 "$LANE/tmp/lane-mail/KEN-78"
-assert_eq "RC=$RC idle=$(grep -c '^lane-mail-check: idle=' "$ERR_FILE" || true) unrecorded=$(grep -c "^lane-mail-check: idle-unrecorded=$LANE/tmp/lane-mail/KEN-78/sent-count\$" "$ERR_FILE" || true)" \
-  "RC=0 idle=0 unrecorded=1" \
-  "a hold the record cannot take is reported under idle-unrecorded and not made"
+# in leaves a readable record unwritable, except to root, which ignores the
+# mode.
+if [ "${CAN_DENY_READS:?}" -eq 1 ]; then
+  new_handoff_lane idle_hold_unrecorded KEN-78
+  REPORT_ITEM=""
+  printf '0\n' > "$LANE/tmp/lane-mail/KEN-78/sent-count"
+  chmod 555 "$LANE/tmp/lane-mail/KEN-78"
+  stop
+  chmod 755 "$LANE/tmp/lane-mail/KEN-78"
+  assert_eq "RC=$RC idle=$(grep -c '^lane-mail-check: idle=' "$ERR_FILE" || true) unrecorded=$(grep -c "^lane-mail-check: idle-hold-unrecorded=$LANE/tmp/lane-mail/KEN-78/sent-count\$" "$ERR_FILE" || true)" \
+    "RC=0 idle=0 unrecorded=1" \
+    "a hold the record cannot take is reported under idle-hold-unrecorded and not made"
+  # The notice sent and not counted: the next turn end reads it as a send.
+  # This case's reader seals the mailbox once the notice is in it.
+  new_handoff_lane idle_notice_unrecorded KEN-76
+  REPORT_ITEM=""
+  stop
+  wrap_reader "$(printf '[ "${1:-}" != notice ] || { %q "$@" && chmod 555 %q; exit; }' "$LANE_MAIL" "$LANE/tmp/lane-mail/KEN-76")"
+  stop_active
+  chmod 755 "$LANE/tmp/lane-mail/KEN-76"
+  assert_eq "RC=$RC keys=$(hook_keys) record=$(sent_record KEN-76)" \
+    "RC=0 keys=account=unlisted;idle-notice-unrecorded=$LANE/tmp/lane-mail/KEN-76/sent-count;idle-notice=KEN-76 record=0 held" \
+    "a notice the record cannot count is reported under idle-notice-unrecorded"
+else
+  printf '  skip  a hold the record cannot take: running as root, which writes in a mode-555 directory\n'
+  printf '  skip  a notice the record cannot count: running as root, which writes in a mode-555 directory\n'
+fi
 # A listing jq cannot read is reported and the turn ends. This case's reader
 # prints a line that is no JSON for its `events` verb and runs every other one.
 new_handoff_lane idle_events_envelope KEN-79
@@ -2864,7 +2881,7 @@ assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-84" \
 
 # The notice left out of the record: the hook's own notice then passes the
 # lane's next idle turn as a send of its own.
-mutant idle-notice-uncounted -e '/^  record_sent "\$((SENT + 1))" || :$/d'
+mutant idle-notice-uncounted -e '/^  record_sent idle-notice-unrecorded "\$((SENT + 1))" || :$/d'
 new_handoff_lane control_idle_notice KEN-85
 REPORT_ITEM=""
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
@@ -2916,7 +2933,7 @@ assert_eq "RC=$RC keys=$(hook_keys)" "RC=0 keys=account=unlisted;idle-notice=KEN
   "control: without the recorded hold a turn another stop hook continued is reported, never held"
 
 # The hold made and not recorded: the turn it continued is held again.
-mutant idle-hold-unrecorded -e 's@^  record_sent "\$SENT" held || return 0$@  record_sent "$SENT" || return 0@'
+mutant idle-hold-unrecorded -e 's@^  record_sent idle-hold-unrecorded "\$SENT" held || return 0$@  record_sent idle-hold-unrecorded "$SENT" || return 0@'
 new_handoff_lane control_idle_unrecorded KEN-92
 REPORT_ITEM=""
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
@@ -2927,16 +2944,20 @@ assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-92" \
 
 # A hold the record could not take made all the same: the lane is held with
 # nothing to bound the next continued turn.
-mutant idle-hold-unguarded -e 's@^  record_sent "\$SENT" held || return 0$@  record_sent "$SENT" held || :@'
-new_handoff_lane control_idle_unguarded KEN-93
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-printf '0\n' > "$LANE/tmp/lane-mail/KEN-93/sent-count"
-chmod 555 "$LANE/tmp/lane-mail/KEN-93"
-stop
-chmod 755 "$LANE/tmp/lane-mail/KEN-93"
-assert_eq "RC=$RC idle=$(grep -c '^lane-mail-check: idle=' "$ERR_FILE" || true)" "RC=2 idle=1" \
-  "control: without the guard a hold the record cannot take is made"
+mutant idle-hold-unguarded -e 's@^  record_sent idle-hold-unrecorded "\$SENT" held || return 0$@  record_sent idle-hold-unrecorded "$SENT" held || :@'
+if [ "${CAN_DENY_READS:?}" -eq 1 ]; then
+  new_handoff_lane control_idle_unguarded KEN-93
+  REPORT_ITEM=""
+  install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+  printf '0\n' > "$LANE/tmp/lane-mail/KEN-93/sent-count"
+  chmod 555 "$LANE/tmp/lane-mail/KEN-93"
+  stop
+  chmod 755 "$LANE/tmp/lane-mail/KEN-93"
+  assert_eq "RC=$RC idle=$(grep -c '^lane-mail-check: idle=' "$ERR_FILE" || true)" "RC=2 idle=1" \
+    "control: without the guard a hold the record cannot take is made"
+else
+  printf '  skip  control: a hold the record cannot take made unguarded: running as root, which writes in a mode-555 directory\n'
+fi
 
 # The Pi arm dropped: a Pi turn another stop hook continued is held, and the
 # carrier runs nothing for that hold.
@@ -2951,7 +2972,7 @@ assert_eq "RC=$RC idle=$(grep -c '^lane-mail-check: idle=KEN-94$' "$ERR_FILE" ||
 
 # The halt's clear dropped: the hold the turn end before the halt recorded
 # stands.
-mutant idle-halt-keeps-hold -e 's@^    \[ -z "\$HOLD" \] || record_sent "\$SENT" || :$@    :@'
+mutant idle-halt-keeps-hold -e 's@^    \[ -z "\$HOLD" \] || record_sent idle-unrecorded "\$SENT" || :$@    :@'
 new_handoff_lane control_idle_halt_hold KEN-96
 REPORT_ITEM=""
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
