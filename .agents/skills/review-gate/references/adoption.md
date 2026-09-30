@@ -8,7 +8,7 @@ Required contexts match `REVIEW_GATE_STANDARD_CONTEXTS` and exclude the retired 
 
 The organization's overseer app may approve a head after the managing workflow's internal review passes and its approval wait expires. Its emergency merge bypasses only the required-checks and merge-queue rulesets. Approval and thread resolution still apply. These operations belong to the managing workflow, not this package.
 
-`validate-standard.sh` reports rule sources, approval requirements, stale-approval dismissal, required contexts, merge-queue checks, app installation and secret placement. Its standard-bypass-actors row judges bypass actors per ruleset: a queue-only ruleset admits REVIEW_GATE_STANDARD_QUEUE_BYPASS, a checks-only ruleset admits REVIEW_GATE_STANDARD_CHECKS_BYPASS, and any other ruleset admits none. The owner holds the ruleset split. The managing workflow reads the merge route through the github skill’s pr-merge command.
+`validate-standard.sh` reports rule sources, approval requirements, stale-approval dismissal, required contexts, merge-queue checks, app installation and secret placement. Its `standard-bypass-actors` row judges bypass actors per ruleset: a queue-only ruleset admits `REVIEW_GATE_STANDARD_QUEUE_BYPASS`, a checks-only ruleset admits `REVIEW_GATE_STANDARD_CHECKS_BYPASS`, and any other ruleset admits none. The owner holds the ruleset split. Merge routing follows the github skill’s `pr-merge --help` § Merge route.
 
 ## Settings
 
@@ -25,9 +25,26 @@ Declare values in the `[env]` table of `kendex.settings.toml`. The standard load
 
 `validate-standard.sh --environment-only` reads the environment and secret keys only. Consumer adoption supplies these values from the refresh template, so it needs no consumer assignment.
 
+## Trusted removal for an existing consumer
+
+A consumer with the retired gate package needs a one-time trusted removal PR before automatic refresh can update it. Its default-branch adopter needs a template the new package deletes. The automatic job preserves those default-branch scripts and never executes the refreshed adopter under its app token. It never performs retirement.
+
+1. After the catalog removal merges, the consumer's owning lane refreshes the packages and runs the reviewed new adopter from the consumer root:
+
+   ```bash
+   kendex refresh
+   .agents/skills/review-gate/scripts/adopt-refresh.sh
+   kendex verify --scope project
+   git add -A
+   ```
+
+2. Commit the package update, retired workflow deletion and inventory removal in a normal PR. It takes the surviving CI checks, a final-head Copilot approval and resolved review threads. It does not use the automatic render-only route. An edited, symlinked or unrecorded workflow stops adoption and needs an owner decision.
+3. With those checks met, the repository's overseer sends the owner one line that the removal PR is ready to arm. The owner removes `Review gate` from that repository's required-checks ruleset and binds its other contexts to GitHub Actions (`integration_id` 15368). The target layout is [review-gate-platform.md § Target](https://github.com/vanillagreencom/kendex/blob/main/docs/plans/review-gate-platform.md#target).
+4. After the owner replies done, arm the removal PR. The required-check transition precedes writer removal, or later PRs wait for a status no workflow posts. Once the removal PR merges, automatic refresh starts from the fully migrated default branch.
+
 ## Automatic consumer refresh
 
-The shipped `templates/kendex-refresh.yml` checks for updates every 30 minutes. A manual run uses the same path. Each run installs the latest released kendex through `scripts/install-latest.sh`. That script resolves the release tag and its installer commit at run time. Each run updates `kendex/refresh` and keeps one open pull request. The class controls publication and auto-merge per [SKILL.md § Scripts](../SKILL.md#scripts). Required CI checks and the merge queue still control merging. A current consumer opens no pull request.
+After trusted removal, the shipped `templates/kendex-refresh.yml` checks for updates every 30 minutes. A manual run uses the same path. Each run installs the latest released kendex through `scripts/install-latest.sh`. That script resolves the release tag and its installer commit at run time. Each run updates `kendex/refresh` and keeps one open pull request. The class controls publication and auto-merge per [SKILL.md § Scripts](../SKILL.md#scripts). Required CI checks and the merge queue still control merging. A current consumer opens no pull request.
 
 Provision the `kendex` environment before adoption. It must contain `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` and allow deployments from the default branch only. The organization owner uses `scripts/provision-environment.sh --org ORG` from their own machine. `scripts/adopt-refresh.sh` reads the existing environment through `validate-standard.sh --environment-only`. It checks the environment and secret names the refresh template it installs reads, whatever the consumer's `REVIEW_GATE_STANDARD_*` settings say, so refresh adoption needs none of those keys. A missing environment, secret or branch policy stops adoption with the failed check and provisioning remedy.
 
@@ -39,7 +56,7 @@ kendex verify --scope project
 git add -A
 ```
 
-Commit the workflow and inventory with the installed skill. Adoption removes an unedited retired gate workflow and its inventory entry, proved by the committed adoption hash. An edited, symlinked or unrecorded retired copy needs an owner decision and stops adoption without changing the files.
+Commit the workflow and inventory with the installed skill. Retirement belongs to the trusted removal route above, not an automatic run. Adoption removes an unedited retired gate workflow and its inventory entry, proved by the committed adoption hash. An edited, symlinked or unrecorded retired copy needs an owner decision and stops adoption without changing the files.
 
 Refresh workflow reconciliation in `scripts/adopt-refresh.sh` uses exact bytes, independently of the adoption record:
 

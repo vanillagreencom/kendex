@@ -820,8 +820,7 @@ probe_failed_check() {
 # --- Late-findings guard  --------------------------------------
 # The reviewThreads walk is lib/review-threads.sh's, shared with approval-wait
 # so the waiter and this guard cannot disagree about what an open thread is.
-# It is fail-closed throughout (the review-predicate posture: anything
-# unverifiable is "no evidence", never "no threads").
+# An unverifiable thread read fails closed; it never means "no threads".
 count_unresolved_threads() {
   orch_count_unresolved_threads "$REPO_OWNER" "$REPO_NAME" "$PR_NUM" "$GH_ERR_FILE"
 }

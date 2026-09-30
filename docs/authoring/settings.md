@@ -41,7 +41,7 @@ Write each comment block for the consumer who reads it. The first line says what
 
 ## Naming
 
-Prefix keys with the skill name in upper-snake: `REVIEW_GATE_MODE` for a skill named `review-gate`. A convention, not enforced; a skill that deliberately ships a companion package's key is legitimate.
+Prefix keys with the skill name in upper-snake: `REVIEW_GATE_STANDARD_APP` for a skill named `review-gate`. A convention, not enforced; a skill that deliberately ships a companion package's key is legitimate.
 
 ## Where a value comes from
 

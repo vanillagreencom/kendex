@@ -148,7 +148,7 @@ a hook package's markdown measures on its size|class=micro measured=true cause=p
 a hook body is excluded|class=standard measured=true cause=excluded-path|hooks/guard.sh=2
 a hook body a harness renders is excluded|class=standard measured=true cause=excluded-path|.claude/hooks/guard.sh=2
 a gate script is excluded|class=standard measured=true cause=excluded-path|skills/review-gate/scripts/gate.sh=2
-a gate writer template is excluded|class=standard measured=true cause=excluded-path|skills/review-gate/templates/writer.yml=2
+a consumer refresh template is excluded|class=standard measured=true cause=excluded-path|skills/review-gate/templates/kendex-refresh.yml=2
 the organization standard is excluded|class=standard measured=true cause=excluded-path|skills/review-gate/standard.json=2
 the Pi extension that runs every hook is excluded|class=standard measured=true cause=excluded-path|pi-extensions/pi-hooks/extensions/dispatch.ts=2
 a preflight script is excluded|class=standard measured=true cause=excluded-path|skills/preflight/scripts/run.sh=2
@@ -306,10 +306,10 @@ done <<'ROWS'
 a CI workflow is queue-only|queue_only=true cause=queue-path path=.github/workflows/ci.yml glob=.github/workflows/*|.github/workflows/ci.yml=2
 a CI action is queue-only|queue_only=true cause=queue-path path=.github/actions/change-class/classify glob=.github/actions/*|.github/actions/change-class/classify=2
 the organization-standard report is queue-only|queue_only=true cause=queue-path path=skills/review-gate/scripts/validate-standard.sh glob=*skills/review-gate/scripts/*|skills/review-gate/scripts/validate-standard.sh=2
-the gate writer template's render is queue-only|queue_only=true cause=queue-path path=.agents/skills/review-gate/templates/review-gate-writer.yml glob=*skills/review-gate/templates/*|.agents/skills/review-gate/templates/review-gate-writer.yml=2
+the consumer refresh template's render is queue-only|queue_only=true cause=queue-path path=.agents/skills/review-gate/templates/kendex-refresh.yml glob=*skills/review-gate/templates/*|.agents/skills/review-gate/templates/kendex-refresh.yml=2
 the organization standard is queue-only|queue_only=true cause=queue-path path=skills/review-gate/standard.json glob=*skills/review-gate/standard.json|skills/review-gate/standard.json=2
-the settings naming the gate's context are queue-only|queue_only=true cause=queue-path path=kendex.settings.toml glob=kendex.settings.toml|kendex.settings.toml=2
-the machine-local settings naming the gate's context are queue-only|queue_only=true cause=queue-path path=.kendex/settings.toml glob=.kendex/settings.toml|.kendex/settings.toml=2
+the settings naming required contexts are queue-only|queue_only=true cause=queue-path path=kendex.settings.toml glob=kendex.settings.toml|kendex.settings.toml=2
+the machine-local settings naming required contexts are queue-only|queue_only=true cause=queue-path path=.kendex/settings.toml glob=.kendex/settings.toml|.kendex/settings.toml=2
 the classifier is queue-only|queue_only=true cause=queue-path path=skills/harness-ci/scripts/change-class glob=*skills/harness-ci/scripts/*|skills/harness-ci/scripts/change-class=2
 the classifier's list is queue-only|queue_only=true cause=queue-path path=skills/orch/references/narrow-change.conf glob=*skills/orch/references/narrow-change.conf|skills/orch/references/narrow-change.conf=2
 the branch measurement is queue-only|queue_only=true cause=queue-path path=skills/orch/scripts/branch-size-check glob=*skills/orch/scripts/branch-size-check|skills/orch/scripts/branch-size-check=2

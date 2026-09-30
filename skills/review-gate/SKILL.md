@@ -30,7 +30,7 @@ Run `scripts/validate-standard.sh` for a read-only report. Run `scripts/provisio
 
 ## Consumer refresh
 
-Run `scripts/adopt-refresh.sh` after refreshing a consumer's packages. It adopts the refresh workflow and removes an unedited retired gate workflow with its inventory record. Commit its changes with the refresh. [references/adoption.md § Automatic consumer refresh](references/adoption.md#automatic-consumer-refresh) states the environment and token requirements.
+An existing consumer first follows [references/adoption.md § Trusted removal for an existing consumer](references/adoption.md#trusted-removal-for-an-existing-consumer). Automatic refresh runs only after that normally reviewed removal merges. Fresh installs use `scripts/adopt-refresh.sh` to adopt the refresh workflow. Environment and token requirements: [references/adoption.md § Automatic consumer refresh](references/adoption.md#automatic-consumer-refresh).
 
 ## 4. Operations
 
@@ -51,5 +51,4 @@ The overseer's fallback approval and emergency merge follow the managing reposit
 | `scripts/refresh-reviews.sh` | File automatic review findings upstream before resolving their threads. |
 | `scripts/dispatch-refresh.sh` | Signal consumers visible to the catalog app installation. |
 
-
-Each script documents its command contract in `--help`. Reviewer routing for installed packages: [references/vendored-paths.md](references/vendored-paths.md).
+Reviewer routing for installed packages: [references/vendored-paths.md](references/vendored-paths.md).

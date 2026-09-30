@@ -3,7 +3,7 @@
 # install record runs the executable HARNESS_CI_LOCK_KENDEX names; every other
 # diff, and that one with the variable unset, runs the `kendex` on PATH.
 #
-# Two doubles stand for the two binaries the review-gate writer installs: the
+# Two doubles stand for the two verifiers a caller can supply: the
 # pinned release on PATH, which knows the record's registration shape `v1`
 # alone, and the rolling main build, which also knows `v2`. Each refuses a
 # record whose shape it does not know, as `kendex verify` does a registration

@@ -36,9 +36,8 @@ name: Skill Tests
 # so it runs only the compile steps: each cargo lane builds its targets with
 # `--no-run` and saves the compile cache under the merged lockfile, and every
 # test step is conditioned off. Whatever else does NOT run on every event
-# carries its own `if:` saying why. The review gate never conditions CI (it
-# answers review-only; see the review-gate skill) — no gate job reads the
-# predicate.
+# carries its own `if:` saying why. GitHub enforces approval and thread
+# resolution independently of CI job selection.
 #
 # Every job names its GitHub-hosted runner in `runs-on:`, directly or through
 # its matrix's `os` list, the same label on every event. The repository is
@@ -302,7 +301,7 @@ jobs:
   # is judged by itself. The trusted default-branch checker is the consumer
   # rule (../../skills/bot-instructions/SKILL.md § A pull request changing its own review); here it
   # would report drift by construction on every such change. Code review covers the
-  # checker, and the review gate holds every policy path.
+  # checker; GitHub requires a current-head approval and resolved threads.
   bot-instructions:
     name: Bot instructions
     needs: changes
@@ -1382,10 +1381,9 @@ jobs:
   # AGGREGATOR — this job's name is the per-repository ruleset's required
   # context, so the `(shell + node)` in it is frozen history: renaming it to
   # match today's shards leaves the ruleset waiting on a context nothing
-  # creates. It and the two cargo aggregators stand until the organization
-  # ruleset, which requires `CI` alone beside `Review gate`, replaces the
-  # per-repository one (docs/decisions/D003-one-merge-path.md item 3); `CI`
-  # holds every lane they hold, so retiring them is deleting them. It runs on
+  # creates. It and the two cargo aggregators stand while the repository
+  # required-checks ruleset names them. `CI` holds every lane they hold;
+  # removing their required contexts must precede deleting the jobs. It runs on
   # pull_request and merge_group, the two events the ruleset gates; not on
   # push, where the shards are skipped and nothing requires a context. GitHub
   # counts a SKIPPED required context as satisfied, so on the gated events no

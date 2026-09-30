@@ -20,4 +20,4 @@ The pull-request watcher reads GitHub's review state. It reports open threads, o
 
 ## Settings
 
-Declare organization-standard values in `kendex.settings.toml` under `[env]`. Set `PR_REVIEW_WAIT_SECS` to change the watcher's quiet period. [Repository wiring and settings](references/adoption.md) describes the required GitHub configuration and consumer refresh setup.
+Declare organization-standard values in `kendex.settings.toml` under `[env]`. Set `PR_REVIEW_WAIT_SECS` to change the watcher's quiet period. Existing consumers first take the [trusted removal PR](references/adoption.md#trusted-removal-for-an-existing-consumer). [Repository wiring and settings](references/adoption.md) describes the required GitHub configuration and consumer refresh setup.

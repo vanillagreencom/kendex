@@ -337,7 +337,7 @@ git -C "[WORKTREE_PATH]" push origin HEAD
 
 A `Tracked:` reply names the issue it filed, and a decline is a decline — say so. Resolving a thread is not a reply.
 
-`[REASON]` takes one of the forms [../references/finding-disposition.md](../references/finding-disposition.md) § Decision flow sets out, which also states how far the gate's `unreasoned-decline` verdict reaches and where the rule binds past it.
+`[REASON]` takes one of the forms [../references/finding-disposition.md](../references/finding-disposition.md) § Decision flow sets out.
 
 ```bash
 .agents/skills/github/scripts/github.sh post-reply "[THREAD_ID]" "[REPLY_BODY]" --pr "[PR_NUMBER]"

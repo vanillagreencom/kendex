@@ -72,9 +72,7 @@ On the Codex collaboration runtime the cap is MultiAgentV2's configurable `featu
 
 ## CI triggering
 
-orch orders the review gate before CI verification universally, with no repo detection, so a repo whose CI starts only after a review verdict (approval-gated jobs, or a merge queue) can never deadlock the workflow. On always-on repos the post-gate CI verify returns quickly, and `ci-wait` tolerates dispatch latency through `CI_WAIT_NO_CHECKS_GRACE`.
-
-When the review evidence arrives as a commit status rather than a check-run, no PR workflow trigger fires on it, so a run gated closed while that status was pending recovers only through the repo's own status convergence, or one bounded manual rerun-in-place after the evidence lands. Consuming-repo gate architecture belongs to the review-gate skill; vendor it rather than hand-writing gate jobs.
+orch waits for the review result before CI verification. An armed PR still waits for GitHub’s required approval and thread resolution. CI job selection belongs to the repository’s workflow. `ci-wait` tolerates dispatch latency through `CI_WAIT_NO_CHECKS_GRACE`.
 
 Reruns re-execute the workflow definition and verifier state pinned at the original triggering event, so a PR that changes gate or CI behavior only exhibits the new behavior on a fresh head. Reruns are for flakes and re-gating unchanged workflows.
 
