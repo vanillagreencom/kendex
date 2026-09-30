@@ -161,6 +161,10 @@ fn the_explicit_override_lands_for_every_project_writer() {
 fn global_writes_and_main_checkout_writes_keep_their_existing_paths() {
     for verb in ["refresh", "apply", "updates"] {
         for target in ["global", "main"] {
+            // Windows Known Folder home ignores fixture overrides, so global writes lack isolation.
+            if cfg!(windows) && target == "global" {
+                continue;
+            }
             let fixture = world();
             fixture.mark();
             let mut args = vec![verb, "--yes", "--leave"];
@@ -180,10 +184,6 @@ fn global_writes_and_main_checkout_writes_keep_their_existing_paths() {
                 !String::from_utf8_lossy(&output.stderr).contains("lane-refresh: item="),
                 "{target} {args:?}: {output:?}"
             );
-            if cfg!(windows) && target == "global" {
-                // Windows Known Folder detection ignores fixture home overrides.
-                continue;
-            }
             let root = if target == "main" {
                 &fixture.main
             } else {
