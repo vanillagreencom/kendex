@@ -96,9 +96,12 @@ case "${1:-}" in
       [[ ! -e "${STUB_PASTED:-}" ]] || running="${STUB_PANE_CMD:-claude}"
       printf '%%1\t%s\t%s\n' "$$" "$running"
     else echo %1; fi ;;
-  load-buffer) [[ -z "${STUB_BUFFER_LOG:-}" ]] || cat -- "${@: -1}" >> "$STUB_BUFFER_LOG" ;;
+  load-buffer) [[ -z "${STUB_BUFFER_LOG:-}" ]] || cat -- "${@: -1}" >> "$STUB_BUFFER_LOG"
+    if grep -q '^exec bash -lc ' "${@: -1}"; then : > "$STUB_REMOTE_TYPED"; fi ;;
   paste-buffer) [[ -z "${STUB_PASTED:-}" ]] || : > "$STUB_PASTED" ;;
-  capture-pane) printf '%s\n' "${STUB_PANE_TEXT:-}" ;;
+  capture-pane)
+    if [[ -n "${STUB_HARNESS_TEXT:-}" && -e "$STUB_REMOTE_TYPED" ]]; then printf '%s\n' "$STUB_HARNESS_TEXT"
+    else printf '%s\n' "${STUB_PANE_TEXT:-}"; fi ;;
 esac
 exit 0
 EOF
@@ -171,8 +174,9 @@ run_ot() {
   done
   [[ -z "$state_dir" ]] || state_args=(--state-dir "$state_dir")
   rm -f -- "${TMP_ROOT:?}/pasted"
+  rm -f -- "${TMP_ROOT:?}/remote-typed"
   set +e
-  OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" STUB_PASTED="$TMP_ROOT/pasted" \
+  OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" STUB_PASTED="$TMP_ROOT/pasted" STUB_REMOTE_TYPED="$TMP_ROOT/remote-typed" \
     WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" LANES_HOME="$SESSION_HOME" EXISTS_DIR="$EXISTS_DIR" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX="${RUN_TMUX:-}" ORCH_TMUX_SESSION="${RUN_SESSION-stub}" TMUX_PANE="${RUN_PANE:-}" \
     STUB_SESSION_NAME="${STUB_SESSION_NAME:-}" STUB_TMUX_LOG="${STUB_TMUX_LOG:-}" STUB_DEAD_SESSIONS="${STUB_DEAD_SESSIONS:-}" STUB_PANE_GONE="${STUB_PANE_GONE:-}" STUB_HAS_SESSION_ERR="${STUB_HAS_SESSION_ERR:-}" GH_REPO="" STUB_GH_REPO="${STUB_GH_REPO:-}" \
@@ -856,10 +860,23 @@ assert_eq "rc=$RC refused=$(grep -c '^open-terminal: host-prepare-failed item=CC
 # foreground even in a fleet. One whose record names claude starts fresh on its
 # start brief, which carries the line, so it is handed off like any launch.
 CODEX_RELAUNCH=(-- --relaunch --launch-flags "-m gpt-5 -c model_reasoning_effort=high")
-HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 "${CODEX_RELAUNCH[@]}"
+HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 STUB_HARNESS_TEXT='Working (esc to interrupt)' "${CODEX_RELAUNCH[@]}"
 assert_eq "rc=$RC waited=$(grep -c '^wait --item CC-83 $' "$TMP_ROOT/host.log" || true) handed=$(grep -c '^open-terminal: lane-preparing ' <<<"$OUT" || true) lineless=$(grep -c '^open-terminal: resume-lineless item=CC-83 harness=codex$' <<<"$ERR" || true) record=$(prepared CC-83)" \
   "rc=0 waited=1 handed=0 lineless=1 record=running none none" \
   "a hosted codex relaunch that resumes waits for its host in the foreground and reports resume-lineless to the caller"
+# A remote command that leaves the pane at its shell cannot renew this record.
+: > "$TMP_ROOT/host.log"
+HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 ORCH_TMUX_VERIFY_SECS=1 "${CODEX_RELAUNCH[@]}"
+assert_eq "rc=$RC waited=$(grep -c '^wait --item CC-83 $' "$TMP_ROOT/host.log" || true) missing=$(grep -c '^open-terminal: harness-screen-missing item=CC-83 seconds=2$' <<<"$ERR" || true) record=$(prepared CC-83)" \
+  "rc=1 waited=1 missing=1 record=stopped none none" \
+  "a foreground hosted codex relaunch at a bare shell fails and records stopped"
+NO_SCREEN_OT="$TMP_ROOT/no-screen/scripts"
+mkdir -p "$NO_SCREEN_OT"
+cp -R "$REPO/scripts/." "$NO_SCREEN_OT/"
+mutate_file "$NO_SCREEN_OT/open-terminal" '    tmux_wait_harness "$pane" "$harness_secs" || harness_rc=$?' '    :'
+HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 -- SCRIPT="$NO_SCREEN_OT/open-terminal" "${CODEX_RELAUNCH[@]:1}"
+assert_eq "rc=$RC record=$(prepared CC-83)" "rc=0 record=running none none" \
+  "control: without the screen check a bare shell renews the record as running"
 "$WS" --state-dir "$STATE" update oversee '.lanes += [{item: "CC-87", harness: "claude", status: "running"}]' >/dev/null
 HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-87 "${CODEX_RELAUNCH[@]}"
 assert_eq "rc=$RC handed=$(grep -c '^open-terminal: lane-preparing item=CC-87 ' <<<"$OUT" || true) lineless=$(grep -c 'resume-lineless' <<<"$ERR" || true) record=$(settled CC-87)" \
@@ -1078,6 +1095,7 @@ for pi_wake_row in "sends|0|0" "nowake|1|1"; do
     "a hosted Pi lane on a $pi_wake_carrier carrier launches, its brief carrying the arm line only where the carrier lists no mail wake"
   : > "$PI_TYPED"
   PI_HAND_OFF_CMD=- hosted_pi /pi "$pi_wake_carrier" "$OFF" - STUB_BUFFER_LOG="$PI_TYPED" \
+    STUB_HARNESS_TEXT='Working (esc to interrupt)' \
     -- --relaunch --launch-flags "--model github-copilot/opus --thinking high"
   assert_eq "$(pi_wake_outcome)" "rc=0 launched windows=1 marker=root arm=0 rearm=$want_arm notice=$want_notice" \
     "a hosted Pi relaunch on a $pi_wake_carrier carrier launches, its line re-arming the watch only where the carrier lists no mail wake"

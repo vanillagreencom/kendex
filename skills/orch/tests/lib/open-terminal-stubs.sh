@@ -188,6 +188,14 @@ STUBEOF
 chmod +x "$1/worktree" "$1/gh" "$1/tmux" "$1/ghostty"
 }
 
+# Read the remote command from a pane log and remove the two shell-quote
+# layers around the hosted selection command. Never execute the logged text.
+ot_hosted_relaunch_text() { # LOG
+  local line
+  line="$(grep -m1 '^exec bash -lc ' "$1")" || return 1
+  printf '%s\n' "$line" | sed "s/'\\\\''/'/g" | sed "s/'\\\\''/'/g"
+}
+
 # Execute the hosted command in a disposable worktree with the real session
 # lookup and a harness that records argv. KIND describes the session store;
 # STATUS is the exit of a resumed or fresh harness, never the lookup's exit.

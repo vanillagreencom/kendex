@@ -1016,18 +1016,14 @@ run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD" --
 assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=$(host_call) ssh=$(typed "clear; ssh 'lane.example'") remote=$(typed "exec bash -lc 'cd /srv/lane && exec true --model opus --effort high $QUESTION_OFF_ALL'") env=$(typed CLAUDE_CONFIG_DIR=) opened=$(said "open-terminal: tmux-opened item=CC-40 host=$HOST_STUB path=/srv/lane")" \
   "rc=0 creates=nolog launched=1 claim_lanes=eclaude calls=accounts;create,--item,CC-40,--repo,o/r,--harness,claude,--account,eclaude;cat,--item,CC-40,/srv/lane/.git;put,--item,CC-40,/srv/clone/.git/lane-mail/cc-40;cat,--item,CC-40,/srv/clone/.git/lane-mail/cc-40;put,--item,CC-40,/srv/lane/tmp/lane-mail/CC-40/context.json ssh=1 remote=1 env=0 opened=1" \
   "a hosted launch creates through lane-host, types ssh then the remote line, and renders no lane env prefix"
-# A hosted relaunch continues natively. Q is how single_quote renders one quote
-# of the continuation line inside the remote command. A claude relaunch runs
-# the start brief behind its --continue, and counts only once its pane draws a
-# harness screen, which HARNESS_UP shows once the remote command is typed;
+# Q is how single_quote renders one quote of the continuation line inside the
+# remote command. A hosted relaunch selects a resume or the start brief and
+# counts only once its pane draws a harness screen, which HARNESS_UP shows once the remote command is typed;
 # open-terminal-relaunch-route.sh holds that route's own rows.
 #
-# One row per harness, one asserted remote command each. The codex row pins an
-# absence, because `codex resume` declares its prompt as conflicting with
-# --last: a rendered `codex resume --last <line>` would hand codex a sentence
-# as a session name. The assertion named "a hosted codex relaunch resumes
-# promptless, so no sentence is rendered into the session-id slot" is what
-# reddens if that line comes back.
+# One row per harness. Codex's resume arm stays promptless under D002, while
+# its fresh arm carries the start brief. Pi's resume carries the continuation
+# line, while its fresh arm carries the start brief.
 # Write it as ${Q} wherever a letter, digit or underscore follows: `$Qopus` is
 # the variable Qopus, which under `set -u` empties the whole substitution the
 # expectation was built in and leaves the row comparing against nothing.
@@ -1051,10 +1047,22 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=
   "rc=0 creates=nolog launched=1 calls=accounts;create,--item,CC-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,CC-41,/srv/lane/.git;put,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;cat,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;put,--item,CC-41,/srv/lane/tmp/lane-mail/CC-41/context.json remote=1" \
   "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line, the start brief behind it"
 HOSTED_LINE="$(hosted_line CC-48)"
-run_ot "ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-48
-assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec pi $Q--exclude-tools$Q ${Q}question$Q $Q--model$Q ${Q}github-copilot/opus$Q $Q--thinking$Q ${Q}high$Q -c $Q$HOSTED_LINE $UNATTENDED_TEXT$Q'")" \
-  "rc=0 creates=nolog launched=1 remote=1" \
-  "a hosted pi relaunch continues natively with the continuation line"
+PI_RELAUNCH="$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high"
+run_ot "$PI_RELAUNCH" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-48
+PI_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
+PI_RESUME="0) exec pi '--exclude-tools' 'question' '--model' 'github-copilot/opus' '--thinking' 'high' --session \"\$session\" '$HOSTED_LINE $UNATTENDED_TEXT' ;; 1) exec pi"
+assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") lookup=$(grep -cF 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh pi CC-48 linear ' <<<"$PI_REMOTE" || true) resume=$(grep -cF "$PI_RESUME" <<<"$PI_REMOTE" || true) fresh=$(grep -cF "'/skill:orch start CC-48 $UNATTENDED_TEXT'" <<<"$PI_REMOTE" || true)" \
+  "rc=0 creates=nolog launched=1 claim_lanes=eclaude lookup=1 resume=1 fresh=1" \
+  "a hosted pi relaunch selects its host session or the start brief, keeping its lane and continuation line"
+PI_OT_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-pi-native/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-pi-native/orch"
+mutate_file "$OPEN_TERMINAL" '      codex | pi)' '      pi) printf '\''pi %s-c%s\n'\'' "$flags" "$line"; return ;;'$'\n''      pi | codex)'
+run_ot "$PI_RELAUNCH" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-48
+PI_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
+assert_eq "rc=$RC selection=$(grep -cF "$PI_RESUME" <<<"$PI_REMOTE" || true) native=$(grep -cF " -c '$HOSTED_LINE $UNATTENDED_TEXT'" <<<"$PI_REMOTE" || true)" \
+  "rc=0 selection=0 native=1" "control: the old pi -c form fails the resume-or-fresh assertion"
+OPEN_TERMINAL="$PI_OT_SHIPPED"
 # A hosted Pi launch on a pi-claude model is refused before any pick, judge or
 # host call, auto and named alike: the host protocol hands a Pi lane its
 # account as its Pi root and carries no Claude seat. The control drops the
@@ -1089,7 +1097,7 @@ pi_hosted_row() { # PCT
   printf 'account=%s\tharness=pi\tmonthly-pct=%s\tmonthly-resets=2026-10-07T00:00:00Z\n' "$H/.eclaude" "$1" > "$PI_ROW_FILE"
 }
 pi_hosted_row 40
-run_ot "ORCH_LANE_ALIASES=eclaude=work;LANE_HOST_STUB_ACCOUNTS=$PI_ROW_FILE;flags=--model github-copilot/claude-sonnet-5 --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-1669
+run_ot "$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;LANE_HOST_STUB_ACCOUNTS=$PI_ROW_FILE;flags=--model github-copilot/claude-sonnet-5 --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-1669
 assert_eq "$(observe "rc=0 launched=1 unreadable=none poolfix=none")" "rc=0 launched=1 unreadable=none poolfix=none" \
   "a hosted Pi relaunch is admitted on the provider's pool row with no stated reading"
 pi_hosted_row 97
@@ -1120,7 +1128,7 @@ PI_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-pi-host/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-pi-host/orch"
 mutate_file "$OPEN_TERMINAL" '[[ "$LANE_HOST" == local || "$LAUNCH_HARNESS" == pi ]]' '[[ "$LANE_HOST" == local ]]'
-run_ot "$PI_HELD" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-1669
+run_ot "$HARNESS_UP;$PI_HELD" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-1669
 assert_eq "$(observe "rc=0 relaunchgate=1")" "rc=0 relaunchgate=1" \
   "control: a Pi relaunch that asks the provider relaunches on a held row whose pool nobody read"
 OPEN_TERMINAL="$PI_OT_SHIPPED"
@@ -1153,10 +1161,14 @@ run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copi
 assert_eq "$(observe "rc=0 launched=1") policy=$(typed "COPILOT_ALLOW_ALL=true copilot")" "rc=0 launched=1 policy=0" \
   "control: without the hosted policy a hosted copilot lane keeps the COPILOT_GITHUB_TOKEN its host exports"
 OPEN_TERMINAL="$COPILOT_OT_SHIPPED"
-run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=-m gpt-6-astra -c model_reasoning_effort=high" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
-assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec env ORCH_COMPACTION_OVERRIDES=$Q{\"harness\":\"codex\",\"settings\":{\"model_auto_compact_token_limit\":\"9223372036854775807\",\"model_auto_compact_token_limit_scope\":\"body_after_prefix\",\"model_post_turn_compact_threshold_percent\":\"0\"}}$Q codex $Q-c$Q ${Q}check_for_update_on_startup=false$Q $Q-c$Q ${Q}model_auto_compact_token_limit=9223372036854775807$Q $Q-c$Q ${Q}model_auto_compact_token_limit_scope=body_after_prefix$Q $Q-c$Q ${Q}model_post_turn_compact_threshold_percent=0$Q $Q-c$Q ${Q}features.default_mode_request_user_input=false$Q $Q-m$Q ${Q}gpt-6-astra$Q $Q-c$Q ${Q}model_reasoning_effort=high$Q resume --last'") line=$(typed "Resume the orch workflow for CC-49")" \
-  "rc=0 creates=nolog launched=1 remote=1 line=0" \
-  "a hosted codex relaunch resumes promptless, so no sentence is rendered into the session-id slot"
+CODEX_RELAUNCH="$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;flags=-m gpt-6-astra -c model_reasoning_effort=high"
+run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
+CODEX_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
+CODEX_LEAD="codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high'"
+CODEX_RESUME="0) exec $CODEX_LEAD resume \"\$session\" ;; 1) exec $CODEX_LEAD 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-49'"
+assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") lookup=$(grep -cF 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh codex CC-49 linear ' <<<"$CODEX_REMOTE" || true) arms=$(grep -cF "$CODEX_RESUME" <<<"$CODEX_REMOTE" || true) compaction=$(typed "ORCH_COMPACTION_OVERRIDES=$Q$CODEX_COMPACTION$Q") line=$(typed 'Resume the orch workflow for CC-49')" \
+  "rc=0 creates=nolog launched=1 claim_lanes=eclaude lookup=1 arms=1 compaction=1 line=0" \
+  "a hosted codex relaunch selects its host session promptless or the start brief, keeping its lane and compaction flags"
 # The lane comes up idle, so the launcher owes the operator a record saying the
 # line is still to be pasted; without one the summary reports the item as
 # launched and nothing distinguishes it from a lane that got its instruction.
@@ -1164,34 +1176,32 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash 
 # continuation line" is what reddens if the record goes away.
 assert_eq "$(said "open-terminal: resume-lineless item=CC-49 harness=codex")" "1" \
   "the promptless resume is recorded as owing its continuation line"
-# Parse-level control for the row above, run against the real codex parser.
-# One positional is appended to whatever open-terminal rendered, and the
-# assertion named "a positional appended to the rendering is still parsed as a
-# session id" is what reddens: a promptless rendering leaves the session-id
-# slot free, so the appended value fills it and codex parses (exit 1, stdin is
-# not a terminal); a rendering that already carried the line makes the appended
-# value a second positional, which is the PROMPT that --last is declared to
-# conflict with, and clap exits 2 before anything runs. --help is deliberately
-# NOT used here: it short-circuits clap ahead of conflict checking, so every
-# form exits 0 and the probe would answer the same for the rendering and for
-# the defect.
+# Parse-level control against the real codex parser. The host lookup supplies
+# the session id. Appending one prompt parses (exit 1, stdin is not a terminal)
+# only while the resume arm is promptless. An arm already carrying a prompt
+# rejects the extra positional (exit 2). --help bypasses that argument check.
 if command -v codex >/dev/null 2>&1; then
-  # The pane log holds the command as it was TYPED, so every quote start_cmd put
-  # round a flag token reads as the `bash -lc` escape; the second sed undoes that
-  # escape, which is what the remote shell does before codex sees its argv.
-  RENDERED="$(sed -n "s/.*exec bash -lc 'cd \/srv\/lane \&\& exec \(env ORCH_COMPACTION_OVERRIDES=.* codex .*\)'.*/\1/p" "$RUN/tmux.log" \
-    | tail -1 | sed "s/'\\\\''/'/g")"
-  assert_eq "${RENDERED:-MISSING}" "env ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high' resume --last" \
-    "the rendered remote command is recovered from the pane log"
+  RENDERED="$(sed -n 's/.*0) exec \(codex .*\) ;; 1) exec .*/\1/p' <<<"$CODEX_REMOTE")" || exit 1
+  assert_eq "${RENDERED:-MISSING}" "$CODEX_LEAD resume \"\$session\"" \
+    "the rendered resume arm is recovered from the pane log with no prompt"
   CODEX_PARSE_RC=0
-  CODEX_HOME="$TMP_ROOT/codex-parse-home" timeout 20 bash -c "$RENDERED zz-appended-session" </dev/null >/dev/null 2>&1 || CODEX_PARSE_RC=$?
-  assert_eq "$CODEX_PARSE_RC" "1" "a positional appended to the rendering is still parsed as a session id"
+  CODEX_HOME="$TMP_ROOT/codex-parse-home" timeout 20 bash -c "session=11111111-1111-4111-8111-111111111111; $RENDERED zz-appended-prompt" </dev/null >/dev/null 2>&1 || CODEX_PARSE_RC=$?
+  assert_eq "$CODEX_PARSE_RC" "1" "a prompt appended to the rendering fits the unfilled prompt slot"
   CODEX_REFUSE_RC=0
-  CODEX_HOME="$TMP_ROOT/codex-parse-home" timeout 20 codex resume --last 'a continuation line' zz-appended-session </dev/null >/dev/null 2>&1 || CODEX_REFUSE_RC=$?
-  assert_eq "$CODEX_REFUSE_RC" "2" "control: the same append onto a rendering carrying the line is the parse error the assertion above would catch"
+  CODEX_HOME="$TMP_ROOT/codex-parse-home" timeout 20 codex resume 11111111-1111-4111-8111-111111111111 'a continuation line' zz-appended-prompt </dev/null >/dev/null 2>&1 || CODEX_REFUSE_RC=$?
+  assert_eq "$CODEX_REFUSE_RC" "2" "control: the same append onto a resume carrying a line fails parsing"
 else
   echo "  skip  codex is not installed; the parse-level control did not run"
 fi
+CODEX_OT_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-codex-native/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-codex-native/orch"
+mutate_file "$OPEN_TERMINAL" '      codex | pi)' '      codex) printf '\''codex %sresume --last\n'\'' "$flags"; return ;;'$'\n''      pi | codex)'
+run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
+CODEX_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
+assert_eq "rc=$RC selection=$(grep -cF "$CODEX_RESUME" <<<"$CODEX_REMOTE" || true) native=$(grep -cF ' resume --last' <<<"$CODEX_REMOTE" || true)" \
+  "rc=0 selection=0 native=1" "control: the old codex resume --last form fails the resume-or-fresh assertion"
+OPEN_TERMINAL="$CODEX_OT_SHIPPED"
 # A GitHub-tracker item is the issue number while its worktree id is issue-<n>,
 # and the lane's mailbox is bound under the worktree id: write_lane_marker
 # writes it there and the overseer's `lane-mail send --item` writes the same
