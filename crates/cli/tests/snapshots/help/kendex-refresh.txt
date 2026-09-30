@@ -22,6 +22,9 @@ Options:
           The project this run reads and writes, by path, instead of the one it
           was typed in
 
+      --lane-refresh
+          Permit project writes in a marked lane whose item is a refresh
+
       --throwaway
           Add a throwaway project to Projects: a folder under a temporary path,
           which is otherwise refused
