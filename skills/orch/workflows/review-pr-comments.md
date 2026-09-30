@@ -387,19 +387,19 @@ Auto-resolve every thread where a reply was posted; keep open only threads await
 
 ### 7.2 Copilot Head Route
 
-**Skip if** no thread this triage answered is Copilot's. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind the base branch, URL-encoded for the rules path, and the head:
+**Skip if** no thread this triage answered is Copilot's. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Resolve the gate mode the base sets:
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefName,headRefOid --jq '[(.baseRefName|@uri),.headRefOid]|@tsv'
+env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
 ```
 
-Read the approval count each `pull_request` rule on the base requires, one per line. This is the ruleset read `github.sh pr-merge --auto` makes:
+`off`, or a non-zero exit, which is reported, ends this step: no rule holds the pull request for an approval, or no mode was read. On `approval`, bind the head:
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/rules/branches/[BASE_BRANCH]' --jq '.[] | select(.type == "pull_request") | .parameters.required_approving_review_count'
+env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
 ```
 
-A non-zero exit from either read, which is reported, ends this step. An output with no count of at least 1 ends it too: no rule holds the pull request for an approval. Otherwise read every review of the pull request, oldest first, one login, `commit_id` and `state` per line:
+A non-zero exit, which is reported, ends this step. Otherwise read every review of the pull request, oldest first, one login, `commit_id` and `state` per line:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pulls/[PR_NUMBER]/reviews' --jq '.[] | [.user.login, .commit_id, .state] | @tsv'
@@ -419,7 +419,7 @@ A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` ends th
   ```
 
   ```bash
-  .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval --on-timeout block --item [ISSUE_ID]
+  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval --on-timeout block --item [ISSUE_ID]
   ```
 
   Exit `5` with the log line `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [ISSUE_ID]`, act on what it prints, then launch the wait again. On any other answer, read the reviews again. A `copilot-pull-request-reviewer[bot]` line whose `commit_id` is `[HEAD_SHA]` is the re-review, since none existed when the request went out:
