@@ -281,7 +281,9 @@ echo "=== hosted lane exits: the provider reads past a live ssh child ==="
 REMOTE_WATCH="$(mutant_scripts remote-watch/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/remote-watch/github"
 mutate_file "$REMOTE_WATCH" '    if [[ "$prior" == "$pane_key" || "$(lane_field "$states" "$i" 3)" == provider ]]; then' '    if [[ "$prior" == "$pane_key" ]]; then'
-mutate_file "${REMOTE_WATCH%/*}/lib/lane-state.sh" '  if [[ "$LANE_PROBE_RC" -eq 2 ]]; then' '  if false; then'
+UNSUPPORTED_WATCH="$(mutant_scripts unsupported-watch/orch lib/lane-state.sh)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/unsupported-watch/github"
+mutate_file "${UNSUPPORTED_WATCH%/*}/lib/lane-state.sh" '  if [[ "$LANE_PROBE_RC" -eq 2 ]]; then' '  if false; then'
 provider="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
 for row in 'exited|0|true|live' 'running|0|false|live' 'exited|2|false|live' 'exited|7|false|live' 'garbage|0|false|live' 'exited|0|false|control' 'exited|2|false|unsupported-control'; do
   IFS='|' read -r remote_status provider_rc want_exit judge <<<"$row"
@@ -293,6 +295,7 @@ for row in 'exited|0|true|live' 'running|0|false|live' 'exited|2|false|live' 'ex
   printf 'started\n' > "$remote_disk/srv/lane/tmp/lane-status-issue-2.md"
   jq -cn --arg host "$provider" '{issue_id:"oversee", triaged:[], lanes:[{item:"issue-2", window:"gh-2", host:$host, mail_root:"/srv/lane", harness:"claude", status:"running", launched_at:"2026-08-15T09:00:00Z"}]}' > "$STUB_DIR/fleet.json"
   target="$REPO_ROOT/skills/orch/scripts/oversee-watch"; [[ "$judge" == live ]] || target="$REMOTE_WATCH"
+  [[ "$judge" != unsupported-control ]] || target="$UNSUPPORTED_WATCH"
   OUT="$(WATCH_BIN="$target" run_watch ORCH_LANE_HOST="$provider" LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" LANE_HOST_STUB_DIR="$remote_disk" LANE_HOST_STUB_HARNESS_STATE="$remote_status" LANE_HOST_STUB_PROBE_STATUS="$provider_rc" \
     -- --state "$STUB_DIR/fleet.json" --max-loops 1 2>"$ERR")" && RC=0 || RC=$?
   want_asking=false
