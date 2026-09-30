@@ -32,14 +32,23 @@ for (const row of [
 	});
 }
 
+// A continued turn compares the new body with the cached one; that comparison and the send
+// must walk the values, never stringify the full body, the input-less body or the input prefix.
 test("a WebSocket request that succeeds never serializes the full request body", async (t) => {
 	providerWorld(t);
 	t.mock.timers.enable({ apis: ["setTimeout"] });
-	codexWebSocket(t);
+	const socket = codexWebSocket(t);
 	let body: unknown;
+	const options = { transport: "websocket-cached", sessionId: "serialize-once", onPayload: (payload: unknown) => { body = payload; } };
+	const first = await runCodexProvider(options, {}, { messages: [user("hello")] });
+	assert.equal(first.stopReason, "stop", first.errorMessage);
 	const stringify = t.mock.method(JSON, "stringify");
-	const result = await runCodexProvider({ transport: "websocket-cached", sessionId: "serialize-once", onPayload: (payload: unknown) => { body = payload; } }, {}, { messages: [user("hello")] });
-	assert.equal(result.stopReason, "stop", result.errorMessage);
+	const second = await runCodexProvider(options, {}, { messages: [user("hello"), first, user("next")] });
+	assert.equal(second.stopReason, "stop", second.errorMessage);
+	assert.equal(socket.requests[1].previous_response_id, "resp_1");
 	assert.ok(body, "onPayload must receive the request body");
-	assert.equal(stringify.mock.calls.filter((call) => call.arguments[0] === body).length, 0);
+	const serialized = stringify.mock.calls.map((call) => call.arguments[0]);
+	assert.equal(serialized.filter((value) => value === body).length, 0);
+	assert.deepEqual(serialized.filter((value) => Array.isArray(value)), []);
+	assert.deepEqual(serialized.filter((value) => value !== null && typeof value === "object" && "model" in value && !("input" in value)), []);
 });
