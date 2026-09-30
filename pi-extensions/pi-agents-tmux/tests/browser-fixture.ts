@@ -30,19 +30,14 @@ export function filesystemCalls(run: () => void): number[] {
 	}
 }
 
-/** Load a disposable production edit with imports resolved from the real package. */
+/** Load a disposable production edit. Relative runtime imports still use the real package. */
 export async function importRuntimeCopy(fileName: string, before: string, after: string): Promise<unknown> {
 	const runtimeDir = resolve(import.meta.dir, "../extensions/subagent");
 	const original = fs.readFileSync(join(runtimeDir, fileName), "utf8");
 	assert.equal(original.split(before).length - 1, 1, "control must edit exactly one production behavior");
 	const modified = original.replace(before, after);
 	assert.notEqual(modified, original);
-	const source = modified.replace(/from "([^"]+)"/g, (_match, specifier: string) => {
-		const resolved = specifier.startsWith("./")
-			? join(runtimeDir, specifier.replace(/\.js$/, ".ts"))
-			: import.meta.resolve(specifier);
-		return `from ${JSON.stringify(resolved)}`;
-	});
+	const source = modified.replace(/from "\.\/([^\"]+)\.js"/g, (_match, name: string) => `from ${JSON.stringify(join(runtimeDir, `${name}.ts`))}`);
 	const copy = join(tempRuntime(), fileName);
 	writeFileSync(copy, source);
 	return import(copy);
