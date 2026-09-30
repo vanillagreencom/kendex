@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fakeCtx, fakePi, mockPiModules } from "./lib/fake-pi.ts";
 
 mockPiModules();
@@ -16,7 +16,7 @@ interface Panel {
 	tasksWrite: (params: Record<string, unknown>) => Promise<any>;
 }
 
-async function withPanel(run: (panel: Panel) => Promise<void>): Promise<void> {
+async function withPanel(run: (panel: Panel) => Promise<void>, expectedWarnings: string[] = []): Promise<void> {
 	const previousPiDir = process.env.PI_CODING_AGENT_DIR;
 	const previousDiagnosticLog = process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG;
 	const base = realpathSync(mkdtempSync(join(tmpdir(), "pi-task-panel-saves-")));
@@ -37,7 +37,7 @@ async function withPanel(run: (panel: Panel) => Promise<void>): Promise<void> {
 			sidecar: join(base, "agent", "kendex", "sessions", SESSION_ID, "pi-task-panel", "state.json"),
 			tasksWrite: (params) => tool.execute(`call-${++call}`, params, undefined, undefined, ctx),
 		});
-		expect(notifications.filter((note) => note.level === "warning")).toEqual([]);
+		expect(notifications.filter((note) => note.level === "warning").map((note) => note.message.split("\n")[0])).toEqual(expectedWarnings);
 	} finally {
 		if (previousPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousPiDir;
@@ -101,3 +101,51 @@ test("tree navigation reads the sidecar only after a queued write lands", async 
 		expect(result.details.message).toBe("queued");
 	});
 });
+
+/** Makes the sidecar directory a plain file, so the next sidecar write fails; the returned function undoes it. */
+function blockSidecar(sidecar: string): () => void {
+	const directory = dirname(sidecar);
+	rmSync(directory, { recursive: true, force: true });
+	mkdirSync(dirname(directory), { recursive: true });
+	writeFileSync(directory, "not a directory", "utf8");
+	return () => unlinkSync(directory);
+}
+
+/** Makes the next session-entry append throw; the returned function undoes it. */
+function refuseAppend(pi: ReturnType<typeof fakePi>): () => void {
+	const append = pi.appendEntry;
+	pi.appendEntry = () => {
+		throw new Error("append refused");
+	};
+	return () => {
+		pi.appendEntry = append;
+	};
+}
+
+const failedSaves: Array<{ failure: string; warnings: string[]; arm: (panel: Panel) => Array<() => void> }> = [
+	{ failure: "session-entry append", warnings: ["persistence_failure=session-entry"], arm: ({ pi }) => [refuseAppend(pi)] },
+	{ failure: "sidecar write", warnings: ["persistence_failure=sidecar-write"], arm: ({ sidecar }) => [blockSidecar(sidecar)] },
+	{
+		failure: "sidecar write and session-entry append",
+		warnings: ["persistence_failure=sidecar-write", "persistence_failure=session-entry-no-sidecar"],
+		arm: ({ pi, sidecar }) => [blockSidecar(sidecar), refuseAppend(pi)],
+	},
+];
+
+for (const { failure, warnings, arm } of failedSaves) {
+	test(`after a failed ${failure}, repeating the same change saves it again`, async () => {
+		await withPanel(async (panel) => {
+			const { pi, sidecar, tasksWrite } = panel;
+			await tasksWrite({ action: "add_task", task: "first" });
+			const undo = arm(panel);
+			await tasksWrite({ action: "mark_done", task: "first" });
+			for (const restore of undo) restore();
+			const entries = pi.appended.length;
+			await tasksWrite({ action: "mark_done", task: "first" });
+			expect(pi.appended).toHaveLength(entries + 1);
+			const saved = JSON.parse(readFileSync(sidecar, "utf8"));
+			expect(saved.tasks.map((task: { status: string }) => task.status)).toEqual(["completed"]);
+			expect(saved).toEqual(pi.appended.at(-1)?.data);
+		}, warnings);
+	});
+}

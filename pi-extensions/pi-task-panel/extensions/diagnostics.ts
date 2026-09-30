@@ -19,14 +19,24 @@ export function logTaskPanelDiagnostic(message: string, details?: Record<string,
 	}
 }
 
-export function reportTaskPanelPersistenceFailure(where: string, error: unknown, ctx?: ExtensionContext): void {
+const SESSION_HISTORY_FALLBACK = "Task panel state persistence failed. Falling back to session history where available.";
+
+/** The explanation each failing store gets under its `persistence_failure=<where>` line. */
+const PERSISTENCE_FAILURE_EXPLANATIONS = {
+	"sidecar-read": SESSION_HISTORY_FALLBACK,
+	"sidecar-write": SESSION_HISTORY_FALLBACK,
+	"session-entry": "The task panel session history entry was not written. The sidecar file alone holds this task state.",
+	"session-entry-no-sidecar":
+		"The task panel session history entry was not written, and neither was the sidecar file. No store holds this task state until the next task panel save.",
+} as const;
+
+export type TaskPanelPersistenceFailure = keyof typeof PERSISTENCE_FAILURE_EXPLANATIONS;
+
+export function reportTaskPanelPersistenceFailure(where: TaskPanelPersistenceFailure, error: unknown, ctx?: ExtensionContext): void {
 	const msg = error instanceof Error ? error.message : String(error);
 	logTaskPanelDiagnostic("persistence failed", { where, error: msg });
 	try {
-		ctx?.ui.notify?.(
-			`persistence_failure=${where}\nTask panel state persistence failed. Falling back to session history where available.`,
-			"warning",
-		);
+		ctx?.ui.notify?.(`persistence_failure=${where}\n${PERSISTENCE_FAILURE_EXPLANATIONS[where]}`, "warning");
 	} catch {
 		// UI notification is best-effort only.
 	}

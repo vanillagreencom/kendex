@@ -858,10 +858,18 @@ export default function taskPanel(pi: ExtensionAPI): void {
 				reportTaskPanelPersistenceFailure("sidecar-write", error, ctx);
 			}
 			lastSidecarWriteOk = sidecarOk;
+			let entryOk = true;
 			try {
 				appendSessionEntry(saved, sidecarOk);
 			} catch (error) {
-				reportTaskPanelPersistenceFailure("session-entry", error, ctx);
+				entryOk = false;
+				reportTaskPanelPersistenceFailure(sidecarOk ? "session-entry" : "session-entry-no-sidecar", error, ctx);
+			}
+			// A failed save must not count as saved: forget its fingerprint so the
+			// next persist of the same state queues a new save. A newer save queued
+			// meanwhile owns the map entry and keeps it.
+			if ((!sidecarOk || !entryOk) && lastFingerprintBySession.get(sessionKey) === saved.fingerprint) {
+				lastFingerprintBySession.delete(sessionKey);
 			}
 		});
 		return sidecarSaves;
