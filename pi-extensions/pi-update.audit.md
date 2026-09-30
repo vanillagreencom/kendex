@@ -15,7 +15,7 @@ Verdict: `roll`.
 - Tested extension commit: `0d6164b35cd7ca4d1b039bd46fbc4d903d71c700`, the head of `main` when the merged-commit run started. No fix of this run lands before it; the required fixes are in § Unresolved required fixes.
 - Evidence: run directory `tmp/pi-update/run.8K2hDP` (local to the KEN-2178 lane). Pi 0.99.1 resolved from every extension entry file and suite directory in every package copy (`merged.*/logs/*.proof.log`, 40 paths). On the tested commit: the pi-hooks, pi-agents-tmux, pi-tool-renderer, pi-extension-manager and pi-codex-minimal-tools suites pass (123, 264, 85, 54 and 130 tests); every one of the 18 packages loads from its manifest into a real session and runs one prompt; the six checks under § Checks give the results listed there. KEN-2231, KEN-2232, KEN-2233 and KEN-2235 carry the check files.
 
-Every `### Breaking Changes` entry in range was read against `pi-hooks/pi-contract.json`, across every source, and against `agent_before_settle`, which `pi-hooks/extensions/hooks.ts` listens on and the contract omits (KEN-2236). No entry names an event or call pi-hooks uses; the `ExtensionAPI` and `ExtensionContext` declarations remove no member and no event between 0.87.1 and 0.99.1. `coding-agent`, `agent` and the other sources carry none.
+Every `### Breaking Changes` entry in range was read against `pi-hooks/pi-contract.json`, across every source, and against `agent_before_settle`, which `pi-hooks/extensions/hooks.ts` listens on and the tested commit's contract omits (KEN-2236). No entry names an event or call pi-hooks uses; the `ExtensionAPI` and `ExtensionContext` declarations remove no member and no event between 0.87.1 and 0.99.1. `coding-agent`, `agent` and the other sources carry none.
 
 | Release | Source | Entry | Names from the contract | Result |
 |---|---|---|---|---|
@@ -47,10 +47,11 @@ Every `### Breaking Changes` entry in range was read against `pi-hooks/pi-contra
 | Required parity fix (open, this range) | 4 |
 | Required parity fix (fixed after the tested commit) | 1 |
 | Found by this run, predates the range (open) | 2 |
+| Found by this run, fixed after the tested commit | 1 |
 | Optional improvement (deferred) | 7 |
 | Non-impact | grouped below, not tallied |
 
-Fixed after the tested commit: KEN-2196, carried from 0.87.1, the Codex shim's Off reasoning effort (0.86.0, [#9191](https://github.com/earendil-works/pi/issues/9191)). It landed on `main` as `cd404e68`, after the tested commit `0d6164b3`, which still omits the Off effort; the next run's tested commit carries the fix.
+Fixed on `main` after the tested commit `0d6164b3`, which holds neither fix: KEN-2196, carried from 0.87.1, the Codex shim's Off reasoning effort (0.86.0, [#9191](https://github.com/earendil-works/pi/issues/9191)), as `cd404e68`; KEN-2236's contract entries, as `78d3b3cd`. Its other half, a check tying the contract to the code, stays open.
 
 ## Unresolved required fixes
 
@@ -68,7 +69,7 @@ Found by this run, outside the range:
 | Item | Extension | What the check shows |
 |---|---|---|
 | KEN-2235 | `pi-tool-renderer` | `tool_batch` runs each child through the built-in tool's `execute`, so no `tool_call` listener sees it: a `bash` child that a pi-hooks PreToolUse guard refuses as a direct call runs inside a batch. The code path has no Pi-version dependency. Pi 0.99.0's `ctx.executeTool()` emits `tool_call` for a nested call, and pi-hooks refuses it (§ Checks), so running the children through it is the fix. |
-| KEN-2236 | `pi-hooks` | `pi-contract.json` omits `agent_before_settle` for `hooks.ts` and lists `ctx.isIdle`, which `hooks.ts` no longer calls; no check ties the contract to the code. The Breaking Changes table above was also read against `agent_before_settle`. |
+| KEN-2236 | `pi-hooks` | At the tested commit, `pi-contract.json` omits `agent_before_settle` for `hooks.ts` and lists `ctx.isIdle`, which `hooks.ts` no longer calls; `78d3b3cd` fixed both. Open: no check ties the contract to the code. |
 
 ## Checks
 
