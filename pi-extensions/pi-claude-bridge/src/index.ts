@@ -36,7 +36,7 @@ export {
 } from "./connector-inventory.js";
 export { connectorCachePath, connectorCacheScopeKey, readCachedConnectors, scopeKeyFor, writeCachedConnectors } from "./connector-cache.js";
 export { connectorServersSnapshot, primeConnectorServers } from "./connector-runtime.js";
-import { debug, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.js";
+import { debug, describeBlocks, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.js";
 import { preflightClaudeExecutable, resolveClaudeExecutable } from "./claude-executable.js";
 import { appendIntegrityEntry, argKeys, deleteSharedSessionLane, extensionApi, getSharedSession, markSessionForRebuild, recordStartedLane, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, takeStartedLane, type SessionState } from "./bridge-state.js";
 import { connectorsEnabledFor, isChildExecutedTool } from "./connectors.js";
@@ -173,9 +173,9 @@ const MODELS = buildModels(getModels("anthropic"));
 function extractAllToolResults(context: Context): McpResult[] {
 	const { results, stopIdx } = _extractAllToolResults(context.messages as unknown as Array<{ role: string; [key: string]: unknown }>);
 	debug(`extractAllToolResults: ${results.length} results from ${context.messages.length} msgs, stopped at index ${stopIdx}`);
-	debug(`extractAllToolResults: all msg roles:`, context.messages.map((m, i) => `[${i}]${m.role}`).join(" "));
+	debug(`extractAllToolResults: all msg roles:`, () => context.messages.map((m, i) => `[${i}]${m.role}`).join(" "));
 	for (let r = 0; r < results.length; r++) {
-		debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""} preview:`, () => JSON.stringify(results[r].content).slice(0, 150));
+		debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""}`, () => describeBlocks(results[r].content));
 	}
 	return results;
 }
@@ -215,12 +215,12 @@ function extractUserPromptBlocks(messages: Context["messages"]): ContentBlockPar
 			debug(`extractUserPromptBlocks: content is ${typeof content}`);
 			continue;
 		}
-		debug(`extractUserPromptBlocks: ${content.length} blocks, types=${content.map((b: any) => b.type).join(",")}`);
+		debug("extractUserPromptBlocks:", () => describeBlocks(content));
 		for (const block of content) {
 			if (block.type === "text" && block.text) {
 				blocks.push({ type: "text", text: block.text });
 			} else if (block.type === "image") {
-				debug(`image block: mimeType=${(block as any).mimeType}, data length=${((block as any).data ?? "").length}, keys=${Object.keys(block).join(",")}`);
+				debug(() => `image block: mimeType=${(block as any).mimeType}, data length=${((block as any).data ?? "").length}, keys=${Object.keys(block).join(",")}`);
 				if (!(block as any).data || !(block as any).mimeType) {
 					debug(`image block missing data or mimeType, skipping`);
 					continue;
@@ -690,7 +690,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 				if (!queryCtx.reportedHistoryRestartDecline) {
 					queryCtx.reportedHistoryRestartDecline = true;
 					const names = [...new Set([...queryCtx.childSideCalls.values()].map((call) => call.name))];
-					debug(`provider: pi replaced this query's history, but ${queryCtx.childSideCalls.size} child-executed call(s) are absent from pi's context; not restarting (${names.join(", ")})`);
+					debug(() => `provider: pi replaced this query's history, but ${queryCtx.childSideCalls.size} child-executed call(s) are absent from pi's context; not restarting (${names.join(", ")})`);
 					appendIntegrityEntry("history_restart_declined", { reason: "child-executed calls pi's history cannot carry", count: queryCtx.childSideCalls.size, names });
 				}
 			} else {
@@ -730,7 +730,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			if (id && queryCtx.pendingToolCalls.has(id)) {
 				const pending = queryCtx.pendingToolCalls.get(id)!;
 				queryCtx.pendingToolCalls.delete(id);
-				debug(`provider: resolving ${pending.toolName} [${id}]${result.isError ? " (error)" : ""}`, () => JSON.stringify(result.content).slice(0, 200));
+				debug(`provider: resolving ${pending.toolName} [${id}]${result.isError ? " (error)" : ""}`, () => describeBlocks(result.content));
 				pending.resolve(result);
 			} else if (id) {
 				queryCtx.pendingResults.set(id, result);
@@ -1105,7 +1105,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		`model=${queryModel.id} requested=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
 		`resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${built.effort ?? "default"} account=${account?.label ?? "legacy"}`,
 		`fallback=${built.fallbackModel ?? "none"}`,
-		`appendSys=${built.appendSystemPrompt} promptCtx=${built.promptContextLabels.join(",") || "none"} strictMcp=${built.strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true} connectors=${built.enableCloudMcp}`,
+		() => `appendSys=${built.appendSystemPrompt} promptCtx=${built.promptContextLabels.join(",") || "none"} strictMcp=${built.strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true} connectors=${built.enableCloudMcp}`,
 		`claudeExec=${claudeExecutablePreflight ? `${claudeExecutablePreflight.fileType}:${claudeExecutablePreflight.path}` : "sdk-default"}`,
 		`prompt=${promptText.slice(0, 60)}${promptBlocks ? " [+images]" : ""}`);
 
@@ -1188,7 +1188,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		// chain — an outermost-only path. A reentrant (subagent) query that fails
 		// just fails; it must never queue a retry or burn a profile exclusion.
 		const eligible = Boolean(!isReentrant && account && router && failure.kind && !committed && !wasAborted && !options?.signal?.aborted && rotationState.attempts < MAX_ROTATION_ATTEMPTS);
-		debug("provider: account rotation decision", JSON.stringify({
+		debug("provider: account rotation decision", () => JSON.stringify({
 			eligible,
 			account: account?.label,
 			kind: failure.kind,
@@ -1564,7 +1564,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 				reentryStream.end();
 				return;
 			}
-			debug(`provider: starting account retry after ${retryFailure?.kind ?? "failure"}; excluded=${[...rotationState.excludedProfileIds].join(",")}`);
+			debug(() => `provider: starting account retry after ${retryFailure?.kind ?? "failure"}; excluded=${[...rotationState.excludedProfileIds].join(",")}`);
 			const retryStream = streamClaudeAgentSdk(model, context, {
 				...(options ?? {}),
 				[ROTATION_STATE_KEY]: rotationState,
@@ -1613,7 +1613,7 @@ export default function (pi: ExtensionAPI) {
 	process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
 
 	const config = loadConfig(process.cwd());
-	debug("loadConfig:", JSON.stringify(config));
+	debug("loadConfig:", () => JSON.stringify(config));
 	// Registered before the disabled early return: a bridge switched off by
 	// claude-bridge.json is exactly when the settings editor has to show where
 	// that value came from.

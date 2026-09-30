@@ -340,7 +340,7 @@ function convertMessagesForImport(
 	const { anthropicMessages, sanitizedIds } = convertPiMessages(messages, customToolNameToSdk);
 
 	debug(`convertMessagesForImport: ${messages.length} pi msgs → ${anthropicMessages.length} anthropic msgs`);
-	debug(`convertMessagesForImport: imported roles:`, anthropicMessages.map((m, i) => {
+	debug(`convertMessagesForImport: imported roles:`, () => anthropicMessages.map((m, i) => {
 		const c = m.content;
 		if (typeof c === "string") return `[${i}]${m.role}:text`;
 		if (Array.isArray(c)) return `[${i}]${m.role}:${(c).map((b) => b.type).join("+")}`;
@@ -348,7 +348,7 @@ function convertMessagesForImport(
 	}).join(" "));
 	if (sanitizedIds.size > 0) {
 		debug(`convertMessagesForImport: sanitized ${sanitizedIds.size} tool IDs:`,
-			[...sanitizedIds.entries()].map(([orig, clean]) => orig === clean ? orig : `${orig}→${clean}`).join(", "));
+			() => [...sanitizedIds.entries()].map(([orig, clean]) => orig === clean ? orig : `${orig}→${clean}`).join(", "));
 	}
 	// A steer can make Pi split one parallel Claude batch across several visible
 	// assistant/tool-result pairs. Recover those real later results before the
@@ -357,7 +357,7 @@ function convertMessagesForImport(
 	if (recoveredToolResults.length > 0) {
 		debug(
 			`convertMessagesForImport: recovered ${recoveredToolResults.length} later tool result(s) for original parallel batch`,
-			recoveredToolResults.map((item) => item.id).join(", "),
+			() => recoveredToolResults.map((item) => item.id).join(", "),
 		);
 	}
 	// Pre-repair: pair every REMAINING orphaned tool_use with an EXPLICIT
@@ -444,7 +444,7 @@ export function planIncrementalPromptBatch(
 	if (pendingPrompts.length === 0 || pendingPrompts.some((message) => (message as { role?: string }).role !== "user")) {
 		// Log the rejected tail so a diag log can tell apart "two assistants in
 		// tail" vs "toolResult in tail" vs "stale cursor" without a repro.
-		debug(`planIncrementalPromptBatch: rejected — cursor=${cursor} promptStart=${promptStart} tail roles=[${messages.slice(boundedCursor).map((m) => (m as { role?: string }).role).join(", ")}]`);
+		debug(() => `planIncrementalPromptBatch: rejected — cursor=${cursor} promptStart=${promptStart} tail roles=[${messages.slice(boundedCursor).map((m) => (m as { role?: string }).role).join(", ")}]`);
 		return undefined;
 	}
 

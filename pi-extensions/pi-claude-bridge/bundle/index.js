@@ -35599,6 +35599,9 @@ function debug(...args) {
   } catch {
   }
 }
+function describeBlocks(blocks) {
+  return `blocks=${blocks.length} types=${blocks.map((block) => block.type).join(",")} bytes=${Buffer.byteLength(JSON.stringify(blocks))}`;
+}
 var nextCliDebugSeq = 1;
 function makeCliDebugOptions(tag) {
   if (!DEBUG) return {};
@@ -52470,10 +52473,7 @@ function primeConnectorServers(claudeConfigDir, overrides = {}) {
         return;
       }
       const servers = connectorMcpServers(inventory);
-      debug(
-        `connectors: declaring ${Object.keys(servers).length} of ${inventory.connectors.length} installed`,
-        Object.keys(servers).join(", ") || "none"
-      );
+      debug(() => `connectors: declaring ${Object.keys(servers).length} of ${inventory.connectors.length} installed ${Object.keys(servers).join(", ") || "none"}`);
       connectorServerCache.set(key, servers);
       connectorServerFailureAt.delete(key);
       if (writeCachedConnectors(inventory.connectors, key)) {
@@ -52497,7 +52497,7 @@ function connectorServersSnapshot(claudeConfigDir) {
   if (!cached2) return {};
   const servers = connectorMcpServers({ ok: true, complete: true, connectors: cached2 });
   if (Object.keys(servers).length === 0) return {};
-  debug(`connectors: turn-1 declarations from cache \u2014 ${Object.keys(servers).join(", ")}`);
+  debug(() => `connectors: turn-1 declarations from cache \u2014 ${Object.keys(servers).join(", ")}`);
   return servers;
 }
 
@@ -53684,7 +53684,7 @@ function schedulePersistSharedSession(ctxLike) {
 function convertMessagesForImport(messages, customToolNameToSdk) {
   const { anthropicMessages, sanitizedIds } = convertPiMessages(messages, customToolNameToSdk);
   debug(`convertMessagesForImport: ${messages.length} pi msgs \u2192 ${anthropicMessages.length} anthropic msgs`);
-  debug(`convertMessagesForImport: imported roles:`, anthropicMessages.map((m, i) => {
+  debug(`convertMessagesForImport: imported roles:`, () => anthropicMessages.map((m, i) => {
     const c = m.content;
     if (typeof c === "string") return `[${i}]${m.role}:text`;
     if (Array.isArray(c)) return `[${i}]${m.role}:${c.map((b2) => b2.type).join("+")}`;
@@ -53693,14 +53693,14 @@ function convertMessagesForImport(messages, customToolNameToSdk) {
   if (sanitizedIds.size > 0) {
     debug(
       `convertMessagesForImport: sanitized ${sanitizedIds.size} tool IDs:`,
-      [...sanitizedIds.entries()].map(([orig, clean]) => orig === clean ? orig : `${orig}\u2192${clean}`).join(", ")
+      () => [...sanitizedIds.entries()].map(([orig, clean]) => orig === clean ? orig : `${orig}\u2192${clean}`).join(", ")
     );
   }
   const recoveredToolResults = recoverLaterToolResults(anthropicMessages);
   if (recoveredToolResults.length > 0) {
     debug(
       `convertMessagesForImport: recovered ${recoveredToolResults.length} later tool result(s) for original parallel batch`,
-      recoveredToolResults.map((item) => item.id).join(", ")
+      () => recoveredToolResults.map((item) => item.id).join(", ")
     );
   }
   const missingToolResults = findUnpairedToolUses(anthropicMessages);
@@ -53735,7 +53735,7 @@ function planIncrementalPromptBatch(messages, cursor) {
   if (messages[promptStart]?.role === "assistant") promptStart++;
   const pendingPrompts = messages.slice(promptStart);
   if (pendingPrompts.length === 0 || pendingPrompts.some((message) => message.role !== "user")) {
-    debug(`planIncrementalPromptBatch: rejected \u2014 cursor=${cursor} promptStart=${promptStart} tail roles=[${messages.slice(boundedCursor).map((m) => m.role).join(", ")}]`);
+    debug(() => `planIncrementalPromptBatch: rejected \u2014 cursor=${cursor} promptStart=${promptStart} tail roles=[${messages.slice(boundedCursor).map((m) => m.role).join(", ")}]`);
     return void 0;
   }
   return {
@@ -54064,7 +54064,8 @@ function ensureTurnStarted(c = ctx()) {
 }
 function finalizeCurrentStream(stopReason, c = ctx()) {
   if (!c.currentPiStream || !c.turnOutput) return;
-  debug(`provider: finalizeCurrentStream called, stopReason=${stopReason}, turnOutput=${JSON.stringify({ stopReason: c.turnOutput.stopReason, error: c.turnOutput.errorMessage })}`);
+  const turnOutput = c.turnOutput;
+  debug(() => `provider: finalizeCurrentStream called, stopReason=${stopReason}, turnOutput=${JSON.stringify({ stopReason: turnOutput.stopReason, error: turnOutput.errorMessage })}`);
   if (!c.turnStarted) ensureTurnStarted(c);
   const reason = stopReason === "length" ? "length" : "stop";
   c.currentPiStream.push({ type: "done", reason, message: c.turnOutput });
@@ -54078,7 +54079,7 @@ function endToolUseTurn(c) {
   const partial2 = c.turnOutput.content.filter((b2) => b2?.type === "toolCall" && "partialJson" in b2);
   if (partial2.length > 0) {
     const calls = partial2.map((b2) => ({ id: b2.id, name: b2.name }));
-    debug(`endToolUseTurn: pruning ${partial2.length} still-partial tool call(s) \u2014 truncated arguments never execute:`, calls.map((entry) => `${entry.name} [${entry.id}]`).join(", "));
+    debug(`endToolUseTurn: pruning ${partial2.length} still-partial tool call(s) \u2014 truncated arguments never execute:`, () => calls.map((entry) => `${entry.name} [${entry.id}]`).join(", "));
     diagDump("partial_tool_calls_pruned", { count: partial2.length, calls });
     appendIntegrityEntry("partial_tool_calls_pruned", { count: partial2.length, calls });
     c.turnOutput.content = c.turnOutput.content.filter((b2) => !(b2?.type === "toolCall" && "partialJson" in b2));
@@ -54114,7 +54115,7 @@ function reapStaleQueuedResults(c) {
   const stale = c.takeStaleQueuedResults();
   if (stale.length === 0) return;
   const names = stale.map((entry) => entry.toolName);
-  debug(`reapStaleQueuedResults: parked ${stale.length} early tool result(s) awaiting a late handler:`, names.join(", "));
+  debug(`reapStaleQueuedResults: parked ${stale.length} early tool result(s) awaiting a late handler:`, () => names.join(", "));
   diagDump("stale_queued_tool_results_parked", { count: stale.length, stale });
   appendIntegrityEntry("stale_queued_tool_results_parked", { count: stale.length, stale });
   safeNotify(
@@ -54409,7 +54410,7 @@ function processAssistantMessage(message, model, customToolNameToPi, c = ctx()) 
     c.resetToolTracking();
   }
   c.beginChildMessage(assistantMsg.id);
-  debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b2) => b2.type).join(",")}${sameMessage ? " (same message re-yield)" : ""}`);
+  debug("processAssistantMessage fallback:", () => describeBlocks(assistantMsg.content), sameMessage ? "(same message re-yield)" : "");
   const alreadyRendered = (type, content) => c.turnBlocks.some((b2) => b2.type === type && (type === "text" ? b2.text : b2.thinking) === content);
   for (const block of assistantMsg.content) {
     if (block.type === "text" && block.text) {
@@ -54805,7 +54806,7 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
           const originalModel = message.original_model;
           const fallbackModel = message.fallback_model;
           updateTurnOutputModel(fallbackModel, queryCtx);
-          debug("consumeQuery: model_refusal_fallback", JSON.stringify({ originalModel, fallbackModel }));
+          debug("consumeQuery: model_refusal_fallback", () => JSON.stringify({ originalModel, fallbackModel }));
           if (typeof fallbackModel === "string" && typeof originalModel === "string" && fallbackModelForPrimaryModel(originalModel) === fallbackModel) {
             safeNotify(
               `Pi Claude switched ${modelDisplayName(originalModel)} to ${modelDisplayName(fallbackModel)} after Claude Code safety fallback.`,
@@ -54820,7 +54821,7 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
       case "rate_limit_event": {
         if (!streamLive) break;
         const info = message.rate_limit_info;
-        debug("consumeQuery: rate_limit_event", JSON.stringify(info).slice(0, 300));
+        debug("consumeQuery: rate_limit_event", () => JSON.stringify(info).slice(0, 300));
         if (info?.status === "rejected") {
           const rateLimitType = rateLimitTypeFromInfo(info);
           const resetAt = rateLimitResetFromInfo(info);
@@ -54846,7 +54847,7 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
         } else if (info?.status === "allowed_warning") {
           const warning = formatAllowedRateLimitWarning(info);
           if (warning) safeNotify(warning, "warning");
-          else debug("consumeQuery: suppressed low/ambiguous allowed_warning rate_limit_event", JSON.stringify(info).slice(0, 300));
+          else debug("consumeQuery: suppressed low/ambiguous allowed_warning rate_limit_event", () => JSON.stringify(info).slice(0, 300));
         }
         break;
       }
@@ -55163,9 +55164,9 @@ var MODELS = buildModels(getModels("anthropic"));
 function extractAllToolResults2(context) {
   const { results, stopIdx } = extractAllToolResults(context.messages);
   debug(`extractAllToolResults: ${results.length} results from ${context.messages.length} msgs, stopped at index ${stopIdx}`);
-  debug(`extractAllToolResults: all msg roles:`, context.messages.map((m, i) => `[${i}]${m.role}`).join(" "));
+  debug(`extractAllToolResults: all msg roles:`, () => context.messages.map((m, i) => `[${i}]${m.role}`).join(" "));
   for (let r = 0; r < results.length; r++) {
-    debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""} preview:`, () => JSON.stringify(results[r].content).slice(0, 150));
+    debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""}`, () => describeBlocks(results[r].content));
   }
   return results;
 }
@@ -55190,12 +55191,12 @@ function extractUserPromptBlocks(messages) {
       debug(`extractUserPromptBlocks: content is ${typeof content}`);
       continue;
     }
-    debug(`extractUserPromptBlocks: ${content.length} blocks, types=${content.map((b2) => b2.type).join(",")}`);
+    debug("extractUserPromptBlocks:", () => describeBlocks(content));
     for (const block of content) {
       if (block.type === "text" && block.text) {
         blocks.push({ type: "text", text: block.text });
       } else if (block.type === "image") {
-        debug(`image block: mimeType=${block.mimeType}, data length=${(block.data ?? "").length}, keys=${Object.keys(block).join(",")}`);
+        debug(() => `image block: mimeType=${block.mimeType}, data length=${(block.data ?? "").length}, keys=${Object.keys(block).join(",")}`);
         if (!block.data || !block.mimeType) {
           debug(`image block missing data or mimeType, skipping`);
           continue;
@@ -55440,7 +55441,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
         if (!queryCtx.reportedHistoryRestartDecline) {
           queryCtx.reportedHistoryRestartDecline = true;
           const names = [...new Set([...queryCtx.childSideCalls.values()].map((call) => call.name))];
-          debug(`provider: pi replaced this query's history, but ${queryCtx.childSideCalls.size} child-executed call(s) are absent from pi's context; not restarting (${names.join(", ")})`);
+          debug(() => `provider: pi replaced this query's history, but ${queryCtx.childSideCalls.size} child-executed call(s) are absent from pi's context; not restarting (${names.join(", ")})`);
           appendIntegrityEntry("history_restart_declined", { reason: "child-executed calls pi's history cannot carry", count: queryCtx.childSideCalls.size, names });
         }
       } else {
@@ -55471,7 +55472,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
       if (id2 && queryCtx.pendingToolCalls.has(id2)) {
         const pending = queryCtx.pendingToolCalls.get(id2);
         queryCtx.pendingToolCalls.delete(id2);
-        debug(`provider: resolving ${pending.toolName} [${id2}]${result.isError ? " (error)" : ""}`, () => JSON.stringify(result.content).slice(0, 200));
+        debug(`provider: resolving ${pending.toolName} [${id2}]${result.isError ? " (error)" : ""}`, () => describeBlocks(result.content));
         pending.resolve(result);
       } else if (id2) {
         queryCtx.pendingResults.set(id2, result);
@@ -55718,7 +55719,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     `model=${queryModel.id} requested=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
     `resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${built.effort ?? "default"} account=${account?.label ?? "legacy"}`,
     `fallback=${built.fallbackModel ?? "none"}`,
-    `appendSys=${built.appendSystemPrompt} promptCtx=${built.promptContextLabels.join(",") || "none"} strictMcp=${built.strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true} connectors=${built.enableCloudMcp}`,
+    () => `appendSys=${built.appendSystemPrompt} promptCtx=${built.promptContextLabels.join(",") || "none"} strictMcp=${built.strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true} connectors=${built.enableCloudMcp}`,
     `claudeExec=${claudeExecutablePreflight ? `${claudeExecutablePreflight.fileType}:${claudeExecutablePreflight.path}` : "sdk-default"}`,
     `prompt=${promptText.slice(0, 60)}${promptBlocks ? " [+images]" : ""}`
   );
@@ -55759,7 +55760,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     recordAttemptFailure(failure);
     const committed = abortCtx.committedOutput || attemptBuffer?.hasCommittedOutput === true;
     const eligible = Boolean(!isReentrant && account && router && failure.kind && !committed && !wasAborted && !options?.signal?.aborted && rotationState.attempts < MAX_ROTATION_ATTEMPTS);
-    debug("provider: account rotation decision", JSON.stringify({
+    debug("provider: account rotation decision", () => JSON.stringify({
       eligible,
       account: account?.label,
       kind: failure.kind,
@@ -56027,7 +56028,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
       reentryStream.end();
       return;
     }
-    debug(`provider: starting account retry after ${retryFailure?.kind ?? "failure"}; excluded=${[...rotationState.excludedProfileIds].join(",")}`);
+    debug(() => `provider: starting account retry after ${retryFailure?.kind ?? "failure"}; excluded=${[...rotationState.excludedProfileIds].join(",")}`);
     const retryStream = streamClaudeAgentSdk(model, context, {
       ...options ?? {},
       [ROTATION_STATE_KEY]: rotationState
@@ -56055,7 +56056,7 @@ function index_default(pi2) {
   setExtensionApi(pi2);
   process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
   const config2 = loadConfig(process.cwd());
-  debug("loadConfig:", JSON.stringify(config2));
+  debug("loadConfig:", () => JSON.stringify(config2));
   registerExternalConfigResolver();
   registerBridgeCommands(pi2);
   if (config2.enabled === false) {

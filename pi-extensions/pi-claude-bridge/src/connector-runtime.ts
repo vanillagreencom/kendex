@@ -118,8 +118,7 @@ export function primeConnectorServers(claudeConfigDir?: string, overrides: Prime
 				return;
 			}
 			const servers = connectorMcpServers(inventory);
-			debug(`connectors: declaring ${Object.keys(servers).length} of ${inventory.connectors.length} installed`,
-				Object.keys(servers).join(", ") || "none");
+			debug(() => `connectors: declaring ${Object.keys(servers).length} of ${inventory.connectors.length} installed ${Object.keys(servers).join(", ") || "none"}`);
 			connectorServerCache.set(key, servers);
 			connectorServerFailureAt.delete(key);
 			// Persist so the NEXT cold process has this synchronously. Priming always
@@ -153,6 +152,6 @@ export function connectorServersSnapshot(claudeConfigDir?: string): Record<strin
 	if (!cached) return {};
 	const servers = connectorMcpServers({ ok: true, complete: true, connectors: cached });
 	if (Object.keys(servers).length === 0) return {};
-	debug(`connectors: turn-1 declarations from cache — ${Object.keys(servers).join(", ")}`);
+	debug(() => `connectors: turn-1 declarations from cache — ${Object.keys(servers).join(", ")}`);
 	return servers;
 }

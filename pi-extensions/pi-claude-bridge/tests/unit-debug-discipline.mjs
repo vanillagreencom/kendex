@@ -10,19 +10,23 @@
 // 3. debug() evaluates function args lazily (after the DEBUG early return),
 //    and the per-SDK-message call site in consumeQuery uses that: the payload
 //    must not be built when DEBUG is off, because stream_event arrives once
-//    per streamed token.
+//    per streamed token. No debug() argument in src/ builds a collection
+//    string or JSON outside a thunk.
+// 4. A tool result's debug lines carry its block count, types and size,
+//    never its content, even with DEBUG on.
 //
 // The DEBUG flag is read once at module load, so the two gating states are
 // exercised in child processes with a controlled environment; the in-process
 // tests below scrub CLAUDE_BRIDGE_DEBUG before importing any bridge module.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import ts from "typescript";
 
 // In-process modules must load with DEBUG off regardless of the runner's env.
 delete process.env.CLAUDE_BRIDGE_DEBUG;
@@ -165,5 +169,79 @@ describe("consumeQuery managed-message debug is lazy (VST-15)", () => {
 
 		assert.equal(payloadTouched, false, "the debug payload must not be evaluated when DEBUG is off");
 		assert.equal(result.failure, undefined);
+	});
+});
+
+// Calls that build a string, array or JSON over a collection. A literal or a
+// spread builds one too.
+const EAGER_BUILDERS = new Set(["map", "join", "filter", "flatMap", "reduce", "keys", "values", "entries", "stringify", "from"]);
+
+/** Each debug() call in `text`, with the argument positions that build a
+ *  collection string or JSON outside a thunk. */
+function scanDebugCalls(file, text) {
+	const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+	const builds = (node) =>
+		(ts.isCallExpression(node) && EAGER_BUILDERS.has((ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node.expression).getText(source)))
+		|| ts.isArrayLiteralExpression(node) || ts.isObjectLiteralExpression(node) || ts.isSpreadElement(node)
+		|| Boolean(ts.forEachChild(node, builds));
+	const calls = [];
+	const visit = (node) => {
+		if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "debug") {
+			const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+			const eager = node.arguments.flatMap((arg, index) => !ts.isArrowFunction(arg) && !ts.isFunctionExpression(arg) && builds(arg) ? [index] : []);
+			calls.push({ at: `${file}:${line}`, eager });
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(source);
+	return calls;
+}
+
+describe("debug() arguments that build collections are lazy", () => {
+	it("the scan flags an eager builder and passes a thunk or a scalar", () => {
+		for (const [call, eager] of [
+			['debug("x", list.join(","))', [1]],
+			["debug(`x ${list.map((v) => v.id)}`)", [0]],
+			['debug("x", JSON.stringify(value))', [1]],
+			['debug("x", Object.keys(value).length)', [1]],
+			['debug("x", [...set])', [1]],
+			['debug("x", { a })', [1]],
+			['debug("x", () => list.join(","))', []],
+			['debug(() => `x ${JSON.stringify(value)}`)', []],
+			['debug(`x ${id.slice(0, 8)} ${list.length}`, String(n))', []],
+		]) assert.deepEqual(scanDebugCalls("row.ts", call).map((entry) => entry.eager), [eager], call);
+	});
+
+	it("no debug() call in src/ builds one outside a thunk", () => {
+		const srcDir = join(pkgRoot, "src");
+		const files = readdirSync(srcDir).filter((name) => name.endsWith(".ts"));
+		const calls = files.flatMap((name) => scanDebugCalls(name, readFileSync(join(srcDir, name), "utf8")));
+		// Floor: src/ holds well over 150 debug() calls; fewer means the scan broke.
+		assert.ok(calls.length >= 150, `scan found ${calls.length} debug() calls in ${files.length} files: the scan is broken`);
+		assert.deepEqual(calls.filter((entry) => entry.eager.length > 0).map((entry) => entry.at), []);
+	});
+});
+
+describe("tool-result debug lines carry no tool content", () => {
+	it("logs block count, types and size for a delivered result with DEBUG on", () => {
+		const marker = "tool-result-content-marker";
+		const scriptPath = join(dir, "tool-result.mjs");
+		const logPath = join(dir, "debug.log");
+		writeFileSync(scriptPath, [
+			`import { withBridge } from ${JSON.stringify(pathToFileURL(join(pkgRoot, "tests/lib/queue-bridge.mjs")).href)};`,
+			`await withBridge(["t0"], async (bridge) => {`,
+			`	const waiting = (await bridge.handler("t0")).result;`,
+			`	bridge.deliver([{ id: "t0", text: ${JSON.stringify(marker)} }]);`,
+			`	if ((await waiting).content[0].text !== ${JSON.stringify(marker)}) throw new Error("result not delivered");`,
+			`});`,
+		].join("\n"));
+		execFileSync(process.execPath, ["--import", "tsx", scriptPath], {
+			cwd: pkgRoot,
+			env: { PATH: process.env.PATH, HOME: dir, PI_CODING_AGENT_DIR: join(dir, "agent"), CLAUDE_BRIDGE_DEBUG: "1", CLAUDE_BRIDGE_DEBUG_PATH: logPath, CLAUDE_BRIDGE_DIAG_PATH: join(dir, "diag.log") },
+		});
+		const log = readFileSync(logPath, "utf8");
+		assert.match(log, /provider: resolving echo \[t0\] blocks=1 types=text bytes=\d+\n/);
+		assert.match(log, /extractAllToolResults: result\[0\] id=t0 blocks=1 types=text bytes=\d+\n/);
+		assert.equal(log.includes(marker), false, "no tool content in the debug log");
 	});
 });

@@ -92,6 +92,14 @@ export function debug(...args: unknown[]) {
 	try { appendFileSync(DEBUG_LOG_PATH, `[${ts}] [${moduleInstanceId}] ${msg}\n`, { mode: 0o600 }); } catch { /* debug is best effort */ }
 }
 
+/** Debug description of a content-block list: block count, block types and
+ *  serialized size, never a block's text or data, so a tool payload or a
+ *  user-authored message stays out of the log. The size serializes every
+ *  block: call it only inside a debug() thunk. */
+export function describeBlocks(blocks: ReadonlyArray<{ type: string }>): string {
+	return `blocks=${blocks.length} types=${blocks.map((block) => block.type).join(",")} bytes=${Buffer.byteLength(JSON.stringify(blocks))}`;
+}
+
 // Per-query CLI debug capture. When CLAUDE_BRIDGE_DEBUG=1, ask the Claude Code
 // CLI subprocess to write its own debug log to a file we choose, and also
 // forward its stderr into our debug stream. Drops straight into the real SDK's

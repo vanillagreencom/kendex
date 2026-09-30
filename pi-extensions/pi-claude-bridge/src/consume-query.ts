@@ -251,7 +251,7 @@ export async function consumeQuery(
 					const originalModel = (message as any).original_model;
 					const fallbackModel = (message as any).fallback_model;
 					updateTurnOutputModel(fallbackModel, queryCtx);
-					debug("consumeQuery: model_refusal_fallback", JSON.stringify({ originalModel, fallbackModel }));
+					debug("consumeQuery: model_refusal_fallback", () => JSON.stringify({ originalModel, fallbackModel }));
 					// Notify only for reroutes we configured, so an unexpected pairing from
 					// Claude Code is still logged above but not announced as one of ours.
 					if (typeof fallbackModel === "string" && typeof originalModel === "string" && fallbackModelForPrimaryModel(originalModel) === fallbackModel) {
@@ -273,7 +273,7 @@ export async function consumeQuery(
 			case "rate_limit_event": {
 				if (!streamLive) break;
 				const info = (message as any).rate_limit_info as Record<string, unknown> | undefined;
-				debug("consumeQuery: rate_limit_event", JSON.stringify(info).slice(0, 300));
+				debug("consumeQuery: rate_limit_event", () => JSON.stringify(info).slice(0, 300));
 				if (info?.status === "rejected") {
 					const rateLimitType = rateLimitTypeFromInfo(info);
 					const resetAt = rateLimitResetFromInfo(info);
@@ -306,7 +306,7 @@ export async function consumeQuery(
 				} else if (info?.status === "allowed_warning") {
 					const warning = formatAllowedRateLimitWarning(info);
 					if (warning) safeNotify(warning, "warning");
-					else debug("consumeQuery: suppressed low/ambiguous allowed_warning rate_limit_event", JSON.stringify(info).slice(0, 300));
+					else debug("consumeQuery: suppressed low/ambiguous allowed_warning rate_limit_event", () => JSON.stringify(info).slice(0, 300));
 				}
 				break;
 			}

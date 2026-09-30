@@ -3,7 +3,7 @@ import { type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { appendIntegrityEntry, safeNotify } from "./bridge-state.js";
 import { connectorResultByteSize, recordConnectorCallResult } from "./connector-audit.js";
 import { isChildExecutedTool } from "./connectors.js";
-import { debug, diagDump } from "./debug.js";
+import { debug, describeBlocks, diagDump } from "./debug.js";
 import { ctx, failStrandedToolCall, type QueryContext } from "./query-state.js";
 import { isForeignMcpTool, isPiDispatchable, mapToolArgs, mapToolName } from "./tool-mapping.js";
 
@@ -58,7 +58,8 @@ export function ensureTurnStarted(c: QueryContext = ctx()): void {
 
 export function finalizeCurrentStream(stopReason?: string, c: QueryContext = ctx()): void {
 	if (!c.currentPiStream || !c.turnOutput) return;
-	debug(`provider: finalizeCurrentStream called, stopReason=${stopReason}, turnOutput=${JSON.stringify({stopReason: c.turnOutput.stopReason, error: c.turnOutput.errorMessage})}`);
+	const turnOutput = c.turnOutput;
+	debug(() => `provider: finalizeCurrentStream called, stopReason=${stopReason}, turnOutput=${JSON.stringify({stopReason: turnOutput.stopReason, error: turnOutput.errorMessage})}`);
 	if (!c.turnStarted) ensureTurnStarted(c);
 	const reason = stopReason === "length" ? "length" : "stop";
 	c.currentPiStream.push({ type: "done", reason, message: c.turnOutput });
@@ -97,7 +98,7 @@ export function endToolUseTurn(c: QueryContext): void {
 	const partial = (c.turnOutput.content as Array<any>).filter((b) => b?.type === "toolCall" && "partialJson" in b);
 	if (partial.length > 0) {
 		const calls = partial.map((b) => ({ id: b.id, name: b.name }));
-		debug(`endToolUseTurn: pruning ${partial.length} still-partial tool call(s) — truncated arguments never execute:`, calls.map((entry) => `${entry.name} [${entry.id}]`).join(", "));
+		debug(`endToolUseTurn: pruning ${partial.length} still-partial tool call(s) — truncated arguments never execute:`, () => calls.map((entry) => `${entry.name} [${entry.id}]`).join(", "));
 		diagDump("partial_tool_calls_pruned", { count: partial.length, calls });
 		appendIntegrityEntry("partial_tool_calls_pruned", { count: partial.length, calls });
 		c.turnOutput.content = (c.turnOutput.content as Array<any>).filter((b) => !(b?.type === "toolCall" && "partialJson" in b));
@@ -155,7 +156,7 @@ export function reapStaleQueuedResults(c: QueryContext): void {
 	const stale = c.takeStaleQueuedResults();
 	if (stale.length === 0) return;
 	const names = stale.map((entry) => entry.toolName);
-	debug(`reapStaleQueuedResults: parked ${stale.length} early tool result(s) awaiting a late handler:`, names.join(", "));
+	debug(`reapStaleQueuedResults: parked ${stale.length} early tool result(s) awaiting a late handler:`, () => names.join(", "));
 	diagDump("stale_queued_tool_results_parked", { count: stale.length, stale });
 	appendIntegrityEntry("stale_queued_tool_results_parked", { count: stale.length, stale });
 	safeNotify(
@@ -637,7 +638,7 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 	// for a message whose `message_start` already streamed — any message that
 	// produced no content blocks, since `turnSawStreamEvent` only tracks those.
 	c.beginChildMessage(assistantMsg.id);
-	debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b: any) => b.type).join(",")}${sameMessage ? " (same message re-yield)" : ""}`);
+	debug("processAssistantMessage fallback:", () => describeBlocks(assistantMsg.content), sameMessage ? "(same message re-yield)" : "");
 	// Deduped against the WHOLE current turn, not just same-id re-yields: a
 	// rejected turn's synthesized error message ("You've hit your weekly limit")
 	// arrives as multiple assistant yields whose ids DIFFER or are absent (one
