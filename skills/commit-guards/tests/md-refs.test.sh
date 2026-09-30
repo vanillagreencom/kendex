@@ -195,6 +195,8 @@ cite_rows \
   "mailto uses the same non-local destination rule|dec||[D016](mailto:D016@example.com)\n|rc=0 $(clean 0 3 0 "$DEC_YES")" \
   "a leading slash uses the same non-local destination rule|dec||[D016](/D016)\n|rc=0 $(clean 0 3 0 "$DEC_YES")" \
   "bare IDs beside external links still fail|dec||[D016](https://example.com/D016) D016\n|rc=1 $(dead AGENTS.md 1 "$(nodecision D016)");$(failed 1 1 3 0 "$DEC_YES")" \
+  "an even backslash run leaves the inline link intact|dec||\\\\\\\\[D016](https://example.com/D016)\n|rc=0 $(clean 0 3 0 "$DEC_YES")" \
+  "a continued raw HTML block does not parse inline links|dec||<div>\n[D016](https://example.com/D016)\n</div>\n|rc=1 $(dead AGENTS.md 2 "$(nodecision D016)");$(dead AGENTS.md 2 "$(nodecision D016)");$(failed 2 2 3 0 "$DEC_YES")" \
   "relative link labels and destinations keep their decision IDs|dec||[D001](docs/decisions/D001-first.md)\n|rc=0 $(clean 3 3 0 "$DEC_YES")" \
   "a relative link does not hide a missing decision in its label|dec||[D016](docs/guide.md)\n|rc=1 $(dead AGENTS.md 1 "$(nodecision D016)");$(failed 1 2 3 0 "$DEC_YES")" \
   "link-shaped code remains decision citation text|dec||\`[D016](https://example.com/D016)\`\n|rc=1 $(dead AGENTS.md 1 "$(nodecision D016)");$(dead AGENTS.md 1 "$(nodecision D016)");$(failed 2 2 3 0 "$DEC_YES")" \
@@ -218,9 +220,9 @@ put AGENTS.md '[D016](https://github.com/vanillagreencom/kendex/blob/main/docs/d
 assert_eq "the shipped D016 link passes without a local D016 decision" "rc=0 $(clean 0 3 0 "$DEC_YES")" "$(run '' --all)"
 mkdir -p "$TMP/md-refs-mutant"
 cp -R "$SKILL_DIR/scripts" "$TMP/md-refs-mutant/scripts"
-MASK_LINE='  if (grammar != "text") s = mask_links(s, 1)'
+MASK_LINE='  if (grammar != "text" && block_kind != "X") s = mask_links(s, 1)'
 assert_eq "the external-link masking control has one edit site" 1 "$(grep -Fxc "$MASK_LINE" "$TMP/md-refs-mutant/scripts/lib/md-refs.awk")"
-sed 's/if (grammar != "text") s = mask_links(s, 1)/# external-link control: keep decision emission unmasked/' \
+sed 's/if (grammar != "text" \&\& block_kind != "X") s = mask_links(s, 1)/# external-link control: keep decision emission unmasked/' \
   "$SKILL_DIR/scripts/lib/md-refs.awk" >"$TMP/md-refs-mutant/scripts/lib/md-refs.awk"
 cmp -s "$SKILL_DIR/scripts/lib/md-refs.awk" "$TMP/md-refs-mutant/scripts/lib/md-refs.awk" && exit 2
 MDR="$TMP/md-refs-mutant/scripts/md-refs"
@@ -230,6 +232,23 @@ MDR="$SKILL_DIR/scripts/md-refs"
 put AGENTS.md 'D016\n'
 assert_eq "a bare D016 fails decision-missing in that same consumer" \
   "rc=1 $(dead AGENTS.md 1 "$(nodecision D016)");$(failed 1 1 3 0 "$DEC_YES")" "$(run '' --all)"
+
+# Consumer authors can write literal link-shaped text, not just inline links.
+while IFS='|' read -r label site mutation content; do
+  put AGENTS.md "$content"
+  assert_eq "$label keeps both missing decision IDs" \
+    "rc=1 $(dead AGENTS.md 1 "$(nodecision D016)");$(dead AGENTS.md 1 "$(nodecision D016)");$(failed 2 2 3 0 "$DEC_YES")" "$(run '' --all)"
+  assert_eq "$label control has one edit site" 1 "$(grep -Fxc "$site" "$SKILL_DIR/scripts/lib/md-refs.awk")"
+  sed "$mutation" "$SKILL_DIR/scripts/lib/md-refs.awk" >"$TMP/md-refs-mutant/scripts/lib/md-refs.awk"
+  cmp -s "$SKILL_DIR/scripts/lib/md-refs.awk" "$TMP/md-refs-mutant/scripts/lib/md-refs.awk" && exit 2
+  MDR="$TMP/md-refs-mutant/scripts/md-refs"
+  assert_eq "control: $label fails open without its link boundary" \
+    "rc=0 $(clean 0 3 0 "$DEC_YES")" "$(run '' --all)"
+  MDR="$SKILL_DIR/scripts/md-refs"
+done <<'CASES'
+escaped opener|    if (escapes % 2) { p = start + RLENGTH; continue }|s/if (escapes % 2)/if (0)/|\\[D016](https://example.com/D016)\n
+raw HTML block|  if (grammar != "text" && block_kind != "X") s = mask_links(s, 1)|s/ \&\& block_kind != "X"//|<div>[D016](https://example.com/D016)</div>\n
+CASES
 
 echo "=== a link followed by a section name resolves the heading prefix ==="
 cite_rows \

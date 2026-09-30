@@ -461,13 +461,15 @@ while IFS= read -r f; do
   # Content follows two protocol tabs, and can contain more tabs of its own.
   first = index($0, "\t")
   if (!first) next
+  block_kind = substr($0, 1, first - 1)
   rest = substr($0, first + 1)
   second = index(rest, "\t")
   line_no = substr(rest, 1, second - 1)
   text = substr(rest, second + 1)
   split_spans(text)
   text = outside
-  emit_ids(mask_links(text, 0))
+  if (block_kind != "X") text = mask_links(text, 0)
+  emit_ids(text, block_kind)
   next
 }
 AWK

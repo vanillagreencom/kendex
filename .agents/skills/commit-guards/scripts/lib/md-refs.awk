@@ -126,12 +126,16 @@ function is_local(dest) {
 # Mask complete inline links, or only those whose destinations are not local.
 # Keep positions for section tails. Code spans still carry decision citations,
 # so link-shaped text inside them is not masked.
-function mask_links(s, external_only,   search, p, start, dest, stop) {
+function mask_links(s, external_only,   search, p, start, dest, stop, escapes) {
   split_spans(s)
   search = outside
   p = 1
   while (match(substr(search, p), /\[[^][]*\]\(/)) {
     start = p + RSTART - 1
+    # An odd backslash run makes the opening bracket literal text.
+    escapes = 0
+    while (start > escapes + 1 && substr(search, start - escapes - 1, 1) == "\\") escapes++
+    if (escapes % 2) { p = start + RLENGTH; continue }
     dest = parse_dest(search, start + RLENGTH)
     stop = LINK_CLOSE
     if (dest == "" || stop == 0) { p = start + RLENGTH; continue }
@@ -203,9 +207,10 @@ function emit_citation(span,   path, rest, i) {
 # runs to the end of the line, and the prefix rule allows prose after it.
 # In plain text only the `§` form is a citation: a bare ID there is prose,
 # and the caller's pre-filter is free to open only the files that hold a §.
-function emit_ids(s,   i, p, q, n, before, after, tail, section) {
+function emit_ids(s, block_kind,   i, p, q, n, before, after, tail, section) {
   if (id_prefix == "") return
-  if (grammar != "text") s = mask_links(s, 1)
+  # HTML block records do not parse Markdown inline links.
+  if (grammar != "text" && block_kind != "X") s = mask_links(s, 1)
   p = 1
   while (1) {
     i = index(substr(s, p), id_prefix)
@@ -440,7 +445,7 @@ mode == "refs" {
   line_no = f[2]
   if (f[1] == "H") next
   if (f[1] == "X") {
-    emit_ids(f[3])
+    emit_ids(f[3], f[1])
     next
   }
   split_spans(f[3])

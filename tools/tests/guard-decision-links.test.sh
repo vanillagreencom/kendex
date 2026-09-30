@@ -44,11 +44,16 @@ refuse|skills/demo/README.md|# D016
 refuse|skills/demo/README.md|text\tD016
 refuse|skills/demo/README.md|`D016` and D1
 refuse|skills/demo/README.md|[D016](broken
+refuse|skills/demo/README.md|\\[D016](https://example.com/D016)
+refuse|skills/demo/README.md|<div>[D016](https://example.com/D016)</div>
+refuse|skills/demo/README.md|<div>\n[D016](https://example.com/D016)\n</div>
 refuse|skills/demo/README.md|> D016
 pass|skills/demo/README.md|[D016](https://github.com/vanillagreencom/kendex/blob/main/docs/decisions/D016-merge-route-reads-bypass.md)
 pass|skills/demo/README.md|[D016](<https://example.com/D016> "D016")
 pass|skills/demo/README.md|[D016](https://example.com/(D016))
 pass|skills/demo/README.md|[text]() then [D016](https://example.com/D016)
+pass|skills/demo/README.md|\\\\[D016](https://example.com/D016)
+pass|skills/demo/README.md|`\\[D016](https://example.com/D016)`
 pass|skills/demo/README.md|AD016 D016x 1D016 D016A DXXX
 pass|skills/demo/README.md|`D016` and ``D1 ` D2``
 pass|skills/demo/README.md|```text\nD016\n```
@@ -68,28 +73,34 @@ pass|skills/demo/citation.txt|D016
 scan|skills/demo/README.md|```text\nD016
 CASES
 
-reset_world
-# docs-writing/templates/DEVELOPMENT.md is catalog content, unlike the
-# skill's top-level maintainer notes. Stage its source and render together.
-mkdir -p "$R/skills/demo/templates" "$R/.agents/skills/demo/templates"
-printf '# citation\n\nRead D016.\n' >"$R/skills/demo/templates/DEVELOPMENT.md"
-cp "$R/skills/demo/templates/DEVELOPMENT.md" "$R/.agents/skills/demo/templates/DEVELOPMENT.md"
-git -C "$R" add -- skills/demo/templates/DEVELOPMENT.md .agents/skills/demo/templates/DEVELOPMENT.md
-run_guard
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: shipped-decision-link=skills/demo/templates/DEVELOPMENT.md"* ]] \
-  && [[ "$OUT" == *$'D\tskills/demo/templates/DEVELOPMENT.md\t3\tD016'* ]] \
-  && ok "must-fail fixture reaches the decision-link rule with its source line" \
-  || bad "must-fail fixture reaches the decision-link rule with its source line" "rc=$RC out=$OUT"
-# Keep extraction and matched text intact. Remove only the refusal behavior.
-matches=$(grep -Fc 'say shipped-decision-link "$f"' "$GUARD") || matches=0
-if [ "$matches" -eq 1 ] && mutant_guard 's/say shipped-decision-link "$f"/: # decision-link control/'; then
-  run_mutant
-  [ "$RC" -eq 0 ] && [[ "$OUT" == *$'D\tskills/demo/templates/DEVELOPMENT.md\t3\tD016'* ]] \
-    && ok "control: the same fixture passes when the link refusal is disabled" \
-    || bad "control: the same fixture passes when the link refusal is disabled" "rc=$RC out=$OUT"
-else
-  bad "control: the decision-link refusal was not changed in the guard copy"
-fi
+while IFS= read -r content; do
+  reset_world
+  # docs-writing/templates/DEVELOPMENT.md is catalog content, unlike the
+  # skill's top-level maintainer notes. Stage its source and render together.
+  mkdir -p "$R/skills/demo/templates" "$R/.agents/skills/demo/templates"
+  printf '# citation\n\n%b\n' "$content" >"$R/skills/demo/templates/DEVELOPMENT.md"
+  cp "$R/skills/demo/templates/DEVELOPMENT.md" "$R/.agents/skills/demo/templates/DEVELOPMENT.md"
+  git -C "$R" add -- skills/demo/templates/DEVELOPMENT.md .agents/skills/demo/templates/DEVELOPMENT.md
+  run_guard
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: shipped-decision-link=skills/demo/templates/DEVELOPMENT.md"* ]] \
+    && [[ "$OUT" == *$'D\tskills/demo/templates/DEVELOPMENT.md\t3\tD016'* ]] \
+    && ok "must-fail fixture reaches the decision-link rule with its source line: $content" \
+    || bad "must-fail fixture reaches the decision-link rule with its source line: $content" "rc=$RC out=$OUT"
+  # Keep extraction and matched text intact. Remove only the refusal behavior.
+  matches=$(grep -Fc 'say shipped-decision-link "$f"' "$GUARD") || matches=0
+  if [ "$matches" -eq 1 ] && mutant_guard 's/say shipped-decision-link "$f"/: # decision-link control/'; then
+    run_mutant
+    [ "$RC" -eq 0 ] && [[ "$OUT" == *$'D\tskills/demo/templates/DEVELOPMENT.md\t3\tD016'* ]] \
+      && ok "control: the same fixture passes when the link refusal is disabled: $content" \
+      || bad "control: the same fixture passes when the link refusal is disabled: $content" "rc=$RC out=$OUT"
+  else
+    bad "control: the decision-link refusal was not changed in the guard copy"
+  fi
+done <<'CASES'
+Read D016.
+\\[D016](https://example.com/D016)
+<div>[D016](https://example.com/D016)</div>
+CASES
 
 echo "=== incomplete common-file discovery refuses all dependent scans ==="
 reset_world
