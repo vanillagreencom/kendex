@@ -34,8 +34,8 @@ export interface Standing {
    *  and acting on rows we could not refresh is exactly the fail-open it
    *  closes. */
   read: ReadState;
-  /** True while a read of the standing is on its way: a mount or a return
-   *  to the window reloads over rows that landed perfectly well, and every
+  /** True while a read of the standing is on its way: window focus can
+   *  reload over rows that landed perfectly well, and every
    *  value a commit-applying action captured is about to be replaced. */
   reading: boolean;
 }
@@ -46,9 +46,8 @@ type Answer =
 
 /** The landing and the plain read, sharing one ticket order.
  *
- *  Reads of the standing overlap on every ordinary path: startup against
- *  the page's own mount, the focus rescan against both, every mutation
- *  re-reading behind them. */
+ *  Startup and focus supply the standing to every page. Navigation adds
+ *  no demand. A focus read can overlap startup or a mutation's read. */
 export function standingReads(set: (partial: Partial<Standing>) => void) {
   const order = readOrder();
 

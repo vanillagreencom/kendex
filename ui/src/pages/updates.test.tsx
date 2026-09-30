@@ -62,7 +62,6 @@ vi.mock("@/stores/updates", async (importOriginal) => {
       read: stub.read,
       lastFetched: stub.lastFetched,
       unreadable: stub.unreadable,
-      reload: async () => {},
     };
     return selector ? selector(state) : state;
   };

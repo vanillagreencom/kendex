@@ -80,7 +80,7 @@ export function UpdatesPage() {
   // so the button and `updateRows` answer to one predicate: rows an
   // overview-producing read is about to replace.
   const unconfirmed = useUpdatesStore(readUnsettled);
-  const load = useUpdatesStore((s) => s.reload);
+
   const lastFetched = useUpdatesStore((s) => s.lastFetched);
   // One choice for every table on the page; the `…` menu lives on the
   // main table, or on the muted one when it is the only table drawn.
@@ -112,9 +112,6 @@ export function UpdatesPage() {
     place: string | null;
   } | null>(null);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
   // Opening this page reads the update notice: Home's row goes and the
   // badge takes the neutral fill until the set of updates changes.
   const markRead = useReadNotices((s) => s.markRead);
@@ -140,7 +137,7 @@ export function UpdatesPage() {
     unreadable.length === 0;
 
   // On the page's own clock, not the render's. Only a read of the standing
-  // re-renders this — mount, a check, a mutation — so a window left open
+  // re-renders this: startup, focus, a check or a mutation. A window left open
   // would go on claiming the age it had when it opened.
   const now = useNowTick();
   const lastChecked = lastCheckedLabel(lastFetched, now);

@@ -203,8 +203,8 @@ describe("updates store", () => {
   });
 
   // Reads land in any order, and they overlap on every ordinary path: the
-  // startup effect against the page's own mount, the focus rescan against
-  // both. Without ordering a slow early one landing last overwrites a
+  // startup effect against a focus rescan or a mutation's read.
+  // Without ordering a slow early one landing last overwrites a
   // fresher answer and stamps its stale rows current.
   it("discards a slow load that lands after a fresher check", async () => {
     let resolveLoad!: (
@@ -270,7 +270,7 @@ describe("updates store", () => {
     expect(useUpdatesStore.getState().read.error).toBeNull();
   });
 
-  // A mount or a return to the window reloads over rows that landed
+  // A return to the window reloads over rows that landed
   // perfectly well. The read state stays `landed` throughout — the rows
   // are still the last answer — so nothing in it says the values under
   // the buttons are about to be replaced. An update accepted in that

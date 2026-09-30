@@ -1,0 +1,1 @@
+- Returning to Updates keeps the current rows without repeating the background read. Startup reads them once. Check for updates and refreshes after changes or window focus still run.

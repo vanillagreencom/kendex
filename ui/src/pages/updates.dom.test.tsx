@@ -19,7 +19,7 @@ import { scanFound } from "@/test/observed";
 import { UpdatesPage } from "./updates";
 
 vi.mock("@/bindings", () => ({
-  commands: { auditAll: vi.fn(), updatesOverview: vi.fn() },
+  commands: { auditAll: vi.fn() },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
@@ -28,18 +28,19 @@ beforeEach(() => {
     status: "ok",
     data: [],
   } as never);
-  // The page reloads the standing on mount, and that answer replaces the
-  // staged one, so it carries the same empty machine.
-  vi.mocked(commands.updatesOverview).mockResolvedValue({
-    status: "ok",
-    data: { rows: [], warnings: [], unreadable: [], fetchedAt: null },
-  } as never);
+
   // A settled scan of a machine with nothing on it, and a join answering
   // about that scan: the one state in which the page may say so. Only what
   // differs from each store's own defaults is set.
   useScanStore.setState({ result: scanFound([]), generation: 1 });
   useProvenanceStore.setState({ loaded: true, answeredFor: 1 });
-  useUpdatesStore.setState({ read: READ_LANDED });
+  useUpdatesStore.setState({
+    rows: [],
+    warnings: [],
+    unreadable: [],
+    lastFetched: null,
+    read: READ_LANDED,
+  });
   useNavStore.setState({ page: "updates" });
 });
 
@@ -65,10 +66,7 @@ describe("where an empty machine's Updates page leads", () => {
 describe("opening the Updates page", () => {
   it("marks the update set it shows read", async () => {
     const rows = [updateRow("gh", null)];
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: { rows, warnings: [], unreadable: [], fetchedAt: null },
-    } as never);
+    useUpdatesStore.setState({ rows });
     mount(<UpdatesPage />);
     await settle();
     const stored = useReadNotices.getState().read.updates;

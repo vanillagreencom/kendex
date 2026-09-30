@@ -14,8 +14,8 @@ import { UpdatesPage } from "./updates";
 // exist to remove. Two surfaces, one rate: the Updates page composes its age
 // into a sentence, and `<Ago>` is what every table row and header draws.
 //
-// The store is real; `load` is stubbed to a no-op so the mount effect
-// reaches no command and the age on screen can only come from the clock.
+// The page subscribes to the real store. The age on screen changes without
+// a read of the standing.
 beforeEach(() => {
   vi.useFakeTimers();
   useUpdatesStore.setState({
@@ -25,7 +25,6 @@ beforeEach(() => {
     busy: false,
     read: READ_LANDED,
     checking: false,
-    reload: async () => {},
   });
 });
 

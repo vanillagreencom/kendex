@@ -67,8 +67,12 @@ const dialog = () => document.querySelector('[role="dialog"]');
 beforeEach(() => {
   useUpdatesStore.setState({
     rows: [],
+    warnings: [],
+    unreadable: [],
+    lastFetched: null,
     busy: false,
     read: READ_LANDED,
+    reading: false,
     checking: false,
   });
   useUpdatesView.setState({ showVersion: false });
@@ -224,14 +228,8 @@ describe("the table's own menu", () => {
   // The page owns the choice: its main table carries the menu, and the
   // muted table under "hidden updates" follows with no menu of its own.
   it("shows the Version column from the `…` menu, for every table on the page", async () => {
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: {
-        rows: [row("one", null), row("two", null, { ignored: true })],
-        warnings: [],
-        unreadable: [],
-        lastFetched: null,
-      },
+    useUpdatesStore.setState({
+      rows: [row("one", null), row("two", null, { ignored: true })],
     });
     const host = mount(<UpdatesPage />);
     await settle();
@@ -265,15 +263,7 @@ describe("the table's own menu", () => {
 // exists once the menu is open, which is why it is held here.
 describe("the row's Ignore item", () => {
   it("is held while a check is out", async () => {
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: {
-        rows: [row("one", null)],
-        warnings: [],
-        unreadable: [],
-        lastFetched: null,
-      },
-    });
+    useUpdatesStore.setState({ rows: [row("one", null)] });
     mount(<UpdatesPage />);
     await settle();
 
@@ -303,15 +293,7 @@ describe("the row's Ignore item", () => {
   // while it is up, and the store refuses the mute on either. The confirm
   // says so rather than closing over an error.
   it("holds the confirm it opens for either half of the pair", async () => {
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: {
-        rows: [row("one", null)],
-        warnings: [],
-        unreadable: [],
-        lastFetched: null,
-      },
-    });
+    useUpdatesStore.setState({ rows: [row("one", null)] });
     mount(<UpdatesPage />);
     await settle();
 
@@ -344,15 +326,7 @@ describe("the row's Ignore item", () => {
 
 describe("a page with only muted updates", () => {
   it("still carries the `…` menu, on the muted table", async () => {
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: {
-        rows: [row("two", null, { ignored: true })],
-        warnings: [],
-        unreadable: [],
-        lastFetched: null,
-      },
-    });
+    useUpdatesStore.setState({ rows: [row("two", null, { ignored: true })] });
     const host = mount(<UpdatesPage />);
     await settle();
     expect(host.querySelector('[aria-label="Table options"]')).toBeNull();
@@ -693,20 +667,14 @@ describe("the explanation on the Edited tag", () => {
 describe("a row of a kind core refuses", () => {
   it("offers no Update, and shows the refusal core sent", async () => {
     const refusal = "REFUSED-BY-CORE: this kind moves another way";
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: {
-        rows: [
-          row("pi-hooks", null, {
-            kind: "pi-extension",
-            noPerPackageUpdate: refusal,
-          }),
-          row("gh", null),
-        ],
-        warnings: [],
-        unreadable: [],
-        lastFetched: null,
-      },
+    useUpdatesStore.setState({
+      rows: [
+        row("pi-hooks", null, {
+          kind: "pi-extension",
+          noPerPackageUpdate: refusal,
+        }),
+        row("gh", null),
+      ],
     });
     mount(<UpdatesPage />);
     await settle();
@@ -729,15 +697,8 @@ describe("a row of a kind core refuses", () => {
 // off these rows, so a captured array would write against a standing the
 // app has already replaced.
 describe("a review left open while the standing moves", () => {
-  const overview = (rows: unknown[]) => ({
-    status: "ok" as const,
-    data: { rows, warnings: [], unreadable: [], lastFetched: null },
-  });
-
   it("follows the store rather than the rows the click saw", async () => {
-    vi.mocked(commands.updatesOverview).mockResolvedValue(
-      overview([row("gh", null)]) as never,
-    );
+    useUpdatesStore.setState({ rows: [row("gh", null)] });
     mount(<UpdatesPage />);
     await settle();
 
@@ -765,9 +726,7 @@ describe("a review left open while the standing moves", () => {
   // frozen array could never lose its targets. Here another window takes
   // the update the dialog was opened on, and the read lands under it.
   it("says so when the news it was opened on is gone", async () => {
-    vi.mocked(commands.updatesOverview).mockResolvedValue(
-      overview([row("gh", null), row("dev", null)]) as never,
-    );
+    useUpdatesStore.setState({ rows: [row("gh", null), row("dev", null)] });
     mount(<UpdatesPage />);
     await settle();
 
@@ -800,15 +759,9 @@ describe("a review left open while the standing moves", () => {
 // it opens is handed the same siblings and names the place the same way.
 describe("the place a review names", () => {
   it("tells same-named folders apart in the confirm, as the row does", async () => {
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: {
-        rows: [row("gh", "/home/x/work/app"), row("gh", "/home/x/clients/app")],
-        warnings: [],
-        unreadable: [],
-        lastFetched: null,
-      },
-    } as never);
+    useUpdatesStore.setState({
+      rows: [row("gh", "/home/x/work/app"), row("gh", "/home/x/clients/app")],
+    });
     const host = mount(<UpdatesPage />);
     await settle();
 
