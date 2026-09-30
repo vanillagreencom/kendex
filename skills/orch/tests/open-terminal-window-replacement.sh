@@ -130,8 +130,8 @@ run_row() { # LAUNCHER HOST COUNT SPLIT SOLE [FAILURE] [MODE] [COLLISION]
     "$launcher" --state-dir "$RUN/state" --repo o/r ${tracker_args[@]+"${tracker_args[@]}"} --harness claude --cmd "claude --model opus --effort high --disallowedTools=AskUserQuestion,EnterPlanMode --settings='{\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}'" \
     ${host_args[@]+"${host_args[@]}"} "$mode" "$ITEM" 2>&1)" || RC=$?
   [[ "$RC" == 0 ]] || printf '%s\n' "$OUT"
-  JOB="$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee --arg item "$STATE_ID" \
-    '[.lanes[]? | select(.item == $item) | .prepare.pid // empty] | first // ""')"
+  JOB="$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee .lanes | jq -r --arg item "$STATE_ID" \
+    '[.[]? | select(.item == $item) | .prepare.pid // empty] | first // ""')"
   # Local command delivery is asynchronous. Poll the real screen rather than
   # assume the shell has executed the paste when open-terminal returns.
   STATE=""
@@ -154,8 +154,8 @@ run_row() { # LAUNCHER HOST COUNT SPLIT SOLE [FAILURE] [MODE] [COLLISION]
   for pane in $FOREIGN; do
     if grep -qxF -- "$pane" <<<"$PANES"; then FOREIGN_RETAINED=$((FOREIGN_RETAINED + 1)); fi
   done
-  RECORD="$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee --arg item "$STATE_ID" \
-    '[.lanes[]? | select(.item == $item) | "\(.status) \(.window // "")"] | first')"
+  RECORD="$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee .lanes | jq -r --arg item "$STATE_ID" \
+    '[.[]? | select(.item == $item) | "\(.status) \(.window // "")"] | first')"
   if [[ -n "$JOB" ]]; then kill -TERM -- "-$JOB"; JOB=""; fi
 }
 
