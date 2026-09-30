@@ -504,7 +504,7 @@ if [[ "$kind" == "fix" && "$validate_run_dir_given" == "true" ]]; then
             }
             { valid = 0 }
             END { if (valid && hops && rows) print target }
-          ' -- "$rebase_map")" || die rebase-map-unreadable "path=$rebase_map"
+          ' < "$rebase_map")" || die rebase-map-unreadable "path=$rebase_map"
         fi
         [[ "$mapped_base" == "$run_head" ]] \
           || die run-off-round "run-dir=$validate_run_dir" "head=$run_head" "base-sha=$round_base"
