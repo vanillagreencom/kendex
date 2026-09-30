@@ -415,6 +415,59 @@ for row in "claude|claude -n CC-1 $CLAUDE_QUESTION_OFF --resume $CLAUDE222|$REAR
       "$harness clears the predecessor reading for a $lifetime session"
   done
 done
+# open-terminal's GitHub start brief is /orch start github OWNER/REPO#N.
+# KEN-2189 removed the issue-token filter; the repository's last letter before
+# #2708 must not prevent the owned lead transcript from being selected.
+GITHUB_HOME="$TMP_ROOT/github-session-home"
+GITHUB_WT="$TMP_ROOT/wt/issue-2708"
+GITHUB_BRIEF='/orch start github vanillagreencom/kendex#2708'
+mkdir -p "$GITHUB_WT"
+for row in 'claude|.claude-shared/projects/repo|null|{"type":"user","isSidechain":false}' \
+  'codex|.selected-codex/sessions/2026|{"type":"session_meta","payload":{"id":"owned","source":"cli"}}|{"type":"event_msg","payload":{"type":"user_message"}}' \
+  'pi|.pi/agent/sessions/repo|{"type":"session","version":3,"id":"owned"}|{"type":"message","message":{"role":"user"}}'; do
+  IFS='|' read -r harness root meta message <<<"$row"
+  mkdir -p "$GITHUB_HOME/$root"
+  for owner in owned foreign; do
+    cwd="$GITHUB_WT"
+    [[ "$owner" != foreign ]] || cwd="$TMP_ROOT/other-repo/issue-2708"
+    jq -nc --argjson meta "$meta" --argjson message "$message" --arg cwd "$cwd" --arg brief "$GITHUB_BRIEF" '
+      (if $meta!=null then $meta | if .type=="session_meta" then .payload.cwd=$cwd else .cwd=$cwd end else empty end),
+      ($message | if .type=="event_msg" then .payload.message=$brief
+        elif .type=="message" then .message.content=[{type:"text",text:$brief}]
+        else .message.content=$brief end | if .type=="user" then .cwd=$cwd else . end)' > "$GITHUB_HOME/$root/$owner.jsonl"
+    # Ownership, not a newer copy of the same GitHub kickoff, selects the file.
+    if [[ "$owner" == owned ]]; then touch -t 200001010000 "$GITHUB_HOME/$root/$owner.jsonl"
+    else touch -t 203001010000 "$GITHUB_HOME/$root/$owner.jsonl"; fi
+  done
+  selected_rc=0
+  selected="$(env -i PATH="$BIN:$PATH" HOME="$GITHUB_HOME" LANES_HOME="$GITHUB_HOME" \
+    LANE_ENV= LAUNCH_FLAGS= LANES_CLI="$BIN/lanes" bash -c \
+    'set -euo pipefail; source "$1"; find_relaunch_session "$2" "$3" "$4"' _ \
+    "$SCRIPTS_DIR/lib/lane-relaunch.sh" "$harness" "$GITHUB_WT" "$GITHUB_HOME/.selected-codex")" || selected_rc=$?
+  assert_eq "rc=$selected_rc transcript=$selected" "rc=0 transcript=$GITHUB_HOME/$root/owned.jsonl" \
+    "$harness selects the exact owned transcript whose first user message is the GitHub start brief"
+done
+# Must-fail control: add the old issue-token check back to a disposable matcher.
+# Keep the ownership check in place, so only the retired token rule rejects it.
+GITHUB_CONTROL="$TMP_ROOT/github-lane-relaunch.sh"
+cp "$SCRIPTS_DIR/lib/lane-relaunch.sh" "$GITHUB_CONTROL"
+mutate_file "$GITHUB_CONTROL" \
+  'if jq -Rne --arg cwd "$cwd" "$match_filter | .cwd==\$cwd and .lead" "$file" >/dev/null 2>&1; then' \
+  'if jq -Rne --arg cwd "$cwd" "$match_filter | .cwd==\$cwd and .lead" "$file" >/dev/null 2>&1 && jq -Rne --arg i "#2708" '\''[inputs|fromjson?|select(.type=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)"; "i")'\'' "$file" >/dev/null 2>&1; then'
+selected_rc=0
+selected="$(env -i PATH="$BIN:$PATH" HOME="$GITHUB_HOME" LANES_HOME="$GITHUB_HOME" \
+  LANE_ENV= LAUNCH_FLAGS= LANES_CLI="$BIN/lanes" bash -c \
+  'set -euo pipefail; source "$1"; find_relaunch_session "$2" "$3" "$4"' _ \
+  "$GITHUB_CONTROL" claude "$GITHUB_WT" "$GITHUB_HOME/.selected-codex")" || selected_rc=$?
+control_rc=0
+(
+  source "$TEST_DIR/lib/assertions.sh"
+  assert_eq "rc=$selected_rc transcript=$selected" "rc=0 transcript=$GITHUB_HOME/.claude-shared/projects/repo/owned.jsonl" \
+    "GitHub transcript selection"
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/github-control.log" || control_rc=$?
+assert_eq "control=$control_rc rc=$selected_rc transcript=$selected" 'control=1 rc=1 transcript=' \
+  "control: the old issue-token check turns the exact GitHub selection assertion red" "$TMP_ROOT/github-control.log"
 # Without forwarding the selected identity, the marker clears a resumed
 # session's reading. Keep the real session lookup and marker in this control.
 CONTEXT_CONTROL="$REPO/scripts/open-terminal-context-control"
