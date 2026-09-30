@@ -87,6 +87,6 @@ COMMIT_GUARDS_PRE_COMMIT_LOCAL = ""
 
 # The paths that project check reads, as path patterns separated by spaces
 # (`*` matches across folders). The check runs only for a commit that changes
-# one of them, and a skipped check prints one line. Empty runs it on every
-# commit.
+# one of them, and a skipped check prints `pre-commit: local-entry=skipped`.
+# Empty runs it on every commit.
 COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS = ""

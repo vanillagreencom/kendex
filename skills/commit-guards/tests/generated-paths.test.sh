@@ -100,15 +100,24 @@ assert_eq 'control: refusing adopted objects breaks the valid mixed inventory' \
 # shellcheck source=../scripts/lib/generated-paths.sh
 source "$reader"
 
-echo "=== a refusal names the jq that read the inventory, and says install jq only when none is on PATH ==="
-# The refusal's status line and its fix line, from a load with jq on PATH and
-# from one whose PATH holds no jq. The expected version is asked of the jq on
-# PATH, never of the loader.
+echo "=== a refusal names the jq that read the inventory, and names jq as the fix only when jq is at fault ==="
+# The refusal's status line and its fix line, from a load with jq on PATH,
+# from one whose PATH holds no jq, and from one whose PATH holds a jq that
+# cannot compile the filter. The expected version is asked of the jq on PATH,
+# never of the loader. The stub stands in for jq 1.5, which has no halt_error
+# and exits 3 on a filter naming it.
 NO_JQ_PATH="$TMP/no-jq-bin"
 mkdir -p "$NO_JQ_PATH"
-refusal() { # PATH-FOR-THE-LOAD
+OLD_JQ_PATH="$TMP/old-jq-bin"
+mkdir -p "$OLD_JQ_PATH"
+printf '%s\n' '#!/bin/sh' \
+  'case "$1" in --version) printf "jq-1.5\n"; exit 0 ;; esac' \
+  'printf "jq: error: halt_error/1 is not defined at <top-level>, line 2:\n" >&2' \
+  'exit 3' >"$OLD_JQ_PATH/jq"
+chmod +x "$OLD_JQ_PATH/jq"
+refusal() { # PATH-FOR-THE-LOAD [INVENTORY]
   local rc=0
-  (PATH="$1" && generated_paths_load '[1]') 2>"$TMP/err" || rc=$?
+  (PATH="$1" && generated_paths_load "${2:-[1]}") 2>"$TMP/err" || rc=$?
   printf 'rc=%s %s' "$rc" "$(LC_ALL=C awk '/^  (status|fix): / { sub(/^  /, ""); print }' "$TMP/err" | paste -sd ';' -)"
 }
 JQ_VERSION="$(jq --version)"
@@ -118,6 +127,14 @@ assert_eq "with jq on PATH the refusal names its version and the refresh, and no
 assert_eq "with no jq on PATH the refusal names the missing jq and its install" \
   "rc=2 status: jq-missing, read by no jq on PATH;fix: Install jq, then run the check again." \
   "$(refusal "$NO_JQ_PATH")"
+REFRESH_FIX="fix: Run kendex refresh at the repository root, then stage .kendex-generated.json with the renders."
+OLD_JQ_FIX="fix: Install jq 1.6 or newer (the filter needs halt_error), then run the check again."
+assert_eq "an inventory that is not JSON, read by a jq that runs the filter, names the refresh" \
+  "rc=2 status: jq-error, read by $JQ_VERSION;$REFRESH_FIX" \
+  "$(refusal "$PATH" invalid)"
+assert_eq "a jq that cannot compile the filter names jq, not the refresh" \
+  "rc=2 status: jq-error, read by jq-1.5;$OLD_JQ_FIX" \
+  "$(refusal "$OLD_JQ_PATH")"
 
 # Control: a loader that says install jq whatever PATH holds, the refusal
 # this suite replaced, turns the first row red.
@@ -130,6 +147,20 @@ source "$TMP/generated-paths.sh"
 assert_eq "control: a loader naming install jq with jq present breaks the version row" \
   "rc=2 status: jq-missing, read by no jq on PATH;fix: Install jq, then run the check again." \
   "$(refusal "$PATH")"
+# shellcheck source=../scripts/lib/generated-paths.sh
+source "$reader"
+
+# Control: a loader that blames the inventory without asking jq to run the
+# filter on an empty one sends the jq 1.5 row to the refresh.
+needle="        if jq -ers \"\$filter\" <<<'[]' >/dev/null 2>&1; then"
+[ "$(grep -Fxc "$needle" "$reader")" -eq 1 ]
+sed "s/^        if jq -ers \"\\\$filter\" <<<'\[\]' >\/dev\/null 2>&1; then\$/        if true; then/" "$reader" >"$TMP/generated-paths.sh"
+cmp -s "$reader" "$TMP/generated-paths.sh" && { echo "control changed no bytes" >&2; exit 1; }
+# shellcheck source=../scripts/lib/generated-paths.sh
+source "$TMP/generated-paths.sh"
+assert_eq "control: a loader that skips the empty-inventory run sends an old jq to the refresh" \
+  "rc=2 status: jq-error, read by jq-1.5;$REFRESH_FIX" \
+  "$(refusal "$OLD_JQ_PATH")"
 # shellcheck source=../scripts/lib/generated-paths.sh
 source "$reader"
 

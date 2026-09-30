@@ -176,18 +176,21 @@ run_rows \
 
 echo "=== COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS: the entry runs only for a commit touching a path it names ==="
 # Every row's entry exits 2, so a row where it ran blocks and a row where it
-# was skipped passes only because it did not run.
+# was skipped passes only because it did not run; the config-error row's entry
+# prints its fixture line if it runs, so that row also proves the refusal
+# comes first. The hit row's seed holds setup.py at the root, which `*.py`
+# names if the globs expand against the work tree.
 fx_scope_settings() { repo scope-settings; local_entry '#!/bin/sh\necho "fixture=local-error"\nexit 2\n'; printf '[env]\n' >"$R/kendex.settings.toml"; git -C "$R" add kendex.settings.toml; }
 fx_scope_empty() { repo scope-empty; local_entry '#!/bin/sh\necho "fixture=local-error"\nexit 2\n'; printf '[env]\n' >"$R/kendex.settings.toml"; git -C "$R" add kendex.settings.toml; }
-fx_scope_hit() { repo scope-hit; local_entry '#!/bin/sh\necho "fixture=local-error"\nexit 2\n'; mkdir -p "$R/src"; printf 'x = 1\n' >"$R/src/x.py"; git -C "$R" add src/x.py; }
+fx_scope_hit() { repo scope-hit; printf 'x = 1\n' >"$R/setup.py"; git -C "$R" add setup.py; git -C "$R" commit -qm 'feat: root script'; local_entry '#!/bin/sh\necho "fixture=local-error"\nexit 2\n'; mkdir -p "$R/src"; printf 'x = 1\n' >"$R/src/x.py"; git -C "$R" add src/x.py; }
 fx_scope_deleted() { repo scope-deleted; local_entry '#!/bin/sh\necho "fixture=local-error"\nexit 2\n'; git -C "$R" rm -q a.txt; }
-fx_scope_malformed() { repo scope-malformed; local_entry '#!/bin/sh\nexit 0\n'; }
+fx_scope_malformed() { repo scope-malformed; local_entry '#!/bin/sh\necho "fixture=local-error"\nexit 2\n'; }
 SCOPE_ENV="$LOCAL_ENV,COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS=*.py a.txt"
 LOCAL_DIED="$LOCAL;fixture=local-error;$(incomplete 'repo-local: tools/local-check' 2);$ERRORS"
 run_rows \
-  "a commit staging a settings file and a text file, neither named, skips the entry with one announced line and passes|fx_scope_settings|$SCOPE_ENV|$BARE||rc=0 $SKIPS;$BATCH_OK;pre-commit: local-entry=skipped;$CHAIN_OK" \
+  "a commit staging a settings file and a text file, neither named, skips the entry at its local-entry=skipped record and passes|fx_scope_settings|$SCOPE_ENV|$BARE||rc=0 $SKIPS;$BATCH_OK;pre-commit: local-entry=skipped;$CHAIN_OK" \
   "control: the same commit with the setting empty runs the entry, and its exit 2 blocks|fx_scope_empty|$LOCAL_ENV,COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS=|$BARE||rc=2 $SKIPS;$BATCH_OK;$LOCAL_DIED" \
-  "a staged path the globs match runs the entry, a glob crossing a slash|fx_scope_hit|$SCOPE_ENV|$BARE||rc=2 $SKIPS;$BATCH_OK;$LOCAL_DIED" \
+  "a staged path the globs match runs the entry, a glob crossing a slash, never expanded against a root file it names|fx_scope_hit|$SCOPE_ENV|$BARE||rc=2 $SKIPS;$BATCH_OK;$LOCAL_DIED" \
   "a deletion of a named path is a change to it and runs the entry|fx_scope_deleted|$SCOPE_ENV|$BARE||rc=2 $SKIPS;$BATCH_OK;$LOCAL_DIED" \
   "an absolute glob is a config error naming the setting, as every path setting's is|fx_scope_malformed|$LOCAL_ENV,COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS=/abs/*.py|$BARE||rc=2 $SKIPS;$BATCH_OK;pre-commit: path-absolute=COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS:/abs/*.py"
 

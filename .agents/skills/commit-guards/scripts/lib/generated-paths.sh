@@ -2,10 +2,14 @@
 # The render writer produces .kendex-generated.json; paths are literal files.
 # Callers supply the inventory from the same state their scan measures.
 # jq halts with 20 for the document count and 21 for the entry shape, and
-# its halt text names what it read: the count, or the index and a short print
-# of the first entry the rule rejects. The shell reports the status as the
-# stable refusal value and adds one fixed explanation per status. Any other
-# status is jq's own parse or tool failure, reported with jq's text.
+# its halt text names what it read: the count, the type of a document that is
+# not an array, or the index and the first 120 characters of the first entry
+# the rule rejects. The shell reports the status as the stable refusal value
+# and adds one fixed explanation per status. Any other status is jq's own parse
+# or tool failure, reported with jq's text; the same filter run on an empty
+# inventory says whether the fault is the inventory's or jq's, since jq's
+# status alone does not. With no jq on PATH the status is the shell's
+# command-not-found status.
 # not-a-path: standalone inventory reader loads the shared message emitter.
 # shellcheck source=messages.sh
 source "$(dirname -- "${BASH_SOURCE[0]}")/messages.sh"
@@ -13,8 +17,8 @@ GENERATED_PATHS=""
 GENERATED_NL='
 '
 generated_paths_load() { # JSON — load the writer's exact paths, or refuse
-  local output="" status=0 word reader explanation fix
-  output="$(jq -ers '
+  local output="" status=0 word reader explanation fix filter
+  filter='
     if length == 1 then .[0] else "\(length) JSON documents, not one\n" | halt_error(20) end
     | def path_string: type == "string" and length > 0
         and (contains("\n") or contains("\u0000") | not);
@@ -28,7 +32,8 @@ generated_paths_load() { # JSON — load the writer's exact paths, or refuse
       | (first(range(length) as $i | select(.[$i] | entry | not) | $i) // null) as $bad
       | if $bad == null then map(if type == "string" then . else .path end) | join("\n")
         else "entry \($bad) fails the entry rule: \(.[$bad] | tojson | .[0:120])\n" | halt_error(21) end
-  ' <<<"$1" 2>&1)" || status=$?
+  '
+  output="$(jq -ers "$filter" <<<"$1" 2>&1)" || status=$?
   if [ "$status" -eq 0 ]; then
     GENERATED_PATHS="$output"
     return 0
@@ -53,7 +58,12 @@ generated_paths_load() { # JSON — load the writer's exact paths, or refuse
         ;;
       *)
         word="jq-error"
-        explanation="jq could not read the inventory; the cause is jq's own text."
+        if jq -ers "$filter" <<<'[]' >/dev/null 2>&1; then
+          explanation="jq could not read the inventory; the cause is jq's own text."
+        else
+          explanation="The jq on PATH cannot run the inventory filter on an empty inventory, so the fault is jq's, not the inventory's."
+          fix="Install jq 1.6 or newer (the filter needs halt_error), then run the check again."
+        fi
         ;;
     esac
   fi
