@@ -334,20 +334,24 @@ assert_not_contains "$OUT" "open-terminal: terminal-opened item=CC-1" "no lane i
 
 MERGED_DIR=""
 
-# Relaunch resumes the newest transcript whose harness kickoff names the item.
-# The claude transcript records the item lower case while the launch names the
-# canonical upper-case one: a session launched before the canonical brief holds
-# whichever case its project's pattern was written in, and a scan that read the
-# id case-sensitively would resume nothing and start a second session on the
-# lane's worktree.
+# The worktree owns the session even when its prompt names no item.
+# A newer foreign repository repeats the item but must lose before mtime.
 SESSION_HOME="$TMP_ROOT/session-home"; CLAUDE222=22222222-2222-2222-2222-222222222222; CODEX444=44444444-4444-4444-4444-444444444444; mkdir -p "$SESSION_HOME/.claude-shared/projects/repo" "$SESSION_HOME/.selected-codex/sessions/2026" "$SESSION_HOME/.pi/agent/sessions/repo"
-printf '%s\n' '{"type":"user","message":{"content":"start cc-1"}}' >"$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl"
+printf '%s\n' "{\"type\":\"user\",\"cwd\":\"$TMP_ROOT/wt/CC-1\",\"isSidechain\":false,\"message\":{\"content\":\"Continue.\"}}" >"$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl"
 cp "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl" "$SESSION_HOME/.claude-shared/projects/repo/11111111-1111-1111-1111-111111111111.jsonl"; touch -t 200001010000 "$SESSION_HOME/.claude-shared/projects/repo/11111111-1111-1111-1111-111111111111.jsonl"
 mkdir -p "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents"
-printf '%s\n' '{"type":"user","message":{"content":"start cc-1"}}' >"$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents/child-agent.jsonl"; touch -t 203001010000 "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents/child-agent.jsonl"
-printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CODEX444\"}}" '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"repository instructions"}]}}' '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-1"}}' >"$SESSION_HOME/.selected-codex/sessions/2026/session.jsonl"
+printf '%s\n' "{\"type\":\"user\",\"cwd\":\"$TMP_ROOT/wt/CC-1\",\"isSidechain\":true,\"message\":{\"content\":\"start CC-1\"}}" >"$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents/child-agent.jsonl"; touch -t 203001010000 "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents/child-agent.jsonl"
+printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CODEX444\",\"cwd\":\"$TMP_ROOT/wt/CC-1\"}}" >"$SESSION_HOME/.selected-codex/sessions/2026/session.jsonl"
 PI_SESSION_ID=55555555-5555-5555-5555-555555555555
-printf '%s\n' "{\"type\":\"session\",\"id\":\"$PI_SESSION_ID\"}" '{"type":"message","message":{"role":"user","content":"start CC-1"}}' >"$SESSION_HOME/.pi/agent/sessions/repo/session.jsonl"
+printf '%s\n' "{\"type\":\"session\",\"version\":3,\"id\":\"$PI_SESSION_ID\",\"cwd\":\"$TMP_ROOT/wt/CC-1\"}" >"$SESSION_HOME/.pi/agent/sessions/repo/session.jsonl"
+# pi-agents-tmux sessionRuntimeDir/paneSessionPath keep workers outside sessions.
+PI_WORKER="$SESSION_HOME/.pi/agent/kendex/sessions/$PI_SESSION_ID/pi-agents-tmux/sessions/dev.jsonl"
+mkdir -p "${PI_WORKER%/*}"; cp "$SESSION_HOME/.pi/agent/sessions/repo/session.jsonl" "$PI_WORKER"; touch -t 203001010000 "$PI_WORKER"
+for row in '.claude-shared/projects/repo|{"type":"user","isSidechain":false,"message":{"content":"start CC-1"}}' '.selected-codex/sessions/2026|{"type":"session_meta","payload":{"id":"foreign","source":"cli"}}}' '.pi/agent/sessions/repo|{"type":"session","version":3,"id":"foreign"}'; do
+  root="${row%%|*}" meta="${row#*|}"
+  jq -nc --argjson meta "$meta" --arg cwd "$TMP_ROOT/other-repo/CC-1" 'if $meta.type=="session_meta" then $meta|.payload.cwd=$cwd else $meta|.cwd=$cwd end' > "$SESSION_HOME/$root/foreign.jsonl"
+  touch -t 203001010000 "$SESSION_HOME/$root/foreign.jsonl"
+done
 EXIT_DIR="$TMP_ROOT/resume-exit"; EXISTS_DIR="$TMP_ROOT/resume-exists"; mkdir -p "$EXIT_DIR" "$EXISTS_DIR"; touch "$EXISTS_DIR/CC-1"
 #
 # The resumed command carries the continuation line itself on every harness, so
@@ -450,7 +454,7 @@ assert_eq "${LAUNCH_CODEX_CMD##* && }" \
   "a codex --cmd launch runs its substituted template exactly, with no update setting added"
 
 OLD_CODEX="$SESSION_HOME/.old-codex"; CROSS_CODEX=55555555-5555-5555-5555-555555555555; mkdir -p "$OLD_CODEX/sessions/2026"
-printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CROSS_CODEX\"}}" '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-2"}}' >"$OLD_CODEX/sessions/2026/cross.jsonl"
+printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CROSS_CODEX\",\"cwd\":\"$TMP_ROOT/wt/CC-2\"}}" >"$OLD_CODEX/sessions/2026/cross.jsonl"
 CODEX_INVENTORY="$(jq -nc --arg d "$OLD_CODEX" '[{config_dir:$d}]')"; OT_CAPTURE="$TMP_ROOT/resume-codex-cross.cmd" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case resume-codex-cross -- --relaunch --harness codex CC-2
 await_file "$TMP_ROOT/resume-codex-cross.cmd"; assert_contains "$(cat "$TMP_ROOT/resume-codex-cross.cmd")" "codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $CROSS_CODEX" "codex relaunch finds a session in another account store"
 assert_eq "$(cat "$SESSION_HOME/.selected-codex/sessions/2026/cross.jsonl")" "$(cat "$OLD_CODEX/sessions/2026/cross.jsonl")" "the destination account can read the discovered transcript"
@@ -462,27 +466,27 @@ assert_eq "$(cat "$SESSION_HOME/.selected-codex/sessions/2026/cross.jsonl")" "$(
 # made yet, and every relaunch of the lane would start a fresh thread instead of
 # resuming. The transcript here sits only in the account's own store.
 LAUNCH_HOME_CODEX=66666666-6666-6666-6666-666666666666
-printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$LAUNCH_HOME_CODEX\"}}" '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-6"}}' >"$SESSION_HOME/.selected-codex/sessions/2026/launch-home.jsonl"
+printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$LAUNCH_HOME_CODEX\",\"cwd\":\"$TMP_ROOT/wt/CC-6\"}}" >"$SESSION_HOME/.selected-codex/sessions/2026/launch-home.jsonl"
 OT_CAPTURE="$TMP_ROOT/resume-codex-home.cmd" LANES_HOME="$SESSION_HOME" \
   CODEX_HOME_OVERRIDE="$(lane_codex_home_path "$SESSION_HOME/.selected-codex" "$TMP_ROOT/wt/CC-6")" \
   run_case resume-codex-home -- --relaunch --harness codex CC-6
 await_file "$TMP_ROOT/resume-codex-home.cmd"; assert_contains "$(cat "$TMP_ROOT/resume-codex-home.cmd")" "codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $LAUNCH_HOME_CODEX" "a codex relaunch from inside a private launch home scans the account's own transcript store"
 
 PI_ABSOLUTE="$TMP_ROOT/pi-absolute"; mkdir -p "$PI_ABSOLUTE" "$SESSION_HOME/.pi/agent"
-printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-3"}}' >"$PI_ABSOLUTE/session.jsonl"
+printf '%s\n' "{\"type\":\"session\",\"version\":3,\"id\":\"absolute\",\"cwd\":\"$TMP_ROOT/wt/CC-3\"}" >"$PI_ABSOLUTE/session.jsonl"
 printf '{"sessionDir":"%s"}\n' "$PI_ABSOLUTE" >"$SESSION_HOME/.pi/agent/settings.json"
 OT_CAPTURE="$TMP_ROOT/resume-pi-absolute.cmd" LANES_HOME="$SESSION_HOME" run_case resume-pi-absolute -- --relaunch --harness pi CC-3
 await_file "$TMP_ROOT/resume-pi-absolute.cmd"; assert_contains "$(cat "$TMP_ROOT/resume-pi-absolute.cmd")" "pi $PI_QUESTION_OFF --session $PI_ABSOLUTE/session.jsonl" "pi relaunch reads an absolute sessionDir from global settings"
 
 PI_WORKTREE="$TMP_ROOT/wt/CC-4"; PI_RELATIVE="$PI_WORKTREE/pi-sessions"; mkdir -p "$PI_WORKTREE/.pi" "$PI_RELATIVE"
-printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-4"}}' >"$PI_RELATIVE/session.jsonl"
+printf '%s\n' "{\"type\":\"session\",\"version\":3,\"id\":\"relative\",\"cwd\":\"$TMP_ROOT/wt/CC-4\"}" >"$PI_RELATIVE/session.jsonl"
 printf '%s\n' '{"sessionDir":"pi-sessions"}' >"$PI_WORKTREE/.pi/settings.json"
 jq -nc --arg p "$(cd "$PI_WORKTREE" && pwd -P)" '{($p):true}' >"$SESSION_HOME/.pi/agent/trust.json"
 OT_CAPTURE="$TMP_ROOT/resume-pi-relative.cmd" LANES_HOME="$SESSION_HOME" run_case resume-pi-relative -- --relaunch --harness pi CC-4
 await_file "$TMP_ROOT/resume-pi-relative.cmd"; assert_contains "$(cat "$TMP_ROOT/resume-pi-relative.cmd")" "pi $PI_QUESTION_OFF --session $PI_RELATIVE/session.jsonl" "pi relaunch resolves a project sessionDir from the launched worktree"
 
 PI_UNTRUSTED="$TMP_ROOT/wt/CC-5"; mkdir -p "$PI_UNTRUSTED/.pi" "$PI_UNTRUSTED/pi-sessions"
-printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-5"}}' >"$PI_UNTRUSTED/pi-sessions/session.jsonl"
+printf '%s\n' "{\"type\":\"session\",\"version\":3,\"id\":\"untrusted\",\"cwd\":\"$TMP_ROOT/wt/CC-5\"}" >"$PI_UNTRUSTED/pi-sessions/session.jsonl"
 printf '%s\n' '{"sessionDir":"pi-sessions"}' >"$PI_UNTRUSTED/.pi/settings.json"
 OT_CAPTURE="$TMP_ROOT/resume-pi-untrusted.cmd" LANES_HOME="$SESSION_HOME" run_case resume-pi-untrusted -- --relaunch --harness pi CC-5
 await_file "$TMP_ROOT/resume-pi-untrusted.cmd"; assert_contains "$(cat "$TMP_ROOT/resume-pi-untrusted.cmd")" "pi $PI_QUESTION_OFF '/skill:orch start CC-5 $UNATTENDED_TEXT'" "pi relaunch ignores an untrusted project sessionDir"

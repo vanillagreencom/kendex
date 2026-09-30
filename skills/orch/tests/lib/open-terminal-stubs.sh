@@ -205,16 +205,12 @@ ot_hosted_relaunch_text() { # LOG
   printf '%s\n' "$line" | sed "s/'\\\\''/'/g" | sed "s/'\\\\''/'/g"
 }
 
-# Execute the hosted command in a disposable worktree with the real session
-# lookup and a harness that records argv. KIND describes the session store;
-# STATUS is the exit of a resumed or fresh harness, never the lookup's exit.
+# Replay real host selection; KIND names its store, STATUS the harness exit.
 ot_replay_relaunch() { # LINE SCRIPTS RUN HARNESS KIND STATUS
   local line="$1" scripts="$2" run="$3" harness="$4" kind="$5" status="$6"
-  local sandbox="${OT_REPLAY_SANDBOX:-$run/sandbox}" home="$run/host-home" root kickoff=CC-1 rc=0 metadata
+  local sandbox="${OT_REPLAY_SANDBOX:-$run/sandbox}" home="$run/host-home" root session_cwd rc=0 metadata
   local arg previous="" runs=0 resume=0 fresh=0 target=0 unattended expected_prompt
-  # Expectations read the shipped owner, never the scripts a control mutates.
   unattended="$(
-    # shellcheck source=../../scripts/lib/lane-launch.sh
     source "$(dirname "${BASH_SOURCE[0]}")/../../scripts/lib/lane-launch.sh" && printf '%s' "$LAUNCH_UNATTENDED_TEXT"
   )" || return 1
   [[ -n "$unattended" ]] || { echo "ot-replay-relaunch: unattended-text=empty" >&2; return 1; }
@@ -225,24 +221,23 @@ ot_replay_relaunch() { # LINE SCRIPTS RUN HARNESS KIND STATUS
     codex) root="$home/codex account/sessions"; expected_prompt="Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-1. $unattended" ;;
     pi) root="$home/pi agent/sessions"; expected_prompt="/skill:orch start CC-1 $unattended" ;;
   esac
-  [[ "$kind" != foreign ]] || kickoff=CC-2
+  session_cwd="$sandbox"
+  [[ "$kind" != foreign ]] || session_cwd="$run/other-repo/CC-1"
   case "$kind" in
-    matching | foreign | newer-worker | newer-exec | newer-parent)
+    matching | foreign | newer-foreign | newer-worker | newer-exec | newer-parent)
       mkdir -p "$root" || return 1
       if [[ "$harness" == codex ]]; then
-        printf '%s\n' '{"type":"session_meta","payload":{"id":"11111111-1111-4111-8111-111111111111","source":"cli"}}' \
-          "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"start $kickoff\"}}" > "$root/session.jsonl"
+        jq -nc --arg cwd "$session_cwd" '{type:"session_meta",payload:{id:"11111111-1111-4111-8111-111111111111",cwd:$cwd,source:"cli"}}' > "$root/session.jsonl" || return 1
       else
-        printf '%s\n' '{"type":"session","id":"11111111-1111-4111-8111-111111111111"}' \
-          "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"start $kickoff\"}}" > "$root/session.jsonl"
+        jq -nc --arg cwd "$session_cwd" '{type:"session",version:3,id:"11111111-1111-4111-8111-111111111111",cwd:$cwd,parentSession:"/previous/lead.jsonl"}' > "$root/session.jsonl" || return 1
       fi ;;
     empty) mkdir -p "$root"; : > "$root/session.jsonl" ;;
     scan-failed) mkdir -p "${root%/*}"; : > "$root" ;;
     none) ;;
   esac
-  # Codex's SessionMeta carries source and parent separately. A spawned
-  # dev-start worker repeats the lead's item in its delegation kickoff.
+  # Foreign sessions can repeat a kickoff; SessionMeta owns source and parent.
   case "$kind" in
+    newer-foreign) metadata='"source":"cli"'; session_cwd="$run/other-repo/CC-1" ;;
     newer-worker | worker-only) metadata='"source":{"subagent":{"thread_spawn":{"parent_thread_id":"11111111-1111-4111-8111-111111111111","depth":1}}},"parent_thread_id":"11111111-1111-4111-8111-111111111111"' ;;
     newer-exec | exec-only) metadata='"source":"exec"' ;;
     newer-parent | parent-only) metadata='"source":"cli","parent_thread_id":"11111111-1111-4111-8111-111111111111"' ;;
@@ -250,9 +245,12 @@ ot_replay_relaunch() { # LINE SCRIPTS RUN HARNESS KIND STATUS
   esac
   if [[ -n "$metadata" ]]; then
     mkdir -p "$root" || return 1
-    printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"22222222-2222-4222-8222-222222222222\",$metadata}}" \
-      '{"type":"event_msg","payload":{"type":"user_message","message":"DELEGATION: implement CC-1"}}' > "$root/worker.jsonl" || return 1
-    # Fixed mtimes prove the newer worker loses to the lead, without a wait.
+    if [[ "$harness" == codex ]]; then
+      jq -nc --arg cwd "$session_cwd" --argjson meta "{$metadata}" '{type:"session_meta",payload:($meta+{id:"22222222-2222-4222-8222-222222222222",cwd:$cwd})},{type:"event_msg",payload:{type:"user_message",message:"start CC-1"}}' > "$root/worker.jsonl" || return 1
+    else
+      jq -nc --arg cwd "$session_cwd" '{type:"session",version:3,id:"22222222-2222-4222-8222-222222222222",cwd:$cwd},{type:"message",message:{role:"user",content:[{type:"text",text:"start CC-1"}]}}' > "$root/worker.jsonl" || return 1
+    fi
+    # Fixed mtimes prove the newer foreign session loses, without a wait.
     [[ ! -f "$root/session.jsonl" ]] || touch -t 202601010000 "$root/session.jsonl" || return 1
     touch -t 202601010001 "$root/worker.jsonl" || return 1
   fi

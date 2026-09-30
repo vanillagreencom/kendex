@@ -4,10 +4,10 @@
 #
 # The relaunch session lookup: which harness transcript a --relaunch or --wake
 # resumes, and the id the harness resumes it by. It reads open-terminal's
-# globals (TRACKER, LANE_ENV, LAUNCH_FLAGS, LANES_CLI) and calls its
+# globals (LANE_ENV, LAUNCH_FLAGS, LANES_CLI) and calls its
 # launch_ambient_codex_home and copilot_launch_home on the local path.
 #
-# Hosted entry point: bash lane-relaunch.sh HARNESS ITEM TRACKER LAUNCH_FLAGS.
+# Hosted entry point: bash lane-relaunch.sh HARNESS ITEM LAUNCH_FLAGS.
 # open-terminal's rendered command consumes stdout as the resume id. Exit 1
 # means no session; exit 2 means lookup failed, never permission to start fresh.
 
@@ -64,7 +64,10 @@ pi_relaunch_root() { # WORKTREE HOME
   printf '%s\n' "$root"
 }
 
-# Find the newest transcript whose harness kickoff names the item.
+# Transcript fallback for Claude listSessions, Codex thread/list and Pi
+# SessionManager.list: shell launches lack SDK/app-server connections; Codex
+# copies across accounts. Worktree metadata owns repository/item, never prompts.
+# Pi workers use kendex/sessions, outside its lead store; Pi parents are forks.
 #
 # Copilot is the exception: how its events.jsonl records a kickoff is not
 # measured, so a copilot session is the one lib/copilot-session.sh's
@@ -75,24 +78,14 @@ pi_relaunch_root() { # WORKTREE HOME
 # in `-p` and at a pane alike (1.0.88, the log naming "Cannot create session
 # from empty events array"). An older resumable record in the same worktree is
 # resumed in its place.
-find_relaunch_session() { # HARNESS ITEM WORKTREE [HOST_CODEX_HOME]
-  local harness="$1" item="$2" cwd="$3" home="${LANES_HOME:-$HOME}" config roots root inventory id_match match_filter="" files file best="" best_root="" rc relative target
+find_relaunch_session() { # HARNESS WORKTREE [HOST_CODEX_HOME]
+  local harness="$1" cwd="$2" home="${LANES_HOME:-$HOME}" config roots root inventory match_filter="" files file best="" best_root="" rc relative target
   command -v jq >/dev/null 2>&1 || return 2
-  # Whether a kickoff record names the item, for every harness: one expression,
-  # so the letter-case rule has a single home and one test pins it. The id is
-  # matched without regard to case because a transcript holds whatever spelling
-  # its own launch rendered, and an earlier launcher rendered the case
-  # GH_ISSUE_PATTERN was written in rather than the tracker's canonical one, so
-  # a case-sensitive scan would miss a lane's own session and resume nothing.
-  id_match='|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)"; "i")'
-  # Which record is the kickoff differs per harness. Codex writes injected
-  # repository instructions as user response items, so only its user_message
-  # event identifies the work item. Claude Code and Pi keep their own
-  # first-message formats.
+  cwd="$(cd -- "$cwd" && pwd -P)" || return 2
   case "$harness" in
-    claude) roots="$home/.claude-shared/projects"; match_filter='[inputs|fromjson?|select(.type=="user")|.message.content]'"$id_match" ;;
+    claude) roots="$home/.claude-shared/projects"; match_filter='first(inputs|fromjson?|select(.cwd!=null)) // {} | {cwd, lead:(.isSidechain!=true)}' ;;
     codex)
-      if [[ -n "${4:-}" ]]; then config="$4"
+      if [[ -n "${3:-}" ]]; then config="$3"
       else
         config="$(launch_ambient_codex_home)" || return 2
         [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"
@@ -100,25 +93,20 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE [HOST_CODEX_HOME]
       [[ -x "$LANES_CLI" ]] || return 2
       inventory="$("$LANES_CLI" list --local --harness codex --json)" || return 2
       roots="$(jq -er --arg d "$config" 'if type=="array" and all(.[]; (.config_dir|type)=="string") then ([.[]|.config_dir]+[$d]|unique[]|.+"/sessions") else error("inventory") end' <<<"$inventory")" || return 2
-      # Transcript fallback for item-scoped resume: the CLI's resume --last
-      # cannot query a kickoff by item. Match its interactive sources, then
-      # exclude worker parents before comparing timestamps. SessionMeta in
-      # Codex's protocol defaults an omitted source to vscode.
-      match_filter='[inputs|fromjson?] as $rows |
-        ($rows|map(select(.type=="session_meta"))|first|.payload) as $meta |
-        ($meta!=null and ($meta|(.source=="cli" or .source=="vscode" or (has("source")|not)) and .parent_thread_id==null)) and
-        ([$rows[]|select(.type=="event_msg" and .payload.type=="user_message")|.payload.message]'"$id_match"')' ;;
-    pi) roots="$(pi_relaunch_root "$cwd" "$home")" || return 2; match_filter='[inputs|fromjson?|select(.type=="message" and .message.role=="user")|.message.content]'"$id_match" ;;
+      # SessionMeta defaults an omitted source to vscode in Codex's protocol.
+      match_filter='first(inputs|fromjson?|select(.type=="session_meta")|.payload) // {} |
+        {cwd, lead:((.source=="cli" or .source=="vscode" or (has("source")|not)) and .parent_thread_id==null)}' ;;
+    pi) roots="$(pi_relaunch_root "$cwd" "$home")" || return 2; match_filter='first(inputs|fromjson?|select(.type=="session")) // {} | {cwd, lead:true}' ;;
     copilot)
       config="$(copilot_launch_home)"
       copilot_session_in_worktree "$config" "$cwd"
       return ;;
   esac
-  [[ "$TRACKER" != github ]] || item="#$item"
+
   while IFS= read -r root; do
     [[ -n "$root" && -e "$root" ]] || continue
     [[ -d "$root" && -r "$root" ]] || return 2
-    # A Claude child repeats its lead's kickoff below a subagents directory.
+    # A Claude child lives below a subagents directory.
     # Only direct project children are lead transcripts; other stores recurse.
     if [[ "$harness" == claude ]]; then
       files="$(find -H "$root" -mindepth 2 -maxdepth 2 -type f -name '*.jsonl' -print 2>/dev/null)" || return 2
@@ -127,7 +115,7 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE [HOST_CODEX_HOME]
     fi
     while IFS= read -r file; do
       [[ -n "$file" ]] || continue
-      if jq -Rne --arg i "$item" "$match_filter" "$file" >/dev/null 2>&1; then
+      if jq -Rne --arg cwd "$cwd" "$match_filter | .cwd==\$cwd and .lead" "$file" >/dev/null 2>&1; then
         [[ -n "$best" && ! "$file" -nt "$best" ]] || { best="$file"; best_root="$root"; }
       else rc=$?; [[ "$rc" -eq 1 ]] || return 2; fi
     done <<<"$files"
@@ -158,15 +146,12 @@ session_id_of() { # HARNESS SESSION_FILE
   printf '%s\n' "$id"
 }
 
-# Codex and Pi silently start fresh when their native continue finds no session.
-# The hosted command must ask the same lookup as the local launcher before it
-# chooses a prompt. It runs in the worktree, with the host's account environment.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   set -euo pipefail
-  TRACKER="$3" LAUNCH_FLAGS="$4" LANE_ENV=""
+  LAUNCH_FLAGS="$3" LANE_ENV=""
   LANES_CLI="$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)/lanes" || exit 2
   session_file="" lookup_rc=0
-  session_file="$(find_relaunch_session "$1" "$2" "$PWD" "${CODEX_HOME:-$HOME/.codex}")" || lookup_rc=$?
+  session_file="$(find_relaunch_session "$1" "$PWD" "${CODEX_HOME:-$HOME/.codex}")" || lookup_rc=$?
   case "$lookup_rc" in
     0) session_id_of "$1" "$session_file" && exit 0 ;;
     1) exit 1 ;;

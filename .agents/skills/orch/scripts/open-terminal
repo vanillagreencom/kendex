@@ -1525,8 +1525,8 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
           selected_resume="$(printf 'printf resume > %q || exit 2; ' "$HOST_SELECTION_FILE")" || return 1
           selected_fresh="$(printf 'printf fresh > %q || exit 2; ' "$HOST_SELECTION_FILE")" || return 1
         fi
-        selection="$(printf 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh %q %q %q %q); rc=$?; case "$rc" in 0) %sexec %s ;; 1) %sexec %s ;; *) exit "$rc" ;; esac' \
-          "$HARNESS" "$item" "$TRACKER" "$LAUNCH_FLAGS" "$selected_resume" "$resume" "$selected_fresh" "$fresh")" || return 1
+        selection="$(printf 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh %q %q %q); rc=$?; case "$rc" in 0) %sexec %s ;; 1) %sexec %s ;; *) exit "$rc" ;; esac' \
+          "$HARNESS" "$item" "$LAUNCH_FLAGS" "$selected_resume" "$resume" "$selected_fresh" "$fresh")" || return 1
         quoted="$(lane_single_quote "$selection")" || return 1
         printf 'bash -c %s\n' "$quoted"
         return ;; esac
@@ -2587,7 +2587,7 @@ launch_finish() {
   # A Pi wake goes to the live session through pi-bridge and reads no store.
   if [[ "$RELAUNCH" == true && "$HOST_RELAUNCH" == false && -z "$CMD_TEMPLATE" && "$RELAUNCH_ROUTE" == resume && "$HARNESS" =~ ^(claude|codex|pi|copilot)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
     resume_rc=0
-    session_file="$(find_relaunch_session "$HARNESS" "$item" "$wt")" || resume_rc=$?
+    session_file="$(find_relaunch_session "$HARNESS" "$wt")" || resume_rc=$?
     [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1; }
     [[ "$WAKE" != true || -n "$session_file" ]] || { ot_message session-missing "item=$item" "harness=$HARNESS" >&2; return 1; }
   fi
@@ -2644,8 +2644,7 @@ launch_finish() {
     if [[ "$HARNESS" == codex ]]; then
       local compaction_env compaction_verified=true compaction_cmd="$cmd"
       [[ -z "$CMD_TEMPLATE" ]] || compaction_verified=false
-      # Both selection arms use the same flags. The fresh form exposes those
-      # verified Codex arguments to the compaction reader without shell code.
+      # Both selection arms share the fresh form's verified Codex flags.
       if [[ "$RELAUNCH_ROUTE" == resume-or-fresh ]]; then
         compaction_cmd="$(RELAUNCH_ROUTE=fresh start_cmd "$item" "$wt_id" "$repo")" || return 1
       fi
@@ -3153,8 +3152,6 @@ for raw in "${ITEMS[@]}"; do
   # A host still preparing the item it accepted answers through `wait`. Under a
   # fleet a background job waits and the watch reports what it recorded;
   # without one there is no record to report through, so the launch waits here.
-  # Hosted Codex selection must finish in the foreground: only the host knows
-  # whether it resumed promptless and owes the caller a continuation paste.
   if [[ "$host_state" == preparing && "$FLEET" == true && -z "$HOST_SELECTION_FILE" ]]; then
     launch_handoff || { failed=$((failed + 1)); continue; }
     preparing=$((preparing + 1))

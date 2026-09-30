@@ -1051,7 +1051,7 @@ PI_RELAUNCH="$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$
 run_ot "$PI_RELAUNCH" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-48
 PI_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 PI_RESUME="0) exec pi '--exclude-tools' 'question' '--model' 'github-copilot/opus' '--thinking' 'high' --session \"\$session\" '$HOSTED_LINE $UNATTENDED_TEXT' ;; 1) exec pi"
-assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") lookup=$(grep -cF 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh pi CC-48 linear ' <<<"$PI_REMOTE" || true) resume=$(grep -cF "$PI_RESUME" <<<"$PI_REMOTE" || true) fresh=$(grep -cF "'/skill:orch start CC-48 $UNATTENDED_TEXT'" <<<"$PI_REMOTE" || true)" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") lookup=$(grep -cF 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh pi CC-48 ' <<<"$PI_REMOTE" || true) resume=$(grep -cF "$PI_RESUME" <<<"$PI_REMOTE" || true) fresh=$(grep -cF "'/skill:orch start CC-48 $UNATTENDED_TEXT'" <<<"$PI_REMOTE" || true)" \
   "rc=0 creates=nolog launched=1 claim_lanes=eclaude lookup=1 resume=1 fresh=1" \
   "a hosted pi relaunch selects its host session or the start brief, keeping its lane and continuation line"
 PI_OT_SHIPPED="$OPEN_TERMINAL"
@@ -1166,7 +1166,7 @@ run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo 
 CODEX_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 CODEX_LEAD="codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high'"
 CODEX_RESUME="0) printf resume > tmp/lane-mail/CC-49/relaunch-selection || exit 2; exec $CODEX_LEAD resume \"\$session\" ;; 1) printf fresh > tmp/lane-mail/CC-49/relaunch-selection || exit 2; exec $CODEX_LEAD 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-49. $UNATTENDED_TEXT'"
-assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") lookup=$(grep -cF 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh codex CC-49 linear ' <<<"$CODEX_REMOTE" || true) arms=$(grep -cF "$CODEX_RESUME" <<<"$CODEX_REMOTE" || true) compaction=$(typed "ORCH_COMPACTION_OVERRIDES=$Q$CODEX_COMPACTION$Q") line=$(typed 'Resume the orch workflow for CC-49')" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") lookup=$(grep -cF 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh codex CC-49 ' <<<"$CODEX_REMOTE" || true) arms=$(grep -cF "$CODEX_RESUME" <<<"$CODEX_REMOTE" || true) compaction=$(typed "ORCH_COMPACTION_OVERRIDES=$Q$CODEX_COMPACTION$Q") line=$(typed 'Resume the orch workflow for CC-49')" \
   "rc=0 creates=nolog launched=1 claim_lanes=eclaude lookup=1 arms=1 compaction=1 line=0" \
   "a hosted codex relaunch selects its host session promptless or the start brief, keeping its lane and compaction flags"
 # The lane comes up idle, so the launcher owes the operator a record saying the
@@ -2107,12 +2107,13 @@ else
   # The transcript a relaunch resumes. Staged here and removed after, so no
   # other row's launch finds a session it never asked for.
   RESUME_ROOT="$H/.claude-shared/projects/lane-resume"
-  mkdir -p "$RESUME_ROOT"
-  printf '%s\n' '{"type":"user","message":{"content":"kickoff CC-50"}}' > "$RESUME_ROOT/session.jsonl"
+  RESUME_WT="$TMP_ROOT/claude-resume-wt"
+  mkdir -p "$RESUME_ROOT" "$RESUME_WT"
+  printf '%s\n' "{\"type\":\"user\",\"cwd\":\"$RESUME_WT\",\"isSidechain\":false,\"message\":{\"content\":\"Continue.\"}}" > "$RESUME_ROOT/session.jsonl"
   # `resumed` is what makes this row the relaunch it claims to be: without it a
   # transcript that stopped matching would render a fresh claude carrying a
   # brief, which is the row above, and this assertion would not notice.
-  assert_eq "$(lane_launch "$OPEN_TERMINAL" gated-resume claude "$LNBARE" "$LNLANE" gated "rc verified mismatch closed resumed" flags=--relaunch)" \
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" gated-resume claude "$LNBARE" "$LNLANE" gated "rc verified mismatch closed resumed" flags=--relaunch "wt=$RESUME_WT")" \
     "rc=1 verified=0 mismatch=1 closed=1 resumed=1" \
     "and on a claude relaunch that resumes a session, which carries none either"
   rm -rf -- "${RESUME_ROOT:?}"

@@ -333,29 +333,18 @@ Options:
                     Codex --relaunch awaiting host session selection, the
                     launch runs `lane-host wait` itself.
                     lane-close closes a record still preparing. With
-                    --relaunch the provider keeps its tree. Without --cmd,
-                    Codex and Pi select a matching session on the host and
-                    resume by id or file path. No session starts the normal
-                    brief in the same call. Claude uses --continue and runs
-                    the start brief when it exits 1 for no session.
-                    Claude and Pi resumes carry the continuation line.
-                    A Codex resume stays promptless and reports resume-lineless
-                    only when the host selected resume. Paste its continuation
-                    per oversee-lanes.md § Talking to a lane, Pane paste.
-                    A fresh start needs no paste. These no-command relaunches,
-                    including switched-harness fresh starts, count as launched
-                    only once the pane shows a harness screen or Claude's
-                    brief check passes. The screen wait allows twice
-                    ORCH_TMUX_VERIFY_SECS for Claude's possible two starts.
-                    A pane that draws none is harness-screen-missing, and under
-                    --state-dir its window is closed and the lane's fleet
-                    record reads stopped. A launch run in the foreground
-                    writes stopped only once the close succeeds; one the
-                    background job ran writes it whatever the close answered.
-                    A relaunch that writes the record preparing or stopped,
-                    not yet taken, keeps the harness, model, account and
-                    session of the last launch that took, which the next
-                    relaunch is judged on.
+                    --relaunch keeps the tree. Without --cmd, Codex and Pi
+                    resume a lead session whose recorded cwd is this worktree,
+                    or run the start brief when none exists. Claude falls back
+                    to that brief when --continue exits 1. Claude and Pi carry
+                    the continuation line. An actual Codex resume reports
+                    resume-lineless; paste its continuation per oversee-lanes.md
+                    § Talking to a lane, Pane paste. Fresh starts need no paste.
+                    These relaunches, including harness switches, count only
+                    after harness readiness. A missing screen closes the
+                    window and records stopped, retaining the last successful
+                    harness, model, account and session. Foreground launches
+                    record stopped only after a successful close.
                     WHICH CREDENTIAL RUNS THE LANE: the copy the provider
                     installed on the host. `create` receives the lane's config
                     dir as --account on every call, a relaunch included, and

@@ -193,8 +193,16 @@ for harness_screen in "codex|$HARNESS_SCREEN" "pi|$PI_SCREEN"; do
     'matching|0|rc=0 runs=1 resume=1 fresh=0 target=1' \
     'matching|1|rc=1 runs=1 resume=1 fresh=0 target=1' \
     'matching|143|rc=143 runs=1 resume=1 fresh=0 target=1' \
+    'newer-foreign|0|rc=0 runs=1 resume=1 fresh=0 target=1' \
+    'newer-worker|0|rc=0 runs=1 resume=1 fresh=0 target=1' \
+    'worker-only|0|rc=0 runs=1 resume=0 fresh=1 target=0' \
+    'newer-exec|0|rc=0 runs=1 resume=1 fresh=0 target=1' \
+    'exec-only|0|rc=0 runs=1 resume=0 fresh=1 target=0' \
+    'newer-parent|0|rc=0 runs=1 resume=1 fresh=0 target=1' \
+    'parent-only|0|rc=0 runs=1 resume=0 fresh=1 target=0' \
     'scan-failed|0|rc=2 runs=0 resume=0 fresh=0 target=0'; do
     kind="${row%%|*}" rest="${row#*|}" exit_status="${rest%%|*}" expected="${rest#*|}"
+    [[ "$harness" != pi || ! "$kind" =~ (worker|exec|parent) ]] || continue
     if [[ "$exit_status" == 0 && ( "$kind" == none || "$kind" == matching ) ]]; then
       SELECT_KIND="$kind" run_ot "$harness" "$screen" "$harness"
       assert_eq "rc=$RC launched=$(launched) closed=$(closed) status=$(status)" \
@@ -221,17 +229,6 @@ for harness_screen in "codex|$HARNESS_SCREEN" "pi|$PI_SCREEN"; do
   RUN_ENV=()
   assert_eq "rc=$RC invalid=$(said '^open-terminal: verify-seconds-invalid setting=ORCH_TMUX_VERIFY_SECS value=abc')" \
     'rc=1 invalid=1' "$harness relaunch refuses an invalid screen-wait bound"
-done
-run_ot codex "$HARNESS_SCREEN" codex
-for row in 'newer-worker|rc=0 runs=1 resume=1 fresh=0 target=1' \
-  'worker-only|rc=0 runs=1 resume=0 fresh=1 target=0' \
-  'newer-exec|rc=0 runs=1 resume=1 fresh=0 target=1' \
-  'exec-only|rc=0 runs=1 resume=0 fresh=1 target=0' \
-  'newer-parent|rc=0 runs=1 resume=1 fresh=0 target=1' \
-  'parent-only|rc=0 runs=1 resume=0 fresh=1 target=0'; do
-  kind="${row%%|*}" replay_run="$RUN/replay-$kind"
-  assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$replay_run" codex "$kind" 0)" \
-    "${row#*|}" "codex $kind resumes only a lead interactive session" "$replay_run/replay.err"
 done
 # A pane this machine cannot read is the local tmux failure it is, never a
 # harness that showed no screen. The first capture is the ssh prompt wait's.
@@ -381,50 +378,32 @@ for harness in codex pi; do
     "$expected" \
     "control: native $harness continue on an empty host loses the start brief" "$RUN/replay.err"
 done
-control lookup-empty '    1) exit 1 ;;' '    1) exit 0 ;;' lib/lane-relaunch.sh
-for harness in codex pi; do
-  run_ot "$harness" "$HARNESS_SCREEN" "$harness"
-  assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$RUN" "$harness" none 0)" \
-    'rc=0 runs=1 resume=1 fresh=0 target=0' \
-    "control: a lookup that passes absence resumes $harness with an empty id" "$RUN/replay.err"
-done
-control lookup-failure '  exit 2' '  exit 1' lib/lane-relaunch.sh
-for harness in codex pi; do
-  run_ot "$harness" "$HARNESS_SCREEN" "$harness"
-  assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$RUN" "$harness" scan-failed 0)" \
-    'rc=0 runs=1 resume=0 fresh=1 target=0' \
-    "control: a lookup that hides its failure starts $harness fresh" "$RUN/replay.err"
-done
-# Only the executed launch reads the mutant owner. The replay matcher keeps
-# the shipped text, so a changed suffix cannot pass as the exact fresh prompt.
+while IFS="|" read -r name old new kind expected; do
+  control "$name" "$old" "$new" lib/lane-relaunch.sh
+  for harness in codex pi; do
+    run_ot "$harness" "$HARNESS_SCREEN" "$harness"
+    assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$RUN" "$harness" "$kind" 0)" \
+      "$expected" "control: $name changes $harness selection" "$RUN/replay.err"
+  done
+done <<'ROWS'
+lookup-empty|    1) exit 1 ;;|    1) exit 0 ;;|none|rc=0 runs=1 resume=1 fresh=0 target=0
+lookup-failure|  exit 2|  exit 1|scan-failed|rc=0 runs=1 resume=0 fresh=1 target=0
+worktree|.cwd==\$cwd and .lead|true and .lead|newer-foreign|rc=0 runs=1 resume=1 fresh=0 target=0
+wrong-target|0) session_id_of "$1" "$session_file" && exit 0 ;;|0) id="$(session_id_of "$1" "$session_file")" && printf "%s-wrong\n" "$id" && exit 0 ;;|matching|rc=0 runs=1 resume=1 fresh=0 target=0
+ROWS
+# The matcher reads shipped unattended text, never the mutated launch owner.
 control unattended "LAUNCH_UNATTENDED_TEXT='This is" "LAUNCH_UNATTENDED_TEXT='changed unattended text. This is" lib/lane-launch.sh
 for harness in codex pi; do
   run_ot "$harness" "$HARNESS_SCREEN" "$harness"
   assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$RUN" "$harness" none 0)" \
-    'rc=0 runs=1 resume=0 fresh=0 target=0' \
-    "control: changed unattended text fails the exact $harness fresh-prompt match" "$RUN/replay.err"
+    'rc=0 runs=1 resume=0 fresh=0 target=0' "control: changed unattended text fails the $harness fresh-prompt match"
 done
-for rule in source parent lead; do
-  case "$rule" in
-    source) old='.source=="cli"'; new='.source!="cli"'; worker=exec ;;
-    parent) old='.parent_thread_id==null'; new='.parent_thread_id!=null'; worker=parent ;;
-    lead) old='$meta!=null and ($meta|'; new='$meta!=null or ($meta|'; worker=worker ;;
-  esac
+for row in 'source|.source=="cli"|.source!="cli"|exec-only' 'parent|.parent_thread_id==null|.parent_thread_id!=null|parent-only'; do
+  IFS="|" read -r rule old new kind <<<"$row"
   control "codex-$rule" "$old" "$new" lib/lane-relaunch.sh
   run_ot codex "$HARNESS_SCREEN" codex
-  for kind in "newer-$worker" "$worker-only"; do
-    replay_run="$RUN/replay-$kind"
-    assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$replay_run" codex "$kind" 0)" \
-      'rc=0 runs=1 resume=1 fresh=0 target=0' \
-      "control: without the $rule check codex $kind resumes a non-lead" "$replay_run/replay.err"
-  done
-done
-control wrong-target '0) session_id_of "$1" "$session_file" && exit 0 ;;' '0) id="$(session_id_of "$1" "$session_file")" && printf "%s-wrong\n" "$id" && exit 0 ;;' lib/lane-relaunch.sh
-for harness in codex pi; do
-  run_ot "$harness" "$HARNESS_SCREEN" "$harness"
-  assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$RUN" "$harness" matching 0)" \
-    'rc=0 runs=1 resume=1 fresh=0 target=0' \
-    "control: a wrong $harness resume argument fails the matching-session target check" "$RUN/replay.err"
+  assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$RUN" codex "$kind" 0)" \
+    'rc=0 runs=1 resume=1 fresh=0 target=0' "control: without $rule eligibility Codex resumes a non-lead"
 done
 control brief '"$RELAUNCH_ROUTE" != resume-or-fresh ]]; then' '"$HOST_RELAUNCH" == false ]]; then'
 run_ot codex - claude
