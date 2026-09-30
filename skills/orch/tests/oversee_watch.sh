@@ -1307,13 +1307,15 @@ custom_close_case() { # NAME
   printf '[{"number":2,"headRefName":"issue-2","mergedAt":"2026-09-20T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
   write_state "$custom/workflow-state-oversee.json" \
     "$(lane_record issue-2 gh-2 /srv/provider /srv/lane/issue-2 running)"
+  printf 'running\n' > "$STUB_DIR/harness-state"
   repeat_sleep_stub \
     'n=0; [[ ! -f "$STUB_DIR/repeat.calls" ]] || n="$(cat "$STUB_DIR/repeat.calls")"' \
     'n=$((n + 1)); printf "%s\n" "$n" > "$STUB_DIR/repeat.calls"' \
-    'case "$n" in 1) rm -rf -- "$STUB_DIR/remote/srv/lane/issue-2" ;; 2) unlink "$STUB_DIR/custom/workflow-state-oversee.json" ;; esac'
+    'case "$n" in 1) rm -rf -- "$STUB_DIR/remote/srv/lane/issue-2"; printf "exited\n" > "$STUB_DIR/harness-state" ;; 2) unlink "$STUB_DIR/custom/workflow-state-oversee.json" ;; esac'
   err="$TMP_ROOT/e-$name"
   out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
-    LANE_HOST_STUB_DIR="$STUB_DIR/remote" PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 \
+    LANE_HOST_STUB_DIR="$STUB_DIR/remote" LANE_HOST_STUB_HARNESS_STATE_FILE="$STUB_DIR/harness-state" \
+    PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 \
     --since 2026-09-19T00:00:00Z --repeat 0 --state "$custom/workflow-state-oversee.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
 }
 custom_close_case repeat_state_custom_close

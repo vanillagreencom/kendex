@@ -3083,8 +3083,12 @@ check_lanes() {
       asking_state="$(lane_row_clear lane-exited "$asking_state" "$lane")"
       continue
     fi
-    pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
-    prior="$(lane_row_get lane-exited "$asking_state" "$lane")"
+    if ! pane_key="$(lane_field "$LANE_OBS" "$i" 5)"; then
+      die state-read-failed "" "lane=$lane" "field=pane-key"
+    fi
+    if ! prior="$(lane_row_get lane-exited "$asking_state" "$lane")"; then
+      die state-read-failed "" "lane=$lane" "row=lane-exited"
+    fi
     if [[ "$prior" == "$pane_key|reported" ]]; then continue; fi
     if [[ "$prior" == "$pane_key" || "$(lane_field "$states" "$i" 3)" == provider ]]; then
       asking_state="$(lane_row_set lane-exited "$asking_state" "$lane" "$pane_key|reported")"
@@ -3100,7 +3104,7 @@ check_lanes() {
       report_tail "$below"
       PASS_EVENT=1
       asking_state="$(lane_row_clear lane-asking "$asking_state" "$lane")"
-      # A worktree still standing is a lane stopped inside merge-pr.md § 5,
+      # A worktree still standing is a lane stopped inside ../workflows/merge-pr.md § 5,
       # which the overseer resumes; its sandbox closes on the exit after that.
       hosted_lane_item "$lane"
       if [[ -n "$HOSTED_ROOT" && -n "$(lane_row_get merged "$asking_state" "$LANE_ITEM")" ]] \
@@ -3298,7 +3302,9 @@ check_lanes() {
     # its last row, so each turn end it writes is news once.
     lane_note "$lane"
     screen_key="${pane_key}|${COPILOT_SESSION_NOTE}|$(printf '%s' "$turn" | cksum)"
-    prior="$(lane_row_get lane-idle "$asking_state" "$lane")"
+    if ! prior="$(lane_row_get lane-idle "$asking_state" "$lane")"; then
+      die state-read-failed "" "lane=$lane" "row=lane-idle"
+    fi
     if [[ "$prior" == "$screen_key|reported" ]]; then continue; fi
     if [[ "$prior" == "$screen_key" ]]; then
       asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$screen_key|reported")"
@@ -3321,7 +3327,6 @@ check_lanes() {
   # reported what it found.
   [[ "$close_failed" -eq 0 ]] || exit 2
 }
-
 
 # One `lanes list` per pass, read by the account events below and the
 # heartbeat's roster alike, so those two never describe an account

@@ -300,7 +300,8 @@ for row in 'exited|0|true' 'running|0|false' 'exited|2|false' 'exited|7|false' '
   assert_eq "$(grep -c '^status --item issue-2 --harness claude ' "$STUB_DIR/host.calls")" "1" "one remote harness call per lane per pass"
 done
 # The watch still has to publish the authoritative remote exit immediately.
-REMOTE_WATCH="$(mutant_scripts remote-watch/orch oversee-watch)/oversee-watch" || exit 1
+REMOTE_SCRIPTS="$(mutant_scripts remote-watch/orch oversee-watch)" || exit 1
+REMOTE_WATCH="$REMOTE_SCRIPTS/oversee-watch"
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/remote-watch/github"
 mutate_file "$REMOTE_WATCH" '    if [[ "$prior" == "$pane_key" || "$(lane_field "$states" "$i" 3)" == provider ]]; then' \
   '    if [[ "$prior" == "$pane_key" ]]; then'

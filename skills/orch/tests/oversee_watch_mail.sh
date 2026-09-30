@@ -692,7 +692,7 @@ assert_eq "$(grep -c 're=' <<<"$(head -1 <<<"$out")")" "0" \
 # clone's state before the merged item's exited window closes its sandbox;
 # keep leaves them standing; absent never has one.
 hosted_runs() { # CASE LANES KEEP [ENV...]
-  local lanes="$2" keep="$3" n run args=()
+  local lanes="$2" keep="$3" n run harness_state args=()
   new_case "$1"
   shift 3
   HOSTED_DISK="$STUB_DIR/remote"
@@ -711,9 +711,14 @@ hosted_runs() { # CASE LANES KEEP [ENV...]
   jq -nc '[$ARGS.positional[] | {number: tonumber, headRefName: "issue-\(.)", mergedAt: "2026-09-14T10:00:00Z"}]' \
     --args $lanes > "$STUB_DIR/merged.json"
   for run in 1 2 3; do
+    harness_state=running
+    # The first pass learns the clone while the harness lives. Its exit is
+    # news after the worktree goes, or while it stands in the keep row.
+    [[ "$run" -eq 1 ]] || harness_state=exited
     HOSTED_RC[run]=0
     HOSTED_OUT[run]="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
-      LANE_HOST_STUB_DIR="$HOSTED_DISK" ${1+"$@"} -- --max-loops 1 "${args[@]}" 2>"$STUB_DIR/run$run.err")" \
+      LANE_HOST_STUB_DIR="$HOSTED_DISK" LANE_HOST_STUB_HARNESS_STATE="$harness_state" \
+      ${1+"$@"} -- --max-loops 1 "${args[@]}" 2>"$STUB_DIR/run$run.err")" \
       || HOSTED_RC[run]=$?
     # A jammed state directory is the stub's doing; the next run starts writable.
     [[ ! -d "$STATE_DIR" ]] || chmod u+w "$STATE_DIR"

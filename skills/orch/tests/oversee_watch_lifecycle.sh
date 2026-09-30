@@ -849,8 +849,8 @@ unit_start_case() { # RUNNER
 # a private copy of lib/watch-pid.sh sets to 1, so the takeover shows the stop waits for the
 # record and not for the close. The old watch is the one a succession
 # restarted for %9, which a start from %9 takes over. Its first pass learns
-# the lane's clone from the worktree and sees the lane exit; the worktree
-# then goes, and the second pass reports the exit and closes the lane. The
+# the lane's clone from the worktree while the harness lives; the worktree
+# then goes and the provider reports exited, so the second pass closes the lane. The
 # new start runs one pass. Sets TAKEN; AT_EXIT, close.log as the old watch's
 # exit status lands; OLD_EXIT; CLOSES, the closes made; and EVENT and FAILED,
 # the lane-closed and lane-close-failed lines the old watch's log carries.
@@ -866,13 +866,17 @@ unit_takeover_case() { # NAME RUNNER TARGET CLOSE_RC
   printf '{"handoff":{"written_at":"t"}}\n' > "$STUB_DIR/remote/srv/clone/tmp/workflow-state-issue-1.json"
   printf 'bash\n' > "$STUB_DIR/cmd-gh-1.txt"
   printf '[{"number": 1, "headRefName": "issue-1", "mergedAt": "2026-09-14T10:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+  printf 'running\n' > "$STUB_DIR/harness-state"
   host_env=(ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote"
+    LANE_HOST_STUB_HARNESS_STATE_FILE="$STUB_DIR/harness-state"
     OVERSEE_WATCH_LANE_CLOSE="$TMP_ROOT/bin/slow-close.sh" SLOW_CLOSE_RC="$4")
   dir="$(mktemp -d "$STUB_DIR/waiter.XXXXXX")"
   fence_start "$runner" "$target" "$dir" OVERSEE_WATCH_ORIGIN=succession "${host_env[@]}" \
     -- --item issue-1 --hosted issue-1=/srv/lane/issue-1 gh-1
   wait_file "$STUB_DIR/held" 200 || true
-  rm -rf -- "${STUB_DIR:?}/remote/srv/lane/issue-1" "${STUB_DIR:?}/hold"
+  rm -rf -- "${STUB_DIR:?}/remote/srv/lane/issue-1"
+  printf 'exited\n' > "$STUB_DIR/harness-state"
+  rm -f -- "${STUB_DIR:?}/hold"
   wait_file "$STUB_DIR/close.log" 200 || true
   err="$TMP_ROOT/e-$name"
   ( WATCH_BIN="$target" repeat_watch_run PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" TMUX_PANE=%9 LIFECYCLE_SLEEP_FAIL=1 \
