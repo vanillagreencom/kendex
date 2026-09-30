@@ -1,0 +1,1 @@
+- Alert reads use the overseer app token, not lane credentials. Supply and renew its private file through `ORCH_SECURITY_ALERT_TOKEN_FILE` on the control VM.

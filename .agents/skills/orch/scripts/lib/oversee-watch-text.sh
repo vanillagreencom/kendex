@@ -239,9 +239,11 @@ The long pass's events, checked and reported in this order:
                              not be read, or carried a line the check cannot
                              read. A source is <repo>/<kind>,
                              <repo>/dependabot-prs (the alert-to-pull-request
-                             link) or alerts_triaged. A cause is permission,
-                             the credential the watch reads with lacking that
-                             alert permission; feature-off, the alert feature
+                             link), alerts_triaged or installation-token.
+                             A cause is permission, vanillagreen-overseer
+                             lacking that alert permission; credential, its
+                             supplied token file unavailable or invalid;
+                             feature-off, the alert feature
                              turned off on that repository; http-<status> or
                              exit-<N> for any other failure; or invalid.
                              Printed on every long pass a read fails, and
@@ -747,6 +749,19 @@ Environment:
                               through OVERSEE_WATCH_WORKFLOW_STATE, which must
                               then exist; `off` lists nothing. Any other value
                               exits 2
+  ORCH_SECURITY_ALERT_TOKEN_FILE
+                              path to the installation token supplied and
+                              renewed by the control VM for
+                              vanillagreen-overseer, with alert read and write
+                              permissions. No default. Read once each long
+                              pass; only alert REST lists and the GraphQL
+                              alert-to-PR link use it through GH_TOKEN.
+                              Other watch reads keep their current credential.
+                              An unset, unreadable, empty or whitespace-bearing
+                              token produces security-alerts-unread with cause
+                              credential, keeps prior rows and makes no alert
+                              API call. With ORCH_SECURITY_ALERTS=off it is
+                              not read
   ORCH_STATE_DIR              workflow-state directory; relative paths join
                               the project root; absolute paths stay unchanged
   ORCH_WATCH_TAIL_LINES       most lines any one event's pane payload prints,
@@ -909,7 +924,7 @@ ow_message() { # REASON FIELD=VALUE...
     outside-list-invalid) text='The GitHub list of open issues and pull requests carried a line the outside-contribution check cannot read: a number, a pr or issue kind, a login, and a pull request head commit.' ;;
     external-triage-invalid) text='ORCH_EXTERNAL_TRIAGE takes on or off.' ;;
     security-alerts-invalid) text='ORCH_SECURITY_ALERTS takes on or off.' ;;
-    security-alerts-read-failed) text='A read the security-alert check needs failed, so the source it names is judged nothing this pass and its baseline rows stand; the security-alerts-unread line carries it. Cause permission is the credential the watch reads with lacking that alert permission; for a GitHub App the owner adds it to the app and accepts it on each installation. Cause feature-off is the alert feature turned off on that repository, which only turning it on clears. GitHub'"'"'s or workflow-state'"'"'s own words follow where the read printed any.' ;;
+    security-alerts-read-failed) text='A read the security-alert check needs failed, so the named source is not judged this pass and its baseline rows stand. Cause permission means vanillagreen-overseer lacks that alert permission; the owner adds it to the app and accepts it on each installation. Cause credential means ORCH_SECURITY_ALERT_TOKEN_FILE supplies no usable installation token; the control VM must supply and renew it. Cause feature-off means the alert feature is off on that repository. The failed reader'"'"'s own words follow where it printed any.' ;;
     triage-state-failed) text='The fleet triage verdict log could not be read.' ;;
     triage-item-invalid) text='The fleet triage log contains an invalid issue identifier.' ;;
     time-failed) text='The current UTC time could not be read.' ;;

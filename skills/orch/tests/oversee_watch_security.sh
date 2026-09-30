@@ -10,12 +10,12 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.
 
 HEARTBEAT="EVENT heartbeat loops=1 interval=0s since=none"
 
-# run [ENV=VAL ...] -- ARGS... — one single-loop watch run; OUT, RC and ERR (a
-# file) are what the checks read.
+# run [ENV=VAL ...] -- ARGS...: one watch run; OUT, RC and ERR (a file)
+# are what the checks read. RUN_LOOPS overrides the single-loop default.
 RUN_SEQ=0
 run() {
   ERR="$TMP_ROOT/run-$((++RUN_SEQ)).err"
-  OUT="$(run_watch "$@" --max-loops 1 2>"$ERR")" && RC=0 || RC=$?
+  OUT="$(run_watch "$@" --max-loops "${RUN_LOOPS:-1}" 2>"$ERR")" && RC=0 || RC=$?
 }
 
 # events — the run's security-alert lines, one per line, or `none`.
@@ -66,6 +66,98 @@ one_of_each() {
 }
 
 echo "=== oversee-watch security alerts ==="
+
+# GitHub CLI gives GH_TOKEN precedence over GITHUB_TOKEN and the keyring.
+# Only the four alert reads use the supplied installation token. Each control
+# restores the watch's ambient credential at one API call site.
+for kind in rest graphql; do
+  scripts="$(mutant_scripts "security-auth-$kind/orch" lib/security-alerts.sh)" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/security-auth-$kind/github"
+  case "$kind" in
+    rest) call='gh api --paginate' ;;
+    graphql) call='gh api graphql' ;;
+  esac
+  mutate_file "$scripts/lib/security-alerts.sh" "GH_TOKEN=\"\$token\" $call" "GH_TOKEN=\"\${GH_TOKEN:-}\" $call"
+done
+for row in \
+  'gh|GH_TOKEN=ghs_fixture_lane|0' \
+  'github|GITHUB_TOKEN=ghs_fixture_lane|0' \
+  'keyring|GH_TOKEN=|0' \
+  'rest|GH_TOKEN=ghs_fixture_lane|3' \
+  'graphql|GH_TOKEN=ghs_fixture_lane|1'; do
+  IFS='|' read -r name ambient wrong <<<"$row"
+  new_case "security_auth_$name"
+  one_of_each
+  watch="$REPO_ROOT/skills/orch/scripts/oversee-watch"
+  case "$name" in rest|graphql) watch="$TMP_ROOT/security-auth-$name/orch/scripts/oversee-watch" ;; esac
+  WATCH_BIN="$watch" run "$ambient" --
+  current=ghs_fixture_lane
+  [[ "$name" != keyring ]] || current=keyring
+  got="$(awk -F'\t' -v current="$current" '
+    $2 == "api" && ($3 == "graphql" || ($3 == "--paginate" && $4 ~ /\/alerts\?/)) {
+      alerts++; if ($1 != "ghs_fixture_overseer") wrong++; next
+    }
+    { other++; if ($1 != current) leaked++ }
+    END { printf "%d|%d|%d|%d", alerts, wrong, (other > 0), leaked }
+  ' "$STUB_DIR/gh.auth")" || exit 1
+  assert_eq "$RC|$got" "0|4|$wrong|1|0" "alert credential isolation: $name" "$ERR"
+done
+
+# The control VM renews short-lived tokens while the same watch is running.
+# Replacement during the GraphQL read affects only the next long pass.
+new_case security_auth_rotation
+printf 'ghs_fixture_renewed\n' > "$STUB_DIR/next-alert-token"
+RUN_LOOPS=2 run GH_TOKEN=ghs_fixture_lane --
+got="$(awk -F'\t' '
+  $2 == "api" && ($3 == "graphql" || ($3 == "--paginate" && $4 ~ /\/alerts\?/)) { print $1 }
+' "$STUB_DIR/gh.auth")" || exit 1
+assert_eq "$RC|$got" '0|ghs_fixture_overseer
+ghs_fixture_overseer
+ghs_fixture_overseer
+ghs_fixture_overseer
+ghs_fixture_renewed
+ghs_fixture_renewed
+ghs_fixture_renewed
+ghs_fixture_renewed' "one token snapshot per pass, renewed without restarting the watch" "$ERR"
+
+# No usable token means no fallback API read. Rows from a successful pass
+# survive until the control VM restores its supply. The table includes the
+# control VM's missing file and interrupted/invalid file writes.
+for shape in unset missing empty whitespace multiline; do
+  new_case "security_auth_$shape"
+  one_of_each
+  run --
+  supplied="$STUB_DIR/alert-token"
+  case "$shape" in
+    unset) supplied="" ;;
+    missing) rm -- "$supplied" ;;
+    empty) : > "$supplied" ;;
+    whitespace) printf ' \t\n' > "$supplied" ;;
+    multiline) printf 'ghs_fixture_overseer\nghs_fixture_renewed\n' > "$supplied" ;;
+  esac
+  : > "$STUB_DIR/gh.auth"
+  run GH_TOKEN=ghs_fixture_lane "ORCH_SECURITY_ALERT_TOKEN_FILE=$supplied" --
+  calls="$(awk -F'\t' '$2 == "api" && ($3 == "graphql" || ($3 == "--paginate" && $4 ~ /\/alerts\?/)) { n++ } END { print n+0 }' "$STUB_DIR/gh.auth")" || exit 1
+  refused="$RC|$(unread)|$(events)|$calls"
+  printf 'ghs_fixture_renewed\n' > "$STUB_DIR/alert-token"
+  run --
+  assert_eq "$refused|$RC|$(unread)|$(events)" "0|EVENT security-alerts-unread reads=installation-token:credential|none|0|0|none|none" \
+    "unusable token refuses fallback and recovery retains rows: $shape" "$ERR"
+done
+
+# Must-fail control: keep the file read and token checks but disable their
+# refusal. The credential row must fail rather than accept gh's fallback.
+scripts="$(mutant_scripts security-token-control/orch lib/security-alerts.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/security-token-control/github"
+mutate_file "$scripts/lib/security-alerts.sh" \
+  '    || [[ -z "$token" || "$token" == *[[:space:]]* ]]; then' \
+  '    || [[ -z "$token" || "$token" == *[[:space:]]* ]] && false; then'
+for shape in missing empty; do
+  new_case "security_token_control_$shape"
+  case "$shape" in missing) rm -- "$STUB_DIR/alert-token" ;; empty) : > "$STUB_DIR/alert-token" ;; esac
+  WATCH_BIN="$scripts/oversee-watch" run GH_TOKEN=ghs_fixture_lane --
+  assert_eq "$RC|$(unread)" "0|none" "control: token refusal removed makes the credential row fail: $shape" "$ERR"
+done
 
 # One open alert of each kind prints one line each, the Dependabot line naming
 # its pull request, and ends the run as news. The next pass reports none.
@@ -250,9 +342,9 @@ assert_eq "$RC|$(grep -F $'owner/repo\t' <<<"$OUT" || true)" "0|owner/repo	${DEP
 # The setting: off lists nothing and makes no call; any other value is refused.
 new_case security_off
 one_of_each
-run ORCH_SECURITY_ALERTS=off --
-assert_eq "$RC|$(events)|$(grep -cE '/alerts\?|api graphql' "$STUB_DIR/gh.calls" || true)" "0|none|0" \
-  "ORCH_SECURITY_ALERTS=off lists nothing" "$ERR"
+run ORCH_SECURITY_ALERTS=off "ORCH_SECURITY_ALERT_TOKEN_FILE=$STUB_DIR/missing-token" --
+assert_eq "$RC|$(events)|$(unread)|$(grep -cE '/alerts\?|api graphql' "$STUB_DIR/gh.calls" || true)" "0|none|none|0" \
+  "ORCH_SECURITY_ALERTS=off reads neither the token nor alerts" "$ERR"
 new_case security_setting_invalid
 run ORCH_SECURITY_ALERTS=yes --
 assert_eq "$RC|${OUT:-empty}|$(grep -c 'oversee-watch: security-alerts-invalid setting=ORCH_SECURITY_ALERTS value=yes' "$ERR" || true)" \

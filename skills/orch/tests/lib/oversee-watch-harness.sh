@@ -101,6 +101,9 @@ CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
 #                 graphql-fail present → that call fails as gh fails a
 #                 GraphQL error, exit 1 with no HTTP status, printing the
 #                 file's own text, or a missing-permission line where empty
+#   next-alert-token
+#                 after the GraphQL read, atomically replaces alert-token,
+#                 as the control VM's token mint renews the supplied file
 # Every `auth status`, `pr list`, `run`, `api --paginate` and `api graphql`
 # call is logged to gh.calls.
 # `api user` (env-token preflight) succeeds for any token except one
@@ -108,6 +111,9 @@ CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
+# These credentials are fixture values only. Record gh's documented token
+# precedence separately from the command log so authentication is testable.
+printf '%s\t%s\t%s\t%s\n' "${GH_TOKEN:-${GITHUB_TOKEN:-keyring}}" "${1:-}" "${2:-}" "${3:-}" >> "$STUB_DIR/gh.auth"
 case "${1:-} ${2:-}" in
   "auth status")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
@@ -201,6 +207,7 @@ case "${1:-} ${2:-}" in
       '{data: {repository: {vulnerabilityAlerts: {pageInfo: {hasNextPage: false, endCursor: null},
         nodes: [$nodes[] | select($states == null or (.state as $s | $states | index($s)))]}}}}' \
       | jq -r "${filter:-.}"
+    [[ ! -f "$STUB_DIR/next-alert-token" ]] || mv -- "$STUB_DIR/next-alert-token" "$STUB_DIR/alert-token"
     exit ;;
   "pr list")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
@@ -691,6 +698,7 @@ new_case() {
   printf '9001\n' > "$STUB_DIR/panepid-gh-1.txt"
   printf '9002\n' > "$STUB_DIR/panepid-gh-2.txt"
   printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
+  printf 'ghs_fixture_overseer\n' > "$STUB_DIR/alert-token"
 }
 
 # shortened_ceiling_watch — the scripts, as mutant_scripts links them, whose
@@ -756,10 +764,12 @@ run_watch() {
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR -u ORCH_LANE_HOST \
            -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u ORCH_WATCH_START_STALL_SECS -u ORCH_OVERSEER_MARK_REPEAT -u LINEAR_TEAM -u ORCH_DIRECTIVE_UNREAD_SECS -u ORCH_EXTERNAL_TRIAGE -u ORCH_SECURITY_ALERTS \
+           -u ORCH_SECURITY_ALERT_TOKEN_FILE \
            -u ORCH_REPORT_EVERY_MINUTES -u ORCH_REPORT_EVERY_ISSUES -u ORCH_REPORT_UPCOMING \
            -u ORCH_REPORT_COLUMNS -u ORCH_PROGRESS_REPORT_DIR -u OVERSEE_WATCH_REPORT \
            -u OVERSEE_REPORT_WORKFLOW_STATE -u OVERSEE_REPORT_TRACKER -u OVERSEE_REPORT_GITHUB \
            -u OVERSEE_REPORT_LANE_MAIL -u OVERSEE_REPORT_LANE_HOST ORCH_REPORT=off \
+           ORCH_SECURITY_ALERT_TOKEN_FILE="$STUB_DIR/alert-token" \
            STUB_DIR="$STUB_DIR" TMUX="fake" OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" \
            ORCH_WATCH_MAIL_INTERVAL=0 \
            ${team_args[@]+"${team_args[@]}"} \

@@ -139,14 +139,16 @@ The owner applied this layout on 2026-09-29 (owner note 1790641164, § Sources).
 
 When Copilot is down, or the enterprise AI-credit budget stops, no Copilot approval arrives. The budget is the enterprise's because Copilot code review for members without a Copilot license bills its AI credits to the enterprise (§ Sandbox proof), and GitHub blocks code reviews once the enterprise spending limit is exhausted (§ Sources). The standing route is the overseer's GitHub App (owner note 1790642054, § Sources):
 
-- `vanillagreen-overseer`, app id 5115517, owned by vanillagreencom, installed on all repositories (installation 165975211). Permissions: Pull requests write and Contents write; Checks, Statuses and Metadata read; no webhooks.
+- `vanillagreen-overseer`, app id 5115517, owned by vanillagreencom, installed on all repositories (installation 165975211). Permissions: Pull requests write and Contents write; Dependabot alerts, code scanning alerts and secret scanning alerts read and write; Checks, Statuses and Metadata read; no webhooks.
 - Its private key sits on the control VM, mode 600. The control VM mints short-lived installation tokens for overseer sessions only. Lanes never hold it; FLT-426 scopes the lanes app tokens.
 - It bypasses, in `pull_request` mode, each working repository's `main required checks` and `main merge queue`, and nothing on 24148602, so thread resolution, deletion and force-push hold even for it.
 
-The app has two uses, and only these:
+The app has three uses, and only these:
 
 1. **Use 1, fallback approval.** When the ruleset requires an approval, no review bot has approved the head within its window (Copilot down, out of credits, a path outside the approval globs, or no verdict), and the lane's own internal review passed with no open blocker, the overseer approves the head as the app, and the approval satisfies 24148602 like Copilot's would. It sends one notice, to the master while one runs. No ruleset or setting changes. The signal is `approval-wait`'s timeout for a lane, and `pr-watch.sh`'s `awaiting-stale` line for the overseer (P4). The app authors no pull request, so an owner-authored one takes its approval too. Two lane routes also end in this approval: a head Copilot last read, whose Copilot threads the lane answered with no push since, approved after the overseer writes why each decline holds, and a moved head whose one Copilot re-review left no approval and no open thread. [review-pr-comments.md § 7.2](../../skills/orch/workflows/review-pr-comments.md#72-copilot-head-route) sets both out.
 2. **Use 2, emergency merge.** When a required check itself cannot pass (a broken review gate, broken CI, a GitHub outage), the overseer merges the verified head as the app through its `pull_request`-mode bypass on `main required checks` and `main merge queue`, and posts a notice naming the pull request, the head, the broken check and the reason. 24148602 still holds the approval and the threads. Use 2 replaces the gate-repair break-glass of [review-gate SKILL.md § 4. Operations](../../skills/review-gate/SKILL.md#4-operations), and no one adds a temporary bypass entry.
+
+3. **Use 3, security alerts.** The watch reads open alerts and their linked pull requests with the installation token the control VM supplies. The overseer uses the same token for dismissals and resolutions. [security-alerts.md § Credential](../../skills/orch/references/security-alerts.md#credential) defines the token supply. Lanes never hold it.
 
 The owner's own approval still counts, as any write-access approval does. The owner holds no standing bypass anywhere. The orch merge and approval steps that name this identity, with the merge-rail, [adoption.md](../../skills/review-gate/references/adoption.md) and review-gate SKILL.md § 4 rewrite, are KEN-2069's; this note rewrites none of them.
 
@@ -257,12 +259,9 @@ Not proven:
 
 ## The lanes app permission set
 
-The lanes app, `vanillagreen-fleet-lanes` (installation 161253865), holds the permission set [D003](../decisions/D003-one-merge-path.md) § Decision item 2 records. KEN-2220's security-alert check in `oversee-watch` adds three repository permissions, each read and write: Dependabot alerts, code scanning alerts and secret scanning alerts. Read lists a repository's open alerts. Write lets the overseer dismiss one with its reason and comment.
+The lanes app, `vanillagreen-fleet-lanes` (installation 161253865), keeps the permission set [D003](../decisions/D003-one-merge-path.md) § Decision item 2 records, without alert permissions. The overseer app owns Use 3 (§ Copilot-down fallback).
 
-- Owner step: add the three permissions to the app, then accept the permission update on each installation.
-- Done for kendex. The overseer measured it on 2026-09-30 (owner note 1790735185): a token minted from the installation read 28 open kendex Dependabot alerts.
-- Pending for every other installation. Until an installation accepts the update, each long pass of `oversee-watch` prints one `security-alerts-unread` line that names each alert list of that installation's repositories with cause `permission`.
-- Open risk: every lane sandbox holds this installation's token, so each lane gets the three permissions wherever the app is installed. A lane can read secret scanning alerts, with each plaintext secret unless the read passes `hide_secret=true`, and can dismiss or resolve any alert, which silences the check that reports it. The least-privilege holder is the overseer app, `vanillagreen-overseer`, whose key sits on the control VM only (§ Copilot-down fallback). A follow-up item moves the grant there. Until it lands, the interim control is a rule in [security-alerts.md § Triage](../../skills/orch/references/security-alerts.md#triage): the overseer runs every dismissal and resolution itself from the control VM and never delegates one, so no lane brief, fix item or take-over route asks a lane to dismiss or resolve an alert.
+- Owner step: the overseer app's alert grant is accepted (owner note 1790789346-1276246-32321). After this change merges and the control VM runs it, remove the alert permissions from the lanes app and accept that update on each installation. The overseer then obtains the owner's confirmation.
 
 ## Issues the design makes moot
 

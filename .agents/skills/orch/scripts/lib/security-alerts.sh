@@ -17,7 +17,8 @@
 # and white space character percent-encoded (`%25`, `%20`), so a directory
 # name with a space stays one word; a source is `<repo>/<kind>`,
 # `<repo>/dependabot-prs` (the alert-to-pull-request link) or
-# `alerts_triaged`; a cause is one of security_read_cause's or `invalid`.
+# `alerts_triaged` or `installation-token`; a cause is one of
+# security_read_cause's, `invalid` or `credential`.
 
 # ORCH_SECURITY_ALERTS, read once at start: `on` (the default) runs the pass,
 # `off` lists nothing, and any other value is refused rather than guessed.
@@ -75,8 +76,8 @@ SECURITY_PR_JQ='.data.repository.vulnerabilityAlerts.nodes[]
   | "\(.number)\t\(.state)\t\(.dependabotUpdate.pullRequest.number)"'
 
 # The cause a failed read is reported under, the first row whose ERE matches
-# what gh printed: `permission`, the credential the watch reads with lacking
-# the alert permission, or `feature-off`, the alert feature turned off on the
+# what gh printed: `permission`, the overseer app lacking the alert
+# permission, or `feature-off`, the alert feature turned off on the
 # repository, which GitHub answers with a 403 or 404 of its own. The words
 # each row was written from:
 #   Resource not accessible by integration (HTTP 403)          GitHub App
@@ -139,8 +140,17 @@ check_security_alerts() {
   [[ "$SECURITY_ENABLED" -eq 1 ]] || return 0
   local errf="$WORK_DIR/security.err" state="${PW_SEEN[0]}" events="" new_rows="" rc
   local recorded="" reported repo kind out prs line key number severity subject_key subject
-  local manifest scope advisory validity url pr fields row alerts source query keys=() fix_keys=() fix_rows=""
+  local manifest scope advisory validity url pr fields row alerts source query token keys=() fix_keys=() fix_rows=""
   SECURITY_UNREAD=""
+  # The control VM renews its installation token in this file. Read once per
+  # long pass so every alert read shares it, but unrelated gh calls never do.
+  # A missing or empty token must not fall back to a lane token or the keyring.
+  if ! token="$(cat -- "${ORCH_SECURITY_ALERT_TOKEN_FILE:-}" 2>"$errf")" \
+    || [[ -z "$token" || "$token" == *[[:space:]]* ]]; then
+    security_unread installation-token credential "$errf"
+    security_unread_commit "$state"
+    return 0
+  fi
   reported=$'\n'"$(awk -F'\t' '$1 == "security-alert" && NF == 3 { print $2 }' <<<"$state")"$'\n'
 
   # The verdicts first: without them nothing is judged, and every row stands.
@@ -175,13 +185,13 @@ check_security_alerts() {
       # A secret's plaintext value is in the list unless GitHub is told to
       # leave it out, and the check never reads it.
       [[ "$kind" != secret-scanning ]] || query+="&hide_secret=true"
-      out="$(gh api --paginate "repos/$repo/$kind/alerts?$query" \
+      out="$(GH_TOKEN="$token" gh api --paginate "repos/$repo/$kind/alerts?$query" \
         --jq "$(security_alert_jq "$kind")" 2>"$errf")" || rc=$?
       [[ "$rc" != 0 ]] || security_lines_valid "$kind" "$out" "" || rc=invalid
       prs=""
       if [[ "$rc" == 0 && "$kind" == dependabot ]]; then
         source="$repo/dependabot-prs"
-        prs="$(gh api graphql --paginate -f owner="${repo%%/*}" -f name="${repo#*/}" \
+        prs="$(GH_TOKEN="$token" gh api graphql --paginate -f owner="${repo%%/*}" -f name="${repo#*/}" \
           -f query="$SECURITY_PR_QUERY" --jq "$SECURITY_PR_JQ" 2>"$errf")" || rc=$?
         [[ "$rc" != 0 ]] || security_lines_valid "$kind" "" "$prs" || rc=invalid
       fi
