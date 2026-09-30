@@ -120,12 +120,13 @@ ghs_fixture_renewed
 ghs_fixture_renewed
 ghs_fixture_renewed' "one token snapshot per pass, renewed without restarting the watch" "$ERR"
 
-# No usable token means no fallback API read. Rows from a successful pass
-# survive until the control VM restores its supply. The table includes the
-# control VM's missing file and interrupted/invalid file writes.
+# No usable token means no fallback API read. Alert rows and the heartbeat's
+# security-update mapping survive the outage, before recovery can repair them.
+# The table includes the control VM's missing file and interrupted/invalid writes.
 for shape in unset missing empty whitespace multiline; do
   new_case "security_auth_$shape"
   one_of_each
+  printf '%s\n' "$DEPENDABOT_OPEN" > "$STUB_DIR/open.txt"
   run --
   supplied="$STUB_DIR/alert-token"
   case "$shape" in
@@ -137,12 +138,14 @@ for shape in unset missing empty whitespace multiline; do
   esac
   : > "$STUB_DIR/gh.auth"
   run GH_TOKEN=ghs_fixture_lane "ORCH_SECURITY_ALERT_TOKEN_FILE=$supplied" --
+  refused="$RC|$(unread)|$(events)"
+  run GH_TOKEN=ghs_fixture_lane "ORCH_SECURITY_ALERT_TOKEN_FILE=$supplied" --
+  retained="$RC|$(unread)|$(events)|$(heartbeats)|$(grep -F $'owner/repo\t' <<<"$OUT" || true)"
   calls="$(awk -F'\t' '$2 == "api" && ($3 == "graphql" || ($3 == "--paginate" && $4 ~ /\/alerts\?/)) { n++ } END { print n+0 }' "$STUB_DIR/gh.auth")" || exit 1
-  refused="$RC|$(unread)|$(events)|$calls"
   printf 'ghs_fixture_renewed\n' > "$STUB_DIR/alert-token"
   run --
-  assert_eq "$refused|$RC|$(unread)|$(events)" "0|EVENT security-alerts-unread reads=installation-token:credential|none|0|0|none|none" \
-    "unusable token refuses fallback and recovery retains rows: $shape" "$ERR"
+  assert_eq "$refused|$retained|$calls|$RC|$(unread)|$(events)" "0|EVENT security-alerts-unread reads=installation-token:credential|none|0|EVENT security-alerts-unread reads=installation-token:credential|none|1|owner/repo	bot-fix pr=12 alert=7|0|0|none|none" \
+    "unusable token refuses fallback, retains the mapping during the outage and recovers without repeating alerts: $shape" "$ERR"
 done
 
 # Must-fail control: keep the file read and token checks but disable their
