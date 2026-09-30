@@ -33,6 +33,8 @@ export const DEFAULT_NOTIFICATION_TITLE = "Pi";
 export const DEFAULT_NOTIFICATION_COOLDOWN_SECONDS = 8;
 export const DEFAULT_NOTIFICATION_BODY_MAX_CHARS = 240;
 export const DEFAULT_TMUX_MESSAGE_DURATION_MS = 5000;
+/** Deadline for each tmux call a notification makes; a stalled server is skipped, not waited on. */
+export const TMUX_COMMAND_TIMEOUT_MS = 1000;
 
 export const DEFAULT_COMPACTION_MODEL = "current";
 export const DEFAULT_COMPACTION_MAX_TOKENS = 8192;

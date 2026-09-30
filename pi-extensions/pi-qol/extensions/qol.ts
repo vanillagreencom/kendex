@@ -38,6 +38,7 @@ import { runHandoff } from "./qol/handoff.js";
 import { imageContentForPath, resolveSubmittedImagePaths } from "./qol/images.js";
 import {
 	clearTmuxWindowMark,
+	forgetTmuxIdentity,
 	notifyQuestionOpened,
 	sendQolNotification,
 	type QolNotificationService,
@@ -46,6 +47,7 @@ import {
 	installPendingQueueThemePatch,
 	installStatusTextAlignmentPatch,
 	restorePendingQueueThemePatch,
+	restoreStatusTextAlignmentPatch,
 } from "./qol/pending-queue.js";
 import { permissionGateMatch, permissionGatePrompt } from "./qol/permission-gate.js";
 import { createRateLimitAutoResumeController, RATE_LIMIT_AUTO_RESUME_EVENT } from "./qol/rate-limit-auto-resume.js";
@@ -102,7 +104,6 @@ export default function qol(pi: ExtensionAPI): void {
 	if (!settingBoolean("enabled", true)) return;
 
 	installThinkingTimerPatch();
-	installStatusTextAlignmentPatch();
 	const thinkingTimerStore: ThinkingTimerStore = {
 		enabled: false,
 		starts: new Map(),
@@ -381,7 +382,7 @@ export default function qol(pi: ExtensionAPI): void {
 		if (!service) return false;
 		questionUnsubscribe = service.subscribe((event: any) => {
 			if (event?.action !== "opened") return;
-			notifyQuestionOpened(ctx, { requestId: event.requestId, request: event.request, source: event.source }, "question");
+			notifyQuestionOpened(pi, ctx, { requestId: event.requestId, request: event.request, source: event.source }, "question");
 		});
 		return true;
 	};
@@ -570,7 +571,7 @@ export default function qol(pi: ExtensionAPI): void {
 	};
 	const notificationService: QolNotificationService = {
 		notifyQuestionOpened(ctx, event) {
-			notifyQuestionOpened(ctx ?? currentCtx, event, "question");
+			notifyQuestionOpened(pi, ctx ?? currentCtx, event, "question");
 			return true;
 		},
 	};
@@ -579,7 +580,7 @@ export default function qol(pi: ExtensionAPI): void {
 	pi.events.on(QUESTION_OPENED_EVENT, (data: unknown) => {
 		if (!data || typeof data !== "object") return;
 		const event = data as QuestionOpenedEventLike;
-		notifyQuestionOpened(currentCtx, event, "question");
+		notifyQuestionOpened(pi, currentCtx, event, "question");
 	});
 	pi.events.on(RATE_LIMIT_AUTO_RESUME_EVENT, (payload: unknown) => {
 		if (!currentCtx) return;
@@ -601,6 +602,7 @@ export default function qol(pi: ExtensionAPI): void {
 		void consumePendingSessionSearchContext(pi, ctx, event.reason);
 		installAutocompleteHintStyling(ctx);
 		installPendingQueueThemePatch(ctx);
+		installStatusTextAlignmentPatch(ctx);
 		if (ctx.hasUI) {
 			ctx.ui.setHiddenThinkingLabel(hiddenThinkingLabel(ctx.ui.theme, ctx.cwd));
 			applyWorkingIndicatorMode(ctx);
@@ -673,7 +675,8 @@ export default function qol(pi: ExtensionAPI): void {
 		if (sessionSearchWarmupTimer) clearTimeout(sessionSearchWarmupTimer);
 		sessionSearchWarmupTimer = undefined;
 		resetThinkingTimer(undefined);
-		clearTmuxWindowMark();
+		clearTmuxWindowMark(pi);
+		forgetTmuxIdentity();
 		questionUnsubscribe?.();
 		questionUnsubscribe = undefined;
 		currentCtx = undefined;
@@ -683,6 +686,7 @@ export default function qol(pi: ExtensionAPI): void {
 		ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, undefined);
 		ctx.ui.setStatus("qol-budget-guard", undefined);
 		restorePendingQueueThemePatch(ctx);
+		restoreStatusTextAlignmentPatch();
 		resetStatuslineUi(ctx);
 		ctx.ui.setEditorComponent(undefined);
 	});
@@ -704,7 +708,7 @@ export default function qol(pi: ExtensionAPI): void {
 	});
 	pi.on("agent_start", (_event, ctx) => {
 		clearIdleCompactionTimer();
-		clearTmuxWindowMark();
+		clearTmuxWindowMark(pi);
 		rateLimitAutoResumeController.noteAgentStart(ctx);
 		if (ctx.hasUI) {
 			void refreshStatusline(ctx);
@@ -754,21 +758,21 @@ export default function qol(pi: ExtensionAPI): void {
 		const critical = criticalInfo(text);
 		if (critical) {
 			pendingTaskCompleteNotification = undefined;
-			sendQolNotification(ctx, "critical", `Critical: ${critical}`, "error", `critical:${critical.slice(0, 80)}`);
+			void sendQolNotification(pi, ctx, "critical", `Critical: ${critical}`, "error", `critical:${critical.slice(0, 80)}`);
 			return;
 		}
 		if (pendingTaskCompleteNotification) {
 			const body = pendingTaskCompleteNotification;
 			pendingTaskCompleteNotification = undefined;
-			sendQolNotification(ctx, "task-complete", body, "info", "task-complete");
+			void sendQolNotification(pi, ctx, "task-complete", body, "info", "task-complete");
 			return;
 		}
 		if (ctx.hasPendingMessages?.()) return;
 		if (needsDirection(text)) {
-			sendQolNotification(ctx, "direction", "Pi is awaiting your direction.", "warning", "direction");
+			void sendQolNotification(pi, ctx, "direction", "Pi is awaiting your direction.", "warning", "direction");
 			return;
 		}
-		sendQolNotification(ctx, "ready", settingString("notification.readyMessage", "Ready for input", ctx.cwd), "info", "ready");
+		void sendQolNotification(pi, ctx, "ready", settingString("notification.readyMessage", "Ready for input", ctx.cwd), "info", "ready");
 	});
 	pi.on("agent_settled", async (_event, ctx) => {
 		await fireStagedBudgetGuard(ctx);
@@ -796,7 +800,7 @@ export default function qol(pi: ExtensionAPI): void {
 	pi.on("session_before_tree", (event, ctx) => handleQolBranchSummary(event, ctx));
 	pi.on("tool_call", async (event: any, ctx) => {
 		if (event?.toolName === "question") {
-			notifyQuestionOpened(ctx, { requestId: event.input?.id ?? event.toolCallId, request: event.input, source: "tool_call" }, "question");
+			notifyQuestionOpened(pi, ctx, { requestId: event.input?.id ?? event.toolCallId, request: event.input, source: "tool_call" }, "question");
 			return undefined;
 		}
 		if (!settingBoolean("permissionGate.enabled", false, ctx.cwd)) return undefined;
@@ -815,7 +819,7 @@ export default function qol(pi: ExtensionAPI): void {
 	});
 
 	pi.on("input", async (event) => {
-		clearTmuxWindowMark();
+		clearTmuxWindowMark(pi);
 		if (event.source === "extension") return { action: "continue" };
 		const text = event.text ?? "";
 		const paths = currentCtx?.cwd ? resolveSubmittedImagePaths(text, currentCtx.cwd) : [];
@@ -952,7 +956,7 @@ export default function qol(pi: ExtensionAPI): void {
 			return;
 		}
 		if (sub === "notify-test") {
-			sendQolNotification(ctx, "test", "QOL notification test", "info", `test:${Date.now()}`);
+			void sendQolNotification(pi, ctx, "test", "QOL notification test", "info", `test:${Date.now()}`);
 			ctx.ui.notify("Sent QOL notification test.", "info");
 			return;
 		}

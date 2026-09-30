@@ -9,6 +9,15 @@ interface PendingQueueThemePatch {
 	cwd?: string;
 }
 
+interface StatusTextAlignmentPatch {
+	originalRender: (this: unknown, width: number) => string[];
+}
+
+interface StatusTextClassification {
+	text: string;
+	status: boolean;
+}
+
 function isPendingQueuePreviewText(text: string): boolean {
 	const plain = stripAnsi(text);
 	return plain.startsWith("Steering: ") || plain.startsWith("Follow-up: ");
@@ -28,15 +37,32 @@ function isQueuedMessageStatusText(text: string): boolean {
 	return /^Restored \d+ queued messages? to editor$/.test(plain) || plain === "No queued messages to restore";
 }
 
-export function installStatusTextAlignmentPatch(): void {
+/**
+ * Pads Pi's dequeue status line ("Restored N queued messages to editor") flush
+ * with the pending-queue preview. The patch wraps every pi-tui `Text`, so the
+ * classification is cached per instance and recomputed only when its text
+ * changes: an unchanged `Text`, which pi-tui answers from its own render
+ * cache, pays one string comparison, not a scan of its whole text.
+ */
+export function installStatusTextAlignmentPatch(ctx: ExtensionContext): void {
+	if (!ctx.hasUI) return;
 	const proto = Text.prototype as unknown as Record<PropertyKey, any>;
 	if (proto[STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL]) return;
 	const originalRender = proto.render;
 	if (typeof originalRender !== "function") return;
-	proto[STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL] = true;
+	const classifications = new WeakMap<object, StatusTextClassification>();
+	const isStatusText = (component: object, text: string): boolean => {
+		const cached = classifications.get(component);
+		if (cached && cached.text === text) return cached.status;
+		const status = isQueuedMessageStatusText(text);
+		classifications.set(component, { text, status });
+		return status;
+	};
+	const patch: StatusTextAlignmentPatch = { originalRender };
+	proto[STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL] = patch;
 	proto.render = function patchedQolStatusTextRender(this: any, width: number): string[] {
 		const text = typeof this?.text === "string" ? this.text : "";
-		if (!isQueuedMessageStatusText(text)) return originalRender.call(this, width);
+		if (!isStatusText(this, text)) return originalRender.call(this, width);
 		const originalPaddingX = this.paddingX;
 		try {
 			this.paddingX = 0;
@@ -47,6 +73,14 @@ export function installStatusTextAlignmentPatch(): void {
 			this.invalidate?.();
 		}
 	};
+}
+
+export function restoreStatusTextAlignmentPatch(): void {
+	const proto = Text.prototype as unknown as Record<PropertyKey, any>;
+	const patch = proto[STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL] as StatusTextAlignmentPatch | undefined;
+	if (!patch) return;
+	proto.render = patch.originalRender;
+	delete proto[STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL];
 }
 
 export function installPendingQueueThemePatch(ctx: ExtensionContext): void {

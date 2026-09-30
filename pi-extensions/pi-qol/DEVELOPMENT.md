@@ -15,6 +15,8 @@ For maintainers. What it does for a consumer is [README.md](README.md); mechanic
 - The permission gate fails closed: a matched command with no UI to ask is blocked, not allowed. `extensions/qol/permission-gate.ts::permissionGateMatch` is the one matcher.
 - Scheduled prompts persist as `qol-schedule` custom session entries and are re-armed from the session branch on load; `extensions/qol/schedule.ts::createScheduleController`.
 - Sibling extensions are reached only through the `Symbol.for` keys in `extensions/qol/constants.ts` and the interfaces in `extensions/qol/bridges.ts`; a missing sibling disables the feature, never throws.
+- Notifications never block Pi's event path. `extensions/qol/notifications.ts::sendQolNotification` decides synchronously, then delivers in the background: every tmux call goes through `pi.exec` under `TMUX_COMMAND_TIMEOUT_MS`, the pane's tmux identity is looked up once per session, and terminal writes run one at a time through one queue, so a stalled terminal delays later notifications, not Pi. `tests/notifications.test.ts` holds the deadline, the cache and the queue.
+- The `Text` render patch that aligns Pi's queued-message status line is installed at `session_start` in a UI session and removed at `session_shutdown`. It classifies a `Text` again only when that component's text changes. `extensions/qol/pending-queue.ts::installStatusTextAlignmentPatch`; `tests/pending-queue.test.ts`.
 - `/context` reports a failed transcript-risk estimate as a sanitized error block rather than omitting the warning; `extensions/qol/transcript-risk.ts::transcriptRiskState`.
 
 ## Tests

@@ -2,6 +2,11 @@
 
 ## Consumer-impacting changes
 
+### 2.2.1
+
+- Turn-end notifications no longer freeze Pi when tmux is slow. Each tmux call now stops after 1 second, runs in the background, and the pane's tmux details are read once per session. Terminal writes run in order, one at a time, so a stalled terminal delays the next notification, not Pi.
+- Long tool output no longer costs an extra scan on every screen redraw. The queued-message status alignment now checks a text block again only when its text changes. It is installed when an interactive session starts and removed when the session ends.
+
 ### 2.2.0
 
 - Show a provider label before the model by default, using readable names such as `Copilot / GPT 6 Astra`. Disable it with `statusline.showProvider`.
