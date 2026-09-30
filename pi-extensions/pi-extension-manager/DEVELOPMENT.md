@@ -16,7 +16,7 @@ OMP global settings prefer `config.yml`, then `config.yaml`. Native project sett
 
 ## Settings-changed event
 
-A quick-settings write emits `kendex:extension-settings-changed` on `pi.events` with `{ extensionId, key, value }` (`extensions/manager/quick-settings-ui.ts`). Every kendex package memoizes its settings reads (`package-config.ts`, vendored in each) and drops them on this event, so a setting written here applies on the next read. A write through `HostAdapter.write` also clears this package's own memo.
+A quick-settings write emits `kendex:extension-settings-changed` on `pi.events` with `{ extensionId, key, value }` (`extensions/manager/quick-settings-ui.ts`). The other kendex packages memoize their settings reads through their vendored `package-config.ts` and drop them on this event, so a setting written here applies on their next read. This package memoizes only its glyph lookup (`settingsMemo` in `extensions/manager/glyphs.ts`); `HostAdapter.settings` reads and parses each readable file on every call. A write through `HostAdapter.write` also clears the glyph memo.
 
 ## External config resolvers
 

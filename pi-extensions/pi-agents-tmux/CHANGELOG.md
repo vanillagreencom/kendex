@@ -5,7 +5,7 @@
 ### 3.1.1
 
 - The agent dashboard no longer rereads child transcripts while it draws: the widget render reads no transcript file, where before every frame read up to 96 KB per working row. Each working row's activity line and usage come from a per-transcript cache, which the usage poll advances by only the bytes a transcript gained since its last read; before, the poll parsed each growing transcript from its first byte. The activity line now moves at the poll interval (`completionPollMs`) instead of every frame, and a half-written transcript line no longer shows as raw JSON. The dashboard's registry sync re-reads the task registry only when the file's version changed, and skips finished task records that have not changed since it last applied them.
-- Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again, and an unchanged file is not parsed again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk, and widgets and renderers read settings many times per repaint.
+- Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk.
 
 ### 3.1.0
 

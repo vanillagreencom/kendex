@@ -4,7 +4,7 @@
 
 ### 2.0.6
 
-- After the one-second window in which settings are answered from memory, a settings file whose text did not change is not parsed again. A project trust answer that another kendex Pi extension records now applies on the next settings read, not after that window.
+- A project trust answer that another kendex Pi extension records now applies on the next settings read. Before, it applied only after the one-second window in which settings are answered from memory.
 
 ### 2.0.5
 

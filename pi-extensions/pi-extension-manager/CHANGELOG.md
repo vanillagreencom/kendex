@@ -4,7 +4,7 @@
 
 ### 3.0.2
 
-- Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again, and an unchanged file is not parsed again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk, and widgets and renderers read settings many times per repaint.
+- The manager's glyph style lookup comes from memory. A lookup is answered for one second without touching disk, then the settings files are read again. A change made in the extension manager, or a new session, applies at once; a hand edit to a settings file applies within one second. Before, every lookup read the settings files. The manager's other settings reads still read and parse the settings files on each call.
 
 ### 3.0.1
 
