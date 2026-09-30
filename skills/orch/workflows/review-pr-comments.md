@@ -387,23 +387,25 @@ Auto-resolve every thread where a reply was posted; keep open only threads await
 
 ### 7.2 Copilot Head Route
 
-**Skip if** no thread this triage answered is Copilot's. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind the endpoints and the decision:
+**Skip if** no thread this triage answered is Copilot's. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind the base branch, URL-encoded for the rules path, and the head:
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefOid,headRefOid,reviewDecision --jq '[.baseRefOid,.headRefOid,.reviewDecision]|@tsv'
+env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefName,headRefOid --jq '[(.baseRefName|@uri),.headRefOid]|@tsv'
 ```
+
+Read the approval count each `pull_request` rule on the base requires, one per line. This is the ruleset read `github.sh pr-merge --auto` makes:
 
 ```bash
-.agents/skills/orch/scripts/approval-wait --resolve-mode --base [BASE_SHA] --head [HEAD_SHA]
+env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/rules/branches/[BASE_BRANCH]' --jq '.[] | select(.type == "pull_request") | .parameters.required_approving_review_count'
 ```
 
-A decision of `APPROVED`, a printed mode other than `approval`, or a non-zero exit, which is reported, ends this step. Otherwise read Copilot's reviews of the pull request, oldest first, one `commit_id` and `state` per line:
+A non-zero exit from either read, which is reported, ends this step. An output with no count of at least 1 ends it too: no rule holds the pull request for an approval. Otherwise read every review of the pull request, oldest first, one login, `commit_id` and `state` per line:
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pulls/[PR_NUMBER]/reviews' --jq '.[] | select(.user.login == "copilot-pull-request-reviewer[bot]") | [.commit_id, .state] | @tsv'
+env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pulls/[PR_NUMBER]/reviews' --jq '.[] | [.user.login, .commit_id, .state] | @tsv'
 ```
 
-Every Copilot thread is answered and resolved by now. The route is whether the head moved since the last line's `commit_id`, the last head Copilot read:
+A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` ends this step: the head is already approved. Every Copilot thread is answered and resolved by now. The route is whether the head moved since the `commit_id` of the last `copilot-pull-request-reviewer[bot]` line, the last head Copilot read:
 
 - **Head unmoved.** Copilot read this head, so each answer stands on code it saw. Send the notice below, first line `copilot-declined-unchanged PR #[PR_NUMBER] head [HEAD_SHA]`. Under it, one line per thread `github.sh pr-threads [PR_NUMBER]` lists with `author` `copilot-pull-request-reviewer` gives its `id`, its location and the reply that answered it, a decline's reason included. Request no Copilot re-review. The overseer approves the head under [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds) `lane-notice`.
 - **Head moved**, by a push for any reviewer's thread. Unless the head already equals `pr_approval.copilot_rerequest_head`, request one Copilot re-review, record that head, then wait on it through [Waiter launch](../references/waiter-launch.md). A head already recorded gets no second request, no wait and no notice: the overseer's `awaiting-stale` rule decides it.
@@ -420,7 +422,7 @@ Every Copilot thread is answered and resolved by now. The route is whether the h
   .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval --on-timeout block --item [ISSUE_ID]
   ```
 
-  Exit `5` with the log line `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [ISSUE_ID]`, act on what it prints, then launch the wait again. On any other answer, read Copilot's reviews again. A line whose `commit_id` is `[HEAD_SHA]` is the re-review, since none existed when the request went out:
+  Exit `5` with the log line `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [ISSUE_ID]`, act on what it prints, then launch the wait again. On any other answer, read the reviews again. A `copilot-pull-request-reviewer[bot]` line whose `commit_id` is `[HEAD_SHA]` is the re-review, since none existed when the request went out:
 
   | Answer | Copilot's review at `[HEAD_SHA]` | Then |
   |--------|----------------------------------|------|
