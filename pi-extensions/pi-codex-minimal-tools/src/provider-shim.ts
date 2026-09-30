@@ -5,7 +5,8 @@ import { readFileSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { arch, platform, release } from "node:os";
 import { dirname, join, normalize, relative } from "node:path";
-import { constants as zlibConstants, zstdCompressSync } from "node:zlib";
+import { isDeepStrictEqual } from "node:util";
+import { constants as zlibConstants, zstdCompress } from "node:zlib";
 import { glyphs, treeGlyph } from "./glyphs.js";
 import { loadSettings } from "./settings.js";
 import { saveBase64Image } from "./utils/images.js";
@@ -69,15 +70,13 @@ export function buildCodexUserAgent(): string {
 	return `pi (${platform()} ${release()}; ${arch()})`;
 }
 
-export function compressRequestBodyZstd(bodyJson: string): Uint8Array | null {
-	try {
-		const compressed = zstdCompressSync(bodyJson, {
-			params: { [zlibConstants.ZSTD_c_compressionLevel]: REQUEST_COMPRESSION_ZSTD_LEVEL },
+/** Compresses on the libuv thread pool; null sends the body uncompressed. */
+export function compressRequestBodyZstd(bodyJson: string): Promise<Uint8Array | null> {
+	return new Promise((resolve) => {
+		zstdCompress(bodyJson, { params: { [zlibConstants.ZSTD_c_compressionLevel]: REQUEST_COMPRESSION_ZSTD_LEVEL } }, (error, compressed) => {
+			resolve(error ? null : new Uint8Array(compressed.buffer, compressed.byteOffset, compressed.byteLength));
 		});
-		return new Uint8Array(compressed.buffer, compressed.byteOffset, compressed.byteLength);
-	} catch {
-		return null;
-	}
+	});
 }
 
 interface SavedGeneratedImage {
@@ -978,12 +977,9 @@ function requestBodyWithoutInput(body: ResponsesBody): ResponsesBody {
 	return rest as ResponsesBody;
 }
 
-function responseInputsEqual(a: unknown[] | undefined, b: unknown[] | undefined): boolean {
-	return JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
-}
-
+// Structural comparison walks both values without serializing the transcript.
 function requestBodiesMatchExceptInput(a: ResponsesBody, b: ResponsesBody): boolean {
-	return JSON.stringify(requestBodyWithoutInput(a)) === JSON.stringify(requestBodyWithoutInput(b));
+	return isDeepStrictEqual(requestBodyWithoutInput(a), requestBodyWithoutInput(b));
 }
 
 function getCachedWebSocketInputDelta(body: ResponsesBody, continuation: CachedWebSocketContinuationState): unknown[] | undefined {
@@ -998,7 +994,7 @@ function getCachedWebSocketInputDelta(body: ResponsesBody, continuation: CachedW
 	}
 
 	const prefix = currentInput.slice(0, baseline.length);
-	if (!responseInputsEqual(prefix, baseline)) {
+	if (!isDeepStrictEqual(prefix, baseline)) {
 		return undefined;
 	}
 
@@ -1680,7 +1676,10 @@ function createCodexStream<TApi extends Api>(
 			const websocketRequestId = codexSessionId || createCodexRequestId();
 			const sseHeaders = buildSSEHeaders(model.headers, options?.headers, accountId, apiKey, codexSessionId);
 			const websocketHeaders = buildWebSocketHeaders(model.headers, options?.headers, accountId, apiKey, websocketRequestId);
-			const bodyJson = JSON.stringify(body);
+			// A cached WebSocket continuation sends only the new input, so the full body
+			// is serialized only when a failure diagnostic or the SSE request needs it.
+			let bodyJson: string | undefined;
+			const serializedBody = () => (bodyJson ??= JSON.stringify(body));
 			const responseHeaderTimeoutMs = responseHeaderTimeoutMsFromOptions(options);
 			const transport = options?.transport || "auto";
 
@@ -1728,7 +1727,7 @@ function createCodexStream<TApi extends Api>(
 								...(websocketStarted ? {} : { fallbackTransport: "sse" }),
 								eventsEmitted: websocketStarted,
 								phase: websocketStarted ? "after_message_stream_start" : "before_message_stream_start",
-								requestBytes: new TextEncoder().encode(bodyJson).byteLength,
+								requestBytes: new TextEncoder().encode(serializedBody()).byteLength,
 							}),
 						);
 						if (transport === "websocket" || transport === "websocket-cached" || websocketStarted) {
@@ -1743,9 +1742,9 @@ function createCodexStream<TApi extends Api>(
 			let lastError: Error | undefined;
 			const sseUrl = resolveCodexUrl(model.baseUrl);
 			const sseDispatcher = await proxyDispatcherForUrl(sseUrl);
-			const compressedBody = compressRequestBodyZstd(bodyJson);
+			const compressedBody = await compressRequestBodyZstd(serializedBody());
 			if (compressedBody) sseHeaders.set("content-encoding", "zstd");
-			const sseBody: Uint8Array | string = compressedBody ?? bodyJson;
+			const sseBody: Uint8Array | string = compressedBody ?? serializedBody();
 
 			for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
 				if (options?.signal?.aborted) {

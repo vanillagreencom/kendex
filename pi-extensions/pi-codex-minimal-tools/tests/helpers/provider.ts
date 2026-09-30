@@ -18,10 +18,28 @@ export function providerWorld(t: Pick<TestContext, "after">) {
 	return fixture;
 }
 
+/**
+ * Resolve when the provider makes its first fetch. The SSE body compresses on the
+ * libuv thread pool before that fetch, a wait no mocked clock schedules, so a case
+ * advances its clock only once this resolves.
+ */
+export function firstFetch(): Promise<void> {
+	const fetch = globalThis.fetch;
+	return new Promise((resolve) => {
+		globalThis.fetch = (...args: Parameters<typeof fetch>) => {
+			globalThis.fetch = fetch;
+			resolve();
+			return fetch(...args);
+		};
+	});
+}
+
 /** Advance the test clock only after pending request promises have settled. */
 export async function finishRetries<T>(t: TestContext, pending: Promise<T>): Promise<T> {
 	let settled = false;
+	const fetched = firstFetch();
 	const observed = pending.finally(() => { settled = true; });
+	await Promise.race([fetched, observed.then(() => undefined, () => undefined)]);
 	for (let step = 0; step < 12 && !settled; step++) {
 		await setImmediate();
 		if (!settled) t.mock.timers.tick(10_000);
@@ -103,3 +121,49 @@ export function successSseResponse(): Response {
 	return sseResponse(`data: ${JSON.stringify(completedEvent)}\n\n`);
 }
 
+
+type Listener = (event: unknown) => void;
+
+/** Replace the global WebSocket with a Codex socket that records each sent request and answers it with one completed text response. */
+export function codexWebSocket(t: Pick<TestContext, "after">): { requests: Array<Record<string, any>> } {
+	const requests: Array<Record<string, any>> = [];
+	class ScriptedCodexSocket {
+		readyState = 1;
+		private readonly listeners = new Map<string, Set<Listener>>();
+		constructor() {
+			globalThis.setImmediate(() => this.emit("open", {}));
+		}
+		addEventListener(type: string, listener: Listener) {
+			const set = this.listeners.get(type) ?? new Set<Listener>();
+			set.add(listener);
+			this.listeners.set(type, set);
+		}
+		removeEventListener(type: string, listener: Listener) {
+			this.listeners.get(type)?.delete(listener);
+		}
+		send(data: string) {
+			requests.push(JSON.parse(data));
+			const id = `resp_${requests.length}`;
+			const messageId = `msg_${requests.length}`;
+			const events = [
+				{ type: "response.created", response: { id } },
+				{ type: "response.output_item.added", output_index: 0, item: { type: "message", id: messageId } },
+				{ type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "ok" },
+				{ type: "response.output_item.done", output_index: 0, item: { type: "message", id: messageId, content: [{ type: "output_text", text: "ok" }] } },
+				{ ...completedEvent, response: { ...completedEvent.response, id } },
+			];
+			globalThis.setImmediate(() => { for (const event of events) this.emit("message", { data: JSON.stringify(event) }); });
+		}
+		close() {
+			this.readyState = 3;
+		}
+		private emit(type: string, event: unknown) {
+			for (const listener of [...(this.listeners.get(type) ?? [])]) listener(event);
+		}
+	}
+	const global = globalThis as { WebSocket?: unknown };
+	const previous = global.WebSocket;
+	global.WebSocket = ScriptedCodexSocket;
+	t.after(() => { global.WebSocket = previous; });
+	return { requests };
+}

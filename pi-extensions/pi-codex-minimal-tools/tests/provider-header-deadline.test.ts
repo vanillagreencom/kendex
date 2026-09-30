@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
-import { providerWorld, runCodexProvider } from "./helpers/provider.js";
+import { firstFetch, providerWorld, runCodexProvider } from "./helpers/provider.js";
 
 test("provider applies the configured response-header deadline", async (t) => {
 	providerWorld(t);
@@ -12,8 +12,9 @@ test("provider applies the configured response-header deadline", async (t) => {
 		signals.push(init.signal);
 		init.signal.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
 	});
+	const fetched = firstFetch();
 	const pending = runCodexProvider({ timeoutMs: 45_000 });
-	await setImmediate();
+	await fetched;
 	assert.equal(signals.length, 1);
 	t.mock.timers.tick(44_999);
 	await setImmediate();

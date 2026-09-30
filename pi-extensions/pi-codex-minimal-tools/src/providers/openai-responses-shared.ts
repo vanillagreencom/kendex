@@ -475,17 +475,22 @@ export async function processResponsesStream<TApi extends Api>(
 		customInput?: { property: string; jsonBuffer: GrammarInputBuffer };
 	};
 
+	// blockMatchesParts: the block's text equals its parts rendered in index order.
+	// While it holds, a delta to the last existing part extends the text by exactly
+	// that delta, so the block appends it instead of rendering every part again.
 	type ReasoningState = {
 		kind: "reasoning";
 		blockIndex: number;
 		block: ThinkingBlock;
 		summaryParts: Map<number, { text: string }>;
+		blockMatchesParts: boolean;
 	};
 	type MessageState = {
 		kind: "message";
 		blockIndex: number;
 		block: TextBlock;
 		parts: Map<number, { type: "output_text" | "refusal"; text: string }>;
+		blockMatchesParts: boolean;
 	};
 	type FunctionCallState = {
 		kind: "function_call";
@@ -533,6 +538,41 @@ export async function processResponsesStream<TApi extends Api>(
 			}
 		}
 	};
+	const isLastPart = (parts: ReadonlyMap<number, unknown>, index: number): boolean => {
+		for (const key of parts.keys()) if (key > index) return false;
+		return true;
+	};
+	const appendReasoningSummaryDelta = (state: ReasoningState, summaryIndex: number, delta: string) => {
+		const existing = state.summaryParts.get(summaryIndex);
+		const summaryPart = existing ?? { text: "" };
+		summaryPart.text += delta;
+		if (existing && state.blockMatchesParts && isLastPart(state.summaryParts, summaryIndex)) {
+			state.block.thinking += delta;
+			if (delta.length > 0) stream.push({ type: "thinking_delta", contentIndex: state.blockIndex, delta, partial: output });
+			return;
+		}
+		state.summaryParts.set(summaryIndex, summaryPart);
+		const previousThinking = state.block.thinking;
+		state.block.thinking = renderReasoningSummary(state.summaryParts);
+		state.blockMatchesParts = true;
+		emitAppendedDelta("thinking_delta", state.blockIndex, previousThinking, state.block.thinking);
+	};
+	const appendMessageDelta = (state: MessageState, contentIndex: number, type: "output_text" | "refusal", delta: string) => {
+		const existing = state.parts.get(contentIndex);
+		const messagePart = existing ?? { type, text: "" };
+		if (messagePart.type !== type) return;
+		messagePart.text += delta;
+		if (existing && state.blockMatchesParts && isLastPart(state.parts, contentIndex)) {
+			state.block.text += delta;
+			if (delta.length > 0) stream.push({ type: "text_delta", contentIndex: state.blockIndex, delta, partial: output });
+			return;
+		}
+		state.parts.set(contentIndex, messagePart);
+		const previousText = state.block.text;
+		state.block.text = renderMessageText(state.parts);
+		state.blockMatchesParts = true;
+		emitAppendedDelta("text_delta", state.blockIndex, previousText, state.block.text);
+	};
 	const pushToolCallDelta = (state: FunctionCallState, delta: string | undefined) => {
 		if (delta !== undefined) stream.push({ type: "toolcall_delta", contentIndex: state.blockIndex, delta, partial: output });
 	};
@@ -562,6 +602,7 @@ export async function processResponsesStream<TApi extends Api>(
 					blockIndex: blockIndex(),
 					block: currentBlock,
 					summaryParts: new Map(),
+					blockMatchesParts: true,
 				});
 				stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
 			} else if (item.type === "message") {
@@ -572,6 +613,7 @@ export async function processResponsesStream<TApi extends Api>(
 					blockIndex: blockIndex(),
 					block: currentBlock,
 					parts: new Map(),
+					blockMatchesParts: true,
 				});
 				stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
 			} else if (item.type === "function_call") {
@@ -607,28 +649,23 @@ export async function processResponsesStream<TApi extends Api>(
 			const state = outputStates.get(event.output_index);
 			if (state?.kind === "reasoning") {
 				state.summaryParts.set(event.summary_index, { text: event.part.text });
+				state.blockMatchesParts = false;
 			}
 		} else if (event.type === "response.reasoning_summary_text.delta") {
 			const state = outputStates.get(event.output_index);
-			if (state?.kind === "reasoning") {
-				const summaryPart = state.summaryParts.get(event.summary_index) ?? { text: "" };
-				summaryPart.text += event.delta;
-				state.summaryParts.set(event.summary_index, summaryPart);
-				const previousThinking = state.block.thinking;
-				const nextThinking = renderReasoningSummary(state.summaryParts);
-				state.block.thinking = nextThinking;
-				emitAppendedDelta("thinking_delta", state.blockIndex, previousThinking, nextThinking);
-			}
+			if (state?.kind === "reasoning") appendReasoningSummaryDelta(state, event.summary_index, event.delta);
 		} else if (event.type === "response.reasoning_summary_part.done") {
 			const state = outputStates.get(event.output_index);
 			if (state?.kind === "reasoning") {
 				state.summaryParts.set(event.summary_index, { text: event.part.text });
 				state.block.thinking = renderReasoningSummary(state.summaryParts);
+				state.blockMatchesParts = true;
 			}
 		} else if (event.type === "response.reasoning_text.delta") {
 			const state = outputStates.get(event.output_index);
 			if (state?.kind === "reasoning") {
 				state.block.thinking += event.delta;
+				state.blockMatchesParts = false;
 				stream.push({ type: "thinking_delta", contentIndex: state.blockIndex, delta: event.delta, partial: output });
 			}
 		} else if (event.type === "response.content_part.added") {
@@ -638,38 +675,20 @@ export async function processResponsesStream<TApi extends Api>(
 					type: event.part.type,
 					text: event.part.type === "output_text" ? event.part.text : event.part.refusal,
 				});
+				state.blockMatchesParts = false;
 			}
 		} else if (event.type === "response.output_text.delta") {
 			const state = outputStates.get(event.output_index);
-			if (state?.kind === "message") {
-				const messagePart = state.parts.get(event.content_index) ?? { type: "output_text" as const, text: "" };
-				if (messagePart.type === "output_text") {
-					messagePart.text += event.delta;
-					state.parts.set(event.content_index, messagePart);
-					const previousText = state.block.text;
-					const nextText = renderMessageText(state.parts);
-					state.block.text = nextText;
-					emitAppendedDelta("text_delta", state.blockIndex, previousText, nextText);
-				}
-			}
+			if (state?.kind === "message") appendMessageDelta(state, event.content_index, "output_text", event.delta);
 		} else if (event.type === "response.refusal.delta") {
 			const state = outputStates.get(event.output_index);
-			if (state?.kind === "message") {
-				const messagePart = state.parts.get(event.content_index) ?? { type: "refusal" as const, text: "" };
-				if (messagePart.type === "refusal") {
-					messagePart.text += event.delta;
-					state.parts.set(event.content_index, messagePart);
-					const previousText = state.block.text;
-					const nextText = renderMessageText(state.parts);
-					state.block.text = nextText;
-					emitAppendedDelta("text_delta", state.blockIndex, previousText, nextText);
-				}
-			}
+			if (state?.kind === "message") appendMessageDelta(state, event.content_index, "refusal", event.delta);
 		} else if (event.type === "response.function_call_arguments.delta") {
 			const state = outputStates.get(event.output_index);
 			if (state?.kind === "function_call") {
+				// Arguments parse once the call completes: parsing the growing buffer on
+				// every delta costs time quadratic in the argument length.
 				state.block.partialJson = (state.block.partialJson ?? "") + event.delta;
-				state.block.arguments = parseStreamingJson(state.block.partialJson ?? "");
 				stream.push({ type: "toolcall_delta", contentIndex: state.blockIndex, delta: event.delta, partial: output });
 			}
 		} else if (event.type === "response.function_call_arguments.done") {
@@ -704,7 +723,7 @@ export async function processResponsesStream<TApi extends Api>(
 				if (!state || state.kind !== "reasoning") {
 					const currentBlock: ThinkingBlock = { type: "thinking", thinking: "" };
 					output.content.push(currentBlock);
-					state = { kind: "reasoning", blockIndex: blockIndex(), block: currentBlock, summaryParts: new Map() };
+					state = { kind: "reasoning", blockIndex: blockIndex(), block: currentBlock, summaryParts: new Map(), blockMatchesParts: true };
 					outputStates.set(event.output_index, state);
 				}
 				const summaryText = item.summary?.map((summary: { text?: string }) => summary.text ?? "").join("\n\n") || "";
@@ -718,7 +737,7 @@ export async function processResponsesStream<TApi extends Api>(
 				if (!state || state.kind !== "message") {
 					const currentBlock: TextBlock = { type: "text", text: "" };
 					output.content.push(currentBlock);
-					state = { kind: "message", blockIndex: blockIndex(), block: currentBlock, parts: new Map() };
+					state = { kind: "message", blockIndex: blockIndex(), block: currentBlock, parts: new Map(), blockMatchesParts: true };
 					outputStates.set(event.output_index, state);
 				}
 				// Null-tolerant like the reasoning branch above: OpenAI-compatible streams
@@ -783,6 +802,12 @@ export async function processResponsesStream<TApi extends Api>(
 				: [];
 			for (const item of finalOutput) {
 				if ((item as { type?: unknown } | undefined)?.type === "image_generation_call") appendImageGenerationCall(item);
+			}
+			// A call the stream never closed with output_item.done still gets its arguments.
+			for (const state of outputStates.values()) {
+				if (state.kind === "function_call" && state.block.partialJson !== undefined) {
+					state.block.arguments = parseStreamingJson(state.block.partialJson);
+				}
 			}
 			if (response?.id) output.responseId = response.id;
 			if (response?.usage) {
