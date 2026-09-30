@@ -217,25 +217,42 @@ test("the window mark and the tmux message do not wait on the terminal writes", 
 	});
 });
 
-test("a tty that never drains leaves later notifications' OSC and tmux messages free", async () => {
-	expect.hasAssertions();
-	writeQolSettings({ "notification.tmux": true });
-	const pane = stalledTty("pane-tty");
-	const client = fakeTty("client-tty");
-	// The first notification's window is inactive, so it rings the bell into the
-	// full pane tty; the second's is active, so it writes only the OSC.
-	const { calls, pi } = fakeTmux(client.path, [paneState(pane), paneState(pane, { active: true })]);
-	const first = within(sendQolNotification(pi, undefined, "test", "first", "info", nextKey()), 2000);
-	const second = within(sendQolNotification(pi, undefined, "test", "second", "info", nextKey()), 2000);
-	const settled = await Promise.all([first, second]);
-	const written = client.read();
-	expect({
-		settled,
-		client: { first: written.includes(osc777NotificationSequence("Pi", "first")), second: written.includes(osc777NotificationSequence("Pi", "second")) },
-		tmuxMessages: argsOf(calls, "display-message").filter((args) => args[1] === "-d").map((args) => args.at(-1)),
-	}).toEqual({
-		settled: [undefined, undefined],
-		client: { first: true, second: true },
-		tmuxMessages: ["Pi: first", "Pi: second"],
+/**
+ * A full tty on each write path: the pane tty takes the bell by `writeToTerminal`,
+ * a client tty takes the OSC by `writeRawToPaths`. The other tty drains and
+ * receives each notification's OSC: straight to the client, or through the
+ * pane's fallback once the stalled client refuses it.
+ */
+const stalledTtyRows = [
+	{ stalled: "pane" as const, settings: { "notification.tmux": true } },
+	{ stalled: "client" as const, settings: { "notification.tmux": true, "notification.bell": false, "notification.tmuxPassthrough": false } },
+];
+
+if (stalledTtyRows.length === 0) throw new Error("Stalled tty table is empty");
+
+for (const row of stalledTtyRows) {
+	test(`a ${row.stalled} tty that never drains leaves later notifications' OSC and tmux messages free`, async () => {
+		expect.hasAssertions();
+		writeQolSettings(row.settings);
+		const stalled = stalledTty(`${row.stalled}-tty`);
+		const draining = fakeTty(row.stalled === "pane" ? "client-tty" : "pane-tty");
+		const [pane, client] = row.stalled === "pane" ? [stalled, draining.path] : [draining.path, stalled];
+		// The first notification's window is inactive, so it rings the bell when the
+		// bell is on; the second's is active, so it writes only the OSC.
+		const { calls, pi } = fakeTmux(client, [paneState(pane), paneState(pane, { active: true })]);
+		// Real wait: bounds a delivery that a blocking write to the full tty never settles.
+		const first = within(sendQolNotification(pi, undefined, "test", "first", "info", nextKey()), 2000);
+		const second = within(sendQolNotification(pi, undefined, "test", "second", "info", nextKey()), 2000);
+		const settled = await Promise.all([first, second]);
+		const written = draining.read();
+		expect({
+			settled,
+			osc: { first: written.includes(osc777NotificationSequence("Pi", "first")), second: written.includes(osc777NotificationSequence("Pi", "second")) },
+			tmuxMessages: argsOf(calls, "display-message").filter((args) => args[1] === "-d").map((args) => args.at(-1)),
+		}).toEqual({
+			settled: [undefined, undefined],
+			osc: { first: true, second: true },
+			tmuxMessages: ["Pi: first", "Pi: second"],
+		});
 	});
-});
+}
