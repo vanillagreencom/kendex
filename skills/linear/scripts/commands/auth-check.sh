@@ -100,9 +100,6 @@ if [[ -z "$LINEAR_TEAM_TARGET" ]]; then
   if [[ "${LINEAR_TEAM_ENV_BLANK:-0}" == "1" && -n "$project_declared_team" ]]; then
     warnings+=("LINEAR_TEAM is exported as an empty value, which overrides the project value (\"$project_declared_team\"). Unset it in the environment to use project configuration.")
   fi
-  if [[ "$LINEAR_API_KEY_SOURCE" == "environment" ]]; then
-    warnings+=("LINEAR_API_KEY comes from the process environment (a machine-wide key reaches every workspace it owns) while this project names no team. Until LINEAR_TEAM is set, this project has no Linear target of its own.")
-  fi
 elif [[ "$LINEAR_TEAM_SOURCE" == "environment" ]]; then
   team_source_file=""
   if [[ -n "$project_declared_team" && "$project_declared_team" != "$LINEAR_TEAM_TARGET" ]]; then
@@ -110,8 +107,13 @@ elif [[ "$LINEAR_TEAM_SOURCE" == "environment" ]]; then
   fi
 fi
 
-if [[ "${LINEAR_API_KEY_ENV_SHADOWED:-0}" == "1" ]]; then
-  warnings+=("inherited LINEAR_API_KEY (sha256:$LINEAR_API_KEY_ENV_FINGERPRINT) differs from the project-config key (sha256:$LINEAR_API_KEY_PROJECT_FINGERPRINT); using project-config — unset the global export if unintended")
+if [[ "$LINEAR_AUTH_KIND" == "api-key" ]]; then
+  if [[ -z "$LINEAR_TEAM_TARGET" && "$LINEAR_API_KEY_SOURCE" == "environment" ]]; then
+    warnings+=("LINEAR_API_KEY comes from the process environment (a machine-wide key reaches every workspace it owns) while this project names no team. Until LINEAR_TEAM is set, this project has no Linear target of its own.")
+  fi
+  if [[ "${LINEAR_API_KEY_ENV_SHADOWED:-0}" == "1" ]]; then
+    warnings+=("inherited LINEAR_API_KEY (sha256:$LINEAR_API_KEY_ENV_FINGERPRINT) differs from the project-config key (sha256:$LINEAR_API_KEY_PROJECT_FINGERPRINT); using project-config — unset the global export if unintended")
+  fi
 fi
 
 actor='null'

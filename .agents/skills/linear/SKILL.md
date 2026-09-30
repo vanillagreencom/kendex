@@ -68,7 +68,7 @@ The cache is `.cache/linear` under the physical worktree root ([README.md](READM
 
 Set `LINEAR_CLIENT_ID` and `LINEAR_CLIENT_SECRET` in the project's private env file (`.env.local` unless `KENDEX_ENV_FILE` names another). Together they select the application over `LINEAR_API_KEY`. The fixed OAuth scope is `read,write`. Tokens live only in the cache. Credential precedence, renewal and attribution: [README.md § Settings](README.md#settings).
 
-`LINEAR_API_KEY` and `KENDEX_USER_EMAIL`, the operator's email, also belong in the private env file. Non-secret defaults belong in committed `kendex.settings.toml` `[env]`. The kendex app's Customize tab writes the key, team and email. A `LINEAR_API_KEY` from project files beats an inherited key. `auth-check` warns with fingerprints when it shadows a different inherited key. Every other key uses process environment precedence over the private env file.
+`LINEAR_API_KEY` and `KENDEX_USER_EMAIL`, the operator's email, also belong in the private env file. Non-secret defaults belong in committed `kendex.settings.toml` `[env]`. The kendex app's Customize tab writes the key, team and email. A `LINEAR_API_KEY` from project files beats an inherited key. When the personal key is selected, `auth-check` warns with fingerprints if it shadows a different inherited key. Every other key uses process environment precedence over the private env file.
 
 ## Shared label maintenance
 

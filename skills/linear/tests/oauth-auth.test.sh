@@ -18,7 +18,6 @@ cp -R -- "$SKILL_DIR" "$PROJECT/.agents/skills/linear"
 LINEAR="$PROJECT/.agents/skills/linear/scripts/linear.sh"
 REAL_JQ=$(command -v jq)
 export LINEAR_CACHE_ROOT="$PROJECT"
-
 cat >"$PROJECT/bin/date" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -104,9 +103,6 @@ chmod +x "$PROJECT/bin/curl" "$PROJECT/bin/date" "$PROJECT/bin/jq" "$PROJECT/bin
 OUT="" RC=0 NOW=1000
 LOG="$TMP_ROOT/log"
 mkdir -p "$LOG"
-: >"$LOG/mints"
-: >"$LOG/auth"
-
 # One app pair in the private file; an unresolved unused key must not block it.
 printf 'LINEAR_CLIENT_ID="app/id"\nLINEAR_CLIENT_SECRET="app&secret"\nLINEAR_API_KEY="op://unused/key"\n' >"$PROJECT/.env.local"
 for row in 'mint:1000:1:token-1' 'cache:1000:1:token-1' 'before-expiry:4540:2:token-2' 'expired:9000:3:token-3'; do
@@ -121,9 +117,8 @@ done
 config=$(cat "$LOG/config")
 assert_contains 'mint sends fixed scope and encoded client credentials' "$config" \
     'grant_type=client_credentials&scope=read%2Cwrite&client_id=app%2Fid&client_secret=app%26secret'
-argv=$(cat "$LOG/jq-argv")
-assert_not_contains 'mint keeps client credentials out of jq arguments' "$argv" 'app&secret'
-assert_not_contains 'mint keeps client ID out of jq arguments' "$argv" 'app/id'
+assert_not 'mint keeps client credentials out of jq arguments' \
+    grep -F -e 'app&secret' -e 'app/id' "$LOG/jq-argv"
 cache_files=("$PROJECT/.cache/linear/oauth/"*.json)
 assert_eq 'one app cache record exists' "${#cache_files[@]}" 1
 cached=$(cat -- "${cache_files[0]}")
@@ -140,10 +135,6 @@ assert_ne 'a second 401 refuses' "$RC" 0
 count=$(wc -l <"$LOG/mints")
 assert_eq 'a second 401 never renews again' "${count//[[:space:]]/}" 5
 
-run_oauth_request auth-check
-assert_eq 'app auth-check succeeds' "$RC" 0
-assert_jq 'auth-check reports selected application and actor' "$OUT" \
-    '.credential == "app" and .actor == {kind:"application",id:"actor-id",name:"Actor name"}'
 run_oauth_request request MODE=download
 assert_eq 'app attachment download succeeds' "$RC" 0
 header=$(cat "$LOG/download-auth")
@@ -159,21 +150,24 @@ assert_eq 'secret rotation mints a new token' "$header" 'Bearer token-6'
 run_oauth_request request LINEAR_CLIENT_SECRET=bad MODE=token-failure
 assert_ne 'token mint failure refuses instead of using personal key' "$RC" 0
 
-# Key-only installs preserve the bare header and user actor.
-printf 'LINEAR_API_KEY="personal-key"\n' >"$PROJECT/.env.local"
-run_oauth_request request
-assert_eq 'key-only request succeeds' "$RC" 0
-header=$(tail -n 1 "$LOG/auth")
-assert_eq 'personal key reaches GraphQL without Bearer' "$header" personal-key
-run_oauth_request auth-check
-assert_jq 'auth-check reports personal key and user actor' "$OUT" \
-    '.credential == "api-key" and .actor.kind == "user" and .actor.id == "actor-id"'
-
-# Both app values in process env win over the key from project files.
-run_oauth_request request LINEAR_CLIENT_ID=env-app LINEAR_CLIENT_SECRET=env-secret LINEAR_API_KEY_OVERRIDE=override-key
-assert_eq 'environment app beats project key' "$RC" 0
-header=$(tail -n 1 "$LOG/auth")
-assert_eq 'app precedence uses Bearer' "$header" 'Bearer token-8'
+# Reports retain key provenance without giving advice about an unused key.
+for row in \
+    'app-shadow|app/id|app&secret|op://unused/key|inherited-key||project-config|app|application|Bearer token-5' \
+    'app-inherited|app/id|app&secret||inherited-key||environment|app|application|Bearer token-5' \
+    'key-only|||personal-key|||project-config|api-key|user|personal-key' \
+    'environment-app|env-app|env-secret|personal-key||override-key|override|app|application|Bearer token-8'; do
+    IFS='|' read -r label id secret key inherited override key_source credential kind authorization <<<"$row"
+    printf 'LINEAR_API_KEY="%s"\n' "$key" >"$PROJECT/.env.local"
+    run_oauth_request auth-check LINEAR_CLIENT_ID="$id" LINEAR_CLIENT_SECRET="$secret" \
+        LINEAR_API_KEY="$inherited" LINEAR_API_KEY_OVERRIDE="$override"
+    assert_eq "$label: auth-check succeeds" "$RC" 0
+    assert "$label: credential report" jq -e --arg source "$key_source" --arg credential "$credential" --arg kind "$kind" \
+        '.ok and .credential == $credential and .actor == {kind:$kind,id:"actor-id",name:"Actor name"} and
+         .api_key_source == $source and .team == null and .writes_enabled == false and
+         (.warnings | length == 1 and all(.[]; contains("LINEAR_TEAM") and (contains("LINEAR_API_KEY") | not)))' <<<"$OUT"
+    header=$(tail -n 1 "$LOG/auth")
+    assert_eq "$label: selected authorization reaches GraphQL" "$header" "$authorization"
+done
 
 for row in 'no-credentials||||credential=unset' \
     'partial-app|partial|||credential=incomplete-app' \
@@ -196,7 +190,6 @@ printf '{"synced_at":"2026-09-30T00:00:00Z"}' >"$PROJECT/.cache/linear/meta.json
 run_oauth_request cache-read
 assert_eq 'app references: cache-only read succeeds' "$RC" 0
 assert_not 'app references: cache-only read never resolves secrets' test -s "$LOG/op"
-
 for row in 'live:request' 'inventory:cache-fetch'; do
     IFS=: read -r label command <<<"$row"
     rm -rf -- "$PROJECT/.cache/linear/oauth"
@@ -260,7 +253,6 @@ for row in \
         assert_jq "$label: failed download is not recorded" "$manifest" 'length == 0'
     fi
 done
-
 if [[ "${OAUTH_GIT_REDIRECT_CHILD:-0}" != 1 ]]; then
     run_oauth_git_redirects "$SCRIPT_DIR/oauth-auth.test.sh" "$TMP_ROOT/git-callers"
 fi

@@ -1,10 +1,8 @@
-# Each mutation changes a copy; the runner proves its named assertion fails.
 control_expect 'normal Git redirects: OAuth suite succeeds'
 control_expect 'linked Git redirects: OAuth suite succeeds'
 control_replace tests/oauth-auth.test.sh 1 \
     'unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE' \
     ': unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE'
-
 control_expect 'cache: mint count'
 control_replace scripts/lib/auth.sh 1 \
     '    if [[ "${1:-}" != "renew" && -f "$token_file" ]]; then' \
@@ -35,10 +33,10 @@ control_replace scripts/lib/auth.sh 1 \
     '    LINEAR_AUTH_KIND="incomplete-app"' \
     '    LINEAR_AUTH_KIND="api-key"; LINEAR_API_KEY="missing"'
 
-control_expect 'auth-check reports selected application and actor'
+control_expect 'app-shadow: credential report'
 control_replace scripts/commands/auth-check.sh 1 \
-    '    --arg credential "$LINEAR_AUTH_KIND" \' \
-    '    --arg credential "api-key" \'
+    'if [[ "$LINEAR_AUTH_KIND" == "api-key" ]]; then' \
+    'if [[ "$LINEAR_AUTH_KIND" == "api-key" || "$LINEAR_AUTH_KIND" == "app" ]]; then'
 
 control_expect 'attachment download uses selected app'
 control_replace scripts/lib/attachments.sh 1 \
