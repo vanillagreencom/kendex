@@ -74,6 +74,8 @@ CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
 #   refresh.<SLUG>.err fails that list with the file's stderr;
 #   refresh-log.<RUN>.txt is the failed-step log (default: empty);
 #   refresh-log.<RUN>.err fails that log with the file's stderr.
+#   workflows.<SLUG>.json is the paginated workflow list (default: empty);
+#   workflows.<SLUG>.err fails that list with the file's stderr.
 # Every `auth status`, `pr list`, `run` and `api --paginate` call is logged to gh.calls.
 # `api user` (env-token preflight) succeeds for any token except one
 # starting with ghp_stale.
@@ -115,11 +117,15 @@ case "${1:-} ${2:-}" in
     [[ "${4:-}" == --jq ]] && filter="$5"
     list="${path%%\?*}"; list="${list##*/}"
     [[ -f "$STUB_DIR/$list-fail" ]] && { echo "HTTP 502: bad gateway" >&2; exit 1; }
-    repo="${path#repos/}"; repo="${repo%/"$list"\?*}"
+    repo="${path#repos/}"; repo="${repo%/"$list"*}"
+    [[ "$list" != workflows ]] || repo="${repo%/actions}"
     slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
+    [[ ! -f "$STUB_DIR/$list.$slug.err" ]] || { cat "$STUB_DIR/$list.$slug.err" >&2; exit 1; }
     src="$STUB_DIR/$list.$slug.json"
     [[ -f "$src" ]] || src="$STUB_DIR/$list.json"
-    if [[ -f "$src" ]]; then jq -r "${filter:-.}" "$src"; else jq -rn "[] | ${filter:-.}"; fi
+    if [[ -f "$src" ]]; then jq -r "${filter:-.}" "$src"
+    elif [[ "$list" == workflows ]]; then jq -rn "{workflows: []} | ${filter:-.}"
+    else jq -rn "[] | ${filter:-.}"; fi
     exit ;;
   "pr list")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
@@ -689,12 +695,17 @@ run_watch() {
              ${repo_args[@]+"${repo_args[@]}"} ${watch_args[@]+"${watch_args[@]}"})
 }
 
-# refresh_watch [ARGS...] captures a complete long pass, including its status.
+# refresh_watch [ARGS...] captures status, events and calls for this invocation.
 # The fixture owns the mark interval and run list; no caller environment
 # decides how many passes elapse between refresh events.
 refresh_watch() {
   REFRESH_RC=0
+  : > "$STUB_DIR/gh.calls"
   run_watch ORCH_OVERSEER_MARK_REPEAT=2 -- --max-loops 1 "$@" \
     >"$STUB_DIR/out" 2>"$STUB_DIR/err" </dev/null || REFRESH_RC=$?
   REFRESH_EVENTS="$(awk '/^EVENT refresh-failing /' "$STUB_DIR/out")"
+  REFRESH_LISTS="$(awk '/^run list / { n++ } END { print n+0 }' "$STUB_DIR/gh.calls")"
+  REFRESH_LOG_REQUESTS="$(awk '/^run view /' "$STUB_DIR/gh.calls")"
+  REFRESH_HEARTBEATS="$(awk '/^EVENT heartbeat / { n++ } END { print n+0 }' "$STUB_DIR/out")"
+  REFRESH_NOTICES="$(awk '/^oversee-watch: refresh-unread / { n++ } END { print n+0 }' "$STUB_DIR/err")"
 }

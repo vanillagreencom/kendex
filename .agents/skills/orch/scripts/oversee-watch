@@ -1512,19 +1512,23 @@ check_prepare() {
 # One completed-run list per repository proves the failure pair. A failed
 # read cannot clear a standing pair or end the other fleet checks.
 check_refresh() {
-  local repo runs pair last since log cause prior passes rc
+  local repo runs pair last since log cause prior passes rc workflows
   local rows="${PW_SEEN[0]}" errf="$WORK_DIR/refresh.err"
   for repo in "${REPOS[@]}"; do
     rc=0
     runs="$(gh run list --repo "$repo" --workflow kendex-refresh.yml --status completed --limit 2 \
       --json databaseId,conclusion,createdAt 2>"$errf")" || rc=$?
     if (( rc != 0 )); then
-      # gh emits this workflow-specific 404 for a repository without the
-      # consumer refresh workflow. A repository-access 404 is not absence.
+      # gh rewrites every workflow-endpoint 404, including access failures.
+      # Only a complete successful workflow list can prove absence.
       if grep -q '^HTTP 404: workflow kendex-refresh\.yml not found on the default branch (' "$errf"; then
-        rows="$(lane_row_clear refresh-failing "$rows" "$repo")" \
-          || die state-read-failed "" "repo=$repo" "row=refresh-failing"
-        continue
+        if workflows="$(gh api --paginate "repos/$repo/actions/workflows" \
+          --jq '.workflows[].path' 2>"$errf")" \
+          && ! grep -qxF '.github/workflows/kendex-refresh.yml' <<<"$workflows"; then
+          rows="$(lane_row_clear refresh-failing "$rows" "$repo")" \
+            || die state-read-failed "" "repo=$repo" "row=refresh-failing"
+          continue
+        fi
       fi
       ow_message refresh-unread "repo=$repo" "read=runs" "exit=$rc" >&2
       continue
