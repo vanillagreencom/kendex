@@ -5,8 +5,7 @@
 # STUB_CALL_LOG when set; the state lookup's failures through
 # STUB_STATE_STDERR, STUB_STATE_EXIT, STUB_STATE_SILENT_FAIL, STUB_PR_MISSING
 # and STUB_STATE_FAIL_ONCE, a marker path the first lookup of a run creates;
-# the branch-rule reads' failures through STUB_RULES_EXIT, narrowed by
-# STUB_RULES_EXIT_JQ to the reads whose --jq filter holds that text, and
+# the branch-rule reads' failures through STUB_RULES_EXIT and
 # STUB_BRANCH_EXIT; a ruleset read's answer through STUB_RULESET_JSON_<id>,
 # per ruleset id, and its failure through STUB_RULESET_EXIT). STUB_POST_GRAPHQL_PARTIAL makes the
 # post-merge read a GraphQL 200 carrying an errors array beside data, and
@@ -181,7 +180,7 @@ case "${1:-}" in
             # A merge queue on STUB_QUEUE_BRANCH with STUB_QUEUE_METHOD, and
             # a pull_request rule allowing STUB_RULE_METHODS, join the rules.
             'repos/{owner}/{repo}/rules/branches/'*)
-                if [[ "${STUB_RULES_EXIT:-0}" != "0" && "$jq_filter" == *"${STUB_RULES_EXIT_JQ:-}"* ]]; then
+                if [[ "${STUB_RULES_EXIT:-0}" != "0" ]]; then
                     echo "gh: Not Found (HTTP 404)" >&2
                     exit "$STUB_RULES_EXIT"
                 fi

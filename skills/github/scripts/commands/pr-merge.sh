@@ -149,10 +149,7 @@ Merge route:
         The merge call passes --auto and no --admin, so GitHub enrolls the
         PR in the queue (exit 75): GitHub refuses a merge call on a queue
         base that passes neither. This --auto reads no approval rule, as
-        the plain merge does not. Where the base's rules could not be read,
-        the base may hold no queue, and the same --auto then arms auto-merge.
-        cause is rules-unreadable (the base branch's rules
-        could not be read, or a rule names no ruleset), ruleset-unreadable
+        the plain merge does not. cause is ruleset-unreadable
         (that ruleset could not be read), queue-ruleset-mixed (that
         merge-queue ruleset also holds the rule named as rule=), no-bypass
         (that merge-queue ruleset answered another value for this token,
@@ -838,28 +835,23 @@ route_queue() { # FIELDS WHY
     echo "  $2 The merge call passes --auto and no --admin." >&2
 }
 merge_route() { # PR TOKEN HEAD ACCEPTED...
-    local pr_num="$1" token="$2" head="$3" branch base rules queue_ids ids id bypass bypasses="" rulesets="" unnamed mixed enabled direct rc=0
+    local pr_num="$1" token="$2" head="$3" branch base rules queue_ids ids id bypass bypasses="" rulesets="" mixed enabled direct rc=0
     shift 3
     MERGE_ROUTE=queue
     MERGE_ROUTE_METHOD=""
     if ! branch=$(with_token "$token" gh pr view "$pr_num" --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$branch" ] \
         || ! base=$(jq -nr --arg v "$branch" '$v | @uri') \
         || ! rules=$(with_token "$token" gh api "repos/{owner}/{repo}/rules/branches/$base" --paginate \
-            --jq '.[] | "\(.ruleset_id // "-") \(.type)"' 2>/dev/null) \
+            --jq '.[] | "\(.ruleset_id) \(.type)"' 2>/dev/null) \
         || ! queue_ids=$(awk '$2 == "merge_queue" && !seen[$1]++ { print $1 }' <<<"$rules") \
-        || ! unnamed=$(awk '$1 !~ /^[0-9]+$/ { print $2; exit }' <<<"$rules") \
         || ! mixed=$(awk '$2 == "merge_queue" { queue[$1] = 1 } { rule[NR] = $0 }
             END { for (i = 1; i <= NR; i++) { split(rule[i], f, " "); if ((f[1] in queue) && f[2] != "merge_queue") { print rule[i]; exit } } }' <<<"$rules") \
         || ! ids=$(awk '!seen[$1]++ { print $1 }' <<<"$rules"); then
-        route_queue "cause=rules-unreadable" "The base branch's rules could not be read, so no bypass is proven."
-        return 0
+        echo "pr-merge: merge-method-unreadable cause=rules" >&2
+        return 1
     fi
     if [ -z "$queue_ids" ]; then
         MERGE_ROUTE=plain
-        return 0
-    fi
-    if [ -n "$unnamed" ]; then
-        route_queue "cause=rules-unreadable" "A $unnamed rule on the base branch names no ruleset, so no bypass is proven."
         return 0
     fi
     if [ -n "$mixed" ]; then

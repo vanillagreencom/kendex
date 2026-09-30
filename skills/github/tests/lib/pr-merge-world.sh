@@ -28,8 +28,6 @@
 #     contexts array;
 #     rule-type:<type> a ruleset rule of that type beside one requiring Lint
 #     rules:fail, branch:fail the ruleset or the branch-protection read errors
-#     route-rules:fail only the merge route's ruleset read errors, the one
-#     read whose filter names each rule's ruleset_id
 #     repo:no-protection a branch answer carrying no protection object
 #     methods:<m+m|-> the repository's allowed merge methods, `+` a space,
 #     `-` none; repo:pushless the repository answer with no allow_* flags
@@ -47,12 +45,12 @@
 #     queue_only=false, no line, a classifier that fails, or a range read
 #     that fails; head-moved:<sha> after it, the head every read but the
 #     range's answers
-#     queue-rule:<value|absent|fail|unnamed>  a merge_queue rule on the base
+#     queue-rule:<value|absent|fail>  a merge_queue rule on the base
 #     from ruleset 20569265, beside a required check from ruleset 24148610
 #     that answers never, whose read answers current_user_can_bypass
-#     <value>, carries no such field, fails, or a merge_queue rule naming no
-#     ruleset id; after it, queue-mixed puts a pull_request rule in the
-#     queue ruleset, other-bypass:<value> is the checks ruleset's answer, and
+#     <value>, carries no such field, or fails; after it, queue-mixed puts a
+#     pull_request rule in the queue ruleset, other-bypass:<value> is the
+#     checks ruleset's answer, and
 #     protection:on turns classic branch protection on, protection:unknown
 #     answers a protection object with no enabled field
 #     queue-two:<a>,<b>  two merge_queue rulesets, 20569265 answering <a> and
@@ -215,7 +213,6 @@ word() {
     classic-contexts:*) W_ENV+=("STUB_GATE_RULES=[]" "STUB_CLASSIC_JSON=$(jq -c --arg c "$v" '{protection: {required_status_checks: {contexts: [$c], checks: []}}}' <<<null)") ;;
     rule-type:*) W_ENV+=("STUB_GATE_RULES=$(jq -c --arg t "$v" '[{type: $t}, {type: "required_status_checks", parameters: {required_status_checks: [{context: "Lint"}]}}]' <<<null)") ;;
     rules:fail) W_ENV+=("STUB_RULES_EXIT=1") ;;
-    route-rules:fail) W_ENV+=("STUB_RULES_EXIT=1" "STUB_RULES_EXIT_JQ=ruleset_id") ;;
     branch:fail) W_ENV+=("STUB_BRANCH_EXIT=1") ;;
     repo:no-protection) W_ENV+=('STUB_CLASSIC_JSON={"name":"main","protected":true}') ;;
     base:*) W_ENV+=("STUB_BASE=$v") ;;
@@ -237,7 +234,6 @@ word() {
     head-moved:*) W_ENV+=("STUB_RANGE_HEAD=$RANGE_HEAD" "STUB_HEAD=$v") ;;
     route:false) W_ENV+=("STUB_CLASS=standard" "STUB_QUEUE_LINE=$QUEUE_FALSE" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     # The base's merge_queue rule and the answer its ruleset read gives.
-    queue-rule:unnamed) W_ENV+=("STUB_GATE_RULES=$(jq -c '[.[] | if .type == "merge_queue" then del(.ruleset_id) else . end]' <<<"$QUEUE_RULES")" "$CHECKS_NEVER") ;;
     queue-rule:fail) W_ENV+=("STUB_GATE_RULES=$QUEUE_RULES" "STUB_RULESET_EXIT=1") ;;
     queue-rule:absent) W_ENV+=("STUB_GATE_RULES=$QUEUE_RULES" 'STUB_RULESET_JSON_20569265={"id":20569265}' "$CHECKS_NEVER") ;;
     queue-rule:*) W_ENV+=("STUB_GATE_RULES=$QUEUE_RULES" "$(ruleset_answer 20569265 "$v")" "$CHECKS_NEVER") ;;
@@ -422,8 +418,6 @@ err_macro() {
     # route-queue:<why> the second line of a queue route; route-why:<name>
     # names the why.
     route-queue:*) printf '%s The merge call passes --auto and no --admin.' "$(err_macro "route-why:${1#route-queue:}")" ;;
-    route-why:rules) printf "The base branch's rules could not be read, so no bypass is proven." ;;
-    route-why:unnamed) printf 'A merge_queue rule on the base branch names no ruleset, so no bypass is proven.' ;;
     route-why:ruleset) printf 'The ruleset could not be read, so no bypass is proven.' ;;
     route-why:no-bypass) printf 'This token may not bypass the merge-queue ruleset.' ;;
     route-why:mixed) printf 'The merge-queue ruleset holds another rule, which --admin would skip too.' ;;
